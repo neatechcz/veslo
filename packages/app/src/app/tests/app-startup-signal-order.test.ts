@@ -20,3 +20,17 @@ test("startup effects only read visibility/debug signals after they are declared
     );
   }
 });
+
+test("developer mode is gated by the debug URL parameter", () => {
+  assert.doesNotMatch(source, /const developerMode = \(\) => true;/);
+  assert.match(
+    source,
+    /const developerMode = \(\) => resolveDeveloperModeFromSearch\(location\.search\);/,
+    "developer mode should be derived from the current route search string",
+  );
+  assert.match(
+    source,
+    /function resolveDeveloperModeFromSearch\(search: string\)[\s\S]*new URLSearchParams\(search\.startsWith\("\?"\) \? search\.slice\(1\) : search\)[\s\S]*params\.has\("debug"\)/,
+    "the debug URL parameter should be the explicit developer-mode entry point",
+  );
+});

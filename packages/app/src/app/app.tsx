@@ -884,10 +884,19 @@ const recordExternalSendTraceEntries = (entries: unknown) => {
   }
 };
 
+function resolveDeveloperModeFromSearch(search: string) {
+  const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  if (!params.has("debug")) return false;
+  const value = params.get("debug")?.trim().toLowerCase() ?? "";
+  return value === "" || value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
 export default function App() {
   const cloudEnvironment = resolveVesloCloudEnvironment(import.meta.env as Record<string, string | undefined>);
   const envVesloWorkspaceId = cloudEnvironment.workspaceId ?? null;
-  const developerMode = () => true;
+  const location = useLocation();
+  const navigate = useNavigate();
+  const developerMode = () => resolveDeveloperModeFromSearch(location.search);
   const [documentVisible, setDocumentVisible] = createSignal(true);
   const [appFocused, setAppFocused] = createSignal(true);
 
@@ -918,8 +927,6 @@ export default function App() {
       // ignore
     }
   };
-  const location = useLocation();
-  const navigate = useNavigate();
 
   const [creatingSession, setCreatingSession] = createSignal(false);
   const [sessionViewLockUntil, setSessionViewLockUntil] = createSignal(0);

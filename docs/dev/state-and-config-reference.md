@@ -54,6 +54,8 @@ Session/sidebar convenience state also lives in local storage, for example:
 
 Treat these as UI state, not product contract, unless a feature depends on them explicitly.
 
+Developer-only UI surfaces are not enabled by default. The app derives developer mode from the current URL search string, and only a `debug` parameter with no value or a truthy value (`1`, `true`, `yes`, `on`) exposes debug-only panels, badges, and diagnostics. The separate `veslo:workspace-debug` local storage flag keeps workspace tracing available without showing developer-only UI.
+
 Session archive records are loaded through the Veslo server archive API. When a cloud account is available, archive requests use that account id as the owner key. In local desktop mode without cloud auth, loopback Veslo server archive requests use the local desktop owner key `local:desktop`; remote archive requests still require a cloud account id.
 
 Pending draft content itself is additionally mirrored into the desktop pending-draft store so unpublished drafts survive restart with their current text and attachment chips.
