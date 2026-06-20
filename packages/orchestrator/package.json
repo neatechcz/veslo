@@ -1,6 +1,6 @@
 {
   "name": "veslo-orchestrator",
-  "version": "2026.6.2",
+  "version": "2026.6.3",
   "opencodeVersion": "1.17.4",
   "description": "Veslo host orchestrator for opencode + Veslo server + veslo-code-router",
   "private": true,
@@ -52,8 +52,8 @@
     "@opentui/keymap": "0.4.1",
     "@opentui/solid": "0.4.1",
     "solid-js": "1.9.12",
-    "veslo-code-router": "2026.6.2",
-    "veslo-server": "2026.6.2",
+    "veslo-code-router": "2026.6.3",
+    "veslo-server": "2026.6.3",
     "zod": "4.1.8"
   },
   "devDependencies": {
