@@ -38,6 +38,23 @@ The Azure principal behind `AZURE_CLIENT_ID` must have `Artifact Signing Certifi
 
 Each Windows `signtool` invocation is bounded by `VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS` (default `300`) and retried up to `VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS` times (default `3`) so a stalled Azure Artifact Signing request fails or recovers without hanging the whole release indefinitely.
 
+## macOS signing and notarization
+
+macOS desktop builds use a Developer ID Application certificate for signing:
+
+- Secrets: `APPLE_SIGNING_IDENTITY`, `APPLE_CODESIGN_CERT_P12_BASE64`, `APPLE_CODESIGN_CERT_PASSWORD`
+
+For notarization, GitHub Actions supports either App Store Connect API key credentials:
+
+- Secrets: `APPLE_NOTARY_API_KEY_ID`, `APPLE_NOTARY_API_ISSUER_ID`, `APPLE_NOTARY_API_KEY_P8_BASE64`
+
+Or Apple ID app-specific password credentials:
+
+- Secrets: `APPLE_NOTARY_APPLE_ID`, `APPLE_NOTARY_APP_SPECIFIC_PASSWORD`
+- Variable or secret: `APPLE_TEAM_ID`
+
+Use the Apple ID app-specific password path when the Apple Developer account can manage certificates but is not enabled for App Store Connect.
+
 ## veslo-orchestrator (npm + sidecars)
 
 1. Bump versions (includes `packages/orchestrator/package.json`):

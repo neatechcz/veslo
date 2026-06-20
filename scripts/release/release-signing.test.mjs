@@ -90,6 +90,48 @@ test("requires notary secrets when notarization is requested", () => {
   );
 });
 
+test("accepts App Store Connect API key notarization secrets", () => {
+  const result = resolveReleaseSigning({
+    osType: "macos",
+    updaterPrivateKey: "private-key",
+    updaterPrivateKeyPassword: "secret",
+    appleSigningIdentity: "Developer ID Application: Example",
+    appleCertificate: "base64-cert",
+    appleCertificatePassword: "cert-password",
+    appleNotaryApiKeyId: "key-id",
+    appleNotaryApiIssuerId: "issuer-id",
+    appleNotaryApiKeyPath: "/tmp/AuthKey.p8",
+    allowUnsignedMacos: false,
+    macosNotarize: true,
+  });
+
+  assert.equal(result.appleNotaryReady, true);
+  assert.equal(result.appleNotaryAuthMode, "api-key");
+  assert.equal(result.macosBuildMode, "signed-notarized");
+  assert.equal(result.shouldNotarizeMacos, true);
+});
+
+test("accepts Apple ID app-specific password notarization secrets", () => {
+  const result = resolveReleaseSigning({
+    osType: "macos",
+    updaterPrivateKey: "private-key",
+    updaterPrivateKeyPassword: "secret",
+    appleSigningIdentity: "Developer ID Application: Example",
+    appleCertificate: "base64-cert",
+    appleCertificatePassword: "cert-password",
+    appleId: "developer@example.com",
+    applePassword: "app-specific-password",
+    appleTeamId: "TEAM123456",
+    allowUnsignedMacos: false,
+    macosNotarize: true,
+  });
+
+  assert.equal(result.appleNotaryReady, true);
+  assert.equal(result.appleNotaryAuthMode, "apple-id");
+  assert.equal(result.macosBuildMode, "signed-notarized");
+  assert.equal(result.shouldNotarizeMacos, true);
+});
+
 test("non-macOS releases only require updater signing", () => {
   const result = resolveReleaseSigning({
     osType: "linux",
@@ -149,6 +191,22 @@ test("workflow routes signing through the release signing resolver", () => {
   assert.match(workflow, /azure\/login@/);
   assert.match(workflow, /Artifact Signing dlib package/);
   assert.match(workflow, /tauri\.windows\.release\.conf\.json/);
+  assert.match(workflow, /appleNotaryAuthMode/);
+  assert.match(workflow, /APPLE_NOTARY_APPLE_ID/);
+  assert.match(workflow, /APPLE_NOTARY_APP_SPECIFIC_PASSWORD/);
+  assert.match(workflow, /APPLE_TEAM_ID/);
+});
+
+test("prerelease workflow supports Apple ID macOS notarization", () => {
+  const workflowPath = resolve(import.meta.dirname, "../../.github/workflows/prerelease.yml");
+  const workflow = readFileSync(workflowPath, "utf8");
+
+  assert.match(workflow, /Resolve macOS signing/);
+  assert.match(workflow, /release-signing\.mjs/);
+  assert.match(workflow, /appleNotaryAuthMode/);
+  assert.match(workflow, /APPLE_NOTARY_APPLE_ID/);
+  assert.match(workflow, /APPLE_NOTARY_APP_SPECIFIC_PASSWORD/);
+  assert.match(workflow, /APPLE_TEAM_ID/);
 });
 
 test("all Windows desktop workflows route bundles through Azure Artifact Signing", () => {

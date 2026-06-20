@@ -40,6 +40,9 @@ export function resolveReleaseSigning(options = {}) {
   const appleNotaryApiKeyPath = options.appleNotaryApiKeyPath ?? readOption("APPLE_API_KEY_PATH");
   const appleNotaryApiKeyBase64 =
     options.appleNotaryApiKeyBase64 ?? readOption("APPLE_NOTARY_API_KEY_P8_BASE64");
+  const appleId = options.appleId ?? readOption("APPLE_ID");
+  const applePassword = options.applePassword ?? readOption("APPLE_PASSWORD");
+  const appleTeamId = options.appleTeamId ?? readOption("APPLE_TEAM_ID");
   const allowUnsignedMacos = parseBool(
     options.allowUnsignedMacos ?? readOption("ALLOW_UNSIGNED_MACOS", "false"),
   );
@@ -67,11 +70,14 @@ export function resolveReleaseSigning(options = {}) {
 
   const appleSigningReady =
     hasValue(appleSigningIdentity) && hasValue(appleCertificate) && hasValue(appleCertificatePassword);
-  const appleNotaryReady =
+  const appleNotaryApiKeyReady =
     (hasValue(appleNotaryApiKeyId) &&
       hasValue(appleNotaryApiIssuerId) &&
       hasValue(appleNotaryApiKeyPath)) ||
     hasValue(appleNotaryApiKeyBase64);
+  const appleIdNotaryReady = hasValue(appleId) && hasValue(applePassword) && hasValue(appleTeamId);
+  const appleNotaryAuthMode = appleNotaryApiKeyReady ? "api-key" : appleIdNotaryReady ? "apple-id" : "none";
+  const appleNotaryReady = appleNotaryAuthMode !== "none";
 
   if (osType !== "macos") {
     return {
@@ -79,6 +85,7 @@ export function resolveReleaseSigning(options = {}) {
       windowsSigningReady,
       appleSigningReady,
       appleNotaryReady,
+      appleNotaryAuthMode,
       allowUnsignedMacos,
       macosNotarize,
       macosBuildMode: "not-applicable",
@@ -96,7 +103,7 @@ export function resolveReleaseSigning(options = {}) {
     }
     if (!appleNotaryReady) {
       throw new Error(
-        "APPLE_NOTARY_API_KEY_P8_BASE64 or the resolved APPLE_API_KEY/APPLE_API_ISSUER/APPLE_API_KEY_PATH trio are required when macOS notarization is enabled.",
+        "APPLE_NOTARY_API_KEY_P8_BASE64 or the resolved APPLE_API_KEY/APPLE_API_ISSUER/APPLE_API_KEY_PATH trio, or APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID are required when macOS notarization is enabled.",
       );
     }
   }
@@ -116,6 +123,7 @@ export function resolveReleaseSigning(options = {}) {
     updaterSigningReady: true,
     appleSigningReady,
     appleNotaryReady,
+    appleNotaryAuthMode,
     allowUnsignedMacos,
     macosNotarize,
     macosBuildMode,
