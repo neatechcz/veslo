@@ -63,7 +63,7 @@ type SoulMaterializationFileResult = SoulMaterializationManifestFile & {
 
 export type SoulMaterializationSuccess = {
   ok: true;
-  status: "current";
+  status: "current" | "pending";
   workspaceRoot: string;
   effectiveContent: string;
   manifestPath: string;
@@ -196,6 +196,24 @@ export async function materializeEffectiveSoul(input: MaterializeEffectiveSoulIn
     return conflictFailure(conflicts);
   }
 
+  const materializedAt = new Date().toISOString();
+  const files = snapshots.map((snapshot) => manifestFileForSnapshot(snapshot, materializedAt));
+
+  if (input.workspaceActive === true) {
+    return {
+      ok: true,
+      status: "pending",
+      workspaceRoot,
+      effectiveContent,
+      manifestPath,
+      instructionsPath,
+      files,
+      pending: true,
+      reloadRequired: true,
+      manualSyncRequired: false,
+    };
+  }
+
   try {
     await ensureSoulInstructions(instructionsPath);
   } catch (error) {
@@ -206,8 +224,6 @@ export async function materializeEffectiveSoul(input: MaterializeEffectiveSoulIn
     });
   }
 
-  const materializedAt = new Date().toISOString();
-  const files = snapshots.map((snapshot) => manifestFileForSnapshot(snapshot, materializedAt));
   const manifest = manifestForFiles(files, effectiveContent, materializedAt);
 
   try {
@@ -233,7 +249,7 @@ export async function materializeEffectiveSoul(input: MaterializeEffectiveSoulIn
     manifestPath,
     instructionsPath,
     files,
-    pending: input.workspaceActive === true,
+    pending: false,
     reloadRequired: true,
     manualSyncRequired: false,
   };

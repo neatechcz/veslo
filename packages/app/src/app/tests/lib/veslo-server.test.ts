@@ -2367,6 +2367,67 @@ test("Soul workspace mutations send update restore and heartbeat bodies", async 
   }
 });
 
+test("Soul mutation helpers forward active workspace ids and expose materialization sync", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method?: string; headers: Headers; body: string | null }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method,
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body: typeof init?.body === "string" ? init.body : null,
+    });
+    return new Response(JSON.stringify({ ok: true, status: "pending", pending: true, files: [] }), {
+      status: 202,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.updateUserSoul({
+      content: "# User",
+      changeSummary: "Update user",
+      baseVersionId: "user_v1",
+      activeWorkspaceIds: ["workspace-a", "workspace-a", "workspace-b"],
+    });
+    await client.restoreWorkspaceSoulVersion("workspace a", "workspace_v1", {
+      changeSummary: "Restore workspace",
+      activeWorkspaceIds: ["workspace-a"],
+    });
+    await client.syncWorkspaceSoulMaterialization("workspace a", { activeRun: true });
+
+    assert.deepEqual(calls.map((call) => `${call.method ?? "GET"} ${call.url}`), [
+      "PATCH https://veslo.example/soul/user",
+      "POST https://veslo.example/workspace/workspace%20a/soul/versions/workspace_v1/restore",
+      "POST https://veslo.example/workspace/workspace%20a/soul/materialization/sync",
+    ]);
+    assert.deepEqual(JSON.parse(calls[0]?.body ?? "{}"), {
+      content: "# User",
+      changeSummary: "Update user",
+      baseVersionId: "user_v1",
+      activeWorkspaceIds: ["workspace-a", "workspace-b"],
+    });
+    assert.deepEqual(JSON.parse(calls[1]?.body ?? "{}"), {
+      changeSummary: "Restore workspace",
+      activeWorkspaceIds: ["workspace-a"],
+    });
+    assert.deepEqual(JSON.parse(calls[2]?.body ?? "{}"), { activeRun: true });
+    for (const call of calls) {
+      assert.equal(call.headers.get("authorization"), "Bearer token-123");
+      assert.equal(call.headers.get("x-veslo-host-token"), "host-token-123");
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("createVesloServerClient exposes getMyAiAccess", async () => {
   const originalFetch = globalThis.fetch;
   const originalSetTimeout = globalThis.setTimeout;

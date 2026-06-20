@@ -10,7 +10,7 @@ import type {
   VesloSoulSummary,
   VesloSoulVersion,
 } from "../lib/veslo-server";
-import { createSoulEditorController, type SoulEditorSource } from "./soul-controller.js";
+import { createSoulEditorController, type SoulEditorControllerInput, type SoulEditorSource } from "./soul-controller.js";
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -215,6 +215,8 @@ function createController(input?: {
   sourceList?: SoulEditorSource[];
   client?: VesloServerClient;
   refresh?: () => void;
+  activeWorkspaceIds?: () => string[];
+  onMaterializationResult?: SoulEditorControllerInput<SoulEditorSource>["onMaterializationResult"];
 }) {
   const fallbackClient = input?.client ?? makeClient(input?.sourceList).client;
   return createSoulEditorController({
@@ -223,6 +225,8 @@ function createController(input?: {
     serverConnected: () => true,
     authContext: () => authContext,
     refresh: input?.refresh ?? (() => {}),
+    activeWorkspaceIds: input?.activeWorkspaceIds,
+    onMaterializationResult: input?.onMaterializationResult,
     defaultChangeSummary: () => "Update Soul content",
     defaultRestoreSummary: () => "Restore selected Soul version",
     detailErrorMessage: () => "Failed to load Soul details.",
@@ -298,6 +302,69 @@ test("Soul editor controller saves content with change summary and current baseV
           baseVersionId: "user-v1",
         },
       ]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("Soul editor controller forwards active workspace ids for runtime-safe materialization", behaviorTestOptions, async () => {
+  const { client, calls } = makeClient();
+  const materializationCallbacks: unknown[] = [];
+  (client as unknown as { updateUserSoul: VesloServerClient["updateUserSoul"] }).updateUserSoul = async (input) => {
+    calls.updateUserSoul.push(input);
+    return {
+      ...readResponse(sources()[1], input.content),
+      materialization: {
+        ok: true,
+        pending: true,
+        manualSyncRequired: false,
+        workspaces: [
+          {
+            workspaceId: "ws-1",
+            result: {
+              ok: true,
+              status: "pending",
+              workspaceRoot: "/workspace",
+              effectiveContent: "Updated user Soul",
+              manifestPath: "/workspace/.opencode/veslo/soul-manifest.json",
+              instructionsPath: "/workspace/opencode.jsonc",
+              files: [],
+              pending: true,
+              reloadRequired: true,
+              manualSyncRequired: false,
+            },
+          },
+        ],
+      },
+    };
+  };
+
+  await createRoot(async (dispose) => {
+    try {
+      const controller = createController({
+        client,
+        activeWorkspaceIds: () => ["ws-1"],
+        onMaterializationResult: (source, materialization) => {
+          materializationCallbacks.push({ source, materialization });
+        },
+      });
+      controller.setSelectedSourceKey("user");
+      await flush();
+
+      controller.setContent("Updated user Soul");
+      await controller.saveSelectedSoul();
+
+      assert.deepEqual(calls.updateUserSoul, [
+        {
+          ...authContext,
+          content: "Updated user Soul",
+          changeSummary: "Update Soul content",
+          baseVersionId: "user-v1",
+          activeWorkspaceIds: ["ws-1"],
+        },
+      ]);
+      assert.equal(materializationCallbacks.length, 1);
     } finally {
       dispose();
     }

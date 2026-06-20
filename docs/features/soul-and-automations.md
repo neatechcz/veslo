@@ -91,6 +91,13 @@ by other Veslo resources, so organization, user, and workspace Soul sources can
 share inventory, audit, and multi-workspace ownership logic without migrating
 the stored Soul document format.
 
+Soul updates may change the cached source document while an agent run is active,
+but runtime materialization must not write `.opencode` Soul files or instructions
+for an active workspace. In that case the local server returns a pending
+materialization result. The UI passes the current busy workspace ids with Soul
+mutations and replays the workspace materialization sync after the workspace is
+idle.
+
 ## Soul Setup Expectations
 
 Soul setup relies on a combination of:

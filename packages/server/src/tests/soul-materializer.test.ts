@@ -146,6 +146,26 @@ test("materializer writes and updates managed runtime files and manifest", async
   }));
 });
 
+test("workspace-active materialization returns pending without writing runtime files", async () => {
+  const workspaceRoot = await tempDir("veslo-soul-materializer-active-");
+
+  const result = await materializeEffectiveSoul({
+    workspaceRoot,
+    ...soulDocs(),
+    workspaceActive: true,
+  });
+
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error(result.message);
+  expect(result.status).toBe("pending");
+  expect(result.pending).toBe(true);
+  await expect(readFile(join(workspaceRoot, ".opencode", "soul-company.md"), "utf8")).rejects.toThrow();
+  await expect(readFile(join(workspaceRoot, ".opencode", "soul-user.md"), "utf8")).rejects.toThrow();
+  await expect(readFile(join(workspaceRoot, ".opencode", "soul-workspace.md"), "utf8")).rejects.toThrow();
+  await expect(readFile(soulMaterializationManifestPath(workspaceRoot), "utf8")).rejects.toThrow();
+  await expect(readFile(join(workspaceRoot, "opencode.jsonc"), "utf8")).rejects.toThrow();
+});
+
 test("existing unmanaged Soul target files are not overwritten and return actionable conflict status", async () => {
   const workspaceRoot = await tempDir("veslo-soul-materializer-conflict-");
   await mkdir(join(workspaceRoot, ".opencode"), { recursive: true });

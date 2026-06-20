@@ -99,3 +99,21 @@ test("scoped send and session creation do not fall back to the active client", (
     "scoped send/create must not fall back to the active client after an explicit target lookup",
   );
 });
+
+test("skill command lookup follows the scoped target workspace", () => {
+  assert.match(
+    source,
+    /async function listCommands\(\s*scope: CommandListScope = \{\},[\s\S]*const scopedWorkspaceId = scope\.workspaceId\?\.trim\(\) \?\? "";[\s\S]*const c = scopedWorkspaceId \? routedClient\(scopedWorkspaceId\) : routedClient\(\);/,
+    "listCommands should use the explicitly scoped workspace client when one is provided",
+  );
+  assert.match(
+    source,
+    /const directory =[\s\S]*scopedDirectory \|\|[\s\S]*workspaceRootForId\(scopedWorkspaceId, null\)[\s\S]*workspaceStore\.activeWorkspaceRoot\(\)\.trim\(\)[\s\S]*const list = await listCommandsTyped\(c, directory\);/,
+    "listCommands should resolve command directory from the scoped workspace before the active workspace root",
+  );
+  assert.match(
+    source,
+    /const commandDirectory =[\s\S]*targetWorkspace\?\.directory\?\.trim\(\)[\s\S]*targetWorkspace\?\.workspaceRoot\?\.trim\(\)[\s\S]*listCommands\(\s*targetWorkspaceId\s*\?[\s\S]*workspaceId: targetWorkspaceId,[\s\S]*directory: commandDirectory,[\s\S]*: undefined,/,
+    "skill auto-invocation should list skill commands from the same workspace used for skill resolution",
+  );
+});

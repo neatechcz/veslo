@@ -16,11 +16,13 @@ import {
 
 import type {
   VesloServerClient,
+  VesloSoulAnyMaterializationResult,
   VesloSoulAuthContext,
   VesloSoulOverviewResponse,
   VesloSoulSummary,
 } from "../lib/veslo-server";
 import type { WorkspaceInfo } from "../lib/tauri";
+import type { WorkspaceBusyMap } from "../context/workspace-debug";
 import { formatRelativeTime } from "../utils";
 import { currentLocale, t } from "../../i18n";
 import { createSoulEditorController, type SoulEditorSource } from "./soul-controller";
@@ -34,6 +36,7 @@ type SoulViewProps = {
   authContext: VesloSoulAuthContext;
   refresh: (options?: { force?: boolean }) => void;
   workspaces: WorkspaceInfo[];
+  busySessionByWorkspaceId?: WorkspaceBusyMap;
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
 };
 
@@ -160,6 +163,42 @@ export default function SoulView(props: SoulViewProps) {
   });
   const openSoulModal = (sourceKey: string) => setOpenSourceKey(sourceKey);
   const closeSoulModal = () => setOpenSourceKey(null);
+  const [pendingSoulMaterializationWorkspaceIds, setPendingSoulMaterializationWorkspaceIds] =
+    createSignal<Record<string, true>>({});
+  let soulMaterializationReplayInFlight = false;
+
+  const busySoulWorkspaceIds = createMemo(() =>
+    Object.entries(props.busySessionByWorkspaceId ?? {})
+      .filter(([, sessions]) => Object.keys(sessions ?? {}).length > 0)
+      .map(([workspaceId]) => workspaceId.trim())
+      .filter(Boolean),
+  );
+  const isSoulWorkspaceBusy = (workspaceId: string) =>
+    Object.keys((props.busySessionByWorkspaceId ?? {})[workspaceId.trim()] ?? {}).length > 0;
+
+  const queuePendingSoulMaterialization = (
+    source: SoulSource,
+    materialization: VesloSoulAnyMaterializationResult | undefined,
+  ) => {
+    const pendingWorkspaceIds = new Set<string>();
+    if (materialization) {
+      if ("workspaces" in materialization) {
+        for (const item of materialization.workspaces ?? []) {
+          if (item.result?.pending) pendingWorkspaceIds.add(item.workspaceId);
+        }
+      } else if (materialization.pending && source.scope === "workspace") {
+        pendingWorkspaceIds.add(source.workspaceId);
+      }
+    }
+    if (!pendingWorkspaceIds.size) return;
+    setPendingSoulMaterializationWorkspaceIds((current) => {
+      const next = { ...current };
+      for (const workspaceId of pendingWorkspaceIds) {
+        if (workspaceId.trim()) next[workspaceId.trim()] = true;
+      }
+      return next;
+    });
+  };
 
   createEffect(() => {
     const key = openSourceKey();
@@ -185,11 +224,38 @@ export default function SoulView(props: SoulViewProps) {
     serverConnected: () => props.serverConnected,
     authContext: () => props.authContext,
     refresh: props.refresh,
+    activeWorkspaceIds: busySoulWorkspaceIds,
+    onMaterializationResult: queuePendingSoulMaterialization,
     defaultChangeSummary: () => translate("soul.default_change_summary"),
     defaultRestoreSummary: () => translate("soul.restore_default_summary"),
     detailErrorMessage: () => translate("soul.detail_error"),
     historyErrorMessage: () => translate("soul.history_error"),
     previewErrorMessage: () => translate("soul.preview_error"),
+  });
+
+  createEffect(() => {
+    const client = props.client;
+    if (!client || !props.serverConnected || soulMaterializationReplayInFlight) return;
+    const workspaceId = Object.keys(pendingSoulMaterializationWorkspaceIds()).find((id) => !isSoulWorkspaceBusy(id));
+    if (!workspaceId) return;
+    soulMaterializationReplayInFlight = true;
+    void (async () => {
+      try {
+        const result = await client.syncWorkspaceSoulMaterialization(workspaceId, props.authContext);
+        if (!result.pending) {
+          setPendingSoulMaterializationWorkspaceIds((current) => {
+            const next = { ...current };
+            delete next[workspaceId];
+            return next;
+          });
+          props.refresh({ force: true });
+        }
+      } catch (error) {
+        console.warn("Failed to replay pending Soul materialization", error);
+      } finally {
+        soulMaterializationReplayInFlight = false;
+      }
+    })();
   });
 
   const selectedSourceKey = controller.selectedSourceKey;

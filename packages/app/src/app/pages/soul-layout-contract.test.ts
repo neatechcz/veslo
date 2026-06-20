@@ -30,6 +30,7 @@ test("Dashboard passes Soul overview state and busy flag to SoulView", () => {
   assert.match(dashboardSource, /soulClient:\s*VesloServerClient\s*\|\s*null;/);
   assert.match(dashboardSource, /soulServerConnected:\s*boolean;/);
   assert.match(dashboardSource, /soulAuthContext:\s*VesloSoulAuthContext;/);
+  assert.match(dashboardSource, /busySessionByWorkspaceId\?:\s*WorkspaceBusyMap;/);
   assert.match(appSource, /const \[soulOverviewBusy,\s*setSoulOverviewBusy\] = createSignal\(false\)/);
   assert.match(appSource, /soulOverviewBusy:\s*soulOverviewBusy\(\)/);
   assert.match(appSource, /soulClient:\s*vesloServerClient\(\)/);
@@ -42,6 +43,7 @@ test("Dashboard passes Soul overview state and busy flag to SoulView", () => {
   assert.match(dashboardSource, /<SoulView[\s\S]*serverConnected=\{props\.soulServerConnected\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*authContext=\{props\.soulAuthContext\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*refresh=\{props\.refreshSoulData\}/);
+  assert.match(dashboardSource, /<SoulView[\s\S]*busySessionByWorkspaceId=\{props\.busySessionByWorkspaceId\}/);
   assert.doesNotMatch(dashboardSource, /<SoulView[\s\S]{0,500}runSoulPrompt=\{props\.runSoulPrompt\}/);
 });
 

@@ -1360,10 +1360,21 @@ export type VesloSoulMaterializationResult =
         | string;
     };
 
+export type VesloSoulConfiguredMaterializationResult = {
+  ok: boolean;
+  pending: boolean;
+  manualSyncRequired: false;
+  workspaces: Array<{ workspaceId: string; result: VesloSoulMaterializationResult }>;
+};
+
+export type VesloSoulAnyMaterializationResult =
+  | VesloSoulMaterializationResult
+  | VesloSoulConfiguredMaterializationResult;
+
 export type VesloSoulReadResponse = {
   document: VesloSoulDocument | null;
   summary: VesloSoulSummary;
-  materialization?: VesloSoulMaterializationResult;
+  materialization?: VesloSoulAnyMaterializationResult;
   pendingEdits?: unknown[];
   denSynced?: boolean;
 };
@@ -1405,10 +1416,13 @@ export type VesloSoulUpdateInput = VesloSoulAuthContext & {
   content: string;
   changeSummary: string;
   baseVersionId: string | null;
+  activeWorkspaceIds?: string[];
 };
 
 export type VesloSoulRestoreInput = VesloSoulAuthContext & {
   changeSummary?: string;
+  activeWorkspaceIds?: string[];
+  activeRun?: boolean;
 };
 
 export type VesloWorkspaceSystemProvisionResult = {
@@ -2347,6 +2361,25 @@ function buildDenContextHeaders(options?: VesloSkillRegistryAuthContext): Record
 
 function skillMaterializationSyncBody(options?: VesloSkillMaterializationRequestOptions): VesloSkillMaterializationSyncOptions | undefined {
   return options?.activeRun === true ? { activeRun: true } : undefined;
+}
+
+function activeWorkspaceIdsPayload(input?: { activeWorkspaceIds?: string[] }): { activeWorkspaceIds?: string[] } {
+  const activeWorkspaceIds = [...new Set(
+    (input?.activeWorkspaceIds ?? [])
+      .map((item) => item.trim())
+      .filter(Boolean),
+  )];
+  return activeWorkspaceIds.length ? { activeWorkspaceIds } : {};
+}
+
+function soulRestoreBody(input?: VesloSoulRestoreInput): { changeSummary?: string; activeWorkspaceIds?: string[]; activeRun?: boolean } | undefined {
+  if (!input) return undefined;
+  const body = {
+    ...(input.changeSummary !== undefined ? { changeSummary: input.changeSummary } : {}),
+    ...activeWorkspaceIdsPayload(input),
+    ...(input.activeRun === true ? { activeRun: true } : {}),
+  };
+  return Object.keys(body).length ? body : undefined;
 }
 
 export async function requestManagedAiAccessBundle(baseUrl: string, userToken: string) {
@@ -3748,6 +3781,7 @@ export function createVesloServerClient(options: {
           content: input.content,
           changeSummary: input.changeSummary,
           baseVersionId: input.baseVersionId,
+          ...activeWorkspaceIdsPayload(input),
         },
         extraHeaders: buildDenContextHeaders(input),
         timeoutMs: timeouts.soulMemory,
@@ -3761,6 +3795,7 @@ export function createVesloServerClient(options: {
           content: input.content,
           changeSummary: input.changeSummary,
           baseVersionId: input.baseVersionId,
+          ...activeWorkspaceIdsPayload(input),
         },
         extraHeaders: buildDenContextHeaders(input),
         timeoutMs: timeouts.soulMemory,
@@ -3773,7 +3808,7 @@ export function createVesloServerClient(options: {
           token,
           hostToken,
           method: "POST",
-          body: input ? { changeSummary: input.changeSummary } : undefined,
+          body: soulRestoreBody(input),
           extraHeaders: buildDenContextHeaders(input),
           timeoutMs: timeouts.soulMemory,
         },
@@ -3786,7 +3821,7 @@ export function createVesloServerClient(options: {
           token,
           hostToken,
           method: "POST",
-          body: input ? { changeSummary: input.changeSummary } : undefined,
+          body: soulRestoreBody(input),
           extraHeaders: buildDenContextHeaders(input),
           timeoutMs: timeouts.soulMemory,
         },
@@ -3800,6 +3835,7 @@ export function createVesloServerClient(options: {
           content: input.content,
           changeSummary: input.changeSummary,
           baseVersionId: input.baseVersionId,
+          ...activeWorkspaceIdsPayload(input),
         },
         extraHeaders: buildDenContextHeaders(input),
         timeoutMs: timeouts.soulMemory,
@@ -3812,8 +3848,21 @@ export function createVesloServerClient(options: {
           token,
           hostToken,
           method: "POST",
-          body: input ? { changeSummary: input.changeSummary } : undefined,
+          body: soulRestoreBody(input),
           extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.soulMemory,
+        },
+      ),
+    syncWorkspaceSoulMaterialization: (workspaceId: string, options?: VesloSoulAuthContext & { activeRun?: boolean }) =>
+      requestJson<VesloSoulMaterializationResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/soul/materialization/sync`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: options?.activeRun === true ? { activeRun: true } : undefined,
+          extraHeaders: buildDenContextHeaders(options),
           timeoutMs: timeouts.soulMemory,
         },
       ),

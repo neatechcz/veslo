@@ -589,6 +589,53 @@ test("workspace soul routes work for configured workspaces that are not active",
   expect(await read.json()).toEqual(updatePayload);
 });
 
+test("workspace Soul materialization stays pending during active runs and syncs after idle", async () => {
+  const server = await startFixture();
+  const workspaceRoot = tempDirs[tempDirs.length - 2]!;
+  const soulPath = join(workspaceRoot, ".opencode", "soul-workspace.md");
+
+  const update = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_active/soul`, {
+    method: "PATCH",
+    headers: { ...denHeaders, "content-type": "application/json" },
+    body: JSON.stringify({
+      content: "Pending workspace memory",
+      changeSummary: "Create while active",
+      baseVersionId: null,
+      activeRun: true,
+    }),
+  });
+
+  expect(update.status).toBe(200);
+  const updatePayload = await update.json() as {
+    document: SoulDocument;
+    materialization: { ok: boolean; status: string; pending: boolean };
+  };
+  expect(updatePayload.document.currentVersionId).toBeTruthy();
+  expect(updatePayload.materialization).toMatchObject({
+    ok: true,
+    status: "pending",
+    pending: true,
+  });
+  await expect(readFile(soulPath, "utf8")).rejects.toThrow();
+
+  const stillActiveSync = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_active/soul/materialization/sync`, {
+    method: "POST",
+    headers: { ...denHeaders, "content-type": "application/json" },
+    body: JSON.stringify({ activeRun: true }),
+  });
+  expect(stillActiveSync.status).toBe(202);
+  expect(await stillActiveSync.json()).toMatchObject({ ok: true, status: "pending", pending: true });
+  await expect(readFile(soulPath, "utf8")).rejects.toThrow();
+
+  const idleSync = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_active/soul/materialization/sync`, {
+    method: "POST",
+    headers: denHeaders,
+  });
+  expect(idleSync.status).toBe(200);
+  expect(await idleSync.json()).toMatchObject({ ok: true, status: "current", pending: false });
+  expect(await readFile(soulPath, "utf8")).toBe("Pending workspace memory\n");
+});
+
 test("workspace Soul writes require approval before local cache and materialization writes", async () => {
   const server = await startFixture({ approval: { mode: "manual", timeoutMs: 1_000 } });
   const workspaceRoot = tempDirs[tempDirs.length - 2]!;

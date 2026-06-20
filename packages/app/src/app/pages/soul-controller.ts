@@ -3,6 +3,7 @@ import { createComputed, createMemo, createSignal, type Accessor } from "solid-j
 import type {
   VesloServerClient,
   VesloSoulAuthContext,
+  VesloSoulAnyMaterializationResult,
   VesloSoulReadResponse,
   VesloSoulSummary,
   VesloSoulVersion,
@@ -38,6 +39,11 @@ export type SoulEditorControllerInput<TSource extends SoulEditorSource = SoulEdi
   serverConnected: Accessor<boolean>;
   authContext: Accessor<VesloSoulAuthContext>;
   refresh: (options?: { force?: boolean }) => void;
+  activeWorkspaceIds?: Accessor<string[]>;
+  onMaterializationResult?: (
+    source: TSource,
+    materialization: VesloSoulAnyMaterializationResult | undefined,
+  ) => void;
   defaultChangeSummary: Accessor<string>;
   defaultRestoreSummary: Accessor<string>;
   detailErrorMessage: Accessor<string>;
@@ -159,7 +165,11 @@ export function createSoulEditorController<TSource extends SoulEditorSource>(
   const materialization = createMemo(() => selectedDetail()?.materialization ?? null);
   const materializationDiagnostic = createMemo(() => {
     const current = materialization();
-    if (!current || current.ok) return null;
+    if (!current) return null;
+    if ("workspaces" in current) {
+      return current.workspaces.map((item) => item.result).find((result) => !result.ok) ?? null;
+    }
+    if (current.ok) return null;
     return current;
   });
   const selectedRestorePending = createMemo(() => {
@@ -316,6 +326,10 @@ export function createSoulEditorController<TSource extends SoulEditorSource>(
 
   const changeSummaryValue = () => changeSummary().trim() || input.defaultChangeSummary();
   const restoreChangeSummaryValue = () => restoreChangeSummary().trim() || input.defaultRestoreSummary();
+  const activeWorkspaceIdsPayload = () => {
+    const activeWorkspaceIds = input.activeWorkspaceIds?.() ?? [];
+    return activeWorkspaceIds.length ? { activeWorkspaceIds } : {};
+  };
 
   const previewVersion = async (versionId: string) => {
     const source = selectedSource();
@@ -357,6 +371,7 @@ export function createSoulEditorController<TSource extends SoulEditorSource>(
         content: content(),
         changeSummary: changeSummaryValue(),
         baseVersionId: currentBaseVersionId(),
+        ...activeWorkspaceIdsPayload(),
       };
       let response: VesloSoulReadResponse;
       switch (source.scope) {
@@ -372,6 +387,7 @@ export function createSoulEditorController<TSource extends SoulEditorSource>(
       }
       if (!sourceStillSelected(source, client)) return;
       applyDetailResponse(response, source.key);
+      input.onMaterializationResult?.(source, response.materialization);
       setSelectedVersionId(null);
       setSelectedVersionPreview(null);
       input.refresh({ force: true });
@@ -402,6 +418,7 @@ export function createSoulEditorController<TSource extends SoulEditorSource>(
       const restoreInput = {
         ...input.authContext(),
         changeSummary: restoreChangeSummaryValue(),
+        ...activeWorkspaceIdsPayload(),
       };
       switch (source.scope) {
         case "organization":
@@ -416,6 +433,7 @@ export function createSoulEditorController<TSource extends SoulEditorSource>(
       }
       if (!sourceStillSelected(source, client)) return;
       applyDetailResponse(response, source.key);
+      input.onMaterializationResult?.(source, response.materialization);
       setRestoreChangeSummary("");
       setSelectedVersionId(null);
       setSelectedVersionPreview(null);

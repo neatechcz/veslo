@@ -1612,6 +1612,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 authContext={props.soulAuthContext}
                 refresh={props.refreshSoulData}
                 workspaces={props.workspaces}
+                busySessionByWorkspaceId={props.busySessionByWorkspaceId}
                 isPrivateWorkspacePath={props.isPrivateWorkspacePath}
               />
             </Match>
