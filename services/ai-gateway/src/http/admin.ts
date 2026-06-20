@@ -1333,6 +1333,26 @@ export function createDefaultAdminService(
   let codexCapacityAlertEmailRunner: (() => Promise<CodexCapacityAlertMonitorResult>) | null = null;
   let credentialAlertEmailRunner: (() => Promise<CredentialAlertEmailMonitorResult>) | null = null;
   const codexAuthUploadSessions = new Map<string, CodexAuthUploadSessionRecord>();
+  type DenOrganizationProxyMethod =
+    | "listOrganizations"
+    | "getOrganization"
+    | "updateOrganization"
+    | "listOrganizationMembers"
+    | "createOrganizationMember"
+    | "updateOrganizationMember"
+    | "deleteOrganizationMember"
+    | "listOrganizationDomains"
+    | "createOrganizationDomain"
+    | "updateOrganizationDomain"
+    | "deleteOrganizationDomain"
+    | "listOrganizationInvites"
+    | "createOrganizationInvite"
+    | "resendOrganizationInvite"
+    | "revokeOrganizationInvite";
+
+  function requireDenOrganizationProxy<K extends DenOrganizationProxyMethod>(method: K): DenAdminApi[K] {
+    return denClient[method].bind(denClient) as DenAdminApi[K];
+  }
 
   function getCredentialRotationService() {
     if (!credentialRotationService) {
