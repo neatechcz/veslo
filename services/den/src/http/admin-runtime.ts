@@ -57,6 +57,11 @@ type ListedUserRow = {
   emailVerified: boolean
 }
 
+type AdminOrganizationAccessContext = {
+  snapshot: AdminSessionSnapshot
+  organization: AdminOrganizationRecord
+}
+
 export type PlatformAdminRecipient = {
   userId: string
   email: string
@@ -448,6 +453,215 @@ export async function listActivePlatformAdminRecipients(): Promise<PlatformAdmin
       email: entry.email.trim().toLowerCase(),
       name: entry.name?.trim() || null,
     }))
+}
+
+async function loadOrganizationRecord(orgId: string): Promise<AdminOrganizationRecord | null> {
+  const rows = await db
+    .select({
+      id: OrgTable.id,
+      name: OrgTable.name,
+      slug: OrgTable.slug,
+      ownerUserId: OrgTable.owner_user_id,
+      seatLimit: OrgTable.seat_limit,
+      createdAt: OrgTable.created_at,
+      updatedAt: OrgTable.updated_at,
+    })
+    .from(OrgTable)
+    .where(eq(OrgTable.id, orgId))
+    .limit(1)
+
+  return rows[0] ? mapOrganizationRow(rows[0]) : null
+}
+
+async function requireAdminOrganizationAccess(
+  req: express.Request,
+  res: express.Response,
+  options: {
+    orgId?: string | null
+    snapshot?: AdminSessionSnapshot
+  } = {},
+): Promise<AdminOrganizationAccessContext | null> {
+  const snapshot = options.snapshot ?? await requireAdminSessionSnapshot(req, res)
+  if (!snapshot) {
+    return null
+  }
+
+  const orgId = options.orgId ?? req.params.orgId ?? readRequestedOrganizationId(req) ?? (
+    snapshot.platformAdmin
+      ? null
+      : snapshot.organizations.length === 1
+        ? snapshot.organizations[0].id
+        : null
+  )
+  if (!orgId) {
+    res.status(400).json({ error: "org_context_required" })
+    return null
+  }
+
+  if (!canAdminAccessOrganization(snapshot, orgId)) {
+    res.status(403).json({ error: "organization_forbidden" })
+    return null
+  }
+
+  const organization = await loadOrganizationRecord(orgId)
+  if (!organization) {
+    res.status(snapshot.platformAdmin ? 404 : 403).json({
+      error: snapshot.platformAdmin ? "organization_not_found" : "organization_forbidden",
+    })
+    return null
+  }
+
+  return {
+    snapshot,
+    organization,
+  }
+}
+
+async function listAdminOrganizationsForSnapshot(snapshot: AdminSessionSnapshot) {
+  if (snapshot.platformAdmin) {
+    const rows = await db
+      .select({
+        id: OrgTable.id,
+        name: OrgTable.name,
+        slug: OrgTable.slug,
+        ownerUserId: OrgTable.owner_user_id,
+        seatLimit: OrgTable.seat_limit,
+        createdAt: OrgTable.created_at,
+        updatedAt: OrgTable.updated_at,
+      })
+      .from(OrgTable)
+
+    return rows.map(mapOrganizationRow)
+  }
+
+  const orgIds = snapshot.organizations.map((entry) => entry.id)
+  if (orgIds.length === 0) {
+    return []
+  }
+
+  const rows = await db
+    .select({
+      id: OrgTable.id,
+      name: OrgTable.name,
+      slug: OrgTable.slug,
+      ownerUserId: OrgTable.owner_user_id,
+      seatLimit: OrgTable.seat_limit,
+      createdAt: OrgTable.created_at,
+      updatedAt: OrgTable.updated_at,
+    })
+    .from(OrgTable)
+    .where(inArray(OrgTable.id, orgIds))
+
+  return rows.map(mapOrganizationRow)
+}
+
+async function loadOrganizationMember(orgId: string, membershipId: string) {
+  const rows = await db
+    .select({
+      membershipId: OrgMembershipTable.id,
+      userId: AuthUserTable.id,
+      name: AuthUserTable.name,
+      email: AuthUserTable.email,
+      role: OrgMembershipTable.role,
+      status: OrgMembershipTable.status,
+      createdAt: OrgMembershipTable.created_at,
+    })
+    .from(OrgMembershipTable)
+    .innerJoin(AuthUserTable, eq(OrgMembershipTable.user_id, AuthUserTable.id))
+    .where(and(eq(OrgMembershipTable.org_id, orgId), eq(OrgMembershipTable.id, membershipId)))
+    .limit(1)
+
+  return rows[0] ? mapMemberRow(rows[0]) : null
+}
+
+async function loadOrganizationMemberByUserId(orgId: string, userId: string) {
+  const rows = await db
+    .select({
+      membershipId: OrgMembershipTable.id,
+      userId: AuthUserTable.id,
+      name: AuthUserTable.name,
+      email: AuthUserTable.email,
+      role: OrgMembershipTable.role,
+      status: OrgMembershipTable.status,
+      createdAt: OrgMembershipTable.created_at,
+    })
+    .from(OrgMembershipTable)
+    .innerJoin(AuthUserTable, eq(OrgMembershipTable.user_id, AuthUserTable.id))
+    .where(and(eq(OrgMembershipTable.org_id, orgId), eq(OrgMembershipTable.user_id, userId)))
+    .limit(1)
+
+  return rows[0] ? mapMemberRow(rows[0]) : null
+}
+
+async function loadOrganizationMembers(orgId: string) {
+  const rows = await db
+    .select({
+      membershipId: OrgMembershipTable.id,
+      userId: AuthUserTable.id,
+      name: AuthUserTable.name,
+      email: AuthUserTable.email,
+      role: OrgMembershipTable.role,
+      status: OrgMembershipTable.status,
+      createdAt: OrgMembershipTable.created_at,
+    })
+    .from(OrgMembershipTable)
+    .innerJoin(AuthUserTable, eq(OrgMembershipTable.user_id, AuthUserTable.id))
+    .where(eq(OrgMembershipTable.org_id, orgId))
+
+  return rows.map(mapMemberRow)
+}
+
+async function loadAdminUsersForOrganization(org: AdminOrganizationRecord) {
+  const rows = await db
+    .select({
+      id: AuthUserTable.id,
+      name: AuthUserTable.name,
+      email: AuthUserTable.email,
+      emailVerified: AuthUserTable.emailVerified,
+      membershipId: OrgMembershipTable.id,
+      role: OrgMembershipTable.role,
+    })
+    .from(OrgMembershipTable)
+    .innerJoin(AuthUserTable, eq(OrgMembershipTable.user_id, AuthUserTable.id))
+    .where(eq(OrgMembershipTable.org_id, org.id))
+
+  const userIds = rows.map((entry) => entry.id)
+  const [platformAdmins, disabledUsers] = await Promise.all([
+    loadPlatformAdminUserIds(userIds),
+    loadUserDisabledState(userIds),
+  ])
+
+  return rows.map((entry): AdminUserRecord => ({
+    id: entry.id,
+    name: entry.name,
+    email: entry.email,
+    emailVerified: entry.emailVerified,
+    platformAdmin: platformAdmins.has(entry.id) || isBootstrapPlatformAdminEmail(entry.email),
+    disabled: disabledUsers.has(entry.id),
+    memberships: [{
+      membershipId: entry.membershipId,
+      orgId: org.id,
+      orgName: org.name,
+      orgSlug: org.slug,
+      role: toCurrentOrgRole(entry.role),
+    }],
+  }))
+}
+
+async function pickReplacementOrganizationAdminUserId(orgId: string, excludedUserId: string) {
+  const rows = await db
+    .select({
+      userId: OrgMembershipTable.user_id,
+    })
+    .from(OrgMembershipTable)
+    .where(and(
+      eq(OrgMembershipTable.org_id, orgId),
+      eq(OrgMembershipTable.role, "organization_admin"),
+      sql`${OrgMembershipTable.user_id} <> ${excludedUserId}`,
+    ))
+    .limit(1)
+
+  return rows[0]?.userId ?? null
 }
 
 async function createUserViaAuth(req: express.Request, body: { email: string; name: string; password?: string }) {

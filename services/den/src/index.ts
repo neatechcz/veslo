@@ -20,7 +20,12 @@ import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { requireSession } from "./http/session.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
 import { desktopAuthV2Router } from "./http/desktop-auth-v2.js"
-import { createAdminRuntimeRouter, listActivePlatformAdminRecipients, requirePlatformAdminSnapshot } from "./http/admin-runtime.js"
+import {
+  createAdminRuntimeRouter,
+  isBootstrapPlatformAdminEmail,
+  listActivePlatformAdminRecipients,
+  requirePlatformAdminSnapshot,
+} from "./http/admin-runtime.js"
 import { createFeedbackRouter } from "./http/feedback.js"
 import { createManagedAiAdminUiRouter } from "./managed-ai/http/admin.js"
 import {
