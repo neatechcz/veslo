@@ -884,13 +884,17 @@ export function startServer(config: ServerConfig) {
             );
           }
           const batch = body as { batchId: string; events: Parameters<DebugLogPipeline["append"]>[0] };
-          void debugLogPipeline.append(batch.events).catch((error) => {
-            logger.log("error", "debug log ingest append failed", {
-              batchId: batch.batchId,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          });
-          return finalize(jsonResponse({ ok: true, acceptedBatchIds: [batch.batchId] }, 202));
+          await debugLogPipeline.append(batch.events);
+          return finalize(
+            jsonResponse(
+              {
+                ok: true,
+                acceptedBatchIds: [batch.batchId],
+                cloudUploadEnabled: debugLogPipeline.isEnabled(),
+              },
+              202,
+            ),
+          );
         } catch (error) {
           const apiError = error instanceof ApiError
             ? error

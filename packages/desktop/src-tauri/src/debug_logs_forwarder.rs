@@ -1,6 +1,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -17,13 +17,17 @@ const SPOOL_MAX_BYTES: u64 = 50 * 1024 * 1024; // 50 MB before retention drop
 const RETENTION_LOW_BYTES: u64 = 35 * 1024 * 1024; // truncate down to ~35 MB
 const MAX_EVENTS_PER_BATCH: usize = 500;
 const MAX_LOG_LINE_BYTES: usize = 64 * 1024;
+const MAX_DIAGNOSTIC_TEXT_BYTES: usize = 16 * 1024;
 const MAX_BATCH_BODY_BYTES: usize = 224 * 1024;
 const BATCH_SIZE_PROBE_ID: &str = "00000000-0000-0000-0000-000000000000";
+const INSTALL_ID_FILE: &str = "install-id.txt";
+const REDACTED: &str = "[redacted]";
 
 #[derive(Clone, Copy, Debug)]
 pub enum LogStream {
     Stdout,
     Stderr,
+    Diagnostic,
 }
 
 impl LogStream {
@@ -31,8 +35,18 @@ impl LogStream {
         match self {
             LogStream::Stdout => "stdout",
             LogStream::Stderr => "stderr",
+            LogStream::Diagnostic => "diagnostic",
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct CloudDiagnosticsContext {
+    den_api_base: String,
+    token: String,
+    user_id: String,
+    org_id: String,
+    workspace_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -55,6 +69,9 @@ struct DebugLogEvent {
 pub struct DebugLogsForwarder {
     spool_dir: PathBuf,
     pending_path: PathBuf,
+    install_id: String,
+    boot_id: String,
+    cloud_context: Mutex<Option<CloudDiagnosticsContext>>,
     write_lock: Mutex<()>,
     sequence: AtomicU64,
 }
@@ -63,6 +80,12 @@ pub struct DebugLogsForwarder {
 enum PostBatchError {
     Status(u16),
     Transport(String),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum LocalPostResult {
+    CloudUploaded,
+    CloudNotUploaded,
 }
 
 impl std::fmt::Display for PostBatchError {
@@ -90,16 +113,303 @@ fn truncate_utf8_to_bytes(input: &str, max_bytes: usize) -> String {
     format!("{}{}", &input[..end], SUFFIX)
 }
 
+fn load_or_create_install_id(spool_dir: &Path) -> String {
+    let path = spool_dir.join(INSTALL_ID_FILE);
+    if let Ok(raw) = fs::read_to_string(&path) {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    let install_id = Uuid::new_v4().to_string();
+    let _ = fs::write(&path, format!("{install_id}\n"));
+    install_id
+}
+
+fn is_secret_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    lower.contains("token")
+        || lower.contains("secret")
+        || lower.contains("password")
+        || lower.contains("authorization")
+        || lower.contains("credential")
+        || lower.contains("apikey")
+        || lower.contains("api_key")
+        || lower.contains("accesskey")
+        || lower.contains("access_key")
+        || lower.contains("refreshkey")
+        || lower.contains("refresh_key")
+        || lower.contains("verifier")
+        || lower == "code"
+        || lower.ends_with("_code")
+        || lower.ends_with("-code")
+}
+
+fn is_tail_key(key: Option<&str>) -> bool {
+    let Some(key) = key else {
+        return false;
+    };
+    let lower = key.to_ascii_lowercase();
+    lower.contains("stdout") || lower.contains("stderr") || lower.contains("tail")
+}
+
+fn redact_home_paths(input: &str) -> String {
+    let mut out = input.to_string();
+    if let Ok(home) = std::env::var("HOME") {
+        let trimmed = home.trim();
+        if !trimmed.is_empty() {
+            out = out.replace(trimmed, "[home]");
+        }
+    }
+
+    out = redact_path_segment(&out, "/Users/", '/');
+    out = redact_path_segment(&out, "/home/", '/');
+    out = redact_path_segment(&out, "\\Users\\", '\\');
+    out
+}
+
+fn redact_path_segment(input: &str, marker: &str, separator: char) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(idx) = rest.find(marker) {
+        out.push_str(&rest[..idx]);
+        out.push_str(marker);
+        out.push_str("[user]");
+        let after_marker = &rest[idx + marker.len()..];
+        match after_marker.find(separator) {
+            Some(next_separator) => {
+                rest = &after_marker[next_separator..];
+            }
+            None => {
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn strip_url_query_values(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+    loop {
+        let http_idx = rest.find("http://");
+        let https_idx = rest.find("https://");
+        let idx = match (http_idx, https_idx) {
+            (Some(http_idx), Some(https_idx)) => http_idx.min(https_idx),
+            (Some(http_idx), None) => http_idx,
+            (None, Some(https_idx)) => https_idx,
+            (None, None) => {
+                output.push_str(rest);
+                break;
+            }
+        };
+        output.push_str(&rest[..idx]);
+        let urlish = &rest[idx..];
+        let end = urlish
+            .find(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | '<' | '>'))
+            .unwrap_or(urlish.len());
+        output.push_str(&strip_single_url_query_values(&urlish[..end]));
+        rest = &urlish[end..];
+    }
+    output
+}
+
+fn strip_single_url_query_values(input: &str) -> String {
+    let Some(query_start) = input.find('?') else {
+        return input.to_string();
+    };
+
+    let (base, query_and_fragment) = input.split_at(query_start);
+    let query_and_fragment = &query_and_fragment[1..];
+    let (query, fragment) = match query_and_fragment.find('#') {
+        Some(idx) => (&query_and_fragment[..idx], &query_and_fragment[idx..]),
+        None => (query_and_fragment, ""),
+    };
+    if query.is_empty() {
+        return format!("{base}?{fragment}");
+    }
+
+    let stripped = query
+        .split('&')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let key = part.split_once('=').map(|(key, _)| key).unwrap_or(part);
+            format!("{key}={REDACTED}")
+        })
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("{base}?{stripped}{fragment}")
+}
+
+fn redact_inline_secret_assignments(input: &str) -> String {
+    let mut out = input.to_string();
+    for key in [
+        "token",
+        "secret",
+        "password",
+        "authorization",
+        "api_key",
+        "apikey",
+    ] {
+        out = redact_inline_secret_key(&out, key);
+    }
+    out
+}
+
+fn redact_inline_authorization(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let lower = input.to_ascii_lowercase();
+    let mut cursor = 0;
+    while let Some(relative_idx) = lower[cursor..].find("bearer ") {
+        let idx = cursor + relative_idx;
+        let value_start = idx + "bearer ".len();
+        out.push_str(&input[cursor..value_start]);
+        out.push_str(REDACTED);
+        let mut end = value_start;
+        while end < input.len() {
+            let ch = input[end..].chars().next().unwrap();
+            if ch.is_whitespace() || matches!(ch, ',' | ';' | '&') {
+                break;
+            }
+            end += ch.len_utf8();
+        }
+        cursor = end;
+    }
+    out.push_str(&input[cursor..]);
+    out
+}
+
+fn redact_inline_secret_key(input: &str, key: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let lower = input.to_ascii_lowercase();
+    let needle = format!("{key}=");
+    let mut cursor = 0;
+    while let Some(relative_idx) = lower[cursor..].find(&needle) {
+        let idx = cursor + relative_idx;
+        out.push_str(&input[cursor..idx + needle.len()]);
+        out.push_str(REDACTED);
+        let mut end = idx + needle.len();
+        while end < input.len() {
+            let ch = input[end..].chars().next().unwrap();
+            if ch.is_whitespace() || matches!(ch, ',' | ';' | '&') {
+                break;
+            }
+            end += ch.len_utf8();
+        }
+        cursor = end;
+    }
+    out.push_str(&input[cursor..]);
+    out
+}
+
+fn sanitize_diagnostic_string(input: &str, truncate: bool) -> String {
+    let stripped_url = strip_url_query_values(input);
+    let redacted_paths = redact_home_paths(&stripped_url);
+    let redacted_secrets = redact_inline_secret_assignments(&redacted_paths);
+    let redacted_secrets = redact_inline_authorization(&redacted_secrets);
+    if truncate {
+        truncate_utf8_to_bytes(&redacted_secrets, MAX_DIAGNOSTIC_TEXT_BYTES)
+    } else {
+        redacted_secrets
+    }
+}
+
+fn sanitize_diagnostic_value(key: Option<&str>, value: serde_json::Value) -> serde_json::Value {
+    if key.map(is_secret_key).unwrap_or(false) {
+        return serde_json::Value::String(REDACTED.to_string());
+    }
+
+    match value {
+        serde_json::Value::Array(items) => serde_json::Value::Array(
+            items
+                .into_iter()
+                .map(|item| sanitize_diagnostic_value(None, item))
+                .collect(),
+        ),
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .map(|(key, value)| {
+                    let sanitized = sanitize_diagnostic_value(Some(&key), value);
+                    (key, sanitized)
+                })
+                .collect(),
+        ),
+        serde_json::Value::String(value) => {
+            serde_json::Value::String(sanitize_diagnostic_string(&value, is_tail_key(key)))
+        }
+        other => other,
+    }
+}
+
+fn sanitize_diagnostic_payload(payload: serde_json::Value) -> serde_json::Value {
+    sanitize_diagnostic_value(None, payload)
+}
+
 impl DebugLogsForwarder {
     pub fn new(spool_dir: PathBuf) -> Self {
         let _ = fs::create_dir_all(&spool_dir);
         let pending_path = spool_dir.join(PENDING_FILE);
+        let install_id = load_or_create_install_id(&spool_dir);
         Self {
             spool_dir,
             pending_path,
+            install_id,
+            boot_id: Uuid::new_v4().to_string(),
+            cloud_context: Mutex::new(None),
             write_lock: Mutex::new(()),
             sequence: AtomicU64::new(0),
         }
+    }
+
+    pub fn install_id(&self) -> &str {
+        &self.install_id
+    }
+
+    pub fn boot_id(&self) -> &str {
+        &self.boot_id
+    }
+
+    pub fn set_cloud_diagnostics_context(
+        &self,
+        den_api_base: String,
+        token: String,
+        user_id: String,
+        org_id: String,
+        workspace_id: Option<String>,
+    ) {
+        let context = CloudDiagnosticsContext {
+            den_api_base: den_api_base.trim().to_string(),
+            token: token.trim().to_string(),
+            user_id: user_id.trim().to_string(),
+            org_id: org_id.trim().to_string(),
+            workspace_id: workspace_id.and_then(|value| {
+                let trimmed = value.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            }),
+        };
+
+        if let Ok(mut guard) = self.cloud_context.lock() {
+            *guard = Some(context);
+        }
+    }
+
+    pub fn clear_cloud_diagnostics_context(&self) {
+        if let Ok(mut guard) = self.cloud_context.lock() {
+            *guard = None;
+        }
+    }
+
+    fn cloud_context_snapshot(&self) -> Option<CloudDiagnosticsContext> {
+        self.cloud_context
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
     }
 
     pub fn append(&self, source: &str, stream: LogStream, line: &str) {
@@ -108,23 +418,85 @@ impl DebugLogsForwarder {
             return;
         }
         let trimmed = truncate_utf8_to_bytes(trimmed, MAX_LOG_LINE_BYTES);
+        self.append_event(
+            source,
+            stream,
+            serde_json::json!({ "line": trimmed }),
+            self.cloud_context_snapshot(),
+        );
+    }
 
+    pub fn append_bootstrap_diagnostic(&self, event_type: &str, payload: serde_json::Value) {
+        let event_type = event_type.trim();
+        if event_type.is_empty() {
+            return;
+        }
+        let sanitized = sanitize_diagnostic_payload(payload);
+        let mut payload = match sanitized {
+            serde_json::Value::Object(map) => map,
+            other => {
+                let mut map = serde_json::Map::new();
+                map.insert("value".to_string(), other);
+                map
+            }
+        };
+        payload.insert(
+            "eventType".to_string(),
+            serde_json::Value::String(event_type.to_string()),
+        );
+        self.append_event(
+            "Veslo bootstrap",
+            LogStream::Diagnostic,
+            serde_json::Value::Object(payload),
+            self.cloud_context_snapshot(),
+        );
+    }
+
+    fn append_event(
+        &self,
+        source: &str,
+        stream: LogStream,
+        mut payload: serde_json::Value,
+        context: Option<CloudDiagnosticsContext>,
+    ) {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let sequence_no = self.sequence.fetch_add(1, Ordering::Relaxed);
 
+        let diagnostics = self.diagnostics_payload(context.as_ref());
+        match &mut payload {
+            serde_json::Value::Object(map) => {
+                map.insert("diagnostics".to_string(), diagnostics);
+            }
+            _ => {
+                payload = serde_json::json!({
+                    "value": payload,
+                    "diagnostics": diagnostics,
+                });
+            }
+        }
+
         let event = DebugLogEvent {
             id: Uuid::new_v4().to_string(),
-            user_id: String::new(),
-            org_id: String::new(),
-            workspace_id: String::new(),
+            user_id: context
+                .as_ref()
+                .map(|value| value.user_id.clone())
+                .unwrap_or_default(),
+            org_id: context
+                .as_ref()
+                .map(|value| value.org_id.clone())
+                .unwrap_or_default(),
+            workspace_id: context
+                .as_ref()
+                .and_then(|value| value.workspace_id.clone())
+                .unwrap_or_default(),
             source: source.to_string(),
             stream: stream.as_str().to_string(),
             timestamp,
             sequence_no,
-            payload: serde_json::json!({ "line": trimmed }),
+            payload,
         };
 
         let serialized = match serde_json::to_string(&event) {
@@ -148,6 +520,35 @@ impl DebugLogsForwarder {
         {
             let _ = writeln!(file, "{}", serialized);
         }
+    }
+
+    fn diagnostics_payload(&self, context: Option<&CloudDiagnosticsContext>) -> serde_json::Value {
+        let mut diagnostics = serde_json::Map::new();
+        diagnostics.insert(
+            "installId".to_string(),
+            serde_json::Value::String(self.install_id.clone()),
+        );
+        diagnostics.insert(
+            "bootId".to_string(),
+            serde_json::Value::String(self.boot_id.clone()),
+        );
+        if let Some(context) = context {
+            diagnostics.insert(
+                "userId".to_string(),
+                serde_json::Value::String(context.user_id.clone()),
+            );
+            diagnostics.insert(
+                "orgId".to_string(),
+                serde_json::Value::String(context.org_id.clone()),
+            );
+            if let Some(workspace_id) = context.workspace_id.as_ref() {
+                diagnostics.insert(
+                    "workspaceId".to_string(),
+                    serde_json::Value::String(workspace_id.clone()),
+                );
+            }
+        }
+        serde_json::Value::Object(diagnostics)
     }
 
     fn enforce_retention(&self) -> std::io::Result<()> {
@@ -286,12 +687,61 @@ fn build_event_batches(events: Vec<serde_json::Value>) -> (Vec<Vec<serde_json::V
     (batches, dropped)
 }
 
+fn parse_local_cloud_upload_enabled(body: &str) -> Option<bool> {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .map(|value| value.get("cloudUploadEnabled").and_then(|v| v.as_bool()) == Some(true))
+}
+
+fn is_direct_fallback_event(event: &serde_json::Value) -> bool {
+    let source = event
+        .get("source")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    let stream = event
+        .get("stream")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+
+    if source == "veslo-server-shell" && matches!(stream, "stdout" | "stderr") {
+        return true;
+    }
+    if source != "Veslo bootstrap" || stream != "diagnostic" {
+        return false;
+    }
+
+    let event_type = event
+        .get("payload")
+        .and_then(|payload| payload.get("eventType"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+
+    event_type.starts_with("desktop-auth:")
+        || event_type.starts_with("new-session:")
+        || event_type.starts_with("veslo-server-launch:")
+        || event_type.starts_with("debug-log-delivery:")
+}
+
+fn write_events_file(path: &PathBuf, events: &[serde_json::Value]) -> std::io::Result<()> {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)?;
+    for event in events {
+        let line = serde_json::to_string(event)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        writeln!(file, "{line}")?;
+    }
+    Ok(())
+}
+
 fn post_batch(
     base_url: &str,
     host_token: &str,
     batch_id: &str,
     events: Vec<serde_json::Value>,
-) -> Result<(), PostBatchError> {
+) -> Result<LocalPostResult, PostBatchError> {
     let url = format!("{}/debug-logs", base_url.trim_end_matches('/'));
     let payload = serde_json::json!({
         "batchId": batch_id,
@@ -306,6 +756,63 @@ fn post_batch(
         .post(&url)
         .set("Content-Type", "application/json")
         .set("x-veslo-host-token", host_token)
+        .send_string(&payload.to_string())
+        .map_err(|e| match e {
+            ureq::Error::Status(status, _) => PostBatchError::Status(status),
+            other => PostBatchError::Transport(other.to_string()),
+        })?;
+
+    if !(200..300).contains(&response.status()) {
+        return Err(PostBatchError::Status(response.status()));
+    }
+    let cloud_upload_enabled = response
+        .into_string()
+        .ok()
+        .and_then(|body| parse_local_cloud_upload_enabled(&body))
+        .unwrap_or(false);
+    if cloud_upload_enabled {
+        Ok(LocalPostResult::CloudUploaded)
+    } else {
+        Ok(LocalPostResult::CloudNotUploaded)
+    }
+}
+
+fn post_direct_den_batch(
+    context: &CloudDiagnosticsContext,
+    batch_id: &str,
+    events: Vec<serde_json::Value>,
+    install_id: &str,
+    boot_id: &str,
+) -> Result<(), PostBatchError> {
+    if context.den_api_base.trim().is_empty() || context.token.trim().is_empty() {
+        return Err(PostBatchError::Transport(
+            "missing cloud diagnostics context".to_string(),
+        ));
+    }
+
+    let url = format!(
+        "{}/v1/desktop-diagnostics",
+        context.den_api_base.trim_end_matches('/')
+    );
+    let payload = serde_json::json!({
+        "batchId": batch_id,
+        "events": events,
+        "installId": install_id,
+        "bootId": boot_id,
+        "userId": context.user_id,
+        "orgId": context.org_id,
+        "workspaceId": context.workspace_id,
+        "deliveryPath": "desktop-direct-fallback",
+    });
+
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(5))
+        .build();
+
+    let response = agent
+        .post(&url)
+        .set("Content-Type", "application/json")
+        .set("Authorization", &format!("Bearer {}", context.token))
         .send_string(&payload.to_string())
         .map_err(|e| match e {
             ureq::Error::Status(status, _) => PostBatchError::Status(status),
@@ -337,10 +844,6 @@ pub fn spawn_flush_task(
     std::thread::spawn(move || loop {
         std::thread::sleep(flush_interval);
 
-        let Some((base_url, host_token)) = collect_server_state(&app) else {
-            continue;
-        };
-
         if let Err(error) = forwarder.rotate_pending() {
             eprintln!("[debug-logs-forwarder] rotate error: {error}");
         }
@@ -353,11 +856,9 @@ pub fn spawn_flush_task(
             }
         };
 
-        let mut server_unhealthy = false;
+        let local_state = collect_server_state(&app);
+        let cloud_context = forwarder.cloud_context_snapshot();
         for file in files {
-            if server_unhealthy {
-                break;
-            }
             let events = match parse_events(&file) {
                 Ok(e) => e,
                 Err(error) => {
@@ -370,29 +871,92 @@ pub fn spawn_flush_task(
                 continue;
             }
 
-            let (batches, dropped) = build_event_batches(events);
-            if dropped > 0 {
-                eprintln!("[debug-logs-forwarder] dropped {dropped} oversized debug log event(s)");
-            }
+            if let Some((base_url, host_token)) = local_state.as_ref() {
+                let (batches, dropped) = build_event_batches(events.clone());
+                if dropped > 0 {
+                    eprintln!(
+                        "[debug-logs-forwarder] dropped {dropped} oversized debug log event(s)"
+                    );
+                }
 
-            let mut all_ok = true;
-            for chunk_vec in batches {
-                let batch_id = Uuid::new_v4().to_string();
-                match post_batch(&base_url, &host_token, &batch_id, chunk_vec) {
-                    Ok(()) => {}
-                    Err(PostBatchError::Status(413)) => {
-                        eprintln!("[debug-logs-forwarder] dropping oversized debug log batch after HTTP 413");
-                    }
-                    Err(error) => {
-                        eprintln!("[debug-logs-forwarder] post failed: {error}");
-                        all_ok = false;
-                        server_unhealthy = true;
-                        break;
+                let mut local_delivered = true;
+                for chunk_vec in batches {
+                    let batch_id = Uuid::new_v4().to_string();
+                    match post_batch(base_url, host_token, &batch_id, chunk_vec) {
+                        Ok(LocalPostResult::CloudUploaded) => {}
+                        Ok(LocalPostResult::CloudNotUploaded) => {
+                            eprintln!(
+                                "[debug-logs-forwarder] local debug-log post did not confirm cloud upload, trying direct fallback"
+                            );
+                            local_delivered = false;
+                            break;
+                        }
+                        Err(error) => {
+                            eprintln!(
+                                "[debug-logs-forwarder] local debug-log post failed: {error}, trying direct fallback"
+                            );
+                            local_delivered = false;
+                            break;
+                        }
                     }
                 }
+
+                if local_delivered {
+                    let _ = fs::remove_file(&file);
+                    continue;
+                }
             }
-            if all_ok {
+
+            let direct_events = events
+                .iter()
+                .filter(|event| is_direct_fallback_event(event))
+                .cloned()
+                .collect::<Vec<_>>();
+            if direct_events.is_empty() {
+                continue;
+            }
+
+            let Some(context) = cloud_context.as_ref() else {
+                eprintln!("[debug-logs-forwarder] direct fallback skipped: missing cloud diagnostics context");
+                continue;
+            };
+
+            let retained_events = events
+                .iter()
+                .filter(|event| !is_direct_fallback_event(event))
+                .cloned()
+                .collect::<Vec<_>>();
+            let (batches, dropped) = build_event_batches(direct_events);
+            if dropped > 0 {
+                eprintln!(
+                    "[debug-logs-forwarder] dropped {dropped} oversized direct diagnostics event(s)"
+                );
+            }
+
+            let mut direct_delivered = true;
+            for chunk_vec in batches {
+                let batch_id = Uuid::new_v4().to_string();
+                if let Err(error) = post_direct_den_batch(
+                    context,
+                    &batch_id,
+                    chunk_vec,
+                    forwarder.install_id(),
+                    forwarder.boot_id(),
+                ) {
+                    eprintln!("[debug-logs-forwarder] direct fallback delivery failed: {error}");
+                    direct_delivered = false;
+                    break;
+                }
+            }
+
+            if !direct_delivered {
+                continue;
+            }
+
+            if retained_events.is_empty() {
                 let _ = fs::remove_file(&file);
+            } else if let Err(error) = write_events_file(&file, &retained_events) {
+                eprintln!("[debug-logs-forwarder] failed to retain non-direct debug log events: {error}");
             }
         }
     });
@@ -461,6 +1025,136 @@ mod tests {
         assert!(raw.contains("\"source\":\"test\""));
         assert!(raw.contains("\"stream\":\"stdout\""));
         assert!(raw.contains("hello world"));
+    }
+
+    #[test]
+    fn install_id_persists_for_spool_dir_and_boot_id_changes_between_instances() {
+        let dir = tempdir().unwrap();
+        let first = DebugLogsForwarder::new(dir.path().to_path_buf());
+        let install_id = first.install_id().to_string();
+        let first_boot_id = first.boot_id().to_string();
+
+        let second = DebugLogsForwarder::new(dir.path().to_path_buf());
+
+        assert_eq!(second.install_id(), install_id);
+        assert_ne!(second.boot_id(), first_boot_id);
+    }
+
+    #[test]
+    fn sanitize_diagnostic_payload_redacts_paths_queries_secrets_and_long_tails() {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/tester".to_string());
+        let sanitized = sanitize_diagnostic_payload(serde_json::json!({
+            "apiToken": "secret-token",
+            "codeVerifier": "oauth-secret",
+            "nested": { "authorization": "Bearer secret-token" },
+            "message": "Request failed with Authorization: Bearer secret-token",
+            "path": format!("{home}/Library/Application Support/Veslo/state.json"),
+            "url": "https://den.example.test/bootstrap?token=secret-token&workspace=abc",
+            "stderrTail": "x".repeat(MAX_DIAGNOSTIC_TEXT_BYTES + 512),
+        }));
+
+        assert_eq!(sanitized["apiToken"], "[redacted]");
+        assert_eq!(sanitized["codeVerifier"], "[redacted]");
+        assert_eq!(sanitized["nested"]["authorization"], "[redacted]");
+        assert_eq!(
+            sanitized["message"],
+            "Request failed with Authorization: Bearer [redacted]"
+        );
+        assert!(!sanitized["path"].as_str().unwrap().contains(&home));
+        assert_eq!(
+            sanitized["url"],
+            "https://den.example.test/bootstrap?token=[redacted]&workspace=[redacted]"
+        );
+        let stderr_tail = sanitized["stderrTail"].as_str().unwrap();
+        assert!(stderr_tail.ends_with("...[truncated]"));
+        assert!(stderr_tail.len() <= MAX_DIAGNOSTIC_TEXT_BYTES);
+    }
+
+    #[test]
+    fn structured_append_writes_diagnostics_and_cloud_context_ids() {
+        let dir = tempdir().unwrap();
+        let forwarder = DebugLogsForwarder::new(dir.path().to_path_buf());
+        forwarder.set_cloud_diagnostics_context(
+            "https://den.example.test".to_string(),
+            "secret-token".to_string(),
+            "user-1".to_string(),
+            "org-1".to_string(),
+            Some("workspace-1".to_string()),
+        );
+
+        forwarder.append_bootstrap_diagnostic(
+            "bootstrap.server_unavailable",
+            serde_json::json!({
+                "message": "server unavailable",
+                "stderrTail": "failed with token=secret-token",
+            }),
+        );
+
+        let raw = fs::read_to_string(dir.path().join(PENDING_FILE)).unwrap();
+        let event: serde_json::Value = serde_json::from_str(raw.lines().next().unwrap()).unwrap();
+        assert_eq!(event["userId"], "user-1");
+        assert_eq!(event["orgId"], "org-1");
+        assert_eq!(event["workspaceId"], "workspace-1");
+        assert_eq!(
+            event["payload"]["eventType"],
+            "bootstrap.server_unavailable"
+        );
+        assert_eq!(
+            event["payload"]["diagnostics"]["installId"],
+            forwarder.install_id()
+        );
+        assert_eq!(
+            event["payload"]["diagnostics"]["bootId"],
+            forwarder.boot_id()
+        );
+        assert_eq!(event["payload"]["diagnostics"]["userId"], "user-1");
+        assert_eq!(event["payload"]["diagnostics"]["orgId"], "org-1");
+        assert_eq!(
+            event["payload"]["diagnostics"]["workspaceId"],
+            "workspace-1"
+        );
+        assert!(!event["payload"]["stderrTail"]
+            .as_str()
+            .unwrap()
+            .contains("secret-token"));
+    }
+
+    #[test]
+    fn local_response_cloud_upload_enabled_is_true_only_when_explicitly_true() {
+        assert_eq!(parse_local_cloud_upload_enabled("{}"), Some(false));
+        assert_eq!(
+            parse_local_cloud_upload_enabled(r#"{"cloudUploadEnabled":false}"#),
+            Some(false)
+        );
+        assert_eq!(
+            parse_local_cloud_upload_enabled(r#"{"cloudUploadEnabled":true}"#),
+            Some(true)
+        );
+        assert_eq!(parse_local_cloud_upload_enabled("not json"), None);
+    }
+
+    #[test]
+    fn direct_fallback_allows_only_bootstrap_and_veslo_server_output_events() {
+        assert!(is_direct_fallback_event(&serde_json::json!({
+            "source": "Veslo bootstrap",
+            "stream": "diagnostic",
+            "payload": { "eventType": "new-session:disabled" },
+        })));
+        assert!(is_direct_fallback_event(&serde_json::json!({
+            "source": "veslo-server-shell",
+            "stream": "stderr",
+            "payload": { "line": "server failed" },
+        })));
+        assert!(!is_direct_fallback_event(&serde_json::json!({
+            "source": "Veslo UI",
+            "stream": "stderr",
+            "payload": { "line": "ordinary ui log" },
+        })));
+        assert!(!is_direct_fallback_event(&serde_json::json!({
+            "source": "Veslo bootstrap",
+            "stream": "diagnostic",
+            "payload": { "eventType": "unbounded:custom" },
+        })));
     }
 
     #[test]

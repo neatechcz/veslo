@@ -1,3 +1,4 @@
+mod bootstrap_diagnostics;
 mod bun_env;
 mod commands;
 mod config;
@@ -11,17 +12,21 @@ mod orchestrator;
 mod paths;
 mod platform;
 mod process_supervisor;
+#[cfg(test)]
+mod single_window_config_tests;
 mod supervised_process;
 mod types;
 mod updater;
 mod utils;
 mod veslo_server;
 mod workspace;
-#[cfg(test)]
-mod single_window_config_tests;
 
 pub use types::*;
 
+use bootstrap_diagnostics::{
+    clear_bootstrap_diagnostics_cloud_context, record_bootstrap_diagnostic,
+    set_bootstrap_diagnostics_cloud_context,
+};
 use commands::access_proofs::{access_proof_ai_clear, access_proof_ai_read, access_proof_ai_write};
 use commands::clipboard::clipboard_file_paths;
 use commands::command_files::{
@@ -327,6 +332,9 @@ pub fn run() {
             updater_prepare_install,
             app_build_info,
             log_ui_event,
+            record_bootstrap_diagnostic,
+            set_bootstrap_diagnostics_cloud_context,
+            clear_bootstrap_diagnostics_cloud_context,
             obsidian_is_available,
             open_in_obsidian,
             write_obsidian_mirror_file,

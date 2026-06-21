@@ -29,6 +29,16 @@ use spawn::{resolve_veslo_port_after_restart, spawn_veslo_server};
 const PERSISTED_STATE_FILE_NAME: &str = "veslo-server-state.json";
 const PERSISTED_PLUGIN_STATE_FILE_NAME: &str = "veslo-server-plugin-state.json";
 
+fn append_veslo_server_launch_diagnostic(
+    app: &AppHandle,
+    event_type: &str,
+    payload: serde_json::Value,
+) {
+    if let Some(forwarder) = app.try_state::<Arc<DebugLogsForwarder>>() {
+        forwarder.append_bootstrap_diagnostic(event_type, payload);
+    }
+}
+
 fn resolve_workspace_ids(app: &AppHandle, workspace_paths: &[String]) -> Vec<Option<String>> {
     let state = load_workspace_state(app).ok();
     workspace_paths
@@ -686,7 +696,17 @@ pub fn start_veslo_server(
     VesloServerManager::stop_locked(&mut state);
 
     let host = "0.0.0.0".to_string();
-    let port = resolve_veslo_port_after_restart()?;
+    let port = match resolve_veslo_port_after_restart() {
+        Ok(port) => port,
+        Err(error) => {
+            append_veslo_server_launch_diagnostic(
+                app,
+                "veslo-server-launch:port-resolve-failed",
+                serde_json::json!({ "error": error }),
+            );
+            return Err(error);
+        }
+    };
     let client_token = previous_client_token.unwrap_or_else(generate_token);
     let host_token = previous_host_token.unwrap_or_else(generate_token);
     let active_workspace = workspace_paths
@@ -695,7 +715,21 @@ pub fn start_veslo_server(
         .unwrap_or("");
     let workspace_ids = resolve_workspace_ids(app, workspace_paths);
 
-    let (rx, child) = spawn_veslo_server(
+    append_veslo_server_launch_diagnostic(
+        app,
+        "veslo-server-launch:spawn-start",
+        serde_json::json!({
+            "port": port,
+            "workspaceCount": workspace_paths.len(),
+            "workspaceIds": workspace_ids.clone(),
+            "hasOpencodeBaseUrl": opencode_base_url.is_some(),
+            "hasOpencodeRouterHealthPort": opencode_router_health_port.is_some(),
+            "hasOrchestratorDaemonUrl": normalized_orchestrator_daemon_url.is_some(),
+            "hasOrchestratorLifecycleToken": normalized_orchestrator_lifecycle_token.is_some(),
+        }),
+    );
+
+    let (rx, child) = match spawn_veslo_server(
         app,
         &host,
         port,
@@ -714,7 +748,31 @@ pub fn start_veslo_server(
         opencode_router_health_port,
         normalized_orchestrator_daemon_url.as_deref(),
         normalized_orchestrator_lifecycle_token.as_deref(),
-    )?;
+    ) {
+        Ok(result) => {
+            append_veslo_server_launch_diagnostic(
+                app,
+                "veslo-server-launch:spawn-succeeded",
+                serde_json::json!({
+                    "port": port,
+                    "workspaceCount": workspace_paths.len(),
+                }),
+            );
+            result
+        }
+        Err(error) => {
+            append_veslo_server_launch_diagnostic(
+                app,
+                "veslo-server-launch:spawn-failed",
+                serde_json::json!({
+                    "port": port,
+                    "workspaceCount": workspace_paths.len(),
+                    "error": error,
+                }),
+            );
+            return Err(error);
+        }
+    };
 
     state.child = Some(child);
     state.child_exited = false;
@@ -744,6 +802,11 @@ pub fn start_veslo_server(
 
     if let Err(error) = persist_veslo_server_info(app, &info) {
         eprintln!("[veslo-server] Failed to persist connection state: {error}");
+        append_veslo_server_launch_diagnostic(
+            app,
+            "veslo-server-launch:persist-state-failed",
+            serde_json::json!({ "error": error }),
+        );
     }
 
     Ok(info)

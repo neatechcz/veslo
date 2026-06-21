@@ -68,6 +68,12 @@ export type PendingSessionDraftControllerDeps = {
   setView: (view: View) => void;
   setError: (message: string | null) => void;
   reportError: (error: unknown, scope: string) => void;
+  onOpenNewSessionFailure?: (input: {
+    scope: "new-private" | "directory";
+    error: unknown;
+    workspaceId?: string | null;
+    directory?: string | null;
+  }) => void;
   safeStringify: (value: unknown) => string;
   addOpencodeCacheHint: (message: string) => string;
 };
@@ -367,6 +373,11 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
       }
     } catch (error) {
       deps.reportError(error, "pendingDrafts.newPrivate");
+      deps.onOpenNewSessionFailure?.({
+        scope: "new-private",
+        error,
+        workspaceId: deps.workspace.activeWorkspaceId(),
+      });
       const message = error instanceof Error ? error.message : deps.safeStringify(error);
       deps.setError(deps.addOpencodeCacheHint(message));
     }
@@ -438,6 +449,12 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
       return pendingDraftKey;
     } catch (error) {
       deps.reportError(error, "pendingDrafts.directory");
+      deps.onOpenNewSessionFailure?.({
+        scope: "directory",
+        error,
+        workspaceId,
+        directory,
+      });
       const message = error instanceof Error ? error.message : deps.safeStringify(error);
       deps.setError(deps.addOpencodeCacheHint(message));
       return "";
