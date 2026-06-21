@@ -22,6 +22,8 @@ Do not let this runbook become agent-only knowledge. If an investigation discove
 
 The owned-server deployment workflow is the source of truth for the production paths. The current workflow defaults are:
 
+- SSH target: `neatech@62.109.146.43`
+- Hostname observed on the server: `neatech-veslo.cust.webglobe.com`
 - App checkout: `/home/neatech/veslo-owned-server-production`
 - Env file: `/home/neatech/veslo-owned-server-dark-launch-inputs/env/production.env`
 - Compose file: `packaging/owned-server/compose.yml`
@@ -30,9 +32,13 @@ The owned-server deployment workflow is the source of truth for the production p
 
 The public Veslo application endpoints should resolve to the owned-server host. If SSH access or paths fail, check the current GitHub Actions variables for `OWNED_SERVER_APP_DIR` and `OWNED_SERVER_ENV_FILE`, then verify the active deployment workflow before searching elsewhere.
 
+Do not assume local SSH aliases such as `neatechapps` or `neatech-internal` are the owned-server host. Connect directly to `neatech@62.109.146.43` unless a newer hostname is documented here.
+
 Use a local shell helper after connecting to the host:
 
 ```bash
+ssh neatech@62.109.146.43
+
 cd /home/neatech/veslo-owned-server-production
 OWNED_SERVER_ENV_FILE=/home/neatech/veslo-owned-server-dark-launch-inputs/env/production.env
 
@@ -247,6 +253,71 @@ NODE
 ```
 
 Prefer metadata queries first. Read decrypted payloads only when the user explicitly asks and the operational need is clear.
+
+To check a specific user's recent debug-log metadata without printing payloads or secrets:
+
+```bash
+TARGET_EMAIL=peter.durik@neatech.cz
+
+compose exec -T -e TARGET_EMAIL="$TARGET_EMAIL" den sh -lc 'cd /app/services/den && node' <<'NODE'
+const mysql = require("mysql2/promise");
+
+const targetEmail = process.env.TARGET_EMAIL?.trim().toLowerCase();
+if (!targetEmail) {
+  throw new Error("TARGET_EMAIL is required");
+}
+
+(async () => {
+  const connection = await mysql.createConnection(process.env.DATABASE_URL);
+  try {
+    const [users] = await connection.execute(
+      "SELECT id, email, name FROM `user` WHERE lower(email) = ? LIMIT 1",
+      [targetEmail],
+    );
+    const user = Array.isArray(users) ? users[0] : null;
+    if (!user?.id) {
+      console.log(JSON.stringify({ user: null }, null, 2));
+      return;
+    }
+
+    const [lastHourEvents] = await connection.execute(`
+      SELECT
+        COUNT(*) AS eventCount,
+        MAX(event_timestamp) AS latestEventTimestamp,
+        MAX(created_at) AS latestCreatedAt
+      FROM debug_log_event
+      WHERE user_id = ? AND event_timestamp >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 HOUR)
+    `, [user.id]);
+
+    const [latestSessions] = await connection.execute(`
+      SELECT
+        id,
+        user_agent AS userAgent,
+        created_at AS createdAt,
+        updated_at AS updatedAt,
+        expires_at AS expiresAt
+      FROM \`session\`
+      WHERE user_id = ?
+      ORDER BY updated_at DESC
+      LIMIT 10
+    `, [user.id]);
+
+    console.log(JSON.stringify({
+      user,
+      lastHourEvents: lastHourEvents[0],
+      latestSessions,
+    }, null, 2));
+  } finally {
+    await connection.end();
+  }
+})().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});
+NODE
+```
+
+If `debug_log_batch` and `debug_log_event` are empty, Den is configured to accept debug logs but no desktop/server process has uploaded any events. Desktop-launched `veslo-server` only forwards to Den when it is started with `VESLO_LOG_INGEST_URL` and `VESLO_LOG_INGEST_TOKEN`; otherwise events stay in the user's local spool and are not queryable from the cloud server. In updater investigations on Windows, also collect `C:\ProgramData\veslo-updater-msi.log` from the affected machine because the Windows MSI installer writes there independently of Den debug-log ingest.
 
 ## Veslo Server Debug-Log Pipeline
 
