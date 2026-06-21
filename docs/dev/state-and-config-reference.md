@@ -102,6 +102,29 @@ In Tauri startup flows, the desktop auth snapshot is allowed to repair stale bro
 
 Desktop auth snapshots can also carry first-run UI metadata such as language and onboarding completion. Those snapshot values only fill missing or invalid browser-stored UI preferences; they must not overwrite a valid local `veslo.language` or `veslo.onboardingComplete` value.
 
+## Veslo Error Monitoring
+
+Veslo can send application errors to a Sentry-compatible service such as the internal Neatech GlitchTip instance. Monitoring is disabled unless a DSN is explicitly configured.
+
+Frontend environment variables:
+
+- `VITE_VESLO_GLITCHTIP_DSN` - Sentry-compatible project DSN for browser/Solid errors. Required to enable frontend monitoring.
+- `VITE_VESLO_GLITCHTIP_ENABLED` - optional kill switch. Values `0`, `false`, `no`, or `off` disable monitoring even when a DSN is present.
+- `VITE_VESLO_GLITCHTIP_ENVIRONMENT` - optional environment name. Defaults to `production` for production frontend builds and `development` otherwise.
+- `VITE_VESLO_GLITCHTIP_TRACES_SAMPLE_RATE` - optional trace sample rate, clamped to `0..1`. Defaults to `0`.
+
+Desktop shell environment variables:
+
+- `VESLO_GLITCHTIP_DSN` - Sentry-compatible project DSN for native Tauri/Rust errors. Required to enable native monitoring.
+- `VESLO_GLITCHTIP_ENVIRONMENT` - optional environment name. Defaults to `production` in release builds and `development` in debug builds.
+- `VESLO_GLITCHTIP_TRACES_SAMPLE_RATE` - optional trace sample rate, clamped to `0..1`. Defaults to `0`.
+
+Privacy defaults:
+
+- Default user/personally identifying data is not sent.
+- Browser session tracking is removed from the default Sentry browser integrations because GlitchTip does not support Sentry release-health sessions.
+- The centralized app `reportError` path forwards handled errors with only Veslo context and severity tags. It must not attach workspace file contents, prompts, transcripts, access tokens, or raw debug-log payloads.
+
 ## Veslo Server Connection State
 
 Managed by `packages/app/src/app/lib/veslo-server.ts`.

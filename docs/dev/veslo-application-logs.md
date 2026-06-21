@@ -329,6 +329,19 @@ The important production distinction is:
 - Den debug-log ingest is the durable, application-queryable store for uploaded debug events.
 - The two are not equivalent. If Den has zero debug-log events, Docker logs may still contain process output, but the application does not have queryable debug-log history for those events.
 
+## GlitchTip Error Monitoring
+
+Veslo also has Sentry-compatible error monitoring through the internal Neatech GlitchTip deployment. Treat this as the error/exception surface, not as a replacement for Docker logs or Den debug-log ingest.
+
+- Service: internal GlitchTip on `glitchtip.neatech.cz`
+- Hosting: standalone `neatech-glitchtip` Docker Compose deployment on `neatech-internal-apps-01.cust.webglobe.com`
+- Project: `veslo`
+- Retention: GlitchTip event retention is configured on the GlitchTip service, currently 30 days in the running container
+
+Monitoring is opt-in at runtime. Configure the frontend DSN with `VITE_VESLO_GLITCHTIP_DSN` and the native desktop DSN with `VESLO_GLITCHTIP_DSN`; the detailed variable list and privacy rules live in `docs/dev/state-and-config-reference.md`.
+
+When investigating production errors, start with GlitchTip for grouped exceptions and stack traces. Use this runbook's Docker and Den sections when you need raw process output, encrypted debug-log metadata, sidecar forwarding behavior, or application-queryable log history.
+
 ## AI Gateway And Den Codex Data Volumes
 
 The owned-server stack mounts Codex data volumes for managed AI surfaces:

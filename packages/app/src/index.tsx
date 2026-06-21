@@ -5,8 +5,10 @@ import { HashRouter, Route, Router } from "@solidjs/router";
 import { bootstrapTheme } from "./app/theme";
 import "./app/index.css";
 import AppEntry from "./app/entry";
+import packageJson from "../package.json";
 import { PlatformProvider, type Platform } from "./app/context/platform";
 import { isTauriRuntime } from "./app/utils";
+import { initErrorMonitoring } from "./app/lib/error-monitoring";
 import { reportError } from "./app/lib/error-reporter";
 import { recordPerfLog } from "./app/lib/perf-log";
 import {
@@ -17,6 +19,13 @@ import { initLocale } from "./i18n";
 
 bootstrapTheme();
 initLocale();
+
+const appPlatform = isTauriRuntime() ? "desktop" : "web";
+
+initErrorMonitoring(import.meta.env, {
+  appVersion: packageJson.version,
+  platform: appPlatform,
+});
 
 const readStoredRequestAuditWindowMs = () => {
   try {
@@ -44,7 +53,7 @@ if (!root) {
 const RouterComponent = isTauriRuntime() ? HashRouter : Router;
 
 const platform: Platform = {
-  platform: isTauriRuntime() ? "desktop" : "web",
+  platform: appPlatform,
   openLink(url: string) {
     if (isTauriRuntime()) {
       void import("@tauri-apps/plugin-opener")

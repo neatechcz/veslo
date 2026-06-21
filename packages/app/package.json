@@ -1,7 +1,7 @@
 {
   "name": "@neatech/veslo-ui",
   "private": true,
-  "version": "2026.6.2",
+  "version": "2026.6.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -54,6 +54,7 @@
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "@opencode-ai/sdk": "1.17.4",
     "@radix-ui/colors": "^3.0.0",
+    "@sentry/browser": "^10.59.0",
     "@solid-primitives/event-bus": "^1.1.2",
     "@solid-primitives/storage": "^4.3.3",
     "@solidjs/router": "^0.15.4",
