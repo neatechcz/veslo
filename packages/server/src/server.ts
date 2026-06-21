@@ -1033,6 +1033,23 @@ function buildOrchestratorWorkspaceOpencodeBaseUrl(config: ServerConfig, workspa
   return `${daemonUrl}/workspace/${encodeURIComponent(workspaceId)}/opencode`;
 }
 
+function isEmptyWorkspaceOpencodeMount(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl);
+    const match = url.pathname.match(/^\/workspace\/([^/]*)\/opencode(?:\/.*)?$/);
+    return Boolean(match && !(match[1] ?? "").trim());
+  } catch {
+    return false;
+  }
+}
+
+function resolveWorkspaceOpencodeBaseUrl(config: ServerConfig, workspace: WorkspaceInfo): string {
+  const configured = workspace.baseUrl?.trim() ?? "";
+  const derived = buildOrchestratorWorkspaceOpencodeBaseUrl(config, workspace);
+  if (configured && !isEmptyWorkspaceOpencodeMount(configured)) return configured;
+  return derived || configured;
+}
+
 async function fetchOpencodeJson(
   workspace: WorkspaceInfo,
   path: string,
@@ -3574,19 +3591,21 @@ function buildConfigTrigger(path: string): ReloadTrigger {
   };
 }
 
-export function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
-  const { opencodeUsername, opencodePassword, ...rest } = workspace;
+export function serializeWorkspace(workspace: ServerConfig["workspaces"][number], config?: ServerConfig) {
+  const { opencodeUsername, opencodePassword, baseUrl: rawBaseUrl, ...rest } = workspace;
+  const baseUrl = config ? resolveWorkspaceOpencodeBaseUrl(config, workspace) : rawBaseUrl;
   const opencodeDirectory = resolveOpencodeDirectory(workspace);
   const opencode =
-    workspace.baseUrl || opencodeDirectory || opencodeUsername || opencodePassword
+    baseUrl || opencodeDirectory || opencodeUsername || opencodePassword
       ? {
-          baseUrl: workspace.baseUrl,
+          baseUrl,
           directory: opencodeDirectory ?? undefined,
           username: opencodeUsername,
         }
       : undefined;
   return {
     ...rest,
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
     opencode,
   };
 }
@@ -4855,6 +4874,7 @@ function createRoutes(
   automationRunner: AutomationRunner,
 ): Route[] {
   const routes: Route[] = [];
+  const serializeWorkspaceForResponse = (workspace: WorkspaceInfo) => serializeWorkspace(workspace, config);
   const serverDataDir = resolveVesloDataDir();
   const fileSessions = new FileSessionStore();
   const sessionArchives = createSessionArchiveStore();
@@ -5576,7 +5596,7 @@ function createRoutes(
       corsOrigins: config.corsOrigins,
       workspaceCount: 1,
       activeWorkspaceId: workspace.id,
-      workspace: serializeWorkspace(workspace),
+      workspace: serializeWorkspaceForResponse(workspace),
       authorizedRoots: config.authorizedRoots,
       server: {
         host: config.host,
@@ -5596,7 +5616,7 @@ function createRoutes(
 
   addRoute(routes, "GET", "/w/:id/workspaces", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    return jsonResponse({ items: [serializeWorkspace(workspace)], activeId: workspace.id });
+    return jsonResponse({ items: [serializeWorkspaceForResponse(workspace)], activeId: workspace.id });
   });
 
   addRoute(routes, "GET", "/status", "client", async () => {
@@ -5610,7 +5630,7 @@ function createRoutes(
       corsOrigins: config.corsOrigins,
       workspaceCount: config.workspaces.length,
       activeWorkspaceId: active?.id ?? null,
-      workspace: active ? serializeWorkspace(active) : null,
+      workspace: active ? serializeWorkspaceForResponse(active) : null,
       authorizedRoots: config.authorizedRoots,
       server: {
         host: config.host,
@@ -5634,7 +5654,7 @@ function createRoutes(
 
   addRoute(routes, "GET", "/workspaces", "client", async () => {
     const active = config.workspaces[0] ?? null;
-    const items = config.workspaces.map(serializeWorkspace);
+    const items = config.workspaces.map(serializeWorkspaceForResponse);
     return jsonResponse({ items, activeId: active?.id ?? null });
   });
 
@@ -5683,14 +5703,14 @@ function createRoutes(
         const persisted = await persistServerWorkspaceState(config);
         return jsonResponse({
           activeId: config.workspaces[0]?.id ?? null,
-          items: config.workspaces.map(serializeWorkspace),
+          items: config.workspaces.map(serializeWorkspaceForResponse),
           persisted,
         });
       }
       if (hasOpencodeMetadata) {
         return jsonResponse({
           activeId: config.workspaces[0]?.id ?? null,
-          items: config.workspaces.map(serializeWorkspace),
+          items: config.workspaces.map(serializeWorkspaceForResponse),
           persisted: false,
         });
       }
@@ -5722,7 +5742,7 @@ function createRoutes(
     return jsonResponse(
       {
         activeId: workspace.id,
-        items: config.workspaces.map(serializeWorkspace),
+        items: config.workspaces.map(serializeWorkspaceForResponse),
         persisted,
       },
       201,
@@ -5747,7 +5767,7 @@ function createRoutes(
     const persisted = await persistServerWorkspaceState(config);
 
     return jsonResponse({
-      items: config.workspaces.map(serializeWorkspace),
+      items: config.workspaces.map(serializeWorkspaceForResponse),
       persisted,
     });
   });
@@ -5936,7 +5956,7 @@ function createRoutes(
     });
     return jsonResponse({
       activeId: workspace.id,
-      workspace: serializeWorkspace(workspace),
+      workspace: serializeWorkspaceForResponse(workspace),
       provision,
       userGlobalSkills,
     });
@@ -5979,7 +5999,7 @@ function createRoutes(
       deleted,
       persisted,
       activeId: active?.id ?? null,
-      items: config.workspaces.map(serializeWorkspace),
+      items: config.workspaces.map(serializeWorkspaceForResponse),
     });
   });
 
@@ -10656,7 +10676,7 @@ async function resolveWorkspace(config: ServerConfig, id: string): Promise<Works
   if (!authorized) {
     throw new ApiError(403, "workspace_unauthorized", "Workspace is not authorized");
   }
-  const baseUrl = workspace.baseUrl?.trim() || buildOrchestratorWorkspaceOpencodeBaseUrl(config, workspace);
+  const baseUrl = resolveWorkspaceOpencodeBaseUrl(config, workspace);
   return {
     ...workspace,
     path: resolvedWorkspace,

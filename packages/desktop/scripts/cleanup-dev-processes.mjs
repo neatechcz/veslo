@@ -32,10 +32,23 @@ function parseJsonOutput(output) {
 }
 
 function runPowerShell(command) {
-  const result = spawnSync(powershellExe(), ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], {
-    encoding: "utf8",
-    windowsHide: true,
-  });
+  const result = spawnSync(
+    powershellExe(),
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-WindowStyle",
+      "Hidden",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      command,
+    ],
+    {
+      encoding: "utf8",
+      windowsHide: true,
+    },
+  );
   if (result.status !== 0) {
     const message = (result.stderr || result.stdout || "PowerShell command failed").trim();
     throw new Error(message);

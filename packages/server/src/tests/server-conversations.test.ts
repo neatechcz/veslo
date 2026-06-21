@@ -312,6 +312,91 @@ describe("conversation routes", () => {
     expect(payload.opencodeSessionId).toBe("sess-orch-stale");
   });
 
+  test("POST /workspace/:id/conversations ignores persisted empty workspace opencode mount", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-empty-mount-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+
+    let malformedBaseUrlHit = false;
+    const malformed = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async () => {
+        malformedBaseUrlHit = true;
+        return Response.json({ error: "not found" }, { status: 404 });
+      },
+    });
+    runningServers.push(malformed as { stop?: (closeActiveConnections?: boolean) => void });
+
+    let orchestratorPath = "";
+    const orchestrator = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        orchestratorPath = url.pathname;
+        if (request.method === "POST" && url.pathname === "/workspace/ws_empty_mount/opencode/session") {
+          return Response.json({
+            id: "sess-empty-mount",
+            title: "Recovered empty mount",
+            directory: workspaceRoot,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+        return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(orchestrator as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: malformed.port,
+      orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
+      workspaces: [
+        {
+          id: "ws_empty_mount",
+          name: "Empty mount",
+          path: workspaceRoot,
+          baseUrl: `http://127.0.0.1:${malformed.port}/workspace//opencode`,
+        },
+      ],
+    });
+
+    const listResponse = await fetch(`http://127.0.0.1:${server.port}/workspaces`, {
+      headers: { Authorization: "Bearer client-token" },
+    });
+    expect(listResponse.status).toBe(200);
+    const listPayload = await listResponse.json() as {
+      items: Array<{ id: string; baseUrl?: string; opencode?: { baseUrl?: string } }>;
+    };
+    const listed = listPayload.items.find((item) => item.id === "ws_empty_mount");
+    expect(listed?.baseUrl).toBe(`http://127.0.0.1:${orchestrator.port}/workspace/ws_empty_mount/opencode`);
+    expect(listed?.opencode?.baseUrl).toBe(`http://127.0.0.1:${orchestrator.port}/workspace/ws_empty_mount/opencode`);
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_empty_mount/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Recovered empty mount",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(201);
+    expect(malformedBaseUrlHit).toBe(false);
+    expect(orchestratorPath).toBe("/workspace/ws_empty_mount/opencode/session");
+    const payload = await response.json() as { id: string; opencodeSessionId: string };
+    expect(payload.id).toBe("sess-empty-mount");
+    expect(payload.opencodeSessionId).toBe("sess-empty-mount");
+  });
+
   test("POST /workspace/:id/conversations/:conversationId/runs queues and drains when lifecycle has an active run", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-queue-"));
     tempDirs.push(workspaceRoot);

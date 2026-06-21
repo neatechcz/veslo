@@ -3,6 +3,7 @@ use std::process::Command;
 
 use tauri::{AppHandle, Manager};
 
+use crate::platform::configure_hidden;
 use crate::types::ExecResult;
 
 const WSL_PREREQUISITE_INSTALLER: &str = "wsl2-prerequisite-installer.ps1";
@@ -69,6 +70,9 @@ fn powershell_single_quote(value: &str) -> String {
 fn elevated_powershell_command(script_path: &Path, script_args: &[&str]) -> String {
     let mut args = vec![
         "-NoProfile".to_string(),
+        "-NonInteractive".to_string(),
+        "-WindowStyle".to_string(),
+        "Hidden".to_string(),
         "-ExecutionPolicy".to_string(),
         "Bypass".to_string(),
         "-File".to_string(),
@@ -85,7 +89,7 @@ fn elevated_powershell_command(script_path: &Path, script_args: &[&str]) -> Stri
         "$ErrorActionPreference = 'Stop'; \
          try {{ \
            $arguments = @({ps_args}); \
-           $process = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -Verb RunAs -Wait -PassThru; \
+           $process = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WindowStyle Hidden -Verb RunAs -Wait -PassThru; \
            $exitCode = if ($null -eq $process.ExitCode) {{ 1 }} else {{ [int]$process.ExitCode }}; \
            Write-Output ('Elevated WSL prerequisite installer exit code: ' + $exitCode); \
            exit $exitCode; \
@@ -150,8 +154,12 @@ pub fn wsl_prerequisites_repair(
 
     if check_only.unwrap_or(false) {
         let mut command = Command::new("powershell.exe");
+        configure_hidden(&mut command);
         command
             .arg("-NoProfile")
+            .arg("-NonInteractive")
+            .arg("-WindowStyle")
+            .arg("Hidden")
             .arg("-ExecutionPolicy")
             .arg("Bypass")
             .arg("-File")
@@ -163,8 +171,12 @@ pub fn wsl_prerequisites_repair(
 
     let elevated_command = elevated_powershell_command(&installer, &["-Install"]);
     let mut command = Command::new("powershell.exe");
+    configure_hidden(&mut command);
     command
         .arg("-NoProfile")
+        .arg("-NonInteractive")
+        .arg("-WindowStyle")
+        .arg("Hidden")
         .arg("-ExecutionPolicy")
         .arg("Bypass")
         .arg("-Command")
@@ -192,8 +204,12 @@ pub fn wsl_sandbox_repair(
         .ok_or_else(|| format!("Bundled WSL sandbox provisioner not found: {WSL_PROVISIONER}"))?;
 
     let mut command = Command::new("powershell.exe");
+    configure_hidden(&mut command);
     command
         .arg("-NoProfile")
+        .arg("-NonInteractive")
+        .arg("-WindowStyle")
+        .arg("Hidden")
         .arg("-ExecutionPolicy")
         .arg("Bypass")
         .arg("-File")
@@ -249,6 +265,10 @@ mod tests {
 
         assert!(command.contains("Start-Process"));
         assert!(command.contains("-Verb RunAs"));
+        assert!(command.contains("-WindowStyle Hidden"));
+        assert!(command.contains("'-NonInteractive'"));
+        assert!(command.contains("'-WindowStyle'"));
+        assert!(command.contains("'Hidden'"));
         assert!(command.contains("wsl2-prerequisite-installer.ps1"));
         assert!(command.contains("'-Install'"));
     }

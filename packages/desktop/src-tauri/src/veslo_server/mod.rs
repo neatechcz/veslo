@@ -181,6 +181,9 @@ fn resolve_engine_url_from_wsl_interface(port: u16) -> Option<String> {
     let output = command
         .args([
             "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
             "-Command",
             "Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias '*WSL*' | Select-Object -ExpandProperty IPAddress",
         ])
@@ -612,6 +615,42 @@ fn persist_veslo_server_info(app: &AppHandle, info: &VesloServerInfo) -> Result<
     persist_veslo_server_plugin_state(&dir, info)
 }
 
+fn normalize_workspace_paths(paths: &[String]) -> Vec<String> {
+    let mut normalized: Vec<String> = paths
+        .iter()
+        .map(|path| path.trim().trim_end_matches('/').to_string())
+        .filter(|path| !path.is_empty())
+        .collect();
+    normalized.sort();
+    normalized.dedup();
+    normalized
+}
+
+fn normalize_launch_url(value: Option<&str>) -> Option<String> {
+    value
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn normalize_launch_token(value: Option<&str>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn launch_config_matches(
+    state: &manager::VesloServerState,
+    workspace_paths: &[String],
+    opencode_base_url: &Option<String>,
+    orchestrator_daemon_url: &Option<String>,
+    orchestrator_lifecycle_token: &Option<String>,
+) -> bool {
+    normalize_workspace_paths(workspace_paths) == normalize_workspace_paths(&state.workspace_paths)
+        && state.opencode_base_url == *opencode_base_url
+        && state.orchestrator_daemon_url == *orchestrator_daemon_url
+        && state.orchestrator_lifecycle_token == *orchestrator_lifecycle_token
+}
+
 pub fn start_veslo_server(
     app: &AppHandle,
     manager: &VesloServerManager,
@@ -656,32 +695,22 @@ pub fn start_veslo_server(
     // VSLO-171 — idempotent skip: if a healthy child is already running with
     // an equivalent workspace set, reuse it instead of kill+respawn. Avoids
     // rotating the bearer token under an active frontend session.
-    let normalize_paths = |paths: &[String]| -> Vec<String> {
-        let mut normalized: Vec<String> = paths
-            .iter()
-            .map(|path| path.trim().trim_end_matches('/').to_string())
-            .filter(|path| !path.is_empty())
-            .collect();
-        normalized.sort();
-        normalized.dedup();
-        normalized
-    };
-    let requested_paths = normalize_paths(workspace_paths);
-    let existing_paths = normalize_paths(&state.workspace_paths);
-    let normalized_orchestrator_daemon_url = orchestrator_daemon_url
-        .map(|value| value.trim().trim_end_matches('/').to_string())
-        .filter(|value| !value.is_empty());
-    let normalized_orchestrator_lifecycle_token = orchestrator_lifecycle_token
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+    let normalized_opencode_base_url = normalize_launch_url(opencode_base_url);
+    let normalized_orchestrator_daemon_url = normalize_launch_url(orchestrator_daemon_url);
+    let normalized_orchestrator_lifecycle_token =
+        normalize_launch_token(orchestrator_lifecycle_token);
     if state.child.is_some()
         && !state.child_exited
         && state.client_token.is_some()
         && state.host_token.is_some()
         && state.port.is_some()
-        && requested_paths == existing_paths
-        && state.orchestrator_daemon_url == normalized_orchestrator_daemon_url
-        && state.orchestrator_lifecycle_token == normalized_orchestrator_lifecycle_token
+        && launch_config_matches(
+            &state,
+            workspace_paths,
+            &normalized_opencode_base_url,
+            &normalized_orchestrator_daemon_url,
+            &normalized_orchestrator_lifecycle_token,
+        )
     {
         let info = VesloServerManager::snapshot_locked(&mut state);
         drop(state);
@@ -728,7 +757,7 @@ pub fn start_veslo_server(
             "port": port,
             "workspaceCount": workspace_paths.len(),
             "workspaceIds": workspace_ids.clone(),
-            "hasOpencodeBaseUrl": opencode_base_url.is_some(),
+            "hasOpencodeBaseUrl": normalized_opencode_base_url.is_some(),
             "hasOpencodeRouterHealthPort": opencode_router_health_port.is_some(),
             "hasOrchestratorDaemonUrl": normalized_orchestrator_daemon_url.is_some(),
             "hasOrchestratorLifecycleToken": normalized_orchestrator_lifecycle_token.is_some(),
@@ -743,7 +772,7 @@ pub fn start_veslo_server(
         &workspace_ids,
         &client_token,
         &host_token,
-        opencode_base_url,
+        normalized_opencode_base_url.as_deref(),
         if active_workspace.is_empty() {
             None
         } else {
@@ -790,9 +819,12 @@ pub fn start_veslo_server(
     state.mdns_url = mdns_url;
     state.lan_url = lan_url;
     state.engine_url = engine_url;
+    state.engine_url_checked_at = Some(std::time::Instant::now());
+    state.engine_url_refresh_started_at = None;
     state.client_token = Some(client_token);
     state.host_token = Some(host_token);
     state.workspace_paths = workspace_paths.to_vec();
+    state.opencode_base_url = normalized_opencode_base_url;
     state.orchestrator_daemon_url = normalized_orchestrator_daemon_url;
     state.orchestrator_lifecycle_token = normalized_orchestrator_lifecycle_token;
     state.last_stdout = None;
@@ -820,14 +852,16 @@ pub fn start_veslo_server(
 
 #[cfg(test)]
 mod tests {
+    use super::manager::VesloServerState;
+    use super::{
+        launch_config_matches, normalize_launch_token, normalize_launch_url,
+        read_persisted_veslo_server_info, read_persisted_veslo_server_info_with_cleanup,
+        HealthIdentity, PersistedVesloServerState,
+    };
     #[cfg(windows)]
     use super::{
         parse_wsl_engine_url_from_powershell_output, resolve_engine_url_from_candidates,
         resolve_engine_url_from_interfaces,
-    };
-    use super::{
-        read_persisted_veslo_server_info, read_persisted_veslo_server_info_with_cleanup,
-        HealthIdentity, PersistedVesloServerState,
     };
     use std::fs;
     use std::io::ErrorKind;
@@ -916,6 +950,45 @@ mod tests {
         assert!(recovered.is_none());
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn launch_config_restarts_when_opencode_base_url_changes() {
+        let state = VesloServerState {
+            workspace_paths: vec!["/workspace/project".to_string()],
+            opencode_base_url: normalize_launch_url(Some(
+                "http://127.0.0.1:59104/workspace//opencode/",
+            )),
+            orchestrator_daemon_url: normalize_launch_url(Some("http://127.0.0.1:59104/")),
+            orchestrator_lifecycle_token: normalize_launch_token(Some("lifecycle-token")),
+            ..Default::default()
+        };
+        let workspace_paths = vec!["/workspace/project/".to_string()];
+        let daemon_url = normalize_launch_url(Some("http://127.0.0.1:59104"));
+        let lifecycle_token = normalize_launch_token(Some(" lifecycle-token "));
+
+        assert!(
+            launch_config_matches(
+                &state,
+                &workspace_paths,
+                &normalize_launch_url(Some("http://127.0.0.1:59104/workspace//opencode")),
+                &daemon_url,
+                &lifecycle_token,
+            ),
+            "equivalent launch config should still reuse the server"
+        );
+        assert!(
+            !launch_config_matches(
+                &state,
+                &workspace_paths,
+                &normalize_launch_url(Some(
+                    "http://127.0.0.1:59104/workspace/ws-278d2edc94b7/opencode",
+                )),
+                &daemon_url,
+                &lifecycle_token,
+            ),
+            "correcting workspace//opencode to a workspace-scoped URL must respawn veslo-server"
+        );
     }
 
     #[test]

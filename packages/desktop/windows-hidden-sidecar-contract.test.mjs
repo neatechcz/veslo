@@ -8,6 +8,12 @@ const rustSourceUrl = (relativePath) =>
 const readRustSource = (relativePath) =>
   readFileSync(rustSourceUrl(relativePath), "utf8");
 
+const repoSourceUrl = (relativePath) =>
+  new URL(`../../${relativePath}`, import.meta.url);
+
+const readRepoSource = (relativePath) =>
+  readFileSync(repoSourceUrl(relativePath), "utf8");
+
 const rawCommandChildImport =
   /use\s+tauri_plugin_shell::process(?:::CommandChild|::\{[^}]*\bCommandChild\b[^}]*\})/;
 const rawCommandChildReference = /tauri_plugin_shell::process::CommandChild/;
@@ -133,6 +139,11 @@ test("Windows WSL engine health probes hide PowerShell and WSL subprocess window
   );
   assertSourceMatches(
     powershellProbe,
+    /\.args\(\[[\s\S]*?"-NonInteractive"[\s\S]*?"-WindowStyle"[\s\S]*?"Hidden"[\s\S]*?"-Command"/,
+    "WSL interface discovery should pass hidden, non-interactive PowerShell arguments",
+  );
+  assertSourceMatches(
+    powershellProbe,
     /command\s*\.args\([\s\S]*?\.output\(\)/,
     "WSL interface discovery should execute the hidden PowerShell command",
   );
@@ -155,6 +166,54 @@ test("Windows WSL engine health probes hide PowerShell and WSL subprocess window
   );
 });
 
+test("Windows WSL repair commands hide PowerShell subprocess windows", () => {
+  const source = readRustSource("commands/wsl_sandbox.rs");
+  const powershellLaunches = source.match(/Command::new\("powershell\.exe"\)/g) ?? [];
+  const hiddenLaunches = source.match(/configure_hidden\(&mut\s+command\)\s*;/g) ?? [];
+
+  assertSourceMatches(
+    source,
+    /use\s+crate::platform::configure_hidden\s*;/,
+    "WSL repair commands should import the central Windows hidden-process helper",
+  );
+  assert.equal(
+    powershellLaunches.length,
+    3,
+    "expected the WSL repair module to launch three PowerShell commands",
+  );
+  assert.equal(
+    hiddenLaunches.length,
+    powershellLaunches.length,
+    "every WSL repair PowerShell command should apply configure_hidden before spawning",
+  );
+
+  const prerequisiteRepair = readRustFunction(source, "wsl_prerequisites_repair");
+  assert.equal(
+    prerequisiteRepair.match(/\.arg\("-WindowStyle"\)[\s\S]*?\.arg\("Hidden"\)/g)?.length,
+    2,
+    "WSL prerequisite check and elevated wrapper commands should pass -WindowStyle Hidden",
+  );
+
+  const sandboxRepair = readRustFunction(source, "wsl_sandbox_repair");
+  assertSourceMatches(
+    sandboxRepair,
+    /\.arg\("-WindowStyle"\)[\s\S]*?\.arg\("Hidden"\)/,
+    "WSL sandbox repair should pass -WindowStyle Hidden",
+  );
+
+  const elevatedCommand = readRustFunction(source, "elevated_powershell_command");
+  assertSourceMatches(
+    elevatedCommand,
+    /"-NonInteractive"\.to_string\(\)[\s\S]*?"-WindowStyle"\.to_string\(\)[\s\S]*?"Hidden"\.to_string\(\)/,
+    "elevated WSL prerequisite command should make the elevated PowerShell child non-interactive and hidden",
+  );
+  assertSourceMatches(
+    elevatedCommand,
+    /Start-Process[^;]*-WindowStyle Hidden[^;]*-Verb RunAs/,
+    "elevated WSL prerequisite command should hide the elevated PowerShell process",
+  );
+});
+
 test("core sidecar state stores supervised child handles instead of raw CommandChild", () => {
   for (const relativePath of coreSidecarStateSources) {
     const source = readRustSource(relativePath);
@@ -170,4 +229,49 @@ test("core sidecar state stores supervised child handles instead of raw CommandC
       `${relativePath} should not reference raw tauri_plugin_shell CommandChild directly`,
     );
   }
+});
+
+test("Windows Node helpers hide PowerShell and WSL child process windows", () => {
+  const orchestratorCli = readRepoSource("packages/orchestrator/src/cli.ts");
+  assertSourceMatches(
+    orchestratorCli,
+    /function\s+spawnProcess[\s\S]*?windowsHide:\s*true/,
+    "orchestrator spawnProcess should hide Windows child process windows",
+  );
+  assertSourceMatches(
+    orchestratorCli,
+    /runCommand\("powershell",\s*\[[\s\S]*?"-NonInteractive"[\s\S]*?"-WindowStyle"[\s\S]*?"Hidden"[\s\S]*?"-ExecutionPolicy"[\s\S]*?"Bypass"[\s\S]*?"-Command"/,
+    "orchestrator PowerShell helpers should be non-interactive and hidden",
+  );
+
+  const wslDiscovery = readRepoSource("packages/orchestrator/src/sandbox/windows-wsl2/discovery.ts");
+  assert.equal(
+    (wslDiscovery.match(/windowsHide:\s*true/g) ?? []).length,
+    2,
+    "WSL discovery should hide both spawnSync and spawn wsl.exe subprocesses",
+  );
+
+  const prepareSidecar = readRepoSource("packages/desktop/scripts/prepare-sidecar.mjs");
+  assertSourceMatches(
+    prepareSidecar,
+    /const\s+hiddenPowerShellArgs\s*=\s*\(script\)\s*=>\s*\[[\s\S]*?"-NonInteractive"[\s\S]*?"-WindowStyle"[\s\S]*?"Hidden"[\s\S]*?"-ExecutionPolicy"[\s\S]*?"Bypass"[\s\S]*?"-Command"/,
+    "prepare-sidecar should use hidden, non-interactive PowerShell arguments",
+  );
+  assert.equal(
+    (prepareSidecar.match(/windowsHide:\s*true/g) ?? []).length,
+    2,
+    "prepare-sidecar should hide both Windows PowerShell subprocesses",
+  );
+
+  const cleanupDevProcesses = readRepoSource("packages/desktop/scripts/cleanup-dev-processes.mjs");
+  assertSourceMatches(
+    cleanupDevProcesses,
+    /spawnSync\(\s*powershellExe\(\),\s*\[[\s\S]*?"-NonInteractive"[\s\S]*?"-WindowStyle"[\s\S]*?"Hidden"[\s\S]*?"-ExecutionPolicy"[\s\S]*?"Bypass"[\s\S]*?"-Command"/,
+    "dev cleanup PowerShell should be non-interactive and hidden",
+  );
+  assertSourceMatches(
+    cleanupDevProcesses,
+    /windowsHide:\s*true/,
+    "dev cleanup should hide its PowerShell subprocess window",
+  );
 });

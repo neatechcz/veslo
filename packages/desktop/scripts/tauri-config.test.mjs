@@ -86,15 +86,18 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   const fragmentPath = resolve(srcTauriDir, "windows/wsl2-sandbox-installer.wxs");
   const prerequisitePath = resolve(srcTauriDir, "windows/wsl2-prerequisite-installer.ps1");
   const wrapperPath = resolve(srcTauriDir, "windows/wsl2-sandbox-installer.ps1");
+  const provisionerPath = resolve(__dirname, "../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1");
   assert.ok(existsSync(fragmentPath), "Expected the WSL provisioning WiX fragment to exist");
   assert.ok(existsSync(prerequisitePath), "Expected the WSL prerequisite installer helper to exist");
   assert.ok(existsSync(wrapperPath), "Expected the WSL provisioning installer wrapper to exist");
+  assert.ok(existsSync(provisionerPath), "Expected the WSL provisioning helper to exist");
 
   const fragment = readFileSync(fragmentPath, "utf8");
   assert.match(fragment, /ComponentGroup\s+Id="VesloWslProvisioningInstallerComponents"/);
   assert.match(fragment, /CustomAction\s+[^>]*Id="VesloProvisionWslSandbox"/s);
   assert.match(fragment, /After="InstallFiles"/);
   assert.match(fragment, /Return="ignore"/);
+  assert.match(fragment, /-NoProfile\s+-NonInteractive\s+-WindowStyle\s+Hidden\s+-ExecutionPolicy\s+Bypass/);
   assert.match(fragment, /\[INSTALLDIR\]wsl2-sandbox-installer\.ps1/);
   assert.doesNotMatch(
     fragment,
@@ -105,5 +108,48 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   assert.match(prerequisite, /wsl\.exe"\s+@\("--install",\s+"--no-distribution"\)/);
   assert.match(prerequisite, /Microsoft-Windows-Subsystem-Linux/);
   assert.match(prerequisite, /VirtualMachinePlatform/);
-  assert.match(readFileSync(wrapperPath, "utf8"), /package\.json/);
+  assert.match(
+    prerequisite,
+    /New-Object\s+System\.Diagnostics\.ProcessStartInfo[\s\S]*?\$startInfo\.UseShellExecute\s*=\s*\$false[\s\S]*?\$startInfo\.CreateNoWindow\s*=\s*\$true/,
+    "WSL prerequisite helper should run native wsl.exe/dism.exe children through hidden ProcessStartInfo",
+  );
+  assert.doesNotMatch(
+    prerequisite,
+    /&\s+\$FilePath\b/,
+    "WSL prerequisite helper should not invoke native child commands through PowerShell's call operator",
+  );
+  const wrapper = readFileSync(wrapperPath, "utf8");
+  assert.match(wrapper, /package\.json/);
+  assert.match(
+    wrapper,
+    /\$baseArgs\s*=\s*@\([\s\S]*?"-NoProfile",[\s\S]*?"-NonInteractive",[\s\S]*?"-WindowStyle",[\s\S]*?"Hidden",[\s\S]*?"-ExecutionPolicy"/,
+    "installer wrapper should run nested PowerShell provisioning commands hidden and non-interactive",
+  );
+  assert.match(
+    wrapper,
+    /New-Object\s+System\.Diagnostics\.ProcessStartInfo[\s\S]*?\$startInfo\.UseShellExecute\s*=\s*\$false[\s\S]*?\$startInfo\.CreateNoWindow\s*=\s*\$true/,
+    "installer wrapper should run native wsl.exe/powershell.exe children through hidden ProcessStartInfo",
+  );
+  assert.doesNotMatch(
+    wrapper,
+    /&\s+(?:wsl|powershell)\.exe\b/i,
+    "installer wrapper should not invoke WSL or nested PowerShell children through PowerShell's call operator",
+  );
+
+  const provisioner = readFileSync(provisionerPath, "utf8");
+  assert.match(
+    provisioner,
+    /New-Object\s+System\.Diagnostics\.ProcessStartInfo[\s\S]*?\$startInfo\.UseShellExecute\s*=\s*\$false[\s\S]*?\$startInfo\.CreateNoWindow\s*=\s*\$true/,
+    "WSL provisioner should run every wsl.exe command through hidden ProcessStartInfo",
+  );
+  assert.match(
+    provisioner,
+    /Invoke-HiddenNativeCommand\s+"wsl\.exe"\s+\$WslArgs/,
+    "WSL provisioner should route Invoke-Wsl through the hidden native command helper",
+  );
+  assert.doesNotMatch(
+    provisioner,
+    /&\s+wsl\.exe\b/i,
+    "WSL provisioner should not invoke wsl.exe through PowerShell's call operator",
+  );
 });

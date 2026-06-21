@@ -1023,7 +1023,16 @@ async function resolveOpencodeDownload(sidecar: SidecarConfig, expectedVersion?:
         "$ErrorActionPreference = 'Stop'",
         `Expand-Archive -Path ${psQuote(archivePath)} -DestinationPath ${psQuote(extractDir)} -Force`,
       ].join("; ");
-      await runCommand("powershell", ["-NoProfile", "-Command", psScript]);
+      await runCommand("powershell", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-WindowStyle",
+        "Hidden",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        psScript,
+      ]);
     } else if (asset.endsWith(".zip")) {
       await runCommand("unzip", ["-q", archivePath, "-d", extractDir]);
     } else if (asset.endsWith(".tar.gz")) {

@@ -65,21 +65,99 @@ function Test-IsAdministrator {
     }
 }
 
+function ConvertTo-NativeArgument([string]$Argument) {
+    if ($null -eq $Argument -or $Argument.Length -eq 0) {
+        return '""'
+    }
+    if ($Argument -notmatch '[\s"]') {
+        return $Argument
+    }
+
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append([char]0x22)
+    $backslashes = 0
+    foreach ($char in $Argument.ToCharArray()) {
+        if ($char -eq [char]0x5c) {
+            $backslashes += 1
+            continue
+        }
+        if ($char -eq [char]0x22) {
+            if ($backslashes -gt 0) {
+                [void]$builder.Append(('\' * ($backslashes * 2)))
+                $backslashes = 0
+            }
+            [void]$builder.Append('\"')
+            continue
+        }
+        if ($backslashes -gt 0) {
+            [void]$builder.Append(('\' * $backslashes))
+            $backslashes = 0
+        }
+        [void]$builder.Append($char)
+    }
+    if ($backslashes -gt 0) {
+        [void]$builder.Append(('\' * ($backslashes * 2)))
+    }
+    [void]$builder.Append([char]0x22)
+    return $builder.ToString()
+}
+
 function Invoke-NativeCommand([string]$FilePath, [string[]]$Arguments) {
     Write-PrereqLog ("> {0} {1}" -f $FilePath, ($Arguments -join " "))
-    $output = & $FilePath @Arguments 2>&1
-    $exitCode = $LASTEXITCODE
-    if ($null -eq $exitCode) {
-        $exitCode = if ($?) { 0 } else { 1 }
-    }
-    foreach ($line in @($output)) {
-        if ($null -ne $line) {
-            Write-PrereqLog ([string]$line)
+
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $FilePath
+    $startInfo.Arguments = (($Arguments | ForEach-Object { ConvertTo-NativeArgument ([string]$_) }) -join " ")
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    try {
+        $startInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+        $startInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    } catch {}
+
+    $lines = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+    $outputHandler = [System.Diagnostics.DataReceivedEventHandler]{
+        param($sender, $eventArgs)
+        if ($null -ne $eventArgs.Data) {
+            [void]$lines.Add([string]$eventArgs.Data)
         }
     }
+    $errorHandler = [System.Diagnostics.DataReceivedEventHandler]{
+        param($sender, $eventArgs)
+        if ($null -ne $eventArgs.Data) {
+            [void]$lines.Add([string]$eventArgs.Data)
+        }
+    }
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $process.add_OutputDataReceived($outputHandler)
+    $process.add_ErrorDataReceived($errorHandler)
+    try {
+        [void]$process.Start()
+        $process.BeginOutputReadLine()
+        $process.BeginErrorReadLine()
+        $process.WaitForExit()
+        $process.WaitForExit()
+        $exitCode = $process.ExitCode
+    } finally {
+        $process.remove_OutputDataReceived($outputHandler)
+        $process.remove_ErrorDataReceived($errorHandler)
+        $process.Dispose()
+    }
+
+    $outputLines = @($lines.ToArray() | ForEach-Object { [string]$_ })
+    foreach ($line in $outputLines) {
+        if ($line) {
+            Write-PrereqLog $line
+        }
+    }
+
     return [pscustomobject]@{
         ExitCode = [int]$exitCode
-        Output = ((@($output) | ForEach-Object { [string]$_ }) -join "`n")
+        Output = ($outputLines -join "`n")
     }
 }
 

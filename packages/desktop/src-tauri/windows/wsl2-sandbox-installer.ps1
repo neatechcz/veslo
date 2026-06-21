@@ -29,6 +29,102 @@ function Write-InstallerLog([string]$Message) {
     Write-Host "[$timestamp] $Message"
 }
 
+function ConvertTo-NativeArgument([string]$Argument) {
+    if ($null -eq $Argument -or $Argument.Length -eq 0) {
+        return '""'
+    }
+    if ($Argument -notmatch '[\s"]') {
+        return $Argument
+    }
+
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append([char]0x22)
+    $backslashes = 0
+    foreach ($char in $Argument.ToCharArray()) {
+        if ($char -eq [char]0x5c) {
+            $backslashes += 1
+            continue
+        }
+        if ($char -eq [char]0x22) {
+            if ($backslashes -gt 0) {
+                [void]$builder.Append(('\' * ($backslashes * 2)))
+                $backslashes = 0
+            }
+            [void]$builder.Append('\"')
+            continue
+        }
+        if ($backslashes -gt 0) {
+            [void]$builder.Append(('\' * $backslashes))
+            $backslashes = 0
+        }
+        [void]$builder.Append($char)
+    }
+    if ($backslashes -gt 0) {
+        [void]$builder.Append(('\' * ($backslashes * 2)))
+    }
+    [void]$builder.Append([char]0x22)
+    return $builder.ToString()
+}
+
+function Invoke-HiddenNativeCommand([string]$FilePath, [string[]]$Arguments) {
+    Write-InstallerLog ("> {0} {1}" -f $FilePath, ($Arguments -join " "))
+
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $FilePath
+    $startInfo.Arguments = (($Arguments | ForEach-Object { ConvertTo-NativeArgument ([string]$_) }) -join " ")
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    try {
+        $startInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+        $startInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    } catch {}
+
+    $lines = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+    $outputHandler = [System.Diagnostics.DataReceivedEventHandler]{
+        param($sender, $eventArgs)
+        if ($null -ne $eventArgs.Data) {
+            [void]$lines.Add([string]$eventArgs.Data)
+        }
+    }
+    $errorHandler = [System.Diagnostics.DataReceivedEventHandler]{
+        param($sender, $eventArgs)
+        if ($null -ne $eventArgs.Data) {
+            [void]$lines.Add([string]$eventArgs.Data)
+        }
+    }
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $process.add_OutputDataReceived($outputHandler)
+    $process.add_ErrorDataReceived($errorHandler)
+    try {
+        [void]$process.Start()
+        $process.BeginOutputReadLine()
+        $process.BeginErrorReadLine()
+        $process.WaitForExit()
+        $process.WaitForExit()
+        $exitCode = $process.ExitCode
+    } finally {
+        $process.remove_OutputDataReceived($outputHandler)
+        $process.remove_ErrorDataReceived($errorHandler)
+        $process.Dispose()
+    }
+
+    $outputLines = @($lines.ToArray() | ForEach-Object { [string]$_ })
+    foreach ($line in $outputLines) {
+        if ($line) {
+            Write-InstallerLog $line
+        }
+    }
+
+    return [pscustomobject]@{
+        ExitCode = [int]$exitCode
+        Output = ($outputLines -join "`n")
+    }
+}
+
 function Resolve-LocalAppData {
     $path = [Environment]::GetFolderPath("LocalApplicationData")
     if ($path -and $path.Trim()) {
@@ -95,14 +191,17 @@ try {
         Finish-Installer 0
     }
 
-    & wsl.exe --status 2>&1 | ForEach-Object { Write-InstallerLog $_ }
-    if ($LASTEXITCODE -ne 0) {
+    $wslStatus = Invoke-HiddenNativeCommand "wsl.exe" @("--status")
+    if ($wslStatus.ExitCode -ne 0) {
         Write-InstallerLog "WSL is installed incompletely or needs a reboot. Not running distro import from MSI."
-        Finish-Installer $LASTEXITCODE
+        Finish-Installer $wslStatus.ExitCode
     }
 
     $baseArgs = @(
         "-NoProfile",
+        "-NonInteractive",
+        "-WindowStyle",
+        "Hidden",
         "-ExecutionPolicy",
         "Bypass",
         "-File",
@@ -120,15 +219,15 @@ try {
     }
 
     Write-InstallerLog "Checking existing managed WSL runtime."
-    & powershell.exe @($baseArgs + @("-CheckOnly")) 2>&1 | ForEach-Object { Write-InstallerLog $_ }
-    if ($LASTEXITCODE -eq 0) {
+    $checkResult = Invoke-HiddenNativeCommand "powershell.exe" @($baseArgs + @("-CheckOnly"))
+    if ($checkResult.ExitCode -eq 0) {
         Write-InstallerLog "Managed WSL runtime already satisfies Veslo requirements."
         Finish-Installer 0
     }
 
     Write-InstallerLog "Managed WSL runtime is missing or incomplete; provisioning now."
-    & powershell.exe @baseArgs 2>&1 | ForEach-Object { Write-InstallerLog $_ }
-    Finish-Installer $LASTEXITCODE
+    $provisionResult = Invoke-HiddenNativeCommand "powershell.exe" $baseArgs
+    Finish-Installer $provisionResult.ExitCode
 } catch {
     Write-InstallerLog "Unhandled wrapper error: $($_.Exception.Message)"
     Finish-Installer 1

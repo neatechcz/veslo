@@ -183,20 +183,51 @@ const wslPrerequisiteInstallerPath = resolve(
 const wslPrerequisiteInstaller = existsSync(wslPrerequisiteInstallerPath)
   ? readText(wslPrerequisiteInstallerPath)
   : "";
+const hiddenProcessStartInfoPattern =
+  /New-Object\s+System\.Diagnostics\.ProcessStartInfo[\s\S]*?\$startInfo\.UseShellExecute\s*=\s*\$false[\s\S]*?\$startInfo\.CreateNoWindow\s*=\s*\$true/;
 addCheck(
   "Windows MSI bundles WSL prerequisite installer for first-run repair",
   tauriBundleResources["windows/wsl2-prerequisite-installer.ps1"] ===
     "wsl2-prerequisite-installer.ps1" &&
     /wsl\.exe"\s+@\("--install",\s+"--no-distribution"\)/.test(wslPrerequisiteInstaller) &&
     /Microsoft-Windows-Subsystem-Linux/.test(wslPrerequisiteInstaller) &&
-    /VirtualMachinePlatform/.test(wslPrerequisiteInstaller),
+    /VirtualMachinePlatform/.test(wslPrerequisiteInstaller) &&
+    hiddenProcessStartInfoPattern.test(wslPrerequisiteInstaller) &&
+    !/&\s+\$FilePath\b/.test(wslPrerequisiteInstaller),
   tauriBundleResources["windows/wsl2-prerequisite-installer.ps1"] ?? "?",
 );
+const wslSandboxInstallerPath = resolve(
+  root,
+  "packages",
+  "desktop",
+  "src-tauri",
+  "windows",
+  "wsl2-sandbox-installer.ps1",
+);
+const wslSandboxInstaller = existsSync(wslSandboxInstallerPath) ? readText(wslSandboxInstallerPath) : "";
 addCheck(
   "Windows MSI bundles WSL sandbox installer wrapper",
   tauriBundleResources["windows/wsl2-sandbox-installer.ps1"] === "wsl2-sandbox-installer.ps1" &&
-    existsSync(resolve(root, "packages", "desktop", "src-tauri", "windows", "wsl2-sandbox-installer.ps1")),
+    hiddenProcessStartInfoPattern.test(wslSandboxInstaller) &&
+    !/&\s+(?:wsl|powershell)\.exe\b/i.test(wslSandboxInstaller),
   tauriBundleResources["windows/wsl2-sandbox-installer.ps1"] ?? "?",
+);
+const wslSandboxProvisionerPath = resolve(
+  root,
+  "packages",
+  "orchestrator",
+  "scripts",
+  "windows-wsl2-sandbox-provision.ps1",
+);
+const wslSandboxProvisioner = existsSync(wslSandboxProvisionerPath) ? readText(wslSandboxProvisionerPath) : "";
+addCheck(
+  "Windows MSI bundles hidden WSL sandbox provisioner",
+  tauriBundleResources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"] ===
+    "windows-wsl2-sandbox-provision.ps1" &&
+    hiddenProcessStartInfoPattern.test(wslSandboxProvisioner) &&
+    /Invoke-HiddenNativeCommand\s+"wsl\.exe"\s+\$WslArgs/.test(wslSandboxProvisioner) &&
+    !/&\s+wsl\.exe\b/i.test(wslSandboxProvisioner),
+  tauriBundleResources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"] ?? "?",
 );
 const wslInstallerFragmentPath = resolve(
   root,
@@ -217,7 +248,8 @@ addCheck(
     /Id="VesloProvisionWslSandbox"/.test(wslInstallerFragment) &&
     /After="InstallFiles"/.test(wslInstallerFragment) &&
     /Return="ignore"/.test(wslInstallerFragment) &&
-    /package\.json/.test(readText(resolve(root, "packages", "desktop", "src-tauri", "windows", "wsl2-sandbox-installer.ps1"))),
+    /-NoProfile\s+-NonInteractive\s+-WindowStyle\s+Hidden\s+-ExecutionPolicy\s+Bypass/.test(wslInstallerFragment) &&
+    /package\.json/.test(wslSandboxInstaller),
   Array.isArray(tauriWindowsWix.fragmentPaths)
     ? tauriWindowsWix.fragmentPaths.join(", ")
     : "?",

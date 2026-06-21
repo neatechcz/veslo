@@ -34,6 +34,16 @@ const forceBuild = hasFlag("--force") || process.env.VESLO_SIDECAR_FORCE_BUILD =
 const sidecarOverride = process.env.VESLO_SIDECAR_DIR?.trim() || readArg("--outdir");
 const sidecarDir = sidecarOverride ? resolve(sidecarOverride) : join(__dirname, "..", "src-tauri", "sidecars");
 const packageJsonPath = resolve(__dirname, "..", "package.json");
+const hiddenPowerShellArgs = (script) => [
+  "-NoProfile",
+  "-NonInteractive",
+  "-WindowStyle",
+  "Hidden",
+  "-ExecutionPolicy",
+  "Bypass",
+  "-Command",
+  script,
+];
 
 const opencodeGithubRepo = (() => {
   const raw =
@@ -359,8 +369,9 @@ const ensureWindowsBaselineBunExecutable = () => {
     `Expand-Archive -Path ${psQuote(archivePath)} -DestinationPath ${psQuote(targetDir)} -Force`,
   ].join("; ");
 
-  const result = spawnSync("powershell", ["-NoProfile", "-Command", psScript], {
+  const result = spawnSync("powershell", hiddenPowerShellArgs(psScript), {
     stdio: "inherit",
+    windowsHide: true,
   });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
@@ -629,8 +640,9 @@ if (shouldDownloadOpencode) {
       `Expand-Archive -Path ${psQuote(archivePath)} -DestinationPath ${psQuote(extractDir)} -Force`,
     ].join("; ");
 
-    const result = spawnSync("powershell", ["-NoProfile", "-Command", psScript], {
+    const result = spawnSync("powershell", hiddenPowerShellArgs(psScript), {
       stdio: "inherit",
+      windowsHide: true,
     });
 
     if (result.status !== 0) {
