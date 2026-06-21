@@ -44,6 +44,7 @@ Veslo is a local-first, cloud-backed control surface for agentic work. Treat the
 - Feature verification and Docker-backed flow checks: `docs/dev/testing-playbook.md` and `packaging/docker/README.md`
 - Development startup and run procedure: `docs/dev/development-startup.md`
 - OpenCode workspace runtime, Veslo server conversation/run boundary, and sandbox/no-sandbox execution: `docs/dev/opencode-workspace-runtime-architecture.md`
+- Veslo production/application log locations and safe read commands: `docs/dev/veslo-application-logs.md`
 - Release workflow: `RELEASE.md` and `docs/dev/release-skill.md`
 - Public behavior and runtime semantics: `docs/features/`
 - Product intent and architecture: `VISION.md`, `PRINCIPLES.md`, `PRODUCT.md`, `ARCHITECTURE.md`, `INFRASTRUCTURE.md`

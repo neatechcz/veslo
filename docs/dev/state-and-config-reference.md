@@ -128,6 +128,10 @@ The local server reports the active path mode through `/capabilities.sandbox`. D
 
 ## Desktop Debug Log Forwarder
 
+Production owned-server application log discovery and operational read commands
+live in `docs/dev/veslo-application-logs.md`. Update that runbook whenever log
+creation, forwarding, storage, retention, service names, or read commands change.
+
 The Tauri shell forwards stdout/stderr from every supervised sidecar (`veslo-server`, `opencode-router`, `veslo-orchestrator`, `engine`) into the veslo-server debug log pipeline. Implementation lives in `packages/desktop/src-tauri/src/debug_logs_forwarder.rs`.
 
 Spool location:
