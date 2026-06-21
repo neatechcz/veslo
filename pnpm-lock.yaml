@@ -259,10 +259,10 @@ importers:
         specifier: 1.9.12
         version: 1.9.12
       veslo-code-router:
-        specifier: 2026.6.4
+        specifier: 2026.6.5
         version: link:../opencode-router
       veslo-server:
-        specifier: 2026.6.4
+        specifier: 2026.6.5
         version: link:../server
       zod:
         specifier: 4.1.8
