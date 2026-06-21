@@ -6,6 +6,11 @@
   "scripts": {
     "check:live-admin-user": "node --import=tsx/esm ./scripts/check-live-admin-user.ts",
     "seed:live-auth": "node --import=tsx/esm ./scripts/seed-live-den-auth.ts",
+    "test:pilot": "node --import=tsx/esm ./helpers/pilot-runner.ts",
+    "test:pilot:core-platform-skills": "node --import=tsx/esm ./specs/core-platform-skills.pilot.ts",
+    "test:pilot:smoke": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario smoke",
+    "test:pilot:navigation": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario navigation",
+    "test:pilot:soul-dashboard": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario soul-dashboard",
     "test": "wdio run wdio.conf.ts",
     "test:update-baselines": "wdio run wdio.conf.ts --update-visual-baseline",
     "test:feedback-youtrack-live": "wdio run wdio.conf.ts --spec ./specs/feedback-youtrack-live.spec.ts",

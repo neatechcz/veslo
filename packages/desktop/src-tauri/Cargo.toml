@@ -22,7 +22,7 @@ tauri-plugin-deep-link = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-http = { version = "2.5.6", default-features = false, features = ["rustls-tls", "http2", "charset", "macos-system-configuration"] }
 tauri-plugin-opener = "2.5.3"
-tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot", rev = "85d9091e616f90167399ac45f89edf028cdb3895" }
+tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot", rev = "a6c5baa3f280fe75e75220be8e7689785a200d13", default-features = false }
 tauri-plugin-shell = "2"
 tauri-plugin-single-instance = "2"
 uuid = { version = "1", features = ["v4"] }
@@ -33,7 +33,6 @@ local-ip-address = "0.5"
 walkdir = "2.5"
 zip = "0.6"
 include_dir = "0.7"
-tauri-plugin-webdriver = { version = "0.2", optional = true }
 sha1 = "0.10"
 # VSLO-86 — async SSE streaming in Rust so engine event subscription doesn't
 # block paralel short requests through the Tauri http plugin's IPC channel.
