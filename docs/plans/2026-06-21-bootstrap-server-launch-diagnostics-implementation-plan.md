@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Build Veslo-owned diagnostics that explain first-run desktop failures, especially when Den auth succeeds but the local Veslo server does not run and chat/new-session entry points are unavailable.
+**Goal:** Build Veslo-owned diagnostics that explain first-run and mid-run local Veslo server failures, including cases where the local Veslo server cannot collect or forward logs.
 
-**Architecture:** The Tauri desktop shell owns bootstrap and server-launch diagnostics before the local Veslo server exists. The Solid app records UI/bootstrap state and, after Den auth, uploads a compact redacted report directly to Den if the local Veslo server is unavailable. The normal full debug-log pipeline remains responsible for runtime logs after the local Veslo server starts.
+**Architecture:** The Tauri desktop shell owns a durable diagnostics spool and uploader for desktop-bootstrap, Veslo server launch, supervised Veslo server output, and log-delivery-state events. The local Veslo server is the preferred delivery path when healthy and cloud-forwarding logs, but the desktop switches to direct Den upload when the local server is missing, unhealthy, crashing, has no host-token/base-url state, rejects `/debug-logs`, or reports cloud forwarding disabled. The Solid app supplies Den auth context after login; it does not perform one-shot report upload itself.
 
 **Tech Stack:** SolidJS app, Tauri v2 Rust commands/state, existing desktop debug-log forwarder patterns, Den authenticated HTTP ingest, Node test runner, Rust unit tests, tauri-pilot desktop E2E.
 
@@ -15,6 +15,8 @@
 Do not implement GlitchTip, Bugsink, Sentry SDKs, source map upload, alerting, or external issue grouping in this plan. Leave a clean sink boundary for that later work.
 
 The Den backend source is not an obvious package in this checkout. The Den tasks below must be implemented in the owned-server/Den backend source of truth. In this repo, implement the desktop/app side and document the required Den contract.
+
+This is not just a first-run feature. It must keep working for the whole app run after the user is authenticated.
 
 ## Task 1: Add App-Side Diagnostic Event Contract
 
@@ -100,6 +102,16 @@ export type NewSessionDisabledReason =
   | "missingQuickChatHandler"
   | "unknown";
 
+export type DiagnosticsLane =
+  | "desktop-bootstrap"
+  | "veslo-server-launch"
+  | "veslo-server-supervised-output"
+  | "delivery-state";
+
+export type DiagnosticsDeliveryPath =
+  | "local-server"
+  | "desktop-direct-fallback";
+
 export type NewSessionDisabledInput = {
   hasRuntimeClient: boolean;
   runtimeConnecting: boolean;
@@ -182,7 +194,7 @@ git add packages/app/src/app/lib/bootstrap-diagnostics.ts packages/app/src/app/t
 git commit -m "feat: add bootstrap diagnostics app contract"
 ```
 
-## Task 2: Add Desktop Bootstrap Diagnostics Spool
+## Task 2: Add Desktop Diagnostics Spool and Cloud Context
 
 **Files:**
 - Create: `packages/desktop/src-tauri/src/bootstrap_diagnostics.rs`
@@ -224,7 +236,7 @@ Expected: FAIL because the module is not wired.
 
 **Step 3: Implement the module**
 
-Create a `BootstrapDiagnostics` state that writes JSONL events to an app-local spool independent of `DebugLogsForwarder`.
+Create a `BootstrapDiagnostics` state that writes JSONL events to an app-local spool independent of the local Veslo server.
 
 Core shape:
 
@@ -237,6 +249,15 @@ pub struct BootstrapDiagnostics {
     boot_id: String,
     sequence: Arc<AtomicU64>,
     write_lock: Arc<Mutex<()>>,
+    cloud_context: Arc<Mutex<Option<DiagnosticsCloudContext>>>,
+}
+
+#[derive(Clone)]
+pub struct DiagnosticsCloudContext {
+    pub den_api_base: String,
+    pub token: String,
+    pub user_id: String,
+    pub org_id: String,
 }
 
 #[derive(Serialize)]
@@ -263,7 +284,9 @@ Expose methods:
 impl BootstrapDiagnostics {
     pub fn new(spool_dir: PathBuf) -> Self;
     pub fn record(&self, lane: &str, event_type: &str, level: &str, payload: serde_json::Value);
-    pub fn drain_report(&self, max_events: usize) -> serde_json::Value;
+    pub fn flush_to_den_if_configured(&self, reason: &str, max_events: usize) -> Result<usize, String>;
+    pub fn set_cloud_context(&self, context: DiagnosticsCloudContext);
+    pub fn clear_cloud_context(&self);
     pub fn install_id(&self) -> &str;
     pub fn boot_id(&self) -> &str;
 }
@@ -282,11 +305,26 @@ pub fn record_bootstrap_diagnostic(
 }
 
 #[tauri::command]
-pub fn drain_bootstrap_diagnostics_report(
+pub fn configure_bootstrap_diagnostics_cloud_context(
     state: tauri::State<BootstrapDiagnostics>,
-    max_events: Option<usize>,
-) -> serde_json::Value {
-    state.drain_report(max_events.unwrap_or(500))
+    den_api_base: String,
+    token: String,
+    user_id: String,
+    org_id: String,
+) {
+    state.set_cloud_context(DiagnosticsCloudContext {
+        den_api_base,
+        token,
+        user_id,
+        org_id,
+    });
+}
+
+#[tauri::command]
+pub fn clear_bootstrap_diagnostics_cloud_context(
+    state: tauri::State<BootstrapDiagnostics>,
+) {
+    state.clear_cloud_context();
 }
 ```
 
@@ -313,7 +351,8 @@ Register commands:
 
 ```rust
 bootstrap_diagnostics::record_bootstrap_diagnostic,
-bootstrap_diagnostics::drain_bootstrap_diagnostics_report,
+bootstrap_diagnostics::configure_bootstrap_diagnostics_cloud_context,
+bootstrap_diagnostics::clear_bootstrap_diagnostics_cloud_context,
 ```
 
 **Step 4: Run tests to verify they pass**
@@ -331,7 +370,7 @@ Expected: PASS.
 
 ```bash
 git add packages/desktop/src-tauri/src/bootstrap_diagnostics.rs packages/desktop/src-tauri/src/lib.rs
-git commit -m "feat: add desktop bootstrap diagnostics spool"
+git commit -m "feat: add desktop diagnostics spool"
 ```
 
 ## Task 3: Instrument Local Veslo Server Launch
@@ -388,6 +427,8 @@ Record:
 - `veslo-server.launch.spawn.failed` if `spawn_veslo_server` returns error
 - `veslo-server.launch.spawned` after child state is saved
 - `veslo-server.launch.persist.failed` if persisting connection state fails
+- `veslo-server.process.output` for supervised Veslo server stdout/stderr summaries or lines captured by the desktop
+- `veslo-server.process.exited` when the supervised child exits, including code/signal when available
 
 Payloads must include booleans and categories only:
 
@@ -422,12 +463,82 @@ git add packages/desktop/src-tauri/src/veslo_server/mod.rs packages/desktop/src-
 git commit -m "feat: record local server launch diagnostics"
 ```
 
-## Task 4: Upload Bootstrap Reports After Den Auth
+## Task 4: Report Local Debug-Log Cloud Delivery State
+
+**Files:**
+- Modify: `packages/server/src/server.ts`
+- Modify: `packages/server/src/debug-log-pipeline.ts`
+- Test: `packages/server/src/tests/server.debug-logs-route.test.ts`
+
+**Step 1: Write failing tests**
+
+Add assertions:
+
+```ts
+test("POST /debug-logs reports when cloud upload is enabled", async () => {
+  const server = await startTestServer({ debugLogUpload: true });
+  const response = await postValidDebugLogBatch(server);
+  const payload = await response.json();
+  expect(payload.cloudUploadEnabled).toBe(true);
+});
+
+test("POST /debug-logs reports when cloud upload is disabled", async () => {
+  const server = await startTestServer({ debugLogUpload: false });
+  const response = await postValidDebugLogBatch(server);
+  const payload = await response.json();
+  expect(payload.cloudUploadEnabled).toBe(false);
+});
+```
+
+**Step 2: Run test to verify it fails**
+
+Run:
+
+```bash
+pnpm --filter veslo-server test -- server.debug-logs-route
+```
+
+Expected: FAIL because the response does not include `cloudUploadEnabled`.
+
+**Step 3: Implement minimal server status**
+
+Change the `/debug-logs` success response to include:
+
+```ts
+{
+  ok: true,
+  acceptedBatchIds: [batch.batchId],
+  cloudUploadEnabled: debugLogPipeline.isEnabled(),
+}
+```
+
+Keep `debugLogPipeline.isEnabled()` as the source of truth for whether the server can forward batches to Den.
+
+**Step 4: Run tests to verify they pass**
+
+Run:
+
+```bash
+pnpm --filter veslo-server test -- server.debug-logs-route
+```
+
+Expected: PASS.
+
+**Step 5: Commit**
+
+```bash
+git add packages/server/src/server.ts packages/server/src/debug-log-pipeline.ts packages/server/src/tests/server.debug-logs-route.test.ts
+git commit -m "feat: report debug log cloud delivery status"
+```
+
+## Task 5: Configure Desktop Direct Fallback After Den Auth
 
 **Files:**
 - Modify: `packages/app/src/app/lib/bootstrap-diagnostics.ts`
 - Modify: `packages/app/src/app/lib/den-auth.ts`
 - Modify: `packages/app/src/app/app.tsx`
+- Modify: `packages/desktop/src-tauri/src/debug_logs_forwarder.rs`
+- Modify: `packages/desktop/src-tauri/src/bootstrap_diagnostics.rs`
 - Test: `packages/app/src/app/tests/lib/bootstrap-diagnostics.test.ts`
 - Test: add source-level test if needed under `packages/app/src/app/tests/app-bootstrap-diagnostics.test.ts`
 
@@ -436,27 +547,23 @@ git commit -m "feat: record local server launch diagnostics"
 Extend `bootstrap-diagnostics.test.ts` with:
 
 ```ts
-import { buildBootstrapDiagnosticsUploadRequest } from "../../lib/bootstrap-diagnostics";
+import { buildDiagnosticsCloudContextCommand } from "../../lib/bootstrap-diagnostics";
 
-test("buildBootstrapDiagnosticsUploadRequest attaches auth metadata without leaking token", () => {
-  const request = buildBootstrapDiagnosticsUploadRequest({
+test("buildDiagnosticsCloudContextCommand sends auth to native command only", () => {
+  const command = buildDiagnosticsCloudContextCommand({
     auth: {
       denApiBase: "https://api.veslo.work/",
       token: "secret",
       user: { id: "user_1", email: "ina@example.com" },
       orgId: "org_1",
     },
-    report: {
-      bootId: "boot_1",
-      installId: "install_1",
-      events: [{ eventType: "veslo-server.launch.spawn.failed", payload: { token: "x" } }],
-    },
   });
 
-  assert.equal(request.url, "https://api.veslo.work/v1/desktop-bootstrap-diagnostics");
-  assert.equal(request.headers.Authorization, "Bearer secret");
-  assert.equal(request.body.userId, "user_1");
-  assert.equal(JSON.stringify(request.body).includes("secret"), false);
+  assert.equal(command.name, "configure_bootstrap_diagnostics_cloud_context");
+  assert.equal(command.args.denApiBase, "https://api.veslo.work");
+  assert.equal(command.args.token, "secret");
+  assert.equal(command.args.userId, "user_1");
+  assert.equal(command.args.orgId, "org_1");
 });
 ```
 
@@ -470,49 +577,46 @@ pnpm --filter @neatech/veslo-ui test:unit -- packages/app/src/app/tests/lib/boot
 
 Expected: FAIL because upload helper does not exist.
 
-**Step 3: Implement upload helper**
+**Step 3: Implement auth context helper**
 
 Add:
 
 ```ts
-export function buildBootstrapDiagnosticsUploadRequest(input: {
+export function buildDiagnosticsCloudContextCommand(input: {
   auth: { denApiBase: string; token: string; user?: { id?: string; email?: string }; orgId?: string };
-  report: Record<string, unknown>;
 }) {
   const base = input.auth.denApiBase.trim().replace(/\/+$/, "");
-  const body = sanitizeBootstrapDiagnosticPayload({
-    ...input.report,
-    userId: input.auth.user?.id ?? "",
-    orgId: input.auth.orgId ?? "",
-    userEmailHashSourcePresent: Boolean(input.auth.user?.email),
-  });
   return {
-    url: `${base}/v1/desktop-bootstrap-diagnostics`,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${input.auth.token}`,
+    name: "configure_bootstrap_diagnostics_cloud_context" as const,
+    args: {
+      denApiBase: base,
+      token: input.auth.token,
+      userId: input.auth.user?.id ?? "",
+      orgId: input.auth.orgId ?? "",
     },
-    body,
   };
 }
 
-export async function uploadBootstrapDiagnosticsAfterAuth(input: {
-  auth: { denApiBase: string; token: string; user?: { id?: string; email?: string }; orgId?: string };
-  fetchImpl?: typeof fetch;
-}): Promise<boolean> {
-  const report = await invoke<Record<string, unknown>>("drain_bootstrap_diagnostics_report", { maxEvents: 500 }).catch(() => null);
-  if (!report) return false;
-  const request = buildBootstrapDiagnosticsUploadRequest({ auth: input.auth, report });
-  const response = await (input.fetchImpl ?? fetch)(request.url, {
-    method: "POST",
-    headers: request.headers,
-    body: JSON.stringify(request.body),
-  });
-  return response.ok;
+export async function configureDiagnosticsCloudContextAfterAuth(auth: {
+  denApiBase: string;
+  token: string;
+  user?: { id?: string; email?: string };
+  orgId?: string;
+}): Promise<void> {
+  const command = buildDiagnosticsCloudContextCommand({ auth });
+  await invoke(command.name, command.args).catch(() => {});
 }
 ```
 
-In `app.tsx`, subscribe to Den auth changes and call upload once per boot/auth revision after auth exists. Record a `desktop-bootstrap.den-upload.*` diagnostic before and after upload.
+In `app.tsx`, subscribe to Den auth changes and call `configureDiagnosticsCloudContextAfterAuth` whenever auth becomes available. Clear the native cloud context on logout.
+
+In Rust, the diagnostics flush task should:
+
+- try local `/debug-logs` first when local server state exists
+- parse the response and check `cloudUploadEnabled`
+- if local delivery fails or `cloudUploadEnabled` is false, use the configured Den cloud context to POST directly to `/v1/desktop-diagnostics`
+- record `delivery-state.local-server.failed`, `delivery-state.local-server.cloud-disabled`, `delivery-state.direct-fallback.started`, `delivery-state.direct-fallback.succeeded`, and `delivery-state.direct-fallback.failed`
+- keep events in the spool until either local server delivery with cloud forwarding enabled or direct Den delivery succeeds
 
 **Step 4: Run tests to verify they pass**
 
@@ -521,6 +625,7 @@ Run:
 ```bash
 pnpm --filter @neatech/veslo-ui test:unit -- packages/app/src/app/tests/lib/bootstrap-diagnostics.test.ts
 pnpm --filter @neatech/veslo-ui test:desktop-auth-onboarding
+cd packages/desktop/src-tauri && cargo test bootstrap_diagnostics --lib
 ```
 
 Expected: PASS.
@@ -528,11 +633,11 @@ Expected: PASS.
 **Step 5: Commit**
 
 ```bash
-git add packages/app/src/app/lib/bootstrap-diagnostics.ts packages/app/src/app/lib/den-auth.ts packages/app/src/app/app.tsx packages/app/src/app/tests/lib/bootstrap-diagnostics.test.ts
-git commit -m "feat: upload bootstrap diagnostics after Den auth"
+git add packages/app/src/app/lib/bootstrap-diagnostics.ts packages/app/src/app/lib/den-auth.ts packages/app/src/app/app.tsx packages/app/src/app/tests/lib/bootstrap-diagnostics.test.ts packages/desktop/src-tauri/src/bootstrap_diagnostics.rs packages/desktop/src-tauri/src/debug_logs_forwarder.rs
+git commit -m "feat: configure desktop diagnostics fallback upload"
 ```
 
-## Task 5: Instrument Chat/New-Session Disabled Reasons
+## Task 6: Instrument Chat/New-Session Disabled Reasons
 
 **Files:**
 - Modify: `packages/app/src/app/components/session/workspace-session-list.tsx`
@@ -630,7 +735,7 @@ git add packages/app/src/app/components/session/workspace-session-list.tsx packa
 git commit -m "feat: record chat entry diagnostics"
 ```
 
-## Task 6: Define and Implement Den Bootstrap Diagnostics Ingest
+## Task 7: Define and Implement Den Desktop Diagnostics Ingest
 
 **Files:**
 - Den backend source of truth, not present as an obvious package in this checkout.
@@ -641,11 +746,11 @@ git commit -m "feat: record chat entry diagnostics"
 
 Tests must prove:
 
-- unauthenticated `POST /v1/desktop-bootstrap-diagnostics` returns `401`
-- authenticated user can post a compact bootstrap report
+- unauthenticated `POST /v1/desktop-diagnostics` returns `401`
+- authenticated user can post compact desktop diagnostics
 - payload is encrypted at rest
 - cleartext metadata can be queried by user, boot id, install id hash, source lane, event type, and time
-- runtime/full-log payloads are rejected
+- unsupported lanes and unbounded full-log payloads are rejected
 - retention expiry is set
 
 **Step 2: Implement endpoint**
@@ -653,7 +758,7 @@ Tests must prove:
 Endpoint contract:
 
 ```ts
-type DesktopBootstrapDiagnosticsRequest = {
+type DesktopDiagnosticsRequest = {
   bootId: string;
   installId: string;
   userId?: string;
@@ -662,17 +767,22 @@ type DesktopBootstrapDiagnosticsRequest = {
   platform?: string;
   events: Array<{
     id?: string;
-    lane: "desktop-bootstrap" | "veslo-server-launch";
+    lane:
+      | "desktop-bootstrap"
+      | "veslo-server-launch"
+      | "veslo-server-supervised-output"
+      | "delivery-state";
     eventType: string;
     level?: "info" | "warn" | "error";
     timestamp: number | string;
     sequenceNo?: number;
+    deliveryPath?: "desktop-direct-fallback";
     payload?: Record<string, unknown>;
   }>;
 };
 ```
 
-Reject any event lane other than `desktop-bootstrap` or `veslo-server-launch`.
+Reject any event lane outside the four allowed desktop-owned lanes. Runtime logs sent by the local server remain on the existing internal debug-log ingest.
 
 Store cleartext metadata plus encrypted payload in a dedicated table such as `desktop_bootstrap_diagnostic_event`.
 
@@ -680,9 +790,9 @@ Store cleartext metadata plus encrypted payload in a dedicated table such as `de
 
 Minimum admin APIs:
 
-- `GET /admin/api/desktop-bootstrap-diagnostics?userId=&from=&to=`
-- `GET /admin/api/desktop-bootstrap-diagnostics/:bootId`
-- `GET /admin/api/desktop-bootstrap-diagnostics/:bootId/export`
+- `GET /admin/api/desktop-diagnostics?userId=&from=&to=`
+- `GET /admin/api/desktop-diagnostics/:bootId`
+- `GET /admin/api/desktop-diagnostics/:bootId/export`
 
 **Step 4: Run Den tests**
 
@@ -694,7 +804,7 @@ Expected: all new tests PASS.
 
 Commit only the Den backend files and docs in that repository.
 
-## Task 7: Add Real Desktop E2E Coverage
+## Task 8: Add Real Desktop E2E Coverage
 
 **Files:**
 - Add or modify tauri-pilot scenario under `packages/e2e/specs` or the current pilot scenario location.
@@ -709,8 +819,10 @@ Scenario requirements:
 - simulate local Veslo server launch failure by using a test-only env/config hook
 - complete or seed Den auth
 - verify app remains usable enough to upload bootstrap diagnostics
-- assert Den/mock ingest received `desktop-bootstrap` and `veslo-server-launch` events
+- assert Den/mock ingest received `desktop-bootstrap`, `veslo-server-launch`, and `delivery-state` events
 - assert no `veslo-server-runtime` events are required for the failure explanation
+- simulate a mid-run local Veslo server crash and assert Den/mock ingest receives `veslo-server-supervised-output` and fallback delivery events
+- simulate local `/debug-logs` returning `cloudUploadEnabled: false` and assert desktop uses direct Den fallback
 
 **Step 2: Run preflight**
 
@@ -752,7 +864,7 @@ git add packages/e2e packages/desktop packages/app docs/dev
 git commit -m "test: cover bootstrap server launch diagnostics"
 ```
 
-## Task 8: Final Verification and Docs
+## Task 9: Final Verification and Docs
 
 **Files:**
 - Modify: `docs/dev/state-and-config-reference.md`
@@ -765,7 +877,8 @@ Document:
 
 - bootstrap diagnostics spool location
 - lane separation
-- direct Den upload trigger
+- continuous direct Den fallback trigger
+- local `/debug-logs` `cloudUploadEnabled` handshake
 - privacy/redaction boundary
 - admin lookup expectations
 - GlitchTip/Bugsink explicitly out of this slice
@@ -786,7 +899,7 @@ If `packages/server/src` changes during implementation, also run:
 pnpm --filter veslo-server build:bin
 ```
 
-Run the focused real desktop E2E from Task 7.
+Run the focused real desktop E2E from Task 8.
 
 **Step 3: Refresh graph if available**
 
@@ -804,4 +917,3 @@ If `graphify` is not available, skip and note it in the final handoff.
 git add docs/dev docs/plans
 git commit -m "docs: document bootstrap diagnostics"
 ```
-

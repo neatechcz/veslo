@@ -1,20 +1,22 @@
 # Bootstrap and Server Launch Diagnostics Design
 
 **Date:** 2026-06-21
-**Scope:** Veslo-owned diagnostics for first-run desktop failures, local Veslo server launch failures, and chat-entry disabled states.
+**Scope:** Veslo-owned diagnostics for first-run desktop failures, local Veslo server launch failures, mid-run local Veslo server failures, debug-log delivery failures, and chat-entry disabled states.
 **Out of scope:** GlitchTip, Bugsink, Sentry-compatible sink setup, source map upload, alert routing, and external observability deployment.
 
 ## Problem
 
-A newly installed Veslo desktop app can reach a state where the user signs in successfully, but the local Veslo server is unavailable and the chat entry point cannot open a new chat. The current debug-log path is not enough for that failure class because normal log upload depends on the local Veslo server becoming reachable.
+A newly installed Veslo desktop app can reach a state where the user signs in successfully, but the local Veslo server is unavailable and the chat entry point cannot open a new chat. The same blind spot can also happen later in the app run if the local Veslo server crashes, stops responding, loses its host-token/base-url state, or accepts debug logs without being able to forward them to Den.
 
-The local Veslo server can only explain behavior after it starts. It cannot explain why it never started. Veslo therefore needs a desktop-owned diagnostics path that records app bootstrap and server-launch evidence outside the local server process, then uploads that evidence after user authentication even when the local server is still down.
+The local Veslo server can only explain behavior while it is running and while its debug-log uploader is configured and healthy. It cannot explain why it never started, why it died, or why its own log pipeline stopped forwarding. Veslo therefore needs a desktop-owned diagnostics path that records app bootstrap, server-launch evidence, supervisor-captured Veslo server output, and delivery failures outside the local server process, then uploads that evidence directly to Den whenever the local server cannot be trusted as the log carrier.
 
 ## Goals
 
 - Give support and developers a server-side timeline for first-run failures by user, install, and app launch.
 - Separate logs emitted by the local Veslo server from logs about launching that server.
 - Capture enough launch evidence to explain why the local server did not run.
+- Capture enough mid-run evidence to explain why a previously running local server stopped carrying logs.
+- Keep a direct desktop-to-Den backup delivery path for diagnostics when the local Veslo server is unavailable, unhealthy, or unable to forward logs.
 - Capture enough app state to explain why a chat/new-session control was disabled or ineffective.
 - Keep diagnostics durable across restarts and temporary network failures.
 - Keep sensitive user content, prompts, tool output, provider tokens, cookies, and raw workspace paths out of this bootstrap channel.
@@ -30,7 +32,7 @@ The local Veslo server can only explain behavior after it starts. It cannot expl
 
 ## Decision
 
-Add Veslo-owned bootstrap diagnostics with three distinct local event lanes:
+Add Veslo-owned diagnostics with four distinct local event lanes:
 
 1. `desktop-bootstrap`
    Events from the desktop shell and WebView before the local Veslo server is trusted to be available.
@@ -38,10 +40,15 @@ Add Veslo-owned bootstrap diagnostics with three distinct local event lanes:
 2. `veslo-server-launch`
    Events from the desktop supervisor around discovery, spawning, readiness checks, exits, and health checks for the local Veslo server process.
 
-3. `veslo-server-runtime`
+3. `veslo-server-supervised-output`
+   Veslo server stdout/stderr and process lifecycle observations captured by the desktop supervisor. This lane is not emitted by the server debug-log pipeline; it is what the desktop sees from outside the process.
+
+4. `veslo-server-runtime`
    Events emitted by the local Veslo server itself after it starts. This lane continues to use the normal debug-log pipeline.
 
-The first two lanes must be collected outside the local Veslo server process. They are written to a desktop-owned durable spool immediately at app startup. After Den authentication succeeds, the desktop can upload a compact redacted bootstrap report directly to Den if the local Veslo server remains unavailable.
+The first three lanes must be collected outside the local Veslo server process. They are written to a desktop-owned durable spool immediately at app startup and during the full app run. After Den authentication succeeds, the desktop diagnostics service can upload them directly to Den whenever the local Veslo server is not a reliable delivery path.
+
+The local Veslo server remains the preferred delivery path when healthy. It must not be the only delivery path.
 
 ## Architecture
 
@@ -119,6 +126,22 @@ The server-launch lane records what happened around the local Veslo server proce
 
 This lane is the key difference from normal server logs. It exists even if the local Veslo server binary never starts.
 
+### Supervised server output lane
+
+The desktop supervisor already observes child process stdout/stderr. This lane makes that observation durable and cloud-deliverable independently of the local server.
+
+It records:
+
+- Veslo server stdout/stderr lines, size-limited and redacted
+- process start and exit state
+- exit code or signal
+- last known PID
+- whether the local `/debug-logs` endpoint was reachable
+- whether the local `/debug-logs` endpoint reported cloud forwarding enabled
+- fallback upload activation and outcome
+
+The local Veslo server should emit enough structured self-log lines to stdout/stderr that this lane is useful when the server's own upload pipeline cannot run.
+
 ### Runtime lane
 
 The local Veslo server continues to own full runtime logs after it starts:
@@ -131,24 +154,64 @@ The local Veslo server continues to own full runtime logs after it starts:
 
 These logs should remain separate from server-launch diagnostics. In Den, the user should be able to see that `veslo-server-launch` failed before expecting any `veslo-server-runtime` events.
 
+### Delivery state lane
+
+Delivery behavior is diagnostic data. The desktop diagnostics service records:
+
+- local server base URL unavailable
+- host token unavailable
+- local `/debug-logs` POST failed
+- local `/debug-logs` POST returned non-2xx
+- local `/debug-logs` reported cloud forwarding disabled
+- local server health failed after previously succeeding
+- direct Den fallback upload started
+- direct Den fallback upload succeeded
+- direct Den fallback upload failed and will retry
+
+These events are small and must be sent through the same fallback path.
+
 ## Upload Flow
 
 ### Normal path
 
-1. Desktop writes `desktop-bootstrap` and `veslo-server-launch` events to its local diagnostics spool.
+1. Desktop writes `desktop-bootstrap`, `veslo-server-launch`, and `veslo-server-supervised-output` events to its local diagnostics spool.
 2. Desktop starts the local Veslo server.
 3. Desktop forwards events to the local Veslo server debug-log endpoint.
 4. The local Veslo server spools and uploads to Den through the existing internal ingest path.
+5. Den deduplicates events by stable event id, boot id, install id, source lane, and timestamp.
 
-### Failure path
+### Fallback path
 
-1. Desktop writes bootstrap and launch events to its local diagnostics spool.
+1. Desktop writes diagnostics events to its local diagnostics spool.
 2. User signs in through Den.
-3. The local Veslo server remains missing or unhealthy for a configured threshold.
-4. Desktop uploads a compact redacted bootstrap report directly to Den with the signed-in Den session.
-5. When the local Veslo server later recovers, normal debug-log forwarding resumes.
+3. The desktop diagnostics service continuously evaluates the local Veslo server as a delivery path.
+4. If the local server is missing, unhealthy, unreachable, has no host token, returns repeated POST failures, or reports cloud forwarding disabled, desktop uploads diagnostics batches directly to Den with the signed-in Den session.
+5. When the local Veslo server later recovers and reports healthy forwarding, normal local-server delivery resumes.
 
-The direct desktop-to-Den route accepts only bootstrap and launch diagnostics. It must not accept full runtime logs, prompts, transcripts, tool output, workspace file contents, screenshots, raw process logs, or arbitrary user-provided payloads.
+The direct desktop-to-Den route accepts only desktop-owned diagnostics lanes: `desktop-bootstrap`, `veslo-server-launch`, `veslo-server-supervised-output`, and delivery-state events. It must not accept prompts, transcripts, tool output, workspace file contents, screenshots, arbitrary user-provided payloads, or unbounded raw process logs.
+
+### Local server delivery status
+
+The local `/debug-logs` endpoint should return enough status for the desktop to know whether accepting a batch actually means the event can reach Den. At minimum:
+
+```json
+{
+  "ok": true,
+  "acceptedBatchIds": ["..."],
+  "cloudUploadEnabled": true
+}
+```
+
+If `cloudUploadEnabled` is false, the desktop must keep or requeue those events for direct Den fallback instead of assuming delivery is complete.
+
+### Deduplication
+
+Every diagnostics event must have a stable event id generated before first delivery. Den must deduplicate across both ingestion paths:
+
+- local Veslo server internal ingest
+- direct desktop fallback ingest
+
+This allows the desktop to safely retry after uncertain failures without corrupting the timeline.
 
 ## Den Storage
 
@@ -170,6 +233,7 @@ Cleartext searchable metadata:
 - app version
 - platform
 - failure category when present
+- delivery path, such as `local-server` or `desktop-direct-fallback`
 
 Encrypted payload:
 
@@ -177,8 +241,9 @@ Encrypted payload:
 - redacted stderr/stdout tail
 - app state snapshot
 - launch state snapshot
+- delivery state snapshot
 
-Retention should be shorter than full debug logs, initially 14 days unless operations wants 30 days for consistency.
+Retention should be long enough for support investigations. Use 30 days for this diagnostics stream unless operations explicitly chooses a shorter window.
 
 ## Read/Support API
 
@@ -194,6 +259,9 @@ Platform-admin diagnostics search should answer:
 - Did health checks fail?
 - Why was chat/new-session disabled?
 - Did normal debug-log forwarding fail because the local server was unavailable?
+- Did normal debug-log forwarding fail because the local server accepted logs but could not upload them?
+- Did the desktop fallback uploader activate?
+- Which delivery path got the event into Den?
 
 Minimum read endpoints:
 
@@ -201,7 +269,7 @@ Minimum read endpoints:
 - fetch one timeline by `bootId`
 - export one timeline as JSONL
 
-The result should present bootstrap, launch, and runtime lanes separately in chronological order.
+The result should present bootstrap, launch, supervised output, delivery-state, and runtime lanes separately in chronological order.
 
 ## Privacy and Redaction
 
@@ -239,7 +307,10 @@ Required coverage:
 - local server binary missing emits `veslo-server-launch` failure
 - port conflict emits a distinct launch failure category
 - server process exits before health emits exit code/signal metadata
-- local server never starts, but Den receives the direct bootstrap report after sign-in
+- local server never starts, but Den receives desktop fallback diagnostics after sign-in
+- local server starts and later crashes, and Den receives supervisor-captured exit/output diagnostics through direct fallback
+- local server accepts `/debug-logs` but reports cloud forwarding disabled, and desktop falls back to direct Den upload
+- local server `/debug-logs` POST repeatedly fails, and desktop falls back to direct Den upload
 - chat/new-session disabled state emits the correct structured reason
 - direct Den ingest rejects unauthenticated uploads
 - direct Den ingest rejects runtime/full-log payloads
@@ -248,10 +319,9 @@ Required coverage:
 
 ## Rollout
 
-1. Build local event model, redaction, and desktop spool for bootstrap and launch lanes.
-2. Add direct Den ingest for authenticated bootstrap reports.
+1. Build local event model, redaction, and desktop spool for bootstrap, launch, supervised output, and delivery-state lanes.
+2. Add direct Den ingest for authenticated desktop diagnostics fallback.
 3. Add admin search/read endpoints for timelines.
-4. Instrument first-run app state and server launch paths.
-5. Add desktop E2E scenarios for fresh install, server launch failure, and chat disabled state.
+4. Instrument first-run app state, server launch paths, server supervisor output, and log-delivery state.
+5. Add desktop E2E scenarios for fresh install, server launch failure, mid-run server crash, cloud-forwarding-disabled, and chat disabled state.
 6. Later, in a separate session, add GlitchTip/Bugsink as an optional observability sink.
-
