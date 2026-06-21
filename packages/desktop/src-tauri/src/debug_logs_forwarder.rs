@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -22,6 +23,7 @@ const MAX_BATCH_BODY_BYTES: usize = 224 * 1024;
 const BATCH_SIZE_PROBE_ID: &str = "00000000-0000-0000-0000-000000000000";
 const INSTALL_ID_FILE: &str = "install-id.txt";
 const REDACTED: &str = "[redacted]";
+const DIRECT_FALLBACK_FAILURE_BACKOFF: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Copy, Debug)]
 pub enum LogStream {
@@ -72,6 +74,8 @@ pub struct DebugLogsForwarder {
     install_id: String,
     boot_id: String,
     cloud_context: Mutex<Option<CloudDiagnosticsContext>>,
+    direct_fallback_retry_after: Mutex<Option<SystemTime>>,
+    direct_fallback_retry_files: Mutex<HashSet<PathBuf>>,
     write_lock: Mutex<()>,
     sequence: AtomicU64,
 }
@@ -358,6 +362,8 @@ impl DebugLogsForwarder {
             install_id,
             boot_id: Uuid::new_v4().to_string(),
             cloud_context: Mutex::new(None),
+            direct_fallback_retry_after: Mutex::new(None),
+            direct_fallback_retry_files: Mutex::new(HashSet::new()),
             write_lock: Mutex::new(()),
             sequence: AtomicU64::new(0),
         }
@@ -410,6 +416,49 @@ impl DebugLogsForwarder {
             .lock()
             .ok()
             .and_then(|guard| guard.clone())
+    }
+
+    fn should_attempt_direct_fallback(&self, now: SystemTime) -> bool {
+        let Ok(guard) = self.direct_fallback_retry_after.lock() else {
+            return true;
+        };
+
+        guard
+            .as_ref()
+            .map(|retry_after| now >= *retry_after)
+            .unwrap_or(true)
+    }
+
+    fn record_direct_fallback_failure(&self, now: SystemTime) {
+        if let Ok(mut guard) = self.direct_fallback_retry_after.lock() {
+            *guard = Some(now + DIRECT_FALLBACK_FAILURE_BACKOFF);
+        }
+    }
+
+    fn mark_direct_fallback_retry_file(&self, path: &Path) {
+        if let Ok(mut guard) = self.direct_fallback_retry_files.lock() {
+            guard.insert(path.to_path_buf());
+        }
+    }
+
+    fn clear_direct_fallback_retry_file(&self, path: &Path) {
+        if let Ok(mut guard) = self.direct_fallback_retry_files.lock() {
+            guard.remove(path);
+        }
+    }
+
+    fn is_direct_fallback_retry_file(&self, path: &Path) -> bool {
+        self.direct_fallback_retry_files
+            .lock()
+            .map(|guard| guard.contains(path))
+            .unwrap_or(false)
+    }
+
+    fn record_direct_fallback_success(&self, path: &Path) {
+        self.clear_direct_fallback_retry_file(path);
+        if let Ok(mut guard) = self.direct_fallback_retry_after.lock() {
+            *guard = None;
+        }
     }
 
     pub fn append(&self, source: &str, stream: LogStream, line: &str) {
@@ -871,39 +920,42 @@ pub fn spawn_flush_task(
                 continue;
             }
 
-            if let Some((base_url, host_token)) = local_state.as_ref() {
-                let (batches, dropped) = build_event_batches(events.clone());
-                if dropped > 0 {
-                    eprintln!(
-                        "[debug-logs-forwarder] dropped {dropped} oversized debug log event(s)"
-                    );
-                }
+            let direct_retry_only = forwarder.is_direct_fallback_retry_file(&file);
+            if !direct_retry_only {
+                if let Some((base_url, host_token)) = local_state.as_ref() {
+                    let (batches, dropped) = build_event_batches(events.clone());
+                    if dropped > 0 {
+                        eprintln!(
+                            "[debug-logs-forwarder] dropped {dropped} oversized debug log event(s)"
+                        );
+                    }
 
-                let mut local_delivered = true;
-                for chunk_vec in batches {
-                    let batch_id = Uuid::new_v4().to_string();
-                    match post_batch(base_url, host_token, &batch_id, chunk_vec) {
-                        Ok(LocalPostResult::CloudUploaded) => {}
-                        Ok(LocalPostResult::CloudNotUploaded) => {
-                            eprintln!(
-                                "[debug-logs-forwarder] local debug-log post did not confirm cloud upload, trying direct fallback"
-                            );
-                            local_delivered = false;
-                            break;
-                        }
-                        Err(error) => {
-                            eprintln!(
-                                "[debug-logs-forwarder] local debug-log post failed: {error}, trying direct fallback"
-                            );
-                            local_delivered = false;
-                            break;
+                    let mut local_delivered = true;
+                    for chunk_vec in batches {
+                        let batch_id = Uuid::new_v4().to_string();
+                        match post_batch(base_url, host_token, &batch_id, chunk_vec) {
+                            Ok(LocalPostResult::CloudUploaded) => {}
+                            Ok(LocalPostResult::CloudNotUploaded) => {
+                                eprintln!(
+                                    "[debug-logs-forwarder] local debug-log post did not confirm cloud upload, trying direct fallback"
+                                );
+                                local_delivered = false;
+                                break;
+                            }
+                            Err(error) => {
+                                eprintln!(
+                                    "[debug-logs-forwarder] local debug-log post failed: {error}, trying direct fallback"
+                                );
+                                local_delivered = false;
+                                break;
+                            }
                         }
                     }
-                }
 
-                if local_delivered {
-                    let _ = fs::remove_file(&file);
-                    continue;
+                    if local_delivered {
+                        let _ = fs::remove_file(&file);
+                        continue;
+                    }
                 }
             }
 
@@ -913,6 +965,7 @@ pub fn spawn_flush_task(
                 .cloned()
                 .collect::<Vec<_>>();
             if direct_events.is_empty() {
+                forwarder.clear_direct_fallback_retry_file(&file);
                 continue;
             }
 
@@ -920,6 +973,10 @@ pub fn spawn_flush_task(
                 eprintln!("[debug-logs-forwarder] direct fallback skipped: missing cloud diagnostics context");
                 continue;
             };
+            if !forwarder.should_attempt_direct_fallback(SystemTime::now()) {
+                forwarder.mark_direct_fallback_retry_file(&file);
+                continue;
+            }
 
             let retained_events = events
                 .iter()
@@ -944,6 +1001,8 @@ pub fn spawn_flush_task(
                     forwarder.boot_id(),
                 ) {
                     eprintln!("[debug-logs-forwarder] direct fallback delivery failed: {error}");
+                    forwarder.record_direct_fallback_failure(SystemTime::now());
+                    forwarder.mark_direct_fallback_retry_file(&file);
                     direct_delivered = false;
                     break;
                 }
@@ -953,10 +1012,13 @@ pub fn spawn_flush_task(
                 continue;
             }
 
+            forwarder.record_direct_fallback_success(&file);
             if retained_events.is_empty() {
                 let _ = fs::remove_file(&file);
             } else if let Err(error) = write_events_file(&file, &retained_events) {
-                eprintln!("[debug-logs-forwarder] failed to retain non-direct debug log events: {error}");
+                eprintln!(
+                    "[debug-logs-forwarder] failed to retain non-direct debug log events: {error}"
+                );
             }
         }
     });
@@ -1155,6 +1217,30 @@ mod tests {
             "stream": "diagnostic",
             "payload": { "eventType": "unbounded:custom" },
         })));
+    }
+
+    #[test]
+    fn direct_fallback_failure_backs_off_and_success_clears_backoff() {
+        let dir = tempdir().unwrap();
+        let forwarder = DebugLogsForwarder::new(dir.path().to_path_buf());
+        let flushing_file = dir.path().join("flushing-a.jsonl");
+        let now = UNIX_EPOCH + Duration::from_secs(1_000);
+
+        assert!(forwarder.should_attempt_direct_fallback(now));
+        assert!(!forwarder.is_direct_fallback_retry_file(&flushing_file));
+
+        forwarder.record_direct_fallback_failure(now);
+        forwarder.mark_direct_fallback_retry_file(&flushing_file);
+        assert!(!forwarder.should_attempt_direct_fallback(
+            now + DIRECT_FALLBACK_FAILURE_BACKOFF - Duration::from_secs(1)
+        ));
+        assert!(forwarder.should_attempt_direct_fallback(now + DIRECT_FALLBACK_FAILURE_BACKOFF));
+        assert!(forwarder.is_direct_fallback_retry_file(&flushing_file));
+
+        forwarder.record_direct_fallback_failure(now);
+        forwarder.record_direct_fallback_success(&flushing_file);
+        assert!(forwarder.should_attempt_direct_fallback(now));
+        assert!(!forwarder.is_direct_fallback_retry_file(&flushing_file));
     }
 
     #[test]
