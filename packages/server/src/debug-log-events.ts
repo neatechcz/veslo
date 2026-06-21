@@ -31,6 +31,7 @@ export interface DebugLogUploadRequest extends DebugLogBatch {}
 export interface DebugLogUploadResponse {
   ok?: boolean;
   acceptedBatchIds: string[];
+  cloudUploadEnabled?: boolean;
 }
 
 export interface DebugLogUploadRetryPolicy {

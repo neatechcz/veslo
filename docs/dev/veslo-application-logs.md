@@ -143,7 +143,7 @@ done
 
 ## Den Debug-Log Ingest
 
-Den accepts uploaded debug-log batches at `POST /v1/internal/debug-logs`. This is the application-queryable debug-log store: metadata is queryable, while payload content is encrypted and returned only through admin read paths.
+Den accepts uploaded debug-log batches at `POST /v1/internal/debug-logs` for server-to-server `veslo-server` shipping and at `POST /v1/desktop-diagnostics` for signed-in desktop fallback diagnostics when the local server is unavailable or not a trusted carrier. Both routes write to the application-queryable debug-log store: metadata is queryable, while payload content is encrypted and returned only through admin read paths.
 
 Configuration lives in the Den container environment:
 

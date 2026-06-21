@@ -352,7 +352,7 @@ Veslo server exposes a host-token-protected ingest route the desktop shell uses 
 
 Route:
 
-- `POST /debug-logs` — auth: host (`x-veslo-host-token`). Body: `{ batchId: string, events: DebugLogEvent[] }` validated by `validateDebugLogBatch` in `debug-log-events.ts` (1–1000 events per batch). Success returns `202 Accepted` with `{ ok: true, acceptedBatchIds: [batchId] }` after validation; durable spool append continues asynchronously so log forwarding cannot block server health or UI routes. Validation failures return `400 invalid_batch` with a list of issues.
+- `POST /debug-logs` — auth: host (`x-veslo-host-token`). Body: `{ batchId: string, events: DebugLogEvent[] }` validated by `validateDebugLogBatch` in `debug-log-events.ts` (1–1000 events per batch). Success returns `202 Accepted` with `{ ok: true, acceptedBatchIds: [batchId], cloudUploadEnabled: boolean }`. When `cloudUploadEnabled` is true, the route has durably appended the batch before returning so the desktop may delete its local copy. When false, the desktop keeps or directly uploads eligible bootstrap/server-launch diagnostics. Validation failures return `400 invalid_batch` with a list of issues.
 
 Event shape (single source of truth: `packages/server/src/debug-log-events.ts`):
 
@@ -376,7 +376,7 @@ interface DebugLogEvent {
 
 Behavior the desktop shell relies on:
 
-- The endpoint accepts and persists batches even when remote ingest is disabled. With `VESLO_LOG_INGEST_URL`/`VESLO_LOG_INGEST_TOKEN` unset the server keeps events in a local spool; once both are set the uploader drains the spool on the next flush tick.
+- The endpoint reports whether veslo-server is configured as a cloud-capable carrier. With `VESLO_LOG_INGEST_URL`/`VESLO_LOG_INGEST_TOKEN` unset, the route returns `cloudUploadEnabled: false`; the desktop direct diagnostics fallback is responsible for eligible bootstrap/server-launch delivery after login.
 - Server-originated events (`source: "veslo-server-self"` for logger output, `source: "audit"` for audit entries) join the same pipeline, so the desktop only needs to forward what it captures itself.
 - Workspace/session/run identifiers are forwarded as-is. Server does not enrich them — the remote ingest (Den) is expected to derive any missing context from host token metadata.
 

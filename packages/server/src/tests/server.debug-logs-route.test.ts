@@ -127,6 +127,27 @@ test("POST /debug-logs without host token returns 401/403", async () => {
 });
 
 test("POST /debug-logs with host token accepts a valid batch (202)", async () => {
+  const { server } = await startFixture({ debugLogUpload: true });
+  const response = await fetch(`http://127.0.0.1:${server.port}/debug-logs`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-veslo-host-token": "host-token",
+    },
+    body: JSON.stringify(makeBatch()),
+  });
+  expect(response.status).toBe(202);
+  const payload = await response.json() as {
+    ok: boolean;
+    acceptedBatchIds: string[];
+    cloudUploadEnabled: boolean;
+  };
+  expect(payload.ok).toBe(true);
+  expect(payload.acceptedBatchIds).toEqual(["batch-1"]);
+  expect(payload.cloudUploadEnabled).toBe(true);
+});
+
+test("POST /debug-logs reports disabled cloud upload while accepting a valid batch", async () => {
   const { server } = await startFixture();
   const response = await fetch(`http://127.0.0.1:${server.port}/debug-logs`, {
     method: "POST",
@@ -137,9 +158,14 @@ test("POST /debug-logs with host token accepts a valid batch (202)", async () =>
     body: JSON.stringify(makeBatch()),
   });
   expect(response.status).toBe(202);
-  const payload = await response.json() as { ok: boolean; acceptedBatchIds: string[] };
+  const payload = await response.json() as {
+    ok: boolean;
+    acceptedBatchIds: string[];
+    cloudUploadEnabled: boolean;
+  };
   expect(payload.ok).toBe(true);
   expect(payload.acceptedBatchIds).toEqual(["batch-1"]);
+  expect(payload.cloudUploadEnabled).toBe(false);
 });
 
 test("POST /debug-logs does not spool its own request log", async () => {
