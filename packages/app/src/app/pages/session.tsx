@@ -256,7 +256,7 @@ export type SessionViewProps = {
   soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
   openCreateWorkspace: () => void;
   openCreateRemoteWorkspace: () => void;
-  openNewSessionWithDirectory: () => void;
+  openNewSessionWithDirectory: () => Promise<boolean | void> | boolean | void;
   openDirectorySessionFromPicker: () => void;
   openPendingDirectoryDraftInWorkspace: (workspaceId: string) => void;
   canChooseSessionFolder: boolean;
@@ -483,6 +483,8 @@ export default function SessionView(props: SessionViewProps) {
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
+  const [newSessionBusy, setNewSessionBusy] = createSignal(false);
+  const [newSessionError, setNewSessionError] = createSignal<string | null>(null);
 
   const [sessionMenuOpen, setSessionMenuOpen] = createSignal(false);
   const [deleteSessionOpen, setDeleteSessionOpen] = createSignal(false);
@@ -525,6 +527,22 @@ export default function SessionView(props: SessionViewProps) {
   const selectedSessionTitle = createMemo(() =>
     props.selectedSessionTitle?.trim() || selectedSessionSidebarItem()?.title?.trim() || "",
   );
+  const openNewSessionFromEmptyState = async () => {
+    if (newSessionBusy()) return;
+    setNewSessionError(null);
+    setNewSessionBusy(true);
+    try {
+      const opened = await props.openNewSessionWithDirectory();
+      if (opened === false) {
+        setNewSessionError(tr("session.open_chat_failed"));
+      }
+    } catch (error) {
+      setNewSessionError(error instanceof Error ? error.message : tr("session.open_chat_failed"));
+    } finally {
+      setNewSessionBusy(false);
+    }
+  };
+  const newSessionDisplayError = createMemo(() => props.error ?? newSessionError());
   const sessionTitlebarContextModel = createMemo(() => {
     const rootPath = props.activeWorkspaceRoot.trim();
     return resolveSessionTitlebarContext({
@@ -4944,14 +4962,23 @@ export default function SessionView(props: SessionViewProps) {
                 <div class="mt-6 flex justify-center">
                   <button
                     type="button"
-                    class="font-product type-ui-md rounded-2xl border border-gray-7 bg-gray-12 px-4 py-3 font-semibold text-gray-1 transition-colors hover:bg-gray-11"
+                    class="font-product type-ui-md inline-flex items-center gap-2 rounded-2xl border border-gray-7 bg-gray-12 px-4 py-3 font-semibold text-gray-1 transition-colors hover:bg-gray-11 disabled:cursor-not-allowed disabled:opacity-70"
+                    disabled={newSessionBusy()}
                     onClick={() => {
-                      void props.openNewSessionWithDirectory();
+                      void openNewSessionFromEmptyState();
                     }}
                   >
+                    <Show when={newSessionBusy()}>
+                      <Loader2 size={14} class="animate-spin" />
+                    </Show>
                     {tr("session.new_session_label")}
                   </button>
                 </div>
+                <Show when={newSessionDisplayError()}>
+                  <p class="font-reading type-ui-sm mt-4 text-red-11">
+                    {newSessionDisplayError()}
+                  </p>
+                </Show>
               </div>
             </Show>
             <Show when={showSessionLoadingState()}>

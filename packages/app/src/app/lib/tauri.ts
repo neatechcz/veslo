@@ -888,6 +888,24 @@ export async function engineInstall(): Promise<ExecResult> {
   return invoke<ExecResult>("engine_install");
 }
 
+export async function wslSandboxRepair(options?: {
+  checkOnly?: boolean;
+  force?: boolean;
+}): Promise<ExecResult> {
+  return invoke<ExecResult>("wsl_sandbox_repair", {
+    checkOnly: options?.checkOnly ?? false,
+    force: options?.force ?? false,
+  });
+}
+
+export async function wslPrerequisitesRepair(options?: {
+  checkOnly?: boolean;
+}): Promise<ExecResult> {
+  return invoke<ExecResult>("wsl_prerequisites_repair", {
+    checkOnly: options?.checkOnly ?? false,
+  });
+}
+
 export async function opkgInstall(projectDir: string, pkg: string): Promise<ExecResult> {
   return invoke<ExecResult>("opkg_install", { projectDir, package: pkg });
 }

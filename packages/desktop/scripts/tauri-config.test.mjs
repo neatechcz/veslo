@@ -65,6 +65,11 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
     "MSI must bundle the managed WSL provisioning helper into the app resources directory",
   );
   assert.equal(
+    resources["windows/wsl2-prerequisite-installer.ps1"],
+    "wsl2-prerequisite-installer.ps1",
+    "MSI must bundle the phase-1 WSL prerequisite helper for first-run repair",
+  );
+  assert.equal(
     resources["windows/wsl2-sandbox-installer.ps1"],
     "wsl2-sandbox-installer.ps1",
     "MSI must bundle the installer wrapper that calls the provisioning helper",
@@ -79,8 +84,10 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   );
 
   const fragmentPath = resolve(srcTauriDir, "windows/wsl2-sandbox-installer.wxs");
+  const prerequisitePath = resolve(srcTauriDir, "windows/wsl2-prerequisite-installer.ps1");
   const wrapperPath = resolve(srcTauriDir, "windows/wsl2-sandbox-installer.ps1");
   assert.ok(existsSync(fragmentPath), "Expected the WSL provisioning WiX fragment to exist");
+  assert.ok(existsSync(prerequisitePath), "Expected the WSL prerequisite installer helper to exist");
   assert.ok(existsSync(wrapperPath), "Expected the WSL provisioning installer wrapper to exist");
 
   const fragment = readFileSync(fragmentPath, "utf8");
@@ -89,5 +96,9 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   assert.match(fragment, /After="InstallFiles"/);
   assert.match(fragment, /Return="ignore"/);
   assert.match(fragment, /wsl2-sandbox-installer\.ps1/);
+  const prerequisite = readFileSync(prerequisitePath, "utf8");
+  assert.match(prerequisite, /wsl\.exe"\s+@\("--install",\s+"--no-distribution"\)/);
+  assert.match(prerequisite, /Microsoft-Windows-Subsystem-Linux/);
+  assert.match(prerequisite, /VirtualMachinePlatform/);
   assert.match(readFileSync(wrapperPath, "utf8"), /package\.json/);
 });

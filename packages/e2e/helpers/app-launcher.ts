@@ -35,7 +35,7 @@ const CUSTOM_BINARY_PATH = process.env.E2E_TAURI_BINARY?.trim() ?? '';
 const CUSTOM_OPENCODE_HOME = process.env.E2E_OPENCODE_HOME?.trim() ?? '';
 const ISOLATED_PROFILE_ROOT = join(resolveDesktopRoot(), '..', 'e2e', '.tmp-veslo-home');
 const PILOT_RUNTIME_ID = createHash('sha1').update(resolveDesktopRoot()).digest('hex').slice(0, 12);
-const DEFAULT_PILOT_RUNTIME_DIR = join('/tmp', `veslo-pilot-${PILOT_RUNTIME_ID}`);
+const DEFAULT_PILOT_RUNTIME_DIR = posix.join('/tmp', `veslo-pilot-${PILOT_RUNTIME_ID}`);
 const APP_IDENTIFIERS = [
   'com.neatech.veslo',
   'com.neatech.veslo.dev',
@@ -62,6 +62,7 @@ type TerminateAppProcessResult = {
 type AppLaunchEnvOptions = {
   platform?: NodeJS.Platform;
   vesloServerPort?: number;
+  pilotRuntimeDir?: string;
   opencodeHome: string;
   snapshotPath: string;
   denApiBase?: string | null;
@@ -119,7 +120,7 @@ export function resolvePilotSocketPath(options: ResolvePilotSocketPathOptions = 
   }
 
   const runtimeDir = options.runtimeDir ?? env.XDG_RUNTIME_DIR ?? resolvePilotRuntimeDir({ env, platform });
-  return join(runtimeDir, `tauri-pilot-${identifier}.sock`);
+  return posix.join(runtimeDir, `tauri-pilot-${identifier}.sock`);
 }
 
 function preparePilotRuntimeDir(dir: string): void {
@@ -223,6 +224,12 @@ export function createAppLaunchEnv(
 ): NodeJS.ProcessEnv {
   const platform = options.platform ?? process.platform;
   const joinForPlatform = platform === 'win32' ? win32.join : posix.join;
+  const pilotRuntimeDir = options.pilotRuntimeDir ?? resolvePilotRuntimeDir({ platform });
+  const pilotSocket = resolvePilotSocketPath({
+    env: baseEnv,
+    platform,
+    runtimeDir: pilotRuntimeDir,
+  });
   const vesloDataDir = joinForPlatform(options.opencodeHome, '.veslo');
   const vesloAppDataDir = joinForPlatform(vesloDataDir, 'app-data');
   const vesloAppLocalDataDir = joinForPlatform(vesloDataDir, 'app-local-data');
@@ -235,6 +242,7 @@ export function createAppLaunchEnv(
     VESLO_APP_DATA_DIR: vesloAppDataDir,
     VESLO_APP_LOCAL_DATA_DIR: vesloAppLocalDataDir,
     VESLO_DEN_AUTH_SNAPSHOT_PATH: options.snapshotPath,
+    ...(options.vesloServerPort ? { VESLO_DESKTOP_SERVER_PORT: String(options.vesloServerPort) } : {}),
     ...(denApiBase ? { VESLO_DEN_API_BASE: denApiBase } : {}),
   };
 
@@ -536,23 +544,7 @@ export async function ensureWebDriverReady(
   );
 }
 
-export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
-  if (await hasReadyWebDriverServer(port)) {
-    if (shouldUseManagedAiGatewayFixture() || shouldUseGoogleMcpCatalogFixture()) {
-      const fixtureNames = [
-        shouldUseManagedAiGatewayFixture() ? 'E2E_MANAGED_AI_GATEWAY_FIXTURE=1' : null,
-        shouldUseGoogleMcpCatalogFixture() ? 'E2E_GOOGLE_MCP_CATALOG_FIXTURE=1' : null,
-      ].filter(Boolean).join(' and ');
-      throw new Error(
-        `Refusing to reuse an existing WebDriver server on port ${port} while ${fixtureNames}. Stop the existing desktop app before running the fixture spec.`,
-      );
-    }
-    console.log(`[e2e] Reusing existing WebDriver server on port ${port}.`);
-    appProcess = null;
-    appProcessOwnedByHarness = false;
-    return;
-  }
-
+export async function startApp(port: number = resolveWebDriverPort()): Promise<void> {
   const binaryPath = resolveBinaryPath();
   const pilotRuntimeDir = resolvePilotRuntimeDir();
   preparePilotRuntimeDir(pilotRuntimeDir);

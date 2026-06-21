@@ -1,9 +1,10 @@
 use std::env;
+use std::fs;
 use std::net::TcpListener;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use tauri::async_runtime::Receiver;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::supervised_process::{self, CommandEvent, SupervisedCommandChild};
 
@@ -268,6 +269,29 @@ fn resolve_server_sandbox_backend() -> String {
     )
 }
 
+fn server_cwd_for_workspace_paths(app: &AppHandle, workspace_paths: &[String]) -> PathBuf {
+    if let Some(path) = workspace_paths
+        .first()
+        .map(|path| path.trim())
+        .filter(|path| !path.is_empty())
+    {
+        return PathBuf::from(path);
+    }
+
+    if let Ok(app_data_dir) = app.path().app_data_dir() {
+        if let Err(error) = fs::create_dir_all(&app_data_dir) {
+            println!(
+                "[veslo-server] warning: failed to create app data cwd {}: {error}",
+                app_data_dir.display()
+            );
+        } else {
+            return app_data_dir;
+        }
+    }
+
+    PathBuf::from(".")
+}
+
 pub fn spawn_veslo_server(
     app: &AppHandle,
     host: &str,
@@ -310,10 +334,7 @@ pub fn spawn_veslo_server(
             Ok(command) => command,
             Err(_) => supervised_process::command(app, "veslo-server"),
         };
-        let cwd = workspace_paths
-            .first()
-            .map(|path| Path::new(path))
-            .unwrap_or_else(|| Path::new("."));
+        let cwd = server_cwd_for_workspace_paths(app, workspace_paths);
         command.args(server_args).current_dir(cwd)
     }
     .env("VESLO_MANAGED_AI_BASE_URL", resolve_managed_ai_base_url());

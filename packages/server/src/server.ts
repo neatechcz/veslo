@@ -3071,6 +3071,45 @@ function parseSessionTranscriptDeletedParts(input: unknown): Record<string, stri
   return deletedPartsByMessageId;
 }
 
+function readTranscriptMessageInfo(message: unknown): Record<string, unknown> | null {
+  if (!isRecordLike(message)) return null;
+  return isRecordLike(message.info) ? message.info : message;
+}
+
+function readTranscriptString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function readPositiveTranscriptNumber(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function transcriptAssistantMessageIsTerminal(info: Record<string, unknown>): boolean {
+  const time = isRecordLike(info.time) ? info.time : null;
+  if (time && readPositiveTranscriptNumber(time.completed) !== null) return true;
+  if (isRecordLike(info.error)) return true;
+  if (readTranscriptString(info.finish)) return true;
+  return false;
+}
+
+function transcriptLatestAssistantLooksTerminal(messages: unknown[]): boolean {
+  if (messages.length === 0) return false;
+  const latestInfo = readTranscriptMessageInfo(messages[messages.length - 1]);
+  if (!latestInfo) return false;
+  if (readTranscriptString(latestInfo.role) !== "assistant") return false;
+  return transcriptAssistantMessageIsTerminal(latestInfo);
+}
+
+function transcriptReasonSignalsIdle(reason: string): boolean {
+  const normalized = reason.trim().toLowerCase();
+  return normalized.includes("session.idle") || normalized.includes("session.error");
+}
+
+function shouldReconcileLifecycleAfterTranscriptAppend(messages: unknown[], reason: string): boolean {
+  return transcriptReasonSignalsIdle(reason) || transcriptLatestAssistantLooksTerminal(messages);
+}
+
 function isRecordLike(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -5112,7 +5151,12 @@ function createRoutes(
     delayMs = 0,
   ) => {
     const key = conversationQueueKey(workspaceId, conversationId);
-    if (conversationQueueDrainTimers.has(key)) return;
+    const existing = conversationQueueDrainTimers.get(key);
+    if (existing) {
+      if (delayMs > 0) return;
+      clearTimeout(existing);
+      conversationQueueDrainTimers.delete(key);
+    }
     const timer = setTimeout(() => {
       conversationQueueDrainTimers.delete(key);
       void drainConversationQueue(workspaceId, conversationId);
@@ -5289,6 +5333,46 @@ function createRoutes(
       conversationQueueDrainInFlight.delete(key);
     }
   }
+
+  const reconcileConversationLifecycleAfterTranscriptAppend = (input: {
+    workspace: WorkspaceInfo;
+    conversationId: string;
+    sessionId: string;
+    reason: string;
+    shouldReconcile: boolean;
+  }) => {
+    if (!input.shouldReconcile) return;
+    const conversationId = input.conversationId.trim();
+    if (!conversationId) return;
+    const lifecycleOwner = input.workspace.workspaceType === "remote" ? null : lifecycleClient;
+    if (!lifecycleOwner) return;
+
+    void (async () => {
+      try {
+        const latest = await lifecycleOwner.status(input.workspace.id, conversationId, "latest");
+        recordSendWorkflowTrace("server", "server:conversation-run:transcript-reconcile", {
+          workspaceId: input.workspace.id,
+          conversationId,
+          sessionId: input.sessionId,
+          reason: input.reason || null,
+          runId: latest?.runId ?? null,
+          status: latest?.status ?? null,
+          stale: latest?.stale ?? null,
+        });
+        if (latest && !isActiveLifecycleStatus(latest.status)) {
+          scheduleConversationQueueDrain(input.workspace.id, conversationId, 0);
+        }
+      } catch (error) {
+        recordSendWorkflowTrace("server", "server:conversation-run:transcript-reconcile-error", {
+          workspaceId: input.workspace.id,
+          conversationId,
+          sessionId: input.sessionId,
+          reason: input.reason || null,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+  };
 
   for (const pending of conversationRunQueueStore.pendingConversationKeys()) {
     scheduleConversationQueueDrain(pending.workspaceId, pending.conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
@@ -6409,13 +6493,16 @@ function createRoutes(
       throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
     }
 
+    const messages = parseSessionTranscriptMessages(body.messages);
+    const partsByMessageId = parseSessionTranscriptParts(body.partsByMessageId);
+    const reason = optionalBodyString(body, "reason") ?? "";
     const result = await conversationService.appendTranscript({
       workspace,
       sessionId,
       directory,
       limit: parseSessionTranscriptLimit(body.limit),
-      messages: parseSessionTranscriptMessages(body.messages),
-      partsByMessageId: parseSessionTranscriptParts(body.partsByMessageId),
+      messages,
+      partsByMessageId,
       deletedMessageIds: parseTranscriptStringArray(body.deletedMessageIds, "deletedMessageIds"),
       deletedPartsByMessageId: parseSessionTranscriptDeletedParts(body.deletedPartsByMessageId),
     });
@@ -6431,6 +6518,13 @@ function createRoutes(
         directory,
       });
     }
+    reconcileConversationLifecycleAfterTranscriptAppend({
+      workspace,
+      conversationId: result.conversationId ?? binding?.conversationId ?? sessionId,
+      sessionId: result.opencodeSessionId,
+      reason,
+      shouldReconcile: shouldReconcileLifecycleAfterTranscriptAppend(messages, reason),
+    });
     return jsonResponse(result);
   });
 

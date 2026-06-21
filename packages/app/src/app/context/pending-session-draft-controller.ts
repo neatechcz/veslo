@@ -286,7 +286,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
   const openNewSessionWithDirectory = async () => {
     if (!deps.isTauriRuntime()) {
       await deps.createSessionAndOpen();
-      return;
+      return true;
     }
 
     try {
@@ -317,7 +317,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
               setActivePendingDraftMeta(existingPendingDraft);
               restorePendingDraftComposer(newPrivatePendingDraftKey, pendingDraft.draft.composer);
               deps.setView("session");
-              return;
+              return true;
             }
           }
         } else {
@@ -327,7 +327,10 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
       }
 
       const scratch = await deps.workspace.createScratchWorkspace();
-      if (!scratch?.id) return;
+      if (!scratch?.id) {
+        deps.setError("Failed to create a private chat workspace.");
+        return false;
+      }
 
       const cleanupFreshScratchWorkspace = async () => {
         const cleanupSucceeded = await deps.workspace.forgetWorkspace(scratch.id, { deleteLocalData: true });
@@ -344,7 +347,8 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
         });
         if (!activatedScratchWorkspace) {
           await cleanupFreshScratchWorkspace();
-          return;
+          deps.setError("Failed to activate the private chat workspace.");
+          return false;
         }
         const pendingDraft = await deps.pendingSessionDraftsPut({
           id: `pending-new-private-${scratch.id}`,
@@ -360,7 +364,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
         setActivePendingDraftMeta(pendingDraft);
         restorePendingDraftComposer(newPrivatePendingDraftKey, emptyPendingDraft);
         deps.setView("session");
-        return;
+        return true;
       } catch (error) {
         await cleanupFreshScratchWorkspace();
         throw error;
@@ -369,6 +373,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
       deps.reportError(error, "pendingDrafts.newPrivate");
       const message = error instanceof Error ? error.message : deps.safeStringify(error);
       deps.setError(deps.addOpencodeCacheHint(message));
+      return false;
     }
   };
 

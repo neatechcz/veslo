@@ -105,6 +105,16 @@ describe("run registry", () => {
     expect((await registry.get("ws-a", "run-a"))?.record.status).toBe("completed");
   });
 
+  test("active read reconciles stale active rows and returns no active run after completion", async () => {
+    const { registry, store } = createRegistry(() => ({ active: false }));
+    await registry.register(input);
+
+    const active = await registry.active("ws-a", "conv-a");
+
+    expect(active).toBeNull();
+    expect(store.get("ws-a", "run-a")?.status).toBe("completed");
+  });
+
   test("register keeps blocking when an active run probe is unreachable", async () => {
     const { registry } = createRegistry(() => ({ unreachable: true }));
     await registry.register(input);
@@ -136,5 +146,16 @@ describe("run registry", () => {
 
     expect(reconciled?.record.status).toBe("running");
     expect(reconciled?.stale).toBe(true);
+  });
+
+  test("active read remains active when the probe is unreachable", async () => {
+    const { registry } = createRegistry(() => ({ unreachable: true }));
+    await registry.register(input);
+
+    const active = await registry.active("ws-a", "conv-a");
+
+    expect(active?.record.runId).toBe("run-a");
+    expect(active?.record.status).toBe("running");
+    expect(active?.stale).toBe(true);
   });
 });

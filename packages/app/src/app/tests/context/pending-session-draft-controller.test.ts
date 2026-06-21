@@ -98,14 +98,67 @@ test("pending draft controller reopens an existing private draft without creatin
         addOpencodeCacheHint: (message) => message,
       });
 
-      await controller.openNewSessionWithDirectory();
+      const opened = await controller.openNewSessionWithDirectory();
 
       const pendingKey = resolvePendingDraftKey({ kind: "new-private" });
+      assert.equal(opened, true);
       assert.deepEqual(activatedWorkspaces, ["scratch-1"]);
       assert.equal(controller.activePendingDraftKey(), pendingKey);
       assert.equal(controller.activePendingDraftMeta()?.id, existingDraft.id);
       assert.equal(composerDrafts[pendingKey]?.text, "remember this");
       assert.deepEqual(views, ["session"]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("pending draft controller reports failure when scratch workspace creation fails", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const errors: string[] = [];
+
+      const controller = createPendingSessionDraftController({
+        isTauriRuntime: () => true,
+        createSessionAndOpen: async () => {
+          throw new Error("web fallback should not create a real session on desktop");
+        },
+        createEmptyComposerDraft: () => draft(""),
+        pendingSessionDraftsList: async () => [],
+        pendingSessionDraftsGet: async () => null,
+        pendingSessionDraftsPut: async () => {
+          throw new Error("scratch creation failure should not persist a draft");
+        },
+        pendingSessionDraftsDelete: async () => true,
+        workspace: {
+          activeWorkspaceId: () => "",
+          activeWorkspaceDisplay: () => ({}),
+          workspaces: () => [],
+          activateWorkspace: async () => {
+            throw new Error("scratch creation failure should not activate a workspace");
+          },
+          createScratchWorkspace: async () => null,
+          forgetWorkspace: async () => true,
+          pickWorkspaceFolder: async () => null,
+          ensureWorkspaceForFolder: async () => null,
+        },
+        publishRegisteredWorkspaceToSidebar: () => undefined,
+        setComposerDraftBySessionId: () => undefined,
+        setView: () => undefined,
+        setError: (message) => {
+          if (message) errors.push(message);
+        },
+        reportError: (error) => {
+          throw error instanceof Error ? error : new Error(String(error));
+        },
+        safeStringify: (value) => String(value),
+        addOpencodeCacheHint: (message) => message,
+      });
+
+      const opened = await controller.openNewSessionWithDirectory();
+
+      assert.equal(opened, false);
+      assert.deepEqual(errors, ["Failed to create a private chat workspace."]);
     } finally {
       dispose();
     }

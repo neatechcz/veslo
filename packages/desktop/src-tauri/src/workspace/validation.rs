@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -96,22 +97,29 @@ fn canonicalize_existing_or_parent(
         return Err(format!("path does not exist: {}", candidate.display()));
     }
 
-    // NotSystemPath: canonicalize the parent and re-join the leaf.
-    let parent = candidate
-        .parent()
-        .ok_or_else(|| "path must have a parent directory".to_string())?;
-    if !parent.exists() {
-        return Err(format!(
-            "parent directory does not exist: {}",
-            parent.display()
-        ));
+    // NotSystemPath: create operations may target a nested path whose parent
+    // hierarchy does not exist yet, especially for fresh profile private
+    // workspaces. Canonicalize the nearest existing ancestor and append the
+    // missing suffix so system-directory checks still run against a resolved
+    // absolute path.
+    let mut missing_components: Vec<OsString> = Vec::new();
+    let mut existing = candidate;
+    while !existing.exists() {
+        let leaf = existing
+            .file_name()
+            .ok_or_else(|| "path must have an existing ancestor directory".to_string())?;
+        missing_components.push(leaf.to_os_string());
+        existing = existing
+            .parent()
+            .ok_or_else(|| "path must have an existing ancestor directory".to_string())?;
     }
-    let parent_canonical =
-        fs::canonicalize(parent).map_err(|e| format!("Failed to resolve parent: {e}"))?;
-    let leaf = candidate
-        .file_name()
-        .ok_or_else(|| "path must have a final component".to_string())?;
-    Ok(parent_canonical.join(leaf))
+
+    let mut resolved =
+        fs::canonicalize(existing).map_err(|e| format!("Failed to resolve parent: {e}"))?;
+    for component in missing_components.iter().rev() {
+        resolved.push(component);
+    }
+    Ok(resolved)
 }
 
 /// Aggregate `authorized_roots` from every registered workspace's `.opencode/veslo.json`.
@@ -207,4 +215,51 @@ fn system_path_prefixes() -> Vec<PathBuf> {
         PathBuf::from(r"C:\Program Files (x86)"),
         PathBuf::from(r"C:\ProgramData"),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "veslo-validation-{name}-{}-{suffix}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn not_system_path_allows_missing_parent_chain() {
+        let root = unique_temp_dir("missing-parent-chain");
+        fs::create_dir_all(&root).expect("create temp root");
+        let candidate = root.join("private-workspaces").join("scratch");
+
+        let resolved = canonicalize_existing_or_parent(&candidate, ValidationMode::NotSystemPath)
+            .expect("resolve create target with missing parent chain");
+
+        assert_eq!(
+            resolved,
+            fs::canonicalize(&root)
+                .unwrap()
+                .join("private-workspaces")
+                .join("scratch")
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn registered_workspace_mode_still_requires_existing_path() {
+        let root = unique_temp_dir("registered-missing");
+        let missing = root.join("workspace");
+
+        let error =
+            canonicalize_existing_or_parent(&missing, ValidationMode::IsRegisteredWorkspace)
+                .expect_err("registered workspace validation requires an existing path");
+
+        assert!(error.contains("path does not exist"));
+    }
 }

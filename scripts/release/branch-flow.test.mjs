@@ -26,6 +26,16 @@ test("release ship pushes main to origin", () => {
   assert.match(script, /Pushed main/);
 });
 
+test("release prepare pins SOURCE_DATE_EPOCH before release review", () => {
+  const scriptPath = resolve(import.meta.dirname, "./prepare.mjs");
+  const script = readFileSync(scriptPath, "utf8");
+
+  assert.match(script, /Resolving SOURCE_DATE_EPOCH/);
+  assert.match(script, /process\.env\.SOURCE_DATE_EPOCH/);
+  assert.match(script, /git log -1 --format=%ct/);
+  assert.match(script, /node scripts\/release\/review\.mjs --strict/);
+});
+
 test("release workflow does not publish Linux AUR packages", () => {
   const workflowPath = resolve(import.meta.dirname, "../../.github/workflows/release-macos-aarch64.yml");
   const workflow = readFileSync(workflowPath, "utf8");

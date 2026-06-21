@@ -116,6 +116,13 @@ The local Veslo server must be able to reach a ready state without an active
 workspace. Starting, recovering, or refreshing the local server must not be a
 side effect of switching the visible workspace.
 
+Fresh desktop profiles have no configured workspace yet. The desktop shell must
+therefore allow a managed `veslo-server` restart with an empty workspace list,
+using the app data directory as a stable process cwd until the first workspace is
+created. Private chat workspace creation must also create the app-owned private
+workspace root before validating or registering the nested scratch directory, so
+the first `Chat` click cannot dead-end on a missing parent directory.
+
 `Invalid bearer token` between the app and the local Veslo server is a local
 connection-state failure. It is not a message failure or a conversation failure.
 The app and desktop shell should recover the current server URL and client token

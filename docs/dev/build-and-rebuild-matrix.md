@@ -65,6 +65,14 @@ pnpm test:pilot:core-platform-skills
 
 The pilot script requires `tauri-pilot` on `PATH`, or `E2E_TAURI_PILOT_BIN=/absolute/path/to/tauri-pilot`.
 
+### Release bundle sidecars
+
+Release bundle verification must check more than `versions.json` presence. The
+macOS extracted-app verifier also requires the bundled `veslo-server`,
+`veslo-code-router`, `veslo-orchestrator`, `veslo-code`, `opencode`,
+`chrome-devtools-mcp`, and `opencode-managed-deps.json` sidecars to exist, and
+executable sidecars must have executable permissions on POSIX platforms.
+
 ## When in Doubt
 
 - If the change crosses app and server boundaries, rebuild the server binary and verify through the desktop app.
