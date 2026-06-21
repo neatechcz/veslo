@@ -45,6 +45,9 @@ import {
 import {
   DEFAULT_UPDATE_AUTO_DOWNLOAD,
   UPDATE_AUTO_DOWNLOAD_DEFAULT_OFF_MIGRATION_KEY,
+  UPDATE_INSTALL_STATE_KEY,
+  parseUpdateInstallState,
+  resolveUpdateInstallStartupStatus,
   resolveUpdateAutoDownloadDefaultOffMigration,
   resolveUpdateStartupPreferences,
   shouldAutoCheckForUpdatesAt,
@@ -11256,10 +11259,32 @@ export default function App() {
     setSubagentDecorationsReady(true);
 
     if (isTauriRuntime()) {
+      let currentAppVersion: string | null = null;
       try {
-        setAppVersion(await getVersion());
+        currentAppVersion = await getVersion();
+        setAppVersion(currentAppVersion);
       } catch {
         // ignore
+      }
+
+      if (typeof window !== "undefined") {
+        try {
+          const installStartup = resolveUpdateInstallStartupStatus({
+            storedState: parseUpdateInstallState(window.localStorage.getItem(UPDATE_INSTALL_STATE_KEY)),
+            currentVersion: currentAppVersion,
+          });
+
+          if (installStartup.action === "clear" || installStartup.action === "stale") {
+            window.localStorage.removeItem(UPDATE_INSTALL_STATE_KEY);
+          }
+
+          if (installStartup.action === "recover" || installStartup.action === "stale") {
+            setUpdateStatus(installStartup.status);
+            setLaunchUpdateCheckTriggered(true);
+          }
+        } catch {
+          // ignore
+        }
       }
 
       try {
@@ -12197,7 +12222,7 @@ export default function App() {
     if (!env.supported) return;
 
     const state = updateStatus();
-    if (state.state === "checking" || state.state === "downloading") return;
+    if (state.state === "checking" || state.state === "downloading" || state.state === "installing") return;
 
     setLaunchUpdateCheckTriggered(true);
     checkForUpdates({ quiet: true }).catch(e => reportError(e, "updates.check"));
@@ -12213,7 +12238,7 @@ export default function App() {
     const maybeRunAutoUpdateCheck = () => {
       if (!updateAutoCheck()) return;
       const state = updateStatus();
-      if (state.state === "checking" || state.state === "downloading") return;
+      if (state.state === "checking" || state.state === "downloading" || state.state === "installing") return;
       if (!shouldAutoCheckForUpdatesAt(state)) return;
       checkForUpdates({ quiet: true }).catch(e => reportError(e, "updates.check"));
     };

@@ -9,12 +9,16 @@ import {
   UPDATE_AUTO_DOWNLOAD_RETRY_DELAYS_MS,
   UPDATE_AUTO_CHECK_EVERY_MS,
   createUpdaterState,
+  createUpdateInstallState,
+  parseUpdateInstallState,
   resolveAutoDownloadFailureStatus,
   resolveAutoDownloadOptOutStatus,
   resolveNextUpdateDownloadRetry,
+  resolveUpdateInstallStartupStatus,
   resolveUpdateAutoDownloadDefaultOffMigration,
   resolveUpdateAutoDownloadPreference,
   resolveUpdateStartupPreferences,
+  shouldRelaunchAfterUpdateInstall,
   shouldAutoCheckForUpdatesAt,
 } from "../../context/updater.js";
 
@@ -26,6 +30,108 @@ test("auto-download defaults to disabled", () => {
     assert.equal(updater.updateAutoDownload(), false);
     dispose();
   });
+});
+
+test("Windows update install state is persisted with target version and start time", () => {
+  assert.deepEqual(
+    createUpdateInstallState({
+      targetVersion: "2026.6.5",
+      currentVersion: "2026.6.4",
+      startedAt: 1_800_000_000_000,
+      platform: "windows",
+    }),
+    {
+      schemaVersion: 1,
+      targetVersion: "2026.6.5",
+      currentVersion: "2026.6.4",
+      startedAt: 1_800_000_000_000,
+      platform: "windows",
+    },
+  );
+});
+
+test("startup clears completed update install state after target version launches", () => {
+  const state = createUpdateInstallState({
+    targetVersion: "2026.6.5",
+    currentVersion: "2026.6.4",
+    startedAt: 1_800_000_000_000,
+    platform: "windows",
+  });
+
+  assert.deepEqual(
+    resolveUpdateInstallStartupStatus({
+      storedState: state,
+      currentVersion: "2026.6.5",
+      now: 1_800_000_030_000,
+    }),
+    { action: "clear" },
+  );
+});
+
+test("startup keeps recent Windows updater handoff in installing state instead of re-offering update", () => {
+  const state = createUpdateInstallState({
+    targetVersion: "2026.6.5",
+    currentVersion: "2026.6.4",
+    startedAt: 1_800_000_000_000,
+    platform: "windows",
+  });
+
+  assert.deepEqual(
+    resolveUpdateInstallStartupStatus({
+      storedState: state,
+      currentVersion: "2026.6.4",
+      now: 1_800_000_030_000,
+    }),
+    {
+      action: "recover",
+      status: {
+        state: "installing",
+        lastCheckedAt: null,
+        version: "2026.6.5",
+        startedAt: 1_800_000_000_000,
+        currentVersion: "2026.6.4",
+      },
+    },
+  );
+});
+
+test("stale Windows updater handoff becomes a retryable install error", () => {
+  const state = createUpdateInstallState({
+    targetVersion: "2026.6.5",
+    currentVersion: "2026.6.4",
+    startedAt: 1_800_000_000_000,
+    platform: "windows",
+  });
+
+  assert.deepEqual(
+    resolveUpdateInstallStartupStatus({
+      storedState: state,
+      currentVersion: "2026.6.4",
+      now: 1_800_000_000_000 + 2 * 60 * 60_000 + 1,
+    }),
+    {
+      action: "stale",
+      status: {
+        state: "error",
+        lastCheckedAt: null,
+        version: "2026.6.5",
+        message:
+          "The previous update install did not finish. Restart Windows if an installer is still running, then retry the update.",
+      },
+    },
+  );
+});
+
+test("invalid persisted update install state is ignored", () => {
+  assert.equal(parseUpdateInstallState(null), null);
+  assert.equal(parseUpdateInstallState("not json"), null);
+  assert.equal(parseUpdateInstallState(JSON.stringify({ targetVersion: "2026.6.5" })), null);
+});
+
+test("Windows MSI updater handoff does not use the frontend relaunch path", () => {
+  assert.equal(shouldRelaunchAfterUpdateInstall("windows"), false);
+  assert.equal(shouldRelaunchAfterUpdateInstall("macos"), true);
+  assert.equal(shouldRelaunchAfterUpdateInstall("linux"), true);
 });
 
 test("stored auto-download preference overrides the default", () => {
@@ -56,13 +162,13 @@ test("startup update preferences keep automatic checks enabled when auto-downloa
   );
 });
 
-test("startup update preferences let explicit auto-download imply auto-check", () => {
+test("startup update preferences keep quiet checks enabled for manual and automatic downloads", () => {
   assert.deepEqual(
     resolveUpdateStartupPreferences({
       storedAutoCheck: "0",
       storedAutoDownload: null,
     }),
-    { autoCheck: false, autoDownload: false },
+    { autoCheck: true, autoDownload: false },
   );
   assert.deepEqual(
     resolveUpdateStartupPreferences({

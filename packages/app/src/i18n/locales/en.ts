@@ -825,6 +825,7 @@ export default {
   "settings.update_retrying_download": "Retrying download...",
   "settings.update_retrying_in": "Retrying in {time}",
   "settings.update_download_failed": "Update download failed",
+  "settings.update_installing": "Installing update...",
   "settings.update_ready": "Ready to install: v",
   "settings.sidebar_update_available": "Update available",
   "settings.sidebar_update_preparing": "Preparing update",

@@ -18,13 +18,16 @@ import type {
 } from "./types";
 import type { WorkspaceBusyMap } from "./context/workspace-debug";
 import { currentLocale, t } from "../i18n";
-import { addOpencodeCacheHint, isTauriRuntime, safeStringify } from "./utils";
+import { addOpencodeCacheHint, isTauriRuntime, isWindowsPlatform, safeStringify } from "./utils";
 import { mapConfigProvidersToList } from "./utils/providers";
 import {
   UPDATE_AUTO_DOWNLOAD_MAX_RETRIES,
+  UPDATE_INSTALL_STATE_KEY,
+  createUpdateInstallState,
   createUpdaterState,
   resolveAutoDownloadFailureStatus,
   resolveAutoDownloadOptOutStatus,
+  shouldRelaunchAfterUpdateInstall,
 } from "./context/updater";
 import {
   resetVesloState,
@@ -57,6 +60,26 @@ function throttle<T extends (...args: any[]) => any>(
         if (lastArgs) fn(...lastArgs);
       }, delayMs - (now - lastCall));
     }
+  }
+}
+
+function writeUpdateInstallState(state: ReturnType<typeof createUpdateInstallState>) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(UPDATE_INSTALL_STATE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore
+  }
+}
+
+function clearUpdateInstallState() {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.removeItem(UPDATE_INSTALL_STATE_KEY);
+  } catch {
+    // ignore
   }
 }
 
@@ -454,6 +477,8 @@ export function createSystemState(options: {
 
   async function checkForUpdates(optionsCheck?: { quiet?: boolean }) {
     if (!isTauriRuntime()) return;
+    if (updateStatus().state === "installing") return;
+
     const startedAt = Date.now();
     recordPerfLog(true, "workspace.updater", "check-start", {
       quiet: Boolean(optionsCheck?.quiet),
@@ -557,6 +582,7 @@ export function createSystemState(options: {
       state.retry?.kind === "scheduled";
     if (state.state === "downloading" && !scheduledRetryDownload) return;
     if (state.state === "ready") return;
+    if (state.state === "installing") return;
 
     options.setError(null);
     const startedAt = Date.now();
@@ -663,6 +689,23 @@ export function createSystemState(options: {
         downloadedBytes: accumulatedBytes,
         ms: Date.now() - startedAt,
       });
+
+      if (optionsDownload?.automatic && !updateAutoDownload()) {
+        recordPerfLog(true, "workspace.updater", "download-paused-after-complete", {
+          version: downloadPending.version,
+          totalBytes,
+          downloadedBytes: accumulatedBytes,
+        });
+        setUpdateStatus(
+          resolveAutoDownloadOptOutStatus({
+            lastCheckedAt,
+            version: downloadPending.version,
+            notes: downloadPending.notes,
+          }),
+        );
+        return;
+      }
+
       setUpdateStatus({
         state: "ready",
         lastCheckedAt,
@@ -725,13 +768,74 @@ export function createSystemState(options: {
     }
 
     options.setError(null);
+    const platform = isWindowsPlatform() ? "windows" : "unknown";
+    const startedAt = Date.now();
+    const previousStatus = updateStatus();
+    const lastCheckedAt =
+      previousStatus.state === "ready" || previousStatus.state === "available"
+        ? previousStatus.lastCheckedAt
+        : null;
+
+    if (platform === "windows") {
+      writeUpdateInstallState(
+        createUpdateInstallState({
+          targetVersion: pending.version,
+          currentVersion: pending.update.currentVersion,
+          startedAt,
+          platform,
+        }),
+      );
+    }
+
+    setUpdateStatus({
+      state: "installing",
+      lastCheckedAt,
+      version: pending.version,
+      startedAt,
+      currentVersion: pending.update.currentVersion,
+      notes: pending.notes,
+    });
+
+    recordPerfLog(true, "workspace.updater", "install-start", {
+      version: pending.version,
+      currentVersion: pending.update.currentVersion,
+      platform,
+    });
+
     try {
       await updaterPrepareInstall();
+      recordPerfLog(true, "workspace.updater", "install-prepared", {
+        version: pending.version,
+        platform,
+      });
+
       await pending.update.install();
-      await pending.update.close();
-      await relaunch();
+      recordPerfLog(true, "workspace.updater", "install-handoff", {
+        version: pending.version,
+        platform,
+        frontendRelaunch: shouldRelaunchAfterUpdateInstall(platform),
+      });
+
+      await pending.update.close().catch((error) => {
+        recordPerfLog(true, "workspace.updater", "install-close-error", {
+          version: pending.version,
+          platform,
+          message: error instanceof Error ? error.message : safeStringify(error),
+        });
+      });
+
+      if (shouldRelaunchAfterUpdateInstall(platform)) {
+        clearUpdateInstallState();
+        await relaunch();
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
+      clearUpdateInstallState();
+      recordPerfLog(true, "workspace.updater", "install-error", {
+        version: pending.version,
+        platform,
+        message,
+      });
       setUpdateStatus({ state: "error", lastCheckedAt: null, message });
     }
   }

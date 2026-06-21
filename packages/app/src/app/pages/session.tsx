@@ -4459,6 +4459,7 @@ export default function SessionView(props: SessionViewProps) {
     return (
       state === "available" ||
       state === "downloading" ||
+      state === "installing" ||
       state === "ready" ||
       (state === "error" && retry?.kind === "exhausted")
     );
@@ -4477,6 +4478,9 @@ export default function SessionView(props: SessionViewProps) {
     const retry = props.updateStatus?.retry;
     if (state === "ready") {
       return t("settings.sidebar_update_ready", currentLocale());
+    }
+    if (state === "installing") {
+      return t("settings.update_installing", currentLocale());
     }
     if (state === "available" && props.updateAutoDownload) {
       return t("settings.sidebar_update_preparing", currentLocale());
@@ -4527,7 +4531,7 @@ export default function SessionView(props: SessionViewProps) {
     if (state === "error" && retry?.kind === "exhausted") {
       return "text-red-11 hover:text-red-11 hover:bg-red-3/30";
     }
-    if (state === "downloading") {
+    if (state === "downloading" || state === "installing") {
       return "text-blue-11 hover:text-blue-11 hover:bg-blue-3/30";
     }
     return "text-dls-secondary hover:text-emerald-11 hover:bg-emerald-3/25";
@@ -4542,7 +4546,7 @@ export default function SessionView(props: SessionViewProps) {
     if (state === "error" && retry?.kind === "exhausted") {
       return "border-red-7/35";
     }
-    if (state === "downloading") {
+    if (state === "downloading" || state === "installing") {
       return "border-blue-7/35";
     }
     return "border-dls-border";
@@ -4557,7 +4561,7 @@ export default function SessionView(props: SessionViewProps) {
     if (state === "error" && retry?.kind === "exhausted") {
       return "text-red-10 fill-red-10";
     }
-    if (state === "downloading") {
+    if (state === "downloading" || state === "installing") {
       return "text-blue-10";
     }
     return "text-emerald-10 fill-emerald-10";
@@ -4572,7 +4576,7 @@ export default function SessionView(props: SessionViewProps) {
     if (state === "error" && retry?.kind === "exhausted") {
       return "text-red-11/75";
     }
-    if (state === "downloading") {
+    if (state === "downloading" || state === "installing") {
       return "text-blue-11/75";
     }
     return "text-dls-secondary";
@@ -4594,6 +4598,7 @@ export default function SessionView(props: SessionViewProps) {
       return `${t("settings.update_retrying_download", currentLocale())}${version}`;
     }
     if (state === "downloading") return `${t("settings.update_downloading", currentLocale())}${version}`;
+    if (state === "installing") return `${t("settings.update_installing", currentLocale())}${version}`;
     if (state === "available" && props.updateAutoDownload) {
       return `${t("settings.sidebar_update_preparing", currentLocale())}${version}`;
     }
@@ -4631,7 +4636,7 @@ export default function SessionView(props: SessionViewProps) {
             aria-label={updatePillTitle()}
           >
             <Show
-              when={props.updateStatus?.state === "downloading"}
+              when={props.updateStatus?.state === "downloading" || props.updateStatus?.state === "installing"}
               fallback={
                 <Circle
                   size={8}

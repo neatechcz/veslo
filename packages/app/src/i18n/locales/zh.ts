@@ -831,6 +831,7 @@ export default {
   "settings.update_retrying_download": "正在重试下载...",
   "settings.update_retrying_in": "将在 {time} 后重试",
   "settings.update_download_failed": "更新下载失败",
+  "settings.update_installing": "正在安装更新...",
   "settings.update_ready": "准备安装：v",
   "settings.sidebar_update_available": "有可用更新",
   "settings.sidebar_update_preparing": "正在准备更新",
