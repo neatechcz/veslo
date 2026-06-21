@@ -40,9 +40,10 @@ fn resolve_workspace_managed_deps_manifest(app: &tauri::AppHandle) -> Option<Pat
 #[tauri::command]
 pub fn workspace_private_root(app: tauri::AppHandle) -> Result<String, String> {
     let (data_dir, _) = crate::workspace::state::veslo_state_paths(&app)?;
-    Ok(private_workspace_root_from_data_dir(&data_dir)
-        .to_string_lossy()
-        .to_string())
+    let root = private_workspace_root_from_data_dir(&data_dir);
+    fs::create_dir_all(&root)
+        .map_err(|e| format!("Failed to create private workspace root: {e}"))?;
+    Ok(root.to_string_lossy().to_string())
 }
 
 /// Resolve the path to the global OpenCode SQLite database.

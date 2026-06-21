@@ -4,6 +4,7 @@ import { formatBytes, formatRelativeTime, isTauriRuntime, isWindowsPlatform } fr
 
 import Button from "../components/button";
 import DashboardTabRail, { type DashboardTabRailDashboardTab } from "../components/dashboard-tab-rail";
+import WindowsSandboxRepair from "../components/windows-sandbox-repair";
 import { CircleAlert, Copy, Download, FolderOpen, Loader2, PlugZap, RefreshCcw, Smartphone, X } from "lucide-solid";
 import type { OpencodeConnectStatus, SessionArchiveItem, SettingsTab, StartupPreference } from "../types";
 import type {
@@ -1284,6 +1285,8 @@ export default function SettingsView(props: SettingsViewProps) {
                 )}
               </Show>
             </div>
+
+            <WindowsSandboxRepair />
 
             <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
               <div class="flex items-start justify-between gap-4">

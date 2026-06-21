@@ -2688,6 +2688,7 @@ export default function App() {
       await serverClient.appendSessionTranscript(serverWorkspaceId, sessionId, {
         directory,
         limit: input.limit,
+        reason: input.reason,
         messages: input.messages,
         partsByMessageId: input.partsByMessageId,
         deletedMessageIds: input.deletedMessageIds,

@@ -65,6 +65,7 @@
     "resources": {
       "../package.json": "package.json",
       "../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1": "windows-wsl2-sandbox-provision.ps1",
+      "windows/wsl2-prerequisite-installer.ps1": "wsl2-prerequisite-installer.ps1",
       "windows/wsl2-sandbox-installer.ps1": "wsl2-sandbox-installer.ps1"
     }
   },

@@ -35,7 +35,7 @@ const CUSTOM_BINARY_PATH = process.env.E2E_TAURI_BINARY?.trim() ?? '';
 const CUSTOM_OPENCODE_HOME = process.env.E2E_OPENCODE_HOME?.trim() ?? '';
 const ISOLATED_PROFILE_ROOT = join(resolveDesktopRoot(), '..', 'e2e', '.tmp-veslo-home');
 const PILOT_RUNTIME_ID = createHash('sha1').update(resolveDesktopRoot()).digest('hex').slice(0, 12);
-const DEFAULT_PILOT_RUNTIME_DIR = join('/tmp', `veslo-pilot-${PILOT_RUNTIME_ID}`);
+const DEFAULT_PILOT_RUNTIME_DIR = posix.join('/tmp', `veslo-pilot-${PILOT_RUNTIME_ID}`);
 const APP_IDENTIFIERS = [
   'com.neatech.veslo',
   'com.neatech.veslo.dev',
@@ -127,7 +127,7 @@ export function resolvePilotSocketPath(options: ResolvePilotSocketPathOptions = 
   }
 
   const runtimeDir = options.runtimeDir ?? env.XDG_RUNTIME_DIR ?? resolvePilotRuntimeDir({ env, platform });
-  return join(runtimeDir, `tauri-pilot-${identifier}.sock`);
+  return posix.join(runtimeDir, `tauri-pilot-${identifier}.sock`);
 }
 
 function preparePilotRuntimeDir(dir: string): void {
@@ -231,6 +231,12 @@ export function createAppLaunchEnv(
 ): NodeJS.ProcessEnv {
   const platform = options.platform ?? process.platform;
   const joinForPlatform = platform === 'win32' ? win32.join : posix.join;
+  const pilotRuntimeDir = options.pilotRuntimeDir ?? resolvePilotRuntimeDir({ platform });
+  const pilotSocket = resolvePilotSocketPath({
+    env: baseEnv,
+    platform,
+    runtimeDir: pilotRuntimeDir,
+  });
   const vesloDataDir = joinForPlatform(options.opencodeHome, '.veslo');
   const vesloAppDataDir = joinForPlatform(vesloDataDir, 'app-data');
   const vesloAppLocalDataDir = joinForPlatform(vesloDataDir, 'app-local-data');

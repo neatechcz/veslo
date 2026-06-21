@@ -87,6 +87,18 @@ if (lockfileChanged) {
 }
 
 // ── Step 4: Release review ──────────────────────────────────────────
+heading("Resolving SOURCE_DATE_EPOCH");
+if (!process.env.SOURCE_DATE_EPOCH) {
+  process.env.SOURCE_DATE_EPOCH = run("git log -1 --format=%ct", { readOnly: true });
+  success(`SOURCE_DATE_EPOCH=${process.env.SOURCE_DATE_EPOCH}`);
+} else {
+  success(`SOURCE_DATE_EPOCH=${process.env.SOURCE_DATE_EPOCH}`);
+}
+
+heading("Building sidecar release manifest");
+run("pnpm --filter veslo-orchestrator build:sidecars", { stdio: "inherit" });
+success("Sidecar release manifest updated");
+
 heading("Running release review");
 const reviewOutput = run("node scripts/release/review.mjs --strict", { readOnly: true, allowFail: false });
 log(reviewOutput);

@@ -25,6 +25,7 @@ export type RunLifecycleOwner = {
   markAbortRequested(workspaceId: string, runId: string): RunRecord | null;
   get(workspaceId: string, runId: string): Promise<ReconciledRun | null>;
   latest(workspaceId: string, conversationId: string): Promise<ReconciledRun | null>;
+  active(workspaceId: string, conversationId: string): Promise<ReconciledRun | null>;
 };
 
 export class RunAlreadyActiveError extends Error {
@@ -150,6 +151,13 @@ export function createRunRegistry(deps: {
     async latest(workspaceId, conversationId) {
       const record = deps.store.latestForConversation(workspaceId, conversationId);
       return record ? reconcile(record) : null;
+    },
+
+    async active(workspaceId, conversationId) {
+      const record = deps.store.activeForConversation(workspaceId, conversationId);
+      if (!record) return null;
+      const reconciled = await reconcile(record);
+      return isTerminalRunStatus(reconciled.record.status) ? null : reconciled;
     },
   };
 }

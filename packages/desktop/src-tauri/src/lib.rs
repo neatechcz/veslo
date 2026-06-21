@@ -76,6 +76,7 @@ use commands::workspace::{
     workspace_update_display_name, workspace_update_remote, workspace_veslo_read,
     workspace_veslo_write,
 };
+use commands::wsl_sandbox::{wsl_prerequisites_repair, wsl_sandbox_repair};
 use engine::manager::EngineManager;
 use opencode_router::manager::OpenCodeRouterManager;
 use orchestrator::manager::OrchestratorManager;
@@ -352,6 +353,8 @@ pub fn run() {
             opencode_db_read_transcript,
             scheduler_list_jobs,
             scheduler_delete_job,
+            wsl_prerequisites_repair,
+            wsl_sandbox_repair,
             pending_session_drafts_list,
             pending_session_drafts_get,
             pending_session_drafts_put,

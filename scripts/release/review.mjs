@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,6 +59,45 @@ const addCheck = (label, pass, details) => {
 };
 
 const addWarning = (message) => warnings.push(message);
+
+const manifestEntryVersion = (manifest, name) =>
+  manifest?.[name]?.version ?? manifest?.entries?.[name]?.version ?? null;
+
+const addManifestEntryVersionCheck = (manifest, name, expectedVersion, label) => {
+  const actualVersion = manifestEntryVersion(manifest, name);
+  addCheck(
+    label,
+    Boolean(expectedVersion && actualVersion === expectedVersion),
+    `${actualVersion ?? "?"} vs ${expectedVersion ?? "?"}`,
+  );
+};
+
+const hostSidecarName = (name) => (process.platform === "win32" ? `${name}.exe` : name);
+
+const readHostSidecarVersion = (path) => {
+  try {
+    const result = spawnSync(path, ["--version"], { encoding: "utf8" });
+    if (result.status === 0 && result.stdout.trim()) return result.stdout.trim();
+  } catch {
+    // ignore
+  }
+  return null;
+};
+
+const addHostSidecarVersionCheck = (sidecarDir, name, expectedVersion, label) => {
+  const sidecarPath = resolve(sidecarDir, hostSidecarName(name));
+  if (!existsSync(sidecarPath)) {
+    addWarning(`Desktop sidecar binary missing (${hostSidecarName(name)}). Run pnpm --filter @neatech/veslo prepare:sidecar before packaging.`);
+    return;
+  }
+
+  const actualVersion = readHostSidecarVersion(sidecarPath);
+  addCheck(
+    label,
+    Boolean(expectedVersion && actualVersion === expectedVersion),
+    `${actualVersion ?? "?"} vs ${expectedVersion ?? "?"}`,
+  );
+};
 
 const versionChecks = [
   ["app", versions.app],
@@ -131,6 +171,26 @@ addCheck(
     "windows-wsl2-sandbox-provision.ps1" &&
     existsSync(resolve(root, "packages", "orchestrator", "scripts", "windows-wsl2-sandbox-provision.ps1")),
   tauriBundleResources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"] ?? "?",
+);
+const wslPrerequisiteInstallerPath = resolve(
+  root,
+  "packages",
+  "desktop",
+  "src-tauri",
+  "windows",
+  "wsl2-prerequisite-installer.ps1",
+);
+const wslPrerequisiteInstaller = existsSync(wslPrerequisiteInstallerPath)
+  ? readText(wslPrerequisiteInstallerPath)
+  : "";
+addCheck(
+  "Windows MSI bundles WSL prerequisite installer for first-run repair",
+  tauriBundleResources["windows/wsl2-prerequisite-installer.ps1"] ===
+    "wsl2-prerequisite-installer.ps1" &&
+    /wsl\.exe"\s+@\("--install",\s+"--no-distribution"\)/.test(wslPrerequisiteInstaller) &&
+    /Microsoft-Windows-Subsystem-Linux/.test(wslPrerequisiteInstaller) &&
+    /VirtualMachinePlatform/.test(wslPrerequisiteInstaller),
+  tauriBundleResources["windows/wsl2-prerequisite-installer.ps1"] ?? "?",
 );
 addCheck(
   "Windows MSI bundles WSL sandbox installer wrapper",
@@ -210,6 +270,61 @@ if (!vesloCodeRouterRange) {
     `${vesloCodeRouterRange} vs ${versions.opencodeRouter ?? "?"}`,
   );
 }
+
+const desktopSidecarDir = resolve(root, "packages", "desktop", "src-tauri", "sidecars");
+const desktopSidecarManifestPath = resolve(desktopSidecarDir, "versions.json");
+if (existsSync(desktopSidecarManifestPath)) {
+  const desktopSidecarManifest = readJson(desktopSidecarManifestPath);
+  addManifestEntryVersionCheck(
+    desktopSidecarManifest,
+    "veslo-server",
+    versions.server,
+    "Desktop sidecar manifest veslo-server version matches",
+  );
+  addManifestEntryVersionCheck(
+    desktopSidecarManifest,
+    "veslo-code-router",
+    versions.opencodeRouter,
+    "Desktop sidecar manifest veslo-code-router version matches",
+  );
+  addManifestEntryVersionCheck(
+    desktopSidecarManifest,
+    "veslo-orchestrator",
+    versions.orchestrator,
+    "Desktop sidecar manifest veslo-orchestrator version matches",
+  );
+  if (versions.opencode.desktop) {
+    addManifestEntryVersionCheck(
+      desktopSidecarManifest,
+      "veslo-code",
+      versions.opencode.desktop,
+      "Desktop sidecar manifest veslo-code version matches",
+    );
+  }
+} else {
+  addWarning(
+    "Desktop sidecar manifest missing (run pnpm --filter @neatech/veslo prepare:sidecar before packaging).",
+  );
+}
+
+addHostSidecarVersionCheck(
+  desktopSidecarDir,
+  "veslo-server",
+  versions.server,
+  "Desktop veslo-server sidecar binary version matches",
+);
+addHostSidecarVersionCheck(
+  desktopSidecarDir,
+  "veslo-code-router",
+  versions.opencodeRouter,
+  "Desktop veslo-code-router sidecar binary version matches",
+);
+addHostSidecarVersionCheck(
+  desktopSidecarDir,
+  "veslo-orchestrator",
+  versions.orchestrator,
+  "Desktop veslo-orchestrator sidecar binary version matches",
+);
 
 const sidecarManifestPath = resolve(
   root,

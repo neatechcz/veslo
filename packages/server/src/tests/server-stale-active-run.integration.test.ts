@@ -68,6 +68,7 @@ async function loadOrchestratorRunModules() {
         directory: string;
         kind: RunKind;
       }): Promise<RunRecord>;
+      active(workspaceId: string, conversationId: string): Promise<{ record: RunRecord; stale: boolean } | null>;
     },
     createRunStore: storeModule.createRunStore as (options: { dbPath: string }) => RunStoreLike,
     RunAlreadyActiveError: registryModule.RunAlreadyActiveError as {
@@ -286,6 +287,14 @@ describe("stale active run integration", () => {
               { status: 400 },
             );
           }
+        }
+
+        const activeMatch = /^\/workspace\/ws_1\/conversations\/([^/]+)\/runs\/active$/.exec(url.pathname);
+        if (request.method === "GET" && activeMatch) {
+          const conversationId = decodeURIComponent(activeMatch[1] ?? "");
+          const active = await registry.active("ws_1", conversationId);
+          if (!active) return Response.json({ error: "run not found" }, { status: 404 });
+          return Response.json({ ok: true, ...active.record, stale: active.stale });
         }
 
         if (request.method === "POST" && url.pathname.includes("/failed")) {

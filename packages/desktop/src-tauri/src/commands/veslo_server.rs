@@ -206,9 +206,6 @@ pub fn veslo_server_restart(
         &workspace_state,
         engine_workspace_path.as_deref(),
     );
-    if workspace_paths.is_empty() {
-        return Err("No active local workspace available".to_string());
-    }
 
     let engine_attached = engine_opencode_url
         .as_deref()
@@ -342,6 +339,20 @@ mod tests {
         assert_eq!(
             local_workspace_paths_for_server_restart(&state, Some("/workspace-b")),
             vec!["/workspace-b".to_string(), "/workspace-a".to_string()],
+        );
+    }
+
+    #[test]
+    fn local_workspace_paths_for_server_restart_allows_fresh_profile() {
+        let state = WorkspaceState {
+            version: WORKSPACE_STATE_VERSION,
+            active_id: String::new(),
+            workspaces: Vec::new(),
+        };
+
+        assert_eq!(
+            local_workspace_paths_for_server_restart(&state, None),
+            Vec::<String>::new()
         );
     }
 
