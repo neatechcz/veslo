@@ -15,6 +15,8 @@ use tauri::Manager;
 use uuid::Uuid;
 
 use crate::debug_logs_forwarder::DebugLogsForwarder;
+#[cfg(windows)]
+use crate::platform::configure_hidden;
 use crate::process_supervisor::spawn_output_collector_with_forwarder;
 use crate::types::{VesloServerInfo, WorkspaceType};
 use crate::workspace::state::load_workspace_state;
@@ -174,7 +176,9 @@ fn parse_wsl_engine_url_from_powershell_output(output: &str, port: u16) -> Optio
 
 #[cfg(windows)]
 fn resolve_engine_url_from_wsl_interface(port: u16) -> Option<String> {
-    let output = Command::new("powershell")
+    let mut command = Command::new("powershell");
+    configure_hidden(&mut command);
+    let output = command
         .args([
             "-NoProfile",
             "-Command",
@@ -208,7 +212,9 @@ fn probe_engine_url_from_wsl_once(url: &str) -> bool {
          fi",
         shell_quote(&health_url)
     );
-    Command::new("wsl.exe")
+    let mut command = Command::new("wsl.exe");
+    configure_hidden(&mut command);
+    command
         .args(["-e", "sh", "-c", &script])
         .status()
         .map(|status| status.success())
