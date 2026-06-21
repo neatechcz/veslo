@@ -136,6 +136,43 @@ function Resolve-LocalAppData {
     return [System.IO.Path]::GetTempPath()
 }
 
+function Resolve-SystemExecutable([string]$RelativePath, [string]$CommandName) {
+    $roots = @()
+    if ($env:WINDIR -and $env:WINDIR.Trim()) {
+        $roots += $env:WINDIR.Trim()
+    }
+    if ($env:SystemRoot -and $env:SystemRoot.Trim() -and $roots -notcontains $env:SystemRoot.Trim()) {
+        $roots += $env:SystemRoot.Trim()
+    }
+
+    foreach ($root in $roots) {
+        $candidates = @(
+            (Join-Path $root (Join-Path "Sysnative" $RelativePath)),
+            (Join-Path $root (Join-Path "System32" $RelativePath))
+        )
+        foreach ($candidate in $candidates) {
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                return $candidate
+            }
+        }
+    }
+
+    $command = Get-Command $CommandName -ErrorAction SilentlyContinue
+    if ($command -and $command.Source) {
+        return $command.Source
+    }
+
+    return $null
+}
+
+function Resolve-WslExecutable {
+    return Resolve-SystemExecutable "wsl.exe" "wsl.exe"
+}
+
+function Resolve-PowerShellExecutable {
+    return Resolve-SystemExecutable "WindowsPowerShell\v1.0\powershell.exe" "powershell.exe"
+}
+
 $logRoot = Join-Path (Resolve-LocalAppData) "Veslo\logs"
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 $logPath = Join-Path $logRoot "wsl2-sandbox-installer.log"
@@ -185,17 +222,25 @@ try {
         Finish-Installer 0
     }
 
-    $wslCommand = Get-Command "wsl.exe" -ErrorAction SilentlyContinue
+    $wslCommand = Resolve-WslExecutable
     if (-not $wslCommand) {
         Write-InstallerLog "wsl.exe was not found. Install WSL first, then run Veslo repair/onboarding."
         Finish-Installer 0
     }
+    Write-InstallerLog "Resolved wsl.exe: $wslCommand"
 
-    $wslStatus = Invoke-HiddenNativeCommand "wsl.exe" @("--status")
+    $wslStatus = Invoke-HiddenNativeCommand $wslCommand @("--status")
     if ($wslStatus.ExitCode -ne 0) {
         Write-InstallerLog "WSL is installed incompletely or needs a reboot. Not running distro import from MSI."
         Finish-Installer $wslStatus.ExitCode
     }
+
+    $powershellCommand = Resolve-PowerShellExecutable
+    if (-not $powershellCommand) {
+        Write-InstallerLog "powershell.exe was not found. Not running distro import from MSI."
+        Finish-Installer 0
+    }
+    Write-InstallerLog "Resolved powershell.exe: $powershellCommand"
 
     $baseArgs = @(
         "-NoProfile",
@@ -219,14 +264,14 @@ try {
     }
 
     Write-InstallerLog "Checking existing managed WSL runtime."
-    $checkResult = Invoke-HiddenNativeCommand "powershell.exe" @($baseArgs + @("-CheckOnly"))
+    $checkResult = Invoke-HiddenNativeCommand $powershellCommand @($baseArgs + @("-CheckOnly"))
     if ($checkResult.ExitCode -eq 0) {
         Write-InstallerLog "Managed WSL runtime already satisfies Veslo requirements."
         Finish-Installer 0
     }
 
     Write-InstallerLog "Managed WSL runtime is missing or incomplete; provisioning now."
-    $provisionResult = Invoke-HiddenNativeCommand "powershell.exe" $baseArgs
+    $provisionResult = Invoke-HiddenNativeCommand $powershellCommand $baseArgs
     Finish-Installer $provisionResult.ExitCode
 } catch {
     Write-InstallerLog "Unhandled wrapper error: $($_.Exception.Message)"
