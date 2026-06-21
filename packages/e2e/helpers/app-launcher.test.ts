@@ -11,6 +11,7 @@ import {
   resolvePilotIdentifier,
   resolvePilotRuntimeDir,
   resolvePilotSocketPath,
+  resolveStartAppPort,
   seedDefaultWorkspaceState,
   terminateAppProcess,
 } from './app-launcher.js';
@@ -30,7 +31,7 @@ test('createAppLaunchEnv configures pilot and forces x11 on linux so GTK-backed 
     },
   );
 
-  assert.equal(env.TAURI_PILOT_SOCKET, '/tmp/veslo-pilot-runtime/tauri-pilot-com.neatech.veslo.dev.sock');
+  assert.equal(env.TAURI_PILOT_SOCKET, '/tmp/veslo-pilot-runtime/tauri-pilot-com.neatech.veslo.e2e.sock');
   assert.equal(env.OPENCODE_HOME, '/tmp/opencode-home');
   assert.equal(env.VESLO_DATA_DIR, '/tmp/opencode-home/.veslo');
   assert.equal(env.VESLO_APP_DATA_DIR, '/tmp/opencode-home/.veslo/app-data');
@@ -70,7 +71,7 @@ test('createAppLaunchEnv isolates Windows app, local, and WebView2 storage so st
     },
   );
 
-  assert.equal(env.TAURI_PILOT_SOCKET, '\\\\.\\pipe\\tauri-pilot-com.neatech.veslo.dev');
+  assert.equal(env.TAURI_PILOT_SOCKET, '\\\\.\\pipe\\tauri-pilot-com.neatech.veslo.e2e');
   assert.equal(env.OPENCODE_HOME, 'C:\\temp\\veslo-e2e-home');
   assert.equal(env.VESLO_DATA_DIR, 'C:\\temp\\veslo-e2e-home\\.veslo');
   assert.equal(env.VESLO_APP_DATA_DIR, 'C:\\temp\\veslo-e2e-home\\.veslo\\app-data');
@@ -81,8 +82,8 @@ test('createAppLaunchEnv isolates Windows app, local, and WebView2 storage so st
   assert.equal(env.WEBVIEW2_USER_DATA_FOLDER, 'C:\\temp\\veslo-e2e-home\\webview2');
 });
 
-test('resolvePilotIdentifier defaults to the dev app identifier used by the e2e build', () => {
-  assert.equal(resolvePilotIdentifier({}), 'com.neatech.veslo.dev');
+test('resolvePilotIdentifier defaults to the dedicated e2e app identifier', () => {
+  assert.equal(resolvePilotIdentifier({}), 'com.neatech.veslo.e2e');
   assert.equal(resolvePilotIdentifier({ E2E_TAURI_PILOT_IDENTIFIER: 'com.example.test' }), 'com.example.test');
 });
 
@@ -101,7 +102,7 @@ test('resolvePilotSocketPath allows E2E runs to target an explicit pilot socket'
       platform: 'darwin',
       runtimeDir: '/tmp/veslo-pilot-runtime',
     }),
-    '/tmp/veslo-pilot-runtime/tauri-pilot-com.neatech.veslo.dev.sock',
+    '/tmp/veslo-pilot-runtime/tauri-pilot-com.neatech.veslo.e2e.sock',
   );
 });
 
@@ -136,6 +137,17 @@ test('resolveLaunchTimeout gives cold desktop starts enough time by default', ()
 
 test('resolveLaunchTimeout allows local overrides for slow machines', () => {
   assert.equal(resolveLaunchTimeout({ E2E_LAUNCH_TIMEOUT: '180000' }), 180000);
+});
+
+test('resolveStartAppPort defaults through the shared WebDriver port resolver', () => {
+  assert.equal(resolveStartAppPort(undefined, {}), 4445);
+  assert.equal(resolveStartAppPort(undefined, { E2E_WEBDRIVER_PORT: '4455' }), 4455);
+  assert.equal(resolveStartAppPort(4466, { E2E_WEBDRIVER_PORT: '4455' }), 4466);
+});
+
+test('startApp does not reuse legacy WebDriver servers in the tauri-pilot harness', () => {
+  const source = readFileSync(new URL('./app-launcher.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /hasReadyWebDriverServer/);
 });
 
 test('seedDefaultWorkspaceState skips network-backed enterprise creators for deterministic E2E fixtures', () => {

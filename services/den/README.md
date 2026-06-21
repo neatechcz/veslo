@@ -147,6 +147,12 @@ pnpm db:migrate
   - Requires `Authorization: Bearer <DEN_LOG_INGEST_TOKEN>`.
   - Accepts `{ batchId, events }`, stores encrypted event payloads, and returns `202 { acceptedBatchIds }`.
   - Repeated `batchId` or `Idempotency-Key` values are treated as accepted retries and do not duplicate event rows.
+- `POST /v1/desktop-diagnostics`
+  - Desktop fallback route used when local `veslo-server` cannot be trusted as the diagnostics carrier.
+  - Requires the signed-in user's Better Auth bearer token and verifies the requested organization.
+  - Accepts `{ batchId, installId, bootId, userId, orgId, workspaceId?, deliveryPath: "desktop-direct-fallback", events }`.
+  - Only bootstrap diagnostics and `veslo-server-shell` stdout/stderr events are accepted; arbitrary UI/runtime logs are rejected.
+  - Stores accepted events in the same encrypted debug-log store and returns `202 { ok: true, acceptedBatchIds }`.
 - `GET /admin/api/debug-logs`
   - Platform-admin-only backend-first debug-log search API.
   - Supports metadata filters such as user, org, workspace, session, run, source, stream, level, and time range.

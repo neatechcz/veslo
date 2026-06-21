@@ -102,6 +102,29 @@ In Tauri startup flows, the desktop auth snapshot is allowed to repair stale bro
 
 Desktop auth snapshots can also carry first-run UI metadata such as language and onboarding completion. Those snapshot values only fill missing or invalid browser-stored UI preferences; they must not overwrite a valid local `veslo.language` or `veslo.onboardingComplete` value.
 
+## Veslo Error Monitoring
+
+Veslo can send application errors to a Sentry-compatible service such as the internal Neatech GlitchTip instance. Monitoring is disabled unless a DSN is explicitly configured.
+
+Frontend environment variables:
+
+- `VITE_VESLO_GLITCHTIP_DSN` - Sentry-compatible project DSN for browser/Solid errors. Required to enable frontend monitoring.
+- `VITE_VESLO_GLITCHTIP_ENABLED` - optional kill switch. Values `0`, `false`, `no`, or `off` disable monitoring even when a DSN is present.
+- `VITE_VESLO_GLITCHTIP_ENVIRONMENT` - optional environment name. Defaults to `production` for production frontend builds and `development` otherwise.
+- `VITE_VESLO_GLITCHTIP_TRACES_SAMPLE_RATE` - optional trace sample rate, clamped to `0..1`. Defaults to `0`.
+
+Desktop shell environment variables:
+
+- `VESLO_GLITCHTIP_DSN` - Sentry-compatible project DSN for native Tauri/Rust errors. Required to enable native monitoring.
+- `VESLO_GLITCHTIP_ENVIRONMENT` - optional environment name. Defaults to `production` in release builds and `development` in debug builds.
+- `VESLO_GLITCHTIP_TRACES_SAMPLE_RATE` - optional trace sample rate, clamped to `0..1`. Defaults to `0`.
+
+Privacy defaults:
+
+- Default user/personally identifying data is not sent.
+- Browser session tracking is removed from the default Sentry browser integrations because GlitchTip does not support Sentry release-health sessions.
+- The centralized app `reportError` path forwards handled errors with only Veslo context and severity tags. It must not attach workspace file contents, prompts, transcripts, access tokens, or raw debug-log payloads.
+
 ## Veslo Server Connection State
 
 Managed by `packages/app/src/app/lib/veslo-server.ts`.
@@ -128,20 +151,26 @@ The local server reports the active path mode through `/capabilities.sandbox`. D
 
 ## Desktop Debug Log Forwarder
 
-The Tauri shell forwards stdout/stderr from every supervised sidecar (`veslo-server`, `opencode-router`, `veslo-orchestrator`, `engine`) into the veslo-server debug log pipeline. Implementation lives in `packages/desktop/src-tauri/src/debug_logs_forwarder.rs`.
+Production owned-server application log discovery and operational read commands
+live in `docs/dev/veslo-application-logs.md`. Update that runbook whenever log
+creation, forwarding, storage, retention, service names, or read commands change.
+
+The Tauri shell writes a desktop-owned debug-log spool before handing events to the veslo-server debug log pipeline. Implementation lives in `packages/desktop/src-tauri/src/debug_logs_forwarder.rs`.
 
 Spool location:
 
 - `${VESLO_APP_LOCAL_DATA_DIR or app_local_data_dir()}/desktop-debug-log-spool/`
-- `pending.jsonl` — append-only file growing as sidecars emit lines.
+- `install-id.txt` — stable desktop install identifier used to correlate retries and app restarts.
+- `pending.jsonl` — append-only file growing as sidecars emit lines and bootstrap diagnostics.
 - `flushing-{uuid}.jsonl` — appears briefly during a flush; deleted on success, kept on failure for retry.
 
 Behavior:
 
-- A dedicated OS thread wakes every 5 s, reads veslo-server `port` and `host_token` from `VesloServerManager` state, atomically renames `pending.jsonl` to a `flushing-*` file, and POSTs batches of up to 500 events to `http://127.0.0.1:{port}/debug-logs` with `x-veslo-host-token`. Server-side validation lives in `validateDebugLogBatch`.
-- Source labels in events: `veslo-server-shell` (Tauri-side capture, distinct from server-internal `veslo-server-self`), `opencode-router`, `orchestrator`, `engine`. `chrome-devtools-mcp` is covered transparently because it runs as an orchestrator child.
+- A dedicated OS thread wakes every 5 s, atomically renames `pending.jsonl` to a `flushing-*` file, and first tries to POST batches of up to 500 events to `http://127.0.0.1:{port}/debug-logs` with `x-veslo-host-token` when veslo-server state has a base URL and host token. Server-side validation lives in `validateDebugLogBatch`.
+- If veslo-server is missing, rejects the batch, lacks host-token/base-url state, or returns `cloudUploadEnabled: false`, the desktop uses the signed-in Den auth context to POST only desktop-owned diagnostics to `POST /v1/desktop-diagnostics`. The direct path is intentionally narrower than the local debug-log path: it accepts bootstrap diagnostics, Veslo server launch diagnostics, and `veslo-server-shell` stdout/stderr, but not arbitrary UI logs, prompts, transcripts, screenshots, or workspace file contents.
+- Source labels in events: `Veslo bootstrap` for structured desktop diagnostics, `veslo-server-shell` for Tauri-side capture of Veslo server stdout/stderr, plus other sidecar labels such as `opencode-router`, `orchestrator`, and `engine` that are only shipped through the local veslo-server route. `chrome-devtools-mcp` is covered transparently because it runs as an orchestrator child.
 - Retention: `pending.jsonl` is truncated back to ~35 MB whenever it crosses the 50 MB high-water mark. Truncation drops the oldest lines and keeps the JSONL boundary clean.
-- Resilience: when veslo-server is not running (no port/token available) the flush thread skips the cycle. POST failures leave the `flushing-*` file in place; the next tick retries.
+- Resilience: POST failures or missing cloud context leave the `flushing-*` file in place; the next tick retries. After a direct Den fallback failure, the desktop backs off further direct attempts for one minute and marks that flushing file as direct-retry-only so it does not keep reposting the same file to the local server while Den is unavailable. If direct diagnostics upload succeeds for a mixed file, only direct-eligible events are removed and non-direct events stay in the local spool for later veslo-server delivery.
 
 This forwarder is independent of the veslo-server pipeline below — events arrive at the server endpoint and join the same downstream spool/uploader path.
 
@@ -160,18 +189,20 @@ Environment variables (all optional):
 
 Pipeline behavior:
 
-- `enabled` is derived as `Boolean(ingestUrl && ingestToken)`. Without both vars the spool keeps collecting and retention prunes the oldest entries; nothing is sent over the network. Flip the two vars and the pipeline starts uploading on the next tick — no restart required for the upload to start, but the running process must be restarted to pick up new env values.
+- `enabled` is derived as `Boolean(ingestUrl && ingestToken)`. Without both vars the server route reports `cloudUploadEnabled: false` and does not retain desktop-forwarded events indefinitely; the desktop direct diagnostics path is responsible for bootstrap/server-launch fallback delivery after login.
 - Server data dir default: `VESLO_DATA_DIR` wins when set. Without it, Windows uses `%LOCALAPPDATA%\com.neatech.veslo\veslo-server` (falling back to `%APPDATA%`), while macOS/Linux keep `<home>/.veslo/veslo-server`. On Windows, an existing legacy `<home>\.veslo\veslo-server` directory is copied into the AppData default on first resolve; if that copy fails, the server falls back to the legacy path so existing bindings and caches do not disappear after update.
 - Desktop orchestrator data dir default: `VESLO_DATA_DIR` also controls the managed orchestrator. Dev startup sets it to `%LOCALAPPDATA%\com.neatech.veslo.dev\veslo-orchestrator-dev` on Windows so scratch, engine state, and OpenCode config stay under AppData. When that dev default is used, the Windows launcher copies missing files from the legacy `<home>\.veslo\veslo-orchestrator-dev` store and merges legacy `conversation_binding` rows into the AppData binding DB. Without an override, the production desktop fallback uses `%LOCALAPPDATA%\com.neatech.veslo\veslo-orchestrator` on Windows and `<home>/.veslo/veslo-orchestrator` on macOS/Linux.
 - Spool location: `<server data dir>/debug-log-spool/events/`. One JSON file per event today (file-per-event format owned by `debug-log-spool.ts`); switching to JSONL append-only is tracked separately as a follow-up.
 - Upload retry policy lives in `debug-log-uploader.ts` (3 attempts, 250 ms initial, 2× multiplier, capped at 2 s). Failed batches stay leased in the manifest and the next flush tick re-leases them after the lease TTL.
 - Retention is enforced asynchronously after appends and by a maintenance loop that runs even when remote upload is disabled. The spool can temporarily exceed `VESLO_LOG_SPOOL_MAX_BYTES`, but `/debug-logs` ingest stays off the cleanup hot path and bulk-prunes old unleased events back toward the low-water mark.
-- `POST /debug-logs` validates the host token and batch body before returning `202`, then appends the events to the durable spool asynchronously. Append failures are logged locally; sidecar log forwarding must not block server health or other UI-facing routes on disk cleanup.
+- `POST /debug-logs` validates the host token and batch body, awaits the durable append when server-side cloud upload is configured, and returns `202 { ok: true, acceptedBatchIds, cloudUploadEnabled }`. Append failures return through the normal server error path so the desktop keeps its local copy.
 - Process signals: `startServer` registers SIGINT/SIGTERM handlers that drain the pipeline (final flush) before exit.
 
 ## Den Debug Log Ingest
 
 Den accepts uploaded debug-log batches from `veslo-server` at `POST /v1/internal/debug-logs`. The route uses a dedicated server-to-server bearer token (`DEN_LOG_INGEST_TOKEN`) and stores each event payload encrypted with `DEN_LOG_MASTER_KEY` plus operator-managed `DEN_LOG_MASTER_KEY_VERSION`.
+
+Den also accepts the desktop fallback stream at `POST /v1/desktop-diagnostics`. That route uses the signed-in user's Better Auth bearer token and verifies org membership before ingesting into the same encrypted debug-log store. It accepts only desktop-owned diagnostics lanes (`Veslo bootstrap` diagnostic events and `veslo-server-shell` stdout/stderr), and it rejects arbitrary debug-log sources.
 
 Environment variables:
 

@@ -45,7 +45,9 @@ Password reset also stays in the browser handoff flow. The reset page keeps the 
 
 The hosted desktop onboarding page also caches the current desktop auth transaction context in browser session storage. If a later auth or verification return lands back on the onboarding page without the original transaction query, the hosted page restores that context before attempting the desktop handoff. This keeps the original desktop auth transaction alive across browser-managed redirects.
 
-DEN signup is gated before Better Auth creates the user, including email/password and social provider signups. An enabled organization domain with self-signup enabled can auto-activate a member only while the organization has an available seat. If the email domain is missing, disabled, or invite-only, signup requires a valid pending organization invite for that email, and invite signup checks that organization's seat capacity before user creation. Domain-joined and invite-joined signups receive active organization membership and do not get a personal default organization.
+DEN signup runs authorization before Better Auth creates the user, including email/password and social provider signups. An enabled organization domain with self-signup enabled can auto-activate a member only while the organization has an available seat. Invite signup checks that organization's seat capacity before user creation, and domain-joined and invite-joined signups receive active organization membership without a personal default organization.
+
+Temporary signup policy, as of 2026-06-21: if the email has no enabled self-signup domain and no invite token, signup is allowed and the post-create hook creates the user's normal default personal organization. This temporarily opens personal-domain signup such as Gmail while preserving existing invite-token validation and organization seat-limit enforcement.
 
 Key persistent settings:
 

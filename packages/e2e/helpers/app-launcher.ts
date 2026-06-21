@@ -27,7 +27,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const DEFAULT_WEBDRIVER_PORT = 4445;
-const DEFAULT_PILOT_IDENTIFIER = 'com.neatech.veslo.dev';
+const DEFAULT_PILOT_IDENTIFIER = 'com.neatech.veslo.e2e';
 const DEFAULT_LAUNCH_TIMEOUT = 120_000;
 const LAUNCH_TIMEOUT = resolveLaunchTimeout();
 const REAL_PROFILE_ENV = process.env.E2E_USE_EXISTING_PROFILE?.trim() === '1';
@@ -62,6 +62,7 @@ type TerminateAppProcessResult = {
 type AppLaunchEnvOptions = {
   platform?: NodeJS.Platform;
   vesloServerPort?: number;
+  pilotRuntimeDir?: string;
   opencodeHome: string;
   snapshotPath: string;
   denApiBase?: string | null;
@@ -77,6 +78,13 @@ export function resolveWebDriverPort(env: Record<string, string | undefined> = p
   }
 
   return port;
+}
+
+export function resolveStartAppPort(
+  port?: number,
+  env: Record<string, string | undefined> = process.env,
+): number {
+  return port ?? resolveWebDriverPort(env);
 }
 
 export function resolvePilotIdentifier(env: Record<string, string | undefined> = process.env): string {
@@ -227,6 +235,8 @@ export function createAppLaunchEnv(
   const vesloAppDataDir = joinForPlatform(vesloDataDir, 'app-data');
   const vesloAppLocalDataDir = joinForPlatform(vesloDataDir, 'app-local-data');
   const denApiBase = options.denApiBase?.trim().replace(/\/+$/, '') ?? '';
+  const pilotRuntimeDir = options.pilotRuntimeDir ?? resolvePilotRuntimeDir({ env: baseEnv, platform });
+  const pilotSocket = resolvePilotSocketPath({ env: baseEnv, platform, runtimeDir: pilotRuntimeDir });
   const env: NodeJS.ProcessEnv = {
     ...baseEnv,
     TAURI_PILOT_SOCKET: pilotSocket,
@@ -235,6 +245,7 @@ export function createAppLaunchEnv(
     VESLO_APP_DATA_DIR: vesloAppDataDir,
     VESLO_APP_LOCAL_DATA_DIR: vesloAppLocalDataDir,
     VESLO_DEN_AUTH_SNAPSHOT_PATH: options.snapshotPath,
+    ...(options.vesloServerPort ? { VESLO_DESKTOP_SERVER_PORT: String(options.vesloServerPort) } : {}),
     ...(denApiBase ? { VESLO_DEN_API_BASE: denApiBase } : {}),
   };
 
@@ -536,29 +547,15 @@ export async function ensureWebDriverReady(
   );
 }
 
-export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
-  if (await hasReadyWebDriverServer(port)) {
-    if (shouldUseManagedAiGatewayFixture() || shouldUseGoogleMcpCatalogFixture()) {
-      const fixtureNames = [
-        shouldUseManagedAiGatewayFixture() ? 'E2E_MANAGED_AI_GATEWAY_FIXTURE=1' : null,
-        shouldUseGoogleMcpCatalogFixture() ? 'E2E_GOOGLE_MCP_CATALOG_FIXTURE=1' : null,
-      ].filter(Boolean).join(' and ');
-      throw new Error(
-        `Refusing to reuse an existing WebDriver server on port ${port} while ${fixtureNames}. Stop the existing desktop app before running the fixture spec.`,
-      );
-    }
-    console.log(`[e2e] Reusing existing WebDriver server on port ${port}.`);
-    appProcess = null;
-    appProcessOwnedByHarness = false;
-    return;
-  }
+export async function startApp(port?: number): Promise<void> {
+  const resolvedPort = resolveStartAppPort(port);
 
   const binaryPath = resolveBinaryPath();
   const pilotRuntimeDir = resolvePilotRuntimeDir();
   preparePilotRuntimeDir(pilotRuntimeDir);
   const pilotSocket = resolvePilotSocketPath({ runtimeDir: pilotRuntimeDir });
   console.log(`[e2e] Launching Tauri binary: ${binaryPath}`);
-  console.log(`[e2e] WebDriver port: ${port}`);
+  console.log(`[e2e] WebDriver port: ${resolvedPort}`);
   const useGoogleMcpCatalogFixture = shouldUseGoogleMcpCatalogFixture();
   const skillRegistryFixtureBaseUrl = process.env.E2E_SKILL_REGISTRY_FIXTURE?.trim() === '0' && !useGoogleMcpCatalogFixture
     ? null
@@ -640,7 +637,7 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   } else {
     env = {
       ...process.env,
-      TAURI_WEBDRIVER_PORT: String(port),
+      TAURI_WEBDRIVER_PORT: String(resolvedPort),
       ...(googleMcpCatalogFixtureBaseUrl ? { VESLO_DEN_API_BASE: googleMcpCatalogFixtureBaseUrl } : {}),
     } as NodeJS.ProcessEnv;
     if (process.platform !== 'win32') {

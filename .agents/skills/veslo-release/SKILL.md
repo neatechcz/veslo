@@ -9,7 +9,7 @@ description: Use when preparing, shipping, verifying, or writing release notes f
 
 Run Veslo releases from the private Veslo repository as the source of truth. Produce public-safe release notes from real git changes, then use the repository release scripts and GitHub workflows to publish the desktop app and mirror public updater artifacts to `neatechcz/veslo-updates`.
 
-This skill is repo-local. For Codex/OpenAI-compatible surfaces, use this `.opencode/skills/veslo-release` package and its `agents/openai.yaml` metadata. For Codex, keep the matching `.Codex/skills/veslo-release/SKILL.md` copy in sync.
+This skill is repo-local. For Codex/OpenAI-compatible surfaces, use this `.opencode/skills/veslo-release` package and its `agents/openai.yaml` metadata. For Claude Code, keep the matching `.claude/skills/veslo-release/SKILL.md` copy in sync.
 
 ## Release Decision
 

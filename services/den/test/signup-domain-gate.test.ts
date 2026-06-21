@@ -37,7 +37,7 @@ test("enabled organization domain blocks when seat limit is reached", () => {
   )
 })
 
-test("missing enabled domain requires invite", () => {
+test("missing enabled domain allows personal signup while domain gate is temporarily disabled", () => {
   assert.deepEqual(
     decideSignupAccess({
       matchingDomain: null,
@@ -45,8 +45,31 @@ test("missing enabled domain requires invite", () => {
       seatLimit: null,
       hasValidInvite: false,
     }),
-    { ok: false, error: "domain_not_allowed" },
+    { ok: true, mode: "personal" },
   )
+})
+
+test("email signup without an enabled domain or invite is temporarily allowed", async () => {
+  const decision = await resolveEmailSignupAccess({
+    email: "person@gmail.com",
+    inviteToken: null,
+    dependencies: {
+      resolveEnabledOrganizationDomainForEmail: async () => {
+        throw new OrganizationAdminRepositoryError("domain_not_allowed")
+      },
+      countActiveOrganizationSeats: async () => {
+        throw new Error("domain seat count should not be used for personal signup")
+      },
+      assertCanActivateOrganizationSeat: async () => {
+        throw new Error("invite seat check should not be used for personal signup")
+      },
+      resolveValidOrganizationInviteForSignup: async () => {
+        throw new Error("invite lookup should not be used for personal signup")
+      },
+    },
+  })
+
+  assert.deepEqual(decision, { ok: true, mode: "personal" })
 })
 
 test("post-create domain signup activates membership and skips default org fallback", async () => {
@@ -392,7 +415,7 @@ test("post-create invite acceptance rejects submitted stored token hashes as bea
   assert.notEqual(acceptedTokenHashes[0], storedTokenHash)
 })
 
-test("social post-create without authorized signup access does not authorize default org fallback", async () => {
+test("post-create signup without domain or invite creates a default personal org while domain gate is temporarily disabled", async () => {
   const result = await completeSignupAfterUserCreate({
     user: { id: "user_1", email: "personal@example.test" },
     inviteToken: null,
@@ -408,7 +431,7 @@ test("social post-create without authorized signup access does not authorize def
     },
   })
 
-  assert.deepEqual(result, { activatedOrganizationMembership: false, createDefaultOrganization: false })
+  assert.deepEqual(result, { activatedOrganizationMembership: false, createDefaultOrganization: true })
 })
 
 test("post-create activation failure cleans up the just-created auth user before rethrowing", async () => {

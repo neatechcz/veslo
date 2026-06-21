@@ -100,11 +100,20 @@ Install is intentionally gated:
 
 - if any session is actively running, Veslo refuses to install the update
 - once the app is idle, the install flow is:
+  - persist a short-lived install-in-progress marker on Windows
+  - stop Veslo-managed desktop services
   - `pending.update.install()`
   - `pending.update.close()`
-  - `relaunch()`
+- macOS and other non-Windows runtimes then use the frontend relaunch path
+- Windows MSI installs do not use the immediate frontend relaunch path; the MSI handoff owns the installer/restart flow
 
-This prevents the app from restarting in the middle of a task run.
+This prevents the app from restarting in the middle of a task run and prevents a restarted old Windows build from offering the same MSI update again while the previous installer handoff is still recent.
+
+On startup, the app checks the persisted Windows install marker:
+
+- if the launched app version matches the target version, the marker is cleared
+- if the marker is recent and the app is still on the old version, update checks are suppressed and the UI stays in `installing`
+- if the marker is stale, the marker is cleared and the UI shows a retryable update error
 
 ### 7. UI surfaces
 

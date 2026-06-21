@@ -15,6 +15,7 @@ import { isAdminAlertEmailConfigured, sendAdminAlertEmail } from "./email/admin-
 import { env } from "./env.js"
 import { createDbFeedbackProjectorStore, createFeedbackProjector } from "./feedback/projector.js"
 import { createDebugLogsIngestRouter } from "./http/debug-logs.js"
+import { createDesktopDiagnosticsRouter } from "./http/desktop-diagnostics.js"
 import { createInternalPlatformAdminRecipientsRouter } from "./http/internal-platform-admin-recipients.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { requireSession } from "./http/session.js"
@@ -122,6 +123,7 @@ if (corsOrigins.length > 0) {
 app.all("/api/auth/*", createAuthNodeHandler(toNodeHandler(auth), guardEmailSignupRequest))
 app.use("/v1", feedbackRouter)
 app.use("/v1/internal", debugLogsIngestRouter)
+app.use("/v1", createDesktopDiagnosticsRouter({ service: debugLogService }))
 app.use("/v1/internal", createInternalPlatformAdminRecipientsRouter({
   token: env.aiGatewayInternalToken,
   listRecipients: listActivePlatformAdminRecipients,

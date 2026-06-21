@@ -20,6 +20,26 @@ const assertSourceOmits = (source, pattern, message) => {
   assert.equal(pattern.test(source), false, message);
 };
 
+const readRustFunction = (source, name) => {
+  const marker = `fn ${name}`;
+  const start = source.indexOf(marker);
+  assert.notEqual(start, -1, `expected function ${name} to exist`);
+  const bodyStart = source.indexOf("{", start);
+  assert.notEqual(bodyStart, -1, `expected function ${name} to have a body`);
+
+  let depth = 0;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, index + 1);
+    }
+  }
+
+  assert.fail(`expected function ${name} body to close`);
+};
+
 const coreSidecarLaunchSources = [
   "engine/spawn.rs",
   "veslo_server/spawn.rs",
@@ -95,6 +115,44 @@ test("core sidecar launch sites route through the supervised process abstraction
       `${relativePath} should not reference raw tauri_plugin_shell CommandChild directly`,
     );
   }
+});
+
+test("Windows WSL engine health probes hide PowerShell and WSL subprocess windows", () => {
+  const source = readRustSource("veslo_server/mod.rs");
+
+  const powershellProbe = readRustFunction(source, "resolve_engine_url_from_wsl_interface");
+  assertSourceMatches(
+    powershellProbe,
+    /let\s+mut\s+command\s*=\s*Command::new\("powershell"\)\s*;/,
+    "WSL interface discovery should build a mutable PowerShell command",
+  );
+  assertSourceMatches(
+    powershellProbe,
+    /configure_hidden\(&mut\s+command\)\s*;/,
+    "WSL interface discovery should hide the PowerShell probe window",
+  );
+  assertSourceMatches(
+    powershellProbe,
+    /command\s*\.args\([\s\S]*?\.output\(\)/,
+    "WSL interface discovery should execute the hidden PowerShell command",
+  );
+
+  const wslProbe = readRustFunction(source, "probe_engine_url_from_wsl_once");
+  assertSourceMatches(
+    wslProbe,
+    /let\s+mut\s+command\s*=\s*Command::new\("wsl\.exe"\)\s*;/,
+    "WSL health probing should build a mutable wsl.exe command",
+  );
+  assertSourceMatches(
+    wslProbe,
+    /configure_hidden\(&mut\s+command\)\s*;/,
+    "WSL health probing should hide the wsl.exe probe window",
+  );
+  assertSourceMatches(
+    wslProbe,
+    /command\s*\.args\([\s\S]*?\.status\(\)/,
+    "WSL health probing should execute the hidden wsl.exe command",
+  );
 });
 
 test("core sidecar state stores supervised child handles instead of raw CommandChild", () => {

@@ -1123,6 +1123,7 @@ export default function DashboardView(props: DashboardViewProps) {
     return (
       state === "available" ||
       state === "downloading" ||
+      state === "installing" ||
       state === "ready" ||
       (state === "error" && retry?.kind === "exhausted")
     );
@@ -1141,6 +1142,9 @@ export default function DashboardView(props: DashboardViewProps) {
     const retry = props.updateStatus?.retry;
     if (state === "ready") {
       return t("settings.sidebar_update_ready", currentLocale());
+    }
+    if (state === "installing") {
+      return t("settings.update_installing", currentLocale());
     }
     if (state === "available" && props.updateAutoDownload) {
       return t("settings.sidebar_update_preparing", currentLocale());
@@ -1191,7 +1195,7 @@ export default function DashboardView(props: DashboardViewProps) {
     if (state === "error" && retry?.kind === "exhausted") {
       return "text-red-11 hover:text-red-11 hover:bg-red-3/30";
     }
-    if (state === "downloading") {
+    if (state === "downloading" || state === "installing") {
       return "text-blue-11 hover:text-blue-11 hover:bg-blue-3/30";
     }
     return "text-dls-secondary hover:text-emerald-11 hover:bg-emerald-3/25";
@@ -1206,7 +1210,7 @@ export default function DashboardView(props: DashboardViewProps) {
     if (state === "error" && retry?.kind === "exhausted") {
       return "border-red-7/35";
     }
-    if (state === "downloading") {
+    if (state === "downloading" || state === "installing") {
       return "border-blue-7/35";
     }
     return "border-dls-border";
@@ -1221,7 +1225,7 @@ export default function DashboardView(props: DashboardViewProps) {
     if (state === "error" && retry?.kind === "exhausted") {
       return "text-red-10 fill-red-10";
     }
-    if (state === "downloading") {
+    if (state === "downloading" || state === "installing") {
       return "text-blue-10";
     }
     return "text-emerald-10 fill-emerald-10";
@@ -1236,7 +1240,7 @@ export default function DashboardView(props: DashboardViewProps) {
     if (state === "error" && retry?.kind === "exhausted") {
       return "text-red-11/75";
     }
-    if (state === "downloading") {
+    if (state === "downloading" || state === "installing") {
       return "text-blue-11/75";
     }
     return "text-dls-secondary";
@@ -1258,6 +1262,7 @@ export default function DashboardView(props: DashboardViewProps) {
       return `${t("settings.update_retrying_download", currentLocale())}${version}`;
     }
     if (state === "downloading") return `${t("settings.update_downloading", currentLocale())}${version}`;
+    if (state === "installing") return `${t("settings.update_installing", currentLocale())}${version}`;
     if (state === "available" && props.updateAutoDownload) {
       return `${t("settings.sidebar_update_preparing", currentLocale())}${version}`;
     }
@@ -1375,99 +1380,99 @@ export default function DashboardView(props: DashboardViewProps) {
           style={leftSidebarStyle()}
         >
           <div class="flex min-h-0 flex-1 flex-col">
-          <Show when={showUpdatePill()}>
-            <div
-              role="status"
-              class={`group mb-3 w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${updatePillButtonTone()}`}
-              title={updatePillTitle()}
-              aria-label={updatePillTitle()}
-            >
-              <Show
-                when={props.updateStatus?.state === "downloading"}
-                fallback={
-                  <Circle
-                    size={8}
-                    class={`${updatePillDotTone()} shrink-0 ${props.updateStatus?.state === "available" ? "group-hover:animate-pulse" : ""}`}
-                  />
-                }
+            <Show when={showUpdatePill()}>
+              <div
+                role="status"
+                class={`group mb-3 w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${updatePillButtonTone()}`}
+                title={updatePillTitle()}
+                aria-label={updatePillTitle()}
               >
-                <Loader2 size={13} class={`animate-spin shrink-0 ${updatePillDotTone()}`} />
-              </Show>
-              <span class="min-w-0 flex-1 truncate text-left">{updatePillLabel()}</span>
-              <Show when={props.updateStatus?.version}>
-                {(version) => (
-                  <span class={`shrink-0 font-mono text-[10px] ${updatePillVersionTone()}`}>v{version()}</span>
-                )}
-              </Show>
-              <Show when={updatePillActionLabel()}>
-                {(label) => (
-                  <button
-                    type="button"
-                    class="shrink-0 rounded-md border border-dls-border bg-dls-surface/80 px-1.5 py-0.5 text-[11px] font-semibold text-dls-text transition-colors hover:bg-dls-surface-raised focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.24)] disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={updatePillActionDisabled()}
-                    title={updatePillActionTitle()}
-                    aria-label={updatePillActionTitle()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (props.updateStatus?.state === "available") {
-                        if (!props.updateAutoDownload) {
-                          props.downloadUpdate();
+                <Show
+                  when={props.updateStatus?.state === "downloading" || props.updateStatus?.state === "installing"}
+                  fallback={
+                    <Circle
+                      size={8}
+                      class={`${updatePillDotTone()} shrink-0 ${props.updateStatus?.state === "available" ? "group-hover:animate-pulse" : ""}`}
+                    />
+                  }
+                >
+                  <Loader2 size={13} class={`animate-spin shrink-0 ${updatePillDotTone()}`} />
+                </Show>
+                <span class="min-w-0 flex-1 truncate text-left">{updatePillLabel()}</span>
+                <Show when={props.updateStatus?.version}>
+                  {(version) => (
+                    <span class={`shrink-0 font-mono text-[10px] ${updatePillVersionTone()}`}>v{version()}</span>
+                  )}
+                </Show>
+                <Show when={updatePillActionLabel()}>
+                  {(label) => (
+                    <button
+                      type="button"
+                      class="shrink-0 rounded-md border border-dls-border bg-dls-surface/80 px-1.5 py-0.5 text-[11px] font-semibold text-dls-text transition-colors hover:bg-dls-surface-raised focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.24)] disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={updatePillActionDisabled()}
+                      title={updatePillActionTitle()}
+                      aria-label={updatePillActionTitle()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (props.updateStatus?.state === "available") {
+                          if (!props.updateAutoDownload) {
+                            props.downloadUpdate();
+                          }
+                          return;
                         }
-                        return;
-                      }
-                      if (props.updateStatus?.state === "error" && props.updateStatus?.retry?.kind === "exhausted") {
-                        props.retryUpdateDownload();
-                        return;
-                      }
-                      if (props.updateStatus?.state === "ready" && !props.anyActiveRuns) {
-                        props.installUpdateAndRestart();
-                      }
-                    }}
-                  >
-                    {label()}
-                  </button>
-                )}
-              </Show>
-            </div>
-          </Show>
-          <div class="min-h-0 flex-1">
-            <WorkspaceSessionList
-              workspaceSessionGroups={props.workspaceSessionGroups}
-              workspaceSessionPagingById={props.workspaceSessionPagingById}
-              subagentDecorationsBySessionId={props.subagentDecorationsBySessionId}
-              unreadSessionIds={props.unreadSessionIds}
-              archivedSessionIds={props.archivedSessionIds}
-              activeWorkspaceId={props.activeWorkspaceId}
-              selectedSessionId={props.selectedSessionId}
-              sessionStatusById={props.sessionStatusById}
-              busySessionByWorkspaceId={props.busySessionByWorkspaceId}
-              allowSelectedParentExpansion={false}
-              connectingWorkspaceId={props.connectingWorkspaceId}
-              pendingPermissionCountByWs={props.pendingPermissionCountByWs}
-              workspaceConnectionStateById={props.workspaceConnectionStateById}
-              readyEngineWorkspaceIds={props.readyEngineWorkspaceIds}
-              newTaskDisabled={props.newTaskDisabled}
-              importingWorkspaceConfig={props.importingWorkspaceConfig}
-              soulStatusByWorkspaceId={props.soulStatusByWorkspaceId}
-              isPrivateWorkspacePath={props.isPrivateWorkspacePath}
-              onActivateWorkspace={props.activateWorkspace}
-              onOpenSession={openSessionFromList}
-              onOpenPendingDirectoryDraftInWorkspace={props.openPendingDirectoryDraftInWorkspace}
-              onOpenRenameWorkspace={props.openRenameWorkspace}
-              onShareWorkspace={(workspaceId) => setShareWorkspaceId(workspaceId)}
-              onOpenSoul={openSoulForWorkspace}
-              onRevealWorkspace={revealWorkspaceInFinder}
-              onRecoverWorkspace={props.recoverWorkspace}
-              onTestWorkspaceConnection={props.testWorkspaceConnection}
-              onEditWorkspaceConnection={props.editWorkspaceConnection}
-              onForgetWorkspace={props.forgetWorkspace}
-              onOpenCreateWorkspace={props.openCreateWorkspace}
-              onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
-              onImportWorkspaceConfig={props.importWorkspaceConfig}
-              onQuickNewSession={props.openNewSessionWithDirectory}
-              onAddDirectorySession={props.openDirectorySessionFromPicker}
-              onOpenArchivedSessions={() => openSettings("archived")}
-              onArchiveSession={props.archiveSession}
+                        if (props.updateStatus?.state === "error" && props.updateStatus?.retry?.kind === "exhausted") {
+                          props.retryUpdateDownload();
+                          return;
+                        }
+                        if (props.updateStatus?.state === "ready" && !props.anyActiveRuns) {
+                          props.installUpdateAndRestart();
+                        }
+                      }}
+                    >
+                      {label()}
+                    </button>
+                  )}
+                </Show>
+              </div>
+            </Show>
+            <div class="min-h-0 flex-1">
+              <WorkspaceSessionList
+                workspaceSessionGroups={props.workspaceSessionGroups}
+                workspaceSessionPagingById={props.workspaceSessionPagingById}
+                subagentDecorationsBySessionId={props.subagentDecorationsBySessionId}
+                unreadSessionIds={props.unreadSessionIds}
+                archivedSessionIds={props.archivedSessionIds}
+                activeWorkspaceId={props.activeWorkspaceId}
+                selectedSessionId={props.selectedSessionId}
+                sessionStatusById={props.sessionStatusById}
+                busySessionByWorkspaceId={props.busySessionByWorkspaceId}
+                allowSelectedParentExpansion={false}
+                connectingWorkspaceId={props.connectingWorkspaceId}
+                pendingPermissionCountByWs={props.pendingPermissionCountByWs}
+                workspaceConnectionStateById={props.workspaceConnectionStateById}
+                readyEngineWorkspaceIds={props.readyEngineWorkspaceIds}
+                newTaskDisabled={props.newTaskDisabled}
+                importingWorkspaceConfig={props.importingWorkspaceConfig}
+                soulStatusByWorkspaceId={props.soulStatusByWorkspaceId}
+                isPrivateWorkspacePath={props.isPrivateWorkspacePath}
+                onActivateWorkspace={props.activateWorkspace}
+                onOpenSession={openSessionFromList}
+                onOpenPendingDirectoryDraftInWorkspace={props.openPendingDirectoryDraftInWorkspace}
+                onOpenRenameWorkspace={props.openRenameWorkspace}
+                onShareWorkspace={(workspaceId) => setShareWorkspaceId(workspaceId)}
+                onOpenSoul={openSoulForWorkspace}
+                onRevealWorkspace={revealWorkspaceInFinder}
+                onRecoverWorkspace={props.recoverWorkspace}
+                onTestWorkspaceConnection={props.testWorkspaceConnection}
+                onEditWorkspaceConnection={props.editWorkspaceConnection}
+                onForgetWorkspace={props.forgetWorkspace}
+                onOpenCreateWorkspace={props.openCreateWorkspace}
+                onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
+                onImportWorkspaceConfig={props.importWorkspaceConfig}
+                onQuickNewSession={props.openNewSessionWithDirectory}
+                onAddDirectorySession={props.openDirectorySessionFromPicker}
+                onOpenArchivedSessions={() => openSettings("archived")}
+                onArchiveSession={props.archiveSession}
               onUnarchiveSession={props.unarchiveSession}
               onLoadMoreWorkspaceSessions={props.loadMoreWorkspaceSidebarSessions}
               onLoadedSessionPrefetchInterestChange={reportLoadedSessionPrefetchInterest}

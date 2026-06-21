@@ -45,6 +45,9 @@ import {
 import {
   DEFAULT_UPDATE_AUTO_DOWNLOAD,
   UPDATE_AUTO_DOWNLOAD_DEFAULT_OFF_MIGRATION_KEY,
+  UPDATE_INSTALL_STATE_KEY,
+  parseUpdateInstallState,
+  resolveUpdateInstallStartupStatus,
   resolveUpdateAutoDownloadDefaultOffMigration,
   resolveUpdateStartupPreferences,
   shouldAutoCheckForUpdatesAt,
@@ -207,6 +210,12 @@ import {
   submitFeedbackReport,
   type FeedbackRuntimeContext,
 } from "./lib/feedback";
+import {
+  classifyNewSessionDisabledReason,
+  clearBootstrapDiagnosticsCloudContext,
+  recordBootstrapDiagnostic,
+  setBootstrapDiagnosticsCloudContext,
+} from "./lib/bootstrap-diagnostics";
 import {
   AUTO_COMPACT_CONTEXT_PREF_KEY,
   ENGINE_CUSTOM_BIN_PATH_PREF_KEY,
@@ -1799,6 +1808,15 @@ export default function App() {
     setView,
     setError,
     reportError,
+    onOpenNewSessionFailure: (input) => {
+      if (!isTauriRuntime()) return;
+      void recordBootstrapDiagnostic("new-session:open-failed", {
+        scope: input.scope,
+        workspaceId: input.workspaceId?.trim() || null,
+        directory: input.directory?.trim() || null,
+        message: input.error instanceof Error ? input.error.message : safeStringify(input.error),
+      });
+    },
     safeStringify,
     addOpencodeCacheHint,
   });
@@ -5221,6 +5239,8 @@ export default function App() {
   const [managedAiAccessBusy, setManagedAiAccessBusy] = createSignal(false);
   const [managedAiAccessError, setManagedAiAccessError] = createSignal<string | null>(null);
   const [denAuthRevision, setDenAuthRevision] = createSignal(0);
+  let lastBootstrapDiagnosticsCloudContextKey = "";
+  let lastNewSessionDisabledDiagnosticKey = "";
   const [managedAiAccessRefreshNonce, setManagedAiAccessRefreshNonce] = createSignal(0);
   const [managedAiAccessRetryAttempt, setManagedAiAccessRetryAttempt] = createSignal(0);
   const [managedAiAccessRetryScheduled, setManagedAiAccessRetryScheduled] = createSignal(false);
@@ -5249,6 +5269,10 @@ export default function App() {
   };
   const logoutLocalDenAuth = async () => {
     clearDenAuth();
+    if (isTauriRuntime()) {
+      lastBootstrapDiagnosticsCloudContextKey = "";
+      void clearBootstrapDiagnosticsCloudContext();
+    }
     clearManagedAiAccessCache();
     setOnboardingStep("auth");
     setView("onboarding");
@@ -7836,6 +7860,27 @@ export default function App() {
         if (result.ok) {
           exchangedCodes.add(code);
           writeDenAuth(result.state);
+          if (isTauriRuntime()) {
+            const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+            await setBootstrapDiagnosticsCloudContext({
+              denApiBase: result.state.denApiBase,
+              token: result.state.token,
+              userId: result.state.user.id,
+              orgId: result.state.orgId || result.state.org.id,
+              workspaceId: activeWorkspaceId,
+            });
+            void recordBootstrapDiagnostic("desktop-auth:exchange-success", {
+              denApiBase: result.state.denApiBase,
+              userId: result.state.user.id,
+              orgId: result.state.orgId || result.state.org.id,
+              workspaceId: activeWorkspaceId || null,
+            });
+            void recordBootstrapDiagnostic("desktop-auth:post-auth-bootstrap-start", {
+              userId: result.state.user.id,
+              orgId: result.state.orgId || result.state.org.id,
+              workspaceId: activeWorkspaceId || null,
+            });
+          }
           await flushPendingDesktopSnapshotWrite();
           clearDesktopAuthExchangeProof(exchangeProof?.sessionId);
           requestManagedAiAccessRefresh();
@@ -7845,12 +7890,31 @@ export default function App() {
           setBooting(true);
           const rebootstrapTimeout = setTimeout(() => {
             console.warn("[boot] post-auth bootstrap timed out after 15s - forcing boot complete");
+            if (isTauriRuntime()) {
+              void recordBootstrapDiagnostic("desktop-auth:post-auth-bootstrap-timeout", {
+                userId: result.state.user.id,
+                orgId: result.state.orgId || result.state.org.id,
+                workspaceId: workspaceStore.activeWorkspaceId().trim() || null,
+                timeoutMs: 15_000,
+              });
+            }
             setBooting(false);
           }, 15_000);
-          void workspaceStore.bootstrapOnboarding().finally(() => {
-            clearTimeout(rebootstrapTimeout);
-            setBooting(false);
-          });
+          void workspaceStore.bootstrapOnboarding()
+            .catch((error) => {
+              if (isTauriRuntime()) {
+                void recordBootstrapDiagnostic("desktop-auth:post-auth-bootstrap-failed", {
+                  userId: result.state.user.id,
+                  orgId: result.state.orgId || result.state.org.id,
+                  workspaceId: workspaceStore.activeWorkspaceId().trim() || null,
+                  message: error instanceof Error ? error.message : safeStringify(error),
+                });
+              }
+            })
+            .finally(() => {
+              clearTimeout(rebootstrapTimeout);
+              setBooting(false);
+            });
           return;
         }
 
@@ -8031,6 +8095,35 @@ export default function App() {
       setDenAuthRevision((value) => value + 1);
     });
     onCleanup(unsubscribe);
+  });
+
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+
+    denAuthRevision();
+    const auth = readDenAuth();
+    const denApiBase = auth?.denApiBase?.trim() ?? "";
+    const token = auth?.token?.trim() ?? "";
+    const userId = auth?.user?.id?.trim() ?? "";
+    const orgId = auth?.orgId?.trim() || auth?.org?.id?.trim() || "";
+    const workspaceId = workspaceStore.activeWorkspaceId().trim();
+    const nextKey = [denApiBase, token, userId, orgId, workspaceId].join("\u0000");
+
+    if (nextKey === lastBootstrapDiagnosticsCloudContextKey) return;
+    lastBootstrapDiagnosticsCloudContextKey = nextKey;
+
+    if (!denApiBase || !token || !userId || !orgId) {
+      void clearBootstrapDiagnosticsCloudContext();
+      return;
+    }
+
+    void setBootstrapDiagnosticsCloudContext({
+      denApiBase,
+      token,
+      userId,
+      orgId,
+      workspaceId,
+    });
   });
 
   const resolveDenUserLabel = (auth: ReturnType<typeof readDenAuth>) => {
@@ -9563,6 +9656,47 @@ export default function App() {
     }
 
     return busy();
+  });
+
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+
+    const disabled = newTaskDisabled();
+    if (!disabled) {
+      lastNewSessionDisabledDiagnosticKey = "";
+      return;
+    }
+
+    const label = busyLabel();
+    const runtimeConnecting =
+      busy() &&
+      (label === "status.connecting" ||
+        label === "status.starting_engine" ||
+        label === "status.disconnecting");
+    const hasRuntimeClient = Boolean(routedClient());
+    const activeWorkspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
+    const classifiedReason = classifyNewSessionDisabledReason({
+      runtimeConnecting,
+      runtimeUnreachable: !hasRuntimeClient && !runtimeConnecting,
+      hasRuntimeClient,
+      hasWorkspaceRoot: Boolean(activeWorkspaceRoot),
+      hasQuickChatHandler: Boolean(pendingSessionDraftController.openNewSessionWithDirectory),
+    });
+    const reason = classifiedReason === "available" ? "unknown" : classifiedReason;
+    const payload = {
+      reason,
+      busy: busy(),
+      busyLabel: label,
+      vesloServerStatus: vesloServerStatus(),
+      hasRuntimeClient,
+      hasWorkspaceRoot: Boolean(activeWorkspaceRoot),
+      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim() || null,
+      connectingWorkspaceId: workspaceStore.connectingWorkspaceId()?.trim() || null,
+    };
+    const nextKey = JSON.stringify(payload);
+    if (nextKey === lastNewSessionDisabledDiagnosticKey) return;
+    lastNewSessionDisabledDiagnosticKey = nextKey;
+    void recordBootstrapDiagnostic("new-session:disabled", payload);
   });
 
   createEffect(() => {
@@ -11125,10 +11259,32 @@ export default function App() {
     setSubagentDecorationsReady(true);
 
     if (isTauriRuntime()) {
+      let currentAppVersion: string | null = null;
       try {
-        setAppVersion(await getVersion());
+        currentAppVersion = await getVersion();
+        setAppVersion(currentAppVersion);
       } catch {
         // ignore
+      }
+
+      if (typeof window !== "undefined") {
+        try {
+          const installStartup = resolveUpdateInstallStartupStatus({
+            storedState: parseUpdateInstallState(window.localStorage.getItem(UPDATE_INSTALL_STATE_KEY)),
+            currentVersion: currentAppVersion,
+          });
+
+          if (installStartup.action === "clear" || installStartup.action === "stale") {
+            window.localStorage.removeItem(UPDATE_INSTALL_STATE_KEY);
+          }
+
+          if (installStartup.action === "recover" || installStartup.action === "stale") {
+            setUpdateStatus(installStartup.status);
+            setLaunchUpdateCheckTriggered(true);
+          }
+        } catch {
+          // ignore
+        }
       }
 
       try {
@@ -12066,7 +12222,7 @@ export default function App() {
     if (!env.supported) return;
 
     const state = updateStatus();
-    if (state.state === "checking" || state.state === "downloading") return;
+    if (state.state === "checking" || state.state === "downloading" || state.state === "installing") return;
 
     setLaunchUpdateCheckTriggered(true);
     checkForUpdates({ quiet: true }).catch(e => reportError(e, "updates.check"));
@@ -12082,7 +12238,7 @@ export default function App() {
     const maybeRunAutoUpdateCheck = () => {
       if (!updateAutoCheck()) return;
       const state = updateStatus();
-      if (state.state === "checking" || state.state === "downloading") return;
+      if (state.state === "checking" || state.state === "downloading" || state.state === "installing") return;
       if (!shouldAutoCheckForUpdatesAt(state)) return;
       checkForUpdates({ quiet: true }).catch(e => reportError(e, "updates.check"));
     };

@@ -213,6 +213,8 @@ export default function SettingsView(props: SettingsViewProps) {
         return props.anyActiveRuns
           ? "border-amber-7/35 bg-amber-3/20 text-amber-11"
           : "border-green-7/35 bg-green-3/20 text-green-11";
+      case "installing":
+        return "border-blue-7/35 bg-blue-3/20 text-blue-11";
       case "error":
         return "border-red-7/35 bg-red-3/20 text-red-11";
       default:
@@ -229,6 +231,7 @@ export default function SettingsView(props: SettingsViewProps) {
     }
     if (updateState() === "available") return `${translate("settings.update_available")}${version}`;
     if (updateState() === "ready") return `${translate("settings.update_ready")}${version}`;
+    if (updateState() === "installing") return translate("settings.update_installing");
     if (updateState() === "downloading") {
       const retry = updateRetry();
       if (retry?.kind === "scheduled") {
@@ -255,12 +258,13 @@ export default function SettingsView(props: SettingsViewProps) {
       return translate("settings.retry_update_download");
     }
     if (updateState() === "error") return translate("settings.retry");
-    if (updateState() === "checking" || updateState() === "downloading") return null;
+    if (updateState() === "checking" || updateState() === "downloading" || updateState() === "installing") return null;
     return translate("settings.check_update");
   });
 
   const generalUpdateDisabled = createMemo(() => {
     if (updateState() === "checking") return true;
+    if (updateState() === "installing") return true;
     if (updateState() === "downloading") return !props.updateAutoDownload;
     if (updateState() === "ready" && props.anyActiveRuns) return true;
     return props.busy;
@@ -966,7 +970,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs font-medium ${generalUpdateTone()}`}
                     title={generalUpdateTitle()}
                   >
-                    <Show when={updateState() === "checking" || updateState() === "downloading"}>
+                    <Show when={updateState() === "checking" || updateState() === "downloading" || updateState() === "installing"}>
                       <Loader2 size={12} class="animate-spin shrink-0" />
                     </Show>
                     <span class="tabular-nums whitespace-nowrap">{generalUpdateLabel()}</span>

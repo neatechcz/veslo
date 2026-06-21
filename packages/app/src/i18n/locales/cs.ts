@@ -822,6 +822,7 @@ export default {
   "settings.update_retrying_download": "Znovu zkouším stáhnout...",
   "settings.update_retrying_in": "Další pokus za {time}",
   "settings.update_download_failed": "Stažení aktualizace selhalo",
+  "settings.update_installing": "Instaluji aktualizaci...",
   "settings.update_ready": "Připraveno k instalaci: v",
   "settings.sidebar_update_available": "Dostupná aktualizace",
   "settings.sidebar_update_preparing": "Připravuji aktualizaci",

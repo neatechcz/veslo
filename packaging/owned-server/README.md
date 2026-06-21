@@ -127,6 +127,10 @@ Compose also defines container health checks for Den `/health`, AI Gateway `/hea
 
 ## Logs
 
+The canonical runbook for Veslo application and server logs is
+`docs/dev/veslo-application-logs.md`. Keep that document updated whenever log
+creation, forwarding, storage, retention, service names, or read commands change.
+
 ```bash
 sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env logs -f den
 sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env logs -f ai-gateway

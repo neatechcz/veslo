@@ -18,6 +18,14 @@ export type UpdateStatus =
     }
   | { state: "ready"; lastCheckedAt: number; version: string; notes?: string }
   | {
+      state: "installing";
+      lastCheckedAt: number | null;
+      version: string;
+      startedAt: number;
+      currentVersion?: string;
+      notes?: string;
+    }
+  | {
       state: "error";
       lastCheckedAt: number | null;
       message: string;
@@ -31,6 +39,8 @@ export const UPDATE_AUTO_CHECK_EVERY_MS = 60 * 60_000;
 export const DEFAULT_UPDATE_AUTO_DOWNLOAD = false;
 export const UPDATE_AUTO_DOWNLOAD_DEFAULT_OFF_MIGRATION_KEY =
   "veslo.updateAutoDownloadDefaultOff.v1";
+export const UPDATE_INSTALL_STATE_KEY = "veslo.updateInstallState.v1";
+export const UPDATE_INSTALL_STALE_AFTER_MS = 2 * 60 * 60_000;
 export const UPDATE_AUTO_DOWNLOAD_RETRY_DELAYS_MS = [
   30_000,
   2 * 60_000,
@@ -42,6 +52,116 @@ export type UpdateDownloadRetryInfo =
   | { kind: "active"; retryAttempt: number; maxRetries: number }
   | { kind: "scheduled"; retryAttempt: number; maxRetries: number; nextRetryAt: number; message?: string }
   | { kind: "exhausted"; retryAttempt: number; maxRetries: number; message?: string };
+
+export type UpdateInstallPlatform = "windows" | "macos" | "linux" | "unknown";
+
+export type UpdateInstallState = {
+  schemaVersion: 1;
+  targetVersion: string;
+  currentVersion?: string;
+  startedAt: number;
+  platform: UpdateInstallPlatform;
+};
+
+export type UpdateInstallStartupStatus =
+  | { action: "ignore" }
+  | { action: "clear" }
+  | { action: "recover"; status: Extract<UpdateStatus, { state: "installing" }> }
+  | { action: "stale"; status: Extract<UpdateStatus, { state: "error" }> };
+
+function normalizeUpdateVersion(version: string | null | undefined) {
+  return (version ?? "").trim().replace(/^v/i, "");
+}
+
+export function createUpdateInstallState(input: {
+  targetVersion: string;
+  currentVersion?: string;
+  startedAt?: number;
+  platform: UpdateInstallPlatform;
+}): UpdateInstallState {
+  return {
+    schemaVersion: 1,
+    targetVersion: input.targetVersion,
+    currentVersion: input.currentVersion,
+    startedAt: input.startedAt ?? Date.now(),
+    platform: input.platform,
+  };
+}
+
+export function parseUpdateInstallState(raw: string | null): UpdateInstallState | null {
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<UpdateInstallState>;
+    if (parsed.schemaVersion !== 1) return null;
+    if (typeof parsed.targetVersion !== "string" || !parsed.targetVersion.trim()) return null;
+    if (typeof parsed.startedAt !== "number" || !Number.isFinite(parsed.startedAt) || parsed.startedAt <= 0) {
+      return null;
+    }
+    if (
+      parsed.platform !== "windows" &&
+      parsed.platform !== "macos" &&
+      parsed.platform !== "linux" &&
+      parsed.platform !== "unknown"
+    ) {
+      return null;
+    }
+
+    return {
+      schemaVersion: 1,
+      targetVersion: parsed.targetVersion,
+      currentVersion: typeof parsed.currentVersion === "string" ? parsed.currentVersion : undefined,
+      startedAt: parsed.startedAt,
+      platform: parsed.platform,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function resolveUpdateInstallStartupStatus(input: {
+  storedState: UpdateInstallState | null;
+  currentVersion: string | null;
+  now?: number;
+}): UpdateInstallStartupStatus {
+  const stored = input.storedState;
+  if (!stored) return { action: "ignore" };
+
+  const targetVersion = normalizeUpdateVersion(stored.targetVersion);
+  const currentVersion = normalizeUpdateVersion(input.currentVersion);
+  if (targetVersion && currentVersion && targetVersion === currentVersion) {
+    return { action: "clear" };
+  }
+
+  const now = input.now ?? Date.now();
+  if (now - stored.startedAt > UPDATE_INSTALL_STALE_AFTER_MS) {
+    return {
+      action: "stale",
+      status: {
+        state: "error",
+        lastCheckedAt: null,
+        version: stored.targetVersion,
+        message:
+          "The previous update install did not finish. Restart Windows if an installer is still running, then retry the update.",
+      },
+    };
+  }
+
+  return {
+    action: "recover",
+    status: {
+      state: "installing",
+      lastCheckedAt: null,
+      version: stored.targetVersion,
+      startedAt: stored.startedAt,
+      currentVersion: stored.currentVersion,
+    },
+  };
+}
+
+export function shouldRelaunchAfterUpdateInstall(platform: UpdateInstallPlatform) {
+  return platform !== "windows";
+}
 
 export function resolveNextUpdateDownloadRetry(input: { completedRetries: number; now?: number }) {
   const retryCount = Number.isFinite(input.completedRetries) ? input.completedRetries : 0;
@@ -154,6 +274,7 @@ export function resolveUpdateStartupPreferences(input: {
 
 export function getUpdateLastCheckedAt(state: UpdateStatus) {
   if (state.state === "checking") return null;
+  if (state.state === "installing") return null;
   return state.lastCheckedAt ?? null;
 }
 
