@@ -8,6 +8,8 @@ import { normalizeInviteEmail } from "../org-admin/policy.js"
 import { hashOrganizationInviteToken } from "../org-admin/invite-token.js"
 import type { OrgRole } from "../db/schema.js"
 
+const SIGNUP_DOMAIN_GATE_TEMPORARILY_DISABLED = true
+
 export type SignupAccessError = "domain_not_allowed" | "seat_limit_reached"
 
 export type SignupGateDomain = {
@@ -25,11 +27,13 @@ export type SignupAccessInput = {
 export type SignupAccessDecision =
   | { ok: true; mode: "domain"; organizationId: string }
   | { ok: true; mode: "invite" }
+  | { ok: true; mode: "personal" }
   | { ok: false; error: SignupAccessError }
 
 export type ResolvedSignupAccessDecision =
   | { ok: true; mode: "domain"; organizationId: string; role: "member" }
   | { ok: true; mode: "invite"; organizationId: string; role: (typeof OrgRole)[number]; inviteToken: string }
+  | { ok: true; mode: "personal" }
   | { ok: false; error: SignupAccessError }
 
 export function decideSignupAccess(input: SignupAccessInput): SignupAccessDecision {
@@ -46,6 +50,10 @@ export function decideSignupAccess(input: SignupAccessInput): SignupAccessDecisi
 
   if (input.hasValidInvite) {
     return { ok: true, mode: "invite" }
+  }
+
+  if (SIGNUP_DOMAIN_GATE_TEMPORARILY_DISABLED) {
+    return { ok: true, mode: "personal" }
   }
 
   return { ok: false, error: "domain_not_allowed" }
@@ -121,7 +129,10 @@ export async function resolveEmailSignupAccess(input: EmailSignupAccessInput): P
     if (!decision.ok) {
       return decision
     }
-    if (decision.mode !== "domain") {
+    if (decision.mode === "personal") {
+      return { ok: true, mode: "personal" }
+    }
+    if (decision.mode === "invite") {
       return { ok: false, error: "domain_not_allowed" }
     }
     return {
@@ -156,6 +167,10 @@ export async function resolveEmailSignupAccess(input: EmailSignupAccessInput): P
       }
       throw error
     }
+  }
+
+  if (SIGNUP_DOMAIN_GATE_TEMPORARILY_DISABLED) {
+    return { ok: true, mode: "personal" }
   }
 
   return { ok: false, error: "domain_not_allowed" }
@@ -244,7 +259,10 @@ export async function completeSignupAfterUserCreate(input: CompleteSignupAfterUs
     return { activatedOrganizationMembership: true, createDefaultOrganization: false }
   }
 
-  return { activatedOrganizationMembership: false, createDefaultOrganization: false }
+  return {
+    activatedOrganizationMembership: false,
+    createDefaultOrganization: SIGNUP_DOMAIN_GATE_TEMPORARILY_DISABLED,
+  }
 }
 
 export type RunSignupAfterUserCreateSideEffectsInput = CompleteSignupAfterUserCreateInput & {
