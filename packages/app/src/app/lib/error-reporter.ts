@@ -9,6 +9,8 @@
  *   somePromise.catch(e => reportError(e, "sidebar.refresh"))
  */
 
+import { captureReportedError } from "./error-monitoring";
+
 export type ErrorSeverity = "warning" | "error";
 
 const isDev =
@@ -34,6 +36,13 @@ export function reportError(
     method(`[${context}]`, error);
   } else {
     console.warn(`[${context}]`, safeMessage(error));
+  }
+  try {
+    captureReportedError(error, context, severity);
+  } catch (captureError) {
+    if (isDev) {
+      console.warn("[error-monitoring.capture]", captureError);
+    }
   }
   return undefined;
 }

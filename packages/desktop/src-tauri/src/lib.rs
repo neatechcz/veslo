@@ -4,6 +4,7 @@ mod config;
 mod debug_logs_forwarder;
 mod engine;
 mod env_guard;
+mod error_monitoring;
 mod fs;
 mod opencode_router;
 mod opkg;
@@ -200,6 +201,7 @@ fn kill_orphan_sidecars() {}
 
 pub fn run() {
     kill_orphan_sidecars();
+    let _sentry_guard = error_monitoring::init_error_monitoring();
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             let deep_link_urls: Vec<String> = argv
