@@ -95,7 +95,12 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   assert.match(fragment, /CustomAction\s+[^>]*Id="VesloProvisionWslSandbox"/s);
   assert.match(fragment, /After="InstallFiles"/);
   assert.match(fragment, /Return="ignore"/);
-  assert.match(fragment, /wsl2-sandbox-installer\.ps1/);
+  assert.match(fragment, /\[INSTALLDIR\]wsl2-sandbox-installer\.ps1/);
+  assert.doesNotMatch(
+    fragment,
+    /\[INSTALLDIR\]resources\\wsl2-sandbox-installer\.ps1/,
+    "Tauri MSI installs script resources into INSTALLDIR on Windows, so the custom action must not point at a resources subdirectory",
+  );
   const prerequisite = readFileSync(prerequisitePath, "utf8");
   assert.match(prerequisite, /wsl\.exe"\s+@\("--install",\s+"--no-distribution"\)/);
   assert.match(prerequisite, /Microsoft-Windows-Subsystem-Linux/);

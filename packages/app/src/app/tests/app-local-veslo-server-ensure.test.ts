@@ -44,6 +44,66 @@ test("local Veslo server ensure only deduplicates after a successful ensure", ()
   );
 });
 
+test("local Veslo server ensure runs as an app service on a clean profile", () => {
+  const effectStart = source.indexOf('let lastLocalVesloEnsureKey = "";');
+  assert.notStrictEqual(effectStart, -1, "local Veslo server ensure effect is missing");
+
+  const ensureCall = "void ensureLocalVesloServerRunning()";
+  const ensureIdx = source.indexOf(ensureCall, effectStart);
+  assert.notStrictEqual(ensureIdx, -1, "local Veslo server ensure call is missing");
+
+  const effectEnd = source.indexOf("const restartLocalServer = async () => {", ensureIdx);
+  assert.notStrictEqual(effectEnd, -1, "local Veslo server ensure effect end marker is missing");
+  const effectSource = source.slice(effectStart, effectEnd);
+
+  assert.match(
+    effectSource,
+    /if \(!workspaceStore\.workspacesHydrated\(\)\) return;/,
+    "clean-profile local server startup should wait for workspace bootstrap hydration",
+  );
+  assert.match(
+    effectSource,
+    /const nextKey = activeWorkspaceId \|\| activeWorkspaceRoot[\s\S]*: "app-service";/,
+    "clean-profile local server startup should use an app-service key when no workspace exists yet",
+  );
+  assert.doesNotMatch(
+    effectSource,
+    /if\s*\(\s*!nextKey\.replace\(/,
+    "clean-profile local server startup must not skip an empty workspace key after hydration",
+  );
+});
+
+test("new Chat opens the pending draft and then ensures the local Veslo server", () => {
+  const wrapperStart = source.indexOf("const openNewSessionWithDirectory = async () => {");
+  assert.notStrictEqual(wrapperStart, -1, "app-shell new Chat handler is missing");
+
+  const wrapperEnd = source.indexOf("  const {\n    activePendingDraftKey,", wrapperStart);
+  assert.notStrictEqual(wrapperEnd, -1, "app-shell new Chat handler end marker is missing");
+  const wrapperSource = source.slice(wrapperStart, wrapperEnd);
+
+  assert.match(
+    wrapperSource,
+    /const opened = await pendingSessionDraftController\.openNewSessionWithDirectory\(\);/,
+    "new Chat should first delegate composer opening to the pending draft controller",
+  );
+  assert.match(
+    wrapperSource,
+    /if \(opened !== false && isTauriRuntime\(\)\) \{[\s\S]*void ensureLocalVesloServerRunning\(\{ ignoreStartupPreference: true \}\)\.catch/,
+    "new Chat should explicitly wake the local Veslo server after the draft opens",
+  );
+  assert.match(
+    wrapperSource,
+    /reportError\(error, "veslo-server\.ensure\.new-chat"\);/,
+    "new Chat server startup failures should be reported with a specific surface",
+  );
+  assert.match(wrapperSource, /return opened;/, "new Chat should preserve the controller result");
+  assert.doesNotMatch(
+    source,
+    /openNewSessionWithDirectory:\s*pendingSessionDraftController\.openNewSessionWithDirectory/,
+    "Chat props should not bypass the runtime-aware app-shell handler",
+  );
+});
+
 test("local Veslo server ensure effect is registered after the real implementation is assigned", () => {
   const effectStart = source.indexOf('let lastLocalVesloEnsureKey = "";');
   assert.notStrictEqual(effectStart, -1, "local Veslo server ensure effect is missing");

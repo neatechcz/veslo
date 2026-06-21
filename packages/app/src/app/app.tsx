@@ -1802,6 +1802,17 @@ export default function App() {
     safeStringify,
     addOpencodeCacheHint,
   });
+  const openNewSessionWithDirectory = async () => {
+    const opened = await pendingSessionDraftController.openNewSessionWithDirectory();
+    if (opened !== false && isTauriRuntime()) {
+      void ensureLocalVesloServerRunning({ ignoreStartupPreference: true }).catch((error) => {
+        reportError(error, "veslo-server.ensure.new-chat");
+        const message = error instanceof Error ? error.message : safeStringify(error);
+        setError(addOpencodeCacheHint(message));
+      });
+    }
+    return opened;
+  };
   const {
     activePendingDraftKey,
     setActivePendingDraftKey,
@@ -8610,15 +8621,15 @@ export default function App() {
   let lastLocalVesloEnsureKey = "";
   createEffect(() => {
     if (!isTauriRuntime()) return;
+    if (!workspaceStore.workspacesHydrated()) return;
     if (startupPreference() === "server") return;
     if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") return;
 
-    const nextKey = [
-      workspaceStore.activeWorkspaceId().trim(),
-      workspaceStore.activeWorkspaceRoot().trim(),
-      baseUrl().trim(),
-    ].join("::");
-    if (!nextKey.replace(/:/g, "")) return;
+    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+    const activeWorkspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
+    const nextKey = activeWorkspaceId || activeWorkspaceRoot
+      ? [activeWorkspaceId, activeWorkspaceRoot, baseUrl().trim()].join("::")
+      : "app-service";
     if (nextKey === lastLocalVesloEnsureKey) return;
 
     const scheduledKey = nextKey;
@@ -12372,7 +12383,7 @@ export default function App() {
         workspaceStore.setCreateWorkspaceOpen(true);
       },
       openCreateRemoteWorkspace,
-      openNewSessionWithDirectory: pendingSessionDraftController.openNewSessionWithDirectory,
+      openNewSessionWithDirectory,
       openDirectorySessionFromPicker: () => {
         void pendingSessionDraftController.openDirectorySessionFromPicker();
       },
@@ -12665,7 +12676,7 @@ export default function App() {
       workspaceStore.setCreateWorkspaceOpen(true);
     },
     openCreateRemoteWorkspace,
-    openNewSessionWithDirectory: pendingSessionDraftController.openNewSessionWithDirectory,
+    openNewSessionWithDirectory,
     openDirectorySessionFromPicker: () => {
       void pendingSessionDraftController.openDirectorySessionFromPicker();
     },
