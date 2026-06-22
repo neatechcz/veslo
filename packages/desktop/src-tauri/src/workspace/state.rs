@@ -429,6 +429,7 @@ mod tests {
     use super::{
         legacy_state_candidates, load_workspace_state_from_paths,
         private_workspace_root_from_data_dir, stable_workspace_id, try_load_legacy_workspace_state,
+        workspace_state_for_persistence,
     };
     use crate::types::{RemoteType, WorkspaceInfo, WorkspaceState, WorkspaceType};
     use std::fs;

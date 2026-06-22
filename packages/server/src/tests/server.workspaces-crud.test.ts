@@ -26,8 +26,8 @@ afterEach(async () => {
   }
 });
 
-async function startFixture(seedWorkspaces: WorkspaceInfo[] = []) {
-  const configDir = await mkdtemp(join(tmpdir(), "veslo-crud-config-"));
+async function startFixture(seedWorkspaces: WorkspaceInfo[] = [], options?: { configDir?: string }) {
+  const configDir = options?.configDir ?? await mkdtemp(join(tmpdir(), "veslo-crud-config-"));
   tempDirs.push(configDir);
   const configPath = join(configDir, "server.json");
 
@@ -304,7 +304,6 @@ test("PATCH /workspaces/:id returns 404 for unknown id", async () => {
 
 test("DELETE /workspaces/:id removes explicit-id workspace from persisted config", async () => {
   const configDir = await mkdtemp(join(tmpdir(), "veslo-ws-delete-explicit-"));
-  tempDirs.push(configDir);
   const workspacePath = join(configDir, "workspace-a");
   const seed: WorkspaceInfo = {
     id: "custom-workspace-id",
@@ -312,7 +311,7 @@ test("DELETE /workspaces/:id removes explicit-id workspace from persisted config
     path: workspacePath,
     workspaceType: "local",
   };
-  const { server, configPath } = await startFixture([seed]);
+  const { server, configPath } = await startFixture([seed], { configDir });
   await writeFile(
     configPath,
     `${JSON.stringify({
@@ -340,7 +339,6 @@ test("DELETE /workspaces/:id removes explicit-id workspace from persisted config
 
 test("DELETE /workspaces/:id removes missing local workspace from persisted config", async () => {
   const configDir = await mkdtemp(join(tmpdir(), "veslo-ws-delete-missing-"));
-  tempDirs.push(configDir);
   const workspacePath = join(configDir, "missing-workspace");
   const seed: WorkspaceInfo = {
     id: workspaceIdForPath(workspacePath),
@@ -348,7 +346,7 @@ test("DELETE /workspaces/:id removes missing local workspace from persisted conf
     path: workspacePath,
     workspaceType: "local",
   };
-  const { server, configPath } = await startFixture([seed]);
+  const { server, configPath } = await startFixture([seed], { configDir });
   await writeFile(
     configPath,
     `${JSON.stringify({
