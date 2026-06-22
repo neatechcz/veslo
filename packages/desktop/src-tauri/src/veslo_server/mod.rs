@@ -26,7 +26,7 @@ pub mod manager;
 pub mod spawn;
 
 use manager::VesloServerManager;
-use spawn::{resolve_veslo_port_after_restart, spawn_veslo_server};
+use spawn::{resolve_veslo_host, resolve_veslo_port_after_restart, spawn_veslo_server};
 
 const PERSISTED_STATE_FILE_NAME: &str = "veslo-server-state.json";
 const PERSISTED_PLUGIN_STATE_FILE_NAME: &str = "veslo-server-plugin-state.json";
@@ -238,14 +238,47 @@ fn probe_engine_url_from_wsl(url: &str) -> bool {
     false
 }
 
-fn build_urls(
+fn is_loopback_bind_host(host: &str) -> bool {
+    let normalized = host
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
+    normalized.is_empty()
+        || normalized == "localhost"
+        || normalized == "::1"
+        || normalized.starts_with("127.")
+}
+
+pub(crate) fn publishes_external_urls(host: Option<&str>) -> bool {
+    host.map(|value| !is_loopback_bind_host(value))
+        .unwrap_or(false)
+}
+
+pub(crate) fn resolve_engine_url_for_bind_host(
+    host: Option<&str>,
+    port: Option<u16>,
+) -> Option<String> {
+    if !publishes_external_urls(host) {
+        return None;
+    }
+    port.and_then(resolve_engine_url)
+}
+
+fn build_urls_for_host_with_engine_resolver(
+    host: &str,
     port: u16,
+    mut engine_url_resolver: impl FnMut(u16) -> Option<String>,
 ) -> (
     Option<String>,
     Option<String>,
     Option<String>,
     Option<String>,
 ) {
+    if is_loopback_bind_host(host) {
+        return (None, None, None, None);
+    }
+
     let hostname = gethostname().to_string_lossy().trim().to_string();
     let mdns_url = if hostname.is_empty() {
         None
@@ -257,13 +290,25 @@ fn build_urls(
     let lan_url = local_ip().ok().map(|ip| format!("http://{ip}:{port}"));
 
     let connect_url = lan_url.clone().or(mdns_url.clone());
-    let engine_url = resolve_engine_url(port);
+    let engine_url = engine_url_resolver(port);
 
     (connect_url, mdns_url, lan_url, engine_url)
 }
 
+fn build_urls_for_host(
+    host: &str,
+    port: u16,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
+    build_urls_for_host_with_engine_resolver(host, port, resolve_engine_url)
+}
+
 pub fn resolve_connect_url(port: u16) -> Option<String> {
-    let (connect_url, _mdns_url, _lan_url, _engine_url) = build_urls(port);
+    let (connect_url, _mdns_url, _lan_url, _engine_url) = build_urls_for_host("0.0.0.0", port);
     connect_url
 }
 
@@ -384,7 +429,7 @@ fn persisted_state_to_info_with_health(
         connect_url: state.connect_url.clone(),
         mdns_url: state.mdns_url.clone(),
         lan_url: state.lan_url.clone(),
-        engine_url: state.port.and_then(resolve_engine_url),
+        engine_url: resolve_engine_url_for_bind_host(state.host.as_deref(), state.port),
         client_token: state.client_token.clone(),
         host_token: None,
         pid: state.pid,
@@ -502,13 +547,14 @@ fn discover_external_veslo_server() -> Option<VesloServerInfo> {
         .rsplit_once(':')
         .and_then(|(_, tail)| tail.split('/').next())
         .and_then(|p| p.parse::<u16>().ok());
+    let host = host_from_http_url(trimmed).unwrap_or_else(|| "127.0.0.1".to_string());
     let (connect_url, mdns_url, lan_url, engine_url) = match port {
-        Some(p) => build_urls(p),
+        Some(p) => build_urls_for_host(&host, p),
         None => (None, None, None, None),
     };
     Some(VesloServerInfo {
         running: true,
-        host: Some("0.0.0.0".to_string()),
+        host: Some(host),
         port,
         base_url: Some(trimmed.to_string()),
         connect_url,
@@ -730,8 +776,8 @@ pub fn start_veslo_server(
     let previous_host_token = state.host_token.clone();
     VesloServerManager::stop_locked(&mut state);
 
-    let host = "0.0.0.0".to_string();
-    let port = match resolve_veslo_port_after_restart() {
+    let host = resolve_veslo_host();
+    let port = match resolve_veslo_port_after_restart(&host) {
         Ok(port) => port,
         Err(error) => {
             append_veslo_server_launch_diagnostic(
@@ -814,7 +860,7 @@ pub fn start_veslo_server(
     state.host = Some(host.clone());
     state.port = Some(port);
     state.base_url = Some(format!("http://127.0.0.1:{port}"));
-    let (connect_url, mdns_url, lan_url, engine_url) = build_urls(port);
+    let (connect_url, mdns_url, lan_url, engine_url) = build_urls_for_host(&host, port);
     state.connect_url = connect_url;
     state.mdns_url = mdns_url;
     state.lan_url = lan_url;
@@ -854,8 +900,9 @@ pub fn start_veslo_server(
 mod tests {
     use super::manager::VesloServerState;
     use super::{
-        launch_config_matches, normalize_launch_token, normalize_launch_url,
-        read_persisted_veslo_server_info, read_persisted_veslo_server_info_with_cleanup,
+        build_urls_for_host_with_engine_resolver, launch_config_matches, normalize_launch_token,
+        normalize_launch_url, publishes_external_urls, read_persisted_veslo_server_info,
+        read_persisted_veslo_server_info_with_cleanup, resolve_engine_url_for_bind_host,
         HealthIdentity, PersistedVesloServerState,
     };
     #[cfg(windows)]
@@ -938,6 +985,45 @@ mod tests {
             None
         );
         assert_eq!(probes, 1);
+    }
+
+    #[test]
+    fn loopback_bind_does_not_publish_external_or_engine_urls() {
+        let mut engine_probe_called = false;
+        let (connect_url, mdns_url, lan_url, engine_url) =
+            build_urls_for_host_with_engine_resolver("127.0.0.1", 8787, |_| {
+                engine_probe_called = true;
+                Some("http://172.29.64.1:8787".to_string())
+            });
+
+        assert_eq!(connect_url, None);
+        assert_eq!(mdns_url, None);
+        assert_eq!(lan_url, None);
+        assert_eq!(engine_url, None);
+        assert!(!engine_probe_called);
+        assert!(!publishes_external_urls(Some("127.0.0.1")));
+        assert!(!publishes_external_urls(Some("localhost")));
+        assert!(!publishes_external_urls(None));
+    }
+
+    #[test]
+    fn external_bind_preserves_engine_url_resolution() {
+        let (_connect_url, _mdns_url, _lan_url, engine_url) =
+            build_urls_for_host_with_engine_resolver("0.0.0.0", 8787, |_| {
+                Some("http://172.29.64.1:8787".to_string())
+            });
+
+        assert_eq!(engine_url.as_deref(), Some("http://172.29.64.1:8787"));
+        assert!(publishes_external_urls(Some("0.0.0.0")));
+    }
+
+    #[test]
+    fn engine_url_resolution_is_gated_by_bind_host() {
+        assert_eq!(
+            resolve_engine_url_for_bind_host(Some("127.0.0.1"), Some(8787)),
+            None
+        );
+        assert_eq!(resolve_engine_url_for_bind_host(None, Some(8787)), None);
     }
 
     #[test]

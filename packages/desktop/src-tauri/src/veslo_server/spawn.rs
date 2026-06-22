@@ -9,9 +9,11 @@ use tauri::{AppHandle, Manager};
 use crate::supervised_process::{self, CommandEvent, SupervisedCommandChild};
 
 const DEFAULT_VESLO_PORT: u16 = 8787;
+const DEFAULT_VESLO_HOST: &str = "127.0.0.1";
 const DEFAULT_MANAGED_AI_BASE_URL: &str = "https://ai.veslo.work";
 const VESLO_SERVER_DEV_WATCH_ENV: &str = "VESLO_SERVER_DEV_WATCH";
 const VESLO_SERVER_DEV_DIR_ENV: &str = "VESLO_SERVER_DEV_DIR";
+const VESLO_DESKTOP_SERVER_HOST_ENV: &str = "VESLO_DESKTOP_SERVER_HOST";
 const VESLO_DESKTOP_SERVER_PORT_ENV: &str = "VESLO_DESKTOP_SERVER_PORT";
 const VESLO_SANDBOX_BACKEND_ENV: &str = "VESLO_SANDBOX_BACKEND";
 const VESLO_DISABLE_SANDBOX_ENV: &str = "VESLO_DISABLE_SANDBOX";
@@ -29,8 +31,25 @@ fn parse_dev_watch_flag(value: Option<&str>) -> bool {
     parse_env_flag(value)
 }
 
-fn should_use_dev_watch_mode() -> bool {
-    parse_dev_watch_flag(env::var(VESLO_SERVER_DEV_WATCH_ENV).ok().as_deref())
+fn should_use_dev_watch_mode_from_env(
+    value: Option<&str>,
+    external_runtime_binaries_allowed: bool,
+) -> Result<bool, String> {
+    let requested = parse_dev_watch_flag(value);
+    if requested && !external_runtime_binaries_allowed {
+        return Err(format!(
+            "{VESLO_SERVER_DEV_WATCH_ENV}=1 requires {}=1 in release builds because it starts Bun from PATH",
+            supervised_process::ALLOW_EXTERNAL_RUNTIME_BINARIES_ENV
+        ));
+    }
+    Ok(requested)
+}
+
+fn should_use_dev_watch_mode() -> Result<bool, String> {
+    should_use_dev_watch_mode_from_env(
+        env::var(VESLO_SERVER_DEV_WATCH_ENV).ok().as_deref(),
+        supervised_process::external_runtime_binaries_allowed(),
+    )
 }
 
 fn resolve_dev_watch_dir() -> PathBuf {
@@ -87,21 +106,22 @@ fn validate_managed_opencode_base_url(opencode_base_url: Option<&str>) -> Result
 
 #[cfg(test)]
 pub fn resolve_veslo_port() -> Result<u16, String> {
+    let host = resolve_veslo_host();
     let port = configured_veslo_port()?;
-    bind_veslo_port(port)
+    bind_veslo_port(&host, port)
 }
 
-fn bind_veslo_port(port: u16) -> Result<u16, String> {
-    TcpListener::bind(("0.0.0.0", port))
+fn bind_veslo_port(host: &str, port: u16) -> Result<u16, String> {
+    TcpListener::bind((host, port))
         .map(|_| port)
-        .map_err(|error| format!("Veslo server port {port} is unavailable: {error}"))
+        .map_err(|error| format!("Veslo server port {port} on {host} is unavailable: {error}"))
 }
 
-pub fn resolve_veslo_port_after_restart() -> Result<u16, String> {
+pub fn resolve_veslo_port_after_restart(host: &str) -> Result<u16, String> {
     let port = configured_veslo_port()?;
     let deadline = std::time::Instant::now() + PORT_RESTART_RETRY_TIMEOUT;
     loop {
-        match bind_veslo_port(port) {
+        match bind_veslo_port(host, port) {
             Ok(resolved) => return Ok(resolved),
             Err(error) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(PORT_RESTART_RETRY_INTERVAL);
@@ -112,6 +132,18 @@ pub fn resolve_veslo_port_after_restart() -> Result<u16, String> {
             Err(error) => return Err(error),
         }
     }
+}
+
+fn resolve_veslo_host_from_env(value: Option<&str>) -> String {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_VESLO_HOST)
+        .to_string()
+}
+
+pub fn resolve_veslo_host() -> String {
+    resolve_veslo_host_from_env(env::var(VESLO_DESKTOP_SERVER_HOST_ENV).ok().as_deref())
 }
 
 fn configured_veslo_port() -> Result<u16, String> {
@@ -322,7 +354,7 @@ pub fn spawn_veslo_server(
         orchestrator_daemon_url,
         orchestrator_lifecycle_token,
     );
-    let use_dev_watch = should_use_dev_watch_mode();
+    let use_dev_watch = should_use_dev_watch_mode()?;
 
     let mut command = if use_dev_watch {
         let dev_watch_dir = resolve_dev_watch_dir();
@@ -332,7 +364,12 @@ pub fn spawn_veslo_server(
     } else {
         let command = match supervised_process::sidecar(app, "veslo-server") {
             Ok(command) => command,
-            Err(_) => supervised_process::command(app, "veslo-server"),
+            Err(error) => supervised_process::command_fallback_for_missing_sidecar(
+                app,
+                "veslo-server",
+                "veslo-server",
+                error,
+            )?,
         };
         let cwd = server_cwd_for_workspace_paths(app, workspace_paths);
         command.args(server_args).current_dir(cwd)
@@ -416,6 +453,24 @@ mod tests {
     }
 
     #[test]
+    fn release_dev_watch_requires_external_runtime_override() {
+        assert!(should_use_dev_watch_mode_from_env(Some("1"), true)
+            .expect("debug/developer override allows dev watch"));
+
+        let error = should_use_dev_watch_mode_from_env(Some("1"), false)
+            .expect_err("release dev watch must not silently start Bun");
+        assert!(error.contains(VESLO_SERVER_DEV_WATCH_ENV));
+        assert!(error.contains(supervised_process::ALLOW_EXTERNAL_RUNTIME_BINARIES_ENV));
+    }
+
+    #[test]
+    fn veslo_server_host_defaults_to_loopback() {
+        assert_eq!(resolve_veslo_host_from_env(None), "127.0.0.1");
+        assert_eq!(resolve_veslo_host_from_env(Some(" ")), "127.0.0.1");
+        assert_eq!(resolve_veslo_host_from_env(Some("0.0.0.0")), "0.0.0.0");
+    }
+
+    #[test]
     fn prepends_bun_watch_prefix_for_dev_server() {
         let args = vec!["--host".to_string(), "0.0.0.0".to_string()];
         let expected = vec![
@@ -435,7 +490,8 @@ mod tests {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let _guard = EnvGuard::unset(VESLO_DESKTOP_SERVER_PORT_ENV);
-        let fixed_port_guard = TcpListener::bind(("0.0.0.0", DEFAULT_VESLO_PORT)).ok();
+        let fixed_port_guard =
+            TcpListener::bind((resolve_veslo_host().as_str(), DEFAULT_VESLO_PORT)).ok();
 
         let error = resolve_veslo_port()
             .expect_err("Veslo desktop must not fall back to a dynamic server port");
@@ -478,7 +534,8 @@ mod tests {
         });
 
         assert_eq!(
-            resolve_veslo_port_after_restart().expect("resolve released restart port"),
+            resolve_veslo_port_after_restart(resolve_veslo_host().as_str())
+                .expect("resolve released restart port"),
             port
         );
         releaser.join().expect("listener releaser joins");

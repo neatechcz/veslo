@@ -20,6 +20,7 @@ const ENGINE_URL_REFRESH_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 struct EngineUrlRefreshLease {
     generation: u64,
     port: u16,
+    host: Option<String>,
 }
 
 fn active_local_workspace_path(state: &WorkspaceState) -> Option<String> {
@@ -117,6 +118,7 @@ fn sanitize_live_info_with_health(
     info.lan_url = None;
     info.client_token = None;
     info.host_token = None;
+    info.engine_url = None;
     info.pid = None;
     info.last_stderr = Some(truncate_output(
         "Veslo server identity does not match persisted state.",
@@ -147,6 +149,9 @@ fn begin_engine_url_refresh_if_due(
     if !info.running {
         return None;
     }
+    if !crate::veslo_server::publishes_external_urls(info.host.as_deref()) {
+        return None;
+    }
 
     let port = info.port?;
 
@@ -167,6 +172,7 @@ fn begin_engine_url_refresh_if_due(
     Some(EngineUrlRefreshLease {
         generation: state.engine_url_refresh_generation,
         port,
+        host: info.host.clone(),
     })
 }
 
@@ -214,11 +220,14 @@ pub fn veslo_server_info(app: AppHandle, manager: State<VesloServerManager>) -> 
 
     if let Some(mut sanitized) = running_snapshot {
         if let Some(lease) = engine_url_refresh {
-            let refreshed = crate::veslo_server::resolve_engine_url(lease.port);
+            let refreshed = crate::veslo_server::resolve_engine_url_for_bind_host(
+                lease.host.as_deref(),
+                Some(lease.port),
+            );
             let mut state = manager.inner.lock().expect("veslo server mutex poisoned");
             let live = VesloServerManager::snapshot_locked(&mut state);
             if state.engine_url_refresh_generation == lease.generation {
-                if live.running && live.port == Some(lease.port) {
+                if live.running && live.port == Some(lease.port) && live.host == lease.host {
                     finish_engine_url_refresh(&mut state, lease, Instant::now(), refreshed);
                     sanitized = VesloServerManager::snapshot_locked(&mut state);
                 } else {
@@ -448,6 +457,7 @@ mod tests {
         checked_at: Option<Instant>,
     ) -> VesloServerState {
         VesloServerState {
+            host: info.host.clone(),
             port: info.port,
             engine_url: info.engine_url.clone(),
             engine_url_checked_at: checked_at,
@@ -472,7 +482,27 @@ mod tests {
         let lease = begin_engine_url_refresh_if_due(&mut state, &info, now, ttl, lock_timeout)
             .expect("expired ttl should start a refresh");
         assert_eq!(lease.port, 8787);
+        assert_eq!(lease.host.as_deref(), Some("0.0.0.0"));
         assert_eq!(state.engine_url_refresh_started_at, Some(now));
+    }
+
+    #[test]
+    fn engine_url_refresh_skips_loopback_server() {
+        let mut info = sample_live_info();
+        info.host = Some("127.0.0.1".to_string());
+        let now = Instant::now();
+        let mut state = sample_engine_url_state(&info, Some(now - Duration::from_secs(120)));
+
+        assert_eq!(
+            begin_engine_url_refresh_if_due(
+                &mut state,
+                &info,
+                now,
+                Duration::from_secs(120),
+                Duration::from_secs(30),
+            ),
+            None
+        );
     }
 
     #[test]
@@ -528,7 +558,8 @@ mod tests {
             lease,
             EngineUrlRefreshLease {
                 generation: 42,
-                port: 8787
+                port: 8787,
+                host: Some("0.0.0.0".to_string()),
             }
         );
     }
@@ -546,6 +577,7 @@ mod tests {
             EngineUrlRefreshLease {
                 generation: 7,
                 port: 8787,
+                host: Some("0.0.0.0".to_string()),
             },
             now,
             None,
@@ -569,6 +601,7 @@ mod tests {
             EngineUrlRefreshLease {
                 generation: 7,
                 port: 8787,
+                host: Some("0.0.0.0".to_string()),
             },
             now,
             Some("http://172.30.64.1:8787/".to_string()),

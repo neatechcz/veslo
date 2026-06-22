@@ -10,6 +10,8 @@ pub use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
 pub type SupervisedProcessReceiver = Receiver<CommandEvent>;
+pub const ALLOW_EXTERNAL_RUNTIME_BINARIES_ENV: &str =
+    "VESLO_DESKTOP_ALLOW_EXTERNAL_RUNTIME_BINARIES";
 
 #[derive(Debug)]
 pub struct SupervisedCommand {
@@ -34,6 +36,48 @@ where
     S: AsRef<OsStr>,
 {
     SupervisedCommand::from_shell(app.shell().command(program))
+}
+
+fn parse_env_flag(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|raw| raw.trim().to_ascii_lowercase()),
+        Some(flag) if matches!(flag.as_str(), "1" | "true" | "yes" | "on")
+    )
+}
+
+pub fn external_runtime_binaries_allowed_from_env(
+    value: Option<&str>,
+    debug_assertions: bool,
+) -> bool {
+    debug_assertions || parse_env_flag(value)
+}
+
+pub fn external_runtime_binaries_allowed() -> bool {
+    external_runtime_binaries_allowed_from_env(
+        std::env::var(ALLOW_EXTERNAL_RUNTIME_BINARIES_ENV)
+            .ok()
+            .as_deref(),
+        cfg!(debug_assertions),
+    )
+}
+
+pub fn command_fallback_for_missing_sidecar<S>(
+    app: &AppHandle,
+    sidecar_name: &str,
+    fallback_program: S,
+    sidecar_error: String,
+) -> Result<SupervisedCommand, String>
+where
+    S: AsRef<OsStr>,
+{
+    let fallback_name = fallback_program.as_ref().to_string_lossy().to_string();
+    if external_runtime_binaries_allowed() {
+        return Ok(command(app, fallback_program));
+    }
+
+    Err(format!(
+        "Bundled {sidecar_name} sidecar is unavailable ({sidecar_error}); refusing to run external {fallback_name} from PATH. Set {ALLOW_EXTERNAL_RUNTIME_BINARIES_ENV}=1 only for a developer override."
+    ))
 }
 
 pub fn sidecar<P>(app: &AppHandle, program: P) -> Result<SupervisedCommand, String>
@@ -130,6 +174,31 @@ impl SupervisedCommandChild {
             #[cfg(windows)]
             SupervisedCommandChildInner::Native(child) => child.kill(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn external_runtime_binaries_are_allowed_in_debug_builds() {
+        assert!(external_runtime_binaries_allowed_from_env(None, true));
+        assert!(external_runtime_binaries_allowed_from_env(Some("0"), true));
+    }
+
+    #[test]
+    fn external_runtime_binaries_require_explicit_release_override() {
+        assert!(!external_runtime_binaries_allowed_from_env(None, false));
+        assert!(!external_runtime_binaries_allowed_from_env(
+            Some("0"),
+            false
+        ));
+        assert!(external_runtime_binaries_allowed_from_env(Some("1"), false));
+        assert!(external_runtime_binaries_allowed_from_env(
+            Some("true"),
+            false
+        ));
     }
 }
 

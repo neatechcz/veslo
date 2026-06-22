@@ -15,6 +15,8 @@ use crate::supervised_process;
 use crate::types::{OrchestratorEngineSnapshot, OrchestratorStatus, OrchestratorWorkspace};
 use crate::workspace::validation::{validate_workspace_path, ValidationMode};
 
+const DEFAULT_DETACHED_VESLO_HOST: &str = "127.0.0.1";
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrchestratorDetachedHost {
@@ -438,7 +440,12 @@ pub fn orchestrator_start_detached(
 
     let command = match supervised_process::sidecar(&app, "veslo-orchestrator") {
         Ok(command) => command,
-        Err(_) => supervised_process::command(&app, "veslo"),
+        Err(error) => supervised_process::command_fallback_for_missing_sidecar(
+            &app,
+            "veslo-orchestrator",
+            "veslo",
+            error,
+        )?,
     };
 
     // Start a dedicated host stack for this workspace.
@@ -455,7 +462,7 @@ pub fn orchestrator_start_detached(
             "true".to_string(),
             "--detach".to_string(),
             "--veslo-host".to_string(),
-            "0.0.0.0".to_string(),
+            DEFAULT_DETACHED_VESLO_HOST.to_string(),
             "--veslo-port".to_string(),
             port.to_string(),
             "--veslo-token".to_string(),

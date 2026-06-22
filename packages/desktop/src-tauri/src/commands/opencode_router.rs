@@ -59,14 +59,23 @@ const OPENCODE_ROUTER_MAX_START_ATTEMPTS: usize = 5;
 
 fn resolve_opencode_router_command(
     app: &AppHandle,
-) -> Result<tauri_plugin_shell::process::Command, tauri_plugin_shell::Error> {
+) -> Result<tauri_plugin_shell::process::Command, String> {
     use tauri_plugin_shell::ShellExt;
 
     match app.shell().sidecar("veslo-code-router") {
         Ok(command) => Ok(command),
         Err(_) => match app.shell().sidecar("opencode-router") {
             Ok(command) => Ok(command),
-            Err(_) => Ok(app.shell().command("opencode-router")),
+            Err(error) => {
+                if crate::supervised_process::external_runtime_binaries_allowed() {
+                    Ok(app.shell().command("opencode-router"))
+                } else {
+                    Err(format!(
+                        "Bundled veslo-code-router sidecar is unavailable ({error}); refusing to run external opencode-router from PATH. Set {}=1 only for a developer override.",
+                        crate::supervised_process::ALLOW_EXTERNAL_RUNTIME_BINARIES_ENV
+                    ))
+                }
+            }
         },
     }
 }

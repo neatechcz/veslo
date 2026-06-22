@@ -24,12 +24,27 @@ use serde_json::json;
 use std::time::Duration;
 use uuid::Uuid;
 
+const DEFAULT_OPENCODE_BIND_HOST: &str = "127.0.0.1";
+const VESLO_OPENCODE_BIND_HOST_ENV: &str = "VESLO_OPENCODE_BIND_HOST";
+
 #[derive(Default)]
 struct OutputState {
     stdout: String,
     stderr: String,
     exited: bool,
     exit_code: Option<i32>,
+}
+
+fn resolve_opencode_bind_host_from_env(value: Option<&str>) -> String {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_OPENCODE_BIND_HOST)
+        .to_string()
+}
+
+fn resolve_opencode_bind_host() -> String {
+    resolve_opencode_bind_host_from_env(std::env::var(VESLO_OPENCODE_BIND_HOST_ENV).ok().as_deref())
 }
 
 fn is_opencode_reachable(base_url: &str) -> bool {
@@ -492,7 +507,8 @@ pub fn engine_doctor(
     prefer_sidecar: Option<bool>,
     opencode_bin_path: Option<String>,
 ) -> EngineDoctorResult {
-    let prefer_sidecar = prefer_sidecar.unwrap_or(false);
+    let prefer_sidecar = prefer_sidecar.unwrap_or(false)
+        || !crate::supervised_process::external_runtime_binaries_allowed();
     let resource_dir = app.path().resource_dir().ok();
 
     let current_bin_dir = tauri::process::current_binary(&app.env())
@@ -507,9 +523,20 @@ pub fn engine_doctor(
         current_bin_dir.as_deref(),
     );
 
+    let external_path_blocked =
+        in_path && !crate::supervised_process::external_runtime_binaries_allowed();
+    let mut notes = notes;
+    if external_path_blocked {
+        notes.push(format!(
+            "PATH OpenCode resolution is disabled in release; set {}=1 only for a developer override.",
+            crate::supervised_process::ALLOW_EXTERNAL_RUNTIME_BINARIES_ENV
+        ));
+    }
+
     let (version, supports_serve, serve_help_status, serve_help_stdout, serve_help_stderr) =
-        match resolved.as_ref() {
-            Some(path) => {
+        match (resolved.as_ref(), external_path_blocked) {
+            (_, true) => (None, false, None, None, None),
+            (Some(path), false) => {
                 let (ok, status, stdout, stderr) = opencode_serve_help(path.as_os_str());
                 (
                     opencode_version(path.as_os_str()),
@@ -519,13 +546,17 @@ pub fn engine_doctor(
                     stderr,
                 )
             }
-            None => (None, false, None, None, None),
+            (None, false) => (None, false, None, None, None),
         };
 
     EngineDoctorResult {
-        found: resolved.is_some(),
+        found: resolved.is_some() && !external_path_blocked,
         in_path,
-        resolved_path: resolved.map(|path| path.to_string_lossy().to_string()),
+        resolved_path: if external_path_blocked {
+            None
+        } else {
+            resolved.map(|path| path.to_string_lossy().to_string())
+        },
         version,
         supports_serve,
         notes,
@@ -623,10 +654,7 @@ pub fn engine_start(
     workspace_paths.retain(|path| path.trim() != project_dir);
     workspace_paths.insert(0, project_dir.clone());
 
-    let bind_host = std::env::var("VESLO_OPENCODE_BIND_HOST")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "0.0.0.0".to_string());
+    let bind_host = resolve_opencode_bind_host();
     let client_host = "127.0.0.1".to_string();
     let port = find_free_port()?;
     let enable_auth = std::env::var("VESLO_OPENCODE_AUTH")
@@ -655,13 +683,21 @@ pub fn engine_start(
     let current_bin_dir = tauri::process::current_binary(&app.env())
         .ok()
         .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
-    let prefer_sidecar = prefer_sidecar.unwrap_or(false);
+    let prefer_sidecar = prefer_sidecar.unwrap_or(false)
+        || !crate::supervised_process::external_runtime_binaries_allowed();
     let _guard = EnvVarGuard::apply("OPENCODE_BIN_PATH", opencode_bin_path.as_deref());
-    let (program, _in_path, notes) = resolve_engine_path(
+    let (program, in_path, notes) = resolve_engine_path(
         prefer_sidecar,
         resource_dir.as_deref(),
         current_bin_dir.as_deref(),
     );
+    if in_path && !crate::supervised_process::external_runtime_binaries_allowed() {
+        let notes_text = notes.join("\n");
+        return Err(format!(
+            "Bundled OpenCode sidecar is unavailable; refusing to run OpenCode from PATH in release. Set {}=1 only for a developer override.\n\nNotes:\n{notes_text}",
+            crate::supervised_process::ALLOW_EXTERNAL_RUNTIME_BINARIES_ENV
+        ));
+    }
     let Some(program) = program else {
         let notes_text = notes.join("\n");
         return Err(format!(
@@ -1231,7 +1267,8 @@ pub fn engine_start(
 mod tests {
     use super::{
         format_orchestrator_start_error, orchestrator_opencode_base_url,
-        resolve_orchestrator_proxy_workspace_id, should_retry_orchestrator_start,
+        resolve_opencode_bind_host_from_env, resolve_orchestrator_proxy_workspace_id,
+        should_retry_orchestrator_start,
     };
     use crate::types::{OrchestratorStatus, OrchestratorWorkspace};
 
@@ -1279,6 +1316,16 @@ mod tests {
         assert!(source.contains("Some(opencode_base_url.clone())"));
         assert!(!source.contains("Some(&opencode_connect_url)"));
         assert!(!source.contains("Some(opencode_connect_url)"));
+    }
+
+    #[test]
+    fn opencode_bind_host_defaults_to_loopback() {
+        assert_eq!(resolve_opencode_bind_host_from_env(None), "127.0.0.1");
+        assert_eq!(resolve_opencode_bind_host_from_env(Some(" ")), "127.0.0.1");
+        assert_eq!(
+            resolve_opencode_bind_host_from_env(Some("0.0.0.0")),
+            "0.0.0.0"
+        );
     }
 
     #[test]
