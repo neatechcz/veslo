@@ -16,7 +16,7 @@ use crate::workspace::state::load_workspace_state;
 const ENGINE_URL_REFRESH_TTL: Duration = Duration::from_secs(120);
 const ENGINE_URL_REFRESH_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct EngineUrlRefreshLease {
     generation: u64,
     port: u16,

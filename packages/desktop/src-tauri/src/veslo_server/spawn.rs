@@ -71,7 +71,7 @@ fn build_veslo_server_dev_watch_args(mut server_args: Vec<String>) -> Vec<String
     args
 }
 
-fn host_from_http_url(raw: &str) -> Option<String> {
+pub(crate) fn host_from_http_url(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     let without_scheme = trimmed
         .strip_prefix("http://")

@@ -26,7 +26,9 @@ pub mod manager;
 pub mod spawn;
 
 use manager::VesloServerManager;
-use spawn::{resolve_veslo_host, resolve_veslo_port_after_restart, spawn_veslo_server};
+use spawn::{
+    host_from_http_url, resolve_veslo_host, resolve_veslo_port_after_restart, spawn_veslo_server,
+};
 
 const PERSISTED_STATE_FILE_NAME: &str = "veslo-server-state.json";
 const PERSISTED_PLUGIN_STATE_FILE_NAME: &str = "veslo-server-plugin-state.json";
