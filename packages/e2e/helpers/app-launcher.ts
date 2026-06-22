@@ -68,6 +68,15 @@ type AppLaunchEnvOptions = {
   denApiBase?: string | null;
 };
 
+type ResolvePilotRuntimeDirOptions = {
+  env?: Record<string, string | undefined>;
+  platform?: NodeJS.Platform;
+};
+
+type ResolvePilotSocketPathOptions = ResolvePilotRuntimeDirOptions & {
+  runtimeDir?: string;
+};
+
 export function resolveWebDriverPort(env: Record<string, string | undefined> = process.env): number {
   const raw = env.E2E_WEBDRIVER_PORT?.trim();
   if (!raw) return DEFAULT_WEBDRIVER_PORT;
@@ -231,12 +240,6 @@ export function createAppLaunchEnv(
 ): NodeJS.ProcessEnv {
   const platform = options.platform ?? process.platform;
   const joinForPlatform = platform === 'win32' ? win32.join : posix.join;
-  const pilotRuntimeDir = options.pilotRuntimeDir ?? resolvePilotRuntimeDir({ platform });
-  const pilotSocket = resolvePilotSocketPath({
-    env: baseEnv,
-    platform,
-    runtimeDir: pilotRuntimeDir,
-  });
   const vesloDataDir = joinForPlatform(options.opencodeHome, '.veslo');
   const vesloAppDataDir = joinForPlatform(vesloDataDir, 'app-data');
   const vesloAppLocalDataDir = joinForPlatform(vesloDataDir, 'app-local-data');

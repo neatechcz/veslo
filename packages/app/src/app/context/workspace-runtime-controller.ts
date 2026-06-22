@@ -70,6 +70,19 @@ export type WorkspaceRuntimeControllerDeps = {
 export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControllerDeps) {
   const ensureEngineForWorkspaceSingleFlight = createSingleFlight<boolean>();
 
+  const setErrorForActiveWorkspace = (workspaceId: string, message: string) => {
+    const activeWorkspaceId = deps.activeWorkspaceId().trim();
+    if (!activeWorkspaceId || activeWorkspaceId === workspaceId) {
+      deps.setError(message);
+      return;
+    }
+    recordSendWorkflowTrace("workspace-runtime", "inactive-workspace-error-suppressed", {
+      workspaceId,
+      activeWorkspaceId,
+      error: message,
+    });
+  };
+
   async function connectToEngineQuiet(
     baseUrl: string,
     directory: string,
@@ -95,7 +108,10 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
       : null;
     if (workspaceId && !entry) {
       const detail = deps.routing.lastEnsureError(workspaceId);
-      deps.setError(detail ? `Failed to ensure workspace client: ${detail}` : "Failed to ensure workspace client");
+      setErrorForActiveWorkspace(
+        workspaceId,
+        detail ? `Failed to ensure workspace client: ${detail}` : "Failed to ensure workspace client",
+      );
       recordSendWorkflowTrace("workspace-runtime", "connect-quiet:routing-error", {
         workspaceId,
         baseUrl,
@@ -338,7 +354,7 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           workspaceId: id,
           error: message,
         });
-        deps.setError(message);
+        setErrorForActiveWorkspace(id, message);
         deps.dispatchLifecycle?.({
           type: "failed",
           workspaceId: id,

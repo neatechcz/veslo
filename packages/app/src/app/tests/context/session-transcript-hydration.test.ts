@@ -85,6 +85,46 @@ test("hydrateTranscriptSnapshot stores messages and keeps the current selection 
   });
 });
 
+test("hydrateTranscriptSnapshot keeps messages in creation order", () => {
+  createRoot((dispose) => {
+    try {
+      const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>("sess-a");
+
+      const store = createSessionStore({
+        client: () => null,
+        routing: makeTestRouting(() => null),
+        activeWorkspaceRoot: () => "",
+        selectedSessionId,
+        setSelectedSessionId,
+        developerMode: () => false,
+        setError: () => {},
+        setSseConnected: () => {},
+      });
+
+      store.setSessions([makeSession("sess-a") as any]);
+      store.hydrateTranscriptSnapshot({
+        workspaceId: "ws-a",
+        sessionId: "sess-a",
+        limit: 140,
+        messages: [
+          { ...makeMessageInfo(), id: "msg-a", time: { created: 20 } },
+          { ...makeMessageInfo(), id: "msg-z", time: { created: 10 } },
+        ],
+        partsByMessageId: {
+          "msg-a": [{ ...makeTextPart(), id: "part-a", messageID: "msg-a" }],
+          "msg-z": [{ ...makeTextPart(), id: "part-z", messageID: "msg-z" }],
+        },
+        fetchedAt: 1,
+        staleAt: 2,
+      });
+
+      assert.deepEqual(store.getCachedTranscriptMessages("sess-a").map((message) => message.id), ["msg-z", "msg-a"]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("workspace snapshots restore transcript freshness and evict old workspace snapshots", () => {
   createRoot((dispose) => {
     try {
