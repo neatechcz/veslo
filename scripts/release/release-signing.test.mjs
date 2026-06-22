@@ -192,6 +192,8 @@ test("workflow routes signing through the release signing resolver", () => {
   assert.match(workflow, /Artifact Signing dlib package/);
   assert.match(workflow, /tauri\.windows\.release\.conf\.json/);
   assert.match(workflow, /appleNotaryAuthMode/);
+  assert.match(workflow, /appleNotaryAuthMode == 'api-key' && secrets\.APPLE_NOTARY_API_KEY_ID \|\| ''/);
+  assert.match(workflow, /appleNotaryAuthMode == 'apple-id' && secrets\.APPLE_NOTARY_APPLE_ID \|\| ''/);
   assert.match(workflow, /APPLE_NOTARY_APPLE_ID/);
   assert.match(workflow, /APPLE_NOTARY_APP_SPECIFIC_PASSWORD/);
   assert.match(workflow, /APPLE_TEAM_ID/);
@@ -204,6 +206,8 @@ test("prerelease workflow supports Apple ID macOS notarization", () => {
   assert.match(workflow, /Resolve macOS signing/);
   assert.match(workflow, /release-signing\.mjs/);
   assert.match(workflow, /appleNotaryAuthMode/);
+  assert.match(workflow, /appleNotaryAuthMode == 'api-key' && secrets\.APPLE_NOTARY_API_KEY_ID \|\| ''/);
+  assert.match(workflow, /appleNotaryAuthMode == 'apple-id' && secrets\.APPLE_NOTARY_APPLE_ID \|\| ''/);
   assert.match(workflow, /APPLE_NOTARY_APPLE_ID/);
   assert.match(workflow, /APPLE_NOTARY_APP_SPECIFIC_PASSWORD/);
   assert.match(workflow, /APPLE_TEAM_ID/);
