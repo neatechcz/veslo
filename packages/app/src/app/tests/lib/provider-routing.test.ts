@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   OPENCODE_SESSION_ID_TEMPLATE,
+  VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE,
   applyGatewayProviderRouting,
   managedConfigContentsMatchForServerPatch,
 } from "../../lib/opencode.js";
@@ -46,8 +47,7 @@ test("openai provider config points at ai-gateway openai route", () => {
   assert.equal(parsed.provider?.openai?.options?.apiKey, undefined);
   assert.equal(parsed.provider?.openai?.options?.headers, undefined);
   assert.deepEqual(parsed.provider?.openai?.models?.["gpt-4o-mini"]?.headers, {
-    Authorization: "Bearer veslo-client-token",
-    "x-veslo-gateway-token": "gateway-access-token",
+    Authorization: `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`,
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
 });
@@ -91,8 +91,7 @@ test("anthropic provider config points at ai-gateway anthropic route", () => {
   assert.equal(parsed.provider?.anthropic?.options?.apiKey, undefined);
   assert.equal(parsed.provider?.anthropic?.options?.headers, undefined);
   assert.deepEqual(parsed.provider?.anthropic?.models?.["claude-sonnet-4-20250514"]?.headers, {
-    Authorization: "Bearer veslo-client-token",
-    "x-veslo-gateway-token": "gateway-access-token",
+    Authorization: `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`,
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
 });
@@ -133,10 +132,9 @@ test("codex_oauth provider config points at ai-gateway codex route", () => {
   };
 
   assert.equal(parsed.provider?.codex_oauth?.options?.baseURL, "http://127.0.0.1:4318/ai-gateway/providers/codex_oauth/v1");
-  assert.equal(parsed.provider?.codex_oauth?.options?.apiKey, "veslo-client-token");
+  assert.equal(parsed.provider?.codex_oauth?.options?.apiKey, VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE);
   assert.equal(parsed.provider?.codex_oauth?.options?.headers, undefined);
   assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.headers, {
-    "x-veslo-gateway-token": "gateway-access-token",
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
 });
@@ -165,7 +163,6 @@ test("gateway provider config can carry a stable workspace correlation header", 
   };
 
   assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.headers, {
-    "x-veslo-gateway-token": "gateway-access-token",
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
     "x-veslo-workspace-id": "ws_1",
   });
@@ -211,13 +208,12 @@ test("openai_compatible provider config points at ai-gateway custom route", () =
     parsed.provider?.openai_compatible?.options?.baseURL,
     "http://127.0.0.1:4318/ai-gateway/providers/openai_compatible/v1",
   );
-  assert.equal(parsed.provider?.openai_compatible?.options?.apiKey, "veslo-client-token");
+  assert.equal(parsed.provider?.openai_compatible?.options?.apiKey, VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE);
   assert.equal(parsed.provider?.openai_compatible?.options?.headers, undefined);
   assert.equal(parsed.provider?.openai_compatible?.models?.["custom-model"]?.name, "custom-model");
   assert.equal(parsed.provider?.openai_compatible?.models?.["custom-model"]?.tool_call, true);
   assert.equal(parsed.provider?.openai_compatible?.models?.["custom-model"]?.reasoning, true);
   assert.deepEqual(parsed.provider?.openai_compatible?.models?.["custom-model"]?.headers, {
-    "x-veslo-gateway-token": "gateway-access-token",
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
 });
@@ -263,13 +259,12 @@ test("codex_oauth provider config includes assigned gpt-5.5 without changing the
     assert.equal(parsed.provider?.codex_oauth?.models?.[modelId]?.tool_call, true);
     assert.equal(parsed.provider?.codex_oauth?.models?.[modelId]?.reasoning, true);
     assert.deepEqual(parsed.provider?.codex_oauth?.models?.[modelId]?.headers, {
-      "x-veslo-gateway-token": "gateway-access-token",
       "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
     });
   }
 });
 
-test("gateway access token is stored as a gateway credential, not a raw provider secret", () => {
+test("managed provider config does not persist runtime gateway credentials", () => {
   const updated = applyGatewayProviderRouting(
     JSON.stringify({
       provider: {
@@ -293,7 +288,7 @@ test("gateway access token is stored as a gateway credential, not a raw provider
     },
   );
 
-  assert.match(updated, /gateway-access-token/);
+  assert.doesNotMatch(updated, /gateway-access-token/);
   assert.doesNotMatch(updated, /sk-proj-openai-secret/);
 
   const parsed = JSON.parse(updated) as {
@@ -313,13 +308,12 @@ test("gateway access token is stored as a gateway credential, not a raw provider
     "x-extra": "keep-me",
   });
   assert.deepEqual(parsed.provider?.openai?.models?.["gpt-4o-mini"]?.headers, {
-    Authorization: "Bearer veslo-client-token",
-    "x-veslo-gateway-token": "gateway-access-token",
+    Authorization: `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`,
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
 });
 
-test("migrated provider config export redacts provider secrets while keeping gateway routing", () => {
+test("migrated provider config export removes provider secrets while keeping gateway routing", () => {
   const updated = applyGatewayProviderRouting(
     JSON.stringify({
       provider: {
@@ -347,7 +341,7 @@ test("migrated provider config export redacts provider secrets while keeping gat
     },
   );
 
-  assert.match(updated, /gateway-access-token/);
+  assert.doesNotMatch(updated, /gateway-access-token/);
   assert.doesNotMatch(updated, /sk-ant|sk-proj|refresh_token|access_token/);
 
   const parsed = JSON.parse(updated) as {
@@ -371,13 +365,12 @@ test("migrated provider config export redacts provider secrets while keeping gat
     "x-extra": "keep-me",
   });
   assert.deepEqual(parsed.provider?.anthropic?.models?.["claude-sonnet-4-20250514"]?.headers, {
-    Authorization: "Bearer veslo-client-token",
-    "x-veslo-gateway-token": "gateway-access-token",
+    Authorization: `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`,
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
 });
 
-test("server-backed managed config comparison requires a patch when gateway tokens are redacted", () => {
+test("server-backed managed config comparison requires a patch when legacy gateway tokens are redacted", () => {
   const desired = applyGatewayProviderRouting(
     JSON.stringify({
       model: "codex_oauth/gpt-5.4",
@@ -407,9 +400,13 @@ test("server-backed managed config comparison requires a patch when gateway toke
   );
 
   const redactedCurrent = desired.replace("gateway-access-token", "[REDACTED]");
+  const currentWithLegacyGatewayToken = redactedCurrent.replace(
+    `"x-veslo-session-id": "${OPENCODE_SESSION_ID_TEMPLATE}"`,
+    `"x-veslo-gateway-token": "[REDACTED]", "x-veslo-session-id": "${OPENCODE_SESSION_ID_TEMPLATE}"`,
+  );
 
   assert.equal(
-    managedConfigContentsMatchForServerPatch(redactedCurrent, desired),
+    managedConfigContentsMatchForServerPatch(currentWithLegacyGatewayToken, desired),
     false,
   );
 });
@@ -443,7 +440,7 @@ test("server-backed managed config comparison requires a patch when the local se
     },
   );
 
-  const redactedCurrent = desired.replace("new-local-client-token", "[REDACTED]");
+  const redactedCurrent = desired.replace(VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE, "[REDACTED]");
 
   assert.equal(
     managedConfigContentsMatchForServerPatch(redactedCurrent, desired),
@@ -480,7 +477,7 @@ test("server-backed managed config comparison requires a patch when model author
     },
   );
 
-  const redactedCurrent = desired.replace("Bearer new-local-client-token", "[REDACTED]");
+  const redactedCurrent = desired.replace(`Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`, "[REDACTED]");
 
   assert.equal(
     managedConfigContentsMatchForServerPatch(redactedCurrent, desired),

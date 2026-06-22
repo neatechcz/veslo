@@ -18,7 +18,10 @@ import {
   shouldEnsureManagedAiLocalGateway,
   shouldDeferManagedAiAccessRefresh,
 } from "../../lib/ai-access.js";
-import { OPENCODE_SESSION_ID_TEMPLATE } from "../../lib/opencode.js";
+import {
+  OPENCODE_SESSION_ID_TEMPLATE,
+  VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE,
+} from "../../lib/opencode.js";
 
 const managedCodexProfile: ManagedAiAccessProfile = {
   userId: "user_123",
@@ -525,13 +528,13 @@ test("formatManagedAiAccessConfig writes admin-managed default model and gateway
   };
 
   assert.equal(parsed.model, "openai/gpt-4o-mini");
+  assert.doesNotMatch(content, /den_token_123/);
   assert.equal(parsed.provider?.openai?.options?.baseURL, "https://veslo.example.test/ai-gateway/providers/openai/v1");
   assert.deepEqual(parsed.provider?.openai?.options?.headers, {
     "x-keep": "1",
   });
   assert.deepEqual(parsed.provider?.openai?.models?.["gpt-4o-mini"]?.headers, {
-    Authorization: "Bearer veslo-client-token",
-    "x-veslo-gateway-token": "den_token_123",
+    Authorization: `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`,
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
 });
@@ -580,10 +583,10 @@ test("formatManagedAiAccessConfig routes codex_oauth through the gateway", () =>
     parsed.provider?.codex_oauth?.options?.baseURL,
     "https://veslo.example.test/ai-gateway/providers/codex_oauth/v1",
   );
-  assert.equal(parsed.provider?.codex_oauth?.options?.apiKey, "veslo-client-token");
+  assert.doesNotMatch(content, /den_token_123/);
+  assert.equal(parsed.provider?.codex_oauth?.options?.apiKey, VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE);
   assert.equal(parsed.provider?.codex_oauth?.options?.headers, undefined);
   assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.headers, {
-    "x-veslo-gateway-token": "den_token_123",
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
 });
@@ -641,10 +644,10 @@ test("formatManagedAiAccessConfig routes openai_compatible through the gateway",
     parsed.provider?.openai_compatible?.options?.baseURL,
     "https://veslo.example.test/ai-gateway/providers/openai_compatible/v1",
   );
-  assert.equal(parsed.provider?.openai_compatible?.options?.apiKey, "veslo-client-token");
+  assert.doesNotMatch(content, /den_token_123/);
+  assert.equal(parsed.provider?.openai_compatible?.options?.apiKey, VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE);
   assert.equal(parsed.provider?.openai_compatible?.options?.headers, undefined);
   assert.deepEqual(parsed.provider?.openai_compatible?.models?.["custom-model"]?.headers, {
-    "x-veslo-gateway-token": "den_token_123",
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
 });
@@ -681,8 +684,8 @@ test("formatManagedAiAccessConfig supports assigned gpt-5.5 without making it th
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.name, "gpt-5.5");
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.tool_call, true);
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.reasoning, true);
+  assert.doesNotMatch(content, /den_token_123/);
   assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.headers, {
-    "x-veslo-gateway-token": "den_token_123",
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
 });
@@ -942,7 +945,7 @@ test("hasUsableManagedAiRuntimeConfig rejects stale managed base URLs", () => {
   );
 });
 
-test("hasUsableManagedAiRuntimeConfig treats server-redacted apiKey as usable when routing and gateway token match", () => {
+test("hasUsableManagedAiRuntimeConfig treats server-redacted apiKey as usable when routing matches", () => {
   const content = formatManagedAiAccessConfig("{}", {
     profile: managedCodexProfile,
     serverBaseUrl: "http://127.0.0.1:8787",

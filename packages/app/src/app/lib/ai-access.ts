@@ -3,7 +3,11 @@ import { parse } from "jsonc-parser";
 import type { ModelRef } from "../types";
 import type { VesloGatewayProvider, VesloUserAiAccess } from "./veslo-server";
 import { formatConfigWithDefaultModel } from "./model-persistence";
-import { applyGatewayProviderRouting } from "./opencode";
+import {
+  OPENCODE_SESSION_ID_TEMPLATE,
+  VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE,
+  applyGatewayProviderRouting,
+} from "./opencode";
 import { isGatewayOwnedProvider } from "../utils/providers";
 
 export const AI_ACCESS_ADMIN_MANAGED_MESSAGE =
@@ -170,13 +174,10 @@ function parseConfigObject(content: string | null | undefined): Record<string, u
 
 function hasManagedGatewayHeaders(value: unknown, expectedWorkspaceId?: string | null): boolean {
   const headers = readConfigObject(value);
-  const gatewayToken = typeof headers["x-veslo-gateway-token"] === "string"
-    ? headers["x-veslo-gateway-token"].trim()
-    : "";
   const sessionTemplate = typeof headers["x-veslo-session-id"] === "string"
     ? headers["x-veslo-session-id"].trim()
     : "";
-  if (!gatewayToken || !sessionTemplate) return false;
+  if (sessionTemplate !== OPENCODE_SESSION_ID_TEMPLATE) return false;
 
   const workspaceId = expectedWorkspaceId?.trim() ?? "";
   if (!workspaceId) return true;
@@ -198,7 +199,9 @@ function hasUsableServerClientCredential(
   const isOpenAiCompatibleGatewayProvider = providerId === "codex_oauth" || providerId === "openai_compatible";
   if (isOpenAiCompatibleGatewayProvider) {
     const apiKey = typeof options.apiKey === "string" ? options.apiKey.trim() : "";
-    return apiKey === expectedToken || apiKey === REDACTED_SECRET_VALUE;
+    return apiKey === VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE ||
+      apiKey === expectedToken ||
+      apiKey === REDACTED_SECRET_VALUE;
   }
 
   const models = readConfigObject(providerConfig.models);
@@ -209,7 +212,9 @@ function hasUsableServerClientCredential(
       : typeof headers.authorization === "string"
         ? headers.authorization.trim()
         : "";
-    return authorization === `Bearer ${expectedToken}` || authorization === REDACTED_SECRET_VALUE;
+    return authorization === `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}` ||
+      authorization === `Bearer ${expectedToken}` ||
+      authorization === REDACTED_SECRET_VALUE;
   });
 }
 
@@ -435,6 +440,7 @@ export function extractManagedApiKey(content: string | null | undefined): string
       if (typeof apiKey !== "string") continue;
       const normalized = apiKey.trim();
       if (!normalized || normalized === REDACTED_SECRET_VALUE) continue;
+      if (normalized === VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE) continue;
       return normalized;
     }
     return null;

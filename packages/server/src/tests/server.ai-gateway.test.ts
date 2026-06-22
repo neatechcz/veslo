@@ -240,6 +240,125 @@ describe("ai gateway proxy routes", () => {
     }
   });
 
+  test("server uses runtime ai-access authorization for provider routes without gateway token headers", async () => {
+    const requests: Array<{
+      method: string;
+      pathname: string;
+      authorization: string | null;
+      gatewayToken: string | null;
+      sessionId: string | null;
+      body: unknown;
+    }> = [];
+
+    const upstream = createServer(async (req, res) => {
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const rawBody = Buffer.concat(chunks).toString("utf8");
+      requests.push({
+        method: req.method ?? "GET",
+        pathname: req.url ?? "/",
+        authorization: req.headers.authorization ?? null,
+        gatewayToken: typeof req.headers["x-veslo-gateway-token"] === "string" ? req.headers["x-veslo-gateway-token"] : null,
+        sessionId: typeof req.headers["x-veslo-session-id"] === "string" ? req.headers["x-veslo-session-id"] : null,
+        body: rawBody ? JSON.parse(rawBody) : null,
+      });
+
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      if (req.url === "/api/me/ai-access") {
+        res.end(JSON.stringify({
+          accessToken: "runtime-gateway-token",
+          aiAccess: {
+            id: "ai_access_user_123",
+            userId: "user_123",
+            enabled: true,
+            provider: "codex_oauth",
+            defaultModel: "gpt-5.5",
+            allowedModels: ["gpt-5.5"],
+            updatedAt: "2026-04-08T10:00:00.000Z",
+          },
+        }));
+        return;
+      }
+
+      res.end(JSON.stringify({
+        id: "chatcmpl_runtime_123",
+        object: "chat.completion",
+        model: "gpt-5.5",
+      }));
+    });
+    const upstreamPort = await listenTestServer(upstream);
+
+    try {
+      await withManagedAiEnv({ managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}` }, async () => {
+        const server = startServer(createTestConfig());
+
+        try {
+          const accessResponse = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/me/ai-access`, {
+            headers: {
+              authorization: "Bearer client-token",
+              "x-veslo-gateway-authorization": "Bearer den-user-token",
+            },
+          });
+          expect(accessResponse.status).toBe(200);
+          expect((await accessResponse.json() as { accessToken?: string }).accessToken).toBe("runtime-gateway-token");
+
+          const response = await fetch(
+            `http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`,
+            {
+              method: "POST",
+              headers: {
+                authorization: "Bearer client-token",
+                "content-type": "application/json",
+                "x-veslo-session-id": "session_runtime",
+              },
+              body: JSON.stringify({
+                model: "gpt-5.5",
+                messages: [{ role: "user", content: "Hello" }],
+              }),
+            },
+          );
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({
+            id: "chatcmpl_runtime_123",
+            object: "chat.completion",
+            model: "gpt-5.5",
+          });
+
+          expect(requests).toEqual([
+            {
+              method: "GET",
+              pathname: "/api/me/ai-access",
+              authorization: "Bearer den-user-token",
+              gatewayToken: null,
+              sessionId: null,
+              body: null,
+            },
+            {
+              method: "POST",
+              pathname: "/providers/codex_oauth/v1/chat/completions",
+              authorization: "Bearer runtime-gateway-token",
+              gatewayToken: null,
+              sessionId: "session_runtime",
+              body: {
+                model: "gpt-5.5",
+                messages: [{ role: "user", content: "Hello" }],
+              },
+            },
+          ]);
+        } finally {
+          stopTestServer(server);
+        }
+      });
+    } finally {
+      upstream.close();
+      await once(upstream, "close");
+    }
+  });
+
   test("server proxies ai-gateway codex_oauth chat completions route", async () => {
     const requests: Array<{
       method: string;

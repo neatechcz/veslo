@@ -115,6 +115,7 @@ const DEFAULT_OPENCODE_USERNAME = "opencode";
 const DEFAULT_OPENCODE_HOT_RELOAD_DEBOUNCE_MS = 700;
 const DEFAULT_OPENCODE_HOT_RELOAD_COOLDOWN_MS = 1500;
 const DEFAULT_MANAGED_AI_BASE_URL = "https://ai.veslo.work";
+const VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV = "VESLO_OPENCODE_SERVER_CLIENT_TOKEN";
 
 type ParsedArgs = {
   positionals: string[];
@@ -2498,6 +2499,7 @@ async function startOpencode(options: {
   expectedVersion?: string;
   username?: string;
   password?: string;
+  vesloServerToken?: string;
   corsOrigins: string[];
   logger: Logger;
   runId: string;
@@ -2528,6 +2530,7 @@ async function startOpencode(options: {
     ),
     ...(options.username ? { OPENCODE_SERVER_USERNAME: options.username } : {}),
     ...(options.password ? { OPENCODE_SERVER_PASSWORD: options.password } : {}),
+    ...(options.vesloServerToken ? { [VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV]: options.vesloServerToken } : {}),
     ...(options.configDir ? { OPENCODE_CONFIG_DIR: options.configDir } : {}),
     OPENCODE_HOT_RELOAD: options.hotReload.enabled ? "1" : "0",
     OPENCODE_HOT_RELOAD_DEBOUNCE_MS: String(options.hotReload.debounceMs),
@@ -3779,6 +3782,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     process.env.VESLO_OPENCODE_USERNAME ??
     process.env.OPENCODE_SERVER_USERNAME ??
     DEFAULT_OPENCODE_USERNAME;
+  const vesloServerToken = readFlag(args.flags, "veslo-token") ?? process.env.VESLO_TOKEN;
   const authHeaders = opencodePassword
     ? { Authorization: `Basic ${encodeBasicAuth(opencodeUsername, opencodePassword)}` }
     : undefined;
@@ -3947,6 +3951,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           expectedVersion: opencodeBinary.expectedVersion,
           username: opencodePassword ? opencodeUsername : undefined,
           password: opencodePassword,
+          vesloServerToken,
           corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
           logger,
           runId: `${runId}-${workspaceId.slice(-8)}`,
@@ -4079,6 +4084,7 @@ async function runRouterDaemon(args: ParsedArgs) {
                 expectedVersion: opencodeBinary.expectedVersion,
                 username: opencodePassword ? opencodeUsername : undefined,
                 password: opencodePassword,
+                vesloServerToken,
                 corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
                 logger,
                 runId: `${runId}-shared`,
@@ -5765,6 +5771,7 @@ async function runStart(args: ParsedArgs) {
         expectedVersion: opencodeBinary.expectedVersion,
         username: opencodeUsername,
         password: opencodePassword,
+        vesloServerToken: vesloToken,
         corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
         logger,
         runId,

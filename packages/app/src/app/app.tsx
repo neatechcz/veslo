@@ -8301,7 +8301,7 @@ export default function App() {
         localClientToken: gatewayLocalAuth.token,
       }),
       cachedAccessPresent: Boolean(cachedAccess),
-      freshCachedAccessPresent: Boolean(proofCachedAccess),
+      freshCachedAccessPresent: Boolean(proofCachedAccess?.gatewayAccessToken),
     });
     if (refreshPreflight.type === "reset") {
       setManagedAiAccess(null);

@@ -43,11 +43,11 @@ test("sendPrompt blocks when managed bootstrap readiness is unavailable before r
   );
 });
 
-test("managed AI bootstrap writes config with the managed gateway token when present and otherwise falls back to the DEN auth token", () => {
+test("managed AI bootstrap waits for runtime gateway authorization before writing managed config", () => {
   assert.match(
     source,
     /const managedProfile = managedAiAccess\(\);[\s\S]*?const gatewayClient = gatewayVesloServerClient\(\);[\s\S]*?const providerRoutingTarget = resolveManagedAiProviderRoutingTarget\(\{[\s\S]*?\}\);\s*const gatewayAccessToken = managedAiGatewayAccessToken\(\) \|\| denGatewayAccessToken\(\);/s,
-    "managed AI config writes should prefer the managed gateway token and fall back to the DEN auth token when no separate token is provided",
+    "managed AI config writes should wait for the managed gateway token or DEN fallback before treating provider routing as ready",
   );
 });
 

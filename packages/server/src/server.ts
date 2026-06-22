@@ -344,13 +344,6 @@ function isSensitiveConfigKey(key: string): boolean {
   const normalized = normalizeConfigKey(key);
   if (!normalized) return false;
   if (normalized === "tokensource") return false;
-  // VSLO-86 — x-veslo-gateway-token must round-trip in clear so the frontend
-  // can re-patch opencode.jsonc on disk with a valid token. Without this
-  // exception, getConfig returned "[REDACTED]", the patch effect echoed the
-  // literal back, and engines later sent "[REDACTED]" as the Den gateway
-  // header → AI gateway 401. The same header lives in the allow-list on the
-  // client (GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS); keep both in sync.
-  if (normalized === "xveslogatewaytoken") return false;
   return REDACTED_CONFIG_KEYS.some((segment) => normalized === segment || normalized.endsWith(segment));
 }
 
@@ -1515,14 +1508,6 @@ function requireAiGatewayCallerAuth(request: Request): string {
   return authorization;
 }
 
-function requireAiGatewayAccessToken(request: Request): string {
-  const accessToken = request.headers.get(GATEWAY_ACCESS_TOKEN_HEADER)?.trim() ?? "";
-  if (!accessToken) {
-    throw new ApiError(401, "gateway_unauthorized", "Gateway access token is required");
-  }
-  return `Bearer ${accessToken}`;
-}
-
 function requireAiGatewaySessionId(request: Request): string {
   const sessionId = request.headers.get(GATEWAY_SESSION_ID_HEADER)?.trim() ?? "";
   if (!sessionId) {
@@ -1589,11 +1574,116 @@ type ActiveAiGatewayProxyRequest = {
   origin: string | null;
 };
 
+type AiGatewayRuntimeAuthorizationEntry = {
+  authorization: string;
+  at: number;
+  source: "ai-access-token" | "caller-authorization";
+};
+
 const aiGatewaySessionHits = new Map<string, AiGatewaySessionHit[]>();
 const aiGatewayWorkspaceHits = new Map<string, AiGatewaySessionHit[]>();
 const activeAiGatewayRunsBySession = new Map<string, ActiveAiGatewayRunContext[]>();
 const activeAiGatewayRunsByWorkspace = new Map<string, ActiveAiGatewayRunContext[]>();
 const activeAiGatewayProxyRequests = new Map<string, ActiveAiGatewayProxyRequest>();
+const aiGatewayRuntimeAuthorizationByActorToken = new Map<string, AiGatewayRuntimeAuthorizationEntry>();
+
+function actorRuntimeTokenKey(actor?: Actor): string {
+  return actor?.tokenHash?.trim() ?? "";
+}
+
+function topLevelRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function readAiAccessBundleAccessToken(value: unknown): string {
+  const accessToken = topLevelRecord(value).accessToken;
+  return typeof accessToken === "string" && accessToken.trim() !== REDACTED_SECRET_VALUE
+    ? accessToken.trim()
+    : "";
+}
+
+function readAiAccessBundleEnabled(value: unknown): boolean {
+  const aiAccess = topLevelRecord(topLevelRecord(value).aiAccess);
+  return aiAccess.enabled === true;
+}
+
+function registerAiGatewayRuntimeAuthorization(input: {
+  actor?: Actor;
+  authorization: string;
+  source: AiGatewayRuntimeAuthorizationEntry["source"];
+}): void {
+  const key = actorRuntimeTokenKey(input.actor);
+  const authorization = input.authorization.trim();
+  if (!key || !authorization) return;
+  aiGatewayRuntimeAuthorizationByActorToken.set(key, {
+    authorization,
+    source: input.source,
+    at: Date.now(),
+  });
+}
+
+function clearAiGatewayRuntimeAuthorization(actor?: Actor): void {
+  const key = actorRuntimeTokenKey(actor);
+  if (key) aiGatewayRuntimeAuthorizationByActorToken.delete(key);
+}
+
+function syncAiGatewayRuntimeAuthorizationFromAccessBundle(input: {
+  actor?: Actor;
+  value: unknown;
+  callerAuthorization: string;
+}): void {
+  if (!readAiAccessBundleEnabled(input.value)) {
+    clearAiGatewayRuntimeAuthorization(input.actor);
+    return;
+  }
+
+  const accessToken = readAiAccessBundleAccessToken(input.value);
+  if (accessToken) {
+    registerAiGatewayRuntimeAuthorization({
+      actor: input.actor,
+      authorization: `Bearer ${accessToken}`,
+      source: "ai-access-token",
+    });
+    return;
+  }
+
+  registerAiGatewayRuntimeAuthorization({
+    actor: input.actor,
+    authorization: input.callerAuthorization,
+    source: "caller-authorization",
+  });
+}
+
+function resolveAiGatewayProviderAuthorization(input: {
+  request: Request;
+  actor?: Actor;
+}): {
+  authorization: string;
+  source: "legacy-header" | AiGatewayRuntimeAuthorizationEntry["source"];
+} {
+  const legacyAccessToken = input.request.headers.get(GATEWAY_ACCESS_TOKEN_HEADER)?.trim() ?? "";
+  if (legacyAccessToken) {
+    return {
+      authorization: `Bearer ${legacyAccessToken}`,
+      source: "legacy-header",
+    };
+  }
+
+  const key = actorRuntimeTokenKey(input.actor);
+  const runtime = key ? aiGatewayRuntimeAuthorizationByActorToken.get(key) : undefined;
+  if (runtime?.authorization.trim()) {
+    return {
+      authorization: runtime.authorization,
+      source: runtime.source,
+    };
+  }
+
+  throw new ApiError(
+    401,
+    "gateway_runtime_authorization_required",
+    "Managed AI gateway authorization is not available in this Veslo server runtime",
+  );
+}
 
 function pruneAiGatewaySessionHits(now = Date.now()): void {
   const cutoff = now - AI_GATEWAY_SESSION_HIT_TTL_MS;
@@ -2163,6 +2253,7 @@ async function proxyAiGatewayReadinessRequest(input: {
 async function proxyAiGatewayRequest(input: {
   request: Request;
   url: URL;
+  actor?: Actor;
   gatewayPath: string;
   auth: "caller" | "gateway-token";
   requireSessionId?: boolean;
@@ -2185,8 +2276,12 @@ async function proxyAiGatewayRequest(input: {
   const requestId = randomUUID();
   const gatewayAccessToken = input.request.headers.get(GATEWAY_ACCESS_TOKEN_HEADER)?.trim() ?? "";
   const gatewayCallerAuth = input.request.headers.get(GATEWAY_CALLER_AUTH_HEADER)?.trim() ?? "";
-  const authorization =
-    input.auth === "caller" ? requireAiGatewayCallerAuth(input.request) : requireAiGatewayAccessToken(input.request);
+  const providerAuthorization = input.auth === "gateway-token"
+    ? resolveAiGatewayProviderAuthorization({ request: input.request, actor: input.actor })
+    : null;
+  const authorization = input.auth === "caller"
+    ? requireAiGatewayCallerAuth(input.request)
+    : providerAuthorization?.authorization ?? "";
   const incomingSessionId = input.requireSessionId ? requireAiGatewaySessionId(input.request) : undefined;
   const workspaceId = trimmedHeader(input.request, GATEWAY_WORKSPACE_ID_HEADER);
   const activeRunContext = resolveActiveAiGatewayRunContext({ sessionId: incomingSessionId, workspaceId });
@@ -2213,6 +2308,8 @@ async function proxyAiGatewayRequest(input: {
   const incomingHeaderNames = headerNamesForTrace(input.request.headers);
   const incomingInternalHeaderSummary = {
     hasGatewayAccessToken: Boolean(gatewayAccessToken),
+    hasRuntimeGatewayAuthorization: Boolean(providerAuthorization && providerAuthorization.source !== "legacy-header"),
+    gatewayAuthorizationSource: providerAuthorization?.source ?? (input.auth === "caller" ? "caller" : "missing"),
     hasGatewayCallerAuth: Boolean(gatewayCallerAuth),
     hasWorkspaceId: Boolean(workspaceId),
     hasSendTraceId: Boolean(trimmedHeader(input.request, "x-veslo-send-trace-id")),
@@ -2533,6 +2630,13 @@ async function proxyAiGatewayRequest(input: {
   }
 
   const redacted = input.preserveAiAccessToken ? redactAiAccessBundleForClient(json) : redactSensitiveConfig(json);
+  if (input.auth === "caller" && input.preserveAiAccessToken) {
+    syncAiGatewayRuntimeAuthorizationFromAccessBundle({
+      actor: input.actor,
+      value: json,
+      callerAuthorization: gatewayCallerAuth,
+    });
+  }
   redactionDoneAt = perfMs();
   logTiming(response.status, "ok", {
     streaming: false,
@@ -5827,6 +5931,7 @@ function createRoutes(
     return proxyAiGatewayRequest({
       request: ctx.request,
       url: ctx.url,
+      actor: ctx.actor,
       gatewayPath: "/api/me/ai-access",
       auth: "caller",
       preserveAiAccessToken: true,
@@ -5844,6 +5949,7 @@ function createRoutes(
     return proxyAiGatewayRequest({
       request: ctx.request,
       url: ctx.url,
+      actor: ctx.actor,
       gatewayPath: "/providers/openai/v1/chat/completions",
       auth: "gateway-token",
       requireSessionId: true,
@@ -5854,6 +5960,7 @@ function createRoutes(
     return proxyAiGatewayRequest({
       request: ctx.request,
       url: ctx.url,
+      actor: ctx.actor,
       gatewayPath: "/providers/anthropic/v1/messages",
       auth: "gateway-token",
       requireSessionId: true,
@@ -5864,6 +5971,7 @@ function createRoutes(
     return proxyAiGatewayRequest({
       request: ctx.request,
       url: ctx.url,
+      actor: ctx.actor,
       gatewayPath: "/providers/codex_oauth/v1/chat/completions",
       auth: "gateway-token",
       requireSessionId: true,
@@ -5874,6 +5982,7 @@ function createRoutes(
     return proxyAiGatewayRequest({
       request: ctx.request,
       url: ctx.url,
+      actor: ctx.actor,
       gatewayPath: "/providers/openai_compatible/v1/chat/completions",
       auth: "gateway-token",
       requireSessionId: true,
