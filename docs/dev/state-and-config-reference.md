@@ -75,6 +75,11 @@ Workspace activation state is runtime-only state managed by `packages/app/src/ap
 - Runtime readiness checks that can target a concrete workspace should use workspace-scoped readiness (`isWorkspaceRuntimeReady(workspaceId)` in the app shell), not the global `engineReady` signal. The global signal remains a compatibility fallback for the active workspace; send, SSE, sidebar live sync, permission polling, and MCP runtime reads are expected to gate on the target workspace.
 - Runtime readiness and app-level routing client reads are owned by the app runtime owner. It derives runtime availability from orchestrator ready snapshots, workspace routing entries, active legacy `engineReady`, and workspace busy state, then exposes an owner-gated routing wrapper for session, extension/skill, system-state, and routing-context consumers. It does not start, stop, or activate engines; lifecycle mutations still belong to the workspace/runtime controllers.
 - MCP runtime status refresh is single-flight by workspace, project directory, and the current MCP entry list key. If the configured MCP entry list changes while an older status request is in flight, the new list must schedule its own runtime status read and stale older success or failure results must not overwrite or clear the current status UI.
+- Desktop bootstrap marks local workspaces whose root folder no longer exists as `missing` and skips provisioning for them. App activation must not start a host or recreate files for a missing local workspace; it should leave the workspace removable from Veslo and ask the user to remove it or choose the folder again.
+
+## Workspace Removal State
+
+Removing a workspace is detach-only by default: it removes the workspace from Veslo state and the local server registry without deleting the user's project folder. Destructive local cleanup requires an explicit `deleteLocalData`/`delete_local_data` mode. For normal user folders that mode removes Veslo/OpenCode local state (`.opencode` and `opencode.jsonc`) only. For app-created private workspaces under the desktop private workspace root, the same explicit mode removes the private workspace child directory because that folder is Veslo-owned scratch data.
 
 ## Den Auth State
 

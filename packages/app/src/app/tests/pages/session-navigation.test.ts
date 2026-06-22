@@ -94,6 +94,12 @@ const redoLastUserMessageSource =
   redoLastUserMessageStart >= 0 && redoLastUserMessageEnd >= 0
     ? appSource.slice(redoLastUserMessageStart, redoLastUserMessageEnd)
     : "";
+const chooseFolderForCurrentSessionStart = appSource.indexOf("  const chooseFolderForCurrentSession = async () => {");
+const chooseFolderForCurrentSessionEnd = appSource.indexOf("  function runSoulPrompt(", chooseFolderForCurrentSessionStart);
+const chooseFolderForCurrentSessionSource =
+  chooseFolderForCurrentSessionStart >= 0 && chooseFolderForCurrentSessionEnd >= 0
+    ? appSource.slice(chooseFolderForCurrentSessionStart, chooseFolderForCurrentSessionEnd)
+    : "";
 const renameSessionTitleStart = appSource.indexOf("  async function renameSessionTitle(");
 const renameSessionTitleEnd = appSource.indexOf("  async function deleteSessionById(", renameSessionTitleStart);
 const renameSessionTitleSource =
@@ -780,6 +786,20 @@ test("fresh New session surfaces cleanup failure instead of silently assuming ro
     openNewSessionSource,
     /const cleanupSucceeded = await deps\.workspace\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}/s,
     "fresh New session must treat scratch-workspace cleanup failure as an error",
+  );
+});
+
+test("Choose folder cleanup removes the old private workspace directory", () => {
+  assert.notEqual(chooseFolderForCurrentSessionSource, "", "Choose folder flow should exist in app shell");
+  assert.match(
+    chooseFolderForCurrentSessionSource,
+    /if \(sourceWorkspace\.workspaceType !== "local" \|\| !workspaceStore\.isPrivateWorkspacePath\(sourceRoot\)\) \{[\s\S]*throw new Error\("Choose folder is only available for private workspaces\."\);[\s\S]*\}/s,
+    "Choose folder should only detach/delete a source workspace after proving it is an app private workspace",
+  );
+  assert.match(
+    chooseFolderForCurrentSessionSource,
+    /if \(sourceWorkspaceId && sourceWorkspaceId !== targetWorkspace\.id\) \{\s*await workspaceStore\.forgetWorkspace\(sourceWorkspaceId, \{ deleteLocalData: true \}\);\s*\}/s,
+    "moving a private chat into a chosen folder should remove the old app-owned private workspace directory",
   );
 });
 

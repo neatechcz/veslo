@@ -13,3 +13,13 @@ test("local workspace CRUD lives outside workspace facade", () => {
   assert.match(localSource, /return \[existing, \.\.\.rest\];/);
   assert.doesNotMatch(facadeSource, /async function createLocalWorkspace/);
 });
+
+test("missing local workspace roots do not start a host process", () => {
+  const localSource = readContextSource("workspace-local-workspaces.ts");
+
+  assert.match(
+    localSource,
+    /if \(workspace\.missing\) \{\s*deps\.setError\("Workspace folder no longer exists\. Remove it from Veslo or choose the folder again\."\);\s*return false;\s*\}[\s\S]*const started = await deps\.startHost\(\{ workspacePath: workspace\.path, navigate: false \}\);/s,
+    "missing local workspaces should remain removable without recreating or starting their deleted folder",
+  );
+});

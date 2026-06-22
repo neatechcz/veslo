@@ -361,6 +361,7 @@ mod tests {
             veslo_token: None,
             veslo_workspace_id: None,
             veslo_workspace_name: None,
+            missing: None,
         }
     }
 

@@ -31,8 +31,7 @@ pub fn init_error_monitoring() -> Option<sentry::ClientInitGuard> {
         }
     };
 
-    let environment =
-        read_env("VESLO_GLITCHTIP_ENVIRONMENT").unwrap_or_else(default_environment);
+    let environment = read_env("VESLO_GLITCHTIP_ENVIRONMENT").unwrap_or_else(default_environment);
     let traces_sample_rate =
         parse_traces_sample_rate(read_env("VESLO_GLITCHTIP_TRACES_SAMPLE_RATE"));
 

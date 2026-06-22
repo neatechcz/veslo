@@ -346,6 +346,8 @@ pub struct WorkspaceInfo {
     pub veslo_workspace_id: Option<String>,
     #[serde(default, alias = "openworkWorkspaceName")]
     pub veslo_workspace_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub missing: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Clone)]

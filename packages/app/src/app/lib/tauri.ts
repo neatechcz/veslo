@@ -152,6 +152,7 @@ export type WorkspaceInfo = {
   vesloToken?: string | null;
   vesloWorkspaceId?: string | null;
   vesloWorkspaceName?: string | null;
+  missing?: boolean | null;
 };
 
 export type WorkspaceList = {

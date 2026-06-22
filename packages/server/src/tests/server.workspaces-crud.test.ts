@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -300,6 +300,78 @@ test("PATCH /workspaces/:id returns 404 for unknown id", async () => {
     body: JSON.stringify({ name: "X" }),
   });
   expect(response.status).toBe(404);
+});
+
+test("DELETE /workspaces/:id removes explicit-id workspace from persisted config", async () => {
+  const configDir = await mkdtemp(join(tmpdir(), "veslo-ws-delete-explicit-"));
+  tempDirs.push(configDir);
+  const workspacePath = join(configDir, "workspace-a");
+  const seed: WorkspaceInfo = {
+    id: "custom-workspace-id",
+    name: "Custom",
+    path: workspacePath,
+    workspaceType: "local",
+  };
+  const { server, configPath } = await startFixture([seed]);
+  await writeFile(
+    configPath,
+    `${JSON.stringify({
+      workspaces: [{ id: seed.id, path: "workspace-a", name: seed.name }],
+      authorizedRoots: ["workspace-a"],
+    }, null, 2)}\n`,
+    "utf8",
+  );
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspaces/${seed.id}`, {
+    method: "DELETE",
+    headers: hostHeaders(),
+  });
+
+  expect(response.status).toBe(200);
+  const payload = (await response.json()) as { deleted: boolean; persisted: boolean; items: Array<{ id: string }> };
+  expect(payload.deleted).toBe(true);
+  expect(payload.persisted).toBe(true);
+  expect(payload.items).toEqual([]);
+
+  const onDisk = JSON.parse(await readFile(configPath, "utf8")) as { workspaces: unknown[]; authorizedRoots: unknown[] };
+  expect(onDisk.workspaces).toEqual([]);
+  expect(onDisk.authorizedRoots).toEqual([]);
+});
+
+test("DELETE /workspaces/:id removes missing local workspace from persisted config", async () => {
+  const configDir = await mkdtemp(join(tmpdir(), "veslo-ws-delete-missing-"));
+  tempDirs.push(configDir);
+  const workspacePath = join(configDir, "missing-workspace");
+  const seed: WorkspaceInfo = {
+    id: workspaceIdForPath(workspacePath),
+    name: "Missing",
+    path: workspacePath,
+    workspaceType: "local",
+  };
+  const { server, configPath } = await startFixture([seed]);
+  await writeFile(
+    configPath,
+    `${JSON.stringify({
+      workspaces: [{ path: "missing-workspace", name: seed.name }],
+      authorizedRoots: ["missing-workspace"],
+    }, null, 2)}\n`,
+    "utf8",
+  );
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspaces/${seed.id}`, {
+    method: "DELETE",
+    headers: hostHeaders(),
+  });
+
+  expect(response.status).toBe(200);
+  const payload = (await response.json()) as { deleted: boolean; persisted: boolean; items: Array<{ id: string }> };
+  expect(payload.deleted).toBe(true);
+  expect(payload.persisted).toBe(true);
+  expect(payload.items).toEqual([]);
+
+  const onDisk = JSON.parse(await readFile(configPath, "utf8")) as { workspaces: unknown[]; authorizedRoots: unknown[] };
+  expect(onDisk.workspaces).toEqual([]);
+  expect(onDisk.authorizedRoots).toEqual([]);
 });
 
 test("CRUD flow end-to-end: create → list → rename → list", async () => {

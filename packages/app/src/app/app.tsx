@@ -10944,7 +10944,7 @@ export default function App() {
       );
 
       if (sourceWorkspaceId && sourceWorkspaceId !== targetWorkspace.id) {
-        await workspaceStore.forgetWorkspace(sourceWorkspaceId);
+        await workspaceStore.forgetWorkspace(sourceWorkspaceId, { deleteLocalData: true });
       }
 
       // forgetWorkspace → setWorkspaces() triggers a reactive sidebar

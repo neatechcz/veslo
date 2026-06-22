@@ -270,6 +270,8 @@ Common app flows:
   Discover available workspaces and active workspace.
 - `POST /workspaces/local`
   Register a desktop-local workspace with the server before workspace-scoped config, mutation, or OpenCode write flows depend on it.
+- `DELETE /workspaces/:id`
+  Remove a workspace from the server registry. The route must persist removal for both explicit-id entries and path-derived entries, and it must work even when the local workspace folder no longer exists on disk.
 - `GET /workspace/:id/config`
   Read workspace-scoped Veslo config.
 - `PATCH /workspace/:id/config`

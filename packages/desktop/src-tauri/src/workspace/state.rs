@@ -382,12 +382,21 @@ pub fn load_workspace_state(app: &tauri::AppHandle) -> Result<WorkspaceState, St
     load_workspace_state_from_paths(&data_dir, &path)
 }
 
+fn workspace_state_for_persistence(state: &WorkspaceState) -> WorkspaceState {
+    let mut persisted = state.clone();
+    for workspace in persisted.workspaces.iter_mut() {
+        workspace.missing = None;
+    }
+    persisted
+}
+
 pub fn save_workspace_state(app: &tauri::AppHandle, state: &WorkspaceState) -> Result<(), String> {
     let (dir, path) = veslo_state_paths(app)?;
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create {}: {e}", dir.display()))?;
+    let persisted = workspace_state_for_persistence(state);
     fs::write(
         &path,
-        serde_json::to_string_pretty(state).map_err(|e| e.to_string())?,
+        serde_json::to_string_pretty(&persisted).map_err(|e| e.to_string())?,
     )
     .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
     Ok(())
@@ -524,6 +533,7 @@ mod tests {
             veslo_token: None,
             veslo_workspace_id: None,
             veslo_workspace_name: None,
+            missing: None,
         }
     }
 
@@ -532,6 +542,22 @@ mod tests {
         fs::create_dir_all(dir).expect("create state dir");
         let serialized = serde_json::to_string_pretty(state).expect("serialize state");
         fs::write(path, serialized).expect("write state");
+    }
+
+    #[test]
+    fn persistence_drops_runtime_missing_workspace_flag() {
+        let mut workspace = local_workspace("ws-missing", "Missing", "/tmp/missing-workspace");
+        workspace.missing = Some(true);
+        let state = WorkspaceState {
+            version: 4,
+            active_id: workspace.id.clone(),
+            workspaces: vec![workspace],
+        };
+
+        let persisted = workspace_state_for_persistence(&state);
+
+        assert_eq!(state.workspaces[0].missing, Some(true));
+        assert_eq!(persisted.workspaces[0].missing, None);
     }
 
     #[test]

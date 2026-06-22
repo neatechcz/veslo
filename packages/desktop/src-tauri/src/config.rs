@@ -48,8 +48,8 @@ fn opencode_config_candidates(
             ))
         }
         "global" => {
-            let base =
-                xdg_config_home().ok_or_else(|| "Unable to resolve config directory".to_string())?;
+            let base = xdg_config_home()
+                .ok_or_else(|| "Unable to resolve config directory".to_string())?;
 
             let root = base.join("opencode");
             let jsonc = root.join("opencode.jsonc");

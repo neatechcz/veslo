@@ -10939,10 +10939,12 @@ async function persistWorkspaceDeletion(configPath: string, workspaceId: string,
 
   const nextWorkspaces = workspaces.filter((entry) => {
     const obj = ensurePlainObject(entry);
+    const explicitId = typeof obj.id === "string" ? obj.id.trim() : "";
+    if (explicitId && explicitId === workspaceId) return false;
     const path = typeof obj.path === "string" ? obj.path.trim() : "";
     if (!path) return true;
-    const id = workspaceIdForPath(resolve(configDir, path));
-    return id !== workspaceId;
+    const pathId = workspaceIdForPath(resolve(configDir, path));
+    return pathId !== workspaceId;
   });
 
   const rootsRaw = parsed.authorizedRoots;
