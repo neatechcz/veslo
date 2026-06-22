@@ -83,7 +83,11 @@ export interface EngineStoreDeps {
   // Orchestrator / runtime helpers
   resolveEngineRuntime: () => EngineRuntime;
   resolveWorkspacePaths: () => string[];
-  activateOrchestratorWorkspace: (input: { workspacePath: string; name?: string | null }) => Promise<any>;
+  activateOrchestratorWorkspace: (input: {
+    workspacePath: string;
+    workspaceId?: string | null;
+    name?: string | null;
+  }) => Promise<any>;
   activateVesloHostWorkspace: (workspacePath: string) => Promise<any>;
 
   // Workspace-level helpers

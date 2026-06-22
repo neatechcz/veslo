@@ -709,10 +709,12 @@ export async function orchestratorStatus(): Promise<OrchestratorStatus> {
 
 export async function orchestratorWorkspaceActivate(input: {
   workspacePath: string;
+  workspaceId?: string | null;
   name?: string | null;
 }): Promise<OrchestratorWorkspace> {
   return invoke<OrchestratorWorkspace>("orchestrator_workspace_activate", {
     workspacePath: input.workspacePath,
+    workspaceId: input.workspaceId ?? null,
     name: input.name ?? null,
   });
 }

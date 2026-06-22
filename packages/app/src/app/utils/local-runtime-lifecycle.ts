@@ -44,6 +44,7 @@ export interface LocalRuntimeLifecycleDeps {
   readEngineInfo: (workspaceId?: string, workspacePath?: string) => Promise<EngineInfo>;
   activateOrchestratorWorkspace: (input: {
     workspacePath: string;
+    workspaceId?: string | null;
     name?: string | null;
   }) => Promise<unknown>;
   activateVesloHostWorkspace: (workspacePath: string) => Promise<unknown>;
@@ -182,10 +183,11 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
 
   const activateOrchestratorWorkspace = async (options: Pick<
     LocalRuntimeReconnectOptions,
-    "workspacePath" | "workspaceName"
+    "workspacePath" | "workspaceId" | "workspaceName"
   >) => {
     await deps.activateOrchestratorWorkspace({
       workspacePath: options.workspacePath,
+      workspaceId: options.workspaceId?.trim() || null,
       name: options.workspaceName?.trim() || null,
     });
     await activateVesloHostWorkspaceWithTimeout(

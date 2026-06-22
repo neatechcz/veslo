@@ -493,6 +493,8 @@ test("local runtime health error helpers classify dead endpoints and probe timeo
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("failed to fetch")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("ECONNREFUSED")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"engine_not_running"}')), true);
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"opencode_request_failed","status":503}')), true);
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("upstream status 502")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("permission denied")), false);
   assert.equal(isLocalRuntimeHealthTimeoutError(new Error(localRuntimeHealthTimeoutMessage)), true);
 });

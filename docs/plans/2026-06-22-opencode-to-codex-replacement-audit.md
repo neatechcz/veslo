@@ -542,8 +542,11 @@ the provider-proxy wire format.**
 
 ### 10.7 Dependencies
 - **REMOVE:** `@opencode-ai/sdk`, `@opencode-ai/plugin` (all packages).
-- **ADD:** `@openai/codex-sdk` (or an app-server JSON-RPC client), a forked-Codex build pipeline,
-  and OpenRouter Responses integration in the gateway.
+- **ADD:** a **`codex app-server` JSON-RPC client** (not the high-level `@openai/codex-sdk`) — the
+  SDK's `runStreamed` only surfaces `item.completed`/`turn.completed`, but the app-server emits
+  `item.started`/`item.updated`/`item.completed` + `command/exec/outputDelta`, which is what
+  streaming-text parity needs. Plus a forked-Codex build pipeline and OpenRouter Responses
+  integration in the gateway.
 
 ### 10.8 Net-new components (the actual build)
 1. **Veslo AI Gateway / Responses** — route, model-router policy table, `OpenRouterResponses` +
@@ -569,8 +572,174 @@ the provider-proxy wire format.**
 6. **Event/part translator to parity** — make the Codex bridge emit the exact Veslo event/part
    vocabulary; transcript hydration parity.
 7. **Config + skills materializer** — `config.toml` writer; skills re-home; MCP via `mcp_servers`.
-8. **FS/search re-home** — file browser + "what changed" on Veslo server FS APIs.
+8. **FS/search** — file browser + "what changed" **re-home** onto existing Veslo server FS APIs
+   (`/workspace/:id/files/content`, `/files/sessions/*` catalog/read/write/ops). **Text search
+   (`find.text`) and symbol/LSP search (`find.symbols`, `lsp.updated`) are net-new**, not a
+   re-home — build (ripgrep for text; an LSP bridge for symbols) or scope them out.
 9. **Desktop sidecar swap** — Codex binary + local proxy in `prepare-sidecar.mjs` / `tauri.conf.json`.
 10. **Cutover + teardown** — flip default `engineKind` to Codex; delete `@opencode-ai/*`,
     `opencode-router`, OpenCode sidecar + download, plugin/identities UI; remove the flag after the
     E2E parity gate (§6.8) passes.
+
+---
+
+## 11. Realism review (verification pass, 2026-06-22)
+
+The plan was stress-tested against the actual Codex app-server protocol and the actual repo
+surfaces. Verdict: **architecture sound, premise holds, with five corrections and five gates.**
+
+### 11.1 Confirmed solid — the two premise-breakers both check out
+- **Interactive permissions/questions are reproducible.** The app-server sends
+  `item/permissions/requestApproval` (server→client) and `applyPatchApproval` /
+  `execCommandApproval` with allow/deny and `scope: "session"`. This maps cleanly onto Veslo's
+  `permission.asked` → `reply(once | always | reject)` and the question-modal flow. The "keep the
+  permission UX" assumption is **valid**.
+- **Token-level streaming is reproducible — but only via the app-server**, not the high-level
+  SDK. The app-server emits `item.started` / `item.updated` / `item.completed` plus
+  `command/exec/outputDelta`; the SDK's `runStreamed` only surfaces completed items. The "keep the
+  streaming UX" assumption is **valid via app-server** (spike must confirm `item.updated` carries
+  agent-text deltas, not just state).
+- **Transcript persistence is already engine-agnostic.** Veslo keeps its own host-side store keyed
+  by `engine_session_id` with an opaque `payload_json`; the OpenCode `opencode.db` is only runtime
+  scratch. KEEP holds; the translator owns the part-payload schema (= workstream #1).
+- **File browser re-home is real** — `/workspace/:id/files/content` and the `/files/sessions/*`
+  catalog (snapshot/events/read-batch/write-batch/ops) already exist.
+- **Managed access is partly built** — `/ai-gateway` + `/ai-gateway/me/ai-access` exist; OpenRouter
+  exposes a Responses API. The gateway is an extension, not a greenfield.
+
+### 11.2 Corrections (the plan was optimistic here)
+1. **Engine client = app-server JSON-RPC, not `@openai/codex-sdk`** (streaming granularity). Fixed
+   in §10.7.
+2. **Search/symbols/LSP is net-new, not a re-home.** The server browses/reads/writes files but has
+   no content search or symbol/LSP search. Build (ripgrep + LSP bridge) or scope out. Fixed in §10.9.
+3. **Skills port is bigger than "change the output target."** OpenPackage/opkg is a registry +
+   materializer + lockfile + hub + Den-seeded platform skills; Codex's skill model differs. The
+   materializer *plumbing* is reusable, but the **skill format, distribution, and platform-skill
+   seeding** are a substantial rebuild. Treat as the largest engine-side line item.
+4. **Per-conversation Codex processes are heavier than one shared OpenCode server.** The thread
+   pool must cap concurrency, recycle idle threads, and bound memory — a real resource-management
+   task, not a free swap.
+5. **Forked-Codex build is a standing cost.** codex-rs is Rust; a cross-platform fork
+   (darwin arm64/x64, win x64, linux) tracking a fast-moving upstream must stay near-zero-diff
+   (config + loopback proxy, not code forks) or it becomes a maintenance sink.
+
+### 11.3 Gates — must be proven in the spike before cutover
+1. **OpenRouter Responses Beta fidelity** for Codex's exact feature use (local tools, reasoning
+   round-trip, parallel tool calls, full streaming events). Pin with contract tests.
+2. **Codex statelessness** through the gateway (no `previous_response_id` reliance).
+3. **`item.updated` delta granularity** carries agent-text token deltas.
+4. **Windows story.** Official Codex support is **Windows 11 via WSL2**; a **native managed Windows
+   sandbox** is emerging (`codex sandbox setup --elevated`, app-server `windowsSandbox/setupStart`).
+   Feasible, and the repo's existing `windows-wsl2` sandbox work is the aligned path — but the
+   WSL2-vs-native decision is real and non-trivial for a Windows-first product.
+5. **Reasoning continuity** for gpt-5-codex-class models across the gateway/OpenRouter.
+
+### 11.4 Bottom line
+Realistic. The risky premise ("swap the engine but keep the UI") is **supported by Codex's
+app-server** for the two hardest behaviors (streaming + interactive approvals). The genuine cost
+centers are now correctly identified: the **skills ecosystem rebuild**, the **event/part
+translator**, **net-new search/LSP**, and the **managed Responses gateway** — plus a disciplined,
+low-diff Codex fork. Nothing uncovered is a blocker; the corrections move effort, not feasibility.
+
+---
+
+## 12. Optimized execution plan (operative — supersedes the linear sequence in §6 / §10.9)
+
+The linear 1→10 list was correct but un-optimized: it serialized independent work, put the
+de-risking spike in the middle, and carried full scope into v1. The optimized plan applies six
+principles.
+
+### 12.1 Principles
+1. **De-risk first** — one blocking spike validates the only gates that can still break the
+   approach, before any large build starts.
+2. **Parallelize** — after a thin, safe foundation, three independent tracks run concurrently.
+3. **Cut v1 scope hard** — defer everything not on the core agent loop.
+4. **Protect the critical path** — the event/part translator is the long pole; everything else
+   must merely be "ready by cutover," not ahead of it.
+5. **Progressive cutover** — dual-engine behind a flag, dogfood Codex internally while OpenCode
+   stays default, flip only after parity. No big bang.
+6. **Zero-code-fork rule for v1** — managed access via config + loopback proxy only; any codex-rs
+   source fork needs explicit sign-off and a drift budget.
+
+### 12.2 Track 0 — Blocking de-risk spike  →  **Gate G0 (go/no-go)**
+One throwaway harness: `codex app-server` → stub Veslo Responses gateway → OpenRouter `/responses`.
+Prove, with recorded fixtures:
+- OpenRouter Responses Beta fidelity (local tools, reasoning round-trip, parallel tool calls,
+  full streaming events);
+- Codex runs **stateless** (no `previous_response_id` reliance);
+- `item.updated` carries **agent-text token deltas**, not just state;
+- capture the real app-server schema via `codex app-server generate-ts`.
+Deliverable: a go/no-go + **golden event fixtures** that make the translator testable offline.
+**Nothing in Tracks C/D/E starts large work until G0 is green.**
+
+### 12.3 Foundation — Track A (safe, merges straight to main, unblocks everything)
+Runs immediately, in parallel with Track 0 (no behavior change, no flag needed):
+- **A1 — Veslo-owned engine types** (`EngineEvent`/`MessagePart`/`Session`/`Permission`); the app
+  stops importing `@opencode-ai/sdk`. Pure decoupling.
+- **A2 — `engineKind` boundary** in orchestrator + server; OpenCode stays the sole impl. Green
+  throughout.
+
+### 12.4 Three parallel tracks (after G0 + A)
+- **Track B — Managed Responses gateway** (backend, fully independent of Codex; testable with any
+  Responses client):
+  B1 `/ai-gateway/v1/responses` + OpenAI-direct adapter + metering + contract tests → **Gate G1**;
+  B2 OpenRouter adapter + model-router policy + model-list seeding.
+- **Track C — Codex engine adapter** (**critical path**; built against G0 fixtures):
+  C1 app-server client + thread pool + lifecycle; C2 **event/part translator** (the long pole);
+  C3 loopback Responses proxy + per-spawn token; C4 permission/approval mapping → **Gate G2**
+  (parity vs golden fixtures).
+- **Track D — Workspace contract & ecosystem** (scope-cut, see 12.5):
+  D1 Codex config materializer (`config.toml`); D2 platform-skills re-home; D3 MCP via
+  `mcp_servers`; D4 file-browser re-home.
+
+### 12.5 v1 scope cuts (explicit defer list — the biggest optimization)
+- **Skills:** ship v1 with **only the platform skills** (`veslo-xlsx/docx/pdf/pptx`,
+  `skill-creator`) re-homed to Codex layout. **Defer the full opkg registry / hub / lockfile
+  port** to post-cutover. (Removes the largest engine-side line item from the critical timeline.)
+- **Search:** **defer `find.text`, `find.symbols`, `lsp.updated`.** The agent already searches via
+  its own tools; the **"what changed" panel is driven by Codex `file_change` items** through the
+  translator, not by a server diff API. Add host-side search later if the UI needs it.
+- **Providers:** ship **OpenRouter + OpenAI-direct only**; **defer Anthropic-direct** (OpenRouter
+  already fronts Anthropic).
+- **Translator surface:** v1 maps the **~10–12 essential events** the core loop needs
+  (`message.updated`, `message.part.updated/removed`, `session.status/idle/error`,
+  `permission.asked/replied`, `question.*`, `todo.updated`), **not all 24**. The OpenCode-internal
+  events (`lsp.updated`, `mcp.tools.changed`, `command.executed`, `opencode.hotreload.applied`,
+  `server.connected`, `connected/degraded/cleared`) are dropped or stubbed.
+- **Messaging router:** already deleted (§10.5).
+
+### 12.6 Critical path & parallelism
+```
+G0 spike ─┬─▶ A1 types ─┬─▶ C1 adapter ─▶ C2 translator(G2) ─▶ E sidecar ─▶ CUTOVER(G3,G4)
+          └─▶ A2 engineKind ┘                    ▲
+   Track B (gateway, G1) ───────────────────────-┤  "ready by cutover", off critical path
+   Track D (config/skills/mcp/files) ───────────-┘  "ready by cutover", off critical path
+```
+The **only** critical chain is `G0 → A → C1 → C2 → E → cutover`. Compress C2 (translator) — it
+gates everything — by building it purely against G0 golden fixtures (no live model needed until
+integration).
+
+### 12.7 Progressive cutover (Track E + gates)
+1. Land Codex behind `engineKind=codex` flag, default still OpenCode.
+2. **Dogfood internally** on Codex; collect parity telemetry against real Tauri (**Gate G3**).
+3. Desktop sidecar swap (Codex binary + loopback proxy); Windows = WSL2 path first (reuse existing
+   `windows-wsl2` infra), native managed sandbox later.
+4. Flip default to Codex after **Gate G4** (E2E parity sign-off), then teardown `@opencode-ai/*`,
+   `opencode-router`, OpenCode sidecar/download, plugin/identities UI, and the flag.
+
+### 12.8 Gate summary
+- **G0** spike go/no-go (fidelity + statelessness + deltas) — blocks the big build.
+- **G1** gateway contract tests green (OpenAI then OpenRouter).
+- **G2** translator parity vs golden fixtures.
+- **G3** real-Tauri E2E parity (send, stream, permissions, abort, resume, 2 concurrent
+  workspaces, sandbox + no-sandbox, managed-access proof).
+- **G4** cutover sign-off → flip default → teardown.
+
+### 12.9 What the optimization bought
+- Feasibility risk is **front-loaded into one cheap spike** instead of discovered mid-build.
+- Wall-clock compresses: gateway, ecosystem, and engine adapter run **in parallel**, gated only at
+  cutover.
+- v1 **ships smaller**: platform skills only, no search/LSP, two providers, ~half the translator
+  surface — the deferred items return post-cutover without blocking the engine swap.
+- The critical path is reduced to **one chain** with a single long pole (the translator), which is
+  made testable offline via fixtures.

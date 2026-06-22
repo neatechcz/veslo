@@ -99,8 +99,8 @@ function createHarness(options?: {
       readInfoRequests.push({ workspaceId, workspacePath });
       return infoSnapshot;
     },
-    activateOrchestratorWorkspace: async ({ workspacePath, name }) => {
-      calls.push(`activateOrchestrator:${workspacePath}:${name ?? ""}`);
+    activateOrchestratorWorkspace: async ({ workspacePath, workspaceId, name }) => {
+      calls.push(`activateOrchestrator:${workspacePath}:${workspaceId ?? ""}:${name ?? ""}`);
       return null;
     },
     activateVesloHostWorkspace: async (workspacePath) => {
@@ -301,7 +301,7 @@ test("restartWorkspaceRuntime can reconnect quietly after orchestrator workspace
 
   assert.equal(ok, true);
   assert.deepEqual(harness.calls, [
-    "activateOrchestrator:/tmp/orchestrated:Orchestrated",
+    "activateOrchestrator:/tmp/orchestrated:ws-orch:Orchestrated",
     "activateHost:/tmp/orchestrated",
     "readEngineInfo",
     "setEngine:/tmp/orchestrated",
@@ -324,6 +324,32 @@ test("restartWorkspaceRuntime can reconnect quietly after orchestrator workspace
   ]);
 });
 
+test("restartWorkspaceRuntime activates orchestrator with the requested workspace id", async () => {
+  const harness = createHarness({
+    runtime: "veslo-orchestrator",
+    infoSnapshot: makeEngineInfo({
+      runtime: "veslo-orchestrator",
+      projectDir: "/tmp/private-profile",
+      baseUrl: "http://127.0.0.1:6100/workspace/ws-target/opencode",
+    }),
+  });
+
+  const ok = await harness.lifecycle.restartWorkspaceRuntime({
+    workspacePath: "/tmp/private-profile",
+    workspaceId: "ws-target",
+    workspaceName: "Private",
+    reason: "ensure-engine",
+    connectMode: "quiet",
+  });
+
+  assert.equal(ok, true);
+  assert.equal(harness.calls[0], "activateOrchestrator:/tmp/private-profile:ws-target:Private");
+  assert.deepEqual(harness.readInfoRequests, [
+    { workspaceId: "ws-target", workspacePath: "/tmp/private-profile" },
+  ]);
+  assert.equal(harness.quietConnections[0]?.context?.workspaceId, "ws-target");
+});
+
 test("reattachOrchestratorWorkspace reuses the shared engine snapshot flow without a stop/start cycle", async () => {
   const harness = createHarness({
     runtime: "veslo-orchestrator",
@@ -344,7 +370,7 @@ test("reattachOrchestratorWorkspace reuses the shared engine snapshot flow witho
 
   assert.equal(ok, true);
   assert.deepEqual(harness.calls, [
-    "activateOrchestrator:/tmp/reused:Reused",
+    "activateOrchestrator:/tmp/reused:ws-reused:Reused",
     "activateHost:/tmp/reused",
     "readEngineInfo",
     "setEngine:/tmp/reused",

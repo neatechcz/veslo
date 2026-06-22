@@ -450,7 +450,11 @@ export function createWorkspaceStore(options: {
     return resolved;
   };
 
-  async function activateOrchestratorWorkspace(input: { workspacePath: string; name?: string | null }) {
+  async function activateOrchestratorWorkspace(input: {
+    workspacePath: string;
+    workspaceId?: string | null;
+    name?: string | null;
+  }) {
     return await withTimeoutOrThrow(
       orchestratorWorkspaceActivate(input),
       {

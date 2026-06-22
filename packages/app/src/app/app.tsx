@@ -1122,7 +1122,7 @@ export default function App() {
   const readyEngineWorkspaceIds = createMemo(() => {
     const set = new Set<string>();
     for (const engine of orchestratorEnginesState()) {
-      if (engine.state === "ready") set.add(engine.workspaceId);
+      if (engine.state === "ready" || engine.state === "idle") set.add(engine.workspaceId);
     }
     return set;
   });
@@ -3882,7 +3882,6 @@ export default function App() {
           stopSendPromptBusy();
           return false;
         }
-        sendPreflight.runtimeHealthOk = true;
       } catch (error) {
         recordSendTrace("sendPrompt:engine-start-error", {
           traceId: sendTraceId,

@@ -295,13 +295,19 @@ pub async fn orchestrator_workspace_activate(
     app: AppHandle,
     manager: State<'_, OrchestratorManager>,
     workspace_path: String,
+    workspace_id: Option<String>,
     name: Option<String>,
 ) -> Result<OrchestratorWorkspace, String> {
     let workspace_path =
         validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?
             .to_string_lossy()
             .to_string();
-    let workspace_id = workspace_id_for_registered_path(&app, &workspace_path);
+    let workspace_id = workspace_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| workspace_id_for_registered_path(&app, &workspace_path));
     let base_url = resolve_base_url(&manager)?;
 
     // VSLO-86 — push the blocking ureq calls onto a dedicated thread so the
