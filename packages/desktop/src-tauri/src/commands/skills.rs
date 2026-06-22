@@ -768,7 +768,10 @@ mod tests {
         );
         assert_eq!(metadata.policy_id.as_deref(), None);
         assert_eq!(metadata.skill_id.as_deref(), Some("platform_skill_tool"));
-        assert_eq!(metadata.version_id.as_deref(), Some("platform_version_tool_v1"));
+        assert_eq!(
+            metadata.version_id.as_deref(),
+            Some("platform_version_tool_v1")
+        );
         assert_eq!(metadata.source.as_deref(), Some("platform"));
         assert_eq!(metadata.removal_policy.as_deref(), Some("locked"));
     }

@@ -46,6 +46,7 @@ test("release review verifies Windows MSI WSL sandbox provisioning packaging", (
   for (const label of [
     "Windows MSI bundles desktop package manifest for WSL provisioning version pin",
     "Windows MSI bundles WSL sandbox provisioner",
+    "Windows MSI bundles WSL prerequisite installer for first-run repair",
     "Windows MSI bundles WSL sandbox installer wrapper",
     "Windows MSI schedules WSL sandbox provisioning action",
   ]) {

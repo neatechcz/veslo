@@ -26,7 +26,9 @@ pub mod manager;
 pub mod spawn;
 
 use manager::VesloServerManager;
-use spawn::{resolve_veslo_port_after_restart, spawn_veslo_server};
+use spawn::{
+    host_from_http_url, resolve_veslo_host, resolve_veslo_port_after_restart, spawn_veslo_server,
+};
 
 const PERSISTED_STATE_FILE_NAME: &str = "veslo-server-state.json";
 const PERSISTED_PLUGIN_STATE_FILE_NAME: &str = "veslo-server-plugin-state.json";
@@ -181,6 +183,9 @@ fn resolve_engine_url_from_wsl_interface(port: u16) -> Option<String> {
     let output = command
         .args([
             "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
             "-Command",
             "Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias '*WSL*' | Select-Object -ExpandProperty IPAddress",
         ])
@@ -235,14 +240,47 @@ fn probe_engine_url_from_wsl(url: &str) -> bool {
     false
 }
 
-fn build_urls(
+fn is_loopback_bind_host(host: &str) -> bool {
+    let normalized = host
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
+    normalized.is_empty()
+        || normalized == "localhost"
+        || normalized == "::1"
+        || normalized.starts_with("127.")
+}
+
+pub(crate) fn publishes_external_urls(host: Option<&str>) -> bool {
+    host.map(|value| !is_loopback_bind_host(value))
+        .unwrap_or(false)
+}
+
+pub(crate) fn resolve_engine_url_for_bind_host(
+    host: Option<&str>,
+    port: Option<u16>,
+) -> Option<String> {
+    if !publishes_external_urls(host) {
+        return None;
+    }
+    port.and_then(resolve_engine_url)
+}
+
+fn build_urls_for_host_with_engine_resolver(
+    host: &str,
     port: u16,
+    mut engine_url_resolver: impl FnMut(u16) -> Option<String>,
 ) -> (
     Option<String>,
     Option<String>,
     Option<String>,
     Option<String>,
 ) {
+    if is_loopback_bind_host(host) {
+        return (None, None, None, None);
+    }
+
     let hostname = gethostname().to_string_lossy().trim().to_string();
     let mdns_url = if hostname.is_empty() {
         None
@@ -254,13 +292,25 @@ fn build_urls(
     let lan_url = local_ip().ok().map(|ip| format!("http://{ip}:{port}"));
 
     let connect_url = lan_url.clone().or(mdns_url.clone());
-    let engine_url = resolve_engine_url(port);
+    let engine_url = engine_url_resolver(port);
 
     (connect_url, mdns_url, lan_url, engine_url)
 }
 
+fn build_urls_for_host(
+    host: &str,
+    port: u16,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
+    build_urls_for_host_with_engine_resolver(host, port, resolve_engine_url)
+}
+
 pub fn resolve_connect_url(port: u16) -> Option<String> {
-    let (connect_url, _mdns_url, _lan_url, _engine_url) = build_urls(port);
+    let (connect_url, _mdns_url, _lan_url, _engine_url) = build_urls_for_host("0.0.0.0", port);
     connect_url
 }
 
@@ -381,7 +431,7 @@ fn persisted_state_to_info_with_health(
         connect_url: state.connect_url.clone(),
         mdns_url: state.mdns_url.clone(),
         lan_url: state.lan_url.clone(),
-        engine_url: state.port.and_then(resolve_engine_url),
+        engine_url: resolve_engine_url_for_bind_host(state.host.as_deref(), state.port),
         client_token: state.client_token.clone(),
         host_token: None,
         pid: state.pid,
@@ -499,13 +549,14 @@ fn discover_external_veslo_server() -> Option<VesloServerInfo> {
         .rsplit_once(':')
         .and_then(|(_, tail)| tail.split('/').next())
         .and_then(|p| p.parse::<u16>().ok());
+    let host = host_from_http_url(trimmed).unwrap_or_else(|| "127.0.0.1".to_string());
     let (connect_url, mdns_url, lan_url, engine_url) = match port {
-        Some(p) => build_urls(p),
+        Some(p) => build_urls_for_host(&host, p),
         None => (None, None, None, None),
     };
     Some(VesloServerInfo {
         running: true,
-        host: Some("0.0.0.0".to_string()),
+        host: Some(host),
         port,
         base_url: Some(trimmed.to_string()),
         connect_url,
@@ -612,6 +663,42 @@ fn persist_veslo_server_info(app: &AppHandle, info: &VesloServerInfo) -> Result<
     persist_veslo_server_plugin_state(&dir, info)
 }
 
+fn normalize_workspace_paths(paths: &[String]) -> Vec<String> {
+    let mut normalized: Vec<String> = paths
+        .iter()
+        .map(|path| path.trim().trim_end_matches('/').to_string())
+        .filter(|path| !path.is_empty())
+        .collect();
+    normalized.sort();
+    normalized.dedup();
+    normalized
+}
+
+fn normalize_launch_url(value: Option<&str>) -> Option<String> {
+    value
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn normalize_launch_token(value: Option<&str>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn launch_config_matches(
+    state: &manager::VesloServerState,
+    workspace_paths: &[String],
+    opencode_base_url: &Option<String>,
+    orchestrator_daemon_url: &Option<String>,
+    orchestrator_lifecycle_token: &Option<String>,
+) -> bool {
+    normalize_workspace_paths(workspace_paths) == normalize_workspace_paths(&state.workspace_paths)
+        && state.opencode_base_url == *opencode_base_url
+        && state.orchestrator_daemon_url == *orchestrator_daemon_url
+        && state.orchestrator_lifecycle_token == *orchestrator_lifecycle_token
+}
+
 pub fn start_veslo_server(
     app: &AppHandle,
     manager: &VesloServerManager,
@@ -656,32 +743,22 @@ pub fn start_veslo_server(
     // VSLO-171 — idempotent skip: if a healthy child is already running with
     // an equivalent workspace set, reuse it instead of kill+respawn. Avoids
     // rotating the bearer token under an active frontend session.
-    let normalize_paths = |paths: &[String]| -> Vec<String> {
-        let mut normalized: Vec<String> = paths
-            .iter()
-            .map(|path| path.trim().trim_end_matches('/').to_string())
-            .filter(|path| !path.is_empty())
-            .collect();
-        normalized.sort();
-        normalized.dedup();
-        normalized
-    };
-    let requested_paths = normalize_paths(workspace_paths);
-    let existing_paths = normalize_paths(&state.workspace_paths);
-    let normalized_orchestrator_daemon_url = orchestrator_daemon_url
-        .map(|value| value.trim().trim_end_matches('/').to_string())
-        .filter(|value| !value.is_empty());
-    let normalized_orchestrator_lifecycle_token = orchestrator_lifecycle_token
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+    let normalized_opencode_base_url = normalize_launch_url(opencode_base_url);
+    let normalized_orchestrator_daemon_url = normalize_launch_url(orchestrator_daemon_url);
+    let normalized_orchestrator_lifecycle_token =
+        normalize_launch_token(orchestrator_lifecycle_token);
     if state.child.is_some()
         && !state.child_exited
         && state.client_token.is_some()
         && state.host_token.is_some()
         && state.port.is_some()
-        && requested_paths == existing_paths
-        && state.orchestrator_daemon_url == normalized_orchestrator_daemon_url
-        && state.orchestrator_lifecycle_token == normalized_orchestrator_lifecycle_token
+        && launch_config_matches(
+            &state,
+            workspace_paths,
+            &normalized_opencode_base_url,
+            &normalized_orchestrator_daemon_url,
+            &normalized_orchestrator_lifecycle_token,
+        )
     {
         let info = VesloServerManager::snapshot_locked(&mut state);
         drop(state);
@@ -701,8 +778,8 @@ pub fn start_veslo_server(
     let previous_host_token = state.host_token.clone();
     VesloServerManager::stop_locked(&mut state);
 
-    let host = "0.0.0.0".to_string();
-    let port = match resolve_veslo_port_after_restart() {
+    let host = resolve_veslo_host();
+    let port = match resolve_veslo_port_after_restart(&host) {
         Ok(port) => port,
         Err(error) => {
             append_veslo_server_launch_diagnostic(
@@ -728,7 +805,7 @@ pub fn start_veslo_server(
             "port": port,
             "workspaceCount": workspace_paths.len(),
             "workspaceIds": workspace_ids.clone(),
-            "hasOpencodeBaseUrl": opencode_base_url.is_some(),
+            "hasOpencodeBaseUrl": normalized_opencode_base_url.is_some(),
             "hasOpencodeRouterHealthPort": opencode_router_health_port.is_some(),
             "hasOrchestratorDaemonUrl": normalized_orchestrator_daemon_url.is_some(),
             "hasOrchestratorLifecycleToken": normalized_orchestrator_lifecycle_token.is_some(),
@@ -743,7 +820,7 @@ pub fn start_veslo_server(
         &workspace_ids,
         &client_token,
         &host_token,
-        opencode_base_url,
+        normalized_opencode_base_url.as_deref(),
         if active_workspace.is_empty() {
             None
         } else {
@@ -785,14 +862,17 @@ pub fn start_veslo_server(
     state.host = Some(host.clone());
     state.port = Some(port);
     state.base_url = Some(format!("http://127.0.0.1:{port}"));
-    let (connect_url, mdns_url, lan_url, engine_url) = build_urls(port);
+    let (connect_url, mdns_url, lan_url, engine_url) = build_urls_for_host(&host, port);
     state.connect_url = connect_url;
     state.mdns_url = mdns_url;
     state.lan_url = lan_url;
     state.engine_url = engine_url;
+    state.engine_url_checked_at = Some(std::time::Instant::now());
+    state.engine_url_refresh_started_at = None;
     state.client_token = Some(client_token);
     state.host_token = Some(host_token);
     state.workspace_paths = workspace_paths.to_vec();
+    state.opencode_base_url = normalized_opencode_base_url;
     state.orchestrator_daemon_url = normalized_orchestrator_daemon_url;
     state.orchestrator_lifecycle_token = normalized_orchestrator_lifecycle_token;
     state.last_stdout = None;
@@ -820,14 +900,17 @@ pub fn start_veslo_server(
 
 #[cfg(test)]
 mod tests {
+    use super::manager::VesloServerState;
+    use super::{
+        build_urls_for_host_with_engine_resolver, launch_config_matches, normalize_launch_token,
+        normalize_launch_url, publishes_external_urls, read_persisted_veslo_server_info,
+        read_persisted_veslo_server_info_with_cleanup, resolve_engine_url_for_bind_host,
+        HealthIdentity, PersistedVesloServerState,
+    };
     #[cfg(windows)]
     use super::{
         parse_wsl_engine_url_from_powershell_output, resolve_engine_url_from_candidates,
         resolve_engine_url_from_interfaces,
-    };
-    use super::{
-        read_persisted_veslo_server_info, read_persisted_veslo_server_info_with_cleanup,
-        HealthIdentity, PersistedVesloServerState,
     };
     use std::fs;
     use std::io::ErrorKind;
@@ -907,6 +990,45 @@ mod tests {
     }
 
     #[test]
+    fn loopback_bind_does_not_publish_external_or_engine_urls() {
+        let mut engine_probe_called = false;
+        let (connect_url, mdns_url, lan_url, engine_url) =
+            build_urls_for_host_with_engine_resolver("127.0.0.1", 8787, |_| {
+                engine_probe_called = true;
+                Some("http://172.29.64.1:8787".to_string())
+            });
+
+        assert_eq!(connect_url, None);
+        assert_eq!(mdns_url, None);
+        assert_eq!(lan_url, None);
+        assert_eq!(engine_url, None);
+        assert!(!engine_probe_called);
+        assert!(!publishes_external_urls(Some("127.0.0.1")));
+        assert!(!publishes_external_urls(Some("localhost")));
+        assert!(!publishes_external_urls(None));
+    }
+
+    #[test]
+    fn external_bind_preserves_engine_url_resolution() {
+        let (_connect_url, _mdns_url, _lan_url, engine_url) =
+            build_urls_for_host_with_engine_resolver("0.0.0.0", 8787, |_| {
+                Some("http://172.29.64.1:8787".to_string())
+            });
+
+        assert_eq!(engine_url.as_deref(), Some("http://172.29.64.1:8787"));
+        assert!(publishes_external_urls(Some("0.0.0.0")));
+    }
+
+    #[test]
+    fn engine_url_resolution_is_gated_by_bind_host() {
+        assert_eq!(
+            resolve_engine_url_for_bind_host(Some("127.0.0.1"), Some(8787)),
+            None
+        );
+        assert_eq!(resolve_engine_url_for_bind_host(None, Some(8787)), None);
+    }
+
+    #[test]
     fn read_persisted_server_info_returns_none_without_state() {
         let dir =
             std::env::temp_dir().join(format!("veslo-server-state-missing-{}", Uuid::new_v4()));
@@ -916,6 +1038,45 @@ mod tests {
         assert!(recovered.is_none());
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn launch_config_restarts_when_opencode_base_url_changes() {
+        let state = VesloServerState {
+            workspace_paths: vec!["/workspace/project".to_string()],
+            opencode_base_url: normalize_launch_url(Some(
+                "http://127.0.0.1:59104/workspace//opencode/",
+            )),
+            orchestrator_daemon_url: normalize_launch_url(Some("http://127.0.0.1:59104/")),
+            orchestrator_lifecycle_token: normalize_launch_token(Some("lifecycle-token")),
+            ..Default::default()
+        };
+        let workspace_paths = vec!["/workspace/project/".to_string()];
+        let daemon_url = normalize_launch_url(Some("http://127.0.0.1:59104"));
+        let lifecycle_token = normalize_launch_token(Some(" lifecycle-token "));
+
+        assert!(
+            launch_config_matches(
+                &state,
+                &workspace_paths,
+                &normalize_launch_url(Some("http://127.0.0.1:59104/workspace//opencode")),
+                &daemon_url,
+                &lifecycle_token,
+            ),
+            "equivalent launch config should still reuse the server"
+        );
+        assert!(
+            !launch_config_matches(
+                &state,
+                &workspace_paths,
+                &normalize_launch_url(Some(
+                    "http://127.0.0.1:59104/workspace/ws-278d2edc94b7/opencode",
+                )),
+                &daemon_url,
+                &lifecycle_token,
+            ),
+            "correcting workspace//opencode to a workspace-scoped URL must respawn veslo-server"
+        );
     }
 
     #[test]

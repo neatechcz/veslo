@@ -132,8 +132,8 @@ mod tests {
             ("USERPROFILE", Some("C:\\Users\\marcel")),
         ]);
 
-        let path = resolve_global_commands_dir()
-            .expect("global commands should resolve from USERPROFILE");
+        let path =
+            resolve_global_commands_dir().expect("global commands should resolve from USERPROFILE");
 
         assert_eq!(
             path,

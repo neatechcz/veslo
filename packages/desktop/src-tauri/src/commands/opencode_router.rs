@@ -31,19 +31,51 @@ fn check_health_endpoint(port: u16) -> Option<serde_json::Value> {
     }
 }
 
+fn looks_like_router_health(value: &serde_json::Value) -> bool {
+    value.get("opencode").is_some() || value.get("ok").is_some()
+}
+
+fn health_endpoint_reachable(port: u16) -> bool {
+    let url = format!("http://127.0.0.1:{}/health", port);
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(2))
+        .build();
+
+    match agent.get(&url).call() {
+        Ok(response) => response
+            .into_json::<serde_json::Value>()
+            .map(|value| looks_like_router_health(&value))
+            .unwrap_or(false),
+        Err(ureq::Error::Status(503, response)) => response
+            .into_json::<serde_json::Value>()
+            .map(|value| looks_like_router_health(&value))
+            .unwrap_or(false),
+        Err(_) => false,
+    }
+}
+
 const OPENCODE_ROUTER_STARTUP_WAIT_MS: u64 = 5_000;
 const OPENCODE_ROUTER_MAX_START_ATTEMPTS: usize = 5;
 
 fn resolve_opencode_router_command(
     app: &AppHandle,
-) -> Result<tauri_plugin_shell::process::Command, tauri_plugin_shell::Error> {
+) -> Result<tauri_plugin_shell::process::Command, String> {
     use tauri_plugin_shell::ShellExt;
 
     match app.shell().sidecar("veslo-code-router") {
         Ok(command) => Ok(command),
         Err(_) => match app.shell().sidecar("opencode-router") {
             Ok(command) => Ok(command),
-            Err(_) => Ok(app.shell().command("opencode-router")),
+            Err(error) => {
+                if crate::supervised_process::external_runtime_binaries_allowed() {
+                    Ok(app.shell().command("opencode-router"))
+                } else {
+                    Err(format!(
+                        "Bundled veslo-code-router sidecar is unavailable ({error}); refusing to run external opencode-router from PATH. Set {}=1 only for a developer override.",
+                        crate::supervised_process::ALLOW_EXTERNAL_RUNTIME_BINARIES_ENV
+                    ))
+                }
+            }
         },
     }
 }
@@ -91,13 +123,41 @@ fn format_startup_failure(
     )
 }
 
+fn format_startup_timeout(
+    health_port: u16,
+    startup_stdout: &Option<String>,
+    startup_stderr: &Option<String>,
+) -> String {
+    let mut parts = Vec::new();
+    if let Some(stdout) = startup_stdout {
+        if !stdout.trim().is_empty() {
+            parts.push(format!("stdout:\n{}", stdout.trim()));
+        }
+    }
+    if let Some(stderr) = startup_stderr {
+        if !stderr.trim().is_empty() {
+            parts.push(format!("stderr:\n{}", stderr.trim()));
+        }
+    }
+
+    let suffix = if parts.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{}", parts.join("\n\n"))
+    };
+
+    format!(
+        "OpenCodeRouter health endpoint did not become reachable on port {health_port} within {OPENCODE_ROUTER_STARTUP_WAIT_MS}ms.{suffix}",
+    )
+}
+
 fn await_router_startup(
     rx: &mut tauri::async_runtime::Receiver<CommandEvent>,
     health_port: u16,
     startup_stdout: &mut Option<String>,
     startup_stderr: &mut Option<String>,
 ) -> Result<(), String> {
-    if check_health_endpoint(health_port).is_some() {
+    if health_endpoint_reachable(health_port) {
         return Ok(());
     }
 
@@ -128,12 +188,16 @@ fn await_router_startup(
             }
         }
 
-        if check_health_endpoint(health_port).is_some() {
+        if health_endpoint_reachable(health_port) {
             return Ok(());
         }
 
         if Instant::now() >= deadline {
-            return Ok(());
+            return Err(format_startup_timeout(
+                health_port,
+                startup_stdout,
+                startup_stderr,
+            ));
         }
 
         std::thread::sleep(Duration::from_millis(80));
@@ -478,4 +542,35 @@ async fn opencodeRouter_version(app: &AppHandle) -> Option<String> {
     }
 
     Some(trimmed.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn router_health_shape_accepts_healthy_and_unhealthy_payloads() {
+        assert!(looks_like_router_health(&serde_json::json!({
+            "ok": true,
+            "opencode": { "healthy": true }
+        })));
+        assert!(looks_like_router_health(&serde_json::json!({
+            "ok": false,
+            "opencode": { "healthy": false }
+        })));
+        assert!(!looks_like_router_health(&serde_json::json!({
+            "status": "not-router"
+        })));
+    }
+
+    #[test]
+    fn startup_timeout_includes_health_port_and_output() {
+        let stdout = Some("router stdout\n".to_string());
+        let stderr = Some("router stderr\n".to_string());
+        let message = format_startup_timeout(49999, &stdout, &stderr);
+
+        assert!(message.contains("49999"));
+        assert!(message.contains("router stdout"));
+        assert!(message.contains("router stderr"));
+    }
 }

@@ -38,6 +38,7 @@ test("desktop build workflow no longer runs Linux app builds", () => {
   assert.match(workflow, /x86_64-pc-windows-msvc/);
   assert.match(workflow, /bun-version:\s+"?1\.3\.11"?/);
   assert.match(windowsWorkflow, /bun-version:\s+"?1\.3\.11"?/);
+  assert.match(windowsWorkflow, /Prepare desktop sidecars/);
   assert.doesNotMatch(workflow, /build-linux/);
   assert.doesNotMatch(workflow, /unknown-linux/);
   assert.doesNotMatch(workflow, /Tauri Build \(Linux\)/);
@@ -59,6 +60,9 @@ test("orchestrator release packaging only builds macOS and Windows sidecars", ()
   assert.match(productionWorkflow, /bun-version:\s+"?1\.3\.11"?/);
   assert.match(prepareSidecar, /bun-windows-x64-baseline\.zip/);
   assert.match(prepareSidecar, /BUN_WINDOWS_X64_BASELINE_EXECUTABLE/);
+  assert.match(prepareSidecar, /sidecarVersionMatches/);
+  assert.match(prepareSidecar, /expectedOpenCodeRouterVersion/);
+  assert.match(prepareSidecar, /expectedOrchestratorVersion/);
   assert.match(serverBuild, /--compile-executable-path/);
   assert.match(routerBuild, /--compile-executable-path/);
   assert.match(orchestratorBuild, /executablePath/);

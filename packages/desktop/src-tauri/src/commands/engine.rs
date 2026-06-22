@@ -14,7 +14,7 @@ use crate::opencode_router::spawn::resolve_opencode_router_health_port;
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{self, OrchestratorSpawnOptions};
 use crate::supervised_process::CommandEvent;
-use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
+use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult, OrchestratorStatus};
 use crate::utils::truncate_output;
 use crate::veslo_server::{
     manager::VesloServerManager, persisted_veslo_server_plugin_state_path, start_veslo_server,
@@ -24,12 +24,27 @@ use serde_json::json;
 use std::time::Duration;
 use uuid::Uuid;
 
+const DEFAULT_OPENCODE_BIND_HOST: &str = "127.0.0.1";
+const VESLO_OPENCODE_BIND_HOST_ENV: &str = "VESLO_OPENCODE_BIND_HOST";
+
 #[derive(Default)]
 struct OutputState {
     stdout: String,
     stderr: String,
     exited: bool,
     exit_code: Option<i32>,
+}
+
+fn resolve_opencode_bind_host_from_env(value: Option<&str>) -> String {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_OPENCODE_BIND_HOST)
+        .to_string()
+}
+
+fn resolve_opencode_bind_host() -> String {
+    resolve_opencode_bind_host_from_env(std::env::var(VESLO_OPENCODE_BIND_HOST_ENV).ok().as_deref())
 }
 
 fn is_opencode_reachable(base_url: &str) -> bool {
@@ -75,6 +90,59 @@ fn is_opencode_reachable(base_url: &str) -> bool {
     }
 
     false
+}
+
+fn normalize_workspace_path_for_match(path: &str) -> String {
+    path.trim()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn resolve_orchestrator_proxy_workspace_id(
+    status: &OrchestratorStatus,
+    project_dir: &str,
+    health_active_id: Option<&str>,
+) -> Option<String> {
+    let target_path = normalize_workspace_path_for_match(project_dir);
+    let by_path = if target_path.is_empty() {
+        None
+    } else {
+        status
+            .workspaces
+            .iter()
+            .find(|workspace| {
+                workspace.workspace_type == "local"
+                    && normalize_workspace_path_for_match(&workspace.path) == target_path
+            })
+            .map(|workspace| workspace.id.trim().to_string())
+            .filter(|id| !id.is_empty())
+    };
+
+    by_path
+        .or_else(|| {
+            status
+                .active_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .or_else(|| {
+            health_active_id
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(ToOwned::to_owned)
+        })
+}
+
+fn orchestrator_opencode_base_url(daemon_port: u16, workspace_id: Option<&str>) -> String {
+    let workspace_id = workspace_id.map(str::trim).filter(|id| !id.is_empty());
+    if let Some(workspace_id) = workspace_id {
+        format!("http://127.0.0.1:{daemon_port}/workspace/{workspace_id}/opencode")
+    } else {
+        format!("http://127.0.0.1:{daemon_port}")
+    }
 }
 
 fn format_orchestrator_start_error(
@@ -439,7 +507,8 @@ pub fn engine_doctor(
     prefer_sidecar: Option<bool>,
     opencode_bin_path: Option<String>,
 ) -> EngineDoctorResult {
-    let prefer_sidecar = prefer_sidecar.unwrap_or(false);
+    let prefer_sidecar = prefer_sidecar.unwrap_or(false)
+        || !crate::supervised_process::external_runtime_binaries_allowed();
     let resource_dir = app.path().resource_dir().ok();
 
     let current_bin_dir = tauri::process::current_binary(&app.env())
@@ -454,9 +523,20 @@ pub fn engine_doctor(
         current_bin_dir.as_deref(),
     );
 
+    let external_path_blocked =
+        in_path && !crate::supervised_process::external_runtime_binaries_allowed();
+    let mut notes = notes;
+    if external_path_blocked {
+        notes.push(format!(
+            "PATH OpenCode resolution is disabled in release; set {}=1 only for a developer override.",
+            crate::supervised_process::ALLOW_EXTERNAL_RUNTIME_BINARIES_ENV
+        ));
+    }
+
     let (version, supports_serve, serve_help_status, serve_help_stdout, serve_help_stderr) =
-        match resolved.as_ref() {
-            Some(path) => {
+        match (resolved.as_ref(), external_path_blocked) {
+            (_, true) => (None, false, None, None, None),
+            (Some(path), false) => {
                 let (ok, status, stdout, stderr) = opencode_serve_help(path.as_os_str());
                 (
                     opencode_version(path.as_os_str()),
@@ -466,13 +546,17 @@ pub fn engine_doctor(
                     stderr,
                 )
             }
-            None => (None, false, None, None, None),
+            (None, false) => (None, false, None, None, None),
         };
 
     EngineDoctorResult {
-        found: resolved.is_some(),
+        found: resolved.is_some() && !external_path_blocked,
         in_path,
-        resolved_path: resolved.map(|path| path.to_string_lossy().to_string()),
+        resolved_path: if external_path_blocked {
+            None
+        } else {
+            resolved.map(|path| path.to_string_lossy().to_string())
+        },
         version,
         supports_serve,
         notes,
@@ -570,10 +654,7 @@ pub fn engine_start(
     workspace_paths.retain(|path| path.trim() != project_dir);
     workspace_paths.insert(0, project_dir.clone());
 
-    let bind_host = std::env::var("VESLO_OPENCODE_BIND_HOST")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "0.0.0.0".to_string());
+    let bind_host = resolve_opencode_bind_host();
     let client_host = "127.0.0.1".to_string();
     let port = find_free_port()?;
     let enable_auth = std::env::var("VESLO_OPENCODE_AUTH")
@@ -602,13 +683,21 @@ pub fn engine_start(
     let current_bin_dir = tauri::process::current_binary(&app.env())
         .ok()
         .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
-    let prefer_sidecar = prefer_sidecar.unwrap_or(false);
+    let prefer_sidecar = prefer_sidecar.unwrap_or(false)
+        || !crate::supervised_process::external_runtime_binaries_allowed();
     let _guard = EnvVarGuard::apply("OPENCODE_BIN_PATH", opencode_bin_path.as_deref());
-    let (program, _in_path, notes) = resolve_engine_path(
+    let (program, in_path, notes) = resolve_engine_path(
         prefer_sidecar,
         resource_dir.as_deref(),
         current_bin_dir.as_deref(),
     );
+    if in_path && !crate::supervised_process::external_runtime_binaries_allowed() {
+        let notes_text = notes.join("\n");
+        return Err(format!(
+            "Bundled OpenCode sidecar is unavailable; refusing to run OpenCode from PATH in release. Set {}=1 only for a developer override.\n\nNotes:\n{notes_text}",
+            crate::supervised_process::ALLOW_EXTERNAL_RUNTIME_BINARIES_ENV
+        ));
+    }
     let Some(program) = program else {
         let notes_text = notes.join("\n");
         return Err(format!(
@@ -838,23 +927,38 @@ pub fn engine_start(
         // lazily through its proxy. Route via the daemon proxy URL when no
         // singleton is reported; fall back to the singleton path for backward
         // compatibility if `opencode` is still present.
+        let daemon_reconciled = match reconcile_orchestrator_workspaces(&app, &orchestrator_manager)
+        {
+            Ok(count) => {
+                if count > 0 {
+                    eprintln!("[orchestrator] reconciled {count} workspace(s)");
+                }
+                Ok(count)
+            }
+            Err(error) => {
+                eprintln!("[orchestrator] reconcile failed: {error}");
+                Err(error)
+            }
+        };
+        let reconciled_status = orchestrator::resolve_orchestrator_status(&data_dir, None);
         let daemon_port = health
             .daemon
             .as_ref()
             .map(|d| d.port)
             .unwrap_or_else(|| health.opencode.as_ref().map(|o| o.port).unwrap_or(0));
-        let active_ws_id = health.active_id.clone();
+        let active_ws_id = resolve_orchestrator_proxy_workspace_id(
+            &reconciled_status,
+            &project_dir,
+            health.active_id.as_deref(),
+        );
         let opencode_port = health
             .opencode
             .as_ref()
             .map(|o| o.port)
             .unwrap_or(daemon_port);
         let opencode_pid = health.opencode.as_ref().map(|o| o.pid);
-        let opencode_base_url = if let Some(ref ws_id) = active_ws_id {
-            format!("http://127.0.0.1:{daemon_port}/workspace/{ws_id}/opencode")
-        } else {
-            format!("http://127.0.0.1:{daemon_port}")
-        };
+        let opencode_base_url =
+            orchestrator_opencode_base_url(daemon_port, active_ws_id.as_deref());
         if let Ok(mut state) = manager.inner.lock() {
             state.runtime = EngineRuntime::Orchestrator;
             state.child = None;
@@ -946,23 +1050,6 @@ pub fn engine_start(
             }
         }
 
-        // Reconcile orchestrator registry with Tauri-side workspace list. Without
-        // this the daemon only learns about workspaces that get explicitly
-        // activated, and a sidebar click on any unseen workspace would 404 on
-        // /workspaces/:id/activate and stall the 30s frontend timeout.
-        let daemon_reconciled = match reconcile_orchestrator_workspaces(&app, &orchestrator_manager)
-        {
-            Ok(count) => {
-                if count > 0 {
-                    eprintln!("[orchestrator] reconciled {count} workspace(s)");
-                }
-                Ok(count)
-            }
-            Err(error) => {
-                eprintln!("[orchestrator] reconcile failed: {error}");
-                Err(error)
-            }
-        };
         crate::flow_log!(
             "[veslo:flow] RECONCILE done {{ server: {}, daemon: {} }}",
             server_reconciled,
@@ -1178,7 +1265,45 @@ pub fn engine_start(
 
 #[cfg(test)]
 mod tests {
-    use super::{format_orchestrator_start_error, should_retry_orchestrator_start};
+    use super::{
+        format_orchestrator_start_error, orchestrator_opencode_base_url,
+        resolve_opencode_bind_host_from_env, resolve_orchestrator_proxy_workspace_id,
+        should_retry_orchestrator_start,
+    };
+    use crate::types::{OrchestratorStatus, OrchestratorWorkspace};
+
+    fn orchestrator_workspace(id: &str, path: &str) -> OrchestratorWorkspace {
+        OrchestratorWorkspace {
+            id: id.to_string(),
+            name: id.to_string(),
+            path: path.to_string(),
+            workspace_type: "local".to_string(),
+            base_url: None,
+            directory: None,
+            created_at: None,
+            last_used_at: None,
+        }
+    }
+
+    fn orchestrator_status(
+        active_id: Option<&str>,
+        workspaces: Vec<OrchestratorWorkspace>,
+    ) -> OrchestratorStatus {
+        OrchestratorStatus {
+            running: true,
+            data_dir: "/tmp/veslo-orchestrator".to_string(),
+            daemon: None,
+            opencode: None,
+            cli_version: None,
+            sidecar: None,
+            binaries: None,
+            active_id: active_id.map(ToOwned::to_owned),
+            workspace_count: workspaces.len(),
+            workspaces,
+            engines: Vec::new(),
+            last_error: None,
+        }
+    }
 
     #[test]
     fn local_sidecars_use_loopback_opencode_url() {
@@ -1191,6 +1316,16 @@ mod tests {
         assert!(source.contains("Some(opencode_base_url.clone())"));
         assert!(!source.contains("Some(&opencode_connect_url)"));
         assert!(!source.contains("Some(opencode_connect_url)"));
+    }
+
+    #[test]
+    fn opencode_bind_host_defaults_to_loopback() {
+        assert_eq!(resolve_opencode_bind_host_from_env(None), "127.0.0.1");
+        assert_eq!(resolve_opencode_bind_host_from_env(Some(" ")), "127.0.0.1");
+        assert_eq!(
+            resolve_opencode_bind_host_from_env(Some("0.0.0.0")),
+            "0.0.0.0"
+        );
     }
 
     #[test]
@@ -1228,5 +1363,42 @@ mod tests {
         assert!(!should_retry_orchestrator_start(2, 2, true));
         assert!(!should_retry_orchestrator_start(1, 2, false));
         assert!(!should_retry_orchestrator_start(1, 1, true));
+    }
+
+    #[test]
+    fn orchestrator_proxy_url_uses_project_workspace_when_health_active_id_is_empty() {
+        let status = orchestrator_status(
+            Some(""),
+            vec![orchestrator_workspace(
+                "ws-project",
+                "C:\\work\\project-beta-legal",
+            )],
+        );
+
+        let workspace_id = resolve_orchestrator_proxy_workspace_id(
+            &status,
+            "C:/work/project-beta-legal/",
+            Some(""),
+        );
+        let base_url = orchestrator_opencode_base_url(59104, workspace_id.as_deref());
+
+        assert_eq!(
+            workspace_id.as_deref(),
+            Some("ws-project"),
+            "project path should win over an empty /health activeId"
+        );
+        assert_eq!(
+            base_url,
+            "http://127.0.0.1:59104/workspace/ws-project/opencode"
+        );
+        assert!(!base_url.contains("/workspace//opencode"));
+    }
+
+    #[test]
+    fn orchestrator_proxy_url_falls_back_to_daemon_root_without_workspace_id() {
+        let base_url = orchestrator_opencode_base_url(59104, Some(" "));
+
+        assert_eq!(base_url, "http://127.0.0.1:59104");
+        assert!(!base_url.contains("/workspace//opencode"));
     }
 }

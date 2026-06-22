@@ -58,6 +58,11 @@ jobs:
         run: |
           node -e "const fs=require('fs'); const configPath='packages/desktop/src-tauri/tauri.conf.json'; const ciPath='packages/desktop/src-tauri/tauri.conf.ci.json'; const config=JSON.parse(fs.readFileSync(configPath,'utf8')); config.bundle={...config.bundle, createUpdaterArtifacts:false}; fs.writeFileSync(ciPath, JSON.stringify(config, null, 2));"
 
+      - name: Prepare desktop sidecars
+        run: pnpm -C packages/desktop prepare:sidecar
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
       - name: Resolve Windows signing
         id: signing
         shell: bash

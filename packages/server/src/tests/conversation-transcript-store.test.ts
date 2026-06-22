@@ -28,24 +28,24 @@ describe("conversation transcript store", () => {
     expect(result).toBeNull();
   });
 
-  test("persists messages + parts and reads them back in id order", async () => {
+  test("persists messages + parts and reads them back in creation order", async () => {
     const store = await newStore();
     await store.appendTranscript({
       workspaceId: "ws-a",
       engineSessionId: "ses-1",
       messages: [
         {
-          id: "msg-2",
+          id: "msg-a",
           role: "assistant",
           createdAt: 20,
-          payload: { id: "msg-2", role: "assistant", text: "second" },
+          payload: { id: "msg-a", role: "assistant", text: "second" },
           parts: [{ id: "prt-2", type: "text", payload: { id: "prt-2", text: "second" } }],
         },
         {
-          id: "msg-1",
+          id: "msg-z",
           role: "user",
           createdAt: 10,
-          payload: { id: "msg-1", role: "user", text: "first" },
+          payload: { id: "msg-z", role: "user", text: "first" },
           parts: [
             { id: "prt-1a", type: "text", payload: { id: "prt-1a", text: "a" } },
             { id: "prt-1b", type: "text", payload: { id: "prt-1b", text: "b" } },
@@ -56,12 +56,12 @@ describe("conversation transcript store", () => {
 
     const result = await store.getTranscript({ workspaceId: "ws-a", engineSessionId: "ses-1" });
     expect(result).not.toBeNull();
-    expect(result!.messages.map((m) => (m as { id: string }).id)).toEqual(["msg-1", "msg-2"]);
-    expect(result!.partsByMessageId["msg-1"].map((p) => (p as { id: string }).id)).toEqual([
+    expect(result!.messages.map((m) => (m as { id: string }).id)).toEqual(["msg-z", "msg-a"]);
+    expect(result!.partsByMessageId["msg-z"].map((p) => (p as { id: string }).id)).toEqual([
       "prt-1a",
       "prt-1b",
     ]);
-    expect(result!.partsByMessageId["msg-2"].map((p) => (p as { id: string }).id)).toEqual(["prt-2"]);
+    expect(result!.partsByMessageId["msg-a"].map((p) => (p as { id: string }).id)).toEqual(["prt-2"]);
   });
 
   test("upserts on re-append (latest payload wins, no duplicates)", async () => {
@@ -146,22 +146,26 @@ describe("conversation transcript store", () => {
     expect((result!.partsByMessageId["msg-1"][0] as { text: string }).text).toBe("keep updated");
   });
 
-  test("limit returns the first N messages by id (mirrors read store)", async () => {
+  test("limit returns the first N messages by creation order", async () => {
     const store = await newStore();
     await store.appendTranscript({
       workspaceId: "ws-a",
       engineSessionId: "ses-1",
-      messages: ["msg-1", "msg-2", "msg-3"].map((id, index) => ({
-        id,
+      messages: [
+        ["msg-c", 30],
+        ["msg-a", 10],
+        ["msg-b", 20],
+      ].map(([id, createdAt]) => ({
+        id: String(id),
         role: "user",
-        createdAt: (index + 1) * 10,
+        createdAt: Number(createdAt),
         payload: { id },
         parts: [],
       })),
     });
 
     const result = await store.getTranscript({ workspaceId: "ws-a", engineSessionId: "ses-1", limit: 2 });
-    expect(result!.messages.map((m) => (m as { id: string }).id)).toEqual(["msg-1", "msg-2"]);
+    expect(result!.messages.map((m) => (m as { id: string }).id)).toEqual(["msg-a", "msg-b"]);
   });
 
   test("scopes by workspace and session", async () => {

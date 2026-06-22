@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<WixLocalization
+  Culture="cs-CZ"
+  xmlns="http://schemas.microsoft.com/wix/2006/localization">
+  <String Id="TauriLanguage">1029</String>
+  <String Id="TauriCodepage">1250</String>
+  <String Id="LaunchApp">Spustit Veslo by Neatech</String>
+  <String Id="DowngradeErrorMessage">Je již nainstalována novější verze aplikace Veslo by Neatech.</String>
+  <String Id="PathEnvVarFeature">Přidat umístění spustitelného souboru Veslo by Neatech do systémové proměnné PATH. Díky tomu lze Veslo by Neatech spustit z libovolného umístění.</String>
+  <String Id="InstallAppFeature">Nainstaluje aplikaci Veslo by Neatech.</String>
+</WixLocalization>

@@ -241,12 +241,13 @@ export function createConversationTranscriptStore(options?: {
           : 140;
 
       return withDb((db) => {
-        // Mirror conversation-read-store: messages ordered by id ASC, limited.
+        // Host-first reads should preserve transcript chronology even when old
+        // imported engine ids do not sort in creation order.
         const messageRows = db
           .query<MessageRow, [string, string, number]>(
             `SELECT message_id, payload_json FROM conversation_message
              WHERE workspace_id = ?1 AND engine_session_id = ?2
-             ORDER BY message_id ASC
+             ORDER BY created_at ASC, message_id ASC
              LIMIT ?3`,
           )
           .all(workspaceId, engineSessionId, limit);

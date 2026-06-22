@@ -43,7 +43,12 @@ pub fn spawn_opencode_router(
         Ok(command) => command,
         Err(_) => match supervised_process::sidecar(app, "opencode-router") {
             Ok(command) => command,
-            Err(_) => supervised_process::command(app, "opencode-router"),
+            Err(error) => supervised_process::command_fallback_for_missing_sidecar(
+                app,
+                "veslo-code-router",
+                "opencode-router",
+                error,
+            )?,
         },
     };
 

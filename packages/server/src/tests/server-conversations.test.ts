@@ -312,6 +312,91 @@ describe("conversation routes", () => {
     expect(payload.opencodeSessionId).toBe("sess-orch-stale");
   });
 
+  test("POST /workspace/:id/conversations ignores persisted empty workspace opencode mount", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-empty-mount-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+
+    let malformedBaseUrlHit = false;
+    const malformed = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async () => {
+        malformedBaseUrlHit = true;
+        return Response.json({ error: "not found" }, { status: 404 });
+      },
+    });
+    runningServers.push(malformed as { stop?: (closeActiveConnections?: boolean) => void });
+
+    let orchestratorPath = "";
+    const orchestrator = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        orchestratorPath = url.pathname;
+        if (request.method === "POST" && url.pathname === "/workspace/ws_empty_mount/opencode/session") {
+          return Response.json({
+            id: "sess-empty-mount",
+            title: "Recovered empty mount",
+            directory: workspaceRoot,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+        return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(orchestrator as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: malformed.port,
+      orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
+      workspaces: [
+        {
+          id: "ws_empty_mount",
+          name: "Empty mount",
+          path: workspaceRoot,
+          baseUrl: `http://127.0.0.1:${malformed.port}/workspace//opencode`,
+        },
+      ],
+    });
+
+    const listResponse = await fetch(`http://127.0.0.1:${server.port}/workspaces`, {
+      headers: { Authorization: "Bearer client-token" },
+    });
+    expect(listResponse.status).toBe(200);
+    const listPayload = await listResponse.json() as {
+      items: Array<{ id: string; baseUrl?: string; opencode?: { baseUrl?: string } }>;
+    };
+    const listed = listPayload.items.find((item) => item.id === "ws_empty_mount");
+    expect(listed?.baseUrl).toBe(`http://127.0.0.1:${orchestrator.port}/workspace/ws_empty_mount/opencode`);
+    expect(listed?.opencode?.baseUrl).toBe(`http://127.0.0.1:${orchestrator.port}/workspace/ws_empty_mount/opencode`);
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_empty_mount/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Recovered empty mount",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(201);
+    expect(malformedBaseUrlHit).toBe(false);
+    expect(orchestratorPath).toBe("/workspace/ws_empty_mount/opencode/session");
+    const payload = await response.json() as { id: string; opencodeSessionId: string };
+    expect(payload.id).toBe("sess-empty-mount");
+    expect(payload.opencodeSessionId).toBe("sess-empty-mount");
+  });
+
   test("POST /workspace/:id/conversations/:conversationId/runs queues and drains when lifecycle has an active run", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-queue-"));
     tempDirs.push(workspaceRoot);
@@ -455,6 +540,162 @@ describe("conversation routes", () => {
     );
     expect(registerRequests).toHaveLength(1);
     expect(engineSubmits).toEqual(["/session/sess-queued/prompt_async"]);
+  });
+
+  test("POST /workspace/:id/sessions/:sessionId/transcript reconciles lifecycle and wakes queued runs", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-transcript-reconcile-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+
+    const engineSubmits: string[] = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({
+            id: "sess-transcript-reconcile",
+            title: "Transcript reconcile",
+            directory: workspaceRoot,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-transcript-reconcile/prompt_async") {
+          engineSubmits.push(url.pathname);
+          return Response.json({ ok: true });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    let lifecycleStatus = "running";
+    let latestRequests = 0;
+    const registerRequests: string[] = [];
+    const orchestrator = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== "lifecycle-token") {
+          return Response.json({ error: "unauthorized" }, { status: 401 });
+        }
+        if (request.method === "GET" && url.pathname.endsWith("/runs/active")) {
+          return Response.json({
+            ok: true,
+            workspaceId: "ws_1",
+            conversationId: "conv-active",
+            runId: "run-active",
+            status: "running",
+            stale: false,
+          });
+        }
+        if (request.method === "GET" && url.pathname.endsWith("/runs/latest")) {
+          latestRequests += 1;
+          return Response.json({
+            ok: true,
+            workspaceId: "ws_1",
+            conversationId: "conv-active",
+            runId: "run-active",
+            status: lifecycleStatus,
+            stale: false,
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/runs/register") {
+          const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+          registerRequests.push(typeof body?.runId === "string" ? body.runId : "");
+          lifecycleStatus = "running";
+          return Response.json({ ok: true, ...body, workspaceId: "ws_1", status: "running", stale: false });
+        }
+        return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(orchestrator as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+      orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
+      orchestratorLifecycleToken: "lifecycle-token",
+    });
+    const headers = {
+      Authorization: "Bearer client-token",
+      "Content-Type": "application/json",
+    };
+
+    const createResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Transcript reconcile",
+        }),
+      },
+    );
+    expect(createResponse.status).toBe(201);
+    const created = await createResponse.json() as {
+      conversationId: string;
+      opencodeSessionId: string;
+    };
+
+    const runResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          kind: "prompt_async",
+          directory: workspaceRoot,
+          clientMessageId: "msg-transcript-queued",
+          parts: [{ type: "text", text: "Queue then drain" }],
+        }),
+      },
+    );
+    expect(runResponse.status).toBe(202);
+    expect(engineSubmits).toEqual([]);
+
+    lifecycleStatus = "completed";
+    const appendResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/${encodeURIComponent(created.opencodeSessionId)}/transcript`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          reason: "session.idle",
+          messages: [
+            {
+              id: "msg-user",
+              sessionID: created.opencodeSessionId,
+              role: "user",
+              time: { created: 1_000 },
+            },
+            {
+              id: "msg-assistant",
+              sessionID: created.opencodeSessionId,
+              role: "assistant",
+              time: { created: 2_000, completed: 3_000 },
+            },
+          ],
+          partsByMessageId: {
+            "msg-user": [],
+            "msg-assistant": [],
+          },
+        }),
+      },
+    );
+    expect(appendResponse.status).toBe(200);
+
+    await waitForCondition(
+      () => latestRequests > 0 && engineSubmits.length > 0,
+      { timeoutMs: 1_000, message: "expected terminal transcript append to wake queued run before poll interval" },
+    );
+    expect(registerRequests).toHaveLength(1);
+    expect(engineSubmits).toEqual(["/session/sess-transcript-reconcile/prompt_async"]);
   });
 
   test.if(process.platform === "win32")("POST /workspace/:id/conversations accepts Windows directory casing differences", async () => {

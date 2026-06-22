@@ -157,6 +157,22 @@ export type WorkspaceSessionCache = {
 const sortById = <T extends { id: string }>(list: T[]) =>
   list.slice().sort((a, b) => a.id.localeCompare(b.id));
 
+const messageActivity = (message: { id: string; time?: { created?: number; updated?: number } }) =>
+  Number.isFinite(message.time?.created ?? NaN)
+    ? message.time!.created!
+    : Number.isFinite(message.time?.updated ?? NaN)
+      ? message.time!.updated!
+      : 0;
+
+const sortMessagesByActivity = <T extends { id: string; time?: { created?: number; updated?: number } }>(list: T[]) =>
+  list
+    .slice()
+    .sort((a, b) => {
+      const delta = messageActivity(a) - messageActivity(b);
+      if (delta !== 0) return delta;
+      return a.id.localeCompare(b.id);
+    });
+
 const sessionActivity = (session: Session) =>
   session.time?.updated ?? session.time?.created ?? 0;
 
@@ -211,10 +227,10 @@ const removeSession = (list: Session[], sessionID: string) => list.filter((sessi
 
 const upsertMessageInfo = (list: MessageInfo[], next: MessageInfo) => {
   const index = list.findIndex((message) => message.id === next.id);
-  if (index === -1) return sortById([...list, next]);
+  if (index === -1) return sortMessagesByActivity([...list, next]);
   const copy = list.slice();
   copy[index] = next;
-  return copy;
+  return sortMessagesByActivity(copy);
 };
 
 const removeMessageInfo = (list: MessageInfo[], messageID: string) =>
@@ -1229,7 +1245,7 @@ export function createSessionStore(options: {
       .map((info) => info as MessageInfo);
 
     batch(() => {
-      setStore("messages", sessionID, reconcile(sortById(infos), { key: "id" }));
+      setStore("messages", sessionID, reconcile(sortMessagesByActivity(infos), { key: "id" }));
       for (const message of list) {
         const parts = message.parts.filter((part) => !!part?.id);
         setStore("parts", message.info.id, reconcile(sortById(parts), { key: "id" }));
@@ -1294,6 +1310,10 @@ export function createSessionStore(options: {
 
   function getCachedTranscriptMessageCount(sessionID: string) {
     return (store.messages[sessionID] ?? []).length;
+  }
+
+  function getCachedTranscriptMessages(sessionID: string) {
+    return store.messages[sessionID] ?? [];
   }
 
   function getTranscriptFreshness(sessionID: string) {
@@ -1403,7 +1423,7 @@ export function createSessionStore(options: {
       : normalizeDirectoryPath(options.activeWorkspaceRoot());
     if (!workspaceId || !sessionID || !directory) return null;
 
-    const messagesForSession = sortById(
+    const messagesForSession = sortMessagesByActivity(
       (store.messages[sessionID] ?? []).filter((message): message is MessageInfo => Boolean(message?.id)),
     );
     const hasPendingDeletions =
@@ -1519,7 +1539,7 @@ export function createSessionStore(options: {
         const transcript = unwrap(
           await withTimeout(c.session.messages({ sessionID, limit }), 12_000, "background session.messages"),
         ) as MessageWithParts[];
-        const messages = sortById(
+        const messages = sortMessagesByActivity(
           transcript
             .map((message) => message.info)
             .filter((info): info is MessageInfo => Boolean(info?.id)),
@@ -2946,6 +2966,7 @@ export function createSessionStore(options: {
     hydrateTranscriptSnapshot,
     hasWarmTranscript,
     getCachedTranscriptMessageCount,
+    getCachedTranscriptMessages,
     getTranscriptFreshness,
     saveWorkspaceSnapshot,
     loadWorkspaceSnapshot,

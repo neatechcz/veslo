@@ -262,7 +262,7 @@ installation restore or rollout-policy enable route instead.
 
 ## Workspace Scope
 
-Many routes are workspace-scoped and should be called with an active workspace id. Desktop-launched local servers pass the app workspace id into the server process so app state, registry workspace skill-set sync, and `/workspace/:id/*` routes share the same identifier instead of falling back to a path-hash id. When the desktop app refreshes the local server, it should pass the currently attached local workspace first and the remaining known local workspace paths after it, so a newly materialized private chat workspace is available to file-session and other workspace-scoped routes before the prompt handoff continues.
+Many routes are workspace-scoped and should be called with an active workspace id. Desktop-launched local servers pass the app workspace id into the server process so app state, registry workspace skill-set sync, and `/workspace/:id/*` routes share the same identifier instead of falling back to a path-hash id. A fresh desktop profile may restart the local server with no workspace paths at all; that is valid app-service startup and must not be treated as a missing-workspace error. When local workspace paths exist, the desktop app should pass the currently attached local workspace first and the remaining known local workspace paths after it, so a newly materialized private chat workspace is available to file-session and other workspace-scoped routes before the prompt handoff continues.
 
 Common app flows:
 
@@ -270,6 +270,8 @@ Common app flows:
   Discover available workspaces and active workspace.
 - `POST /workspaces/local`
   Register a desktop-local workspace with the server before workspace-scoped config, mutation, or OpenCode write flows depend on it.
+- `DELETE /workspaces/:id`
+  Remove a workspace from the server registry. The route must persist removal for both explicit-id entries and path-derived entries, and it must work even when the local workspace folder no longer exists on disk.
 - `GET /workspace/:id/config`
   Read workspace-scoped Veslo config.
 - `PATCH /workspace/:id/config`
@@ -306,13 +308,22 @@ run queue and returns `status: "queued"` with `queueItemId`, `reservedRunId`,
 `activeRunId`, and `queuePosition`. App clients must treat `queued` as an
 accepted send, not as a failed send or transcript error. `run_already_active`
 is an internal lifecycle lock signal and should not be surfaced as the normal
-client-facing response for this route.
+client-facing response for this route. The lifecycle active check is a
+reconciled read, not a raw active-row lookup: if OpenCode reports the session
+idle or the transcript probe shows a terminal assistant message, the
+orchestrator completes the stale run before the server decides whether to
+queue the new request.
 
 `POST /workspace/:id/sessions/:sessionId/transcript` persists live transcript
 snapshots into the host store. `messages` plus `partsByMessageId` are the
 current snapshot; callers may also send `deletedMessageIds` and
 `deletedPartsByMessageId` so host-first transcript reads do not resurrect parts
-or messages that the live stream removed.
+or messages that the live stream removed. Callers may include a best-effort
+`reason` such as `session.idle`. When the snapshot or reason indicates a
+terminal turn, the server asks the orchestrator to reconcile the latest run and
+wakes the durable run queue if that reconciliation reaches a terminal state.
+The transcript request itself does not directly mark lifecycle rows terminal;
+the orchestrator still verifies state against OpenCode first.
 
 ## Capability Discovery
 

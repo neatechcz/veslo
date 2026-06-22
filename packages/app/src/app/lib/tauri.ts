@@ -152,6 +152,7 @@ export type WorkspaceInfo = {
   vesloToken?: string | null;
   vesloWorkspaceId?: string | null;
   vesloWorkspaceName?: string | null;
+  missing?: boolean | null;
 };
 
 export type WorkspaceList = {
@@ -886,6 +887,24 @@ export type ScheduledJob = {
 
 export async function engineInstall(): Promise<ExecResult> {
   return invoke<ExecResult>("engine_install");
+}
+
+export async function wslSandboxRepair(options?: {
+  checkOnly?: boolean;
+  force?: boolean;
+}): Promise<ExecResult> {
+  return invoke<ExecResult>("wsl_sandbox_repair", {
+    checkOnly: options?.checkOnly ?? false,
+    force: options?.force ?? false,
+  });
+}
+
+export async function wslPrerequisitesRepair(options?: {
+  checkOnly?: boolean;
+}): Promise<ExecResult> {
+  return invoke<ExecResult>("wsl_prerequisites_repair", {
+    checkOnly: options?.checkOnly ?? false,
+  });
 }
 
 export async function opkgInstall(projectDir: string, pkg: string): Promise<ExecResult> {

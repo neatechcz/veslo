@@ -34,6 +34,16 @@ const forceBuild = hasFlag("--force") || process.env.VESLO_SIDECAR_FORCE_BUILD =
 const sidecarOverride = process.env.VESLO_SIDECAR_DIR?.trim() || readArg("--outdir");
 const sidecarDir = sidecarOverride ? resolve(sidecarOverride) : join(__dirname, "..", "src-tauri", "sidecars");
 const packageJsonPath = resolve(__dirname, "..", "package.json");
+const hiddenPowerShellArgs = (script) => [
+  "-NoProfile",
+  "-NonInteractive",
+  "-WindowStyle",
+  "Hidden",
+  "-ExecutionPolicy",
+  "Bypass",
+  "-Command",
+  script,
+];
 
 const opencodeGithubRepo = (() => {
   const raw =
@@ -309,6 +319,18 @@ const readBinaryVersion = (filePath) => {
   return null;
 };
 
+const sidecarVersionMatches = (filePath, expectedVersion) => {
+  if (!expectedVersion) return false;
+  if (!existsSync(filePath) || isStubBinary(filePath)) return false;
+  return readBinaryVersion(filePath) === expectedVersion;
+};
+
+const shouldBuildVersionedSidecar = (filePath, expectedVersion) =>
+  forceBuild || !sidecarVersionMatches(filePath, expectedVersion);
+
+const shouldCopyVersionedSidecar = (filePath, expectedVersion, didBuild) =>
+  didBuild || !sidecarVersionMatches(filePath, expectedVersion);
+
 const currentBunVersion = () => {
   const result = spawnSync("bun", ["--version"], { encoding: "utf8" });
   if (result.status === 0 && result.stdout.trim()) return result.stdout.trim();
@@ -347,8 +369,9 @@ const ensureWindowsBaselineBunExecutable = () => {
     `Expand-Archive -Path ${psQuote(archivePath)} -DestinationPath ${psQuote(targetDir)} -Force`,
   ].join("; ");
 
-  const result = spawnSync("powershell", ["-NoProfile", "-Command", psScript], {
+  const result = spawnSync("powershell", hiddenPowerShellArgs(psScript), {
     stdio: "inherit",
+    windowsHide: true,
   });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
@@ -447,6 +470,15 @@ const writeManagedDepsManifest = (normalizedOpencodeVersion) => {
   }
 };
 
+const copyExecutableSync = (source, target) => {
+  copyFileSync(source, target);
+  try {
+    chmodSync(target, 0o755);
+  } catch {
+    // Windows and restricted filesystems may ignore POSIX executable bits.
+  }
+};
+
 const parseChecksum = (content, assetName) => {
   const lines = content.split(/\r?\n/);
   for (const line of lines) {
@@ -511,7 +543,7 @@ if (existsSync(vesloServerBuildPath)) {
     } catch {
       // ignore
     }
-    copyFileSync(vesloServerBuildPath, vesloServerPath);
+    copyExecutableSync(vesloServerBuildPath, vesloServerPath);
   }
 
   if (vesloServerTargetPath) {
@@ -525,7 +557,7 @@ if (existsSync(vesloServerBuildPath)) {
       } catch {
         // ignore
       }
-      copyFileSync(vesloServerBuildPath, vesloServerTargetPath);
+      copyExecutableSync(vesloServerBuildPath, vesloServerTargetPath);
     }
   }
 }
@@ -608,8 +640,9 @@ if (shouldDownloadOpencode) {
       `Expand-Archive -Path ${psQuote(archivePath)} -DestinationPath ${psQuote(extractDir)} -Force`,
     ].join("; ");
 
-    const result = spawnSync("powershell", ["-NoProfile", "-Command", psScript], {
+    const result = spawnSync("powershell", hiddenPowerShellArgs(psScript), {
       stdio: "inherit",
+      windowsHide: true,
     });
 
     if (result.status !== 0) {
@@ -716,7 +749,10 @@ if (normalizedOpenCodeRouterVersion && opencodeRouterPkgVersion && normalizedOpe
 }
 
 let didBuildOpenCodeRouter = false;
-const shouldBuildOpenCodeRouter = forceBuild || !existsSync(vesloCodeRouterBuildPath) || isStubBinary(vesloCodeRouterBuildPath);
+const shouldBuildOpenCodeRouter = shouldBuildVersionedSidecar(
+  vesloCodeRouterBuildPath,
+  expectedOpenCodeRouterVersion,
+);
 if (shouldBuildOpenCodeRouter) {
   mkdirSync(sidecarDir, { recursive: true });
   if (existsSync(vesloCodeRouterBuildPath)) {
@@ -744,33 +780,51 @@ if (shouldBuildOpenCodeRouter) {
 }
 
 if (existsSync(vesloCodeRouterBuildPath)) {
-  const shouldCopyCanonical = didBuildOpenCodeRouter || !existsSync(vesloCodeRouterPath) || isStubBinary(vesloCodeRouterPath);
+  const shouldCopyCanonical = shouldCopyVersionedSidecar(
+    vesloCodeRouterPath,
+    expectedOpenCodeRouterVersion,
+    didBuildOpenCodeRouter,
+  );
   if (shouldCopyCanonical && vesloCodeRouterBuildPath !== vesloCodeRouterPath) {
     try {
       if (existsSync(vesloCodeRouterPath)) unlinkSync(vesloCodeRouterPath);
     } catch {
       // ignore
     }
-    copyFileSync(vesloCodeRouterBuildPath, vesloCodeRouterPath);
+    copyExecutableSync(vesloCodeRouterBuildPath, vesloCodeRouterPath);
   }
 
   if (vesloCodeRouterTargetPath) {
-    const shouldCopyTarget = didBuildOpenCodeRouter || !existsSync(vesloCodeRouterTargetPath) || isStubBinary(vesloCodeRouterTargetPath);
+    const shouldCopyTarget = shouldCopyVersionedSidecar(
+      vesloCodeRouterTargetPath,
+      expectedOpenCodeRouterVersion,
+      didBuildOpenCodeRouter,
+    );
     if (shouldCopyTarget && vesloCodeRouterBuildPath !== vesloCodeRouterTargetPath) {
       try {
         if (existsSync(vesloCodeRouterTargetPath)) unlinkSync(vesloCodeRouterTargetPath);
       } catch {
         // ignore
       }
-      copyFileSync(vesloCodeRouterBuildPath, vesloCodeRouterTargetPath);
+      copyExecutableSync(vesloCodeRouterBuildPath, vesloCodeRouterTargetPath);
     }
   }
 }
 
 // Build orchestrator sidecar
+const orchestratorPkgRaw = readFileSync(resolve(orchestratorDir, "package.json"), "utf8");
+const orchestratorPkg = JSON.parse(orchestratorPkgRaw);
+const expectedOrchestratorVersion = String(orchestratorPkg.version ?? "").trim();
+if (!expectedOrchestratorVersion) {
+  console.error("Orchestrator version missing. Ensure packages/orchestrator/package.json has version.");
+  process.exit(1);
+}
+
 let didBuildOrchestrator = false;
-const shouldBuildOrchestrator =
-  forceBuild || !existsSync(orchestratorBuildPath) || isStubBinary(orchestratorBuildPath);
+const shouldBuildOrchestrator = shouldBuildVersionedSidecar(
+  orchestratorBuildPath,
+  expectedOrchestratorVersion,
+);
 if (shouldBuildOrchestrator) {
   mkdirSync(sidecarDir, { recursive: true });
   if (existsSync(orchestratorBuildPath)) {
@@ -813,29 +867,33 @@ if (shouldBuildOrchestrator) {
 }
 
 if (existsSync(orchestratorBuildPath)) {
-  const shouldCopyCanonical =
-    didBuildOrchestrator || !existsSync(orchestratorPath) || isStubBinary(orchestratorPath);
+  const shouldCopyCanonical = shouldCopyVersionedSidecar(
+    orchestratorPath,
+    expectedOrchestratorVersion,
+    didBuildOrchestrator,
+  );
   if (shouldCopyCanonical && orchestratorBuildPath !== orchestratorPath) {
     try {
       if (existsSync(orchestratorPath)) unlinkSync(orchestratorPath);
     } catch {
       // ignore
     }
-    copyFileSync(orchestratorBuildPath, orchestratorPath);
+    copyExecutableSync(orchestratorBuildPath, orchestratorPath);
   }
 
   if (orchestratorTargetPath) {
-    const shouldCopyTarget =
-      didBuildOrchestrator ||
-      !existsSync(orchestratorTargetPath) ||
-      isStubBinary(orchestratorTargetPath);
+    const shouldCopyTarget = shouldCopyVersionedSidecar(
+      orchestratorTargetPath,
+      expectedOrchestratorVersion,
+      didBuildOrchestrator,
+    );
     if (shouldCopyTarget && orchestratorBuildPath !== orchestratorTargetPath) {
       try {
         if (existsSync(orchestratorTargetPath)) unlinkSync(orchestratorTargetPath);
       } catch {
         // ignore
       }
-      copyFileSync(orchestratorBuildPath, orchestratorTargetPath);
+      copyExecutableSync(orchestratorBuildPath, orchestratorTargetPath);
     }
   }
 }
@@ -898,7 +956,7 @@ if (existsSync(chromeDevtoolsBuildPath)) {
     } catch {
       // ignore
     }
-    copyFileSync(chromeDevtoolsBuildPath, chromeDevtoolsPath);
+    copyExecutableSync(chromeDevtoolsBuildPath, chromeDevtoolsPath);
   }
 
   if (chromeDevtoolsTargetPath) {
@@ -912,7 +970,7 @@ if (existsSync(chromeDevtoolsBuildPath)) {
       } catch {
         // ignore
       }
-      copyFileSync(chromeDevtoolsBuildPath, chromeDevtoolsTargetPath);
+      copyExecutableSync(chromeDevtoolsBuildPath, chromeDevtoolsTargetPath);
     }
   }
 }

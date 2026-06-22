@@ -49,7 +49,7 @@ test('createAppLaunchEnv forwards the Den API base for fixture-backed catalog E2
     },
     {
       platform: 'darwin',
-      port: 4445,
+      vesloServerPort: 4445,
       opencodeHome: '/tmp/opencode-home',
       snapshotPath: '/tmp/opencode-home/.veslo/den-auth.json',
       denApiBase: 'http://127.0.0.1:54321/',

@@ -267,6 +267,10 @@ export function createWorkspaceLocalWorkspaces(deps: WorkspaceLocalWorkspacesDep
       deps.setError("Local workspace is not available.");
       return false;
     }
+    if (workspace.missing) {
+      deps.setError("Workspace folder no longer exists. Remove it from Veslo or choose the folder again.");
+      return false;
+    }
 
     const started = await deps.startHost({ workspacePath: workspace.path, navigate: false });
     if (!started) return false;

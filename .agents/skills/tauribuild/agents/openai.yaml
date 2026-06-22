@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tauri Build"
+  short_description: "Build Veslo full app with Tauri Pilot enabled."
+  default_prompt: "Build the full Veslo desktop app with Tauri Pilot enabled."

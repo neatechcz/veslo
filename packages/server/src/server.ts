@@ -1033,6 +1033,23 @@ function buildOrchestratorWorkspaceOpencodeBaseUrl(config: ServerConfig, workspa
   return `${daemonUrl}/workspace/${encodeURIComponent(workspaceId)}/opencode`;
 }
 
+function isEmptyWorkspaceOpencodeMount(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl);
+    const match = url.pathname.match(/^\/workspace\/([^/]*)\/opencode(?:\/.*)?$/);
+    return Boolean(match && !(match[1] ?? "").trim());
+  } catch {
+    return false;
+  }
+}
+
+function resolveWorkspaceOpencodeBaseUrl(config: ServerConfig, workspace: WorkspaceInfo): string {
+  const configured = workspace.baseUrl?.trim() ?? "";
+  const derived = buildOrchestratorWorkspaceOpencodeBaseUrl(config, workspace);
+  if (configured && !isEmptyWorkspaceOpencodeMount(configured)) return configured;
+  return derived || configured;
+}
+
 async function fetchOpencodeJson(
   workspace: WorkspaceInfo,
   path: string,
@@ -3075,6 +3092,45 @@ function parseSessionTranscriptDeletedParts(input: unknown): Record<string, stri
   return deletedPartsByMessageId;
 }
 
+function readTranscriptMessageInfo(message: unknown): Record<string, unknown> | null {
+  if (!isRecordLike(message)) return null;
+  return isRecordLike(message.info) ? message.info : message;
+}
+
+function readTranscriptString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function readPositiveTranscriptNumber(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function transcriptAssistantMessageIsTerminal(info: Record<string, unknown>): boolean {
+  const time = isRecordLike(info.time) ? info.time : null;
+  if (time && readPositiveTranscriptNumber(time.completed) !== null) return true;
+  if (isRecordLike(info.error)) return true;
+  if (readTranscriptString(info.finish)) return true;
+  return false;
+}
+
+function transcriptLatestAssistantLooksTerminal(messages: unknown[]): boolean {
+  if (messages.length === 0) return false;
+  const latestInfo = readTranscriptMessageInfo(messages[messages.length - 1]);
+  if (!latestInfo) return false;
+  if (readTranscriptString(latestInfo.role) !== "assistant") return false;
+  return transcriptAssistantMessageIsTerminal(latestInfo);
+}
+
+function transcriptReasonSignalsIdle(reason: string): boolean {
+  const normalized = reason.trim().toLowerCase();
+  return normalized.includes("session.idle") || normalized.includes("session.error");
+}
+
+function shouldReconcileLifecycleAfterTranscriptAppend(messages: unknown[], reason: string): boolean {
+  return transcriptReasonSignalsIdle(reason) || transcriptLatestAssistantLooksTerminal(messages);
+}
+
 function isRecordLike(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -3535,19 +3591,21 @@ function buildConfigTrigger(path: string): ReloadTrigger {
   };
 }
 
-export function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
-  const { opencodeUsername, opencodePassword, ...rest } = workspace;
+export function serializeWorkspace(workspace: ServerConfig["workspaces"][number], config?: ServerConfig) {
+  const { opencodeUsername, opencodePassword, baseUrl: rawBaseUrl, ...rest } = workspace;
+  const baseUrl = config ? resolveWorkspaceOpencodeBaseUrl(config, workspace) : rawBaseUrl;
   const opencodeDirectory = resolveOpencodeDirectory(workspace);
   const opencode =
-    workspace.baseUrl || opencodeDirectory || opencodeUsername || opencodePassword
+    baseUrl || opencodeDirectory || opencodeUsername || opencodePassword
       ? {
-          baseUrl: workspace.baseUrl,
+          baseUrl,
           directory: opencodeDirectory ?? undefined,
           username: opencodeUsername,
         }
       : undefined;
   return {
     ...rest,
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
     opencode,
   };
 }
@@ -4816,6 +4874,7 @@ function createRoutes(
   automationRunner: AutomationRunner,
 ): Route[] {
   const routes: Route[] = [];
+  const serializeWorkspaceForResponse = (workspace: WorkspaceInfo) => serializeWorkspace(workspace, config);
   const serverDataDir = resolveVesloDataDir();
   const fileSessions = new FileSessionStore();
   const sessionArchives = createSessionArchiveStore();
@@ -5116,7 +5175,12 @@ function createRoutes(
     delayMs = 0,
   ) => {
     const key = conversationQueueKey(workspaceId, conversationId);
-    if (conversationQueueDrainTimers.has(key)) return;
+    const existing = conversationQueueDrainTimers.get(key);
+    if (existing) {
+      if (delayMs > 0) return;
+      clearTimeout(existing);
+      conversationQueueDrainTimers.delete(key);
+    }
     const timer = setTimeout(() => {
       conversationQueueDrainTimers.delete(key);
       void drainConversationQueue(workspaceId, conversationId);
@@ -5293,6 +5357,46 @@ function createRoutes(
       conversationQueueDrainInFlight.delete(key);
     }
   }
+
+  const reconcileConversationLifecycleAfterTranscriptAppend = (input: {
+    workspace: WorkspaceInfo;
+    conversationId: string;
+    sessionId: string;
+    reason: string;
+    shouldReconcile: boolean;
+  }) => {
+    if (!input.shouldReconcile) return;
+    const conversationId = input.conversationId.trim();
+    if (!conversationId) return;
+    const lifecycleOwner = input.workspace.workspaceType === "remote" ? null : lifecycleClient;
+    if (!lifecycleOwner) return;
+
+    void (async () => {
+      try {
+        const latest = await lifecycleOwner.status(input.workspace.id, conversationId, "latest");
+        recordSendWorkflowTrace("server", "server:conversation-run:transcript-reconcile", {
+          workspaceId: input.workspace.id,
+          conversationId,
+          sessionId: input.sessionId,
+          reason: input.reason || null,
+          runId: latest?.runId ?? null,
+          status: latest?.status ?? null,
+          stale: latest?.stale ?? null,
+        });
+        if (latest && !isActiveLifecycleStatus(latest.status)) {
+          scheduleConversationQueueDrain(input.workspace.id, conversationId, 0);
+        }
+      } catch (error) {
+        recordSendWorkflowTrace("server", "server:conversation-run:transcript-reconcile-error", {
+          workspaceId: input.workspace.id,
+          conversationId,
+          sessionId: input.sessionId,
+          reason: input.reason || null,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+  };
 
   for (const pending of conversationRunQueueStore.pendingConversationKeys()) {
     scheduleConversationQueueDrain(pending.workspaceId, pending.conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
@@ -5492,7 +5596,7 @@ function createRoutes(
       corsOrigins: config.corsOrigins,
       workspaceCount: 1,
       activeWorkspaceId: workspace.id,
-      workspace: serializeWorkspace(workspace),
+      workspace: serializeWorkspaceForResponse(workspace),
       authorizedRoots: config.authorizedRoots,
       server: {
         host: config.host,
@@ -5512,7 +5616,7 @@ function createRoutes(
 
   addRoute(routes, "GET", "/w/:id/workspaces", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    return jsonResponse({ items: [serializeWorkspace(workspace)], activeId: workspace.id });
+    return jsonResponse({ items: [serializeWorkspaceForResponse(workspace)], activeId: workspace.id });
   });
 
   addRoute(routes, "GET", "/status", "client", async () => {
@@ -5526,7 +5630,7 @@ function createRoutes(
       corsOrigins: config.corsOrigins,
       workspaceCount: config.workspaces.length,
       activeWorkspaceId: active?.id ?? null,
-      workspace: active ? serializeWorkspace(active) : null,
+      workspace: active ? serializeWorkspaceForResponse(active) : null,
       authorizedRoots: config.authorizedRoots,
       server: {
         host: config.host,
@@ -5550,7 +5654,7 @@ function createRoutes(
 
   addRoute(routes, "GET", "/workspaces", "client", async () => {
     const active = config.workspaces[0] ?? null;
-    const items = config.workspaces.map(serializeWorkspace);
+    const items = config.workspaces.map(serializeWorkspaceForResponse);
     return jsonResponse({ items, activeId: active?.id ?? null });
   });
 
@@ -5599,14 +5703,14 @@ function createRoutes(
         const persisted = await persistServerWorkspaceState(config);
         return jsonResponse({
           activeId: config.workspaces[0]?.id ?? null,
-          items: config.workspaces.map(serializeWorkspace),
+          items: config.workspaces.map(serializeWorkspaceForResponse),
           persisted,
         });
       }
       if (hasOpencodeMetadata) {
         return jsonResponse({
           activeId: config.workspaces[0]?.id ?? null,
-          items: config.workspaces.map(serializeWorkspace),
+          items: config.workspaces.map(serializeWorkspaceForResponse),
           persisted: false,
         });
       }
@@ -5638,7 +5742,7 @@ function createRoutes(
     return jsonResponse(
       {
         activeId: workspace.id,
-        items: config.workspaces.map(serializeWorkspace),
+        items: config.workspaces.map(serializeWorkspaceForResponse),
         persisted,
       },
       201,
@@ -5663,7 +5767,7 @@ function createRoutes(
     const persisted = await persistServerWorkspaceState(config);
 
     return jsonResponse({
-      items: config.workspaces.map(serializeWorkspace),
+      items: config.workspaces.map(serializeWorkspaceForResponse),
       persisted,
     });
   });
@@ -5852,7 +5956,7 @@ function createRoutes(
     });
     return jsonResponse({
       activeId: workspace.id,
-      workspace: serializeWorkspace(workspace),
+      workspace: serializeWorkspaceForResponse(workspace),
       provision,
       userGlobalSkills,
     });
@@ -5895,7 +5999,7 @@ function createRoutes(
       deleted,
       persisted,
       activeId: active?.id ?? null,
-      items: config.workspaces.map(serializeWorkspace),
+      items: config.workspaces.map(serializeWorkspaceForResponse),
     });
   });
 
@@ -6413,13 +6517,16 @@ function createRoutes(
       throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
     }
 
+    const messages = parseSessionTranscriptMessages(body.messages);
+    const partsByMessageId = parseSessionTranscriptParts(body.partsByMessageId);
+    const reason = optionalBodyString(body, "reason") ?? "";
     const result = await conversationService.appendTranscript({
       workspace,
       sessionId,
       directory,
       limit: parseSessionTranscriptLimit(body.limit),
-      messages: parseSessionTranscriptMessages(body.messages),
-      partsByMessageId: parseSessionTranscriptParts(body.partsByMessageId),
+      messages,
+      partsByMessageId,
       deletedMessageIds: parseTranscriptStringArray(body.deletedMessageIds, "deletedMessageIds"),
       deletedPartsByMessageId: parseSessionTranscriptDeletedParts(body.deletedPartsByMessageId),
     });
@@ -6435,6 +6542,13 @@ function createRoutes(
         directory,
       });
     }
+    reconcileConversationLifecycleAfterTranscriptAppend({
+      workspace,
+      conversationId: result.conversationId ?? binding?.conversationId ?? sessionId,
+      sessionId: result.opencodeSessionId,
+      reason,
+      shouldReconcile: shouldReconcileLifecycleAfterTranscriptAppend(messages, reason),
+    });
     return jsonResponse(result);
   });
 
@@ -10562,7 +10676,7 @@ async function resolveWorkspace(config: ServerConfig, id: string): Promise<Works
   if (!authorized) {
     throw new ApiError(403, "workspace_unauthorized", "Workspace is not authorized");
   }
-  const baseUrl = workspace.baseUrl?.trim() || buildOrchestratorWorkspaceOpencodeBaseUrl(config, workspace);
+  const baseUrl = resolveWorkspaceOpencodeBaseUrl(config, workspace);
   return {
     ...workspace,
     path: resolvedWorkspace,
@@ -10825,10 +10939,12 @@ async function persistWorkspaceDeletion(configPath: string, workspaceId: string,
 
   const nextWorkspaces = workspaces.filter((entry) => {
     const obj = ensurePlainObject(entry);
+    const explicitId = typeof obj.id === "string" ? obj.id.trim() : "";
+    if (explicitId && explicitId === workspaceId) return false;
     const path = typeof obj.path === "string" ? obj.path.trim() : "";
     if (!path) return true;
-    const id = workspaceIdForPath(resolve(configDir, path));
-    return id !== workspaceId;
+    const pathId = workspaceIdForPath(resolve(configDir, path));
+    return pathId !== workspaceId;
   });
 
   const rootsRaw = parsed.authorizedRoots;

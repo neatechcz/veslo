@@ -376,12 +376,12 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
 
           # macOS notarization (App Store Connect API key or Apple ID app-specific password)
-          APPLE_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
-          APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
-          APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID || secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ steps.macos_signing.outputs.appleNotaryAuthMode == 'api-key' && secrets.APPLE_NOTARY_API_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ steps.macos_signing.outputs.appleNotaryAuthMode == 'api-key' && secrets.APPLE_NOTARY_API_ISSUER_ID || '' }}
+          APPLE_API_KEY_PATH: ${{ steps.macos_signing.outputs.appleNotaryAuthMode == 'api-key' && env.NOTARY_KEY_PATH || '' }}
+          APPLE_ID: ${{ steps.macos_signing.outputs.appleNotaryAuthMode == 'apple-id' && secrets.APPLE_NOTARY_APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ steps.macos_signing.outputs.appleNotaryAuthMode == 'apple-id' && secrets.APPLE_NOTARY_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ steps.macos_signing.outputs.appleNotaryAuthMode == 'apple-id' && vars.APPLE_TEAM_ID || steps.macos_signing.outputs.appleNotaryAuthMode == 'apple-id' && secrets.APPLE_TEAM_ID || '' }}
         with:
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: ${{ env.RELEASE_NAME }}

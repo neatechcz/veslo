@@ -1023,7 +1023,16 @@ async function resolveOpencodeDownload(sidecar: SidecarConfig, expectedVersion?:
         "$ErrorActionPreference = 'Stop'",
         `Expand-Archive -Path ${psQuote(archivePath)} -DestinationPath ${psQuote(extractDir)} -Force`,
       ].join("; ");
-      await runCommand("powershell", ["-NoProfile", "-Command", psScript]);
+      await runCommand("powershell", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-WindowStyle",
+        "Hidden",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        psScript,
+      ]);
     } else if (asset.endsWith(".zip")) {
       await runCommand("unzip", ["-q", archivePath, "-d", extractDir]);
     } else if (asset.endsWith(".tar.gz")) {
@@ -4566,15 +4575,15 @@ async function runRouterDaemon(args: ParsedArgs) {
         const conversationId = decodeURIComponent(parts[3] ?? "").trim();
         const runId = decodeURIComponent(parts[5] ?? "").trim();
         if (runId === "active") {
-          const active = runStore.activeForConversation(workspace.id, conversationId);
+          const active = await runRegistry.active(workspace.id, conversationId);
           if (!active) {
             send(404, { error: "run not found" });
             return;
           }
           send(200, {
             ok: true,
-            ...active,
-            stale: false,
+            ...active.record,
+            stale: active.stale,
           });
           return;
         }

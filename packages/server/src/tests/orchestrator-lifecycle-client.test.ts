@@ -96,7 +96,7 @@ describe("orchestrator lifecycle client", () => {
     await expect(client.status("ws-a", "conv-a", "latest")).resolves.toBeNull();
   });
 
-  test("active reads the non-reconciled active run endpoint", async () => {
+  test("active reads the orchestrator active run endpoint", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchImpl = mockFetch(async (input, init) => {
       calls.push({ url: String(input), init });

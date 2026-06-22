@@ -1,3 +1,4 @@
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, State};
 
 use crate::engine::manager::EngineManager;
@@ -5,12 +6,22 @@ use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::orchestrator::{self, read_orchestrator_auth};
 use crate::types::{VesloServerInfo, WorkspaceState, WorkspaceType};
 use crate::utils::truncate_output;
-use crate::veslo_server::manager::VesloServerManager;
+use crate::veslo_server::manager::{VesloServerManager, VesloServerState};
 use crate::veslo_server::{
     clear_persisted_veslo_server_info, recover_persisted_veslo_server_info, server_health_identity,
     start_veslo_server, HealthIdentity,
 };
 use crate::workspace::state::load_workspace_state;
+
+const ENGINE_URL_REFRESH_TTL: Duration = Duration::from_secs(120);
+const ENGINE_URL_REFRESH_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EngineUrlRefreshLease {
+    generation: u64,
+    port: u16,
+    host: Option<String>,
+}
 
 fn active_local_workspace_path(state: &WorkspaceState) -> Option<String> {
     state
@@ -107,6 +118,7 @@ fn sanitize_live_info_with_health(
     info.lan_url = None;
     info.client_token = None;
     info.host_token = None;
+    info.engine_url = None;
     info.pid = None;
     info.last_stderr = Some(truncate_output(
         "Veslo server identity does not match persisted state.",
@@ -116,49 +128,112 @@ fn sanitize_live_info_with_health(
     (info, true)
 }
 
-fn refresh_running_engine_url(
-    mut info: VesloServerInfo,
-    refresh: impl FnOnce(u16) -> Option<String>,
-) -> (VesloServerInfo, bool) {
+fn elapsed_since(now: Instant, then: Instant) -> Duration {
+    now.checked_duration_since(then)
+        .unwrap_or_else(|| Duration::from_secs(0))
+}
+
+fn normalize_engine_url(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn begin_engine_url_refresh_if_due(
+    state: &mut VesloServerState,
+    info: &VesloServerInfo,
+    now: Instant,
+    ttl: Duration,
+    lock_timeout: Duration,
+) -> Option<EngineUrlRefreshLease> {
     if !info.running {
-        return (info, false);
+        return None;
+    }
+    if !crate::veslo_server::publishes_external_urls(info.host.as_deref()) {
+        return None;
     }
 
-    let Some(port) = info.port else {
-        return (info, false);
-    };
+    let port = info.port?;
 
-    let refreshed = refresh(port);
-    let changed = info.engine_url != refreshed;
-    info.engine_url = refreshed;
-    (info, changed)
+    if let Some(started_at) = state.engine_url_refresh_started_at {
+        if elapsed_since(now, started_at) < lock_timeout {
+            return None;
+        }
+    }
+
+    if let Some(checked_at) = state.engine_url_checked_at {
+        if elapsed_since(now, checked_at) < ttl {
+            return None;
+        }
+    }
+
+    state.engine_url_refresh_generation = state.engine_url_refresh_generation.wrapping_add(1);
+    state.engine_url_refresh_started_at = Some(now);
+    Some(EngineUrlRefreshLease {
+        generation: state.engine_url_refresh_generation,
+        port,
+        host: info.host.clone(),
+    })
+}
+
+fn finish_engine_url_refresh(
+    state: &mut VesloServerState,
+    lease: EngineUrlRefreshLease,
+    checked_at: Instant,
+    refreshed: Option<String>,
+) {
+    if state.engine_url_refresh_generation != lease.generation {
+        return;
+    }
+
+    state.engine_url_refresh_started_at = None;
+    state.engine_url_checked_at = Some(checked_at);
+
+    if let Some(url) = normalize_engine_url(refreshed) {
+        state.engine_url = Some(url);
+    }
 }
 
 #[tauri::command]
 pub fn veslo_server_info(app: AppHandle, manager: State<VesloServerManager>) -> VesloServerInfo {
-    let running_snapshot = {
+    let (running_snapshot, engine_url_refresh) = {
         let mut state = manager.inner.lock().expect("veslo server mutex poisoned");
         let info = VesloServerManager::snapshot_locked(&mut state);
         let (sanitized, stale) = sanitize_live_info_with_health(info, server_health_identity);
         if sanitized.running {
-            Some(sanitized)
+            let refresh = begin_engine_url_refresh_if_due(
+                &mut state,
+                &sanitized,
+                Instant::now(),
+                ENGINE_URL_REFRESH_TTL,
+                ENGINE_URL_REFRESH_LOCK_TIMEOUT,
+            );
+            (Some(sanitized), refresh)
         } else {
             if stale {
                 let _ = clear_persisted_veslo_server_info(&app);
                 return sanitized;
             }
-            None
+            (None, None)
         }
     };
 
-    if let Some(sanitized) = running_snapshot {
-        let (sanitized, engine_url_changed) =
-            refresh_running_engine_url(sanitized, crate::veslo_server::resolve_engine_url);
-        if engine_url_changed {
+    if let Some(mut sanitized) = running_snapshot {
+        if let Some(lease) = engine_url_refresh {
+            let refreshed = crate::veslo_server::resolve_engine_url_for_bind_host(
+                lease.host.as_deref(),
+                Some(lease.port),
+            );
             let mut state = manager.inner.lock().expect("veslo server mutex poisoned");
             let live = VesloServerManager::snapshot_locked(&mut state);
-            if live.running && live.port == sanitized.port {
-                state.engine_url = sanitized.engine_url.clone();
+            if state.engine_url_refresh_generation == lease.generation {
+                if live.running && live.port == Some(lease.port) && live.host == lease.host {
+                    finish_engine_url_refresh(&mut state, lease, Instant::now(), refreshed);
+                    sanitized = VesloServerManager::snapshot_locked(&mut state);
+                } else {
+                    state.engine_url_refresh_started_at = None;
+                    state.engine_url_checked_at = Some(Instant::now());
+                }
             }
         }
         return sanitized;
@@ -206,9 +281,6 @@ pub fn veslo_server_restart(
         &workspace_state,
         engine_workspace_path.as_deref(),
     );
-    if workspace_paths.is_empty() {
-        return Err("No active local workspace available".to_string());
-    }
 
     let engine_attached = engine_opencode_url
         .as_deref()
@@ -263,13 +335,16 @@ pub fn veslo_server_restart(
 #[cfg(test)]
 mod tests {
     use super::{
-        active_local_workspace_path, local_workspace_paths_for_server_restart,
-        refresh_running_engine_url, sanitize_live_info_with_health, HealthIdentity,
+        active_local_workspace_path, begin_engine_url_refresh_if_due, finish_engine_url_refresh,
+        local_workspace_paths_for_server_restart, sanitize_live_info_with_health,
+        EngineUrlRefreshLease, HealthIdentity,
     };
     use crate::types::{
         RemoteType, VesloServerInfo, WorkspaceInfo, WorkspaceState, WorkspaceType,
         WORKSPACE_STATE_VERSION,
     };
+    use crate::veslo_server::manager::VesloServerState;
+    use std::time::{Duration, Instant};
 
     fn workspace(id: &str, path: &str, workspace_type: WorkspaceType) -> WorkspaceInfo {
         WorkspaceInfo {
@@ -286,6 +361,7 @@ mod tests {
             veslo_token: None,
             veslo_workspace_id: None,
             veslo_workspace_name: None,
+            missing: None,
         }
     }
 
@@ -345,6 +421,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn local_workspace_paths_for_server_restart_allows_fresh_profile() {
+        let state = WorkspaceState {
+            version: WORKSPACE_STATE_VERSION,
+            active_id: String::new(),
+            workspaces: Vec::new(),
+        };
+
+        assert_eq!(
+            local_workspace_paths_for_server_restart(&state, None),
+            Vec::<String>::new()
+        );
+    }
+
     fn sample_live_info() -> VesloServerInfo {
         VesloServerInfo {
             running: true,
@@ -363,26 +453,164 @@ mod tests {
         }
     }
 
-    #[test]
-    fn refresh_running_engine_url_replaces_stale_url_with_probe_result() {
-        let info = sample_live_info();
-        let (refreshed, changed) =
-            refresh_running_engine_url(info, |_| Some("http://172.30.64.1:8787".to_string()));
+    fn sample_engine_url_state(
+        info: &VesloServerInfo,
+        checked_at: Option<Instant>,
+    ) -> VesloServerState {
+        VesloServerState {
+            host: info.host.clone(),
+            port: info.port,
+            engine_url: info.engine_url.clone(),
+            engine_url_checked_at: checked_at,
+            ..Default::default()
+        }
+    }
 
-        assert!(changed);
+    #[test]
+    fn engine_url_refresh_waits_until_ttl_expires() {
+        let info = sample_live_info();
+        let now = Instant::now();
+        let ttl = Duration::from_secs(120);
+        let lock_timeout = Duration::from_secs(30);
+        let mut state = sample_engine_url_state(&info, Some(now - Duration::from_secs(119)));
+
         assert_eq!(
-            refreshed.engine_url.as_deref(),
-            Some("http://172.30.64.1:8787")
+            begin_engine_url_refresh_if_due(&mut state, &info, now, ttl, lock_timeout),
+            None
+        );
+
+        state.engine_url_checked_at = Some(now - Duration::from_secs(120));
+        let lease = begin_engine_url_refresh_if_due(&mut state, &info, now, ttl, lock_timeout)
+            .expect("expired ttl should start a refresh");
+        assert_eq!(lease.port, 8787);
+        assert_eq!(lease.host.as_deref(), Some("0.0.0.0"));
+        assert_eq!(state.engine_url_refresh_started_at, Some(now));
+    }
+
+    #[test]
+    fn engine_url_refresh_skips_loopback_server() {
+        let mut info = sample_live_info();
+        info.host = Some("127.0.0.1".to_string());
+        let now = Instant::now();
+        let mut state = sample_engine_url_state(&info, Some(now - Duration::from_secs(120)));
+
+        assert_eq!(
+            begin_engine_url_refresh_if_due(
+                &mut state,
+                &info,
+                now,
+                Duration::from_secs(120),
+                Duration::from_secs(30),
+            ),
+            None
         );
     }
 
     #[test]
-    fn refresh_running_engine_url_clears_stale_url_when_probe_fails() {
-        let info = sample_live_info();
-        let (refreshed, changed) = refresh_running_engine_url(info, |_| None);
+    fn engine_url_refresh_throttles_recent_failed_probe() {
+        let mut info = sample_live_info();
+        info.engine_url = None;
+        let now = Instant::now();
+        let mut state = sample_engine_url_state(&info, Some(now - Duration::from_secs(30)));
 
-        assert!(changed);
-        assert_eq!(refreshed.engine_url, None);
+        assert_eq!(
+            begin_engine_url_refresh_if_due(
+                &mut state,
+                &info,
+                now,
+                Duration::from_secs(120),
+                Duration::from_secs(30),
+            ),
+            None,
+            "a missing engineUrl should still respect the last checked timestamp"
+        );
+    }
+
+    #[test]
+    fn engine_url_refresh_lock_is_single_flight_but_expires() {
+        let info = sample_live_info();
+        let now = Instant::now();
+        let mut state = sample_engine_url_state(&info, Some(now - Duration::from_secs(121)));
+        state.engine_url_refresh_generation = 41;
+        state.engine_url_refresh_started_at = Some(now - Duration::from_secs(29));
+
+        assert_eq!(
+            begin_engine_url_refresh_if_due(
+                &mut state,
+                &info,
+                now,
+                Duration::from_secs(120),
+                Duration::from_secs(30),
+            ),
+            None,
+            "an active refresh inside the lock timeout should suppress duplicate probes"
+        );
+
+        state.engine_url_refresh_started_at = Some(now - Duration::from_secs(30));
+        let lease = begin_engine_url_refresh_if_due(
+            &mut state,
+            &info,
+            now,
+            Duration::from_secs(120),
+            Duration::from_secs(30),
+        )
+        .expect("an expired refresh lease should allow a new probe");
+        assert_eq!(
+            lease,
+            EngineUrlRefreshLease {
+                generation: 42,
+                port: 8787,
+                host: Some("0.0.0.0".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn finish_engine_url_refresh_preserves_old_url_on_failure() {
+        let info = sample_live_info();
+        let now = Instant::now();
+        let mut state = sample_engine_url_state(&info, Some(now - Duration::from_secs(121)));
+        state.engine_url_refresh_generation = 7;
+        state.engine_url_refresh_started_at = Some(now - Duration::from_secs(1));
+
+        finish_engine_url_refresh(
+            &mut state,
+            EngineUrlRefreshLease {
+                generation: 7,
+                port: 8787,
+                host: Some("0.0.0.0".to_string()),
+            },
+            now,
+            None,
+        );
+
+        assert_eq!(state.engine_url.as_deref(), Some("http://172.21.0.1:8787"));
+        assert_eq!(state.engine_url_checked_at, Some(now));
+        assert_eq!(state.engine_url_refresh_started_at, None);
+    }
+
+    #[test]
+    fn finish_engine_url_refresh_ignores_stale_generation() {
+        let info = sample_live_info();
+        let now = Instant::now();
+        let mut state = sample_engine_url_state(&info, Some(now - Duration::from_secs(121)));
+        state.engine_url_refresh_generation = 8;
+        state.engine_url_refresh_started_at = Some(now - Duration::from_secs(1));
+
+        finish_engine_url_refresh(
+            &mut state,
+            EngineUrlRefreshLease {
+                generation: 7,
+                port: 8787,
+                host: Some("0.0.0.0".to_string()),
+            },
+            now,
+            Some("http://172.30.64.1:8787/".to_string()),
+        );
+
+        assert_eq!(state.engine_url.as_deref(), Some("http://172.21.0.1:8787"));
+        assert_ne!(state.engine_url_checked_at, Some(now));
+        assert!(state.engine_url_refresh_started_at.is_some());
     }
 
     #[test]

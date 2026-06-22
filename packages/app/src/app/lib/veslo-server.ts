@@ -1103,6 +1103,7 @@ export type VesloSessionTranscriptPrefetchResult = {
 export type VesloSessionTranscriptAppendInput = {
   directory?: string | null;
   limit?: number;
+  reason?: string;
   messages: MessageInfo[];
   partsByMessageId: Record<string, Part[]>;
   deletedMessageIds?: string[];

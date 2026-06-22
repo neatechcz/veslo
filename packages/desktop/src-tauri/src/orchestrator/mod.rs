@@ -372,7 +372,12 @@ pub fn spawn_orchestrator_daemon(
 > {
     let command = match supervised_process::sidecar(app, "veslo-orchestrator") {
         Ok(command) => command,
-        Err(_) => supervised_process::command(app, "veslo"),
+        Err(error) => supervised_process::command_fallback_for_missing_sidecar(
+            app,
+            "veslo-orchestrator",
+            "veslo",
+            error,
+        )?,
     };
 
     let mut args = vec![

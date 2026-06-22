@@ -696,8 +696,8 @@ fn remove_managed_legacy_internal_pack(pack_dir: &Path) -> Result<bool, String> 
 }
 
 fn dir_is_empty(path: &Path) -> Result<bool, String> {
-    let mut entries =
-        fs::read_dir(path).map_err(|e| format!("Failed to read directory {}: {e}", path.display()))?;
+    let mut entries = fs::read_dir(path)
+        .map_err(|e| format!("Failed to read directory {}: {e}", path.display()))?;
     Ok(entries.next().is_none())
 }
 
@@ -942,7 +942,11 @@ mod tests {
         for filename in INTERNAL_AGENTS {
             write_file(
                 &opencode_path(&workspace_root, &["agents", filename]),
-                &managed_legacy_agent(filename.trim_start_matches("veslo-internal-").trim_end_matches(".md")),
+                &managed_legacy_agent(
+                    filename
+                        .trim_start_matches("veslo-internal-")
+                        .trim_end_matches(".md"),
+                ),
             );
         }
         write_file(
@@ -1025,7 +1029,8 @@ mod tests {
         let workspace_root = temp_workspace_root("preserve-same-name");
         let internal_root = opencode_path(&workspace_root, &["veslo", "internal"]);
         let user_docx_agent = opencode_path(&workspace_root, &["agents", "veslo-internal-docx.md"]);
-        let managed_pdf_agent = opencode_path(&workspace_root, &["agents", "veslo-internal-pdf.md"]);
+        let managed_pdf_agent =
+            opencode_path(&workspace_root, &["agents", "veslo-internal-pdf.md"]);
         let user_plugin = opencode_path(&workspace_root, &["plugins", "veslo-delegate.js"]);
         let user_docx_content = "---\ndescription: user-owned DOCX helper\nmode: primary\n---\n\nThis same-name file is user-authored.\n";
         let user_plugin_content =
@@ -1054,8 +1059,14 @@ mod tests {
 
         assert!(!internal_root.exists());
         assert!(!managed_pdf_agent.exists());
-        assert_eq!(fs::read_to_string(&user_docx_agent).unwrap(), user_docx_content);
-        assert_eq!(fs::read_to_string(&user_plugin).unwrap(), user_plugin_content);
+        assert_eq!(
+            fs::read_to_string(&user_docx_agent).unwrap(),
+            user_docx_content
+        );
+        assert_eq!(
+            fs::read_to_string(&user_plugin).unwrap(),
+            user_plugin_content
+        );
 
         let second = provision_internal_workspace_assets(&workspace_root, None).unwrap();
         assert_eq!(second.status, ProvisionStatus::Unchanged);

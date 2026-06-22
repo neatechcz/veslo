@@ -218,7 +218,7 @@ test("by-project sidebar renders private chats as a bottom section", () => {
   );
   assert.match(
     source,
-    /data-sidebar-chat-collapsed="true"[\s\S]*onClick=\{startQuickChatFromCollapsed\}[\s\S]*disabled=\{!props\.onQuickNewSession\}[\s\S]*aria-label=\{tr\("sidebar\.new_chat"\)\}[\s\S]*title=\{tr\("sidebar\.new_chat"\)\}[\s\S]*<Plus size=\{12\} \/>[\s\S]*<span>\{tr\("sidebar\.chat"\)\}<\/span>/,
+    /data-sidebar-chat-collapsed="true"[\s\S]*onClick=\{startQuickChatFromCollapsed\}[\s\S]*disabled=\{!props\.onQuickNewSession \|\| quickChatBusy\(\)\}[\s\S]*aria-label=\{tr\("sidebar\.new_chat"\)\}[\s\S]*title=\{tr\("sidebar\.new_chat"\)\}[\s\S]*<Show when=\{quickChatBusy\(\)\} fallback=\{<Plus size=\{12\} \/>\}>[\s\S]*<Loader2 size=\{12\} class="animate-spin" \/>[\s\S]*<span>\{tr\("sidebar\.chat"\)\}<\/span>/,
     "collapsed Chats should expose a compact + Chat button",
   );
   assert.doesNotMatch(

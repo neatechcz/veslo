@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +29,7 @@ const tauriConfig = readJson(resolve(root, "packages", "desktop", "src-tauri", "
 const cargoVersion = readCargoVersion(resolve(root, "packages", "desktop", "src-tauri", "Cargo.toml"));
 const tauriBundleResources = tauriConfig.bundle?.resources ?? {};
 const tauriWindowsWix = tauriConfig.bundle?.windows?.wix ?? {};
+const tauriWindowsNsis = tauriConfig.bundle?.windows?.nsis ?? {};
 
 const versions = {
   app: appPkg.version ?? null,
@@ -58,6 +60,45 @@ const addCheck = (label, pass, details) => {
 };
 
 const addWarning = (message) => warnings.push(message);
+
+const manifestEntryVersion = (manifest, name) =>
+  manifest?.[name]?.version ?? manifest?.entries?.[name]?.version ?? null;
+
+const addManifestEntryVersionCheck = (manifest, name, expectedVersion, label) => {
+  const actualVersion = manifestEntryVersion(manifest, name);
+  addCheck(
+    label,
+    Boolean(expectedVersion && actualVersion === expectedVersion),
+    `${actualVersion ?? "?"} vs ${expectedVersion ?? "?"}`,
+  );
+};
+
+const hostSidecarName = (name) => (process.platform === "win32" ? `${name}.exe` : name);
+
+const readHostSidecarVersion = (path) => {
+  try {
+    const result = spawnSync(path, ["--version"], { encoding: "utf8" });
+    if (result.status === 0 && result.stdout.trim()) return result.stdout.trim();
+  } catch {
+    // ignore
+  }
+  return null;
+};
+
+const addHostSidecarVersionCheck = (sidecarDir, name, expectedVersion, label) => {
+  const sidecarPath = resolve(sidecarDir, hostSidecarName(name));
+  if (!existsSync(sidecarPath)) {
+    addWarning(`Desktop sidecar binary missing (${hostSidecarName(name)}). Run pnpm --filter @neatech/veslo prepare:sidecar before packaging.`);
+    return;
+  }
+
+  const actualVersion = readHostSidecarVersion(sidecarPath);
+  addCheck(
+    label,
+    Boolean(expectedVersion && actualVersion === expectedVersion),
+    `${actualVersion ?? "?"} vs ${expectedVersion ?? "?"}`,
+  );
+};
 
 const versionChecks = [
   ["app", versions.app],
@@ -132,11 +173,87 @@ addCheck(
     existsSync(resolve(root, "packages", "orchestrator", "scripts", "windows-wsl2-sandbox-provision.ps1")),
   tauriBundleResources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"] ?? "?",
 );
+const wslPrerequisiteInstallerPath = resolve(
+  root,
+  "packages",
+  "desktop",
+  "src-tauri",
+  "windows",
+  "wsl2-prerequisite-installer.ps1",
+);
+const wslPrerequisiteInstaller = existsSync(wslPrerequisiteInstallerPath)
+  ? readText(wslPrerequisiteInstallerPath)
+  : "";
+const hiddenProcessStartInfoPattern =
+  /New-Object\s+System\.Diagnostics\.ProcessStartInfo[\s\S]*?\$startInfo\.UseShellExecute\s*=\s*\$false[\s\S]*?\$startInfo\.CreateNoWindow\s*=\s*\$true/;
+addCheck(
+  "Windows MSI bundles WSL prerequisite installer for first-run repair",
+  tauriBundleResources["windows/wsl2-prerequisite-installer.ps1"] ===
+    "wsl2-prerequisite-installer.ps1" &&
+    /wsl\.exe"\s+@\("--install",\s+"--no-distribution"\)/.test(wslPrerequisiteInstaller) &&
+    /Microsoft-Windows-Subsystem-Linux/.test(wslPrerequisiteInstaller) &&
+    /VirtualMachinePlatform/.test(wslPrerequisiteInstaller) &&
+    hiddenProcessStartInfoPattern.test(wslPrerequisiteInstaller) &&
+    !/&\s+\$FilePath\b/.test(wslPrerequisiteInstaller),
+  tauriBundleResources["windows/wsl2-prerequisite-installer.ps1"] ?? "?",
+);
+const wslClientInstallerPath = resolve(
+  root,
+  "packages",
+  "desktop",
+  "src-tauri",
+  "windows",
+  "wsl2-client-installer.ps1",
+);
+const wslClientInstaller = existsSync(wslClientInstallerPath) ? readText(wslClientInstallerPath) : "";
+addCheck(
+  "Windows installers bundle client WSL runtime setup",
+  tauriBundleResources["windows/wsl2-client-installer.ps1"] === "wsl2-client-installer.ps1" &&
+    /wsl2-prerequisite-installer\.ps1/.test(wslClientInstaller) &&
+    /wsl2-sandbox-installer\.ps1/.test(wslClientInstaller) &&
+    /function\s+Resolve-WslExecutable\b/.test(wslClientInstaller) &&
+    /function\s+Resolve-PowerShellExecutable\b/.test(wslClientInstaller) &&
+    /Sysnative/.test(wslClientInstaller) &&
+    /System32/.test(wslClientInstaller) &&
+    /Invoke-ElevatedPowerShellScript\s+\$prerequisiteScript\s+@\("-Install"\)/.test(wslClientInstaller) &&
+    /-Verb\s+RunAs/.test(wslClientInstaller) &&
+    /RunOnce/.test(wslClientInstaller) &&
+    hiddenProcessStartInfoPattern.test(wslClientInstaller) &&
+    !/&\s+(?:wsl|powershell)\.exe\b/i.test(wslClientInstaller),
+  tauriBundleResources["windows/wsl2-client-installer.ps1"] ?? "?",
+);
+const wslSandboxInstallerPath = resolve(
+  root,
+  "packages",
+  "desktop",
+  "src-tauri",
+  "windows",
+  "wsl2-sandbox-installer.ps1",
+);
+const wslSandboxInstaller = existsSync(wslSandboxInstallerPath) ? readText(wslSandboxInstallerPath) : "";
 addCheck(
   "Windows MSI bundles WSL sandbox installer wrapper",
   tauriBundleResources["windows/wsl2-sandbox-installer.ps1"] === "wsl2-sandbox-installer.ps1" &&
-    existsSync(resolve(root, "packages", "desktop", "src-tauri", "windows", "wsl2-sandbox-installer.ps1")),
+    hiddenProcessStartInfoPattern.test(wslSandboxInstaller) &&
+    !/&\s+(?:wsl|powershell)\.exe\b/i.test(wslSandboxInstaller),
   tauriBundleResources["windows/wsl2-sandbox-installer.ps1"] ?? "?",
+);
+const wslSandboxProvisionerPath = resolve(
+  root,
+  "packages",
+  "orchestrator",
+  "scripts",
+  "windows-wsl2-sandbox-provision.ps1",
+);
+const wslSandboxProvisioner = existsSync(wslSandboxProvisionerPath) ? readText(wslSandboxProvisionerPath) : "";
+addCheck(
+  "Windows MSI bundles hidden WSL sandbox provisioner",
+  tauriBundleResources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"] ===
+    "windows-wsl2-sandbox-provision.ps1" &&
+    hiddenProcessStartInfoPattern.test(wslSandboxProvisioner) &&
+    /Invoke-HiddenNativeCommand\s+"wsl\.exe"\s+\$WslArgs/.test(wslSandboxProvisioner) &&
+    !/&\s+wsl\.exe\b/i.test(wslSandboxProvisioner),
+  tauriBundleResources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"] ?? "?",
 );
 const wslInstallerFragmentPath = resolve(
   root,
@@ -157,10 +274,61 @@ addCheck(
     /Id="VesloProvisionWslSandbox"/.test(wslInstallerFragment) &&
     /After="InstallFiles"/.test(wslInstallerFragment) &&
     /Return="ignore"/.test(wslInstallerFragment) &&
-    /package\.json/.test(readText(resolve(root, "packages", "desktop", "src-tauri", "windows", "wsl2-sandbox-installer.ps1"))),
+    /\[System64Folder\]WindowsPowerShell\\v1\.0\\powershell\.exe/.test(wslInstallerFragment) &&
+    !/\[SystemFolder\]WindowsPowerShell\\v1\.0\\powershell\.exe/.test(wslInstallerFragment) &&
+    /-NoProfile\s+-NonInteractive\s+-WindowStyle\s+Hidden\s+-ExecutionPolicy\s+Bypass/.test(wslInstallerFragment) &&
+    /\[INSTALLDIR\]wsl2-client-installer\.ps1/.test(wslInstallerFragment) &&
+    /function\s+Resolve-WslExecutable\b/.test(wslSandboxInstaller) &&
+    /function\s+Resolve-PowerShellExecutable\b/.test(wslSandboxInstaller) &&
+    /Sysnative/.test(wslSandboxInstaller) &&
+    /System32/.test(wslSandboxInstaller) &&
+    /package\.json/.test(wslSandboxInstaller),
   Array.isArray(tauriWindowsWix.fragmentPaths)
     ? tauriWindowsWix.fragmentPaths.join(", ")
     : "?",
+);
+const nsisHookPath = resolve(root, "packages", "desktop", "src-tauri", "windows", "nsis-hooks.nsh");
+const nsisHook = existsSync(nsisHookPath) ? readText(nsisHookPath) : "";
+const nsisCzechLanguagePath = resolve(root, "packages", "desktop", "src-tauri", "windows", "locales", "Czech.nsh");
+const nsisCzechLanguage = existsSync(nsisCzechLanguagePath) ? readText(nsisCzechLanguagePath) : "";
+addCheck(
+  "Windows NSIS client installer is current-user and prepares runtime",
+  tauriWindowsNsis.installMode === "currentUser" &&
+    Array.isArray(tauriWindowsNsis.languages) &&
+    tauriWindowsNsis.languages[0] === "Czech" &&
+    tauriWindowsNsis.languages.includes("English") &&
+    tauriWindowsNsis.customLanguageFiles?.Czech === "windows/locales/Czech.nsh" &&
+    /LangString\s+alreadyInstalled\s+\$\{LANG_CZECH\}/.test(nsisCzechLanguage) &&
+    /LangString\s+webview2InstallSuccess\s+\$\{LANG_CZECH\}/.test(nsisCzechLanguage) &&
+    /LangString\s+deleteAppData\s+\$\{LANG_CZECH\}/.test(nsisCzechLanguage) &&
+    tauriWindowsNsis.installerHooks === "windows/nsis-hooks.nsh" &&
+    /NSIS_HOOK_POSTINSTALL/.test(nsisHook) &&
+    /nsExec::ExecToLog/.test(nsisHook) &&
+    !/\bExecWait\b/.test(nsisHook) &&
+    /wsl2-client-installer\.ps1/.test(nsisHook) &&
+    /-NoProfile\s+-NonInteractive\s+-WindowStyle\s+Hidden\s+-ExecutionPolicy\s+Bypass/.test(nsisHook) &&
+    !/-Verb\s+RunAs/.test(nsisHook),
+  `${tauriWindowsNsis.installMode ?? "?"}; ${tauriWindowsNsis.installerHooks ?? "?"}`,
+);
+const supervisedProcessPath = resolve(root, "packages", "desktop", "src-tauri", "src", "supervised_process.rs");
+const supervisedProcess = existsSync(supervisedProcessPath) ? readText(supervisedProcessPath) : "";
+const windowsPlatformPath = resolve(root, "packages", "desktop", "src-tauri", "src", "platform", "windows.rs");
+const windowsPlatform = existsSync(windowsPlatformPath) ? readText(windowsPlatformPath) : "";
+const wslSandboxCommandPath = resolve(root, "packages", "desktop", "src-tauri", "src", "commands", "wsl_sandbox.rs");
+const wslSandboxCommand = existsSync(wslSandboxCommandPath) ? readText(wslSandboxCommandPath) : "";
+const vesloServerDesktopPath = resolve(root, "packages", "desktop", "src-tauri", "src", "veslo_server", "mod.rs");
+const vesloServerDesktop = existsSync(vesloServerDesktopPath) ? readText(vesloServerDesktopPath) : "";
+addCheck(
+  "Windows runtime sidecars and repair helpers launch without console windows",
+  /const\s+CREATE_NO_WINDOW:\s*u32\s*=\s*0x0800_0000/.test(supervisedProcess) &&
+    /command\.creation_flags\(CREATE_NO_WINDOW\)/.test(supervisedProcess) &&
+    /pub fn spawn\(self\)[\s\S]*?spawn_hidden_command/.test(supervisedProcess) &&
+    /pub fn configure_hidden[\s\S]*?command\.creation_flags\(CREATE_NO_WINDOW\)/.test(windowsPlatform) &&
+    /Command::new\("powershell\.exe"\)[\s\S]*?configure_hidden\(&mut command\)/.test(wslSandboxCommand) &&
+    /Start-Process[\s\S]*?-WindowStyle Hidden[\s\S]*?-Verb RunAs/.test(wslSandboxCommand) &&
+    /Command::new\("powershell"\)[\s\S]*?configure_hidden\(&mut command\)/.test(vesloServerDesktop) &&
+    /Command::new\("wsl\.exe"\)[\s\S]*?configure_hidden\(&mut command\)/.test(vesloServerDesktop),
+  "CREATE_NO_WINDOW + hidden PowerShell paths",
 );
 addCheck(
   "OpenCodeRouter version pinned in desktop",
@@ -210,6 +378,61 @@ if (!vesloCodeRouterRange) {
     `${vesloCodeRouterRange} vs ${versions.opencodeRouter ?? "?"}`,
   );
 }
+
+const desktopSidecarDir = resolve(root, "packages", "desktop", "src-tauri", "sidecars");
+const desktopSidecarManifestPath = resolve(desktopSidecarDir, "versions.json");
+if (existsSync(desktopSidecarManifestPath)) {
+  const desktopSidecarManifest = readJson(desktopSidecarManifestPath);
+  addManifestEntryVersionCheck(
+    desktopSidecarManifest,
+    "veslo-server",
+    versions.server,
+    "Desktop sidecar manifest veslo-server version matches",
+  );
+  addManifestEntryVersionCheck(
+    desktopSidecarManifest,
+    "veslo-code-router",
+    versions.opencodeRouter,
+    "Desktop sidecar manifest veslo-code-router version matches",
+  );
+  addManifestEntryVersionCheck(
+    desktopSidecarManifest,
+    "veslo-orchestrator",
+    versions.orchestrator,
+    "Desktop sidecar manifest veslo-orchestrator version matches",
+  );
+  if (versions.opencode.desktop) {
+    addManifestEntryVersionCheck(
+      desktopSidecarManifest,
+      "veslo-code",
+      versions.opencode.desktop,
+      "Desktop sidecar manifest veslo-code version matches",
+    );
+  }
+} else {
+  addWarning(
+    "Desktop sidecar manifest missing (run pnpm --filter @neatech/veslo prepare:sidecar before packaging).",
+  );
+}
+
+addHostSidecarVersionCheck(
+  desktopSidecarDir,
+  "veslo-server",
+  versions.server,
+  "Desktop veslo-server sidecar binary version matches",
+);
+addHostSidecarVersionCheck(
+  desktopSidecarDir,
+  "veslo-code-router",
+  versions.opencodeRouter,
+  "Desktop veslo-code-router sidecar binary version matches",
+);
+addHostSidecarVersionCheck(
+  desktopSidecarDir,
+  "veslo-orchestrator",
+  versions.orchestrator,
+  "Desktop veslo-orchestrator sidecar binary version matches",
+);
 
 const sidecarManifestPath = resolve(
   root,

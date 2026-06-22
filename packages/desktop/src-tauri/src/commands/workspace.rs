@@ -40,9 +40,10 @@ fn resolve_workspace_managed_deps_manifest(app: &tauri::AppHandle) -> Option<Pat
 #[tauri::command]
 pub fn workspace_private_root(app: tauri::AppHandle) -> Result<String, String> {
     let (data_dir, _) = crate::workspace::state::veslo_state_paths(&app)?;
-    Ok(private_workspace_root_from_data_dir(&data_dir)
-        .to_string_lossy()
-        .to_string())
+    let root = private_workspace_root_from_data_dir(&data_dir);
+    fs::create_dir_all(&root)
+        .map_err(|e| format!("Failed to create private workspace root: {e}"))?;
+    Ok(root.to_string_lossy().to_string())
 }
 
 /// Resolve the path to the global OpenCode SQLite database.
@@ -205,9 +206,35 @@ impl Default for WorkspaceForgetMode {
     }
 }
 
-fn cleanup_workspace_local_state(workspace_root: &Path, mode: WorkspaceForgetMode) {
+fn cleanup_workspace_local_state(
+    workspace_root: &Path,
+    mode: WorkspaceForgetMode,
+    private_workspace_root: Option<&Path>,
+) {
     if mode != WorkspaceForgetMode::DeleteLocalData {
         return;
+    }
+
+    if let Some(private_root) = private_workspace_root {
+        if workspace_root.exists() {
+            let canonical_workspace = fs::canonicalize(workspace_root);
+            let canonical_private_root = fs::canonicalize(private_root);
+            if let (Ok(canonical_workspace), Ok(canonical_private_root)) =
+                (canonical_workspace, canonical_private_root)
+            {
+                if canonical_workspace.starts_with(&canonical_private_root)
+                    && canonical_workspace != canonical_private_root
+                {
+                    if let Err(e) = fs::remove_dir_all(&canonical_workspace) {
+                        println!(
+                            "[workspace] warning: failed to remove private workspace {}: {e}",
+                            canonical_workspace.display()
+                        );
+                    }
+                    return;
+                }
+            }
+        }
     }
 
     let opencode_dir = workspace_root.join(".opencode");
@@ -248,8 +275,19 @@ pub fn workspace_bootstrap(
 
     for workspace in state.workspaces.iter_mut() {
         if workspace.workspace_type != WorkspaceType::Local {
+            workspace.missing = None;
             continue;
         }
+        let workspace_root = Path::new(&workspace.path);
+        if !workspace_root.is_dir() {
+            workspace.missing = Some(true);
+            eprintln!(
+                "[workspace] bootstrap skipping missing workspace root {}",
+                workspace.path
+            );
+            continue;
+        }
+        workspace.missing = None;
         if let Err(error) = ensure_workspace_files(
             &workspace.path,
             &workspace.preset,
@@ -326,7 +364,14 @@ pub fn workspace_forget(
                 .ok()
                 .and_then(|s| s.base_url.clone());
             cleanup_opencode_sessions(base_url.as_deref(), &ws.path);
-            cleanup_workspace_local_state(Path::new(&ws.path), forget_mode);
+            let private_root = crate::workspace::state::veslo_state_paths(&app)
+                .ok()
+                .map(|(data_dir, _)| private_workspace_root_from_data_dir(&data_dir));
+            cleanup_workspace_local_state(
+                Path::new(&ws.path),
+                forget_mode,
+                private_root.as_deref(),
+            );
         }
     }
 
@@ -519,6 +564,7 @@ pub fn workspace_create(
             veslo_token: None,
             veslo_workspace_id: None,
             veslo_workspace_name: None,
+            missing: None,
         },
     );
     state.active_id = id.clone();
@@ -626,6 +672,7 @@ pub fn workspace_create_remote(
             veslo_token,
             veslo_workspace_id,
             veslo_workspace_name,
+            missing: None,
         },
     );
     state.active_id = id.clone();
@@ -1237,6 +1284,7 @@ pub fn workspace_import_config(
             veslo_token: None,
             veslo_workspace_id: None,
             veslo_workspace_name: None,
+            missing: None,
         },
     );
     state.active_id = id.clone();
@@ -1273,6 +1321,7 @@ mod tests {
             veslo_token: None,
             veslo_workspace_id: None,
             veslo_workspace_name: None,
+            missing: None,
         }
     }
 
@@ -1290,7 +1339,7 @@ mod tests {
     #[test]
     fn workspace_forget_default_keeps_local_files() {
         let root = temp_workspace_root("detach");
-        cleanup_workspace_local_state(&root, WorkspaceForgetMode::DetachOnly);
+        cleanup_workspace_local_state(&root, WorkspaceForgetMode::DetachOnly, None);
         assert!(
             root.join(".opencode").is_dir(),
             ".opencode should remain for detach"
@@ -1305,7 +1354,7 @@ mod tests {
     #[test]
     fn workspace_forget_delete_local_data_removes_local_files() {
         let root = temp_workspace_root("delete");
-        cleanup_workspace_local_state(&root, WorkspaceForgetMode::DeleteLocalData);
+        cleanup_workspace_local_state(&root, WorkspaceForgetMode::DeleteLocalData, None);
         assert!(
             !root.join(".opencode").exists(),
             ".opencode should be removed for destructive mode"
@@ -1315,6 +1364,30 @@ mod tests {
             "opencode.jsonc should be removed for destructive mode"
         );
         fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn workspace_forget_delete_local_data_removes_private_workspace_root() {
+        let private_root = temp_workspace_root("private-parent").join("private-workspaces");
+        let workspace_root = private_root.join("scratch-workspace");
+        fs::create_dir_all(workspace_root.join(".opencode")).expect("create private workspace");
+        fs::write(workspace_root.join("note.md"), "private content").expect("create private file");
+
+        cleanup_workspace_local_state(
+            &workspace_root,
+            WorkspaceForgetMode::DeleteLocalData,
+            Some(&private_root),
+        );
+
+        assert!(
+            private_root.is_dir(),
+            "private workspace parent root should remain"
+        );
+        assert!(
+            !workspace_root.exists(),
+            "app-owned private workspace child should be removed"
+        );
+        fs::remove_dir_all(private_root.parent().expect("temp root parent")).expect("cleanup");
     }
 
     #[test]

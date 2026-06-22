@@ -134,7 +134,7 @@ type Props = {
   onOpenCreateWorkspace: () => void;
   onOpenCreateRemoteWorkspace: () => void;
   onImportWorkspaceConfig: () => void;
-  onQuickNewSession?: () => void;
+  onQuickNewSession?: () => Promise<boolean | void> | boolean | void;
   onOpenSessionSearch?: () => void;
   onOpenArchivedSessions?: () => void;
   onAddDirectorySession?: () => void;
@@ -487,6 +487,8 @@ export default function WorkspaceSessionList(props: Props) {
   const [chatSidebarHeight, setChatSidebarHeight] = createSignal(readChatSidebarHeight());
   const [chatSidebarCollapsed, setChatSidebarCollapsed] = createSignal(readChatSidebarCollapsed());
   const [chatSidebarResizeDrag, setChatSidebarResizeDrag] = createSignal<ChatSidebarResizeState | null>(null);
+  const [quickChatBusy, setQuickChatBusy] = createSignal(false);
+  const [quickChatError, setQuickChatError] = createSignal<string | null>(null);
   const [lastClickedSessionId, setLastClickedSessionId] = createSignal<string | null>(null);
   const [workspaceMenuTarget, setWorkspaceMenuTarget] = createSignal<WorkspaceMenuTarget | null>(null);
   const [workspaceMenuSize, setWorkspaceMenuSize] = createSignal({
@@ -1481,8 +1483,24 @@ export default function WorkspaceSessionList(props: Props) {
     if (persist) persistChatSidebarState(height, collapsed);
   };
 
+  const runQuickChat = async () => {
+    if (!props.onQuickNewSession || quickChatBusy()) return;
+    setQuickChatError(null);
+    setQuickChatBusy(true);
+    try {
+      const opened = await props.onQuickNewSession();
+      if (opened === false) {
+        setQuickChatError(tr("sidebar.open_chat_failed"));
+      }
+    } catch (error) {
+      setQuickChatError(error instanceof Error ? error.message : tr("sidebar.open_chat_failed"));
+    } finally {
+      setQuickChatBusy(false);
+    }
+  };
+
   const startQuickChat = () => {
-    props.onQuickNewSession?.();
+    void runQuickChat();
   };
 
   const startQuickChatFromCollapsed = () => {
@@ -2805,11 +2823,13 @@ export default function WorkspaceSessionList(props: Props) {
                   type="button"
                   class="inline-flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full border border-gray-6 bg-gray-1 px-2 text-[11px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 hover:text-gray-12 disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={startQuickChatFromCollapsed}
-                  disabled={!props.onQuickNewSession}
+                  disabled={!props.onQuickNewSession || quickChatBusy()}
                   aria-label={tr("sidebar.new_chat")}
                   title={tr("sidebar.new_chat")}
                 >
-                  <Plus size={12} />
+                  <Show when={quickChatBusy()} fallback={<Plus size={12} />}>
+                    <Loader2 size={12} class="animate-spin" />
+                  </Show>
                   <span>{tr("sidebar.chat")}</span>
                 </button>
                 <button
@@ -2850,14 +2870,21 @@ export default function WorkspaceSessionList(props: Props) {
                     type="button"
                     class="inline-flex h-7 items-center gap-1 rounded-full border border-gray-6 bg-gray-1 px-2 text-[11px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={startQuickChat}
-                    disabled={!props.onQuickNewSession}
+                    disabled={!props.onQuickNewSession || quickChatBusy()}
                     aria-label={tr("sidebar.new_chat")}
                     title={tr("sidebar.new_chat")}
                   >
-                    <Plus size={12} />
+                    <Show when={quickChatBusy()} fallback={<Plus size={12} />}>
+                      <Loader2 size={12} class="animate-spin" />
+                    </Show>
                     <span>{tr("sidebar.chat")}</span>
                   </button>
                 </div>
+                <Show when={quickChatError()}>
+                  <div class="px-1.5 pb-1 text-[11px] font-medium leading-snug text-red-11">
+                    {quickChatError()}
+                  </div>
+                </Show>
                 <div
                   class="overflow-y-auto pr-1"
                   style={{

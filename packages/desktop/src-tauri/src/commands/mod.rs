@@ -17,3 +17,4 @@ pub mod updater;
 pub mod veslo_server;
 pub mod window;
 pub mod workspace;
+pub mod wsl_sandbox;

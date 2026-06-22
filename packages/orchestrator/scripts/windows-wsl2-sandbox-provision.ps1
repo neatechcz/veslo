@@ -58,9 +58,96 @@ function Normalize-WslOutput([string]$Text) {
     return ($Text -replace "`0", "").Trim()
 }
 
+function ConvertTo-NativeArgument([string]$Argument) {
+    if ($null -eq $Argument -or $Argument.Length -eq 0) {
+        return '""'
+    }
+    if ($Argument -notmatch '[\s"]') {
+        return $Argument
+    }
+
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append([char]0x22)
+    $backslashes = 0
+    foreach ($char in $Argument.ToCharArray()) {
+        if ($char -eq [char]0x5c) {
+            $backslashes += 1
+            continue
+        }
+        if ($char -eq [char]0x22) {
+            if ($backslashes -gt 0) {
+                [void]$builder.Append(('\' * ($backslashes * 2)))
+                $backslashes = 0
+            }
+            [void]$builder.Append('\"')
+            continue
+        }
+        if ($backslashes -gt 0) {
+            [void]$builder.Append(('\' * $backslashes))
+            $backslashes = 0
+        }
+        [void]$builder.Append($char)
+    }
+    if ($backslashes -gt 0) {
+        [void]$builder.Append(('\' * ($backslashes * 2)))
+    }
+    [void]$builder.Append([char]0x22)
+    return $builder.ToString()
+}
+
+function Invoke-HiddenNativeCommand([string]$FilePath, [string[]]$Arguments) {
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $FilePath
+    $startInfo.Arguments = (($Arguments | ForEach-Object { ConvertTo-NativeArgument ([string]$_) }) -join " ")
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    try {
+        $startInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+        $startInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    } catch {}
+
+    $lines = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+    $outputHandler = [System.Diagnostics.DataReceivedEventHandler]{
+        param($sender, $eventArgs)
+        if ($null -ne $eventArgs.Data) {
+            [void]$lines.Add([string]$eventArgs.Data)
+        }
+    }
+    $errorHandler = [System.Diagnostics.DataReceivedEventHandler]{
+        param($sender, $eventArgs)
+        if ($null -ne $eventArgs.Data) {
+            [void]$lines.Add([string]$eventArgs.Data)
+        }
+    }
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $process.add_OutputDataReceived($outputHandler)
+    $process.add_ErrorDataReceived($errorHandler)
+    try {
+        [void]$process.Start()
+        $process.BeginOutputReadLine()
+        $process.BeginErrorReadLine()
+        $process.WaitForExit()
+        $process.WaitForExit()
+        $exitCode = $process.ExitCode
+    } finally {
+        $process.remove_OutputDataReceived($outputHandler)
+        $process.remove_ErrorDataReceived($errorHandler)
+        $process.Dispose()
+    }
+
+    return [pscustomobject]@{
+        ExitCode = [int]$exitCode
+        Output = ((@($lines.ToArray()) | ForEach-Object { [string]$_ }) -join "`n")
+    }
+}
+
 function Invoke-Wsl([string[]]$WslArgs) {
-    $output = & wsl.exe @WslArgs 2>&1 | Out-String
-    return @{ ExitCode = $LASTEXITCODE; Output = (Normalize-WslOutput $output) }
+    $result = Invoke-HiddenNativeCommand "wsl.exe" $WslArgs
+    return @{ ExitCode = $result.ExitCode; Output = (Normalize-WslOutput $result.Output) }
 }
 
 # Runs a bash script inside the distro as the given user. The script body is

@@ -65,8 +65,8 @@
     "semantic_hash": ""
   },
   "packages/app/package.json": {
-    "mtime": 1781900780.1786165,
-    "ast_hash": "54a133dd2313437fe0842540967b4340",
+    "mtime": 1782067801.856407,
+    "ast_hash": "05babb92b86a371d59f100b97d96c3a3",
     "semantic_hash": ""
   },
   "packages/app/progress.json": {
@@ -255,8 +255,8 @@
     "semantic_hash": "34f726e20fa2d3dcf92471a5ed9b489f"
   },
   "packages/app/src/app/app.tsx": {
-    "mtime": 1781964269.5616872,
-    "ast_hash": "4fa1e079bb9c11d1e32264419eae59f4",
+    "mtime": 1782063221.4759333,
+    "ast_hash": "79f9ca9dbd39d310c5acdc54ea520c9b",
     "semantic_hash": ""
   },
   "packages/app/src/app/components/add-mcp-modal.tsx": {
@@ -740,8 +740,8 @@
     "semantic_hash": "1287026a236fcc09a4a0a2ee239697fb"
   },
   "packages/app/src/app/context/updater.ts": {
-    "mtime": 1781900780.1952572,
-    "ast_hash": "3ef1db50902279c17e8629b107f247ec",
+    "mtime": 1782063221.4764733,
+    "ast_hash": "9f33e52ddbef63f373cb5dea1cf4480e",
     "semantic_hash": ""
   },
   "packages/app/src/app/context/veslo-server.ts": {
@@ -845,9 +845,9 @@
     "semantic_hash": ""
   },
   "packages/app/src/app/lib/error-reporter.ts": {
-    "mtime": 1777281604.5911524,
-    "ast_hash": "143730bc31988255aaa84d9d58f21080",
-    "semantic_hash": "143730bc31988255aaa84d9d58f21080"
+    "mtime": 1782052819.6179833,
+    "ast_hash": "e28ff95e561eb09bcccbfa1d15a2073a",
+    "semantic_hash": ""
   },
   "packages/app/src/app/lib/feedback.ts": {
     "mtime": 1781900780.2043526,
@@ -1100,8 +1100,8 @@
     "semantic_hash": "45340f868d2c31bc0bda1c40eb258b65"
   },
   "packages/app/src/app/pages/dashboard.tsx": {
-    "mtime": 1781960215.345878,
-    "ast_hash": "bf3c9ccfb7716f216234fdd67a26be48",
+    "mtime": 1782063221.4768348,
+    "ast_hash": "058fe291a269fe3262883b2ffe85488d",
     "semantic_hash": ""
   },
   "packages/app/src/app/pages/extensions.tsx": {
@@ -1190,13 +1190,13 @@
     "semantic_hash": "185afcdc3cd3a4398f14cbae6e736403"
   },
   "packages/app/src/app/pages/session.tsx": {
-    "mtime": 1781902211.5984495,
-    "ast_hash": "e7bceae972d95bcf3e4fe95904f25709",
+    "mtime": 1782063221.477703,
+    "ast_hash": "1d77308c0ae489d3d53d51020a65a608",
     "semantic_hash": ""
   },
   "packages/app/src/app/pages/settings.tsx": {
-    "mtime": 1781900780.212774,
-    "ast_hash": "4e5f5e1f00a5c60ec332923fd039493a",
+    "mtime": 1782063221.4780223,
+    "ast_hash": "d9e7ba270e7b6df9d90cf216b44ca16c",
     "semantic_hash": ""
   },
   "packages/app/src/app/pages/sidebar-session-pagination.ts": {
@@ -1260,8 +1260,8 @@
     "semantic_hash": ""
   },
   "packages/app/src/app/system-state.ts": {
-    "mtime": 1781900780.215192,
-    "ast_hash": "2d50f9ea2ca01aad6fcba005b015c146",
+    "mtime": 1782063221.478368,
+    "ast_hash": "bc055f7fe1d73fd5f192358fa77ab9ac",
     "semantic_hash": ""
   },
   "packages/app/src/app/theme.ts": {
@@ -1390,13 +1390,13 @@
     "semantic_hash": "f0005617265d0ad75f53a83dfe4e4d65"
   },
   "packages/app/src/i18n/locales/cs.ts": {
-    "mtime": 1781902273.5570452,
-    "ast_hash": "2409ca5ae1e93f33a44afb30b0b36faf",
+    "mtime": 1782063221.479922,
+    "ast_hash": "f13b7a438dfe07b843de185fb701b1b8",
     "semantic_hash": ""
   },
   "packages/app/src/i18n/locales/en.ts": {
-    "mtime": 1781902261.7505841,
-    "ast_hash": "9b465adb2e4162526bd81da09e6a2417",
+    "mtime": 1782063221.4808786,
+    "ast_hash": "dc0972bb43437d501f5b7e8c07ed57f1",
     "semantic_hash": ""
   },
   "packages/app/src/i18n/locales/index.ts": {
@@ -1405,13 +1405,13 @@
     "semantic_hash": "93708cab9e57bef681fe7a0bba87e373"
   },
   "packages/app/src/i18n/locales/zh.ts": {
-    "mtime": 1781902282.4696403,
-    "ast_hash": "e02241096090e476db5f8a98983fa249",
+    "mtime": 1782063221.4814317,
+    "ast_hash": "6a224b35aecf469a2b83f1b48355cab8",
     "semantic_hash": ""
   },
   "packages/app/src/index.tsx": {
-    "mtime": 1781900780.2673664,
-    "ast_hash": "58bee305e0b2fafe7783e45855d2b137",
+    "mtime": 1782052819.6183698,
+    "ast_hash": "db073691c0d97e85e87b1df3a4d5eefb",
     "semantic_hash": ""
   },
   "packages/app/src/styles/tailwind-colors.ts": {
@@ -1450,8 +1450,8 @@
     "semantic_hash": "c10417c727ec619aef55afa7c87417a8"
   },
   "packages/desktop/package.json": {
-    "mtime": 1781900780.267931,
-    "ast_hash": "a7fa61b28de7a108fcb589623ea3e6a6",
+    "mtime": 1782067801.8567169,
+    "ast_hash": "710551e3d3906c91384b9bcb14f7dabf",
     "semantic_hash": ""
   },
   "packages/desktop/scripts/chrome-devtools-mcp-shim.ts": {
@@ -1500,7 +1500,7 @@
     "semantic_hash": "804ac71695a86d3c76c7de80edf67745"
   },
   "packages/desktop/src-tauri/gen/schemas/capabilities.json": {
-    "mtime": 1781903588.5327768,
+    "mtime": 1782052247.4614558,
     "ast_hash": "aad86e908494517bdbaec45bb131db11",
     "semantic_hash": ""
   },
@@ -1535,7 +1535,7 @@
     "semantic_hash": "8fa79d1c7d454863bbf0c69433508a1a"
   },
   "packages/desktop/src-tauri/src/commands/command_files.rs": {
-    "mtime": 1781903473.2359767,
+    "mtime": 1782054747.492487,
     "ast_hash": "671a63d6d55efa0ca5a171f243f83766",
     "semantic_hash": ""
   },
@@ -1595,7 +1595,7 @@
     "semantic_hash": ""
   },
   "packages/desktop/src-tauri/src/commands/skills.rs": {
-    "mtime": 1781900780.2777295,
+    "mtime": 1782054747.4930255,
     "ast_hash": "88bb391a26996915e77bed154754406a",
     "semantic_hash": ""
   },
@@ -1620,13 +1620,13 @@
     "semantic_hash": ""
   },
   "packages/desktop/src-tauri/src/config.rs": {
-    "mtime": 1781900780.279158,
+    "mtime": 1782054747.4932714,
     "ast_hash": "e67185cb5a8fb4eb8721c6324557393c",
     "semantic_hash": ""
   },
   "packages/desktop/src-tauri/src/debug_logs_forwarder.rs": {
-    "mtime": 1781900780.2796495,
-    "ast_hash": "3b70c4b38e08db81d74eb6a112f7c63a",
+    "mtime": 1782045427.419531,
+    "ast_hash": "d1cc22750205e2346ea110bdfd7f799a",
     "semantic_hash": ""
   },
   "packages/desktop/src-tauri/src/engine/doctor.rs": {
@@ -1665,8 +1665,8 @@
     "semantic_hash": "31afd1f361c39a4601be8b68067f9b56"
   },
   "packages/desktop/src-tauri/src/lib.rs": {
-    "mtime": 1781900780.2808754,
-    "ast_hash": "e3365072c202889ff90069f4d5d527a0",
+    "mtime": 1782108813.8559277,
+    "ast_hash": "b58c63fdff6a59154096f0d823115002",
     "semantic_hash": ""
   },
   "packages/desktop/src-tauri/src/main.rs": {
@@ -1755,8 +1755,8 @@
     "semantic_hash": ""
   },
   "packages/desktop/src-tauri/src/veslo_server/mod.rs": {
-    "mtime": 1781903543.3128495,
-    "ast_hash": "90b1e127458b1db5f530e09f618f0f7b",
+    "mtime": 1782054612.6164794,
+    "ast_hash": "06271169262f4ec178ad713d87997469",
     "semantic_hash": ""
   },
   "packages/desktop/src-tauri/src/veslo_server/spawn.rs": {
@@ -1775,7 +1775,7 @@
     "semantic_hash": ""
   },
   "packages/desktop/src-tauri/src/workspace/internal_provision.rs": {
-    "mtime": 1781903318.3795295,
+    "mtime": 1782054747.4939308,
     "ast_hash": "e40a91a4bce2a32e8f3288b097988792",
     "semantic_hash": "e40a91a4bce2a32e8f3288b097988792"
   },
@@ -1795,8 +1795,8 @@
     "semantic_hash": "2ddd901f6972d190d4d74b6feb905e78"
   },
   "packages/desktop/src-tauri/tauri.conf.json": {
-    "mtime": 1781900780.284787,
-    "ast_hash": "20ad058e352686bb0fe7035fbcdb63f8",
+    "mtime": 1782067801.8585744,
+    "ast_hash": "585ebb5c9ed6a0d56d16cc9583cb4c41",
     "semantic_hash": ""
   },
   "packages/desktop/src-tauri/tauri.dev.conf.json": {
@@ -1815,9 +1815,9 @@
     "semantic_hash": "ea3aa4999a90e81261c3b471e8989640"
   },
   "packages/desktop/windows-hidden-sidecar-contract.test.mjs": {
-    "mtime": 1781900779.9877944,
-    "ast_hash": "7e87e48ea15051c6383eb6a88f4e2196",
-    "semantic_hash": "7e87e48ea15051c6383eb6a88f4e2196"
+    "mtime": 1782054570.0383842,
+    "ast_hash": "75bae6e56093fa342366be29ab036c87",
+    "semantic_hash": ""
   },
   "packages/docs/docs.json": {
     "mtime": 1780159102.8587368,
@@ -1830,13 +1830,13 @@
     "semantic_hash": "2ff00000b53af7dc5bd384a5a051d192"
   },
   "packages/e2e/helpers/app-launcher.test.ts": {
-    "mtime": 1781900780.2859435,
-    "ast_hash": "92a07c2b98c1f217b8be96f7a07ac524",
+    "mtime": 1782045002.0015152,
+    "ast_hash": "ac89048b50819e8b7a51c26299aee653",
     "semantic_hash": ""
   },
   "packages/e2e/helpers/app-launcher.ts": {
-    "mtime": 1781900780.2863443,
-    "ast_hash": "b1ef544bc76910dbd85ee9e41df24d8d",
+    "mtime": 1782044761.2841554,
+    "ast_hash": "5c9e73753aa9df26c403a46c91a98d0a",
     "semantic_hash": ""
   },
   "packages/e2e/helpers/desktop-auth-seed.test.ts": {
@@ -1915,7 +1915,7 @@
     "semantic_hash": "6ea84fe76e769fa3d0838e56f00e23bc"
   },
   "packages/e2e/helpers/pilot-integration.test.ts": {
-    "mtime": 1781900779.9887352,
+    "mtime": 1782067801.859365,
     "ast_hash": "c6488fb340939127a1740e36e5f03d68",
     "semantic_hash": "c6488fb340939127a1740e36e5f03d68"
   },
@@ -1945,7 +1945,7 @@
     "semantic_hash": "a169005134a361d8e327f32a687c11cf"
   },
   "packages/e2e/package.json": {
-    "mtime": 1781900780.2875102,
+    "mtime": 1782067801.8598828,
     "ast_hash": "216030fbaaa927562dd1eea315b9a751",
     "semantic_hash": ""
   },
@@ -2305,8 +2305,8 @@
     "semantic_hash": "6e1e8e2378f8c4c1669a4e0382ed4439"
   },
   "packages/opencode-router/package.json": {
-    "mtime": 1781900780.2911222,
-    "ast_hash": "d20a9695a764fd101a36132cab7eb11d",
+    "mtime": 1782067801.8601885,
+    "ast_hash": "b697efc2d7b6cf4fed05f754ccf45f30",
     "semantic_hash": ""
   },
   "packages/opencode-router/script/build.ts": {
@@ -2445,8 +2445,8 @@
     "semantic_hash": "9386a8dc90df43f7ab7f2897726b7715"
   },
   "packages/orchestrator/package.json": {
-    "mtime": 1781900780.293162,
-    "ast_hash": "f55ea572a3b3273b75a191287de08863",
+    "mtime": 1782067801.8606257,
+    "ast_hash": "256dabb4ded55777d371865711bad3b5",
     "semantic_hash": ""
   },
   "packages/orchestrator/script/build.ts": {
@@ -2535,8 +2535,8 @@
     "semantic_hash": "039102ee44c982686fcacec7dd9433f9"
   },
   "packages/server/package.json": {
-    "mtime": 1781900779.998472,
-    "ast_hash": "04c08dd3554a812bf3c58d2b7958e448",
+    "mtime": 1782067801.8609436,
+    "ast_hash": "d258b6c2d6bfba901be169633003e380",
     "semantic_hash": ""
   },
   "packages/server/script/build.ts": {
@@ -2605,9 +2605,9 @@
     "semantic_hash": ""
   },
   "packages/server/src/debug-log-events.ts": {
-    "mtime": 1779192950.9540246,
-    "ast_hash": "a1553f1b3aba1659337054f2b40cff09",
-    "semantic_hash": "a1553f1b3aba1659337054f2b40cff09"
+    "mtime": 1782044279.838117,
+    "ast_hash": "d3f988e44b511e783ad61cf7ee696b78",
+    "semantic_hash": ""
   },
   "packages/server/src/debug-log-pipeline.ts": {
     "mtime": 1781900780.3072882,
@@ -2705,8 +2705,8 @@
     "semantic_hash": "251eab9db0f2380bdbadd554bc163473"
   },
   "packages/server/src/server.ts": {
-    "mtime": 1781960215.3499653,
-    "ast_hash": "f2efe0005f8dc14c1722c3b9acd79067",
+    "mtime": 1782107696.08508,
+    "ast_hash": "6a1e1a02ca185b54ccb4d9cab42b4612",
     "semantic_hash": ""
   },
   "packages/server/src/session-archives.ts": {
@@ -3860,8 +3860,8 @@
     "semantic_hash": "a82a70a9b2bfff09478e199d380faa35"
   },
   "services/den/src/index.ts": {
-    "mtime": 1781958262.8563576,
-    "ast_hash": "cbca46f4f5d33046c9e97c0c95cac948",
+    "mtime": 1782044279.8413322,
+    "ast_hash": "cd59eaaba5c8bb7c1cde764d2a168809",
     "semantic_hash": ""
   },
   "services/den/src/integrations/youtrack-rest.ts": {
@@ -4905,8 +4905,8 @@
     "semantic_hash": ""
   },
   "packages/app/src/app/context/pending-session-draft-controller.ts": {
-    "mtime": 1781900780.1906106,
-    "ast_hash": "766e1b55e233b9009b164e6ff8265677",
+    "mtime": 1782044279.8338437,
+    "ast_hash": "ade1ec76ed63eb83b491dc99dcdf9777",
     "semantic_hash": ""
   },
   "packages/app/src/app/context/runtime-owner.ts": {
@@ -5745,8 +5745,8 @@
     "semantic_hash": ""
   },
   "packages/app/src/app/tests/context/updater.test.ts": {
-    "mtime": 1781900780.2390456,
-    "ast_hash": "cec6d4825ae3a1fb417d3bdca8fc1ea2",
+    "mtime": 1782063221.4788358,
+    "ast_hash": "a56426da67681855ff7f2c7ac239b143",
     "semantic_hash": ""
   },
   "packages/app/src/app/tests/context/workspace-activate-guard.test.ts": {
@@ -6550,198 +6550,13 @@
     "semantic_hash": ""
   },
   "packages/desktop/tests/windows-hidden-sidecar-contract.test.mjs": {
-    "mtime": 1781900780.2854586,
-    "ast_hash": "ab3a85d402f99035ec685916abc3c88f",
+    "mtime": 1782054570.039017,
+    "ast_hash": "85bd8c92cc1894e1e66f359fd6a07c62",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-live-feedback-youtrack/latest.json": {
     "mtime": 1777819160.759022,
     "ast_hash": "51c539f43763e430805e91a82e86c6c4",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/docx/scripts/scripts/__init__.py": {
-    "mtime": 1781755999.3441777,
-    "ast_hash": "2b74d8c4bd027d27b005fb0d2411b7a2",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/docx/scripts/scripts/comment.py": {
-    "mtime": 1781755999.3442914,
-    "ast_hash": "c5cab80cb3e3337190de5c9a7f3d2334",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/docx/scripts/scripts/helpers/scripts/helpers/__init__.py": {
-    "mtime": 1781755999.3447444,
-    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/docx/scripts/scripts/helpers/scripts/helpers/merge_runs.py": {
-    "mtime": 1781755999.3449037,
-    "ast_hash": "71ef3ae25aada719852b2a2714fbcc65",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/docx/scripts/scripts/ooxml/scripts/ooxml/scripts/scripts/ooxml/scripts/pack.py": {
-    "mtime": 1781755999.3520045,
-    "ast_hash": "99d7c94338ecaac4ea0d423c130e332b",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/docx/scripts/scripts/ooxml/scripts/ooxml/scripts/scripts/ooxml/scripts/unpack.py": {
-    "mtime": 1781755999.3520844,
-    "ast_hash": "26135c2250872e522f41215833880bc5",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/docx/scripts/scripts/ooxml/scripts/ooxml/scripts/scripts/ooxml/scripts/validate.py": {
-    "mtime": 1781755999.352166,
-    "ast_hash": "1998dd264520c7c8d09f3edef11c92c7",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/docx/scripts/scripts/ooxml/scripts/ooxml/scripts/scripts/ooxml/scripts/validation/scripts/ooxml/scripts/validation/__init__.py": {
-    "mtime": 1781755999.3524594,
-    "ast_hash": "9577920dc811fff9762a96d4095d95e5",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/docx/scripts/scripts/ooxml/scripts/ooxml/scripts/scripts/ooxml/scripts/validation/scripts/ooxml/scripts/validation/base.py": {
-    "mtime": 1781755999.3526134,
-    "ast_hash": "3dba9423cd3c7040719353bd90a80985",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/docx/scripts/scripts/ooxml/scripts/ooxml/scripts/scripts/ooxml/scripts/validation/scripts/ooxml/scripts/validation/docx.py": {
-    "mtime": 1781755999.3527732,
-    "ast_hash": "f74a2ffcf139e597c0bd14fd50a70c22",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/docx/scripts/scripts/ooxml/scripts/ooxml/scripts/scripts/ooxml/scripts/validation/scripts/ooxml/scripts/validation/pptx.py": {
-    "mtime": 1781755999.3528943,
-    "ast_hash": "3b5cc57a4728a9297f51b8a4c66f7449",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/docx/scripts/scripts/ooxml/scripts/ooxml/scripts/scripts/ooxml/scripts/validation/scripts/ooxml/scripts/validation/redlining.py": {
-    "mtime": 1781755999.3530095,
-    "ast_hash": "40ec4a9f2b783a2c4b13800462d6b8aa",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/docx/scripts/scripts/pack.py": {
-    "mtime": 1781755999.3444707,
-    "ast_hash": "98e72a5e16b97c5f758677c74e647b12",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/docx/scripts/scripts/unpack.py": {
-    "mtime": 1781755999.3445668,
-    "ast_hash": "0c9e7eea923133e0ae63724f95cde3f5",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pdf/scripts/scripts/check_bounding_boxes.py": {
-    "mtime": 1781755999.354196,
-    "ast_hash": "64ce2d6bf850cb622e25bcd427cdab53",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pdf/scripts/scripts/check_fillable_fields.py": {
-    "mtime": 1781755999.3542824,
-    "ast_hash": "3f61698ecb0c5dc3554feea244c90f54",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pdf/scripts/scripts/convert_pdf_to_images.py": {
-    "mtime": 1781755999.3543696,
-    "ast_hash": "4e5fc4c79544f9a61ec712a5d2a5c195",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pdf/scripts/scripts/create_validation_image.py": {
-    "mtime": 1781755999.354503,
-    "ast_hash": "68ad9c8912b1ba0fd852ce55a0ec3530",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pdf/scripts/scripts/extract_form_field_info.py": {
-    "mtime": 1781755999.3546956,
-    "ast_hash": "919f3d8db479f7342bacfc71c42ee844",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pdf/scripts/scripts/fill_fillable_fields.py": {
-    "mtime": 1781755999.3548524,
-    "ast_hash": "036130dab315960e93e0cb43bd6d6606",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pdf/scripts/scripts/fill_pdf_form_with_annotations.py": {
-    "mtime": 1781755999.354951,
-    "ast_hash": "fae9be54e3cb090ad8361a1643b2211f",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pptx/ooxml/ooxml/scripts/ooxml/scripts/pack.py": {
-    "mtime": 1781755999.3619764,
-    "ast_hash": "99d7c94338ecaac4ea0d423c130e332b",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pptx/ooxml/ooxml/scripts/ooxml/scripts/unpack.py": {
-    "mtime": 1781755999.3620617,
-    "ast_hash": "26135c2250872e522f41215833880bc5",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pptx/ooxml/ooxml/scripts/ooxml/scripts/validate.py": {
-    "mtime": 1781755999.3621888,
-    "ast_hash": "1998dd264520c7c8d09f3edef11c92c7",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pptx/ooxml/ooxml/scripts/ooxml/scripts/validation/ooxml/scripts/validation/__init__.py": {
-    "mtime": 1781755999.3626525,
-    "ast_hash": "9577920dc811fff9762a96d4095d95e5",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pptx/ooxml/ooxml/scripts/ooxml/scripts/validation/ooxml/scripts/validation/base.py": {
-    "mtime": 1781755999.3627791,
-    "ast_hash": "3dba9423cd3c7040719353bd90a80985",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pptx/ooxml/ooxml/scripts/ooxml/scripts/validation/ooxml/scripts/validation/docx.py": {
-    "mtime": 1781755999.3629217,
-    "ast_hash": "f74a2ffcf139e597c0bd14fd50a70c22",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pptx/ooxml/ooxml/scripts/ooxml/scripts/validation/ooxml/scripts/validation/pptx.py": {
-    "mtime": 1781755999.3630643,
-    "ast_hash": "3b5cc57a4728a9297f51b8a4c66f7449",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pptx/ooxml/ooxml/scripts/ooxml/scripts/validation/ooxml/scripts/validation/redlining.py": {
-    "mtime": 1781755999.3631997,
-    "ast_hash": "40ec4a9f2b783a2c4b13800462d6b8aa",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pptx/scripts/scripts/inventory.py": {
-    "mtime": 1781755999.3634431,
-    "ast_hash": "601246c5e0de1240936033b6b15c0e62",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pptx/scripts/scripts/rearrange.py": {
-    "mtime": 1781755999.3635554,
-    "ast_hash": "50ed064e92670d478b2ee681670829dc",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pptx/scripts/scripts/replace.py": {
-    "mtime": 1781755999.3636632,
-    "ast_hash": "58d9f615c24a006ec8fbf543ecf7f3d6",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/pptx/scripts/scripts/thumbnail.py": {
-    "mtime": 1781755999.363777,
-    "ast_hash": "8a1810bf6f566ece02c00176c019aacb",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/skill-creator/scripts/scripts/init_skill.py": {
-    "mtime": 1781755999.3650103,
-    "ast_hash": "f27dc53d9b6324b770fbcaafb9d379f7",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/skill-creator/scripts/scripts/package_skill.py": {
-    "mtime": 1781755999.3651297,
-    "ast_hash": "ca05b626406d61f50038c1a0384d78d1",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/skill-creator/scripts/scripts/quick_validate.py": {
-    "mtime": 1781755999.3652403,
-    "ast_hash": "8247be9cfc7938843f586b6509a64641",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-data/internal-packs/2026-04-22.1/xlsx/recalc.py": {
-    "mtime": 1781755999.3641381,
-    "ast_hash": "2c168b411fb4af7d21788b706dea3e80",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-opencode-home/.veslo/app-data/veslo-workspaces.json": {
@@ -6764,11 +6579,6 @@
     "ast_hash": "83845486eb8eecc363e9110caeaf0847",
     "semantic_hash": ""
   },
-  "packages/e2e/.tmp-opencode-home/.veslo/veslo-orchestrator-auth.json": {
-    "mtime": 1781756005.8788486,
-    "ast_hash": "fa9152129642cd951aa76bd347319c42",
-    "semantic_hash": ""
-  },
   "packages/e2e/.tmp-veslo-home/Library/Application Support/com.differentai.openwork.dev/veslo-workspaces.json": {
     "mtime": 1781755996.374416,
     "ast_hash": "ed40a27d9028f5b9145c8a26381d056d",
@@ -6787,21 +6597,6 @@
   "packages/e2e/.tmp-veslo-home/Library/Application Support/com.neatech.veslo/veslo-workspaces.json": {
     "mtime": 1781755996.3740273,
     "ast_hash": "ed40a27d9028f5b9145c8a26381d056d",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/workspaces/visual-workspace/.opencode/plugins/veslo-delegate.js": {
-    "mtime": 1781755999.3667967,
-    "ast_hash": "dd76e9dbd95364a85f75cc1aa8d78ca6",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/workspaces/visual-workspace/.opencode/veslo.json": {
-    "mtime": 1781755999.562233,
-    "ast_hash": "4ac2f191b205d2bd1b1cad7ee917c7a3",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/workspaces/visual-workspace/.opencode/veslo/internal/manifest.json": {
-    "mtime": 1781755999.5612998,
-    "ast_hash": "2ccf57f109d91b09bf54934a3b10ac43",
     "semantic_hash": ""
   },
   "packages/e2e/helpers/google-mcp-catalog-fixture.test.ts": {
@@ -7105,8 +6900,8 @@
     "semantic_hash": ""
   },
   "packages/server/src/conversation-service.ts": {
-    "mtime": 1781900780.3068664,
-    "ast_hash": "c9db106704c6e539ac52c38e92fb2465",
+    "mtime": 1782107658.322468,
+    "ast_hash": "e6279cd6af60eef7b700edfb7c8b400a",
     "semantic_hash": ""
   },
   "packages/server/src/conversation-transcript-store.ts": {
@@ -7175,8 +6970,8 @@
     "semantic_hash": ""
   },
   "packages/server/src/tests/conversation-service.test.ts": {
-    "mtime": 1781900780.3152292,
-    "ast_hash": "d4a061c66e405b4b5e9fa9ae8c64c316",
+    "mtime": 1782107713.8100193,
+    "ast_hash": "9db934f6e2dcb0cc4493a1fb18c7dfb1",
     "semantic_hash": ""
   },
   "packages/server/src/tests/conversation-transcript-store.test.ts": {
@@ -7240,8 +7035,8 @@
     "semantic_hash": ""
   },
   "packages/server/src/tests/server-conversations.test.ts": {
-    "mtime": 1781960215.3509514,
-    "ast_hash": "e18558bdd729edeb349adea3bac38c28",
+    "mtime": 1782107641.0128908,
+    "ast_hash": "e702f9212f95c3f5fbb5e5b119883eb8",
     "semantic_hash": ""
   },
   "packages/server/src/tests/server-session-archives-mounted-route.test.ts": {
@@ -7275,8 +7070,8 @@
     "semantic_hash": ""
   },
   "packages/server/src/tests/server.debug-logs-route.test.ts": {
-    "mtime": 1781900780.3190856,
-    "ast_hash": "039e4487c8a5dd1eadf0c53cb4a6d198",
+    "mtime": 1782044279.8400142,
+    "ast_hash": "a6e86250e612e9f9c79b02d22d3bb328",
     "semantic_hash": ""
   },
   "packages/server/src/tests/server.hub-mcp.test.ts": {
@@ -7612,6 +7407,46 @@
   "services/den/test/internal-platform-admin-recipients.test.ts": {
     "mtime": 1781900780.3622081,
     "ast_hash": "4f8429549fc51fa4f1f9590895d73ef7",
+    "semantic_hash": ""
+  },
+  "packages/app/src/app/lib/bootstrap-diagnostics.ts": {
+    "mtime": 1782044279.835517,
+    "ast_hash": "fc87575224e4f4e4306f61eb7b494864",
+    "semantic_hash": ""
+  },
+  "packages/app/src/app/lib/error-monitoring.ts": {
+    "mtime": 1782052819.617802,
+    "ast_hash": "f76ce1ad6d476c06c24b4110aaeb3cf5",
+    "semantic_hash": ""
+  },
+  "packages/app/src/app/tests/lib/bootstrap-diagnostics.test.ts": {
+    "mtime": 1782044279.8359776,
+    "ast_hash": "6e8c135cde0ff8315395deff97c284a1",
+    "semantic_hash": ""
+  },
+  "packages/app/src/app/tests/lib/error-monitoring.test.ts": {
+    "mtime": 1782052819.6181452,
+    "ast_hash": "3e526cc5486ec6e51341ce9a0743ba67",
+    "semantic_hash": ""
+  },
+  "packages/desktop/src-tauri/src/bootstrap_diagnostics.rs": {
+    "mtime": 1782044279.8362644,
+    "ast_hash": "7b6706fd30fdb4a63c3743d39cd586a5",
+    "semantic_hash": ""
+  },
+  "packages/desktop/src-tauri/src/error_monitoring.rs": {
+    "mtime": 1782054747.4935565,
+    "ast_hash": "d0ce13cd0b3bd4dae23a5cd651a211de",
+    "semantic_hash": ""
+  },
+  "services/den/src/http/desktop-diagnostics.ts": {
+    "mtime": 1782044279.84076,
+    "ast_hash": "db42c60ecae584ad8b17941c05ae59f8",
+    "semantic_hash": ""
+  },
+  "services/den/test/desktop-diagnostics-route.test.ts": {
+    "mtime": 1782044279.8416464,
+    "ast_hash": "65fd1979adc17959690d2162c47c51e5",
     "semantic_hash": ""
   }
 }

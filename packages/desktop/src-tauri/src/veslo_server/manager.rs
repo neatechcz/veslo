@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crate::process_supervisor::{kill_running_child, resolve_running_pid, SupervisedChild};
 use crate::supervised_process::SupervisedCommandChild;
@@ -20,6 +21,9 @@ pub struct VesloServerState {
     pub mdns_url: Option<String>,
     pub lan_url: Option<String>,
     pub engine_url: Option<String>,
+    pub engine_url_checked_at: Option<Instant>,
+    pub engine_url_refresh_started_at: Option<Instant>,
+    pub engine_url_refresh_generation: u64,
     pub client_token: Option<String>,
     pub host_token: Option<String>,
     pub last_stdout: Option<String>,
@@ -30,6 +34,7 @@ pub struct VesloServerState {
     // (b) carry tokens across an unavoidable respawn so the frontend's cached
     //     bearer keeps working (VSLO-171: token rotation was causing 401s).
     pub workspace_paths: Vec<String>,
+    pub opencode_base_url: Option<String>,
     pub orchestrator_daemon_url: Option<String>,
     pub orchestrator_lifecycle_token: Option<String>,
 }
@@ -91,10 +96,14 @@ impl VesloServerManager {
         state.mdns_url = None;
         state.lan_url = None;
         state.engine_url = None;
+        state.engine_url_checked_at = None;
+        state.engine_url_refresh_started_at = None;
+        state.engine_url_refresh_generation = state.engine_url_refresh_generation.wrapping_add(1);
         // Intentionally keep client_token / host_token / workspace_paths so a
         // subsequent start_veslo_server can decide whether to skip respawn or
         // reuse the existing tokens (avoids the 401 "Invalid bearer token"
         // race documented in docs/handoffs/vslo-171-auth-and-switch.md).
+        state.opencode_base_url = None;
         state.orchestrator_daemon_url = None;
         state.orchestrator_lifecycle_token = None;
     }

@@ -94,6 +94,12 @@ const redoLastUserMessageSource =
   redoLastUserMessageStart >= 0 && redoLastUserMessageEnd >= 0
     ? appSource.slice(redoLastUserMessageStart, redoLastUserMessageEnd)
     : "";
+const chooseFolderForCurrentSessionStart = appSource.indexOf("  const chooseFolderForCurrentSession = async () => {");
+const chooseFolderForCurrentSessionEnd = appSource.indexOf("  function runSoulPrompt(", chooseFolderForCurrentSessionStart);
+const chooseFolderForCurrentSessionSource =
+  chooseFolderForCurrentSessionStart >= 0 && chooseFolderForCurrentSessionEnd >= 0
+    ? appSource.slice(chooseFolderForCurrentSessionStart, chooseFolderForCurrentSessionEnd)
+    : "";
 const renameSessionTitleStart = appSource.indexOf("  async function renameSessionTitle(");
 const renameSessionTitleEnd = appSource.indexOf("  async function deleteSessionById(", renameSessionTitleStart);
 const renameSessionTitleSource =
@@ -720,7 +726,7 @@ test("first New session creates one private workspace and opens a persisted pend
   );
   assert.match(
     openNewSessionSource,
-    /const scratch = await deps\.workspace\.createScratchWorkspace\(\);[\s\S]*const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*const cleanupSucceeded = await deps\.workspace\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}[\s\S]*\};[\s\S]*const emptyPendingDraft = deps\.createEmptyComposerDraft\(\);[\s\S]*const now = Date\.now\(\);[\s\S]*try \{[\s\S]*const activatedScratchWorkspace = await deps\.workspace\.activateWorkspace\(scratch\.id, \{[\s\S]*origin: "app:new-private-scratch-workspace"[\s\S]*\}\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await deps\.pendingSessionDraftsPut\(\{[\s\S]*kind: "new-private"[\s\S]*workspaceId: scratch\.id[\s\S]*privateWorkspaceId: scratch\.id[\s\S]*createdAt: now[\s\S]*updatedAt: now[\s\S]*composer: emptyPendingDraft[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*restorePendingDraftComposer\(newPrivatePendingDraftKey, emptyPendingDraft\);[\s\S]*deps\.setView\("session"\);[\s\S]*return;[\s\S]*\} catch \(error\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}/s,
+    /const scratch = await deps\.workspace\.createScratchWorkspace\(\);[\s\S]*const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*const cleanupSucceeded = await deps\.workspace\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}[\s\S]*\};[\s\S]*const emptyPendingDraft = deps\.createEmptyComposerDraft\(\);[\s\S]*const now = Date\.now\(\);[\s\S]*try \{[\s\S]*const activatedScratchWorkspace = await deps\.workspace\.activateWorkspace\(scratch\.id, \{[\s\S]*origin: "app:new-private-scratch-workspace"[\s\S]*\}\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*deps\.setError\("Failed to activate the private chat workspace\."\);[\s\S]*return false;[\s\S]*\}[\s\S]*const pendingDraft = await deps\.pendingSessionDraftsPut\(\{[\s\S]*kind: "new-private"[\s\S]*workspaceId: scratch\.id[\s\S]*privateWorkspaceId: scratch\.id[\s\S]*createdAt: now[\s\S]*updatedAt: now[\s\S]*composer: emptyPendingDraft[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*restorePendingDraftComposer\(newPrivatePendingDraftKey, emptyPendingDraft\);[\s\S]*deps\.setView\("session"\);[\s\S]*return true;[\s\S]*\} catch \(error\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}/s,
     "the first New session should create one private workspace, persist one pending draft, and open the draft route",
   );
   assert.doesNotMatch(
@@ -734,10 +740,10 @@ test("second New session reopens the same pending draft and does not create anot
   assert.notEqual(openNewSessionSource, "", "New session flow should exist in pending draft controller");
   assert.match(
     openNewSessionSource,
-    /if \(existingPendingDraft\) \{\s*const pendingDraft = await deps\.pendingSessionDraftsGet\(existingPendingDraft\.id\);[\s\S]*if \(pendingDraft\) \{\s*const restoreError = formatPendingDraftAttachmentRestoreError\(pendingDraft\.attachmentFailures\);[\s\S]*if \(restoreError\) \{\s*deps\.setError\(restoreError\);[\s\S]*\}\s*const pendingWorkspaceId = \(existingPendingDraft\.privateWorkspaceId \?\? existingPendingDraft\.workspaceId\)\.trim\(\);[\s\S]*const activatedPendingWorkspace = await deps\.workspace\.activateWorkspace\(pendingWorkspaceId, \{[\s\S]*origin: "app:new-private-existing-pending-draft"[\s\S]*\}\);[\s\S]*if \(!activatedPendingWorkspace\) \{[\s\S]*await deps\.pendingSessionDraftsDelete\(existingPendingDraft\.id\);[\s\S]*markPendingDraftConsumed\(existingPendingDraft\.id\);[\s\S]*\} else \{[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*restorePendingDraftComposer\(newPrivatePendingDraftKey, pendingDraft\.draft\.composer\);[\s\S]*deps\.setView\("session"\);[\s\S]*return;[\s\S]*\}[\s\S]*\}[\s\S]*\}/s,
+    /if \(existingPendingDraft\) \{\s*const pendingDraft = await deps\.pendingSessionDraftsGet\(existingPendingDraft\.id\);[\s\S]*if \(pendingDraft\) \{\s*const restoreError = formatPendingDraftAttachmentRestoreError\(pendingDraft\.attachmentFailures\);[\s\S]*if \(restoreError\) \{\s*deps\.setError\(restoreError\);[\s\S]*\}\s*const pendingWorkspaceId = \(existingPendingDraft\.privateWorkspaceId \?\? existingPendingDraft\.workspaceId\)\.trim\(\);[\s\S]*const activatedPendingWorkspace = await deps\.workspace\.activateWorkspace\(pendingWorkspaceId, \{[\s\S]*origin: "app:new-private-existing-pending-draft"[\s\S]*\}\);[\s\S]*if \(!activatedPendingWorkspace\) \{[\s\S]*await deps\.pendingSessionDraftsDelete\(existingPendingDraft\.id\);[\s\S]*markPendingDraftConsumed\(existingPendingDraft\.id\);[\s\S]*\} else \{[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*restorePendingDraftComposer\(newPrivatePendingDraftKey, pendingDraft\.draft\.composer\);[\s\S]*deps\.setView\("session"\);[\s\S]*return true;[\s\S]*\}[\s\S]*\}[\s\S]*\}/s,
     "repeat New session should reopen the existing private pending draft instead of creating a new workspace",
   );
-  const existingBranchMatch = openNewSessionSource.match(/if \(existingPendingDraft\) \{[\s\S]*?return;\s*\}/);
+  const existingBranchMatch = openNewSessionSource.match(/if \(existingPendingDraft\) \{[\s\S]*?return true;\s*\}/);
   const existingBranch = existingBranchMatch?.[0] ?? "";
   assert.doesNotMatch(
     existingBranch,
@@ -755,12 +761,12 @@ test("New session skips stale existing private pending draft when workspace acti
   assert.notEqual(openNewSessionSource, "", "New session flow should exist in pending draft controller");
   assert.match(
     openNewSessionSource,
-    /const activatedPendingWorkspace = await deps\.workspace\.activateWorkspace\(pendingWorkspaceId, \{[\s\S]*origin: "app:new-private-existing-pending-draft"[\s\S]*\}\);[\s\S]*if \(!activatedPendingWorkspace\) \{[\s\S]*await deps\.pendingSessionDraftsDelete\(existingPendingDraft\.id\);[\s\S]*markPendingDraftConsumed\(existingPendingDraft\.id\);[\s\S]*\} else \{[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*deps\.setView\("session"\);[\s\S]*return;[\s\S]*\}/s,
+    /const activatedPendingWorkspace = await deps\.workspace\.activateWorkspace\(pendingWorkspaceId, \{[\s\S]*origin: "app:new-private-existing-pending-draft"[\s\S]*\}\);[\s\S]*if \(!activatedPendingWorkspace\) \{[\s\S]*await deps\.pendingSessionDraftsDelete\(existingPendingDraft\.id\);[\s\S]*markPendingDraftConsumed\(existingPendingDraft\.id\);[\s\S]*\} else \{[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*deps\.setView\("session"\);[\s\S]*return true;[\s\S]*\}/s,
     "reopening an existing private pending draft must remove stale draft state and continue to fresh workspace creation when activation fails",
   );
   assert.match(
     openNewSessionSource,
-    /const activatedScratchWorkspace = await deps\.workspace\.activateWorkspace\(scratch\.id, \{[\s\S]*origin: "app:new-private-scratch-workspace"[\s\S]*\}\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await deps\.pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*deps\.setView\("session"\);/s,
+    /const activatedScratchWorkspace = await deps\.workspace\.activateWorkspace\(scratch\.id, \{[\s\S]*origin: "app:new-private-scratch-workspace"[\s\S]*\}\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*deps\.setError\("Failed to activate the private chat workspace\."\);[\s\S]*return false;[\s\S]*\}[\s\S]*const pendingDraft = await deps\.pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*deps\.setView\("session"\);/s,
     "creating a fresh private pending draft must stop before route activation when workspace activation fails",
   );
 });
@@ -780,6 +786,20 @@ test("fresh New session surfaces cleanup failure instead of silently assuming ro
     openNewSessionSource,
     /const cleanupSucceeded = await deps\.workspace\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}/s,
     "fresh New session must treat scratch-workspace cleanup failure as an error",
+  );
+});
+
+test("Choose folder cleanup removes the old private workspace directory", () => {
+  assert.notEqual(chooseFolderForCurrentSessionSource, "", "Choose folder flow should exist in app shell");
+  assert.match(
+    chooseFolderForCurrentSessionSource,
+    /if \(sourceWorkspace\.workspaceType !== "local" \|\| !workspaceStore\.isPrivateWorkspacePath\(sourceRoot\)\) \{[\s\S]*throw new Error\("Choose folder is only available for private workspaces\."\);[\s\S]*\}/s,
+    "Choose folder should only detach/delete a source workspace after proving it is an app private workspace",
+  );
+  assert.match(
+    chooseFolderForCurrentSessionSource,
+    /if \(sourceWorkspaceId && sourceWorkspaceId !== targetWorkspace\.id\) \{\s*await workspaceStore\.forgetWorkspace\(sourceWorkspaceId, \{ deleteLocalData: true \}\);\s*\}/s,
+    "moving a private chat into a chosen folder should remove the old app-owned private workspace directory",
   );
 });
 
