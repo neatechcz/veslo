@@ -78,6 +78,11 @@ jobs:
       publish_sidecars: ${{ steps.resolve.outputs.publish_sidecars }}
       publish_npm: ${{ steps.resolve.outputs.publish_npm }}
     steps:
+      - name: Checkout release metadata
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Resolve metadata
         id: resolve
         shell: bash
@@ -126,6 +131,8 @@ jobs:
           RELEASE_BODY_INPUT="${INPUT_RELEASE_BODY:-}"
           if [ -n "$RELEASE_BODY_INPUT" ]; then
             RELEASE_BODY="$RELEASE_BODY_INPUT"
+          elif [ -f "release-notes/$TAG.md" ]; then
+            RELEASE_BODY="$(cat "release-notes/$TAG.md")"
           else
             RELEASE_BODY="See the assets to download this version and install."
           fi
