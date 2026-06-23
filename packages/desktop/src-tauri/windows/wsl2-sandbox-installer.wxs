@@ -27,12 +27,33 @@
       Id="VesloProvisionWslSandbox"
       Directory="INSTALLDIR"
       Execute="deferred"
-      Impersonate="yes"
-      Return="check"
-      ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File &quot;[INSTALLDIR]wsl2-client-installer.ps1&quot; -AllowRestartContinuationSuccess -AllowDeferredRuntimeRepairSuccess" />
+      Impersonate="no"
+      Return="ignore"
+      ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File &quot;[INSTALLDIR]wsl2-client-installer.ps1&quot; -MachineSetupOnly -AllowRestartContinuationSuccess -AllowDeferredRuntimeRepairSuccess" />
+
+    <CustomAction
+      Id="VesloDisableExitDialogLaunchCheckbox"
+      Property="WIXUI_EXITDIALOGOPTIONALCHECKBOX"
+      Value="0" />
+
+    <CustomAction
+      Id="VesloClearExitDialogLaunchCheckboxText"
+      Property="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"
+      Value="" />
+
+    <CustomAction
+      Id="VesloDisableAutoLaunchApp"
+      Property="AUTOLAUNCHAPP"
+      Value="" />
+
+    <InstallUISequence>
+      <Custom Action="VesloDisableExitDialogLaunchCheckbox" Before="ExecuteAction"><![CDATA[NOT Installed]]></Custom>
+      <Custom Action="VesloClearExitDialogLaunchCheckboxText" After="VesloDisableExitDialogLaunchCheckbox"><![CDATA[NOT Installed]]></Custom>
+    </InstallUISequence>
 
     <InstallExecuteSequence>
       <Custom Action="VesloProvisionWslSandbox" After="InstallFiles"><![CDATA[NOT REMOVE~="ALL"]]></Custom>
+      <Custom Action="VesloDisableAutoLaunchApp" Before="LaunchApplication"><![CDATA[AUTOLAUNCHAPP AND NOT Installed]]></Custom>
     </InstallExecuteSequence>
   </Fragment>
 </Wix>

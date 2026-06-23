@@ -18,7 +18,11 @@ $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 $env:WSL_UTF8 = "1"
 $NativeCommandTimeoutExitCode = 1460
-$PrerequisiteInstallerScriptRevision = "optional-feature-first-20260623"
+$PrerequisiteInstallerScriptRevision = "wsl-app-provisioning-singlereboot-20260620"
+
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+} catch {}
 
 if (-not $CheckOnly -and -not $Install) {
     $CheckOnly = $true
@@ -49,7 +53,17 @@ function Write-PrereqLog([string]$Message) {
     Write-Host "[$timestamp] $Message"
 }
 
+$script:WslAppPackageStaged = $false
+
 function Finish-Prereq([int]$ExitCode) {
+    # When Windows needs a restart to activate the WSL features, stage the WSL
+    # app package now (before exiting) so the single upcoming restart is enough
+    # to make WSL usable instead of needing a second install pass afterwards.
+    if ($Install -and ($ExitCode -eq 3010 -or $ExitCode -eq 1641) -and -not $script:WslAppPackageStaged) {
+        $script:WslAppPackageStaged = $true
+        Write-PrereqLog "Windows restart is required; staging the WSL app package first so a single restart finishes setup."
+        [void](Install-WslAppPackage)
+    }
     Write-PrereqLog "WSL prerequisite helper finished with exit code $ExitCode. Log: $logPath"
     try {
         Stop-Transcript | Out-Null
@@ -489,6 +503,46 @@ function Enable-WslFeaturesWithPowerShellThenDism {
 
     Write-PrereqLog "PowerShell optional feature enablement failed with exit code $powerShellExit; falling back to DISM feature enablement."
     return Enable-WslFeaturesWithDism
+}
+
+function Install-WslAppPackage {
+    # Stage the modern "Windows Subsystem for Linux" app package for all users so
+    # a single Windows restart is enough to make WSL usable. On current Windows
+    # builds the System32 wsl.exe is only a stub until the optional feature is
+    # active (post-restart), so `wsl --install` / `wsl --update` cannot fetch the
+    # WSL app before the restart. Provisioning the MSIX bundle here stages it now;
+    # it activates together with the features on the next boot, which avoids the
+    # second install pass (and second restart) the feature-only path needs.
+    if (-not (Get-Command Add-AppxProvisionedPackage -ErrorAction SilentlyContinue)) {
+        Write-PrereqLog "Add-AppxProvisionedPackage is unavailable; cannot stage the WSL app package (will rely on a post-restart pass instead)."
+        return $false
+    }
+
+    try {
+        $headers = @{ "User-Agent" = "Veslo-Installer"; "Accept" = "application/vnd.github+json" }
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/microsoft/WSL/releases/latest" -Headers $headers -TimeoutSec 120
+        $asset = $release.assets |
+            Where-Object { $_.name -match "\.msixbundle$" } |
+            Select-Object -First 1
+        if (-not $asset) {
+            Write-PrereqLog "No .msixbundle asset found in the latest microsoft/WSL release; skipping WSL app staging."
+            return $false
+        }
+
+        $downloadDir = Join-Path $env:TEMP "veslo-wsl-prereq"
+        New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
+        $bundlePath = Join-Path $downloadDir $asset.name
+        Write-PrereqLog "Downloading WSL app package: $($asset.browser_download_url)"
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $bundlePath -UseBasicParsing -TimeoutSec 1800
+
+        Write-PrereqLog "Provisioning WSL app package for all users: $bundlePath"
+        Add-AppxProvisionedPackage -Online -PackagePath $bundlePath -SkipLicense -ErrorAction Stop | Out-Null
+        Write-PrereqLog "WSL app package staged successfully; it will activate after the next Windows restart."
+        return $true
+    } catch {
+        Write-PrereqLog "Failed to stage WSL app package: $($_.Exception.Message). WSL will be completed after the restart instead."
+        return $false
+    }
 }
 
 function Test-WslSyntaxFallback([string]$Output) {

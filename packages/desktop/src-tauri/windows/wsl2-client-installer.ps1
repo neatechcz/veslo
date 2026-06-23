@@ -4,10 +4,21 @@ Client installer entrypoint for Veslo's Windows WSL2 runtime setup.
 
 .DESCRIPTION
 This helper is invoked by Windows installers after application files are
-installed. It owns the full client-side path: check WSL prerequisites, launch the
-elevated prerequisite helper when Windows features are missing, register a
-RunOnce continuation when a restart is required, and then run the managed
-VesloSandbox provisioning wrapper.
+installed. It runs in one of two modes:
+
+* -MachineSetupOnly (used by the MSI from an elevated, non-impersonated
+  LocalSystem deferred custom action): it owns only the machine-wide part of
+  setup and never prompts the user. Because it already runs elevated it enables
+  the Windows WSL features AND stages the WSL app package in-process (no UAC /
+  RunAs), so a single Windows restart is enough to make WSL usable. It does NOT
+  import the per-user VesloSandbox distro; the Veslo app does that on first run
+  via the windowless `wsl_sandbox_repair` command.
+
+* default per-user mode (used by the NSIS per-user installer hook and as a
+  fallback): WSL features are machine-wide and need elevation, so when WSL is
+  missing it launches the prerequisite helper elevated once, registers a RunOnce
+  continuation when Windows must restart, and then provisions the per-user
+  VesloSandbox distro.
 
 The script logs the real runtime setup exit code so installer logs can
 distinguish "app installed" from "runtime prepared". Package manager hooks may
@@ -22,14 +33,15 @@ param(
     [string]$OpencodeGithubRepo = "anomalyco/opencode",
     [switch]$SkipPrerequisiteInstall,
     [switch]$AllowRestartContinuationSuccess,
-    [switch]$AllowDeferredRuntimeRepairSuccess
+    [switch]$AllowDeferredRuntimeRepairSuccess,
+    [switch]$MachineSetupOnly
 )
 
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 $env:WSL_UTF8 = "1"
 $NativeCommandTimeoutExitCode = 1460
-$ClientInstallerScriptRevision = "runonce-elevated-exit-guard-20260623"
+$ClientInstallerScriptRevision = "system-machine-setup-singlereboot-20260620"
 $ClientInstallerScriptPath = if ($PSCommandPath -and $PSCommandPath.Trim()) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
 
 function Write-ClientInstallerLog([string]$Message) {
@@ -94,6 +106,49 @@ function Resolve-CommonAppData {
         return $env:ProgramData
     }
     return [System.IO.Path]::GetTempPath()
+}
+
+function Resolve-RuntimeDataRoot {
+    # Machine setup runs as LocalSystem, so its log and restart marker live in
+    # ProgramData where the per-user Veslo app can also read them. The per-user
+    # flow keeps using LocalAppData (matching the NSIS hook log messages).
+    if ($MachineSetupOnly) {
+        return Resolve-CommonAppData
+    }
+    return Resolve-LocalAppData
+}
+
+function Resolve-RestartRequiredMarkerPath {
+    return (Join-Path (Join-Path (Resolve-RuntimeDataRoot) "Veslo") "runtime-setup-restart-required.marker")
+}
+
+function Write-RestartRequiredMarker {
+    $markerPath = Resolve-RestartRequiredMarkerPath
+    try {
+        $markerDir = Split-Path -Parent $markerPath
+        New-Item -ItemType Directory -Force -Path $markerDir | Out-Null
+        $content = @(
+            "VESLO_RUNTIME_SETUP_RESULT=restart_required",
+            "Timestamp=$((Get-Date).ToString("o"))",
+            "Log=$logPath"
+        )
+        Set-Content -LiteralPath $markerPath -Value $content -Encoding UTF8 -Force
+        Write-ClientInstallerLog "Wrote restart-required marker: $markerPath"
+    } catch {
+        Write-ClientInstallerLog "Failed to write restart-required marker: $($_.Exception.Message)"
+    }
+}
+
+function Clear-RestartRequiredMarker {
+    $markerPath = Resolve-RestartRequiredMarkerPath
+    try {
+        if (Test-Path -LiteralPath $markerPath -PathType Leaf) {
+            Remove-Item -LiteralPath $markerPath -Force
+            Write-ClientInstallerLog "Cleared restart-required marker: $markerPath"
+        }
+    } catch {
+        Write-ClientInstallerLog "Failed to clear restart-required marker: $($_.Exception.Message)"
+    }
 }
 
 function Write-RecentPrerequisiteLogTail {
@@ -513,8 +568,13 @@ function Register-ClientInstallerRunOnce {
     Write-ClientInstallerLog "Registered RunOnce continuation for Veslo WSL runtime setup."
 }
 
-$logRoot = Join-Path (Resolve-LocalAppData) "Veslo\logs"
-New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
+$logRoot = Join-Path (Resolve-RuntimeDataRoot) "Veslo\logs"
+try {
+    New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
+} catch {
+    $logRoot = Join-Path (Resolve-LocalAppData) "Veslo\logs"
+    New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
+}
 $logPath = Join-Path $logRoot "wsl2-client-installer.log"
 
 try {
@@ -528,18 +588,21 @@ function Finish-ClientInstaller([int]$RuntimeExitCode) {
     $restartContinuation = $RuntimeExitCode -eq 3010 -or $RuntimeExitCode -eq 1641
     if ($AllowRestartContinuationSuccess -and $restartContinuation) {
         $installerExitCode = 0
-        Write-ClientInstallerLog "Windows restart is required; RunOnce continuation is registered, so this package-manager invocation will exit 0."
+        Write-ClientInstallerLog "Windows restart is required to finish WSL setup; this package-manager invocation will exit 0 and Veslo will continue after the restart."
     }
 
     if ($RuntimeExitCode -eq 0) {
+        Clear-RestartRequiredMarker
         Write-ClientInstallerLog "VESLO_RUNTIME_SETUP_RESULT=ready"
     } elseif ($restartContinuation) {
+        Write-RestartRequiredMarker
         Write-ClientInstallerLog "VESLO_RUNTIME_SETUP_RESULT=restart_required"
     } else {
+        Clear-RestartRequiredMarker
         Write-ClientInstallerLog "VESLO_RUNTIME_SETUP_RESULT=failed"
     }
 
-    if ($installerExitCode -ne 0 -and $AllowDeferredRuntimeRepairSuccess) {
+    if ($installerExitCode -ne 0 -and -not $restartContinuation -and $AllowDeferredRuntimeRepairSuccess) {
         Write-ClientInstallerLog "Runtime setup did not finish during package installation; first-run onboarding/Settings repair will retry with user-visible guidance, so this package-manager invocation will exit 0."
         $installerExitCode = 0
     }
@@ -550,25 +613,54 @@ function Finish-ClientInstaller([int]$RuntimeExitCode) {
     exit $installerExitCode
 }
 
-try {
-    Write-ClientInstallerLog "Veslo client runtime installer started."
-    Write-ClientInstallerLog "Script revision: $ClientInstallerScriptRevision"
-    Write-ClientInstallerLog "Script path: $ClientInstallerScriptPath"
-    $identityName = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    Write-ClientInstallerLog "Identity: $identityName"
-    if ($identityName -match "\\SYSTEM$") {
-        Write-ClientInstallerLog "Cannot prepare Veslo WSL runtime under SYSTEM. WSL distros and RunOnce continuations are per-user; run installer or repair under the target Windows user."
-        Finish-ClientInstaller 5
+# Machine-wide WSL setup that runs elevated (LocalSystem) from the MSI. It never
+# prompts and never imports the per-user distro: it just enables the Windows WSL
+# features and stages the WSL app package so a single restart makes WSL usable.
+function Invoke-MachineWslSetup([string]$PrerequisiteScript) {
+    $wslState = Test-WslUsable
+    Write-ClientInstallerLog $wslState.Reason
+    if ($wslState.Ok) {
+        Write-ClientInstallerLog "WSL is already usable; no machine setup needed. The Veslo app will import the VesloSandbox distro per-user."
+        Finish-ClientInstaller 0
     }
-    Write-ClientInstallerLog "Distro: $DistroName"
-    Write-ClientInstallerLog "Skip prerequisite install: $([bool]$SkipPrerequisiteInstall)"
 
-    $scriptDir = Split-Path -Parent $ClientInstallerScriptPath
-    $prerequisiteScript = Join-Path $scriptDir "wsl2-prerequisite-installer.ps1"
-    $sandboxInstallerScript = Join-Path $scriptDir "wsl2-sandbox-installer.ps1"
+    if (-not $SkipPrerequisiteInstall) {
+        if (-not (Test-Path -LiteralPath $PrerequisiteScript -PathType Leaf)) {
+            Write-ClientInstallerLog "Prerequisite installer helper is missing: $PrerequisiteScript"
+        } else {
+            Write-ClientInstallerLog "WSL is not usable; running the WSL prerequisite install in-process (already elevated, no UAC prompt)."
+            $prereqInstall = Invoke-LocalPowerShellScript -ScriptPath $PrerequisiteScript -ScriptArguments @("-Install") -TimeoutSeconds 3600
+            Write-ClientInstallerLog "WSL prerequisite install finished with exit code $($prereqInstall.ExitCode)."
+            Write-RecentPrerequisiteLogTail
+            if ($prereqInstall.ExitCode -eq 3010 -or $prereqInstall.ExitCode -eq 1641) {
+                Finish-ClientInstaller $prereqInstall.ExitCode
+            }
+        }
 
-    if (-not (Test-Path -LiteralPath $sandboxInstallerScript -PathType Leaf)) {
-        Write-ClientInstallerLog "Sandbox installer wrapper is missing: $sandboxInstallerScript"
+        $wslState = Test-WslUsable
+        Write-ClientInstallerLog $wslState.Reason
+    }
+
+    if ($wslState.Ok) {
+        Write-ClientInstallerLog "WSL is now usable without a restart. The Veslo app will import the VesloSandbox distro per-user."
+        Finish-ClientInstaller 0
+    }
+
+    if ($wslState.ExitCode -eq 3010 -or $wslState.ExitCode -eq 1641) {
+        Finish-ClientInstaller $wslState.ExitCode
+    }
+
+    Write-ClientInstallerLog "WSL is not usable yet and Windows likely needs a restart. Marking restart required; Veslo onboarding/Settings repair will retry without requiring manual PowerShell."
+    Finish-ClientInstaller 3010
+}
+
+# Per-user WSL setup used by the NSIS per-user installer hook and the app. WSL
+# features are machine-wide, so this elevates the prerequisite helper once (UAC)
+# when WSL is missing, registers a RunOnce continuation when Windows must
+# restart, and then provisions the per-user VesloSandbox distro.
+function Invoke-UserWslSetup([string]$PrerequisiteScript, [string]$SandboxInstallerScript) {
+    if (-not (Test-Path -LiteralPath $SandboxInstallerScript -PathType Leaf)) {
+        Write-ClientInstallerLog "Sandbox installer wrapper is missing: $SandboxInstallerScript"
         Finish-ClientInstaller 2
     }
 
@@ -576,11 +668,11 @@ try {
     Write-ClientInstallerLog $wslState.Reason
 
     if (-not $wslState.Ok -and -not $SkipPrerequisiteInstall) {
-        if (-not (Test-Path -LiteralPath $prerequisiteScript -PathType Leaf)) {
-            Write-ClientInstallerLog "Prerequisite installer helper is missing: $prerequisiteScript"
+        if (-not (Test-Path -LiteralPath $PrerequisiteScript -PathType Leaf)) {
+            Write-ClientInstallerLog "Prerequisite installer helper is missing: $PrerequisiteScript"
         } else {
             Write-ClientInstallerLog "WSL status already failed; skipping redundant prerequisite check and launching elevated WSL prerequisite install from the installer flow."
-            $prereqInstall = Invoke-ElevatedPowerShellScript -ScriptPath $prerequisiteScript -ScriptArguments @("-Install") -TimeoutSeconds 3600
+            $prereqInstall = Invoke-ElevatedPowerShellScript -ScriptPath $PrerequisiteScript -ScriptArguments @("-Install") -TimeoutSeconds 3600
             Write-ClientInstallerLog "Elevated WSL prerequisite install finished with exit code $($prereqInstall.ExitCode)."
             Write-RecentPrerequisiteLogTail
             if ($prereqInstall.ExitCode -eq 3010 -or $prereqInstall.ExitCode -eq 1641) {
@@ -615,8 +707,34 @@ try {
     }
 
     Write-ClientInstallerLog "Running managed VesloSandbox provisioning wrapper."
-    $sandboxResult = Invoke-LocalPowerShellScript -ScriptPath $sandboxInstallerScript -ScriptArguments $sandboxArgs -TimeoutSeconds 3600
+    $sandboxResult = Invoke-LocalPowerShellScript -ScriptPath $SandboxInstallerScript -ScriptArguments $sandboxArgs -TimeoutSeconds 3600
     Finish-ClientInstaller $sandboxResult.ExitCode
+}
+
+try {
+    Write-ClientInstallerLog "Veslo client runtime installer started."
+    Write-ClientInstallerLog "Script revision: $ClientInstallerScriptRevision"
+    Write-ClientInstallerLog "Script path: $ClientInstallerScriptPath"
+    Write-ClientInstallerLog "Machine setup only: $([bool]$MachineSetupOnly)"
+    $identityName = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    Write-ClientInstallerLog "Identity: $identityName"
+    Write-ClientInstallerLog "Distro: $DistroName"
+    Write-ClientInstallerLog "Skip prerequisite install: $([bool]$SkipPrerequisiteInstall)"
+
+    $scriptDir = Split-Path -Parent $ClientInstallerScriptPath
+    $prerequisiteScript = Join-Path $scriptDir "wsl2-prerequisite-installer.ps1"
+    $sandboxInstallerScript = Join-Path $scriptDir "wsl2-sandbox-installer.ps1"
+
+    if ($MachineSetupOnly) {
+        Invoke-MachineWslSetup -PrerequisiteScript $prerequisiteScript
+    }
+
+    if ($identityName -match "\\SYSTEM$") {
+        Write-ClientInstallerLog "Cannot prepare Veslo WSL runtime under SYSTEM without -MachineSetupOnly. WSL distros and RunOnce continuations are per-user; run installer or repair under the target Windows user."
+        Finish-ClientInstaller 5
+    }
+
+    Invoke-UserWslSetup -PrerequisiteScript $prerequisiteScript -SandboxInstallerScript $sandboxInstallerScript
 } catch {
     Write-ClientInstallerLog "Unhandled client installer error: $($_.Exception.Message)"
     Finish-ClientInstaller 1

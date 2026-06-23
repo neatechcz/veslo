@@ -172,8 +172,13 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   assert.match(fragment, /After="InstallFiles"/);
   assert.match(
     fragment,
-    /Return="check"/,
-    "MSI must fail on real WSL/VesloSandbox setup failures instead of silently completing a broken runtime install",
+    /Id="VesloProvisionWslSandbox"[\s\S]*?Impersonate="no"/,
+    "MSI WSL setup must run non-impersonated (LocalSystem) so it can enable Windows WSL features silently without a UAC prompt",
+  );
+  assert.match(
+    fragment,
+    /Id="VesloProvisionWslSandbox"[\s\S]*?Return="ignore"/,
+    "MSI WSL setup must not fail the install on a restart-required/incomplete WSL state; the Veslo app finishes setup after the restart",
   );
   assert.match(
     fragment,
@@ -194,12 +199,47 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   assert.match(
     fragment,
     /-AllowRestartContinuationSuccess/,
-    "MSI custom action should allow reboot-required RunOnce continuations without treating them as hard setup failures",
+    "MSI custom action should mask reboot-required helper exits because Windows Installer EXE custom actions treat non-zero returns as failures",
   );
   assert.match(
     fragment,
     /-AllowDeferredRuntimeRepairSuccess/,
     "MSI custom action should avoid generic Windows Installer custom-action failures and defer runtime repair to first-run onboarding",
+  );
+  assert.match(
+    fragment,
+    /-MachineSetupOnly/,
+    "MSI custom action must run the client installer in machine-setup-only mode so it enables WSL silently and leaves per-user distro import to the Veslo app",
+  );
+  assert.doesNotMatch(
+    fragment,
+    /VesloPromptWslRuntimeRestart/,
+    "MSI must not force a Windows restart from a popup/shutdown action; restart is surfaced by the app and standard Windows reboot handling",
+  );
+  assert.doesNotMatch(
+    fragment,
+    /-PromptForRestartIfRequired/,
+    "MSI must not run the client installer in restart-prompt mode; that flow was removed in favor of app-driven restart handling",
+  );
+  assert.match(
+    fragment,
+    /Id="VesloDisableExitDialogLaunchCheckbox"[\s\S]*?Property="WIXUI_EXITDIALOGOPTIONALCHECKBOX"[\s\S]*?Value="0"/,
+    "MSI should disable Tauri's default launch checkbox because Veslo may still need WSL runtime continuation after install",
+  );
+  assert.match(
+    fragment,
+    /Id="VesloClearExitDialogLaunchCheckboxText"[\s\S]*?Property="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"[\s\S]*?Value=""/,
+    "MSI should hide Tauri's default launch checkbox text on the finish dialog",
+  );
+  assert.match(
+    fragment,
+    /Custom Action="VesloDisableExitDialogLaunchCheckbox"\s+Before="ExecuteAction"/,
+    "MSI should disable the finish-dialog launch checkbox before the UI reaches ExitDialog",
+  );
+  assert.match(
+    fragment,
+    /Custom Action="VesloDisableAutoLaunchApp"\s+Before="LaunchApplication"/,
+    "MSI should clear passive auto-launch before Tauri's generated LaunchApplication action can run",
   );
   assert.doesNotMatch(
     fragment,
@@ -208,8 +248,19 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   );
   const prerequisite = readFileSync(prerequisitePath, "utf8");
   assert.match(prerequisite, /\$NativeCommandTimeoutExitCode\s*=\s*1460/);
-  assert.match(prerequisite, /optional-feature-first-20260623/);
+  assert.match(prerequisite, /wsl-app-provisioning-singlereboot-20260620/);
   assert.match(prerequisite, /Script revision:/);
+  assert.match(
+    prerequisite,
+    /SecurityProtocol[\s\S]*?Tls12/,
+    "WSL prerequisite helper must force TLS 1.2 so downloads succeed on a fresh Windows where PowerShell 5.1 may default to TLS 1.0",
+  );
+  assert.match(
+    prerequisite,
+    /function\s+Install-WslAppPackage\b/,
+    "WSL prerequisite helper must stage the WSL app package so a single Windows restart finishes setup instead of needing a second pass",
+  );
+  assert.match(prerequisite, /Add-AppxProvisionedPackage\s+-Online\s+-PackagePath/);
   assert.match(prerequisite, /function\s+Invoke-IsolatedNativeCommand\b/);
   assert.match(prerequisite, /Start-Job\s+-ScriptBlock/);
   assert.match(prerequisite, /Wait-Job\s+-Job\s+\$job\s+-Timeout\s+\$TimeoutSeconds/);
@@ -269,7 +320,7 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   );
   const clientInstaller = readFileSync(clientInstallerPath, "utf8");
   assert.match(clientInstaller, /\$NativeCommandTimeoutExitCode\s*=\s*1460/);
-  assert.match(clientInstaller, /runonce-elevated-exit-guard-20260623/);
+  assert.match(clientInstaller, /system-machine-setup-singlereboot-20260620/);
   assert.match(clientInstaller, /Script revision:/);
   assert.match(clientInstaller, /function\s+Invoke-IsolatedNativeCommand\b/);
   assert.match(clientInstaller, /Start-Job\s+-ScriptBlock/);
@@ -284,6 +335,35 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   );
   assert.match(clientInstaller, /AllowRestartContinuationSuccess/);
   assert.match(clientInstaller, /AllowDeferredRuntimeRepairSuccess/);
+  assert.match(
+    clientInstaller,
+    /\[switch\]\$MachineSetupOnly/,
+    "client runtime installer must support machine-setup-only mode for the elevated MSI LocalSystem flow",
+  );
+  assert.match(
+    clientInstaller,
+    /function\s+Invoke-MachineWslSetup\b/,
+    "client runtime installer must own the silent, no-UAC machine WSL setup path used by the MSI",
+  );
+  assert.match(
+    clientInstaller,
+    /function\s+Invoke-UserWslSetup\b/,
+    "client runtime installer must keep the per-user flow used by the NSIS per-user installer hook",
+  );
+  assert.match(clientInstaller, /Resolve-RestartRequiredMarkerPath/);
+  assert.match(clientInstaller, /runtime-setup-restart-required\.marker/);
+  assert.doesNotMatch(
+    clientInstaller,
+    /Show-RestartPromptIfRequired/,
+    "client runtime installer must not show a restart popup or force shutdown; restart is surfaced by the app",
+  );
+  assert.doesNotMatch(
+    clientInstaller,
+    /shutdown\.exe/,
+    "client runtime installer must not run shutdown.exe to force a Windows restart",
+  );
+  assert.match(clientInstaller, /Set-Content\s+-LiteralPath\s+\$markerPath/);
+  assert.match(clientInstaller, /VESLO_RUNTIME_SETUP_RESULT=restart_required/);
   assert.match(clientInstaller, /function\s+Write-RecentPrerequisiteLogTail\b/);
   assert.match(clientInstaller, /Latest WSL prerequisite helper transcript/);
   assert.match(clientInstaller, /Start-Sleep\s+-Milliseconds\s+500/);
@@ -291,7 +371,7 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   assert.match(clientInstaller, /Get-Content\s+-LiteralPath\s+\$prereqLogPath\s+-ErrorAction\s+Stop/);
   assert.match(
     clientInstaller,
-    /first-run onboarding\/Settings repair will retry[\s\S]*?\$installerExitCode\s*=\s*0/,
+    /-not\s+\$restartContinuation[\s\S]*?first-run onboarding\/Settings repair will retry[\s\S]*?\$installerExitCode\s*=\s*0/,
     "client runtime installer should let MSI complete with a clear log when runtime repair must continue in onboarding",
   );
   assert.match(
@@ -310,7 +390,8 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   assert.match(clientInstaller, /System32/);
   assert.match(
     clientInstaller,
-    /Invoke-ElevatedPowerShellScript\s+-ScriptPath\s+\$prerequisiteScript\s+-ScriptArguments\s+@\("-Install"\)\s+-TimeoutSeconds\s+3600/,
+    /Invoke-ElevatedPowerShellScript\s+-ScriptPath\s+\$[Pp]rerequisiteScript\s+-ScriptArguments\s+@\("-Install"\)\s+-TimeoutSeconds\s+3600/,
+    "client runtime installer per-user flow must still elevate the prerequisite helper once for WSL feature enablement",
   );
   assert.match(
     clientInstaller,
