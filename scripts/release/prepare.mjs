@@ -35,7 +35,8 @@ const run = (cmd, opts = {}) => {
     return "";
   }
   try {
-    return execSync(cmd, { cwd: root, encoding: "utf8", stdio: opts.stdio ?? "pipe" }).trim();
+    const output = execSync(cmd, { cwd: root, encoding: "utf8", stdio: opts.stdio ?? "pipe" });
+    return typeof output === "string" ? output.trim() : "";
   } catch (err) {
     if (opts.allowFail) return "";
     fail(`Command failed: ${cmd}\n${err.stderr || err.message}`);
