@@ -483,7 +483,7 @@ type AdminCredentialActionRepository = {
   drainCredential(credentialId: string): Promise<boolean>;
   rotateCredential(credentialId: string): Promise<boolean>;
   reconnectCredential(credentialId: string): Promise<boolean>;
-  quarantineCredential(credentialId: string, reason: string): Promise<boolean>;
+  quarantineCredential(credentialId: string, reason: string, expectedLastRefreshAt?: string | null): Promise<boolean>;
   deleteCredential(input: { credentialId: string; allowHealthyUnavailable?: boolean }): Promise<DeleteCredentialResult>;
 };
 
@@ -691,8 +691,48 @@ export class MySqlAdminCredentialActionRepository implements AdminCredentialActi
     return this.transitionCredentialState(credentialId, "healthy", "admin_reconnect");
   }
 
-  async quarantineCredential(credentialId: string, reason: string): Promise<boolean> {
-    return this.transitionCredentialState(credentialId, "unhealthy", reason || "credential_quarantined");
+  async quarantineCredential(credentialId: string, reason: string, expectedLastRefreshAt?: string | null): Promise<boolean> {
+    const credential = await this.getCredential(credentialId);
+    if (!credential || credential.state !== "healthy") {
+      return false;
+    }
+
+    if (expectedLastRefreshAt && toIsoString(credential.updated_at) !== expectedLastRefreshAt) {
+      return false;
+    }
+
+    const now = new Date();
+    const filters = [
+      eq(credentialRecordTable.id, credentialId),
+      eq(credentialRecordTable.state, "healthy"),
+    ];
+    if (expectedLastRefreshAt) {
+      filters.push(eq(credentialRecordTable.updated_at, new Date(expectedLastRefreshAt)));
+    }
+
+    const updateResult = await this.db
+      .update(credentialRecordTable)
+      .set({
+        state: "unhealthy",
+        updated_at: now,
+      })
+      .where(and(...filters));
+
+    const affectedRows = getAffectedRows(updateResult);
+    if (affectedRows === 0) {
+      return false;
+    }
+
+    await this.db.insert(credentialHealthEventTable).values({
+      id: `health_${randomUUID()}`,
+      credential_record_id: credentialId,
+      from_state: credential.state,
+      to_state: "unhealthy",
+      reason: reason || "credential_quarantined",
+      created_at: now,
+    });
+
+    return true;
   }
 
   async deleteCredential(input: { credentialId: string; allowHealthyUnavailable?: boolean }): Promise<DeleteCredentialResult> {
@@ -980,6 +1020,18 @@ function toIsoString(value: Date | string | null) {
   }
 
   return new Date(0).toISOString();
+}
+
+function getAffectedRows(value: unknown): number | null {
+  if (Array.isArray(value) && value.length > 0) {
+    return getAffectedRows(value[0]);
+  }
+
+  if (value && typeof value === "object" && "affectedRows" in value) {
+    return Number((value as { affectedRows?: unknown }).affectedRows ?? 0);
+  }
+
+  return null;
 }
 
 class DenAdminClient {
@@ -1303,7 +1355,7 @@ export function createDefaultAdminService(
   const alertEmailRecipients = deps.alertEmailRecipients ?? env.alertEmail.recipients;
   const sendAlertEmail = deps.sendAlertEmail ?? sendAdminAlertEmail;
   const now = deps.now ?? (() => new Date());
-  const codexStatusProvider =
+  const codexStatusProvider: CodexCredentialStatusProvider =
     deps.codexStatusProvider ??
     (getCredentialSecretLookupRepository()
       ? new CachedCodexCredentialStatusProvider({
@@ -1333,6 +1385,7 @@ export function createDefaultAdminService(
   let codexCapacityAlertEmailRunner: (() => Promise<CodexCapacityAlertMonitorResult>) | null = null;
   let credentialAlertEmailRunner: (() => Promise<CredentialAlertEmailMonitorResult>) | null = null;
   const codexAuthUploadSessions = new Map<string, CodexAuthUploadSessionRecord>();
+  const codexAuthValidationByCredentialId = new Map<string, Promise<CodexUsageStatus>>();
   type DenOrganizationProxyMethod =
     | "listOrganizations"
     | "getOrganization"
@@ -1472,6 +1525,15 @@ export function createDefaultAdminService(
           return credential;
         }
 
+        if (isCodexAuthValidationInProgress(credential.id)) {
+          return {
+            ...credential,
+            cachedTokens: readCachedTokens(credential),
+            upstreamStatus: null,
+            eligibility: codexAuthValidationEligibility(),
+          };
+        }
+
         const upstreamStatus = await statusProvider.getStatus({
           credentialId: credential.id,
           credentialName: credential.name,
@@ -1482,6 +1544,7 @@ export function createDefaultAdminService(
             const quarantined = await getCredentialActionRepository().quarantineCredential(
               credential.id,
               "codex_refresh_token_reused",
+              credential.lastRefreshAt,
             );
             if (quarantined) {
               await recordAuditEvent({
@@ -1524,6 +1587,10 @@ export function createDefaultAdminService(
     const eligible: EligibleCodexCredential[] = [];
 
     for (const credential of candidates) {
+      if (isCodexAuthValidationInProgress(credential.id)) {
+        continue;
+      }
+
       const status = await codexStatusProvider.getStatus({
         credentialId: credential.id,
         credentialName: credential.name,
@@ -1575,6 +1642,10 @@ export function createDefaultAdminService(
       }
 
       if (credential.provider !== "codex_oauth") {
+        continue;
+      }
+
+      if (isCodexAuthValidationInProgress(credential.id)) {
         continue;
       }
 
@@ -1692,6 +1763,83 @@ export function createDefaultAdminService(
     throw new HttpError(result.reason, status);
   }
 
+  function isCodexAuthValidationInProgress(credentialId: string): boolean {
+    return codexAuthValidationByCredentialId.has(credentialId);
+  }
+
+  function codexAuthValidationEligibility(): AdminCredentialEligibility {
+    return {
+      state: "unavailable",
+      reason: "Codex auth upload is validating.",
+      resetAt: null,
+    };
+  }
+
+  async function validateCodexAuthBeforeReconnect(input: {
+    credentialId: string;
+    credentialName: string;
+  }): Promise<CodexUsageStatus> {
+    if (codexAuthValidationByCredentialId.has(input.credentialId)) {
+      throw new HttpError("codex_auth_upload_validation_in_progress", 409);
+    }
+
+    const validation = (async () => {
+      const status = await (codexStatusProvider.refreshStatus
+        ? codexStatusProvider.refreshStatus(input)
+        : codexStatusProvider.getStatus(input));
+
+      if (isCodexRefreshTokenReuseStatus(status)) {
+        throw new HttpError("codex_auth_upload_refresh_token_reused", 409);
+      }
+
+      if (!status.available) {
+        throw new HttpError("codex_auth_upload_validation_failed", 409);
+      }
+
+      return status;
+    })();
+    codexAuthValidationByCredentialId.set(input.credentialId, validation);
+
+    try {
+      return await validation;
+    } finally {
+      if (codexAuthValidationByCredentialId.get(input.credentialId) === validation) {
+        codexAuthValidationByCredentialId.delete(input.credentialId);
+      }
+    }
+  }
+
+  async function replaceCodexAuthJsonAndValidate(input: {
+    credentialId: string;
+    credentialName: string;
+    secretRef: string;
+    authJson: string;
+  }): Promise<void> {
+    const secretStore = getSecretStore();
+    const previousSecret = await secretStore.get(input.secretRef).catch(() => null);
+    await secretStore.replace(input.secretRef, {
+      kind: "codex_auth_json",
+      authJson: input.authJson,
+    });
+
+    try {
+      await validateCodexAuthBeforeReconnect({
+        credentialId: input.credentialId,
+        credentialName: input.credentialName,
+      });
+    } catch (error) {
+      if (previousSecret) {
+        await secretStore.replace(input.secretRef, previousSecret).catch((rollbackError) => {
+          console.error("admin_codex_auth_upload_rollback_failed", {
+            credentialId: input.credentialId,
+            error: rollbackError,
+          });
+        });
+      }
+      throw error;
+    }
+  }
+
   async function toCodexCapacityCredentials(
     credentials: CredentialRecord[],
     statusProvider: CodexCredentialStatusProvider,
@@ -1703,6 +1851,8 @@ export function createDefaultAdminService(
           let upstreamStatus: CodexUsageStatus | null = null;
           if (Object.hasOwn(credential, "upstreamStatus")) {
             upstreamStatus = credential.upstreamStatus ?? null;
+          } else if (isCodexAuthValidationInProgress(credential.id)) {
+            upstreamStatus = null;
           } else {
             upstreamStatus = await statusProvider.getStatus({
               credentialId: credential.id,
@@ -2229,8 +2379,10 @@ export function createDefaultAdminService(
       }
       const { visible, stored } = await getCodexCredentialSecretRecordOrThrow(uploadSession.credentialId);
 
-      await getSecretStore().replace(stored.secretRef, {
-        kind: "codex_auth_json",
+      await replaceCodexAuthJsonAndValidate({
+        credentialId: uploadSession.credentialId,
+        credentialName: visible.name,
+        secretRef: stored.secretRef,
         authJson,
       });
       const updated = await getCredentialActionRepository().reconnectCredential(uploadSession.credentialId);
@@ -2315,8 +2467,10 @@ export function createDefaultAdminService(
         throw new HttpError("credential_reconnect_unsupported_provider", 400);
       }
 
-      await getSecretStore().replace(storedCredential.secretRef, {
-        kind: "codex_auth_json",
+      await replaceCodexAuthJsonAndValidate({
+        credentialId,
+        credentialName: credential.name,
+        secretRef: storedCredential.secretRef,
         authJson,
       });
       const updated = await getCredentialActionRepository().reconnectCredential(credentialId);

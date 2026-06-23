@@ -672,6 +672,7 @@ test("createDefaultAdminService soft-deletes an unusable credential and tombston
 test("createDefaultAdminService reconnects a Codex credential in place", async () => {
   const secretReplacements: unknown[] = [];
   const reconnectCalls: string[] = [];
+  const statusProbeCalls: string[] = [];
   const auditCalls: Array<{ action: string; entityId: string; result: string }> = [];
   const refreshedCredential = {
     ...createCredential("cred_codex_1", "healthy", { provider: "codex_oauth", activeLeases: 0 }),
@@ -710,6 +711,22 @@ test("createDefaultAdminService reconnects a Codex credential in place", async (
         return {
           provider: "codex_oauth",
           secretRef: "secret_codex_1",
+        };
+      },
+    },
+    codexStatusProvider: {
+      async getStatus() {
+        throw new Error("unexpected_cached_status_probe");
+      },
+      async refreshStatus(input: { credentialId: string }) {
+        assert.equal(secretReplacements.length, 1);
+        assert.equal(reconnectCalls.length, 0);
+        statusProbeCalls.push(input.credentialId);
+        return {
+          available: true,
+          source: "codex_exec_no_rate_limits",
+          label: "Codex OK, limits unknown",
+          checkedAt: "2026-06-17T08:00:01.000Z",
         };
       },
     },
@@ -762,6 +779,7 @@ test("createDefaultAdminService reconnects a Codex credential in place", async (
       },
     },
   ]);
+  assert.deepEqual(statusProbeCalls, ["cred_codex_1"]);
   assert.deepEqual(reconnectCalls, ["cred_codex_1"]);
   assert.deepEqual(auditCalls, [
     {
@@ -775,6 +793,7 @@ test("createDefaultAdminService reconnects a Codex credential in place", async (
 test("createDefaultAdminService uploads Codex auth through a one-time local helper session", async () => {
   const secretReplacements: unknown[] = [];
   const reconnectCalls: string[] = [];
+  const statusProbeCalls: string[] = [];
   const auditCalls: Array<{ action: string; entityId: string; result: string }> = [];
   const refreshedCredential = {
     ...createCredential("cred_codex_1", "healthy", { provider: "codex_oauth", activeLeases: 0 }),
@@ -818,6 +837,22 @@ test("createDefaultAdminService uploads Codex auth through a one-time local help
           provider: "codex_oauth",
           secretRef: "secret_codex_1",
           name: "Václav Codex",
+        };
+      },
+    },
+    codexStatusProvider: {
+      async getStatus() {
+        throw new Error("unexpected_cached_status_probe");
+      },
+      async refreshStatus(input: { credentialId: string }) {
+        assert.equal(secretReplacements.length, 1);
+        assert.equal(reconnectCalls.length, 0);
+        statusProbeCalls.push(input.credentialId);
+        return {
+          available: true,
+          source: "codex_exec_no_rate_limits",
+          label: "Codex OK, limits unknown",
+          checkedAt: "2026-06-17T08:00:01.000Z",
         };
       },
     },
@@ -885,6 +920,7 @@ test("createDefaultAdminService uploads Codex auth through a one-time local help
       },
     },
   ]);
+  assert.deepEqual(statusProbeCalls, ["cred_codex_1"]);
   assert.deepEqual(reconnectCalls, ["cred_codex_1"]);
   assert.deepEqual(auditCalls, [
     {
@@ -904,6 +940,263 @@ test("createDefaultAdminService uploads Codex auth through a one-time local help
     }),
     /codex_auth_upload_session_not_found/,
   );
+});
+
+test("createDefaultAdminService rejects Codex auth uploads that still reuse the refresh token", async () => {
+  const secretReplacements: unknown[] = [];
+  const reconnectCalls: string[] = [];
+  const auditCalls: Array<{ action: string; entityId: string; result: string }> = [];
+  let probeResult: "reused" | "healthy" = "reused";
+  const refreshedCredential = {
+    ...createCredential("cred_codex_1", "unhealthy", { provider: "codex_oauth", activeLeases: 0 }),
+    name: "Václav Codex",
+    alertCount: 0,
+    linkedAlertIds: [],
+  };
+  const service = createDefaultAdminService("http://den.example.test", {
+    denClient: createUnusedDenClient(),
+    credentialReadRepository: {
+      async listAdminCredentials() {
+        return [refreshedCredential];
+      },
+    },
+    credentialActionRepository: {
+      async renameCredential() {
+        throw new Error("unused");
+      },
+      async revokeCredential() {
+        throw new Error("unused");
+      },
+      async drainCredential() {
+        throw new Error("unused");
+      },
+      async rotateCredential() {
+        throw new Error("unused");
+      },
+      async deleteCredential() {
+        throw new Error("unused");
+      },
+      async reconnectCredential(credentialId: string) {
+        reconnectCalls.push(credentialId);
+        return true;
+      },
+    } as any,
+    credentialSecretLookupRepository: {
+      async getCredentialRecordById() {
+        return {
+          provider: "codex_oauth",
+          secretRef: "secret_codex_1",
+          name: "Václav Codex",
+        };
+      },
+    },
+    codexStatusProvider: {
+      async getStatus() {
+        throw new Error("unexpected_cached_status_probe");
+      },
+      async refreshStatus() {
+        if (probeResult === "reused") {
+          return {
+            available: false,
+            source: "unavailable",
+            label: "Codex limits unavailable",
+            detail: "Your access token could not be refreshed because your refresh token was already used.",
+            checkedAt: "2026-06-17T08:00:01.000Z",
+          };
+        }
+
+        return {
+          available: true,
+          source: "codex_exec_no_rate_limits",
+          label: "Codex OK, limits unknown",
+          checkedAt: "2026-06-17T08:00:02.000Z",
+        };
+      },
+    },
+    secretStore: {
+      async put() {
+        throw new Error("unused");
+      },
+      async get() {
+        throw new Error("unused");
+      },
+      async replace(secretRef: string, secret: unknown) {
+        secretReplacements.push({ secretRef, secret });
+      },
+    },
+    auditRepository: {
+      async recordEvent(input) {
+        auditCalls.push({
+          action: input.action,
+          entityId: input.entityId,
+          result: input.result,
+        });
+      },
+      async listEvents() {
+        return [];
+      },
+    },
+    alertRepository: {
+      async listAlerts() {
+        return [];
+      },
+    },
+    now: () => new Date("2026-06-17T08:00:00.000Z"),
+  } as any);
+  const sessionPayload = await (service as any).createCodexAuthUploadSession(
+    "admin-token",
+    "cred_codex_1",
+    { origin: "https://ai.veslo.work" },
+    "admin@example.test",
+  );
+
+  await assert.rejects(
+    () => (service as any).uploadCodexAuth(sessionPayload.upload.token, {
+      authJson: createCodexAuthJson("reused-refresh-token"),
+    }),
+    /codex_auth_upload_refresh_token_reused/,
+  );
+
+  assert.deepEqual(reconnectCalls, []);
+  assert.equal(secretReplacements.length, 1);
+  assert.deepEqual(auditCalls, [
+    {
+      action: "credential.codex_auth_upload_session.create",
+      entityId: "cred_codex_1",
+      result: "ok",
+    },
+  ]);
+
+  probeResult = "healthy";
+  const retryResult = await (service as any).uploadCodexAuth(sessionPayload.upload.token, {
+    authJson: createCodexAuthJson("fresh-refresh-token"),
+  });
+
+  assert.equal(retryResult.ok, true);
+  assert.deepEqual(reconnectCalls, ["cred_codex_1"]);
+});
+
+test("createDefaultAdminService skips admin status probes while Codex auth upload validation is running", async () => {
+  let releaseValidation: (() => void) | undefined;
+  let validationStarted: (() => void) | undefined;
+  const validationStartedPromise = new Promise<void>((resolve) => {
+    validationStarted = resolve;
+  });
+  const validationGate = new Promise<void>((resolve) => {
+    releaseValidation = resolve;
+  });
+  let getStatusCalls = 0;
+  const reconnectCalls: string[] = [];
+  const service = createDefaultAdminService("http://den.example.test", {
+    denClient: createUnusedDenClient(),
+    credentialReadRepository: {
+      async listAdminCredentials() {
+        return [
+          {
+            ...createCredential("cred_codex_1", "healthy", { provider: "codex_oauth", activeLeases: 0 }),
+            name: "Václav Codex",
+            alertCount: 0,
+            linkedAlertIds: [],
+          },
+        ];
+      },
+    },
+    credentialActionRepository: {
+      async renameCredential() {
+        throw new Error("unused");
+      },
+      async revokeCredential() {
+        throw new Error("unused");
+      },
+      async drainCredential() {
+        throw new Error("unused");
+      },
+      async rotateCredential() {
+        throw new Error("unused");
+      },
+      async deleteCredential() {
+        throw new Error("unused");
+      },
+      async quarantineCredential() {
+        throw new Error("unexpected_quarantine");
+      },
+      async reconnectCredential(credentialId: string) {
+        reconnectCalls.push(credentialId);
+        return true;
+      },
+    } as any,
+    credentialSecretLookupRepository: {
+      async getCredentialRecordById() {
+        return {
+          provider: "codex_oauth",
+          secretRef: "secret_codex_1",
+          name: "Václav Codex",
+        };
+      },
+    },
+    codexStatusProvider: {
+      async getStatus() {
+        getStatusCalls += 1;
+        throw new Error("admin_status_probe_raced_codex_auth_upload");
+      },
+      async refreshStatus() {
+        validationStarted?.();
+        await validationGate;
+        return {
+          available: true,
+          source: "codex_exec_no_rate_limits",
+          label: "Codex OK, limits unknown",
+          checkedAt: "2026-06-17T08:00:02.000Z",
+        };
+      },
+    },
+    secretStore: {
+      async put() {
+        throw new Error("unused");
+      },
+      async get() {
+        throw new Error("unused");
+      },
+      async replace() {
+        return;
+      },
+    },
+    auditRepository: {
+      async recordEvent() {
+        return;
+      },
+      async listEvents() {
+        return [];
+      },
+    },
+    alertRepository: {
+      async listAlerts() {
+        return [];
+      },
+    },
+    now: () => new Date("2026-06-17T08:00:00.000Z"),
+  } as any);
+  const sessionPayload = await (service as any).createCodexAuthUploadSession(
+    "admin-token",
+    "cred_codex_1",
+    { origin: "https://ai.veslo.work" },
+    "admin@example.test",
+  );
+
+  const uploadPromise = (service as any).uploadCodexAuth(sessionPayload.upload.token, {
+    authJson: createCodexAuthJson("fresh-refresh-token"),
+  });
+  await validationStartedPromise;
+
+  const listed = await service.listCredentials("admin-token");
+  assert.equal(getStatusCalls, 0);
+  assert.equal(listed.credentials[0]?.upstreamStatus, null);
+  assert.equal(listed.credentials[0]?.eligibility?.state, "unavailable");
+  assert.equal(listed.credentials[0]?.eligibility?.reason, "Codex auth upload is validating.");
+
+  releaseValidation?.();
+  await uploadPromise;
+  assert.deepEqual(reconnectCalls, ["cred_codex_1"]);
 });
 
 test("createDefaultAdminService creates a new Codex credential from a one-time local helper session", async () => {
@@ -1046,7 +1339,7 @@ test("createDefaultAdminService creates a new Codex credential from a one-time l
 });
 
 test("createDefaultAdminService quarantines Codex credentials with reused refresh tokens", async () => {
-  const quarantineCalls: Array<{ credentialId: string; reason: string }> = [];
+  const quarantineCalls: Array<{ credentialId: string; reason: string; expectedLastRefreshAt?: string | null }> = [];
   const auditCalls: Array<{ action: string; entityId: string; result: string }> = [];
   const service = createDefaultAdminService("http://den.example.test", {
     denClient: createUnusedDenClient(),
@@ -1074,8 +1367,8 @@ test("createDefaultAdminService quarantines Codex credentials with reused refres
       async deleteCredential() {
         throw new Error("unused");
       },
-      async quarantineCredential(credentialId: string, reason: string) {
-        quarantineCalls.push({ credentialId, reason });
+      async quarantineCredential(credentialId: string, reason: string, expectedLastRefreshAt?: string | null) {
+        quarantineCalls.push({ credentialId, reason, expectedLastRefreshAt });
         return true;
       },
     } as any,
@@ -1116,6 +1409,7 @@ test("createDefaultAdminService quarantines Codex credentials with reused refres
     {
       credentialId: "cred_codex_michal",
       reason: "codex_refresh_token_reused",
+      expectedLastRefreshAt: "2026-04-03T10:00:00.000Z",
     },
   ]);
   assert.deepEqual(auditCalls, [
@@ -1125,6 +1419,177 @@ test("createDefaultAdminService quarantines Codex credentials with reused refres
       result: "warning",
     },
   ]);
+});
+
+test("credential quarantine ignores already-unhealthy credentials", async () => {
+  const updates: Array<Record<string, unknown>> = [];
+  const healthEvents: unknown[] = [];
+  const db = {
+    select() {
+      return {
+        from() {
+          return {
+            where() {
+              return {
+                async limit() {
+                  return [
+                    {
+                      id: "cred_codex_1",
+                      state: "unhealthy",
+                      updated_at: new Date("2026-06-17T08:00:00.000Z"),
+                    },
+                  ];
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+    update() {
+      return {
+        set(values: Record<string, unknown>) {
+          updates.push(values);
+          return {
+            async where() {
+              return;
+            },
+          };
+        },
+      };
+    },
+    insert() {
+      return {
+        async values(value: unknown) {
+          healthEvents.push(value);
+        },
+      };
+    },
+  };
+  const repository = new MySqlAdminCredentialActionRepository(db as never);
+
+  const quarantined = await repository.quarantineCredential("cred_codex_1", "codex_refresh_token_reused");
+
+  assert.equal(quarantined, false);
+  assert.deepEqual(updates, []);
+  assert.deepEqual(healthEvents, []);
+});
+
+test("credential quarantine ignores stale refresh-token-reuse probes after reconnect", async () => {
+  const updates: Array<Record<string, unknown>> = [];
+  const healthEvents: unknown[] = [];
+  const db = {
+    select() {
+      return {
+        from() {
+          return {
+            where() {
+              return {
+                async limit() {
+                  return [
+                    {
+                      id: "cred_codex_1",
+                      state: "healthy",
+                      updated_at: new Date("2026-06-17T08:05:00.000Z"),
+                    },
+                  ];
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+    update() {
+      return {
+        set(values: Record<string, unknown>) {
+          updates.push(values);
+          return {
+            async where() {
+              return;
+            },
+          };
+        },
+      };
+    },
+    insert() {
+      return {
+        async values(value: unknown) {
+          healthEvents.push(value);
+        },
+      };
+    },
+  };
+  const repository = new MySqlAdminCredentialActionRepository(db as never);
+
+  const quarantined = await repository.quarantineCredential(
+    "cred_codex_1",
+    "codex_refresh_token_reused",
+    "2026-06-17T08:00:00.000Z",
+  );
+
+  assert.equal(quarantined, false);
+  assert.deepEqual(updates, []);
+  assert.deepEqual(healthEvents, []);
+});
+
+test("credential quarantine ignores compare-and-set update misses", async () => {
+  const updates: Array<Record<string, unknown>> = [];
+  const healthEvents: unknown[] = [];
+  const db = {
+    select() {
+      return {
+        from() {
+          return {
+            where() {
+              return {
+                async limit() {
+                  return [
+                    {
+                      id: "cred_codex_1",
+                      state: "healthy",
+                      updated_at: new Date("2026-06-17T08:00:00.000Z"),
+                    },
+                  ];
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+    update() {
+      return {
+        set(values: Record<string, unknown>) {
+          updates.push(values);
+          return {
+            async where() {
+              return { affectedRows: 0 };
+            },
+          };
+        },
+      };
+    },
+    insert() {
+      return {
+        async values(value: unknown) {
+          healthEvents.push(value);
+        },
+      };
+    },
+  };
+  const repository = new MySqlAdminCredentialActionRepository(db as never);
+
+  const quarantined = await repository.quarantineCredential(
+    "cred_codex_1",
+    "codex_refresh_token_reused",
+    "2026-06-17T08:00:00.000Z",
+  );
+
+  assert.equal(quarantined, false);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0]?.state, "unhealthy");
+  assert.deepEqual(healthEvents, []);
 });
 
 test("credential delete action allows revoked credentials with active leases", async () => {

@@ -41,6 +41,7 @@ export type CodexCredentialStatusInput = {
 
 export interface CodexCredentialStatusProvider {
   getStatus(input: CodexCredentialStatusInput): Promise<CodexUsageStatus>;
+  refreshStatus?(input: CodexCredentialStatusInput): Promise<CodexUsageStatus>;
 }
 
 type CodexRateLimitWindowSnapshot = {
@@ -101,6 +102,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
   private readonly now: () => Date;
   private readonly cache = new Map<string, CachedStatusEntry>();
   private readonly inFlight = new Map<string, Promise<CodexUsageStatus>>();
+  private readonly refreshInFlight = new Map<string, Promise<CodexUsageStatus>>();
 
   constructor(deps: CachedCodexCredentialStatusProviderDeps) {
     this.loadCredentialAuthJson = deps.loadCredentialAuthJson;
@@ -131,44 +133,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
       return current;
     }
 
-    const refresh = (async () => {
-      let status = unavailableStatus("Credential is missing Codex auth.json.");
-      try {
-        const authJson = await this.loadCredentialAuthJson(input.credentialId);
-        if (!authJson?.trim()) {
-          status = unavailableStatus("Credential is missing Codex auth.json.");
-        } else {
-          const result = await this.probe({
-            credentialId: input.credentialId,
-            credentialName: input.credentialName,
-            authJson,
-          });
-          await this.persistUpdatedAuthJson(input.credentialId, authJson, result.updatedAuthJson);
-          const unsupportedModels = extractUnsupportedCodexModels(result.detail);
-          const usageLimitStatus = result.rateLimits
-            ? null
-            : codexUsageStatusFromUsageLimitFailure(result.detail, result.checkedAt);
-          status = result.rateLimits
-            ? codexUsageStatusFromRateLimits(result.rateLimits, result.checkedAt, result.detail)
-            : usageLimitStatus
-              ? usageLimitStatus
-            : result.ok === true || unsupportedModels.length > 0
-              ? codexUsageStatusUnknownLimits(result.checkedAt, result.detail, unsupportedModels)
-              : unavailableStatus(result.detail || "Codex probe did not return rate limits.", result.checkedAt);
-        }
-      } catch (error) {
-        status = unavailableStatus(
-          error instanceof Error && error.message ? error.message : "Codex probe failed.",
-          this.now().toISOString(),
-        );
-      }
-
-      this.cache.set(input.credentialId, {
-        expiresAt: nowMs + this.ttlMs,
-        status,
-      });
-      return status;
-    })();
+    const refresh = this.loadAndProbeStatus(input, nowMs);
     this.inFlight.set(input.credentialId, refresh);
 
     try {
@@ -176,6 +141,61 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
     } finally {
       this.inFlight.delete(input.credentialId);
     }
+  }
+
+  async refreshStatus(input: CodexCredentialStatusInput): Promise<CodexUsageStatus> {
+    const current = this.refreshInFlight.get(input.credentialId);
+    if (current) {
+      return current;
+    }
+
+    const refresh = this.loadAndProbeStatus(input, this.now().getTime());
+    this.refreshInFlight.set(input.credentialId, refresh);
+
+    try {
+      return await refresh;
+    } finally {
+      this.refreshInFlight.delete(input.credentialId);
+    }
+  }
+
+  private async loadAndProbeStatus(input: CodexCredentialStatusInput, nowMs: number): Promise<CodexUsageStatus> {
+    let status = unavailableStatus("Credential is missing Codex auth.json.");
+    try {
+      const authJson = await this.loadCredentialAuthJson(input.credentialId);
+      if (!authJson?.trim()) {
+        status = unavailableStatus("Credential is missing Codex auth.json.");
+      } else {
+        const result = await this.probe({
+          credentialId: input.credentialId,
+          credentialName: input.credentialName,
+          authJson,
+        });
+        await this.persistUpdatedAuthJson(input.credentialId, authJson, result.updatedAuthJson);
+        const unsupportedModels = extractUnsupportedCodexModels(result.detail);
+        const usageLimitStatus = result.rateLimits
+          ? null
+          : codexUsageStatusFromUsageLimitFailure(result.detail, result.checkedAt);
+        status = result.rateLimits
+          ? codexUsageStatusFromRateLimits(result.rateLimits, result.checkedAt, result.detail)
+          : usageLimitStatus
+            ? usageLimitStatus
+            : result.ok === true || unsupportedModels.length > 0
+              ? codexUsageStatusUnknownLimits(result.checkedAt, result.detail, unsupportedModels)
+              : unavailableStatus(result.detail || "Codex probe did not return rate limits.", result.checkedAt);
+      }
+    } catch (error) {
+      status = unavailableStatus(
+        error instanceof Error && error.message ? error.message : "Codex probe failed.",
+        this.now().toISOString(),
+      );
+    }
+
+    this.cache.set(input.credentialId, {
+      expiresAt: nowMs + this.ttlMs,
+      status,
+    });
+    return status;
   }
 
   private async persistUpdatedAuthJson(

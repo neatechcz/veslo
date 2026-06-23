@@ -424,6 +424,48 @@ test("CachedCodexCredentialStatusProvider shares concurrent probes for the same 
   assert.deepEqual(second, first);
 });
 
+test("CachedCodexCredentialStatusProvider refreshStatus bypasses cached probe results", async () => {
+  let probeCalls = 0;
+  const provider = new CachedCodexCredentialStatusProvider({
+    ttlMs: 5 * 60 * 1000,
+    now: () => new Date("2026-04-26T12:00:00.000Z"),
+    loadCredentialAuthJson: async () => JSON.stringify({ auth_mode: "chatgpt", tokens: { refresh_token: "rt", account_id: "acct" } }),
+    probe: async () => {
+      probeCalls += 1;
+      return {
+        checkedAt: "2026-04-26T12:00:00.000Z",
+        rateLimits: {
+          primary: {
+            used_percent: probeCalls,
+            window_minutes: 300,
+            resets_at: 1777215600,
+          },
+          secondary: null,
+          plan_type: "plus",
+        },
+      };
+    },
+  });
+
+  const cached = await provider.getStatus({
+    credentialId: "cred_codex_1",
+    credentialName: "Credential cred_codex_1",
+  });
+  const refreshed = await provider.refreshStatus({
+    credentialId: "cred_codex_1",
+    credentialName: "Credential cred_codex_1",
+  });
+  const cachedAfterRefresh = await provider.getStatus({
+    credentialId: "cred_codex_1",
+    credentialName: "Credential cred_codex_1",
+  });
+
+  assert.equal(probeCalls, 2);
+  assert.equal(cached.limits?.fiveHour?.usedPercent, 1);
+  assert.equal(refreshed.limits?.fiveHour?.usedPercent, 2);
+  assert.equal(cachedAfterRefresh.limits?.fiveHour?.usedPercent, 2);
+});
+
 test("CachedCodexCredentialStatusProvider persists refreshed Codex auth JSON from probes", async () => {
   const savedAuthJson: Array<{ credentialId: string; authJson: string }> = [];
   const provider = new CachedCodexCredentialStatusProvider({
