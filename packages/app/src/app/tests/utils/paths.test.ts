@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   directoryQueryPathModeFromSandbox,
   directoryQueryPathVariants,
+  isWslMappableWindowsWorkspacePath,
   normalizeDirectoryPath,
   normalizeDirectoryQueryPath,
   sessionDirectoryMatchesRoot,
@@ -22,6 +23,14 @@ test("normalizeDirectoryQueryPath strips Windows extended-length prefixes", () =
     normalizeDirectoryQueryPath("//?/c:/users/alice/appdata/local/veslo/test-repo/test-repo2"),
     WINDOWS_WORKSPACE_PATH_LOWER,
   );
+});
+
+test("isWslMappableWindowsWorkspacePath accepts only local drive-letter paths", () => {
+  assert.equal(isWslMappableWindowsWorkspacePath("C:\\Users\\alice\\project"), true);
+  assert.equal(isWslMappableWindowsWorkspacePath("\\\\?\\C:\\Users\\alice\\project"), true);
+  assert.equal(isWslMappableWindowsWorkspacePath("\\\\server\\share\\project"), false);
+  assert.equal(isWslMappableWindowsWorkspacePath("\\\\?\\UNC\\server\\share\\project"), false);
+  assert.equal(isWslMappableWindowsWorkspacePath("/mnt/c/Users/alice/project"), false);
 });
 
 const withWindowsPlatform = async (run: () => void | Promise<void>) => {

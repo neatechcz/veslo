@@ -82,6 +82,11 @@ function windowsDirectoryPathToWslMountPath(input: string) {
   return rest ? `/mnt/${drive}/${rest}` : `/mnt/${drive}`;
 }
 
+export function isWslMappableWindowsWorkspacePath(input: string | null | undefined) {
+  const normalized = normalizeDirectoryQueryPath(input);
+  return /^[A-Za-z]:(?:\/|$)/.test(normalized);
+}
+
 function isWorkspaceAliasPath(input: string) {
   const normalized = normalizeDirectoryQueryPath(input);
   return normalized === "/workspace" || normalized === "workspace";

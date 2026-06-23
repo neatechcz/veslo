@@ -848,6 +848,11 @@ export type ExecResult = {
   stderr: string;
 };
 
+export type DesktopSandboxEnvironment = {
+  backend: string;
+  enabled: boolean;
+};
+
 export type ScheduledJobRun = {
   prompt?: string;
   command?: string;
@@ -906,6 +911,10 @@ export async function wslPrerequisitesRepair(options?: {
   return invoke<ExecResult>("wsl_prerequisites_repair", {
     checkOnly: options?.checkOnly ?? false,
   });
+}
+
+export async function desktopSandboxEnvironment(): Promise<DesktopSandboxEnvironment> {
+  return invoke<DesktopSandboxEnvironment>("desktop_sandbox_environment");
 }
 
 export async function opkgInstall(projectDir: string, pkg: string): Promise<ExecResult> {

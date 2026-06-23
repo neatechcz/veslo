@@ -294,7 +294,7 @@ fn resolve_server_sandbox_backend_from_env(
     default_server_sandbox_backend_for_platform().to_string()
 }
 
-fn resolve_server_sandbox_backend() -> String {
+pub fn resolve_server_sandbox_backend() -> String {
     resolve_server_sandbox_backend_from_env(
         env::var(VESLO_SANDBOX_BACKEND_ENV).ok().as_deref(),
         env::var(VESLO_DISABLE_SANDBOX_ENV).ok().as_deref(),

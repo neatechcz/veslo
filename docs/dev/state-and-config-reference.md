@@ -149,7 +149,11 @@ Release desktop builds must use bundled sidecars for `veslo-server`, `veslo-orch
 
 On Windows, OpenCode runs inside the WSL2/bwrap backend. Host workspace paths such as `C:\Users\...\repo`, WSL mount paths such as `/mnt/c/Users/.../repo`, and the sandbox alias `/workspace` can all describe the same active workspace. Session list filters, sidebar scoping, and conversation binding lookups must treat these forms as equivalent. This equivalence does not solve OpenCode data-home location by itself: a DB stored in WSL guest home still needs an explicit host-readable path or a server-side content tunnel.
 
+The packaged Windows runtime defaults to the managed `VesloSandbox` distro. Personal WSL2 distros are not selected automatically when the managed distro is missing. `VESLO_WSL_DISTRO` can point at an explicitly provisioned alternative, and `VESLO_WSL_ALLOW_PERSONAL_DISTRO_FALLBACK=1` re-enables fallback selection for diagnostics only.
+
 The local server reports the active path mode through `/capabilities.sandbox`. Desktop-launched `veslo-server` processes must receive `VESLO_SANDBOX_BACKEND` from the Tauri shell so the app can choose sandbox path aliases before host paths when WSL2 is active. `VESLO_DISABLE_SANDBOX=1` remains the hard opt-out and forces `backend=none`.
+
+Windows local workspace start preflights WSL prerequisites, the managed `VesloSandbox` runtime, and workspace path mountability only when the desktop shell resolves the effective sandbox backend to `windows-wsl2`.
 
 ## Desktop Debug Log Forwarder
 

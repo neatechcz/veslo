@@ -3,6 +3,8 @@ import { homeDir } from "@tauri-apps/api/path";
 import type { WorkspacePreset } from "../types";
 import {
   addOpencodeCacheHint,
+  isWindowsPlatform,
+  isWslMappableWindowsWorkspacePath,
   isPrivateWorkspacePathForRoot,
   isTauriRuntime,
   normalizeDirectoryPath,
@@ -141,6 +143,12 @@ export function createWorkspaceLocalWorkspaces(deps: WorkspaceLocalWorkspacesDep
         deps.setError(t("app.error.choose_folder", currentLocale()));
         return null;
       }
+      if (isWindowsPlatform() && isWslMappableWindowsWorkspacePath(resolvedFolder) === false) {
+        deps.setError(
+          "This workspace path cannot be mounted into the Windows WSL2 sandbox. Choose a folder on a local drive such as C:\\Users\\...; network and UNC paths are not supported for local sandboxed runs.",
+        );
+        return null;
+      }
 
       const explicitName = flowOptions?.workspaceName?.trim() ?? "";
       const name =
@@ -177,7 +185,7 @@ export function createWorkspaceLocalWorkspaces(deps: WorkspaceLocalWorkspacesDep
 
   async function createWorkspaceFlow(preset: WorkspacePreset, folder: string | null) {
     const created = await createLocalWorkspace(preset, folder, {
-      markOnboardingComplete: true,
+      markOnboardingComplete: false,
       navigateToDashboard: false,
       closeModal: true,
     });
@@ -186,9 +194,9 @@ export function createWorkspaceLocalWorkspaces(deps: WorkspaceLocalWorkspacesDep
     if (!opened) {
       const message = "Workspace was created, but the local runtime did not start.";
       deps.updateWorkspaceConnectionState(created.id, { status: "error", message });
-      deps.setError(message);
       return;
     }
+    deps.markOnboardingComplete();
   }
 
   async function createScratchWorkspace() {

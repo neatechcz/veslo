@@ -96,14 +96,17 @@ The runtime selector currently uses this order:
 
 1. `VESLO_WSL_DISTRO`, when explicitly set.
 2. Managed `VesloSandbox`, when installed.
-3. Existing WSL2 distro fallback for development/support only.
+3. Existing WSL2 distro fallback only when `VESLO_WSL_ALLOW_PERSONAL_DISTRO_FALLBACK=1`
+   is explicitly set for diagnostics.
 
-The fallback exists to keep development unblocked while the onboarding
-provisioner is being built. The product default remains `VesloSandbox`; a
-normal user should not be asked to prepare a personal Ubuntu distro by hand.
+The product default is `VesloSandbox`. A normal user should not be asked to
+prepare a personal Ubuntu distro by hand, and packaged runtime startup must not
+silently select a user's personal WSL distro just because the managed distro is
+missing.
 
 Do not treat fallback to a personal distro as product behavior. It is only a
-development/support bridge; `VESLO_WSL_DISTRO` is the explicit escape hatch.
+development/support bridge; `VESLO_WSL_DISTRO` is the explicit escape hatch for
+an intentionally provisioned alternative distro.
 
 ## Current Implementation State
 
