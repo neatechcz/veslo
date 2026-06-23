@@ -75,6 +75,7 @@ import {
 } from "./soul-memory.js";
 import {
   materializeEffectiveSoul,
+  readSoulMaterializationManifest,
   readSoulMaterializationStatus,
   type SoulMaterializationResult,
 } from "./soul-materializer.js";
@@ -3952,9 +3953,58 @@ async function readCachedSoulForMaterialization(
   dataDir: string,
   scope: SoulScope,
   ownerId: string | undefined,
+  workspaceRoot?: string,
 ): Promise<SoulDocument | null> {
-  if (!ownerId) return null;
-  return readCachedSoulDocument({ dataDir, scope, ownerId });
+  const cached = ownerId ? await readCachedSoulDocument({ dataDir, scope, ownerId }) : null;
+  if (cached) return cached;
+  const existing = workspaceRoot
+    ? await readMaterializedSoulDocumentForScope(workspaceRoot, scope)
+    : null;
+  if (!existing) return null;
+  if (ownerId && existing.ownerId !== ownerId) return null;
+  return existing;
+}
+
+async function readMaterializedSoulDocumentForScope(
+  workspaceRoot: string,
+  scope: SoulScope,
+): Promise<SoulDocument | null> {
+  let manifest: Awaited<ReturnType<typeof readSoulMaterializationManifest>>;
+  try {
+    manifest = await readSoulMaterializationManifest(workspaceRoot);
+  } catch {
+    return null;
+  }
+  const entry = manifest?.files.find((file) => file.scope === scope);
+  if (!entry?.ownerId) return null;
+
+  let content = "";
+  try {
+    content = await readFile(join(workspaceRoot, entry.path), "utf8");
+  } catch {
+    return null;
+  }
+
+  const versionId = entry.currentVersionId ?? entry.sourceVersionId;
+  return {
+    id: entry.documentId ?? `${scope}_${entry.ownerId}`,
+    scope,
+    ownerId: entry.ownerId,
+    currentVersionId: versionId,
+    heartbeatEnabled: true,
+    versions: versionId
+      ? [{
+          id: versionId,
+          content: content.endsWith("\n") ? content.slice(0, -1) : content,
+          changeSummary: "Existing materialized Soul runtime",
+          createdAt: entry.materializedAt,
+          createdBy: "system",
+          source: "system",
+          baseVersionId: null,
+          restoreSourceVersionId: null,
+        }]
+      : [],
+  };
 }
 
 async function materializeSoulForWorkspace(
@@ -3969,13 +4019,13 @@ async function materializeSoulForWorkspace(
     const hasOverride = (scope: SoulScope) => Object.prototype.hasOwnProperty.call(overrides, scope);
     const organization = hasOverride("organization")
       ? overrides.organization ?? null
-      : await readCachedSoulForMaterialization(dataDir, "organization", den.orgId);
+      : await readCachedSoulForMaterialization(dataDir, "organization", den.orgId, workspace.path);
     const user = hasOverride("user")
       ? overrides.user ?? null
-      : await readCachedSoulForMaterialization(dataDir, "user", den.userId);
+      : await readCachedSoulForMaterialization(dataDir, "user", den.userId, workspace.path);
     const workspaceDocument = hasOverride("workspace")
       ? overrides.workspace ?? null
-      : await readCachedSoulForMaterialization(dataDir, "workspace", workspace.id);
+      : await readCachedSoulForMaterialization(dataDir, "workspace", workspace.id, workspace.path);
 
     await soulMaterializationTestHookForTests?.({ workspaceId: workspace.id, overrides });
 
@@ -6125,6 +6175,7 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
 
+    const soulMaterialization = await materializeSoulForWorkspace(serverDataDir, ctx, workspace);
     const result = await provisionWorkspaceInternalSystem(workspace.path, resolveVesloAppDataDir());
     const userGlobalSkills = await materializeUserGlobalSkillsForWorkspace({
       workspaceRoot: workspace.path,
@@ -6173,6 +6224,7 @@ function createRoutes(
       written: result.written,
       unchanged: result.unchanged,
       userGlobalSkills,
+      soulMaterialization,
     });
   });
 
@@ -10111,6 +10163,13 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const automationId = validateAgentLabAutomationId(ctx.params.automationId);
     const path = resolveAutomationsPath(workspace.path);
+
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "automations.run",
+      summary: `Run automation ${automationId}`,
+      paths: [path],
+    });
     const run = await ctx.automationRunner.runNow(workspace.id, automationId);
 
     await recordAudit(workspace.path, {

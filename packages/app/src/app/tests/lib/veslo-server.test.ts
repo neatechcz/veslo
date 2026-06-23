@@ -2428,6 +2428,59 @@ test("Soul mutation helpers forward active workspace ids and expose materializat
   }
 });
 
+test("provisionWorkspaceSystem forwards Den context for Soul materialization", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method?: string; headers: Headers }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method,
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+    });
+    return new Response(JSON.stringify({
+      ok: true,
+      workspaceId: "workspace a",
+      version: "1",
+      status: "unchanged",
+      written: 0,
+      unchanged: 1,
+      soulMaterialization: { ok: true, status: "current", pending: false, files: [] },
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.provisionWorkspaceSystem("workspace a", {
+      denApiBase: "https://den.example",
+      denToken: "den-token",
+      denOrgId: "org_1",
+      denUserId: "user_1",
+    });
+
+    assert.deepEqual(calls.map((call) => `${call.method ?? "GET"} ${call.url}`), [
+      "POST https://veslo.example/workspace/workspace%20a/system/provision",
+    ]);
+    const headers = calls[0]!.headers;
+    assert.equal(headers.get("authorization"), "Bearer token-123");
+    assert.equal(headers.get("x-veslo-host-token"), "host-token-123");
+    assert.equal(headers.get("x-veslo-den-api-base"), "https://den.example");
+    assert.equal(headers.get("x-veslo-den-token"), "den-token");
+    assert.equal(headers.get("x-veslo-den-org-id"), "org_1");
+    assert.equal(headers.get("x-veslo-den-user-id"), "user_1");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("createVesloServerClient exposes getMyAiAccess", async () => {
   const originalFetch = globalThis.fetch;
   const originalSetTimeout = globalThis.setTimeout;

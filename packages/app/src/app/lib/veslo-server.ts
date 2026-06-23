@@ -1433,6 +1433,7 @@ export type VesloWorkspaceSystemProvisionResult = {
   status: "updated" | "unchanged";
   written: number;
   unchanged: number;
+  soulMaterialization?: VesloSoulMaterializationResult | null;
 };
 
 type RawJsonResponse<T> = {
@@ -2823,7 +2824,7 @@ export function createVesloServerClient(options: {
         body: payload,
         timeoutMs: timeouts.workspaceImport,
       }),
-    provisionWorkspaceSystem: (workspaceId: string) =>
+    provisionWorkspaceSystem: (workspaceId: string, options?: VesloSoulAuthContext) =>
       requestJson<VesloWorkspaceSystemProvisionResult>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/system/provision`,
@@ -2831,6 +2832,7 @@ export function createVesloServerClient(options: {
           token,
           hostToken,
           method: "POST",
+          extraHeaders: buildDenContextHeaders(options),
           timeoutMs: timeouts.workspaceProvision,
         },
       ),

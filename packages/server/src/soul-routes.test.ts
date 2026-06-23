@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, test } from "bun:test";
 
 import { setSoulMaterializationTestHookForTests, startServer } from "./server.js";
+import { cacheSoulDocument } from "./soul-cache.js";
 import type { SoulDocument } from "./soul-memory.js";
 
 const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void }> = [];
@@ -600,6 +601,63 @@ test("concurrent Soul materializations preserve newest scope content", async () 
   expect(workspaceResponse.status).toBe(200);
 
   expect(await readFile(join(workspaceRoot, ".opencode", "soul-user.md"), "utf8")).toBe("Newest user memory\n");
+});
+
+test("POST /workspace/:id/system/provision syncs cached Soul runtime files", async () => {
+  const server = await startFixture();
+  const dataDir = tempDirs[tempDirs.length - 3]!;
+  const workspaceRoot = tempDirs[tempDirs.length - 2]!;
+  await cacheSoulDocument({
+    dataDir,
+    document: document({ scope: "organization", ownerId: "org_1", versionId: "org_v1", content: "Org memory" }),
+  });
+  await cacheSoulDocument({
+    dataDir,
+    document: document({ scope: "user", ownerId: "user_1", versionId: "user_v1", content: "User memory" }),
+  });
+  await cacheSoulDocument({
+    dataDir,
+    document: document({
+      scope: "workspace",
+      ownerId: "ws_active",
+      versionId: "workspace_v1",
+      content: "Workspace memory",
+    }),
+  });
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_active/system/provision`, {
+    method: "POST",
+    headers: denHeaders,
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as {
+    soulMaterialization?: { ok: boolean; status: string; pending: boolean };
+  };
+  expect(payload.soulMaterialization).toMatchObject({
+    ok: true,
+    status: "current",
+    pending: false,
+  });
+  expect(await readFile(join(workspaceRoot, ".opencode", "soul-company.md"), "utf8")).toBe("Org memory\n");
+  expect(await readFile(join(workspaceRoot, ".opencode", "soul-user.md"), "utf8")).toBe("User memory\n");
+  expect(await readFile(join(workspaceRoot, ".opencode", "soul-workspace.md"), "utf8")).toBe("Workspace memory\n");
+
+  const noDenResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_active/system/provision`, {
+    method: "POST",
+    headers: clientHeaders,
+  });
+  expect(noDenResponse.status).toBe(200);
+  expect((await noDenResponse.json() as {
+    soulMaterialization?: { ok: boolean; status: string; pending: boolean };
+  }).soulMaterialization).toMatchObject({
+    ok: true,
+    status: "current",
+    pending: false,
+  });
+  expect(await readFile(join(workspaceRoot, ".opencode", "soul-company.md"), "utf8")).toBe("Org memory\n");
+  expect(await readFile(join(workspaceRoot, ".opencode", "soul-user.md"), "utf8")).toBe("User memory\n");
+  expect(await readFile(join(workspaceRoot, ".opencode", "soul-workspace.md"), "utf8")).toBe("Workspace memory\n");
 });
 
 test("POST /workspace/:id/soul/heartbeat-toggle toggles workspace Heartbeat", async () => {

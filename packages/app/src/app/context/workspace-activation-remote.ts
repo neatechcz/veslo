@@ -1,5 +1,5 @@
 import type { OpencodeAuth } from "../lib/opencode";
-import type { VesloServerSettings, VesloWorkspaceInfo } from "../lib/veslo-server";
+import type { VesloServerSettings, VesloSoulAuthContext, VesloWorkspaceInfo } from "../lib/veslo-server";
 import {
   buildVesloWorkspaceBaseUrl,
   createVesloServerClient,
@@ -15,6 +15,7 @@ import type { ConnectToServer, WorkspaceActivationOptions } from "./workspace-ty
 export type WorkspaceRemoteActivationDeps = {
   setStartupPreference: (value: any) => void;
   vesloServerSettings: () => VesloServerSettings;
+  soulAuthContext?: () => VesloSoulAuthContext;
   updateVesloServerSettings: (next: VesloServerSettings) => void;
   resolveVesloHost: (input: {
     hostUrl: string;
@@ -191,7 +192,10 @@ export function createWorkspaceRemoteActivation(deps: WorkspaceRemoteActivationD
           baseUrl: scopedHostUrl,
           token: token || undefined,
         });
-        const provision = await provisionClient.provisionWorkspaceSystem(workspaceInfo.id);
+        const provision = await provisionClient.provisionWorkspaceSystem(
+          workspaceInfo.id,
+          deps.soulAuthContext?.(),
+        );
         deps.wsDebug("activate:veslo:provision", {
           id: workspaceInfo.id,
           status: provision.status,
