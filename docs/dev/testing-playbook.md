@@ -147,7 +147,7 @@ The previous visual snapshot flow was WebdriverIO-based and is legacy. Convert t
 
 ### Tauri Pilot live desktop testing
 
-Tauri Pilot is available in Veslo debug desktop builds. The repo carries the Rust plugin dependency in `packages/desktop/src-tauri/Cargo.toml`, registers it in `packages/desktop/src-tauri/src/lib.rs` under `#[cfg(debug_assertions)]`, and grants `pilot:default` in `packages/desktop/src-tauri/capabilities/default.json`. It is a live inspection and interaction surface for the real Tauri desktop app, not a release-runtime feature and not a substitute for the WebdriverIO E2E gate when a spec exists.
+Tauri Pilot is available in Veslo E2E/debug automation builds. The repo carries the Rust plugin dependency in `packages/desktop/src-tauri/Cargo.toml`, registers it in `packages/desktop/src-tauri/src/lib.rs` under debug/E2E gates, and grants `pilot:default` only through the E2E Tauri config. Keep pilot permissions out of the default desktop capability. It is a live inspection and interaction surface for the real Tauri desktop app, not a release-runtime feature and not a substitute for the WebdriverIO E2E gate when a spec exists.
 
 Use Tauri Pilot when the behavior under test depends on the running desktop shell, the system WebView, sidecar startup, native dialogs, workspace activation, or real app state that a browser-only test cannot represent. It is especially useful for exploratory regression checks, timing probes, reproducing UI bugs with the user's current profile, and validating that the real desktop UI reaches the expected state after a fix.
 

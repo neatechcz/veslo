@@ -1010,12 +1010,14 @@ fn collect_workspace_entries(
     let mut entries: Vec<(PathBuf, String)> = Vec::new();
     let mut excluded: Vec<String> = Vec::new();
 
-    let config_path = workspace_root.join("opencode.json");
-    if config_path.exists() && config_path.is_file() {
-        if should_exclude(&config_path) {
-            excluded.push("opencode.json".to_string());
-        } else {
-            entries.push((config_path, "opencode.json".to_string()));
+    for config_name in ["opencode.jsonc", "opencode.json"] {
+        let config_path = workspace_root.join(config_name);
+        if config_path.exists() && config_path.is_file() {
+            if should_exclude(&config_path) {
+                excluded.push(config_name.to_string());
+            } else {
+                entries.push((config_path, config_name.to_string()));
+            }
         }
     }
 
@@ -1100,7 +1102,7 @@ pub fn workspace_export_config(
         input
             .read_to_end(&mut buffer)
             .map_err(|e| format!("Failed to read {}: {e}", src.display()))?;
-        if rel == "opencode.json" {
+        if rel == "opencode.json" || rel == "opencode.jsonc" {
             buffer = redact_exported_opencode_config(&buffer)?;
         }
         zip.write_all(&buffer)

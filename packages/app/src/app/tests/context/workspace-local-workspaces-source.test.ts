@@ -23,3 +23,19 @@ test("missing local workspace roots do not start a host process", () => {
     "missing local workspaces should remain removable without recreating or starting their deleted folder",
   );
 });
+
+test("first workspace onboarding completes only after runtime activation succeeds", () => {
+  const localSource = readContextSource("workspace-local-workspaces.ts");
+
+  assert.match(
+    localSource,
+    /async function createWorkspaceFlow[\s\S]*markOnboardingComplete: false,[\s\S]*const opened = await activateFreshLocalWorkspace[\s\S]*if \(!opened\) \{[\s\S]*return;[\s\S]*\}[\s\S]*deps\.markOnboardingComplete\(\);/s,
+  );
+});
+
+test("Windows workspace creation rejects paths that cannot be mounted into WSL2", () => {
+  const localSource = readContextSource("workspace-local-workspaces.ts");
+
+  assert.match(localSource, /isWindowsPlatform\(\) && isWslMappableWindowsWorkspacePath\(resolvedFolder\) === false/);
+  assert.match(localSource, /network and UNC paths are not supported for local sandboxed runs/);
+});

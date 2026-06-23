@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { open, readFile, rename, rm } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, normalize, resolve } from "node:path";
+import { basename, dirname, join, posix, resolve, win32 } from "node:path";
 
 import { resolveVesloDataDir } from "./audit.js";
 import { ApiError } from "./errors.js";
@@ -333,14 +333,22 @@ function normalizeOptionalString(value: unknown, field: string, maxLength = 2048
 function normalizePath(value: unknown, name: string): string | undefined {
   const path = normalizeOptionalString(value, "target.path", 4096);
   if (!path) return undefined;
-  const normalized = normalize(path);
-  if (!isAbsolute(normalized)) {
+  const pathApi = path.startsWith("/") || posix.isAbsolute(path)
+    ? posix
+    : win32.isAbsolute(path)
+      ? win32
+      : null;
+  if (!pathApi) {
     throw new ApiError(400, "invalid_skill_path", "Skill path must be absolute");
   }
-  if (basename(normalized) !== "SKILL.md") {
+  const normalized = pathApi.normalize(path);
+  if (!pathApi.isAbsolute(normalized)) {
+    throw new ApiError(400, "invalid_skill_path", "Skill path must be absolute");
+  }
+  if (pathApi.basename(normalized) !== "SKILL.md") {
     throw new ApiError(400, "invalid_skill_path", "Skill path must point to SKILL.md");
   }
-  if (basename(dirname(normalized)) !== name) {
+  if (pathApi.basename(pathApi.dirname(normalized)) !== name) {
     throw new ApiError(400, "invalid_skill_path", "Skill path parent directory must match skill name");
   }
   return normalized;

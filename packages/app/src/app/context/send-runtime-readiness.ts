@@ -138,8 +138,13 @@ export function shouldRecoverLocalRuntimeFromHealthError(
 ): boolean {
   const message = messageFromUnknownError(error, safeStringify);
   const normalized = message.toLowerCase();
-  return (
+  const localRuntimeUnavailable =
     normalized.includes("engine_not_running") ||
+    normalized.includes("opencode_request_failed") ||
+    /\b(?:upstream\s+)?status\s+(?:502|503)\b/.test(normalized) ||
+    /"status"\s*:\s*(?:502|503)\b/.test(normalized);
+  return (
+    localRuntimeUnavailable ||
     normalized.includes("error sending request") ||
     normalized.includes("connection refused") ||
     message.includes("ECONNREFUSED") ||

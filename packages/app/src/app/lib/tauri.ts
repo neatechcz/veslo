@@ -710,10 +710,12 @@ export async function orchestratorStatus(): Promise<OrchestratorStatus> {
 
 export async function orchestratorWorkspaceActivate(input: {
   workspacePath: string;
+  workspaceId?: string | null;
   name?: string | null;
 }): Promise<OrchestratorWorkspace> {
   return invoke<OrchestratorWorkspace>("orchestrator_workspace_activate", {
     workspacePath: input.workspacePath,
+    workspaceId: input.workspaceId ?? null,
     name: input.name ?? null,
   });
 }
@@ -847,6 +849,11 @@ export type ExecResult = {
   stderr: string;
 };
 
+export type DesktopSandboxEnvironment = {
+  backend: string;
+  enabled: boolean;
+};
+
 export type ScheduledJobRun = {
   prompt?: string;
   command?: string;
@@ -905,6 +912,10 @@ export async function wslPrerequisitesRepair(options?: {
   return invoke<ExecResult>("wsl_prerequisites_repair", {
     checkOnly: options?.checkOnly ?? false,
   });
+}
+
+export async function desktopSandboxEnvironment(): Promise<DesktopSandboxEnvironment> {
+  return invoke<DesktopSandboxEnvironment>("desktop_sandbox_environment");
 }
 
 export async function opkgInstall(projectDir: string, pkg: string): Promise<ExecResult> {

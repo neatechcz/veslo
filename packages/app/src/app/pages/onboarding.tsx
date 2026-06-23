@@ -382,6 +382,9 @@ export default function OnboardingView(props: OnboardingViewProps) {
                 </div>
               </div>
             </div>
+
+            <WindowsSandboxRepair />
+
             <Button
               onClick={props.onStartHost}
               disabled={props.busy || !props.activeWorkspacePath.trim()}
@@ -467,8 +470,6 @@ export default function OnboardingView(props: OnboardingViewProps) {
                     </div>
                   </Show>
                 </div>
-
-                <WindowsSandboxRepair />
 
                 <Show when={isTauriRuntime() && props.developerMode}>
                   <div class="rounded-2xl bg-gray-2/40 border border-gray-6 p-4">

@@ -49,6 +49,36 @@ test("Windows updater MSI installs write a verbose diagnostic log", () => {
   );
 });
 
+test("default desktop capability does not expose tauri-pilot", () => {
+  const defaultCapability = JSON.parse(readFileSync(resolve(srcTauriDir, "capabilities/default.json"), "utf8"));
+  const generatedCapabilities = JSON.parse(readFileSync(resolve(srcTauriDir, "gen/schemas/capabilities.json"), "utf8"));
+  const e2eConfig = JSON.parse(readFileSync(resolve(srcTauriDir, "tauri.e2e.conf.json"), "utf8"));
+  const defaultPermissions = defaultCapability?.permissions ?? [];
+  const generatedDefaultPermissions = generatedCapabilities?.["veslo-default"]?.permissions ?? [];
+  const e2eCapabilities = e2eConfig?.app?.security?.capabilities ?? [];
+
+  assert.ok(!defaultPermissions.includes("pilot:default"), "pilot permission must stay out of the release/default capability");
+  assert.ok(
+    !generatedDefaultPermissions.includes("pilot:default"),
+    "generated capability snapshot must not reintroduce pilot into the release/default capability",
+  );
+  assert.ok(
+    JSON.stringify(e2eCapabilities).includes("pilot:default"),
+    "E2E config should be the place that enables tauri-pilot automation",
+  );
+});
+
+test("desktop sandbox environment command mirrors the server backend resolver", () => {
+  const lib = readFileSync(resolve(srcTauriDir, "src/lib.rs"), "utf8");
+  const misc = readFileSync(resolve(srcTauriDir, "src/commands/misc.rs"), "utf8");
+  const spawn = readFileSync(resolve(srcTauriDir, "src/veslo_server/spawn.rs"), "utf8");
+
+  assert.match(spawn, /pub fn resolve_server_sandbox_backend\(\) -> String/);
+  assert.match(misc, /pub fn desktop_sandbox_environment\(\) -> DesktopSandboxEnvironment/);
+  assert.match(misc, /crate::veslo_server::spawn::resolve_server_sandbox_backend\(\)/);
+  assert.match(lib, /desktop_sandbox_environment/);
+});
+
 test("Windows MSI uses Czech WiX localization", () => {
   const config = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
   const language = config?.bundle?.windows?.wix?.language;

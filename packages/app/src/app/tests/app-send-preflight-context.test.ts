@@ -26,8 +26,13 @@ test("sendPrompt carries a preflight context into first-session creation", () =>
   );
   assert.match(
     sendPromptSource,
+    /ensureLocalRuntimeReachableForSend\("sendPrompt", sendPreflight\)/,
+    "sendPrompt should verify runtime health after any workspace engine ensure",
+  );
+  assert.doesNotMatch(
+    sendPromptSource,
     /sendPreflight\.runtimeHealthOk = true;/,
-    "sendPrompt should treat a successful workspace engine ensure as runtime health for this send flow",
+    "sendPrompt should not treat a completed workspace engine ensure as a health probe",
   );
   assert.match(
     sendPromptSource,
@@ -54,7 +59,7 @@ test("createSessionAndOpen skips duplicate preflight gates when sendPrompt alrea
   );
 });
 
-test("send runtime preflight skips duplicate health after workspace engine ensure", () => {
+test("send runtime preflight skips duplicate health only for an explicitly healthy preflight", () => {
   const start = runtimeReadinessSource.indexOf("async function ensureLocalRuntimeReachableForSend(");
   const end = runtimeReadinessSource.indexOf("async function connectLocalRuntimeClientFromEngineInfo", start);
   assert.ok(start >= 0 && end > start, "ensureLocalRuntimeReachableForSend source should be present");
@@ -63,7 +68,7 @@ test("send runtime preflight skips duplicate health after workspace engine ensur
   assert.match(
     ensureSource,
     /if \(preflight\?\.runtimeHealthOk\) \{[\s\S]*recordSendTrace\(`\$\{reason\}:runtime-health-skip`,[\s\S]*reason: "send-preflight-already-healthy"[\s\S]*return true;[\s\S]*\}[\s\S]*if \(currentClient\) \{/s,
-    "send runtime health should not probe a workspace proxy that was just ensured healthy",
+    "send runtime health should skip only when an earlier health probe marked the preflight healthy",
   );
 });
 

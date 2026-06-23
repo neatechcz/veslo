@@ -24,7 +24,14 @@ export type Wsl2Runtime = {
   wslIp?: string;
 };
 
-const MANAGED_WSL_DISTRO = "VesloSandbox";
+export const MANAGED_WSL_DISTRO = "VesloSandbox";
+const PERSONAL_DISTRO_FALLBACK_ENV = "VESLO_WSL_ALLOW_PERSONAL_DISTRO_FALLBACK";
+
+function envFlagEnabled(value: string | undefined): boolean {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
 
 function isUsableWslConnectIp(value: string): boolean {
   const parts = value.trim().split(".");
@@ -207,11 +214,13 @@ export async function listWslDistributions(): Promise<WslDistro[]> {
     .filter((entry) => entry.name);
 }
 
-async function selectDistro(): Promise<string> {
-  const override = process.env.VESLO_WSL_DISTRO?.trim();
+export function selectWslDistroForRuntime(
+  distros: WslDistro[],
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const override = env.VESLO_WSL_DISTRO?.trim();
   if (override) return override;
 
-  const distros = await listWslDistributions();
   if (distros.length === 0) {
     throw new Error("No WSL distributions are installed. Run the Veslo first-run Windows sandbox onboarding, then retry.");
   }
@@ -220,14 +229,30 @@ async function selectDistro(): Promise<string> {
     const names = distros.map((entry) => `${entry.name}${entry.version ? ` (WSL${entry.version})` : ""}`).join(", ");
     throw new Error(`No WSL2 distribution is available. Run the Veslo first-run Windows sandbox onboarding. Found: ${names}`);
   }
+  const managed = wsl2.find((entry) => entry.name.toLowerCase() === MANAGED_WSL_DISTRO.toLowerCase())?.name;
+  if (managed) return managed;
+
+  const names = wsl2.map((entry) => entry.name).join(", ");
+  if (!envFlagEnabled(env[PERSONAL_DISTRO_FALLBACK_ENV])) {
+    throw new Error(
+      `Managed WSL distro '${MANAGED_WSL_DISTRO}' is not installed. ` +
+        "Run the Veslo first-run Windows sandbox onboarding or repair action, then retry. " +
+        `Existing personal WSL2 distros are not used automatically. Found WSL2 distros: ${names}. ` +
+        `Set VESLO_WSL_DISTRO to an explicitly provisioned distro, or set ${PERSONAL_DISTRO_FALLBACK_ENV}=1 for diagnostics only.`,
+    );
+  }
+
   return (
-    wsl2.find((entry) => entry.name.toLowerCase() === MANAGED_WSL_DISTRO.toLowerCase())?.name ??
     wsl2.find((entry) => entry.default)?.name ??
     wsl2.find((entry) => entry.state.toLowerCase() === "running")?.name ??
     wsl2.find((entry) => /^ubuntu/i.test(entry.name))?.name ??
     wsl2[0]?.name ??
     "Ubuntu"
   );
+}
+
+async function selectDistro(): Promise<string> {
+  return selectWslDistroForRuntime(await listWslDistributions());
 }
 
 export async function discoverWsl2Runtime(): Promise<Wsl2Runtime> {
