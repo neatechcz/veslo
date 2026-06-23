@@ -881,6 +881,8 @@ export default {
   "settings.windows_sandbox_ready": "Windows sandbox is ready.",
   "settings.windows_sandbox_restart_required": "WSL support was installed. Restart Windows, then run this again to prepare VesloSandbox.",
   "settings.windows_sandbox_failed": "Windows sandbox repair failed.",
+  "settings.windows_sandbox_gate_title": "Setting up Veslo sandbox",
+  "settings.windows_sandbox_continue_anyway": "Continue anyway",
   "settings.pending_permissions": "Pending permissions",
   "settings.recent_events": "Recent events",
   "settings.notion_connected": "Connected",
