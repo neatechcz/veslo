@@ -1,4 +1,4 @@
-import { Show, createSignal } from "solid-js";
+import { Show, createSignal, onMount } from "solid-js";
 import { CheckCircle2, Loader2, ShieldAlert } from "lucide-solid";
 
 import Button from "./button";
@@ -39,12 +39,21 @@ const statusClass = (tone: RepairStatus["tone"]) => {
   }
 };
 
+// The MSI enables WSL as LocalSystem; the per-user VesloSandbox distro is left
+// to the app so it can be imported without admin. We auto-run that finish step
+// once per app session so onboarding completes the sandbox on its own.
+let autoPrepareStarted = false;
+
 export default function WindowsSandboxRepair() {
   const translate = (key: string) => t(key, currentLocale());
   const [busy, setBusy] = createSignal(false);
   const [status, setStatus] = createSignal<RepairStatus | null>(null);
 
-  const prepareSandbox = async () => {
+  // When `auto` is true we never trigger the elevated WSL install (that would
+  // pop a UAC prompt); we only finish the per-user distro provisioning, which
+  // needs no admin. The manual button passes `auto = false` so an explicit
+  // click may still install the WSL features with elevation.
+  const prepareSandbox = async (auto = false) => {
     if (busy()) return;
     setBusy(true);
     setStatus({ tone: "info", message: translate("settings.windows_sandbox_checking") });
@@ -52,6 +61,17 @@ export default function WindowsSandboxRepair() {
     try {
       const prereq = await wslPrerequisitesRepair({ checkOnly: true });
       if (!prereq.ok) {
+        if (auto) {
+          // WSL itself is not usable yet (needs install/restart, which requires
+          // elevation). Surface it as an option instead of auto-prompting UAC.
+          setStatus({
+            tone: "warning",
+            message: translate("settings.windows_sandbox_restart_required"),
+            details: resultOutput(prereq),
+          });
+          return;
+        }
+
         setStatus({ tone: "info", message: translate("settings.windows_sandbox_installing_wsl") });
         const install = await wslPrerequisitesRepair({ checkOnly: false });
         const details = resultOutput(install);
@@ -103,6 +123,39 @@ export default function WindowsSandboxRepair() {
     }
   };
 
+  // Fully automatic finish: on first mount, detect the sandbox state and, when
+  // WSL is already usable, import/provision VesloSandbox in the background
+  // (windowless, no UAC). If the sandbox is already provisioned we just show it
+  // as ready; if WSL still needs installing/restarting we leave that as a
+  // manual, clearly labelled option (it requires elevation).
+  const autoPrepare = async () => {
+    if (busy()) return;
+    setBusy(true);
+    setStatus({ tone: "info", message: translate("settings.windows_sandbox_checking") });
+    let alreadyReady = false;
+    try {
+      const sandboxCheck = await wslSandboxRepair({ checkOnly: true });
+      if (sandboxCheck.ok) {
+        alreadyReady = true;
+        setStatus({ tone: "success", message: translate("settings.windows_sandbox_ready") });
+      }
+    } catch {
+      // Ignore and fall through to the guided auto flow below.
+    } finally {
+      setBusy(false);
+    }
+
+    if (alreadyReady) return;
+    await prepareSandbox(true);
+  };
+
+  onMount(() => {
+    if (!(isTauriRuntime() && isWindowsPlatform())) return;
+    if (autoPrepareStarted) return;
+    autoPrepareStarted = true;
+    void autoPrepare();
+  });
+
   return (
     <Show when={isTauriRuntime() && isWindowsPlatform()}>
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
@@ -117,7 +170,7 @@ export default function WindowsSandboxRepair() {
           <Button
             variant="secondary"
             class="h-8 shrink-0 px-3 py-0 text-xs"
-            onClick={prepareSandbox}
+            onClick={() => void prepareSandbox(false)}
             disabled={busy()}
           >
             <Show when={busy()} fallback={<CheckCircle2 size={14} class="mr-1.5" />}>
