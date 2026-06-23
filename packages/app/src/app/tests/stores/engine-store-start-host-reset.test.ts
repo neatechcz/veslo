@@ -71,3 +71,9 @@ test("startHost preflights Windows WSL sandbox readiness before engine launch", 
     /if \(!\(await ensureLocalRuntimeReadyForWorkspaceStart\(dir\)\)\) \{[\s\S]*return false;[\s\S]*\}[\s\S]*const source = deps\.engineSource\(\);/s,
   );
 });
+
+test("startHost does not classify generic WSL check output as restart-required", () => {
+  assert.match(source, /result\.status === 3010/);
+  assert.match(source, /result\.status === 1641/);
+  assert.doesNotMatch(source, /\\brestart\\b\|\\breboot\\b/);
+});

@@ -19,7 +19,11 @@ const resultOutput = (result: ExecResult) => [result.stdout, result.stderr]
 
 const isRestartRequired = (result: ExecResult) => {
   const output = resultOutput(result);
-  return result.status === 3010 || result.status === 1641 || /\brestart\b|\breboot\b/i.test(output);
+  return (
+    result.status === 3010 ||
+    result.status === 1641 ||
+    /WSL (?:installation|update) requested a Windows restart|Windows restart is (?:required|likely required)/i.test(output)
+  );
 };
 
 const statusClass = (tone: RepairStatus["tone"]) => {

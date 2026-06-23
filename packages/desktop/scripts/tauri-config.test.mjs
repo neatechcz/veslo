@@ -157,6 +157,16 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   assert.ok(existsSync(provisionerPath), "Expected the WSL provisioning helper to exist");
 
   const fragment = readFileSync(fragmentPath, "utf8");
+  assert.match(
+    fragment,
+    /<Property\s+Id="MsiLogging"\s+Value="voicewarmupx!"\s*\/>/,
+    "Double-clicked MSI installs must create a verbose Windows Installer MSI*.LOG for early bootstrap failures",
+  );
+  assert.match(fragment, /RemoveOldVesloWslClientInstaller/);
+  assert.match(fragment, /RemoveOldVesloWslPrerequisiteInstaller/);
+  assert.match(fragment, /RemoveOldVesloWslSandboxInstaller/);
+  assert.match(fragment, /RemoveOldVesloWslSandboxProvisioner/);
+  assert.match(fragment, /Name="wsl2-client-installer\.ps1"\s+On="install"/);
   assert.match(fragment, /ComponentGroup\s+Id="VesloWslProvisioningInstallerComponents"/);
   assert.match(fragment, /CustomAction\s+[^>]*Id="VesloProvisionWslSandbox"/s);
   assert.match(fragment, /After="InstallFiles"/);
@@ -186,33 +196,67 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
     /-AllowRestartContinuationSuccess/,
     "MSI custom action should allow reboot-required RunOnce continuations without treating them as hard setup failures",
   );
+  assert.match(
+    fragment,
+    /-AllowDeferredRuntimeRepairSuccess/,
+    "MSI custom action should avoid generic Windows Installer custom-action failures and defer runtime repair to first-run onboarding",
+  );
   assert.doesNotMatch(
     fragment,
     /\[INSTALLDIR\]resources\\wsl2-sandbox-installer\.ps1/,
     "Tauri MSI installs script resources into INSTALLDIR on Windows, so the custom action must not point at a resources subdirectory",
   );
   const prerequisite = readFileSync(prerequisitePath, "utf8");
+  assert.match(prerequisite, /\$NativeCommandTimeoutExitCode\s*=\s*1460/);
+  assert.match(prerequisite, /optional-feature-first-20260623/);
+  assert.match(prerequisite, /Script revision:/);
+  assert.match(prerequisite, /function\s+Invoke-IsolatedNativeCommand\b/);
+  assert.match(prerequisite, /Start-Job\s+-ScriptBlock/);
+  assert.match(prerequisite, /Wait-Job\s+-Job\s+\$job\s+-Timeout\s+\$TimeoutSeconds/);
+  assert.match(prerequisite, /function\s+Stop-HiddenNativeProcessTree\b/);
+  assert.match(prerequisite, /Native command timed out after/);
+  assert.match(prerequisite, /WaitForExit\(\$timeoutMilliseconds\)/);
+  assert.match(
+    prerequisite,
+    /@\(("--status"|'--status')\)\s+-TimeoutSeconds\s+45/,
+    "WSL status checks must timeout quickly instead of hanging the installer indefinitely",
+  );
   assert.match(prerequisite, /function\s+Resolve-WslExecutable\b/);
   assert.match(prerequisite, /function\s+Resolve-DismExecutable\b/);
   assert.match(prerequisite, /Sysnative/);
   assert.match(prerequisite, /System32/);
   assert.match(
     prerequisite,
-    /Invoke-NativeCommand\s+\$WslCommand\s+@\("--install",\s+"--no-distribution",\s+"--web-download"\)/,
+    /Invoke-NativeCommand\s+-FilePath\s+\$WslCommand\s+-Arguments\s+@\("--install",\s+"--no-distribution",\s+"--web-download"\)\s+-TimeoutSeconds\s+1800/,
     "WSL prerequisite helper should install the modern WSL package without creating a default user distro",
   );
   assert.match(
     prerequisite,
-    /Invoke-NativeCommand\s+\$WslCommand\s+@\("--install",\s+"--no-distribution"\)/,
+    /Invoke-NativeCommand\s+-FilePath\s+\$WslCommand\s+-Arguments\s+@\("--install",\s+"--no-distribution"\)\s+-TimeoutSeconds\s+1800/,
     "WSL prerequisite helper should fall back to the older no-distro install syntax",
   );
   assert.match(
     prerequisite,
-    /Invoke-NativeCommand\s+\$WslCommand\s+@\("--update",\s+"--web-download"\)/,
+    /Invoke-NativeCommand\s+-FilePath\s+\$WslCommand\s+-Arguments\s+@\("--update",\s+"--web-download"\)\s+-TimeoutSeconds\s+1800/,
     "WSL prerequisite helper should update/download the modern WSL package from the web source",
   );
   assert.match(prerequisite, /Microsoft-Windows-Subsystem-Linux/);
   assert.match(prerequisite, /VirtualMachinePlatform/);
+  assert.match(prerequisite, /function\s+Test-WslInstallDismFallback\b/);
+  assert.match(prerequisite, /Invoke-FeatureEnablementFallbackAfterWslInstallFailure/);
+  assert.match(
+    prerequisite,
+    /Enabling Windows WSL optional features so Windows can finish WSL setup after restart/,
+    "WSL prerequisite helper should enable Windows optional features when wsl --install fails generically in installer context",
+  );
+  assert.match(prerequisite, /function\s+Enable-WslFeaturesWithPowerShell\b/);
+  assert.match(prerequisite, /function\s+Enable-WslFeaturesWithPowerShellThenDism\b/);
+  assert.match(prerequisite, /Enable-WindowsOptionalFeature/);
+  assert.match(
+    prerequisite,
+    /PowerShell optional feature enablement failed[\s\S]*?falling back to DISM feature enablement/,
+    "WSL prerequisite helper should prefer PowerShell optional feature enablement and only then fall back to DISM",
+  );
   assert.match(
     prerequisite,
     /New-Object\s+System\.Diagnostics\.ProcessStartInfo[\s\S]*?\$startInfo\.UseShellExecute\s*=\s*\$false[\s\S]*?\$startInfo\.CreateNoWindow\s*=\s*\$true/,
@@ -224,7 +268,32 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
     "WSL prerequisite helper should not invoke native child commands through PowerShell's call operator",
   );
   const clientInstaller = readFileSync(clientInstallerPath, "utf8");
+  assert.match(clientInstaller, /\$NativeCommandTimeoutExitCode\s*=\s*1460/);
+  assert.match(clientInstaller, /runonce-elevated-exit-guard-20260623/);
+  assert.match(clientInstaller, /Script revision:/);
+  assert.match(clientInstaller, /function\s+Invoke-IsolatedNativeCommand\b/);
+  assert.match(clientInstaller, /Start-Job\s+-ScriptBlock/);
+  assert.match(clientInstaller, /Wait-Job\s+-Job\s+\$job\s+-Timeout\s+\$TimeoutSeconds/);
+  assert.match(clientInstaller, /function\s+Stop-HiddenNativeProcessTree\b/);
+  assert.match(clientInstaller, /Native command timed out after/);
+  assert.match(clientInstaller, /WaitForExit\(\$timeoutMilliseconds\)/);
+  assert.match(
+    clientInstaller,
+    /@\(("--status"|'--status')\)\s+-TimeoutSeconds\s+45/,
+    "client runtime installer must bound wsl.exe --status so MSI can finish with a useful log",
+  );
   assert.match(clientInstaller, /AllowRestartContinuationSuccess/);
+  assert.match(clientInstaller, /AllowDeferredRuntimeRepairSuccess/);
+  assert.match(clientInstaller, /function\s+Write-RecentPrerequisiteLogTail\b/);
+  assert.match(clientInstaller, /Latest WSL prerequisite helper transcript/);
+  assert.match(clientInstaller, /Start-Sleep\s+-Milliseconds\s+500/);
+  assert.match(clientInstaller, /Windows PowerShell transcript start/);
+  assert.match(clientInstaller, /Get-Content\s+-LiteralPath\s+\$prereqLogPath\s+-ErrorAction\s+Stop/);
+  assert.match(
+    clientInstaller,
+    /first-run onboarding\/Settings repair will retry[\s\S]*?\$installerExitCode\s*=\s*0/,
+    "client runtime installer should let MSI complete with a clear log when runtime repair must continue in onboarding",
+  );
   assert.match(
     clientInstaller,
     /Cannot prepare Veslo WSL runtime under SYSTEM[\s\S]*?Finish-ClientInstaller 5/,
@@ -239,7 +308,20 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   assert.match(clientInstaller, /function\s+Resolve-PowerShellExecutable\b/);
   assert.match(clientInstaller, /Sysnative/);
   assert.match(clientInstaller, /System32/);
-  assert.match(clientInstaller, /Invoke-ElevatedPowerShellScript\s+\$prerequisiteScript\s+@\("-Install"\)/);
+  assert.match(
+    clientInstaller,
+    /Invoke-ElevatedPowerShellScript\s+-ScriptPath\s+\$prerequisiteScript\s+-ScriptArguments\s+@\("-Install"\)\s+-TimeoutSeconds\s+3600/,
+  );
+  assert.match(
+    clientInstaller,
+    /WSL status already failed; skipping redundant prerequisite check/,
+    "client runtime installer should go directly to elevated prerequisite install after the initial WSL status failure",
+  );
+  assert.doesNotMatch(
+    clientInstaller,
+    /Invoke-LocalPowerShellScript\s+-ScriptPath\s+\$prerequisiteScript\s+-ScriptArguments\s+@\("-CheckOnly"\)/,
+    "client runtime installer should not run a second local prerequisite check after wsl.exe --status already failed",
+  );
   assert.match(clientInstaller, /-Verb\s+RunAs/);
   assert.match(clientInstaller, /RunOnce/);
   const runOnceFunction = clientInstaller.match(/function\s+Register-ClientInstallerRunOnce[\s\S]*?\n}\r?\n/);
@@ -248,6 +330,21 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
     runOnceFunction[0],
     /-SkipPrerequisiteInstall/,
     "RunOnce continuation must retry WSL prerequisites after reboot instead of skipping WSL package download",
+  );
+  assert.match(
+    runOnceFunction[0],
+    /\$ClientInstallerScriptPath/,
+    "RunOnce continuation must use the script-scoped path; function-local MyInvocation can produce an empty -File",
+  );
+  assert.doesNotMatch(
+    runOnceFunction[0],
+    /\$MyInvocation\.MyCommand\.Path/,
+    "RunOnce continuation must not use function-local MyInvocation for the PowerShell -File path",
+  );
+  assert.match(
+    clientInstaller,
+    /Elevated prerequisite installer exited without an ExitCode[\s\S]*?ExitCode\s*=\s*\$exitCode/,
+    "client runtime installer must not treat a null elevated process ExitCode as success",
   );
   assert.match(
     clientInstaller,
@@ -265,6 +362,20 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
     "client runtime installer should not invoke WSL or nested PowerShell children through PowerShell's call operator",
   );
   const wrapper = readFileSync(wrapperPath, "utf8");
+  assert.match(wrapper, /\$NativeCommandTimeoutExitCode\s*=\s*1460/);
+  assert.match(wrapper, /native-timeout-isolation-20260623/);
+  assert.match(wrapper, /Script revision:/);
+  assert.match(wrapper, /function\s+Invoke-IsolatedNativeCommand\b/);
+  assert.match(wrapper, /Start-Job\s+-ScriptBlock/);
+  assert.match(wrapper, /Wait-Job\s+-Job\s+\$job\s+-Timeout\s+\$TimeoutSeconds/);
+  assert.match(wrapper, /function\s+Stop-HiddenNativeProcessTree\b/);
+  assert.match(wrapper, /Native command timed out after/);
+  assert.match(wrapper, /WaitForExit\(\$timeoutMilliseconds\)/);
+  assert.match(
+    wrapper,
+    /@\(("--status"|'--status')\)\s+-TimeoutSeconds\s+45/,
+    "MSI sandbox wrapper must bound wsl.exe --status so a wedged WSL service does not hang setup",
+  );
   assert.doesNotMatch(
     wrapper,
     /best-effort/,
@@ -280,7 +391,10 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   assert.match(wrapper, /function\s+Resolve-PowerShellExecutable\b/);
   assert.match(wrapper, /Sysnative/);
   assert.match(wrapper, /System32/);
-  assert.match(wrapper, /Invoke-HiddenNativeCommand\s+\$wslCommand\s+@\("--status"\)/);
+  assert.match(
+    wrapper,
+    /Invoke-HiddenNativeCommand\s+-FilePath\s+\$wslCommand\s+-Arguments\s+@\("--status"\)\s+-TimeoutSeconds\s+45/,
+  );
   assert.match(
     wrapper,
     /Write-InstallerLog "wsl\.exe was not found[\s\S]*?Finish-Installer 127/,
@@ -291,7 +405,10 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
     /Write-InstallerLog "powershell\.exe was not found[\s\S]*?Finish-Installer 127/,
     "sandbox provisioning wrapper must not report success when PowerShell is missing",
   );
-  assert.match(wrapper, /Invoke-HiddenNativeCommand\s+\$powershellCommand\s+@\(\$baseArgs\s+\+\s+@\("-CheckOnly"\)\)/);
+  assert.match(
+    wrapper,
+    /Invoke-HiddenNativeCommand\s+-FilePath\s+\$powershellCommand\s+-Arguments\s+@\(\$baseArgs\s+\+\s+@\("-CheckOnly"\)\)\s+-TimeoutSeconds\s+600/,
+  );
   assert.match(
     wrapper,
     /\$baseArgs\s*=\s*@\([\s\S]*?"-NoProfile",[\s\S]*?"-NonInteractive",[\s\S]*?"-WindowStyle",[\s\S]*?"Hidden",[\s\S]*?"-ExecutionPolicy"/,
@@ -309,6 +426,32 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   );
 
   const provisioner = readFileSync(provisionerPath, "utf8");
+  assert.match(provisioner, /\$NativeCommandTimeoutExitCode\s*=\s*1460/);
+  assert.match(provisioner, /tls-opencode-version-guard-20260623/);
+  assert.match(provisioner, /Script revision:/);
+  assert.match(provisioner, /SecurityProtocol[\s\S]*?Tls12/);
+  assert.match(provisioner, /function\s+Invoke-ProvisionWebRequest\b/);
+  assert.match(provisioner, /Invoke-WebRequest[\s\S]*?-TimeoutSec\s+\$TimeoutSeconds/);
+  assert.match(provisioner, /Join-Path\s+\$PSScriptRoot\s+"package\.json"/);
+  assert.match(provisioner, /Join-Path\s+\$PSScriptRoot\s+"\.\.\\package\.json"/);
+  assert.match(provisioner, /test "\$actual" = "__EXPECTED_OPENCODE_VERSION__"/);
+  assert.doesNotMatch(
+    provisioner,
+    /opencode --version \| grep -F/,
+    "CheckOnly must compare the parsed OpenCode version exactly instead of accepting substring matches",
+  );
+  assert.match(provisioner, /catch\s*\{[\s\S]*?Unhandled provisioning error/);
+  assert.match(provisioner, /function\s+Invoke-IsolatedNativeCommand\b/);
+  assert.match(provisioner, /Start-Job\s+-ScriptBlock/);
+  assert.match(provisioner, /Wait-Job\s+-Job\s+\$job\s+-Timeout\s+\$TimeoutSeconds/);
+  assert.match(provisioner, /function\s+Stop-HiddenNativeProcessTree\b/);
+  assert.match(provisioner, /Timed out after \$TimeoutSeconds seconds/);
+  assert.match(provisioner, /WaitForExit\(\$timeoutMilliseconds\)/);
+  assert.match(
+    provisioner,
+    /Invoke-Wsl\s+-WslArgs\s+@\(("--status"|'--status')\)\s+-TimeoutSeconds\s+45/,
+    "provisioning helper must bound wsl.exe --status before importing the managed distro",
+  );
   assert.match(
     provisioner,
     /New-Object\s+System\.Diagnostics\.ProcessStartInfo[\s\S]*?\$startInfo\.UseShellExecute\s*=\s*\$false[\s\S]*?\$startInfo\.CreateNoWindow\s*=\s*\$true/,
@@ -316,7 +459,7 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   );
   assert.match(
     provisioner,
-    /Invoke-HiddenNativeCommand\s+"wsl\.exe"\s+\$WslArgs/,
+    /Invoke-HiddenNativeCommand\s+-FilePath\s+"wsl\.exe"\s+-Arguments\s+\$WslArgs/,
     "WSL provisioner should route Invoke-Wsl through the hidden native command helper",
   );
   assert.doesNotMatch(

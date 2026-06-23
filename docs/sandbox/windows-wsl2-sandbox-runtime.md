@@ -149,17 +149,39 @@ Implemented installer bridge:
   clean machine can finish the WSL package/kernel download before provisioning
 - the prerequisite helper installs or updates WSL without creating a default
   personal distro (`wsl --install --no-distribution --web-download` with legacy
-  fallbacks) and uses DISM feature enablement only as the older-Windows fallback
-- real WSL/VesloSandbox setup failures fail the Windows installer instead of
-  silently completing a broken runtime install; restart-required WSL feature
-  enablement is the allowed pending state because RunOnce continues setup after
-  the user signs in again
+  fallbacks) and falls back to DISM feature enablement when the modern WSL
+  installer returns a generic failure from the installer context; if direct DISM
+  feature enablement fails, the helper retries through PowerShell
+  `Enable-WindowsOptionalFeature`
+- real WSL/VesloSandbox setup failures are logged as failed runtime setup
+  instead of being reported as a prepared runtime; MSI package installs may
+  still complete so Windows Installer does not replace the useful runtime log
+  with a generic custom-action failure, while first-run onboarding and Settings
+  repair continue the same setup path
+- restart-required WSL feature enablement is the allowed pending state because
+  RunOnce continues setup after the user signs in again
 - installer runtime setup fails when invoked under `SYSTEM`, because WSL
   distributions and RunOnce continuations are per-user and must be prepared
   under the target Windows account
-- the PowerShell wrappers return and log the real runtime/provisioning status
-  so installer logs can distinguish app install success from runtime setup
-  failure or restart-required continuation
+- the PowerShell wrappers log the real runtime/provisioning status so installer
+  logs can distinguish app install success from runtime setup failure or
+  restart-required continuation
+- MSI packages enable default verbose Windows Installer logging, so clean
+  installs create an `MSI*.LOG` file in the installing user's temp directory
+  even when the failure happens before the WSL runtime scripts are reached
+- installer WSL/native commands are bounded by explicit timeouts; quick
+  `wsl.exe --status` probes time out after 45 seconds and return exit code
+  `1460` so a wedged WSL service cannot hang MSI setup indefinitely
+- WSL commands are launched through an isolated child PowerShell job from the
+  installer helpers, so the parent helper can still enforce and log the timeout
+  when `wsl.exe` itself hangs during startup or status probing
+- client installer and Settings/onboarding repair output include the recent
+  `%ProgramData%\Veslo\logs\wsl2-prerequisite-installer.log` tail after elevated
+  prerequisite repair attempts, so generic elevated `exit code 1` failures carry
+  the underlying WSL/DISM detail
+- MSI installs remove old WSL helper `.ps1` files from `INSTALLDIR` before
+  installing the new copies, avoiding stale unversioned helper scripts during
+  validation upgrades
 - runtime setup details are logged to
   `%ProgramData%\Veslo\logs\wsl2-prerequisite-installer.log`,
   `%LOCALAPPDATA%\Veslo\logs\wsl2-client-installer.log` and

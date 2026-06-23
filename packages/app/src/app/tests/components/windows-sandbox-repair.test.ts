@@ -23,6 +23,12 @@ test("Windows sandbox repair runs WSL prerequisites before sandbox provisioning"
   assert.match(componentSource, /settings\.windows_sandbox_restart_required/);
 });
 
+test("Windows sandbox repair only treats explicit restart-required install results as restart-required", () => {
+  assert.match(componentSource, /result\.status === 3010/);
+  assert.match(componentSource, /result\.status === 1641/);
+  assert.doesNotMatch(componentSource, /\\brestart\\b\|\\breboot\\b/);
+});
+
 test("Windows sandbox repair is available from onboarding and settings", () => {
   assert.match(settingsSource, /<WindowsSandboxRepair \/>/);
   assert.match(onboardingSource, /<WindowsSandboxRepair \/>/);

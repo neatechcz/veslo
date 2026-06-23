@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Fragment>
+    <Property Id="MsiLogging" Value="voicewarmupx!" />
+
     <DirectoryRef Id="INSTALLDIR">
       <Component Id="VesloWslProvisioningInstallerAnchor" Guid="36d5c50b-0df9-45ac-a2ae-6f0032f108d4">
         <RegistryValue
@@ -10,6 +12,10 @@
           Type="integer"
           Value="1"
           KeyPath="yes" />
+        <RemoveFile Id="RemoveOldVesloWslClientInstaller" Name="wsl2-client-installer.ps1" On="install" />
+        <RemoveFile Id="RemoveOldVesloWslPrerequisiteInstaller" Name="wsl2-prerequisite-installer.ps1" On="install" />
+        <RemoveFile Id="RemoveOldVesloWslSandboxInstaller" Name="wsl2-sandbox-installer.ps1" On="install" />
+        <RemoveFile Id="RemoveOldVesloWslSandboxProvisioner" Name="windows-wsl2-sandbox-provision.ps1" On="install" />
       </Component>
     </DirectoryRef>
 
@@ -23,7 +29,7 @@
       Execute="deferred"
       Impersonate="yes"
       Return="check"
-      ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File &quot;[INSTALLDIR]wsl2-client-installer.ps1&quot; -AllowRestartContinuationSuccess" />
+      ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File &quot;[INSTALLDIR]wsl2-client-installer.ps1&quot; -AllowRestartContinuationSuccess -AllowDeferredRuntimeRepairSuccess" />
 
     <InstallExecuteSequence>
       <Custom Action="VesloProvisionWslSandbox" After="InstallFiles"><![CDATA[NOT REMOVE~="ALL"]]></Custom>
