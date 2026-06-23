@@ -22,8 +22,8 @@
       Directory="INSTALLDIR"
       Execute="deferred"
       Impersonate="yes"
-      Return="ignore"
-      ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File &quot;[INSTALLDIR]wsl2-client-installer.ps1&quot;" />
+      Return="check"
+      ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File &quot;[INSTALLDIR]wsl2-client-installer.ps1&quot; -AllowRestartContinuationSuccess" />
 
     <InstallExecuteSequence>
       <Custom Action="VesloProvisionWslSandbox" After="InstallFiles"><![CDATA[NOT REMOVE~="ALL"]]></Custom>

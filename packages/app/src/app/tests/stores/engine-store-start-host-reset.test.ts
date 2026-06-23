@@ -59,14 +59,15 @@ test("startHost preflights Windows WSL sandbox readiness before engine launch", 
   assert.match(source, /desktopSandboxEnvironment\(\)/);
   assert.match(
     source,
-    /const windowsSandboxEnvironment = await resolveWindowsSandboxEnvironmentForLocalStart\(\);[\s\S]*if \(deps\.isWindowsPlatform\(\) && !windowsSandboxEnvironment\) \{[\s\S]*return false;[\s\S]*\}[\s\S]*const useWindowsWslSandbox = windowsSandboxEnvironment\?\.backend === "windows-wsl2";/s,
+    /async function ensureLocalRuntimeReadyForWorkspaceStart\(workspacePath: string\) \{[\s\S]*const windowsSandboxEnvironment = await resolveWindowsSandboxEnvironmentForLocalStart\(\);[\s\S]*if \(deps\.isWindowsPlatform\(\) && !windowsSandboxEnvironment\) \{[\s\S]*return false;[\s\S]*\}[\s\S]*const useWindowsWslSandbox = windowsSandboxEnvironment\?\.backend === "windows-wsl2";/s,
   );
   assert.match(source, /const useWindowsWslSandbox = windowsSandboxEnvironment\?\.backend === "windows-wsl2";/);
   assert.match(source, /async function ensureWindowsSandboxReadyForLocalStart\(\)/);
+  assert.match(source, /ensureLocalRuntimeReadyForWorkspaceStart,/);
   assert.match(source, /wslPrerequisitesRepair\(\{ checkOnly: true \}\)/);
   assert.match(source, /wslSandboxRepair\(\{ checkOnly: true \}\)/);
   assert.match(
     source,
-    /if \(useWindowsWslSandbox && !isWslMappableWindowsWorkspacePath\(dir\)\) \{[\s\S]*return false;[\s\S]*\}[\s\S]*if \(useWindowsWslSandbox && !\(await ensureWindowsSandboxReadyForLocalStart\(\)\)\) \{[\s\S]*return false;[\s\S]*\}[\s\S]*const source = deps\.engineSource\(\);/s,
+    /if \(!\(await ensureLocalRuntimeReadyForWorkspaceStart\(dir\)\)\) \{[\s\S]*return false;[\s\S]*\}[\s\S]*const source = deps\.engineSource\(\);/s,
   );
 });

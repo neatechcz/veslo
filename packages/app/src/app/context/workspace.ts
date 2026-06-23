@@ -1572,6 +1572,7 @@ export function createWorkspaceStore(options: {
     updateWorkspaceConnectionState,
     onEngineStable: options.onEngineStable,
     clearWorkspaceBusyAllExcept,
+    ensureLocalRuntimeReadyForWorkspaceStart: engineStore.ensureLocalRuntimeReadyForWorkspaceStart,
     syncWorkspaceSkillMaterializationBeforeRuntime,
     createClient,
     waitForHealthy,

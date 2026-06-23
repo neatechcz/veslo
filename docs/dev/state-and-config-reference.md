@@ -153,7 +153,11 @@ The packaged Windows runtime defaults to the managed `VesloSandbox` distro. Pers
 
 The local server reports the active path mode through `/capabilities.sandbox`. Desktop-launched `veslo-server` processes must receive `VESLO_SANDBOX_BACKEND` from the Tauri shell so the app can choose sandbox path aliases before host paths when WSL2 is active. `VESLO_DISABLE_SANDBOX=1` remains the hard opt-out and forces `backend=none`.
 
-Windows local workspace start preflights WSL prerequisites, the managed `VesloSandbox` runtime, and workspace path mountability only when the desktop shell resolves the effective sandbox backend to `windows-wsl2`.
+Windows local workspace start preflights WSL prerequisites, the managed `VesloSandbox` runtime, and workspace path mountability only when the desktop shell resolves the effective sandbox backend to `windows-wsl2`. Both explicit local host startup and lazy first-prompt runtime startup must use this preflight before spawning `veslo-code` or attaching an orchestrator workspace, so a failed clean-install sandbox setup surfaces as a repairable runtime-prerequisite error instead of a generic send failure.
+
+Windows installer/onboarding prerequisite repair must install or update the WSL package without creating a personal default distro, then import the managed `VesloSandbox` distro. Real WSL/VesloSandbox setup failures should fail the Windows installer instead of silently completing a broken runtime install. If a Windows restart is required after feature enablement, the registered continuation must retry prerequisite installation after reboot rather than skipping directly to sandbox import; that restart-required continuation is the one allowed pending state.
+
+Installer runtime setup must run under the target Windows user, not `SYSTEM`, because WSL distros and `RunOnce` continuations are per-user. A `SYSTEM` invocation must fail with a clear log message instead of reporting a prepared runtime.
 
 ## Desktop Debug Log Forwarder
 

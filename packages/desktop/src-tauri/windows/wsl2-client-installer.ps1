@@ -9,9 +9,11 @@ elevated prerequisite helper when Windows features are missing, register a
 RunOnce continuation when a restart is required, and then run the managed
 VesloSandbox provisioning wrapper.
 
-The script is intentionally best-effort from the package manager's perspective:
-failures are logged for onboarding/Settings repair, but the Veslo application
-installation itself is not rolled back.
+The script returns the real runtime setup exit code so installer logs can
+distinguish "app installed" from "runtime prepared". Package manager hooks may
+allow restart-required continuations, but real WSL/VesloSandbox setup failures
+should stay non-zero so installers and repair surfaces can stop silent broken
+installs.
 #>
 [CmdletBinding()]
 param(
@@ -19,7 +21,8 @@ param(
     [string]$InstallDir = "",
     [string]$OpencodeVersion = "",
     [string]$OpencodeGithubRepo = "anomalyco/opencode",
-    [switch]$SkipPrerequisiteInstall
+    [switch]$SkipPrerequisiteInstall,
+    [switch]$AllowRestartContinuationSuccess
 )
 
 $ErrorActionPreference = "Continue"
@@ -289,8 +292,7 @@ function Register-ClientInstallerRunOnce {
         "-DistroName",
         $DistroName,
         "-OpencodeGithubRepo",
-        $OpencodeGithubRepo,
-        "-SkipPrerequisiteInstall"
+        $OpencodeGithubRepo
     )
     if ($InstallDir.Trim()) {
         $arguments += @("-InstallDir", $InstallDir)
@@ -317,16 +319,35 @@ try {
 }
 
 function Finish-ClientInstaller([int]$RuntimeExitCode) {
-    Write-ClientInstallerLog "Client runtime installer finished with runtime exit code $RuntimeExitCode. Package installer exit remains 0. Log: $logPath"
+    $installerExitCode = $RuntimeExitCode
+    $restartContinuation = $RuntimeExitCode -eq 3010 -or $RuntimeExitCode -eq 1641
+    if ($AllowRestartContinuationSuccess -and $restartContinuation) {
+        $installerExitCode = 0
+        Write-ClientInstallerLog "Windows restart is required; RunOnce continuation is registered, so this package-manager invocation will exit 0."
+    }
+
+    if ($RuntimeExitCode -eq 0) {
+        Write-ClientInstallerLog "VESLO_RUNTIME_SETUP_RESULT=ready"
+    } elseif ($restartContinuation) {
+        Write-ClientInstallerLog "VESLO_RUNTIME_SETUP_RESULT=restart_required"
+    } else {
+        Write-ClientInstallerLog "VESLO_RUNTIME_SETUP_RESULT=failed"
+    }
+    Write-ClientInstallerLog "Client runtime installer finished with runtime exit code $RuntimeExitCode and process exit code $installerExitCode. Log: $logPath"
     try {
         Stop-Transcript | Out-Null
     } catch {}
-    exit 0
+    exit $installerExitCode
 }
 
 try {
     Write-ClientInstallerLog "Veslo client runtime installer started."
-    Write-ClientInstallerLog "Identity: $([Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+    $identityName = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    Write-ClientInstallerLog "Identity: $identityName"
+    if ($identityName -match "\\SYSTEM$") {
+        Write-ClientInstallerLog "Cannot prepare Veslo WSL runtime under SYSTEM. WSL distros and RunOnce continuations are per-user; run installer or repair under the target Windows user."
+        Finish-ClientInstaller 5
+    }
     Write-ClientInstallerLog "Distro: $DistroName"
     Write-ClientInstallerLog "Skip prerequisite install: $([bool]$SkipPrerequisiteInstall)"
 

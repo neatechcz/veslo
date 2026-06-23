@@ -53,6 +53,7 @@ export type WorkspaceRuntimeControllerDeps = {
   ) => void;
   onEngineStable?: () => void;
   clearWorkspaceBusyAllExcept: (workspaceId: string) => void;
+  ensureLocalRuntimeReadyForWorkspaceStart?: (workspacePath: string) => Promise<boolean>;
   syncWorkspaceSkillMaterializationBeforeRuntime: (
     workspace: WorkspaceInfo,
     options: { reason: string },
@@ -202,6 +203,25 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
       }
 
       try {
+        const runtimeReady = workspace.workspaceType === "local"
+          ? await deps.ensureLocalRuntimeReadyForWorkspaceStart?.(workspace.path)
+          : true;
+        if (runtimeReady === false) {
+          const message = "Workspace runtime prerequisites are not ready";
+          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:runtime-prerequisites-not-ready", {
+            workspaceId: id,
+            workspacePath: workspace.path,
+            runtime,
+          });
+          deps.updateWorkspaceConnectionState(id, { status: "error", message });
+          deps.dispatchLifecycle?.({
+            type: "failed",
+            workspaceId: id,
+            message,
+          });
+          return false;
+        }
+
         const skillsReady = await deps.syncWorkspaceSkillMaterializationBeforeRuntime(workspace, {
           reason: "browse-attach",
         });

@@ -102,6 +102,43 @@ function ConvertTo-NativeArgument([string]$Argument) {
     return $builder.ToString()
 }
 
+function Resolve-SystemExecutable([string]$RelativePath, [string]$CommandName) {
+    $roots = @()
+    if ($env:WINDIR -and $env:WINDIR.Trim()) {
+        $roots += $env:WINDIR.Trim()
+    }
+    if ($env:SystemRoot -and $env:SystemRoot.Trim() -and $roots -notcontains $env:SystemRoot.Trim()) {
+        $roots += $env:SystemRoot.Trim()
+    }
+
+    foreach ($root in $roots) {
+        $candidates = @(
+            (Join-Path $root (Join-Path "Sysnative" $RelativePath)),
+            (Join-Path $root (Join-Path "System32" $RelativePath))
+        )
+        foreach ($candidate in $candidates) {
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                return $candidate
+            }
+        }
+    }
+
+    $command = Get-Command $CommandName -ErrorAction SilentlyContinue
+    if ($command -and $command.Source) {
+        return $command.Source
+    }
+
+    return $null
+}
+
+function Resolve-WslExecutable {
+    return Resolve-SystemExecutable "wsl.exe" "wsl.exe"
+}
+
+function Resolve-DismExecutable {
+    return Resolve-SystemExecutable "dism.exe" "dism.exe"
+}
+
 function Invoke-NativeCommand([string]$FilePath, [string[]]$Arguments) {
     Write-PrereqLog ("> {0} {1}" -f $FilePath, ($Arguments -join " "))
 
@@ -162,7 +199,7 @@ function Invoke-NativeCommand([string]$FilePath, [string[]]$Arguments) {
 }
 
 function Test-WslUsable {
-    $wslCommand = Get-Command "wsl.exe" -ErrorAction SilentlyContinue
+    $wslCommand = Resolve-WslExecutable
     if (-not $wslCommand) {
         return [pscustomobject]@{
             Ok = $false
@@ -171,7 +208,8 @@ function Test-WslUsable {
         }
     }
 
-    $status = Invoke-NativeCommand "wsl.exe" @("--status")
+    Write-PrereqLog "Resolved wsl.exe: $wslCommand"
+    $status = Invoke-NativeCommand $wslCommand @("--status")
     if ($status.ExitCode -eq 0) {
         return [pscustomobject]@{
             Ok = $true
@@ -189,14 +227,21 @@ function Test-WslUsable {
 
 function Enable-WslFeaturesWithDism {
     Write-PrereqLog "Falling back to DISM feature enablement."
-    $wslFeature = Invoke-NativeCommand "dism.exe" @(
+    $dismCommand = Resolve-DismExecutable
+    if (-not $dismCommand) {
+        Write-PrereqLog "dism.exe was not found; cannot enable WSL Windows features."
+        return 127
+    }
+
+    Write-PrereqLog "Resolved dism.exe: $dismCommand"
+    $wslFeature = Invoke-NativeCommand $dismCommand @(
         "/online",
         "/enable-feature",
         "/featurename:Microsoft-Windows-Subsystem-Linux",
         "/all",
         "/norestart"
     )
-    $vmFeature = Invoke-NativeCommand "dism.exe" @(
+    $vmFeature = Invoke-NativeCommand $dismCommand @(
         "/online",
         "/enable-feature",
         "/featurename:VirtualMachinePlatform",
@@ -212,6 +257,57 @@ function Enable-WslFeaturesWithDism {
     return 3010
 }
 
+function Test-WslSyntaxFallback([string]$Output) {
+    return $Output -match "unknown|invalid|unrecognized|unsupported|usage|parameter|option"
+}
+
+function Invoke-WslInstallNoDistribution([string]$WslCommand) {
+    Write-PrereqLog "Installing WSL without a default distro via online web download."
+    $installResult = Invoke-NativeCommand $WslCommand @("--install", "--no-distribution", "--web-download")
+    if ($installResult.ExitCode -eq 0 -or $installResult.ExitCode -eq 3010 -or $installResult.ExitCode -eq 1641) {
+        return $installResult
+    }
+
+    if (-not (Test-WslSyntaxFallback $installResult.Output)) {
+        Write-PrereqLog "wsl --install --web-download failed without a recognized legacy syntax error."
+        return $installResult
+    }
+
+    Write-PrereqLog "wsl --install --web-download is not supported here; retrying with the older install syntax."
+    $legacyInstallResult = Invoke-NativeCommand $WslCommand @("--install", "--no-distribution")
+    if ($legacyInstallResult.ExitCode -eq 0 -or $legacyInstallResult.ExitCode -eq 3010 -or $legacyInstallResult.ExitCode -eq 1641) {
+        return $legacyInstallResult
+    }
+
+    if (-not (Test-WslSyntaxFallback $legacyInstallResult.Output)) {
+        Write-PrereqLog "wsl --install failed without a recognized legacy syntax error."
+        return $legacyInstallResult
+    }
+
+    Write-PrereqLog "wsl --install is not supported by this Windows build; falling back to DISM feature enablement."
+    $fallbackExit = Enable-WslFeaturesWithDism
+    return [pscustomobject]@{
+        ExitCode = [int]$fallbackExit
+        Output = "DISM feature enablement exit code $fallbackExit"
+    }
+}
+
+function Invoke-WslUpdateIfPossible([string]$WslCommand) {
+    Write-PrereqLog "Updating WSL package via online web download."
+    $updateResult = Invoke-NativeCommand $WslCommand @("--update", "--web-download")
+    if ($updateResult.ExitCode -eq 0 -or $updateResult.ExitCode -eq 3010 -or $updateResult.ExitCode -eq 1641) {
+        return $updateResult
+    }
+
+    if (-not (Test-WslSyntaxFallback $updateResult.Output)) {
+        Write-PrereqLog "wsl --update --web-download failed; continuing because install/status checks will decide final readiness."
+        return $updateResult
+    }
+
+    Write-PrereqLog "wsl --update --web-download is not supported here; retrying with the older update syntax."
+    return Invoke-NativeCommand $WslCommand @("--update")
+}
+
 try {
     Write-PrereqLog "Veslo WSL prerequisite helper started."
     Write-PrereqLog "Identity: $([Security.Principal.WindowsIdentity]::GetCurrent().Name)"
@@ -221,9 +317,14 @@ try {
     Write-PrereqLog $current.Reason
     if ($current.Ok) {
         if ($Install) {
-            $setDefault = Invoke-NativeCommand "wsl.exe" @("--set-default-version", "2")
-            if ($setDefault.ExitCode -ne 0) {
-                Write-PrereqLog "Unable to set WSL 2 as default now; continuing because WSL itself is usable."
+            $wslCommand = Resolve-WslExecutable
+            if ($wslCommand) {
+                $setDefault = Invoke-NativeCommand $wslCommand @("--set-default-version", "2")
+                if ($setDefault.ExitCode -ne 0) {
+                    Write-PrereqLog "Unable to set WSL 2 as default now; continuing because WSL itself is usable."
+                }
+            } else {
+                Write-PrereqLog "Unable to resolve wsl.exe for default-version setup; continuing because WSL status already passed."
             }
         }
         Finish-Prereq 0
@@ -238,36 +339,43 @@ try {
         Finish-Prereq 740
     }
 
-    $wslCommand = Get-Command "wsl.exe" -ErrorAction SilentlyContinue
-    if ($wslCommand) {
-        $installResult = Invoke-NativeCommand "wsl.exe" @("--install", "--no-distribution")
-        if ($installResult.ExitCode -ne 0) {
-            $fallbackPattern = "unknown|invalid|unrecognized|unsupported|usage"
-            if ($installResult.Output -notmatch $fallbackPattern) {
-                Write-PrereqLog "wsl --install failed without a recognized legacy syntax error."
-                Finish-Prereq $installResult.ExitCode
-            }
-            $fallbackExit = Enable-WslFeaturesWithDism
-            if ($fallbackExit -ne 0 -and $fallbackExit -ne 3010) {
-                Finish-Prereq $fallbackExit
-            }
-        }
-    } else {
+    $wslCommand = Resolve-WslExecutable
+    if (-not $wslCommand) {
         $fallbackExit = Enable-WslFeaturesWithDism
         if ($fallbackExit -ne 0 -and $fallbackExit -ne 3010) {
             Finish-Prereq $fallbackExit
         }
+        if ($fallbackExit -eq 3010) {
+            Write-PrereqLog "Windows restart is required before wsl.exe can finish installation."
+            Finish-Prereq 3010
+        }
+
+        $wslCommand = Resolve-WslExecutable
+        if (-not $wslCommand) {
+            Write-PrereqLog "wsl.exe is still unavailable after feature enablement. Windows restart is required."
+            Finish-Prereq 3010
+        }
     }
 
-    $wslCommand = Get-Command "wsl.exe" -ErrorAction SilentlyContinue
-    if ($wslCommand) {
-        $setDefault = Invoke-NativeCommand "wsl.exe" @("--set-default-version", "2")
-        if ($setDefault.ExitCode -ne 0) {
-            Write-PrereqLog "WSL default version could not be set before restart. Veslo will retry after Windows restarts."
-        }
-    } else {
-        Write-PrereqLog "wsl.exe is still unavailable after feature enablement. Windows restart is required."
-        Finish-Prereq 3010
+    Write-PrereqLog "Resolved wsl.exe for install: $wslCommand"
+    $installResult = Invoke-WslInstallNoDistribution $wslCommand
+    if ($installResult.ExitCode -eq 3010 -or $installResult.ExitCode -eq 1641) {
+        Write-PrereqLog "WSL installation requested a Windows restart."
+        Finish-Prereq $installResult.ExitCode
+    }
+    if ($installResult.ExitCode -ne 0) {
+        Finish-Prereq $installResult.ExitCode
+    }
+
+    $updateResult = Invoke-WslUpdateIfPossible $wslCommand
+    if ($updateResult.ExitCode -eq 3010 -or $updateResult.ExitCode -eq 1641) {
+        Write-PrereqLog "WSL update requested a Windows restart."
+        Finish-Prereq $updateResult.ExitCode
+    }
+
+    $setDefault = Invoke-NativeCommand $wslCommand @("--set-default-version", "2")
+    if ($setDefault.ExitCode -ne 0) {
+        Write-PrereqLog "WSL default version could not be set before restart. Veslo will retry after Windows restarts."
     }
 
     $afterInstall = Test-WslUsable

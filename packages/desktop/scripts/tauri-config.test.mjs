@@ -160,7 +160,11 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   assert.match(fragment, /ComponentGroup\s+Id="VesloWslProvisioningInstallerComponents"/);
   assert.match(fragment, /CustomAction\s+[^>]*Id="VesloProvisionWslSandbox"/s);
   assert.match(fragment, /After="InstallFiles"/);
-  assert.match(fragment, /Return="ignore"/);
+  assert.match(
+    fragment,
+    /Return="check"/,
+    "MSI must fail on real WSL/VesloSandbox setup failures instead of silently completing a broken runtime install",
+  );
   assert.match(
     fragment,
     /\[System64Folder\]WindowsPowerShell\\v1\.0\\powershell\.exe/,
@@ -177,13 +181,36 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
     /\[INSTALLDIR\]wsl2-client-installer\.ps1/,
     "MSI custom action should run the client runtime installer so missing WSL prerequisites are handled from the installer flow",
   );
+  assert.match(
+    fragment,
+    /-AllowRestartContinuationSuccess/,
+    "MSI custom action should allow reboot-required RunOnce continuations without treating them as hard setup failures",
+  );
   assert.doesNotMatch(
     fragment,
     /\[INSTALLDIR\]resources\\wsl2-sandbox-installer\.ps1/,
     "Tauri MSI installs script resources into INSTALLDIR on Windows, so the custom action must not point at a resources subdirectory",
   );
   const prerequisite = readFileSync(prerequisitePath, "utf8");
-  assert.match(prerequisite, /wsl\.exe"\s+@\("--install",\s+"--no-distribution"\)/);
+  assert.match(prerequisite, /function\s+Resolve-WslExecutable\b/);
+  assert.match(prerequisite, /function\s+Resolve-DismExecutable\b/);
+  assert.match(prerequisite, /Sysnative/);
+  assert.match(prerequisite, /System32/);
+  assert.match(
+    prerequisite,
+    /Invoke-NativeCommand\s+\$WslCommand\s+@\("--install",\s+"--no-distribution",\s+"--web-download"\)/,
+    "WSL prerequisite helper should install the modern WSL package without creating a default user distro",
+  );
+  assert.match(
+    prerequisite,
+    /Invoke-NativeCommand\s+\$WslCommand\s+@\("--install",\s+"--no-distribution"\)/,
+    "WSL prerequisite helper should fall back to the older no-distro install syntax",
+  );
+  assert.match(
+    prerequisite,
+    /Invoke-NativeCommand\s+\$WslCommand\s+@\("--update",\s+"--web-download"\)/,
+    "WSL prerequisite helper should update/download the modern WSL package from the web source",
+  );
   assert.match(prerequisite, /Microsoft-Windows-Subsystem-Linux/);
   assert.match(prerequisite, /VirtualMachinePlatform/);
   assert.match(
@@ -197,6 +224,15 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
     "WSL prerequisite helper should not invoke native child commands through PowerShell's call operator",
   );
   const clientInstaller = readFileSync(clientInstallerPath, "utf8");
+  assert.match(clientInstaller, /AllowRestartContinuationSuccess/);
+  assert.match(
+    clientInstaller,
+    /Cannot prepare Veslo WSL runtime under SYSTEM[\s\S]*?Finish-ClientInstaller 5/,
+    "client runtime installer must fail under SYSTEM because WSL distro and RunOnce state are per-user",
+  );
+  assert.match(clientInstaller, /VESLO_RUNTIME_SETUP_RESULT=ready/);
+  assert.match(clientInstaller, /VESLO_RUNTIME_SETUP_RESULT=restart_required/);
+  assert.match(clientInstaller, /VESLO_RUNTIME_SETUP_RESULT=failed/);
   assert.match(clientInstaller, /wsl2-prerequisite-installer\.ps1/);
   assert.match(clientInstaller, /wsl2-sandbox-installer\.ps1/);
   assert.match(clientInstaller, /function\s+Resolve-WslExecutable\b/);
@@ -206,6 +242,13 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   assert.match(clientInstaller, /Invoke-ElevatedPowerShellScript\s+\$prerequisiteScript\s+@\("-Install"\)/);
   assert.match(clientInstaller, /-Verb\s+RunAs/);
   assert.match(clientInstaller, /RunOnce/);
+  const runOnceFunction = clientInstaller.match(/function\s+Register-ClientInstallerRunOnce[\s\S]*?\n}\r?\n/);
+  assert.ok(runOnceFunction, "Expected client runtime installer to define RunOnce continuation");
+  assert.doesNotMatch(
+    runOnceFunction[0],
+    /-SkipPrerequisiteInstall/,
+    "RunOnce continuation must retry WSL prerequisites after reboot instead of skipping WSL package download",
+  );
   assert.match(
     clientInstaller,
     /\$arguments\s*=\s*@\([\s\S]*?"-NoProfile",[\s\S]*?"-NonInteractive",[\s\S]*?"-WindowStyle",[\s\S]*?"Hidden",[\s\S]*?"-ExecutionPolicy"/,
@@ -222,12 +265,32 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
     "client runtime installer should not invoke WSL or nested PowerShell children through PowerShell's call operator",
   );
   const wrapper = readFileSync(wrapperPath, "utf8");
+  assert.doesNotMatch(
+    wrapper,
+    /best-effort/,
+    "sandbox provisioning wrapper must not describe package setup failures as best-effort",
+  );
+  assert.match(
+    wrapper,
+    /Cannot provision Veslo WSL runtime under SYSTEM[\s\S]*?Finish-Installer 5/,
+    "sandbox provisioning wrapper must fail under SYSTEM because WSL distros are per-user",
+  );
   assert.match(wrapper, /package\.json/);
   assert.match(wrapper, /function\s+Resolve-WslExecutable\b/);
   assert.match(wrapper, /function\s+Resolve-PowerShellExecutable\b/);
   assert.match(wrapper, /Sysnative/);
   assert.match(wrapper, /System32/);
   assert.match(wrapper, /Invoke-HiddenNativeCommand\s+\$wslCommand\s+@\("--status"\)/);
+  assert.match(
+    wrapper,
+    /Write-InstallerLog "wsl\.exe was not found[\s\S]*?Finish-Installer 127/,
+    "sandbox provisioning wrapper must not report success when WSL is missing",
+  );
+  assert.match(
+    wrapper,
+    /Write-InstallerLog "powershell\.exe was not found[\s\S]*?Finish-Installer 127/,
+    "sandbox provisioning wrapper must not report success when PowerShell is missing",
+  );
   assert.match(wrapper, /Invoke-HiddenNativeCommand\s+\$powershellCommand\s+@\(\$baseArgs\s+\+\s+@\("-CheckOnly"\)\)/);
   assert.match(
     wrapper,
@@ -308,6 +371,23 @@ test("Windows NSIS builds a current-user client installer with runtime setup hoo
   );
   assert.match(hook, /wsl2-client-installer\.ps1/);
   assert.match(hook, /-NoProfile\s+-NonInteractive\s+-WindowStyle\s+Hidden\s+-ExecutionPolicy\s+Bypass/);
+  assert.match(hook, /SetRebootFlag\s+true/);
+  assert.match(hook, /MessageBox\s+MB_ICONINFORMATION/);
+  assert.match(hook, /MessageBox\s+MB_ICONEXCLAMATION/);
+  assert.match(hook, /Abort\s+"Veslo Windows runtime preparation failed/);
+  assert.match(hook, /wsl2-client-installer\.log/);
+  assert.match(
+    hook,
+    /\$COMMONAPPDATA\\Veslo\\logs\\wsl2-prerequisite-installer\.log/,
+    "NSIS hook should print the standard NSIS ProgramData variable for prerequisite setup logs",
+  );
+  assert.doesNotMatch(
+    hook,
+    /\$PROGRAMDATA/,
+    "NSIS hook must not use a non-standard $PROGRAMDATA variable when printing log paths",
+  );
+  assert.match(hook, /wsl2-prerequisite-installer\.log/);
+  assert.match(hook, /wsl2-sandbox-installer\.log/);
   assert.doesNotMatch(
     hook,
     /-Verb\s+RunAs/,

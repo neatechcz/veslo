@@ -133,22 +133,43 @@ Current implemented behavior:
 
 Not yet implemented:
 
-- first-run UI onboarding
 - versioned runtime manifest
-- user-facing repair flow
 
 Implemented installer bridge:
 
 - the Windows MSI bundles the provisioning helper as an app resource
 - it also bundles the desktop package manifest (`package.json`) so the wrapper passes
   the currently pinned OpenCode version to the provisioner
-- a WiX custom action runs a best-effort wrapper after app files are installed
+- a WiX custom action runs the checked client runtime wrapper after app files are installed
 - the wrapper first checks the existing `VesloSandbox` runtime, then provisions
   or repairs it only when missing/incomplete
-- provisioning failures do not roll back the Veslo MSI; they are logged to
+- the client installer wrapper checks WSL prerequisites, may launch the bundled
+  elevated prerequisite helper, and registers a RunOnce continuation when a
+  restart is required; the continuation retries prerequisites after reboot so a
+  clean machine can finish the WSL package/kernel download before provisioning
+- the prerequisite helper installs or updates WSL without creating a default
+  personal distro (`wsl --install --no-distribution --web-download` with legacy
+  fallbacks) and uses DISM feature enablement only as the older-Windows fallback
+- real WSL/VesloSandbox setup failures fail the Windows installer instead of
+  silently completing a broken runtime install; restart-required WSL feature
+  enablement is the allowed pending state because RunOnce continues setup after
+  the user signs in again
+- installer runtime setup fails when invoked under `SYSTEM`, because WSL
+  distributions and RunOnce continuations are per-user and must be prepared
+  under the target Windows account
+- the PowerShell wrappers return and log the real runtime/provisioning status
+  so installer logs can distinguish app install success from runtime setup
+  failure or restart-required continuation
+- runtime setup details are logged to
+  `%ProgramData%\Veslo\logs\wsl2-prerequisite-installer.log`,
+  `%LOCALAPPDATA%\Veslo\logs\wsl2-client-installer.log` and
   `%LOCALAPPDATA%\Veslo\logs\wsl2-sandbox-installer.log` for later repair
-- the MSI does not run `wsl --install`; enabling WSL and any reboot/admin
-  requirement still belongs to explicit onboarding or enterprise deployment
+
+First-run onboarding and Settings expose the same two-phase repair path through
+the desktop WSL repair commands. Local runtime startup also performs a
+check-only preflight before spawning `veslo-code`; if the installer did not
+prepare `VesloSandbox`, the app must block the first local prompt with a
+repairable prerequisite message instead of surfacing a generic send failure.
 
 Smoke tests should only verify the environment. They must not install packages,
 repair WSL, or modify user distros.

@@ -21,6 +21,11 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
   assert.match(runtimeSource, /clearWorkspaceBusyAllExcept\(workspace\.id\)/);
   assert.match(
     runtimeSource,
+    /const runtimeReady = workspace\.workspaceType === "local"[\s\S]*await deps\.ensureLocalRuntimeReadyForWorkspaceStart\?\.\(workspace\.path\)[\s\S]*if \(runtimeReady === false\) \{[\s\S]*ensure-engine:runtime-prerequisites-not-ready[\s\S]*return false;[\s\S]*\}[\s\S]*const skillsReady = await deps\.syncWorkspaceSkillMaterializationBeforeRuntime\(workspace,/s,
+    "first-prompt lazy runtime startup must run the Windows WSL2/VesloSandbox preflight before skill sync or engine spawn",
+  );
+  assert.match(
+    runtimeSource,
     /const isActiveWorkspace = workspace\.id === deps\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*if \(isActiveWorkspace\) \{[\s\S]*deps\.setEngineReady\?\.\(true\);[\s\S]*deps\.onEngineStable\?\.\(\);[\s\S]*\}/s,
     "runtime ensure should reflect engine readiness only for the currently active workspace",
   );
@@ -46,8 +51,13 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
   );
   assert.match(
     runtimeSource,
-    /const message = messageFromUnknownError\(e, deps\.safeStringify\);[\s\S]*deps\.setError\(message\);/,
+    /const message = messageFromUnknownError\(e, deps\.safeStringify\);[\s\S]*setErrorForActiveWorkspace\(id, message\);/,
     "runtime ensure failures should keep concrete engine startup messages for the UI",
+  );
+  assert.match(
+    facadeSource,
+    /ensureLocalRuntimeReadyForWorkspaceStart: engineStore\.ensureLocalRuntimeReadyForWorkspaceStart,/,
+    "workspace store should pass the same local runtime preflight used by startHost into lazy first-prompt runtime startup",
   );
   assert.doesNotMatch(facadeSource, /async function ensureEngineForWorkspace/);
 });

@@ -317,7 +317,7 @@ if (!targetEmail) {
 NODE
 ```
 
-If `debug_log_batch` and `debug_log_event` are empty, Den is configured to accept debug logs but no desktop/server process has uploaded any events. Desktop-launched `veslo-server` only forwards to Den when it is started with `VESLO_LOG_INGEST_URL` and `VESLO_LOG_INGEST_TOKEN`; otherwise events stay in the user's local spool and are not queryable from the cloud server. In updater investigations on Windows, also collect `C:\ProgramData\veslo-updater-msi.log` from the affected machine because the Windows MSI installer writes there independently of Den debug-log ingest.
+If `debug_log_batch` and `debug_log_event` are empty, Den is configured to accept debug logs but no desktop/server process has uploaded any events. Desktop-launched `veslo-server` only forwards to Den when it is started with `VESLO_LOG_INGEST_URL` and `VESLO_LOG_INGEST_TOKEN`; otherwise events stay in the user's local spool and are not queryable from the cloud server. In updater investigations on Windows, also collect `C:\ProgramData\veslo-updater-msi.log` from the affected machine because the Windows MSI installer writes there independently of Den debug-log ingest. For clean-install WSL runtime setup issues, also collect `%ProgramData%\Veslo\logs\wsl2-prerequisite-installer.log`, `%LOCALAPPDATA%\Veslo\logs\wsl2-client-installer.log`, and `%LOCALAPPDATA%\Veslo\logs\wsl2-sandbox-installer.log`. NSIS clean installs also print these paths in the installer detail log and stop on non-restart runtime setup failures.
 
 ## Veslo Server Debug-Log Pipeline
 

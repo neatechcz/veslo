@@ -162,6 +162,28 @@ export function createEngineStore(deps: EngineStoreDeps) {
     }
   }
 
+  async function ensureLocalRuntimeReadyForWorkspaceStart(workspacePath: string) {
+    const dir = workspacePath.trim();
+    const windowsSandboxEnvironment = await resolveWindowsSandboxEnvironmentForLocalStart();
+    if (deps.isWindowsPlatform() && !windowsSandboxEnvironment) {
+      return false;
+    }
+    const useWindowsWslSandbox = windowsSandboxEnvironment?.backend === "windows-wsl2";
+
+    if (useWindowsWslSandbox && !isWslMappableWindowsWorkspacePath(dir)) {
+      deps.setError(
+        "This workspace path cannot be mounted into the Windows WSL2 sandbox. Choose a folder on a local drive such as C:\\Users\\...; network and UNC paths are not supported for local sandboxed runs.",
+      );
+      return false;
+    }
+
+    if (useWindowsWslSandbox && !(await ensureWindowsSandboxReadyForLocalStart())) {
+      return false;
+    }
+
+    return true;
+  }
+
   const localRuntimeLifecycle = createLocalRuntimeLifecycle({
     engineSource: deps.engineSource,
     engineCustomBinPath: deps.engineCustomBinPath,
@@ -263,20 +285,7 @@ export function createEngineStore(deps: EngineStoreDeps) {
       return false;
     }
 
-    const windowsSandboxEnvironment = await resolveWindowsSandboxEnvironmentForLocalStart();
-    if (deps.isWindowsPlatform() && !windowsSandboxEnvironment) {
-      return false;
-    }
-    const useWindowsWslSandbox = windowsSandboxEnvironment?.backend === "windows-wsl2";
-
-    if (useWindowsWslSandbox && !isWslMappableWindowsWorkspacePath(dir)) {
-      deps.setError(
-        "This workspace path cannot be mounted into the Windows WSL2 sandbox. Choose a folder on a local drive such as C:\\Users\\...; network and UNC paths are not supported for local sandboxed runs.",
-      );
-      return false;
-    }
-
-    if (useWindowsWslSandbox && !(await ensureWindowsSandboxReadyForLocalStart())) {
+    if (!(await ensureLocalRuntimeReadyForWorkspaceStart(dir))) {
       return false;
     }
 
@@ -496,6 +505,7 @@ export function createEngineStore(deps: EngineStoreDeps) {
     // Methods
     refreshEngine,
     refreshEngineDoctor,
+    ensureLocalRuntimeReadyForWorkspaceStart,
     startHost,
     stopHost,
     reloadWorkspaceEngine,
