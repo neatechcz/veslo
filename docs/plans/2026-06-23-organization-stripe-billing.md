@@ -24,6 +24,21 @@
 
 Use @test-driven-development for each implementation task, @systematic-debugging for any failing test or unexpected Stripe behavior, and @verification-before-completion before committing or reporting completion.
 
+## Mandatory Testing Standard
+
+Every user-visible billing feature in this plan must be verified through complete E2E tests that run the Den admin locally. Unit or API tests are required for low-level logic, but they are not sufficient to mark a feature complete.
+
+The E2E tests must exercise the local admin surface as the user would use it:
+
+- load the Den admin from the locally running Den service,
+- sign in or seed an organization/platform admin session,
+- use the billing UI controls,
+- verify the resulting admin UI state,
+- verify the resulting entitlement/runtime behavior where the feature affects AI access,
+- verify failure and recovery states, not only the happy path.
+
+The only exception to live E2E execution is the external Stripe service. Do not rely on live Stripe in the required E2E suite. Instead, simulate Stripe by using a fake Stripe client, local webhook fixtures, and deterministic hosted URL responses. The simulation must cover every Stripe output and state that our code handles, including successful checkout, canceled/expired checkout, portal session creation, subscription creation/update/deletion, quantity changes, cancel-at-period-end, active, incomplete, past-due, unpaid, canceled, invoice payment succeeded, invoice payment failed, payment method updates, refunds or credit notes if supported by the handler, unknown events, duplicate events, and webhook signature errors.
+
 ## Task 1: Add Billing Domain Types And Pure Entitlement Tests
 
 **Files:**
@@ -827,21 +842,55 @@ git commit -m "docs: document organization billing behavior"
 - Create or modify: `packages/e2e/specs/organization-billing.spec.ts`
 - Modify only if needed: `packages/e2e/helpers/live-admin-client.ts`
 - Modify only if needed: `packages/e2e/helpers/desktop-auth-seed.ts`
+- Create: `packages/e2e/helpers/fake-stripe-billing.ts`
+- Create: `services/den/test/fixtures/stripe-organization-billing-events.ts`
 
 **Step 1: Add E2E scenario**
 
-Use the real Tauri desktop runtime for app behavior and Den test/mocked Stripe hooks for billing state where external Stripe is not suitable.
+Use the real locally running Den admin for all billing UI behavior. Use the real Tauri desktop runtime for app/runtime behavior. Use Den test hooks, a fake Stripe client, and local Stripe webhook fixtures for Stripe responses; do not call live Stripe in the required E2E suite.
 
-Scenario:
+Core scenario:
 
 1. Seed an organization admin.
-2. Configure Managed AI billing as active.
-3. Verify desktop can start a Managed AI request.
-4. Mark billing unpaid through Den test helper or webhook fixture.
-5. Verify history/settings remain readable.
-6. Verify new Managed AI inference is blocked with a payment-required message.
-7. Configure Local Models custom billing.
-8. Verify active user limit remains enforced and local/BYOK inference is not blocked by Managed AI entitlement.
+2. Open the local Den admin billing page.
+3. Create Managed AI checkout from the UI with Basic and Extended quantities.
+4. Simulate `checkout.session.completed` and subscription activation.
+5. Verify the Den admin shows active billing, license usage, Customer Portal access, and the selected quantities.
+6. Verify desktop can start a Managed AI request.
+7. Simulate `invoice.payment_failed` and `past_due`.
+8. Verify Den admin shows the payment warning while inference remains available during grace.
+9. Simulate final `unpaid`.
+10. Verify history/settings remain readable.
+11. Verify new Managed AI inference is blocked with a payment-required message.
+12. Configure Local Models custom billing from the platform admin UI.
+13. Verify active user limit remains enforced.
+14. Verify local/BYOK inference is not blocked by Managed AI entitlement.
+
+Additional required E2E coverage:
+
+- canceled or expired checkout returns to the billing page without granting access,
+- adding seats applies immediately in the UI and entitlement snapshot,
+- reducing seats and Extended-to-Basic downgrade appear as next-period changes,
+- reducing below active user count is rejected in the UI,
+- deactivating a user releases a license,
+- Customer Portal action opens the simulated portal URL,
+- cancel-at-period-end remains active until period end and then blocks Managed AI after the simulated final event,
+- platform admin allowlist changes alter which Managed AI tiers the org admin can select,
+- manual access/admin override enables Managed AI without showing trial language,
+- Local Models custom price, interval, billing source, and quantity are visible to platform admin and read-only for organization admin,
+- single-organization membership and platform-admin transfer behavior are covered.
+
+Required Stripe simulation matrix:
+
+- checkout session: completed, canceled, expired,
+- portal session: URL created, missing customer error,
+- subscription: created, updated, deleted,
+- subscription status: active, incomplete, past_due, unpaid, canceled,
+- subscription quantities: Basic only, Extended only, mixed Basic/Extended, quantity increase, scheduled quantity decrease, scheduled downgrade,
+- invoice: payment succeeded, payment failed,
+- payment method: attached or updated if the handler supports it,
+- refund or credit note events if the handler supports them,
+- webhook processing: valid signature, invalid signature, duplicate event id, unknown event type.
 
 **Step 2: Follow desktop test preflight**
 
@@ -854,7 +903,13 @@ Before any desktop E2E run, follow `docs/dev/testing-playbook.md`:
 
 Do not use `packages/web` or Vite as the app runtime.
 
-**Step 3: Run focused Den and app checks**
+**Step 3: Start the local admin under test**
+
+Start Den locally with the fake Stripe billing configuration enabled. The test harness should launch or verify the local Den service, then open its hosted admin page. Do not test billing through static files alone.
+
+Expected: the local admin page loads with the seeded admin session and billing navigation available.
+
+**Step 4: Run focused Den and app checks**
 
 Run:
 
@@ -865,9 +920,19 @@ pnpm --filter @neatech/veslo-ui typecheck
 
 Expected: PASS.
 
-**Step 4: Run desktop E2E**
+**Step 5: Run local-admin billing E2E**
 
-Run the focused WebdriverIO spec:
+Run the focused local-admin E2E spec:
+
+```bash
+pnpm --filter @neatech/veslo-e2e test -- --spec ./specs/organization-billing.spec.ts
+```
+
+Expected: PASS with all local admin billing features covered and all Stripe outputs simulated through fixtures/fakes.
+
+**Step 6: Run desktop E2E**
+
+Run the focused WebdriverIO spec against the real Tauri runtime if it is split from the local-admin billing spec:
 
 ```bash
 pnpm --filter @neatech/veslo-e2e test -- --spec ./specs/organization-billing.spec.ts
@@ -875,7 +940,7 @@ pnpm --filter @neatech/veslo-e2e test -- --spec ./specs/organization-billing.spe
 
 Expected: PASS against the real Tauri desktop runtime.
 
-**Step 5: Run full relevant suite before PR**
+**Step 7: Run full relevant suite before PR**
 
 Run:
 
@@ -889,9 +954,9 @@ Expected: PASS.
 
 If desktop E2E is blocked by an already-running Veslo process from this repo and the task rules do not allow terminating or reusing it, follow `AGENTS.md`: schedule a 10-minute retry automation and keep retrying until the real Tauri-runtime test completes or the user changes scope.
 
-**Step 6: Commit**
+**Step 8: Commit**
 
 ```bash
-git add packages/e2e/specs/organization-billing.spec.ts packages/e2e/helpers/live-admin-client.ts packages/e2e/helpers/desktop-auth-seed.ts
+git add packages/e2e/specs/organization-billing.spec.ts packages/e2e/helpers/live-admin-client.ts packages/e2e/helpers/desktop-auth-seed.ts packages/e2e/helpers/fake-stripe-billing.ts services/den/test/fixtures/stripe-organization-billing-events.ts
 git commit -m "test: verify organization billing runtime behavior"
 ```
