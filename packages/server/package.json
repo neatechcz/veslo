@@ -1,6 +1,6 @@
 {
   "name": "veslo-server",
-  "version": "2026.6.17",
+  "version": "2026.6.19",
   "description": "Filesystem-backed API for Veslo remote clients",
   "type": "module",
   "bin": {

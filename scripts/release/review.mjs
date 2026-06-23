@@ -189,7 +189,7 @@ const hiddenProcessStartInfoPattern =
 const nativeCommandTimeoutPattern =
   /\$NativeCommandTimeoutExitCode\s*=\s*1460[\s\S]*?function\s+Stop-HiddenNativeProcessTree\b[\s\S]*?WaitForExit\(\$timeoutMilliseconds\)/;
 const hasIsolatedWslCommandGuard = (text) =>
-  /(?:native-timeout-isolation|skip-redundant-prereq-check|wsl-install-dism-fallback|optional-feature-fallback|expanded-prereq-log-tail|optional-feature-first|runonce-elevated-exit-guard|tls-opencode-version-guard)-20260623/.test(text) &&
+  /(?:native-timeout-isolation|skip-redundant-prereq-check|wsl-install-dism-fallback|optional-feature-fallback|expanded-prereq-log-tail|optional-feature-first|runonce-elevated-exit-guard|msi-restart-prompt|restart-command-logging|tls-opencode-version-guard)-20260623/.test(text) &&
   /Script revision:/.test(text) &&
   /function\s+Invoke-IsolatedNativeCommand\b/.test(text) &&
   /Start-Job\s+-ScriptBlock/.test(text) &&
@@ -247,12 +247,27 @@ addCheck(
   tauriBundleResources["windows/wsl2-client-installer.ps1"] === "wsl2-client-installer.ps1" &&
     /AllowRestartContinuationSuccess/.test(wslClientInstaller) &&
     /AllowDeferredRuntimeRepairSuccess/.test(wslClientInstaller) &&
+    /PromptForRestartIfRequired/.test(wslClientInstaller) &&
+    /Resolve-RestartRequiredMarkerPath/.test(wslClientInstaller) &&
+    /runtime-setup-restart-required\.marker/.test(wslClientInstaller) &&
+    /Show-RestartPromptIfRequired/.test(wslClientInstaller) &&
+    /WScript\.Shell/.test(wslClientInstaller) &&
+    /Restart Windows to finish Veslo setup/.test(wslClientInstaller) &&
+    /shutdown\.exe/.test(wslClientInstaller) &&
+    /Invoke-HiddenNativeCommand\s+-FilePath\s+\$shutdownCommand\s+-Arguments\s+\$shutdownArgs\s+-TimeoutSeconds\s+30/.test(
+      wslClientInstaller,
+    ) &&
+    /shutdown\.exe restart request finished with exit code/.test(wslClientInstaller) &&
+    /Windows restart has been scheduled by shutdown\.exe/.test(wslClientInstaller) &&
+    /VESLO_RUNTIME_SETUP_RESULT=restart_required[\s\S]*?Set-Content\s+-LiteralPath\s+\$markerPath/s.test(
+      wslClientInstaller,
+    ) &&
     /function\s+Write-RecentPrerequisiteLogTail\b/.test(wslClientInstaller) &&
     /Latest WSL prerequisite helper transcript/.test(wslClientInstaller) &&
     /Start-Sleep\s+-Milliseconds\s+500/.test(wslClientInstaller) &&
     /Windows PowerShell transcript start/.test(wslClientInstaller) &&
     /Get-Content\s+-LiteralPath\s+\$prereqLogPath\s+-ErrorAction\s+Stop/.test(wslClientInstaller) &&
-    /first-run onboarding\/Settings repair will retry[\s\S]*?\$installerExitCode\s*=\s*0/.test(
+    /-not\s+\$restartContinuation[\s\S]*?first-run onboarding\/Settings repair will retry[\s\S]*?\$installerExitCode\s*=\s*0/.test(
       wslClientInstaller,
     ) &&
     /VESLO_RUNTIME_SETUP_RESULT=ready/.test(wslClientInstaller) &&
@@ -373,6 +388,22 @@ addCheck(
     /\[INSTALLDIR\]wsl2-client-installer\.ps1/.test(wslInstallerFragment) &&
     /-AllowRestartContinuationSuccess/.test(wslInstallerFragment) &&
     /-AllowDeferredRuntimeRepairSuccess/.test(wslInstallerFragment) &&
+    /Id="VesloPromptWslRuntimeRestart"/.test(wslInstallerFragment) &&
+    /-PromptForRestartIfRequired/.test(wslInstallerFragment) &&
+    /-UiLevel\s+&quot;\[UILevel\]&quot;/.test(wslInstallerFragment) &&
+    /Custom Action="VesloPromptWslRuntimeRestart"\s+After="InstallFinalize"/.test(wslInstallerFragment) &&
+    /Id="VesloDisableExitDialogLaunchCheckbox"[\s\S]*?Property="WIXUI_EXITDIALOGOPTIONALCHECKBOX"[\s\S]*?Value="0"/.test(
+      wslInstallerFragment,
+    ) &&
+    /Id="VesloClearExitDialogLaunchCheckboxText"[\s\S]*?Property="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"[\s\S]*?Value=""/.test(
+      wslInstallerFragment,
+    ) &&
+    /Custom Action="VesloDisableExitDialogLaunchCheckbox"\s+Before="ExecuteAction"/.test(
+      wslInstallerFragment,
+    ) &&
+    /Custom Action="VesloDisableAutoLaunchApp"\s+Before="LaunchApplication"/.test(
+      wslInstallerFragment,
+    ) &&
     /function\s+Resolve-WslExecutable\b/.test(wslSandboxInstaller) &&
     /function\s+Resolve-PowerShellExecutable\b/.test(wslSandboxInstaller) &&
     /Sysnative/.test(wslSandboxInstaller) &&

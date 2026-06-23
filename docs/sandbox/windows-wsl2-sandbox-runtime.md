@@ -159,13 +159,17 @@ Implemented installer bridge:
   with a generic custom-action failure, while first-run onboarding and Settings
   repair continue the same setup path
 - restart-required WSL feature enablement is the allowed pending state because
-  RunOnce continues setup after the user signs in again
+  MSI writes a restart-required marker, offers a post-install restart prompt,
+  and RunOnce continues setup after the user signs in again
 - installer runtime setup fails when invoked under `SYSTEM`, because WSL
   distributions and RunOnce continuations are per-user and must be prepared
   under the target Windows account
 - the PowerShell wrappers log the real runtime/provisioning status so installer
   logs can distinguish app install success from runtime setup failure or
   restart-required continuation
+- Windows local workspace startup and lazy first-prompt startup preflight WSL
+  prerequisites and `VesloSandbox`; they must not spawn `veslo-code` while the
+  installer restart/setup continuation is still incomplete
 - MSI packages enable default verbose Windows Installer logging, so clean
   installs create an `MSI*.LOG` file in the installing user's temp directory
   even when the failure happens before the WSL runtime scripts are reached
