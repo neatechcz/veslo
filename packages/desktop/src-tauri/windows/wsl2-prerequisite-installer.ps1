@@ -18,7 +18,7 @@ $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 $env:WSL_UTF8 = "1"
 $NativeCommandTimeoutExitCode = 1460
-$PrerequisiteInstallerScriptRevision = "silent-features-kernel-msix-20260624"
+$PrerequisiteInstallerScriptRevision = "features-msix-no-localsystem-wsl-20260624"
 
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -535,37 +535,34 @@ function Install-WslAppPackage {
     }
 }
 
-function Install-WslKernelMsi {
-    # Install the WSL2 kernel update package quietly. This is the silent,
-    # unattended equivalent of `wsl --update` and is exactly what the WSL
-    # "install on server" docs use for headless setup. `msiexec /quiet` shows no
-    # window and needs no extra elevation when we already run elevated, unlike
-    # `wsl --install`/`wsl --update`, which spawn an interactive, self-elevating
-    # console even from an elevated/LocalSystem context.
+function Test-WslFeaturesEnabled {
+    # Check WSL feature state via DISM cmdlets, NOT wsl.exe: this runs fine as
+    # LocalSystem, whereas wsl.exe refuses to run as LocalSystem
+    # (WSL_E_LOCAL_SYSTEM_NOT_SUPPORTED).
     try {
-        $downloadDir = Join-Path $env:TEMP "veslo-wsl-prereq"
-        New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
-        $msiPath = Join-Path $downloadDir "wsl_update_x64.msi"
-        $kernelUrl = "https://wslstorestorage.blob.core.windows.net/wslblob/wsl_update_x64.msi"
-        Write-PrereqLog "Downloading WSL2 kernel update package: $kernelUrl"
-        Invoke-WebRequest -Uri $kernelUrl -OutFile $msiPath -UseBasicParsing -TimeoutSec 900
-
-        $msiexec = Resolve-SystemExecutable "msiexec.exe" "msiexec.exe"
-        if (-not $msiexec) {
-            Write-PrereqLog "msiexec.exe was not found; cannot install the WSL2 kernel update."
+        if (-not (Get-Command Get-WindowsOptionalFeature -ErrorAction SilentlyContinue)) {
             return $false
         }
-
-        Write-PrereqLog "Installing WSL2 kernel update silently."
-        $result = Invoke-NativeCommand -FilePath $msiexec -Arguments @("/i", $msiPath, "/quiet", "/norestart") -TimeoutSeconds 900
-        if ($result.ExitCode -eq 0 -or $result.ExitCode -eq 3010) {
-            Write-PrereqLog "WSL2 kernel update installed (exit code $($result.ExitCode))."
-            return $true
-        }
-        Write-PrereqLog "WSL2 kernel update install returned exit code $($result.ExitCode)."
-        return $false
+        $wsl = Get-WindowsOptionalFeature -Online -FeatureName "Microsoft-Windows-Subsystem-Linux" -ErrorAction Stop
+        $vm = Get-WindowsOptionalFeature -Online -FeatureName "VirtualMachinePlatform" -ErrorAction Stop
+        return (($wsl.State -eq "Enabled") -and ($vm.State -eq "Enabled"))
     } catch {
-        Write-PrereqLog "Failed to install WSL2 kernel update: $($_.Exception.Message)."
+        Write-PrereqLog "Failed to query WSL feature state: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Test-WslAppProvisioned {
+    # Check whether the modern WSL app package is provisioned, again without
+    # calling wsl.exe (LocalSystem-safe).
+    try {
+        if (-not (Get-Command Get-AppxProvisionedPackage -ErrorAction SilentlyContinue)) {
+            return $false
+        }
+        $pkgs = Get-AppxProvisionedPackage -Online -ErrorAction Stop
+        return [bool]($pkgs | Where-Object { $_.DisplayName -match "WindowsSubsystemForLinux|WSL" })
+    } catch {
+        Write-PrereqLog "Failed to query WSL app provisioning state: $($_.Exception.Message)"
         return $false
     }
 }
@@ -577,25 +574,30 @@ try {
     Write-PrereqLog "Identity: $([Security.Principal.WindowsIdentity]::GetCurrent().Name)"
     Write-PrereqLog "Mode: $(if ($Install) { "install" } else { "check" })"
 
-    $current = Test-WslUsable
-    Write-PrereqLog $current.Reason
-    if ($current.Ok) {
-        if ($Install) {
-            $wslCommand = Resolve-WslExecutable
-            if ($wslCommand) {
-                $setDefault = Invoke-NativeCommand -FilePath $wslCommand -Arguments @("--set-default-version", "2") -TimeoutSeconds 120
-                if ($setDefault.ExitCode -ne 0) {
-                    Write-PrereqLog "Unable to set WSL 2 as default now; continuing because WSL itself is usable."
-                }
-            } else {
-                Write-PrereqLog "Unable to resolve wsl.exe for default-version setup; continuing because WSL status already passed."
-            }
-        }
-        Finish-Prereq 0
-    }
+    # IMPORTANT: this helper may run as LocalSystem (from the MSI custom action),
+    # and wsl.exe refuses to run as LocalSystem (WSL_E_LOCAL_SYSTEM_NOT_SUPPORTED).
+    # It also runs inside the Veslo MSI transaction, so it must not start a nested
+    # Windows Installer (e.g. the WSL2 kernel MSI) - that deadlocks on the
+    # _MSIExecute mutex. So we never touch wsl.exe or msiexec here: we only check
+    # state and install the WSL Windows features + WSL app package, which are
+    # both silent, LocalSystem-safe, and not Windows Installer transactions. The
+    # per-user Veslo app does the wsl.exe work (status + distro import) after the
+    # restart.
+    $featuresEnabled = Test-WslFeaturesEnabled
+    $wslAppProvisioned = Test-WslAppProvisioned
+    Write-PrereqLog "WSL optional features enabled: $featuresEnabled; WSL app provisioned: $wslAppProvisioned"
+    $ready = ($featuresEnabled -and $wslAppProvisioned)
 
     if ($CheckOnly) {
+        if ($ready) {
+            Finish-Prereq 0
+        }
         Finish-Prereq 10
+    }
+
+    if ($ready) {
+        Write-PrereqLog "WSL Windows features and app package are already in place; no machine setup needed."
+        Finish-Prereq 0
     }
 
     if (-not (Test-IsAdministrator)) {
@@ -603,42 +605,21 @@ try {
         Finish-Prereq 740
     }
 
-    # Fully silent machine setup. We deliberately do NOT call `wsl --install` or
-    # `wsl --update`: on current Windows builds those are interactive,
-    # self-elevating commands that open a console window (ending in "Press any
-    # key to exit...") and request their own UAC prompt even when launched from
-    # an elevated/LocalSystem context. Enabling the optional features, installing
-    # the WSL2 kernel MSI with `msiexec /quiet`, and provisioning the WSL app
-    # package are all silent machine operations an elevated context can perform.
-    Write-PrereqLog "Enabling WSL Windows optional features (silent)."
-    $featureExit = Enable-WslFeaturesWithPowerShellThenDism
-    if ($featureExit -ne 0 -and $featureExit -ne 3010) {
-        Write-PrereqLog "Enabling WSL Windows optional features failed with exit code $featureExit."
-        Finish-Prereq $featureExit
-    }
-    $restartRequired = ($featureExit -eq 3010)
-
-    Write-PrereqLog "Installing the WSL2 kernel update package (silent)."
-    [void](Install-WslKernelMsi)
-
-    Write-PrereqLog "Staging the modern WSL app package (silent)."
-    [void](Install-WslAppPackage)
-
-    $wslCommand = Resolve-WslExecutable
-    if ($wslCommand) {
-        $setDefault = Invoke-NativeCommand -FilePath $wslCommand -Arguments @("--set-default-version", "2") -TimeoutSeconds 120
-        if ($setDefault.ExitCode -ne 0) {
-            Write-PrereqLog "WSL default version could not be set yet; Veslo will set it after the restart."
+    if (-not $featuresEnabled) {
+        Write-PrereqLog "Enabling WSL Windows optional features (silent)."
+        $featureExit = Enable-WslFeaturesWithPowerShellThenDism
+        if ($featureExit -ne 0 -and $featureExit -ne 3010) {
+            Write-PrereqLog "Enabling WSL Windows optional features failed with exit code $featureExit."
+            Finish-Prereq $featureExit
         }
     }
 
-    $afterInstall = Test-WslUsable
-    Write-PrereqLog $afterInstall.Reason
-    if ($afterInstall.Ok -and -not $restartRequired) {
-        Finish-Prereq 0
+    if (-not $wslAppProvisioned) {
+        Write-PrereqLog "Provisioning the modern WSL app package (silent)."
+        [void](Install-WslAppPackage)
     }
 
-    Write-PrereqLog "Windows restart is required to finish WSL setup."
+    Write-PrereqLog "Windows restart is required to activate WSL; the Veslo app imports VesloSandbox after the restart."
     Finish-Prereq 3010
 } catch {
     Write-PrereqLog "Unhandled prerequisite helper error: $($_.Exception.Message)"

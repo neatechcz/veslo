@@ -633,41 +633,25 @@ function Finish-ClientInstaller([int]$RuntimeExitCode) {
 # prompts and never imports the per-user distro: it just enables the Windows WSL
 # features and stages the WSL app package so a single restart makes WSL usable.
 function Invoke-MachineWslSetup([string]$PrerequisiteScript) {
-    $wslState = Test-WslUsable
-    Write-ClientInstallerLog $wslState.Reason
-    if ($wslState.Ok) {
-        Write-ClientInstallerLog "WSL is already usable; no machine setup needed. The Veslo app will import the VesloSandbox distro per-user."
+    # WSL cannot run as LocalSystem (WSL_E_LOCAL_SYSTEM_NOT_SUPPORTED), so the
+    # machine phase never calls wsl.exe. It runs the silent prerequisite install
+    # (Windows features + WSL app package via DISM/AppX - both LocalSystem-safe
+    # and not nested Windows Installer transactions) and propagates its result.
+    # The per-user Veslo app imports the VesloSandbox distro after the restart.
+    if (-not (Test-Path -LiteralPath $PrerequisiteScript -PathType Leaf)) {
+        Write-ClientInstallerLog "Prerequisite installer helper is missing: $PrerequisiteScript"
+        Finish-ClientInstaller 2
+    }
+    if ($SkipPrerequisiteInstall) {
+        Write-ClientInstallerLog "Skip prerequisite install requested; nothing to do in machine setup."
         Finish-ClientInstaller 0
     }
 
-    if (-not $SkipPrerequisiteInstall) {
-        if (-not (Test-Path -LiteralPath $PrerequisiteScript -PathType Leaf)) {
-            Write-ClientInstallerLog "Prerequisite installer helper is missing: $PrerequisiteScript"
-        } else {
-            Write-ClientInstallerLog "WSL is not usable; running the WSL prerequisite install in-process (already elevated, no UAC prompt)."
-            $prereqInstall = Invoke-LocalPowerShellScript -ScriptPath $PrerequisiteScript -ScriptArguments @("-Install") -TimeoutSeconds 3600
-            Write-ClientInstallerLog "WSL prerequisite install finished with exit code $($prereqInstall.ExitCode)."
-            Write-RecentPrerequisiteLogTail
-            if ($prereqInstall.ExitCode -eq 3010 -or $prereqInstall.ExitCode -eq 1641) {
-                Finish-ClientInstaller $prereqInstall.ExitCode
-            }
-        }
-
-        $wslState = Test-WslUsable
-        Write-ClientInstallerLog $wslState.Reason
-    }
-
-    if ($wslState.Ok) {
-        Write-ClientInstallerLog "WSL is now usable without a restart. The Veslo app will import the VesloSandbox distro per-user."
-        Finish-ClientInstaller 0
-    }
-
-    if ($wslState.ExitCode -eq 3010 -or $wslState.ExitCode -eq 1641) {
-        Finish-ClientInstaller $wslState.ExitCode
-    }
-
-    Write-ClientInstallerLog "WSL is not usable yet and Windows likely needs a restart. Marking restart required; Veslo onboarding/Settings repair will retry without requiring manual PowerShell."
-    Finish-ClientInstaller 3010
+    Write-ClientInstallerLog "Running the silent WSL machine prerequisite install (no wsl.exe, LocalSystem-safe)."
+    $prereqInstall = Invoke-LocalPowerShellScript -ScriptPath $PrerequisiteScript -ScriptArguments @("-Install") -TimeoutSeconds 3600
+    Write-ClientInstallerLog "WSL prerequisite install finished with exit code $($prereqInstall.ExitCode)."
+    Write-RecentPrerequisiteLogTail
+    Finish-ClientInstaller $prereqInstall.ExitCode
 }
 
 # Per-user WSL setup used by the NSIS per-user installer hook and the app. WSL

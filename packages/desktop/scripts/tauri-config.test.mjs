@@ -248,7 +248,7 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   );
   const prerequisite = readFileSync(prerequisitePath, "utf8");
   assert.match(prerequisite, /\$NativeCommandTimeoutExitCode\s*=\s*1460/);
-  assert.match(prerequisite, /silent-features-kernel-msix-20260624/);
+  assert.match(prerequisite, /features-msix-no-localsystem-wsl-20260624/);
   assert.match(prerequisite, /Script revision:/);
   assert.match(
     prerequisite,
@@ -276,27 +276,30 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   assert.match(prerequisite, /function\s+Resolve-DismExecutable\b/);
   assert.match(prerequisite, /Sysnative/);
   assert.match(prerequisite, /System32/);
-  // Silent unattended setup: optional features + WSL2 kernel MSI (msiexec
-  // /quiet) + the WSL app package. The helper must NOT shell out to
-  // `wsl --install` / `wsl --update`, which open an interactive, self-elevating
-  // console (the "Press any key to exit..." + extra UAC prompt) even when it is
-  // already running elevated.
+  // Silent, LocalSystem-safe machine setup: enable the WSL Windows features and
+  // provision the WSL app package, deciding state via DISM/AppX
+  // (Get-WindowsOptionalFeature / Get-AppxProvisionedPackage) rather than
+  // wsl.exe. The install flow must NOT call wsl.exe (WSL refuses to run as
+  // LocalSystem: WSL_E_LOCAL_SYSTEM_NOT_SUPPORTED) and must NOT start a nested
+  // Windows Installer (msiexec), which deadlocks against the in-progress Veslo MSI.
   assert.match(prerequisite, /Microsoft-Windows-Subsystem-Linux/);
   assert.match(prerequisite, /VirtualMachinePlatform/);
   assert.match(
     prerequisite,
-    /function\s+Install-WslKernelMsi\b/,
-    "WSL prerequisite helper must install the WSL2 kernel update MSI for a silent setup",
+    /function\s+Test-WslFeaturesEnabled\b/,
+    "WSL prerequisite helper must decide install state via DISM feature state, not wsl.exe (LocalSystem-safe)",
   );
-  assert.match(
+  assert.match(prerequisite, /Get-WindowsOptionalFeature/);
+  assert.match(prerequisite, /Get-AppxProvisionedPackage/);
+  assert.doesNotMatch(
     prerequisite,
     /wsl_update_x64\.msi/,
-    "WSL prerequisite helper must use the official WSL2 kernel update MSI",
+    "WSL prerequisite helper must not install the kernel MSI inside the Veslo MSI (a nested msiexec deadlocks on the _MSIExecute mutex)",
   );
-  assert.match(
+  assert.doesNotMatch(
     prerequisite,
-    /@\("\/i",\s*\$msiPath,\s*"\/quiet",\s*"\/norestart"\)/,
-    "WSL2 kernel MSI must be installed silently with msiexec /quiet (no window, no extra elevation)",
+    /msiexec\.exe/i,
+    "WSL prerequisite helper must not start a nested Windows Installer transaction",
   );
   assert.doesNotMatch(
     prerequisite,
