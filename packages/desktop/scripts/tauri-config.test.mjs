@@ -248,7 +248,7 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   );
   const prerequisite = readFileSync(prerequisitePath, "utf8");
   assert.match(prerequisite, /\$NativeCommandTimeoutExitCode\s*=\s*1460/);
-  assert.match(prerequisite, /wsl-app-provisioning-singlereboot-20260620/);
+  assert.match(prerequisite, /silent-features-kernel-msix-20260624/);
   assert.match(prerequisite, /Script revision:/);
   assert.match(
     prerequisite,
@@ -276,29 +276,37 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   assert.match(prerequisite, /function\s+Resolve-DismExecutable\b/);
   assert.match(prerequisite, /Sysnative/);
   assert.match(prerequisite, /System32/);
-  assert.match(
-    prerequisite,
-    /Invoke-NativeCommand\s+-FilePath\s+\$WslCommand\s+-Arguments\s+@\("--install",\s+"--no-distribution",\s+"--web-download"\)\s+-TimeoutSeconds\s+1800/,
-    "WSL prerequisite helper should install the modern WSL package without creating a default user distro",
-  );
-  assert.match(
-    prerequisite,
-    /Invoke-NativeCommand\s+-FilePath\s+\$WslCommand\s+-Arguments\s+@\("--install",\s+"--no-distribution"\)\s+-TimeoutSeconds\s+1800/,
-    "WSL prerequisite helper should fall back to the older no-distro install syntax",
-  );
-  assert.match(
-    prerequisite,
-    /Invoke-NativeCommand\s+-FilePath\s+\$WslCommand\s+-Arguments\s+@\("--update",\s+"--web-download"\)\s+-TimeoutSeconds\s+1800/,
-    "WSL prerequisite helper should update/download the modern WSL package from the web source",
-  );
+  // Silent unattended setup: optional features + WSL2 kernel MSI (msiexec
+  // /quiet) + the WSL app package. The helper must NOT shell out to
+  // `wsl --install` / `wsl --update`, which open an interactive, self-elevating
+  // console (the "Press any key to exit..." + extra UAC prompt) even when it is
+  // already running elevated.
   assert.match(prerequisite, /Microsoft-Windows-Subsystem-Linux/);
   assert.match(prerequisite, /VirtualMachinePlatform/);
-  assert.match(prerequisite, /function\s+Test-WslInstallDismFallback\b/);
-  assert.match(prerequisite, /Invoke-FeatureEnablementFallbackAfterWslInstallFailure/);
   assert.match(
     prerequisite,
-    /Enabling Windows WSL optional features so Windows can finish WSL setup after restart/,
-    "WSL prerequisite helper should enable Windows optional features when wsl --install fails generically in installer context",
+    /function\s+Install-WslKernelMsi\b/,
+    "WSL prerequisite helper must install the WSL2 kernel update MSI for a silent setup",
+  );
+  assert.match(
+    prerequisite,
+    /wsl_update_x64\.msi/,
+    "WSL prerequisite helper must use the official WSL2 kernel update MSI",
+  );
+  assert.match(
+    prerequisite,
+    /@\("\/i",\s*\$msiPath,\s*"\/quiet",\s*"\/norestart"\)/,
+    "WSL2 kernel MSI must be installed silently with msiexec /quiet (no window, no extra elevation)",
+  );
+  assert.doesNotMatch(
+    prerequisite,
+    /Invoke-NativeCommand[^\n]*--install/,
+    "WSL prerequisite helper must not run interactive wsl --install (it opens a console and self-elevates)",
+  );
+  assert.doesNotMatch(
+    prerequisite,
+    /Invoke-NativeCommand[^\n]*--update/,
+    "WSL prerequisite helper must not run interactive wsl --update (it opens a console and self-elevates)",
   );
   assert.match(prerequisite, /function\s+Enable-WslFeaturesWithPowerShell\b/);
   assert.match(prerequisite, /function\s+Enable-WslFeaturesWithPowerShellThenDism\b/);

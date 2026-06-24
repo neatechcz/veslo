@@ -18,7 +18,7 @@ $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 $env:WSL_UTF8 = "1"
 $NativeCommandTimeoutExitCode = 1460
-$PrerequisiteInstallerScriptRevision = "wsl-app-provisioning-singlereboot-20260620"
+$PrerequisiteInstallerScriptRevision = "silent-features-kernel-msix-20260624"
 
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -53,17 +53,7 @@ function Write-PrereqLog([string]$Message) {
     Write-Host "[$timestamp] $Message"
 }
 
-$script:WslAppPackageStaged = $false
-
 function Finish-Prereq([int]$ExitCode) {
-    # When Windows needs a restart to activate the WSL features, stage the WSL
-    # app package now (before exiting) so the single upcoming restart is enough
-    # to make WSL usable instead of needing a second install pass afterwards.
-    if ($Install -and ($ExitCode -eq 3010 -or $ExitCode -eq 1641) -and -not $script:WslAppPackageStaged) {
-        $script:WslAppPackageStaged = $true
-        Write-PrereqLog "Windows restart is required; staging the WSL app package first so a single restart finishes setup."
-        [void](Install-WslAppPackage)
-    }
     Write-PrereqLog "WSL prerequisite helper finished with exit code $ExitCode. Log: $logPath"
     try {
         Stop-Transcript | Out-Null
@@ -545,72 +535,39 @@ function Install-WslAppPackage {
     }
 }
 
-function Test-WslSyntaxFallback([string]$Output) {
-    return $Output -match "unknown|invalid|unrecognized|unsupported|usage|parameter|option"
-}
+function Install-WslKernelMsi {
+    # Install the WSL2 kernel update package quietly. This is the silent,
+    # unattended equivalent of `wsl --update` and is exactly what the WSL
+    # "install on server" docs use for headless setup. `msiexec /quiet` shows no
+    # window and needs no extra elevation when we already run elevated, unlike
+    # `wsl --install`/`wsl --update`, which spawn an interactive, self-elevating
+    # console even from an elevated/LocalSystem context.
+    try {
+        $downloadDir = Join-Path $env:TEMP "veslo-wsl-prereq"
+        New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
+        $msiPath = Join-Path $downloadDir "wsl_update_x64.msi"
+        $kernelUrl = "https://wslstorestorage.blob.core.windows.net/wslblob/wsl_update_x64.msi"
+        Write-PrereqLog "Downloading WSL2 kernel update package: $kernelUrl"
+        Invoke-WebRequest -Uri $kernelUrl -OutFile $msiPath -UseBasicParsing -TimeoutSec 900
 
-function Test-WslInstallDismFallback([pscustomobject]$Result) {
-    if ($null -eq $Result) {
-        return $true
-    }
-    if (Test-WslSyntaxFallback ([string]$Result.Output)) {
-        return $true
-    }
-    if ([int]$Result.ExitCode -eq 1) {
-        return $true
-    }
-    return ([string]$Result.Output) -match "not installed|requires elevation|access is denied|0x800|catastrophic|failed"
-}
+        $msiexec = Resolve-SystemExecutable "msiexec.exe" "msiexec.exe"
+        if (-not $msiexec) {
+            Write-PrereqLog "msiexec.exe was not found; cannot install the WSL2 kernel update."
+            return $false
+        }
 
-function Invoke-FeatureEnablementFallbackAfterWslInstallFailure([string]$Reason) {
-    Write-PrereqLog "$Reason Enabling Windows WSL optional features so Windows can finish WSL setup after restart."
-    $fallbackExit = Enable-WslFeaturesWithPowerShellThenDism
-    return [pscustomobject]@{
-        ExitCode = [int]$fallbackExit
-        Output = "WSL optional feature enablement exit code $fallbackExit"
+        Write-PrereqLog "Installing WSL2 kernel update silently."
+        $result = Invoke-NativeCommand -FilePath $msiexec -Arguments @("/i", $msiPath, "/quiet", "/norestart") -TimeoutSeconds 900
+        if ($result.ExitCode -eq 0 -or $result.ExitCode -eq 3010) {
+            Write-PrereqLog "WSL2 kernel update installed (exit code $($result.ExitCode))."
+            return $true
+        }
+        Write-PrereqLog "WSL2 kernel update install returned exit code $($result.ExitCode)."
+        return $false
+    } catch {
+        Write-PrereqLog "Failed to install WSL2 kernel update: $($_.Exception.Message)."
+        return $false
     }
-}
-
-function Invoke-WslInstallNoDistribution([string]$WslCommand) {
-    Write-PrereqLog "Installing WSL without a default distro via online web download."
-    $installResult = Invoke-NativeCommand -FilePath $WslCommand -Arguments @("--install", "--no-distribution", "--web-download") -TimeoutSeconds 1800
-    if ($installResult.ExitCode -eq 0 -or $installResult.ExitCode -eq 3010 -or $installResult.ExitCode -eq 1641) {
-        return $installResult
-    }
-
-    if (-not (Test-WslInstallDismFallback $installResult)) {
-        Write-PrereqLog "wsl --install --web-download failed without a recognized fallback condition."
-        return $installResult
-    }
-
-    Write-PrereqLog "wsl --install --web-download could not complete here; retrying with the older install syntax."
-    $legacyInstallResult = Invoke-NativeCommand -FilePath $WslCommand -Arguments @("--install", "--no-distribution") -TimeoutSeconds 1800
-    if ($legacyInstallResult.ExitCode -eq 0 -or $legacyInstallResult.ExitCode -eq 3010 -or $legacyInstallResult.ExitCode -eq 1641) {
-        return $legacyInstallResult
-    }
-
-    if (-not (Test-WslInstallDismFallback $legacyInstallResult)) {
-        Write-PrereqLog "wsl --install failed without a recognized fallback condition."
-        return $legacyInstallResult
-    }
-
-    return Invoke-FeatureEnablementFallbackAfterWslInstallFailure "wsl --install could not complete in this installer context."
-}
-
-function Invoke-WslUpdateIfPossible([string]$WslCommand) {
-    Write-PrereqLog "Updating WSL package via online web download."
-    $updateResult = Invoke-NativeCommand -FilePath $WslCommand -Arguments @("--update", "--web-download") -TimeoutSeconds 1800
-    if ($updateResult.ExitCode -eq 0 -or $updateResult.ExitCode -eq 3010 -or $updateResult.ExitCode -eq 1641) {
-        return $updateResult
-    }
-
-    if (-not (Test-WslSyntaxFallback $updateResult.Output)) {
-        Write-PrereqLog "wsl --update --web-download failed; continuing because install/status checks will decide final readiness."
-        return $updateResult
-    }
-
-    Write-PrereqLog "wsl --update --web-download is not supported here; retrying with the older update syntax."
-    return Invoke-NativeCommand -FilePath $WslCommand -Arguments @("--update") -TimeoutSeconds 1800
 }
 
 try {
@@ -646,52 +603,42 @@ try {
         Finish-Prereq 740
     }
 
+    # Fully silent machine setup. We deliberately do NOT call `wsl --install` or
+    # `wsl --update`: on current Windows builds those are interactive,
+    # self-elevating commands that open a console window (ending in "Press any
+    # key to exit...") and request their own UAC prompt even when launched from
+    # an elevated/LocalSystem context. Enabling the optional features, installing
+    # the WSL2 kernel MSI with `msiexec /quiet`, and provisioning the WSL app
+    # package are all silent machine operations an elevated context can perform.
+    Write-PrereqLog "Enabling WSL Windows optional features (silent)."
+    $featureExit = Enable-WslFeaturesWithPowerShellThenDism
+    if ($featureExit -ne 0 -and $featureExit -ne 3010) {
+        Write-PrereqLog "Enabling WSL Windows optional features failed with exit code $featureExit."
+        Finish-Prereq $featureExit
+    }
+    $restartRequired = ($featureExit -eq 3010)
+
+    Write-PrereqLog "Installing the WSL2 kernel update package (silent)."
+    [void](Install-WslKernelMsi)
+
+    Write-PrereqLog "Staging the modern WSL app package (silent)."
+    [void](Install-WslAppPackage)
+
     $wslCommand = Resolve-WslExecutable
-    if (-not $wslCommand) {
-        $fallbackExit = Enable-WslFeaturesWithPowerShellThenDism
-        if ($fallbackExit -ne 0 -and $fallbackExit -ne 3010) {
-            Finish-Prereq $fallbackExit
+    if ($wslCommand) {
+        $setDefault = Invoke-NativeCommand -FilePath $wslCommand -Arguments @("--set-default-version", "2") -TimeoutSeconds 120
+        if ($setDefault.ExitCode -ne 0) {
+            Write-PrereqLog "WSL default version could not be set yet; Veslo will set it after the restart."
         }
-        if ($fallbackExit -eq 3010) {
-            Write-PrereqLog "Windows restart is required before wsl.exe can finish installation."
-            Finish-Prereq 3010
-        }
-
-        $wslCommand = Resolve-WslExecutable
-        if (-not $wslCommand) {
-            Write-PrereqLog "wsl.exe is still unavailable after feature enablement. Windows restart is required."
-            Finish-Prereq 3010
-        }
-    }
-
-    Write-PrereqLog "Resolved wsl.exe for install: $wslCommand"
-    $installResult = Invoke-WslInstallNoDistribution $wslCommand
-    if ($installResult.ExitCode -eq 3010 -or $installResult.ExitCode -eq 1641) {
-        Write-PrereqLog "WSL installation requested a Windows restart."
-        Finish-Prereq $installResult.ExitCode
-    }
-    if ($installResult.ExitCode -ne 0) {
-        Finish-Prereq $installResult.ExitCode
-    }
-
-    $updateResult = Invoke-WslUpdateIfPossible $wslCommand
-    if ($updateResult.ExitCode -eq 3010 -or $updateResult.ExitCode -eq 1641) {
-        Write-PrereqLog "WSL update requested a Windows restart."
-        Finish-Prereq $updateResult.ExitCode
-    }
-
-    $setDefault = Invoke-NativeCommand -FilePath $wslCommand -Arguments @("--set-default-version", "2") -TimeoutSeconds 120
-    if ($setDefault.ExitCode -ne 0) {
-        Write-PrereqLog "WSL default version could not be set before restart. Veslo will retry after Windows restarts."
     }
 
     $afterInstall = Test-WslUsable
     Write-PrereqLog $afterInstall.Reason
-    if ($afterInstall.Ok) {
+    if ($afterInstall.Ok -and -not $restartRequired) {
         Finish-Prereq 0
     }
 
-    Write-PrereqLog "Windows restart is likely required before VesloSandbox can be imported."
+    Write-PrereqLog "Windows restart is required to finish WSL setup."
     Finish-Prereq 3010
 } catch {
     Write-PrereqLog "Unhandled prerequisite helper error: $($_.Exception.Message)"
