@@ -101,6 +101,7 @@ test("accepts App Store Connect API key notarization secrets", () => {
     appleNotaryApiKeyId: "key-id",
     appleNotaryApiIssuerId: "issuer-id",
     appleNotaryApiKeyPath: "/tmp/AuthKey.p8",
+    appleTeamId: "TEAM123456",
     allowUnsignedMacos: false,
     macosNotarize: true,
   });
@@ -109,6 +110,26 @@ test("accepts App Store Connect API key notarization secrets", () => {
   assert.equal(result.appleNotaryAuthMode, "api-key");
   assert.equal(result.macosBuildMode, "signed-notarized");
   assert.equal(result.shouldNotarizeMacos, true);
+});
+
+test("requires Apple team ID with App Store Connect API key notarization", () => {
+  assert.throws(
+    () =>
+      resolveReleaseSigning({
+        osType: "macos",
+        updaterPrivateKey: "private-key",
+        updaterPrivateKeyPassword: "secret",
+        appleSigningIdentity: "Developer ID Application: Example",
+        appleCertificate: "base64-cert",
+        appleCertificatePassword: "cert-password",
+        appleNotaryApiKeyId: "key-id",
+        appleNotaryApiIssuerId: "issuer-id",
+        appleNotaryApiKeyPath: "/tmp/AuthKey.p8",
+        allowUnsignedMacos: false,
+        macosNotarize: true,
+      }),
+    /APPLE_TEAM_ID|notar/i,
+  );
 });
 
 test("accepts Apple ID app-specific password notarization secrets", () => {
@@ -194,6 +215,7 @@ test("workflow routes signing through the release signing resolver", () => {
   assert.match(workflow, /appleNotaryAuthMode/);
   assert.match(workflow, /appleNotaryAuthMode == 'api-key' && secrets\.APPLE_NOTARY_API_KEY_ID \|\| ''/);
   assert.match(workflow, /appleNotaryAuthMode == 'apple-id' && secrets\.APPLE_NOTARY_APPLE_ID \|\| ''/);
+  assert.match(workflow, /APPLE_TEAM_ID: \$\{\{ vars\.APPLE_TEAM_ID \|\| secrets\.APPLE_TEAM_ID \}\}/);
   assert.match(workflow, /APPLE_NOTARY_APPLE_ID/);
   assert.match(workflow, /APPLE_NOTARY_APP_SPECIFIC_PASSWORD/);
   assert.match(workflow, /APPLE_TEAM_ID/);
@@ -208,6 +230,7 @@ test("prerelease workflow supports Apple ID macOS notarization", () => {
   assert.match(workflow, /appleNotaryAuthMode/);
   assert.match(workflow, /appleNotaryAuthMode == 'api-key' && secrets\.APPLE_NOTARY_API_KEY_ID \|\| ''/);
   assert.match(workflow, /appleNotaryAuthMode == 'apple-id' && secrets\.APPLE_NOTARY_APPLE_ID \|\| ''/);
+  assert.match(workflow, /APPLE_TEAM_ID: \$\{\{ vars\.APPLE_TEAM_ID \|\| secrets\.APPLE_TEAM_ID \}\}/);
   assert.match(workflow, /APPLE_NOTARY_APPLE_ID/);
   assert.match(workflow, /APPLE_NOTARY_APP_SPECIFIC_PASSWORD/);
   assert.match(workflow, /APPLE_TEAM_ID/);
