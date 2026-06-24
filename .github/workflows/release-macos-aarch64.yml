@@ -502,8 +502,23 @@ jobs:
 
           echo "NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
 
-      - name: Build + upload (signed + notarized macOS)
-        if: matrix.os_type == 'macos' && steps.signing.outputs.shouldNotarizeMacos == 'true'
+      - name: Validate notary API key
+        if: matrix.os_type == 'macos' && steps.signing.outputs.shouldNotarizeMacos == 'true' && steps.signing.outputs.appleNotaryAuthMode == 'api-key'
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
+        run: |
+          set -euo pipefail
+          xcrun notarytool history \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            >/dev/null
+          echo "Notary API key authenticated."
+
+      - name: Build + upload (signed + notarized macOS, App Store Connect API key)
+        if: matrix.os_type == 'macos' && steps.signing.outputs.shouldNotarizeMacos == 'true' && steps.signing.outputs.appleNotaryAuthMode == 'api-key'
         uses: tauri-apps/tauri-action@390cbe447412ced1303d35abe75287949e43437a
         env:
           CI: true
@@ -519,11 +534,42 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
 
           # macOS notarization (App Store Connect API key or Apple ID app-specific password)
-          APPLE_API_KEY: ${{ steps.signing.outputs.appleNotaryAuthMode == 'api-key' && secrets.APPLE_NOTARY_API_KEY_ID || '' }}
-          APPLE_API_ISSUER: ${{ steps.signing.outputs.appleNotaryAuthMode == 'api-key' && secrets.APPLE_NOTARY_API_ISSUER_ID || '' }}
-          APPLE_API_KEY_PATH: ${{ steps.signing.outputs.appleNotaryAuthMode == 'api-key' && env.NOTARY_KEY_PATH || '' }}
-          APPLE_ID: ${{ steps.signing.outputs.appleNotaryAuthMode == 'apple-id' && secrets.APPLE_NOTARY_APPLE_ID || '' }}
-          APPLE_PASSWORD: ${{ steps.signing.outputs.appleNotaryAuthMode == 'apple-id' && secrets.APPLE_NOTARY_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: ${{ env.RELEASE_NAME }}
+          releaseBody: ${{ env.RELEASE_BODY }}
+          releaseDraft: ${{ env.RELEASE_DRAFT == 'true' }}
+          prerelease: ${{ env.RELEASE_PRERELEASE == 'true' }}
+          projectPath: packages/desktop
+          tauriScript: pnpm exec tauri -vvv
+          args: ${{ matrix.args }}
+          retryAttempts: 3
+          uploadUpdaterJson: false
+          updaterJsonPreferNsis: true
+          releaseAssetNamePattern: veslo-desktop-[platform]-[arch][ext]
+
+      - name: Build + upload (signed + notarized macOS, Apple ID)
+        if: matrix.os_type == 'macos' && steps.signing.outputs.shouldNotarizeMacos == 'true' && steps.signing.outputs.appleNotaryAuthMode == 'apple-id'
+        uses: tauri-apps/tauri-action@390cbe447412ced1303d35abe75287949e43437a
+        env:
+          CI: true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # Tauri updater signing
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+          # macOS signing
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+
+          # macOS notarization (Apple ID app-specific password)
+          APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID || secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ env.RELEASE_TAG }}
