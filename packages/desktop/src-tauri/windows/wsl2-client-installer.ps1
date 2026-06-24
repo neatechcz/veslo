@@ -606,6 +606,22 @@ function Finish-ClientInstaller([int]$RuntimeExitCode) {
         Write-ClientInstallerLog "Runtime setup did not finish during package installation; first-run onboarding/Settings repair will retry with user-visible guidance, so this package-manager invocation will exit 0."
         $installerExitCode = 0
     }
+    try {
+        $statusResult = if ($RuntimeExitCode -eq 0) { "ready" } elseif ($restartContinuation) { "restart_required" } else { "failed" }
+        $statusPath = Join-Path $logRoot "wsl2-runtime-setup-status.txt"
+        Set-Content -LiteralPath $statusPath -Encoding UTF8 -Force -Value @(
+            "result=$statusResult",
+            "runtime_exit_code=$RuntimeExitCode",
+            "process_exit_code=$installerExitCode",
+            "machine_setup_only=$([bool]$MachineSetupOnly)",
+            "identity=$([Security.Principal.WindowsIdentity]::GetCurrent().Name)",
+            "timestamp=$((Get-Date).ToString('o'))",
+            "log=$logPath"
+        )
+        Write-ClientInstallerLog "Wrote runtime setup status: $statusPath (result=$statusResult)"
+    } catch {
+        Write-ClientInstallerLog "Failed to write runtime setup status: $($_.Exception.Message)"
+    }
     Write-ClientInstallerLog "Client runtime installer finished with runtime exit code $RuntimeExitCode and process exit code $installerExitCode. Log: $logPath"
     try {
         Stop-Transcript | Out-Null

@@ -177,8 +177,8 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   );
   assert.match(
     fragment,
-    /Id="VesloProvisionWslSandbox"[\s\S]*?Return="ignore"/,
-    "MSI WSL setup must not fail the install on a restart-required/incomplete WSL state; the Veslo app finishes setup after the restart",
+    /Id="VesloProvisionWslSandbox"[\s\S]*?Return="check"/,
+    "MSI WSL setup must use Return=check so a 3010 (reboot-required) exit surfaces the native Windows Installer restart prompt; genuine failures are masked to 0 by the helper itself",
   );
   assert.match(
     fragment,
@@ -196,15 +196,15 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
     /\[INSTALLDIR\]wsl2-client-installer\.ps1/,
     "MSI custom action should run the client runtime installer so missing WSL prerequisites are handled from the installer flow",
   );
-  assert.match(
+  assert.doesNotMatch(
     fragment,
     /-AllowRestartContinuationSuccess/,
-    "MSI custom action should mask reboot-required helper exits because Windows Installer EXE custom actions treat non-zero returns as failures",
+    "MSI custom action must NOT mask the reboot-required exit; it needs the 3010 to reach Windows Installer so the native restart prompt shows",
   );
   assert.match(
     fragment,
     /-AllowDeferredRuntimeRepairSuccess/,
-    "MSI custom action should avoid generic Windows Installer custom-action failures and defer runtime repair to first-run onboarding",
+    "MSI custom action should still mask genuine (non-reboot) failures to exit 0 and defer runtime repair to first-run onboarding",
   );
   assert.match(
     fragment,

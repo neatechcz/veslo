@@ -28,8 +28,8 @@
       Directory="INSTALLDIR"
       Execute="deferred"
       Impersonate="no"
-      Return="ignore"
-      ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File &quot;[INSTALLDIR]wsl2-client-installer.ps1&quot; -MachineSetupOnly -AllowRestartContinuationSuccess -AllowDeferredRuntimeRepairSuccess" />
+      Return="check"
+      ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File &quot;[INSTALLDIR]wsl2-client-installer.ps1&quot; -MachineSetupOnly -AllowDeferredRuntimeRepairSuccess" />
 
     <CustomAction
       Id="VesloDisableExitDialogLaunchCheckbox"
