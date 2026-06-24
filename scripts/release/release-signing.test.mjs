@@ -193,14 +193,31 @@ test("workflow routes signing through the release signing resolver", () => {
   assert.match(workflow, /tauri\.windows\.release\.conf\.json/);
   assert.match(workflow, /appleNotaryAuthMode/);
   assert.match(workflow, /Validate notary API key/);
-  assert.match(workflow, /Build \+ upload \(signed \+ notarized macOS, App Store Connect API key\)/);
-  assert.match(workflow, /Build \+ upload \(signed \+ notarized macOS, Apple ID\)/);
+  assert.match(workflow, /Build signed macOS bundle for notarization/);
+  assert.match(workflow, /Notarize, staple, and re-sign macOS assets/);
+  assert.match(workflow, /Upload notarized macOS release assets/);
+  assert.match(workflow, /notarize-macos-assets\.sh/);
+  assert.match(workflow, /gh release upload "\$RELEASE_TAG"/);
+  assert.match(workflow, /timeout-minutes:\s*35/);
   assert.match(workflow, /APPLE_API_KEY: \$\{\{ secrets\.APPLE_NOTARY_API_KEY_ID \}\}/);
   assert.match(workflow, /APPLE_API_KEY_PATH: \$\{\{ env\.NOTARY_KEY_PATH \}\}/);
   assert.match(workflow, /APPLE_ID: \$\{\{ secrets\.APPLE_NOTARY_APPLE_ID \}\}/);
   assert.match(workflow, /APPLE_NOTARY_APPLE_ID/);
   assert.match(workflow, /APPLE_NOTARY_APP_SPECIFIC_PASSWORD/);
   assert.match(workflow, /APPLE_TEAM_ID/);
+});
+
+test("manual macOS notarization script staples and re-signs updater artifacts", () => {
+  const scriptPath = resolve(import.meta.dirname, "./notarize-macos-assets.sh");
+  const script = readFileSync(scriptPath, "utf8");
+
+  assert.match(script, /xcrun notarytool submit/);
+  assert.match(script, /--timeout "\$notary_timeout"/);
+  assert.match(script, /xcrun stapler staple "\$app_path"/);
+  assert.match(script, /COPYFILE_DISABLE=1 tar -czf "\$app_tar_path"/);
+  assert.match(script, /tauri signer sign "\$app_tar_path"/);
+  assert.match(script, /hdiutil create/);
+  assert.match(script, /app_tar_sig_path=\$app_tar_sig_path/);
 });
 
 test("prerelease workflow supports Apple ID macOS notarization", () => {
