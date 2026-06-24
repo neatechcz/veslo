@@ -207,16 +207,16 @@ test("workflow routes signing through the release signing resolver", () => {
   assert.match(workflow, /APPLE_TEAM_ID/);
 });
 
-test("manual macOS notarization script staples and re-signs updater artifacts", () => {
+test("manual macOS notarization script staples the DMG and preserves updater artifacts", () => {
   const scriptPath = resolve(import.meta.dirname, "./notarize-macos-assets.sh");
   const script = readFileSync(scriptPath, "utf8");
 
   assert.match(script, /xcrun notarytool submit/);
   assert.match(script, /--timeout "\$notary_timeout"/);
-  assert.match(script, /xcrun stapler staple "\$app_path"/);
-  assert.match(script, /COPYFILE_DISABLE=1 tar -czf "\$app_tar_path"/);
-  assert.match(script, /tauri signer sign "\$app_tar_path"/);
-  assert.match(script, /hdiutil create/);
+  assert.match(script, /xcrun stapler staple "\$dmg_path"/);
+  assert.match(script, /codesign --verify --deep --strict --verbose=2 "\$app_path"/);
+  assert.match(script, /codesign --force --sign "\$APPLE_SIGNING_IDENTITY" "\$dmg_path"/);
+  assert.match(script, /submit_notary "\$dmg_path" "dmg"/);
   assert.match(script, /app_tar_sig_path=\$app_tar_sig_path/);
 });
 

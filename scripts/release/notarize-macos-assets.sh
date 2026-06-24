@@ -23,8 +23,6 @@ require_env VESLO_NOTARY_AUTH_MODE
 require_env APPLE_SIGNING_IDENTITY
 require_env APPLE_CERTIFICATE
 require_env APPLE_CERTIFICATE_PASSWORD
-require_env TAURI_SIGNING_PRIVATE_KEY
-require_env TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 
 case "$target_triple" in
   aarch64-apple-darwin)
@@ -64,8 +62,9 @@ app_path="$(find "$macos_bundle_dir" -maxdepth 1 -type d -name "*.app" | sort | 
 [ -n "$app_path" ] || fail "No .app bundle found in $macos_bundle_dir"
 
 app_tar_path="$(find "$macos_bundle_dir" -maxdepth 1 -type f -name "*.app.tar.gz" | sort | head -n 1 || true)"
-[ -n "$app_tar_path" ] || app_tar_path="$macos_bundle_dir/$(basename "$app_path").tar.gz"
+[ -n "$app_tar_path" ] || fail "No updater tarball found in $macos_bundle_dir"
 app_tar_sig_path="$app_tar_path.sig"
+[ -s "$app_tar_sig_path" ] || fail "No updater signature found: $app_tar_sig_path"
 
 dmg_path="$(find "$dmg_bundle_dir" -maxdepth 1 -type f -name "*.dmg" | sort | head -n 1 || true)"
 [ -n "$dmg_path" ] || fail "No DMG found in $dmg_bundle_dir"
@@ -121,45 +120,18 @@ import_codesign_certificate() {
   security list-keychains -d user -s "$keychain_path" $existing_keychains
 }
 
+echo "Verifying signed app bundle"
+codesign --verify --deep --strict --verbose=2 "$app_path"
+
 import_codesign_certificate
 
-app_zip="$RUNNER_TEMP/veslo-$target_triple.app.zip"
-rm -f "$app_zip"
-ditto -c -k --keepParent "$app_path" "$app_zip"
-submit_notary "$app_zip" "app"
-
-echo "Stapling app bundle"
-xcrun stapler staple "$app_path"
-xcrun stapler validate "$app_path"
-codesign --verify --deep --strict --verbose=2 "$app_path"
-spctl -a -vvv -t exec "$app_path"
-
-echo "Recreating updater tarball from stapled app"
-rm -f "$app_tar_path" "$app_tar_sig_path"
-app_parent="$(dirname "$app_path")"
-app_name="$(basename "$app_path")"
-(
-  cd "$app_parent"
-  COPYFILE_DISABLE=1 tar -czf "$app_tar_path" "$app_name"
-)
-
-updater_key_path="$RUNNER_TEMP/tauri-updater-signing.key"
-printf "%s" "$TAURI_SIGNING_PRIVATE_KEY" > "$updater_key_path"
-chmod 600 "$updater_key_path"
-pnpm --filter @neatech/veslo exec tauri signer sign "$app_tar_path" \
-  --private-key-path "$updater_key_path" \
-  --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" > "$app_tar_sig_path"
-[ -s "$app_tar_sig_path" ] || fail "Updater signature was not written: $app_tar_sig_path"
-
-echo "Recreating DMG from stapled app bundle"
-dmg_staging="$RUNNER_TEMP/veslo-dmg-$target_triple"
-rm -rf "$dmg_staging"
-mkdir -p "$dmg_staging"
-ditto "$app_path" "$dmg_staging/$app_name"
-rm -f "$dmg_path"
-hdiutil create -volname "Veslo by Neatech" -srcfolder "$dmg_staging" -ov -format UDZO "$dmg_path"
+echo "Signing and notarizing DMG"
 codesign --force --sign "$APPLE_SIGNING_IDENTITY" "$dmg_path"
 codesign --verify --verbose=2 "$dmg_path"
+submit_notary "$dmg_path" "dmg"
+xcrun stapler staple "$dmg_path"
+xcrun stapler validate "$dmg_path"
+spctl -a -vvv -t open --context context:primary-signature "$dmg_path"
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   {
