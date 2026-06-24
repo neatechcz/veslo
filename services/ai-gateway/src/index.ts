@@ -40,7 +40,9 @@ export function createApp(deps: AppDependencies = {}) {
   });
 
   app.use(createReadinessRouter(deps.readiness ?? createDefaultReadinessDependencies(runtime)));
-  app.use(createAdminRouter(deps.admin ?? createDefaultAdminService(env.denApiBase)));
+  app.use(createAdminRouter(deps.admin ?? createDefaultAdminService(env.denApiBase, {
+    codexStatusProvider: runtime.codexStatusProvider,
+  })));
   app.use(createUserCredentialsRouter(deps.userCredentials ?? createDefaultUserCredentialDependencies(runtime)));
   const proxyDeps = deps.proxy ?? createDefaultProxyDependencies(runtime);
   app.use(createProxyRouter(proxyDeps));
@@ -57,8 +59,11 @@ export async function startServer() {
     await schemaDb.close();
   }
 
-  const adminService = createDefaultAdminService(env.denApiBase);
-  const app = createApp({ admin: adminService });
+  const runtime = createDefaultRuntimeState();
+  const adminService = createDefaultAdminService(env.denApiBase, {
+    codexStatusProvider: runtime.codexStatusProvider,
+  });
+  const app = createApp({ admin: adminService, runtime });
   const server = app.listen(env.port, env.host, () => {
     console.log(`ai-gateway listening on http://${env.host}:${env.port}`);
   });

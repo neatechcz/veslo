@@ -24,7 +24,7 @@ import { MySqlLeaseRepository } from "../leases/mysql-repository.js";
 import type { LeaseRepository } from "../leases/repository.js";
 import { AnthropicTransport } from "../providers/anthropic-transport.js";
 import { CodexOAuthInferenceProxyTransport } from "../providers/codex-oauth-inference-proxy-transport.js";
-import { CachedCodexCredentialStatusProvider } from "../usage/codex-status.js";
+import { CachedCodexCredentialStatusProvider, type CodexCredentialStatusProvider } from "../usage/codex-status.js";
 import { OpenAiTransport } from "../providers/openai-transport.js";
 import { OpenAiCompatibleTransport } from "../providers/openai-compatible-transport.js";
 import { MySqlUsageRepository } from "../usage/mysql-repository.js";
@@ -34,6 +34,7 @@ export type RuntimeState = {
   aiAccess: AiAccessRepository;
   alerts: AlertRepository;
   audit: AuditRepository;
+  codexStatusProvider?: CodexCredentialStatusProvider;
   credentials: CredentialRepository;
   secrets: SecretStore;
   leases: LeaseRepository;
@@ -49,16 +50,53 @@ export type DefaultRuntimeOptions = {
 export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): RuntimeState {
   const db = options.db ?? createDb(options.databaseUrl ?? env.databaseUrl).db;
   const secretKey = options.secretKey ?? env.secretKey;
+  const aiAccess = new MySqlAiAccessRepository(db);
+  const alerts = new MySqlAlertRepository(db);
+  const audit = new MySqlAuditRepository(db);
+  const credentials = new MySqlCredentialRepository(db);
+  const secrets = new MySqlSecretStore(db, secretKey);
+  const leases = new MySqlLeaseRepository(db);
+  const usage = new MySqlUsageRepository(db);
 
   return {
-    aiAccess: new MySqlAiAccessRepository(db),
-    alerts: new MySqlAlertRepository(db),
-    audit: new MySqlAuditRepository(db),
-    credentials: new MySqlCredentialRepository(db),
-    secrets: new MySqlSecretStore(db, secretKey),
-    leases: new MySqlLeaseRepository(db),
-    usage: new MySqlUsageRepository(db),
+    aiAccess,
+    alerts,
+    audit,
+    codexStatusProvider: createRuntimeCodexStatusProvider({ credentials, secrets }),
+    credentials,
+    secrets,
+    leases,
+    usage,
   };
+}
+
+function createRuntimeCodexStatusProvider(input: {
+  credentials: CredentialRepository;
+  secrets: SecretStore;
+  now?: () => Date;
+}): CodexCredentialStatusProvider {
+  return new CachedCodexCredentialStatusProvider({
+    loadCredentialAuthJson: async (credentialId) => {
+      const record = await input.credentials.getCredentialRecordById(credentialId);
+      if (!record) {
+        return null;
+      }
+
+      const secret = await input.secrets.get(record.secretRef);
+      return secret.kind === "codex_auth_json" ? secret.authJson : null;
+    },
+    saveCredentialAuthJson: async (credentialId, authJson) => {
+      const record = await input.credentials.getCredentialRecordById(credentialId);
+      if (!record) {
+        return;
+      }
+      await input.secrets.replace(record.secretRef, {
+        kind: "codex_auth_json",
+        authJson,
+      });
+    },
+    now: input.now,
+  });
 }
 
 export function createDefaultProxyDependencies(
@@ -69,28 +107,12 @@ export function createDefaultProxyDependencies(
   } = {},
 ): ProxyDependencies {
   const openAiOAuth = overrides.openAiOAuth ?? createDefaultOpenAiOAuthClient();
-  const codexStatusProvider = new CachedCodexCredentialStatusProvider({
-    loadCredentialAuthJson: async (credentialId) => {
-      const record = await runtime.credentials.getCredentialRecordById(credentialId);
-      if (!record) {
-        return null;
-      }
-
-      const secret = await runtime.secrets.get(record.secretRef);
-      return secret.kind === "codex_auth_json" ? secret.authJson : null;
-    },
-    saveCredentialAuthJson: async (credentialId, authJson) => {
-      const record = await runtime.credentials.getCredentialRecordById(credentialId);
-      if (!record) {
-        return;
-      }
-      await runtime.secrets.replace(record.secretRef, {
-        kind: "codex_auth_json",
-        authJson,
-      });
-    },
-    now: overrides.now,
-  });
+  const codexStatusProvider = runtime.codexStatusProvider ??
+    createRuntimeCodexStatusProvider({
+      credentials: runtime.credentials,
+      secrets: runtime.secrets,
+      now: overrides.now,
+    });
 
   return {
     aiAccess: runtime.aiAccess,
@@ -143,27 +165,11 @@ export function createDefaultUserCredentialDependencies(
   runtime: RuntimeState,
   overrides: Partial<Pick<UserCredentialDependencies, "sessionResolver">> = {},
 ): UserCredentialDependencies {
-  const codexStatusProvider = new CachedCodexCredentialStatusProvider({
-    loadCredentialAuthJson: async (credentialId) => {
-      const record = await runtime.credentials.getCredentialRecordById(credentialId);
-      if (!record) {
-        return null;
-      }
-
-      const secret = await runtime.secrets.get(record.secretRef);
-      return secret.kind === "codex_auth_json" ? secret.authJson : null;
-    },
-    saveCredentialAuthJson: async (credentialId, authJson) => {
-      const record = await runtime.credentials.getCredentialRecordById(credentialId);
-      if (!record) {
-        return;
-      }
-      await runtime.secrets.replace(record.secretRef, {
-        kind: "codex_auth_json",
-        authJson,
-      });
-    },
-  });
+  const codexStatusProvider = runtime.codexStatusProvider ??
+    createRuntimeCodexStatusProvider({
+      credentials: runtime.credentials,
+      secrets: runtime.secrets,
+    });
 
   return {
     sessionResolver: overrides.sessionResolver ?? new DenUserSessionResolver({ denApiBase: env.denApiBase }),

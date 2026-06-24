@@ -3,7 +3,7 @@ import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 
-import type { AiAccessRepository } from "../src/access/repository.js";
+import type { AiAccessRepository, UserAiAccessPolicyRecord } from "../src/access/repository.js";
 import type { AiGatewayDb } from "../src/db/index.js";
 import { createApp, createDefaultProxyDependencies, createDefaultRuntimeState, createDefaultUserCredentialDependencies, type RuntimeState } from "../src/index.js";
 import { getPlatformCredentialOwnerUserId } from "../src/credentials/platform-owner.js";
@@ -20,6 +20,7 @@ import type {
   ResolveLeaseInput,
   SessionLease,
 } from "../src/leases/repository.js";
+import { CachedCodexCredentialStatusProvider, type CodexCredentialStatusProvider } from "../src/usage/codex-status.js";
 import type { UsageRepository } from "../src/usage/repository.js";
 
 class PersistentSecretStore implements SecretStore {
@@ -397,6 +398,102 @@ test("default proxy dependencies inject Codex status provider into binding selec
     }),
     /no_eligible_codex_credentials:all_codex_credentials_exhausted/,
   );
+});
+
+test("default runtime dependencies share one Codex status provider across routing and user access repair", async () => {
+  const runtime = createPersistentRuntime() as RuntimeState & {
+    codexStatusProvider: CodexCredentialStatusProvider;
+  };
+  const storedSecret = await runtime.secrets.put({
+    kind: "codex_auth_json",
+    authJson: "",
+  });
+  const createdCredential = await runtime.credentials.createUserCredential?.({
+    ownerUserId: getPlatformCredentialOwnerUserId("codex_oauth"),
+    provider: "codex_oauth",
+    credentialType: "oauth",
+    secretRef: storedSecret.secretRef,
+  });
+  assert.ok(createdCredential);
+
+  let probeCalls = 0;
+  runtime.codexStatusProvider = new CachedCodexCredentialStatusProvider({
+    loadCredentialAuthJson: async () => JSON.stringify({
+      tokens: {
+        id_token: "runtime-id-token",
+        access_token: "runtime-access-token",
+        refresh_token: "runtime-refresh-token",
+      },
+    }),
+    probe: async () => {
+      probeCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return {
+        checkedAt: "2026-06-24T08:00:00.000Z",
+        rateLimits: {
+          primary: {
+            used_percent: 1,
+            window_minutes: 300,
+            resets_at: 1_772_000_000,
+          },
+          secondary: {
+            used_percent: 2,
+            window_minutes: 10080,
+            resets_at: 1_772_604_800,
+          },
+        },
+        ok: true,
+        detail: "Codex OK",
+      };
+    },
+    ttlMs: 60_000,
+    now: () => new Date("2026-06-24T08:00:00.000Z"),
+  });
+
+  const proxy = createDefaultProxyDependencies(runtime, {
+    gatewaySessions: {
+      async resolveSession() {
+        throw new Error("gateway_session_not_used");
+      },
+    },
+    now: () => new Date("2026-06-24T08:00:00.000Z"),
+  });
+  const userCredentials = createDefaultUserCredentialDependencies(runtime, {
+    sessionResolver: {
+      async resolveSession() {
+        throw new Error("user_session_not_used");
+      },
+    },
+  });
+  const aiAccess: UserAiAccessPolicyRecord = {
+    id: "ai_access_codex_shared_status",
+    userId: "user_codex_shared_status",
+    enabled: true,
+    provider: "codex_oauth",
+    credentialId: createdCredential.id,
+    defaultModel: "gpt-5.5",
+    allowedModels: ["gpt-5.5"],
+    assignmentOrigin: "auto_assigned",
+    createdAt: new Date("2026-06-24T07:59:00.000Z"),
+    updatedAt: new Date("2026-06-24T07:59:00.000Z"),
+  };
+
+  const [lease, repairedAiAccess] = await Promise.all([
+    proxy.leaseBroker.getOrCreateActiveLease({
+      ownerUserId: "user_codex_shared_status",
+      bindingOwnerUserId: getPlatformCredentialOwnerUserId("codex_oauth"),
+      provider: "codex_oauth",
+      sessionId: "session_codex_shared_status",
+    }),
+    userCredentials.autoAssignedCodexCredentialRotation?.repairCodexAccess({
+      aiAccess,
+      reason: "runtime_status_provider_test",
+    }),
+  ]);
+
+  assert.equal(lease.provider, "codex_oauth");
+  assert.deepEqual(repairedAiAccess, aiAccess);
+  assert.equal(probeCalls, 1);
 });
 
 test("runtime-backed dependencies keep platform credentials and leases across app re-instantiation", async () => {
