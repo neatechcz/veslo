@@ -16,7 +16,7 @@ require_env() {
 repo_root="${GITHUB_WORKSPACE:-$(pwd)}"
 target_triple="${VESLO_MACOS_TARGET_TRIPLE:-}"
 auth_mode="${VESLO_NOTARY_AUTH_MODE:-}"
-notary_timeout="${VESLO_NOTARY_TIMEOUT:-15m}"
+notary_timeout="${VESLO_NOTARY_TIMEOUT:-30m}"
 
 require_env VESLO_MACOS_TARGET_TRIPLE
 require_env VESLO_NOTARY_AUTH_MODE
@@ -160,11 +160,6 @@ rm -f "$dmg_path"
 hdiutil create -volname "Veslo by Neatech" -srcfolder "$dmg_staging" -ov -format UDZO "$dmg_path"
 codesign --force --sign "$APPLE_SIGNING_IDENTITY" "$dmg_path"
 codesign --verify --verbose=2 "$dmg_path"
-
-submit_notary "$dmg_path" "dmg"
-xcrun stapler staple "$dmg_path"
-xcrun stapler validate "$dmg_path"
-spctl -a -vvv -t open --context context:primary-signature "$dmg_path"
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   {

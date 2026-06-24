@@ -541,11 +541,11 @@ jobs:
         id: macos_assets
         if: matrix.os_type == 'macos' && steps.signing.outputs.shouldNotarizeMacos == 'true'
         shell: bash
-        timeout-minutes: 35
+        timeout-minutes: 40
         env:
           VESLO_MACOS_TARGET_TRIPLE: ${{ matrix.target }}
           VESLO_NOTARY_AUTH_MODE: ${{ steps.signing.outputs.appleNotaryAuthMode }}
-          VESLO_NOTARY_TIMEOUT: 15m
+          VESLO_NOTARY_TIMEOUT: 30m
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -963,11 +963,39 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $assetDir = Join-Path $env:RUNNER_TEMP 'veslo-windows-release-assets'
+          New-Item -ItemType Directory -Force -Path $assetDir | Out-Null
+
+          $msiAssetPath = Join-Path $assetDir 'veslo-desktop-windows-x64.msi'
+          $msiSigAssetPath = Join-Path $assetDir 'veslo-desktop-windows-x64.msi.sig'
+          Copy-Item -Force -Path $env:VESLO_WINDOWS_MSI_PATH -Destination $msiAssetPath
+          Copy-Item -Force -Path $env:VESLO_WINDOWS_MSI_SIG_PATH -Destination $msiSigAssetPath
+
+          $existingAssets = (gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json assets | ConvertFrom-Json).assets
+          $assetNamesToDelete = @(
+            'veslo-desktop-windows-x64.msi',
+            'veslo-desktop-windows-x64.msi.sig',
+            (Split-Path -Leaf $env:VESLO_WINDOWS_MSI_PATH),
+            (Split-Path -Leaf $env:VESLO_WINDOWS_MSI_SIG_PATH)
+          ) | Select-Object -Unique
+
+          foreach ($assetName in $assetNamesToDelete) {
+            $asset = $existingAssets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
+            if (-not $asset) {
+              continue
+            }
+
+            $apiPath = $asset.apiUrl -replace '^https://api.github.com/', ''
+            gh api -X DELETE $apiPath
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to delete existing release asset: $assetName"
+            }
+          }
+
           gh release upload $env:RELEASE_TAG `
-            "$($env:VESLO_WINDOWS_MSI_PATH)#veslo-desktop-windows-x64.msi" `
-            "$($env:VESLO_WINDOWS_MSI_SIG_PATH)#veslo-desktop-windows-x64.msi.sig" `
-            --repo $env:GITHUB_REPOSITORY `
-            --clobber
+            $msiAssetPath `
+            $msiSigAssetPath `
+            --repo $env:GITHUB_REPOSITORY
 
   mirror-public-release:
     name: Mirror desktop release to public repo
