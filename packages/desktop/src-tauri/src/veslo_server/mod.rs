@@ -192,6 +192,17 @@ pub(crate) fn resolve_engine_url_for_bridge_host(_bridge_host: &str, _port: u16)
     None
 }
 
+/// The WSL bridge listener is only meaningful when the active sandbox backend is
+/// `windows-wsl2` and the primary bind stays on loopback. With sandboxing
+/// disabled — e.g. a shared unsandboxed engine, which requires
+/// `VESLO_DISABLE_SANDBOX=1` — OpenCode runs directly on Windows and reaches the
+/// gateway over loopback, so a WSL bridge would be unused and would wrongly pin a
+/// direct engine to the WSL adapter IP. A non-loopback primary bind already
+/// covers WSL. See VSLO-250.
+fn should_bind_wsl_bridge(host: &str, sandbox_backend: &str) -> bool {
+    is_loopback_bind_host(host) && sandbox_backend == "windows-wsl2"
+}
+
 #[cfg(windows)]
 fn format_engine_url_from_ip(ip: IpAddr, port: u16) -> Option<String> {
     if !ip.is_ipv4() || ip.is_loopback() {
@@ -835,7 +846,10 @@ pub fn start_veslo_server(
     let host = resolve_veslo_host();
     // VSLO-250: determine the expected WSL bridge before idempotent reuse, so a
     // previous loopback-only server cannot be reused while we publish bridge URLs.
-    let bridge_host = if is_loopback_bind_host(&host) {
+    // Gate on the active sandbox backend (the same source the server is told via
+    // VESLO_SANDBOX_BACKEND): with sandboxing disabled the engine is direct and
+    // routes over loopback, so no WSL bridge is set up.
+    let bridge_host = if should_bind_wsl_bridge(&host, &spawn::resolve_server_sandbox_backend()) {
         resolve_wsl_bridge_host()
     } else {
         None
@@ -1015,7 +1029,7 @@ mod tests {
         build_urls_for_host_with_engine_resolver, launch_config_matches, normalize_launch_token,
         normalize_launch_url, publishes_external_urls, read_persisted_veslo_server_info,
         read_persisted_veslo_server_info_with_cleanup, resolve_engine_url_for_bind_host,
-        HealthIdentity, PersistedVesloServerState,
+        should_bind_wsl_bridge, HealthIdentity, PersistedVesloServerState,
     };
     #[cfg(windows)]
     use super::{
@@ -1136,6 +1150,17 @@ mod tests {
             None
         );
         assert_eq!(resolve_engine_url_for_bind_host(None, Some(8787)), None);
+    }
+
+    #[test]
+    fn wsl_bridge_only_binds_for_loopback_wsl2_backend() {
+        assert!(should_bind_wsl_bridge("127.0.0.1", "windows-wsl2"));
+        assert!(should_bind_wsl_bridge("localhost", "windows-wsl2"));
+        // A non-loopback primary bind already reaches WSL; no extra bridge.
+        assert!(!should_bind_wsl_bridge("0.0.0.0", "windows-wsl2"));
+        // Sandbox disabled (shared unsandboxed engine) -> direct engine, loopback.
+        assert!(!should_bind_wsl_bridge("127.0.0.1", "none"));
+        assert!(!should_bind_wsl_bridge("127.0.0.1", "windows-job-object"));
     }
 
     #[test]
