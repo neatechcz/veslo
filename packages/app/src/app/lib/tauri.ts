@@ -862,6 +862,10 @@ export type DesktopSandboxEnvironment = {
   enabled: boolean;
 };
 
+export type DesktopRuntimePreferences = {
+  sharedUnsandboxedEngine: boolean;
+};
+
 export type ScheduledJobRun = {
   prompt?: string;
   command?: string;
@@ -924,6 +928,16 @@ export async function wslPrerequisitesRepair(options?: {
 
 export async function desktopSandboxEnvironment(): Promise<DesktopSandboxEnvironment> {
   return invoke<DesktopSandboxEnvironment>("desktop_sandbox_environment");
+}
+
+export async function desktopRuntimePreferencesRead(): Promise<DesktopRuntimePreferences> {
+  return invoke<DesktopRuntimePreferences>("desktop_runtime_preferences_read");
+}
+
+export async function desktopRuntimePreferencesWrite(
+  preferences: DesktopRuntimePreferences,
+): Promise<DesktopRuntimePreferences> {
+  return invoke<DesktopRuntimePreferences>("desktop_runtime_preferences_write", { preferences });
 }
 
 export async function opkgInstall(projectDir: string, pkg: string): Promise<ExecResult> {

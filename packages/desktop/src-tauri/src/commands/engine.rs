@@ -759,6 +759,8 @@ pub fn engine_start(
         let veslo_server_state_path = persisted_veslo_server_plugin_state_path(&app)
             .ok()
             .map(|path| path.to_string_lossy().to_string());
+        let shared_unsandboxed_engine =
+            crate::runtime_preferences::read_shared_unsandboxed_engine_override(&app)?;
 
         let mut health = None;
         for attempt in 1..=max_start_attempts {
@@ -780,6 +782,7 @@ pub fn engine_start(
                 veslo_server_state_path: veslo_server_state_path.clone(),
                 max_engines,
                 idle_suspend_ms,
+                shared_unsandboxed_engine,
             };
 
             let (mut rx, child) = orchestrator::spawn_orchestrator_daemon(&app, &spawn_options)?;

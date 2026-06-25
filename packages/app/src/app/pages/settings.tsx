@@ -25,6 +25,8 @@ import type {
 } from "../lib/tauri";
 import {
   appBuildInfo,
+  desktopRuntimePreferencesRead,
+  desktopRuntimePreferencesWrite,
   engineRestart,
   opencodeRouterRestart,
   opencodeRouterStop,
@@ -178,6 +180,11 @@ export default function SettingsView(props: SettingsViewProps) {
     }
   };
   const [buildInfo, setBuildInfo] = createSignal<AppBuildInfo | null>(null);
+  const [sharedUnsandboxedEngine, setSharedUnsandboxedEngine] = createSignal(false);
+  const [runtimePreferencesReady, setRuntimePreferencesReady] = createSignal(!isTauriRuntime());
+  const [runtimePreferencesBusy, setRuntimePreferencesBusy] = createSignal(false);
+  const [runtimePreferencesStatus, setRuntimePreferencesStatus] = createSignal<string | null>(null);
+  const [runtimePreferencesError, setRuntimePreferencesError] = createSignal<string | null>(null);
   const updateState = () => props.updateStatus?.state ?? "idle";
   const updateNotes = () => props.updateStatus?.notes ?? null;
   const updateVersion = () => props.updateStatus?.version ?? null;
@@ -411,6 +418,26 @@ export default function SettingsView(props: SettingsViewProps) {
         ? translate("settings.browser_signin_saved_custom").replace("{endpoint}", effective)
         : translate("settings.browser_signin_saved_default").replace("{endpoint}", effective),
     );
+  };
+
+  const handleToggleSharedUnsandboxedEngine = async () => {
+    if (!isTauriRuntime() || runtimePreferencesBusy()) return;
+    const next = !sharedUnsandboxedEngine();
+    setRuntimePreferencesBusy(true);
+    setRuntimePreferencesStatus(null);
+    setRuntimePreferencesError(null);
+    try {
+      const saved = await desktopRuntimePreferencesWrite({
+        sharedUnsandboxedEngine: next,
+      });
+      setSharedUnsandboxedEngine(Boolean(saved.sharedUnsandboxedEngine));
+      setRuntimePreferencesStatus("Saved. Restart the local server to apply.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setRuntimePreferencesError(message || "Failed to save runtime preferences.");
+    } finally {
+      setRuntimePreferencesBusy(false);
+    }
   };
 
   const vesloStatusLabel = createMemo(() => {
@@ -684,6 +711,16 @@ export default function SettingsView(props: SettingsViewProps) {
   onMount(() => {
     if (!isTauriRuntime()) return;
     void appBuildInfo().then((info) => setBuildInfo(info)).catch(() => setBuildInfo(null));
+    void desktopRuntimePreferencesRead()
+      .then((preferences) => {
+        setSharedUnsandboxedEngine(Boolean(preferences.sharedUnsandboxedEngine));
+        setRuntimePreferencesError(null);
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        setRuntimePreferencesError(message || "Failed to read runtime preferences.");
+      })
+      .finally(() => setRuntimePreferencesReady(true));
   });
 
   const formatUptime = (uptimeMs?: number | null) => {
@@ -993,6 +1030,66 @@ export default function SettingsView(props: SettingsViewProps) {
                   </For>
                 </div>
               </div>
+            </div>
+
+            <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+              <div>
+                <div class="text-sm font-medium text-gray-12">Local runtime</div>
+                <div class="text-xs text-gray-10">Engine isolation and pooling. Restart local server to apply.</div>
+              </div>
+
+              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-gray-12">Shared unsandboxed engine</div>
+                  <div class="text-xs text-gray-7">
+                    Sets <span class="font-mono">VESLO_DISABLE_SANDBOX</span> and{" "}
+                    <span class="font-mono">VESLO_SHARED_OPENCODE_ENGINE</span> together.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={sharedUnsandboxedEngine()}
+                  aria-label="Toggle shared unsandboxed engine"
+                  class={`relative h-6 w-11 shrink-0 rounded-full border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] ${
+                    sharedUnsandboxedEngine()
+                      ? "border-amber-7/30 bg-amber-9"
+                      : "border-gray-6 bg-gray-3 hover:bg-gray-4"
+                  }`}
+                  onClick={() => void handleToggleSharedUnsandboxedEngine()}
+                  disabled={!isTauriRuntime() || !runtimePreferencesReady() || runtimePreferencesBusy()}
+                >
+                  <span class={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-gray-1 shadow-sm transition-transform ${
+                    sharedUnsandboxedEngine() ? "translate-x-5" : "translate-x-0"
+                  }`} />
+                </button>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2 text-xs">
+                <span class={`rounded-full border px-2 py-1 ${
+                  sharedUnsandboxedEngine()
+                    ? "border-amber-7/35 bg-amber-3/20 text-amber-11"
+                    : "border-green-7/25 bg-green-3/20 text-green-11"
+                }`}>
+                  {sharedUnsandboxedEngine() ? "Shared unsandboxed mode" : "Per-workspace engine mode"}
+                </span>
+                <Show when={isTauriRuntime()} fallback={<span class="text-gray-8">Desktop app only</span>}>
+                  <span class="text-gray-8">
+                    {runtimePreferencesBusy()
+                      ? "Saving..."
+                      : props.engineInfo?.running
+                        ? "Restart local server to apply changes."
+                        : "Applies on next local server start."}
+                  </span>
+                </Show>
+              </div>
+
+              <Show when={runtimePreferencesStatus()}>
+                {(value) => <div class="text-xs text-gray-10">{value()}</div>}
+              </Show>
+              <Show when={runtimePreferencesError()}>
+                {(value) => <div class="text-xs text-red-11">{value()}</div>}
+              </Show>
             </div>
 
             <Show when={showGeneralUpdateControls()}>

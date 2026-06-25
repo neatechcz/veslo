@@ -82,6 +82,7 @@ pub struct OrchestratorSpawnOptions {
     pub max_engines: Option<u32>,
     /// VSLO-171 F3Ú9: idle suspend threshold in ms. None = orchestrator default.
     pub idle_suspend_ms: Option<u64>,
+    pub shared_unsandboxed_engine: Option<bool>,
 }
 
 pub fn resolve_orchestrator_data_dir() -> String {
@@ -350,15 +351,24 @@ pub fn request_orchestrator_shutdown(data_dir: &str) -> Result<bool, String> {
 
 pub fn build_orchestrator_env_overrides(
     veslo_server_state_path: Option<&Path>,
+    shared_unsandboxed_engine: Option<bool>,
 ) -> Vec<(String, String)> {
-    veslo_server_state_path
-        .map(|path| {
-            vec![(
-                "VESLO_SERVER_STATE_PATH".to_string(),
-                path.to_string_lossy().to_string(),
-            )]
-        })
-        .unwrap_or_default()
+    let mut env = Vec::new();
+
+    if let Some(path) = veslo_server_state_path {
+        env.push((
+            "VESLO_SERVER_STATE_PATH".to_string(),
+            path.to_string_lossy().to_string(),
+        ));
+    }
+
+    env.extend(
+        crate::runtime_preferences::shared_unsandboxed_engine_env_overrides(
+            shared_unsandboxed_engine,
+        ),
+    );
+
+    env
 }
 
 pub fn spawn_orchestrator_daemon(
@@ -463,7 +473,9 @@ pub fn spawn_orchestrator_daemon(
     }
 
     let veslo_server_state_path = options.veslo_server_state_path.as_deref().map(Path::new);
-    for (key, value) in build_orchestrator_env_overrides(veslo_server_state_path) {
+    for (key, value) in
+        build_orchestrator_env_overrides(veslo_server_state_path, options.shared_unsandboxed_engine)
+    {
         command = command.env(key, value);
     }
 
@@ -509,11 +521,23 @@ mod tests {
             .join("veslo-orchestrator-env-test")
             .join("veslo-server-plugin-state.json");
 
-        let env = build_orchestrator_env_overrides(Some(&state_path));
+        let env = build_orchestrator_env_overrides(Some(&state_path), None);
 
         assert!(env.iter().any(|(key, value)| {
             key == "VESLO_SERVER_STATE_PATH" && value == state_path.to_string_lossy().as_ref()
         }));
+    }
+
+    #[test]
+    fn orchestrator_env_overrides_include_shared_unsandboxed_engine_pair_when_enabled() {
+        let env = build_orchestrator_env_overrides(None, Some(true));
+
+        assert!(env
+            .iter()
+            .any(|(key, value)| key == "VESLO_DISABLE_SANDBOX" && value == "1"));
+        assert!(env
+            .iter()
+            .any(|(key, value)| key == "VESLO_SHARED_OPENCODE_ENGINE" && value == "1"));
     }
 
     #[test]

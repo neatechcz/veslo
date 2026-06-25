@@ -13,6 +13,7 @@ mod orchestrator;
 mod paths;
 mod platform;
 mod process_supervisor;
+mod runtime_preferences;
 #[cfg(test)]
 mod single_window_config_tests;
 mod supervised_process;
@@ -80,6 +81,7 @@ use commands::wsl_sandbox::{wsl_prerequisites_repair, wsl_sandbox_repair};
 use engine::manager::EngineManager;
 use opencode_router::manager::OpenCodeRouterManager;
 use orchestrator::manager::OrchestratorManager;
+use runtime_preferences::{desktop_runtime_preferences_read, desktop_runtime_preferences_write};
 use tauri::{Emitter, Manager, WebviewWindowBuilder};
 use veslo_server::manager::VesloServerManager;
 use workspace::watch::WorkspaceWatchState;
@@ -333,6 +335,8 @@ pub fn run() {
             write_opencode_config,
             updater_environment,
             updater_prepare_install,
+            desktop_runtime_preferences_read,
+            desktop_runtime_preferences_write,
             app_build_info,
             desktop_sandbox_environment,
             log_ui_event,

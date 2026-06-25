@@ -444,7 +444,7 @@ pub fn orchestrator_start_detached(
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let veslo_url = format!("http://127.0.0.1:{port}");
 
-    let command = match supervised_process::sidecar(&app, "veslo-orchestrator") {
+    let mut command = match supervised_process::sidecar(&app, "veslo-orchestrator") {
         Ok(command) => command,
         Err(error) => supervised_process::command_fallback_for_missing_sidecar(
             &app,
@@ -453,6 +453,14 @@ pub fn orchestrator_start_detached(
             error,
         )?,
     };
+
+    let shared_unsandboxed_engine =
+        crate::runtime_preferences::read_shared_unsandboxed_engine_override(&app)?;
+    for (key, value) in crate::runtime_preferences::shared_unsandboxed_engine_env_overrides(
+        shared_unsandboxed_engine,
+    ) {
+        command = command.env(key, value);
+    }
 
     // Start a dedicated host stack for this workspace.
     // We pass explicit tokens and a free port so the UI can connect deterministically.
