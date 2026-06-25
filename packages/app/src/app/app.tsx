@@ -3877,82 +3877,15 @@ export default function App() {
       // Yield to the browser's macro task queue so it paints the spinner
       // before the engine start blocks the microtask chain.
       await new Promise((resolve) => setTimeout(resolve, 0));
-      try {
-        const started = await sendTraceStep(
-          "sendPrompt:ensure-engine-for-workspace",
-          () => workspaceStore.ensureEngineForWorkspace(sendTargetWorkspace?.workspaceId),
-          {
-            traceId: sendTraceId,
-            activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
-            activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
-            targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
-            targetWorkspaceRoot: sendTargetWorkspace?.workspaceRoot ?? null,
-            targetRuntimeReady: sendRuntimeReady,
-          },
-        );
-        if (!started) {
-          recordSendTrace("sendPrompt:engine-not-started", {
-            traceId: sendTraceId,
-          });
-          cleanupPendingSidebarSession();
-          stopSendPromptBusy();
-          return false;
-        }
-        sendPreflight.enginePrepared = true;
-        sendPreflight.effectiveSandbox = resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
-      } catch (error) {
-        recordSendTrace("sendPrompt:engine-start-error", {
-          traceId: sendTraceId,
-          message: messageFromUnknownError(error),
-        });
-        cleanupPendingSidebarSession();
-        stopSendPromptBusy();
-        return false;
-      }
     }
 
-    if (
-      !(await sendTraceStep(
-        "sendPrompt:ensure-local-runtime-reachable",
-        () => ensureLocalRuntimeReachableForSend("sendPrompt", sendPreflight),
-        {
-          traceId: sendTraceId,
-          activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
-          targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
-          workspaceType: workspaceStore.activeWorkspaceDisplay().workspaceType,
-          hasClient: Boolean(routedClient(sendTargetWorkspace?.workspaceId)),
-        },
-      ))
-    ) {
-      recordSendTrace("sendPrompt:blocked-runtime-unreachable", {
-        traceId: sendTraceId,
-      });
+    if (!(await prepareSendRuntimeForSend("sendPrompt", sendPreflight))) {
       cleanupPendingSidebarSession();
       stopSendPromptBusy();
       return false;
     }
     sendPreflight.enginePrepared = true;
     sendPreflight.effectiveSandbox = resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
-
-    if (
-      !(await sendTraceStep(
-        "sendPrompt:ensure-managed-ai-bootstrap-ready",
-        () => ensureManagedAiBootstrapReady(sendPreflight),
-        {
-          traceId: sendTraceId,
-          managedAiBootstrapBusy: managedAiBootstrapBusy(),
-          reloadBusy: reloadBusy(),
-          hasClient: Boolean(routedClient(sendTargetWorkspace?.workspaceId)),
-        },
-      ))
-    ) {
-      recordSendTrace("sendPrompt:blocked-managed-ai-bootstrap", {
-        traceId: sendTraceId,
-      });
-      cleanupPendingSidebarSession();
-      stopSendPromptBusy();
-      return false;
-    }
     sendPreflight.managedAiReady = true;
 
     const c = routedClientForSendTarget(sendTargetWorkspace);
@@ -4730,10 +4663,10 @@ export default function App() {
     }
     const sendTargetWorkspace = resolveSendTargetWorkspaceScope(sessionID);
     replacePreflight.targetWorkspace = sendTargetWorkspace;
-    if (!(await ensureLocalRuntimeReachableForSend("replaceUserMessage", replacePreflight))) return false;
+    if (!(await prepareSendRuntimeForSend("replaceUserMessage", replacePreflight))) return false;
     replacePreflight.enginePrepared = true;
     replacePreflight.effectiveSandbox = resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
-    if (!(await ensureManagedAiBootstrapReady(replacePreflight))) return false;
+    replacePreflight.managedAiReady = true;
     const c = routedClientForSendTarget(sendTargetWorkspace);
     if (!c) {
       recordSendTrace("replaceUserMessage:blocked-no-client", {
@@ -5431,6 +5364,11 @@ export default function App() {
       isDesktopRuntime: isTauriRuntime(),
       workspaceType: workspace.workspaceType,
       engineBaseUrl: providerRoutingEngineBaseUrl,
+      requiresEngineBridgeUrl: runtimeSandboxState.requiresEngineBridgeUrl,
+      configuredSandboxEnabled: runtimeSandboxState.configuredEnabled,
+      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
+      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
+      childKind: runtimeSandboxState.childKind,
       sandboxEnabled: runtimeSandboxState.isSandboxed,
       sandboxBackend: runtimeSandboxState.effectiveBackend,
     });
@@ -5587,6 +5525,7 @@ export default function App() {
   const {
     ensureManagedAiBootstrapReady,
     ensureLocalRuntimeReachableForSend,
+    prepareSendRuntimeForSend,
     connectLocalRuntimeClientFromEngineInfo,
     messageFromUnknownError,
   } = sendRuntimeReadiness;
@@ -11578,6 +11517,11 @@ export default function App() {
       isDesktopRuntime: isTauriRuntime(),
       workspaceType: workspace.workspaceType,
       engineBaseUrl: providerRoutingEngineBaseUrl,
+      requiresEngineBridgeUrl: runtimeSandboxState.requiresEngineBridgeUrl,
+      configuredSandboxEnabled: runtimeSandboxState.configuredEnabled,
+      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
+      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
+      childKind: runtimeSandboxState.childKind,
       sandboxEnabled: runtimeSandboxState.isSandboxed,
       sandboxBackend: runtimeSandboxState.effectiveBackend,
     });
@@ -11930,6 +11874,11 @@ export default function App() {
       isDesktopRuntime: isTauriRuntime(),
       workspaceType: "local",
       engineBaseUrl: providerRoutingLocalHost.engineUrl ?? "",
+      requiresEngineBridgeUrl: runtimeSandboxState.requiresEngineBridgeUrl,
+      configuredSandboxEnabled: runtimeSandboxState.configuredEnabled,
+      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
+      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
+      childKind: runtimeSandboxState.childKind,
       sandboxEnabled: runtimeSandboxState.isSandboxed,
       sandboxBackend: runtimeSandboxState.effectiveBackend,
     });

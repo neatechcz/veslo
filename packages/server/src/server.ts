@@ -948,9 +948,41 @@ export function startServer(config: ServerConfig) {
     });
   });
 
+  // VSLO-250 — optional second listener on a WSL-reachable bridge address
+  // (e.g. the WSL virtual adapter IP). It shares the exact same fetch handler,
+  // so token auth, CORS, proxying and streaming behave identically to the
+  // primary listener. A bind failure here must not take down the primary
+  // loopback listener; managed AI routing fails closed upstream instead.
+  const bridgeHost = config.bridgeHost?.trim();
+  let bridgeServer: StoppableServer | null = null;
+  if (bridgeHost && bridgeHost !== config.host) {
+    try {
+      bridgeServer = Bun.serve({ ...serverOptions, hostname: bridgeHost }) as StoppableServer;
+      logger.log("info", "veslo-server bridge listener started", {
+        bridgeHost,
+        port: config.port,
+      });
+    } catch (error) {
+      bridgeServer = null;
+      logger.log("error", "veslo-server bridge listener failed to start", {
+        bridgeHost,
+        port: config.port,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   const originalStop = server.stop.bind(server);
+  const stopBridge = bridgeServer ? bridgeServer.stop.bind(bridgeServer) : null;
   server.stop = (closeActiveConnections?: boolean) => {
     automationRunner.stop();
+    if (stopBridge) {
+      try {
+        stopBridge(closeActiveConnections);
+      } catch {
+        // best effort: a failed bridge stop must not block primary shutdown
+      }
+    }
     return originalStop(closeActiveConnections);
   };
 

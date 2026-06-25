@@ -410,6 +410,52 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
     }
   }
 
+  async function prepareSendRuntimeForSend(
+    reason: string,
+    preflight: SendRuntimePreflightContext,
+  ): Promise<boolean> {
+    const tracePayload = preflight.traceId ? { traceId: preflight.traceId } : undefined;
+    const targetWorkspaceId = preflight.targetWorkspace?.workspaceId?.trim() ?? "";
+    const targetWorkspace = targetWorkspaceId
+      ? deps.workspaces().find((workspace) => workspace.id === targetWorkspaceId) ?? null
+      : null;
+    const workspaceType = targetWorkspace?.workspaceType ?? deps.activeWorkspaceDisplay().workspaceType;
+
+    const runtimeReady = await deps.sendTraceStep(
+      `${reason}:ensure-local-runtime-reachable`,
+      () => ensureLocalRuntimeReachableForSend(reason, preflight),
+      {
+        ...(tracePayload ?? {}),
+        activeWorkspaceId: deps.activeWorkspaceId().trim(),
+        targetWorkspaceId: targetWorkspaceId || null,
+        workspaceType,
+        hasClient: Boolean(targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient()),
+      },
+    );
+    if (!runtimeReady) {
+      deps.recordSendTrace(`${reason}:blocked-runtime-unreachable`, tracePayload);
+      return false;
+    }
+    preflight.enginePrepared = true;
+
+    const managedAiReady = await deps.sendTraceStep(
+      `${reason}:ensure-managed-ai-bootstrap-ready`,
+      () => ensureManagedAiBootstrapReady(preflight),
+      {
+        ...(tracePayload ?? {}),
+        managedAiBootstrapBusy: deps.managedAiBootstrapBusy(),
+        reloadBusy: deps.reloadBusy(),
+        hasClient: Boolean(targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient()),
+      },
+    );
+    if (!managedAiReady) {
+      deps.recordSendTrace(`${reason}:blocked-managed-ai-bootstrap`, tracePayload);
+      return false;
+    }
+    preflight.managedAiReady = true;
+    return true;
+  }
+
   async function connectLocalRuntimeClientFromEngineInfo(reason: string): Promise<Client | null> {
     if (!deps.isTauriRuntime() || deps.activeWorkspaceDisplay().workspaceType !== "local") {
       return deps.routedClient() ?? null;
@@ -474,6 +520,7 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
   return {
     ensureManagedAiBootstrapReady,
     ensureLocalRuntimeReachableForSend,
+    prepareSendRuntimeForSend,
     connectLocalRuntimeClientFromEngineInfo,
     messageFromUnknownError: errorMessage,
   };

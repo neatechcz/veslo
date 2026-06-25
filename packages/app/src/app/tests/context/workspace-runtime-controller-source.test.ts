@@ -16,6 +16,11 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
     "quiet reconnect must bind a workspace-scoped routed client before send uses routedClient(workspaceId)",
   );
   assert.match(runtimeSource, /reattachOrchestratorWorkspace\(/);
+  assert.match(
+    runtimeSource,
+    /if \(!ok && runtime === "veslo-orchestrator"\) \{[\s\S]*ok = await reattachOrchestratorAfterColdStart\("browse-cold-start-reattach"\);[\s\S]*\}/,
+    "orchestrator cold start should reattach the workspace when startHost starts the daemon but does not publish a route",
+  );
   assert.match(runtimeSource, /withTimeoutOrThrow\(deps\.loadSessions\(workspace\.path\)/);
   assert.match(runtimeSource, /loadSessions failed; continuing first prompt/);
   assert.match(runtimeSource, /clearWorkspaceBusyAllExcept\(workspace\.id\)/);

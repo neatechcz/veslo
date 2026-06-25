@@ -7,6 +7,7 @@ import {
   localRuntimeHealthTimeoutMessage,
   managedAiRuntimeConfigNotReadyMessage,
   shouldRecoverLocalRuntimeFromHealthError,
+  type SendRuntimePreflightContext,
   type SendRuntimeReadinessDeps,
 } from "../../context/send-runtime-readiness.js";
 
@@ -200,6 +201,113 @@ test("managed AI bootstrap readiness validates the snapshotted target workspace 
   assert.equal(await readiness.ensureManagedAiBootstrapReady(preflight), true);
   assert.deepEqual(targets, [preflight.targetWorkspace]);
   assert.deepEqual(waits, [{ hasClient: true }]);
+});
+
+test("send runtime readiness owner prepares runtime before managed AI bootstrap", async () => {
+  const order: string[] = [];
+  const waits: Array<{ hasClient: boolean }> = [];
+  const { readiness, clients } = createHarness({
+    managedAiAccess: () => ({ providerId: "codex_oauth" }),
+    hasUsableManagedAiRuntimeConfigForSend: async () => {
+      order.push("managed-config-check");
+      return true;
+    },
+    waitForManagedAiBootstrapReady: async (options) => {
+      order.push("managed-bootstrap-wait");
+      waits.push({ hasClient: options.hasClient() });
+    },
+    sendTraceStep: async (event, run) => {
+      order.push(`trace-start:${event}`);
+      const result = await run();
+      order.push(`trace-end:${event}`);
+      return result;
+    },
+  });
+  clients.set(
+    "target",
+    createClient("target", async () => {
+      order.push("runtime-health");
+      return {};
+    }),
+  );
+
+  const preflight: SendRuntimePreflightContext = {
+    traceId: "trace-prepare",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.prepareSendRuntimeForSend("sendPrompt", preflight), true);
+  assert.equal(preflight.runtimeHealthOk, true);
+  assert.equal(preflight.enginePrepared, true);
+  assert.equal(preflight.managedAiReady, true);
+  assert.deepEqual(waits, [{ hasClient: true }]);
+  assert.ok(
+    order.indexOf("trace-start:sendPrompt:ensure-local-runtime-reachable") <
+      order.indexOf("trace-start:sendPrompt:ensure-managed-ai-bootstrap-ready"),
+    "runtime reachability should be prepared before managed AI bootstrap",
+  );
+  assert.ok(
+    order.indexOf("runtime-health") < order.indexOf("managed-config-check"),
+    "managed AI routing should be validated only after runtime health succeeds",
+  );
+});
+
+test("send runtime readiness owner blocks managed AI bootstrap when runtime recovery fails", async () => {
+  const managedConfigChecks: unknown[] = [];
+  const { readiness, events, ensureEngineCalls } = createHarness({
+    managedAiAccess: () => ({ providerId: "codex_oauth" }),
+    ensureEngineForWorkspace: async (workspaceId?: string) => {
+      ensureEngineCalls.push(workspaceId);
+      return false;
+    },
+    hasUsableManagedAiRuntimeConfigForSend: async (targetWorkspace) => {
+      managedConfigChecks.push(targetWorkspace);
+      return true;
+    },
+  });
+
+  const preflight: SendRuntimePreflightContext = {
+    traceId: "trace-prepare-blocked",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.prepareSendRuntimeForSend("sendPrompt", preflight), false);
+  assert.deepEqual(ensureEngineCalls, ["target"]);
+  assert.deepEqual(managedConfigChecks, []);
+  assert.equal(preflight.enginePrepared, undefined);
+  assert.equal(preflight.managedAiReady, undefined);
+  assert.ok(events.some((entry) => entry.event === "sendPrompt:blocked-runtime-unreachable"));
+});
+
+test("send runtime readiness owner blocks managed AI when runtime routing config is unusable", async () => {
+  const healthCalls: string[] = [];
+  const { readiness, clients, errors, events } = createHarness({
+    managedAiAccess: () => ({ providerId: "codex_oauth" }),
+    hasUsableManagedAiRuntimeConfigForSend: async () => false,
+  });
+  clients.set(
+    "target",
+    createClient("target", async () => {
+      healthCalls.push("target");
+      return {};
+    }),
+  );
+
+  const preflight: SendRuntimePreflightContext = {
+    traceId: "trace-prepare-managed-blocked",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.prepareSendRuntimeForSend("sendPrompt", preflight), false);
+  assert.deepEqual(healthCalls, ["target"]);
+  assert.equal(preflight.runtimeHealthOk, true);
+  assert.equal(preflight.enginePrepared, true);
+  assert.equal(preflight.managedAiReady, undefined);
+  assert.deepEqual(errors, [managedAiRuntimeConfigNotReadyMessage]);
+  assert.ok(events.some((entry) => entry.event === "sendPrompt:blocked-managed-ai-bootstrap"));
 });
 
 test("local runtime readiness probes the snapshotted target workspace client", async () => {

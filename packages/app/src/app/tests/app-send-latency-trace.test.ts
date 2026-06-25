@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
 const schedulerSource = readFileSync(new URL("../lib/workspace-runtime-schedulers.ts", import.meta.url), "utf8");
 const mcpRefreshSource = readFileSync(new URL("../lib/mcp-server-refresh.ts", import.meta.url), "utf8");
 const mcpRuntimeStatusSource = readFileSync(
@@ -28,9 +29,6 @@ test("send preflight records per-step latency trace entries for step 2", () => {
   for (const event of [
     "sendPrompt:maybe-resolve-skill-command",
     "sendPrompt:ensure-scoped-workspace-active",
-    "sendPrompt:ensure-engine-for-workspace",
-    "sendPrompt:ensure-managed-ai-bootstrap-ready",
-    "sendPrompt:ensure-local-runtime-reachable",
     "sendPrompt:create-session-and-open",
   ]) {
     assert.match(
@@ -39,6 +37,21 @@ test("send preflight records per-step latency trace entries for step 2", () => {
       `${event} should be timed with sendTraceStep`,
     );
   }
+  for (const event of [
+    "sendPrompt:ensure-local-runtime-reachable",
+    "sendPrompt:ensure-managed-ai-bootstrap-ready",
+  ]) {
+    assert.match(
+      readinessSource,
+      new RegExp(`deps\\.sendTraceStep\\(\\s*\`${"\\$"}\\{reason\\}:${event.replace("sendPrompt:", "")}\``),
+      `${event} should be timed by the send runtime readiness owner`,
+    );
+  }
+  assert.match(
+    readinessSource,
+    /deps\.sendTraceStep\(\s*`\$\{reason\}:runtime-recovery-ensure-engine`/,
+    "workspace engine recovery should still be timed from the readiness owner",
+  );
 });
 
 test("send flow preserves UI trace id and forwards trace entries to native logs", () => {

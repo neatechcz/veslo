@@ -14,6 +14,7 @@ import { parseList, readJsonFile, shortId } from "./utils.js";
 interface CliArgs {
   configPath?: string;
   host?: string;
+  bridgeHost?: string;
   port?: number;
   token?: string;
   hostToken?: string;
@@ -38,6 +39,7 @@ interface CliArgs {
 
 interface FileConfig {
   host?: string;
+  bridgeHost?: string;
   port?: number;
   token?: string;
   hostToken?: string;
@@ -131,6 +133,11 @@ export function parseCliArgs(argv: string[]): CliArgs {
     }
     if (value === "--host") {
       args.host = argv[index + 1];
+      index += 1;
+      continue;
+    }
+    if (value === "--bridge-host") {
+      args.bridgeHost = argv[index + 1];
       index += 1;
       continue;
     }
@@ -235,6 +242,7 @@ export function printHelp(): void {
     "Options:",
     "  --config <path>          Path to server.json",
     "  --host <host>            Hostname (default 127.0.0.1)",
+    "  --bridge-host <host>     Extra bind address served with the same auth (e.g. WSL adapter IP)",
     "  --port <port>            Port (default 8787)",
     "  --token <token>          Client bearer token",
     "  --host-token <token>     Host approval token",
@@ -419,9 +427,14 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
 
   const host = cli.host ?? process.env.VESLO_HOST ?? fileConfig.host ?? DEFAULT_HOST;
   const port = cli.port ?? (process.env.VESLO_PORT ? Number(process.env.VESLO_PORT) : undefined) ?? fileConfig.port ?? DEFAULT_PORT;
+  const bridgeHostRaw = cli.bridgeHost ?? process.env.VESLO_BRIDGE_HOST ?? fileConfig.bridgeHost;
+  const bridgeHostTrimmed = bridgeHostRaw?.trim();
+  // A bridge host equal to the primary host adds no reachability, so drop it.
+  const bridgeHost = bridgeHostTrimmed && bridgeHostTrimmed !== host ? bridgeHostTrimmed : undefined;
 
   return {
     host,
+    bridgeHost,
     port: Number.isNaN(port) ? DEFAULT_PORT : port,
     token,
     hostToken,

@@ -26,13 +26,17 @@ test("sendPrompt carries a preflight context into first-session creation", () =>
   );
   assert.match(
     sendPromptSource,
-    /ensureLocalRuntimeReachableForSend\("sendPrompt", sendPreflight\)/,
-    "sendPrompt should verify runtime health after any workspace engine ensure",
+    /prepareSendRuntimeForSend\("sendPrompt", sendPreflight\)/,
+    "sendPrompt should delegate runtime and managed AI readiness to the send readiness owner",
   );
+  const prepareStart = runtimeReadinessSource.indexOf("async function prepareSendRuntimeForSend(");
+  const prepareEnd = runtimeReadinessSource.indexOf("async function connectLocalRuntimeClientFromEngineInfo", prepareStart);
+  assert.ok(prepareStart >= 0 && prepareEnd > prepareStart, "prepareSendRuntimeForSend source should be present");
+  const prepareSource = runtimeReadinessSource.slice(prepareStart, prepareEnd);
   assert.ok(
-    sendPromptSource.indexOf('"sendPrompt:ensure-local-runtime-reachable"') <
-      sendPromptSource.indexOf('"sendPrompt:ensure-managed-ai-bootstrap-ready"'),
-    "sendPrompt should refresh runtime state before validating managed AI routing",
+    prepareSource.indexOf("${reason}:ensure-local-runtime-reachable") <
+      prepareSource.indexOf("${reason}:ensure-managed-ai-bootstrap-ready"),
+    "send readiness owner should refresh runtime state before validating managed AI routing",
   );
   assert.doesNotMatch(
     sendPromptSource,

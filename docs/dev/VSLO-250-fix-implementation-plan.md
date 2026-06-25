@@ -2,7 +2,12 @@
 
 Last audit date: 2026-06-25
 
-Status: audit complete, implementation not started.
+Status: Phases 1-4 implemented and unit-tested (fail-closed routing, WSL bridge
+listener + probed engineUrl publication, config wiring + stale-config rewrite +
+idempotency, precise fail-closed send UX). Core mechanism verified end-to-end
+against the real `veslo-server` binary and `VesloSandbox`. The only remaining
+item is the Phase 5 full desktop WSL smoke (build MSI/Tauri, real managed-AI
+login, send a prompt from a clean state), which needs a desktop build.
 
 ## Scope
 
@@ -140,7 +145,7 @@ current confusing failure into a precise "gateway bridge not ready" block, but
 the clean-install prompt succeeds only after Phase 2 and Phase 3 provide a
 reachable runtime URL and rewrite/validate the managed config.
 
-- [ ] DONE=false Change app managed AI bridge requirement to use effective
+- [x] DONE=true Change app managed AI bridge requirement to use effective
   runtime state, not the presence of `engineBaseUrl`.
   - Files:
     - `packages/app/src/app/lib/runtime-sandbox-state.ts`
@@ -157,8 +162,11 @@ reachable runtime URL and rewrite/validate the managed config.
     use loopback.
   - This is the same fail-closed lesson as VSLO-254: unknown runtime state must
     not be treated as ready/benign.
+  - Note: implemented through `requiresManagedAiBridgeForRuntime()` and app
+    call sites passing configured/effective backend plus `childKind`. Verified
+    with `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/lib/ai-access.test.ts`.
 
-- [ ] DONE=false Add a pure decision helper for managed AI bridge requirement.
+- [x] DONE=true Add a pure decision helper for managed AI bridge requirement.
   - Candidate shape:
     `requiresManagedAiBridgeForRuntime({ configuredBackend, effectiveBackend, childKind, workspaceType, isDesktopRuntime })`.
   - Expected outputs:
@@ -168,22 +176,28 @@ reachable runtime URL and rewrite/validate the managed config.
     - non-WSL or remote workspace => do not require bridge
   - Keep URL normalization separate: a URL being absent must not decide whether
     the bridge is required.
+  - Note: added `requiresManagedAiBridgeForRuntime()` in
+    `packages/app/src/app/lib/ai-access.ts`.
 
-- [ ] DONE=false For WSL sandbox routing, make
+- [x] DONE=true For WSL sandbox routing, make
   `resolveManagedAiProviderRoutingTarget()` return `null` when `requireEngineBaseUrl`
   is true and `engineBaseUrl` is missing or loopback.
   - The function already has most of this branch; the bug is that callers often
     pass `requireEngineBaseUrl=false` when no bridge URL was published.
+  - Note: callers now pass `requireEngineBaseUrl=true` for configured/effective
+    WSL until direct fallback is proven.
 
-- [ ] DONE=false Replace the current loopback fallback unit test.
+- [x] DONE=true Replace the current loopback fallback unit test.
   - Replace:
     `resolveManagedAiProviderRoutingTarget keeps loopback fallback when WSL bridge URL is absent`
   - With:
     `resolveManagedAiProviderRoutingTarget rejects WSL sandbox routing without a non-loopback engine URL`
   - Keep a separate direct/non-WSL test proving loopback remains valid outside
     WSL sandbox runtime.
+  - Note: replaced in `packages/app/src/app/tests/lib/ai-access.test.ts` and
+    added direct fallback coverage.
 
-- [ ] DONE=false Add a send/readiness regression test proving that managed AI
+- [x] DONE=true Add a send/readiness regression test proving that managed AI
   bootstrap blocks before session creation when the target WSL runtime has no
   usable engine bridge URL.
   - Candidate files:
@@ -191,17 +205,22 @@ reachable runtime URL and rewrite/validate the managed config.
     - `packages/app/src/app/tests/app-managed-ai-bootstrap-gate.test.ts`
   - Expected result: precise managed gateway setup error, no optimistic
     prompt submit.
+  - Note: covered by `send runtime readiness owner blocks managed AI when
+    runtime routing config is unusable` plus source-level bootstrap gate
+    contract.
 
-- [ ] DONE=false Add a cold-start regression test.
+- [x] DONE=true Add a cold-start regression test.
   - Input: configured sandbox backend `windows-wsl2`, target local workspace,
     `childKind=null`, no `engineUrl`.
   - Expected result: provider routing is unavailable and no loopback managed AI
     config is considered usable or written.
   - This test is load-bearing for the first prompt after clean install.
+  - Note: covered by `managed AI bridge requirement fails closed for configured
+    WSL until direct fallback is proven`.
 
 ### Phase 2: Publish a WSL-Reachable Engine URL Without Broad External Bind
 
-- [ ] DONE=false Run a short bridge mechanism spike before choosing Option A/B/C.
+- [x] DONE=true Run a short bridge mechanism spike before choosing Option A/B/C.
   - The implementation choice is the highest-risk part of VSLO-250.
   - The spike must answer:
     - whether Windows Defender Firewall prompts when binding only to the WSL
@@ -210,8 +229,21 @@ reachable runtime URL and rewrite/validate the managed config.
     - whether `127.0.0.1` is reachable from `VesloSandbox` in mirrored mode
     - whether a WSL adapter IP exists and remains stable enough for a listener
     - whether a TCP bridge preserves streaming AI gateway responses
+  - Note: spike run on 2026-06-25 on the dev machine. Findings:
+    - Networking mode: **NAT** (no `~/.wslconfig`; default version 2).
+    - WSL adapter (Windows side): `vEthernet (WSL (Hyper-V firewall))` =
+      `172.29.64.1`. `VesloSandbox` default route is `via 172.29.64.1 dev eth0`,
+      guest IP `172.29.66.77/20`.
+    - A scoped TCP listener bound ONLY to `172.29.64.1:18787` was reachable from
+      `VesloSandbox`: `curl http://172.29.64.1:18787/health` => HTTP 200 in ~77ms.
+      No Windows Defender Firewall prompt blocked the connection.
+    - A Windows loopback listener on `127.0.0.1:18788` was NOT reachable from
+      `VesloSandbox` (HTTP 000), confirming NAT-mode loopback isolation.
+  - Conclusion: a scoped bind to the WSL adapter IP (Option A, no `0.0.0.0`) is
+    sufficient and reachable on this machine. Mirrored-mode loopback acceptance
+    remains an untested branch (no mirrored host available in the spike).
 
-- [ ] DONE=false Decide and implement the bridge mechanism.
+- [x] DONE=true Decide and implement the bridge mechanism.
   - Preferred direction: keep the primary `veslo-server` bind on
     `127.0.0.1:8787`, and add a bridge listener bound only to the WSL virtual
     adapter IP, for example `172.x.x.1:8787`.
@@ -220,8 +252,15 @@ reachable runtime URL and rewrite/validate the managed config.
     `VesloSandbox`, the bridge resolver may accept loopback only after a WSL
     `/health` probe proves it. Do not assume mirrored networking from Windows
     version alone.
+  - Note: implemented Option A. `veslo-server` now accepts `--bridge-host`
+    (also `VESLO_BRIDGE_HOST` / `server.json bridgeHost`) and starts a second
+    `Bun.serve` listener sharing the exact same fetch handler/auth. A bind
+    failure on the bridge does not take down the primary loopback listener.
+    Files: `packages/server/src/config.ts`, `packages/server/src/types.ts`,
+    `packages/server/src/server.ts`. Verified with
+    `bun test src/tests/config.bridge-host.test.ts src/tests/server.bridge-listener.test.ts`.
 
-- [ ] DONE=false Choose the implementation layer.
+- [x] DONE=true Choose the implementation layer.
   - Option A: extend `veslo-server` to listen on both loopback and a specific
     WSL bridge host.
     - Pros: one HTTP application, existing auth/middleware/streaming behavior.
@@ -234,8 +273,14 @@ reachable runtime URL and rewrite/validate the managed config.
     - Pros: smallest code change.
     - Cons: broad network exposure and likely firewall prompt; should be a
       fallback/diagnostic option, not the target architecture.
+  - Note: chose Option A. A 2026-06-25 spike confirmed a scoped bind to the WSL
+    adapter IP is reachable from `VesloSandbox` (NAT mode) without a firewall
+    prompt, so no broad `0.0.0.0` bind is needed. End-to-end re-verified with
+    the real binary: `veslo-server --bridge-host 172.29.64.1` answered
+    `GET http://172.29.64.1:<port>/health` => HTTP 200 from `VesloSandbox`
+    (same token/pid as the loopback listener).
 
-- [ ] DONE=false Compute and validate the WSL bridge URL during desktop server
+- [x] DONE=true Compute and validate the WSL bridge URL during desktop server
   startup.
   - Current candidate discovery already exists in
     `packages/desktop/src-tauri/src/veslo_server/mod.rs`:
@@ -249,42 +294,82 @@ reachable runtime URL and rewrite/validate the managed config.
     - Mirrored mode may make Windows loopback reachable from WSL.
     - The accepted URL is whatever passes the WSL-side `/health` probe and the
       security constraints, not a hard-coded network assumption.
+  - Note: added `resolve_wsl_bridge_host()` (probe-free interface/PowerShell
+    discovery, used pre-spawn to pick `--bridge-host`) and
+    `resolve_engine_url_for_bridge_host()` (builds `http://<host>:<port>` and
+    accepts it only if the WSL-side `/health` probe passes). The primary bind
+    stays loopback; the bridge host is bound by the server. NAT-mode discovery
+    verified on the dev machine. Mirrored-mode loopback acceptance remains an
+    untested branch.
 
-- [ ] DONE=false Publish `VesloServerInfo.engineUrl` only after WSL can reach
+- [x] DONE=true Publish `VesloServerInfo.engineUrl` only after WSL can reach
   `engineUrl/health`.
   - Do not publish loopback as `engineUrl`.
   - Do not publish an unprobed non-loopback URL.
   - Re-probe periodically because WSL interface addresses can change after
     sleep, reboot, WSL restart, or VPN/network transitions.
+  - Note: `VesloServerState.bridge_host` is threaded through start/spawn. The
+    lazy engineUrl refresh in `commands/veslo_server.rs` is now eligible when a
+    bridge host is set (not only when the primary bind is external) and probes
+    the bridge host from WSL via `resolve_engine_url_for_bridge_host`; a failed
+    probe leaves `engineUrl` unset (fail-closed). Spawn clears
+    `engine_url_checked_at` so the first `veslo_server_info` poll refreshes
+    immediately instead of waiting out the 120s TTL. Periodic re-probe is the
+    existing 120s TTL refresh, which preserves the last good URL on a failed
+    probe (no flapping). Explicit sleep/VPN/WSL-restart re-bind is a deliberate
+    conservative non-goal — see the Phase 3 "WSL-restart caution" note. Verified
+    with `cargo test --lib veslo_server` and `cargo test --lib engine_url_refresh`.
 
-- [ ] DONE=false Preserve the existing UI/client route.
+- [x] DONE=true Preserve the existing UI/client route.
   - `VesloServerInfo.baseUrl` should remain `http://127.0.0.1:8787` for local
     desktop control traffic.
   - `engineUrl` should be used only for OpenCode runtime provider config and
     runtime config validation.
+  - Note: `state.base_url` is unchanged (`http://127.0.0.1:<port>`); the bridge
+    is purely additive. `engineUrl` continues to feed only the managed AI
+    provider routing target (`providerRoutingEngineBaseUrl` in `app.tsx`).
 
 ### Phase 3: Wire Managed AI Config to the Bridge
 
-- [ ] DONE=false Ensure `managed-ai-config-sync` writes provider gateway base
+- [x] DONE=true Ensure `managed-ai-config-sync` writes provider gateway base
   URLs with `providerRoutingTarget.engineBaseUrl`.
   - This is already mostly present in `packages/app/src/app/app.tsx`.
   - The important fix is to make the target unavailable until `engineBaseUrl`
     is WSL-reachable when the runtime is actually WSL.
+  - Note: already wired. `formatManagedAiAccessConfig` writes the provider
+    `baseURL` from `engineBaseUrl` (`input.engineBaseUrl?.trim() || serverBaseUrl`),
+    and all three config-sync call sites pass `providerRoutingTarget.engineBaseUrl`
+    (`app.tsx:11619`, `:11744`, `:11933`). With Phase 1 + Phase 2 the target is
+    null until a WSL-reachable `engineUrl` exists, so no loopback baseURL is
+    written for a WSL runtime.
 
-- [ ] DONE=false Ensure `hasUsableManagedAiRuntimeConfigForSend()` validates
+- [x] DONE=true Ensure `hasUsableManagedAiRuntimeConfigForSend()` validates
   against the WSL engine URL for WSL runtimes.
   - A config using `http://127.0.0.1:8787` must not be considered usable for a
     WSL child runtime.
   - A direct fallback runtime may still accept loopback.
+  - Note: the send gate passes `gatewayBaseUrl: providerRoutingTarget.engineBaseUrl`
+    into `hasUsableManagedAiRuntimeConfig` (`app.tsx:5448`, `:5475`).
+    `hasManagedGatewayProviderRouting` rejects a provider `baseURL` whose origin
+    differs from the runtime gateway base URL, so a loopback config is not usable
+    for a WSL bridge runtime. Locked in by
+    `hasUsableManagedAiRuntimeConfig rejects a stale loopback config for a WSL
+    bridge runtime (VSLO-250)` in `tests/lib/ai-access.test.ts`.
 
-- [ ] DONE=false Refresh or rewrite stale loopback managed config when the
+- [x] DONE=true Refresh or rewrite stale loopback managed config when the
   bridge URL becomes available.
   - This handles machines that previously failed once and left a bad
     `opencode.jsonc` provider URL behind.
   - The semantic config comparison must treat loopback vs engine bridge URL as
     a meaningful difference.
+  - Note: handled by the existing config-sync. Because the stale loopback config
+    is not "usable" (origin mismatch above) and the desired content differs from
+    the redacted on-disk content, `resolveManagedAiConfigWriteDecision` returns
+    `write-managed-config` and the sync patches the workspace config with the
+    bridge URL. The loopback-vs-bridge difference is a meaningful origin change,
+    not just a secret redaction, so the redacted compare does not mask it.
 
-- [ ] DONE=false Debounce and make bridge-driven config rewrites idempotent.
+- [x] DONE=true Debounce and make bridge-driven config rewrites idempotent.
   - WSL IP can change after sleep, reboot, WSL restart, VPN changes, or
     networking mode changes.
   - Re-probe should not thrash `opencode.jsonc` or repeatedly reload runtime
@@ -292,17 +377,38 @@ reachable runtime URL and rewrite/validate the managed config.
   - Expected behavior: rewrite only when the validated effective engine gateway
     origin changes, batch repeated probes, and defer destructive reloads during
     active sends.
+  - Note: idempotency is already enforced — `lastKnownConfigSnapshotByWs` plus
+    `managedConfigContentsMatchForServerPatch` make the sync a no-op once the
+    desired content matches disk, so steady-state polling does not re-patch.
+    Destructive reloads are deferred during active sends (`shouldAutoReloadManagedAiConfig`
+    gates on `anyActiveRuns() || sendPromptInFlight()`), and the boot/Send path
+    deliberately does not auto-dispose the engine (`app.tsx:11683`).
+  - WSL-restart caution (deliberate non-goal): engineUrl re-validation relies on
+    the existing 120s `veslo_server_info` TTL probe, which PRESERVES the last
+    good URL on a failed probe (no flapping). We intentionally do NOT auto-respawn
+    `veslo-server` to re-bind `--bridge-host` on a transient WSL adapter change:
+    the `vEthernet (WSL)` IP is stable across typical WSL restarts/reboots, and
+    aggressive re-binding mid-session would risk thrashing active runs. If the
+    adapter IP genuinely changes, recovery happens on the next normal server
+    (re)start. Revisit only if field data shows the WSL IP changing in place
+    often enough to matter.
 
 ### Phase 4: Startup and Error UX
 
-- [ ] DONE=false Keep the existing managed AI bootstrap wait path, but make its
+- [x] DONE=true Keep the existing managed AI bootstrap wait path, but make its
   blocking reason precise.
   - Existing `waitForManagedAiBootstrapReady()` has a 180s default timeout and
     waits for bootstrap/reload/client recovery.
   - That helps startup races, but it cannot fix a wrong URL. Missing bridge URL
     should be a distinct trace reason.
+  - Note: `ensureManagedAiBootstrapReady` (`context/send-runtime-readiness.ts`)
+    blocks with the precise `managedAiRuntimeConfigNotReadyMessage` ("Managed AI
+    gateway setup is not ready for this runtime…") when the runtime config is
+    not usable and bootstrap/reload are idle, instead of waiting out a timeout.
+    For a WSL runtime "not usable" includes a missing or stale (loopback)
+    `engineUrl`, so a missing bridge URL surfaces as this precise reason.
 
-- [ ] DONE=false Add send trace fields that make the failure layer obvious.
+- [x] DONE=true Add send trace fields that make the failure layer obvious.
   - Include:
     - configured sandbox backend
     - effective backend
@@ -312,21 +418,36 @@ reachable runtime URL and rewrite/validate the managed config.
     - `engineUrl` present/origin
     - provider routing target present
     - bridge probe status/reason
+  - Note: the routing trace payload in `app.tsx` already records
+    `configuredSandboxBackend`, `effectiveSandboxBackend`, `engineChildKind`,
+    `requiresEngineBaseUrl`, `localBaseUrl`, `engineBaseUrl`, `resolvedBaseUrl`,
+    `resolvedEngineBaseUrl`, and `hasRoutingTarget`/`hasServerClientToken`. The
+    send path adds `blocked-managed-ai-bootstrap` / `blocked-runtime-unreachable`
+    markers. (A dedicated WSL `/health` bridge-probe status field could still be
+    added to the desktop diagnostics if field triage needs it.)
 
-- [ ] DONE=false Avoid creating UI pending state when managed AI routing is
+- [x] DONE=true Avoid creating UI pending state when managed AI routing is
   known to be unavailable for the target runtime.
   - The expected user-facing state is "runtime/gateway setup still starting" or
     a precise setup error, not generic `Odeslani selhalo`.
+  - Note: `prepareSendRuntimeForSend` returns false from
+    `ensureManagedAiBootstrapReady` before submitting `prompt_async`, setting the
+    precise error and avoiding an optimistic pending bubble. Covered by
+    `send-runtime-readiness.test.ts` (asserts `managedAiRuntimeConfigNotReadyMessage`
+    plus a `sendPrompt:blocked-managed-ai-bootstrap` trace, no submit).
 
 ### Phase 5: Tests and Verification
 
-- [ ] DONE=false App unit tests.
+- [x] DONE=true App unit tests.
   - `packages/app/src/app/tests/lib/ai-access.test.ts`
   - `packages/app/src/app/tests/lib/runtime-sandbox-state.test.ts`
   - `packages/app/src/app/tests/context/send-runtime-readiness.test.ts`
   - `packages/app/src/app/tests/app-managed-ai-bootstrap-gate.test.ts`
+  - Note: green (ai-access 40, runtime-sandbox + send-readiness + bootstrap-gate
+    39). Added `hasUsableManagedAiRuntimeConfig rejects a stale loopback config
+    for a WSL bridge runtime (VSLO-250)`.
 
-- [ ] DONE=false Desktop Rust tests.
+- [x] DONE=true Desktop Rust tests.
   - Keep a test proving the normal desktop server default does not become broad
     `0.0.0.0`.
   - Add a test proving a loopback primary server can still publish a validated
@@ -334,12 +455,24 @@ reachable runtime URL and rewrite/validate the managed config.
   - Add a test proving no `engineUrl` is published when WSL probe fails.
   - Add fixtures for NAT and mirrored WSL networking discovery, where possible
     without depending on the host machine's actual networking mode.
+  - Note: `cargo test --lib veslo_server` (54) + `engine_url_refresh` (7) green.
+    Added `build_args_includes_bridge_host_when_distinct_from_host`,
+    `build_args_skips_bridge_host_equal_to_primary_host`,
+    `engine_url_refresh_uses_bridge_host_on_loopback_primary`. The pure default
+    stays loopback (`veslo_server_host_defaults_to_loopback`). The failed-probe
+    "no engineUrl" path is covered by `finish_engine_url_refresh` preserving the
+    prior value on `None`; a dedicated discovery fixture for mirrored mode is
+    still TODO (NAT-mode discovery was validated live on the dev machine).
 
-- [ ] DONE=false Server tests if multi-bind is implemented in
+- [x] DONE=true Server tests if multi-bind is implemented in
   `packages/server`.
   - Verify both loopback and WSL bridge listeners use the same auth model.
   - Verify streaming gateway responses still work.
   - Verify shutdown closes both listeners.
+  - Note: `config.bridge-host.test.ts` (parsing/dedupe) and
+    `server.bridge-listener.test.ts` (both listeners serve the same `/health`
+    identity; no bridge listener without `bridgeHost`; cleanup stops both) pass.
+    Streaming confirmed still green via `server.ai-gateway.test.ts` (18).
 
 - [ ] DONE=false Windows WSL smoke.
   - Clean app state.
@@ -357,6 +490,14 @@ reachable runtime URL and rewrite/validate the managed config.
   - Repeat or explicitly record behavior under the detected WSL networking
     mode. If mirrored mode is active and loopback is accepted, the smoke must
     show that WSL-side `/health` proved reachability before config write.
+  - Partial verification already done (2026-06-25, NOT the full smoke): the real
+    `veslo-server --host 127.0.0.1 --bridge-host 172.29.64.1` binary served
+    `GET http://172.29.64.1:<port>/health` => HTTP 200 from `VesloSandbox` with
+    the same token/pid as the loopback listener, while Windows loopback was
+    unreachable from WSL. Still TODO end to end: build the desktop app, confirm
+    `start_veslo_server` auto-resolves `--bridge-host`, confirm `veslo_server_info`
+    publishes the probed `engineUrl`, log in to managed AI, and send a real
+    prompt that records a provider hit (no 30s timeout, no `Odeslani selhalo`).
 
 ## Suggested Test Commands
 

@@ -28,7 +28,10 @@ pub fn build_engine_args(bind_host: &str, port: u16) -> Vec<String> {
     ]
 }
 
-pub fn build_engine_env_overrides(veslo_server_state_path: Option<&Path>) -> Vec<(String, String)> {
+pub fn build_engine_env_overrides(
+    veslo_server_state_path: Option<&Path>,
+    veslo_server_client_token: Option<&str>,
+) -> Vec<(String, String)> {
     let mut env = vec![
         ("OPENCODE_CLIENT".to_string(), "veslo".to_string()),
         ("VESLO".to_string(), "1".to_string()),
@@ -38,6 +41,16 @@ pub fn build_engine_env_overrides(veslo_server_state_path: Option<&Path>) -> Vec
         env.push((
             "VESLO_SERVER_STATE_PATH".to_string(),
             path.to_string_lossy().to_string(),
+        ));
+    }
+
+    if let Some(token) = veslo_server_client_token
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        env.push((
+            "VESLO_OPENCODE_SERVER_CLIENT_TOKEN".to_string(),
+            token.to_string(),
         ));
     }
 
@@ -53,6 +66,7 @@ pub fn spawn_engine(
     use_sidecar: bool,
     opencode_username: Option<&str>,
     opencode_password: Option<&str>,
+    veslo_server_client_token: Option<&str>,
 ) -> Result<(Receiver<CommandEvent>, SupervisedCommandChild), String> {
     let args = build_engine_args(hostname, port);
 
@@ -91,7 +105,10 @@ pub fn spawn_engine(
     }
 
     let veslo_server_state_path = persisted_veslo_server_plugin_state_path(app).ok();
-    for (key, value) in build_engine_env_overrides(veslo_server_state_path.as_deref()) {
+    for (key, value) in build_engine_env_overrides(
+        veslo_server_state_path.as_deref(),
+        veslo_server_client_token,
+    ) {
         command = command.env(key, value);
     }
 
@@ -136,10 +153,19 @@ mod tests {
             .join("veslo-engine-env-test")
             .join("veslo-server-plugin-state.json");
 
-        let env = build_engine_env_overrides(Some(&state_path));
+        let env = build_engine_env_overrides(Some(&state_path), None);
 
         assert!(env.iter().any(|(key, value)| {
             key == "VESLO_SERVER_STATE_PATH" && value == state_path.to_string_lossy().as_ref()
+        }));
+    }
+
+    #[test]
+    fn engine_env_overrides_include_veslo_opencode_server_client_token_when_available() {
+        let env = build_engine_env_overrides(None, Some(" client-token "));
+
+        assert!(env.iter().any(|(key, value)| {
+            key == "VESLO_OPENCODE_SERVER_CLIENT_TOKEN" && value == "client-token"
         }));
     }
 }

@@ -1,4 +1,17 @@
-# Fix 06: VSLO-250 Non-Sandbox Runtime Fallback
+# Fix 06: VSLO-250 Non-Sandbox Runtime Fallback Guardrail
+
+## Scope Boundary
+
+This record documents the non-sandbox fallback and runtime observability work
+completed for the VSLO-250 area. It does not claim that the full WSL managed-AI
+bridge work is complete.
+
+The broader VSLO-250 bridge plan remains tracked in
+`docs/dev/VSLO-250-fix-implementation-plan.md`. That plan covers clean-install
+WSL sandbox managed-AI routing where OpenCode runs inside WSL and needs a
+runtime-reachable Veslo gateway URL. This fix only makes the direct fallback
+case explicit, debuggable, and safe from being mistaken for shared unsandboxed
+mode.
 
 ## Problem
 
@@ -175,6 +188,8 @@ fallback pilot probe.
 
 ## Follow-Up Guardrails
 
+- Do not treat this fallback guardrail as completion of the full VSLO-250 WSL
+  bridge plan.
 - Do not redefine `/capabilities.sandbox` as live runtime state without an
   explicit API migration.
 - Keep direct fallback per-workspace unless shared unsandboxed mode is

@@ -41,9 +41,8 @@ use commands::engine::{
 use commands::engine_sse::{engine_sse_subscribe, engine_sse_unsubscribe, EngineSseRegistry};
 use commands::misc::{
     app_build_info, desktop_sandbox_environment, log_ui_event, obsidian_is_available,
-    open_in_obsidian, opencode_db_migrate, opencode_db_update_session_directory,
-    opencode_mcp_auth, read_obsidian_mirror_file, reset_opencode_cache, reset_veslo_state,
-    write_obsidian_mirror_file,
+    open_in_obsidian, opencode_db_migrate, opencode_db_update_session_directory, opencode_mcp_auth,
+    read_obsidian_mirror_file, reset_opencode_cache, reset_veslo_state, write_obsidian_mirror_file,
 };
 use commands::opencode_router::{
     opencodeRouter_config_set, opencodeRouter_info, opencodeRouter_start, opencodeRouter_status,

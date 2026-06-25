@@ -239,6 +239,32 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
         }
 
         let ok = false;
+        const reattachOrchestratorAfterColdStart = async (reason: string, error?: unknown) => {
+          const message = error === undefined ? "" : messageFromUnknownError(error, deps.safeStringify);
+          deps.wsLog("[workspace:ensureEngine] startHost did not attach, trying orchestrator reattach...", {
+            id,
+            ...(message ? { error: message } : {}),
+          });
+          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:start-host:not-started", {
+            workspaceId: id,
+            ...(message ? { error: message } : {}),
+          });
+          const reattachStartedAt = Date.now();
+          const reattached = await deps.localRuntimeLifecycle.reattachOrchestratorWorkspace({
+            workspacePath: workspace.path,
+            workspaceId: workspace.id,
+            workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
+            reason,
+            connectMode: "quiet",
+            navigate: false,
+          });
+          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:reattach:done", {
+            workspaceId: id,
+            ok: reattached,
+            durationMs: Date.now() - reattachStartedAt,
+          });
+          return reattached;
+        };
         try {
           const startedAt = Date.now();
           recordSendWorkflowTrace("workspace-runtime", "ensure-engine:restart-runtime:start", {
@@ -286,6 +312,9 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
               ok,
               durationMs: Date.now() - startHostStartedAt,
             });
+            if (!ok && runtime === "veslo-orchestrator") {
+              ok = await reattachOrchestratorAfterColdStart("browse-cold-start-reattach");
+            }
           } catch (startHostError) {
             if (
               deps.resolveEngineRuntime() !== "veslo-orchestrator" ||
@@ -301,20 +330,7 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
               workspaceId: id,
               error: messageFromUnknownError(startHostError, deps.safeStringify),
             });
-            const reattachStartedAt = Date.now();
-            ok = await deps.localRuntimeLifecycle.reattachOrchestratorWorkspace({
-              workspacePath: workspace.path,
-              workspaceId: workspace.id,
-              workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
-              reason: "browse-cold-start-reattach",
-              connectMode: "quiet",
-              navigate: false,
-            });
-            recordSendWorkflowTrace("workspace-runtime", "ensure-engine:reattach:done", {
-              workspaceId: id,
-              ok,
-              durationMs: Date.now() - reattachStartedAt,
-            });
+            ok = await reattachOrchestratorAfterColdStart("browse-cold-start-reattach", startHostError);
           }
         }
         if (!ok) {

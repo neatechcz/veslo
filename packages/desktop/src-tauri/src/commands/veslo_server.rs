@@ -21,6 +21,9 @@ struct EngineUrlRefreshLease {
     generation: u64,
     port: u16,
     host: Option<String>,
+    /// When set, the WSL bridge address whose `/health` is probed from inside
+    /// WSL to publish a WSL-reachable engineUrl. Takes precedence over `host`.
+    bridge_host: Option<String>,
 }
 
 fn active_local_workspace_path(state: &WorkspaceState) -> Option<String> {
@@ -149,7 +152,13 @@ fn begin_engine_url_refresh_if_due(
     if !info.running {
         return None;
     }
-    if !crate::veslo_server::publishes_external_urls(info.host.as_deref()) {
+    // Eligible when either a WSL bridge address is configured (loopback primary
+    // bind + WSL adapter listener) or the primary bind itself is external
+    // (legacy 0.0.0.0 override). A pure loopback bind with no bridge publishes
+    // no engineUrl. See VSLO-250.
+    if state.bridge_host.is_none()
+        && !crate::veslo_server::publishes_external_urls(info.host.as_deref())
+    {
         return None;
     }
 
@@ -173,6 +182,7 @@ fn begin_engine_url_refresh_if_due(
         generation: state.engine_url_refresh_generation,
         port,
         host: info.host.clone(),
+        bridge_host: state.bridge_host.clone(),
     })
 }
 
@@ -220,10 +230,14 @@ pub fn veslo_server_info(app: AppHandle, manager: State<VesloServerManager>) -> 
 
     if let Some(mut sanitized) = running_snapshot {
         if let Some(lease) = engine_url_refresh {
-            let refreshed = crate::veslo_server::resolve_engine_url_for_bind_host(
-                lease.host.as_deref(),
-                Some(lease.port),
-            );
+            let refreshed = if let Some(bridge_host) = lease.bridge_host.as_deref() {
+                crate::veslo_server::resolve_engine_url_for_bridge_host(bridge_host, lease.port)
+            } else {
+                crate::veslo_server::resolve_engine_url_for_bind_host(
+                    lease.host.as_deref(),
+                    Some(lease.port),
+                )
+            };
             let mut state = manager.inner.lock().expect("veslo server mutex poisoned");
             let live = VesloServerManager::snapshot_locked(&mut state);
             if state.engine_url_refresh_generation == lease.generation {
@@ -329,6 +343,7 @@ pub fn veslo_server_restart(
         opencode_router_health_port,
         lifecycle_config.as_ref().map(|(url, _)| url.as_str()),
         lifecycle_config.as_ref().map(|(_, token)| token.as_str()),
+        None,
     )
 }
 
@@ -506,6 +521,27 @@ mod tests {
     }
 
     #[test]
+    fn engine_url_refresh_uses_bridge_host_on_loopback_primary() {
+        let mut info = sample_live_info();
+        info.host = Some("127.0.0.1".to_string());
+        let now = Instant::now();
+        let mut state = sample_engine_url_state(&info, Some(now - Duration::from_secs(120)));
+        state.bridge_host = Some("172.29.64.1".to_string());
+
+        let lease = begin_engine_url_refresh_if_due(
+            &mut state,
+            &info,
+            now,
+            Duration::from_secs(120),
+            Duration::from_secs(30),
+        )
+        .expect("a configured WSL bridge must refresh engineUrl even on a loopback primary bind");
+
+        assert_eq!(lease.bridge_host.as_deref(), Some("172.29.64.1"));
+        assert_eq!(lease.port, 8787);
+    }
+
+    #[test]
     fn engine_url_refresh_throttles_recent_failed_probe() {
         let mut info = sample_live_info();
         info.engine_url = None;
@@ -560,6 +596,7 @@ mod tests {
                 generation: 42,
                 port: 8787,
                 host: Some("0.0.0.0".to_string()),
+                bridge_host: None,
             }
         );
     }
@@ -578,6 +615,7 @@ mod tests {
                 generation: 7,
                 port: 8787,
                 host: Some("0.0.0.0".to_string()),
+                bridge_host: None,
             },
             now,
             None,
@@ -602,6 +640,7 @@ mod tests {
                 generation: 7,
                 port: 8787,
                 host: Some("0.0.0.0".to_string()),
+                bridge_host: None,
             },
             now,
             Some("http://172.30.64.1:8787/".to_string()),
