@@ -65,6 +65,7 @@ export type PendingSessionDraftControllerDeps = {
   workspace: PendingDraftWorkspace;
   publishRegisteredWorkspaceToSidebar: (workspaceId: string) => Promise<void> | void;
   setComposerDraftBySessionId: SetComposerDraftBySessionId;
+  clearDisplayedSession?: () => void;
   setView: (view: View) => void;
   setError: (message: string | null) => void;
   reportError: (error: unknown, scope: string) => void;
@@ -197,6 +198,18 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
     deps.setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey }, draft));
   };
 
+  const openPendingDraftSession = (
+    storageKey: string,
+    summary: PendingSessionDraftSummary,
+    draft: ComposerDraft,
+  ) => {
+    setActivePendingDraftKey(storageKey);
+    setActivePendingDraftMeta(summary);
+    restorePendingDraftComposer(storageKey, draft);
+    deps.clearDisplayedSession?.();
+    deps.setView("session");
+  };
+
   const createActivePendingDraftPersistenceEffect = (input: ActivePendingDraftPersistenceInput) => {
     createEffect(() => {
       if (!activePendingDraftStorageReady()) return;
@@ -319,10 +332,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
               await deps.pendingSessionDraftsDelete(existingPendingDraft.id);
               markPendingDraftConsumed(existingPendingDraft.id);
             } else {
-              setActivePendingDraftKey(newPrivatePendingDraftKey);
-              setActivePendingDraftMeta(existingPendingDraft);
-              restorePendingDraftComposer(newPrivatePendingDraftKey, pendingDraft.draft.composer);
-              deps.setView("session");
+              openPendingDraftSession(newPrivatePendingDraftKey, existingPendingDraft, pendingDraft.draft.composer);
               return true;
             }
           }
@@ -366,10 +376,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
           updatedAt: now,
           composer: emptyPendingDraft,
         });
-        setActivePendingDraftKey(newPrivatePendingDraftKey);
-        setActivePendingDraftMeta(pendingDraft);
-        restorePendingDraftComposer(newPrivatePendingDraftKey, emptyPendingDraft);
-        deps.setView("session");
+        openPendingDraftSession(newPrivatePendingDraftKey, pendingDraft, emptyPendingDraft);
         return true;
       } catch (error) {
         await cleanupFreshScratchWorkspace();
@@ -423,10 +430,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
           if (restoreError) {
             deps.setError(restoreError);
           }
-          setActivePendingDraftKey(pendingDraftKey);
-          setActivePendingDraftMeta(existingPendingDraft);
-          restorePendingDraftComposer(pendingDraftKey, loadedPendingDraft.draft.composer);
-          deps.setView("session");
+          openPendingDraftSession(pendingDraftKey, existingPendingDraft, loadedPendingDraft.draft.composer);
           return pendingDraftKey;
         }
       }
@@ -447,10 +451,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
         updatedAt: now,
         composer: emptyPendingDraft,
       });
-      setActivePendingDraftKey(pendingDraftKey);
-      setActivePendingDraftMeta(pendingDraft);
-      restorePendingDraftComposer(pendingDraftKey, emptyPendingDraft);
-      deps.setView("session");
+      openPendingDraftSession(pendingDraftKey, pendingDraft, emptyPendingDraft);
       return pendingDraftKey;
     } catch (error) {
       deps.reportError(error, "pendingDrafts.directory");

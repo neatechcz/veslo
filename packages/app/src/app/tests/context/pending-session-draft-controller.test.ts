@@ -49,6 +49,7 @@ test("pending draft controller reopens an existing private draft without creatin
       const existingSummary = summaryFromDraft(existingDraft);
       const activatedWorkspaces: string[] = [];
       const views: string[] = [];
+      const openEvents: string[] = [];
       let composerDrafts: Record<string, ComposerDraft> = {};
 
       const controller = createPendingSessionDraftController({
@@ -86,9 +87,14 @@ test("pending draft controller reopens an existing private draft without creatin
         publishRegisteredWorkspaceToSidebar: () => undefined,
         setComposerDraftBySessionId: (updater) => {
           composerDrafts = updater(composerDrafts);
+          openEvents.push("restore-composer");
+        },
+        clearDisplayedSession: () => {
+          openEvents.push("clear-displayed-session");
         },
         setView: (view) => {
           views.push(view);
+          openEvents.push(`view:${view}`);
         },
         setError: () => undefined,
         reportError: (error) => {
@@ -107,6 +113,7 @@ test("pending draft controller reopens an existing private draft without creatin
       assert.equal(controller.activePendingDraftMeta()?.id, existingDraft.id);
       assert.equal(composerDrafts[pendingKey]?.text, "remember this");
       assert.deepEqual(views, ["session"]);
+      assert.deepEqual(openEvents, ["restore-composer", "clear-displayed-session", "view:session"]);
     } finally {
       dispose();
     }

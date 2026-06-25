@@ -8,14 +8,21 @@ test("app shell delegates pending draft orchestration to the pending draft contr
   const wrapperStart = appSource.indexOf("const openNewSessionWithDirectory = async () => {");
   assert.notStrictEqual(wrapperStart, -1, "app.tsx should expose the new-session handler");
 
-  const wrapperEnd = appSource.indexOf("  const {\n    activePendingDraftKey,", wrapperStart);
-  assert.notStrictEqual(wrapperEnd, -1, "new-session handler end marker is missing");
+  const wrapperTail = appSource.slice(wrapperStart);
+  const wrapperEndMatch = wrapperTail.match(/\r?\n  const \{\r?\n    activePendingDraftKey,/);
+  assert.ok(wrapperEndMatch && wrapperEndMatch.index !== undefined, "new-session handler end marker is missing");
+  const wrapperEnd = wrapperStart + wrapperEndMatch.index;
   const wrapperSource = appSource.slice(wrapperStart, wrapperEnd);
 
   assert.match(
     appSource,
     /createPendingSessionDraftController/,
     "app.tsx should construct a focused pending draft controller instead of owning the flow inline",
+  );
+  assert.match(
+    appSource,
+    /clearDisplayedSession:\s*\(\) => \{\s*batch\(\(\) => \{\s*setSelectedSessionId\(null\);\s*setMessages\(\[\]\);\s*setTodos\(\[\]\);\s*\}\);\s*\},/s,
+    "opening a pending draft should synchronously detach the previously displayed real session before routing",
   );
   assert.match(
     wrapperSource,

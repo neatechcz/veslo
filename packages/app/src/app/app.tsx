@@ -1815,6 +1815,13 @@ export default function App() {
     },
     publishRegisteredWorkspaceToSidebar: (workspaceId) => publishRegisteredWorkspaceToSidebar(workspaceId),
     setComposerDraftBySessionId: (updater) => setComposerDraftBySessionId(updater),
+    clearDisplayedSession: () => {
+      batch(() => {
+        setSelectedSessionId(null);
+        setMessages([]);
+        setTodos([]);
+      });
+    },
     setView,
     setError,
     reportError,
