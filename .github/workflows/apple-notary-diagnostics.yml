@@ -1,0 +1,93 @@
+name: Apple Notary Diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      submission_ids:
+        description: "Comma, space, or newline separated Apple notarization submission IDs"
+        required: false
+        type: string
+      history_limit:
+        description: "Number of recent history entries to inspect when no IDs are provided"
+        required: false
+        default: "20"
+        type: string
+
+jobs:
+  notary-diagnostics:
+    name: Query Apple notarization status
+    runs-on: macos-14
+    timeout-minutes: 15
+    environment: release-signing
+    permissions:
+      contents: read
+    steps:
+      - name: Query notary history and logs
+        shell: bash
+        env:
+          SUBMISSION_IDS: ${{ inputs.submission_ids }}
+          HISTORY_LIMIT: ${{ inputs.history_limit }}
+          APPLE_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
+          APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID || secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          notary_args=()
+          if [ -n "${APPLE_API_KEY:-}" ] && [ -n "${APPLE_API_ISSUER:-}" ] && [ -n "${APPLE_NOTARY_API_KEY_P8_BASE64:-}" ]; then
+            key_path="$RUNNER_TEMP/AuthKey.p8"
+            umask 077
+            printf '%s' "$APPLE_NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$key_path"
+            notary_args=(--key "$key_path" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER")
+            echo "Using App Store Connect API key authentication."
+          elif [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+            notary_args=(--apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID")
+            echo "Using Apple ID app-specific password authentication."
+          else
+            echo "Missing Apple notarization credentials." >&2
+            exit 1
+          fi
+
+          echo "::group::notarytool history"
+          xcrun notarytool history "${notary_args[@]}" --output-format json | tee "$RUNNER_TEMP/notary-history.json"
+          echo "::endgroup::"
+
+          ids_file="$RUNNER_TEMP/notary-ids.txt"
+          printf '%s\n' "${SUBMISSION_IDS:-}" \
+            | tr ',[:space:]' '\n' \
+            | awk 'NF { print }' \
+            > "$ids_file"
+
+          if [ ! -s "$ids_file" ]; then
+            HISTORY_LIMIT="${HISTORY_LIMIT:-20}" node <<'NODE' > "$ids_file"
+          const fs = require("node:fs");
+          const history = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/notary-history.json", "utf8"));
+          const limit = Number.parseInt(process.env.HISTORY_LIMIT || "20", 10);
+          const entries = Array.isArray(history.history) ? history.history : [];
+          for (const entry of entries.slice(0, Number.isFinite(limit) ? limit : 20)) {
+            if (entry && typeof entry.id === "string" && entry.id) {
+              console.log(entry.id);
+            }
+          }
+          NODE
+          fi
+
+          if [ ! -s "$ids_file" ]; then
+            echo "No submission IDs to inspect." >&2
+            exit 1
+          fi
+
+          while IFS= read -r submission_id; do
+            [ -n "$submission_id" ] || continue
+
+            echo "::group::notarytool info $submission_id"
+            xcrun notarytool info "$submission_id" "${notary_args[@]}" --output-format json || true
+            echo "::endgroup::"
+
+            echo "::group::notarytool log $submission_id"
+            xcrun notarytool log "$submission_id" "${notary_args[@]}" --output-format json || true
+            echo "::endgroup::"
+          done < "$ids_file"
