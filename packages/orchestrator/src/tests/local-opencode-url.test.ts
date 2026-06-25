@@ -39,6 +39,10 @@ describe("local OpenCode URL wiring", () => {
 
     expect(cliSource).toContain("sandbox launch unavailable, spawning unsandboxed");
     expect(cliSource).toContain("buildUnsandboxedSandboxWarning");
+    expect(cliSource).toContain("configuredSandboxBackend");
+    expect(cliSource).toContain("effectiveSandboxBackend");
+    expect(cliSource).toContain("sandboxMode");
+    expect(cliSource).toContain("sandboxFallbackReason");
     expect(cliSource).toContain("engineChildKind: proxyTarget.engine.childKind ?? \"direct\"");
     expect(cliSource).toContain("engineChildKind: engine.childKind ?? \"direct\"");
   });

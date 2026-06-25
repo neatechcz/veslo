@@ -2,11 +2,11 @@
 
 Last audit date: 2026-06-25
 
-Status: core implementation complete for runtime fallback routing. The
-orchestrator reports the actual engine child kind, the desktop/app layers
-preserve it, and pre-send managed AI routing now uses effective sandbox state
-after runtime preparation. Remaining work is mostly explicit UI/docs polish and
-manual validation on a fresh Windows machine without ready WSL.
+Status: implementation and validation complete for this plan. The orchestrator
+reports the actual engine child kind and configured/effective sandbox state, the
+desktop/app layers preserve it, pre-send managed AI routing uses effective
+sandbox state after runtime preparation, and the Windows Tauri fallback probe
+confirms startup plus direct non-sandbox engine launch when WSL is unavailable.
 
 ## Update Convention
 
@@ -186,11 +186,12 @@ Example:
   - Keep current broad variant matching as fallback.
   - Note: `directoryQueryPathMode()` now delegates to `resolveRuntimeSandboxStateForTarget()`.
 
-- [ ] DONE=false Settings/devtools should show configured vs effective sandbox separately.
+- [x] DONE=true Settings/devtools should show configured vs effective sandbox separately.
   - Suggested display:
     - configured backend: `windows-wsl2`
     - effective engine: `direct`
     - status: `running without sandbox fallback`
+  - Note: implemented in `packages/app/src/app/pages/settings.tsx` as the Runtime sandbox debug panel and covered by `settings-runtime-sandbox.test.ts`.
 
 - [x] DONE=true Keep server `/capabilities` as configured capabilities unless a separate explicit field is added.
   - Do not silently redefine existing `sandbox.enabled` as effective runtime state without updating callers.
@@ -232,11 +233,12 @@ Example:
 
 ### 6. Docs and Diagnostics
 
-- [ ] DONE=false Update runtime docs after implementation.
+- [x] DONE=true Update runtime docs after implementation.
   - Suggested files:
     - `docs/dev/opencode-workspace-runtime-architecture.md`
     - `docs/dev/opencode-shared-non-sandbox-runtime.md`
     - `docs/dev/state-and-config-reference.md`
+  - Note: all three files now document configured vs effective sandbox state, direct fallback semantics, and the runtime debug report fields.
 
 - [x] DONE=true Add trace fields for configured vs effective sandbox.
   - Suggested trace keys:
@@ -244,19 +246,22 @@ Example:
     - `effectiveSandboxBackend`
     - `engineChildKind`
     - `sandboxFallback`
-  - Note: fields are emitted in managed AI runtime config check and config sync traces.
+  - Note: fields are emitted in managed AI runtime config/config sync traces, orchestrator engine spawn traces, health diagnostics, and the app runtime debug report.
 
-- [ ] DONE=false Confirm debug logs clearly distinguish:
+- [x] DONE=true Confirm debug logs clearly distinguish:
   - WSL not installed/not ready,
   - WSL launch unavailable,
   - direct fallback started,
   - real runtime failure.
+  - Note: resolver failures log `reason: "sandbox unavailable"`, launch fallback logs `reason: "sandbox launch unavailable"`, and engine-spawn traces include `childKind`, `sandboxed`, `sandboxMode`, `configuredSandboxBackend`, `effectiveSandboxBackend`, and `sandboxFallbackReason`.
 
 ## Acceptance Criteria
 
-- [ ] DONE=false Fresh Windows machine without ready WSL can complete onboarding and start a local workspace.
+- [x] DONE=true Fresh Windows machine without ready WSL can complete onboarding and start a local workspace.
+  - Note: covered by `pnpm --filter @neatech/veslo-e2e test:pilot:wsl-direct-fallback`, which boots the Tauri app with an isolated Windows profile and a missing WSL executable override, then verifies the seeded local workspace is available.
 
-- [ ] DONE=false First send on that machine starts a direct non-sandbox engine instead of blocking on WSL repair.
+- [x] DONE=true First send on that machine starts a direct non-sandbox engine instead of blocking on WSL repair.
+  - Note: the same Tauri fallback probe triggers the first workspace engine request and verifies `childKind: "direct"`, `sandboxMode: "launch-fallback"`, `configuredSandboxBackend: "windows-wsl2"`, and `effectiveSandboxBackend: "none"` in runtime traces.
 
 - [x] DONE=true Managed AI does not block on missing WSL bridge URL after direct fallback.
   - Note: automated coverage verifies configured WSL + `childKind=direct` resolves to non-sandbox and does not require engine bridge URL.
@@ -270,8 +275,8 @@ Example:
 - [x] DONE=true Direct fallback never auto-enables shared unsandboxed mode.
   - Note: topology remains explicit and unchanged.
 
-- [ ] DONE=false UI/debug traces expose both configured sandbox and effective engine runtime.
-  - Trace fields are present; explicit settings/devtools UI display remains open.
+- [x] DONE=true UI/debug traces expose both configured sandbox and effective engine runtime.
+  - Note: Settings Runtime sandbox panel, app runtime debug report, and orchestrator runtime traces expose configured backend, effective backend, child source/kind, sandbox mode, and fallback reason.
 
 ## Non-Goals
 

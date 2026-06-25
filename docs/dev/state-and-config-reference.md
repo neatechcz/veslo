@@ -155,6 +155,12 @@ The local server reports the active path mode through `/capabilities.sandbox`. D
 
 Windows local workspace start must not hard-block on WSL prerequisites, the managed `VesloSandbox` runtime, or workspace path mountability. Both explicit local host startup and lazy first-prompt runtime startup pass through the local runtime readiness hook, then let the orchestrator attempt the configured sandbox launch. If `windows-wsl2` launch setup fails because WSL, `VesloSandbox`, bwrap, or workspace mountability is unavailable, the orchestrator must log the sandbox failure, emit the unsandboxed warning, and start a direct engine so local conversations remain usable while repair is pending.
 
+Developer debug surfaces expose both configured and effective sandbox state.
+Settings devtools and the exported runtime debug report include configured
+backend/enabled, effective backend, engine child kind/source, directory query
+mode, engine-bridge requirement, and `sandboxFallback`. Use these fields instead
+of `/capabilities.sandbox` alone when debugging Windows WSL fallback behavior.
+
 Windows installer/onboarding prerequisite repair must install or update the WSL package without creating a personal default distro, then import the managed `VesloSandbox` distro. Real WSL/VesloSandbox setup failures must be logged as failed runtime setup instead of reported as prepared runtime. MSI package installs run the machine prerequisite phase as `SYSTEM`: that phase may enable Windows WSL features, stage the modern WSL app package, write ProgramData status/marker files, disable installer-time app launch, and return `3010` so Windows Installer can require a restart. It must not mask `3010` to success, show a custom shutdown popup, or import a per-user distro under `SYSTEM`.
 
 Windows validation MSI packages must not run a generated WebView2 installer custom action. Tauri's `downloadBootstrapper`, `embedBootstrapper`, and `offlineInstaller` modes all add a nested WebView2 installer action with `Return=check`; download failures, WebView2 installer return codes, or restart-required outcomes can surface as a generic MSI failure after Veslo's own WSL setup has already succeeded. Validation MSI builds therefore use `webviewInstallMode.type = "skip"` and rely on the system WebView2 runtime while the WSL/reboot/Active Setup flow is under test.

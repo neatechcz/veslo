@@ -39,6 +39,7 @@ import {
   writeDenApiBaseOverride,
 } from "../lib/den-auth";
 import { resolveVisibleSettingsTab } from "../lib/settings-tab-label";
+import { resolveEffectiveRuntimeSandboxState } from "../lib/runtime-sandbox-state";
 import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { MODEL_VARIANT_OPTIONS } from "../lib/model-variant";
@@ -721,6 +722,45 @@ export default function SettingsView(props: SettingsViewProps) {
     return `${normalized}${separator}.opencode${separator}veslo.json`;
   });
 
+  const runtimeSandboxState = createMemo(() =>
+    resolveEffectiveRuntimeSandboxState({
+      configuredSandbox: props.vesloServerCapabilities?.sandbox,
+      engineInfo: props.engineInfo,
+      orchestratorEngines: props.orchestratorStatus?.engines ?? null,
+      targetWorkspaceRoot: props.activeWorkspaceRoot.trim() || props.engineInfo?.projectDir?.trim() || null,
+    }),
+  );
+
+  const runtimeSandboxReport = createMemo(() => {
+    const state = runtimeSandboxState();
+    return {
+      configuredBackend: state.configuredBackend,
+      configuredEnabled: state.configuredEnabled,
+      effectiveBackend: state.effectiveBackend,
+      isSandboxed: state.isSandboxed,
+      engineChildKind: state.childKind,
+      engineChildKindSource: state.childKindSource,
+      directoryQueryMode: state.directoryQueryMode,
+      requiresEngineBridgeUrl: state.requiresEngineBridgeUrl,
+      sandboxFallback: state.sandboxFallback,
+    };
+  });
+
+  const runtimeSandboxStatusLabel = createMemo(() => {
+    const state = runtimeSandboxState();
+    if (state.sandboxFallback) return "running without sandbox fallback";
+    if (state.isSandboxed) return "sandbox active";
+    if (state.configuredEnabled) return "sandbox configured";
+    return "sandbox disabled";
+  });
+
+  const runtimeSandboxStatusStyle = createMemo(() => {
+    const state = runtimeSandboxState();
+    if (state.sandboxFallback) return "bg-amber-4/70 text-amber-12 border-amber-7/60";
+    if (state.isSandboxed) return "bg-green-4/70 text-green-12 border-green-7/60";
+    return "bg-gray-4/60 text-gray-11 border-gray-7/50";
+  });
+
   const runtimeDebugReport = createMemo(() => ({
     generatedAt: new Date().toISOString(),
     app: {
@@ -767,6 +807,7 @@ export default function SettingsView(props: SettingsViewProps) {
     },
     diagnostics: props.vesloServerDiagnostics,
     capabilities: props.vesloServerCapabilities,
+    runtimeSandbox: runtimeSandboxReport(),
     pendingPermissions: props.pendingPermissions,
     recentEvents: props.events,
     workspaceDebugEvents: props.workspaceDebugEvents,
@@ -2112,6 +2153,26 @@ export default function SettingsView(props: SettingsViewProps) {
                         </div>
                       )}
                     </Show>
+                  </div>
+
+                  <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
+                    <div class="flex items-center justify-between gap-3">
+                      <div class="font-product type-ui-md font-medium text-gray-12">Runtime sandbox</div>
+                      <div class={`font-product type-ui-xs px-2 py-1 rounded-full border ${runtimeSandboxStatusStyle()}`}>
+                        {runtimeSandboxStatusLabel()}
+                      </div>
+                    </div>
+                    <div class="font-product type-ui-sm grid md:grid-cols-2 gap-2 text-gray-11">
+                      <div>Configured backend {runtimeSandboxState().configuredBackend}</div>
+                      <div>Configured enabled {runtimeSandboxState().configuredEnabled ? translate("common.true") : translate("common.false")}</div>
+                      <div>Effective backend {runtimeSandboxState().effectiveBackend}</div>
+                      <div>Sandboxed {runtimeSandboxState().isSandboxed ? translate("common.true") : translate("common.false")}</div>
+                      <div>Engine child {runtimeSandboxState().childKind ?? "unknown"}</div>
+                      <div>Child source {runtimeSandboxState().childKindSource}</div>
+                      <div>Directory mode {runtimeSandboxState().directoryQueryMode}</div>
+                      <div>Engine bridge URL {runtimeSandboxState().requiresEngineBridgeUrl ? "required" : "not required"}</div>
+                      <div>Fallback {runtimeSandboxState().sandboxFallback ? translate("common.true") : translate("common.false")}</div>
+                    </div>
                   </div>
 
                   <div class="grid md:grid-cols-2 gap-4">

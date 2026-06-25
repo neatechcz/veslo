@@ -782,6 +782,11 @@ export type OrchestratorEngineSnapshot = {
   workdir: string;
   configDir: string;
   childKind?: "direct" | "wsl" | null;
+  sandboxed?: boolean | null;
+  configuredSandboxBackend?: string | null;
+  effectiveSandboxBackend?: string | null;
+  sandboxMode?: "resolved" | "explicit-none" | "disabled-by-env" | "unavailable" | "launch-fallback" | string | null;
+  sandboxFallbackReason?: string | null;
   state: "spawning" | "ready" | "idle" | "suspended" | "crashed" | string;
   spawnedAt: number;
   lastActivityAt: number;

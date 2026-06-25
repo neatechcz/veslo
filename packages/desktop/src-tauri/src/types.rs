@@ -179,6 +179,16 @@ pub struct OrchestratorEngineSnapshot {
     pub config_dir: String,
     #[serde(default)]
     pub child_kind: Option<String>,
+    #[serde(default)]
+    pub sandboxed: Option<bool>,
+    #[serde(default)]
+    pub configured_sandbox_backend: Option<String>,
+    #[serde(default)]
+    pub effective_sandbox_backend: Option<String>,
+    #[serde(default)]
+    pub sandbox_mode: Option<String>,
+    #[serde(default)]
+    pub sandbox_fallback_reason: Option<String>,
     pub state: String,
     pub spawned_at: u64,
     pub last_activity_at: u64,

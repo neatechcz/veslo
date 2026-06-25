@@ -2509,7 +2509,16 @@ async function startOpencode(options: {
   /** F4Ú4 — wrap engine spawn in OS-level sandbox. When omitted, sandbox is
    *  resolved automatically per platform unless `VESLO_DISABLE_SANDBOX=1`. */
   sandbox?: WorkerSandbox | null;
-}): Promise<{ child: ChildProcess; connectHost?: string; childKind?: "direct" | "wsl" }> {
+}): Promise<{
+  child: ChildProcess;
+  connectHost?: string;
+  childKind?: "direct" | "wsl";
+  sandboxed: boolean;
+  configuredSandboxBackend: string;
+  effectiveSandboxBackend: string;
+  sandboxMode: "resolved" | "explicit-none" | "disabled-by-env" | "unavailable" | "launch-fallback";
+  sandboxFallbackReason: string | null;
+}> {
   const args = ["serve", "--hostname", options.bindHost, "--port", String(options.port)];
   for (const origin of options.corsOrigins) {
     args.push("--cors", origin);
@@ -2543,6 +2552,7 @@ async function startOpencode(options: {
 
   // VESLO_DISABLE_SANDBOX=1 is a hard kill switch: it bypasses platform
   // backend resolution entirely, including the Windows WSL2 sandbox branch.
+  const sandboxExplicitNone = options.sandbox === null;
   let sandbox = resolveEngineSandbox({
     env: process.env,
     workspace: options.workspace,
@@ -2550,6 +2560,24 @@ async function startOpencode(options: {
     resolveSandbox,
     logger: options.logger,
   });
+
+  let sandboxMode: "resolved" | "explicit-none" | "disabled-by-env" | "unavailable" | "launch-fallback";
+  let configuredSandboxBackend: WorkerSandbox["name"] | "none" | "unresolved";
+  let sandboxFallbackReason: string | null = null;
+  if (sandbox) {
+    sandboxMode = "resolved";
+    configuredSandboxBackend = sandbox.name;
+  } else if (sandboxExplicitlyDisabled(process.env)) {
+    sandboxMode = "disabled-by-env";
+    configuredSandboxBackend = "none";
+  } else if (sandboxExplicitNone) {
+    sandboxMode = "explicit-none";
+    configuredSandboxBackend = "none";
+  } else {
+    sandboxMode = "unavailable";
+    configuredSandboxBackend = "unresolved";
+    sandboxFallbackReason = "sandbox unavailable";
+  }
 
   let child: ChildProcess;
   let connectHost: string | undefined;
@@ -2606,7 +2634,7 @@ async function startOpencode(options: {
       const detail = error instanceof Error ? error.message : String(error);
       options.logger.warn(
         "sandbox launch unavailable, spawning unsandboxed",
-        { workspace: options.workspace, backend: sandbox.name, error: detail },
+        { workspace: options.workspace, backend: sandbox.name, reason: "sandbox launch unavailable", error: detail },
         "sandbox",
       );
       console.error(
@@ -2616,6 +2644,8 @@ async function startOpencode(options: {
           detail,
         }),
       );
+      sandboxMode = "launch-fallback";
+      sandboxFallbackReason = "sandbox launch unavailable";
       sandbox = null;
     }
   }
@@ -2626,6 +2656,10 @@ async function startOpencode(options: {
         workspace: options.workspace,
         configDir: options.configDir,
         backend: sandbox.name,
+        configuredSandboxBackend,
+        effectiveSandboxBackend: sandbox.name,
+        sandboxMode,
+        sandboxFallbackReason,
         childKind: launch.childKind ?? "direct",
         bindHost: options.bindHost,
         port: options.port,
@@ -2659,6 +2693,11 @@ async function startOpencode(options: {
       {
         workspace: options.workspace,
         configDir: options.configDir,
+        configuredSandboxBackend,
+        effectiveSandboxBackend: "none",
+        sandboxMode,
+        sandboxFallbackReason,
+        childKind,
         bindHost: options.bindHost,
         port: options.port,
       },
@@ -2680,6 +2719,10 @@ async function startOpencode(options: {
       port: options.port,
       connectHost,
       childKind,
+      configuredSandboxBackend,
+      effectiveSandboxBackend: sandbox?.name ?? "none",
+      sandboxMode,
+      sandboxFallbackReason,
     },
     "opencode",
   );
@@ -2693,6 +2736,10 @@ async function startOpencode(options: {
       connectHost: connectHost ?? "",
       childKind,
       sandboxed: Boolean(sandbox),
+      configuredSandboxBackend,
+      effectiveSandboxBackend: sandbox?.name ?? "none",
+      sandboxMode,
+      sandboxFallbackReason,
       ...(launchDiag ? { launch: launchDiag } : {}),
     });
     console.error(
@@ -2705,6 +2752,10 @@ async function startOpencode(options: {
         connectHost,
         childKind,
         sandboxed: Boolean(sandbox),
+        configuredSandboxBackend,
+        effectiveSandboxBackend: sandbox?.name ?? "none",
+        sandboxMode,
+        sandboxFallbackReason,
       })}`,
     );
   }
@@ -2717,6 +2768,10 @@ async function startOpencode(options: {
     connectHost: connectHost ?? null,
     childKind,
     sandboxed: Boolean(sandbox),
+    configuredSandboxBackend,
+    effectiveSandboxBackend: sandbox?.name ?? "none",
+    sandboxMode,
+    sandboxFallbackReason,
     sandboxBackend: sandbox?.name ?? "none",
     displayCommand: launchDiag?.displayCommand ?? null,
   });
@@ -2748,7 +2803,16 @@ async function startOpencode(options: {
     );
   });
 
-  return { child, connectHost, childKind };
+  return {
+    child,
+    connectHost,
+    childKind,
+    sandboxed: Boolean(sandbox),
+    configuredSandboxBackend,
+    effectiveSandboxBackend: sandbox?.name ?? "none",
+    sandboxMode,
+    sandboxFallbackReason,
+  };
 }
 
 function resolveConfiguredSandboxBackend(): WorkerSandbox["name"] | "none" {
@@ -3995,6 +4059,11 @@ async function runRouterDaemon(args: ParsedArgs) {
           port,
           childPid: spawned.child.pid ?? null,
           childKind: spawned.childKind ?? "direct",
+          sandboxed: spawned.sandboxed,
+          configuredSandboxBackend: spawned.configuredSandboxBackend,
+          effectiveSandboxBackend: spawned.effectiveSandboxBackend,
+          sandboxMode: spawned.sandboxMode,
+          sandboxFallbackReason: spawned.sandboxFallbackReason,
           connectHost: spawned.connectHost ?? null,
           clientHost,
           durationMs: Date.now() - startedAt,
@@ -4003,6 +4072,11 @@ async function runRouterDaemon(args: ParsedArgs) {
           child: spawned.child,
           baseUrl: `http://${clientHost}:${port}`,
           childKind: spawned.childKind,
+          sandboxed: spawned.sandboxed,
+          configuredSandboxBackend: spawned.configuredSandboxBackend,
+          effectiveSandboxBackend: spawned.effectiveSandboxBackend,
+          sandboxMode: spawned.sandboxMode,
+          sandboxFallbackReason: spawned.sandboxFallbackReason,
         };
       },
       waitForHealthy: async (baseUrl) => {
@@ -4122,6 +4196,11 @@ async function runRouterDaemon(args: ParsedArgs) {
                 port,
                 childPid: spawned.child.pid ?? null,
                 childKind: spawned.childKind ?? "direct",
+                sandboxed: spawned.sandboxed,
+                configuredSandboxBackend: spawned.configuredSandboxBackend,
+                effectiveSandboxBackend: spawned.effectiveSandboxBackend,
+                sandboxMode: spawned.sandboxMode,
+                sandboxFallbackReason: spawned.sandboxFallbackReason,
                 connectHost: spawned.connectHost ?? null,
                 clientHost,
                 durationMs: Date.now() - startedAt,
@@ -4130,6 +4209,11 @@ async function runRouterDaemon(args: ParsedArgs) {
                 child: spawned.child,
                 baseUrl: `http://${clientHost}:${port}`,
                 childKind: spawned.childKind,
+                sandboxed: spawned.sandboxed,
+                configuredSandboxBackend: spawned.configuredSandboxBackend,
+                effectiveSandboxBackend: spawned.effectiveSandboxBackend,
+                sandboxMode: spawned.sandboxMode,
+                sandboxFallbackReason: spawned.sandboxFallbackReason,
               };
             },
             waitForHealthy: async (baseUrl) => {
