@@ -14,6 +14,7 @@
     "test": "wdio run wdio.conf.ts",
     "test:update-baselines": "wdio run wdio.conf.ts --update-visual-baseline",
     "test:feedback-youtrack-live": "wdio run wdio.conf.ts --spec ./specs/feedback-youtrack-live.spec.ts",
+    "test:den-admin-billing-integrated": "playwright test ./specs/den-admin-billing-integrated.playwright.spec.ts",
     "test:live-codex-auth-upload": "playwright test ./specs/live-admin-codex-auth-upload.playwright.spec.ts"
   },
   "devDependencies": {

@@ -6,7 +6,7 @@ Design approved for implementation planning.
 
 ## Goal
 
-Add organization billing for Veslo so organization admins can pay for seat-based application access through Stripe, while Den remains the product authority for organization access, license limits, tier availability, Local Models agreements, and AI inference policy.
+Add organization billing for Veslo so organization admins can pay for seat-based application access through Stripe, while Den remains the product authority for organization access, license limits, tier availability, Local Models agreements, platform-admin subscription operations, and AI inference policy.
 
 ## Core Direction
 
@@ -73,7 +73,7 @@ The first user of an organization is the organization admin/owner and can manage
 Billing may be managed by:
 
 - the organization admin/owner for self-serve Managed AI,
-- platform admins for every billing mode and override,
+- platform admins for every billing mode, subscription, stop/revoke action, and override,
 - platform admins for user transfer between organizations.
 
 Organization admins can deactivate users. A deactivated user:
@@ -185,6 +185,7 @@ Quantity and tier changes should follow these rules:
 - Downgrading Extended seats to Basic takes effect at the next billing period.
 - Canceling a subscription cancels at period end.
 - The active organization must keep access until the paid period ends unless Stripe marks the subscription as finally unpaid after dunning.
+- Platform admins can also stop renewal at period end or revoke access immediately. Immediate revoke is an operator action, must be audited, should cancel or release the Stripe subscription when Stripe owns the subscription, and should update Den entitlement state without waiting for a user-facing Checkout or Portal flow.
 
 Scheduled decreases and downgrades should remain visible in Den so admins understand current versus next-period entitlements.
 
@@ -241,6 +242,9 @@ The organization admin view should not expose platform-only controls such as tie
 
 Platform admins can manage:
 
+- a cross-organization subscription list with organization name, billing mode, source, status, interval, purchased quantities, active users, payment problem state, cancellation state, and last Stripe/webhook event,
+- a selected-organization billing workspace that shows the same billing summary and self-serve controls an organization admin sees for that organization,
+- an explicit "acting for organization" or impersonation-style target selector, while audit events continue to record the real platform admin as the actor,
 - organization tier allowlists,
 - manual access or invoice access,
 - optional access expiration,
@@ -248,9 +252,13 @@ Platform admins can manage:
 - custom per-license Local Models price,
 - billing interval,
 - billing source: Stripe invoice/subscription or manual external,
+- stop renewal at period end for Stripe-backed subscriptions,
+- immediate revoke/stop access for platform-admin intervention,
 - user deactivation,
 - platform-only user transfer between organizations,
 - Stripe problem states and webhook/audit diagnostics.
+
+The platform-admin organization billing workspace must not require a platform admin to be a member of the target organization. It is an operator-scoped management view, not a login-as-user flow. UI copy and API audit metadata should make that distinction clear.
 
 ### Unified Billing Form
 
@@ -319,7 +327,8 @@ Den should store enough event metadata to answer:
 - which Stripe event last changed the organization billing state,
 - whether a webhook event was ignored, applied, or failed,
 - why a subscription is blocked, in grace, or active,
-- which admin changed a manual or Local Models billing setting.
+- which admin changed a manual or Local Models billing setting,
+- which platform admin stopped renewal or revoked organization billing access.
 
 ## Testing Strategy
 
@@ -335,6 +344,7 @@ Primary scenarios:
 - license limit blocks adding or activating users,
 - deactivating a user releases a license,
 - platform admin enables Local Models custom billing,
+- platform admin lists organization subscriptions, selects an organization, views the organization-admin billing surface for that organization, stops renewal, and immediately revokes a subscription,
 - Local Models enforces active user count but does not block local inference,
 - Customer Portal link is available for an active Stripe customer/subscription.
 

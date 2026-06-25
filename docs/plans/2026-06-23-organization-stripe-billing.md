@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Build organization-scoped Stripe billing for Managed AI self-serve subscriptions and platform-admin Local Models custom licensing.
+**Goal:** Build organization-scoped Stripe billing for Managed AI self-serve subscriptions, platform-admin subscription management, and platform-admin Local Models custom licensing.
 
 **Architecture:** Den is the authority for billing state, license limits, and entitlements; Stripe is the authority for hosted payment lifecycle. Stripe webhook events update Den read models, and runtime AI routes consult Den-derived entitlement snapshots before allowing Veslo-managed inference.
 
@@ -33,6 +33,7 @@ The E2E tests must exercise the local admin surface as the user would use it:
 - load the Den admin from the locally running Den service,
 - sign in or seed an organization/platform admin session,
 - use the billing UI controls,
+- verify platform admins can select any organization, view that organization's billing page as the target organization, and stop or revoke subscriptions,
 - verify the resulting admin UI state,
 - verify the resulting entitlement/runtime behavior where the feature affects AI access,
 - verify failure and recovery states, not only the happy path.
@@ -420,7 +421,8 @@ Cover:
 - portal session requires an existing Stripe customer,
 - adding seats uses immediate proration,
 - reducing seats creates next-period behavior instead of immediate removal,
-- cancellation sets cancel-at-period-end.
+- cancellation sets cancel-at-period-end,
+- platform-admin immediate revoke cancels the Stripe subscription immediately when Stripe owns it and returns enough data for Den to block the relevant entitlement without waiting for Checkout or Portal.
 
 **Step 3: Run failing tests**
 
@@ -440,6 +442,7 @@ Keep the service thin and dependency-injected:
 - `createBillingPortalSession(input)`
 - `updateManagedAiSubscriptionQuantities(input)`
 - `cancelManagedAiSubscriptionAtPeriodEnd(input)`
+- `revokeManagedAiSubscriptionNow(input)` as a platform-admin-only service hook
 - `createLocalModelsStripeInvoiceOrSubscription(input)` as a platform-admin-only service hook.
 
 Do not compute final price in Den. Pass Stripe price ids, quantities, interval, success URL, cancel URL, and metadata containing `orgId`, `billingMode`, and actor user id.
@@ -540,7 +543,10 @@ Assert that:
 - `billing` is an organization-admin capability and allowed page,
 - platform admins also receive billing capability,
 - route deps include billing methods,
-- serializers expose billing status and entitlement snapshot without Stripe secrets.
+- serializers expose billing status and entitlement snapshot without Stripe secrets,
+- platform admins can list organization subscription summaries,
+- platform admins can load a target organization's billing view without being a member of that organization,
+- platform admins can stop renewal at period end and immediately revoke organization billing access.
 
 **Step 2: Run failing contract tests**
 
@@ -556,27 +562,31 @@ Expected: FAIL because billing is not in the admin contract.
 
 Add route deps:
 
+- `listPlatformOrganizationBillingSummaries`
 - `getOrganizationBilling`
 - `createOrganizationBillingCheckout`
 - `createOrganizationBillingPortalSession`
 - `updateOrganizationBillingPlan`
 - `cancelOrganizationBilling`
+- `revokeOrganizationBilling`
 - `updatePlatformOrganizationBilling`
 
 Add routes under `/admin/api`:
 
+- `GET /billing/organizations`
 - `GET /organizations/:orgId/billing`
 - `POST /organizations/:orgId/billing/checkout`
 - `POST /organizations/:orgId/billing/portal`
 - `PATCH /organizations/:orgId/billing/plan`
 - `POST /organizations/:orgId/billing/cancel`
+- `POST /organizations/:orgId/billing/revoke`
 - `PATCH /organizations/:orgId/billing/platform`
 
-Organization admins can call only self-serve Managed AI routes for their org. Platform admins can call all routes.
+Organization admins can call only self-serve Managed AI routes for their org. Platform admins can call all routes. `GET /billing/organizations` and `POST /organizations/:orgId/billing/revoke` are platform-admin-only. `cancel` means stop renewal at period end; `revoke` means immediate operator intervention.
 
 **Step 4: Implement runtime deps**
 
-In `admin-runtime.ts`, wire route deps to the billing repository and Stripe service. Record admin audit events for every mutation.
+In `admin-runtime.ts`, wire route deps to the billing repository and Stripe service. Record admin audit events for every mutation, including the target organization id and real platform admin actor id for platform-admin target-organization actions.
 
 **Step 5: Run tests**
 
@@ -612,6 +622,9 @@ Use existing static UI tests as precedent. Assert that:
 - Basic and Extended quantity controls are present,
 - interval control is present,
 - platform-only Local Models controls are gated on platform admin state,
+- platform admins see an organization billing selector/list and can open a target organization billing workspace,
+- the platform-admin target organization workspace renders the same billing summary and self-serve controls as the organization admin view,
+- platform-only stop renewal and immediate revoke actions are present only for platform admins,
 - Customer Portal action exists,
 - UI does not expose Stripe secret keys.
 
@@ -631,17 +644,20 @@ In `app.js`:
 
 - add `billing` page to page normalization and navigation,
 - load billing payload for selected organization,
+- for platform admins, load the cross-organization billing summary list and keep an explicit selected billing organization id,
+- show an "acting for organization" target label/banner when a platform admin is managing a selected organization,
 - render license usage,
 - render Managed AI self-serve form,
 - render Checkout and Portal actions,
 - render payment warning states,
-- render platform-only Local Models/manual access controls.
+- render platform-only Local Models/manual access controls,
+- render platform-only stop renewal and immediate revoke controls with confirmation copy.
 
 In `app.css`, add compact form, status, and warning styles that match existing admin UI density.
 
 **Step 4: Add action handlers**
 
-Handlers should call the new admin billing endpoints and redirect to returned Stripe URLs where appropriate.
+Handlers should call the new admin billing endpoints and redirect to returned Stripe URLs where appropriate. Platform-admin actions must pass the selected target organization id, refresh the billing summary list after mutation, and keep the actor identity as the platform admin rather than switching the authenticated session.
 
 **Step 5: Run UI tests**
 
@@ -804,6 +820,7 @@ git commit -m "feat(den): enforce single organization membership"
 Document shipped behavior only:
 
 - Managed AI subscriptions,
+- platform-admin subscription list, target-organization billing view, stop renewal, and immediate revoke behavior,
 - Local Models custom licensing,
 - license limits,
 - payment grace behavior,
@@ -865,6 +882,10 @@ Core scenario:
 12. Configure Local Models custom billing from the platform admin UI.
 13. Verify active user limit remains enforced.
 14. Verify local/BYOK inference is not blocked by Managed AI entitlement.
+15. Open the platform-admin billing organization list and select the subscribed organization.
+16. Verify the selected organization workspace shows the same billing summary and self-serve controls as the organization admin billing page, plus platform-only controls.
+17. Stop renewal at period end and verify the UI shows cancel-at-period-end while Managed AI remains available until the simulated final subscription event.
+18. Reactivate or reseed the subscription, then immediately revoke it as platform admin and verify Managed AI is blocked while history and billing recovery remain readable.
 
 Additional required E2E coverage:
 
@@ -875,6 +896,8 @@ Additional required E2E coverage:
 - deactivating a user releases a license,
 - Customer Portal action opens the simulated portal URL,
 - cancel-at-period-end remains active until period end and then blocks Managed AI after the simulated final event,
+- platform admin subscription list filters/selects organizations and displays payment problem, active user, quantity, source, interval, and last Stripe/webhook event summaries,
+- platform-admin immediate revoke blocks the relevant entitlement and records the target organization in the audit data,
 - platform admin allowlist changes alter which Managed AI tiers the org admin can select,
 - manual access/admin override enables Managed AI without showing trial language,
 - Local Models custom price, interval, billing source, and quantity are visible to platform admin and read-only for organization admin,
@@ -886,6 +909,7 @@ Required Stripe simulation matrix:
 - portal session: URL created, missing customer error,
 - subscription: created, updated, deleted,
 - subscription status: active, incomplete, past_due, unpaid, canceled,
+- subscription cancellation modes: cancel at period end, immediate cancel/revoke, cancel failure from Stripe,
 - subscription quantities: Basic only, Extended only, mixed Basic/Extended, quantity increase, scheduled quantity decrease, scheduled downgrade,
 - invoice: payment succeeded, payment failed,
 - payment method: attached or updated if the handler supports it,
