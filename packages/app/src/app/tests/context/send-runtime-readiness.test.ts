@@ -5,6 +5,7 @@ import {
   createSendRuntimeReadiness,
   isLocalRuntimeHealthTimeoutError,
   localRuntimeHealthTimeoutMessage,
+  managedAiRuntimeAuthorizationNotReadyMessage,
   managedAiRuntimeConfigNotReadyMessage,
   shouldRecoverLocalRuntimeFromHealthError,
   type SendRuntimePreflightContext,
@@ -143,6 +144,43 @@ test("managed AI bootstrap readiness can use a validated runtime config while ac
   assert.equal(await readiness.ensureManagedAiBootstrapReady(), true);
   assert.deepEqual(waits, [{ hasManagedProfile: false, hasClient: true }]);
   assert.deepEqual(errors, []);
+});
+
+test("managed AI bootstrap primes runtime gateway authorization for a usable managed config", async () => {
+  const order: string[] = [];
+  const { readiness } = createHarness({
+    managedAiAccess: () => ({ providerId: "codex_oauth" }),
+    hasUsableManagedAiRuntimeConfigForSend: async () => {
+      order.push("config-check");
+      return true;
+    },
+    ensureManagedAiRuntimeAuthorizationForSend: async () => {
+      order.push("auth-prime");
+      return true;
+    },
+    waitForManagedAiBootstrapReady: async () => {
+      order.push("wait");
+    },
+  });
+
+  assert.equal(await readiness.ensureManagedAiBootstrapReady(), true);
+  assert.deepEqual(order, ["config-check", "auth-prime", "wait"]);
+});
+
+test("managed AI bootstrap blocks when runtime gateway authorization cannot be primed", async () => {
+  const waits: string[] = [];
+  const { readiness, errors } = createHarness({
+    managedAiAccess: () => ({ providerId: "codex_oauth" }),
+    hasUsableManagedAiRuntimeConfigForSend: async () => true,
+    ensureManagedAiRuntimeAuthorizationForSend: async () => false,
+    waitForManagedAiBootstrapReady: async () => {
+      waits.push("wait");
+    },
+  });
+
+  assert.equal(await readiness.ensureManagedAiBootstrapReady(), false);
+  assert.deepEqual(waits, []);
+  assert.deepEqual(errors, [managedAiRuntimeAuthorizationNotReadyMessage]);
 });
 
 test("managed AI bootstrap readiness waits when the current runtime config is not usable", async () => {

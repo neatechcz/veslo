@@ -143,6 +143,29 @@ test("managed AI bootstrap can use a validated current runtime config while acce
   );
 });
 
+test("managed AI bootstrap primes runtime authorization after config validation", () => {
+  const start = readinessSource.indexOf("const ensureManagedAiBootstrapReady = async");
+  const end = readinessSource.indexOf("async function ensureLocalRuntimeReachableForSend", start);
+  assert.ok(start >= 0 && end > start, "ensureManagedAiBootstrapReady source should be present");
+  const ensureSource = readinessSource.slice(start, end);
+
+  assert.match(
+    ensureSource,
+    /canUseCurrentManagedConfig[\s\S]*deps\.ensureManagedAiRuntimeAuthorizationForSend[\s\S]*deps\.ensureManagedAiRuntimeAuthorizationForSend\(targetWorkspace\)[\s\S]*managedAiRuntimeAuthorizationNotReadyMessage[\s\S]*resolveManagedAiBootstrapWaitDecision/,
+    "managed bootstrap should prime runtime authorization before it allows the send to continue",
+  );
+  assert.match(
+    source,
+    /const ensureManagedAiRuntimeAuthorizationForSend = async[\s\S]*createVesloServerClient\(\{[\s\S]*baseUrl: providerRoutingTarget\.baseUrl,[\s\S]*token: providerRoutingTarget\.serverClientToken,[\s\S]*\}\);[\s\S]*runtimeClient\.getMyAiAccess\(userToken\)/,
+    "app should prime the same local Veslo server runtime used by managed provider routing",
+  );
+  assert.match(
+    source,
+    /createSendRuntimeReadiness<Client>\(\{[\s\S]*hasUsableManagedAiRuntimeConfigForSend,[\s\S]*ensureManagedAiRuntimeAuthorizationForSend,[\s\S]*waitForManagedAiBootstrapReady,/,
+    "send runtime readiness should receive the runtime authorization priming dependency",
+  );
+});
+
 test("managed AI runtime config validation is workspace-scoped", () => {
   const start = source.indexOf("const hasUsableManagedAiRuntimeConfigForSend = async");
   const end = source.indexOf("const sendRuntimeReadiness = createSendRuntimeReadiness", start);

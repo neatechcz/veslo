@@ -5492,6 +5492,149 @@ export default function App() {
     }
   };
 
+  const ensureManagedAiRuntimeAuthorizationForSend = async (
+    targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
+  ): Promise<boolean> => {
+    if (!isTauriRuntime()) return true;
+    const userToken = denGatewayAccessToken();
+    if (!userToken) {
+      recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:skip", {
+        reason: "missing-user-token",
+      });
+      return false;
+    }
+
+    const targetWorkspaceId = targetWorkspace?.workspaceId?.trim() ?? "";
+    const targetWorkspaceEntry = targetWorkspaceId
+      ? workspaceStore.workspaces().find((entry) => entry.id === targetWorkspaceId)
+      : undefined;
+    const workspace = targetWorkspaceEntry || workspaceStore.activeWorkspaceDisplay();
+    if (workspace.workspaceType !== "local") {
+      recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:skip", {
+        reason: "non-local-workspace",
+        targetWorkspaceId: targetWorkspaceId || null,
+        workspaceType: workspace.workspaceType,
+      });
+      return true;
+    }
+
+    const targetWorkspaceRoot =
+      targetWorkspace?.workspaceRoot?.trim() ||
+      targetWorkspace?.directory?.trim() ||
+      workspace.path?.trim() ||
+      workspace.directory?.trim() ||
+      (targetWorkspaceId === workspaceStore.activeWorkspaceId().trim()
+        ? workspaceStore.activeWorkspaceRoot().trim()
+        : "");
+
+    const providerRoutingLocalHost = activeVesloServerRoutingInfo();
+    const providerRoutingLocalBaseUrl =
+      providerRoutingLocalHost?.baseUrl ?? deriveLocalVesloServerUrlFromOpencodeBaseUrl(baseUrl()) ?? "";
+    const providerRoutingEngineBaseUrl = providerRoutingLocalHost?.engineUrl ?? "";
+    const runtimeSandboxState = resolveRuntimeSandboxStateForTarget({
+      workspaceId: targetWorkspaceId || null,
+      workspaceRoot: targetWorkspaceRoot || null,
+      directory: targetWorkspaceRoot || null,
+    });
+    const providerRoutingRequiresEngineBaseUrl = requiresManagedAiEngineBaseUrl({
+      isDesktopRuntime: isTauriRuntime(),
+      workspaceType: workspace.workspaceType,
+      engineBaseUrl: providerRoutingEngineBaseUrl,
+      requiresEngineBridgeUrl: runtimeSandboxState.requiresEngineBridgeUrl,
+      configuredSandboxEnabled: runtimeSandboxState.configuredEnabled,
+      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
+      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
+      childKind: runtimeSandboxState.childKind,
+      sandboxEnabled: runtimeSandboxState.isSandboxed,
+      sandboxBackend: runtimeSandboxState.effectiveBackend,
+    });
+    const gatewayClient = gatewayVesloServerClient();
+    const providerRoutingTarget = resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: isTauriRuntime(),
+      workspaceType: workspace.workspaceType,
+      activeBaseUrl: providerRoutingLocalBaseUrl,
+      engineBaseUrl: providerRoutingEngineBaseUrl,
+      requireEngineBaseUrl: providerRoutingRequiresEngineBaseUrl,
+      activeToken: providerRoutingLocalHost?.clientToken ?? "",
+      gatewayBaseUrl: gatewayClient?.baseUrl ?? "",
+      gatewayToken: gatewayClient?.token ?? "",
+    });
+    const tracePayload = {
+      targetWorkspaceId: targetWorkspaceId || null,
+      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim() || null,
+      workspaceType: workspace.workspaceType,
+      workspaceRoot: targetWorkspaceRoot || null,
+      providerId: managedAiAccess()?.providerId ?? null,
+      requiresEngineBaseUrl: providerRoutingRequiresEngineBaseUrl,
+      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
+      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
+      engineChildKind: runtimeSandboxState.childKind,
+      sandboxFallback: runtimeSandboxState.sandboxFallback,
+      localBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingLocalBaseUrl),
+      engineBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingEngineBaseUrl),
+      resolvedBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingTarget?.baseUrl ?? null),
+      resolvedEngineBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingTarget?.engineBaseUrl ?? null),
+      hasLocalClientToken: Boolean(providerRoutingLocalHost?.clientToken),
+      hasLocalHostToken: Boolean(providerRoutingLocalHost?.hostToken),
+      hasGatewayClient: Boolean(gatewayClient),
+      hasGatewayToken: Boolean(gatewayClient?.token),
+      hasRoutingTarget: Boolean(providerRoutingTarget),
+      hasServerClientToken: Boolean(providerRoutingTarget?.serverClientToken),
+    };
+
+    if (!providerRoutingTarget?.baseUrl || !providerRoutingTarget.serverClientToken) {
+      recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:skip", {
+        ...tracePayload,
+        reason: "provider-routing-target-missing",
+      });
+      return false;
+    }
+
+    recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:start", tracePayload);
+    try {
+      const runtimeClient = createVesloServerClient({
+        baseUrl: providerRoutingTarget.baseUrl,
+        token: providerRoutingTarget.serverClientToken,
+        hostToken: providerRoutingLocalHost?.hostToken || undefined,
+      });
+      const response = await runtimeClient.getMyAiAccess(userToken);
+      const { profile, gatewayAccessToken, reason } = resolveManagedAiAccessBundleState({
+        aiAccess: response.aiAccess,
+        accessToken: response.accessToken,
+        fallbackAccessToken: userToken,
+        requireGatewayAccessToken: false,
+      });
+      if (!profile) {
+        recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:result", {
+          ...tracePayload,
+          ok: false,
+          reason,
+        });
+        if (reason) setManagedAiAccessError(reason);
+        return false;
+      }
+
+      setManagedAiAccess(profile);
+      setManagedAiGatewayAccessToken(gatewayAccessToken);
+      setManagedAiAccessError(null);
+      writeManagedAiAccessCache(managedAiAccessCacheContext().cacheKey, profile, gatewayAccessToken);
+      recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:result", {
+        ...tracePayload,
+        ok: true,
+        providerId: profile.providerId,
+        defaultModelId: profile.defaultModel.modelID,
+        gatewayAccessTokenPresent: Boolean(gatewayAccessToken),
+      });
+      return true;
+    } catch (error) {
+      recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:error", {
+        ...tracePayload,
+        message: error instanceof Error ? error.message : safeStringify(error),
+      });
+      return false;
+    }
+  };
+
   const sendRuntimeReadiness = createSendRuntimeReadiness<Client>({
     isTauriRuntime,
     activeWorkspaceDisplay: () => workspaceStore.activeWorkspaceDisplay(),
@@ -5511,6 +5654,7 @@ export default function App() {
     managedAiBootstrapPendingCount,
     reloadBusy: () => reloadBusy(),
     hasUsableManagedAiRuntimeConfigForSend,
+    ensureManagedAiRuntimeAuthorizationForSend,
     waitForManagedAiBootstrapReady,
     sendTraceStep,
     recordSendTrace,

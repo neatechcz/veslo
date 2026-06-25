@@ -312,6 +312,19 @@ pub fn resolve_server_sandbox_backend() -> String {
     )
 }
 
+pub fn resolve_server_sandbox_backend_for_runtime_preference(
+    shared_unsandboxed_engine: Option<bool>,
+) -> String {
+    match shared_unsandboxed_engine {
+        Some(true) => "none".to_string(),
+        Some(false) => resolve_server_sandbox_backend_from_env(
+            env::var(VESLO_SANDBOX_BACKEND_ENV).ok().as_deref(),
+            Some("0"),
+        ),
+        None => resolve_server_sandbox_backend(),
+    }
+}
+
 fn server_cwd_for_workspace_paths(app: &AppHandle, workspace_paths: &[String]) -> PathBuf {
     if let Some(path) = workspace_paths
         .first()
@@ -351,6 +364,8 @@ pub fn spawn_veslo_server(
     orchestrator_daemon_url: Option<&str>,
     orchestrator_lifecycle_token: Option<&str>,
     bridge_host: Option<&str>,
+    sandbox_backend: &str,
+    shared_unsandboxed_engine: Option<bool>,
 ) -> Result<(Receiver<CommandEvent>, SupervisedCommandChild), String> {
     validate_managed_opencode_base_url(opencode_base_url)?;
 
@@ -388,7 +403,12 @@ pub fn spawn_veslo_server(
         command.args(server_args).current_dir(cwd)
     }
     .env("VESLO_MANAGED_AI_BASE_URL", resolve_managed_ai_base_url());
-    command = command.env(VESLO_SANDBOX_BACKEND_ENV, resolve_server_sandbox_backend());
+    command = command.env(VESLO_SANDBOX_BACKEND_ENV, sandbox_backend);
+    for (key, value) in crate::runtime_preferences::shared_unsandboxed_engine_env_overrides(
+        shared_unsandboxed_engine,
+    ) {
+        command = command.env(key, value);
+    }
 
     if let Some(port) = opencode_router_health_port {
         command = command.env("OPENCODE_ROUTER_HEALTH_PORT", port.to_string());
@@ -704,5 +724,26 @@ mod tests {
         } else {
             assert_eq!(resolved, "none");
         }
+    }
+
+    #[test]
+    fn sandbox_backend_runtime_preference_disables_sandbox() {
+        let resolved = resolve_server_sandbox_backend_for_runtime_preference(Some(true));
+
+        assert_eq!(resolved, "none");
+    }
+
+    #[test]
+    fn sandbox_backend_runtime_preference_false_ignores_disable_env() {
+        let _lock = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _disable_guard = EnvGuard::set(VESLO_DISABLE_SANDBOX_ENV, "1".to_string());
+        let _backend_guard = EnvGuard::set(VESLO_SANDBOX_BACKEND_ENV, "windows-wsl2".to_string());
+
+        let resolved = resolve_server_sandbox_backend_for_runtime_preference(Some(false));
+
+        assert_eq!(resolved, "windows-wsl2");
     }
 }

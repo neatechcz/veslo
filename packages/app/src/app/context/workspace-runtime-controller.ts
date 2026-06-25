@@ -165,9 +165,28 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
   }
 
   async function ensureEngineForWorkspace(workspaceId?: string | null): Promise<boolean> {
-    const id = workspaceId?.trim() || deps.activeWorkspaceId().trim();
+    let id = workspaceId?.trim() || deps.activeWorkspaceId().trim();
+    if (!deps.workspacesHydrated()) {
+      const start = Date.now();
+      while (!deps.workspacesHydrated() && Date.now() - start < 5_000) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      id = workspaceId?.trim() || deps.activeWorkspaceId().trim();
+      recordSendWorkflowTrace("workspace-runtime", "ensure-engine:hydration-wait", {
+        workspaceId: id || null,
+        hydrated: deps.workspacesHydrated(),
+        durationMs: Date.now() - start,
+      });
+    }
+
     const workspace = deps.workspaces().find((w) => w.id === id);
-    if (!workspace?.path) return false;
+    if (!workspace?.path) {
+      recordSendWorkflowTrace("workspace-runtime", "ensure-engine:workspace-unavailable", {
+        workspaceId: id || null,
+        workspacesHydrated: deps.workspacesHydrated(),
+      });
+      return false;
+    }
 
     return await ensureEngineForWorkspaceSingleFlight(workspace.id || workspace.path, async () => {
       const runtime = deps.resolveEngineRuntime();
@@ -185,18 +204,6 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
         runtime,
         workspacesHydrated: deps.workspacesHydrated(),
       });
-
-      if (!deps.workspacesHydrated()) {
-        const start = Date.now();
-        while (!deps.workspacesHydrated() && Date.now() - start < 5_000) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-        recordSendWorkflowTrace("workspace-runtime", "ensure-engine:hydration-wait", {
-          workspaceId: id,
-          hydrated: deps.workspacesHydrated(),
-          durationMs: Date.now() - start,
-        });
-      }
 
       if (runtime !== "veslo-orchestrator") {
         deps.clearWorkspaceBusyAllExcept(workspace.id);

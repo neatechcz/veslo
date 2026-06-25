@@ -41,6 +41,7 @@ pub struct VesloServerState {
     pub opencode_base_url: Option<String>,
     pub orchestrator_daemon_url: Option<String>,
     pub orchestrator_lifecycle_token: Option<String>,
+    pub sandbox_backend: Option<String>,
 }
 
 impl SupervisedChild for VesloServerState {
@@ -111,5 +112,6 @@ impl VesloServerManager {
         state.opencode_base_url = None;
         state.orchestrator_daemon_url = None;
         state.orchestrator_lifecycle_token = None;
+        state.sandbox_backend = None;
     }
 }

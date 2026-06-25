@@ -781,6 +781,7 @@ fn launch_config_matches(
     workspace_paths: &[String],
     host: &str,
     bridge_host: &Option<String>,
+    sandbox_backend: &str,
     opencode_base_url: &Option<String>,
     orchestrator_daemon_url: &Option<String>,
     orchestrator_lifecycle_token: &Option<String>,
@@ -788,6 +789,7 @@ fn launch_config_matches(
     normalize_workspace_paths(workspace_paths) == normalize_workspace_paths(&state.workspace_paths)
         && state.host.as_deref() == Some(host)
         && state.bridge_host == *bridge_host
+        && state.sandbox_backend.as_deref() == Some(sandbox_backend)
         && state.opencode_base_url == *opencode_base_url
         && state.orchestrator_daemon_url == *orchestrator_daemon_url
         && state.orchestrator_lifecycle_token == *orchestrator_lifecycle_token
@@ -844,12 +846,16 @@ pub fn start_veslo_server(
         normalize_launch_token(orchestrator_lifecycle_token);
     let requested_client_token = normalize_launch_token(veslo_server_client_token);
     let host = resolve_veslo_host();
+    let shared_unsandboxed_engine =
+        crate::runtime_preferences::read_shared_unsandboxed_engine_override(app)?;
+    let sandbox_backend =
+        spawn::resolve_server_sandbox_backend_for_runtime_preference(shared_unsandboxed_engine);
     // VSLO-250: determine the expected WSL bridge before idempotent reuse, so a
     // previous loopback-only server cannot be reused while we publish bridge URLs.
     // Gate on the active sandbox backend (the same source the server is told via
     // VESLO_SANDBOX_BACKEND): with sandboxing disabled the engine is direct and
     // routes over loopback, so no WSL bridge is set up.
-    let bridge_host = if should_bind_wsl_bridge(&host, &spawn::resolve_server_sandbox_backend()) {
+    let bridge_host = if should_bind_wsl_bridge(&host, &sandbox_backend) {
         resolve_wsl_bridge_host()
     } else {
         None
@@ -868,6 +874,7 @@ pub fn start_veslo_server(
             workspace_paths,
             &host,
             &bridge_host,
+            &sandbox_backend,
             &normalized_opencode_base_url,
             &normalized_orchestrator_daemon_url,
             &normalized_orchestrator_lifecycle_token,
@@ -946,6 +953,8 @@ pub fn start_veslo_server(
         normalized_orchestrator_daemon_url.as_deref(),
         normalized_orchestrator_lifecycle_token.as_deref(),
         bridge_host.as_deref(),
+        &sandbox_backend,
+        shared_unsandboxed_engine,
     ) {
         Ok(result) => {
             append_veslo_server_launch_diagnostic(
@@ -999,6 +1008,7 @@ pub fn start_veslo_server(
     state.opencode_base_url = normalized_opencode_base_url;
     state.orchestrator_daemon_url = normalized_orchestrator_daemon_url;
     state.orchestrator_lifecycle_token = normalized_orchestrator_lifecycle_token;
+    state.sandbox_backend = Some(sandbox_backend);
     state.last_stdout = None;
     state.last_stderr = None;
 
@@ -1181,6 +1191,7 @@ mod tests {
             workspace_paths: vec!["/workspace/project".to_string()],
             host: Some("127.0.0.1".to_string()),
             bridge_host: Some("172.29.64.1".to_string()),
+            sandbox_backend: Some("windows-wsl2".to_string()),
             opencode_base_url: normalize_launch_url(Some(
                 "http://127.0.0.1:59104/workspace//opencode/",
             )),
@@ -1199,6 +1210,7 @@ mod tests {
                 &workspace_paths,
                 "127.0.0.1",
                 &bridge_host,
+                "windows-wsl2",
                 &normalize_launch_url(Some("http://127.0.0.1:59104/workspace//opencode")),
                 &daemon_url,
                 &lifecycle_token,
@@ -1211,6 +1223,7 @@ mod tests {
                 &workspace_paths,
                 "127.0.0.1",
                 &bridge_host,
+                "windows-wsl2",
                 &normalize_launch_url(Some(
                     "http://127.0.0.1:59104/workspace/ws-278d2edc94b7/opencode",
                 )),
@@ -1227,6 +1240,7 @@ mod tests {
             workspace_paths: vec!["/workspace/project".to_string()],
             host: Some("127.0.0.1".to_string()),
             bridge_host: None,
+            sandbox_backend: Some("none".to_string()),
             ..Default::default()
         };
         let workspace_paths = vec!["/workspace/project".to_string()];
@@ -1238,11 +1252,38 @@ mod tests {
                 &workspace_paths,
                 "127.0.0.1",
                 &bridge_host,
+                "windows-wsl2",
                 &None,
                 &None,
                 &None,
             ),
             "a loopback-only server must not be reused once a WSL bridge listener is expected"
+        );
+    }
+
+    #[test]
+    fn launch_config_restarts_when_sandbox_backend_changes() {
+        let state = VesloServerState {
+            workspace_paths: vec!["/workspace/project".to_string()],
+            host: Some("127.0.0.1".to_string()),
+            bridge_host: None,
+            sandbox_backend: Some("none".to_string()),
+            ..Default::default()
+        };
+        let workspace_paths = vec!["/workspace/project".to_string()];
+
+        assert!(
+            !launch_config_matches(
+                &state,
+                &workspace_paths,
+                "127.0.0.1",
+                &None,
+                "mac-sandbox-exec",
+                &None,
+                &None,
+                &None,
+            ),
+            "a server started without sandboxing must not be reused after sandbox backend changes"
         );
     }
 

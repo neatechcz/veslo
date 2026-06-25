@@ -6,6 +6,8 @@ import {
 export const localRuntimeHealthTimeoutMessage = "Timed out waiting for local runtime health";
 export const managedAiRuntimeConfigNotReadyMessage =
   "Managed AI gateway setup is not ready for this runtime. Please wait a moment and try again.";
+export const managedAiRuntimeAuthorizationNotReadyMessage =
+  "Managed AI gateway authorization is not ready for this runtime. Please wait a moment and try again.";
 
 export type SendRuntimePreflightTargetWorkspace = {
   workspaceId?: string | null;
@@ -88,6 +90,9 @@ export type SendRuntimeReadinessDeps<Client extends SendRuntimeClient = SendRunt
   managedAiBootstrapPendingCount: () => number;
   reloadBusy: () => boolean;
   hasUsableManagedAiRuntimeConfigForSend: (
+    targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
+  ) => Promise<boolean>;
+  ensureManagedAiRuntimeAuthorizationForSend?: (
     targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
   ) => Promise<boolean>;
   waitForManagedAiBootstrapReady: (options: SendRuntimeManagedAiBootstrapReadyOptions) => Promise<void>;
@@ -242,6 +247,14 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
       const canUseCurrentManagedConfig =
         (hasManagedProfile || currentConfigCheck.type === "check-current-config") &&
         (await deps.hasUsableManagedAiRuntimeConfigForSend(targetWorkspace));
+      if (canUseCurrentManagedConfig && deps.ensureManagedAiRuntimeAuthorizationForSend) {
+        const runtimeAuthorizationReady =
+          await deps.ensureManagedAiRuntimeAuthorizationForSend(targetWorkspace);
+        if (!runtimeAuthorizationReady) {
+          deps.setError(managedAiRuntimeAuthorizationNotReadyMessage);
+          return false;
+        }
+      }
       const waitDecision = resolveManagedAiBootstrapWaitDecision({
         managedProfilePresent: hasManagedProfile,
         bootstrapBusy: deps.managedAiBootstrapBusy(),

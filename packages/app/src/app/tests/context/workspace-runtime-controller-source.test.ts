@@ -10,6 +10,16 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
   assert.match(runtimeSource, /export function createWorkspaceRuntimeController\(/);
   assert.match(runtimeSource, /async function ensureEngineForWorkspace/);
   assert.match(runtimeSource, /connectMode: "quiet"/);
+  const ensureStart = runtimeSource.indexOf("async function ensureEngineForWorkspace");
+  const ensureSource = runtimeSource.slice(ensureStart);
+  const hydrationWaitIndex = ensureSource.indexOf('recordSendWorkflowTrace("workspace-runtime", "ensure-engine:hydration-wait"');
+  const workspaceLookupIndex = ensureSource.indexOf("const workspace = deps.workspaces().find");
+  assert.ok(hydrationWaitIndex >= 0, "runtime ensure should wait for workspace hydration");
+  assert.ok(workspaceLookupIndex >= 0, "runtime ensure should resolve the target workspace");
+  assert.ok(
+    hydrationWaitIndex < workspaceLookupIndex,
+    "runtime ensure must wait for workspace hydration before deciding the target workspace is missing",
+  );
   assert.match(
     runtimeSource,
     /async function connectToEngineQuiet[\s\S]*deps\.routing\.ensure\(workspaceId, baseUrl,[\s\S]*deps\.setClient\(nextClient\);/s,
