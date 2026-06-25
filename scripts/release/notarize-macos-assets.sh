@@ -73,18 +73,54 @@ submit_notary() {
   local file_path="$1"
   local label="$2"
   local output_json="$RUNNER_TEMP/notary-$target_triple-$label.json"
+  local output_log="$RUNNER_TEMP/notary-$target_triple-$label.stderr.log"
 
-  rm -f "$output_json"
+  rm -f "$output_json" "$output_log"
   echo "Submitting $label for notarization: $file_path"
-  if ! xcrun notarytool submit "$file_path" \
+
+  set +e
+  xcrun notarytool submit "$file_path" \
     "${notary_args[@]}" \
     --wait \
     --timeout "$notary_timeout" \
-    --output-format json > "$output_json"; then
+    --output-format json \
+    > "$output_json" \
+    2> "$output_log"
+  local submit_status=$?
+  set -e
+
+  if [ "$submit_status" -ne 0 ]; then
     cat "$output_json" >&2 || true
+    cat "$output_log" >&2 || true
     local submission_id
-    submission_id="$(node -e "const fs=require('fs');try{const d=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));process.stdout.write(d.id||'')}catch{}" "$output_json")"
+    submission_id="$(node - "$output_json" "$output_log" <<'NODE'
+const fs = require("node:fs");
+
+for (const filePath of process.argv.slice(2)) {
+  let text = "";
+  try {
+    text = fs.readFileSync(filePath, "utf8");
+  } catch {
+    continue;
+  }
+
+  for (const line of text.split(/\r?\n/)) {
+    try {
+      const parsed = JSON.parse(line.trim());
+      if (parsed && typeof parsed.id === "string" && parsed.id) {
+        process.stdout.write(parsed.id);
+        process.exit(0);
+      }
+    } catch {
+      // not a JSON status line
+    }
+  }
+}
+NODE
+)"
     if [ -n "$submission_id" ]; then
+      echo "Fetching notarization info for $submission_id" >&2
+      xcrun notarytool info "$submission_id" "${notary_args[@]}" --output-format json >&2 || true
       echo "Fetching notarization log for $submission_id" >&2
       xcrun notarytool log "$submission_id" "${notary_args[@]}" >&2 || true
     fi

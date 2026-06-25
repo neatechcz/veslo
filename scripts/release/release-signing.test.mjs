@@ -213,6 +213,9 @@ test("manual macOS notarization script staples the DMG and preserves updater art
 
   assert.match(script, /xcrun notarytool submit/);
   assert.match(script, /--timeout "\$notary_timeout"/);
+  assert.match(script, /> "\$output_json"/);
+  assert.match(script, /2> "\$output_log"/);
+  assert.match(script, /notarytool info "\$submission_id"/);
   assert.match(script, /xcrun stapler staple "\$dmg_path"/);
   assert.match(script, /codesign --verify --deep --strict --verbose=2 "\$app_path"/);
   assert.match(script, /codesign --force --sign "\$APPLE_SIGNING_IDENTITY" "\$dmg_path"/);
