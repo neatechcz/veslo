@@ -26,8 +26,17 @@ test("sendPrompt carries a preflight context into first-session creation", () =>
   );
   assert.match(
     sendPromptSource,
-    /ensureLocalRuntimeReachableForSend\("sendPrompt", sendPreflight\)/,
-    "sendPrompt should verify runtime health after any workspace engine ensure",
+    /prepareSendRuntimeForSend\("sendPrompt", sendPreflight\)/,
+    "sendPrompt should delegate runtime and managed AI readiness to the send readiness owner",
+  );
+  const prepareStart = runtimeReadinessSource.indexOf("async function prepareSendRuntimeForSend(");
+  const prepareEnd = runtimeReadinessSource.indexOf("async function connectLocalRuntimeClientFromEngineInfo", prepareStart);
+  assert.ok(prepareStart >= 0 && prepareEnd > prepareStart, "prepareSendRuntimeForSend source should be present");
+  const prepareSource = runtimeReadinessSource.slice(prepareStart, prepareEnd);
+  assert.ok(
+    prepareSource.indexOf("${reason}:ensure-local-runtime-reachable") <
+      prepareSource.indexOf("${reason}:ensure-managed-ai-bootstrap-ready"),
+    "send readiness owner should refresh runtime state before validating managed AI routing",
   );
   assert.doesNotMatch(
     sendPromptSource,
@@ -49,13 +58,18 @@ test("createSessionAndOpen skips duplicate preflight gates when sendPrompt alrea
 
   assert.match(
     createSource,
-    /const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision\(\{[\s\S]*preflightManagedAiReady: Boolean\(preflight\?\.managedAiReady\),[\s\S]*runtimeAlreadyPrepared: Boolean\(options\.managedAiRuntimeAlreadyPrepared\),[\s\S]*\}\);[\s\S]*if \(managedAiPreflightDecision\.type === "skip"\) \{[\s\S]*recordSendTrace\("createSessionAndOpen:managed-ai-bootstrap-skip"/,
+    /const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision\(\{[\s\S]*preflightManagedAiReady: Boolean\(createPreflight\.managedAiReady\),[\s\S]*runtimeAlreadyPrepared: Boolean\(options\.managedAiRuntimeAlreadyPrepared\),[\s\S]*\}\);[\s\S]*if \(managedAiPreflightDecision\.type === "skip"\) \{[\s\S]*recordSendTrace\("createSessionAndOpen:managed-ai-bootstrap-skip"/,
     "createSessionAndOpen should log and skip the duplicate managed AI gate",
   );
   assert.match(
     createSource,
-    /const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision\(\{[\s\S]*preflightRuntimeHealthOk: Boolean\(preflight\?\.runtimeHealthOk\),[\s\S]*\}\);[\s\S]*if \(runtimeHealthPreflightDecision\.type === "skip"\) \{[\s\S]*recordSendTrace\("createSessionAndOpen:health-skip"/,
+    /const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision\(\{[\s\S]*preflightRuntimeHealthOk: Boolean\(createPreflight\.runtimeHealthOk\),[\s\S]*\}\);[\s\S]*if \(runtimeHealthPreflightDecision\.type === "skip"\) \{[\s\S]*recordSendTrace\("createSessionAndOpen:health-skip"/,
     "createSessionAndOpen should log and skip the duplicate runtime health probe",
+  );
+  assert.ok(
+    createSource.indexOf("const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision") <
+      createSource.indexOf("const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision"),
+    "createSessionAndOpen should prepare runtime before managed AI routing",
   );
 });
 

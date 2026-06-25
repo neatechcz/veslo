@@ -63,7 +63,7 @@ export function resolveEngineSandbox(input: {
     const detail = error instanceof Error ? error.message : String(error);
     input.logger.warn(
       "sandbox unavailable, spawning unsandboxed",
-      { workspace: input.workspace, error: detail },
+      { workspace: input.workspace, reason: "sandbox unavailable", error: detail },
       "sandbox",
     );
     writeWarning(

@@ -30,6 +30,24 @@ The CLI flag still requires `VESLO_DISABLE_SANDBOX=1`.
 - If sandbox setup is unavailable and Veslo falls back to unsandboxed mode, it
   still keeps per-workspace engines unless the shared flag is explicitly set.
 
+## Direct Fallback Is Not Shared Mode
+
+On Windows, the configured backend can be `windows-wsl2` while the effective
+engine is `direct`. This happens when WSL, the managed `VesloSandbox` distro,
+bubblewrap, or the workspace mount is not ready. The orchestrator logs the
+sandbox failure, emits the unsandboxed warning, and starts a host engine for the
+target workspace.
+
+That fallback is intentionally different from shared non-sandbox mode:
+
+- health/status snapshots report workspace-scoped engines with
+  `childKind=direct`,
+- Settings devtools show configured backend, effective backend, child kind, and
+  `sandboxFallback`,
+- managed AI and directory path routing use the effective runtime state,
+- `VESLO_SHARED_OPENCODE_ENGINE=1` remains ignored or rejected unless
+  `VESLO_DISABLE_SANDBOX=1` is also set.
+
 Expected warning:
 
 ```text

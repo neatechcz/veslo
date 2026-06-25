@@ -54,17 +54,21 @@ export function buildWorkspaceIdentity(workspace?: WorkspaceInfo | null): string
 
 export function buildArchivedSidebarSessionKey(input: {
   workspaceId?: string | null;
+  workspaceIdentity?: string | null;
   sessionId?: string | null;
 }) {
-  const workspaceId = input.workspaceId?.trim() ?? "";
+  const workspaceScope = input.workspaceId?.trim() || input.workspaceIdentity?.trim() || "";
   const sessionId = input.sessionId?.trim() ?? "";
-  if (!workspaceId || !sessionId) return sessionId;
-  return [workspaceId, sessionId].join(ARCHIVED_SIDEBAR_SESSION_KEY_SEPARATOR);
+  if (!workspaceScope || !sessionId) return sessionId;
+  return [workspaceScope, sessionId].join(ARCHIVED_SIDEBAR_SESSION_KEY_SEPARATOR);
 }
 
-export function archivedSidebarSessionKeyFromRecord(record: Pick<VesloSessionArchiveRecord, "sessionId" | "workspaceIdAtArchive">) {
+export function archivedSidebarSessionKeyFromRecord(
+  record: Pick<VesloSessionArchiveRecord, "sessionId" | "workspaceIdAtArchive" | "workspaceIdentity">,
+) {
   return buildArchivedSidebarSessionKey({
     workspaceId: record.workspaceIdAtArchive,
+    workspaceIdentity: record.workspaceIdentity,
     sessionId: record.sessionId,
   });
 }
@@ -152,6 +156,8 @@ export function toSessionArchiveItem(
 
   return {
     sessionId: record.sessionId,
+    workspaceId: record.workspaceIdAtArchive?.trim() || availability.workspace?.id?.trim() || "",
+    workspaceIdentity: record.workspaceIdentity?.trim() || null,
     title: record.titleSnapshot?.trim() || record.sessionId,
     workspaceLabel: record.workspaceLabelSnapshot?.trim() || workspaceLabel(availability.workspace),
     projectLabel:

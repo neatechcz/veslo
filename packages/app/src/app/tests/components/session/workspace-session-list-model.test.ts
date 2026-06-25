@@ -122,6 +122,96 @@ test("buildRecentRows keeps subagents directly below their parent session", () =
   );
 });
 
+test("buildRecentRows keeps duplicate session ids from different workspaces visible", () => {
+  const workspaceA = {
+    id: "workspace-a",
+    name: "workspace-a",
+    path: "/tmp/workspace-a",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+  const workspaceB = {
+    id: "workspace-b",
+    name: "workspace-b",
+    path: "/tmp/workspace-b",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+
+  const rows = buildRecentRows([
+    {
+      workspace: workspaceA,
+      sessions: [{ id: "same-session", title: "A", directory: "/tmp/workspace-a", time: { created: 100, updated: 100 } }],
+      status: "ready",
+    },
+    {
+      workspace: workspaceB,
+      sessions: [{ id: "same-session", title: "B", directory: "/tmp/workspace-b", time: { created: 200, updated: 200 } }],
+      status: "ready",
+    },
+  ]);
+
+  assert.deepEqual(
+    rows.map((row) => `${row.workspace.id}:${row.session.id}:${row.session.title}`),
+    ["workspace-b:same-session:B", "workspace-a:same-session:A"],
+  );
+  assert.deepEqual(rows.map((row) => row.rowKey), ["workspace-b:same-session", "workspace-a:same-session"]);
+});
+
+test("session tree hierarchy scopes duplicate parent ids by workspace row key", () => {
+  const workspaceA = {
+    id: "workspace-a",
+    name: "workspace-a",
+    path: "/tmp/workspace-a",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+  const workspaceB = {
+    id: "workspace-b",
+    name: "workspace-b",
+    path: "/tmp/workspace-b",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+
+  const rows = buildRecentRows([
+    {
+      workspace: workspaceA,
+      sessions: [
+        { id: "root", title: "A root", time: { created: 100, updated: 100 } },
+        { id: "child-a", title: "A child", parentID: "root", time: { created: 110, updated: 110 } },
+      ],
+      status: "ready",
+    },
+    {
+      workspace: workspaceB,
+      sessions: [
+        { id: "root", title: "B root", time: { created: 200, updated: 200 } },
+        { id: "child-b", title: "B child", parentID: "root", time: { created: 210, updated: 210 } },
+      ],
+      status: "ready",
+    },
+  ]);
+
+  const hierarchy = buildRowHierarchyLookup(rows);
+  assert.deepEqual(
+    rows.filter((row) => rowVisibleByExpansion(row, hierarchy, new Set(["workspace-b:root"]))).map((row) => row.rowKey),
+    ["workspace-b:root", "workspace-b:child-b", "workspace-a:root"],
+  );
+  assert.deepEqual(
+    directChildRowsForParent(rows, "workspace-a:root").map((row) => row.rowKey),
+    ["workspace-a:child-a"],
+  );
+  assert.deepEqual(
+    directChildRowsForParent(descendantRowsForParent(rows, "workspace-a:root"), "workspace-a:root").map((row) => row.rowKey),
+    ["workspace-a:child-a"],
+  );
+  assert.deepEqual(
+    descendantRowsForParent(rows, "workspace-b:root").map((row) => row.rowKey),
+    ["workspace-b:child-b"],
+  );
+});
+
 test("buildRecentRows keeps private chat sessions mixed with project sessions by activity", () => {
   const privateRoot = "/Users/test/.veslo/private-workspaces";
   const isPrivateWorkspacePath = (folder: string | null | undefined) =>

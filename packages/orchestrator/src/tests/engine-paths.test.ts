@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   engineDirectoryToHostDirectory,
   hostDirectoryToEngineDirectory,
+  resolveEnginePathMappingBackend,
   rewriteDirectoryFieldsForEngine,
   rewriteDirectoryFieldsForHost,
   rewriteDirectoryQueryForEngine,
@@ -43,5 +44,32 @@ describe("engine path mapping", () => {
 
     const hostBody = rewriteDirectoryFieldsForHost({ session: { directory: "/workspace/docs" } }, mapping);
     expect(hostBody).toEqual({ session: { directory: "\\\\?\\C:\\Work\\project\\docs" } });
+  });
+
+  test("uses WSL path mapping only for engines that actually launched through WSL", () => {
+    expect(
+      resolveEnginePathMappingBackend({
+        configuredBackend: "windows-wsl2",
+        engineChildKind: "wsl",
+      }),
+    ).toBe("windows-wsl2");
+    expect(
+      resolveEnginePathMappingBackend({
+        configuredBackend: "windows-wsl2",
+        engineChildKind: "direct",
+      }),
+    ).toBe("none");
+    expect(
+      resolveEnginePathMappingBackend({
+        configuredBackend: "windows-wsl2",
+        sharedUnsandboxed: true,
+      }),
+    ).toBe("none");
+    expect(
+      resolveEnginePathMappingBackend({
+        configuredBackend: "mac-sandbox-exec",
+        engineChildKind: "direct",
+      }),
+    ).toBe("mac-sandbox-exec");
   });
 });

@@ -82,6 +82,13 @@ export interface DebugLogConfig {
 
 export interface ServerConfig {
   host: string;
+  /**
+   * Optional second bind address served with the same fetch handler and auth.
+   * Used by the desktop shell to expose a WSL-reachable bridge listener (e.g.
+   * the WSL virtual adapter IP) without binding the primary listener to
+   * 0.0.0.0. Unset means single-listener loopback behavior. See VSLO-250.
+   */
+  bridgeHost?: string;
   port: number;
   token: string;
   hostToken: string;

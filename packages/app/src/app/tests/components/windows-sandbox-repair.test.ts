@@ -23,9 +23,22 @@ test("Windows sandbox repair runs WSL prerequisites before sandbox provisioning"
   assert.match(componentSource, /settings\.windows_sandbox_restart_required/);
 });
 
+test("Windows sandbox repair only treats explicit restart-required install results as restart-required", () => {
+  assert.match(componentSource, /result\.status === 3010/);
+  assert.match(componentSource, /result\.status === 1641/);
+  assert.doesNotMatch(componentSource, /\\brestart\\b\|\\breboot\\b/);
+});
+
 test("Windows sandbox repair is available from onboarding and settings", () => {
   assert.match(settingsSource, /<WindowsSandboxRepair \/>/);
-  assert.match(onboardingSource, /<WindowsSandboxRepair \/>/);
+  assert.match(onboardingSource, /<WindowsSandboxRepair\s*\/>/);
+  assert.doesNotMatch(onboardingSource, /<WindowsSandboxRepair\s+blocking\s*\/>/);
+});
+
+test("Windows sandbox gate remains available but onboarding repair is non-blocking", () => {
+  assert.match(componentSource, /blocking\?:\s*boolean/);
+  assert.match(componentSource, /fixed inset-0/);
+  assert.match(componentSource, /settings\.windows_sandbox_continue_anyway/);
 });
 
 test("Tauri API exposes both WSL repair phases", () => {

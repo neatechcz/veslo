@@ -191,10 +191,8 @@ import {
 import {
   abortSession as abortSessionTyped,
   abortSessionSafe,
-  compactSession as compactSessionTyped,
   revertSession,
   unrevertSession,
-  shellInSession,
   listCommands as listCommandsTyped,
 } from "./lib/opencode-session";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
@@ -305,7 +303,6 @@ import {
   groupMessageParts,
   isVisibleTextPart,
   lastUserModelFromMessages,
-  directoryQueryPathModeFromSandbox,
   isTauriRuntime,
   modelEquals,
   normalizeDirectoryQueryPath,
@@ -482,6 +479,10 @@ import {
   shouldDeferManagedAiAccessRefresh,
   type ManagedAiAccessProfile,
 } from "./lib/ai-access";
+import {
+  resolveEffectiveRuntimeSandboxState,
+  type EffectiveRuntimeSandboxState,
+} from "./lib/runtime-sandbox-state";
 import { isGatewayOwnedProvider } from "./utils/providers";
 import {
   resolveManagedAiAccessRetryDelayMs,
@@ -489,14 +490,14 @@ import {
 } from "./lib/managed-ai-access-retry";
 import { waitForManagedAiBootstrapReady } from "./lib/managed-ai-bootstrap-ready";
 import { shouldAutoReloadManagedAiConfig } from "./lib/managed-ai-config-reload";
-import { assertNoClientError, describeRequestError } from "./lib/client-errors";
+import { describeRequestError } from "./lib/client-errors";
 import { CLOUD_ONLY_MODE, resolveVesloCloudEnvironment } from "./lib/cloud-policy";
 import {
   LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY,
+  buildArchivedSidebarSessionKey,
   buildLegacyArchiveMigration,
   buildSessionArchiveSnapshot,
   sortArchivedSessionsByRecency,
-  archivedSidebarSessionKeyFromRecord,
   toSessionArchiveItem,
 } from "./lib/session-archive-model";
 import { isRemoteUiEnabled } from "./lib/runtime-policy";
@@ -539,6 +540,8 @@ type SendPreflightContext = SendRuntimePreflightContext & {
   traceId: string;
   managedAiReady: boolean;
   runtimeHealthOk: boolean;
+  enginePrepared: boolean;
+  effectiveSandbox: EffectiveRuntimeSandboxState | null;
   targetWorkspace: SendTargetWorkspaceScope | null;
   conversationWorkspaceByDirectory: Map<string, Promise<SendConversationWorkspaceResolution | null>>;
 };
@@ -655,6 +658,8 @@ const createSendPreflightContext = (traceId?: string | null): SendPreflightConte
   traceId: traceId?.trim() || makeSendTraceId(),
   managedAiReady: false,
   runtimeHealthOk: false,
+  enginePrepared: false,
+  effectiveSandbox: null,
   targetWorkspace: null,
   conversationWorkspaceByDirectory: new Map(),
 });
@@ -1102,7 +1107,7 @@ export default function App() {
     );
   };
   const directoryQueryPathMode = () =>
-    directoryQueryPathModeFromSandbox(vesloServerCapabilities()?.sandbox);
+    resolveRuntimeSandboxStateForTarget().directoryQueryMode;
   const [vesloServerCheckedAt, setVesloServerCheckedAt] = createSignal<number | null>(null);
   const [vesloServerWorkspaceId, setVesloServerWorkspaceId] = createSignal<string | null>(null);
   const [vesloServerHostInfo, setVesloServerHostInfo] = createSignal<VesloServerInfo | null>(null);
@@ -1745,6 +1750,11 @@ export default function App() {
     activeWorkspaceId: () => currentWorkspaceStoreRef()?.activeWorkspaceId().trim() ?? "",
     activeLegacyEngineReady: () => engineReady(),
     readyEngineWorkspaceIds,
+    requiresOrchestratorReadiness: (workspaceId) => {
+      if (!isTauriRuntime() || engineRuntime() !== "veslo-orchestrator") return false;
+      const workspace = currentWorkspaceStoreRef()?.workspaces().find((entry) => entry.id === workspaceId);
+      return workspace?.workspaceType === "local";
+    },
     workspaceBusy: () => currentWorkspaceStoreRef()?.workspaceBusy() ?? {},
     routing: workspaceRouting,
   });
@@ -3736,6 +3746,7 @@ export default function App() {
     });
     let sendTargetWorkspace = pendingSidebarTargetWorkspace ?? resolveSendTargetWorkspaceScope(sessionID);
     sendPreflight.targetWorkspace = sendTargetWorkspace;
+    sendPreflight.effectiveSandbox = resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
     recordSendTrace("sendPrompt:target-workspace-snapshot", {
       traceId: sendTraceId,
       sessionID: sessionID ?? null,
@@ -3821,6 +3832,7 @@ export default function App() {
     if (scopedSessionID) {
       sendTargetWorkspace = resolveSendTargetWorkspaceScope(scopedSessionID) ?? sendTargetWorkspace;
       sendPreflight.targetWorkspace = sendTargetWorkspace;
+      sendPreflight.effectiveSandbox = resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
     }
 
     resolvedDraft = await sendTraceStep(
@@ -3849,6 +3861,10 @@ export default function App() {
 
     const sendRuntimeWorkspaceId = sendTargetWorkspace?.workspaceId ?? workspaceStore.activeWorkspaceId().trim();
     const sendRuntimeReady = isWorkspaceRuntimeReady(sendRuntimeWorkspaceId);
+    if (sendRuntimeReady) {
+      sendPreflight.enginePrepared = true;
+      sendPreflight.effectiveSandbox = resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
+    }
 
     // In browsing mode, target workspace runtime is not connected. Start it before sending.
     if (!sendRuntimeReady) {
@@ -3861,78 +3877,16 @@ export default function App() {
       // Yield to the browser's macro task queue so it paints the spinner
       // before the engine start blocks the microtask chain.
       await new Promise((resolve) => setTimeout(resolve, 0));
-      try {
-        const started = await sendTraceStep(
-          "sendPrompt:ensure-engine-for-workspace",
-          () => workspaceStore.ensureEngineForWorkspace(sendTargetWorkspace?.workspaceId),
-          {
-            traceId: sendTraceId,
-            activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
-            activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
-            targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
-            targetWorkspaceRoot: sendTargetWorkspace?.workspaceRoot ?? null,
-            targetRuntimeReady: sendRuntimeReady,
-          },
-        );
-        if (!started) {
-          recordSendTrace("sendPrompt:engine-not-started", {
-            traceId: sendTraceId,
-          });
-          cleanupPendingSidebarSession();
-          stopSendPromptBusy();
-          return false;
-        }
-      } catch (error) {
-        recordSendTrace("sendPrompt:engine-start-error", {
-          traceId: sendTraceId,
-          message: messageFromUnknownError(error),
-        });
-        cleanupPendingSidebarSession();
-        stopSendPromptBusy();
-        return false;
-      }
     }
 
-    if (
-      !(await sendTraceStep(
-        "sendPrompt:ensure-managed-ai-bootstrap-ready",
-        () => ensureManagedAiBootstrapReady(sendPreflight),
-        {
-          traceId: sendTraceId,
-          managedAiBootstrapBusy: managedAiBootstrapBusy(),
-          reloadBusy: reloadBusy(),
-          hasClient: Boolean(routedClient()),
-        },
-      ))
-    ) {
-      recordSendTrace("sendPrompt:blocked-managed-ai-bootstrap", {
-        traceId: sendTraceId,
-      });
+    if (!(await prepareSendRuntimeForSend("sendPrompt", sendPreflight))) {
       cleanupPendingSidebarSession();
       stopSendPromptBusy();
       return false;
     }
+    sendPreflight.enginePrepared = true;
+    sendPreflight.effectiveSandbox = resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
     sendPreflight.managedAiReady = true;
-    if (
-      !(await sendTraceStep(
-        "sendPrompt:ensure-local-runtime-reachable",
-        () => ensureLocalRuntimeReachableForSend("sendPrompt", sendPreflight),
-        {
-          traceId: sendTraceId,
-          activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
-          targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
-          workspaceType: workspaceStore.activeWorkspaceDisplay().workspaceType,
-          hasClient: Boolean(routedClient(sendTargetWorkspace?.workspaceId)),
-        },
-      ))
-    ) {
-      recordSendTrace("sendPrompt:blocked-runtime-unreachable", {
-        traceId: sendTraceId,
-      });
-      cleanupPendingSidebarSession();
-      stopSendPromptBusy();
-      return false;
-    }
 
     const c = routedClientForSendTarget(sendTargetWorkspace);
     if (!c) {
@@ -4128,10 +4082,7 @@ export default function App() {
       // Resolve the session directory override so moved sessions operate in the
       // correct folder, not the original private-workspace path.
       const sessionDirOverride = sessionDirectoryOverrideById()[sessionID] ?? undefined;
-      const runConversationOrLegacy = async (
-        input: VesloConversationRunInput,
-        legacy: () => Promise<void>,
-      ) => {
+      const runConversationOrFail = async (input: VesloConversationRunInput) => {
         const scope = resolveSelectedSessionBrowseScope(sessionID);
         const inputWithCorrelation: VesloConversationRunInput = {
           ...input,
@@ -4152,9 +4103,7 @@ export default function App() {
             origin: sendCorrelation.origin,
             hasConversationScope: Boolean(scope?.conversationId),
           });
-          if (scope?.conversationId) {
-            throw new Error("Conversation service is unavailable for this scoped conversation.");
-          }
+          throw new Error("Conversation service is unavailable for this session.");
         } catch (error) {
           recordSendTrace("sendPrompt:conversation-run-error", {
             traceId: sendTraceId,
@@ -4165,35 +4114,18 @@ export default function App() {
             hasConversationScope: Boolean(scope?.conversationId),
             message: messageFromUnknownError(error),
           });
-          if (scope?.conversationId) {
-            throw error;
-          }
-          console.warn("[conversation-run] falling back to OpenCode SDK", error);
+          throw error;
         }
-
-        recordSendTrace("sendPrompt:legacy-run-fallback", {
-          traceId: sendTraceId,
-          sessionID,
-          kind: input.kind,
-          clientMessageId: sendCorrelation.clientMessageId,
-          origin: sendCorrelation.origin,
-        });
-        await legacy();
       };
 
       if (resolvedDraft.mode === "shell") {
-        await runConversationOrLegacy(
-          {
-            kind: "shell",
-            directory: sessionDirOverride,
-            command: content,
-            model,
-            agent: agent ?? undefined,
-          },
-          async () => {
-            await shellInSession(c, sessionID, content);
-          },
-        );
+        await runConversationOrFail({
+          kind: "shell",
+          directory: sessionDirOverride,
+          command: content,
+          model,
+          agent: agent ?? undefined,
+        });
       } else if (resolvedDraft.command || compactCommand) {
         if (compactCommand) {
           await compactCurrentSession(sessionID);
@@ -4221,64 +4153,31 @@ export default function App() {
         const modelString = `${model.providerID}/${model.modelID}`;
         const files = buildCommandFileParts(resolvedDraft);
 
-        // session.command() expects `model` as a provider/model string and only supports file parts.
-        await runConversationOrLegacy(
-          {
-            kind: "command",
-            sessionID,
-            messageID: commandMessageID,
-            command: command.name,
-            arguments: command.arguments,
-            agent: agent ?? undefined,
-            model: modelString,
-            variant: requestVariant,
-            ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-            parts: files.length ? files : undefined,
-            directory: sessionDirOverride,
-          },
-          async () => {
-            unwrap(
-              await c.session.command({
-                sessionID,
-                messageID: commandMessageID,
-                command: command.name,
-                arguments: command.arguments,
-                agent: agent ?? undefined,
-                model: modelString,
-                variant: requestVariant,
-                ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-                parts: files.length ? files : undefined,
-                directory: sessionDirOverride,
-              }),
-            );
-          },
-        );
+        await runConversationOrFail({
+          kind: "command",
+          sessionID,
+          messageID: commandMessageID,
+          command: command.name,
+          arguments: command.arguments,
+          agent: agent ?? undefined,
+          model: modelString,
+          variant: requestVariant,
+          ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+          parts: files.length ? files : undefined,
+          directory: sessionDirOverride,
+        });
         commandMessageIDToClear = null;
 
       } else {
-        await runConversationOrLegacy(
-          {
-            kind: "prompt_async",
-            directory: sessionDirOverride,
-            model,
-            agent: agent ?? undefined,
-            variant: requestVariant,
-            ...promptOverrides,
-            parts,
-          },
-          async () => {
-            const result = await c.session.promptAsync({
-              sessionID,
-              model,
-              agent: agent ?? undefined,
-              variant: requestVariant,
-              ...promptOverrides,
-              parts,
-              directory: sessionDirOverride,
-            });
-            assertNoClientError(result);
-          },
-        );
+        await runConversationOrFail({
+          kind: "prompt_async",
+          directory: sessionDirOverride,
+          model,
+          agent: agent ?? undefined,
+          variant: requestVariant,
+          ...promptOverrides,
+          parts,
+        });
       }
       if (pendingDraftSendState) {
         const pendingDraftStorageKey = pendingDraftSendState.key;
@@ -4508,30 +4407,15 @@ export default function App() {
           sessionID,
           hasConversationScope: Boolean(scope?.conversationId),
         });
-        if (scope?.conversationId) {
-          throw new Error("Conversation service is unavailable for this scoped conversation.");
-        }
+        throw new Error("Conversation service is unavailable for this session.");
       } catch (error) {
         recordSendTrace("compactSession:conversation-run-error", {
           sessionID,
           hasConversationScope: Boolean(scope?.conversationId),
           message: messageFromUnknownError(error),
         });
-        if (scope?.conversationId) {
-          throw error;
-        }
-        console.warn("[conversation-compact] falling back to OpenCode SDK", error);
+        throw error;
       }
-
-      recordSendTrace("compactSession:legacy-run-fallback", { sessionID });
-      await compactSessionTyped(c, sessionID, model, {
-        directory,
-      });
-      finishPerf(developerMode(), "session.compact", "done", startedAt, {
-        sessionID,
-        messageCount: visible.length,
-        model: modelLabel,
-      });
     } catch (error) {
       finishPerf(developerMode(), "session.compact", "error", startedAt, {
         sessionID,
@@ -4779,8 +4663,10 @@ export default function App() {
     }
     const sendTargetWorkspace = resolveSendTargetWorkspaceScope(sessionID);
     replacePreflight.targetWorkspace = sendTargetWorkspace;
-    if (!(await ensureManagedAiBootstrapReady(replacePreflight))) return false;
-    if (!(await ensureLocalRuntimeReachableForSend("replaceUserMessage", replacePreflight))) return false;
+    if (!(await prepareSendRuntimeForSend("replaceUserMessage", replacePreflight))) return false;
+    replacePreflight.enginePrepared = true;
+    replacePreflight.effectiveSandbox = resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
+    replacePreflight.managedAiReady = true;
     const c = routedClientForSendTarget(sendTargetWorkspace);
     if (!c) {
       recordSendTrace("replaceUserMessage:blocked-no-client", {
@@ -5394,6 +5280,45 @@ export default function App() {
     recordSendWorkflowTrace("app", event, payload, { developerMode: developerMode() });
   };
 
+  function resolveRuntimeSandboxStateForTarget(
+    targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
+  ): EffectiveRuntimeSandboxState {
+    let store: typeof workspaceStore | null = null;
+    try {
+      store = workspaceStore;
+    } catch {
+      store = null;
+    }
+
+    const activeWorkspaceId = store?.activeWorkspaceId().trim() ?? "";
+    const targetWorkspaceId = targetWorkspace?.workspaceId?.trim() || activeWorkspaceId;
+    const targetWorkspaceEntry = targetWorkspaceId
+      ? store?.workspaces().find((entry) => entry.id === targetWorkspaceId)
+      : undefined;
+    const targetWorkspaceRoot =
+      targetWorkspace?.workspaceRoot?.trim() ||
+      targetWorkspace?.directory?.trim() ||
+      targetWorkspaceEntry?.path?.trim() ||
+      targetWorkspaceEntry?.directory?.trim() ||
+      (targetWorkspaceId === activeWorkspaceId ? store?.activeWorkspaceRoot().trim() ?? "" : "");
+    const activeEngineInfo = store?.engine() ?? null;
+    const activeEngineProjectDir = normalizeDirectoryPath(activeEngineInfo?.projectDir ?? "");
+    const normalizedTargetRoot = normalizeDirectoryPath(targetWorkspaceRoot);
+    const engineInfoMatchesTarget =
+      !targetWorkspaceId ||
+      targetWorkspaceId === activeWorkspaceId ||
+      (Boolean(activeEngineProjectDir) && activeEngineProjectDir === normalizedTargetRoot);
+    const statusEngines = orchestratorStatusState()?.engines ?? [];
+    const liveEngines = orchestratorEnginesState();
+    return resolveEffectiveRuntimeSandboxState({
+      configuredSandbox: vesloServerCapabilities()?.sandbox,
+      engineInfo: engineInfoMatchesTarget ? activeEngineInfo : null,
+      orchestratorEngines: liveEngines.length ? liveEngines : statusEngines,
+      targetWorkspaceId,
+      targetWorkspaceRoot,
+    });
+  }
+
   const hasUsableManagedAiRuntimeConfigForSend = async (
     targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
   ): Promise<boolean> => {
@@ -5428,14 +5353,25 @@ export default function App() {
     const providerRoutingLocalHost = activeVesloServerRoutingInfo();
     const providerRoutingLocalBaseUrl =
       providerRoutingLocalHost?.baseUrl ?? deriveLocalVesloServerUrlFromOpencodeBaseUrl(baseUrl()) ?? "";
+    const providerRoutingEngineBaseUrl = providerRoutingLocalHost?.engineUrl ?? "";
+    const runtimeSandboxState = resolveRuntimeSandboxStateForTarget({
+      workspaceId: targetWorkspaceId || null,
+      workspaceRoot: targetWorkspaceRoot || null,
+      directory: targetWorkspaceRoot || null,
+    });
     const vesloCapabilities = resolvedVesloCapabilities();
     const providerRoutingRequiresEngineBaseUrl = requiresManagedAiEngineBaseUrl({
       isDesktopRuntime: isTauriRuntime(),
       workspaceType: workspace.workspaceType,
-      sandboxEnabled: vesloCapabilities?.sandbox?.enabled,
-      sandboxBackend: vesloCapabilities?.sandbox?.backend,
+      engineBaseUrl: providerRoutingEngineBaseUrl,
+      requiresEngineBridgeUrl: runtimeSandboxState.requiresEngineBridgeUrl,
+      configuredSandboxEnabled: runtimeSandboxState.configuredEnabled,
+      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
+      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
+      childKind: runtimeSandboxState.childKind,
+      sandboxEnabled: runtimeSandboxState.isSandboxed,
+      sandboxBackend: runtimeSandboxState.effectiveBackend,
     });
-    const providerRoutingEngineBaseUrl = providerRoutingLocalHost?.engineUrl ?? "";
     const gatewayClient = gatewayVesloServerClient();
     const providerRoutingTarget = resolveManagedAiProviderRoutingTarget({
       isDesktopRuntime: isTauriRuntime(),
@@ -5454,6 +5390,10 @@ export default function App() {
       workspaceRoot: targetWorkspaceRoot || null,
       providerId: managedAiAccess()?.providerId ?? null,
       requiresEngineBaseUrl: providerRoutingRequiresEngineBaseUrl,
+      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
+      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
+      engineChildKind: runtimeSandboxState.childKind,
+      sandboxFallback: runtimeSandboxState.sandboxFallback,
       localBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingLocalBaseUrl),
       engineBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingEngineBaseUrl),
       resolvedBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingTarget?.baseUrl ?? null),
@@ -5585,6 +5525,7 @@ export default function App() {
   const {
     ensureManagedAiBootstrapReady,
     ensureLocalRuntimeReachableForSend,
+    prepareSendRuntimeForSend,
     connectLocalRuntimeClientFromEngineInfo,
     messageFromUnknownError,
   } = sendRuntimeReadiness;
@@ -6571,17 +6512,30 @@ export default function App() {
     setSessionArchiveReady(true);
   };
 
-  const archivedSessionIds = createMemo(() =>
-    sessionArchiveRecords().map((record) => archivedSidebarSessionKeyFromRecord(record)),
-  );
+  const archivedSessionIds = createMemo(() => {
+    const workspaces = workspaceStore.workspaces();
+    return sessionArchiveRecords().map((record) => {
+      const item = toSessionArchiveItem(record, workspaces);
+      return buildArchivedSidebarSessionKey({
+        workspaceId: item.workspaceId,
+        workspaceIdentity: item.workspaceIdentity,
+        sessionId: item.sessionId,
+      });
+    });
+  });
   const sessionArchives = createMemo(() =>
     sortArchivedSessionsByRecency(
       sessionArchiveRecords().map((record) => toSessionArchiveItem(record, workspaceStore.workspaces())),
     ),
   );
 
-  const withPendingArchivedSession = async (sessionId: string, task: () => Promise<void>) => {
-    const id = sessionId.trim();
+  const withPendingArchivedSession = async (
+    workspaceId: string,
+    sessionId: string,
+    task: () => Promise<void>,
+    workspaceIdentity?: string | null,
+  ) => {
+    const id = buildArchivedSidebarSessionKey({ workspaceId, workspaceIdentity, sessionId });
     if (!id) return;
     if (sessionArchivePendingIds().has(id)) return;
 
@@ -6727,7 +6681,7 @@ export default function App() {
     const session = group?.sessions.find((entry) => entry.id === sessionId) ?? null;
     if (!group || !session) return;
 
-    await withPendingArchivedSession(sessionId, async () => {
+    await withPendingArchivedSession(workspaceId, sessionId, async () => {
       const response = await client.putSessionArchive(
         sessionId,
         buildSessionArchiveSnapshot({ session, workspace: group.workspace }),
@@ -6738,7 +6692,11 @@ export default function App() {
     });
   };
 
-  const unarchiveSession = async (sessionId: string) => {
+  const unarchiveSession = async (
+    workspaceId: string,
+    sessionId: string,
+    workspaceIdentityHint?: string | null,
+  ) => {
     const client = vesloArchiveClient();
     const ownerKey = sessionArchiveOwnerKey();
     if (!client || !ownerKey) {
@@ -6746,12 +6704,23 @@ export default function App() {
       return;
     }
 
-    await withPendingArchivedSession(sessionId, async () => {
-      const response = await client.deleteSessionArchive(sessionId);
+    const workspaces = workspaceStore.workspaces();
+    const normalizedIdentityHint = workspaceIdentityHint?.trim() ?? "";
+    const archiveItem = sessionArchiveRecords()
+      .map((record) => toSessionArchiveItem(record, workspaces))
+      .find((item) =>
+        item.sessionId === sessionId &&
+        item.workspaceId === workspaceId &&
+        (!normalizedIdentityHint || item.workspaceIdentity === normalizedIdentityHint)
+      );
+    const workspaceIdentity = normalizedIdentityHint || archiveItem?.workspaceIdentity?.trim() || undefined;
+
+    await withPendingArchivedSession(workspaceId, sessionId, async () => {
+      const response = await client.deleteSessionArchive(sessionId, { workspaceId, workspaceIdentity });
       applySessionArchiveRecords(response.items ?? []);
       clearLegacyArchivedSessionIds();
       writeArchiveMigrationDone(ownerKey);
-    });
+    }, workspaceIdentity);
   };
 
   type SidebarSubagentCandidate = {
@@ -10421,8 +10390,48 @@ export default function App() {
       });
     }
 
+    const createPreflight: SendRuntimePreflightContext = preflight ?? {
+      traceId: sendTraceId,
+      targetWorkspace,
+      runtimeHealthOk: false,
+    };
+    createPreflight.targetWorkspace = createPreflight.targetWorkspace ?? targetWorkspace;
+    createPreflight.effectiveSandbox = resolveRuntimeSandboxStateForTarget(targetWorkspace);
+    let createRuntimeReady = true;
+    const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision({
+      preflightRuntimeHealthOk: Boolean(createPreflight.runtimeHealthOk),
+    });
+    if (runtimeHealthPreflightDecision.type === "skip") {
+      recordSendTrace("createSessionAndOpen:health-skip", {
+        ...(tracePayload ?? {}),
+        reason: runtimeHealthPreflightDecision.reason,
+      });
+      createPreflight.enginePrepared = true;
+    } else {
+      createRuntimeReady = await sendTraceStep(
+        "createSessionAndOpen:ensure-local-runtime-reachable",
+        () => ensureLocalRuntimeReachableForSend("createSessionAndOpen", createPreflight),
+        {
+          ...(tracePayload ?? {}),
+          activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
+          targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
+          workspaceType: workspaceStore.activeWorkspaceDisplay().workspaceType,
+          hasClient: Boolean(routedClient(targetWorkspace?.workspaceId)),
+        },
+      );
+      if (createPreflight.runtimeHealthOk) {
+        recordSendTrace("createSessionAndOpen:health-ok", tracePayload);
+      }
+    }
+    if (!createRuntimeReady) {
+      recordSendTrace("createSessionAndOpen:blocked-runtime-unreachable", tracePayload);
+      setError("Local runtime is not ready yet.");
+      return undefined;
+    }
+    createPreflight.enginePrepared = true;
+    createPreflight.effectiveSandbox = resolveRuntimeSandboxStateForTarget(targetWorkspace);
     const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision({
-      preflightManagedAiReady: Boolean(preflight?.managedAiReady),
+      preflightManagedAiReady: Boolean(createPreflight.managedAiReady),
       runtimeAlreadyPrepared: Boolean(options.managedAiRuntimeAlreadyPrepared),
     });
     if (managedAiPreflightDecision.type === "skip") {
@@ -10430,11 +10439,11 @@ export default function App() {
         ...(tracePayload ?? {}),
         reason: managedAiPreflightDecision.reason,
       });
-      if (preflight) preflight.managedAiReady = true;
+      createPreflight.managedAiReady = true;
     } else {
       const managedAiReady = await sendTraceStep(
         "createSessionAndOpen:ensure-managed-ai-bootstrap-ready",
-        () => ensureManagedAiBootstrapReady(preflight ?? { traceId: sendTraceId, targetWorkspace }),
+        () => ensureManagedAiBootstrapReady(createPreflight),
         {
           ...(tracePayload ?? {}),
           managedAiBootstrapBusy: managedAiBootstrapBusy(),
@@ -10446,42 +10455,7 @@ export default function App() {
         recordSendTrace("createSessionAndOpen:blocked-managed-ai-bootstrap", tracePayload);
         return undefined;
       }
-      if (preflight) preflight.managedAiReady = true;
-    }
-    let createRuntimeReady = true;
-    const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision({
-      preflightRuntimeHealthOk: Boolean(preflight?.runtimeHealthOk),
-    });
-    if (runtimeHealthPreflightDecision.type === "skip") {
-      recordSendTrace("createSessionAndOpen:health-skip", {
-        ...(tracePayload ?? {}),
-        reason: runtimeHealthPreflightDecision.reason,
-      });
-    } else {
-      const createRuntimePreflight: SendRuntimePreflightContext = preflight ?? {
-        traceId: sendTraceId,
-        targetWorkspace,
-        runtimeHealthOk: false,
-      };
-      createRuntimeReady = await sendTraceStep(
-        "createSessionAndOpen:ensure-local-runtime-reachable",
-        () => ensureLocalRuntimeReachableForSend("createSessionAndOpen", createRuntimePreflight),
-        {
-          ...(tracePayload ?? {}),
-          activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
-          targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
-          workspaceType: workspaceStore.activeWorkspaceDisplay().workspaceType,
-          hasClient: Boolean(routedClient(targetWorkspace?.workspaceId)),
-        },
-      );
-      if (createRuntimePreflight.runtimeHealthOk) {
-        recordSendTrace("createSessionAndOpen:health-ok", tracePayload);
-      }
-    }
-    if (!createRuntimeReady) {
-      recordSendTrace("createSessionAndOpen:blocked-runtime-unreachable", tracePayload);
-      setError("Local runtime is not ready yet.");
-      return undefined;
+      createPreflight.managedAiReady = true;
     }
     const c = routedClientForSendTarget(targetWorkspace);
     if (!c) {
@@ -10559,49 +10533,32 @@ export default function App() {
       try {
         mark("session:create:start");
         const activeWorkspaceId = targetWorkspace?.workspaceId || workspaceStore.activeWorkspaceId().trim();
-        const vesloCreated = activeWorkspaceId
-          ? await sendTraceStep(
-              "createSessionAndOpen:veslo-conversation-create",
-              () => createConversationFromVesloWriteApi(
-                activeWorkspaceId,
-                sessionDirectory,
-                initialSessionTitle || undefined,
-                preflight,
-              ).catch((error) => {
-              recordSendTrace("createSessionAndOpen:veslo-create-error", {
-                ...(tracePayload ?? {}),
-                message: error instanceof Error ? error.message : safeStringify(error),
-              });
-              console.warn("[conversation-create] falling back to OpenCode SDK", error);
-              return null;
-              }),
-              {
-                ...(tracePayload ?? {}),
-                workspaceId: activeWorkspaceId,
-                sessionDirectory,
-              },
-            )
-          : null;
-        if (vesloCreated) {
-          session = vesloCreated;
-        } else {
-          recordSendTrace("createSessionAndOpen:legacy-create-fallback", {
-            ...(tracePayload ?? {}),
-            workspaceId: activeWorkspaceId || null,
-          });
-          session = unwrap(await sendTraceStep(
-            "createSessionAndOpen:legacy-session-create",
-            () => c.session.create({
-              directory: sessionDirectory,
-              title: initialSessionTitle || undefined,
-            }),
-            {
-              ...(tracePayload ?? {}),
-              workspaceId: activeWorkspaceId || null,
-              sessionDirectory,
-            },
-          ));
+        if (!activeWorkspaceId) {
+          throw new Error("Workspace id is required for session creation.");
         }
+        const vesloCreated = await sendTraceStep(
+          "createSessionAndOpen:veslo-conversation-create",
+          () => createConversationFromVesloWriteApi(
+            activeWorkspaceId,
+            sessionDirectory,
+            initialSessionTitle || undefined,
+            preflight,
+          ),
+          {
+            ...(tracePayload ?? {}),
+            workspaceId: activeWorkspaceId,
+            sessionDirectory,
+          },
+        );
+        if (!vesloCreated) {
+          recordSendTrace("createSessionAndOpen:conversation-create-unavailable", {
+            ...(tracePayload ?? {}),
+            workspaceId: activeWorkspaceId,
+            sessionDirectory,
+          });
+          throw new Error("Conversation service is unavailable for session creation.");
+        }
+        session = vesloCreated;
         recordSendTrace("createSessionAndOpen:create-ok", {
           ...(tracePayload ?? {}),
           sessionDirectory,
@@ -11550,13 +11507,24 @@ export default function App() {
     const providerRoutingLocalHost = activeVesloServerRoutingInfo();
     const providerRoutingLocalBaseUrl =
       providerRoutingLocalHost?.baseUrl ?? deriveLocalVesloServerUrlFromOpencodeBaseUrl(baseUrl()) ?? "";
+    const providerRoutingEngineBaseUrl = providerRoutingLocalHost?.engineUrl ?? "";
+    const runtimeSandboxState = resolveRuntimeSandboxStateForTarget({
+      workspaceId: workspaceId || null,
+      workspaceRoot: root || null,
+      directory: root || null,
+    });
     const providerRoutingRequiresEngineBaseUrl = requiresManagedAiEngineBaseUrl({
       isDesktopRuntime: isTauriRuntime(),
       workspaceType: workspace.workspaceType,
-      sandboxEnabled: vesloCapabilities?.sandbox?.enabled,
-      sandboxBackend: vesloCapabilities?.sandbox?.backend,
+      engineBaseUrl: providerRoutingEngineBaseUrl,
+      requiresEngineBridgeUrl: runtimeSandboxState.requiresEngineBridgeUrl,
+      configuredSandboxEnabled: runtimeSandboxState.configuredEnabled,
+      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
+      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
+      childKind: runtimeSandboxState.childKind,
+      sandboxEnabled: runtimeSandboxState.isSandboxed,
+      sandboxBackend: runtimeSandboxState.effectiveBackend,
     });
-    const providerRoutingEngineBaseUrl = providerRoutingLocalHost?.engineUrl ?? "";
     const providerRoutingTarget = resolveManagedAiProviderRoutingTarget({
       isDesktopRuntime: isTauriRuntime(),
       workspaceType: workspace.workspaceType,
@@ -11589,6 +11557,10 @@ export default function App() {
       managedAllowedModelCount: managedProfile?.allowedModels.length ?? 0,
       providerRoutingReady,
       providerRoutingRequiresEngineBaseUrl,
+      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
+      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
+      engineChildKind: runtimeSandboxState.childKind,
+      sandboxFallback: runtimeSandboxState.sandboxFallback,
       localBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingLocalBaseUrl),
       engineBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingEngineBaseUrl),
       resolvedBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingTarget?.baseUrl ?? null),
@@ -11897,11 +11869,18 @@ export default function App() {
     const providerRoutingLocalHost = activeVesloServerRoutingInfo();
     if (!providerRoutingLocalHost?.baseUrl) return;
     const gatewayClient = gatewayVesloServerClient();
+    const runtimeSandboxState = resolveRuntimeSandboxStateForTarget();
     const providerRoutingRequiresEngineBaseUrl = requiresManagedAiEngineBaseUrl({
       isDesktopRuntime: isTauriRuntime(),
       workspaceType: "local",
-      sandboxEnabled: vesloCapabilities?.sandbox?.enabled,
-      sandboxBackend: vesloCapabilities?.sandbox?.backend,
+      engineBaseUrl: providerRoutingLocalHost.engineUrl ?? "",
+      requiresEngineBridgeUrl: runtimeSandboxState.requiresEngineBridgeUrl,
+      configuredSandboxEnabled: runtimeSandboxState.configuredEnabled,
+      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
+      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
+      childKind: runtimeSandboxState.childKind,
+      sandboxEnabled: runtimeSandboxState.isSandboxed,
+      sandboxBackend: runtimeSandboxState.effectiveBackend,
     });
     const providerRoutingTarget = resolveManagedAiProviderRoutingTarget({
       isDesktopRuntime: isTauriRuntime(),
@@ -12565,8 +12544,8 @@ export default function App() {
           reportError(error, "sessionArchives.archiveSidebar");
           setError(error instanceof Error ? error.message : safeStringify(error));
         }),
-      unarchiveSession: (_workspaceId: string, sessionId: string) =>
-        unarchiveSession(sessionId).catch((error) => {
+      unarchiveSession: (workspaceId: string, sessionId: string) =>
+        unarchiveSession(workspaceId, sessionId).catch((error) => {
           reportError(error, "sessionArchives.unarchiveSidebar");
           setError(error instanceof Error ? error.message : safeStringify(error));
         }),
@@ -12736,8 +12715,8 @@ export default function App() {
       notionBusy: notionBusy(),
       connectNotion,
       sessionArchives: sessionArchives(),
-      onUnarchiveArchivedSession: (sessionId: string) =>
-        unarchiveSession(sessionId).catch((error) => {
+      onUnarchiveArchivedSession: (workspaceId: string, sessionId: string, workspaceIdentity?: string | null) =>
+        unarchiveSession(workspaceId, sessionId, workspaceIdentity).catch((error) => {
           reportError(error, "sessionArchives.unarchiveSettings");
           setError(error instanceof Error ? error.message : safeStringify(error));
         }),
@@ -12924,8 +12903,8 @@ export default function App() {
         reportError(error, "sessionArchives.archiveSidebar");
         setError(error instanceof Error ? error.message : safeStringify(error));
       }),
-    unarchiveSession: (_workspaceId: string, sessionId: string) =>
-      unarchiveSession(sessionId).catch((error) => {
+    unarchiveSession: (workspaceId: string, sessionId: string) =>
+      unarchiveSession(workspaceId, sessionId).catch((error) => {
         reportError(error, "sessionArchives.unarchiveSidebar");
         setError(error instanceof Error ? error.message : safeStringify(error));
       }),

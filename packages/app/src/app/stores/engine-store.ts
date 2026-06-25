@@ -3,7 +3,6 @@ import { createSignal } from "solid-js";
 import type { EngineRuntime, OnboardingStep } from "../types";
 import {
   addOpencodeCacheHint,
-  isWslMappableWindowsWorkspacePath,
   isTauriRuntime,
   normalizeDirectoryPath,
   safeStringify,
@@ -14,19 +13,14 @@ import { t, currentLocale } from "../../i18n";
 import type { OpencodeAuth } from "../lib/opencode";
 import type { WorkspaceRouting } from "../context/workspace-routing";
 import {
-  desktopSandboxEnvironment,
   engineDoctor,
   engineInfo,
   engineInstall,
   engineStart,
   engineStop,
   orchestratorInstanceDispose,
-  wslPrerequisitesRepair,
-  wslSandboxRepair,
-  type DesktopSandboxEnvironment,
   type EngineDoctorResult,
   type EngineInfo,
-  type ExecResult,
   type WorkspaceInfo,
 } from "../lib/tauri";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
@@ -110,56 +104,11 @@ export function createEngineStore(deps: EngineStoreDeps) {
   const [engineDoctorCheckedAt, setEngineDoctorCheckedAt] = createSignal<number | null>(null);
   const [engineInstallLogs, setEngineInstallLogs] = createSignal<string | null>(null);
 
-  const execResultOutput = (result: ExecResult) => [result.stdout, result.stderr]
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .join("\n\n");
-
-  const isRestartRequired = (result: ExecResult) => {
-    const output = execResultOutput(result);
-    return result.status === 3010 || result.status === 1641 || /\brestart\b|\breboot\b/i.test(output);
-  };
-
-  async function resolveWindowsSandboxEnvironmentForLocalStart(): Promise<DesktopSandboxEnvironment | null> {
-    if (!deps.isWindowsPlatform()) return null;
-
-    try {
-      return await desktopSandboxEnvironment();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      deps.setError(addOpencodeCacheHint(`Windows sandbox environment check failed.\n\n${message}`));
-      return null;
-    }
-  }
-
-  async function ensureWindowsSandboxReadyForLocalStart() {
-    if (!deps.isWindowsPlatform()) return true;
-
-    try {
-      const prereq = await wslPrerequisitesRepair({ checkOnly: true });
-      if (!prereq.ok) {
-        const details = execResultOutput(prereq);
-        const message = isRestartRequired(prereq)
-          ? "Windows WSL support needs a restart before VesloSandbox can be prepared. Restart Windows, then run Prepare sandbox from onboarding or Advanced Settings."
-          : "Windows WSL support is not ready. Run Prepare sandbox from onboarding or Advanced Settings to install WSL support and provision VesloSandbox.";
-        deps.setError(details ? `${message}\n\n${details}` : message);
-        return false;
-      }
-
-      const sandbox = await wslSandboxRepair({ checkOnly: true });
-      if (!sandbox.ok) {
-        const details = execResultOutput(sandbox);
-        const message = "Windows sandbox runtime is not ready. Run Prepare sandbox from onboarding or Advanced Settings to provision VesloSandbox, then start the workspace again.";
-        deps.setError(details ? `${message}\n\n${details}` : message);
-        return false;
-      }
-
-      return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      deps.setError(addOpencodeCacheHint(`Windows sandbox runtime check failed.\n\n${message}`));
-      return false;
-    }
+  async function ensureLocalRuntimeReadyForWorkspaceStart(workspacePath: string) {
+    void workspacePath;
+    // Windows WSL repair remains an onboarding/settings workflow. Startup must
+    // reach the orchestrator so it can fall back to an unsandboxed engine.
+    return true;
   }
 
   const localRuntimeLifecycle = createLocalRuntimeLifecycle({
@@ -263,20 +212,7 @@ export function createEngineStore(deps: EngineStoreDeps) {
       return false;
     }
 
-    const windowsSandboxEnvironment = await resolveWindowsSandboxEnvironmentForLocalStart();
-    if (deps.isWindowsPlatform() && !windowsSandboxEnvironment) {
-      return false;
-    }
-    const useWindowsWslSandbox = windowsSandboxEnvironment?.backend === "windows-wsl2";
-
-    if (useWindowsWslSandbox && !isWslMappableWindowsWorkspacePath(dir)) {
-      deps.setError(
-        "This workspace path cannot be mounted into the Windows WSL2 sandbox. Choose a folder on a local drive such as C:\\Users\\...; network and UNC paths are not supported for local sandboxed runs.",
-      );
-      return false;
-    }
-
-    if (useWindowsWslSandbox && !(await ensureWindowsSandboxReadyForLocalStart())) {
+    if (!(await ensureLocalRuntimeReadyForWorkspaceStart(dir))) {
       return false;
     }
 
@@ -496,6 +432,7 @@ export function createEngineStore(deps: EngineStoreDeps) {
     // Methods
     refreshEngine,
     refreshEngineDoctor,
+    ensureLocalRuntimeReadyForWorkspaceStart,
     startHost,
     stopHost,
     reloadWorkspaceEngine,

@@ -63,6 +63,43 @@ fn command_output_result(command: &mut Command, context: &str) -> Result<ExecRes
     })
 }
 
+fn wsl_prerequisite_log_path() -> PathBuf {
+    std::env::var_os("ProgramData")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("Veslo")
+        .join("logs")
+        .join("wsl2-prerequisite-installer.log")
+}
+
+fn append_prerequisite_log_tail(result: &mut ExecResult) {
+    let log_path = wsl_prerequisite_log_path();
+    let Ok(raw) = std::fs::read_to_string(&log_path) else {
+        return;
+    };
+    let lines = raw.lines().collect::<Vec<_>>();
+    if lines.is_empty() {
+        return;
+    }
+
+    let start = lines
+        .iter()
+        .rposition(|line| line.contains("Windows PowerShell transcript start"))
+        .unwrap_or_else(|| lines.len().saturating_sub(260));
+    let mut tail = lines[start..].join("\n");
+    if !tail.is_empty() {
+        tail.push('\n');
+    }
+    if !result.stdout.trim().is_empty() {
+        result.stdout.push_str("\n\n");
+    }
+    result.stdout.push_str(&format!(
+        "Latest WSL prerequisite helper transcript from {}:\n{}",
+        log_path.display(),
+        tail
+    ));
+}
+
 fn powershell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
@@ -182,7 +219,9 @@ pub fn wsl_prerequisites_repair(
         .arg("-Command")
         .arg(elevated_command);
 
-    command_output_result(&mut command, "elevated WSL prerequisite installer")
+    let mut result = command_output_result(&mut command, "elevated WSL prerequisite installer")?;
+    append_prerequisite_log_tail(&mut result);
+    Ok(result)
 }
 
 #[tauri::command]

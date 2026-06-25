@@ -70,7 +70,7 @@ test("recent mode interactions stay wired to recentRowsVisible instead of chatPr
 test("Chaty owns quick-chat creation and resize/collapse interactions", () => {
   assert.match(
     source,
-    /const startQuickChat = \(\) => \{[\s\S]*props\.onQuickNewSession\?\.\(\);[\s\S]*\};/,
+    /const runQuickChat = async \(\) => \{[\s\S]*props\.onQuickNewSession\(\);[\s\S]*\};[\s\S]*const startQuickChat = \(\) => \{[\s\S]*void runQuickChat\(\);[\s\S]*\};/,
     "Chaty should call the quick new-session action through a shared handler",
   );
 
@@ -300,13 +300,13 @@ test("project rows expose drag lifecycle bindings without dedicated grip handle"
 test("clicking selected rows still opens session detail while selected parents toggle subagent expansion", () => {
   assert.match(
     source,
-    /const action = resolveSessionRowClickAction\(\{\s*selectedSessionId: props\.selectedSessionId,\s*clickedSessionId: row\.session\.id,\s*hasChildren: hasChildren\(row\.session\.id\),\s*allowSelectedParentExpansion: props\.allowSelectedParentExpansion,\s*\}\);/s,
+    /const action = resolveSessionRowClickAction\(\{\s*selectedSessionId: props\.selectedSessionId,\s*clickedSessionId: row\.session\.id,\s*hasChildren: hasChildren\(row\.rowKey\),\s*allowSelectedParentExpansion: props\.allowSelectedParentExpansion,\s*\}\);/s,
     "session row clicks should compute selected-row behavior through shared click action logic",
   );
 
   assert.match(
     source,
-    /if \(action\.toggleExpandedParent\) \{\s*toggleExpandedParentSession\(row\.session\.id\);\s*\}/s,
+    /if \(action\.toggleExpandedParent\) \{\s*toggleExpandedParentSession\(row\);\s*\}/s,
     "selected parent rows should still toggle expansion when click action requests it",
   );
 
@@ -381,7 +381,7 @@ test("expanded parent session persistence reads at startup and writes only from 
 
   assert.match(
     source,
-    /const toggleExpandedParentSession = \(sessionId: string\) =>\s*setExpandedParentSessionIds\(\(current\) => \{[\s\S]*writeExpandedParentSessionIds\(next\);[\s\S]*return next;\s*\}\);/s,
+    /const toggleExpandedParentSession = \(row: FlatSessionRow\) =>\s*setExpandedParentSessionIds\(\(current\) => \{[\s\S]*const rowKey = row\.rowKey;[\s\S]*writeExpandedParentSessionIds\(next\);[\s\S]*return next;\s*\}\);/s,
     "expanded parent session state should persist when a user toggles a session branch",
   );
 
@@ -431,8 +431,8 @@ test("session and subagent branches render through animated branch containers", 
   assert.match(source, /const AnimatedSessionBranch = \(props: AnimatedSessionBranchProps\) =>/);
   assert.match(source, /data-sidebar-collapse-region=\{props\.region\}/);
   assert.match(source, /rows: Accessor<FlatSessionRow\[]>;/);
-  assert.match(source, /descendantRowsForParent\(props\.rows\(\), row\.session\.id\)/);
-  assert.match(source, /directChildRowsForParent\(props\.rows\(\), props\.parentSessionId\)/);
+  assert.match(source, /descendantRowsForParent\(props\.rows\(\), row\.rowKey\)/);
+  assert.match(source, /directChildRowsForParent\(props\.rows\(\), props\.parentRowKey\)/);
   assert.match(source, /setRenderedRows\(rows\);/);
 });
 
@@ -469,7 +469,7 @@ test("animated session branch rendering keeps parent row click behavior and arch
 
   assert.match(
     source,
-    /open=\{expandedParentSessionIds\(\)\.has\(row\.session\.id\)\}/,
+    /open=\{expandedParentSessionIds\(\)\.has\(row\.rowKey\) \|\| expandedParentSessionIds\(\)\.has\(row\.session\.id\)\}/,
     "animated branches should still read explicit persisted parent expansion state",
   );
 

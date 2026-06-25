@@ -87,3 +87,37 @@ test("session archive store deletes records idempotently", async () => {
   assert.deepEqual((await store.delete("usr_123", "session-a")).length, 0);
   assert.deepEqual((await store.delete("usr_123", "session-a")).length, 0);
 });
+
+test("session archive scoped delete preserves identity-only records outside the exact scope", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "veslo-session-archives-"));
+  const store = createSessionArchiveStore({ dir });
+
+  await store.put("usr_123", {
+    sessionId: "shared",
+    archivedAt: 10,
+    titleSnapshot: "Workspace A",
+    workspaceIdentity: "local:/workspace/a",
+  });
+  await store.put("usr_123", {
+    sessionId: "shared",
+    archivedAt: 20,
+    titleSnapshot: "Workspace B",
+    workspaceIdentity: "local:/workspace/b",
+  });
+
+  const afterWorkspaceIdDelete = await store.delete("usr_123", "shared", {
+    workspaceId: "workspace-a",
+  });
+  assert.deepEqual(
+    afterWorkspaceIdDelete.map((entry) => entry.workspaceIdentity).sort(),
+    ["local:/workspace/a", "local:/workspace/b"],
+  );
+
+  const afterIdentityDelete = await store.delete("usr_123", "shared", {
+    workspaceIdentity: "local:/workspace/a",
+  });
+  assert.deepEqual(
+    afterIdentityDelete.map((entry) => entry.workspaceIdentity),
+    ["local:/workspace/b"],
+  );
+});

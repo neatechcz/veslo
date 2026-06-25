@@ -147,15 +147,54 @@ export function resolveManagedAiProviderRoutingTarget(input: {
 export function requiresManagedAiEngineBaseUrl(input: {
   isDesktopRuntime: boolean;
   workspaceType: "local" | "remote" | null | undefined;
+  engineBaseUrl?: string | null;
+  requiresEngineBridgeUrl?: boolean | null;
+  configuredSandboxEnabled?: boolean | null;
+  configuredSandboxBackend?: string | null;
+  effectiveSandboxBackend?: string | null;
+  childKind?: string | null;
   sandboxEnabled?: boolean | null;
   sandboxBackend?: string | null;
 }): boolean {
-  return (
-    input.isDesktopRuntime &&
-    input.workspaceType === "local" &&
-    input.sandboxEnabled === true &&
-    input.sandboxBackend === "windows-wsl2"
-  );
+  if (!input.isDesktopRuntime || input.workspaceType !== "local") {
+    return false;
+  }
+
+  if (requiresManagedAiBridgeForRuntime(input)) return true;
+  const childKind = input.childKind?.trim() ?? "";
+  if (input.requiresEngineBridgeUrl === false || childKind === "direct") return false;
+
+  if (input.sandboxEnabled !== true || input.sandboxBackend !== "windows-wsl2") return false;
+
+  // Older callers did not provide the runtime sandbox verdict. Keep the
+  // conservative legacy fallback for those paths.
+  const engineBaseUrl = normalizeHttpUrl(input.engineBaseUrl);
+  return Boolean(engineBaseUrl && !isLoopbackHttpUrl(engineBaseUrl));
+}
+
+export function requiresManagedAiBridgeForRuntime(input: {
+  isDesktopRuntime: boolean;
+  workspaceType: "local" | "remote" | null | undefined;
+  requiresEngineBridgeUrl?: boolean | null;
+  configuredSandboxEnabled?: boolean | null;
+  configuredSandboxBackend?: string | null;
+  effectiveSandboxBackend?: string | null;
+  childKind?: string | null;
+}): boolean {
+  if (!input.isDesktopRuntime || input.workspaceType !== "local") return false;
+  if (input.requiresEngineBridgeUrl === true) return true;
+
+  const childKind = input.childKind?.trim() ?? "";
+  if (childKind === "direct") return false;
+
+  if (
+    input.configuredSandboxEnabled === true &&
+    input.configuredSandboxBackend === "windows-wsl2"
+  ) {
+    return true;
+  }
+
+  return input.effectiveSandboxBackend === "windows-wsl2";
 }
 
 function readConfigObject(value: unknown): Record<string, unknown> {

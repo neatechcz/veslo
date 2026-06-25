@@ -1433,6 +1433,7 @@ export type VesloWorkspaceSystemProvisionResult = {
   status: "updated" | "unchanged";
   written: number;
   unchanged: number;
+  soulMaterialization?: VesloSoulMaterializationResult | null;
 };
 
 type RawJsonResponse<T> = {
@@ -2628,17 +2629,24 @@ export function createVesloServerClient(options: {
           extraHeaders: accountId ? { "X-Veslo-Account-Id": accountId } : undefined,
         },
       ),
-    deleteSessionArchive: (sessionId: string) =>
-      requestJson<{ items: VesloSessionArchiveRecord[] }>(
+    deleteSessionArchive: (sessionId: string, options?: { workspaceId?: string | null; workspaceIdentity?: string | null }) => {
+      const workspaceId = options?.workspaceId?.trim() ?? "";
+      const workspaceIdentity = options?.workspaceIdentity?.trim() ?? "";
+      const search = new URLSearchParams();
+      if (workspaceId) search.set("workspaceId", workspaceId);
+      if (workspaceIdentity) search.set("workspaceIdentity", workspaceIdentity);
+      const query = search.size > 0 ? `?${search.toString()}` : "";
+      return requestJson<{ items: VesloSessionArchiveRecord[] }>(
         baseUrl,
-        `/session-archives/${encodeURIComponent(sessionId)}`,
+        `/session-archives/${encodeURIComponent(sessionId)}${query}`,
         {
           token,
           hostToken,
           method: "DELETE",
           extraHeaders: accountId ? { "X-Veslo-Account-Id": accountId } : undefined,
         },
-      ),
+      );
+    },
     activateWorkspace: (workspaceId: string) =>
       requestJson<{ activeId: string; workspace: VesloWorkspaceInfo }>(
         baseUrl,
@@ -2823,7 +2831,7 @@ export function createVesloServerClient(options: {
         body: payload,
         timeoutMs: timeouts.workspaceImport,
       }),
-    provisionWorkspaceSystem: (workspaceId: string) =>
+    provisionWorkspaceSystem: (workspaceId: string, options?: VesloSoulAuthContext) =>
       requestJson<VesloWorkspaceSystemProvisionResult>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/system/provision`,
@@ -2831,6 +2839,7 @@ export function createVesloServerClient(options: {
           token,
           hostToken,
           method: "POST",
+          extraHeaders: buildDenContextHeaders(options),
           timeoutMs: timeouts.workspaceProvision,
         },
       ),

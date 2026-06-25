@@ -78,6 +78,40 @@ test("runtime owner any-ready includes orchestrator snapshots and routed workspa
   assert.equal(readyFromRoute.anyWorkspaceRuntimeReady(), true);
 });
 
+test("runtime owner does not treat local orchestrator routes as ready without an engine snapshot", () => {
+  const routed = client("ws-local");
+  const routeOnly = createRuntimeOwner({
+    activeWorkspaceId: () => "ws-active",
+    activeLegacyEngineReady: () => false,
+    readyEngineWorkspaceIds: () => new Set(),
+    requiresOrchestratorReadiness: (workspaceId) => workspaceId === "ws-local",
+    routing: createRouting({ "ws-local": routed }),
+  });
+  const snapshotReady = createRuntimeOwner({
+    activeWorkspaceId: () => "ws-active",
+    activeLegacyEngineReady: () => false,
+    readyEngineWorkspaceIds: () => new Set(["ws-local"]),
+    requiresOrchestratorReadiness: (workspaceId) => workspaceId === "ws-local",
+    routing: createRouting({ "ws-local": routed }),
+  });
+
+  assert.deepEqual(routeOnly.resolveWorkspace("ws-local"), {
+    owner: null,
+    workspaceId: "ws-local",
+    ready: false,
+    reason: "not-ready",
+    activeWorkspace: false,
+    orchestratorReady: false,
+    routedClientReady: true,
+    activeLegacyEngineReady: false,
+    busy: false,
+  });
+  assert.equal(routeOnly.client("ws-local"), null);
+  assert.equal(routeOnly.anyWorkspaceRuntimeReady(), false);
+  assert.equal(snapshotReady.isWorkspaceRuntimeReady("ws-local"), true);
+  assert.equal(snapshotReady.client("ws-local"), routed);
+});
+
 test("runtime owner conversation-read sync allows busy workspaces without pretending runtime is ready", () => {
   const owner = createRuntimeOwner({
     activeWorkspaceId: () => "ws-active",

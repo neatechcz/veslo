@@ -37,6 +37,11 @@ impl EngineManager {
         EngineInfo {
             running,
             runtime: state.runtime.clone(),
+            child_kind: if running {
+                Some("direct".to_string())
+            } else {
+                None
+            },
             base_url: state.base_url.clone(),
             project_dir: state.project_dir.clone(),
             hostname: state.hostname.clone(),

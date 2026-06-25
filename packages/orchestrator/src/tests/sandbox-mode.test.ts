@@ -50,6 +50,7 @@ describe("sandbox mode resolution", () => {
 
   test("sandbox resolver failures also emit the visible unsandboxed warning", () => {
     const warningMessages: string[] = [];
+    const loggerWarnings: Array<{ message: string; attrs: unknown }> = [];
 
     const sandbox = resolveEngineSandbox({
       env: {},
@@ -59,7 +60,7 @@ describe("sandbox mode resolution", () => {
       },
       writeWarning: (message) => warningMessages.push(message),
       logger: {
-        warn: () => undefined,
+        warn: (message, attrs) => loggerWarnings.push({ message, attrs }),
       },
     });
 
@@ -68,6 +69,12 @@ describe("sandbox mode resolution", () => {
     expect(warningMessages[0]).toContain("UNSANDBOXED OPENCODE ENGINE");
     expect(warningMessages[0]).toContain("sandbox unavailable");
     expect(warningMessages[0]).toContain("No sandbox backend for platform=linux");
+    expect(loggerWarnings[0]?.message).toContain("sandbox unavailable");
+    expect(loggerWarnings[0]?.attrs).toEqual({
+      workspace: "/Users/demo/project",
+      reason: "sandbox unavailable",
+      error: "No sandbox backend for platform=linux",
+    });
   });
 
   test("unsandboxed warning is a large red terminal banner", () => {

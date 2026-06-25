@@ -317,7 +317,23 @@ if (!targetEmail) {
 NODE
 ```
 
-If `debug_log_batch` and `debug_log_event` are empty, Den is configured to accept debug logs but no desktop/server process has uploaded any events. Desktop-launched `veslo-server` only forwards to Den when it is started with `VESLO_LOG_INGEST_URL` and `VESLO_LOG_INGEST_TOKEN`; otherwise events stay in the user's local spool and are not queryable from the cloud server. In updater investigations on Windows, also collect `C:\ProgramData\veslo-updater-msi.log` from the affected machine because the Windows MSI installer writes there independently of Den debug-log ingest.
+If `debug_log_batch` and `debug_log_event` are empty, Den is configured to accept debug logs but no desktop/server process has uploaded any events. Desktop-launched `veslo-server` only forwards to Den when it is started with `VESLO_LOG_INGEST_URL` and `VESLO_LOG_INGEST_TOKEN`; otherwise events stay in the user's local spool and are not queryable from the cloud server.
+
+In updater investigations on Windows, also collect `C:\ProgramData\veslo-updater-msi.log` from the affected machine because the Windows MSI installer writes there independently of Den debug-log ingest.
+
+For clean-install MSI failures, collect the newest `%TEMP%\MSI*.LOG` file from the affected Windows user. Veslo MSI packages set `MsiLogging=voicewarmupx!`, so a double-clicked install should create this verbose Windows Installer log even when the failure happens before Veslo's PowerShell runtime scripts start. The log can also include the final log path in the `MsiLogFileLocation` property.
+
+If Veslo's WSL helper logs end with `WSL prerequisite helper finished with exit code 0` but Windows Installer still reports a generic failure, inspect the MSI log for WebView2 custom actions. Current validation MSI builds must use `webviewInstallMode.type = "skip"` and must not contain `DownloadAndInvokeBootstrapper`, `InvokeBootstrapper`, or `InvokeStandalone`; those generated actions run a nested WebView2 installer and can fail the MSI after Veslo's WSL setup has already succeeded.
+
+For clean-install WSL runtime setup issues, also collect `%ProgramData%\Veslo\logs\wsl2-client-installer.log`, `%ProgramData%\Veslo\logs\wsl2-prerequisite-installer.log`, `%ProgramData%\Veslo\logs\wsl2-runtime-setup-status.txt`, `%ProgramData%\Veslo\runtime-setup-restart-required.marker`, `%LOCALAPPDATA%\Veslo\logs\wsl2-client-installer.log`, and `%LOCALAPPDATA%\Veslo\logs\wsl2-sandbox-installer.log` when those files exist. MSI clean installs run the machine prerequisite phase as `NT AUTHORITY\SYSTEM`; if Windows reports `3010`, the MSI must surface the native Windows Installer restart requirement instead of masking it or launching Veslo. The machine phase also registers a non-interactive Active Setup startup continuation so the target user context can import/provision `VesloSandbox` after reboot. That continuation may re-register an HKCU RunOnce retry if WSL is still settling or sandbox provisioning fails. NSIS clean installs also print these paths in the installer detail log and stop on non-restart runtime setup failures.
+
+If one of these logs ends after `wsl.exe --status`, check whether the next lines report `Native command timed out after 45 seconds` and exit code `1460`. That means the Windows WSL command hung rather than returning a normal status. MSI installs should then complete the package install and leave first-run onboarding/Settings repair to retry with user-visible guidance.
+
+Newer WSL installer helpers print a `Script revision:` line near the start of their logs. If that line is missing after installing a validation MSI that should contain it, the affected machine is still running an old installed helper. Current MSI packages remove the old WSL helper `.ps1` files from `INSTALLDIR` during install before copying the new files.
+
+When the client runtime installer logs `wsl.exe --status failed` because WSL is not installed, the next expected step is `WSL status already failed; skipping redundant prerequisite check and launching elevated WSL prerequisite install from the installer flow.` A log that stops at a local `wsl2-prerequisite-installer.ps1 -CheckOnly` invocation is from an older validation helper.
+
+If `wsl2-prerequisite-installer.ps1 -Install` returns `1` or `2`, inspect the same prerequisite log for the current script revision. Current MSI machine setup does not call `wsl.exe` or nested `msiexec` under LocalSystem. It checks Windows optional feature state, enables `Microsoft-Windows-Subsystem-Linux` and `VirtualMachinePlatform`, and stages the modern WSL MSIX bundle with `Add-AppxProvisionedPackage` when needed. The client installer and Settings/onboarding repair output should include a `Latest WSL prerequisite helper transcript` section after prerequisite repair attempts.
 
 ## Veslo Server Debug-Log Pipeline
 

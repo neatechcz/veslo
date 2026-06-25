@@ -13,13 +13,18 @@ test("managed AI bootstrap readiness returns a blocking result when setup is not
   const sendEnd = source.indexOf("async function abortSession", sendStart);
   assert.ok(sendStart >= 0 && sendEnd > sendStart, "sendPrompt source should be present");
   const sendSource = source.slice(sendStart, sendEnd);
-  const gateIndex = sendSource.indexOf('"sendPrompt:ensure-managed-ai-bootstrap-ready"');
+  const gateIndex = sendSource.indexOf('prepareSendRuntimeForSend("sendPrompt", sendPreflight)');
   const clientIndex = sendSource.indexOf("const c = routedClientForSendTarget(sendTargetWorkspace);");
-  assert.ok(gateIndex >= 0, "sendPrompt should trace the managed bootstrap gate");
+  assert.ok(gateIndex >= 0, "sendPrompt should call the runtime readiness owner");
   assert.ok(clientIndex >= 0, "sendPrompt should read the routed client");
   assert.ok(
     gateIndex < clientIndex,
     "sendPrompt should wait for managed bootstrap readiness before grabbing the routed client",
+  );
+  assert.match(
+    readinessSource,
+    /deps\.sendTraceStep\(\s*`\$\{reason\}:ensure-managed-ai-bootstrap-ready`/,
+    "send runtime readiness owner should trace the managed bootstrap gate",
   );
 });
 
@@ -54,8 +59,18 @@ test("managed AI bootstrap waits for runtime gateway authorization before writin
 test("managed AI bootstrap routes desktop local providers through the local Veslo server target", () => {
   assert.match(
     source,
-    /const providerRoutingLocalHost = activeVesloServerRoutingInfo\(\);[\s\S]*?const providerRoutingLocalBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.baseUrl \?\? deriveLocalVesloServerUrlFromOpencodeBaseUrl\(baseUrl\(\)\) \?\? "";[\s\S]*?const providerRoutingRequiresEngineBaseUrl = requiresManagedAiEngineBaseUrl\(\{[\s\S]*?const providerRoutingEngineBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.engineUrl \?\? "";[\s\S]*?resolveManagedAiProviderRoutingTarget\(\{[\s\S]*?workspaceType: workspace\.workspaceType,[\s\S]*?activeBaseUrl: providerRoutingLocalBaseUrl,[\s\S]*?engineBaseUrl: providerRoutingEngineBaseUrl,[\s\S]*?requireEngineBaseUrl: providerRoutingRequiresEngineBaseUrl,[\s\S]*?activeToken: providerRoutingLocalHost\?\.clientToken \?\? "",[\s\S]*?gatewayBaseUrl: gatewayClient\?\.baseUrl \?\? "",[\s\S]*?\}\)/s,
+    /const providerRoutingLocalHost = activeVesloServerRoutingInfo\(\);[\s\S]*?const providerRoutingLocalBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.baseUrl \?\? deriveLocalVesloServerUrlFromOpencodeBaseUrl\(baseUrl\(\)\) \?\? "";[\s\S]*?const providerRoutingEngineBaseUrl = providerRoutingLocalHost\?\.engineUrl \?\? "";/s,
     "managed AI config writes should resolve provider routing from the local host snapshot instead of the remote access gateway client",
+  );
+  assert.match(
+    source,
+    /requiresManagedAiEngineBaseUrl\(\{[\s\S]*?requiresEngineBridgeUrl: runtimeSandboxState\.requiresEngineBridgeUrl,[\s\S]*?configuredSandboxEnabled: runtimeSandboxState\.configuredEnabled,[\s\S]*?configuredSandboxBackend: runtimeSandboxState\.configuredBackend,[\s\S]*?effectiveSandboxBackend: runtimeSandboxState\.effectiveBackend,[\s\S]*?childKind: runtimeSandboxState\.childKind,[\s\S]*?\}\)/s,
+    "managed AI routing should require a bridge URL from the runtime sandbox verdict instead of inferring it from an existing URL",
+  );
+  assert.match(
+    source,
+    /resolveManagedAiProviderRoutingTarget\(\{[\s\S]*?workspaceType: workspace\.workspaceType,[\s\S]*?activeBaseUrl: providerRoutingLocalBaseUrl,[\s\S]*?engineBaseUrl: providerRoutingEngineBaseUrl,[\s\S]*?requireEngineBaseUrl: providerRoutingRequiresEngineBaseUrl,[\s\S]*?activeToken: providerRoutingLocalHost\?\.clientToken \?\? "",[\s\S]*?gatewayBaseUrl: gatewayClient\?\.baseUrl \?\? "",[\s\S]*?\}\)/s,
+    "managed AI config writes should pass the local routing target into provider config resolution",
   );
   assert.match(
     source,

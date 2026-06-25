@@ -15,6 +15,10 @@ pub struct VesloServerState {
     pub child: Option<SupervisedCommandChild>,
     pub child_exited: bool,
     pub host: Option<String>,
+    /// Optional secondary WSL-reachable bind address (the WSL virtual adapter
+    /// IP) the server also listens on. Drives engineUrl publication for WSL
+    /// runtimes without binding the primary listener to 0.0.0.0. See VSLO-250.
+    pub bridge_host: Option<String>,
     pub port: Option<u16>,
     pub base_url: Option<String>,
     pub connect_url: Option<String>,
@@ -90,6 +94,7 @@ impl VesloServerManager {
     pub fn stop_locked(state: &mut VesloServerState) {
         kill_running_child(state);
         state.host = None;
+        state.bridge_host = None;
         state.port = None;
         state.base_url = None;
         state.connect_url = None;

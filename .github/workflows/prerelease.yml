@@ -133,6 +133,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Review release packaging
+        if: matrix.os_type == 'windows'
+        run: pnpm release:review --strict
+
       - name: Install OpenTUI x64 core (macOS x86_64)
         if: matrix.os_type == 'macos' && matrix.target == 'x86_64-apple-darwin'
         run: pnpm add -w --ignore-workspace-root-check @opentui/core-darwin-x64@0.1.77

@@ -878,6 +878,8 @@ export default {
   "settings.windows_sandbox_ready": "Windows sandbox je připravený.",
   "settings.windows_sandbox_restart_required": "Podpora WSL byla nainstalována. Restartujte Windows a potom akci spusťte znovu pro přípravu VesloSandbox.",
   "settings.windows_sandbox_failed": "Oprava Windows sandboxu selhala.",
+  "settings.windows_sandbox_gate_title": "Připravuji Veslo sandbox",
+  "settings.windows_sandbox_continue_anyway": "Přesto pokračovat",
   "settings.pending_permissions": "Čekající oprávnění",
   "settings.recent_events": "Nedávné události",
   "settings.notion_connected": "Připojeno",

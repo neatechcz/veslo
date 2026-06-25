@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-Best-effort MSI entrypoint for Veslo's managed WSL2 sandbox distro.
+Installer entrypoint for Veslo's managed WSL2 sandbox distro.
 
 .DESCRIPTION
-This wrapper is invoked by the Windows MSI after application files are
-installed. It keeps MSI installation non-blocking from a product correctness
-perspective: provisioning failures are logged for repair/onboarding, but the
-Veslo app installation itself is not rolled back.
+This wrapper is invoked by the Windows installer after application files are
+installed. It returns the real provisioning exit code so installer logs can
+distinguish "app installed" from "runtime prepared"; package hooks decide
+separately whether a restart-required continuation is acceptable.
 
 The actual runtime setup lives in windows-wsl2-sandbox-provision.ps1. This file
 only locates the bundled helper, checks whether WSL is usable, and runs a quick
@@ -23,6 +23,8 @@ param(
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 $env:WSL_UTF8 = "1"
+$NativeCommandTimeoutExitCode = 1460
+$SandboxInstallerScriptRevision = "native-timeout-isolation-20260623"
 
 function Write-InstallerLog([string]$Message) {
     $timestamp = (Get-Date).ToString("o")
@@ -64,65 +66,6 @@ function ConvertTo-NativeArgument([string]$Argument) {
     }
     [void]$builder.Append([char]0x22)
     return $builder.ToString()
-}
-
-function Invoke-HiddenNativeCommand([string]$FilePath, [string[]]$Arguments) {
-    Write-InstallerLog ("> {0} {1}" -f $FilePath, ($Arguments -join " "))
-
-    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $startInfo.FileName = $FilePath
-    $startInfo.Arguments = (($Arguments | ForEach-Object { ConvertTo-NativeArgument ([string]$_) }) -join " ")
-    $startInfo.UseShellExecute = $false
-    $startInfo.CreateNoWindow = $true
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
-    try {
-        $startInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
-        $startInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
-    } catch {}
-
-    $lines = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
-    $outputHandler = [System.Diagnostics.DataReceivedEventHandler]{
-        param($sender, $eventArgs)
-        if ($null -ne $eventArgs.Data) {
-            [void]$lines.Add([string]$eventArgs.Data)
-        }
-    }
-    $errorHandler = [System.Diagnostics.DataReceivedEventHandler]{
-        param($sender, $eventArgs)
-        if ($null -ne $eventArgs.Data) {
-            [void]$lines.Add([string]$eventArgs.Data)
-        }
-    }
-
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $startInfo
-    $process.add_OutputDataReceived($outputHandler)
-    $process.add_ErrorDataReceived($errorHandler)
-    try {
-        [void]$process.Start()
-        $process.BeginOutputReadLine()
-        $process.BeginErrorReadLine()
-        $process.WaitForExit()
-        $process.WaitForExit()
-        $exitCode = $process.ExitCode
-    } finally {
-        $process.remove_OutputDataReceived($outputHandler)
-        $process.remove_ErrorDataReceived($errorHandler)
-        $process.Dispose()
-    }
-
-    $outputLines = @($lines.ToArray() | ForEach-Object { [string]$_ })
-    foreach ($line in $outputLines) {
-        if ($line) {
-            Write-InstallerLog $line
-        }
-    }
-
-    return [pscustomobject]@{
-        ExitCode = [int]$exitCode
-        Output = ($outputLines -join "`n")
-    }
 }
 
 function Resolve-LocalAppData {
@@ -173,6 +116,208 @@ function Resolve-PowerShellExecutable {
     return Resolve-SystemExecutable "WindowsPowerShell\v1.0\powershell.exe" "powershell.exe"
 }
 
+function Stop-HiddenNativeProcessTree([System.Diagnostics.Process]$Process) {
+    if ($null -eq $Process) {
+        return
+    }
+    try {
+        if ($Process.HasExited) {
+            return
+        }
+    } catch {
+        return
+    }
+
+    $taskkillCommand = Resolve-SystemExecutable "taskkill.exe" "taskkill.exe"
+    if ($taskkillCommand) {
+        try {
+            $killInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $killInfo.FileName = $taskkillCommand
+            $killInfo.Arguments = "/PID $($Process.Id) /T /F"
+            $killInfo.UseShellExecute = $false
+            $killInfo.CreateNoWindow = $true
+            $killProcess = New-Object System.Diagnostics.Process
+            $killProcess.StartInfo = $killInfo
+            try {
+                [void]$killProcess.Start()
+                [void]$killProcess.WaitForExit(10000)
+            } finally {
+                $killProcess.Dispose()
+            }
+        } catch {}
+    }
+
+    try {
+        if (-not $Process.HasExited) {
+            $Process.Kill()
+        }
+    } catch {}
+    try {
+        [void]$Process.WaitForExit(10000)
+    } catch {}
+}
+
+function Invoke-IsolatedNativeCommand([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 600) {
+    Write-InstallerLog ("> isolated {0} {1}" -f $FilePath, ($Arguments -join " "))
+    $argumentsJson = ConvertTo-Json @($Arguments) -Compress
+    $job = $null
+    try {
+        $job = Start-Job -ScriptBlock {
+            param([string]$InnerFilePath, [string]$InnerArgumentsJson)
+            $ErrorActionPreference = "Continue"
+            $ProgressPreference = "SilentlyContinue"
+            $env:WSL_UTF8 = "1"
+            $innerArguments = @()
+            if ($InnerArgumentsJson) {
+                $parsedArguments = ConvertFrom-Json $InnerArgumentsJson
+                if ($null -ne $parsedArguments) {
+                    $innerArguments = @($parsedArguments | ForEach-Object { [string]$_ })
+                }
+            }
+
+            $outputLines = @()
+            $exitCode = 0
+            try {
+                $commandOutput = & $InnerFilePath @innerArguments 2>&1
+                foreach ($line in @($commandOutput)) {
+                    if ($null -ne $line) {
+                        $outputLines += [string]$line
+                    }
+                }
+                if ($null -ne $global:LASTEXITCODE) {
+                    $exitCode = [int]$global:LASTEXITCODE
+                }
+            } catch {
+                $outputLines += $_.Exception.Message
+                $exitCode = 1
+            }
+
+            [pscustomobject]@{
+                ExitCode = [int]$exitCode
+                Output = ($outputLines -join "`n")
+            }
+        } -ArgumentList $FilePath, $argumentsJson
+    } catch {
+        Write-InstallerLog "Failed to start isolated native command job: $($_.Exception.Message)"
+        return [pscustomobject]@{
+            ExitCode = 1
+            Output = $_.Exception.Message
+        }
+    }
+
+    try {
+        Write-InstallerLog "Waiting up to $TimeoutSeconds seconds for isolated native command job $($job.Id)."
+        $completedJob = Wait-Job -Job $job -Timeout $TimeoutSeconds
+        if (-not $completedJob) {
+            Write-InstallerLog "Native command timed out after $TimeoutSeconds seconds in isolated job $($job.Id); stopping job."
+            try {
+                Stop-Job -Job $job -Force -ErrorAction SilentlyContinue
+            } catch {
+                try {
+                    Stop-Job -Job $job -ErrorAction SilentlyContinue
+                } catch {}
+            }
+            return [pscustomobject]@{
+                ExitCode = [int]$NativeCommandTimeoutExitCode
+                Output = "Timed out after $TimeoutSeconds seconds."
+            }
+        }
+
+        $jobOutput = @(Receive-Job -Job $job -ErrorAction SilentlyContinue)
+        $result = $jobOutput | Where-Object { $_ -and $_.PSObject.Properties["ExitCode"] } | Select-Object -Last 1
+        if (-not $result) {
+            $textOutput = ($jobOutput | ForEach-Object { [string]$_ }) -join "`n"
+            return [pscustomobject]@{
+                ExitCode = 1
+                Output = $textOutput
+            }
+        }
+
+        $outputLines = @(([string]$result.Output) -split "`r?`n" | Where-Object { $_ })
+        foreach ($line in $outputLines) {
+            Write-InstallerLog $line
+        }
+        return [pscustomobject]@{
+            ExitCode = [int]$result.ExitCode
+            Output = ($outputLines -join "`n")
+        }
+    } finally {
+        if ($job) {
+            Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Invoke-HiddenNativeCommand([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 600) {
+    if ((Split-Path -Leaf $FilePath) -ieq "wsl.exe") {
+        return Invoke-IsolatedNativeCommand -FilePath $FilePath -Arguments $Arguments -TimeoutSeconds $TimeoutSeconds
+    }
+
+    Write-InstallerLog ("> {0} {1}" -f $FilePath, ($Arguments -join " "))
+
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $FilePath
+    $startInfo.Arguments = (($Arguments | ForEach-Object { ConvertTo-NativeArgument ([string]$_) }) -join " ")
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    try {
+        $startInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+        $startInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    } catch {}
+
+    $lines = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+    $outputHandler = [System.Diagnostics.DataReceivedEventHandler]{
+        param($sender, $eventArgs)
+        if ($null -ne $eventArgs.Data) {
+            [void]$lines.Add([string]$eventArgs.Data)
+        }
+    }
+    $errorHandler = [System.Diagnostics.DataReceivedEventHandler]{
+        param($sender, $eventArgs)
+        if ($null -ne $eventArgs.Data) {
+            [void]$lines.Add([string]$eventArgs.Data)
+        }
+    }
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $process.add_OutputDataReceived($outputHandler)
+    $process.add_ErrorDataReceived($errorHandler)
+    $exitCode = $NativeCommandTimeoutExitCode
+    try {
+        [void]$process.Start()
+        $process.BeginOutputReadLine()
+        $process.BeginErrorReadLine()
+        $timeoutMilliseconds = [Math]::Max(1, $TimeoutSeconds) * 1000
+        if ($process.WaitForExit($timeoutMilliseconds)) {
+            $process.WaitForExit()
+            $exitCode = $process.ExitCode
+        } else {
+            Write-InstallerLog "Native command timed out after $TimeoutSeconds seconds; terminating process tree for PID $($process.Id)."
+            [void]$lines.Add("Timed out after $TimeoutSeconds seconds.")
+            Stop-HiddenNativeProcessTree $process
+        }
+    } finally {
+        $process.remove_OutputDataReceived($outputHandler)
+        $process.remove_ErrorDataReceived($errorHandler)
+        $process.Dispose()
+    }
+
+    $outputLines = @($lines.ToArray() | ForEach-Object { [string]$_ })
+    foreach ($line in $outputLines) {
+        if ($line) {
+            Write-InstallerLog $line
+        }
+    }
+
+    return [pscustomobject]@{
+        ExitCode = [int]$exitCode
+        Output = ($outputLines -join "`n")
+    }
+}
+
 $logRoot = Join-Path (Resolve-LocalAppData) "Veslo\logs"
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 $logPath = Join-Path $logRoot "wsl2-sandbox-installer.log"
@@ -184,16 +329,19 @@ try {
 }
 
 function Finish-Installer([int]$ProvisionExitCode) {
-    Write-InstallerLog "Provisioning wrapper finished with provisioner exit code $ProvisionExitCode. MSI exit remains 0."
+    Write-InstallerLog "Provisioning wrapper finished with provisioner exit code $ProvisionExitCode."
     try {
         Stop-Transcript | Out-Null
     } catch {}
-    exit 0
+    exit $ProvisionExitCode
 }
 
 try {
     Write-InstallerLog "Veslo WSL2 sandbox installer wrapper started."
-    Write-InstallerLog "Identity: $([Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+    Write-InstallerLog "Script revision: $SandboxInstallerScriptRevision"
+    Write-InstallerLog "Script path: $($MyInvocation.MyCommand.Path)"
+    $identityName = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    Write-InstallerLog "Identity: $identityName"
     Write-InstallerLog "Distro: $DistroName"
 
     $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -216,20 +364,19 @@ try {
         }
     }
 
-    $identityName = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     if ($identityName -match "\\SYSTEM$") {
-        Write-InstallerLog "Skipping WSL provisioning under SYSTEM. WSL distros are per-user; Settings/onboarding repair must run under the target user."
-        Finish-Installer 0
+        Write-InstallerLog "Cannot provision Veslo WSL runtime under SYSTEM. WSL distros are per-user; run installer or repair under the target Windows user."
+        Finish-Installer 5
     }
 
     $wslCommand = Resolve-WslExecutable
     if (-not $wslCommand) {
         Write-InstallerLog "wsl.exe was not found. Install WSL first, then run Veslo repair/onboarding."
-        Finish-Installer 0
+        Finish-Installer 127
     }
     Write-InstallerLog "Resolved wsl.exe: $wslCommand"
 
-    $wslStatus = Invoke-HiddenNativeCommand $wslCommand @("--status")
+    $wslStatus = Invoke-HiddenNativeCommand -FilePath $wslCommand -Arguments @("--status") -TimeoutSeconds 45
     if ($wslStatus.ExitCode -ne 0) {
         Write-InstallerLog "WSL is installed incompletely or needs a reboot. Not running distro import from MSI."
         Finish-Installer $wslStatus.ExitCode
@@ -238,7 +385,7 @@ try {
     $powershellCommand = Resolve-PowerShellExecutable
     if (-not $powershellCommand) {
         Write-InstallerLog "powershell.exe was not found. Not running distro import from MSI."
-        Finish-Installer 0
+        Finish-Installer 127
     }
     Write-InstallerLog "Resolved powershell.exe: $powershellCommand"
 
@@ -264,14 +411,14 @@ try {
     }
 
     Write-InstallerLog "Checking existing managed WSL runtime."
-    $checkResult = Invoke-HiddenNativeCommand $powershellCommand @($baseArgs + @("-CheckOnly"))
+    $checkResult = Invoke-HiddenNativeCommand -FilePath $powershellCommand -Arguments @($baseArgs + @("-CheckOnly")) -TimeoutSeconds 600
     if ($checkResult.ExitCode -eq 0) {
         Write-InstallerLog "Managed WSL runtime already satisfies Veslo requirements."
         Finish-Installer 0
     }
 
     Write-InstallerLog "Managed WSL runtime is missing or incomplete; provisioning now."
-    $provisionResult = Invoke-HiddenNativeCommand $powershellCommand $baseArgs
+    $provisionResult = Invoke-HiddenNativeCommand -FilePath $powershellCommand -Arguments $baseArgs -TimeoutSeconds 3600
     Finish-Installer $provisionResult.ExitCode
 } catch {
     Write-InstallerLog "Unhandled wrapper error: $($_.Exception.Message)"

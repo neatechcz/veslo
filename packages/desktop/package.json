@@ -1,9 +1,9 @@
 {
   "name": "@neatech/veslo",
   "private": true,
-  "version": "2026.6.9",
+  "version": "2026.6.24",
   "opencodeVersion": "1.17.4",
-  "opencodeRouterVersion": "2026.6.9",
+  "opencodeRouterVersion": "2026.6.24",
   "type": "module",
   "scripts": {
     "dev": "node ./scripts/tauri-dev.mjs",

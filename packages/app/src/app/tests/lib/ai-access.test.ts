@@ -13,6 +13,7 @@ import {
   resolveManagedAiAccessBundleState,
   resolveManagedAiGatewayBaseUrl,
   resolveManagedAiProviderRoutingTarget,
+  requiresManagedAiBridgeForRuntime,
   requiresManagedAiEngineBaseUrl,
   shouldPreserveManagedAiConfig,
   shouldEnsureManagedAiLocalGateway,
@@ -273,6 +274,8 @@ test("resolveManagedAiProviderRoutingTarget requires an engine URL for WSL sandb
     requiresManagedAiEngineBaseUrl({
       isDesktopRuntime: true,
       workspaceType: "local",
+      engineBaseUrl: "http://172.29.64.1:8787",
+      requiresEngineBridgeUrl: true,
       sandboxEnabled: true,
       sandboxBackend: "windows-wsl2",
     }),
@@ -312,11 +315,119 @@ test("resolveManagedAiProviderRoutingTarget requires an engine URL for WSL sandb
   );
 });
 
+test("resolveManagedAiProviderRoutingTarget rejects WSL sandbox routing without a non-loopback engine URL", () => {
+  assert.equal(
+    requiresManagedAiEngineBaseUrl({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      engineBaseUrl: "",
+      requiresEngineBridgeUrl: true,
+      sandboxEnabled: true,
+      sandboxBackend: "windows-wsl2",
+    }),
+    true,
+  );
+
+  assert.equal(
+    requiresManagedAiEngineBaseUrl({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      engineBaseUrl: "http://127.0.0.1:8787",
+      requiresEngineBridgeUrl: true,
+      sandboxEnabled: true,
+      sandboxBackend: "windows-wsl2",
+    }),
+    true,
+  );
+
+  assert.equal(
+    resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      activeBaseUrl: "http://127.0.0.1:8787",
+      engineBaseUrl: "",
+      requireEngineBaseUrl: true,
+      activeToken: "local-client-token",
+      gatewayBaseUrl: "",
+      gatewayToken: "",
+    }),
+    null,
+  );
+
+  assert.equal(
+    resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      activeBaseUrl: "http://127.0.0.1:8787",
+      engineBaseUrl: "http://127.0.0.1:8787",
+      requireEngineBaseUrl: true,
+      activeToken: "local-client-token",
+      gatewayBaseUrl: "",
+      gatewayToken: "",
+    }),
+    null,
+  );
+});
+
+test("managed AI bridge requirement fails closed for configured WSL until direct fallback is proven", () => {
+  assert.equal(
+    requiresManagedAiBridgeForRuntime({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      configuredSandboxEnabled: true,
+      configuredSandboxBackend: "windows-wsl2",
+      effectiveSandboxBackend: "windows-wsl2",
+      childKind: null,
+    }),
+    true,
+  );
+  assert.equal(
+    requiresManagedAiEngineBaseUrl({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      engineBaseUrl: "",
+      configuredSandboxEnabled: true,
+      configuredSandboxBackend: "windows-wsl2",
+      effectiveSandboxBackend: "windows-wsl2",
+      childKind: null,
+      sandboxEnabled: true,
+      sandboxBackend: "windows-wsl2",
+    }),
+    true,
+  );
+  assert.equal(
+    requiresManagedAiBridgeForRuntime({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      configuredSandboxEnabled: true,
+      configuredSandboxBackend: "windows-wsl2",
+      effectiveSandboxBackend: "none",
+      childKind: "direct",
+    }),
+    false,
+  );
+  assert.equal(
+    requiresManagedAiEngineBaseUrl({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      engineBaseUrl: "",
+      configuredSandboxEnabled: true,
+      configuredSandboxBackend: "windows-wsl2",
+      effectiveSandboxBackend: "none",
+      childKind: "direct",
+      sandboxEnabled: false,
+      sandboxBackend: "none",
+    }),
+    false,
+  );
+});
+
 test("resolveManagedAiProviderRoutingTarget keeps loopback fallback for non-WSL local routing", () => {
   assert.equal(
     requiresManagedAiEngineBaseUrl({
       isDesktopRuntime: true,
       workspaceType: "local",
+      engineBaseUrl: "",
       sandboxEnabled: false,
       sandboxBackend: "none",
     }),
@@ -942,6 +1053,42 @@ test("hasUsableManagedAiRuntimeConfig rejects stale managed base URLs", () => {
       serverClientToken: "veslo-client-token",
     }),
     false,
+  );
+});
+
+test("hasUsableManagedAiRuntimeConfig rejects a stale loopback config for a WSL bridge runtime (VSLO-250)", () => {
+  // A config written before the WSL bridge fix points the provider at the
+  // Windows loopback URL, which OpenCode running inside WSL cannot reach.
+  const staleLoopbackContent = formatManagedAiAccessConfig("{}", {
+    profile: managedCodexProfile,
+    serverBaseUrl: "http://127.0.0.1:8787",
+    engineBaseUrl: "http://127.0.0.1:8787",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "gateway-access-token",
+  });
+
+  // For a WSL runtime the effective gateway base URL is the WSL bridge IP, so
+  // the loopback config must be rejected — this is what forces a config rewrite
+  // and a fail-closed send instead of the silent 30s provider-start timeout.
+  assert.equal(
+    hasUsableManagedAiRuntimeConfig({
+      content: staleLoopbackContent,
+      providerId: "codex_oauth",
+      gatewayBaseUrl: "http://172.29.64.1:8787",
+      serverClientToken: "veslo-client-token",
+    }),
+    false,
+  );
+
+  // A proven direct (non-WSL) runtime still accepts the loopback routing.
+  assert.equal(
+    hasUsableManagedAiRuntimeConfig({
+      content: staleLoopbackContent,
+      providerId: "codex_oauth",
+      gatewayBaseUrl: "http://127.0.0.1:8787",
+      serverClientToken: "veslo-client-token",
+    }),
+    true,
   );
 });
 

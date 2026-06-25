@@ -44,6 +44,11 @@ export type EngineSpawnResult = {
   child: ChildProcess;
   baseUrl: string;
   childKind?: "direct" | "wsl";
+  sandboxed?: boolean;
+  configuredSandboxBackend?: string;
+  effectiveSandboxBackend?: string;
+  sandboxMode?: "resolved" | "explicit-none" | "disabled-by-env" | "unavailable" | "launch-fallback";
+  sandboxFallbackReason?: string | null;
 };
 
 export type EngineProcess = {
@@ -54,6 +59,11 @@ export type EngineProcess = {
   workdir: string;
   configDir: string;
   childKind?: "direct" | "wsl";
+  sandboxed?: boolean;
+  configuredSandboxBackend?: string;
+  effectiveSandboxBackend?: string;
+  sandboxMode?: "resolved" | "explicit-none" | "disabled-by-env" | "unavailable" | "launch-fallback";
+  sandboxFallbackReason?: string | null;
   state: EngineState;
   spawnedAt: number;
   lastActivityAt: number;
@@ -74,6 +84,11 @@ export type SerializedEngineState = {
   workdir: string;
   configDir: string;
   childKind?: "direct" | "wsl";
+  sandboxed?: boolean;
+  configuredSandboxBackend?: string;
+  effectiveSandboxBackend?: string;
+  sandboxMode?: "resolved" | "explicit-none" | "disabled-by-env" | "unavailable" | "launch-fallback";
+  sandboxFallbackReason?: string | null;
   state: EngineState;
   spawnedAt: number;
   lastActivityAt: number;
@@ -312,6 +327,11 @@ export class EnginePool {
       workdir: engine.workdir,
       configDir: engine.configDir,
       childKind: engine.childKind,
+      ...(engine.sandboxed !== undefined ? { sandboxed: engine.sandboxed } : {}),
+      ...(engine.configuredSandboxBackend !== undefined ? { configuredSandboxBackend: engine.configuredSandboxBackend } : {}),
+      ...(engine.effectiveSandboxBackend !== undefined ? { effectiveSandboxBackend: engine.effectiveSandboxBackend } : {}),
+      ...(engine.sandboxMode !== undefined ? { sandboxMode: engine.sandboxMode } : {}),
+      ...(engine.sandboxFallbackReason !== undefined ? { sandboxFallbackReason: engine.sandboxFallbackReason } : {}),
       state: engine.state,
       spawnedAt: engine.spawnedAt,
       lastActivityAt: engine.lastActivityAt,
@@ -649,12 +669,22 @@ export class EnginePool {
       workdir,
       port,
     });
-    const { child, baseUrl, childKind } = await this.deps.spawnEngine({
+    const {
+      child,
+      baseUrl,
+      childKind: spawnedChildKind,
+      sandboxed,
+      configuredSandboxBackend,
+      effectiveSandboxBackend,
+      sandboxMode,
+      sandboxFallbackReason,
+    } = await this.deps.spawnEngine({
       workspaceId: workspace.id,
       workdir,
       configDir,
       port,
     });
+    const childKind = spawnedChildKind ?? "direct";
 
     const existing = this.engines.get(workspace.id);
     const engine: EngineProcess = {
@@ -665,6 +695,11 @@ export class EnginePool {
       workdir,
       configDir,
       childKind,
+      ...(sandboxed !== undefined ? { sandboxed } : {}),
+      ...(configuredSandboxBackend !== undefined ? { configuredSandboxBackend } : {}),
+      ...(effectiveSandboxBackend !== undefined ? { effectiveSandboxBackend } : {}),
+      ...(sandboxMode !== undefined ? { sandboxMode } : {}),
+      ...(sandboxFallbackReason !== undefined ? { sandboxFallbackReason } : {}),
       state: "spawning",
       spawnedAt,
       lastActivityAt: spawnedAt,

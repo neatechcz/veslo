@@ -53,6 +53,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --prefer-offline
 
+      - name: Review release packaging
+        run: pnpm release:review --strict
+
       - name: Create CI Tauri config (disable updater artifacts)
         shell: bash
         run: |

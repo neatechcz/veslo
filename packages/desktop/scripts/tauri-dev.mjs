@@ -6,12 +6,16 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { main as cleanupDevProcesses } from "./cleanup-dev-processes.mjs";
+import { loadDotEnv } from "../../../scripts/load-env.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const desktopDir = resolve(__dirname, "..");
+const repoRoot = resolve(desktopDir, "..", "..");
 const serverDir = resolve(desktopDir, "..", "server");
 const tauriCli = require.resolve("@tauri-apps/cli/tauri.js");
+
+loadDotEnv({ cwd: repoRoot });
 
 const readPort = () => {
   const value = Number.parseInt(process.env.PORT ?? "", 10);

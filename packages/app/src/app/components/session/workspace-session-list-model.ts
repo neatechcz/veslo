@@ -12,7 +12,9 @@ export type FlatSessionRow = {
   status: WorkspaceSessionGroup["status"];
   error: string | null;
   parentSessionId: string | null;
+  parentRowKey: string | null;
   rootSessionId: string;
+  rootRowKey: string;
   nestingLevel: number;
   isSubagent: boolean;
   treeActivityAt: number;
@@ -228,7 +230,7 @@ const compareRecentRows = (a: FlatSessionRow, b: FlatSessionRow) => {
   const byCreated = b.createdAt - a.createdAt;
   if (byCreated !== 0) return byCreated;
 
-  return a.session.id.localeCompare(b.session.id);
+  return a.rowKey.localeCompare(b.rowKey);
 };
 
 const compareProjectRows = (a: FlatSessionRow, b: FlatSessionRow) => {
@@ -238,7 +240,7 @@ const compareProjectRows = (a: FlatSessionRow, b: FlatSessionRow) => {
   const byCreated = b.createdAt - a.createdAt;
   if (byCreated !== 0) return byCreated;
 
-  return a.session.id.localeCompare(b.session.id);
+  return a.rowKey.localeCompare(b.rowKey);
 };
 
 const compareProjectGroups = (
@@ -261,6 +263,50 @@ const parentSessionIdForSession = (
   return value || null;
 };
 
+const rowKeyForSession = (workspaceId: string, sessionId: string) => `${workspaceId}:${sessionId}`;
+
+const rowIdentity = (row: Pick<FlatSessionRow, "rowKey" | "workspace" | "session">) =>
+  row.rowKey || rowKeyForSession(row.workspace.id, row.session.id);
+
+const resolveRowByIdentity = (rows: FlatSessionRow[], identity: string): FlatSessionRow | null => {
+  const id = identity.trim();
+  if (!id) return null;
+  return rows.find((row) => rowIdentity(row) === id) ?? rows.find((row) => row.session.id === id) ?? null;
+};
+
+const buildRowKeyIndexes = (rows: FlatSessionRow[]) => {
+  const rowByKey = new Map<string, FlatSessionRow>();
+  const rowKeysBySessionId = new Map<string, string[]>();
+
+  for (const row of rows) {
+    const key = rowIdentity(row);
+    rowByKey.set(key, row);
+    const existing = rowKeysBySessionId.get(row.session.id);
+    if (existing) {
+      existing.push(key);
+    } else {
+      rowKeysBySessionId.set(row.session.id, [key]);
+    }
+  }
+
+  return { rowByKey, rowKeysBySessionId };
+};
+
+const resolveParentRowKey = (
+  row: FlatSessionRow,
+  rowByKey: ReadonlyMap<string, FlatSessionRow>,
+  rowKeysBySessionId: ReadonlyMap<string, readonly string[]>,
+): string | null => {
+  const parentId = row.parentSessionId?.trim() ?? "";
+  if (!parentId) return null;
+
+  const sameWorkspaceKey = rowKeyForSession(row.workspace.id, parentId);
+  if (rowByKey.has(sameWorkspaceKey)) return sameWorkspaceKey;
+
+  const candidates = rowKeysBySessionId.get(parentId) ?? [];
+  return candidates.length === 1 ? candidates[0] ?? null : null;
+};
+
 const buildFlatSessionRow = (
   group: WorkspaceSessionGroup,
   session: WorkspaceSessionGroup["sessions"][number],
@@ -268,15 +314,18 @@ const buildFlatSessionRow = (
 ): FlatSessionRow => {
   const projectRoot = rootForSession(group.workspace, session);
   const isPrivateProject = isPrivateProjectRoot(group.workspace, projectRoot, isPrivateWorkspacePath);
+  const rowKey = rowKeyForSession(group.workspace.id, session.id);
 
   return {
-    rowKey: `${group.workspace.id}:${session.id}`,
+    rowKey,
     workspace: group.workspace,
     session,
     status: group.status,
     error: group.error ?? null,
     parentSessionId: parentSessionIdForSession(session),
+    parentRowKey: null,
     rootSessionId: session.id,
+    rootRowKey: rowKey,
     nestingLevel: 0,
     isSubagent: false,
     treeActivityAt: activityTimestamp(session),
@@ -300,46 +349,80 @@ const collectFlatRows = (
 
 export type RowHierarchyLookup = {
   rowBySessionId: Map<string, FlatSessionRow>;
+  rowByRowKey: Map<string, FlatSessionRow>;
   parentBySessionId: Map<string, string>;
+  parentByRowKey: Map<string, string>;
   childrenByParentId: Map<string, string[]>;
+  childrenByParentRowKey: Map<string, string[]>;
 };
 
 export const buildRowHierarchyLookup = (rows: FlatSessionRow[]): RowHierarchyLookup => {
   const rowBySessionId = new Map<string, FlatSessionRow>();
+  const rowByRowKey = new Map<string, FlatSessionRow>();
   const parentBySessionId = new Map<string, string>();
+  const parentByRowKey = new Map<string, string>();
   const childrenByParentId = new Map<string, string[]>();
+  const childrenByParentRowKey = new Map<string, string[]>();
+  const { rowByKey, rowKeysBySessionId } = buildRowKeyIndexes(rows);
 
   for (const row of rows) {
     rowBySessionId.set(row.session.id, row);
+    rowByRowKey.set(rowIdentity(row), row);
   }
 
   for (const row of rows) {
     const parentId = row.parentSessionId;
-    if (!parentId || !rowBySessionId.has(parentId)) continue;
+    const parentRowKey = row.parentRowKey ?? resolveParentRowKey(row, rowByKey, rowKeysBySessionId);
+    if (!parentId || !parentRowKey || !rowByRowKey.has(parentRowKey)) continue;
     parentBySessionId.set(row.session.id, parentId);
+    parentByRowKey.set(rowIdentity(row), parentRowKey);
     const existing = childrenByParentId.get(parentId);
     if (existing) {
       existing.push(row.session.id);
     } else {
       childrenByParentId.set(parentId, [row.session.id]);
     }
+    const existingByRowKey = childrenByParentRowKey.get(parentRowKey);
+    if (existingByRowKey) {
+      existingByRowKey.push(rowIdentity(row));
+    } else {
+      childrenByParentRowKey.set(parentRowKey, [rowIdentity(row)]);
+    }
   }
 
-  return { rowBySessionId, parentBySessionId, childrenByParentId };
+  return {
+    rowBySessionId,
+    rowByRowKey,
+    parentBySessionId,
+    parentByRowKey,
+    childrenByParentId,
+    childrenByParentRowKey,
+  };
 };
 
 export const rootRowsForSessionTree = (rows: FlatSessionRow[]): FlatSessionRow[] => {
-  const ids = new Set(rows.map((row) => row.session.id));
-  return rows.filter((row) => !row.parentSessionId || !ids.has(row.parentSessionId));
+  const lookup = buildRowHierarchyLookup(rows);
+  return rows.filter((row) => !lookup.parentByRowKey.has(rowIdentity(row)));
 };
 
 export const directChildRowsForParent = (
   rows: FlatSessionRow[],
   parentSessionId: string,
 ): FlatSessionRow[] => {
-  const id = parentSessionId.trim();
-  if (!id) return [];
-  return rows.filter((row) => row.parentSessionId === id);
+  const parentIdentity = parentSessionId.trim();
+  if (!parentIdentity) return [];
+  const parent = resolveRowByIdentity(rows, parentIdentity);
+  const parentKey = parent ? rowIdentity(parent) : parentIdentity;
+  const lookup = buildRowHierarchyLookup(rows);
+  const childKeys = new Set(lookup.childrenByParentRowKey.get(parentKey) ?? []);
+  if (childKeys.size > 0) {
+    return rows.filter((row) => childKeys.has(rowIdentity(row)));
+  }
+
+  const scopedChildren = rows.filter((row) => row.parentRowKey === parentKey);
+  if (scopedChildren.length > 0) return scopedChildren;
+
+  return parent ? [] : rows.filter((row) => row.parentSessionId === parentIdentity);
 };
 
 export const descendantRowsForParent = (
@@ -349,17 +432,20 @@ export const descendantRowsForParent = (
   const id = parentSessionId.trim();
   if (!id) return [];
 
-  const parentIndex = rows.findIndex((row) => row.session.id === id);
+  const parent = resolveRowByIdentity(rows, id);
+  if (!parent) return [];
+  const parentKey = rowIdentity(parent);
+  const parentIndex = rows.findIndex((row) => rowIdentity(row) === parentKey);
   if (parentIndex < 0) return [];
 
   const parentLevel = rows[parentIndex].nestingLevel;
   const lookup = buildRowHierarchyLookup(rows);
   const descendants: FlatSessionRow[] = [];
-  const isDescendantOf = (candidateId: string, ancestorId: string) => {
-    let parentId = lookup.parentBySessionId.get(candidateId) ?? null;
-    while (parentId) {
-      if (parentId === ancestorId) return true;
-      parentId = lookup.parentBySessionId.get(parentId) ?? null;
+  const isDescendantOf = (candidateKey: string, ancestorKey: string) => {
+    let parentKey = lookup.parentByRowKey.get(candidateKey) ?? null;
+    while (parentKey) {
+      if (parentKey === ancestorKey) return true;
+      parentKey = lookup.parentByRowKey.get(parentKey) ?? null;
     }
     return false;
   };
@@ -367,7 +453,7 @@ export const descendantRowsForParent = (
   for (let index = parentIndex + 1; index < rows.length; index += 1) {
     const row = rows[index];
     if (row.nestingLevel <= parentLevel) break;
-    if (isDescendantOf(row.session.id, id)) descendants.push(row);
+    if (isDescendantOf(rowIdentity(row), parentKey)) descendants.push(row);
   }
 
   return descendants;
@@ -378,14 +464,15 @@ export const rowVisibleByExpansion = (
   lookup: RowHierarchyLookup,
   expandedParentSessionIds: ReadonlySet<string>,
 ) => {
-  let parentId = lookup.parentBySessionId.get(row.session.id) ?? null;
-  while (parentId) {
-    if (!lookup.rowBySessionId.has(parentId)) {
+  let parentKey = lookup.parentByRowKey.get(rowIdentity(row)) ?? null;
+  while (parentKey) {
+    const parentRow = lookup.rowByRowKey.get(parentKey);
+    if (!parentRow) {
       // Parent missing from current data slice (pagination, loading) — keep child visible.
       return true;
     }
-    if (!expandedParentSessionIds.has(parentId)) return false;
-    parentId = lookup.parentBySessionId.get(parentId) ?? null;
+    if (!expandedParentSessionIds.has(parentKey) && !expandedParentSessionIds.has(parentRow.session.id)) return false;
+    parentKey = lookup.parentByRowKey.get(parentKey) ?? null;
   }
   return true;
 };
@@ -399,28 +486,30 @@ export const requiredVisibleCountForExpandedSession = (
   if (!id) return null;
 
   const lookup = buildRowHierarchyLookup(rows);
-  if (!lookup.rowBySessionId.has(id)) return null;
-  const childCount = lookup.childrenByParentId.get(id)?.length ?? 0;
+  const parent = resolveRowByIdentity(rows, id);
+  if (!parent) return null;
+  const parentKey = rowIdentity(parent);
+  const childCount = lookup.childrenByParentRowKey.get(parentKey)?.length ?? 0;
   if (childCount === 0) return null;
 
   const visibleRows = rows.filter((row) =>
     rowVisibleByExpansion(row, lookup, expandedParentSessionIds)
   );
-  const parentIndex = visibleRows.findIndex((row) => row.session.id === id);
+  const parentIndex = visibleRows.findIndex((row) => rowIdentity(row) === parentKey);
   if (parentIndex < 0) return null;
 
-  const isDescendantOf = (candidateId: string, ancestorId: string) => {
-    let parentId = lookup.parentBySessionId.get(candidateId) ?? null;
-    while (parentId) {
-      if (parentId === ancestorId) return true;
-      parentId = lookup.parentBySessionId.get(parentId) ?? null;
+  const isDescendantOf = (candidateKey: string, ancestorKey: string) => {
+    let parentKey = lookup.parentByRowKey.get(candidateKey) ?? null;
+    while (parentKey) {
+      if (parentKey === ancestorKey) return true;
+      parentKey = lookup.parentByRowKey.get(parentKey) ?? null;
     }
     return false;
   };
 
   let deepestVisibleDescendantIndex = parentIndex;
   for (let index = parentIndex + 1; index < visibleRows.length; index += 1) {
-    if (isDescendantOf(visibleRows[index].session.id, id)) {
+    if (isDescendantOf(rowIdentity(visibleRows[index]), parentKey)) {
       deepestVisibleDescendantIndex = index;
     }
   }
@@ -467,73 +556,77 @@ const buildHierarchicalRows = (
 ): FlatSessionRow[] => {
   if (!rows.length) return [];
 
-  const rowBySessionId = new Map(rows.map((row) => [row.session.id, row] as const));
-  const childrenByParentId = new Map<string, FlatSessionRow[]>();
+  const { rowByKey, rowKeysBySessionId } = buildRowKeyIndexes(rows);
+  const parentByRowKey = new Map<string, string>();
+  const childrenByParentKey = new Map<string, FlatSessionRow[]>();
 
   for (const row of rows) {
-    const parentId = row.parentSessionId;
-    if (!parentId || !rowBySessionId.has(parentId)) continue;
-    const existing = childrenByParentId.get(parentId);
+    const parentKey = resolveParentRowKey(row, rowByKey, rowKeysBySessionId);
+    if (!parentKey) continue;
+    parentByRowKey.set(rowIdentity(row), parentKey);
+    const existing = childrenByParentKey.get(parentKey);
     if (existing) {
       existing.push(row);
     } else {
-      childrenByParentId.set(parentId, [row]);
+      childrenByParentKey.set(parentKey, [row]);
     }
   }
 
   const resolving = new Set<string>();
-  const hierarchyCache = new Map<string, { rootSessionId: string; nestingLevel: number }>();
-  const resolveHierarchy = (sessionId: string): { rootSessionId: string; nestingLevel: number } => {
-    const cached = hierarchyCache.get(sessionId);
+  const hierarchyCache = new Map<string, { rootSessionId: string; rootRowKey: string; nestingLevel: number }>();
+  const resolveHierarchy = (rowKey: string): { rootSessionId: string; rootRowKey: string; nestingLevel: number } => {
+    const cached = hierarchyCache.get(rowKey);
     if (cached) return cached;
-    if (resolving.has(sessionId)) {
-      return { rootSessionId: sessionId, nestingLevel: 0 };
+    if (resolving.has(rowKey)) {
+      const row = rowByKey.get(rowKey);
+      return { rootSessionId: row?.session.id ?? rowKey, rootRowKey: rowKey, nestingLevel: 0 };
     }
 
-    resolving.add(sessionId);
-    const row = rowBySessionId.get(sessionId);
-    let next: { rootSessionId: string; nestingLevel: number };
-    if (!row?.parentSessionId || !rowBySessionId.has(row.parentSessionId)) {
-      next = { rootSessionId: sessionId, nestingLevel: 0 };
+    resolving.add(rowKey);
+    const row = rowByKey.get(rowKey);
+    const parentKey = row ? parentByRowKey.get(rowKey) : null;
+    let next: { rootSessionId: string; rootRowKey: string; nestingLevel: number };
+    if (!row || !parentKey || !rowByKey.has(parentKey)) {
+      next = { rootSessionId: row?.session.id ?? rowKey, rootRowKey: rowKey, nestingLevel: 0 };
     } else {
-      const parent = resolveHierarchy(row.parentSessionId);
-      next = parent.rootSessionId === sessionId
-        ? { rootSessionId: sessionId, nestingLevel: 0 }
-        : { rootSessionId: parent.rootSessionId, nestingLevel: parent.nestingLevel + 1 };
+      const parent = resolveHierarchy(parentKey);
+      next = parent.rootRowKey === rowKey
+        ? { rootSessionId: row.session.id, rootRowKey: rowKey, nestingLevel: 0 }
+        : { rootSessionId: parent.rootSessionId, rootRowKey: parent.rootRowKey, nestingLevel: parent.nestingLevel + 1 };
     }
 
-    resolving.delete(sessionId);
-    hierarchyCache.set(sessionId, next);
+    resolving.delete(rowKey);
+    hierarchyCache.set(rowKey, next);
     return next;
   };
 
-  const treeActivityByRootId = new Map<string, number>();
+  const treeActivityByRootKey = new Map<string, number>();
   for (const row of rows) {
-    const info = resolveHierarchy(row.session.id);
-    const latest = treeActivityByRootId.get(info.rootSessionId) ?? 0;
-    treeActivityByRootId.set(info.rootSessionId, Math.max(latest, row.activityAt));
+    const info = resolveHierarchy(rowIdentity(row));
+    const latest = treeActivityByRootKey.get(info.rootRowKey) ?? 0;
+    treeActivityByRootKey.set(info.rootRowKey, Math.max(latest, row.activityAt));
   }
 
-  for (const children of childrenByParentId.values()) {
+  for (const children of childrenByParentKey.values()) {
     children.sort(compareRows);
   }
 
   const compareRootRows = (a: FlatSessionRow, b: FlatSessionRow) => {
-    const aRoot = resolveHierarchy(a.session.id).rootSessionId;
-    const bRoot = resolveHierarchy(b.session.id).rootSessionId;
+    const aRoot = resolveHierarchy(rowIdentity(a)).rootRowKey;
+    const bRoot = resolveHierarchy(rowIdentity(b)).rootRowKey;
     const byTreeActivity =
-      (treeActivityByRootId.get(bRoot) ?? b.activityAt) - (treeActivityByRootId.get(aRoot) ?? a.activityAt);
+      (treeActivityByRootKey.get(bRoot) ?? b.activityAt) - (treeActivityByRootKey.get(aRoot) ?? a.activityAt);
     if (byTreeActivity !== 0) return byTreeActivity;
     return compareRows(a, b);
   };
 
-  const emittedSessionIds = new Set<string>();
+  const emittedRowKeys = new Set<string>();
   const ordered: FlatSessionRow[] = [];
   const applyPrivateRootContext = (row: FlatSessionRow, rootRow: FlatSessionRow): FlatSessionRow => {
-    if (!rootRow.isPrivateProject || rootRow.session.id === row.session.id) return row;
+    if (!rootRow.isPrivateProject || rowIdentity(rootRow) === rowIdentity(row)) return row;
     return {
       ...row,
-      rowKey: `${rootRow.workspace.id}:${row.session.id}`,
+      rowKey: rowKeyForSession(rootRow.workspace.id, row.session.id),
       workspace: rootRow.workspace,
       status: rootRow.status,
       error: rootRow.error,
@@ -544,33 +637,36 @@ const buildHierarchicalRows = (
     };
   };
   const appendRow = (row: FlatSessionRow) => {
-    if (emittedSessionIds.has(row.session.id)) return;
-    emittedSessionIds.add(row.session.id);
+    const key = rowIdentity(row);
+    if (emittedRowKeys.has(key)) return;
+    emittedRowKeys.add(key);
 
-    const info = resolveHierarchy(row.session.id);
-    const rootRow = rowBySessionId.get(info.rootSessionId) ?? row;
+    const info = resolveHierarchy(key);
+    const rootRow = rowByKey.get(info.rootRowKey) ?? row;
     const contextualRow = applyPrivateRootContext(row, rootRow);
     ordered.push({
       ...contextualRow,
+      parentRowKey: parentByRowKey.get(key) ?? null,
       rootSessionId: info.rootSessionId,
+      rootRowKey: info.rootRowKey,
       nestingLevel: info.nestingLevel,
       isSubagent: info.nestingLevel > 0,
-      treeActivityAt: treeActivityByRootId.get(info.rootSessionId) ?? row.activityAt,
+      treeActivityAt: treeActivityByRootKey.get(info.rootRowKey) ?? row.activityAt,
     });
 
-    const children = childrenByParentId.get(row.session.id) ?? [];
+    const children = childrenByParentKey.get(key) ?? [];
     for (const child of children) {
       appendRow(child);
     }
   };
 
   rows
-    .filter((row) => resolveHierarchy(row.session.id).nestingLevel === 0)
+    .filter((row) => resolveHierarchy(rowIdentity(row)).nestingLevel === 0)
     .sort(compareRootRows)
     .forEach((row) => appendRow(row));
 
   rows
-    .filter((row) => !emittedSessionIds.has(row.session.id))
+    .filter((row) => !emittedRowKeys.has(rowIdentity(row)))
     .sort(compareRows)
     .forEach((row) => appendRow(row));
 
@@ -643,11 +739,11 @@ export const buildProjectGroups = (
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean = defaultPrivateWorkspacePath,
 ): ProjectSessionGroup[] => {
   const rows = collectFlatRows(workspaceSessionGroups, isPrivateWorkspacePath);
-  const rowBySessionId = new Map(rows.map((row) => [row.session.id, row] as const));
+  const rowByRowKey = new Map(rows.map((row) => [rowIdentity(row), row] as const));
   const groupedRows = new Map<string, FlatSessionRow[]>();
 
   for (const row of buildHierarchicalRows(rows, compareProjectRows)) {
-    const root = rowBySessionId.get(row.rootSessionId) ?? row;
+    const root = rowByRowKey.get(row.rootRowKey) ?? row;
     const groupKey = projectGroupKeyForRow(root);
     const existing = groupedRows.get(groupKey);
     if (existing) {
