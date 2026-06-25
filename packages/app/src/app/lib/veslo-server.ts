@@ -2629,9 +2629,13 @@ export function createVesloServerClient(options: {
           extraHeaders: accountId ? { "X-Veslo-Account-Id": accountId } : undefined,
         },
       ),
-    deleteSessionArchive: (sessionId: string, options?: { workspaceId?: string | null }) => {
+    deleteSessionArchive: (sessionId: string, options?: { workspaceId?: string | null; workspaceIdentity?: string | null }) => {
       const workspaceId = options?.workspaceId?.trim() ?? "";
-      const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+      const workspaceIdentity = options?.workspaceIdentity?.trim() ?? "";
+      const search = new URLSearchParams();
+      if (workspaceId) search.set("workspaceId", workspaceId);
+      if (workspaceIdentity) search.set("workspaceIdentity", workspaceIdentity);
+      const query = search.size > 0 ? `?${search.toString()}` : "";
       return requestJson<{ items: VesloSessionArchiveRecord[] }>(
         baseUrl,
         `/session-archives/${encodeURIComponent(sessionId)}${query}`,

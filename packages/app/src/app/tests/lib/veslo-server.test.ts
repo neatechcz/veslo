@@ -237,12 +237,15 @@ test("deleteSessionArchive includes workspace scope when provided", async () => 
       accountId: "usr_123",
     });
 
-    await client.deleteSessionArchive("shared-session", { workspaceId: "workspace-a" });
+    await client.deleteSessionArchive("shared-session", {
+      workspaceId: "workspace-a",
+      workspaceIdentity: "local:/workspace/a",
+    });
 
     assert.equal(calls.length, 1);
     assert.equal(
       calls[0]?.url,
-      "https://veslo.example/session-archives/shared-session?workspaceId=workspace-a",
+      "https://veslo.example/session-archives/shared-session?workspaceId=workspace-a&workspaceIdentity=local%3A%2Fworkspace%2Fa",
     );
     assert.equal(calls[0]?.method, "DELETE");
   } finally {

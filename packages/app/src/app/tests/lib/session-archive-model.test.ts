@@ -51,6 +51,20 @@ test("buildArchivedSidebarSessionKey scopes archived sidebar filtering by worksp
   assert.equal(buildArchivedSidebarSessionKey({ workspaceId: "", sessionId: "legacy" }), "legacy");
 });
 
+test("archived sidebar keys can scope identity-only archive records", () => {
+  assert.notEqual(
+    buildArchivedSidebarSessionKey({ workspaceIdentity: "local:/workspace/a", sessionId: "shared" }),
+    buildArchivedSidebarSessionKey({ workspaceIdentity: "local:/workspace/b", sessionId: "shared" }),
+  );
+  assert.equal(
+    archivedSidebarSessionKeyFromRecord({
+      workspaceIdentity: "local:/workspace/a",
+      sessionId: "shared",
+    }),
+    buildArchivedSidebarSessionKey({ workspaceIdentity: "local:/workspace/a", sessionId: "shared" }),
+  );
+});
+
 test("buildArchivedSessionDisplayLabel falls back to project and workspace snapshots", () => {
   const label = buildArchivedSessionDisplayLabel({
     sessionId: "sess_123",
@@ -126,6 +140,31 @@ test("toSessionArchiveItem marks unavailable sessions and uses record snapshots"
   assert.equal(item.workspaceId, "ws_cloud");
   assert.equal(item.workspaceLabel, "Cloud Workspace");
   assert.equal(item.projectLabel, "Client A");
+});
+
+test("toSessionArchiveItem resolves identity-only records to the current workspace id", () => {
+  const item = toSessionArchiveItem(
+    {
+      sessionId: "shared",
+      archivedAt: 50,
+      titleSnapshot: "Archived task",
+      workspaceLabelSnapshot: "Workspace A",
+      workspaceIdentity: "local:/workspace/a",
+    },
+    [
+      {
+        id: "workspace-a",
+        name: "Workspace A",
+        path: "/workspace/a",
+        preset: "starter",
+        workspaceType: "local",
+      },
+    ],
+  );
+
+  assert.equal(item.workspaceId, "workspace-a");
+  assert.equal(item.workspaceIdentity, "local:/workspace/a");
+  assert.equal(item.availableOnThisDevice, true);
 });
 
 test("buildLegacyArchiveMigration preserves local archive order as synthetic archived timestamps", () => {

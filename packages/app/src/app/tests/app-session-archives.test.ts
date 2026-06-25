@@ -18,7 +18,7 @@ test("session archive flow uses the resolved archive owner key instead of requir
   );
 
   const archiveFlow = source.match(
-    /const loadSessionArchives = async \(\) => \{[\s\S]*?const unarchiveSession = async \(workspaceId: string, sessionId: string\) => \{[\s\S]*?^\s*\};/m,
+    /const loadSessionArchives = async \(\) => \{[\s\S]*?const unarchiveSession = async \([\s\S]*?workspaceIdentityHint\?: string \| null,[\s\S]*?\) => \{[\s\S]*?^\s*\};/m,
   )?.[0] ?? "";
 
   assert.ok(archiveFlow, "app should define the session archive load/archive/unarchive flow");
@@ -31,8 +31,8 @@ test("session archive flow uses the resolved archive owner key instead of requir
   assert.match(archiveFlow, /writeArchiveMigrationDone\(ownerKey\);/);
   assert.match(
     archiveFlow,
-    /client\.deleteSessionArchive\(sessionId, \{ workspaceId \}\)/,
-    "unarchive should preserve workspace scope for duplicate session ids",
+    /client\.deleteSessionArchive\(sessionId, \{ workspaceId, workspaceIdentity \}\)/,
+    "unarchive should preserve workspace id and identity scope for duplicate session ids",
   );
 });
 

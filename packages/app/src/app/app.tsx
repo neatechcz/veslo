@@ -498,7 +498,6 @@ import {
   buildLegacyArchiveMigration,
   buildSessionArchiveSnapshot,
   sortArchivedSessionsByRecency,
-  archivedSidebarSessionKeyFromRecord,
   toSessionArchiveItem,
 } from "./lib/session-archive-model";
 import { isRemoteUiEnabled } from "./lib/runtime-policy";
@@ -6574,17 +6573,30 @@ export default function App() {
     setSessionArchiveReady(true);
   };
 
-  const archivedSessionIds = createMemo(() =>
-    sessionArchiveRecords().map((record) => archivedSidebarSessionKeyFromRecord(record)),
-  );
+  const archivedSessionIds = createMemo(() => {
+    const workspaces = workspaceStore.workspaces();
+    return sessionArchiveRecords().map((record) => {
+      const item = toSessionArchiveItem(record, workspaces);
+      return buildArchivedSidebarSessionKey({
+        workspaceId: item.workspaceId,
+        workspaceIdentity: item.workspaceIdentity,
+        sessionId: item.sessionId,
+      });
+    });
+  });
   const sessionArchives = createMemo(() =>
     sortArchivedSessionsByRecency(
       sessionArchiveRecords().map((record) => toSessionArchiveItem(record, workspaceStore.workspaces())),
     ),
   );
 
-  const withPendingArchivedSession = async (workspaceId: string, sessionId: string, task: () => Promise<void>) => {
-    const id = buildArchivedSidebarSessionKey({ workspaceId, sessionId });
+  const withPendingArchivedSession = async (
+    workspaceId: string,
+    sessionId: string,
+    task: () => Promise<void>,
+    workspaceIdentity?: string | null,
+  ) => {
+    const id = buildArchivedSidebarSessionKey({ workspaceId, workspaceIdentity, sessionId });
     if (!id) return;
     if (sessionArchivePendingIds().has(id)) return;
 
@@ -6741,7 +6753,11 @@ export default function App() {
     });
   };
 
-  const unarchiveSession = async (workspaceId: string, sessionId: string) => {
+  const unarchiveSession = async (
+    workspaceId: string,
+    sessionId: string,
+    workspaceIdentityHint?: string | null,
+  ) => {
     const client = vesloArchiveClient();
     const ownerKey = sessionArchiveOwnerKey();
     if (!client || !ownerKey) {
@@ -6749,12 +6765,23 @@ export default function App() {
       return;
     }
 
+    const workspaces = workspaceStore.workspaces();
+    const normalizedIdentityHint = workspaceIdentityHint?.trim() ?? "";
+    const archiveItem = sessionArchiveRecords()
+      .map((record) => toSessionArchiveItem(record, workspaces))
+      .find((item) =>
+        item.sessionId === sessionId &&
+        item.workspaceId === workspaceId &&
+        (!normalizedIdentityHint || item.workspaceIdentity === normalizedIdentityHint)
+      );
+    const workspaceIdentity = normalizedIdentityHint || archiveItem?.workspaceIdentity?.trim() || undefined;
+
     await withPendingArchivedSession(workspaceId, sessionId, async () => {
-      const response = await client.deleteSessionArchive(sessionId, { workspaceId });
+      const response = await client.deleteSessionArchive(sessionId, { workspaceId, workspaceIdentity });
       applySessionArchiveRecords(response.items ?? []);
       clearLegacyArchivedSessionIds();
       writeArchiveMigrationDone(ownerKey);
-    });
+    }, workspaceIdentity);
   };
 
   type SidebarSubagentCandidate = {
@@ -12739,8 +12766,8 @@ export default function App() {
       notionBusy: notionBusy(),
       connectNotion,
       sessionArchives: sessionArchives(),
-      onUnarchiveArchivedSession: (workspaceId: string, sessionId: string) =>
-        unarchiveSession(workspaceId, sessionId).catch((error) => {
+      onUnarchiveArchivedSession: (workspaceId: string, sessionId: string, workspaceIdentity?: string | null) =>
+        unarchiveSession(workspaceId, sessionId, workspaceIdentity).catch((error) => {
           reportError(error, "sessionArchives.unarchiveSettings");
           setError(error instanceof Error ? error.message : safeStringify(error));
         }),

@@ -5975,7 +5975,13 @@ function createRoutes(
     ensureWritable(config);
     const ownerKey = resolveArchiveOwnerKey(ctx.request);
     const workspaceId = ctx.url.searchParams.get("workspaceId")?.trim() || undefined;
-    return jsonResponse({ items: await sessionArchives.delete(ownerKey, ctx.params.sessionId, { workspaceId }) });
+    const workspaceIdentity = ctx.url.searchParams.get("workspaceIdentity")?.trim() || undefined;
+    return jsonResponse({
+      items: await sessionArchives.delete(ownerKey, ctx.params.sessionId, {
+        workspaceId,
+        workspaceIdentity,
+      }),
+    });
   });
 
   addRoute(routes, "GET", "/ai-gateway/me/ai-access", "client", async (ctx) => {

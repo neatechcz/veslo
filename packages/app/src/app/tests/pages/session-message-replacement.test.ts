@@ -57,11 +57,8 @@ test("replacement send path reverts to the original message before sending the e
     /replaceMessageId\?:/,
     "app send API should keep replacement message routing out of the normal prompt send options",
   );
-  const promptAsyncStart = appSource.indexOf('kind: "prompt_async",');
-  const promptAsyncEnd = appSource.indexOf("          },", promptAsyncStart);
-  assert.notEqual(promptAsyncStart, -1, "conversation prompt send branch should exist");
-  assert.notEqual(promptAsyncEnd, -1, "conversation prompt send branch should have a clear request object");
-  const promptAsyncCall = appSource.slice(promptAsyncStart, promptAsyncEnd);
+  const promptAsyncCall = appSource.match(/await runConversationOrFail\(\{\s*kind: "prompt_async",[\s\S]*?\n\s*\}\);/)?.[0] ?? "";
+  assert.ok(promptAsyncCall, "conversation prompt send branch should have a clear request object");
   assert.doesNotMatch(
     promptAsyncCall,
     /\bmessageID\b/,

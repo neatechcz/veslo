@@ -52,12 +52,21 @@ const matchesDeleteScope = (
   record: SessionArchiveRecord,
   sessionId: string,
   workspaceId?: string | null,
+  workspaceIdentity?: string | null,
 ) => {
   if (record.sessionId !== sessionId) return false;
   const scopedWorkspaceId = workspaceId?.trim() ?? "";
-  if (!scopedWorkspaceId) return true;
+  const scopedWorkspaceIdentity = workspaceIdentity?.trim() ?? "";
+  if (!scopedWorkspaceId && !scopedWorkspaceIdentity) return true;
   const recordWorkspaceId = record.workspaceIdAtArchive?.trim() ?? "";
-  return !recordWorkspaceId || recordWorkspaceId === scopedWorkspaceId;
+  if (scopedWorkspaceId && recordWorkspaceId) {
+    return recordWorkspaceId === scopedWorkspaceId;
+  }
+  const recordWorkspaceIdentity = record.workspaceIdentity?.trim() ?? "";
+  if (scopedWorkspaceIdentity && recordWorkspaceIdentity) {
+    return recordWorkspaceIdentity === scopedWorkspaceIdentity;
+  }
+  return false;
 };
 
 export function createSessionArchiveStore(options?: { dir?: string }) {
@@ -106,10 +115,12 @@ export function createSessionArchiveStore(options?: { dir?: string }) {
       await writeOwnerRecords(ownerKey, next);
       return sortRecords(next);
     },
-    async delete(ownerKey: string, sessionId: string, options?: { workspaceId?: string | null }): Promise<SessionArchiveRecord[]> {
+    async delete(ownerKey: string, sessionId: string, options?: { workspaceId?: string | null; workspaceIdentity?: string | null }): Promise<SessionArchiveRecord[]> {
       const normalizedId = sessionId.trim();
       const existing = await readOwnerRecords(ownerKey);
-      const next = existing.filter((entry) => !matchesDeleteScope(entry, normalizedId, options?.workspaceId));
+      const next = existing.filter((entry) =>
+        !matchesDeleteScope(entry, normalizedId, options?.workspaceId, options?.workspaceIdentity)
+      );
       await writeOwnerRecords(ownerKey, next);
       return sortRecords(next);
     },

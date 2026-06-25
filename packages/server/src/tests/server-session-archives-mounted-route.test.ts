@@ -237,4 +237,55 @@ test("session archives keep duplicate session ids scoped by workspace", async ()
   expect(afterDelete.items.map((item) => `${item.workspaceIdAtArchive}:${item.sessionId}`)).toEqual([
     "workspace-b:shared-session",
   ]);
+
+  const identityBaseUrl = `http://127.0.0.1:${server.port}/session-archives/identity-session`;
+  await fetch(identityBaseUrl, {
+    method: "PUT",
+    headers: baseHeaders,
+    body: JSON.stringify({
+      archivedAt: 300,
+      titleSnapshot: "Identity A",
+      workspaceIdentity: "local:/workspace/a",
+    }),
+  });
+  await fetch(identityBaseUrl, {
+    method: "PUT",
+    headers: baseHeaders,
+    body: JSON.stringify({
+      archivedAt: 400,
+      titleSnapshot: "Identity B",
+      workspaceIdentity: "local:/workspace/b",
+    }),
+  });
+
+  const afterWrongScopeDeleteResponse = await fetch(`${identityBaseUrl}?workspaceId=workspace-a`, {
+    method: "DELETE",
+    headers: {
+      Authorization: "Bearer client-token",
+      "x-veslo-account-id": "usr_123",
+    },
+  });
+  expect(afterWrongScopeDeleteResponse.status).toBe(200);
+  const afterWrongScopeDelete = await afterWrongScopeDeleteResponse.json() as { items: Array<{ sessionId: string; workspaceIdentity?: string }> };
+  expect(
+    afterWrongScopeDelete.items
+      .filter((item) => item.sessionId === "identity-session")
+      .map((item) => item.workspaceIdentity)
+      .sort(),
+  ).toEqual(["local:/workspace/a", "local:/workspace/b"]);
+
+  const afterIdentityDeleteResponse = await fetch(`${identityBaseUrl}?workspaceIdentity=${encodeURIComponent("local:/workspace/a")}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: "Bearer client-token",
+      "x-veslo-account-id": "usr_123",
+    },
+  });
+  expect(afterIdentityDeleteResponse.status).toBe(200);
+  const afterIdentityDelete = await afterIdentityDeleteResponse.json() as { items: Array<{ sessionId: string; workspaceIdentity?: string }> };
+  expect(
+    afterIdentityDelete.items
+      .filter((item) => item.sessionId === "identity-session")
+      .map((item) => item.workspaceIdentity),
+  ).toEqual(["local:/workspace/b"]);
 });
