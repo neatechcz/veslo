@@ -130,6 +130,27 @@ before retrying operations that have not yet created irreversible work.
 
 ## Runtime Modes
 
+### Configured vs Effective Sandbox
+
+`/capabilities.sandbox` is the configured local server capability. It must not
+be treated as proof that the currently running engine is actually sandboxed.
+
+The effective runtime state comes from the engine child kind:
+
+- `childKind=wsl` means the engine is running through the Windows WSL2 sandbox
+  and WSL path aliasing can be used.
+- `childKind=direct` means the engine is running directly on the host, even when
+  the configured backend is `windows-wsl2`.
+- missing `childKind` is unknown/configured state, not proof of a WSL runtime.
+
+The app resolves this through
+`packages/app/src/app/lib/runtime-sandbox-state.ts`. Prompt preflight, managed AI
+routing, directory query path mode, debug traces, and Settings devtools should
+use that effective state. Settings devtools also show both configured and
+effective values, including `sandboxFallback`, so a Windows machine without a
+ready WSL sandbox is auditable as `configured=windows-wsl2` and
+`effective=none`.
+
 ### Without Sandbox
 
 Use this mode when sandboxing is unavailable or disabled.
@@ -145,6 +166,12 @@ Expected behavior:
 
 Correctness in this mode means correct routing and concurrency. It does not
 mean security isolation.
+
+When Windows WSL2 sandbox launch fails because WSL, the managed `VesloSandbox`
+distro, bubblewrap, or workspace mountability is unavailable, Veslo falls back
+to a direct host engine. That fallback remains per-workspace by default. It does
+not enable the shared unsandboxed engine unless both `VESLO_DISABLE_SANDBOX=1`
+and `VESLO_SHARED_OPENCODE_ENGINE=1` are explicitly configured.
 
 ### With Sandbox
 

@@ -74,6 +74,7 @@ pub struct OrchestratorSpawnOptions {
     pub opencode_port: Option<u16>,
     pub opencode_username: Option<String>,
     pub opencode_password: Option<String>,
+    pub veslo_token: Option<String>,
     pub lifecycle_token: Option<String>,
     pub cors: Option<String>,
     pub veslo_server_state_path: Option<String>,
@@ -414,6 +415,13 @@ pub fn spawn_orchestrator_daemon(
         if !password.trim().is_empty() {
             args.push("--opencode-password".to_string());
             args.push(password.to_string());
+        }
+    }
+
+    if let Some(token) = &options.veslo_token {
+        if !token.trim().is_empty() {
+            args.push("--veslo-token".to_string());
+            args.push(token.to_string());
         }
     }
 

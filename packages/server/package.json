@@ -1,6 +1,6 @@
 {
   "name": "veslo-server",
-  "version": "2026.6.7",
+  "version": "2026.6.24",
   "description": "Filesystem-backed API for Veslo remote clients",
   "type": "module",
   "bin": {
@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "bun src/cli.ts",
     "test": "bun test src",
+    "test:wsl-bridge-live": "node script/wsl-bridge-live-test.mjs",
     "build": "tsc -p tsconfig.json",
     "build:bin": "bun build --compile src/cli.ts --outfile dist/bin/veslo-server",
     "build:bin:all": "bun ./script/build.ts --outdir dist/bin --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-windows-x64-baseline",

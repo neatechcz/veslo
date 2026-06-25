@@ -44,6 +44,12 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 # Make wsl.exe emit UTF-8 instead of UTF-16 so PowerShell can parse its output.
 $env:WSL_UTF8 = "1"
+$NativeCommandTimeoutExitCode = 1460
+$ProvisionScriptRevision = "tls-opencode-version-guard-20260623"
+
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+} catch {}
 
 function Write-Step([string]$Message) {
     Write-Host "==> $Message" -ForegroundColor Cyan
@@ -52,6 +58,10 @@ function Write-Step([string]$Message) {
 function Fail([string]$Message) {
     Write-Host "PROVISION FAILED: $Message" -ForegroundColor Red
     exit 1
+}
+
+function Invoke-ProvisionWebRequest([string]$Uri, [string]$OutFile, [int]$TimeoutSeconds = 300) {
+    Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing -TimeoutSec $TimeoutSeconds
 }
 
 function Normalize-WslOutput([string]$Text) {
@@ -95,7 +105,163 @@ function ConvertTo-NativeArgument([string]$Argument) {
     return $builder.ToString()
 }
 
-function Invoke-HiddenNativeCommand([string]$FilePath, [string[]]$Arguments) {
+function Resolve-SystemExecutable([string]$RelativePath, [string]$CommandName) {
+    $roots = @()
+    if ($env:WINDIR -and $env:WINDIR.Trim()) {
+        $roots += $env:WINDIR.Trim()
+    }
+    if ($env:SystemRoot -and $env:SystemRoot.Trim() -and $roots -notcontains $env:SystemRoot.Trim()) {
+        $roots += $env:SystemRoot.Trim()
+    }
+
+    foreach ($root in $roots) {
+        $candidates = @(
+            (Join-Path $root (Join-Path "Sysnative" $RelativePath)),
+            (Join-Path $root (Join-Path "System32" $RelativePath))
+        )
+        foreach ($candidate in $candidates) {
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                return $candidate
+            }
+        }
+    }
+
+    $command = Get-Command $CommandName -ErrorAction SilentlyContinue
+    if ($command -and $command.Source) {
+        return $command.Source
+    }
+
+    return $null
+}
+
+function Stop-HiddenNativeProcessTree([System.Diagnostics.Process]$Process) {
+    if ($null -eq $Process) {
+        return
+    }
+    try {
+        if ($Process.HasExited) {
+            return
+        }
+    } catch {
+        return
+    }
+
+    $taskkillCommand = Resolve-SystemExecutable "taskkill.exe" "taskkill.exe"
+    if ($taskkillCommand) {
+        try {
+            $killInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $killInfo.FileName = $taskkillCommand
+            $killInfo.Arguments = "/PID $($Process.Id) /T /F"
+            $killInfo.UseShellExecute = $false
+            $killInfo.CreateNoWindow = $true
+            $killProcess = New-Object System.Diagnostics.Process
+            $killProcess.StartInfo = $killInfo
+            try {
+                [void]$killProcess.Start()
+                [void]$killProcess.WaitForExit(10000)
+            } finally {
+                $killProcess.Dispose()
+            }
+        } catch {}
+    }
+
+    try {
+        if (-not $Process.HasExited) {
+            $Process.Kill()
+        }
+    } catch {}
+    try {
+        [void]$Process.WaitForExit(10000)
+    } catch {}
+}
+
+function Invoke-IsolatedNativeCommand([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 1800) {
+    $argumentsJson = ConvertTo-Json @($Arguments) -Compress
+    $job = $null
+    try {
+        $job = Start-Job -ScriptBlock {
+            param([string]$InnerFilePath, [string]$InnerArgumentsJson)
+            $ErrorActionPreference = "Continue"
+            $ProgressPreference = "SilentlyContinue"
+            $env:WSL_UTF8 = "1"
+            $innerArguments = @()
+            if ($InnerArgumentsJson) {
+                $parsedArguments = ConvertFrom-Json $InnerArgumentsJson
+                if ($null -ne $parsedArguments) {
+                    $innerArguments = @($parsedArguments | ForEach-Object { [string]$_ })
+                }
+            }
+
+            $outputLines = @()
+            $exitCode = 0
+            try {
+                $commandOutput = & $InnerFilePath @innerArguments 2>&1
+                foreach ($line in @($commandOutput)) {
+                    if ($null -ne $line) {
+                        $outputLines += [string]$line
+                    }
+                }
+                if ($null -ne $global:LASTEXITCODE) {
+                    $exitCode = [int]$global:LASTEXITCODE
+                }
+            } catch {
+                $outputLines += $_.Exception.Message
+                $exitCode = 1
+            }
+
+            [pscustomobject]@{
+                ExitCode = [int]$exitCode
+                Output = ($outputLines -join "`n")
+            }
+        } -ArgumentList $FilePath, $argumentsJson
+    } catch {
+        return [pscustomobject]@{
+            ExitCode = 1
+            Output = "Failed to start isolated native command job: $($_.Exception.Message)"
+        }
+    }
+
+    try {
+        $completedJob = Wait-Job -Job $job -Timeout $TimeoutSeconds
+        if (-not $completedJob) {
+            try {
+                Stop-Job -Job $job -Force -ErrorAction SilentlyContinue
+            } catch {
+                try {
+                    Stop-Job -Job $job -ErrorAction SilentlyContinue
+                } catch {}
+            }
+            return [pscustomobject]@{
+                ExitCode = [int]$NativeCommandTimeoutExitCode
+                Output = "Timed out after $TimeoutSeconds seconds while running $FilePath $($Arguments -join ' ') in an isolated job."
+            }
+        }
+
+        $jobOutput = @(Receive-Job -Job $job -ErrorAction SilentlyContinue)
+        $result = $jobOutput | Where-Object { $_ -and $_.PSObject.Properties["ExitCode"] } | Select-Object -Last 1
+        if (-not $result) {
+            return [pscustomobject]@{
+                ExitCode = 1
+                Output = (($jobOutput | ForEach-Object { [string]$_ }) -join "`n")
+            }
+        }
+
+        return [pscustomobject]@{
+            ExitCode = [int]$result.ExitCode
+            Output = [string]$result.Output
+        }
+    } finally {
+        if ($job) {
+            Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Invoke-HiddenNativeCommand([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 1800) {
+    if ((Split-Path -Leaf $FilePath) -ieq "wsl.exe") {
+        return Invoke-IsolatedNativeCommand -FilePath $FilePath -Arguments $Arguments -TimeoutSeconds $TimeoutSeconds
+    }
+
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $FilePath
     $startInfo.Arguments = (($Arguments | ForEach-Object { ConvertTo-NativeArgument ([string]$_) }) -join " ")
@@ -126,13 +292,19 @@ function Invoke-HiddenNativeCommand([string]$FilePath, [string[]]$Arguments) {
     $process.StartInfo = $startInfo
     $process.add_OutputDataReceived($outputHandler)
     $process.add_ErrorDataReceived($errorHandler)
+    $exitCode = $NativeCommandTimeoutExitCode
     try {
         [void]$process.Start()
         $process.BeginOutputReadLine()
         $process.BeginErrorReadLine()
-        $process.WaitForExit()
-        $process.WaitForExit()
-        $exitCode = $process.ExitCode
+        $timeoutMilliseconds = [Math]::Max(1, $TimeoutSeconds) * 1000
+        if ($process.WaitForExit($timeoutMilliseconds)) {
+            $process.WaitForExit()
+            $exitCode = $process.ExitCode
+        } else {
+            [void]$lines.Add("Timed out after $TimeoutSeconds seconds while running $FilePath $($Arguments -join ' ').")
+            Stop-HiddenNativeProcessTree $process
+        }
     } finally {
         $process.remove_OutputDataReceived($outputHandler)
         $process.remove_ErrorDataReceived($errorHandler)
@@ -145,8 +317,8 @@ function Invoke-HiddenNativeCommand([string]$FilePath, [string[]]$Arguments) {
     }
 }
 
-function Invoke-Wsl([string[]]$WslArgs) {
-    $result = Invoke-HiddenNativeCommand "wsl.exe" $WslArgs
+function Invoke-Wsl([string[]]$WslArgs, [int]$TimeoutSeconds = 1800) {
+    $result = Invoke-HiddenNativeCommand -FilePath "wsl.exe" -Arguments $WslArgs -TimeoutSeconds $TimeoutSeconds
     return @{ ExitCode = $result.ExitCode; Output = (Normalize-WslOutput $result.Output) }
 }
 
@@ -162,7 +334,7 @@ function Invoke-DistroBash([string]$Distro, [string]$User, [string]$Script) {
         $drive = $tempFile.Substring(0, 1).ToLower()
         $rest = $tempFile.Substring(2) -replace "\\", "/"
         $wslPath = "/mnt/$drive$rest"
-        $result = Invoke-Wsl @("-d", $Distro, "-u", $User, "--exec", "bash", $wslPath)
+        $result = Invoke-Wsl -WslArgs @("-d", $Distro, "-u", $User, "--exec", "bash", $wslPath) -TimeoutSeconds 1800
         return $result
     } finally {
         Remove-Item -Path $tempFile -Force -ErrorAction SilentlyContinue
@@ -170,7 +342,7 @@ function Invoke-DistroBash([string]$Distro, [string]$User, [string]$Script) {
 }
 
 function Get-WslDistros {
-    $result = Invoke-Wsl @("-l", "-q")
+    $result = Invoke-Wsl -WslArgs @("-l", "-q") -TimeoutSeconds 45
     if ($result.ExitCode -ne 0) { return @() }
     return @($result.Output -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 }
@@ -207,7 +379,15 @@ function Test-ProvisionedRuntime([string]$Distro, [string]$ExpectedOpencodeVersi
     $ok = (Test-CommandInDistro $Distro "root" "id -u veslo >/dev/null && getent passwd veslo | cut -d: -f1,6,7" "veslo user exists") -and $ok
     $ok = (Test-CommandInDistro $Distro "root" "grep -q '^default=veslo$' /etc/wsl.conf && grep -q '^appendWindowsPath=false$' /etc/wsl.conf && cat /etc/wsl.conf" "wsl.conf has Veslo defaults") -and $ok
     $ok = (Test-CommandInDistro $Distro "root" "command -v bwrap && bwrap --version" "bubblewrap is installed") -and $ok
-    $ok = (Test-CommandInDistro $Distro "root" "command -v opencode && opencode --version | grep -F '$ExpectedOpencodeVersion'" "OpenCode $ExpectedOpencodeVersion is installed") -and $ok
+    $opencodeVersionCheck = @'
+set -euo pipefail
+command -v opencode >/dev/null
+actual="$(opencode --version | tr -d '\r' | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+([-+._A-Za-z0-9]+)?' | head -n1)"
+test "$actual" = "__EXPECTED_OPENCODE_VERSION__"
+echo "$actual"
+'@
+    $opencodeVersionCheck = $opencodeVersionCheck.Replace("__EXPECTED_OPENCODE_VERSION__", $ExpectedOpencodeVersion)
+    $ok = (Test-CommandInDistro $Distro "root" $opencodeVersionCheck "OpenCode $ExpectedOpencodeVersion is installed") -and $ok
     $ok = (Test-CommandInDistro $Distro "veslo" "test -w /home/veslo && test -d /home/veslo && echo /home/veslo-writable" "veslo home is usable") -and $ok
 
     $dnsScript = @'
@@ -257,8 +437,14 @@ function Resolve-OpencodeVersion {
     # Pinned in packages/orchestrator/package.json ("opencodeVersion"). Falls
     # back to the version documented in docs/sandbox when the script is copied
     # out of the repo (e.g. bundled with an installer).
-    $packageJson = Join-Path $PSScriptRoot "..\package.json"
-    if (Test-Path $packageJson) {
+    $packageJsonCandidates = @(
+        (Join-Path $PSScriptRoot "package.json"),
+        (Join-Path $PSScriptRoot "..\package.json")
+    )
+    foreach ($packageJson in $packageJsonCandidates) {
+        if (-not (Test-Path $packageJson -PathType Leaf)) {
+            continue
+        }
         try {
             $pkg = Get-Content $packageJson -Raw | ConvertFrom-Json
             if ($pkg.opencodeVersion) { return ([string]$pkg.opencodeVersion).Trim() }
@@ -267,6 +453,7 @@ function Resolve-OpencodeVersion {
     return "1.17.4"
 }
 
+try {
 # --- 1. Preconditions ---------------------------------------------------------
 
 if (-not ([Environment]::OSVersion.Platform -eq "Win32NT")) {
@@ -274,7 +461,8 @@ if (-not ([Environment]::OSVersion.Platform -eq "Win32NT")) {
 }
 
 Write-Step "Checking WSL availability"
-$wslStatus = Invoke-Wsl @("--status")
+Write-Host "Script revision: $ProvisionScriptRevision"
+$wslStatus = Invoke-Wsl -WslArgs @("--status") -TimeoutSeconds 45
 if ($wslStatus.ExitCode -ne 0) {
     Fail @"
 WSL does not appear to be installed or usable.
@@ -314,7 +502,7 @@ $distroExists = $distros -contains $DistroName
 
 if ($distroExists -and $Force) {
     Write-Step "Removing existing $DistroName (-Force)"
-    $unregister = Invoke-Wsl @("--unregister", $DistroName)
+    $unregister = Invoke-Wsl -WslArgs @("--unregister", $DistroName) -TimeoutSeconds 300
     if ($unregister.ExitCode -ne 0) {
         Fail "Failed to unregister ${DistroName}: $($unregister.Output)"
     }
@@ -328,14 +516,14 @@ if (-not $distroExists) {
     $rootfsFile = Join-Path $downloadDir (Split-Path $RootfsUrl -Leaf)
 
     if (-not (Test-Path $rootfsFile)) {
-        Invoke-WebRequest -Uri $RootfsUrl -OutFile $rootfsFile -UseBasicParsing
+        Invoke-ProvisionWebRequest -Uri $RootfsUrl -OutFile $rootfsFile -TimeoutSeconds 900
     } else {
         Write-Host "Reusing cached rootfs: $rootfsFile"
     }
 
     Write-Step "Verifying rootfs checksum"
     $sumsFile = Join-Path $downloadDir "SHA256SUMS"
-    Invoke-WebRequest -Uri $RootfsSha256Url -OutFile $sumsFile -UseBasicParsing
+    Invoke-ProvisionWebRequest -Uri $RootfsSha256Url -OutFile $sumsFile -TimeoutSeconds 300
     $rootfsName = Split-Path $RootfsUrl -Leaf
     $expectedLine = (Get-Content $sumsFile | Where-Object { $_ -match [regex]::Escape($rootfsName) } | Select-Object -First 1)
     if (-not $expectedLine) {
@@ -351,7 +539,7 @@ if (-not $distroExists) {
 
     Write-Step "Importing $DistroName (WSL2)"
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-    $import = Invoke-Wsl @("--import", $DistroName, $InstallDir, $rootfsFile, "--version", "2")
+    $import = Invoke-Wsl -WslArgs @("--import", $DistroName, $InstallDir, $rootfsFile, "--version", "2") -TimeoutSeconds 1800
     if ($import.ExitCode -ne 0) {
         Fail "wsl --import failed: $($import.Output)"
     }
@@ -424,7 +612,7 @@ if ($installedVersion -eq $expectedOpencodeVersion) {
     New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
     $assetFile = Join-Path $downloadDir "opencode-$expectedOpencodeVersion-$assetName"
     if (-not (Test-Path $assetFile)) {
-        Invoke-WebRequest -Uri $assetUrl -OutFile $assetFile -UseBasicParsing
+        Invoke-ProvisionWebRequest -Uri $assetUrl -OutFile $assetFile -TimeoutSeconds 900
     } else {
         Write-Host "Reusing cached asset: $assetFile"
     }
@@ -459,7 +647,7 @@ install -m 0755 "$BIN" /usr/local/bin/opencode
 # --- 5. Restart the distro so /etc/wsl.conf (default user) applies -------------
 
 Write-Step "Restarting $DistroName to apply wsl.conf"
-Invoke-Wsl @("--terminate", $DistroName) | Out-Null
+Invoke-Wsl -WslArgs @("--terminate", $DistroName) -TimeoutSeconds 120 | Out-Null
 
 # --- 6. Verification ------------------------------------------------------------
 
@@ -519,3 +707,6 @@ Write-Host ""
 Write-Host "PASS - $DistroName is provisioned (Ubuntu 22.04, bwrap, opencode $expectedOpencodeVersion)." -ForegroundColor Green
 Write-Host "Next: from packages/orchestrator run the smoke test to validate the full launch path:"
 Write-Host "    pnpm exec bun scripts/windows-wsl2-sandbox-smoke.ts"
+} catch {
+    Fail "Unhandled provisioning error: $($_.Exception.Message)"
+}

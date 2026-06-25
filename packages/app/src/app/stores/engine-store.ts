@@ -83,7 +83,11 @@ export interface EngineStoreDeps {
   // Orchestrator / runtime helpers
   resolveEngineRuntime: () => EngineRuntime;
   resolveWorkspacePaths: () => string[];
-  activateOrchestratorWorkspace: (input: { workspacePath: string; name?: string | null }) => Promise<any>;
+  activateOrchestratorWorkspace: (input: {
+    workspacePath: string;
+    workspaceId?: string | null;
+    name?: string | null;
+  }) => Promise<any>;
   activateVesloHostWorkspace: (workspacePath: string) => Promise<any>;
 
   // Workspace-level helpers
@@ -99,6 +103,13 @@ export function createEngineStore(deps: EngineStoreDeps) {
   const [engineDoctorResult, setEngineDoctorResult] = createSignal<EngineDoctorResult | null>(null);
   const [engineDoctorCheckedAt, setEngineDoctorCheckedAt] = createSignal<number | null>(null);
   const [engineInstallLogs, setEngineInstallLogs] = createSignal<string | null>(null);
+
+  async function ensureLocalRuntimeReadyForWorkspaceStart(workspacePath: string) {
+    void workspacePath;
+    // Windows WSL repair remains an onboarding/settings workflow. Startup must
+    // reach the orchestrator so it can fall back to an unsandboxed engine.
+    return true;
+  }
 
   const localRuntimeLifecycle = createLocalRuntimeLifecycle({
     engineSource: deps.engineSource,
@@ -201,14 +212,18 @@ export function createEngineStore(deps: EngineStoreDeps) {
       return false;
     }
 
-      try {
-        const source = deps.engineSource();
-        const result = await engineDoctor({
-          preferSidecar: source === "sidecar",
-          opencodeBinPath: source === "custom" ? deps.engineCustomBinPath?.().trim() || null : null,
-        });
-        setEngineDoctorResult(result);
-        setEngineDoctorCheckedAt(Date.now());
+    if (!(await ensureLocalRuntimeReadyForWorkspaceStart(dir))) {
+      return false;
+    }
+
+    try {
+      const source = deps.engineSource();
+      const result = await engineDoctor({
+        preferSidecar: source === "sidecar",
+        opencodeBinPath: source === "custom" ? deps.engineCustomBinPath?.().trim() || null : null,
+      });
+      setEngineDoctorResult(result);
+      setEngineDoctorCheckedAt(Date.now());
 
       if (!result.found) {
         deps.setError(
@@ -417,6 +432,7 @@ export function createEngineStore(deps: EngineStoreDeps) {
     // Methods
     refreshEngine,
     refreshEngineDoctor,
+    ensureLocalRuntimeReadyForWorkspaceStart,
     startHost,
     stopHost,
     reloadWorkspaceEngine,

@@ -450,7 +450,11 @@ export function createWorkspaceStore(options: {
     return resolved;
   };
 
-  async function activateOrchestratorWorkspace(input: { workspacePath: string; name?: string | null }) {
+  async function activateOrchestratorWorkspace(input: {
+    workspacePath: string;
+    workspaceId?: string | null;
+    name?: string | null;
+  }) {
     return await withTimeoutOrThrow(
       orchestratorWorkspaceActivate(input),
       {
@@ -584,6 +588,15 @@ export function createWorkspaceStore(options: {
         const remoteActivation = createWorkspaceRemoteActivation({
           setStartupPreference: options.setStartupPreference,
           vesloServerSettings: options.vesloServerSettings,
+          soulAuthContext: () => {
+            const denAuth = readDenAuth();
+            return {
+              denApiBase: denAuth?.denApiBase?.trim() || undefined,
+              denToken: denAuth?.token?.trim() || undefined,
+              denOrgId: denAuth?.orgId?.trim() || undefined,
+              denUserId: denAuth?.user?.id?.trim() || undefined,
+            };
+          },
           updateVesloServerSettings: options.updateVesloServerSettings,
           resolveVesloHost: remoteStoreRef.resolveVesloHost,
           connectToServer,
@@ -1559,6 +1572,7 @@ export function createWorkspaceStore(options: {
     updateWorkspaceConnectionState,
     onEngineStable: options.onEngineStable,
     clearWorkspaceBusyAllExcept,
+    ensureLocalRuntimeReadyForWorkspaceStart: engineStore.ensureLocalRuntimeReadyForWorkspaceStart,
     syncWorkspaceSkillMaterializationBeforeRuntime,
     createClient,
     waitForHealthy,

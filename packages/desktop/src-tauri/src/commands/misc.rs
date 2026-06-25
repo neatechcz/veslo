@@ -31,6 +31,13 @@ pub struct AppBuildInfo {
     pub build_epoch: Option<String>,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopSandboxEnvironment {
+    pub backend: String,
+    pub enabled: bool,
+}
+
 fn opencode_cache_candidates() -> Vec<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
 
@@ -329,6 +336,15 @@ pub fn app_build_info(app: AppHandle) -> AppBuildInfo {
         version,
         git_sha,
         build_epoch,
+    }
+}
+
+#[tauri::command]
+pub fn desktop_sandbox_environment() -> DesktopSandboxEnvironment {
+    let backend = crate::veslo_server::spawn::resolve_server_sandbox_backend();
+    DesktopSandboxEnvironment {
+        enabled: backend != "none",
+        backend,
     }
 }
 

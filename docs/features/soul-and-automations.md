@@ -51,7 +51,10 @@ Supported public behavior:
   history for completed/history views.
 
 Automation reads are available to viewer-level clients. Creating, updating,
-cancelling, and manual runs require collaborator access.
+cancelling, and manual runs require collaborator access and honor the server
+approval mode before mutating the automation store or sending a prompt to
+OpenCode. The legacy Agent Lab compatibility routes follow the same approval
+requirements for create, delete, and manual run operations.
 
 Agent-facing automation tools are provisioned as Veslo-managed OpenCode plugins.
 They read the running Veslo server state from the desktop-provided environment
@@ -109,7 +112,12 @@ Soul setup relies on a combination of:
 - heartbeat log existing
 - at least one successful heartbeat as proof
 
-The source editor treats runtime materialization as automatic. If materialization reports a conflict or status that needs action, the UI should show actionable diagnostics rather than exposing a manual sync choice.
+The source editor treats runtime materialization as automatic. Remote Veslo
+workspace provisioning also materializes Soul runtime files when Den identity
+context is available and must preserve already materialized files when a later
+provision call lacks Den context. If materialization reports a conflict or
+status that needs action, the UI should show actionable diagnostics rather than
+exposing a manual sync choice.
 
 ## Heartbeat Triggering
 

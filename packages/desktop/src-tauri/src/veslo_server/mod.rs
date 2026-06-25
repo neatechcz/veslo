@@ -113,6 +113,96 @@ pub(crate) fn resolve_engine_url(port: u16) -> Option<String> {
     }
 }
 
+/// Discover a WSL-reachable bind address (the WSL virtual adapter IP) WITHOUT
+/// probing it. Used before spawn to decide the `--bridge-host` the server
+/// should additionally listen on. The probe in `resolve_engine_url_for_bridge_host`
+/// only succeeds once the server is actually listening there, so discovery must
+/// be probe-free. See VSLO-250.
+#[cfg(windows)]
+pub(crate) fn resolve_wsl_bridge_host() -> Option<String> {
+    if let Ok(interfaces) = list_afinet_netifas() {
+        for (name, ip) in interfaces {
+            if name.to_ascii_lowercase().contains("wsl") && ip.is_ipv4() && !ip.is_loopback() {
+                return Some(ip.to_string());
+            }
+        }
+    }
+    resolve_wsl_bridge_host_from_powershell()
+}
+
+#[cfg(not(windows))]
+pub(crate) fn resolve_wsl_bridge_host() -> Option<String> {
+    None
+}
+
+#[cfg(windows)]
+fn resolve_wsl_bridge_host_from_powershell() -> Option<String> {
+    let mut command = Command::new("powershell");
+    configure_hidden(&mut command);
+    let output = command
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            "Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias '*WSL*' | Select-Object -ExpandProperty IPAddress",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_wsl_bridge_host_from_powershell_output(&stdout)
+}
+
+#[cfg(windows)]
+fn parse_wsl_bridge_host_from_powershell_output(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let value = line.trim().trim_matches('"').trim_matches('\'');
+        let ip = value.parse::<IpAddr>().ok()?;
+        if ip.is_ipv4() && !ip.is_loopback() {
+            Some(ip.to_string())
+        } else {
+            None
+        }
+    })
+}
+
+/// Build and validate the engineUrl for an already-chosen bridge host by probing
+/// `<url>/health` from inside WSL. Returns `Some(url)` only when WSL can actually
+/// reach it, so a published engineUrl is always proven reachable. See VSLO-250.
+#[cfg(windows)]
+pub(crate) fn resolve_engine_url_for_bridge_host(bridge_host: &str, port: u16) -> Option<String> {
+    let host = bridge_host.trim();
+    if host.is_empty() || is_loopback_bind_host(host) {
+        return None;
+    }
+    let url = format!("http://{host}:{port}");
+    if probe_engine_url_from_wsl(&url) {
+        Some(url)
+    } else {
+        None
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn resolve_engine_url_for_bridge_host(_bridge_host: &str, _port: u16) -> Option<String> {
+    None
+}
+
+/// The WSL bridge listener is only meaningful when the active sandbox backend is
+/// `windows-wsl2` and the primary bind stays on loopback. With sandboxing
+/// disabled — e.g. a shared unsandboxed engine, which requires
+/// `VESLO_DISABLE_SANDBOX=1` — OpenCode runs directly on Windows and reaches the
+/// gateway over loopback, so a WSL bridge would be unused and would wrongly pin a
+/// direct engine to the WSL adapter IP. A non-loopback primary bind already
+/// covers WSL. See VSLO-250.
+fn should_bind_wsl_bridge(host: &str, sandbox_backend: &str) -> bool {
+    is_loopback_bind_host(host) && sandbox_backend == "windows-wsl2"
+}
+
 #[cfg(windows)]
 fn format_engine_url_from_ip(ip: IpAddr, port: u16) -> Option<String> {
     if !ip.is_ipv4() || ip.is_loopback() {
@@ -689,11 +779,15 @@ fn normalize_launch_token(value: Option<&str>) -> Option<String> {
 fn launch_config_matches(
     state: &manager::VesloServerState,
     workspace_paths: &[String],
+    host: &str,
+    bridge_host: &Option<String>,
     opencode_base_url: &Option<String>,
     orchestrator_daemon_url: &Option<String>,
     orchestrator_lifecycle_token: &Option<String>,
 ) -> bool {
     normalize_workspace_paths(workspace_paths) == normalize_workspace_paths(&state.workspace_paths)
+        && state.host.as_deref() == Some(host)
+        && state.bridge_host == *bridge_host
         && state.opencode_base_url == *opencode_base_url
         && state.orchestrator_daemon_url == *orchestrator_daemon_url
         && state.orchestrator_lifecycle_token == *orchestrator_lifecycle_token
@@ -709,6 +803,7 @@ pub fn start_veslo_server(
     opencode_router_health_port: Option<u16>,
     orchestrator_daemon_url: Option<&str>,
     orchestrator_lifecycle_token: Option<&str>,
+    veslo_server_client_token: Option<&str>,
 ) -> Result<VesloServerInfo, String> {
     // VSLO-86 — extend caller-supplied workspaces with every local workspace
     // from veslo-workspaces.json before spawn. The frontend passes only the
@@ -747,14 +842,32 @@ pub fn start_veslo_server(
     let normalized_orchestrator_daemon_url = normalize_launch_url(orchestrator_daemon_url);
     let normalized_orchestrator_lifecycle_token =
         normalize_launch_token(orchestrator_lifecycle_token);
+    let requested_client_token = normalize_launch_token(veslo_server_client_token);
+    let host = resolve_veslo_host();
+    // VSLO-250: determine the expected WSL bridge before idempotent reuse, so a
+    // previous loopback-only server cannot be reused while we publish bridge URLs.
+    // Gate on the active sandbox backend (the same source the server is told via
+    // VESLO_SANDBOX_BACKEND): with sandboxing disabled the engine is direct and
+    // routes over loopback, so no WSL bridge is set up.
+    let bridge_host = if should_bind_wsl_bridge(&host, &spawn::resolve_server_sandbox_backend()) {
+        resolve_wsl_bridge_host()
+    } else {
+        None
+    };
+    let client_token_matches_request = requested_client_token.as_ref().map_or(true, |token| {
+        state.client_token.as_deref() == Some(token.as_str())
+    });
     if state.child.is_some()
         && !state.child_exited
         && state.client_token.is_some()
+        && client_token_matches_request
         && state.host_token.is_some()
         && state.port.is_some()
         && launch_config_matches(
             &state,
             workspace_paths,
+            &host,
+            &bridge_host,
             &normalized_opencode_base_url,
             &normalized_orchestrator_daemon_url,
             &normalized_orchestrator_lifecycle_token,
@@ -778,7 +891,6 @@ pub fn start_veslo_server(
     let previous_host_token = state.host_token.clone();
     VesloServerManager::stop_locked(&mut state);
 
-    let host = resolve_veslo_host();
     let port = match resolve_veslo_port_after_restart(&host) {
         Ok(port) => port,
         Err(error) => {
@@ -790,7 +902,9 @@ pub fn start_veslo_server(
             return Err(error);
         }
     };
-    let client_token = previous_client_token.unwrap_or_else(generate_token);
+    let client_token = requested_client_token
+        .or(previous_client_token)
+        .unwrap_or_else(generate_token);
     let host_token = previous_host_token.unwrap_or_else(generate_token);
     let active_workspace = workspace_paths
         .first()
@@ -831,6 +945,7 @@ pub fn start_veslo_server(
         opencode_router_health_port,
         normalized_orchestrator_daemon_url.as_deref(),
         normalized_orchestrator_lifecycle_token.as_deref(),
+        bridge_host.as_deref(),
     ) {
         Ok(result) => {
             append_veslo_server_launch_diagnostic(
@@ -860,6 +975,7 @@ pub fn start_veslo_server(
     state.child = Some(child);
     state.child_exited = false;
     state.host = Some(host.clone());
+    state.bridge_host = bridge_host.clone();
     state.port = Some(port);
     state.base_url = Some(format!("http://127.0.0.1:{port}"));
     let (connect_url, mdns_url, lan_url, engine_url) = build_urls_for_host(&host, port);
@@ -867,7 +983,15 @@ pub fn start_veslo_server(
     state.mdns_url = mdns_url;
     state.lan_url = lan_url;
     state.engine_url = engine_url;
-    state.engine_url_checked_at = Some(std::time::Instant::now());
+    // With a WSL bridge the engineUrl is published lazily, only after a WSL-side
+    // /health probe proves reachability. Leave the checked-at timestamp unset so
+    // the next veslo_server_info poll refreshes immediately instead of waiting
+    // out the TTL; a non-loopback primary bind keeps the original behavior.
+    state.engine_url_checked_at = if bridge_host.is_some() {
+        None
+    } else {
+        Some(std::time::Instant::now())
+    };
     state.engine_url_refresh_started_at = None;
     state.client_token = Some(client_token);
     state.host_token = Some(host_token);
@@ -905,7 +1029,7 @@ mod tests {
         build_urls_for_host_with_engine_resolver, launch_config_matches, normalize_launch_token,
         normalize_launch_url, publishes_external_urls, read_persisted_veslo_server_info,
         read_persisted_veslo_server_info_with_cleanup, resolve_engine_url_for_bind_host,
-        HealthIdentity, PersistedVesloServerState,
+        should_bind_wsl_bridge, HealthIdentity, PersistedVesloServerState,
     };
     #[cfg(windows)]
     use super::{
@@ -1029,6 +1153,17 @@ mod tests {
     }
 
     #[test]
+    fn wsl_bridge_only_binds_for_loopback_wsl2_backend() {
+        assert!(should_bind_wsl_bridge("127.0.0.1", "windows-wsl2"));
+        assert!(should_bind_wsl_bridge("localhost", "windows-wsl2"));
+        // A non-loopback primary bind already reaches WSL; no extra bridge.
+        assert!(!should_bind_wsl_bridge("0.0.0.0", "windows-wsl2"));
+        // Sandbox disabled (shared unsandboxed engine) -> direct engine, loopback.
+        assert!(!should_bind_wsl_bridge("127.0.0.1", "none"));
+        assert!(!should_bind_wsl_bridge("127.0.0.1", "windows-job-object"));
+    }
+
+    #[test]
     fn read_persisted_server_info_returns_none_without_state() {
         let dir =
             std::env::temp_dir().join(format!("veslo-server-state-missing-{}", Uuid::new_v4()));
@@ -1044,6 +1179,8 @@ mod tests {
     fn launch_config_restarts_when_opencode_base_url_changes() {
         let state = VesloServerState {
             workspace_paths: vec!["/workspace/project".to_string()],
+            host: Some("127.0.0.1".to_string()),
+            bridge_host: Some("172.29.64.1".to_string()),
             opencode_base_url: normalize_launch_url(Some(
                 "http://127.0.0.1:59104/workspace//opencode/",
             )),
@@ -1052,6 +1189,7 @@ mod tests {
             ..Default::default()
         };
         let workspace_paths = vec!["/workspace/project/".to_string()];
+        let bridge_host = Some("172.29.64.1".to_string());
         let daemon_url = normalize_launch_url(Some("http://127.0.0.1:59104"));
         let lifecycle_token = normalize_launch_token(Some(" lifecycle-token "));
 
@@ -1059,6 +1197,8 @@ mod tests {
             launch_config_matches(
                 &state,
                 &workspace_paths,
+                "127.0.0.1",
+                &bridge_host,
                 &normalize_launch_url(Some("http://127.0.0.1:59104/workspace//opencode")),
                 &daemon_url,
                 &lifecycle_token,
@@ -1069,6 +1209,8 @@ mod tests {
             !launch_config_matches(
                 &state,
                 &workspace_paths,
+                "127.0.0.1",
+                &bridge_host,
                 &normalize_launch_url(Some(
                     "http://127.0.0.1:59104/workspace/ws-278d2edc94b7/opencode",
                 )),
@@ -1076,6 +1218,31 @@ mod tests {
                 &lifecycle_token,
             ),
             "correcting workspace//opencode to a workspace-scoped URL must respawn veslo-server"
+        );
+    }
+
+    #[test]
+    fn launch_config_restarts_when_bridge_host_changes() {
+        let state = VesloServerState {
+            workspace_paths: vec!["/workspace/project".to_string()],
+            host: Some("127.0.0.1".to_string()),
+            bridge_host: None,
+            ..Default::default()
+        };
+        let workspace_paths = vec!["/workspace/project".to_string()];
+        let bridge_host = Some("172.29.64.1".to_string());
+
+        assert!(
+            !launch_config_matches(
+                &state,
+                &workspace_paths,
+                "127.0.0.1",
+                &bridge_host,
+                &None,
+                &None,
+                &None,
+            ),
+            "a loopback-only server must not be reused once a WSL bridge listener is expected"
         );
     }
 

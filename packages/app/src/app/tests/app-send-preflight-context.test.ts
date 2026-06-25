@@ -26,8 +26,22 @@ test("sendPrompt carries a preflight context into first-session creation", () =>
   );
   assert.match(
     sendPromptSource,
+    /prepareSendRuntimeForSend\("sendPrompt", sendPreflight\)/,
+    "sendPrompt should delegate runtime and managed AI readiness to the send readiness owner",
+  );
+  const prepareStart = runtimeReadinessSource.indexOf("async function prepareSendRuntimeForSend(");
+  const prepareEnd = runtimeReadinessSource.indexOf("async function connectLocalRuntimeClientFromEngineInfo", prepareStart);
+  assert.ok(prepareStart >= 0 && prepareEnd > prepareStart, "prepareSendRuntimeForSend source should be present");
+  const prepareSource = runtimeReadinessSource.slice(prepareStart, prepareEnd);
+  assert.ok(
+    prepareSource.indexOf("${reason}:ensure-local-runtime-reachable") <
+      prepareSource.indexOf("${reason}:ensure-managed-ai-bootstrap-ready"),
+    "send readiness owner should refresh runtime state before validating managed AI routing",
+  );
+  assert.doesNotMatch(
+    sendPromptSource,
     /sendPreflight\.runtimeHealthOk = true;/,
-    "sendPrompt should treat a successful workspace engine ensure as runtime health for this send flow",
+    "sendPrompt should not treat a completed workspace engine ensure as a health probe",
   );
   assert.match(
     sendPromptSource,
@@ -44,17 +58,22 @@ test("createSessionAndOpen skips duplicate preflight gates when sendPrompt alrea
 
   assert.match(
     createSource,
-    /const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision\(\{[\s\S]*preflightManagedAiReady: Boolean\(preflight\?\.managedAiReady\),[\s\S]*runtimeAlreadyPrepared: Boolean\(options\.managedAiRuntimeAlreadyPrepared\),[\s\S]*\}\);[\s\S]*if \(managedAiPreflightDecision\.type === "skip"\) \{[\s\S]*recordSendTrace\("createSessionAndOpen:managed-ai-bootstrap-skip"/,
+    /const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision\(\{[\s\S]*preflightManagedAiReady: Boolean\(createPreflight\.managedAiReady\),[\s\S]*runtimeAlreadyPrepared: Boolean\(options\.managedAiRuntimeAlreadyPrepared\),[\s\S]*\}\);[\s\S]*if \(managedAiPreflightDecision\.type === "skip"\) \{[\s\S]*recordSendTrace\("createSessionAndOpen:managed-ai-bootstrap-skip"/,
     "createSessionAndOpen should log and skip the duplicate managed AI gate",
   );
   assert.match(
     createSource,
-    /const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision\(\{[\s\S]*preflightRuntimeHealthOk: Boolean\(preflight\?\.runtimeHealthOk\),[\s\S]*\}\);[\s\S]*if \(runtimeHealthPreflightDecision\.type === "skip"\) \{[\s\S]*recordSendTrace\("createSessionAndOpen:health-skip"/,
+    /const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision\(\{[\s\S]*preflightRuntimeHealthOk: Boolean\(createPreflight\.runtimeHealthOk\),[\s\S]*\}\);[\s\S]*if \(runtimeHealthPreflightDecision\.type === "skip"\) \{[\s\S]*recordSendTrace\("createSessionAndOpen:health-skip"/,
     "createSessionAndOpen should log and skip the duplicate runtime health probe",
+  );
+  assert.ok(
+    createSource.indexOf("const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision") <
+      createSource.indexOf("const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision"),
+    "createSessionAndOpen should prepare runtime before managed AI routing",
   );
 });
 
-test("send runtime preflight skips duplicate health after workspace engine ensure", () => {
+test("send runtime preflight skips duplicate health only for an explicitly healthy preflight", () => {
   const start = runtimeReadinessSource.indexOf("async function ensureLocalRuntimeReachableForSend(");
   const end = runtimeReadinessSource.indexOf("async function connectLocalRuntimeClientFromEngineInfo", start);
   assert.ok(start >= 0 && end > start, "ensureLocalRuntimeReachableForSend source should be present");
@@ -63,7 +82,7 @@ test("send runtime preflight skips duplicate health after workspace engine ensur
   assert.match(
     ensureSource,
     /if \(preflight\?\.runtimeHealthOk\) \{[\s\S]*recordSendTrace\(`\$\{reason\}:runtime-health-skip`,[\s\S]*reason: "send-preflight-already-healthy"[\s\S]*return true;[\s\S]*\}[\s\S]*if \(currentClient\) \{/s,
-    "send runtime health should not probe a workspace proxy that was just ensured healthy",
+    "send runtime health should skip only when an earlier health probe marked the preflight healthy",
   );
 });
 

@@ -177,7 +177,7 @@ export function createWorkspaceLocalWorkspaces(deps: WorkspaceLocalWorkspacesDep
 
   async function createWorkspaceFlow(preset: WorkspacePreset, folder: string | null) {
     const created = await createLocalWorkspace(preset, folder, {
-      markOnboardingComplete: true,
+      markOnboardingComplete: false,
       navigateToDashboard: false,
       closeModal: true,
     });
@@ -186,9 +186,9 @@ export function createWorkspaceLocalWorkspaces(deps: WorkspaceLocalWorkspacesDep
     if (!opened) {
       const message = "Workspace was created, but the local runtime did not start.";
       deps.updateWorkspaceConnectionState(created.id, { status: "error", message });
-      deps.setError(message);
       return;
     }
+    deps.markOnboardingComplete();
   }
 
   async function createScratchWorkspace() {

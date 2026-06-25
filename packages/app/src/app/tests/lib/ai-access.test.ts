@@ -13,12 +13,16 @@ import {
   resolveManagedAiAccessBundleState,
   resolveManagedAiGatewayBaseUrl,
   resolveManagedAiProviderRoutingTarget,
+  requiresManagedAiBridgeForRuntime,
   requiresManagedAiEngineBaseUrl,
   shouldPreserveManagedAiConfig,
   shouldEnsureManagedAiLocalGateway,
   shouldDeferManagedAiAccessRefresh,
 } from "../../lib/ai-access.js";
-import { OPENCODE_SESSION_ID_TEMPLATE } from "../../lib/opencode.js";
+import {
+  OPENCODE_SESSION_ID_TEMPLATE,
+  VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE,
+} from "../../lib/opencode.js";
 
 const managedCodexProfile: ManagedAiAccessProfile = {
   userId: "user_123",
@@ -270,6 +274,8 @@ test("resolveManagedAiProviderRoutingTarget requires an engine URL for WSL sandb
     requiresManagedAiEngineBaseUrl({
       isDesktopRuntime: true,
       workspaceType: "local",
+      engineBaseUrl: "http://172.29.64.1:8787",
+      requiresEngineBridgeUrl: true,
       sandboxEnabled: true,
       sandboxBackend: "windows-wsl2",
     }),
@@ -309,11 +315,119 @@ test("resolveManagedAiProviderRoutingTarget requires an engine URL for WSL sandb
   );
 });
 
+test("resolveManagedAiProviderRoutingTarget rejects WSL sandbox routing without a non-loopback engine URL", () => {
+  assert.equal(
+    requiresManagedAiEngineBaseUrl({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      engineBaseUrl: "",
+      requiresEngineBridgeUrl: true,
+      sandboxEnabled: true,
+      sandboxBackend: "windows-wsl2",
+    }),
+    true,
+  );
+
+  assert.equal(
+    requiresManagedAiEngineBaseUrl({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      engineBaseUrl: "http://127.0.0.1:8787",
+      requiresEngineBridgeUrl: true,
+      sandboxEnabled: true,
+      sandboxBackend: "windows-wsl2",
+    }),
+    true,
+  );
+
+  assert.equal(
+    resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      activeBaseUrl: "http://127.0.0.1:8787",
+      engineBaseUrl: "",
+      requireEngineBaseUrl: true,
+      activeToken: "local-client-token",
+      gatewayBaseUrl: "",
+      gatewayToken: "",
+    }),
+    null,
+  );
+
+  assert.equal(
+    resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      activeBaseUrl: "http://127.0.0.1:8787",
+      engineBaseUrl: "http://127.0.0.1:8787",
+      requireEngineBaseUrl: true,
+      activeToken: "local-client-token",
+      gatewayBaseUrl: "",
+      gatewayToken: "",
+    }),
+    null,
+  );
+});
+
+test("managed AI bridge requirement fails closed for configured WSL until direct fallback is proven", () => {
+  assert.equal(
+    requiresManagedAiBridgeForRuntime({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      configuredSandboxEnabled: true,
+      configuredSandboxBackend: "windows-wsl2",
+      effectiveSandboxBackend: "windows-wsl2",
+      childKind: null,
+    }),
+    true,
+  );
+  assert.equal(
+    requiresManagedAiEngineBaseUrl({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      engineBaseUrl: "",
+      configuredSandboxEnabled: true,
+      configuredSandboxBackend: "windows-wsl2",
+      effectiveSandboxBackend: "windows-wsl2",
+      childKind: null,
+      sandboxEnabled: true,
+      sandboxBackend: "windows-wsl2",
+    }),
+    true,
+  );
+  assert.equal(
+    requiresManagedAiBridgeForRuntime({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      configuredSandboxEnabled: true,
+      configuredSandboxBackend: "windows-wsl2",
+      effectiveSandboxBackend: "none",
+      childKind: "direct",
+    }),
+    false,
+  );
+  assert.equal(
+    requiresManagedAiEngineBaseUrl({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      engineBaseUrl: "",
+      configuredSandboxEnabled: true,
+      configuredSandboxBackend: "windows-wsl2",
+      effectiveSandboxBackend: "none",
+      childKind: "direct",
+      sandboxEnabled: false,
+      sandboxBackend: "none",
+    }),
+    false,
+  );
+});
+
 test("resolveManagedAiProviderRoutingTarget keeps loopback fallback for non-WSL local routing", () => {
   assert.equal(
     requiresManagedAiEngineBaseUrl({
       isDesktopRuntime: true,
       workspaceType: "local",
+      engineBaseUrl: "",
       sandboxEnabled: false,
       sandboxBackend: "none",
     }),
@@ -525,13 +639,13 @@ test("formatManagedAiAccessConfig writes admin-managed default model and gateway
   };
 
   assert.equal(parsed.model, "openai/gpt-4o-mini");
+  assert.doesNotMatch(content, /den_token_123/);
   assert.equal(parsed.provider?.openai?.options?.baseURL, "https://veslo.example.test/ai-gateway/providers/openai/v1");
   assert.deepEqual(parsed.provider?.openai?.options?.headers, {
     "x-keep": "1",
   });
   assert.deepEqual(parsed.provider?.openai?.models?.["gpt-4o-mini"]?.headers, {
-    Authorization: "Bearer veslo-client-token",
-    "x-veslo-gateway-token": "den_token_123",
+    Authorization: `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`,
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
 });
@@ -580,10 +694,10 @@ test("formatManagedAiAccessConfig routes codex_oauth through the gateway", () =>
     parsed.provider?.codex_oauth?.options?.baseURL,
     "https://veslo.example.test/ai-gateway/providers/codex_oauth/v1",
   );
-  assert.equal(parsed.provider?.codex_oauth?.options?.apiKey, "veslo-client-token");
+  assert.doesNotMatch(content, /den_token_123/);
+  assert.equal(parsed.provider?.codex_oauth?.options?.apiKey, VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE);
   assert.equal(parsed.provider?.codex_oauth?.options?.headers, undefined);
   assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.headers, {
-    "x-veslo-gateway-token": "den_token_123",
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
 });
@@ -641,10 +755,10 @@ test("formatManagedAiAccessConfig routes openai_compatible through the gateway",
     parsed.provider?.openai_compatible?.options?.baseURL,
     "https://veslo.example.test/ai-gateway/providers/openai_compatible/v1",
   );
-  assert.equal(parsed.provider?.openai_compatible?.options?.apiKey, "veslo-client-token");
+  assert.doesNotMatch(content, /den_token_123/);
+  assert.equal(parsed.provider?.openai_compatible?.options?.apiKey, VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE);
   assert.equal(parsed.provider?.openai_compatible?.options?.headers, undefined);
   assert.deepEqual(parsed.provider?.openai_compatible?.models?.["custom-model"]?.headers, {
-    "x-veslo-gateway-token": "den_token_123",
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
 });
@@ -681,8 +795,8 @@ test("formatManagedAiAccessConfig supports assigned gpt-5.5 without making it th
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.name, "gpt-5.5");
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.tool_call, true);
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.reasoning, true);
+  assert.doesNotMatch(content, /den_token_123/);
   assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.headers, {
-    "x-veslo-gateway-token": "den_token_123",
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
 });
@@ -942,7 +1056,43 @@ test("hasUsableManagedAiRuntimeConfig rejects stale managed base URLs", () => {
   );
 });
 
-test("hasUsableManagedAiRuntimeConfig treats server-redacted apiKey as usable when routing and gateway token match", () => {
+test("hasUsableManagedAiRuntimeConfig rejects a stale loopback config for a WSL bridge runtime (VSLO-250)", () => {
+  // A config written before the WSL bridge fix points the provider at the
+  // Windows loopback URL, which OpenCode running inside WSL cannot reach.
+  const staleLoopbackContent = formatManagedAiAccessConfig("{}", {
+    profile: managedCodexProfile,
+    serverBaseUrl: "http://127.0.0.1:8787",
+    engineBaseUrl: "http://127.0.0.1:8787",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "gateway-access-token",
+  });
+
+  // For a WSL runtime the effective gateway base URL is the WSL bridge IP, so
+  // the loopback config must be rejected — this is what forces a config rewrite
+  // and a fail-closed send instead of the silent 30s provider-start timeout.
+  assert.equal(
+    hasUsableManagedAiRuntimeConfig({
+      content: staleLoopbackContent,
+      providerId: "codex_oauth",
+      gatewayBaseUrl: "http://172.29.64.1:8787",
+      serverClientToken: "veslo-client-token",
+    }),
+    false,
+  );
+
+  // A proven direct (non-WSL) runtime still accepts the loopback routing.
+  assert.equal(
+    hasUsableManagedAiRuntimeConfig({
+      content: staleLoopbackContent,
+      providerId: "codex_oauth",
+      gatewayBaseUrl: "http://127.0.0.1:8787",
+      serverClientToken: "veslo-client-token",
+    }),
+    true,
+  );
+});
+
+test("hasUsableManagedAiRuntimeConfig treats server-redacted apiKey as usable when routing matches", () => {
   const content = formatManagedAiAccessConfig("{}", {
     profile: managedCodexProfile,
     serverBaseUrl: "http://127.0.0.1:8787",

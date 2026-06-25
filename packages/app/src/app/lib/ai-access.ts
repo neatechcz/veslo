@@ -3,7 +3,11 @@ import { parse } from "jsonc-parser";
 import type { ModelRef } from "../types";
 import type { VesloGatewayProvider, VesloUserAiAccess } from "./veslo-server";
 import { formatConfigWithDefaultModel } from "./model-persistence";
-import { applyGatewayProviderRouting } from "./opencode";
+import {
+  OPENCODE_SESSION_ID_TEMPLATE,
+  VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE,
+  applyGatewayProviderRouting,
+} from "./opencode";
 import { isGatewayOwnedProvider } from "../utils/providers";
 
 export const AI_ACCESS_ADMIN_MANAGED_MESSAGE =
@@ -143,15 +147,54 @@ export function resolveManagedAiProviderRoutingTarget(input: {
 export function requiresManagedAiEngineBaseUrl(input: {
   isDesktopRuntime: boolean;
   workspaceType: "local" | "remote" | null | undefined;
+  engineBaseUrl?: string | null;
+  requiresEngineBridgeUrl?: boolean | null;
+  configuredSandboxEnabled?: boolean | null;
+  configuredSandboxBackend?: string | null;
+  effectiveSandboxBackend?: string | null;
+  childKind?: string | null;
   sandboxEnabled?: boolean | null;
   sandboxBackend?: string | null;
 }): boolean {
-  return (
-    input.isDesktopRuntime &&
-    input.workspaceType === "local" &&
-    input.sandboxEnabled === true &&
-    input.sandboxBackend === "windows-wsl2"
-  );
+  if (!input.isDesktopRuntime || input.workspaceType !== "local") {
+    return false;
+  }
+
+  if (requiresManagedAiBridgeForRuntime(input)) return true;
+  const childKind = input.childKind?.trim() ?? "";
+  if (input.requiresEngineBridgeUrl === false || childKind === "direct") return false;
+
+  if (input.sandboxEnabled !== true || input.sandboxBackend !== "windows-wsl2") return false;
+
+  // Older callers did not provide the runtime sandbox verdict. Keep the
+  // conservative legacy fallback for those paths.
+  const engineBaseUrl = normalizeHttpUrl(input.engineBaseUrl);
+  return Boolean(engineBaseUrl && !isLoopbackHttpUrl(engineBaseUrl));
+}
+
+export function requiresManagedAiBridgeForRuntime(input: {
+  isDesktopRuntime: boolean;
+  workspaceType: "local" | "remote" | null | undefined;
+  requiresEngineBridgeUrl?: boolean | null;
+  configuredSandboxEnabled?: boolean | null;
+  configuredSandboxBackend?: string | null;
+  effectiveSandboxBackend?: string | null;
+  childKind?: string | null;
+}): boolean {
+  if (!input.isDesktopRuntime || input.workspaceType !== "local") return false;
+  if (input.requiresEngineBridgeUrl === true) return true;
+
+  const childKind = input.childKind?.trim() ?? "";
+  if (childKind === "direct") return false;
+
+  if (
+    input.configuredSandboxEnabled === true &&
+    input.configuredSandboxBackend === "windows-wsl2"
+  ) {
+    return true;
+  }
+
+  return input.effectiveSandboxBackend === "windows-wsl2";
 }
 
 function readConfigObject(value: unknown): Record<string, unknown> {
@@ -170,13 +213,10 @@ function parseConfigObject(content: string | null | undefined): Record<string, u
 
 function hasManagedGatewayHeaders(value: unknown, expectedWorkspaceId?: string | null): boolean {
   const headers = readConfigObject(value);
-  const gatewayToken = typeof headers["x-veslo-gateway-token"] === "string"
-    ? headers["x-veslo-gateway-token"].trim()
-    : "";
   const sessionTemplate = typeof headers["x-veslo-session-id"] === "string"
     ? headers["x-veslo-session-id"].trim()
     : "";
-  if (!gatewayToken || !sessionTemplate) return false;
+  if (sessionTemplate !== OPENCODE_SESSION_ID_TEMPLATE) return false;
 
   const workspaceId = expectedWorkspaceId?.trim() ?? "";
   if (!workspaceId) return true;
@@ -198,7 +238,9 @@ function hasUsableServerClientCredential(
   const isOpenAiCompatibleGatewayProvider = providerId === "codex_oauth" || providerId === "openai_compatible";
   if (isOpenAiCompatibleGatewayProvider) {
     const apiKey = typeof options.apiKey === "string" ? options.apiKey.trim() : "";
-    return apiKey === expectedToken || apiKey === REDACTED_SECRET_VALUE;
+    return apiKey === VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE ||
+      apiKey === expectedToken ||
+      apiKey === REDACTED_SECRET_VALUE;
   }
 
   const models = readConfigObject(providerConfig.models);
@@ -209,7 +251,9 @@ function hasUsableServerClientCredential(
       : typeof headers.authorization === "string"
         ? headers.authorization.trim()
         : "";
-    return authorization === `Bearer ${expectedToken}` || authorization === REDACTED_SECRET_VALUE;
+    return authorization === `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}` ||
+      authorization === `Bearer ${expectedToken}` ||
+      authorization === REDACTED_SECRET_VALUE;
   });
 }
 
@@ -435,6 +479,7 @@ export function extractManagedApiKey(content: string | null | undefined): string
       if (typeof apiKey !== "string") continue;
       const normalized = apiKey.trim();
       if (!normalized || normalized === REDACTED_SECRET_VALUE) continue;
+      if (normalized === VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE) continue;
       return normalized;
     }
     return null;

@@ -888,6 +888,8 @@ export default {
   "settings.windows_sandbox_ready": "Windows 沙盒已准备就绪。",
   "settings.windows_sandbox_restart_required": "WSL 支持已安装。请重启 Windows，然后再次运行此操作以准备 VesloSandbox。",
   "settings.windows_sandbox_failed": "Windows 沙盒修复失败。",
+  "settings.windows_sandbox_gate_title": "正在设置 Veslo 沙盒",
+  "settings.windows_sandbox_continue_anyway": "仍然继续",
   "settings.pending_permissions": "待处理的权限",
   "settings.recent_events": "最近的事件",
   "settings.notion_connected": "已连接",

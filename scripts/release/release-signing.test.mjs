@@ -192,11 +192,35 @@ test("workflow routes signing through the release signing resolver", () => {
   assert.match(workflow, /Artifact Signing dlib package/);
   assert.match(workflow, /tauri\.windows\.release\.conf\.json/);
   assert.match(workflow, /appleNotaryAuthMode/);
-  assert.match(workflow, /appleNotaryAuthMode == 'api-key' && secrets\.APPLE_NOTARY_API_KEY_ID \|\| ''/);
-  assert.match(workflow, /appleNotaryAuthMode == 'apple-id' && secrets\.APPLE_NOTARY_APPLE_ID \|\| ''/);
+  assert.match(workflow, /Validate notary API key/);
+  assert.match(workflow, /Build signed macOS bundle for notarization/);
+  assert.match(workflow, /Notarize, staple, and re-sign macOS assets/);
+  assert.match(workflow, /Upload notarized macOS release assets/);
+  assert.match(workflow, /notarize-macos-assets\.sh/);
+  assert.match(workflow, /gh release upload "\$RELEASE_TAG"/);
+  assert.match(workflow, /timeout-minutes:\s*35/);
+  assert.match(workflow, /APPLE_API_KEY: \$\{\{ secrets\.APPLE_NOTARY_API_KEY_ID \}\}/);
+  assert.match(workflow, /APPLE_API_KEY_PATH: \$\{\{ env\.NOTARY_KEY_PATH \}\}/);
+  assert.match(workflow, /APPLE_ID: \$\{\{ secrets\.APPLE_NOTARY_APPLE_ID \}\}/);
   assert.match(workflow, /APPLE_NOTARY_APPLE_ID/);
   assert.match(workflow, /APPLE_NOTARY_APP_SPECIFIC_PASSWORD/);
   assert.match(workflow, /APPLE_TEAM_ID/);
+});
+
+test("manual macOS notarization script staples the DMG and preserves updater artifacts", () => {
+  const scriptPath = resolve(import.meta.dirname, "./notarize-macos-assets.sh");
+  const script = readFileSync(scriptPath, "utf8");
+
+  assert.match(script, /xcrun notarytool submit/);
+  assert.match(script, /--timeout "\$notary_timeout"/);
+  assert.match(script, /> "\$output_json"/);
+  assert.match(script, /2> "\$output_log"/);
+  assert.match(script, /notarytool info "\$submission_id"/);
+  assert.match(script, /xcrun stapler staple "\$dmg_path"/);
+  assert.match(script, /codesign --verify --deep --strict --verbose=2 "\$app_path"/);
+  assert.match(script, /codesign --force --sign "\$APPLE_SIGNING_IDENTITY" "\$dmg_path"/);
+  assert.match(script, /submit_notary "\$dmg_path" "dmg"/);
+  assert.match(script, /app_tar_sig_path=\$app_tar_sig_path/);
 });
 
 test("prerelease workflow supports Apple ID macOS notarization", () => {
@@ -206,8 +230,12 @@ test("prerelease workflow supports Apple ID macOS notarization", () => {
   assert.match(workflow, /Resolve macOS signing/);
   assert.match(workflow, /release-signing\.mjs/);
   assert.match(workflow, /appleNotaryAuthMode/);
-  assert.match(workflow, /appleNotaryAuthMode == 'api-key' && secrets\.APPLE_NOTARY_API_KEY_ID \|\| ''/);
-  assert.match(workflow, /appleNotaryAuthMode == 'apple-id' && secrets\.APPLE_NOTARY_APPLE_ID \|\| ''/);
+  assert.match(workflow, /Validate notary API key/);
+  assert.match(workflow, /Build \+ upload \(notarized, App Store Connect API key\)/);
+  assert.match(workflow, /Build \+ upload \(notarized, Apple ID\)/);
+  assert.match(workflow, /APPLE_API_KEY: \$\{\{ secrets\.APPLE_NOTARY_API_KEY_ID \}\}/);
+  assert.match(workflow, /APPLE_API_KEY_PATH: \$\{\{ env\.NOTARY_KEY_PATH \}\}/);
+  assert.match(workflow, /APPLE_ID: \$\{\{ secrets\.APPLE_NOTARY_APPLE_ID \}\}/);
   assert.match(workflow, /APPLE_NOTARY_APPLE_ID/);
   assert.match(workflow, /APPLE_NOTARY_APP_SPECIFIC_PASSWORD/);
   assert.match(workflow, /APPLE_TEAM_ID/);

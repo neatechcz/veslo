@@ -270,7 +270,7 @@ test("rejected pending queue drain updates the remapped item key", () => {
 test("app prompt send accepts an explicit target session without freezing model bootstrap", () => {
   const sendStart = appSource.indexOf("async function sendPrompt");
   const targetCapture = appSource.indexOf("const explicitTargetSessionId = isPendingSessionInstanceId(options.targetSessionId)", sendStart);
-  const bootstrap = appSource.indexOf('"sendPrompt:ensure-managed-ai-bootstrap-ready"', sendStart);
+  const bootstrap = appSource.indexOf('prepareSendRuntimeForSend("sendPrompt", sendPreflight)', sendStart);
   const modelResolution = appSource.indexOf("const model = modelForSession(sessionID);", sendStart);
   const agentResolution = appSource.indexOf("const agent = agentForSession(sessionID);", sendStart);
 

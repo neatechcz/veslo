@@ -142,6 +142,8 @@ export default function OnboardingView(props: OnboardingViewProps) {
   };
 
   return (
+    <>
+    <WindowsSandboxRepair />
     <Switch>
       <Match when={props.onboardingStep === "connecting"}>
         <div class="min-h-screen flex flex-col items-center justify-center bg-gray-1 text-gray-12 p-6 relative overflow-hidden">
@@ -382,6 +384,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                 </div>
               </div>
             </div>
+
             <Button
               onClick={props.onStartHost}
               disabled={props.busy || !props.activeWorkspacePath.trim()}
@@ -467,8 +470,6 @@ export default function OnboardingView(props: OnboardingViewProps) {
                     </div>
                   </Show>
                 </div>
-
-                <WindowsSandboxRepair />
 
                 <Show when={isTauriRuntime() && props.developerMode}>
                   <div class="rounded-2xl bg-gray-2/40 border border-gray-6 p-4">
@@ -826,5 +827,6 @@ export default function OnboardingView(props: OnboardingViewProps) {
         </div>
       </Match>
     </Switch>
+    </>
   );
 }

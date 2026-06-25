@@ -36,18 +36,18 @@ const GATEWAY_PROVIDER_SECRET_OPTION_KEYS = new Set([
   "refreshtoken",
   "token",
 ]);
-const SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE = "__veslo_gateway_token__";
 const SERVER_PATCH_COMPARISON_SECRET_VALUE = "__veslo_secret_value__";
 // VSLO-86 — a literal "[REDACTED]" sitting in opencode.jsonc on disk is a
 // broken state from an earlier patch round-trip where the server returned
 // the redacted value and the app patched it back through formatConfig. The
 // comparison normalizer must distinguish this from a real token so the
-// boot-time effect forces a re-patch with the in-memory gateway token.
+// boot-time effect forces a re-patch with the current generated routing.
 const SERVER_PATCH_COMPARISON_REDACTED_LITERAL = "__veslo_broken_redacted_token__";
 const REDACTED_LITERAL = "[REDACTED]";
 
 export const OPENCODE_SESSION_ID_TEMPLATE = "${OPENCODE_SESSION_ID}";
-const VESLO_GATEWAY_TOKEN_HEADER = "x-veslo-gateway-token";
+export const VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV = "VESLO_OPENCODE_SERVER_CLIENT_TOKEN";
+export const VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE = `{env:${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV}}`;
 const VESLO_SESSION_ID_HEADER = "x-veslo-session-id";
 export const VESLO_WORKSPACE_ID_HEADER = "x-veslo-workspace-id";
 const auditedTauriFetch = wrapStartupRequestAuditFetch(
@@ -163,7 +163,6 @@ function normalizeConfigKey(input: string): string {
 }
 
 const GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS = new Set([
-  VESLO_GATEWAY_TOKEN_HEADER,
   VESLO_SESSION_ID_HEADER,
   VESLO_WORKSPACE_ID_HEADER,
 ].map(normalizeConfigKey));
@@ -234,7 +233,8 @@ function sanitizeGatewayProviderHeaders(value: unknown): Record<string, string> 
   const sanitized: Record<string, string> = {};
 
   for (const [key, rawValue] of Object.entries(headers)) {
-    if (isGatewayProviderSecretKey(normalizeConfigKey(key))) {
+    const normalizedKey = normalizeConfigKey(key);
+    if (isGatewayProviderSecretKey(normalizedKey) || normalizedKey === "xveslogatewaytoken") {
       continue;
     }
     if (typeof rawValue !== "string") continue;
@@ -300,15 +300,10 @@ function normalizeConfigForServerPatchComparison(value: unknown): unknown {
 
   for (const [key, rawValue] of Object.entries(input)) {
     const normalizedKey = normalizeConfigKey(key);
-    // Server reads redact the gateway access token; local server bearer
-    // credentials must remain value-sensitive so token rotation patches config.
+    // Desired config no longer contains gateway credentials. If a server read
+    // still contains this legacy header, force a scrub patch even when redacted.
     if (normalizedKey === "xveslogatewaytoken") {
-      const trimmed = typeof rawValue === "string" ? rawValue.trim() : "";
-      if (trimmed === REDACTED_LITERAL) {
-        output[key] = SERVER_PATCH_COMPARISON_REDACTED_LITERAL;
-        continue;
-      }
-      output[key] = trimmed ? SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE : rawValue;
+      output[key] = SERVER_PATCH_COMPARISON_REDACTED_LITERAL;
       continue;
     }
 
@@ -349,7 +344,7 @@ export function applyGatewayProviderRouting(
     providerId: GatewayOwnedProviderId;
     serverBaseUrl: string;
     serverClientToken: string;
-    gatewayAccessToken: string;
+    gatewayAccessToken?: string | null;
     workspaceId?: string | null;
     models?: string[];
   },
@@ -369,10 +364,6 @@ export function applyGatewayProviderRouting(
     throw new Error("Server client token is required");
   }
 
-  const gatewayAccessToken = input.gatewayAccessToken.trim();
-  if (!gatewayAccessToken) {
-    throw new Error("Gateway access token is required");
-  }
   const workspaceId = input.workspaceId?.trim() ?? "";
 
   const parsed = parseConfigContent(content);
@@ -393,7 +384,7 @@ export function applyGatewayProviderRouting(
     models: assignedModels,
     openAiCompatible: isOpenAiCompatibleGatewayProvider,
     hasServerClientToken: Boolean(serverClientToken),
-    hasGatewayAccessToken: Boolean(gatewayAccessToken),
+    hasGatewayAccessToken: Boolean(input.gatewayAccessToken?.trim()),
     existingProviderKeys: Object.keys(existingProvider).sort((a, b) => a.localeCompare(b)),
     existingOptionsKeys: Object.keys(existingOptions).sort((a, b) => a.localeCompare(b)),
     existingOptionsBaseUrl: summarizeUrlForTrace(
@@ -415,8 +406,9 @@ export function applyGatewayProviderRouting(
       ...existingModel.config,
       headers: {
         ...existingModel.headers,
-        ...(isOpenAiCompatibleGatewayProvider ? {} : { Authorization: `Bearer ${serverClientToken}` }),
-        [VESLO_GATEWAY_TOKEN_HEADER]: gatewayAccessToken,
+        ...(isOpenAiCompatibleGatewayProvider
+          ? {}
+          : { Authorization: `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}` }),
         [VESLO_SESSION_ID_HEADER]: OPENCODE_SESSION_ID_TEMPLATE,
         ...(workspaceId ? { [VESLO_WORKSPACE_ID_HEADER]: workspaceId } : {}),
       },
@@ -441,7 +433,7 @@ export function applyGatewayProviderRouting(
       : {}),
     options: {
       ...existingOptions,
-      ...(isOpenAiCompatibleGatewayProvider ? { apiKey: serverClientToken } : {}),
+      ...(isOpenAiCompatibleGatewayProvider ? { apiKey: VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE } : {}),
       baseURL: `${serverBaseUrl}/ai-gateway/providers/${providerId}/v1`,
       ...(Object.keys(existingHeaders).length > 0 ? { headers: existingHeaders } : {}),
     },

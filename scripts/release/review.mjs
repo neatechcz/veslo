@@ -30,6 +30,7 @@ const cargoVersion = readCargoVersion(resolve(root, "packages", "desktop", "src-
 const tauriBundleResources = tauriConfig.bundle?.resources ?? {};
 const tauriWindowsWix = tauriConfig.bundle?.windows?.wix ?? {};
 const tauriWindowsNsis = tauriConfig.bundle?.windows?.nsis ?? {};
+const tauriWindowsWebviewInstallMode = tauriConfig.bundle?.windows?.webviewInstallMode ?? {};
 
 const versions = {
   app: appPkg.version ?? null,
@@ -161,6 +162,11 @@ addCheck(
   versions.windowsMsiUpgradeCode ?? "?",
 );
 addCheck(
+  "Windows MSI skips generated WebView2 installer custom action",
+  tauriWindowsWebviewInstallMode.type === "skip",
+  `${tauriWindowsWebviewInstallMode.type ?? "?"}`,
+);
+addCheck(
   "Windows MSI bundles desktop package manifest for WSL provisioning version pin",
   tauriBundleResources["../package.json"] === "package.json" &&
     existsSync(resolve(root, "packages", "desktop", "package.json")),
@@ -186,14 +192,47 @@ const wslPrerequisiteInstaller = existsSync(wslPrerequisiteInstallerPath)
   : "";
 const hiddenProcessStartInfoPattern =
   /New-Object\s+System\.Diagnostics\.ProcessStartInfo[\s\S]*?\$startInfo\.UseShellExecute\s*=\s*\$false[\s\S]*?\$startInfo\.CreateNoWindow\s*=\s*\$true/;
+const nativeCommandTimeoutPattern =
+  /\$NativeCommandTimeoutExitCode\s*=\s*1460[\s\S]*?function\s+Stop-HiddenNativeProcessTree\b[\s\S]*?WaitForExit\(\$timeoutMilliseconds\)/;
+const hasIsolatedWslCommandGuard = (text) =>
+  /(?:(?:native-timeout-isolation|skip-redundant-prereq-check|wsl-install-dism-fallback|optional-feature-fallback|expanded-prereq-log-tail|optional-feature-first|runonce-elevated-exit-guard|msi-restart-prompt|restart-command-logging|tls-opencode-version-guard)-20260623|(?:features-msix-no-localsystem-wsl|startup-continuation)-20260624)/.test(text) &&
+  /Script revision:/.test(text) &&
+  /function\s+Invoke-IsolatedNativeCommand\b/.test(text) &&
+  /Start-Job\s+-ScriptBlock/.test(text) &&
+  /Wait-Job\s+-Job\s+\$job\s+-Timeout\s+\$TimeoutSeconds/.test(text);
+const wslStatusTimeoutPattern = /@\(("--status"|'--status')\)\s+-TimeoutSeconds\s+45/;
 addCheck(
   "Windows MSI bundles WSL prerequisite installer for first-run repair",
   tauriBundleResources["windows/wsl2-prerequisite-installer.ps1"] ===
     "wsl2-prerequisite-installer.ps1" &&
-    /wsl\.exe"\s+@\("--install",\s+"--no-distribution"\)/.test(wslPrerequisiteInstaller) &&
+    /features-msix-no-localsystem-wsl-20260624/.test(wslPrerequisiteInstaller) &&
+    /SecurityProtocol[\s\S]*?Tls12/.test(wslPrerequisiteInstaller) &&
+    /function\s+Install-WslAppPackage\b/.test(wslPrerequisiteInstaller) &&
+    /Add-AppxProvisionedPackage\s+-Online\s+-PackagePath/.test(wslPrerequisiteInstaller) &&
+    /function\s+Resolve-WslExecutable\b/.test(wslPrerequisiteInstaller) &&
+    /function\s+Resolve-DismExecutable\b/.test(wslPrerequisiteInstaller) &&
+    /Sysnative/.test(wslPrerequisiteInstaller) &&
+    /System32/.test(wslPrerequisiteInstaller) &&
     /Microsoft-Windows-Subsystem-Linux/.test(wslPrerequisiteInstaller) &&
     /VirtualMachinePlatform/.test(wslPrerequisiteInstaller) &&
+    /function\s+Test-WslFeaturesEnabled\b/.test(wslPrerequisiteInstaller) &&
+    /Get-WindowsOptionalFeature/.test(wslPrerequisiteInstaller) &&
+    /Get-AppxProvisionedPackage/.test(wslPrerequisiteInstaller) &&
+    !/wsl_update_x64\.msi/.test(wslPrerequisiteInstaller) &&
+    !/msiexec\.exe/i.test(wslPrerequisiteInstaller) &&
+    !/Invoke-NativeCommand[^\n]*--install/.test(wslPrerequisiteInstaller) &&
+    !/Invoke-NativeCommand[^\n]*--update/.test(wslPrerequisiteInstaller) &&
+    /function\s+Enable-WslFeaturesWithPowerShell\b/.test(wslPrerequisiteInstaller) &&
+    /function\s+Enable-WslFeaturesWithPowerShellThenDism\b/.test(wslPrerequisiteInstaller) &&
+    /Enable-WindowsOptionalFeature/.test(wslPrerequisiteInstaller) &&
+    /PowerShell optional feature enablement failed[\s\S]*?falling back to DISM feature enablement/.test(
+      wslPrerequisiteInstaller,
+    ) &&
     hiddenProcessStartInfoPattern.test(wslPrerequisiteInstaller) &&
+    nativeCommandTimeoutPattern.test(wslPrerequisiteInstaller) &&
+    hasIsolatedWslCommandGuard(wslPrerequisiteInstaller) &&
+    /Native command timed out after/.test(wslPrerequisiteInstaller) &&
+    wslStatusTimeoutPattern.test(wslPrerequisiteInstaller) &&
     !/&\s+\$FilePath\b/.test(wslPrerequisiteInstaller),
   tauriBundleResources["windows/wsl2-prerequisite-installer.ps1"] ?? "?",
 );
@@ -209,16 +248,66 @@ const wslClientInstaller = existsSync(wslClientInstallerPath) ? readText(wslClie
 addCheck(
   "Windows installers bundle client WSL runtime setup",
   tauriBundleResources["windows/wsl2-client-installer.ps1"] === "wsl2-client-installer.ps1" &&
+    /AllowRestartContinuationSuccess/.test(wslClientInstaller) &&
+    /AllowDeferredRuntimeRepairSuccess/.test(wslClientInstaller) &&
+    /\[switch\]\$StartupContinuation/.test(wslClientInstaller) &&
+    /function\s+Register-MachineStartupContinuation\b[\s\S]*?-StartupContinuation[\s\S]*?-SkipPrerequisiteInstall[\s\S]*?Active Setup/.test(
+      wslClientInstaller,
+    ) &&
+    /function\s+Invoke-StartupContinuation\b[\s\S]*?Wait-WslUsable[\s\S]*?Invoke-LocalPowerShellScript\s+-ScriptPath\s+\$SandboxInstallerScript/s.test(
+      wslClientInstaller,
+    ) &&
+    /function\s+Register-CurrentUserStartupRetry\b[\s\S]*?-StartupContinuation[\s\S]*?-SkipPrerequisiteInstall[\s\S]*?RunOnce/.test(
+      wslClientInstaller,
+    ) &&
+    /Resolve-RestartRequiredMarkerPath/.test(wslClientInstaller) &&
+    /runtime-setup-restart-required\.marker/.test(wslClientInstaller) &&
+    !/Show-RestartPromptIfRequired/.test(wslClientInstaller) &&
+    !/WScript\.Shell/.test(wslClientInstaller) &&
+    !/shutdown\.exe/.test(wslClientInstaller) &&
+    /VESLO_RUNTIME_SETUP_RESULT=restart_required[\s\S]*?Set-Content\s+-LiteralPath\s+\$markerPath/s.test(
+      wslClientInstaller,
+    ) &&
+    /function\s+Write-RecentPrerequisiteLogTail\b/.test(wslClientInstaller) &&
+    /Latest WSL prerequisite helper transcript/.test(wslClientInstaller) &&
+    /Start-Sleep\s+-Milliseconds\s+500/.test(wslClientInstaller) &&
+    /Windows PowerShell transcript start/.test(wslClientInstaller) &&
+    /Get-Content\s+-LiteralPath\s+\$prereqLogPath\s+-ErrorAction\s+Stop/.test(wslClientInstaller) &&
+    /-not\s+\$restartContinuation[\s\S]*?first-run onboarding\/Settings repair will retry[\s\S]*?\$installerExitCode\s*=\s*0/.test(
+      wslClientInstaller,
+    ) &&
+    /VESLO_RUNTIME_SETUP_RESULT=ready/.test(wslClientInstaller) &&
+    /VESLO_RUNTIME_SETUP_RESULT=restart_required/.test(wslClientInstaller) &&
+    /VESLO_RUNTIME_SETUP_RESULT=failed/.test(wslClientInstaller) &&
     /wsl2-prerequisite-installer\.ps1/.test(wslClientInstaller) &&
     /wsl2-sandbox-installer\.ps1/.test(wslClientInstaller) &&
     /function\s+Resolve-WslExecutable\b/.test(wslClientInstaller) &&
     /function\s+Resolve-PowerShellExecutable\b/.test(wslClientInstaller) &&
     /Sysnative/.test(wslClientInstaller) &&
     /System32/.test(wslClientInstaller) &&
-    /Invoke-ElevatedPowerShellScript\s+\$prerequisiteScript\s+@\("-Install"\)/.test(wslClientInstaller) &&
+    /Cannot prepare Veslo WSL runtime under SYSTEM[\s\S]*?Finish-ClientInstaller 5/.test(
+      wslClientInstaller,
+    ) &&
+    /Invoke-ElevatedPowerShellScript[\s\S]*?-ScriptPath\s+\$[Pp]rerequisiteScript[\s\S]*?-ScriptArguments\s+@\("-Install"\)[\s\S]*?-TimeoutSeconds\s+3600/.test(
+      wslClientInstaller,
+    ) &&
+    /WSL status already failed; skipping redundant prerequisite check/.test(wslClientInstaller) &&
+    !/Invoke-LocalPowerShellScript\s+-ScriptPath\s+\$prerequisiteScript\s+-ScriptArguments\s+@\("-CheckOnly"\)/.test(wslClientInstaller) &&
     /-Verb\s+RunAs/.test(wslClientInstaller) &&
     /RunOnce/.test(wslClientInstaller) &&
+    /\$ClientInstallerScriptPath/.test(wslClientInstaller) &&
+    !/function\s+Register-ClientInstallerRunOnce[\s\S]*?\$MyInvocation\.MyCommand\.Path[\s\S]*?\n}/.test(
+      wslClientInstaller,
+    ) &&
+    /Elevated prerequisite installer exited without an ExitCode[\s\S]*?ExitCode\s*=\s*\$exitCode/.test(
+      wslClientInstaller,
+    ) &&
     hiddenProcessStartInfoPattern.test(wslClientInstaller) &&
+    nativeCommandTimeoutPattern.test(wslClientInstaller) &&
+    hasIsolatedWslCommandGuard(wslClientInstaller) &&
+    /Native command timed out after/.test(wslClientInstaller) &&
+    /Native command finished with exit code \$exitCode\./.test(wslClientInstaller) &&
+    wslStatusTimeoutPattern.test(wslClientInstaller) &&
     !/&\s+(?:wsl|powershell)\.exe\b/i.test(wslClientInstaller),
   tauriBundleResources["windows/wsl2-client-installer.ps1"] ?? "?",
 );
@@ -234,7 +323,15 @@ const wslSandboxInstaller = existsSync(wslSandboxInstallerPath) ? readText(wslSa
 addCheck(
   "Windows MSI bundles WSL sandbox installer wrapper",
   tauriBundleResources["windows/wsl2-sandbox-installer.ps1"] === "wsl2-sandbox-installer.ps1" &&
+    !/best-effort/.test(wslSandboxInstaller) &&
+    /Cannot provision Veslo WSL runtime under SYSTEM[\s\S]*?Finish-Installer 5/.test(
+      wslSandboxInstaller,
+    ) &&
     hiddenProcessStartInfoPattern.test(wslSandboxInstaller) &&
+    nativeCommandTimeoutPattern.test(wslSandboxInstaller) &&
+    hasIsolatedWslCommandGuard(wslSandboxInstaller) &&
+    /Native command timed out after/.test(wslSandboxInstaller) &&
+    wslStatusTimeoutPattern.test(wslSandboxInstaller) &&
     !/&\s+(?:wsl|powershell)\.exe\b/i.test(wslSandboxInstaller),
   tauriBundleResources["windows/wsl2-sandbox-installer.ps1"] ?? "?",
 );
@@ -248,10 +345,24 @@ const wslSandboxProvisionerPath = resolve(
 const wslSandboxProvisioner = existsSync(wslSandboxProvisionerPath) ? readText(wslSandboxProvisionerPath) : "";
 addCheck(
   "Windows MSI bundles hidden WSL sandbox provisioner",
-  tauriBundleResources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"] ===
+    tauriBundleResources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"] ===
     "windows-wsl2-sandbox-provision.ps1" &&
     hiddenProcessStartInfoPattern.test(wslSandboxProvisioner) &&
-    /Invoke-HiddenNativeCommand\s+"wsl\.exe"\s+\$WslArgs/.test(wslSandboxProvisioner) &&
+    nativeCommandTimeoutPattern.test(wslSandboxProvisioner) &&
+    hasIsolatedWslCommandGuard(wslSandboxProvisioner) &&
+    /Timed out after \$TimeoutSeconds seconds/.test(wslSandboxProvisioner) &&
+    /SecurityProtocol[\s\S]*?Tls12/.test(wslSandboxProvisioner) &&
+    /function\s+Invoke-ProvisionWebRequest\b/.test(wslSandboxProvisioner) &&
+    /Invoke-WebRequest[\s\S]*?-TimeoutSec\s+\$TimeoutSeconds/.test(wslSandboxProvisioner) &&
+    /Join-Path\s+\$PSScriptRoot\s+"package\.json"/.test(wslSandboxProvisioner) &&
+    /Join-Path\s+\$PSScriptRoot\s+"\.\.\\package\.json"/.test(wslSandboxProvisioner) &&
+    /test "\$actual" = "__EXPECTED_OPENCODE_VERSION__"/.test(wslSandboxProvisioner) &&
+    !/opencode --version \| grep -F/.test(wslSandboxProvisioner) &&
+    /catch\s*\{[\s\S]*?Unhandled provisioning error/.test(wslSandboxProvisioner) &&
+    /Invoke-Wsl\s+-WslArgs\s+@\(("--status"|'--status')\)\s+-TimeoutSeconds\s+45/.test(
+      wslSandboxProvisioner,
+    ) &&
+    /Invoke-HiddenNativeCommand\s+-FilePath\s+"wsl\.exe"\s+-Arguments\s+\$WslArgs/.test(wslSandboxProvisioner) &&
     !/&\s+wsl\.exe\b/i.test(wslSandboxProvisioner),
   tauriBundleResources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"] ?? "?",
 );
@@ -270,18 +381,46 @@ addCheck(
     tauriWindowsWix.fragmentPaths.includes("windows/wsl2-sandbox-installer.wxs") &&
     Array.isArray(tauriWindowsWix.componentGroupRefs) &&
     tauriWindowsWix.componentGroupRefs.includes("VesloWslProvisioningInstallerComponents") &&
+    /<Property\s+Id="MsiLogging"\s+Value="voicewarmupx!"\s*\/>/.test(wslInstallerFragment) &&
+    /RemoveOldVesloWslClientInstaller/.test(wslInstallerFragment) &&
+    /RemoveOldVesloWslPrerequisiteInstaller/.test(wslInstallerFragment) &&
+    /RemoveOldVesloWslSandboxInstaller/.test(wslInstallerFragment) &&
+    /RemoveOldVesloWslSandboxProvisioner/.test(wslInstallerFragment) &&
+    /Name="wsl2-client-installer\.ps1"\s+On="install"/.test(wslInstallerFragment) &&
     /ComponentGroup\s+Id="VesloWslProvisioningInstallerComponents"/.test(wslInstallerFragment) &&
     /Id="VesloProvisionWslSandbox"/.test(wslInstallerFragment) &&
     /After="InstallFiles"/.test(wslInstallerFragment) &&
-    /Return="ignore"/.test(wslInstallerFragment) &&
+    /Return="check"/.test(wslInstallerFragment) &&
     /\[System64Folder\]WindowsPowerShell\\v1\.0\\powershell\.exe/.test(wslInstallerFragment) &&
     !/\[SystemFolder\]WindowsPowerShell\\v1\.0\\powershell\.exe/.test(wslInstallerFragment) &&
     /-NoProfile\s+-NonInteractive\s+-WindowStyle\s+Hidden\s+-ExecutionPolicy\s+Bypass/.test(wslInstallerFragment) &&
     /\[INSTALLDIR\]wsl2-client-installer\.ps1/.test(wslInstallerFragment) &&
+    !/-AllowRestartContinuationSuccess/.test(wslInstallerFragment) &&
+    /-AllowDeferredRuntimeRepairSuccess/.test(wslInstallerFragment) &&
+    !/Id="VesloPromptWslRuntimeRestart"/.test(wslInstallerFragment) &&
+    !/-PromptForRestartIfRequired/.test(wslInstallerFragment) &&
+    /Id="VesloDisableExitDialogLaunchCheckbox"[\s\S]*?Property="WIXUI_EXITDIALOGOPTIONALCHECKBOX"[\s\S]*?Value="0"/.test(
+      wslInstallerFragment,
+    ) &&
+    /Id="VesloClearExitDialogLaunchCheckboxText"[\s\S]*?Property="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"[\s\S]*?Value=""/.test(
+      wslInstallerFragment,
+    ) &&
+    /Custom Action="VesloDisableExitDialogLaunchCheckbox"\s+Before="ExecuteAction"/.test(
+      wslInstallerFragment,
+    ) &&
+    /Custom Action="VesloDisableAutoLaunchApp"\s+Before="LaunchApplication"/.test(
+      wslInstallerFragment,
+    ) &&
     /function\s+Resolve-WslExecutable\b/.test(wslSandboxInstaller) &&
     /function\s+Resolve-PowerShellExecutable\b/.test(wslSandboxInstaller) &&
     /Sysnative/.test(wslSandboxInstaller) &&
     /System32/.test(wslSandboxInstaller) &&
+    /Write-InstallerLog "wsl\.exe was not found[\s\S]*?Finish-Installer 127/.test(
+      wslSandboxInstaller,
+    ) &&
+    /Write-InstallerLog "powershell\.exe was not found[\s\S]*?Finish-Installer 127/.test(
+      wslSandboxInstaller,
+    ) &&
     /package\.json/.test(wslSandboxInstaller),
   Array.isArray(tauriWindowsWix.fragmentPaths)
     ? tauriWindowsWix.fragmentPaths.join(", ")
@@ -307,6 +446,15 @@ addCheck(
     !/\bExecWait\b/.test(nsisHook) &&
     /wsl2-client-installer\.ps1/.test(nsisHook) &&
     /-NoProfile\s+-NonInteractive\s+-WindowStyle\s+Hidden\s+-ExecutionPolicy\s+Bypass/.test(nsisHook) &&
+    /SetRebootFlag\s+true/.test(nsisHook) &&
+    /MessageBox\s+MB_ICONINFORMATION/.test(nsisHook) &&
+    /MessageBox\s+MB_ICONEXCLAMATION/.test(nsisHook) &&
+    /Abort\s+"Veslo Windows runtime preparation failed/.test(nsisHook) &&
+    /wsl2-client-installer\.log/.test(nsisHook) &&
+    /\$COMMONAPPDATA\\Veslo\\logs\\wsl2-prerequisite-installer\.log/.test(nsisHook) &&
+    !/\$PROGRAMDATA/.test(nsisHook) &&
+    /wsl2-prerequisite-installer\.log/.test(nsisHook) &&
+    /wsl2-sandbox-installer\.log/.test(nsisHook) &&
     !/-Verb\s+RunAs/.test(nsisHook),
   `${tauriWindowsNsis.installMode ?? "?"}; ${tauriWindowsNsis.installerHooks ?? "?"}`,
 );

@@ -70,11 +70,11 @@ export function resolveReleaseSigning(options = {}) {
 
   const appleSigningReady =
     hasValue(appleSigningIdentity) && hasValue(appleCertificate) && hasValue(appleCertificatePassword);
-  const appleNotaryApiKeyReady =
-    (hasValue(appleNotaryApiKeyId) &&
-      hasValue(appleNotaryApiIssuerId) &&
-      hasValue(appleNotaryApiKeyPath)) ||
-    hasValue(appleNotaryApiKeyBase64);
+  const appleNotaryApiKeyCredentialReady =
+    hasValue(appleNotaryApiKeyId) &&
+    hasValue(appleNotaryApiIssuerId) &&
+    (hasValue(appleNotaryApiKeyPath) || hasValue(appleNotaryApiKeyBase64));
+  const appleNotaryApiKeyReady = appleNotaryApiKeyCredentialReady;
   const appleIdNotaryReady = hasValue(appleId) && hasValue(applePassword) && hasValue(appleTeamId);
   const appleNotaryAuthMode = appleNotaryApiKeyReady ? "api-key" : appleIdNotaryReady ? "apple-id" : "none";
   const appleNotaryReady = appleNotaryAuthMode !== "none";
@@ -103,7 +103,7 @@ export function resolveReleaseSigning(options = {}) {
     }
     if (!appleNotaryReady) {
       throw new Error(
-        "APPLE_NOTARY_API_KEY_P8_BASE64 or the resolved APPLE_API_KEY/APPLE_API_ISSUER/APPLE_API_KEY_PATH trio, or APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID are required when macOS notarization is enabled.",
+        "APPLE_API_KEY/APPLE_API_ISSUER and APPLE_NOTARY_API_KEY_P8_BASE64 or APPLE_API_KEY_PATH, or APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID are required when macOS notarization is enabled.",
       );
     }
   }

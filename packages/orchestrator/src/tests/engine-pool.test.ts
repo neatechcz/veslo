@@ -314,6 +314,7 @@ describe("EnginePool", () => {
       const snap = h.pool.snapshot();
       expect(snap).toHaveLength(1);
       expect(snap[0]?.workspaceId).toBe("a");
+      expect(snap[0]?.childKind).toBe("direct");
       expect((snap[0] as Record<string, unknown>).child).toBeUndefined();
       expect(() => JSON.stringify(snap)).not.toThrow();
     } finally {

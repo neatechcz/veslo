@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
 const workspaceSendTargetSource = readFileSync(
   new URL("../context/workspace-send-target.ts", import.meta.url),
   "utf8",
@@ -67,8 +68,13 @@ test("send engine startup uses the snapshotted target workspace", () => {
 
   assert.match(
     sendSource,
-    /workspaceStore\.ensureEngineForWorkspace\(sendTargetWorkspace\?\.workspaceId\)/,
-    "browsing-mode send should start the target workspace engine instead of whichever workspace is currently active",
+    /prepareSendRuntimeForSend\("sendPrompt", sendPreflight\)/,
+    "browsing-mode send should delegate engine startup to the send runtime readiness owner",
+  );
+  assert.match(
+    readinessSource,
+    /deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined\)/,
+    "send runtime readiness owner should start the snapshotted target workspace engine instead of whichever workspace is currently active",
   );
 });
 

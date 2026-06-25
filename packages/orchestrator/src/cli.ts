@@ -18,7 +18,7 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { TuiHandle } from "./tui/app.js";
 import { reconcileOpencodeVersion } from "./opencode-version.js";
 import { sanitizeRuntimePayloadForLogs } from "./security.js";
-import { resolveEngineSandbox } from "./sandbox-mode.js";
+import { buildUnsandboxedSandboxWarning, resolveEngineSandbox } from "./sandbox-mode.js";
 import {
   buildSharedOpencodeEngineWarning,
   resolveEngineTopology,
@@ -41,6 +41,7 @@ import {
 import { createRunActivityProbe } from "./run-activity-probe.js";
 import {
   hostDirectoryToEngineDirectory,
+  resolveEnginePathMappingBackend,
   rewriteDirectoryFieldsForEngine,
   rewriteDirectoryFieldsForHost,
   rewriteDirectoryQueryForEngine,
@@ -115,6 +116,7 @@ const DEFAULT_OPENCODE_USERNAME = "opencode";
 const DEFAULT_OPENCODE_HOT_RELOAD_DEBOUNCE_MS = 700;
 const DEFAULT_OPENCODE_HOT_RELOAD_COOLDOWN_MS = 1500;
 const DEFAULT_MANAGED_AI_BASE_URL = "https://ai.veslo.work";
+const VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV = "VESLO_OPENCODE_SERVER_CLIENT_TOKEN";
 
 type ParsedArgs = {
   positionals: string[];
@@ -2498,6 +2500,7 @@ async function startOpencode(options: {
   expectedVersion?: string;
   username?: string;
   password?: string;
+  vesloServerToken?: string;
   corsOrigins: string[];
   logger: Logger;
   runId: string;
@@ -2506,7 +2509,16 @@ async function startOpencode(options: {
   /** F4Ú4 — wrap engine spawn in OS-level sandbox. When omitted, sandbox is
    *  resolved automatically per platform unless `VESLO_DISABLE_SANDBOX=1`. */
   sandbox?: WorkerSandbox | null;
-}): Promise<{ child: ChildProcess; connectHost?: string; childKind?: "direct" | "wsl" }> {
+}): Promise<{
+  child: ChildProcess;
+  connectHost?: string;
+  childKind?: "direct" | "wsl";
+  sandboxed: boolean;
+  configuredSandboxBackend: string;
+  effectiveSandboxBackend: string;
+  sandboxMode: "resolved" | "explicit-none" | "disabled-by-env" | "unavailable" | "launch-fallback";
+  sandboxFallbackReason: string | null;
+}> {
   const args = ["serve", "--hostname", options.bindHost, "--port", String(options.port)];
   for (const origin of options.corsOrigins) {
     args.push("--cors", origin);
@@ -2528,6 +2540,7 @@ async function startOpencode(options: {
     ),
     ...(options.username ? { OPENCODE_SERVER_USERNAME: options.username } : {}),
     ...(options.password ? { OPENCODE_SERVER_PASSWORD: options.password } : {}),
+    ...(options.vesloServerToken ? { [VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV]: options.vesloServerToken } : {}),
     ...(options.configDir ? { OPENCODE_CONFIG_DIR: options.configDir } : {}),
     OPENCODE_HOT_RELOAD: options.hotReload.enabled ? "1" : "0",
     OPENCODE_HOT_RELOAD_DEBOUNCE_MS: String(options.hotReload.debounceMs),
@@ -2539,7 +2552,8 @@ async function startOpencode(options: {
 
   // VESLO_DISABLE_SANDBOX=1 is a hard kill switch: it bypasses platform
   // backend resolution entirely, including the Windows WSL2 sandbox branch.
-  const sandbox = resolveEngineSandbox({
+  const sandboxExplicitNone = options.sandbox === null;
+  let sandbox = resolveEngineSandbox({
     env: process.env,
     workspace: options.workspace,
     sandbox: options.sandbox,
@@ -2547,61 +2561,105 @@ async function startOpencode(options: {
     logger: options.logger,
   });
 
+  let sandboxMode: "resolved" | "explicit-none" | "disabled-by-env" | "unavailable" | "launch-fallback";
+  let configuredSandboxBackend: WorkerSandbox["name"] | "none" | "unresolved";
+  let sandboxFallbackReason: string | null = null;
+  if (sandbox) {
+    sandboxMode = "resolved";
+    configuredSandboxBackend = sandbox.name;
+  } else if (sandboxExplicitlyDisabled(process.env)) {
+    sandboxMode = "disabled-by-env";
+    configuredSandboxBackend = "none";
+  } else if (sandboxExplicitNone) {
+    sandboxMode = "explicit-none";
+    configuredSandboxBackend = "none";
+  } else {
+    sandboxMode = "unavailable";
+    configuredSandboxBackend = "unresolved";
+    sandboxFallbackReason = "sandbox unavailable";
+  }
+
   let child: ChildProcess;
   let connectHost: string | undefined;
   let childKind: "direct" | "wsl" = "direct";
   let launchDiag: LogAttributes | undefined;
+  let launch: Awaited<ReturnType<WorkerSandbox["buildLaunch"]>> | null = null;
   if (sandbox) {
-    if (!sandbox.isAvailable()) {
-      throw new Error(`Sandbox backend ${sandbox.name} is not available on this host.`);
-    }
-    // F4Ú4 — engine needs write access beyond workspace:
-    //   - OPENCODE_CONFIG_DIR (SQLite migrations, logs, telemetry, auth cache)
-    //   - /tmp + /private/tmp + /var/folders (SQLite WAL/SHM, scratch files)
-    //   - XDG dirs opencode uses: ~/.local/state/opencode, ~/.local/share/opencode,
-    //     ~/.cache/opencode, ~/.config/opencode (sessions DB, model cache, settings)
-    //   VSLO-86: `@opencode-ai/plugin` + zod are vendored into
-    //   `<workspace>/.opencode/node_modules/` and `<configDir>/node_modules/`
-    //   at provisioning time, so the engine no longer needs to walk into
-    //   `~/.bun/install/cache` at runtime. Keeping that path out of the
-    //   sandbox allow-list avoids a regression where the sandbox-runtime
-    //   appears to abort fresh spawns when the path is added.
-    //   These will move to per-workspace dirs in a later fáze.
-    const home = process.env.HOME ?? "";
-    const extraWrites: string[] = [
-      "/tmp",
-      "/private/tmp",
-      "/var/folders",
-    ];
-    if (options.configDir) extraWrites.push(options.configDir);
-    if (home) {
-      extraWrites.push(
-        `${home}/.local/state/opencode`,
-        `${home}/.local/share/opencode`,
-        `${home}/.cache/opencode`,
-        `${home}/.config/opencode`,
+    try {
+      if (!sandbox.isAvailable()) {
+        throw new Error(`Sandbox backend ${sandbox.name} is not available on this host.`);
+      }
+      // F4Ú4 — engine needs write access beyond workspace:
+      //   - OPENCODE_CONFIG_DIR (SQLite migrations, logs, telemetry, auth cache)
+      //   - /tmp + /private/tmp + /var/folders (SQLite WAL/SHM, scratch files)
+      //   - XDG dirs opencode uses: ~/.local/state/opencode, ~/.local/share/opencode,
+      //     ~/.cache/opencode, ~/.config/opencode (sessions DB, model cache, settings)
+      //   VSLO-86: `@opencode-ai/plugin` + zod are vendored into
+      //   `<workspace>/.opencode/node_modules/` and `<configDir>/node_modules/`
+      //   at provisioning time, so the engine no longer needs to walk into
+      //   `~/.bun/install/cache` at runtime. Keeping that path out of the
+      //   sandbox allow-list avoids a regression where the sandbox-runtime
+      //   appears to abort fresh spawns when the path is added.
+      //   These will move to per-workspace dirs in a later fáze.
+      const home = process.env.HOME ?? "";
+      const extraWrites: string[] = [
+        "/tmp",
+        "/private/tmp",
+        "/var/folders",
+      ];
+      if (options.configDir) extraWrites.push(options.configDir);
+      if (home) {
+        extraWrites.push(
+          `${home}/.local/state/opencode`,
+          `${home}/.local/share/opencode`,
+          `${home}/.cache/opencode`,
+          `${home}/.config/opencode`,
+        );
+      }
+      launch = await sandbox.buildLaunch({
+        command: {
+          program: options.bin,
+          args,
+          cwd: options.workspace,
+          env,
+        },
+        workspacePath: options.workspace,
+        additionalWritePaths: extraWrites,
+        engine: {
+          kind: "opencode",
+          expectedVersion: options.expectedVersion,
+        },
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      options.logger.warn(
+        "sandbox launch unavailable, spawning unsandboxed",
+        { workspace: options.workspace, backend: sandbox.name, reason: "sandbox launch unavailable", error: detail },
+        "sandbox",
       );
+      console.error(
+        buildUnsandboxedSandboxWarning({
+          workspace: options.workspace,
+          reason: "sandbox launch unavailable",
+          detail,
+        }),
+      );
+      sandboxMode = "launch-fallback";
+      sandboxFallbackReason = "sandbox launch unavailable";
+      sandbox = null;
     }
-    const launch = await sandbox.buildLaunch({
-      command: {
-        program: options.bin,
-        args,
-        cwd: options.workspace,
-        env,
-      },
-      workspacePath: options.workspace,
-      additionalWritePaths: extraWrites,
-      engine: {
-        kind: "opencode",
-        expectedVersion: options.expectedVersion,
-      },
-    });
+  }
+  if (sandbox && launch) {
     options.logger.info(
       "engine spawn (sandboxed)",
       {
         workspace: options.workspace,
         configDir: options.configDir,
         backend: sandbox.name,
+        configuredSandboxBackend,
+        effectiveSandboxBackend: sandbox.name,
+        sandboxMode,
+        sandboxFallbackReason,
         childKind: launch.childKind ?? "direct",
         bindHost: options.bindHost,
         port: options.port,
@@ -2635,6 +2693,11 @@ async function startOpencode(options: {
       {
         workspace: options.workspace,
         configDir: options.configDir,
+        configuredSandboxBackend,
+        effectiveSandboxBackend: "none",
+        sandboxMode,
+        sandboxFallbackReason,
+        childKind,
         bindHost: options.bindHost,
         port: options.port,
       },
@@ -2656,6 +2719,10 @@ async function startOpencode(options: {
       port: options.port,
       connectHost,
       childKind,
+      configuredSandboxBackend,
+      effectiveSandboxBackend: sandbox?.name ?? "none",
+      sandboxMode,
+      sandboxFallbackReason,
     },
     "opencode",
   );
@@ -2669,6 +2736,10 @@ async function startOpencode(options: {
       connectHost: connectHost ?? "",
       childKind,
       sandboxed: Boolean(sandbox),
+      configuredSandboxBackend,
+      effectiveSandboxBackend: sandbox?.name ?? "none",
+      sandboxMode,
+      sandboxFallbackReason,
       ...(launchDiag ? { launch: launchDiag } : {}),
     });
     console.error(
@@ -2681,6 +2752,10 @@ async function startOpencode(options: {
         connectHost,
         childKind,
         sandboxed: Boolean(sandbox),
+        configuredSandboxBackend,
+        effectiveSandboxBackend: sandbox?.name ?? "none",
+        sandboxMode,
+        sandboxFallbackReason,
       })}`,
     );
   }
@@ -2693,6 +2768,10 @@ async function startOpencode(options: {
     connectHost: connectHost ?? null,
     childKind,
     sandboxed: Boolean(sandbox),
+    configuredSandboxBackend,
+    effectiveSandboxBackend: sandbox?.name ?? "none",
+    sandboxMode,
+    sandboxFallbackReason,
     sandboxBackend: sandbox?.name ?? "none",
     displayCommand: launchDiag?.displayCommand ?? null,
   });
@@ -2724,7 +2803,16 @@ async function startOpencode(options: {
     );
   });
 
-  return { child, connectHost, childKind };
+  return {
+    child,
+    connectHost,
+    childKind,
+    sandboxed: Boolean(sandbox),
+    configuredSandboxBackend,
+    effectiveSandboxBackend: sandbox?.name ?? "none",
+    sandboxMode,
+    sandboxFallbackReason,
+  };
 }
 
 function resolveConfiguredSandboxBackend(): WorkerSandbox["name"] | "none" {
@@ -3779,6 +3867,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     process.env.VESLO_OPENCODE_USERNAME ??
     process.env.OPENCODE_SERVER_USERNAME ??
     DEFAULT_OPENCODE_USERNAME;
+  const vesloServerToken = readFlag(args.flags, "veslo-token") ?? process.env.VESLO_TOKEN;
   const authHeaders = opencodePassword
     ? { Authorization: `Basic ${encodeBasicAuth(opencodeUsername, opencodePassword)}` }
     : undefined;
@@ -3947,6 +4036,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           expectedVersion: opencodeBinary.expectedVersion,
           username: opencodePassword ? opencodeUsername : undefined,
           password: opencodePassword,
+          vesloServerToken,
           corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
           logger,
           runId: `${runId}-${workspaceId.slice(-8)}`,
@@ -3969,6 +4059,11 @@ async function runRouterDaemon(args: ParsedArgs) {
           port,
           childPid: spawned.child.pid ?? null,
           childKind: spawned.childKind ?? "direct",
+          sandboxed: spawned.sandboxed,
+          configuredSandboxBackend: spawned.configuredSandboxBackend,
+          effectiveSandboxBackend: spawned.effectiveSandboxBackend,
+          sandboxMode: spawned.sandboxMode,
+          sandboxFallbackReason: spawned.sandboxFallbackReason,
           connectHost: spawned.connectHost ?? null,
           clientHost,
           durationMs: Date.now() - startedAt,
@@ -3977,6 +4072,11 @@ async function runRouterDaemon(args: ParsedArgs) {
           child: spawned.child,
           baseUrl: `http://${clientHost}:${port}`,
           childKind: spawned.childKind,
+          sandboxed: spawned.sandboxed,
+          configuredSandboxBackend: spawned.configuredSandboxBackend,
+          effectiveSandboxBackend: spawned.effectiveSandboxBackend,
+          sandboxMode: spawned.sandboxMode,
+          sandboxFallbackReason: spawned.sandboxFallbackReason,
         };
       },
       waitForHealthy: async (baseUrl) => {
@@ -4079,6 +4179,7 @@ async function runRouterDaemon(args: ParsedArgs) {
                 expectedVersion: opencodeBinary.expectedVersion,
                 username: opencodePassword ? opencodeUsername : undefined,
                 password: opencodePassword,
+                vesloServerToken,
                 corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
                 logger,
                 runId: `${runId}-shared`,
@@ -4095,6 +4196,11 @@ async function runRouterDaemon(args: ParsedArgs) {
                 port,
                 childPid: spawned.child.pid ?? null,
                 childKind: spawned.childKind ?? "direct",
+                sandboxed: spawned.sandboxed,
+                configuredSandboxBackend: spawned.configuredSandboxBackend,
+                effectiveSandboxBackend: spawned.effectiveSandboxBackend,
+                sandboxMode: spawned.sandboxMode,
+                sandboxFallbackReason: spawned.sandboxFallbackReason,
                 connectHost: spawned.connectHost ?? null,
                 clientHost,
                 durationMs: Date.now() - startedAt,
@@ -4103,6 +4209,11 @@ async function runRouterDaemon(args: ParsedArgs) {
                 child: spawned.child,
                 baseUrl: `http://${clientHost}:${port}`,
                 childKind: spawned.childKind,
+                sandboxed: spawned.sandboxed,
+                configuredSandboxBackend: spawned.configuredSandboxBackend,
+                effectiveSandboxBackend: spawned.effectiveSandboxBackend,
+                sandboxMode: spawned.sandboxMode,
+                sandboxFallbackReason: spawned.sandboxFallbackReason,
               };
             },
             waitForHealthy: async (baseUrl) => {
@@ -4175,7 +4286,11 @@ async function runRouterDaemon(args: ParsedArgs) {
   ): { url: string; headers: Record<string, string> } => {
     const workspace = findWorkspace(state, input.workspaceId);
     const mapping: EnginePathMapping = {
-      backend: resolveConfiguredSandboxBackend(),
+      backend: resolveEnginePathMappingBackend({
+        configuredBackend: configuredSandboxBackend,
+        engineChildKind: engine.childKind ?? "direct",
+        sharedUnsandboxed: engineTopology.mode === "shared-unsandboxed",
+      }),
       hostWorkspacePath: workspace?.path?.trim() || input.directory,
     };
     const search = rewriteDirectoryQueryForEngine(
@@ -4761,7 +4876,11 @@ async function runRouterDaemon(args: ParsedArgs) {
 
         const restPath = "/" + parts.slice(3).join("/");
         const pathMapping: EnginePathMapping = {
-          backend: engineTopology.mode === "shared-unsandboxed" ? "none" : resolveConfiguredSandboxBackend(),
+          backend: resolveEnginePathMappingBackend({
+            configuredBackend: configuredSandboxBackend,
+            engineChildKind: proxyTarget.engine.childKind ?? "direct",
+            sharedUnsandboxed: engineTopology.mode === "shared-unsandboxed",
+          }),
           hostWorkspacePath: proxyTarget.directory,
         };
         const rewriteEnginePaths = pathMapping.backend === "windows-wsl2";
@@ -5765,6 +5884,7 @@ async function runStart(args: ParsedArgs) {
         expectedVersion: opencodeBinary.expectedVersion,
         username: opencodeUsername,
         password: opencodePassword,
+        vesloServerToken: vesloToken,
         corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
         logger,
         runId,
@@ -5887,7 +6007,10 @@ async function runStart(args: ParsedArgs) {
         opencodePassword,
         opencodeRouterHealthPort: opencodeRouterReady ? opencodeRouterHealthPort : undefined,
         opencodeRouterDataDir: opencodeRouterReady ? (opencodeRouterDataDir ?? undefined) : undefined,
-        sandboxBackend: configuredSandboxBackend,
+        sandboxBackend: resolveEnginePathMappingBackend({
+          configuredBackend: configuredSandboxBackend,
+          engineChildKind: opencodeSpawn.childKind ?? "direct",
+        }),
         logger,
         runId,
         logFormat,

@@ -54,3 +54,20 @@ test("engine store delegates host start and reload reconnect flow to the shared 
     "reloadWorkspaceEngine should delegate restart and reconnect orchestration to the shared helper",
   );
 });
+
+test("startHost lets the orchestrator handle Windows sandbox fallback before engine launch", () => {
+  assert.match(
+    source,
+    /async function ensureLocalRuntimeReadyForWorkspaceStart\(workspacePath: string\) \{[\s\S]*void workspacePath;[\s\S]*return true;[\s\S]*\}/s,
+    "local runtime startup should not hard-block on Windows WSL sandbox readiness because the orchestrator owns direct fallback",
+  );
+  assert.match(source, /ensureLocalRuntimeReadyForWorkspaceStart,/);
+  assert.doesNotMatch(source, /desktopSandboxEnvironment\(\)/);
+  assert.doesNotMatch(source, /wslPrerequisitesRepair\(\{ checkOnly: true \}\)/);
+  assert.doesNotMatch(source, /wslSandboxRepair\(\{ checkOnly: true \}\)/);
+  assert.doesNotMatch(source, /isWslMappableWindowsWorkspacePath\(dir\)/);
+  assert.match(
+    source,
+    /if \(!\(await ensureLocalRuntimeReadyForWorkspaceStart\(dir\)\)\) \{[\s\S]*return false;[\s\S]*\}[\s\S]*const source = deps\.engineSource\(\);/s,
+  );
+});

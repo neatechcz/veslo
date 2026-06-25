@@ -5,8 +5,10 @@ import { createServer } from "node:net";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import { loadDotEnv } from "./load-env.mjs";
 
 const cwd = process.cwd();
+loadDotEnv({ cwd });
 const tmpDir = path.join(cwd, "tmp");
 
 const ensureTmp = async () => {

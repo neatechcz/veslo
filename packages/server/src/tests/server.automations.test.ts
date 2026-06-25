@@ -511,11 +511,43 @@ test("legacy Agent Lab run reports failed runner result instead of ok true", asy
   }
 });
 
+test("legacy Agent Lab run requires approval before executing automation", async () => {
+  const fixture = await startFixture({ approval: { mode: "manual", timeoutMs: 1_000 } });
+  const automation = fixture.makeAutomation({ id: "auto_needs_approval" });
+  await writeAutomationStore(fixture.workspaceRoot, {
+    schemaVersion: 1,
+    updatedAt: "2026-06-05T12:00:00.000Z",
+    items: [automation],
+    runs: [],
+  });
+
+  const runPromise = fixture.clientFetch(`/workspace/ws_1/agentlab/automations/${automation.id}/run`, {
+    method: "POST",
+  });
+  const approval = await waitForApproval(fixture);
+  expect(approval).toMatchObject({
+    workspaceId: "ws_1",
+    action: "automations.run",
+  });
+
+  const deny = await fixture.hostFetch(`/approvals/${approval.id}`, {
+    method: "POST",
+    body: { reply: "deny" },
+  });
+  expect(deny.status).toBe(200);
+
+  const response = await runPromise;
+  expect(response.status).toBe(403);
+  expect((await response.json() as { code: string }).code).toBe("write_denied");
+  expect(fixture.openCodeCalls).toEqual([]);
+});
+
 type FixtureOptions = {
   readOnly?: boolean;
   failPrompt?: boolean;
   sessionDelayMs?: number;
   configPath?: string;
+  approval?: { mode: "auto" | "manual"; timeoutMs: number };
   beforeStart?: (workspaceRoot: string) => Promise<void>;
   extraWorkspaces?: Array<{
     id: string;
@@ -564,7 +596,7 @@ async function startFixture(options: FixtureOptions = {}) {
     port: 0,
     token: "client-token",
     hostToken: "host-token",
-    approval: { mode: "auto", timeoutMs: 1_000 },
+    approval: options.approval ?? { mode: "auto", timeoutMs: 1_000 },
     corsOrigins: ["*"],
     workspaces: [
       {
@@ -672,6 +704,25 @@ async function startFixture(options: FixtureOptions = {}) {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForApproval(fixture: Awaited<ReturnType<typeof startFixture>>): Promise<{
+  id: string;
+  workspaceId: string;
+  action: string;
+  paths?: string[];
+}> {
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline) {
+    const response = await fixture.hostFetch("/approvals");
+    expect(response.status).toBe(200);
+    const payload = await response.json() as {
+      items: Array<{ id: string; workspaceId: string; action: string; paths?: string[] }>;
+    };
+    if (payload.items.length > 0) return payload.items[0]!;
+    await sleep(20);
+  }
+  throw new Error("Timed out waiting for approval request");
 }
 
 async function writeLegacyAutomationStore(workspaceRoot: string): Promise<void> {

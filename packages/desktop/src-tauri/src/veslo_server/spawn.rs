@@ -177,6 +177,7 @@ pub fn build_veslo_args(
     opencode_directory: Option<&str>,
     orchestrator_daemon_url: Option<&str>,
     orchestrator_lifecycle_token: Option<&str>,
+    bridge_host: Option<&str>,
 ) -> Vec<String> {
     let mut args = vec![
         "--host".to_string(),
@@ -197,6 +198,16 @@ pub fn build_veslo_args(
         "--approval".to_string(),
         "auto".to_string(),
     ];
+
+    // VSLO-250 — extra WSL-reachable listener so OpenCode inside WSL can reach
+    // the managed AI gateway while the primary listener stays on loopback.
+    if let Some(bridge_host) = bridge_host {
+        let trimmed = bridge_host.trim();
+        if !trimmed.is_empty() && trimmed != host {
+            args.push("--bridge-host".to_string());
+            args.push(trimmed.to_string());
+        }
+    }
 
     for (index, workspace_path) in workspace_paths.iter().enumerate() {
         if !workspace_path.trim().is_empty() {
@@ -294,7 +305,7 @@ fn resolve_server_sandbox_backend_from_env(
     default_server_sandbox_backend_for_platform().to_string()
 }
 
-fn resolve_server_sandbox_backend() -> String {
+pub fn resolve_server_sandbox_backend() -> String {
     resolve_server_sandbox_backend_from_env(
         env::var(VESLO_SANDBOX_BACKEND_ENV).ok().as_deref(),
         env::var(VESLO_DISABLE_SANDBOX_ENV).ok().as_deref(),
@@ -339,6 +350,7 @@ pub fn spawn_veslo_server(
     opencode_router_health_port: Option<u16>,
     orchestrator_daemon_url: Option<&str>,
     orchestrator_lifecycle_token: Option<&str>,
+    bridge_host: Option<&str>,
 ) -> Result<(Receiver<CommandEvent>, SupervisedCommandChild), String> {
     validate_managed_opencode_base_url(opencode_base_url)?;
 
@@ -353,6 +365,7 @@ pub fn spawn_veslo_server(
         opencode_directory,
         orchestrator_daemon_url,
         orchestrator_lifecycle_token,
+        bridge_host,
     );
     let use_dev_watch = should_use_dev_watch_mode()?;
 
@@ -554,6 +567,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
 
         assert!(args
@@ -562,6 +576,46 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|pair| pair == ["--workspace-id", "app-workspace-a"]));
+    }
+
+    #[test]
+    fn build_args_includes_bridge_host_when_distinct_from_host() {
+        let args = build_veslo_args(
+            "127.0.0.1",
+            8787,
+            &["/tmp/workspace-a".to_string()],
+            &[None],
+            "client-token",
+            "host-token",
+            None,
+            None,
+            None,
+            None,
+            Some("172.29.64.1"),
+        );
+
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--bridge-host", "172.29.64.1"]));
+    }
+
+    #[test]
+    fn build_args_skips_bridge_host_equal_to_primary_host() {
+        let args = build_veslo_args(
+            "0.0.0.0",
+            8787,
+            &["/tmp/workspace-a".to_string()],
+            &[None],
+            "client-token",
+            "host-token",
+            None,
+            None,
+            None,
+            None,
+            Some("0.0.0.0"),
+        );
+
+        assert!(!args.iter().any(|arg| arg == "--bridge-host"));
     }
 
     #[test]
@@ -577,6 +631,7 @@ mod tests {
             Some("/tmp/workspace-a"),
             Some("http://127.0.0.1:12345"),
             Some("lifecycle-token"),
+            None,
         );
 
         assert!(args

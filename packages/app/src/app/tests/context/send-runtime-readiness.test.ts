@@ -7,6 +7,7 @@ import {
   localRuntimeHealthTimeoutMessage,
   managedAiRuntimeConfigNotReadyMessage,
   shouldRecoverLocalRuntimeFromHealthError,
+  type SendRuntimePreflightContext,
   type SendRuntimeReadinessDeps,
 } from "../../context/send-runtime-readiness.js";
 
@@ -202,6 +203,113 @@ test("managed AI bootstrap readiness validates the snapshotted target workspace 
   assert.deepEqual(waits, [{ hasClient: true }]);
 });
 
+test("send runtime readiness owner prepares runtime before managed AI bootstrap", async () => {
+  const order: string[] = [];
+  const waits: Array<{ hasClient: boolean }> = [];
+  const { readiness, clients } = createHarness({
+    managedAiAccess: () => ({ providerId: "codex_oauth" }),
+    hasUsableManagedAiRuntimeConfigForSend: async () => {
+      order.push("managed-config-check");
+      return true;
+    },
+    waitForManagedAiBootstrapReady: async (options) => {
+      order.push("managed-bootstrap-wait");
+      waits.push({ hasClient: options.hasClient() });
+    },
+    sendTraceStep: async (event, run) => {
+      order.push(`trace-start:${event}`);
+      const result = await run();
+      order.push(`trace-end:${event}`);
+      return result;
+    },
+  });
+  clients.set(
+    "target",
+    createClient("target", async () => {
+      order.push("runtime-health");
+      return {};
+    }),
+  );
+
+  const preflight: SendRuntimePreflightContext = {
+    traceId: "trace-prepare",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.prepareSendRuntimeForSend("sendPrompt", preflight), true);
+  assert.equal(preflight.runtimeHealthOk, true);
+  assert.equal(preflight.enginePrepared, true);
+  assert.equal(preflight.managedAiReady, true);
+  assert.deepEqual(waits, [{ hasClient: true }]);
+  assert.ok(
+    order.indexOf("trace-start:sendPrompt:ensure-local-runtime-reachable") <
+      order.indexOf("trace-start:sendPrompt:ensure-managed-ai-bootstrap-ready"),
+    "runtime reachability should be prepared before managed AI bootstrap",
+  );
+  assert.ok(
+    order.indexOf("runtime-health") < order.indexOf("managed-config-check"),
+    "managed AI routing should be validated only after runtime health succeeds",
+  );
+});
+
+test("send runtime readiness owner blocks managed AI bootstrap when runtime recovery fails", async () => {
+  const managedConfigChecks: unknown[] = [];
+  const { readiness, events, ensureEngineCalls } = createHarness({
+    managedAiAccess: () => ({ providerId: "codex_oauth" }),
+    ensureEngineForWorkspace: async (workspaceId?: string) => {
+      ensureEngineCalls.push(workspaceId);
+      return false;
+    },
+    hasUsableManagedAiRuntimeConfigForSend: async (targetWorkspace) => {
+      managedConfigChecks.push(targetWorkspace);
+      return true;
+    },
+  });
+
+  const preflight: SendRuntimePreflightContext = {
+    traceId: "trace-prepare-blocked",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.prepareSendRuntimeForSend("sendPrompt", preflight), false);
+  assert.deepEqual(ensureEngineCalls, ["target"]);
+  assert.deepEqual(managedConfigChecks, []);
+  assert.equal(preflight.enginePrepared, undefined);
+  assert.equal(preflight.managedAiReady, undefined);
+  assert.ok(events.some((entry) => entry.event === "sendPrompt:blocked-runtime-unreachable"));
+});
+
+test("send runtime readiness owner blocks managed AI when runtime routing config is unusable", async () => {
+  const healthCalls: string[] = [];
+  const { readiness, clients, errors, events } = createHarness({
+    managedAiAccess: () => ({ providerId: "codex_oauth" }),
+    hasUsableManagedAiRuntimeConfigForSend: async () => false,
+  });
+  clients.set(
+    "target",
+    createClient("target", async () => {
+      healthCalls.push("target");
+      return {};
+    }),
+  );
+
+  const preflight: SendRuntimePreflightContext = {
+    traceId: "trace-prepare-managed-blocked",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.prepareSendRuntimeForSend("sendPrompt", preflight), false);
+  assert.deepEqual(healthCalls, ["target"]);
+  assert.equal(preflight.runtimeHealthOk, true);
+  assert.equal(preflight.enginePrepared, true);
+  assert.equal(preflight.managedAiReady, undefined);
+  assert.deepEqual(errors, [managedAiRuntimeConfigNotReadyMessage]);
+  assert.ok(events.some((entry) => entry.event === "sendPrompt:blocked-managed-ai-bootstrap"));
+});
+
 test("local runtime readiness probes the snapshotted target workspace client", async () => {
   const healthCalls: string[] = [];
   const { readiness, clients, events, ensureEngineCalls, engineReadyValues } = createHarness();
@@ -353,6 +461,102 @@ test("local runtime readiness recovers when health resolves an SDK engine_not_ru
   assert.equal(preflight.runtimeHealthOk, true);
 });
 
+test("local runtime readiness recovers when health reports workspace not found", async () => {
+  const order: string[] = [];
+  const { readiness, clients, events, ensureEngineCalls, routeReleaseCalls } = createHarness({
+    releaseWorkspaceRoute: (workspaceId: string) => {
+      order.push(`release:${workspaceId}`);
+      routeReleaseCalls.push(workspaceId);
+      clients.delete(workspaceId);
+    },
+    ensureEngineForWorkspace: async (workspaceId?: string) => {
+      order.push(`ensure:${workspaceId ?? ""}`);
+      ensureEngineCalls.push(workspaceId);
+      clients.set("target", createClient("target-recovered"));
+      return true;
+    },
+  });
+  clients.set(
+    "target",
+    createClient("target-stale", async () => ({
+      error: { error: "workspace not found", workspaceId: "target" },
+      response: { status: 404 },
+    })),
+  );
+
+  const preflight = {
+    traceId: "trace-workspace-not-found",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight), true);
+  assert.deepEqual(routeReleaseCalls, ["target"]);
+  assert.deepEqual(ensureEngineCalls, ["target"]);
+  assert.deepEqual(order, ["release:target", "ensure:target"]);
+  assert.equal(preflight.runtimeHealthOk, true);
+  const healthError = events.find((entry) => entry.event === "sendPrompt:runtime-health-error");
+  assert.equal(healthError?.payload?.recoverable, true);
+  assert.equal(healthError?.payload?.recoverByDefault, false);
+});
+
+test("local runtime readiness recovers by default when routed health fails with an unclassified error", async () => {
+  const { readiness, clients, events, ensureEngineCalls, routeReleaseCalls } = createHarness({
+    ensureEngineForWorkspace: async (workspaceId?: string) => {
+      ensureEngineCalls.push(workspaceId);
+      clients.set("target", createClient("target-recovered"));
+      return true;
+    },
+  });
+  clients.set(
+    "target",
+    createClient("target-stale", async () => {
+      throw new Error("permission denied");
+    }),
+  );
+
+  const preflight = {
+    traceId: "trace-default-recovery",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight), true);
+  assert.deepEqual(routeReleaseCalls, ["target"]);
+  assert.deepEqual(ensureEngineCalls, ["target"]);
+  assert.equal(preflight.runtimeHealthOk, true);
+  const healthError = events.find((entry) => entry.event === "sendPrompt:runtime-health-error");
+  assert.equal(healthError?.payload?.recoverable, false);
+  assert.equal(healthError?.payload?.recoverByDefault, true);
+});
+
+test("local runtime readiness blocks when workspace-not-found recovery cannot restore a route", async () => {
+  const { readiness, clients, events, ensureEngineCalls, routeReleaseCalls } = createHarness({
+    ensureEngineForWorkspace: async (workspaceId?: string) => {
+      ensureEngineCalls.push(workspaceId);
+      return false;
+    },
+  });
+  clients.set(
+    "target",
+    createClient("target-stale", async () => {
+      throw new Error('{"error":"workspace not found","workspaceId":"target"}');
+    }),
+  );
+
+  const preflight = {
+    traceId: "trace-workspace-not-found-unrestored",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight), false);
+  assert.deepEqual(routeReleaseCalls, ["target"]);
+  assert.deepEqual(ensureEngineCalls, ["target"]);
+  assert.equal(preflight.runtimeHealthOk, false);
+  assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-not-started"));
+});
+
 test("local runtime readiness reflects recovery in active UI only for the active workspace", async () => {
   const { readiness, clients, ensureEngineCalls, engineReadyValues, sseConnectedValues, busyValues, busyLabels } =
     createHarness({
@@ -493,6 +697,12 @@ test("local runtime health error helpers classify dead endpoints and probe timeo
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("failed to fetch")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("ECONNREFUSED")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"engine_not_running"}')), true);
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"workspace not found"}')), true);
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("workspace_id_mismatch")), true);
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"opencode_request_failed","status":503}')), true);
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("OpenCode health returned status 404")), true);
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"status":404}')), true);
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("upstream status 502")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("permission denied")), false);
   assert.equal(isLocalRuntimeHealthTimeoutError(new Error(localRuntimeHealthTimeoutMessage)), true);
 });

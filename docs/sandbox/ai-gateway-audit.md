@@ -42,10 +42,10 @@ Anthropic protokolem na custom `baseURL`. Routing generujeme do
 `applyGatewayProviderRouting`):
 
 - `provider.<id>.options.baseURL = <serverBaseUrl>/ai-gateway/providers/<id>/v1`
-- Anthropic-styl: `models.<m>.headers.Authorization = "Bearer <serverClientToken>"`
-- OpenAI-compat (`codex_oauth`,`openai_compatible`): `options.apiKey = <serverClientToken>`
-- vždy v `models.<m>.headers`: `x-veslo-gateway-token`,
-  `x-veslo-session-id = ${OPENCODE_SESSION_ID}`, volitelně `x-veslo-workspace-id`
+- Anthropic-styl: `models.<m>.headers.Authorization = "Bearer {env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}"`
+- OpenAI-compat (`codex_oauth`,`openai_compatible`): `options.apiKey = "{env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}"`
+- v `models.<m>.headers`: `x-veslo-session-id = ${OPENCODE_SESSION_ID}`, volitelne `x-veslo-workspace-id`
+- `opencode.jsonc` nesmi obsahovat live gateway credentials; cloud gateway bearer drzi lokalni Veslo server jen v runtime memory.
 
 Cíl skoku (`resolveManagedAiProviderRoutingTarget`,
 `packages/app/src/app/lib/ai-access.ts`):
@@ -70,7 +70,7 @@ Pořadí zpracování:
 1. cíl = `resolveAiGatewayBaseUrl()` (override `VESLO_MANAGED_AI_BASE_URL` /
    `VESLO_AI_GATEWAY_BASE_URL`, jinak `http://127.0.0.1:4034`; v desktopu
    `https://ai.veslo.work`) + `gatewayPath` + `?search`.
-2. **auth swap:** `x-veslo-gateway-token` → `Authorization: Bearer …`.
+2. **auth swap:** OpenCode se autentizuje lokalnim server tokenem z `VESLO_OPENCODE_SERVER_CLIENT_TOKEN`; lokalni Veslo server dohleda managed-AI runtime authorization z pameti a na cloud posle `Authorization: Bearer ...`. Legacy `x-veslo-gateway-token` je jen docasny fallback pro stare bezici configy.
 3. **session-id resolve:** prázdné / `${OPENCODE_SESSION_ID}` → dohledat
    reálné `opencodeSessionId` z active-run kontextu; nelze → **400
    `gateway_session_unresolved`** (na cloud se nepošle).
@@ -96,7 +96,7 @@ App: `express.json({ limit: "10mb" })`, `GET /health`, proxy router na `/`
 i `/ai-gateway`.
 
 **Společný `/providers` middleware** (`http/proxy.ts`):
-1. token z `Authorization` / `x-veslo-gateway-token`; chybí → 401.
+1. token z `Authorization`; chybí → 401. Lokalni Veslo server uz legacy `x-veslo-gateway-token` na cloud neforwarduje.
 2. identita: `GET ${denApiBase}/v1/me` (prod `api.veslo.work`); fail → 401.
 3. policy: `aiAccess.getUserAiAccess(userId)` z **vlastní ai-gateway DB**;
    `!enabled` → 403 `ai_access_not_configured`.
@@ -136,9 +136,9 @@ cloud i přes lokální proxy, stream i non-stream. Chybové cesty:
 | cloud missing session | 400 | `x-veslo-session-id` povinné |
 | cloud invalid model | 403 | access-policy `model_not_allowed` |
 | local missing client auth | 401 `Invalid bearer token` | server auth |
-| local missing gateway token | 401 `gateway_unauthorized` | proxy |
+| local missing runtime gateway authorization | 401 `gateway_runtime_authorization_required` | proxy |
 | local missing session | 400 `gateway_session_required` | proxy |
-| local invalid gateway token | 502 + `upstreamStatus:401` | gateway odmítl |
+| local invalid runtime gateway authorization | 502 + `upstreamStatus:401` | gateway odmítl |
 
 ---
 
@@ -259,7 +259,7 @@ třídu + test smazat (obě kopie).
 ## 7. Test rig a reprodukce
 
 ```bash
-# per-chunk streaming timing (cloud only; tokeny čte z reálného opencode.jsonc, nikde je nevypisuje)
+# per-chunk streaming timing (cloud only; pouziva runtime/env auth, tokeny nevypisuje)
 node dev-specific/ai-gateway-live/stream-timing-probe.mjs --cloud-only
 
 # plná matice cloud+local (spustí vlastní lokální veslo-server; vyžaduje volný :8787)

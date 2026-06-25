@@ -192,18 +192,18 @@ type SessionRowRenderOptions = {
 };
 
 type AnimatedSessionBranchProps = {
-  parentSessionId: string;
+  parentRowKey: string;
   rows: Accessor<FlatSessionRow[]>;
   open: boolean;
-  hasChildren: (sessionId: string) => boolean;
+  hasChildren: (rowKey: string) => boolean;
   options: SessionRowRenderOptions;
 };
 
 type SessionTreeRowsProps = {
   rows: Accessor<FlatSessionRow[]>;
-  hasChildren: (sessionId: string) => boolean;
+  hasChildren: (rowKey: string) => boolean;
   options: SessionRowRenderOptions;
-  parentSessionId?: string;
+  parentRowKey?: string;
 };
 
 type AnimatedCollapseRegion = "project" | "session-branch";
@@ -728,8 +728,8 @@ export default function WorkspaceSessionList(props: Props) {
   });
 
   const recentHierarchy = createMemo(() => buildRowHierarchyLookup(visibleRecentRows()));
-  const recentHasChildren = (sessionId: string) =>
-    (recentHierarchy().childrenByParentId.get(sessionId)?.length ?? 0) > 0;
+  const recentHasChildren = (rowKey: string) =>
+    (recentHierarchy().childrenByParentRowKey.get(rowKey)?.length ?? 0) > 0;
 
   const recentRowsTreeVisible = createMemo(() =>
     visibleRecentRows().filter((row) =>
@@ -1023,14 +1023,14 @@ export default function WorkspaceSessionList(props: Props) {
   const isSessionUnread = (sessionId: string) => Boolean(props.unreadSessionIds?.[sessionId]);
 
   const ensureExpandedSessionChildrenVisible = (
-    sessionId: string,
+    row: FlatSessionRow,
     expandedParentSessionIds: ReadonlySet<string>,
   ) => {
     if (sidebarMode() === "recent") {
       const required = requiredVisibleCountForExpandedSession(
         visibleRecentRows(),
         expandedParentSessionIds,
-        sessionId,
+        row.rowKey,
       );
       if (required == null) return;
       setRecentVisibleCount((current) => Math.max(current, required));
@@ -1039,11 +1039,11 @@ export default function WorkspaceSessionList(props: Props) {
 
     const groups = allProjectModeGroups();
     for (const group of groups) {
-      if (!group.sessions.some((row) => row.session.id === sessionId)) continue;
+      if (!group.sessions.some((candidate) => candidate.rowKey === row.rowKey)) continue;
       const required = requiredVisibleCountForExpandedSession(
         group.sessions,
         expandedParentSessionIds,
-        sessionId,
+        row.rowKey,
       );
       if (required == null) return;
       setProjectVisibleByKey((current) => {
@@ -1058,14 +1058,15 @@ export default function WorkspaceSessionList(props: Props) {
     }
   };
 
-  const toggleExpandedParentSession = (sessionId: string) =>
+  const toggleExpandedParentSession = (row: FlatSessionRow) =>
     setExpandedParentSessionIds((current) => {
+      const rowKey = row.rowKey;
       const next = new Set(current);
-      if (next.has(sessionId)) {
-        next.delete(sessionId);
+      if (next.has(rowKey)) {
+        next.delete(rowKey);
       } else {
-        next.add(sessionId);
-        ensureExpandedSessionChildrenVisible(sessionId, next);
+        next.add(rowKey);
+        ensureExpandedSessionChildrenVisible(row, next);
       }
       writeExpandedParentSessionIds(next);
       return next;
@@ -1073,18 +1074,18 @@ export default function WorkspaceSessionList(props: Props) {
 
   const handleSessionRowClick = (
     row: FlatSessionRow,
-    hasChildren: (sessionId: string) => boolean,
+    hasChildren: (rowKey: string) => boolean,
   ) => {
     setLastClickedSessionId(row.session.id);
     const action = resolveSessionRowClickAction({
       selectedSessionId: props.selectedSessionId,
       clickedSessionId: row.session.id,
-      hasChildren: hasChildren(row.session.id),
+      hasChildren: hasChildren(row.rowKey),
       allowSelectedParentExpansion: props.allowSelectedParentExpansion,
     });
 
     if (action.toggleExpandedParent) {
-      toggleExpandedParentSession(row.session.id);
+      toggleExpandedParentSession(row);
     }
     if (action.openSession) {
       props.onOpenSession(row.workspace.id, row.session.id);
@@ -1094,7 +1095,7 @@ export default function WorkspaceSessionList(props: Props) {
   const handleSessionRowMouseUp = (
     event: MouseEvent,
     row: FlatSessionRow,
-    hasChildren: (sessionId: string) => boolean,
+    hasChildren: (rowKey: string) => boolean,
   ) => {
     if (event.button !== 0 || event.defaultPrevented) return;
     recentMouseUpSessionActivation = {
@@ -1107,7 +1108,7 @@ export default function WorkspaceSessionList(props: Props) {
   const handleSessionRowPress = (
     event: MouseEvent,
     row: FlatSessionRow,
-    hasChildren: (sessionId: string) => boolean,
+    hasChildren: (rowKey: string) => boolean,
   ) => {
     const recentMouseUp = recentMouseUpSessionActivation;
     if (
@@ -1925,7 +1926,7 @@ export default function WorkspaceSessionList(props: Props) {
 
   const projectSessionRow = (
     row: FlatSessionRow,
-    hasChildren: (sessionId: string) => boolean,
+    hasChildren: (rowKey: string) => boolean,
     options: {
       anchorKey: string;
       label?: () => string;
@@ -2049,7 +2050,7 @@ export default function WorkspaceSessionList(props: Props) {
 
   const recentSessionRow = (
     row: FlatSessionRow,
-    hasChildren: (sessionId: string) => boolean,
+    hasChildren: (rowKey: string) => boolean,
     options: SessionRowRenderOptions,
   ) => {
     const workspace = () => row.workspace;
@@ -2193,7 +2194,7 @@ export default function WorkspaceSessionList(props: Props) {
 
   const renderSingleSessionRow = (
     row: FlatSessionRow,
-    hasChildren: (sessionId: string) => boolean,
+    hasChildren: (rowKey: string) => boolean,
     options: SessionRowRenderOptions,
   ) => {
     if (options.variant === "recent") {
@@ -2212,15 +2213,15 @@ export default function WorkspaceSessionList(props: Props) {
 
   const renderSessionTreeRows = (
     rows: Accessor<FlatSessionRow[]>,
-    hasChildren: (sessionId: string) => boolean,
+    hasChildren: (rowKey: string) => boolean,
     options: SessionRowRenderOptions,
-    parentSessionId?: string,
+    parentRowKey?: string,
   ): JSX.Element => (
     <SessionTreeRows
       rows={rows}
       hasChildren={hasChildren}
       options={options}
-      parentSessionId={parentSessionId}
+      parentRowKey={parentRowKey}
     />
   );
 
@@ -2228,8 +2229,8 @@ export default function WorkspaceSessionList(props: Props) {
     const hasChildren = props.hasChildren;
     const options = props.options;
     const branchRows = createMemo(() =>
-      props.parentSessionId
-        ? directChildRowsForParent(props.rows(), props.parentSessionId)
+      props.parentRowKey
+        ? directChildRowsForParent(props.rows(), props.parentRowKey)
         : rootRowsForSessionTree(props.rows()),
     );
 
@@ -2238,11 +2239,11 @@ export default function WorkspaceSessionList(props: Props) {
         {(row) => (
           <>
             {renderSingleSessionRow(row, hasChildren, options)}
-            <Show when={hasChildren(row.session.id)}>
+            <Show when={hasChildren(row.rowKey)}>
               <AnimatedSessionBranch
-                parentSessionId={row.session.id}
-                rows={() => descendantRowsForParent(props.rows(), row.session.id)}
-                open={expandedParentSessionIds().has(row.session.id)}
+                parentRowKey={row.rowKey}
+                rows={() => descendantRowsForParent(props.rows(), row.rowKey)}
+                open={expandedParentSessionIds().has(row.rowKey) || expandedParentSessionIds().has(row.session.id)}
                 hasChildren={hasChildren}
                 options={options}
               />
@@ -2276,7 +2277,7 @@ export default function WorkspaceSessionList(props: Props) {
           () => renderedRows(),
           props.hasChildren,
           props.options,
-          props.parentSessionId,
+          props.parentRowKey,
         )}
       </AnimatedCollapse>
     );
@@ -2582,8 +2583,8 @@ export default function WorkspaceSessionList(props: Props) {
                 const projectHierarchy = () => buildRowHierarchyLookup(project.sessions);
                 const visibleCount = () => projectVisibleCountForGroup(project);
                 const projectTreeVisibleRows = () => projectTreeVisibleRowsForGroup(project);
-                const hasChildren = (sessionId: string) =>
-                  (projectHierarchy().childrenByParentId.get(sessionId)?.length ?? 0) > 0;
+                const hasChildren = (rowKey: string) =>
+                  (projectHierarchy().childrenByParentRowKey.get(rowKey)?.length ?? 0) > 0;
                 const visibleRows = () => visibleProjectRowsForGroup(project);
                 const forcedVisibleRows = () =>
                   drawerCollapsed() ? visibleRows().filter(rowForcesProjectOpen) : [];
@@ -2798,8 +2799,8 @@ export default function WorkspaceSessionList(props: Props) {
           const visibleCount = () => projectVisibleCountForGroup(chatGroup());
           const chatTreeVisibleRows = () => projectTreeVisibleRowsForGroup(chatGroup());
           const chatRows = () => visibleProjectRowsForGroup(chatGroup());
-          const hasChildren = (sessionId: string) =>
-            (chatHierarchy().childrenByParentId.get(sessionId)?.length ?? 0) > 0;
+          const hasChildren = (rowKey: string) =>
+            (chatHierarchy().childrenByParentRowKey.get(rowKey)?.length ?? 0) > 0;
           const chatPaging = () => projectPagingForGroup(chatGroup());
           const hasHiddenChatRows = () => chatTreeVisibleRows().length > visibleCount();
           const canLoadMoreChatRows = () => hasHiddenChatRows() || chatPaging().hasMore;

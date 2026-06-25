@@ -33,7 +33,8 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 - Settings now shows a read-only AI access summary.
 - If no admin policy is assigned, the user can sign in but cannot send prompts.
 - The desktop app caches a non-secret local proof of the user's managed-AI policy for 3 days in `${VESLO_APP_DATA_DIR or app_data_dir()}/access-proofs.v1.json`. This avoids repeatedly calling `GET /ai-gateway/me/ai-access` during normal app flow and restart without adding UI. The file stores policy metadata only; Den and gateway bearer tokens are never persisted there.
-- Den/AI Gateway remain authoritative for inference. Prompt traffic still uses the current Den auth or local Veslo server token, and failed/no-access refreshes clear the cached proof for that identity.
+- Generated project OpenCode config must also stay non-secret: provider routing points at the local Veslo server and references `{env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}` for local auth. Managed gateway bearer tokens stay in local Veslo server runtime memory and are attached by the proxy.
+- Den/AI Gateway remain authoritative for inference. Prompt traffic still uses the current Den auth or local Veslo server token at runtime, and failed/no-access refreshes clear the cached proof for that identity.
 
 ## Admin behavior
 

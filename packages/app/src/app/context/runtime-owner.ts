@@ -28,6 +28,7 @@ export type RuntimeOwnerOptions = {
   activeWorkspaceId: Accessor<string>;
   activeLegacyEngineReady: Accessor<boolean>;
   readyEngineWorkspaceIds: Accessor<ReadonlySet<string>>;
+  requiresOrchestratorReadiness?: (workspaceId: string) => boolean;
   workspaceBusy?: Accessor<WorkspaceBusyMap>;
   routing: Pick<WorkspaceRouting, "client" | "entry" | "entryIds">;
 };
@@ -95,12 +96,14 @@ export function createRuntimeOwner(options: RuntimeOwnerOptions): RuntimeOwner {
     const activeWorkspace = id === activeWorkspaceId();
     const orchestratorReady = options.readyEngineWorkspaceIds().has(id);
     const routedClientReady = Boolean(options.routing.entry(id));
+    const routedClientCountsAsReady =
+      routedClientReady && !options.requiresOrchestratorReadiness?.(id);
     const activeLegacyEngineReady = activeWorkspace && options.activeLegacyEngineReady();
     const busy = Object.keys(options.workspaceBusy?.()[id] ?? {}).length > 0;
-    const ready = orchestratorReady || routedClientReady || activeLegacyEngineReady;
+    const ready = orchestratorReady || routedClientCountsAsReady || activeLegacyEngineReady;
     const reason: RuntimeOwnerReason = orchestratorReady
       ? "orchestrator-ready"
-      : routedClientReady
+      : routedClientCountsAsReady
         ? "routed-client"
         : activeLegacyEngineReady
           ? "active-legacy-engine-ready"

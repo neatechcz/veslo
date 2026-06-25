@@ -27,6 +27,22 @@ use uuid::Uuid;
 const DEFAULT_OPENCODE_BIND_HOST: &str = "127.0.0.1";
 const VESLO_OPENCODE_BIND_HOST_ENV: &str = "VESLO_OPENCODE_BIND_HOST";
 
+fn current_or_new_veslo_client_token(manager: &VesloServerManager) -> String {
+    manager
+        .inner
+        .lock()
+        .ok()
+        .and_then(|state| {
+            state
+                .client_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|token| !token.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_else(|| Uuid::new_v4().to_string())
+}
+
 #[derive(Default)]
 struct OutputState {
     stdout: String,
@@ -374,6 +390,7 @@ pub fn engine_info(
         return EngineInfo {
             running,
             runtime: EngineRuntime::Orchestrator,
+            child_kind: engine.and_then(|e| e.child_kind.clone()),
             base_url: proxy_base_url,
             project_dir: workspace_path,
             hostname: Some("127.0.0.1".to_string()),
@@ -429,6 +446,7 @@ pub fn engine_info(
     EngineInfo {
         running,
         runtime: EngineRuntime::Orchestrator,
+        child_kind: None,
         base_url: effective_base_url,
         project_dir,
         hostname: Some("127.0.0.1".to_string()),
@@ -737,6 +755,7 @@ pub fn engine_start(
         let daemon_host = "127.0.0.1".to_string();
         let opencode_bin = program.to_string_lossy().to_string();
         let lifecycle_token = Uuid::new_v4().to_string();
+        let veslo_client_token = current_or_new_veslo_client_token(&veslo_manager);
         let veslo_server_state_path = persisted_veslo_server_plugin_state_path(&app)
             .ok()
             .map(|path| path.to_string_lossy().to_string());
@@ -755,6 +774,7 @@ pub fn engine_start(
                 opencode_port: Some(orchestrator_opencode_port),
                 opencode_username: opencode_username.clone(),
                 opencode_password: opencode_password.clone(),
+                veslo_token: Some(veslo_client_token.clone()),
                 lifecycle_token: Some(lifecycle_token.clone()),
                 cors: Some("*".to_string()),
                 veslo_server_state_path: veslo_server_state_path.clone(),
@@ -998,6 +1018,7 @@ pub fn engine_start(
             opencode_router_health_port,
             Some(orchestrator_daemon_url.as_str()),
             Some(lifecycle_token.as_str()),
+            Some(veslo_client_token.as_str()),
         );
         match &veslo_started {
             Ok(_) => {
@@ -1062,6 +1083,7 @@ pub fn engine_start(
         return Ok(EngineInfo {
             running: true,
             runtime: EngineRuntime::Orchestrator,
+            child_kind: None,
             base_url: Some(opencode_base_url),
             project_dir: Some(project_dir),
             hostname: Some("127.0.0.1".to_string()),
@@ -1074,6 +1096,7 @@ pub fn engine_start(
         });
     }
 
+    let veslo_client_token = current_or_new_veslo_client_token(&veslo_manager);
     let (mut rx, child) = spawn_engine(
         &app,
         &program,
@@ -1083,6 +1106,7 @@ pub fn engine_start(
         use_sidecar,
         opencode_username.as_deref(),
         opencode_password.as_deref(),
+        Some(veslo_client_token.as_str()),
     )?;
 
     state.last_stdout = None;
@@ -1244,6 +1268,7 @@ pub fn engine_start(
         opencode_router_health_port,
         None,
         None,
+        Some(veslo_client_token.as_str()),
     ) {
         state.last_stderr = Some(truncate_output(&format!("Veslo server: {error}"), 8000));
     }

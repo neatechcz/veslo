@@ -14,7 +14,6 @@
     "core:window:allow-minimize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
-    "pilot:default",
     "deep-link:default",
     "dialog:allow-open",
     "dialog:allow-save",

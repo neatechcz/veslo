@@ -17,6 +17,12 @@ param(
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 $env:WSL_UTF8 = "1"
+$NativeCommandTimeoutExitCode = 1460
+$PrerequisiteInstallerScriptRevision = "features-msix-no-localsystem-wsl-20260624"
+
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+} catch {}
 
 if (-not $CheckOnly -and -not $Install) {
     $CheckOnly = $true
@@ -102,7 +108,184 @@ function ConvertTo-NativeArgument([string]$Argument) {
     return $builder.ToString()
 }
 
-function Invoke-NativeCommand([string]$FilePath, [string[]]$Arguments) {
+function Resolve-SystemExecutable([string]$RelativePath, [string]$CommandName) {
+    $roots = @()
+    if ($env:WINDIR -and $env:WINDIR.Trim()) {
+        $roots += $env:WINDIR.Trim()
+    }
+    if ($env:SystemRoot -and $env:SystemRoot.Trim() -and $roots -notcontains $env:SystemRoot.Trim()) {
+        $roots += $env:SystemRoot.Trim()
+    }
+
+    foreach ($root in $roots) {
+        $candidates = @(
+            (Join-Path $root (Join-Path "Sysnative" $RelativePath)),
+            (Join-Path $root (Join-Path "System32" $RelativePath))
+        )
+        foreach ($candidate in $candidates) {
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                return $candidate
+            }
+        }
+    }
+
+    $command = Get-Command $CommandName -ErrorAction SilentlyContinue
+    if ($command -and $command.Source) {
+        return $command.Source
+    }
+
+    return $null
+}
+
+function Resolve-WslExecutable {
+    return Resolve-SystemExecutable "wsl.exe" "wsl.exe"
+}
+
+function Resolve-DismExecutable {
+    return Resolve-SystemExecutable "dism.exe" "dism.exe"
+}
+
+function Resolve-PowerShellExecutable {
+    return Resolve-SystemExecutable "WindowsPowerShell\v1.0\powershell.exe" "powershell.exe"
+}
+
+function Stop-HiddenNativeProcessTree([System.Diagnostics.Process]$Process) {
+    if ($null -eq $Process) {
+        return
+    }
+    try {
+        if ($Process.HasExited) {
+            return
+        }
+    } catch {
+        return
+    }
+
+    $taskkillCommand = Resolve-SystemExecutable "taskkill.exe" "taskkill.exe"
+    if ($taskkillCommand) {
+        try {
+            $killInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $killInfo.FileName = $taskkillCommand
+            $killInfo.Arguments = "/PID $($Process.Id) /T /F"
+            $killInfo.UseShellExecute = $false
+            $killInfo.CreateNoWindow = $true
+            $killProcess = New-Object System.Diagnostics.Process
+            $killProcess.StartInfo = $killInfo
+            try {
+                [void]$killProcess.Start()
+                [void]$killProcess.WaitForExit(10000)
+            } finally {
+                $killProcess.Dispose()
+            }
+        } catch {}
+    }
+
+    try {
+        if (-not $Process.HasExited) {
+            $Process.Kill()
+        }
+    } catch {}
+    try {
+        [void]$Process.WaitForExit(10000)
+    } catch {}
+}
+
+function Invoke-IsolatedNativeCommand([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 600) {
+    Write-PrereqLog ("> isolated {0} {1}" -f $FilePath, ($Arguments -join " "))
+    $argumentsJson = ConvertTo-Json @($Arguments) -Compress
+    $job = $null
+    try {
+        $job = Start-Job -ScriptBlock {
+            param([string]$InnerFilePath, [string]$InnerArgumentsJson)
+            $ErrorActionPreference = "Continue"
+            $ProgressPreference = "SilentlyContinue"
+            $env:WSL_UTF8 = "1"
+            $innerArguments = @()
+            if ($InnerArgumentsJson) {
+                $parsedArguments = ConvertFrom-Json $InnerArgumentsJson
+                if ($null -ne $parsedArguments) {
+                    $innerArguments = @($parsedArguments | ForEach-Object { [string]$_ })
+                }
+            }
+
+            $outputLines = @()
+            $exitCode = 0
+            try {
+                $commandOutput = & $InnerFilePath @innerArguments 2>&1
+                foreach ($line in @($commandOutput)) {
+                    if ($null -ne $line) {
+                        $outputLines += [string]$line
+                    }
+                }
+                if ($null -ne $global:LASTEXITCODE) {
+                    $exitCode = [int]$global:LASTEXITCODE
+                }
+            } catch {
+                $outputLines += $_.Exception.Message
+                $exitCode = 1
+            }
+
+            [pscustomobject]@{
+                ExitCode = [int]$exitCode
+                Output = ($outputLines -join "`n")
+            }
+        } -ArgumentList $FilePath, $argumentsJson
+    } catch {
+        Write-PrereqLog "Failed to start isolated native command job: $($_.Exception.Message)"
+        return [pscustomobject]@{
+            ExitCode = 1
+            Output = $_.Exception.Message
+        }
+    }
+
+    try {
+        Write-PrereqLog "Waiting up to $TimeoutSeconds seconds for isolated native command job $($job.Id)."
+        $completedJob = Wait-Job -Job $job -Timeout $TimeoutSeconds
+        if (-not $completedJob) {
+            Write-PrereqLog "Native command timed out after $TimeoutSeconds seconds in isolated job $($job.Id); stopping job."
+            try {
+                Stop-Job -Job $job -Force -ErrorAction SilentlyContinue
+            } catch {
+                try {
+                    Stop-Job -Job $job -ErrorAction SilentlyContinue
+                } catch {}
+            }
+            return [pscustomobject]@{
+                ExitCode = [int]$NativeCommandTimeoutExitCode
+                Output = "Timed out after $TimeoutSeconds seconds."
+            }
+        }
+
+        $jobOutput = @(Receive-Job -Job $job -ErrorAction SilentlyContinue)
+        $result = $jobOutput | Where-Object { $_ -and $_.PSObject.Properties["ExitCode"] } | Select-Object -Last 1
+        if (-not $result) {
+            $textOutput = ($jobOutput | ForEach-Object { [string]$_ }) -join "`n"
+            return [pscustomobject]@{
+                ExitCode = 1
+                Output = $textOutput
+            }
+        }
+
+        $outputLines = @(([string]$result.Output) -split "`r?`n" | Where-Object { $_ })
+        foreach ($line in $outputLines) {
+            Write-PrereqLog $line
+        }
+        return [pscustomobject]@{
+            ExitCode = [int]$result.ExitCode
+            Output = ($outputLines -join "`n")
+        }
+    } finally {
+        if ($job) {
+            Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Invoke-NativeCommand([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 600) {
+    if ((Split-Path -Leaf $FilePath) -ieq "wsl.exe") {
+        return Invoke-IsolatedNativeCommand -FilePath $FilePath -Arguments $Arguments -TimeoutSeconds $TimeoutSeconds
+    }
+
     Write-PrereqLog ("> {0} {1}" -f $FilePath, ($Arguments -join " "))
 
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -135,13 +318,20 @@ function Invoke-NativeCommand([string]$FilePath, [string[]]$Arguments) {
     $process.StartInfo = $startInfo
     $process.add_OutputDataReceived($outputHandler)
     $process.add_ErrorDataReceived($errorHandler)
+    $exitCode = $NativeCommandTimeoutExitCode
     try {
         [void]$process.Start()
         $process.BeginOutputReadLine()
         $process.BeginErrorReadLine()
-        $process.WaitForExit()
-        $process.WaitForExit()
-        $exitCode = $process.ExitCode
+        $timeoutMilliseconds = [Math]::Max(1, $TimeoutSeconds) * 1000
+        if ($process.WaitForExit($timeoutMilliseconds)) {
+            $process.WaitForExit()
+            $exitCode = $process.ExitCode
+        } else {
+            Write-PrereqLog "Native command timed out after $TimeoutSeconds seconds; terminating process tree for PID $($process.Id)."
+            [void]$lines.Add("Timed out after $TimeoutSeconds seconds.")
+            Stop-HiddenNativeProcessTree $process
+        }
     } finally {
         $process.remove_OutputDataReceived($outputHandler)
         $process.remove_ErrorDataReceived($errorHandler)
@@ -162,7 +352,7 @@ function Invoke-NativeCommand([string]$FilePath, [string[]]$Arguments) {
 }
 
 function Test-WslUsable {
-    $wslCommand = Get-Command "wsl.exe" -ErrorAction SilentlyContinue
+    $wslCommand = Resolve-WslExecutable
     if (-not $wslCommand) {
         return [pscustomobject]@{
             Ok = $false
@@ -171,7 +361,8 @@ function Test-WslUsable {
         }
     }
 
-    $status = Invoke-NativeCommand "wsl.exe" @("--status")
+    Write-PrereqLog "Resolved wsl.exe: $wslCommand"
+    $status = Invoke-NativeCommand -FilePath $wslCommand -Arguments @("--status") -TimeoutSeconds 45
     if ($status.ExitCode -eq 0) {
         return [pscustomobject]@{
             Ok = $true
@@ -188,49 +379,225 @@ function Test-WslUsable {
 }
 
 function Enable-WslFeaturesWithDism {
-    Write-PrereqLog "Falling back to DISM feature enablement."
-    $wslFeature = Invoke-NativeCommand "dism.exe" @(
+    Write-PrereqLog "Trying DISM feature enablement."
+    $dismCommand = Resolve-DismExecutable
+    if (-not $dismCommand) {
+        Write-PrereqLog "dism.exe was not found; cannot enable WSL Windows features."
+        return 127
+    }
+
+    Write-PrereqLog "Resolved dism.exe: $dismCommand"
+    $restartRequired = $false
+    $wslFeature = Invoke-NativeCommand -FilePath $dismCommand -Arguments @(
         "/online",
         "/enable-feature",
         "/featurename:Microsoft-Windows-Subsystem-Linux",
         "/all",
         "/norestart"
-    )
-    $vmFeature = Invoke-NativeCommand "dism.exe" @(
+    ) -TimeoutSeconds 900
+    if ($wslFeature.ExitCode -ne 0 -and $wslFeature.ExitCode -ne 3010) {
+        Write-PrereqLog "DISM failed to enable Microsoft-Windows-Subsystem-Linux with exit code $($wslFeature.ExitCode)."
+        return $wslFeature.ExitCode
+    }
+    if ($wslFeature.ExitCode -eq 3010) {
+        $restartRequired = $true
+    }
+
+    $vmFeature = Invoke-NativeCommand -FilePath $dismCommand -Arguments @(
         "/online",
         "/enable-feature",
         "/featurename:VirtualMachinePlatform",
         "/all",
         "/norestart"
-    )
-    if ($wslFeature.ExitCode -ne 0 -and $wslFeature.ExitCode -ne 3010) {
-        return $wslFeature.ExitCode
-    }
+    ) -TimeoutSeconds 900
     if ($vmFeature.ExitCode -ne 0 -and $vmFeature.ExitCode -ne 3010) {
+        Write-PrereqLog "DISM failed to enable VirtualMachinePlatform with exit code $($vmFeature.ExitCode)."
         return $vmFeature.ExitCode
     }
-    return 3010
+    if ($vmFeature.ExitCode -eq 3010) {
+        $restartRequired = $true
+    }
+
+    if ($restartRequired) {
+        return 3010
+    }
+    return 0
+}
+
+function Invoke-EnableWindowsOptionalFeature([string]$FeatureName) {
+    Write-PrereqLog "Enabling Windows optional feature via PowerShell: $FeatureName"
+    try {
+        $result = Enable-WindowsOptionalFeature `
+            -Online `
+            -FeatureName $FeatureName `
+            -All `
+            -NoRestart `
+            -ErrorAction Stop
+        $restartNeeded = $false
+        if ($result -and $result.PSObject.Properties["RestartNeeded"]) {
+            $restartNeeded = [bool]$result.RestartNeeded
+        }
+        $state = ""
+        if ($result -and $result.PSObject.Properties["State"]) {
+            $state = [string]$result.State
+        }
+        Write-PrereqLog "Enable-WindowsOptionalFeature finished for $FeatureName. State: $state RestartNeeded: $restartNeeded"
+        return [pscustomobject]@{
+            ExitCode = 0
+            RestartNeeded = $restartNeeded
+        }
+    } catch {
+        Write-PrereqLog "Enable-WindowsOptionalFeature failed for ${FeatureName}: $($_.Exception.Message)"
+        return [pscustomobject]@{
+            ExitCode = 1
+            RestartNeeded = $false
+        }
+    }
+}
+
+function Enable-WslFeaturesWithPowerShell {
+    Write-PrereqLog "Trying PowerShell optional feature enablement."
+    if (-not (Get-Command Enable-WindowsOptionalFeature -ErrorAction SilentlyContinue)) {
+        Write-PrereqLog "Enable-WindowsOptionalFeature is not available in this PowerShell session."
+        return 127
+    }
+
+    $restartRequired = $false
+    $wslFeature = Invoke-EnableWindowsOptionalFeature "Microsoft-Windows-Subsystem-Linux"
+    if ($wslFeature.ExitCode -ne 0) {
+        return $wslFeature.ExitCode
+    }
+    if ($wslFeature.RestartNeeded) {
+        $restartRequired = $true
+    }
+
+    $vmFeature = Invoke-EnableWindowsOptionalFeature "VirtualMachinePlatform"
+    if ($vmFeature.ExitCode -ne 0) {
+        return $vmFeature.ExitCode
+    }
+    if ($vmFeature.RestartNeeded) {
+        $restartRequired = $true
+    }
+
+    if ($restartRequired) {
+        return 3010
+    }
+    return 0
+}
+
+function Enable-WslFeaturesWithPowerShellThenDism {
+    $powerShellExit = Enable-WslFeaturesWithPowerShell
+    if ($powerShellExit -eq 0 -or $powerShellExit -eq 3010) {
+        return $powerShellExit
+    }
+
+    Write-PrereqLog "PowerShell optional feature enablement failed with exit code $powerShellExit; falling back to DISM feature enablement."
+    return Enable-WslFeaturesWithDism
+}
+
+function Install-WslAppPackage {
+    # Stage the modern "Windows Subsystem for Linux" app package for all users so
+    # a single Windows restart is enough to make WSL usable. On current Windows
+    # builds the System32 wsl.exe is only a stub until the optional feature is
+    # active (post-restart), so `wsl --install` / `wsl --update` cannot fetch the
+    # WSL app before the restart. Provisioning the MSIX bundle here stages it now;
+    # it activates together with the features on the next boot, which avoids the
+    # second install pass (and second restart) the feature-only path needs.
+    if (-not (Get-Command Add-AppxProvisionedPackage -ErrorAction SilentlyContinue)) {
+        Write-PrereqLog "Add-AppxProvisionedPackage is unavailable; cannot stage the WSL app package (will rely on a post-restart pass instead)."
+        return $false
+    }
+
+    try {
+        $headers = @{ "User-Agent" = "Veslo-Installer"; "Accept" = "application/vnd.github+json" }
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/microsoft/WSL/releases/latest" -Headers $headers -TimeoutSec 120
+        $asset = $release.assets |
+            Where-Object { $_.name -match "\.msixbundle$" } |
+            Select-Object -First 1
+        if (-not $asset) {
+            Write-PrereqLog "No .msixbundle asset found in the latest microsoft/WSL release; skipping WSL app staging."
+            return $false
+        }
+
+        $downloadDir = Join-Path $env:TEMP "veslo-wsl-prereq"
+        New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
+        $bundlePath = Join-Path $downloadDir $asset.name
+        Write-PrereqLog "Downloading WSL app package: $($asset.browser_download_url)"
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $bundlePath -UseBasicParsing -TimeoutSec 1800
+
+        Write-PrereqLog "Provisioning WSL app package for all users: $bundlePath"
+        Add-AppxProvisionedPackage -Online -PackagePath $bundlePath -SkipLicense -ErrorAction Stop | Out-Null
+        Write-PrereqLog "WSL app package staged successfully; it will activate after the next Windows restart."
+        return $true
+    } catch {
+        Write-PrereqLog "Failed to stage WSL app package: $($_.Exception.Message). WSL will be completed after the restart instead."
+        return $false
+    }
+}
+
+function Test-WslFeaturesEnabled {
+    # Check WSL feature state via DISM cmdlets, NOT wsl.exe: this runs fine as
+    # LocalSystem, whereas wsl.exe refuses to run as LocalSystem
+    # (WSL_E_LOCAL_SYSTEM_NOT_SUPPORTED).
+    try {
+        if (-not (Get-Command Get-WindowsOptionalFeature -ErrorAction SilentlyContinue)) {
+            return $false
+        }
+        $wsl = Get-WindowsOptionalFeature -Online -FeatureName "Microsoft-Windows-Subsystem-Linux" -ErrorAction Stop
+        $vm = Get-WindowsOptionalFeature -Online -FeatureName "VirtualMachinePlatform" -ErrorAction Stop
+        return (($wsl.State -eq "Enabled") -and ($vm.State -eq "Enabled"))
+    } catch {
+        Write-PrereqLog "Failed to query WSL feature state: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Test-WslAppProvisioned {
+    # Check whether the modern WSL app package is provisioned, again without
+    # calling wsl.exe (LocalSystem-safe).
+    try {
+        if (-not (Get-Command Get-AppxProvisionedPackage -ErrorAction SilentlyContinue)) {
+            return $false
+        }
+        $pkgs = Get-AppxProvisionedPackage -Online -ErrorAction Stop
+        return [bool]($pkgs | Where-Object { $_.DisplayName -match "WindowsSubsystemForLinux|WSL" })
+    } catch {
+        Write-PrereqLog "Failed to query WSL app provisioning state: $($_.Exception.Message)"
+        return $false
+    }
 }
 
 try {
     Write-PrereqLog "Veslo WSL prerequisite helper started."
+    Write-PrereqLog "Script revision: $PrerequisiteInstallerScriptRevision"
+    Write-PrereqLog "Script path: $($MyInvocation.MyCommand.Path)"
     Write-PrereqLog "Identity: $([Security.Principal.WindowsIdentity]::GetCurrent().Name)"
     Write-PrereqLog "Mode: $(if ($Install) { "install" } else { "check" })"
 
-    $current = Test-WslUsable
-    Write-PrereqLog $current.Reason
-    if ($current.Ok) {
-        if ($Install) {
-            $setDefault = Invoke-NativeCommand "wsl.exe" @("--set-default-version", "2")
-            if ($setDefault.ExitCode -ne 0) {
-                Write-PrereqLog "Unable to set WSL 2 as default now; continuing because WSL itself is usable."
-            }
-        }
-        Finish-Prereq 0
-    }
+    # IMPORTANT: this helper may run as LocalSystem (from the MSI custom action),
+    # and wsl.exe refuses to run as LocalSystem (WSL_E_LOCAL_SYSTEM_NOT_SUPPORTED).
+    # It also runs inside the Veslo MSI transaction, so it must not start a nested
+    # Windows Installer (e.g. the WSL2 kernel MSI) - that deadlocks on the
+    # _MSIExecute mutex. So we never touch wsl.exe or msiexec here: we only check
+    # state and install the WSL Windows features + WSL app package, which are
+    # both silent, LocalSystem-safe, and not Windows Installer transactions. The
+    # per-user Veslo app does the wsl.exe work (status + distro import) after the
+    # restart.
+    $featuresEnabled = Test-WslFeaturesEnabled
+    $wslAppProvisioned = Test-WslAppProvisioned
+    Write-PrereqLog "WSL optional features enabled: $featuresEnabled; WSL app provisioned: $wslAppProvisioned"
+    $ready = ($featuresEnabled -and $wslAppProvisioned)
 
     if ($CheckOnly) {
+        if ($ready) {
+            Finish-Prereq 0
+        }
         Finish-Prereq 10
+    }
+
+    if ($ready) {
+        Write-PrereqLog "WSL Windows features and app package are already in place; no machine setup needed."
+        Finish-Prereq 0
     }
 
     if (-not (Test-IsAdministrator)) {
@@ -238,45 +605,21 @@ try {
         Finish-Prereq 740
     }
 
-    $wslCommand = Get-Command "wsl.exe" -ErrorAction SilentlyContinue
-    if ($wslCommand) {
-        $installResult = Invoke-NativeCommand "wsl.exe" @("--install", "--no-distribution")
-        if ($installResult.ExitCode -ne 0) {
-            $fallbackPattern = "unknown|invalid|unrecognized|unsupported|usage"
-            if ($installResult.Output -notmatch $fallbackPattern) {
-                Write-PrereqLog "wsl --install failed without a recognized legacy syntax error."
-                Finish-Prereq $installResult.ExitCode
-            }
-            $fallbackExit = Enable-WslFeaturesWithDism
-            if ($fallbackExit -ne 0 -and $fallbackExit -ne 3010) {
-                Finish-Prereq $fallbackExit
-            }
-        }
-    } else {
-        $fallbackExit = Enable-WslFeaturesWithDism
-        if ($fallbackExit -ne 0 -and $fallbackExit -ne 3010) {
-            Finish-Prereq $fallbackExit
+    if (-not $featuresEnabled) {
+        Write-PrereqLog "Enabling WSL Windows optional features (silent)."
+        $featureExit = Enable-WslFeaturesWithPowerShellThenDism
+        if ($featureExit -ne 0 -and $featureExit -ne 3010) {
+            Write-PrereqLog "Enabling WSL Windows optional features failed with exit code $featureExit."
+            Finish-Prereq $featureExit
         }
     }
 
-    $wslCommand = Get-Command "wsl.exe" -ErrorAction SilentlyContinue
-    if ($wslCommand) {
-        $setDefault = Invoke-NativeCommand "wsl.exe" @("--set-default-version", "2")
-        if ($setDefault.ExitCode -ne 0) {
-            Write-PrereqLog "WSL default version could not be set before restart. Veslo will retry after Windows restarts."
-        }
-    } else {
-        Write-PrereqLog "wsl.exe is still unavailable after feature enablement. Windows restart is required."
-        Finish-Prereq 3010
+    if (-not $wslAppProvisioned) {
+        Write-PrereqLog "Provisioning the modern WSL app package (silent)."
+        [void](Install-WslAppPackage)
     }
 
-    $afterInstall = Test-WslUsable
-    Write-PrereqLog $afterInstall.Reason
-    if ($afterInstall.Ok) {
-        Finish-Prereq 0
-    }
-
-    Write-PrereqLog "Windows restart is likely required before VesloSandbox can be imported."
+    Write-PrereqLog "Windows restart is required to activate WSL; the Veslo app imports VesloSandbox after the restart."
     Finish-Prereq 3010
 } catch {
     Write-PrereqLog "Unhandled prerequisite helper error: $($_.Exception.Message)"
