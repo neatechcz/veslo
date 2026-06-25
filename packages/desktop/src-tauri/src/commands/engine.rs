@@ -374,6 +374,7 @@ pub fn engine_info(
         return EngineInfo {
             running,
             runtime: EngineRuntime::Orchestrator,
+            child_kind: engine.and_then(|e| e.child_kind.clone()),
             base_url: proxy_base_url,
             project_dir: workspace_path,
             hostname: Some("127.0.0.1".to_string()),
@@ -429,6 +430,7 @@ pub fn engine_info(
     EngineInfo {
         running,
         runtime: EngineRuntime::Orchestrator,
+        child_kind: None,
         base_url: effective_base_url,
         project_dir,
         hostname: Some("127.0.0.1".to_string()),
@@ -1062,6 +1064,7 @@ pub fn engine_start(
         return Ok(EngineInfo {
             running: true,
             runtime: EngineRuntime::Orchestrator,
+            child_kind: None,
             base_url: Some(opencode_base_url),
             project_dir: Some(project_dir),
             hostname: Some("127.0.0.1".to_string()),

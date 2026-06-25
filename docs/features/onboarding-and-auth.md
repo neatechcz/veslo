@@ -99,7 +99,7 @@ Onboarding also surfaces environment recovery when local mode is active:
 - engine doctor status
 - install hints
 - OpenCode DB migration repair
-- Windows WSL2 sandbox readiness and repair
+- Windows WSL2 sandbox readiness and repair; local runtime startup can continue unsandboxed while repair is pending
 
 If you change onboarding behavior that depends on local engine readiness, verify whether the environment branch is local-only, cloud-only, or shared.
 

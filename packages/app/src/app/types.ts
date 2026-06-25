@@ -199,6 +199,7 @@ export type WorkspaceSessionGroup = {
 
 export type SessionArchiveItem = {
   sessionId: string;
+  workspaceId: string;
   title: string;
   workspaceLabel: string;
   projectLabel?: string | null;

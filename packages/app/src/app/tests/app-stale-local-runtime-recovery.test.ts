@@ -73,9 +73,23 @@ test("local runtime recovery restarts for dead endpoints and health timeouts", (
     /export const localRuntimeHealthTimeoutMessage = "Timed out waiting for local runtime health";[\s\S]*export function isLocalRuntimeHealthTimeoutError\([\s\S]*safeStringify\?: \(value: unknown\) => string,[\s\S]*\): boolean \{[\s\S]*localRuntimeHealthTimeoutMessage/s,
     "health timeouts should stay separately detectable so stale daemon probes can trigger runtime recovery",
   );
+  const start = readinessSource.indexOf("async function ensureLocalRuntimeReachableForSend(");
+  const end = readinessSource.indexOf("async function connectLocalRuntimeClientFromEngineInfo", start);
+  assert.ok(start >= 0 && end > start, "ensureLocalRuntimeReachableForSend source should be present");
+  const recoverySource = readinessSource.slice(start, end);
   assert.match(
-    readinessSource,
-    /const targetIsActiveWorkspace = !targetWorkspaceId \|\| targetWorkspaceId === deps\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*if \([\s\S]*!isLocalRuntimeHealthTimeoutError\(error, deps\.safeStringify\)[\s\S]*!shouldRecoverLocalRuntimeFromHealthError\(error, deps\.safeStringify\)[\s\S]*\) \{[\s\S]*return true;[\s\S]*if \(targetIsActiveWorkspace\) \{[\s\S]*deps\.setEngineReady\(false\);[\s\S]*deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined\)/s,
+    recoverySource,
+    /const timedOut = isLocalRuntimeHealthTimeoutError\(error, deps\.safeStringify\);[\s\S]*const classifiedRecoverable = shouldRecoverLocalRuntimeFromHealthError\(error, deps\.safeStringify\);[\s\S]*recoverByDefault: !timedOut && !classifiedRecoverable,[\s\S]*willRecover: true,[\s\S]*deps\.recordSendTrace\(`\$\{reason\}:runtime-recovery-start`/s,
+    "failed health probes against an existing routed client should fall through to runtime recovery by default",
+  );
+  assert.doesNotMatch(
+    recoverySource,
+    /!shouldRecoverLocalRuntimeFromHealthError\(error, deps\.safeStringify\)[\s\S]*return true;/s,
+    "unclassified health failures must not continue with the existing routed client",
+  );
+  assert.match(
+    recoverySource,
+    /if \(targetIsActiveWorkspace\) \{[\s\S]*deps\.setEngineReady\(false\);[\s\S]*deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined\)/s,
     "runtime recovery should restart before send but reflect readiness changes only when the target is still the active workspace",
   );
 });

@@ -147,15 +147,23 @@ export function resolveManagedAiProviderRoutingTarget(input: {
 export function requiresManagedAiEngineBaseUrl(input: {
   isDesktopRuntime: boolean;
   workspaceType: "local" | "remote" | null | undefined;
+  engineBaseUrl?: string | null;
   sandboxEnabled?: boolean | null;
   sandboxBackend?: string | null;
 }): boolean {
-  return (
-    input.isDesktopRuntime &&
-    input.workspaceType === "local" &&
-    input.sandboxEnabled === true &&
-    input.sandboxBackend === "windows-wsl2"
-  );
+  if (
+    !input.isDesktopRuntime ||
+    input.workspaceType !== "local" ||
+    input.sandboxEnabled !== true ||
+    input.sandboxBackend !== "windows-wsl2"
+  ) {
+    return false;
+  }
+
+  // The reported sandbox backend is configured before the engine starts. If WSL
+  // launch falls back to a direct engine, no WSL bridge URL is published.
+  const engineBaseUrl = normalizeHttpUrl(input.engineBaseUrl);
+  return Boolean(engineBaseUrl && !isLoopbackHttpUrl(engineBaseUrl));
 }
 
 function readConfigObject(value: unknown): Record<string, unknown> {

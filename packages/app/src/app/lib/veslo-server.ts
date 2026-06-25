@@ -2629,17 +2629,20 @@ export function createVesloServerClient(options: {
           extraHeaders: accountId ? { "X-Veslo-Account-Id": accountId } : undefined,
         },
       ),
-    deleteSessionArchive: (sessionId: string) =>
-      requestJson<{ items: VesloSessionArchiveRecord[] }>(
+    deleteSessionArchive: (sessionId: string, options?: { workspaceId?: string | null }) => {
+      const workspaceId = options?.workspaceId?.trim() ?? "";
+      const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+      return requestJson<{ items: VesloSessionArchiveRecord[] }>(
         baseUrl,
-        `/session-archives/${encodeURIComponent(sessionId)}`,
+        `/session-archives/${encodeURIComponent(sessionId)}${query}`,
         {
           token,
           hostToken,
           method: "DELETE",
           extraHeaders: accountId ? { "X-Veslo-Account-Id": accountId } : undefined,
         },
-      ),
+      );
+    },
     activateWorkspace: (workspaceId: string) =>
       requestJson<{ activeId: string; workspace: VesloWorkspaceInfo }>(
         baseUrl,

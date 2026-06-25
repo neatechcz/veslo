@@ -23,9 +23,9 @@ test("first workspace onboarding completes only after runtime activation succeed
   );
 });
 
-test("Windows workspace creation rejects paths that cannot be mounted into WSL2", () => {
+test("Windows workspace creation leaves WSL mountability to runtime fallback", () => {
   const localSource = readContextSource("workspace-local-workspaces.ts");
 
-  assert.match(localSource, /isWindowsPlatform\(\) && isWslMappableWindowsWorkspacePath\(resolvedFolder\) === false/);
-  assert.match(localSource, /network and UNC paths are not supported for local sandboxed runs/);
+  assert.doesNotMatch(localSource, /isWslMappableWindowsWorkspacePath\(resolvedFolder\)/);
+  assert.doesNotMatch(localSource, /network and UNC paths are not supported for local sandboxed runs/);
 });

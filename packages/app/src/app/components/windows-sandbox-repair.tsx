@@ -14,9 +14,8 @@ type RepairStatus = {
 };
 
 type WindowsSandboxRepairProps = {
-  // When true the component renders as a full-screen gate that blocks the rest
-  // of onboarding until the sandbox is ready (used in onboarding). When false
-  // it renders as an inline card (used in settings).
+  // When true the component renders as a full-screen gate. The default inline
+  // card is non-blocking so local startup can fall back to an unsandboxed engine.
   blocking?: boolean;
 };
 

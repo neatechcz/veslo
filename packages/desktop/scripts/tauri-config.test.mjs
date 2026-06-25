@@ -49,6 +49,19 @@ test("Windows updater MSI installs write a verbose diagnostic log", () => {
   );
 });
 
+test("Windows MSI does not run a nested WebView2 installer custom action", () => {
+  const config = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
+  const webviewInstallMode = config?.bundle?.windows?.webviewInstallMode;
+
+  assert.deepEqual(
+    webviewInstallMode,
+    {
+      type: "skip",
+    },
+    "Windows validation MSI must not run a generated WebView2 installer custom action; nested WebView2 installers can turn runtime install/restart return codes into a generic MSI failure after Veslo's WSL setup has already succeeded",
+  );
+});
+
 test("default desktop capability does not expose tauri-pilot", () => {
   const defaultCapability = JSON.parse(readFileSync(resolve(srcTauriDir, "capabilities/default.json"), "utf8"));
   const generatedCapabilities = JSON.parse(readFileSync(resolve(srcTauriDir, "gen/schemas/capabilities.json"), "utf8"));
@@ -331,7 +344,7 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   );
   const clientInstaller = readFileSync(clientInstallerPath, "utf8");
   assert.match(clientInstaller, /\$NativeCommandTimeoutExitCode\s*=\s*1460/);
-  assert.match(clientInstaller, /system-machine-setup-singlereboot-20260620/);
+  assert.match(clientInstaller, /startup-continuation-20260624/);
   assert.match(clientInstaller, /Script revision:/);
   assert.match(clientInstaller, /function\s+Invoke-IsolatedNativeCommand\b/);
   assert.match(clientInstaller, /Start-Job\s+-ScriptBlock/);
@@ -346,6 +359,7 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   );
   assert.match(clientInstaller, /AllowRestartContinuationSuccess/);
   assert.match(clientInstaller, /AllowDeferredRuntimeRepairSuccess/);
+  assert.match(clientInstaller, /\[switch\]\$StartupContinuation/);
   assert.match(
     clientInstaller,
     /\[switch\]\$MachineSetupOnly/,
@@ -355,6 +369,21 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
     clientInstaller,
     /function\s+Invoke-MachineWslSetup\b/,
     "client runtime installer must own the silent, no-UAC machine WSL setup path used by the MSI",
+  );
+  assert.match(
+    clientInstaller,
+    /function\s+Register-MachineStartupContinuation\b[\s\S]*?-StartupContinuation[\s\S]*?-SkipPrerequisiteInstall[\s\S]*?Active Setup/,
+    "client runtime installer must register a non-interactive user-context startup continuation from the MSI machine setup",
+  );
+  assert.match(
+    clientInstaller,
+    /function\s+Invoke-StartupContinuation\b[\s\S]*?Wait-WslUsable[\s\S]*?Invoke-LocalPowerShellScript\s+-ScriptPath\s+\$SandboxInstallerScript/s,
+    "client runtime installer must finish VesloSandbox provisioning after reboot from a user-context startup continuation",
+  );
+  assert.match(
+    clientInstaller,
+    /function\s+Register-CurrentUserStartupRetry\b[\s\S]*?-StartupContinuation[\s\S]*?-SkipPrerequisiteInstall[\s\S]*?RunOnce/,
+    "startup continuation should retry on the next user logon without elevating when WSL is still settling",
   );
   assert.match(
     clientInstaller,
@@ -416,17 +445,24 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   );
   assert.match(clientInstaller, /-Verb\s+RunAs/);
   assert.match(clientInstaller, /RunOnce/);
+  const commandBuilderFunction = clientInstaller.match(/function\s+New-ClientInstallerCommand[\s\S]*?\n}\r?\n/);
+  assert.ok(commandBuilderFunction, "Expected client runtime installer to define the shared PowerShell command builder");
+  assert.match(
+    commandBuilderFunction[0],
+    /\$ClientInstallerScriptPath/,
+    "PowerShell continuations must use the script-scoped path; function-local MyInvocation can produce an empty -File",
+  );
+  assert.doesNotMatch(
+    commandBuilderFunction[0],
+    /\$MyInvocation\.MyCommand\.Path/,
+    "PowerShell continuation command builder must not use function-local MyInvocation for the PowerShell -File path",
+  );
   const runOnceFunction = clientInstaller.match(/function\s+Register-ClientInstallerRunOnce[\s\S]*?\n}\r?\n/);
   assert.ok(runOnceFunction, "Expected client runtime installer to define RunOnce continuation");
   assert.doesNotMatch(
     runOnceFunction[0],
     /-SkipPrerequisiteInstall/,
     "RunOnce continuation must retry WSL prerequisites after reboot instead of skipping WSL package download",
-  );
-  assert.match(
-    runOnceFunction[0],
-    /\$ClientInstallerScriptPath/,
-    "RunOnce continuation must use the script-scoped path; function-local MyInvocation can produce an empty -File",
   );
   assert.doesNotMatch(
     runOnceFunction[0],
@@ -448,6 +484,7 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
     /New-Object\s+System\.Diagnostics\.ProcessStartInfo[\s\S]*?\$startInfo\.UseShellExecute\s*=\s*\$false[\s\S]*?\$startInfo\.CreateNoWindow\s*=\s*\$true/,
     "client runtime installer should run native child commands through hidden ProcessStartInfo",
   );
+  assert.match(clientInstaller, /Native command finished with exit code \$exitCode\./);
   assert.doesNotMatch(
     clientInstaller,
     /&\s+(?:wsl|powershell)\.exe\b/i,

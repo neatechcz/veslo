@@ -3,8 +3,6 @@ import { homeDir } from "@tauri-apps/api/path";
 import type { WorkspacePreset } from "../types";
 import {
   addOpencodeCacheHint,
-  isWindowsPlatform,
-  isWslMappableWindowsWorkspacePath,
   isPrivateWorkspacePathForRoot,
   isTauriRuntime,
   normalizeDirectoryPath,
@@ -141,12 +139,6 @@ export function createWorkspaceLocalWorkspaces(deps: WorkspaceLocalWorkspacesDep
       const resolvedFolder = await resolveWorkspacePath(folder);
       if (!resolvedFolder) {
         deps.setError(t("app.error.choose_folder", currentLocale()));
-        return null;
-      }
-      if (isWindowsPlatform() && isWslMappableWindowsWorkspacePath(resolvedFolder) === false) {
-        deps.setError(
-          "This workspace path cannot be mounted into the Windows WSL2 sandbox. Choose a folder on a local drive such as C:\\Users\\...; network and UNC paths are not supported for local sandboxed runs.",
-        );
         return null;
       }
 

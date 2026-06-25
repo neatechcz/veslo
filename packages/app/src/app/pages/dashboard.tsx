@@ -393,7 +393,7 @@ export type DashboardViewProps = {
   notionBusy: boolean;
   connectNotion: () => void;
   sessionArchives: SessionArchiveItem[];
-  onUnarchiveArchivedSession: (sessionId: string) => Promise<void> | void;
+  onUnarchiveArchivedSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
 };
 
 type SharedSkillItem = {

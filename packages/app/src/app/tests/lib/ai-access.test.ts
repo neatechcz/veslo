@@ -273,6 +273,7 @@ test("resolveManagedAiProviderRoutingTarget requires an engine URL for WSL sandb
     requiresManagedAiEngineBaseUrl({
       isDesktopRuntime: true,
       workspaceType: "local",
+      engineBaseUrl: "http://172.29.64.1:8787",
       sandboxEnabled: true,
       sandboxBackend: "windows-wsl2",
     }),
@@ -312,11 +313,54 @@ test("resolveManagedAiProviderRoutingTarget requires an engine URL for WSL sandb
   );
 });
 
+test("resolveManagedAiProviderRoutingTarget keeps loopback fallback when WSL bridge URL is absent", () => {
+  assert.equal(
+    requiresManagedAiEngineBaseUrl({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      engineBaseUrl: "",
+      sandboxEnabled: true,
+      sandboxBackend: "windows-wsl2",
+    }),
+    false,
+  );
+
+  assert.equal(
+    requiresManagedAiEngineBaseUrl({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      engineBaseUrl: "http://127.0.0.1:8787",
+      sandboxEnabled: true,
+      sandboxBackend: "windows-wsl2",
+    }),
+    false,
+  );
+
+  assert.deepEqual(
+    resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      activeBaseUrl: "http://127.0.0.1:8787",
+      engineBaseUrl: "",
+      requireEngineBaseUrl: false,
+      activeToken: "local-client-token",
+      gatewayBaseUrl: "",
+      gatewayToken: "",
+    }),
+    {
+      baseUrl: "http://127.0.0.1:8787",
+      engineBaseUrl: "http://127.0.0.1:8787",
+      serverClientToken: "local-client-token",
+    },
+  );
+});
+
 test("resolveManagedAiProviderRoutingTarget keeps loopback fallback for non-WSL local routing", () => {
   assert.equal(
     requiresManagedAiEngineBaseUrl({
       isDesktopRuntime: true,
       workspaceType: "local",
+      engineBaseUrl: "",
       sandboxEnabled: false,
       sandboxBackend: "none",
     }),

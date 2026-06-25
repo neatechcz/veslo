@@ -440,12 +440,15 @@ describe("router proxy + EnginePool integration", () => {
     await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/ping`, { method: "POST" });
     await fetchJson(`${orch.baseUrl}/workspace/ws-b/opencode/ping`, { method: "POST" });
     const health = await fetchJson(`${orch.baseUrl}/health`);
-    const engines = (health.body as { engines: Array<{ workspaceId: string; state: string }> })
+    const engines = (health.body as { engines: Array<{ workspaceId: string; state: string; childKind?: string }> })
       .engines;
     expect(engines).toHaveLength(2);
     const ids = engines.map((e) => e.workspaceId).sort();
     expect(ids).toEqual(["ws-a", "ws-b"]);
-    for (const e of engines) expect(e.state).toBe("ready");
+    for (const e of engines) {
+      expect(e.state).toBe("ready");
+      expect(e.childKind).toBe("direct");
+    }
   });
 
   test("remote workspace returns 501", async () => {
@@ -456,12 +459,14 @@ describe("router proxy + EnginePool integration", () => {
     expect(res.status).toBe(501);
   });
 
-  test("unknown workspace returns 404", async () => {
+  test("unknown workspace health route returns recoverable 404 JSON without spawning", async () => {
     const { orch } = await setup([
       { id: "ws-a", path: "/tmp/ws-a", type: "local" },
     ]);
-    const res = await fetchJson(`${orch.baseUrl}/workspace/ws-missing/opencode/x`);
+    const res = await fetchJson(`${orch.baseUrl}/workspace/ws-missing/opencode/health`);
     expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "workspace not found" });
+    expect(orch.pool.size()).toBe(0);
   });
 
   test("upstream failure returns 502", async () => {

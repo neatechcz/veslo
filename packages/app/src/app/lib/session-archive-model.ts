@@ -152,6 +152,7 @@ export function toSessionArchiveItem(
 
   return {
     sessionId: record.sessionId,
+    workspaceId: record.workspaceIdAtArchive?.trim() ?? "",
     title: record.titleSnapshot?.trim() || record.sessionId,
     workspaceLabel: record.workspaceLabelSnapshot?.trim() || workspaceLabel(availability.workspace),
     projectLabel:

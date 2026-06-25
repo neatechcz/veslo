@@ -22,7 +22,7 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
   assert.match(
     runtimeSource,
     /const runtimeReady = workspace\.workspaceType === "local"[\s\S]*await deps\.ensureLocalRuntimeReadyForWorkspaceStart\?\.\(workspace\.path\)[\s\S]*if \(runtimeReady === false\) \{[\s\S]*ensure-engine:runtime-prerequisites-not-ready[\s\S]*return false;[\s\S]*\}[\s\S]*const skillsReady = await deps\.syncWorkspaceSkillMaterializationBeforeRuntime\(workspace,/s,
-    "first-prompt lazy runtime startup must run the Windows WSL2/VesloSandbox preflight before skill sync or engine spawn",
+    "first-prompt lazy runtime startup must ask the local runtime readiness guard before skill sync or engine spawn",
   );
   assert.match(
     runtimeSource,

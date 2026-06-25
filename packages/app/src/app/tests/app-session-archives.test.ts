@@ -18,7 +18,7 @@ test("session archive flow uses the resolved archive owner key instead of requir
   );
 
   const archiveFlow = source.match(
-    /const loadSessionArchives = async \(\) => \{[\s\S]*?const unarchiveSession = async \(sessionId: string\) => \{[\s\S]*?^\s*\};/m,
+    /const loadSessionArchives = async \(\) => \{[\s\S]*?const unarchiveSession = async \(workspaceId: string, sessionId: string\) => \{[\s\S]*?^\s*\};/m,
   )?.[0] ?? "";
 
   assert.ok(archiveFlow, "app should define the session archive load/archive/unarchive flow");
@@ -29,6 +29,11 @@ test("session archive flow uses the resolved archive owner key instead of requir
   );
   assert.match(archiveFlow, /const ownerKey = sessionArchiveOwnerKey\(\);/);
   assert.match(archiveFlow, /writeArchiveMigrationDone\(ownerKey\);/);
+  assert.match(
+    archiveFlow,
+    /client\.deleteSessionArchive\(sessionId, \{ workspaceId \}\)/,
+    "unarchive should preserve workspace scope for duplicate session ids",
+  );
 });
 
 test("update preference persistence waits for startup preference hydration", () => {

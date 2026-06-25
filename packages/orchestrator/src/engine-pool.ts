@@ -649,12 +649,13 @@ export class EnginePool {
       workdir,
       port,
     });
-    const { child, baseUrl, childKind } = await this.deps.spawnEngine({
+    const { child, baseUrl, childKind: spawnedChildKind } = await this.deps.spawnEngine({
       workspaceId: workspace.id,
       workdir,
       configDir,
       port,
     });
+    const childKind = spawnedChildKind ?? "direct";
 
     const existing = this.engines.get(workspace.id);
     const engine: EngineProcess = {

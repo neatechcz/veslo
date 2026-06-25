@@ -9,6 +9,7 @@ import {
   deriveLocalVesloServerUrlFromOpencodeBaseUrl,
   requestManagedAiAccessBundle,
   resolveSessionArchiveClientOptions,
+  VesloServerError,
 } from "../../lib/veslo-server.js";
 
 const LOCAL_SESSION_ARCHIVE_OWNER_KEY = "local:desktop";
@@ -209,6 +210,41 @@ test("session archive requests include the account id header", async () => {
     assert.equal(calls[0]?.url, "https://veslo.example/session-archives");
     assert.equal(calls[0]?.headers.get("authorization"), "Bearer token-123");
     assert.equal(calls[0]?.headers.get("x-veslo-account-id"), "usr_123");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("deleteSessionArchive includes workspace scope when provided", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string | undefined }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method,
+    });
+    return new Response(JSON.stringify({ items: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      accountId: "usr_123",
+    });
+
+    await client.deleteSessionArchive("shared-session", { workspaceId: "workspace-a" });
+
+    assert.equal(calls.length, 1);
+    assert.equal(
+      calls[0]?.url,
+      "https://veslo.example/session-archives/shared-session?workspaceId=workspace-a",
+    );
+    assert.equal(calls[0]?.method, "DELETE");
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -785,6 +821,39 @@ test("searchRegistrySkills rejects invalid registry search payloads", async () =
       () => client.searchRegistrySkills({ q: "agent" }),
       (error) => {
         assert.equal((error as { code?: unknown }).code, "skill_registry_invalid_payload");
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("workspace not found 404 maps to workspace_id_mismatch", async () => {
+  const previousFetch = globalThis.fetch;
+
+  globalThis.fetch = async (input) => {
+    assert.equal(String(input), "https://veslo.example/workspace/ws-missing/config");
+    return new Response(JSON.stringify({ error: "workspace not found" }), {
+      status: 404,
+      statusText: "Not Found",
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    await assert.rejects(
+      () => client.getConfig("ws-missing"),
+      (error) => {
+        assert.ok(error instanceof VesloServerError);
+        assert.equal(error.status, 404);
+        assert.equal(error.code, "workspace_id_mismatch");
+        assert.equal(error.message, "workspace not found");
         return true;
       },
     );

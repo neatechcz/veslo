@@ -15,7 +15,10 @@ export type SendRuntimePreflightTargetWorkspace = {
 
 export type SendRuntimePreflightContext = {
   traceId?: string | null;
+  managedAiReady?: boolean;
   runtimeHealthOk?: boolean;
+  enginePrepared?: boolean;
+  effectiveSandbox?: unknown;
   targetWorkspace?: SendRuntimePreflightTargetWorkspace | null;
 };
 
@@ -30,6 +33,7 @@ export type SendRuntimeEngineInfo = {
   running?: boolean;
   baseUrl?: string | null;
   projectDir?: string | null;
+  childKind?: "direct" | "wsl" | string | null;
   opencodeUsername?: string | null;
   opencodePassword?: string | null;
 };
@@ -141,8 +145,11 @@ export function shouldRecoverLocalRuntimeFromHealthError(
   const localRuntimeUnavailable =
     normalized.includes("engine_not_running") ||
     normalized.includes("opencode_request_failed") ||
-    /\b(?:upstream\s+)?status\s+(?:502|503)\b/.test(normalized) ||
-    /"status"\s*:\s*(?:502|503)\b/.test(normalized);
+    normalized.includes("workspace not found") ||
+    normalized.includes("workspace_not_found") ||
+    normalized.includes("workspace_id_mismatch") ||
+    /\b(?:upstream\s+)?status\s+(?:404|502|503)\b/.test(normalized) ||
+    /"status"\s*:\s*(?:404|502|503)\b/.test(normalized);
   return (
     localRuntimeUnavailable ||
     normalized.includes("error sending request") ||
@@ -318,16 +325,16 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         return true;
       } catch (error) {
         const message = errorMessage(error);
+        const timedOut = isLocalRuntimeHealthTimeoutError(error, deps.safeStringify);
+        const classifiedRecoverable = shouldRecoverLocalRuntimeFromHealthError(error, deps.safeStringify);
         deps.recordSendTrace(`${reason}:runtime-health-error`, {
           ...(tracePayload ?? {}),
           message,
+          recoverable: timedOut || classifiedRecoverable,
+          recoverByDefault: !timedOut && !classifiedRecoverable,
+          willRecover: true,
         });
-        if (
-          !isLocalRuntimeHealthTimeoutError(error, deps.safeStringify) &&
-          !shouldRecoverLocalRuntimeFromHealthError(error, deps.safeStringify)
-        ) {
-          return true;
-        }
+        // A routed client that fails health is not ready; unknown probe failures recover once.
       }
     } else {
       deps.recordSendTrace(`${reason}:runtime-missing-client`, tracePayload);

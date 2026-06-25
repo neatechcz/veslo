@@ -61,10 +61,10 @@ test("attachment staging self-heals a missing local server workspace once before
     "file-session creation should retry once after refreshing the local workspace/server state",
   );
 
-  const promptAsyncIndex = source.indexOf("const result = await c.session.promptAsync({");
-  assert.notEqual(promptAsyncIndex, -1, "promptAsync call should exist");
+  const promptAsyncIndex = source.indexOf('kind: "prompt_async"');
+  assert.notEqual(promptAsyncIndex, -1, "prompt_async conversation handoff should exist");
   assert.ok(
     stagingStart < promptAsyncIndex,
-    "attachments must be staged after session materialization but before the provider prompt starts",
+    "attachments must be staged after session materialization but before the conversation prompt starts",
   );
 });

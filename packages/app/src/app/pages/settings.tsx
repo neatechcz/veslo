@@ -156,7 +156,7 @@ export type SettingsViewProps = {
   connectNotion: () => void;
   engineDoctorVersion: string | null;
   sessionArchives?: SessionArchiveItem[];
-  onUnarchiveSession?: (sessionId: string) => Promise<void> | void;
+  onUnarchiveSession?: (workspaceId: string, sessionId: string) => Promise<void> | void;
 };
 
 export default function SettingsView(props: SettingsViewProps) {
@@ -704,8 +704,8 @@ export default function SettingsView(props: SettingsViewProps) {
     return parts.length > 0 ? parts.join(" · ") : item.sessionId;
   };
 
-  const handleUnarchiveArchivedSession = async (sessionId: string) => {
-    await Promise.resolve(props.onUnarchiveSession?.(sessionId));
+  const handleUnarchiveArchivedSession = async (item: SessionArchiveItem) => {
+    await Promise.resolve(props.onUnarchiveSession?.(item.workspaceId, item.sessionId));
   };
 
   const [debugReportStatus, setDebugReportStatus] = createSignal<string | null>(null);
@@ -1121,7 +1121,7 @@ export default function SettingsView(props: SettingsViewProps) {
                             <Button
                               variant="outline"
                               class="text-xs h-8 py-0 px-3 shrink-0"
-                              onClick={() => void handleUnarchiveArchivedSession(item.sessionId)}
+                              onClick={() => void handleUnarchiveArchivedSession(item)}
                               disabled={props.busy || !props.onUnarchiveSession}
                             >
                               {translate("settings.archived_sessions_unarchive")}

@@ -17,6 +17,7 @@ test("sortArchivedSessionsByRecency orders newest archived session first", () =>
   const items: SessionArchiveItem[] = [
     {
       sessionId: "old",
+      workspaceId: "workspace",
       title: "Old",
       workspaceLabel: "Workspace",
       archivedAt: 10,
@@ -24,6 +25,7 @@ test("sortArchivedSessionsByRecency orders newest archived session first", () =>
     },
     {
       sessionId: "new",
+      workspaceId: "workspace",
       title: "New",
       workspaceLabel: "Workspace",
       archivedAt: 20,
@@ -111,6 +113,7 @@ test("toSessionArchiveItem marks unavailable sessions and uses record snapshots"
       sessionId: "sess_123",
       archivedAt: 50,
       titleSnapshot: "Archived task",
+      workspaceIdAtArchive: "ws_cloud",
       workspaceLabelSnapshot: "Cloud Workspace",
       projectLabelSnapshot: "Client A",
       resolvedDirectoryAtArchive: "/workspace/client-a",
@@ -120,6 +123,7 @@ test("toSessionArchiveItem marks unavailable sessions and uses record snapshots"
   );
 
   assert.equal(item.availableOnThisDevice, false);
+  assert.equal(item.workspaceId, "ws_cloud");
   assert.equal(item.workspaceLabel, "Cloud Workspace");
   assert.equal(item.projectLabel, "Client A");
 });

@@ -353,6 +353,102 @@ test("local runtime readiness recovers when health resolves an SDK engine_not_ru
   assert.equal(preflight.runtimeHealthOk, true);
 });
 
+test("local runtime readiness recovers when health reports workspace not found", async () => {
+  const order: string[] = [];
+  const { readiness, clients, events, ensureEngineCalls, routeReleaseCalls } = createHarness({
+    releaseWorkspaceRoute: (workspaceId: string) => {
+      order.push(`release:${workspaceId}`);
+      routeReleaseCalls.push(workspaceId);
+      clients.delete(workspaceId);
+    },
+    ensureEngineForWorkspace: async (workspaceId?: string) => {
+      order.push(`ensure:${workspaceId ?? ""}`);
+      ensureEngineCalls.push(workspaceId);
+      clients.set("target", createClient("target-recovered"));
+      return true;
+    },
+  });
+  clients.set(
+    "target",
+    createClient("target-stale", async () => ({
+      error: { error: "workspace not found", workspaceId: "target" },
+      response: { status: 404 },
+    })),
+  );
+
+  const preflight = {
+    traceId: "trace-workspace-not-found",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight), true);
+  assert.deepEqual(routeReleaseCalls, ["target"]);
+  assert.deepEqual(ensureEngineCalls, ["target"]);
+  assert.deepEqual(order, ["release:target", "ensure:target"]);
+  assert.equal(preflight.runtimeHealthOk, true);
+  const healthError = events.find((entry) => entry.event === "sendPrompt:runtime-health-error");
+  assert.equal(healthError?.payload?.recoverable, true);
+  assert.equal(healthError?.payload?.recoverByDefault, false);
+});
+
+test("local runtime readiness recovers by default when routed health fails with an unclassified error", async () => {
+  const { readiness, clients, events, ensureEngineCalls, routeReleaseCalls } = createHarness({
+    ensureEngineForWorkspace: async (workspaceId?: string) => {
+      ensureEngineCalls.push(workspaceId);
+      clients.set("target", createClient("target-recovered"));
+      return true;
+    },
+  });
+  clients.set(
+    "target",
+    createClient("target-stale", async () => {
+      throw new Error("permission denied");
+    }),
+  );
+
+  const preflight = {
+    traceId: "trace-default-recovery",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight), true);
+  assert.deepEqual(routeReleaseCalls, ["target"]);
+  assert.deepEqual(ensureEngineCalls, ["target"]);
+  assert.equal(preflight.runtimeHealthOk, true);
+  const healthError = events.find((entry) => entry.event === "sendPrompt:runtime-health-error");
+  assert.equal(healthError?.payload?.recoverable, false);
+  assert.equal(healthError?.payload?.recoverByDefault, true);
+});
+
+test("local runtime readiness blocks when workspace-not-found recovery cannot restore a route", async () => {
+  const { readiness, clients, events, ensureEngineCalls, routeReleaseCalls } = createHarness({
+    ensureEngineForWorkspace: async (workspaceId?: string) => {
+      ensureEngineCalls.push(workspaceId);
+      return false;
+    },
+  });
+  clients.set(
+    "target",
+    createClient("target-stale", async () => {
+      throw new Error('{"error":"workspace not found","workspaceId":"target"}');
+    }),
+  );
+
+  const preflight = {
+    traceId: "trace-workspace-not-found-unrestored",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight), false);
+  assert.deepEqual(routeReleaseCalls, ["target"]);
+  assert.deepEqual(ensureEngineCalls, ["target"]);
+  assert.equal(preflight.runtimeHealthOk, false);
+  assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-not-started"));
+});
+
 test("local runtime readiness reflects recovery in active UI only for the active workspace", async () => {
   const { readiness, clients, ensureEngineCalls, engineReadyValues, sseConnectedValues, busyValues, busyLabels } =
     createHarness({
@@ -493,7 +589,11 @@ test("local runtime health error helpers classify dead endpoints and probe timeo
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("failed to fetch")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("ECONNREFUSED")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"engine_not_running"}')), true);
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"workspace not found"}')), true);
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("workspace_id_mismatch")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"opencode_request_failed","status":503}')), true);
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("OpenCode health returned status 404")), true);
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"status":404}')), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("upstream status 502")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("permission denied")), false);
   assert.equal(isLocalRuntimeHealthTimeoutError(new Error(localRuntimeHealthTimeoutMessage)), true);

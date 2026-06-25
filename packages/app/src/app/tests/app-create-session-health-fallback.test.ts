@@ -24,7 +24,7 @@ test("createSessionAndOpen attempts local runtime recovery before reading the ro
 
   const createSessionAndOpenSource = source.slice(start, end);
   const recoveryIndex = createSessionAndOpenSource.indexOf(
-    'ensureLocalRuntimeReachableForSend("createSessionAndOpen", createRuntimePreflight)',
+    'ensureLocalRuntimeReachableForSend("createSessionAndOpen", createPreflight)',
   );
   const clientIndex = createSessionAndOpenSource.indexOf("const c = routedClientForSendTarget(targetWorkspace);");
   assert.ok(recoveryIndex >= 0, "createSessionAndOpen should reuse the send runtime readiness recovery helper");

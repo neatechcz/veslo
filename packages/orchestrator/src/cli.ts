@@ -18,7 +18,7 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { TuiHandle } from "./tui/app.js";
 import { reconcileOpencodeVersion } from "./opencode-version.js";
 import { sanitizeRuntimePayloadForLogs } from "./security.js";
-import { resolveEngineSandbox } from "./sandbox-mode.js";
+import { buildUnsandboxedSandboxWarning, resolveEngineSandbox } from "./sandbox-mode.js";
 import {
   buildSharedOpencodeEngineWarning,
   resolveEngineTopology,
@@ -41,6 +41,7 @@ import {
 import { createRunActivityProbe } from "./run-activity-probe.js";
 import {
   hostDirectoryToEngineDirectory,
+  resolveEnginePathMappingBackend,
   rewriteDirectoryFieldsForEngine,
   rewriteDirectoryFieldsForHost,
   rewriteDirectoryQueryForEngine,
@@ -2542,7 +2543,7 @@ async function startOpencode(options: {
 
   // VESLO_DISABLE_SANDBOX=1 is a hard kill switch: it bypasses platform
   // backend resolution entirely, including the Windows WSL2 sandbox branch.
-  const sandbox = resolveEngineSandbox({
+  let sandbox = resolveEngineSandbox({
     env: process.env,
     workspace: options.workspace,
     sandbox: options.sandbox,
@@ -2554,51 +2555,71 @@ async function startOpencode(options: {
   let connectHost: string | undefined;
   let childKind: "direct" | "wsl" = "direct";
   let launchDiag: LogAttributes | undefined;
+  let launch: Awaited<ReturnType<WorkerSandbox["buildLaunch"]>> | null = null;
   if (sandbox) {
-    if (!sandbox.isAvailable()) {
-      throw new Error(`Sandbox backend ${sandbox.name} is not available on this host.`);
-    }
-    // F4Ú4 — engine needs write access beyond workspace:
-    //   - OPENCODE_CONFIG_DIR (SQLite migrations, logs, telemetry, auth cache)
-    //   - /tmp + /private/tmp + /var/folders (SQLite WAL/SHM, scratch files)
-    //   - XDG dirs opencode uses: ~/.local/state/opencode, ~/.local/share/opencode,
-    //     ~/.cache/opencode, ~/.config/opencode (sessions DB, model cache, settings)
-    //   VSLO-86: `@opencode-ai/plugin` + zod are vendored into
-    //   `<workspace>/.opencode/node_modules/` and `<configDir>/node_modules/`
-    //   at provisioning time, so the engine no longer needs to walk into
-    //   `~/.bun/install/cache` at runtime. Keeping that path out of the
-    //   sandbox allow-list avoids a regression where the sandbox-runtime
-    //   appears to abort fresh spawns when the path is added.
-    //   These will move to per-workspace dirs in a later fáze.
-    const home = process.env.HOME ?? "";
-    const extraWrites: string[] = [
-      "/tmp",
-      "/private/tmp",
-      "/var/folders",
-    ];
-    if (options.configDir) extraWrites.push(options.configDir);
-    if (home) {
-      extraWrites.push(
-        `${home}/.local/state/opencode`,
-        `${home}/.local/share/opencode`,
-        `${home}/.cache/opencode`,
-        `${home}/.config/opencode`,
+    try {
+      if (!sandbox.isAvailable()) {
+        throw new Error(`Sandbox backend ${sandbox.name} is not available on this host.`);
+      }
+      // F4Ú4 — engine needs write access beyond workspace:
+      //   - OPENCODE_CONFIG_DIR (SQLite migrations, logs, telemetry, auth cache)
+      //   - /tmp + /private/tmp + /var/folders (SQLite WAL/SHM, scratch files)
+      //   - XDG dirs opencode uses: ~/.local/state/opencode, ~/.local/share/opencode,
+      //     ~/.cache/opencode, ~/.config/opencode (sessions DB, model cache, settings)
+      //   VSLO-86: `@opencode-ai/plugin` + zod are vendored into
+      //   `<workspace>/.opencode/node_modules/` and `<configDir>/node_modules/`
+      //   at provisioning time, so the engine no longer needs to walk into
+      //   `~/.bun/install/cache` at runtime. Keeping that path out of the
+      //   sandbox allow-list avoids a regression where the sandbox-runtime
+      //   appears to abort fresh spawns when the path is added.
+      //   These will move to per-workspace dirs in a later fáze.
+      const home = process.env.HOME ?? "";
+      const extraWrites: string[] = [
+        "/tmp",
+        "/private/tmp",
+        "/var/folders",
+      ];
+      if (options.configDir) extraWrites.push(options.configDir);
+      if (home) {
+        extraWrites.push(
+          `${home}/.local/state/opencode`,
+          `${home}/.local/share/opencode`,
+          `${home}/.cache/opencode`,
+          `${home}/.config/opencode`,
+        );
+      }
+      launch = await sandbox.buildLaunch({
+        command: {
+          program: options.bin,
+          args,
+          cwd: options.workspace,
+          env,
+        },
+        workspacePath: options.workspace,
+        additionalWritePaths: extraWrites,
+        engine: {
+          kind: "opencode",
+          expectedVersion: options.expectedVersion,
+        },
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      options.logger.warn(
+        "sandbox launch unavailable, spawning unsandboxed",
+        { workspace: options.workspace, backend: sandbox.name, error: detail },
+        "sandbox",
       );
+      console.error(
+        buildUnsandboxedSandboxWarning({
+          workspace: options.workspace,
+          reason: "sandbox launch unavailable",
+          detail,
+        }),
+      );
+      sandbox = null;
     }
-    const launch = await sandbox.buildLaunch({
-      command: {
-        program: options.bin,
-        args,
-        cwd: options.workspace,
-        env,
-      },
-      workspacePath: options.workspace,
-      additionalWritePaths: extraWrites,
-      engine: {
-        kind: "opencode",
-        expectedVersion: options.expectedVersion,
-      },
-    });
+  }
+  if (sandbox && launch) {
     options.logger.info(
       "engine spawn (sandboxed)",
       {
@@ -4181,7 +4202,11 @@ async function runRouterDaemon(args: ParsedArgs) {
   ): { url: string; headers: Record<string, string> } => {
     const workspace = findWorkspace(state, input.workspaceId);
     const mapping: EnginePathMapping = {
-      backend: resolveConfiguredSandboxBackend(),
+      backend: resolveEnginePathMappingBackend({
+        configuredBackend: configuredSandboxBackend,
+        engineChildKind: engine.childKind ?? "direct",
+        sharedUnsandboxed: engineTopology.mode === "shared-unsandboxed",
+      }),
       hostWorkspacePath: workspace?.path?.trim() || input.directory,
     };
     const search = rewriteDirectoryQueryForEngine(
@@ -4767,7 +4792,11 @@ async function runRouterDaemon(args: ParsedArgs) {
 
         const restPath = "/" + parts.slice(3).join("/");
         const pathMapping: EnginePathMapping = {
-          backend: engineTopology.mode === "shared-unsandboxed" ? "none" : resolveConfiguredSandboxBackend(),
+          backend: resolveEnginePathMappingBackend({
+            configuredBackend: configuredSandboxBackend,
+            engineChildKind: proxyTarget.engine.childKind ?? "direct",
+            sharedUnsandboxed: engineTopology.mode === "shared-unsandboxed",
+          }),
           hostWorkspacePath: proxyTarget.directory,
         };
         const rewriteEnginePaths = pathMapping.backend === "windows-wsl2";
@@ -5894,7 +5923,10 @@ async function runStart(args: ParsedArgs) {
         opencodePassword,
         opencodeRouterHealthPort: opencodeRouterReady ? opencodeRouterHealthPort : undefined,
         opencodeRouterDataDir: opencodeRouterReady ? (opencodeRouterDataDir ?? undefined) : undefined,
-        sandboxBackend: configuredSandboxBackend,
+        sandboxBackend: resolveEnginePathMappingBackend({
+          configuredBackend: configuredSandboxBackend,
+          engineChildKind: opencodeSpawn.childKind ?? "direct",
+        }),
         logger,
         runId,
         logFormat,

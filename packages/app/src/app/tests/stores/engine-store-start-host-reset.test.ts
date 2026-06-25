@@ -55,25 +55,19 @@ test("engine store delegates host start and reload reconnect flow to the shared 
   );
 });
 
-test("startHost preflights Windows WSL sandbox readiness before engine launch", () => {
-  assert.match(source, /desktopSandboxEnvironment\(\)/);
+test("startHost lets the orchestrator handle Windows sandbox fallback before engine launch", () => {
   assert.match(
     source,
-    /async function ensureLocalRuntimeReadyForWorkspaceStart\(workspacePath: string\) \{[\s\S]*const windowsSandboxEnvironment = await resolveWindowsSandboxEnvironmentForLocalStart\(\);[\s\S]*if \(deps\.isWindowsPlatform\(\) && !windowsSandboxEnvironment\) \{[\s\S]*return false;[\s\S]*\}[\s\S]*const useWindowsWslSandbox = windowsSandboxEnvironment\?\.backend === "windows-wsl2";/s,
+    /async function ensureLocalRuntimeReadyForWorkspaceStart\(workspacePath: string\) \{[\s\S]*void workspacePath;[\s\S]*return true;[\s\S]*\}/s,
+    "local runtime startup should not hard-block on Windows WSL sandbox readiness because the orchestrator owns direct fallback",
   );
-  assert.match(source, /const useWindowsWslSandbox = windowsSandboxEnvironment\?\.backend === "windows-wsl2";/);
-  assert.match(source, /async function ensureWindowsSandboxReadyForLocalStart\(\)/);
   assert.match(source, /ensureLocalRuntimeReadyForWorkspaceStart,/);
-  assert.match(source, /wslPrerequisitesRepair\(\{ checkOnly: true \}\)/);
-  assert.match(source, /wslSandboxRepair\(\{ checkOnly: true \}\)/);
+  assert.doesNotMatch(source, /desktopSandboxEnvironment\(\)/);
+  assert.doesNotMatch(source, /wslPrerequisitesRepair\(\{ checkOnly: true \}\)/);
+  assert.doesNotMatch(source, /wslSandboxRepair\(\{ checkOnly: true \}\)/);
+  assert.doesNotMatch(source, /isWslMappableWindowsWorkspacePath\(dir\)/);
   assert.match(
     source,
     /if \(!\(await ensureLocalRuntimeReadyForWorkspaceStart\(dir\)\)\) \{[\s\S]*return false;[\s\S]*\}[\s\S]*const source = deps\.engineSource\(\);/s,
   );
-});
-
-test("startHost does not classify generic WSL check output as restart-required", () => {
-  assert.match(source, /result\.status === 3010/);
-  assert.match(source, /result\.status === 1641/);
-  assert.doesNotMatch(source, /\\brestart\\b\|\\breboot\\b/);
 });

@@ -143,7 +143,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
 
   return (
     <>
-    <WindowsSandboxRepair blocking />
+    <WindowsSandboxRepair />
     <Switch>
       <Match when={props.onboardingStep === "connecting"}>
         <div class="min-h-screen flex flex-col items-center justify-center bg-gray-1 text-gray-12 p-6 relative overflow-hidden">

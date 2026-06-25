@@ -31,12 +31,11 @@ test("Windows sandbox repair only treats explicit restart-required install resul
 
 test("Windows sandbox repair is available from onboarding and settings", () => {
   assert.match(settingsSource, /<WindowsSandboxRepair \/>/);
-  // Onboarding renders the gating variant so the user cannot proceed until the
-  // sandbox is ready; settings keeps the inline card for manual repair.
-  assert.match(onboardingSource, /<WindowsSandboxRepair\s+blocking\s*\/>/);
+  assert.match(onboardingSource, /<WindowsSandboxRepair\s*\/>/);
+  assert.doesNotMatch(onboardingSource, /<WindowsSandboxRepair\s+blocking\s*\/>/);
 });
 
-test("Windows sandbox gate blocks onboarding until ready and offers an escape", () => {
+test("Windows sandbox gate remains available but onboarding repair is non-blocking", () => {
   assert.match(componentSource, /blocking\?:\s*boolean/);
   assert.match(componentSource, /fixed inset-0/);
   assert.match(componentSource, /settings\.windows_sandbox_continue_anyway/);

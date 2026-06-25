@@ -8,6 +8,16 @@ export type EnginePathMapping = {
   engineWorkspacePath?: string;
 };
 
+export function resolveEnginePathMappingBackend(input: {
+  configuredBackend: EnginePathMapping["backend"];
+  engineChildKind?: "direct" | "wsl" | null;
+  sharedUnsandboxed?: boolean;
+}): EnginePathMapping["backend"] {
+  if (input.sharedUnsandboxed) return "none";
+  if (input.configuredBackend === "windows-wsl2" && input.engineChildKind !== "wsl") return "none";
+  return input.configuredBackend;
+}
+
 function isWsl2Mapping(mapping: EnginePathMapping): boolean {
   return mapping.backend === "windows-wsl2";
 }

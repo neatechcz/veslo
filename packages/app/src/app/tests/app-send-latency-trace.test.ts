@@ -152,7 +152,7 @@ test("conversation read workspace registration dedupes per Veslo client", () => 
   );
 });
 
-test("create session preflight records duration for duplicate gates and fallback branches", () => {
+test("create session preflight records duration for duplicate gates and server creation", () => {
   const start = source.indexOf("async function createSessionAndOpen(");
   const end = source.indexOf("const chooseFolderForCurrentSession", start);
   assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
@@ -163,7 +163,6 @@ test("create session preflight records duration for duplicate gates and fallback
     "createSessionAndOpen:ensure-local-runtime-reachable",
     "createSessionAndOpen:abort-refresh-settle",
     "createSessionAndOpen:veslo-conversation-create",
-    "createSessionAndOpen:legacy-session-create",
     "createSessionAndOpen:select-session",
   ]) {
     assert.match(
@@ -172,6 +171,29 @@ test("create session preflight records duration for duplicate gates and fallback
       `${event} should be timed with sendTraceStep`,
     );
   }
+});
+
+test("create run and compact do not fall back to legacy OpenCode SDK writes", () => {
+  const sendStart = source.indexOf("  async function sendPrompt(");
+  const sendEnd = source.indexOf("  async function abortSession(", sendStart);
+  const compactStart = source.indexOf("  async function compactCurrentSession(");
+  const compactEnd = source.indexOf("  const triggerAutoCompaction", compactStart);
+  const createStart = source.indexOf("async function createSessionAndOpen(");
+  const createEnd = source.indexOf("const chooseFolderForCurrentSession", createStart);
+
+  assert.ok(sendStart >= 0 && sendEnd > sendStart, "sendPrompt source should be present");
+  assert.ok(compactStart >= 0 && compactEnd > compactStart, "compactCurrentSession source should be present");
+  assert.ok(createStart >= 0 && createEnd > createStart, "createSessionAndOpen source should be present");
+
+  const sendSource = source.slice(sendStart, sendEnd);
+  const compactSource = source.slice(compactStart, compactEnd);
+  const createSource = source.slice(createStart, createEnd);
+
+  assert.match(sendSource, /const runConversationOrFail = async \(input: VesloConversationRunInput\)/);
+  assert.doesNotMatch(sendSource, /runConversationOrLegacy|sendPrompt:legacy-run-fallback|c\.session\.promptAsync|c\.session\.command|shellInSession/);
+  assert.doesNotMatch(compactSource, /compactSession:legacy-run-fallback|compactSessionTyped|falling back to OpenCode SDK/);
+  assert.doesNotMatch(createSource, /legacy-create-fallback|legacy-session-create|c\.session\.create|falling back to OpenCode SDK/);
+  assert.match(createSource, /throw new Error\("Conversation service is unavailable for session creation\."\);/);
 });
 
 test("create session preflight does not add a fixed abort-refresh settle delay", () => {
@@ -252,6 +274,11 @@ test("runtime owner gates app-level routing client reads", () => {
     source,
     /const runtimeOwner = createRuntimeOwner\(\{[\s\S]*routing: workspaceRouting,[\s\S]*\}\);[\s\S]*const runtimeOwnedRouting = createRuntimeOwnedRouting\(workspaceRouting, runtimeOwner\);[\s\S]*const routedClient = \(workspaceId\?: string\) => runtimeOwner\.client\(workspaceId\);/,
     "app should create a runtime-owned routing wrapper next to the runtime owner",
+  );
+  assert.match(
+    source,
+    /requiresOrchestratorReadiness: \(workspaceId\) => \{[\s\S]*engineRuntime\(\) !== "veslo-orchestrator"[\s\S]*currentWorkspaceStoreRef\(\)\?\.workspaces\(\)\.find\(\(entry\) => entry\.id === workspaceId\)[\s\S]*workspace\?\.workspaceType === "local";[\s\S]*\}/,
+    "local orchestrator routes should not be treated as runtime-ready without an orchestrator engine snapshot",
   );
   assert.match(
     source,

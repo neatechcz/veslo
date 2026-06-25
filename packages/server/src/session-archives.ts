@@ -20,9 +20,8 @@ export type SessionArchiveRecord = {
   workspaceIdentity?: string;
 };
 
-const DEFAULT_ARCHIVE_STORE_DIR = resolve(
-  process.env.VESLO_SESSION_ARCHIVES_DIR?.trim() || join(homedir(), ".veslo", "veslo-server", "session-archives"),
-);
+const defaultArchiveStoreDir = () =>
+  resolve(process.env.VESLO_SESSION_ARCHIVES_DIR?.trim() || join(homedir(), ".veslo", "veslo-server", "session-archives"));
 
 const normalizeRecord = (record: SessionArchiveRecord): SessionArchiveRecord => ({
   sessionId: record.sessionId.trim(),
@@ -43,8 +42,26 @@ const normalizeRecord = (record: SessionArchiveRecord): SessionArchiveRecord => 
 const sortRecords = (records: SessionArchiveRecord[]) =>
   [...records].sort((left, right) => right.archivedAt - left.archivedAt);
 
+const archiveRecordKey = (record: Pick<SessionArchiveRecord, "sessionId" | "workspaceIdAtArchive" | "workspaceIdentity">) =>
+  [
+    record.workspaceIdAtArchive?.trim() || record.workspaceIdentity?.trim() || "",
+    record.sessionId.trim(),
+  ].join("\0");
+
+const matchesDeleteScope = (
+  record: SessionArchiveRecord,
+  sessionId: string,
+  workspaceId?: string | null,
+) => {
+  if (record.sessionId !== sessionId) return false;
+  const scopedWorkspaceId = workspaceId?.trim() ?? "";
+  if (!scopedWorkspaceId) return true;
+  const recordWorkspaceId = record.workspaceIdAtArchive?.trim() ?? "";
+  return !recordWorkspaceId || recordWorkspaceId === scopedWorkspaceId;
+};
+
 export function createSessionArchiveStore(options?: { dir?: string }) {
-  const dir = resolve(options?.dir?.trim() || DEFAULT_ARCHIVE_STORE_DIR);
+  const dir = resolve(options?.dir?.trim() || defaultArchiveStoreDir());
 
   const ownerPath = (ownerKey: string) => {
     const digest = createHash("sha256").update(ownerKey).digest("hex");
@@ -83,15 +100,16 @@ export function createSessionArchiveStore(options?: { dir?: string }) {
     async put(ownerKey: string, input: SessionArchiveRecord): Promise<SessionArchiveRecord[]> {
       const record = normalizeRecord(input);
       const existing = await readOwnerRecords(ownerKey);
-      const next = existing.filter((entry) => entry.sessionId !== record.sessionId);
+      const key = archiveRecordKey(record);
+      const next = existing.filter((entry) => archiveRecordKey(entry) !== key);
       next.push(record);
       await writeOwnerRecords(ownerKey, next);
       return sortRecords(next);
     },
-    async delete(ownerKey: string, sessionId: string): Promise<SessionArchiveRecord[]> {
+    async delete(ownerKey: string, sessionId: string, options?: { workspaceId?: string | null }): Promise<SessionArchiveRecord[]> {
       const normalizedId = sessionId.trim();
       const existing = await readOwnerRecords(ownerKey);
-      const next = existing.filter((entry) => entry.sessionId !== normalizedId);
+      const next = existing.filter((entry) => !matchesDeleteScope(entry, normalizedId, options?.workspaceId));
       await writeOwnerRecords(ownerKey, next);
       return sortRecords(next);
     },

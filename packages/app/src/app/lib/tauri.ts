@@ -8,6 +8,7 @@ import type { ComposerAttachment, ComposerDraft, ComposerPart, ModelRef, SkillIn
 export type EngineInfo = {
   running: boolean;
   runtime: "direct" | "veslo-orchestrator";
+  childKind?: "direct" | "wsl" | null;
   baseUrl: string | null;
   projectDir: string | null;
   hostname: string | null;
@@ -123,6 +124,7 @@ export type OrchestratorStatus = {
   activeId: string | null;
   workspaceCount: number;
   workspaces: OrchestratorWorkspace[];
+  engines?: OrchestratorEngineSnapshot[];
   lastError: string | null;
 };
 
@@ -779,6 +781,7 @@ export type OrchestratorEngineSnapshot = {
   baseUrl: string;
   workdir: string;
   configDir: string;
+  childKind?: "direct" | "wsl" | null;
   state: "spawning" | "ready" | "idle" | "suspended" | "crashed" | string;
   spawnedAt: number;
   lastActivityAt: number;

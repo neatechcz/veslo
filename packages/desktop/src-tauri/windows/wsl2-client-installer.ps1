@@ -34,14 +34,15 @@ param(
     [switch]$SkipPrerequisiteInstall,
     [switch]$AllowRestartContinuationSuccess,
     [switch]$AllowDeferredRuntimeRepairSuccess,
-    [switch]$MachineSetupOnly
+    [switch]$MachineSetupOnly,
+    [switch]$StartupContinuation
 )
 
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 $env:WSL_UTF8 = "1"
 $NativeCommandTimeoutExitCode = 1460
-$ClientInstallerScriptRevision = "system-machine-setup-singlereboot-20260620"
+$ClientInstallerScriptRevision = "startup-continuation-20260624"
 $ClientInstallerScriptPath = if ($PSCommandPath -and $PSCommandPath.Trim()) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
 
 function Write-ClientInstallerLog([string]$Message) {
@@ -120,6 +121,23 @@ function Resolve-RuntimeDataRoot {
 
 function Resolve-RestartRequiredMarkerPath {
     return (Join-Path (Join-Path (Resolve-RuntimeDataRoot) "Veslo") "runtime-setup-restart-required.marker")
+}
+
+function Resolve-ActiveSetupVersion {
+    $scriptDir = Split-Path -Parent $ClientInstallerScriptPath
+    $packageJson = Join-Path $scriptDir "package.json"
+    if (Test-Path -LiteralPath $packageJson -PathType Leaf) {
+        try {
+            $pkg = Get-Content -LiteralPath $packageJson -Raw -ErrorAction Stop | ConvertFrom-Json
+            $version = ([string]$pkg.version).Trim()
+            if ($version -match "^(\d+)\.(\d+)\.(\d+)$") {
+                return "$($Matches[1]),$($Matches[2]),$($Matches[3]),0"
+            }
+        } catch {
+            Write-ClientInstallerLog "Failed to read package version for Active Setup: $($_.Exception.Message)"
+        }
+    }
+    return "2026,6,24,0"
 }
 
 function Write-RestartRequiredMarker {
@@ -220,6 +238,39 @@ function Resolve-WslExecutable {
 
 function Resolve-PowerShellExecutable {
     return Resolve-SystemExecutable "WindowsPowerShell\v1.0\powershell.exe" "powershell.exe"
+}
+
+function New-ClientInstallerCommand([string[]]$ExtraArguments = @()) {
+    $powershellCommand = Resolve-PowerShellExecutable
+    if (-not $powershellCommand) {
+        return $null
+    }
+
+    $arguments = @(
+        "-NoProfile",
+        "-NonInteractive",
+        "-WindowStyle",
+        "Hidden",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        $ClientInstallerScriptPath,
+        "-DistroName",
+        $DistroName,
+        "-OpencodeGithubRepo",
+        $OpencodeGithubRepo
+    )
+    if ($InstallDir.Trim()) {
+        $arguments += @("-InstallDir", $InstallDir)
+    }
+    if ($OpencodeVersion.Trim()) {
+        $arguments += @("-OpencodeVersion", $OpencodeVersion)
+    }
+    if ($ExtraArguments -and $ExtraArguments.Count -gt 0) {
+        $arguments += $ExtraArguments
+    }
+
+    return '"{0}" {1}' -f $powershellCommand, (($arguments | ForEach-Object { ConvertTo-NativeArgument ([string]$_) }) -join " ")
 }
 
 function Stop-HiddenNativeProcessTree([System.Diagnostics.Process]$Process) {
@@ -417,6 +468,7 @@ function Invoke-HiddenNativeCommand([string]$FilePath, [string[]]$Arguments, [in
             Write-ClientInstallerLog $line
         }
     }
+    Write-ClientInstallerLog "Native command finished with exit code $exitCode."
 
     return [pscustomobject]@{
         ExitCode = [int]$exitCode
@@ -533,39 +585,68 @@ function Test-WslUsable {
     }
 }
 
+function Wait-WslUsable([int]$TimeoutSeconds = 300) {
+    $deadline = (Get-Date).AddSeconds([Math]::Max(1, $TimeoutSeconds))
+    $lastState = $null
+    do {
+        $lastState = Test-WslUsable
+        Write-ClientInstallerLog $lastState.Reason
+        if ($lastState.Ok) {
+            return $lastState
+        }
+        if ((Get-Date) -lt $deadline) {
+            Write-ClientInstallerLog "WSL is not usable yet; waiting 10 seconds before retrying startup continuation."
+            Start-Sleep -Seconds 10
+        }
+    } while ((Get-Date) -lt $deadline)
+
+    return $lastState
+}
+
 function Register-ClientInstallerRunOnce {
-    $powershellCommand = Resolve-PowerShellExecutable
-    if (-not $powershellCommand) {
+    $command = New-ClientInstallerCommand
+    if (-not $command) {
         Write-ClientInstallerLog "Skipping RunOnce registration because powershell.exe was not found."
         return
     }
 
-    $arguments = @(
-        "-NoProfile",
-        "-NonInteractive",
-        "-WindowStyle",
-        "Hidden",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        $ClientInstallerScriptPath,
-        "-DistroName",
-        $DistroName,
-        "-OpencodeGithubRepo",
-        $OpencodeGithubRepo
-    )
-    if ($InstallDir.Trim()) {
-        $arguments += @("-InstallDir", $InstallDir)
-    }
-    if ($OpencodeVersion.Trim()) {
-        $arguments += @("-OpencodeVersion", $OpencodeVersion)
-    }
-
-    $command = '"{0}" {1}' -f $powershellCommand, (($arguments | ForEach-Object { ConvertTo-NativeArgument ([string]$_) }) -join " ")
     $runOncePath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce"
     New-Item -Path $runOncePath -Force | Out-Null
     New-ItemProperty -Path $runOncePath -Name "VesloWslRuntimeSetup" -Value $command -PropertyType String -Force | Out-Null
     Write-ClientInstallerLog "Registered RunOnce continuation for Veslo WSL runtime setup."
+}
+
+function Register-CurrentUserStartupRetry {
+    $command = New-ClientInstallerCommand @("-StartupContinuation", "-SkipPrerequisiteInstall")
+    if (-not $command) {
+        Write-ClientInstallerLog "Skipping startup retry registration because powershell.exe was not found."
+        return
+    }
+
+    $runOncePath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce"
+    New-Item -Path $runOncePath -Force | Out-Null
+    New-ItemProperty -Path $runOncePath -Name "VesloWslRuntimeSetup" -Value $command -PropertyType String -Force | Out-Null
+    Write-ClientInstallerLog "Registered current-user startup retry for Veslo WSL runtime setup."
+}
+
+function Register-MachineStartupContinuation {
+    $command = New-ClientInstallerCommand @("-StartupContinuation", "-SkipPrerequisiteInstall")
+    if (-not $command) {
+        Write-ClientInstallerLog "Skipping machine startup continuation because powershell.exe was not found."
+        return
+    }
+
+    $activeSetupPath = "HKLM:\Software\Microsoft\Active Setup\Installed Components\Neatech.Veslo.WslRuntimeSetup"
+    try {
+        New-Item -Path $activeSetupPath -Force | Out-Null
+        New-ItemProperty -Path $activeSetupPath -Name "StubPath" -Value $command -PropertyType String -Force | Out-Null
+        New-ItemProperty -Path $activeSetupPath -Name "Version" -Value (Resolve-ActiveSetupVersion) -PropertyType String -Force | Out-Null
+        New-ItemProperty -Path $activeSetupPath -Name "IsInstalled" -Value 1 -PropertyType DWord -Force | Out-Null
+        New-ItemProperty -Path $activeSetupPath -Name "ComponentID" -Value "Veslo WSL runtime setup" -PropertyType String -Force | Out-Null
+        Write-ClientInstallerLog "Registered machine Active Setup startup continuation for Veslo WSL runtime setup."
+    } catch {
+        Write-ClientInstallerLog "Failed to register machine startup continuation: $($_.Exception.Message)"
+    }
 }
 
 $logRoot = Join-Path (Resolve-RuntimeDataRoot) "Veslo\logs"
@@ -647,11 +728,52 @@ function Invoke-MachineWslSetup([string]$PrerequisiteScript) {
         Finish-ClientInstaller 0
     }
 
+    Register-MachineStartupContinuation
     Write-ClientInstallerLog "Running the silent WSL machine prerequisite install (no wsl.exe, LocalSystem-safe)."
     $prereqInstall = Invoke-LocalPowerShellScript -ScriptPath $PrerequisiteScript -ScriptArguments @("-Install") -TimeoutSeconds 3600
     Write-ClientInstallerLog "WSL prerequisite install finished with exit code $($prereqInstall.ExitCode)."
     Write-RecentPrerequisiteLogTail
     Finish-ClientInstaller $prereqInstall.ExitCode
+}
+
+function Invoke-StartupContinuation([string]$SandboxInstallerScript) {
+    if (-not (Test-Path -LiteralPath $SandboxInstallerScript -PathType Leaf)) {
+        Write-ClientInstallerLog "Sandbox installer wrapper is missing: $SandboxInstallerScript"
+        Register-CurrentUserStartupRetry
+        Finish-ClientInstaller 2
+    }
+
+    $wslState = Wait-WslUsable -TimeoutSeconds 300
+    if (-not $wslState -or -not $wslState.Ok) {
+        Write-ClientInstallerLog "WSL is still not usable from startup continuation; retrying on the next user logon and leaving app repair available."
+        Register-CurrentUserStartupRetry
+        $exitCode = 1
+        if ($wslState) {
+            $exitCode = [int]$wslState.ExitCode
+        }
+        Finish-ClientInstaller $exitCode
+    }
+
+    $sandboxArgs = @(
+        "-DistroName",
+        $DistroName,
+        "-OpencodeGithubRepo",
+        $OpencodeGithubRepo
+    )
+    if ($InstallDir.Trim()) {
+        $sandboxArgs += @("-InstallDir", $InstallDir)
+    }
+    if ($OpencodeVersion.Trim()) {
+        $sandboxArgs += @("-OpencodeVersion", $OpencodeVersion)
+    }
+
+    Write-ClientInstallerLog "Startup continuation is provisioning the managed VesloSandbox runtime without elevation."
+    $sandboxResult = Invoke-LocalPowerShellScript -ScriptPath $SandboxInstallerScript -ScriptArguments $sandboxArgs -TimeoutSeconds 3600
+    if ($sandboxResult.ExitCode -ne 0) {
+        Write-ClientInstallerLog "Startup continuation did not finish VesloSandbox provisioning; retrying on the next user logon and leaving app repair available."
+        Register-CurrentUserStartupRetry
+    }
+    Finish-ClientInstaller $sandboxResult.ExitCode
 }
 
 # Per-user WSL setup used by the NSIS per-user installer hook and the app. WSL
@@ -716,6 +838,7 @@ try {
     Write-ClientInstallerLog "Script revision: $ClientInstallerScriptRevision"
     Write-ClientInstallerLog "Script path: $ClientInstallerScriptPath"
     Write-ClientInstallerLog "Machine setup only: $([bool]$MachineSetupOnly)"
+    Write-ClientInstallerLog "Startup continuation: $([bool]$StartupContinuation)"
     $identityName = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     Write-ClientInstallerLog "Identity: $identityName"
     Write-ClientInstallerLog "Distro: $DistroName"
@@ -727,6 +850,14 @@ try {
 
     if ($MachineSetupOnly) {
         Invoke-MachineWslSetup -PrerequisiteScript $prerequisiteScript
+    }
+
+    if ($StartupContinuation) {
+        if ($identityName -match "\\SYSTEM$") {
+            Write-ClientInstallerLog "Startup continuation must run under the target Windows user, not LocalSystem."
+            Finish-ClientInstaller 5
+        }
+        Invoke-StartupContinuation -SandboxInstallerScript $sandboxInstallerScript
     }
 
     if ($identityName -match "\\SYSTEM$") {

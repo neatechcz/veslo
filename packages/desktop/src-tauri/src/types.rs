@@ -80,6 +80,7 @@ impl Default for EngineRuntime {
 pub struct EngineInfo {
     pub running: bool,
     pub runtime: EngineRuntime,
+    pub child_kind: Option<String>,
     pub base_url: Option<String>,
     pub project_dir: Option<String>,
     pub hostname: Option<String>,
@@ -176,6 +177,8 @@ pub struct OrchestratorEngineSnapshot {
     pub base_url: String,
     pub workdir: String,
     pub config_dir: String,
+    #[serde(default)]
+    pub child_kind: Option<String>,
     pub state: String,
     pub spawned_at: u64,
     pub last_activity_at: u64,
@@ -353,6 +356,51 @@ pub struct WorkspaceInfo {
 pub struct WorkspaceList {
     pub active_id: String,
     pub workspaces: Vec<WorkspaceInfo>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OrchestratorEngineSnapshot;
+
+    #[test]
+    fn orchestrator_engine_snapshot_preserves_child_kind() {
+        let snapshot: OrchestratorEngineSnapshot = serde_json::from_value(serde_json::json!({
+            "workspaceId": "ws-a",
+            "pid": 1234,
+            "port": 5678,
+            "baseUrl": "http://127.0.0.1:5678",
+            "workdir": "C:/repo/a",
+            "configDir": "C:/data/config",
+            "childKind": "direct",
+            "state": "ready",
+            "spawnedAt": 1,
+            "lastActivityAt": 2
+        }))
+        .expect("snapshot should deserialize");
+
+        assert_eq!(snapshot.child_kind.as_deref(), Some("direct"));
+
+        let encoded = serde_json::to_value(snapshot).expect("snapshot should serialize");
+        assert_eq!(encoded["childKind"], "direct");
+    }
+
+    #[test]
+    fn orchestrator_engine_snapshot_accepts_older_payload_without_child_kind() {
+        let snapshot: OrchestratorEngineSnapshot = serde_json::from_value(serde_json::json!({
+            "workspaceId": "ws-a",
+            "pid": 1234,
+            "port": 5678,
+            "baseUrl": "http://127.0.0.1:5678",
+            "workdir": "C:/repo/a",
+            "configDir": "C:/data/config",
+            "state": "ready",
+            "spawnedAt": 1,
+            "lastActivityAt": 2
+        }))
+        .expect("snapshot should deserialize");
+
+        assert_eq!(snapshot.child_kind, None);
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
