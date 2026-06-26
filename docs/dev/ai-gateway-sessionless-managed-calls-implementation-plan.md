@@ -47,6 +47,8 @@ provider-start watchdog.
 | Skill-creator/sessionless Managed AI calls are tolerated and proxied | true | The local proxy now forwards literal `${OPENCODE_SESSION_ID}` for the sessionless placeholder case instead of returning `gateway_session_unresolved`. |
 | Sessionless fallback avoids satisfying unrelated prompt watchdogs | true | Sessionless fallback traces the provider request but does not record session/workspace watchdog evidence. |
 | Contract tests describe the new sessionless behavior | true | The previous 400 test now asserts forwarding, placeholder preservation, stripped workspace headers, and sessionless diagnostics. |
+| Active gateway run contexts are cleaned up after provider-start watch | true | Registered contexts are removed after success, timeout, or submit failure instead of waiting for TTL. |
+| Same-workspace ambiguous placeholder fallback is covered | true | Regression coverage verifies two active runs in one workspace do not resolve a placeholder through workspace fallback. |
 | Live Tauri app verification completed | false | Not required for this planning pass; keep as manual/release verification. |
 
 ## Implementation Plan
@@ -262,6 +264,8 @@ Server tests:
    - Expected: proxied to upstream.
    - Expected: no workspace watchdog hit is recorded for that run.
    - The prompt watchdog must not be satisfied by this sessionless request.
+   - Includes the same-workspace case: two active runs in one workspace must keep
+     placeholder/workspace fallback unresolved.
 
 5. Keep conversation tests for workspace fallback hardening.
    - Placeholder plus stale workspace header must not attribute provider hits to
@@ -335,6 +339,8 @@ Overall done becomes true only when all of these are true:
 | Sessionless fallback does not satisfy unrelated prompt watchdogs | true |
 | VSLO-250 provider-start watchdog still fires for a normal managed prompt under session-only correlation (no `x-veslo-workspace-id`) | true |
 | Server regression tests cover sessionless fallback and ambiguity behavior | true |
+| Active AI gateway run contexts are unregistered after the provider-start watch completes | true |
+| Same-workspace ambiguous placeholder fallback is covered | true |
 | App config tests confirm stale workspace headers are not generated or accepted as usable config | true |
 | Targeted typechecks pass | true |
 | Live Tauri verification is documented as optional/manual for this phase | true |
@@ -354,7 +360,7 @@ pnpm --filter @neatech/veslo-ui typecheck
 Results:
 
 - server AI Gateway tests: 20/20 passed.
-- server conversation/watchdog tests: 14/14 passed.
+- server conversation/watchdog tests: 15/15 passed.
 - app Managed AI config tests: 56/56 passed.
 - server typecheck passed.
 - app typecheck passed.

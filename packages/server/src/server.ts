@@ -1903,6 +1903,42 @@ function latestActiveAiGatewayRunContextByWorkspace(workspaceId?: string | null)
   return byWorkspace[byWorkspace.length - 1] ?? null;
 }
 
+function activeAiGatewayRunMatches(
+  context: ActiveAiGatewayRunContext,
+  input: Pick<ActiveAiGatewayRunContext, "workspaceId" | "conversationId" | "runId" | "opencodeSessionId">,
+): boolean {
+  return context.workspaceId === input.workspaceId &&
+    context.conversationId === input.conversationId &&
+    context.runId === input.runId &&
+    context.opencodeSessionId === input.opencodeSessionId;
+}
+
+function unregisterActiveAiGatewayRun(
+  input: Pick<ActiveAiGatewayRunContext, "workspaceId" | "conversationId" | "runId" | "opencodeSessionId">,
+): void {
+  const sessionId = normalizeAiGatewaySessionId(input.opencodeSessionId);
+  if (sessionId) {
+    const next = (activeAiGatewayRunsBySession.get(sessionId) ?? [])
+      .filter((context) => !activeAiGatewayRunMatches(context, input));
+    if (next.length) {
+      activeAiGatewayRunsBySession.set(sessionId, next);
+    } else {
+      activeAiGatewayRunsBySession.delete(sessionId);
+    }
+  }
+
+  const workspaceId = input.workspaceId.trim();
+  if (workspaceId) {
+    const next = (activeAiGatewayRunsByWorkspace.get(workspaceId) ?? [])
+      .filter((context) => !activeAiGatewayRunMatches(context, input));
+    if (next.length) {
+      activeAiGatewayRunsByWorkspace.set(workspaceId, next);
+    } else {
+      activeAiGatewayRunsByWorkspace.delete(workspaceId);
+    }
+  }
+}
+
 function registerActiveAiGatewayRun(input: Omit<ActiveAiGatewayRunContext, "at">): void {
   const now = Date.now();
   pruneActiveAiGatewayRuns(now);
@@ -1969,7 +2005,7 @@ function resolveAiGatewaySession(input: {
   if (workspaceContext) {
     const activeContexts = listActiveAiGatewayRunContexts();
     const workspaceCandidates = workspaceId ? activeAiGatewayRunsByWorkspace.get(workspaceId) ?? [] : [];
-    if (activeAiGatewayRunsByWorkspace.size === 1 && workspaceCandidates.length > 0) {
+    if (activeContexts.length === 1 && workspaceCandidates.length === 1) {
       return {
         sessionId: normalizeAiGatewaySessionId(workspaceContext.opencodeSessionId),
         activeRunContext: workspaceContext,
@@ -5522,6 +5558,17 @@ function createRoutes(
     const path = buildConversationRunSubmitPath(kind, target.opencodeSessionId, target.directory);
     const aiGatewayProviderWatchStartedAt = Date.now();
     const opencodeRunBody = buildConversationRunBody(kind, body);
+    let activeAiGatewayRunRegistered = false;
+    const unregisterRegisteredAiGatewayRun = () => {
+      if (!activeAiGatewayRunRegistered) return;
+      activeAiGatewayRunRegistered = false;
+      unregisterActiveAiGatewayRun({
+        workspaceId: workspace.id,
+        conversationId: target.conversationId,
+        runId,
+        opencodeSessionId: target.opencodeSessionId,
+      });
+    };
     runTrace.record("server:conversation-run:opencode-submit-body", {
       workspaceId: workspace.id,
       conversationId: target.conversationId,
@@ -5542,6 +5589,7 @@ function createRoutes(
         clientMessageId,
         origin,
       });
+      activeAiGatewayRunRegistered = true;
     }
     let upstream: unknown;
     try {
@@ -5579,77 +5627,82 @@ function createRoutes(
           },
         ).catch(() => undefined);
       }
+      unregisterRegisteredAiGatewayRun();
       throw error;
     }
-    if (lifecycleOwner && kind === "prompt_async" && expectAiGatewayStart) {
-      const providerStart = await runTrace.step(
-        "server:conversation-run:ai-gateway-provider-start-watch",
-        () => waitForAiGatewayProviderStart({
-          workspaceId: workspace.id,
-          conversationId: target.conversationId,
-          runId,
-          opencodeSessionId: target.opencodeSessionId,
-          clientMessageId,
-          origin,
-          startedAt: aiGatewayProviderWatchStartedAt,
-        }),
-        {
-          workspaceId: workspace.id,
-          conversationId: target.conversationId,
-          runId,
-          clientMessageId,
-          origin,
-          opencodeSessionId: target.opencodeSessionId,
-        },
-      );
-      if (!providerStart.started) {
-        const error = `AI gateway provider request did not start within ${providerStart.timeoutMs}ms.`;
-        await runTrace.step(
-          "server:conversation-run:lifecycle-mark-failed-ai-gateway-provider-start-timeout",
-          () => lifecycleOwner.markFailed(workspace.id, runId, error),
+    try {
+      if (lifecycleOwner && kind === "prompt_async" && expectAiGatewayStart) {
+        const providerStart = await runTrace.step(
+          "server:conversation-run:ai-gateway-provider-start-watch",
+          () => waitForAiGatewayProviderStart({
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            opencodeSessionId: target.opencodeSessionId,
+            clientMessageId,
+            origin,
+            startedAt: aiGatewayProviderWatchStartedAt,
+          }),
           {
             workspaceId: workspace.id,
             conversationId: target.conversationId,
             runId,
-            opencodeSessionId: target.opencodeSessionId,
-            timeoutMs: providerStart.timeoutMs,
-          },
-        ).catch(() => undefined);
-        const abortQuery = new URLSearchParams();
-        abortQuery.set("directory", target.directory);
-        await runTrace.step(
-          "server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout",
-          () => fetchOpencodeJsonWithOrchestratorFallback(
-            config,
-            { ...workspace, directory: target.directory },
-            `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${abortQuery.toString()}`,
-            { method: "POST", sendTraceId: runTrace.traceId },
-          ),
-          {
-            workspaceId: workspace.id,
-            conversationId: target.conversationId,
-            runId,
+            clientMessageId,
+            origin,
             opencodeSessionId: target.opencodeSessionId,
           },
-        ).catch((abortError) => {
-          runTrace.record("server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout:error", {
-            workspaceId: workspace.id,
-            conversationId: target.conversationId,
-            runId,
-            opencodeSessionId: target.opencodeSessionId,
-            error: abortError instanceof Error ? abortError.message : String(abortError),
+        );
+        if (!providerStart.started) {
+          const error = `AI gateway provider request did not start within ${providerStart.timeoutMs}ms.`;
+          await runTrace.step(
+            "server:conversation-run:lifecycle-mark-failed-ai-gateway-provider-start-timeout",
+            () => lifecycleOwner.markFailed(workspace.id, runId, error),
+            {
+              workspaceId: workspace.id,
+              conversationId: target.conversationId,
+              runId,
+              opencodeSessionId: target.opencodeSessionId,
+              timeoutMs: providerStart.timeoutMs,
+            },
+          ).catch(() => undefined);
+          const abortQuery = new URLSearchParams();
+          abortQuery.set("directory", target.directory);
+          await runTrace.step(
+            "server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout",
+            () => fetchOpencodeJsonWithOrchestratorFallback(
+              config,
+              { ...workspace, directory: target.directory },
+              `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${abortQuery.toString()}`,
+              { method: "POST", sendTraceId: runTrace.traceId },
+            ),
+            {
+              workspaceId: workspace.id,
+              conversationId: target.conversationId,
+              runId,
+              opencodeSessionId: target.opencodeSessionId,
+            },
+          ).catch((abortError) => {
+            runTrace.record("server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout:error", {
+              workspaceId: workspace.id,
+              conversationId: target.conversationId,
+              runId,
+              opencodeSessionId: target.opencodeSessionId,
+              error: abortError instanceof Error ? abortError.message : String(abortError),
+            });
           });
-        });
-        throw new ApiError(504, "ai_gateway_provider_start_timeout", error, {
-          workspaceId: workspace.id,
-          conversationId: target.conversationId,
-          runId,
-          opencodeSessionId: target.opencodeSessionId,
-          clientMessageId,
-          origin,
-          timeoutMs: providerStart.timeoutMs,
-        });
+          throw new ApiError(504, "ai_gateway_provider_start_timeout", error, {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            opencodeSessionId: target.opencodeSessionId,
+            clientMessageId,
+            origin,
+            timeoutMs: providerStart.timeoutMs,
+          });
+        }
       }
+    } finally {
+      unregisterRegisteredAiGatewayRun();
     }
     return upstream;
   };

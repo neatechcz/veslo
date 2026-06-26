@@ -1601,6 +1601,217 @@ describe("conversation routes", () => {
     expect(abortRequests).toEqual([workspaceRoot]);
   });
 
+  test("managed prompt provider-start watchdog does not resolve ambiguous same-workspace placeholder hits", async () => {
+    setEnvVarForTest("VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS", "120");
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-gateway-same-workspace-ambiguous-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+
+    let sessionIndex = 0;
+    let serverPort = 0;
+    const registeredRuns: Array<{ runId: string; conversationId: string; sessionId: string }> = [];
+    const failedRequests: Array<Record<string, unknown> | null> = [];
+    const providerRequests: Array<{
+      authorization: string | null;
+      sessionId: string | null;
+      workspaceId: string | null;
+      body: unknown;
+    }> = [];
+
+    const gateway = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (request.method === "POST" && url.pathname === "/providers/codex_oauth/v1/chat/completions") {
+          const requestBody = await request.json().catch(() => null) as unknown;
+          providerRequests.push({
+            authorization: request.headers.get("authorization"),
+            sessionId: request.headers.get("x-veslo-session-id"),
+            workspaceId: request.headers.get("x-veslo-workspace-id"),
+            body: requestBody,
+          });
+          return Response.json({
+            id: "chatcmpl_ambiguous",
+            object: "chat.completion",
+            created: 1,
+            model: "gpt-5.5",
+            choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+          });
+        }
+        return Response.json({ error: "unexpected gateway route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(gateway as { stop?: (closeActiveConnections?: boolean) => void });
+    setEnvVarForTest("VESLO_AI_GATEWAY_BASE_URL", `http://127.0.0.1:${gateway.port}`);
+
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = request.method === "POST"
+          ? await request.json().catch(() => null) as Record<string, unknown> | null
+          : null;
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session") {
+          sessionIndex += 1;
+          return Response.json({
+            id: `sess-ambiguous-${sessionIndex}`,
+            title: body?.title,
+            directory: body?.directory,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+        if (request.method === "POST" && url.pathname.match(/^\/workspace\/ws_1\/opencode\/session\/sess-ambiguous-\d+\/prompt_async$/)) {
+          return Response.json({ ok: true });
+        }
+        if (request.method === "POST" && url.pathname.endsWith("/abort")) {
+          return Response.json({ ok: true, aborted: true });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const orchestrator = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = request.method === "POST"
+          ? await request.json().catch(() => null) as Record<string, unknown> | null
+          : null;
+        if (request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== "lifecycle-token") {
+          return Response.json({ error: "unauthorized" }, { status: 401 });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/runs/register") {
+          registeredRuns.push({
+            runId: typeof body?.runId === "string" ? body.runId : "",
+            conversationId: typeof body?.conversationId === "string" ? body.conversationId : "",
+            sessionId: typeof body?.engineSessionId === "string" ? body.engineSessionId : "",
+          });
+          return Response.json({ ok: true, ...body, workspaceId: "ws_1", status: "running", stale: false });
+        }
+        const failedMatch = url.pathname.match(/^\/workspace\/ws_1\/runs\/([^/]+)\/failed$/);
+        if (request.method === "POST" && failedMatch) {
+          failedRequests.push(body);
+          return Response.json({ ok: true, runId: decodeURIComponent(failedMatch[1] ?? ""), status: "failed" });
+        }
+        const activeMatch = url.pathname.match(/^\/workspace\/ws_1\/conversations\/([^/]+)\/runs\/([^/]+)$/);
+        if (request.method === "GET" && activeMatch) {
+          const conversationId = decodeURIComponent(activeMatch[1] ?? "");
+          const runId = decodeURIComponent(activeMatch[2] ?? "");
+          const match = registeredRuns.find((item) => item.conversationId === conversationId && item.runId === runId);
+          return Response.json({
+            ok: true,
+            workspaceId: "ws_1",
+            conversationId,
+            runId,
+            status: match ? "running" : "completed",
+            stale: false,
+          });
+        }
+        return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(orchestrator as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+      workspaces: [
+        {
+          id: "ws_1",
+          name: "Workspace",
+          path: workspaceRoot,
+          baseUrl: `http://127.0.0.1:${upstream.port}/workspace/ws_1/opencode`,
+        },
+      ],
+      orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
+      orchestratorLifecycleToken: "lifecycle-token",
+    });
+    serverPort = server.port;
+
+    const createConversation = async (title: string) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ directory: workspaceRoot, title }),
+      });
+      expect(response.status).toBe(201);
+      return await response.json() as { conversationId: string };
+    };
+
+    const firstConversation = await createConversation("Ambiguous One");
+    const secondConversation = await createConversation("Ambiguous Two");
+
+    const startRun = async (conversationId: string, text: string) => {
+      const response = await fetch(
+        `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(conversationId)}/runs`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer client-token",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            kind: "prompt_async",
+            directory: workspaceRoot,
+            parts: [{ type: "text", text }],
+            expectAiGatewayStart: true,
+          }),
+        },
+      );
+      return { status: response.status, body: await response.json().catch(() => null) as Record<string, unknown> | null };
+    };
+
+    const firstRunPromise = startRun(firstConversation.conversationId, "First");
+    const secondRunPromise = startRun(secondConversation.conversationId, "Second");
+
+    await waitForCondition(
+      () => registeredRuns.length === 2,
+      { timeoutMs: 1_000, message: "expected both same-workspace runs to register" },
+    );
+
+    const providerResponse = await fetch(`http://127.0.0.1:${serverPort}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+        "x-veslo-gateway-token": "gateway-access-token",
+        "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
+        "x-veslo-workspace-id": "ws_1",
+      },
+      body: JSON.stringify({ model: "gpt-5.5", messages: [{ role: "user", content: "Ambiguous" }] }),
+    });
+    expect(providerResponse.status).toBe(200);
+
+    await waitForCondition(
+      () => providerRequests.length > 0,
+      { timeoutMs: 1_000, message: "expected ambiguous provider request to be proxied" },
+    );
+    expect(providerRequests).toEqual([
+      {
+        authorization: "Bearer gateway-access-token",
+        sessionId: "${OPENCODE_SESSION_ID}",
+        workspaceId: null,
+        body: {
+          model: "gpt-5.5",
+          messages: [{ role: "user", content: "Ambiguous" }],
+        },
+      },
+    ]);
+
+    const [firstRun, secondRun] = await Promise.all([firstRunPromise, secondRunPromise]);
+    expect(firstRun.status).toBe(504);
+    expect(secondRun.status).toBe(504);
+    expect(failedRequests).toHaveLength(2);
+  });
+
   test("managed prompt provider-start watchdog matches placeholder session ids by workspace header", async () => {
     setEnvVarForTest("VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS", "500");
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-gateway-workspace-watch-"));
