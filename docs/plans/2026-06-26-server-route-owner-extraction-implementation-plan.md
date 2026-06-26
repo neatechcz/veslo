@@ -393,42 +393,43 @@ Pro kazdy krok plati:
 ### Faze 3: skills podle realnych subdomen
 
 - id: extract-skill-registry-routes
-  done: false
+  done: true
   existingOwner: skills-registry
   routeAdapter: `routes/skill-registry.ts`
   routes: 17
   namespace: `/v1/skills`, `/v1/skill-installations`, `/v1/skill-rollout-policies`, `/v1/skill-registry-events`
   sourceModules: `skill-registry-client.ts`, `skill-registry-types.ts`, `workspace-skill-set.ts`
   note: Toto nejsou orphaned routy; UI je pres klienta realne pouziva. Registry ownership zustava cloud/registry-side, server route je lokalni proxy adapter.
-  validation: skill registry search/client tests, app client route contract tests, server typecheck, `build:bin`.
+  validation: Test-first `server.skill-registry-routes.test.ts` added, failed before `routes/skill-registry.ts` existed and passed after extraction; `server.skill-registry-search.test.ts`, `skill-registry-client.test.ts`, `skill-registry-types.test.ts`, `workspace-skill-set.test.ts`, app `veslo-server.test.ts`, server typecheck, `build:bin` and `git diff --check` passed.
 
 - id: extract-skill-removal-routes
-  done: false
+  done: true
   existingOwner: skills-runtime
   routeAdapter: `routes/skill-removals.ts`
   routes: 3
   namespace: `/skill-removals`, `/skills/batch-remove`
   sourceModules: `skill-removal-journal.ts`, `skills.ts`
-  validation: skill batch/remove tests, server typecheck, `build:bin`.
+  validation: Test-first `server.skill-removal-routes.test.ts` added, failed before `routes/skill-removals.ts` existed and passed after extraction; `skill-removal-journal.test.ts`, `server.skill-batch-remove.test.ts`, server typecheck, `build:bin` and `git diff --check` passed.
 
 - id: extract-skill-enabled-routes
-  done: false
+  done: true
   existingOwner: skills-runtime
   routeAdapter: `routes/skill-enabled.ts`
   routes: 2
   namespace: `/skills/disabled`, `/skills/enabled-state`
   sourceModules: `skill-enabled-overrides.ts`
-  validation: `server.skill-enabled-overrides.test.ts`, server typecheck, `build:bin`.
+  validation: Test-first `server.skill-enabled-routes.test.ts` added, failed before `routes/skill-enabled.ts` existed and passed after extraction; `skills.test.ts`, app `veslo-server.test.ts`, server typecheck, `build:bin` and `git diff --check` passed. No existing standalone `server.skill-enabled-overrides.test.ts` file was present.
 
 - id: extract-user-global-skills-routes
-  done: false
+  done: true
   existingOwner: user-global-skills
   resourceOwnerModel: user-owned `ResourceOwner`
   routeAdapter: `routes/user-global-skills.ts`
-  routes: 7
+  routes: 6
   namespace: `/skills/user-global-store`, `/skills/user-global`
   sourceModules: `user-skill-store.ts`, `skills.ts`
-  validation: user global skill store tests, server typecheck, `build:bin`.
+  note: `/workspace/:id/skills/user-global-store/sync` zustava v materialization checkpointu, protoze materializuje user-global store do workspace runtime.
+  validation: Test-first `server.user-global-skills-routes.test.ts` added, failed before `routes/user-global-skills.ts` existed and passed after extraction; `user-skill-store.test.ts`, `server.user-skill-store.test.ts`, `skill-removal-journal.test.ts`, app `veslo-server.test.ts`, server typecheck, `build:bin` and `git diff --check` passed.
 
 - id: extract-skill-materialization-routes
   done: false
