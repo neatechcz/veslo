@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, normalize } from "node:path";
+import { join, posix } from "node:path";
 import { afterEach, expect, test } from "bun:test";
 
 import { ApiError } from "./errors.js";
@@ -27,7 +27,7 @@ test("listDisabledSkills returns no records when the store is missing", async ()
 test("setSkillEnabledState disables a workspace skill and writes one record", async () => {
   const dataDir = await tempDir();
   const skillPath = "/workspace/.opencode/skills/research-helper/SKILL.md";
-  const normalizedSkillPath = normalize(skillPath);
+  const normalizedSkillPath = posix.normalize(skillPath);
 
   const result = await setSkillEnabledState({
     dataDir,

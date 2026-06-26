@@ -117,7 +117,7 @@ test("Windows MSI uses Czech WiX localization", () => {
   assert.match(locale, /Je již nainstalována novější verze aplikace Veslo by Neatech\./);
 });
 
-test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () => {
+test("Windows MSI keeps managed WSL sandbox provisioning dormant for non-sandbox installer mode", () => {
   const config = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
   const resources = config?.bundle?.resources ?? {};
   const wix = config?.bundle?.windows?.wix ?? {};
@@ -140,20 +140,20 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   assert.equal(
     resources["windows/wsl2-client-installer.ps1"],
     "wsl2-client-installer.ps1",
-    "Windows installers must bundle the client runtime installer that can run prerequisite and sandbox setup from the installer flow",
+    "Windows installers keep the client runtime installer bundled for explicit WSL rollback builds",
   );
   assert.equal(
     resources["windows/wsl2-sandbox-installer.ps1"],
     "wsl2-sandbox-installer.ps1",
-    "MSI must bundle the installer wrapper that calls the provisioning helper",
+    "MSI keeps the installer wrapper bundled for explicit WSL rollback builds",
   );
   assert.ok(
     wix.fragmentPaths?.includes("windows/wsl2-sandbox-installer.wxs"),
-    "MSI must include the WiX fragment that schedules WSL distro provisioning",
+    "MSI keeps the WiX fragment available while WSL provisioning is disabled by default",
   );
   assert.ok(
     wix.componentGroupRefs?.includes("VesloWslProvisioningInstallerComponents"),
-    "MSI must reference the WSL provisioning fragment so WiX links the custom action into the final package",
+    "MSI keeps the WSL provisioning component group linked for explicit rollback builds",
   );
 
   const fragmentPath = resolve(srcTauriDir, "windows/wsl2-sandbox-installer.wxs");
@@ -175,6 +175,11 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
     /<Property\s+Id="MsiLogging"\s+Value="voicewarmupx!"\s*\/>/,
     "Double-clicked MSI installs must create a verbose Windows Installer MSI*.LOG for early bootstrap failures",
   );
+  assert.match(
+    fragment,
+    /Property\s+Id="VESLO_ENABLE_WSL_INSTALLER"\s+Value="0"/,
+    "WSL installer provisioning must stay disabled by default while Windows builds use shared non-sandbox runtime",
+  );
   assert.match(fragment, /RemoveOldVesloWslClientInstaller/);
   assert.match(fragment, /RemoveOldVesloWslPrerequisiteInstaller/);
   assert.match(fragment, /RemoveOldVesloWslSandboxInstaller/);
@@ -183,6 +188,11 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   assert.match(fragment, /ComponentGroup\s+Id="VesloWslProvisioningInstallerComponents"/);
   assert.match(fragment, /CustomAction\s+[^>]*Id="VesloProvisionWslSandbox"/s);
   assert.match(fragment, /After="InstallFiles"/);
+  assert.match(
+    fragment,
+    /Custom Action="VesloProvisionWslSandbox"\s+After="InstallFiles"><!\[CDATA\[VESLO_ENABLE_WSL_INSTALLER="1" AND NOT REMOVE~="ALL"\]\]><\/Custom>/,
+    "MSI must not run WSL provisioning unless the sandbox installer rollback flag is explicitly enabled",
+  );
   assert.match(
     fragment,
     /Id="VesloProvisionWslSandbox"[\s\S]*?Impersonate="no"/,
@@ -246,13 +256,13 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   );
   assert.match(
     fragment,
-    /Custom Action="VesloDisableExitDialogLaunchCheckbox"\s+Before="ExecuteAction"/,
-    "MSI should disable the finish-dialog launch checkbox before the UI reaches ExitDialog",
+    /Custom Action="VesloDisableExitDialogLaunchCheckbox"\s+Before="ExecuteAction"><!\[CDATA\[VESLO_ENABLE_WSL_INSTALLER="1" AND NOT Installed\]\]><\/Custom>/,
+    "MSI should only disable the finish-dialog launch checkbox for the dormant WSL installer rollback flow",
   );
   assert.match(
     fragment,
-    /Custom Action="VesloDisableAutoLaunchApp"\s+Before="LaunchApplication"/,
-    "MSI should clear passive auto-launch before Tauri's generated LaunchApplication action can run",
+    /Custom Action="VesloDisableAutoLaunchApp"\s+Before="LaunchApplication"><!\[CDATA\[VESLO_ENABLE_WSL_INSTALLER="1" AND AUTOLAUNCHAPP AND NOT Installed\]\]><\/Custom>/,
+    "MSI should only clear passive auto-launch for the dormant WSL installer rollback flow",
   );
   assert.doesNotMatch(
     fragment,
@@ -598,7 +608,7 @@ test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () =>
   );
 });
 
-test("Windows NSIS builds a current-user client installer with runtime setup hook", () => {
+test("Windows NSIS builds a current-user client installer with dormant WSL runtime hook", () => {
   const config = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
   const nsis = config?.bundle?.windows?.nsis ?? {};
   const hookPath = resolve(srcTauriDir, "windows/nsis-hooks.nsh");
@@ -623,7 +633,7 @@ test("Windows NSIS builds a current-user client installer with runtime setup hoo
   assert.equal(
     nsis.installerHooks,
     "windows/nsis-hooks.nsh",
-    "Client NSIS installer should run the post-install runtime setup hook",
+    "Client NSIS installer should keep the dormant post-install WSL runtime setup hook available",
   );
   assert.ok(existsSync(hookPath), "Expected the NSIS installer hook file to exist");
   const czechLanguagePath = resolve(srcTauriDir, "windows/locales/Czech.nsh");
@@ -633,8 +643,18 @@ test("Windows NSIS builds a current-user client installer with runtime setup hoo
   assert.match(hook, /NSIS_HOOK_POSTINSTALL/);
   assert.match(
     hook,
+    /!ifdef VESLO_ENABLE_WSL_INSTALLER/,
+    "NSIS WSL runtime preparation must be behind an explicit rollback define",
+  );
+  assert.match(
+    hook,
+    /Skipping Veslo WSL runtime preparation; shared non-sandbox runtime is enabled by default\./,
+    "NSIS installer should skip WSL preparation by default",
+  );
+  assert.match(
+    hook,
     /nsExec::ExecToLog/,
-    "NSIS hook should run PowerShell through nsExec so no console window is shown during install",
+    "NSIS rollback hook should run PowerShell through nsExec so no console window is shown when explicitly enabled",
   );
   assert.doesNotMatch(
     hook,

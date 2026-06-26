@@ -50,6 +50,10 @@ const statusClass = (tone: RepairStatus["tone"]) => {
 // to the app so it can be imported without admin. We auto-run that finish step
 // once per app session so onboarding completes the sandbox on its own.
 let autoPrepareStarted = false;
+// Windows installer builds now use the shared non-sandbox runtime by default.
+// Keep the WSL repair/provisioning path below for future rollback, but do not
+// run it or render its prompt from the installed Windows app.
+const WINDOWS_WSL_SANDBOX_REPAIR_ENABLED = false;
 
 export default function WindowsSandboxRepair(props: WindowsSandboxRepairProps) {
   const translate = (key: string) => t(key, currentLocale());
@@ -69,6 +73,7 @@ export default function WindowsSandboxRepair(props: WindowsSandboxRepairProps) {
   // needs no admin. The manual button passes `auto = false` so an explicit
   // click may still install the WSL features with elevation.
   const prepareSandbox = async (auto = false) => {
+    if (!WINDOWS_WSL_SANDBOX_REPAIR_ENABLED) return;
     if (busy()) return;
     setBusy(true);
     setStatus({ tone: "info", message: translate("settings.windows_sandbox_checking") });
@@ -144,6 +149,7 @@ export default function WindowsSandboxRepair(props: WindowsSandboxRepairProps) {
   // as ready; if WSL still needs installing/restarting we leave that as a
   // manual, clearly labelled option (it requires elevation).
   const autoPrepare = async () => {
+    if (!WINDOWS_WSL_SANDBOX_REPAIR_ENABLED) return;
     if (busy()) return;
     setBusy(true);
     setStatus({ tone: "info", message: translate("settings.windows_sandbox_checking") });
@@ -189,7 +195,7 @@ export default function WindowsSandboxRepair(props: WindowsSandboxRepairProps) {
   );
 
   return (
-    <Show when={isTauriRuntime() && isWindowsPlatform()}>
+    <Show when={isTauriRuntime() && isWindowsPlatform() && WINDOWS_WSL_SANDBOX_REPAIR_ENABLED}>
       <Show
         when={props.blocking}
         fallback={

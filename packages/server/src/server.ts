@@ -229,6 +229,8 @@ const GATEWAY_CALLER_AUTH_HEADER = "x-veslo-gateway-authorization";
 const GATEWAY_ACCESS_TOKEN_HEADER = "x-veslo-gateway-token";
 const GATEWAY_SESSION_ID_HEADER = "x-veslo-session-id";
 const GATEWAY_WORKSPACE_ID_HEADER = "x-veslo-workspace-id";
+const OPENCODE_SESSION_ID_TEMPLATE = "${OPENCODE_SESSION_ID}";
+const OPENCODE_SESSION_ID_MARKER = "OPENCODE_SESSION_ID";
 const AI_GATEWAY_MODEL_DIAGNOSTIC_MAX_REQUEST_BYTES = 64 * 1024;
 const AI_GATEWAY_JSON_REDACTION_MAX_RESPONSE_BYTES = 64 * 1024;
 const AI_GATEWAY_ERROR_DIAGNOSTIC_MAX_RESPONSE_BYTES = 64 * 1024;
@@ -1552,8 +1554,12 @@ function requireAiGatewaySessionId(request: Request): string {
 function normalizeAiGatewaySessionId(sessionId?: string | null): string {
   const normalized = sessionId?.trim() ?? "";
   if (!normalized) return "";
-  if (normalized === "${OPENCODE_SESSION_ID}") return "";
+  if (containsUnresolvedOpenCodeSessionId(normalized)) return "";
   return normalized;
+}
+
+function containsUnresolvedOpenCodeSessionId(value?: string | null): boolean {
+  return (value?.trim() ?? "").includes(OPENCODE_SESSION_ID_MARKER);
 }
 
 function trimmedHeader(request: Request, name: string): string | undefined {
@@ -1590,6 +1596,23 @@ type ActiveAiGatewayRunContext = {
   origin: string | null;
 };
 
+type AiGatewaySessionResolutionSource =
+  | "veslo-session-header"
+  | "opencode-session-header"
+  | "workspace-active-run-context"
+  | "sessionless-fallback"
+  | "unresolved";
+
+type AiGatewaySessionResolution = {
+  sessionId: string;
+  activeRunContext: ActiveAiGatewayRunContext | null;
+  workspaceId: string | null;
+  source: AiGatewaySessionResolutionSource;
+  workspaceFallbackSuppressedReason?: string;
+  workspaceFallbackCandidateCount?: number;
+  activeContextCount?: number;
+};
+
 type ActiveAiGatewayProxyRequest = {
   requestId: string;
   controller: AbortController;
@@ -1619,6 +1642,97 @@ const activeAiGatewayRunsBySession = new Map<string, ActiveAiGatewayRunContext[]
 const activeAiGatewayRunsByWorkspace = new Map<string, ActiveAiGatewayRunContext[]>();
 const activeAiGatewayProxyRequests = new Map<string, ActiveAiGatewayProxyRequest>();
 const aiGatewayRuntimeAuthorizationByActorToken = new Map<string, AiGatewayRuntimeAuthorizationEntry>();
+
+function roundAiGatewayDiagnosticMs(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function summarizeActiveAiGatewayRunContext(
+  context: ActiveAiGatewayRunContext,
+  now: number,
+): Record<string, unknown> {
+  const ageMs = Math.max(0, now - context.at);
+  return {
+    ageMs: roundAiGatewayDiagnosticMs(ageMs),
+    expiresInMs: roundAiGatewayDiagnosticMs(Math.max(0, AI_GATEWAY_ACTIVE_RUN_TTL_MS - ageMs)),
+    traceId: context.traceId,
+    workspaceId: context.workspaceId,
+    conversationId: context.conversationId,
+    runId: context.runId,
+    opencodeSessionId: context.opencodeSessionId,
+    clientMessageId: context.clientMessageId,
+    origin: context.origin,
+  };
+}
+
+function summarizeActiveAiGatewayRunContexts(
+  contexts: ActiveAiGatewayRunContext[],
+  now: number,
+  limit = 5,
+): Array<Record<string, unknown>> {
+  return contexts
+    .slice()
+    .sort((left, right) => right.at - left.at)
+    .slice(0, limit)
+    .map((context) => summarizeActiveAiGatewayRunContext(context, now));
+}
+
+function summarizeActiveAiGatewayContextKeys(
+  itemsByKey: Map<string, ActiveAiGatewayRunContext[]>,
+  limit = 20,
+): string[] {
+  return Array.from(itemsByKey.keys()).sort((left, right) => left.localeCompare(right)).slice(0, limit);
+}
+
+function summarizeRecentActiveAiGatewayContexts(now: number, limit = 8): Array<Record<string, unknown>> {
+  const seen = new Set<string>();
+  const contexts: ActiveAiGatewayRunContext[] = [];
+  for (const items of activeAiGatewayRunsByWorkspace.values()) {
+    for (const item of items) {
+      const key = [
+        item.workspaceId,
+        item.conversationId,
+        item.runId,
+        item.opencodeSessionId,
+        item.at,
+      ].join("\0");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      contexts.push(item);
+    }
+  }
+  return summarizeActiveAiGatewayRunContexts(contexts, now, limit);
+}
+
+function buildActiveAiGatewayResolutionDiagnostics(input: {
+  incomingSessionId?: string | null;
+  workspaceId?: string | null;
+}): Record<string, unknown> {
+  const now = Date.now();
+  pruneActiveAiGatewayRuns(now);
+  const normalizedIncomingSessionId = normalizeAiGatewaySessionId(input.incomingSessionId);
+  const workspaceId = input.workspaceId?.trim() ?? "";
+  const sessionCandidates = normalizedIncomingSessionId
+    ? activeAiGatewayRunsBySession.get(normalizedIncomingSessionId) ?? []
+    : [];
+  const workspaceCandidates = workspaceId
+    ? activeAiGatewayRunsByWorkspace.get(workspaceId) ?? []
+    : [];
+  return {
+    normalizedIncomingSessionId: normalizedIncomingSessionId || null,
+    workspaceId: workspaceId || null,
+    sessionCandidateCount: sessionCandidates.length,
+    workspaceCandidateCount: workspaceCandidates.length,
+    totalSessionContextKeys: activeAiGatewayRunsBySession.size,
+    totalWorkspaceContextKeys: activeAiGatewayRunsByWorkspace.size,
+    sessionContextKeys: summarizeActiveAiGatewayContextKeys(activeAiGatewayRunsBySession),
+    workspaceContextKeys: summarizeActiveAiGatewayContextKeys(activeAiGatewayRunsByWorkspace),
+    sessionCandidates: summarizeActiveAiGatewayRunContexts(sessionCandidates, now),
+    workspaceCandidates: summarizeActiveAiGatewayRunContexts(workspaceCandidates, now),
+    recentContexts: summarizeRecentActiveAiGatewayContexts(now),
+    activeProxyRequestCount: activeAiGatewayProxyRequests.size,
+  };
+}
 
 function actorRuntimeTokenKey(actor?: Actor): string {
   return actor?.tokenHash?.trim() ?? "";
@@ -1750,6 +1864,45 @@ function pruneActiveAiGatewayRuns(now = Date.now()): void {
   prune(activeAiGatewayRunsByWorkspace);
 }
 
+function activeAiGatewayRunContextKey(context: ActiveAiGatewayRunContext): string {
+  return [
+    context.workspaceId,
+    context.conversationId,
+    context.runId,
+    context.opencodeSessionId,
+    context.at,
+  ].join("\0");
+}
+
+function listActiveAiGatewayRunContexts(now = Date.now()): ActiveAiGatewayRunContext[] {
+  pruneActiveAiGatewayRuns(now);
+  const seen = new Set<string>();
+  const contexts: ActiveAiGatewayRunContext[] = [];
+  for (const items of activeAiGatewayRunsByWorkspace.values()) {
+    for (const item of items) {
+      const key = activeAiGatewayRunContextKey(item);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      contexts.push(item);
+    }
+  }
+  return contexts;
+}
+
+function latestActiveAiGatewayRunContextBySession(sessionId?: string | null): ActiveAiGatewayRunContext | null {
+  const normalizedSessionId = normalizeAiGatewaySessionId(sessionId);
+  if (!normalizedSessionId) return null;
+  const bySession = activeAiGatewayRunsBySession.get(normalizedSessionId) ?? [];
+  return bySession[bySession.length - 1] ?? null;
+}
+
+function latestActiveAiGatewayRunContextByWorkspace(workspaceId?: string | null): ActiveAiGatewayRunContext | null {
+  const normalizedWorkspaceId = workspaceId?.trim() ?? "";
+  if (!normalizedWorkspaceId) return null;
+  const byWorkspace = activeAiGatewayRunsByWorkspace.get(normalizedWorkspaceId) ?? [];
+  return byWorkspace[byWorkspace.length - 1] ?? null;
+}
+
 function registerActiveAiGatewayRun(input: Omit<ActiveAiGatewayRunContext, "at">): void {
   const now = Date.now();
   pruneActiveAiGatewayRuns(now);
@@ -1774,25 +1927,73 @@ function registerActiveAiGatewayRun(input: Omit<ActiveAiGatewayRunContext, "at">
     opencodeSessionId: input.opencodeSessionId,
     clientMessageId: input.clientMessageId,
     origin: input.origin,
+    activeContextDiagnostics: buildActiveAiGatewayResolutionDiagnostics({
+      incomingSessionId: input.opencodeSessionId,
+      workspaceId: input.workspaceId,
+    }),
   });
 }
 
-function resolveActiveAiGatewayRunContext(input: {
-  sessionId?: string | null;
+function resolveAiGatewaySession(input: {
+  incomingSessionId?: string | null;
+  openCodeSessionId?: string | null;
   workspaceId?: string | null;
-}): ActiveAiGatewayRunContext | null {
+}): AiGatewaySessionResolution {
   pruneActiveAiGatewayRuns();
-  const sessionId = normalizeAiGatewaySessionId(input.sessionId);
-  if (sessionId) {
-    const bySession = activeAiGatewayRunsBySession.get(sessionId) ?? [];
-    if (bySession.length) return bySession[bySession.length - 1] ?? null;
-  }
+  const hasUnresolvedOpenCodeSessionId = containsUnresolvedOpenCodeSessionId(input.incomingSessionId);
+  const incomingSessionId = normalizeAiGatewaySessionId(input.incomingSessionId);
+  const openCodeSessionId = normalizeAiGatewaySessionId(input.openCodeSessionId);
   const workspaceId = input.workspaceId?.trim() ?? "";
-  if (workspaceId) {
-    const byWorkspace = activeAiGatewayRunsByWorkspace.get(workspaceId) ?? [];
-    if (byWorkspace.length) return byWorkspace[byWorkspace.length - 1] ?? null;
+
+  if (incomingSessionId) {
+    const activeRunContext = latestActiveAiGatewayRunContextBySession(incomingSessionId);
+    return {
+      sessionId: incomingSessionId,
+      activeRunContext,
+      workspaceId: activeRunContext?.workspaceId ?? null,
+      source: "veslo-session-header",
+    };
   }
-  return null;
+
+  if (openCodeSessionId) {
+    const activeRunContext = latestActiveAiGatewayRunContextBySession(openCodeSessionId);
+    return {
+      sessionId: openCodeSessionId,
+      activeRunContext,
+      workspaceId: activeRunContext?.workspaceId ?? null,
+      source: "opencode-session-header",
+    };
+  }
+
+  const workspaceContext = latestActiveAiGatewayRunContextByWorkspace(workspaceId);
+  if (workspaceContext) {
+    const activeContexts = listActiveAiGatewayRunContexts();
+    const workspaceCandidates = workspaceId ? activeAiGatewayRunsByWorkspace.get(workspaceId) ?? [] : [];
+    if (activeAiGatewayRunsByWorkspace.size === 1 && workspaceCandidates.length > 0) {
+      return {
+        sessionId: normalizeAiGatewaySessionId(workspaceContext.opencodeSessionId),
+        activeRunContext: workspaceContext,
+        workspaceId: workspaceContext.workspaceId,
+        source: "workspace-active-run-context",
+      };
+    }
+    return {
+      sessionId: "",
+      activeRunContext: null,
+      workspaceId: workspaceId || null,
+      source: hasUnresolvedOpenCodeSessionId ? "sessionless-fallback" : "unresolved",
+      workspaceFallbackSuppressedReason: "ambiguous-active-run-context",
+      workspaceFallbackCandidateCount: workspaceCandidates.length,
+      activeContextCount: activeContexts.length,
+    };
+  }
+
+  return {
+    sessionId: "",
+    activeRunContext: null,
+    workspaceId: workspaceId || null,
+    source: hasUnresolvedOpenCodeSessionId ? "sessionless-fallback" : "unresolved",
+  };
 }
 
 function registerActiveAiGatewayProxyRequest(input: Omit<ActiveAiGatewayProxyRequest, "abortReason">): ActiveAiGatewayProxyRequest {
@@ -2316,61 +2517,150 @@ async function proxyAiGatewayRequest(input: {
     ? requireAiGatewayCallerAuth(input.request)
     : providerAuthorization?.authorization ?? "";
   const incomingSessionId = input.requireSessionId ? requireAiGatewaySessionId(input.request) : undefined;
-  const workspaceId = trimmedHeader(input.request, GATEWAY_WORKSPACE_ID_HEADER);
-  const activeRunContext = resolveActiveAiGatewayRunContext({ sessionId: incomingSessionId, workspaceId });
-  const sessionId = input.requireSessionId
-    ? normalizeAiGatewaySessionId(incomingSessionId) ||
-      normalizeAiGatewaySessionId(activeRunContext?.opencodeSessionId) ||
-      ""
-    : undefined;
-  if (input.requireSessionId && !sessionId) {
-    throw new ApiError(400, "gateway_session_unresolved", "Gateway session id placeholder could not be resolved", {
-      requestId,
-      provider: resolveAiGatewayProvider(input.gatewayPath),
-      incomingSessionId,
-      workspaceId,
-    });
-  }
-  const incomingSessionIdForTrace =
-    incomingSessionId && incomingSessionId !== sessionId ? incomingSessionId : undefined;
-  const sessionResolvedFromActiveRunContext =
-    Boolean(input.requireSessionId) &&
-    Boolean(incomingSessionId) &&
-    incomingSessionId !== sessionId &&
-    Boolean(activeRunContext?.opencodeSessionId);
+  const incomingOpenCodeSessionId = input.requireSessionId ? trimmedHeader(input.request, "x-session-id") : undefined;
+  const incomingWorkspaceId = trimmedHeader(input.request, GATEWAY_WORKSPACE_ID_HEADER);
+  const provider = resolveAiGatewayProvider(input.gatewayPath) ?? null;
   const incomingHeaderNames = headerNamesForTrace(input.request.headers);
   const incomingInternalHeaderSummary = {
     hasGatewayAccessToken: Boolean(gatewayAccessToken),
     hasRuntimeGatewayAuthorization: Boolean(providerAuthorization && providerAuthorization.source !== "legacy-header"),
     gatewayAuthorizationSource: providerAuthorization?.source ?? (input.auth === "caller" ? "caller" : "missing"),
     hasGatewayCallerAuth: Boolean(gatewayCallerAuth),
-    hasWorkspaceId: Boolean(workspaceId),
+    hasWorkspaceId: Boolean(incomingWorkspaceId),
     hasSendTraceId: Boolean(trimmedHeader(input.request, "x-veslo-send-trace-id")),
     hasSessionId: Boolean(incomingSessionId),
+    hasOpenCodeSessionId: Boolean(incomingOpenCodeSessionId),
+    hasOpenCodeSessionAffinity: Boolean(trimmedHeader(input.request, "x-session-affinity")),
     hasHostToken: Boolean(trimmedHeader(input.request, "x-veslo-host-token")),
     hasClientId: Boolean(trimmedHeader(input.request, "x-veslo-client-id")),
   };
-  recordAiGatewaySessionHit({
-    sessionId,
-    workspaceId,
-    requestId,
-    provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
-    gatewayPath: input.gatewayPath,
-  });
+  const sessionResolution = input.requireSessionId
+    ? resolveAiGatewaySession({
+        incomingSessionId,
+        openCodeSessionId: incomingOpenCodeSessionId,
+        workspaceId: incomingWorkspaceId,
+      })
+    : null;
+  const activeRunContext = sessionResolution?.activeRunContext ?? null;
+  const sessionId = input.requireSessionId ? sessionResolution?.sessionId ?? "" : undefined;
+  const workspaceId = input.requireSessionId
+    ? sessionResolution?.workspaceId ?? undefined
+    : incomingWorkspaceId ?? undefined;
+  const isSessionlessFallback = input.requireSessionId && sessionResolution?.source === "sessionless-fallback";
+  const forwardedSessionId = input.requireSessionId
+    ? isSessionlessFallback
+      ? incomingSessionId?.trim() || OPENCODE_SESSION_ID_TEMPLATE
+      : sessionId ?? ""
+    : undefined;
+  const forwardedSessionHeaderMode = input.requireSessionId
+    ? isSessionlessFallback
+      ? "incoming-placeholder"
+      : "resolved"
+    : "not-required";
+  if (input.requireSessionId && !sessionId && !isSessionlessFallback) {
+    const activeContextDiagnostics = buildActiveAiGatewayResolutionDiagnostics({
+      incomingSessionId,
+      workspaceId: incomingWorkspaceId,
+    });
+    const unresolvedTrace = {
+      requestId,
+      provider,
+      gatewayPath: input.gatewayPath,
+      incomingSessionId,
+      normalizedIncomingSessionId: normalizeAiGatewaySessionId(incomingSessionId) || null,
+      incomingOpenCodeSessionId: incomingOpenCodeSessionId ?? null,
+      normalizedIncomingOpenCodeSessionId: normalizeAiGatewaySessionId(incomingOpenCodeSessionId) || null,
+      workspaceId: workspaceId ?? null,
+      incomingWorkspaceId: incomingWorkspaceId ?? null,
+      sessionResolutionSource: sessionResolution?.source ?? "unresolved",
+      workspaceFallbackSuppressedReason: sessionResolution?.workspaceFallbackSuppressedReason ?? null,
+      workspaceFallbackCandidateCount: sessionResolution?.workspaceFallbackCandidateCount ?? null,
+      activeContextCount: sessionResolution?.activeContextCount ?? null,
+      incomingHeaders: incomingHeaderNames,
+      incomingInternalHeaders: incomingInternalHeaderSummary,
+      activeContextDiagnostics,
+    };
+    recordSendWorkflowTrace("server", "server:ai-gateway:session-unresolved", unresolvedTrace);
+    try {
+      console.warn(`[veslo:ai-gateway] session-unresolved ${JSON.stringify(unresolvedTrace)}`);
+    } catch {
+      console.warn("[veslo:ai-gateway] session-unresolved");
+    }
+    throw new ApiError(400, "gateway_session_unresolved", "Gateway session id placeholder could not be resolved", {
+      requestId,
+      provider,
+      incomingSessionId,
+      incomingOpenCodeSessionId,
+      workspaceId: incomingWorkspaceId,
+      sessionResolutionSource: sessionResolution?.source ?? "unresolved",
+    });
+  }
+  if (isSessionlessFallback) {
+    const sessionlessTrace = {
+      requestId,
+      provider,
+      gatewayPath: input.gatewayPath,
+      incomingSessionId,
+      normalizedIncomingSessionId: normalizeAiGatewaySessionId(incomingSessionId) || null,
+      incomingOpenCodeSessionId: incomingOpenCodeSessionId ?? null,
+      normalizedIncomingOpenCodeSessionId: normalizeAiGatewaySessionId(incomingOpenCodeSessionId) || null,
+      workspaceId: workspaceId ?? null,
+      incomingWorkspaceId: incomingWorkspaceId ?? null,
+      sessionResolutionSource: sessionResolution?.source ?? "sessionless-fallback",
+      workspaceFallbackSuppressedReason: sessionResolution?.workspaceFallbackSuppressedReason ?? null,
+      workspaceFallbackCandidateCount: sessionResolution?.workspaceFallbackCandidateCount ?? null,
+      activeContextCount: sessionResolution?.activeContextCount ?? null,
+      forwardedSessionHeaderMode,
+      incomingHeaders: incomingHeaderNames,
+      incomingInternalHeaders: incomingInternalHeaderSummary,
+      activeContextDiagnostics: buildActiveAiGatewayResolutionDiagnostics({
+        incomingSessionId,
+        workspaceId: incomingWorkspaceId,
+      }),
+    };
+    recordSendWorkflowTrace("server", "server:ai-gateway:sessionless-forward", sessionlessTrace);
+    try {
+      console.log(`[veslo:ai-gateway] sessionless-forward ${JSON.stringify(sessionlessTrace)}`);
+    } catch {
+      console.log("[veslo:ai-gateway] sessionless-forward");
+    }
+  }
+  const incomingSessionIdForTrace =
+    incomingSessionId && incomingSessionId !== sessionId ? incomingSessionId : undefined;
+  const incomingOpenCodeSessionIdForTrace =
+    incomingOpenCodeSessionId && incomingOpenCodeSessionId !== sessionId ? incomingOpenCodeSessionId : undefined;
+  const sessionResolvedFromActiveRunContext =
+    sessionResolution?.source === "workspace-active-run-context";
+  const watchdogHitRecorded = !isSessionlessFallback;
+  if (watchdogHitRecorded) {
+    recordAiGatewaySessionHit({
+      sessionId,
+      workspaceId,
+      requestId,
+      provider,
+      gatewayPath: input.gatewayPath,
+    });
+  }
   recordSendWorkflowTrace("server", "server:ai-gateway:provider-hit", {
     traceId: activeRunContext?.traceId ?? null,
     requestId,
-    provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+    provider,
     gatewayPath: input.gatewayPath,
     sessionId: sessionId ?? null,
     incomingSessionId: incomingSessionIdForTrace,
+    incomingOpenCodeSessionId: incomingOpenCodeSessionIdForTrace,
     workspaceId: workspaceId ?? null,
+    incomingWorkspaceId: incomingWorkspaceId ?? null,
     conversationId: activeRunContext?.conversationId ?? null,
     runId: activeRunContext?.runId ?? null,
     opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
     clientMessageId: activeRunContext?.clientMessageId ?? null,
     origin: activeRunContext?.origin ?? null,
+    sessionResolutionSource: sessionResolution?.source ?? null,
+    workspaceFallbackSuppressedReason: sessionResolution?.workspaceFallbackSuppressedReason ?? null,
     sessionResolvedFromActiveRunContext,
+    watchdogHitRecorded,
+    forwardedSessionHeaderMode,
     incomingHeaders: incomingHeaderNames,
     incomingInternalHeaders: incomingInternalHeaderSummary,
   });
@@ -2384,10 +2674,14 @@ async function proxyAiGatewayRequest(input: {
       recordSendWorkflowTrace("server", "server:ai-gateway:request-diagnostic", {
         traceId: activeRunContext?.traceId ?? null,
         requestId,
-        provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+        provider,
         gatewayPath: input.gatewayPath,
         sessionId: sessionId ?? null,
         workspaceId: workspaceId ?? null,
+        incomingWorkspaceId: incomingWorkspaceId ?? null,
+        incomingOpenCodeSessionId: incomingOpenCodeSessionIdForTrace,
+        sessionResolutionSource: sessionResolution?.source ?? null,
+        forwardedSessionHeaderMode,
         conversationId: activeRunContext?.conversationId ?? null,
         runId: activeRunContext?.runId ?? null,
         opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
@@ -2402,7 +2696,7 @@ async function proxyAiGatewayRequest(input: {
 
   headers.set("Authorization", authorization);
   if (input.requireSessionId) {
-    headers.set(GATEWAY_SESSION_ID_HEADER, sessionId ?? "");
+    headers.set(GATEWAY_SESSION_ID_HEADER, forwardedSessionId ?? "");
   }
   headers.set("x-veslo-request-id", requestId);
   headers.delete(GATEWAY_CALLER_AUTH_HEADER);
@@ -2432,10 +2726,12 @@ async function proxyAiGatewayRequest(input: {
       requestId,
       method,
       gatewayPath: input.gatewayPath,
-      provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+      provider,
       sessionId: sessionId ?? null,
       incomingSessionId: incomingSessionIdForTrace,
+      incomingOpenCodeSessionId: incomingOpenCodeSessionIdForTrace,
       workspaceId: workspaceId ?? null,
+      incomingWorkspaceId: incomingWorkspaceId ?? null,
       traceId: activeRunContext?.traceId ?? null,
       conversationId: activeRunContext?.conversationId ?? null,
       runId: activeRunContext?.runId ?? null,
@@ -2444,7 +2740,10 @@ async function proxyAiGatewayRequest(input: {
       origin: activeRunContext?.origin ?? null,
       targetOrigin: target.origin,
       targetPath: target.pathname,
+      sessionResolutionSource: sessionResolution?.source ?? null,
       sessionResolvedFromActiveRunContext,
+      watchdogHitRecorded,
+      forwardedSessionHeaderMode,
       incomingHeaders: incomingHeaderNames,
       forwardedHeaders: forwardedHeaderNames,
       incomingInternalHeaders: incomingInternalHeaderSummary,
@@ -2479,16 +2778,21 @@ async function proxyAiGatewayRequest(input: {
       requestId,
       method,
       gatewayPath: input.gatewayPath,
-      provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+      provider,
       sessionId: sessionId ?? null,
       incomingSessionId: incomingSessionIdForTrace,
+      incomingOpenCodeSessionId: incomingOpenCodeSessionIdForTrace,
       workspaceId: workspaceId ?? null,
+      incomingWorkspaceId: incomingWorkspaceId ?? null,
       traceId: activeRunContext?.traceId ?? null,
       conversationId: activeRunContext?.conversationId ?? null,
       runId: activeRunContext?.runId ?? null,
       opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
       clientMessageId: activeRunContext?.clientMessageId ?? null,
       origin: activeRunContext?.origin ?? null,
+      sessionResolutionSource: sessionResolution?.source ?? null,
+      watchdogHitRecorded,
+      forwardedSessionHeaderMode,
       model: model ?? null,
       requestDiagnostic,
       status,
@@ -2529,7 +2833,7 @@ async function proxyAiGatewayRequest(input: {
     requestId,
     controller,
     startedAt,
-    provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+    provider,
     gatewayPath: input.gatewayPath,
     sessionId: sessionId || null,
     workspaceId: workspaceId ?? null,
@@ -2570,7 +2874,7 @@ async function proxyAiGatewayRequest(input: {
       });
       throw new ApiError(499, "ai_gateway_aborted", "AI gateway request was aborted", {
         requestId,
-        provider: resolveAiGatewayProvider(input.gatewayPath),
+        provider,
         model: diagnosticModel,
         sessionId,
         baseUrl,
@@ -2585,7 +2889,7 @@ async function proxyAiGatewayRequest(input: {
       });
       throw new ApiError(504, "ai_gateway_timeout", "AI gateway timed out waiting for upstream response", {
         requestId,
-        provider: resolveAiGatewayProvider(input.gatewayPath),
+        provider,
         model: diagnosticModel,
         sessionId,
         baseUrl,
@@ -2598,7 +2902,7 @@ async function proxyAiGatewayRequest(input: {
     });
     throw new ApiError(503, "ai_gateway_unreachable", "AI gateway is not reachable on this host", {
       requestId,
-      provider: resolveAiGatewayProvider(input.gatewayPath),
+      provider,
       model: diagnosticModel,
       sessionId,
       baseUrl,

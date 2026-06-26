@@ -1,4 +1,5 @@
 !macro NSIS_HOOK_POSTINSTALL
+!ifdef VESLO_ENABLE_WSL_INSTALLER
   DetailPrint "Preparing Veslo Windows runtime..."
   DetailPrint "Veslo runtime setup logs: $LOCALAPPDATA\Veslo\logs\wsl2-client-installer.log"
   DetailPrint "Veslo prerequisite setup logs: $COMMONAPPDATA\Veslo\logs\wsl2-prerequisite-installer.log"
@@ -23,4 +24,10 @@
   veslo_runtime_ready:
   DetailPrint "Veslo Windows runtime is ready."
   veslo_runtime_done:
+!else
+  ; WSL runtime setup is kept as a dormant rollback path. Installer builds now
+  ; use the shared non-sandbox runtime by default, so do not run WSL preparation
+  ; unless VESLO_ENABLE_WSL_INSTALLER is defined for a sandboxed installer build.
+  DetailPrint "Skipping Veslo WSL runtime preparation; shared non-sandbox runtime is enabled by default."
+!endif
 !macroend

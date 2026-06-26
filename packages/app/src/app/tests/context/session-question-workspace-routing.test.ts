@@ -25,6 +25,30 @@ test("pending questions are refreshed per routed workspace", () => {
   assert.match(refreshSource, /setStore\("pendingQuestions", activeList\)/);
 });
 
+test("pending permission and question modals do not fall back while no real session is selected", () => {
+  const permissionSource = sourceBetween(
+    sessionSource,
+    "  const activePermission = createMemo(() => {",
+    "  const activeQuestion = createMemo(() => {",
+  );
+  const questionSource = sourceBetween(
+    sessionSource,
+    "  const activeQuestion = createMemo(() => {",
+    "  const [questionReplyBusy, setQuestionReplyBusy] = createSignal(false);",
+  );
+
+  assert.match(
+    permissionSource,
+    /const id = options\.selectedSessionId\(\);[\s\S]*if \(id\) \{[\s\S]*if \(scoped\) return scoped;[\s\S]*\} else \{\s*return null;\s*\}/s,
+    "permission modal should not surface an unrelated background request while the UI is on a pending/new chat",
+  );
+  assert.match(
+    questionSource,
+    /const id = options\.selectedSessionId\(\);[\s\S]*if \(id\) \{[\s\S]*if \(scopedFromAnyWorkspace\) return scopedFromAnyWorkspace;[\s\S]*\} else \{\s*return null;\s*\}/s,
+    "question modal should not surface an unrelated background request while the UI is on a pending/new chat",
+  );
+});
+
 test("question replies route to the workspace that owns the question", () => {
   const respondSource = sourceBetween(
     sessionSource,

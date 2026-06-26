@@ -1929,10 +1929,11 @@ export function createSessionStore(options: {
     if (id) {
       const scoped = store.pendingPermissions.find((perm) => perm.sessionID === id) ?? null;
       if (scoped) return scoped;
+    } else {
+      return null;
     }
-    // VSLO-171 — surface permissions from any workspace, preferring the
-    // active one so the dialog isn't surprising. Falls back to global store
-    // when no per-WS entries exist yet (first prompt).
+    // VSLO-171 — with a real session selected, surface permissions from any
+    // workspace, preferring the active one so the dialog isn't surprising.
     const all = allPendingPermissions();
     if (all.length > 0) {
       const activeWsId = options.routing.activeWorkspaceId();
@@ -1949,6 +1950,8 @@ export function createSessionStore(options: {
       if (scoped) return scoped;
       const scopedFromAnyWorkspace = allPendingQuestions().find((q) => q.sessionID === id) ?? null;
       if (scopedFromAnyWorkspace) return scopedFromAnyWorkspace;
+    } else {
+      return null;
     }
     const all = allPendingQuestions();
     if (all.length > 0) {

@@ -47,8 +47,8 @@ test("managed AI config sync effect executes controller decisions", () => {
 
   assert.match(
     effectSource,
-    /const providerRoutingReady = Boolean\(\s*providerRoutingTarget\?\.serverClientToken && gatewayAccessToken && vesloWorkspaceId,\s*\);/,
-    "managed provider routing should not be ready until the workspace correlation id is known",
+    /const providerRoutingReady = Boolean\(\s*providerRoutingTarget\?\.serverClientToken && gatewayAccessToken,\s*\);/,
+    "managed provider routing should not depend on a workspace correlation header",
   );
 
   assert.match(

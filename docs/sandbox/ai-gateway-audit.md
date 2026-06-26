@@ -44,7 +44,7 @@ Anthropic protokolem na custom `baseURL`. Routing generujeme do
 - `provider.<id>.options.baseURL = <serverBaseUrl>/ai-gateway/providers/<id>/v1`
 - Anthropic-styl: `models.<m>.headers.Authorization = "Bearer {env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}"`
 - OpenAI-compat (`codex_oauth`,`openai_compatible`): `options.apiKey = "{env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}"`
-- v `models.<m>.headers`: `x-veslo-session-id = ${OPENCODE_SESSION_ID}`, volitelne `x-veslo-workspace-id`
+- v `models.<m>.headers`: `x-veslo-session-id = ${OPENCODE_SESSION_ID}`; `x-veslo-workspace-id` je legacy runtime state a managed config ho scrubuje
 - `opencode.jsonc` nesmi obsahovat live gateway credentials; cloud gateway bearer drzi lokalni Veslo server jen v runtime memory.
 
 Cíl skoku (`resolveManagedAiProviderRoutingTarget`,

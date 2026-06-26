@@ -1400,8 +1400,45 @@ describe("conversation routes", () => {
     let runIdFromRegister = "";
     let conversationIdFromRegister = "";
     let lifecycleStatus = "running";
+    let serverPort = 0;
+    let providerFetchError = "";
     const failedRequests: Array<Record<string, unknown> | null> = [];
     const abortRequests: string[] = [];
+    const providerRequests: Array<{
+      authorization: string | null;
+      sessionId: string | null;
+      workspaceId: string | null;
+      gatewayToken: string | null;
+      body: unknown;
+    }> = [];
+
+    const gateway = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (request.method === "POST" && url.pathname === "/providers/codex_oauth/v1/chat/completions") {
+          const requestBody = await request.json().catch(() => null) as unknown;
+          providerRequests.push({
+            authorization: request.headers.get("authorization"),
+            sessionId: request.headers.get("x-veslo-session-id"),
+            workspaceId: request.headers.get("x-veslo-workspace-id"),
+            gatewayToken: request.headers.get("x-veslo-gateway-token"),
+            body: requestBody,
+          });
+          return Response.json({
+            id: "chatcmpl_sessionless_watchdog",
+            object: "chat.completion",
+            created: 1,
+            model: "gpt-5.5",
+            choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+          });
+        }
+        return Response.json({ error: "unexpected gateway route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(gateway as { stop?: (closeActiveConnections?: boolean) => void });
+    setEnvVarForTest("VESLO_AI_GATEWAY_BASE_URL", `http://127.0.0.1:${gateway.port}`);
 
     const upstream = Bun.serve({
       hostname: "127.0.0.1",
@@ -1421,6 +1458,18 @@ describe("conversation routes", () => {
           });
         }
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session/sess-watch/prompt_async") {
+          void fetch(`http://127.0.0.1:${serverPort}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
+            method: "POST",
+            headers: {
+              Authorization: "Bearer client-token",
+              "Content-Type": "application/json",
+              "x-veslo-gateway-token": "gateway-access-token",
+              "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
+            },
+            body: JSON.stringify({ model: "gpt-5.5", messages: [{ role: "user", content: "Sessionless" }] }),
+          }).catch((error) => {
+            providerFetchError = error instanceof Error ? error.message : String(error);
+          });
           return Response.json({ ok: true });
         }
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session/sess-watch/abort") {
@@ -1503,6 +1552,7 @@ describe("conversation routes", () => {
     );
     expect(createResponse.status).toBe(201);
     const created = await createResponse.json() as { conversationId: string };
+    serverPort = server.port;
 
     const runResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
@@ -1524,6 +1574,24 @@ describe("conversation routes", () => {
     const runPayload = await runResponse.json() as { code?: string; message?: string };
     expect(runPayload.code).toBe("ai_gateway_provider_start_timeout");
     expect(runPayload.message).toContain("AI gateway provider request did not start");
+
+    await waitForCondition(
+      () => providerRequests.length > 0 || Boolean(providerFetchError),
+      { timeoutMs: 1_000, message: "expected sessionless provider request to be proxied" },
+    );
+    expect(providerFetchError).toBe("");
+    expect(providerRequests).toEqual([
+      {
+        authorization: "Bearer gateway-access-token",
+        sessionId: "${OPENCODE_SESSION_ID}",
+        workspaceId: null,
+        gatewayToken: null,
+        body: {
+          model: "gpt-5.5",
+          messages: [{ role: "user", content: "Sessionless" }],
+        },
+      },
+    ]);
 
     await waitForCondition(
       () => failedRequests.length > 0,
@@ -1741,5 +1809,277 @@ describe("conversation routes", () => {
     ]);
     expect(failedRequests).toEqual([]);
     expect(abortRequests).toEqual([]);
+  });
+
+  test("managed prompt provider-start watchdog prefers OpenCode session id over stale workspace headers", async () => {
+    setEnvVarForTest("VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS", "500");
+    const workspaceRootTarget = await mkdtemp(join(tmpdir(), "veslo-server-gateway-target-watch-"));
+    const workspaceRootStale = await mkdtemp(join(tmpdir(), "veslo-server-gateway-stale-watch-"));
+    tempDirs.push(workspaceRootTarget, workspaceRootStale);
+    await useTempVesloDataDir();
+
+    let serverPort = 0;
+    let providerFetchError = "";
+    let stalePromptSubmitted = false;
+    const failedRequests: Array<{ workspaceId: string; body: Record<string, unknown> | null }> = [];
+    const providerRequests: Array<{
+      authorization: string | null;
+      sessionId: string | null;
+      workspaceId: string | null;
+      body: unknown;
+    }> = [];
+
+    const gateway = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (request.method === "POST" && url.pathname === "/providers/codex_oauth/v1/chat/completions") {
+          const requestBody = await request.json().catch(() => null) as unknown;
+          providerRequests.push({
+            authorization: request.headers.get("authorization"),
+            sessionId: request.headers.get("x-veslo-session-id"),
+            workspaceId: request.headers.get("x-veslo-workspace-id"),
+            body: requestBody,
+          });
+          return Response.json({
+            id: "chatcmpl_target",
+            object: "chat.completion",
+            created: 1,
+            model: "gpt-5.5",
+            choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+          });
+        }
+        return Response.json({ error: "unexpected gateway route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(gateway as { stop?: (closeActiveConnections?: boolean) => void });
+    setEnvVarForTest("VESLO_AI_GATEWAY_BASE_URL", `http://127.0.0.1:${gateway.port}`);
+
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = request.method === "POST"
+          ? await request.json().catch(() => null) as Record<string, unknown> | null
+          : null;
+        if (request.method === "POST" && url.pathname === "/workspace/ws_target/opencode/session") {
+          return Response.json({
+            id: "sess-target",
+            title: body?.title,
+            directory: body?.directory,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_stale/opencode/session") {
+          return Response.json({
+            id: "sess-stale",
+            title: body?.title,
+            directory: body?.directory,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_stale/opencode/session/sess-stale/prompt_async") {
+          stalePromptSubmitted = true;
+          return Response.json({ ok: true });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_target/opencode/session/sess-target/prompt_async") {
+          void fetch(`http://127.0.0.1:${serverPort}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
+            method: "POST",
+            headers: {
+              Authorization: "Bearer client-token",
+              "Content-Type": "application/json",
+              "x-veslo-gateway-token": "gateway-access-token",
+              "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
+              "x-veslo-workspace-id": "ws_stale",
+              "x-session-id": "sess-target",
+              "x-veslo-send-trace-id": request.headers.get("x-veslo-send-trace-id") ?? "missing-trace",
+            },
+            body: JSON.stringify({ model: "gpt-5.5", messages: [{ role: "user", content: "Hello" }] }),
+          }).catch((error) => {
+            providerFetchError = error instanceof Error ? error.message : String(error);
+          });
+          return Response.json({ ok: true });
+        }
+        if (request.method === "POST" && url.pathname.endsWith("/abort")) {
+          return Response.json({ ok: true, aborted: true });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const runsByWorkspace = new Map<string, { runId: string; conversationId: string; status: string }>();
+    const orchestrator = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = request.method === "POST"
+          ? await request.json().catch(() => null) as Record<string, unknown> | null
+          : null;
+        if (request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== "lifecycle-token") {
+          return Response.json({ error: "unauthorized" }, { status: 401 });
+        }
+
+        const registerMatch = url.pathname.match(/^\/workspace\/([^/]+)\/runs\/register$/);
+        if (request.method === "POST" && registerMatch?.[1]) {
+          const workspaceId = decodeURIComponent(registerMatch[1]);
+          const state = {
+            runId: typeof body?.runId === "string" ? body.runId : "",
+            conversationId: typeof body?.conversationId === "string" ? body.conversationId : "",
+            status: "running",
+          };
+          runsByWorkspace.set(workspaceId, state);
+          return Response.json({ ok: true, ...body, workspaceId, status: state.status, stale: false });
+        }
+
+        const failedMatch = url.pathname.match(/^\/workspace\/([^/]+)\/runs\/([^/]+)\/failed$/);
+        if (request.method === "POST" && failedMatch?.[1]) {
+          const workspaceId = decodeURIComponent(failedMatch[1]);
+          const state = runsByWorkspace.get(workspaceId);
+          if (state) state.status = "failed";
+          failedRequests.push({ workspaceId, body });
+          return Response.json({
+            ok: true,
+            workspaceId,
+            runId: decodeURIComponent(failedMatch[2] ?? ""),
+            status: "failed",
+          });
+        }
+
+        const activeMatch = url.pathname.match(/^\/workspace\/([^/]+)\/conversations\/([^/]+)\/runs\/([^/]+)$/);
+        if (request.method === "GET" && activeMatch?.[1]) {
+          const workspaceId = decodeURIComponent(activeMatch[1]);
+          const state = runsByWorkspace.get(workspaceId);
+          if (!state && activeMatch[3] === "active") {
+            return Response.json({
+              ok: true,
+              workspaceId,
+              conversationId: decodeURIComponent(activeMatch[2] ?? ""),
+              runId: null,
+              status: "completed",
+              stale: false,
+            });
+          }
+          return Response.json({
+            ok: true,
+            workspaceId,
+            conversationId: state?.conversationId ?? decodeURIComponent(activeMatch[2] ?? ""),
+            runId: state?.runId ?? decodeURIComponent(activeMatch[3] ?? ""),
+            status: state?.status ?? "running",
+            stale: false,
+          });
+        }
+        return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(orchestrator as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot: workspaceRootTarget,
+      upstreamPort: upstream.port,
+      workspaces: [
+        {
+          id: "ws_target",
+          name: "Target",
+          path: workspaceRootTarget,
+          baseUrl: `http://127.0.0.1:${upstream.port}/workspace/ws_target/opencode`,
+        },
+        {
+          id: "ws_stale",
+          name: "Stale",
+          path: workspaceRootStale,
+          baseUrl: `http://127.0.0.1:${upstream.port}/workspace/ws_stale/opencode`,
+        },
+      ],
+      orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
+      orchestratorLifecycleToken: "lifecycle-token",
+    });
+    serverPort = server.port;
+
+    const createConversation = async (workspaceId: string, directory: string, title: string) => {
+      const response = await fetch(
+        `http://127.0.0.1:${server.port}/workspace/${workspaceId}/conversations`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer client-token",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ directory, title }),
+        },
+      );
+      expect(response.status).toBe(201);
+      return await response.json() as { conversationId: string };
+    };
+
+    const staleConversation = await createConversation("ws_stale", workspaceRootStale, "Stale Workspace");
+    const targetConversation = await createConversation("ws_target", workspaceRootTarget, "Target Workspace");
+
+    const staleRunPromise = fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_stale/conversations/${encodeURIComponent(staleConversation.conversationId)}/runs`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          kind: "prompt_async",
+          directory: workspaceRootStale,
+          parts: [{ type: "text", text: "Stale" }],
+          expectAiGatewayStart: true,
+        }),
+      },
+    ).then(async (response) => ({ status: response.status, body: await response.json().catch(() => null) }));
+
+    await waitForCondition(
+      () => runsByWorkspace.has("ws_stale") && stalePromptSubmitted,
+      { timeoutMs: 1_000, message: "expected stale workspace run to be registered and waiting" },
+    );
+
+    const targetRunResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_target/conversations/${encodeURIComponent(targetConversation.conversationId)}/runs`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          kind: "prompt_async",
+          directory: workspaceRootTarget,
+          parts: [{ type: "text", text: "Hello" }],
+          expectAiGatewayStart: true,
+        }),
+      },
+    );
+    expect(targetRunResponse.status).toBe(200);
+
+    await waitForCondition(
+      () => providerRequests.length > 0 || Boolean(providerFetchError),
+      { timeoutMs: 1_000, message: "expected target provider request to reach the managed gateway proxy" },
+    );
+    expect(providerFetchError).toBe("");
+    expect(providerRequests).toEqual([
+      {
+        authorization: "Bearer gateway-access-token",
+        sessionId: "sess-target",
+        workspaceId: null,
+        body: {
+          model: "gpt-5.5",
+          messages: [{ role: "user", content: "Hello" }],
+        },
+      },
+    ]);
+    expect(failedRequests.some((entry) => entry.workspaceId === "ws_target")).toBe(false);
+
+    const staleRun = await staleRunPromise;
+    expect(staleRun.status).toBe(504);
+    expect(failedRequests.some((entry) => entry.workspaceId === "ws_stale")).toBe(true);
   });
 });

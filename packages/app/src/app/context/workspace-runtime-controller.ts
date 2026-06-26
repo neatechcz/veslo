@@ -109,10 +109,15 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
       : null;
     if (workspaceId && !entry) {
       const detail = deps.routing.lastEnsureError(workspaceId);
-      setErrorForActiveWorkspace(
-        workspaceId,
-        detail ? `Failed to ensure workspace client: ${detail}` : "Failed to ensure workspace client",
-      );
+      // This is the "quiet" automated bring-up connect (lifecycle restart /
+      // startHost / reattach). A failed health wait here is usually a cold-start
+      // race — the engine is spawned but its OpenCode HTTP is not serving
+      // /health yet within the ensure timeout — which the lifecycle/send-
+      // readiness retry path recovers from while answering continues. Surfacing
+      // a hard error here only flashes a misleading "Failed to ensure workspace
+      // client" before recovery. Stay quiet: trace and return false. Terminal
+      // failures are owned by ensureEngineForWorkspace's catch block and the
+      // send-readiness gate, which surface precise, recoverable-aware errors.
       recordSendWorkflowTrace("workspace-runtime", "connect-quiet:routing-error", {
         workspaceId,
         baseUrl,

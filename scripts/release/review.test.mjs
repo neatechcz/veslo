@@ -33,7 +33,7 @@ test("release review verifies the Windows MSI version derived from CalVer", () =
   assert.equal(check.ok, true);
 });
 
-test("release review verifies Windows MSI WSL sandbox provisioning packaging", () => {
+test("release review verifies Windows installer WSL provisioning stays dormant by default", () => {
   const scriptPath = resolve(import.meta.dirname, "./review.mjs");
   const output = execFileSync("node", [scriptPath, "--json"], {
     cwd: resolve(import.meta.dirname, "../.."),
@@ -48,7 +48,7 @@ test("release review verifies Windows MSI WSL sandbox provisioning packaging", (
     "Windows MSI bundles WSL sandbox provisioner",
     "Windows MSI bundles WSL prerequisite installer for first-run repair",
     "Windows MSI bundles WSL sandbox installer wrapper",
-    "Windows MSI schedules WSL sandbox provisioning action",
+    "Windows MSI keeps WSL sandbox provisioning action dormant by default",
   ]) {
     assert.ok(labels.has(label), `expected release review to report: ${label}`);
     assert.equal(report.checks.find((entry) => entry.label === label)?.ok, true);

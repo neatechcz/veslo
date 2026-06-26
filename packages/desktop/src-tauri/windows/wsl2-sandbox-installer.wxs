@@ -2,6 +2,13 @@
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Fragment>
     <Property Id="MsiLogging" Value="voicewarmupx!" />
+    <!--
+      WSL provisioning is kept as a dormant rollback path. Windows installer
+      builds now start Veslo in shared non-sandbox mode, so the WSL custom
+      action and launch suppression below stay disabled unless explicitly
+      enabled by setting VESLO_ENABLE_WSL_INSTALLER=1.
+    -->
+    <Property Id="VESLO_ENABLE_WSL_INSTALLER" Value="0" />
 
     <DirectoryRef Id="INSTALLDIR">
       <Component Id="VesloWslProvisioningInstallerAnchor" Guid="36d5c50b-0df9-45ac-a2ae-6f0032f108d4">
@@ -47,13 +54,13 @@
       Value="" />
 
     <InstallUISequence>
-      <Custom Action="VesloDisableExitDialogLaunchCheckbox" Before="ExecuteAction"><![CDATA[NOT Installed]]></Custom>
-      <Custom Action="VesloClearExitDialogLaunchCheckboxText" After="VesloDisableExitDialogLaunchCheckbox"><![CDATA[NOT Installed]]></Custom>
+      <Custom Action="VesloDisableExitDialogLaunchCheckbox" Before="ExecuteAction"><![CDATA[VESLO_ENABLE_WSL_INSTALLER="1" AND NOT Installed]]></Custom>
+      <Custom Action="VesloClearExitDialogLaunchCheckboxText" After="VesloDisableExitDialogLaunchCheckbox"><![CDATA[VESLO_ENABLE_WSL_INSTALLER="1" AND NOT Installed]]></Custom>
     </InstallUISequence>
 
     <InstallExecuteSequence>
-      <Custom Action="VesloProvisionWslSandbox" After="InstallFiles"><![CDATA[NOT REMOVE~="ALL"]]></Custom>
-      <Custom Action="VesloDisableAutoLaunchApp" Before="LaunchApplication"><![CDATA[AUTOLAUNCHAPP AND NOT Installed]]></Custom>
+      <Custom Action="VesloProvisionWslSandbox" After="InstallFiles"><![CDATA[VESLO_ENABLE_WSL_INSTALLER="1" AND NOT REMOVE~="ALL"]]></Custom>
+      <Custom Action="VesloDisableAutoLaunchApp" Before="LaunchApplication"><![CDATA[VESLO_ENABLE_WSL_INSTALLER="1" AND AUTOLAUNCHAPP AND NOT Installed]]></Custom>
     </InstallExecuteSequence>
   </Fragment>
 </Wix>

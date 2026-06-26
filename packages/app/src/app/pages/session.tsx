@@ -2068,7 +2068,7 @@ export default function SessionView(props: SessionViewProps) {
   const [abortBusy, setAbortBusy] = createSignal(false);
   const [escapeStopConfirmationPending, setEscapeStopConfirmationPending] = createSignal(false);
   const [todoExpanded, setTodoExpanded] = createSignal(false);
-  let queueDrainAttemptInFlight = false;
+  const queueDrainAttemptInFlightBySessionKey = new Set<string>();
   let escapeStopConfirmationSessionId = props.selectedSessionId;
 
   const queuedDrafts = createMemo(() => queuedDraftsBySessionKey()[currentSessionQueueKey()] ?? []);
@@ -4024,38 +4024,40 @@ export default function SessionView(props: SessionViewProps) {
     reason: "normal" | "queue-drain",
     sessionKey = currentSessionQueueKey(),
   ) => {
-    if (queueDrainAttemptInFlight) return;
-    if (queuePausedForSessionKey(sessionKey)) return;
+    const drainSessionKey = sessionKey.trim();
+    if (!drainSessionKey) return;
+    if (queueDrainAttemptInFlightBySessionKey.has(drainSessionKey)) return;
+    if (queuePausedForSessionKey(drainSessionKey)) return;
 
-    const item = firstQueuedDraft(queuedDraftsBySessionKey()[sessionKey] ?? []);
+    const item = firstQueuedDraft(queuedDraftsBySessionKey()[drainSessionKey] ?? []);
     if (!item) return;
 
-    queueDrainAttemptInFlight = true;
-    updateQueueForSessionKey(sessionKey, (queue) => markQueuedDraftSending(queue, item.id));
+    queueDrainAttemptInFlightBySessionKey.add(drainSessionKey);
+    updateQueueForSessionKey(drainSessionKey, (queue) => markQueuedDraftSending(queue, item.id));
     try {
-      if (currentSessionQueueKey() !== sessionKey && !sessionIdForQueueKey(sessionKey)) {
-        const queuedSessionKey = resolveQueueKeyForQueuedDraft(sessionKey, item.id);
+      if (currentSessionQueueKey() !== drainSessionKey && !sessionIdForQueueKey(drainSessionKey)) {
+        const queuedSessionKey = resolveQueueKeyForQueuedDraft(drainSessionKey, item.id);
         updateQueueForSessionKey(queuedSessionKey, (queue) => markQueuedDraftQueued(queue, item.id));
         return;
       }
 
-      const accepted = await sendPromptImmediate(item.draft, { reason, expectedSessionKey: sessionKey });
+      const accepted = await sendPromptImmediate(item.draft, { reason, expectedSessionKey: drainSessionKey });
       if (accepted) {
-        const acceptedSessionKey = resolveQueueKeyForQueuedDraft(sessionKey, item.id);
+        const acceptedSessionKey = resolveQueueKeyForQueuedDraft(drainSessionKey, item.id);
         updateQueueForSessionKey(acceptedSessionKey, (queue) => removeQueuedDraft(queue, item.id));
         return;
       }
-      if (currentSessionQueueKey() !== sessionKey && !sessionIdForQueueKey(sessionKey)) {
-        const queuedSessionKey = resolveQueueKeyForQueuedDraft(sessionKey, item.id);
+      if (currentSessionQueueKey() !== drainSessionKey && !sessionIdForQueueKey(drainSessionKey)) {
+        const queuedSessionKey = resolveQueueKeyForQueuedDraft(drainSessionKey, item.id);
         updateQueueForSessionKey(queuedSessionKey, (queue) => markQueuedDraftQueued(queue, item.id));
         return;
       }
-      const errorSessionKey = resolveQueueKeyForQueuedDraft(sessionKey, item.id);
+      const errorSessionKey = resolveQueueKeyForQueuedDraft(drainSessionKey, item.id);
       updateQueueForSessionKey(errorSessionKey, (queue) =>
         markQueuedDraftError(queue, item.id, props.error ?? tr("session.connect_server_to_attach")),
       );
     } finally {
-      queueDrainAttemptInFlight = false;
+      queueDrainAttemptInFlightBySessionKey.delete(drainSessionKey);
     }
   };
 

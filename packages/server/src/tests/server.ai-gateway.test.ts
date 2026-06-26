@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer as createNetServer, type AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { brotliCompressSync } from "node:zlib";
 
 import { REDACTED_SECRET_VALUE, startServer } from "../server.js";
@@ -237,6 +240,212 @@ describe("ai gateway proxy routes", () => {
       legacyUpstream.close();
       await once(upstream, "close");
       await once(legacyUpstream, "close");
+    }
+  });
+
+  test("server resolves placeholder gateway session ids from OpenCode request session headers", async () => {
+    const requests: Array<{
+      authorization: string | null;
+      sessionId: string | null;
+      openCodeSessionId: string | null;
+      workspaceId: string | null;
+      body: unknown;
+    }> = [];
+
+    const upstream = createServer(async (req, res) => {
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const rawBody = Buffer.concat(chunks).toString("utf8");
+      requests.push({
+        authorization: req.headers.authorization ?? null,
+        sessionId: typeof req.headers["x-veslo-session-id"] === "string" ? req.headers["x-veslo-session-id"] : null,
+        openCodeSessionId: typeof req.headers["x-session-id"] === "string" ? req.headers["x-session-id"] : null,
+        workspaceId: typeof req.headers["x-veslo-workspace-id"] === "string" ? req.headers["x-veslo-workspace-id"] : null,
+        body: rawBody ? JSON.parse(rawBody) : null,
+      });
+
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({
+        id: "chatcmpl_opencode_session",
+        object: "chat.completion",
+        model: "gpt-5.5",
+      }));
+    });
+    const upstreamPort = await listenTestServer(upstream);
+
+    try {
+      await withManagedAiEnv(
+        {
+          managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}`,
+          legacyAiGatewayBaseUrl: undefined,
+        },
+        async () => {
+          const server = startServer(createTestConfig());
+
+          try {
+            const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
+              method: "POST",
+              headers: {
+                authorization: "Bearer client-token",
+                "content-type": "application/json",
+                "x-veslo-gateway-token": "gateway-access-token",
+                "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
+                "x-veslo-workspace-id": "ws_stale",
+                "x-session-id": "sess-opencode-real",
+              },
+              body: JSON.stringify({
+                model: "gpt-5.5",
+                messages: [{ role: "user", content: "Hello" }],
+              }),
+            });
+
+            expect(response.status).toBe(200);
+            expect(requests).toEqual([
+              {
+                authorization: "Bearer gateway-access-token",
+                sessionId: "sess-opencode-real",
+                openCodeSessionId: null,
+                workspaceId: null,
+                body: {
+                  model: "gpt-5.5",
+                  messages: [{ role: "user", content: "Hello" }],
+                },
+              },
+            ]);
+          } finally {
+            stopTestServer(server);
+          }
+        },
+      );
+    } finally {
+      upstream.close();
+      await once(upstream, "close");
+    }
+  });
+
+  test("server forwards placeholder session ids for sessionless managed calls", async () => {
+    const traceDir = mkdtempSync(join(tmpdir(), "veslo-ai-gateway-trace-"));
+    const traceFile = join(traceDir, "send-workflow-trace.ndjson");
+    const requests: Array<{
+      authorization: string | null;
+      sessionId: string | null;
+      openCodeSessionId: string | null;
+      workspaceId: string | null;
+      sendTraceId: string | null;
+      gatewayToken: string | null;
+      body: unknown;
+    }> = [];
+
+    const upstream = createServer(async (req, res) => {
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const rawBody = Buffer.concat(chunks).toString("utf8");
+      requests.push({
+        authorization: req.headers.authorization ?? null,
+        sessionId: typeof req.headers["x-veslo-session-id"] === "string" ? req.headers["x-veslo-session-id"] : null,
+        openCodeSessionId: typeof req.headers["x-session-id"] === "string" ? req.headers["x-session-id"] : null,
+        workspaceId: typeof req.headers["x-veslo-workspace-id"] === "string" ? req.headers["x-veslo-workspace-id"] : null,
+        sendTraceId: typeof req.headers["x-veslo-send-trace-id"] === "string" ? req.headers["x-veslo-send-trace-id"] : null,
+        gatewayToken: typeof req.headers["x-veslo-gateway-token"] === "string" ? req.headers["x-veslo-gateway-token"] : null,
+        body: rawBody ? JSON.parse(rawBody) : null,
+      });
+
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({
+        id: "chatcmpl_sessionless",
+        object: "chat.completion",
+        model: "gpt-5.5",
+      }));
+    });
+    const upstreamPort = await listenTestServer(upstream);
+
+    try {
+      await withManagedAiEnv(
+        {
+          managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}`,
+          legacyAiGatewayBaseUrl: undefined,
+        },
+        async () => {
+          await withEnvVar("VESLO_SEND_WORKFLOW_TRACE_FILE", traceFile, async () => {
+            const server = startServer(createTestConfig());
+
+            try {
+              const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
+                method: "POST",
+                headers: {
+                  authorization: "Bearer client-token",
+                  "content-type": "application/json",
+                  "x-veslo-gateway-token": "gateway-access-token",
+                  "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
+                  "x-veslo-workspace-id": "ws-missing-context",
+                  "x-veslo-send-trace-id": "trace-unresolved-placeholder",
+                },
+                body: JSON.stringify({
+                  model: "gpt-5.5",
+                  messages: [{ role: "user", content: "Hello" }],
+                }),
+              });
+
+              expect(response.status).toBe(200);
+              expect(await response.json()).toEqual({
+                id: "chatcmpl_sessionless",
+                object: "chat.completion",
+                model: "gpt-5.5",
+              });
+              expect(requests).toEqual([
+                {
+                  authorization: "Bearer gateway-access-token",
+                  sessionId: "${OPENCODE_SESSION_ID}",
+                  openCodeSessionId: null,
+                  workspaceId: null,
+                  sendTraceId: null,
+                  gatewayToken: null,
+                  body: {
+                    model: "gpt-5.5",
+                    messages: [{ role: "user", content: "Hello" }],
+                  },
+                },
+              ]);
+
+              const entries = readFileSync(traceFile, "utf8")
+                .trim()
+                .split(/\r?\n/)
+                .map((line) => JSON.parse(line) as Record<string, unknown>);
+              const sessionless = entries.find((entry) => entry.event === "server:ai-gateway:sessionless-forward");
+              expect(Boolean(sessionless)).toBe(true);
+              if (!sessionless) throw new Error("missing sessionless-forward trace entry");
+
+              expect(sessionless.provider).toBe("codex_oauth");
+              expect(sessionless.incomingSessionId).toBe("${OPENCODE_SESSION_ID}");
+              expect(sessionless.normalizedIncomingSessionId).toBe(null);
+              expect(sessionless.workspaceId).toBe("ws-missing-context");
+              expect(sessionless.sessionResolutionSource).toBe("sessionless-fallback");
+              expect(sessionless.forwardedSessionHeaderMode).toBe("incoming-placeholder");
+              const internalHeaders = sessionless.incomingInternalHeaders as Record<string, unknown>;
+              expect(internalHeaders.hasWorkspaceId).toBe(true);
+              expect(internalHeaders.hasSessionId).toBe(true);
+              expect(internalHeaders.hasSendTraceId).toBe(true);
+
+              const providerHit = entries.find((entry) => entry.event === "server:ai-gateway:provider-hit");
+              expect(providerHit?.sessionResolutionSource).toBe("sessionless-fallback");
+              expect(providerHit?.watchdogHitRecorded).toBe(false);
+              expect(entries.some((entry) => entry.event === "server:ai-gateway:session-unresolved")).toBe(false);
+            } finally {
+              stopTestServer(server);
+            }
+          });
+        },
+      );
+    } finally {
+      upstream.close();
+      await once(upstream, "close");
+      rmSync(traceDir, { recursive: true, force: true });
     }
   });
 

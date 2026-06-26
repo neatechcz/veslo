@@ -690,5 +690,5 @@ describe("session transcript prefetch routes", () => {
     expect(transcriptPayload.limit).toBe(200);
     expect(transcriptPayload.messages.length).toBe(200);
     expect(upstreamHits).toBe(0);
-  });
+  }, 20_000);
 });

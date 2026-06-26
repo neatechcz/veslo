@@ -11693,7 +11693,7 @@ export default function App() {
       vesloWorkspaceId &&
       vesloCapabilities?.config?.write;
     const providerRoutingReady = Boolean(
-      providerRoutingTarget?.serverClientToken && gatewayAccessToken && vesloWorkspaceId,
+      providerRoutingTarget?.serverClientToken && gatewayAccessToken,
     );
     const providerRoutingReloadKey = providerRoutingTarget
       ? `${providerRoutingTarget.serverClientToken}@${providerRoutingTarget.engineBaseUrl}`

@@ -211,19 +211,17 @@ function parseConfigObject(content: string | null | undefined): Record<string, u
   return readConfigObject(parsed);
 }
 
-function hasManagedGatewayHeaders(value: unknown, expectedWorkspaceId?: string | null): boolean {
+function hasManagedGatewayHeaders(value: unknown): boolean {
   const headers = readConfigObject(value);
   const sessionTemplate = typeof headers["x-veslo-session-id"] === "string"
     ? headers["x-veslo-session-id"].trim()
     : "";
   if (sessionTemplate !== OPENCODE_SESSION_ID_TEMPLATE) return false;
 
-  const workspaceId = expectedWorkspaceId?.trim() ?? "";
-  if (!workspaceId) return true;
-  const configuredWorkspaceId = typeof headers["x-veslo-workspace-id"] === "string"
+  const legacyWorkspaceId = typeof headers["x-veslo-workspace-id"] === "string"
     ? headers["x-veslo-workspace-id"].trim()
     : "";
-  return configuredWorkspaceId === workspaceId;
+  return !legacyWorkspaceId;
 }
 
 function hasUsableServerClientCredential(
@@ -277,7 +275,7 @@ function hasManagedGatewayProviderRouting(
 
   const models = readConfigObject(providerConfig.models);
   return Object.values(models).some((model) =>
-    hasManagedGatewayHeaders(readConfigObject(model).headers, workspaceId)
+    hasManagedGatewayHeaders(readConfigObject(model).headers)
   );
 }
 

@@ -376,12 +376,13 @@ const wslInstallerFragmentPath = resolve(
 );
 const wslInstallerFragment = existsSync(wslInstallerFragmentPath) ? readText(wslInstallerFragmentPath) : "";
 addCheck(
-  "Windows MSI schedules WSL sandbox provisioning action",
+  "Windows MSI keeps WSL sandbox provisioning action dormant by default",
   Array.isArray(tauriWindowsWix.fragmentPaths) &&
     tauriWindowsWix.fragmentPaths.includes("windows/wsl2-sandbox-installer.wxs") &&
     Array.isArray(tauriWindowsWix.componentGroupRefs) &&
     tauriWindowsWix.componentGroupRefs.includes("VesloWslProvisioningInstallerComponents") &&
     /<Property\s+Id="MsiLogging"\s+Value="voicewarmupx!"\s*\/>/.test(wslInstallerFragment) &&
+    /Property\s+Id="VESLO_ENABLE_WSL_INSTALLER"\s+Value="0"/.test(wslInstallerFragment) &&
     /RemoveOldVesloWslClientInstaller/.test(wslInstallerFragment) &&
     /RemoveOldVesloWslPrerequisiteInstaller/.test(wslInstallerFragment) &&
     /RemoveOldVesloWslSandboxInstaller/.test(wslInstallerFragment) &&
@@ -390,6 +391,9 @@ addCheck(
     /ComponentGroup\s+Id="VesloWslProvisioningInstallerComponents"/.test(wslInstallerFragment) &&
     /Id="VesloProvisionWslSandbox"/.test(wslInstallerFragment) &&
     /After="InstallFiles"/.test(wslInstallerFragment) &&
+    /Custom Action="VesloProvisionWslSandbox"\s+After="InstallFiles"><!\[CDATA\[VESLO_ENABLE_WSL_INSTALLER="1" AND NOT REMOVE~="ALL"\]\]><\/Custom>/.test(
+      wslInstallerFragment,
+    ) &&
     /Return="check"/.test(wslInstallerFragment) &&
     /\[System64Folder\]WindowsPowerShell\\v1\.0\\powershell\.exe/.test(wslInstallerFragment) &&
     !/\[SystemFolder\]WindowsPowerShell\\v1\.0\\powershell\.exe/.test(wslInstallerFragment) &&
@@ -405,10 +409,10 @@ addCheck(
     /Id="VesloClearExitDialogLaunchCheckboxText"[\s\S]*?Property="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"[\s\S]*?Value=""/.test(
       wslInstallerFragment,
     ) &&
-    /Custom Action="VesloDisableExitDialogLaunchCheckbox"\s+Before="ExecuteAction"/.test(
+    /Custom Action="VesloDisableExitDialogLaunchCheckbox"\s+Before="ExecuteAction"><!\[CDATA\[VESLO_ENABLE_WSL_INSTALLER="1" AND NOT Installed\]\]><\/Custom>/.test(
       wslInstallerFragment,
     ) &&
-    /Custom Action="VesloDisableAutoLaunchApp"\s+Before="LaunchApplication"/.test(
+    /Custom Action="VesloDisableAutoLaunchApp"\s+Before="LaunchApplication"><!\[CDATA\[VESLO_ENABLE_WSL_INSTALLER="1" AND AUTOLAUNCHAPP AND NOT Installed\]\]><\/Custom>/.test(
       wslInstallerFragment,
     ) &&
     /function\s+Resolve-WslExecutable\b/.test(wslSandboxInstaller) &&
@@ -431,7 +435,7 @@ const nsisHook = existsSync(nsisHookPath) ? readText(nsisHookPath) : "";
 const nsisCzechLanguagePath = resolve(root, "packages", "desktop", "src-tauri", "windows", "locales", "Czech.nsh");
 const nsisCzechLanguage = existsSync(nsisCzechLanguagePath) ? readText(nsisCzechLanguagePath) : "";
 addCheck(
-  "Windows NSIS client installer is current-user and prepares runtime",
+  "Windows NSIS client installer is current-user with dormant WSL runtime hook",
   tauriWindowsNsis.installMode === "currentUser" &&
     Array.isArray(tauriWindowsNsis.languages) &&
     tauriWindowsNsis.languages[0] === "Czech" &&
@@ -442,6 +446,8 @@ addCheck(
     /LangString\s+deleteAppData\s+\$\{LANG_CZECH\}/.test(nsisCzechLanguage) &&
     tauriWindowsNsis.installerHooks === "windows/nsis-hooks.nsh" &&
     /NSIS_HOOK_POSTINSTALL/.test(nsisHook) &&
+    /!ifdef VESLO_ENABLE_WSL_INSTALLER/.test(nsisHook) &&
+    /Skipping Veslo WSL runtime preparation; shared non-sandbox runtime is enabled by default\./.test(nsisHook) &&
     /nsExec::ExecToLog/.test(nsisHook) &&
     !/\bExecWait\b/.test(nsisHook) &&
     /wsl2-client-installer\.ps1/.test(nsisHook) &&

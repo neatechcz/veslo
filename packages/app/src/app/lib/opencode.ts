@@ -234,6 +234,9 @@ function sanitizeGatewayProviderHeaders(value: unknown): Record<string, string> 
 
   for (const [key, rawValue] of Object.entries(headers)) {
     const normalizedKey = normalizeConfigKey(key);
+    if (normalizedKey === normalizeConfigKey(VESLO_WORKSPACE_ID_HEADER)) {
+      continue;
+    }
     if (isGatewayProviderSecretKey(normalizedKey) || normalizedKey === "xveslogatewaytoken") {
       continue;
     }
@@ -410,7 +413,6 @@ export function applyGatewayProviderRouting(
           ? {}
           : { Authorization: `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}` }),
         [VESLO_SESSION_ID_HEADER]: OPENCODE_SESSION_ID_TEMPLATE,
-        ...(workspaceId ? { [VESLO_WORKSPACE_ID_HEADER]: workspaceId } : {}),
       },
     };
     return models;

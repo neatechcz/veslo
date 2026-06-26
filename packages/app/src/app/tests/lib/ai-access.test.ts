@@ -971,7 +971,7 @@ test("hasUsableManagedAiRuntimeConfig accepts current managed codex routing", ()
   );
 });
 
-test("hasUsableManagedAiRuntimeConfig accepts workspace-scoped managed codex routing", () => {
+test("hasUsableManagedAiRuntimeConfig accepts current managed routing when a workspace id is provided", () => {
   const content = formatManagedAiAccessConfig("{}", {
     profile: managedCodexProfile,
     serverBaseUrl: "http://127.0.0.1:8787",
@@ -993,7 +993,7 @@ test("hasUsableManagedAiRuntimeConfig accepts workspace-scoped managed codex rou
   );
 });
 
-test("hasUsableManagedAiRuntimeConfig rejects missing workspace-scoped gateway routing", () => {
+test("hasUsableManagedAiRuntimeConfig does not require workspace-scoped gateway routing", () => {
   const content = formatManagedAiAccessConfig("{}", {
     profile: managedCodexProfile,
     serverBaseUrl: "http://127.0.0.1:8787",
@@ -1010,18 +1010,28 @@ test("hasUsableManagedAiRuntimeConfig rejects missing workspace-scoped gateway r
       serverClientToken: "veslo-client-token",
       workspaceId: "ws_1",
     }),
-    false,
+    true,
   );
 });
 
-test("hasUsableManagedAiRuntimeConfig rejects stale workspace-scoped gateway routing", () => {
-  const content = formatManagedAiAccessConfig("{}", {
-    profile: managedCodexProfile,
-    serverBaseUrl: "http://127.0.0.1:8787",
-    engineBaseUrl: "http://172.29.64.1:8787",
-    serverClientToken: "veslo-client-token",
-    gatewayAccessToken: "gateway-access-token",
-    workspaceId: "ws_old",
+test("hasUsableManagedAiRuntimeConfig rejects legacy workspace-scoped gateway headers", () => {
+  const content = JSON.stringify({
+    provider: {
+      codex_oauth: {
+        options: {
+          apiKey: "{env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}",
+          baseURL: "http://172.29.64.1:8787/ai-gateway/providers/codex_oauth/v1",
+        },
+        models: {
+          "gpt-5.4": {
+            headers: {
+              "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
+              "x-veslo-workspace-id": "ws_old",
+            },
+          },
+        },
+      },
+    },
   });
 
   assert.equal(

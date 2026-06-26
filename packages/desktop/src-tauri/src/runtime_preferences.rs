@@ -21,9 +21,25 @@ struct PersistedRuntimePreferences {
 impl Default for DesktopRuntimePreferences {
     fn default() -> Self {
         Self {
-            shared_unsandboxed_engine: false,
+            shared_unsandboxed_engine: default_shared_unsandboxed_engine_enabled(),
         }
     }
+}
+
+fn default_shared_unsandboxed_engine_enabled() -> bool {
+    cfg!(windows)
+}
+
+fn default_shared_unsandboxed_engine_override() -> Option<bool> {
+    if default_shared_unsandboxed_engine_enabled() {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+fn resolve_shared_unsandboxed_engine_override(persisted: Option<bool>) -> Option<bool> {
+    persisted.or_else(default_shared_unsandboxed_engine_override)
 }
 
 fn runtime_preferences_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -53,14 +69,16 @@ fn shared_unsandboxed_engine_from_env() -> bool {
 pub fn read_shared_unsandboxed_engine_override(app: &AppHandle) -> Result<Option<bool>, String> {
     let path = runtime_preferences_path(app)?;
     if !path.exists() {
-        return Ok(None);
+        return Ok(resolve_shared_unsandboxed_engine_override(None));
     }
 
     let payload =
         fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
     let parsed: PersistedRuntimePreferences = serde_json::from_str(&payload)
         .map_err(|e| format!("Failed to parse {}: {e}", path.display()))?;
-    Ok(parsed.shared_unsandboxed_engine)
+    Ok(resolve_shared_unsandboxed_engine_override(
+        parsed.shared_unsandboxed_engine,
+    ))
 }
 
 pub fn read_runtime_preferences(app: &AppHandle) -> Result<DesktopRuntimePreferences, String> {
@@ -121,7 +139,32 @@ pub fn desktop_runtime_preferences_write(
 
 #[cfg(test)]
 mod tests {
-    use super::shared_unsandboxed_engine_env_overrides;
+    use super::{
+        default_shared_unsandboxed_engine_override, resolve_shared_unsandboxed_engine_override,
+        shared_unsandboxed_engine_env_overrides, DesktopRuntimePreferences,
+    };
+
+    #[test]
+    fn default_runtime_preference_uses_windows_non_sandbox_policy() {
+        assert_eq!(
+            DesktopRuntimePreferences::default().shared_unsandboxed_engine,
+            cfg!(windows)
+        );
+        assert_eq!(
+            default_shared_unsandboxed_engine_override(),
+            if cfg!(windows) { Some(true) } else { None }
+        );
+        assert_eq!(
+            resolve_shared_unsandboxed_engine_override(None),
+            if cfg!(windows) { Some(true) } else { None }
+        );
+    }
+
+    #[test]
+    fn explicit_runtime_preference_overrides_windows_non_sandbox_policy() {
+        assert_eq!(resolve_shared_unsandboxed_engine_override(Some(true)), Some(true));
+        assert_eq!(resolve_shared_unsandboxed_engine_override(Some(false)), Some(false));
+    }
 
     #[test]
     fn shared_unsandboxed_engine_true_sets_required_env_pair() {

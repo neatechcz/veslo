@@ -14,12 +14,33 @@ test("Windows sandbox repair is gated to Tauri on Windows", () => {
   assert.match(componentSource, /isTauriRuntime\(\)\s*&&\s*isWindowsPlatform\(\)/);
 });
 
-test("Windows sandbox repair runs WSL prerequisites before sandbox provisioning", () => {
+test("Windows sandbox repair WSL path is kept but disabled for installer builds", () => {
+  assert.match(componentSource, /const WINDOWS_WSL_SANDBOX_REPAIR_ENABLED = false;/);
+  assert.match(
+    componentSource,
+    /Windows installer builds now use the shared non-sandbox runtime by default\./,
+  );
+  assert.match(
+    componentSource,
+    /if \(!WINDOWS_WSL_SANDBOX_REPAIR_ENABLED\) return;[\s\S]*const prereq = await wslPrerequisitesRepair\(\{ checkOnly: true \}\);/,
+    "manual WSL prerequisite repair should stay in the source but remain dormant",
+  );
+  assert.match(
+    componentSource,
+    /if \(!WINDOWS_WSL_SANDBOX_REPAIR_ENABLED\) return;[\s\S]*const sandboxCheck = await wslSandboxRepair\(\{ checkOnly: true \}\);/,
+    "automatic WSL sandbox provisioning should stay in the source but remain dormant",
+  );
+  assert.match(
+    componentSource,
+    /isTauriRuntime\(\) && isWindowsPlatform\(\) && WINDOWS_WSL_SANDBOX_REPAIR_ENABLED/,
+    "the WSL repair prompt should not render while the installer uses non-sandbox runtime",
+  );
+
   const prerequisiteIndex = componentSource.indexOf("wslPrerequisitesRepair({ checkOnly: true })");
   const sandboxIndex = componentSource.indexOf("wslSandboxRepair({ checkOnly: false })");
 
-  assert.ok(prerequisiteIndex > 0, "Expected a phase-1 WSL prerequisite check");
-  assert.ok(sandboxIndex > prerequisiteIndex, "Expected VesloSandbox provisioning to run after WSL prerequisite repair");
+  assert.ok(prerequisiteIndex > 0, "Expected the dormant WSL prerequisite check to remain in source");
+  assert.ok(sandboxIndex > prerequisiteIndex, "Expected dormant VesloSandbox provisioning to remain after WSL repair");
   assert.match(componentSource, /settings\.windows_sandbox_restart_required/);
 });
 

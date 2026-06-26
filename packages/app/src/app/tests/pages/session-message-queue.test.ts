@@ -110,13 +110,29 @@ test("idle transition drains only after a non-idle status and only when queue is
 test("queued drain uses a stable session key and guards stale navigation", () => {
   assert.match(
     source,
+    /const queueDrainAttemptInFlightBySessionKey = new Set<string>\(\);/,
+    "queue drain in-flight state should be scoped per session key",
+  );
+  assert.doesNotMatch(
+    source,
+    /let queueDrainAttemptInFlight = false;/,
+    "queue drain in-flight state must not be a single global lock",
+  );
+  assert.match(
+    source,
+    /const drainSessionKey = sessionKey\.trim\(\);[\s\S]*queueDrainAttemptInFlightBySessionKey\.has\(drainSessionKey\)[\s\S]*queueDrainAttemptInFlightBySessionKey\.add\(drainSessionKey\)[\s\S]*queueDrainAttemptInFlightBySessionKey\.delete\(drainSessionKey\)/s,
+    "queue drain should lock only the captured session key being drained",
+  );
+
+  assert.match(
+    source,
     /const baseSessionKey = expectedSessionKey \?\? currentSessionQueueKey\(\);\s*const targetSessionId = sessionIdForQueueKey\(baseSessionKey\);\s*const expectedWorkspaceId = workspaceIdForQueueKey\(baseSessionKey\) \|\| props\.activeWorkspaceId;[\s\S]*if \(expectedSessionKey && currentSessionQueueKey\(\) !== expectedSessionKey && !targetSessionId\) return false;/s,
     "immediate sends should target the captured real session key but refuse stale pending queues",
   );
 
   assert.match(
     source,
-    /const accepted = await sendPromptImmediate\(item\.draft, \{ reason, expectedSessionKey: sessionKey \}\);/,
+    /const accepted = await sendPromptImmediate\(item\.draft, \{ reason, expectedSessionKey: drainSessionKey \}\);/,
     "queue drains should pass their captured session key to the immediate send path",
   );
 
@@ -234,7 +250,7 @@ test("accepted pending queue drain removes the sent item from the materialized s
 
   assert.match(
     source,
-    /if \(accepted\) \{\s*const acceptedSessionKey = resolveQueueKeyForQueuedDraft\(sessionKey, item\.id\);\s*updateQueueForSessionKey\(acceptedSessionKey, \(queue\) => removeQueuedDraft\(queue, item\.id\)\);\s*return;\s*\}/s,
+    /if \(accepted\) \{\s*const acceptedSessionKey = resolveQueueKeyForQueuedDraft\(drainSessionKey, item\.id\);\s*updateQueueForSessionKey\(acceptedSessionKey, \(queue\) => removeQueuedDraft\(queue, item\.id\)\);\s*return;\s*\}/s,
     "accepted pending queue drains should remove the sent item from whichever queue currently contains it",
   );
 });
@@ -256,13 +272,13 @@ test("failed first pending submit restores remapped queued drafts to the pending
 test("rejected pending queue drain updates the remapped item key", () => {
   assert.match(
     source,
-    /if \(currentSessionQueueKey\(\) !== sessionKey && !sessionIdForQueueKey\(sessionKey\)\) \{\s*const queuedSessionKey = resolveQueueKeyForQueuedDraft\(sessionKey, item\.id\);\s*updateQueueForSessionKey\(queuedSessionKey, \(queue\) => markQueuedDraftQueued\(queue, item\.id\)\);\s*return;\s*\}/s,
+    /if \(currentSessionQueueKey\(\) !== drainSessionKey && !sessionIdForQueueKey\(drainSessionKey\)\) \{\s*const queuedSessionKey = resolveQueueKeyForQueuedDraft\(drainSessionKey, item\.id\);\s*updateQueueForSessionKey\(queuedSessionKey, \(queue\) => markQueuedDraftQueued\(queue, item\.id\)\);\s*return;\s*\}/s,
     "queued fallback should restore the item in whichever queue currently contains it",
   );
 
   assert.match(
     source,
-    /const errorSessionKey = resolveQueueKeyForQueuedDraft\(sessionKey, item\.id\);\s*updateQueueForSessionKey\(errorSessionKey, \(queue\) =>\s*markQueuedDraftError\(queue, item\.id, props\.error \?\? tr\("session\.connect_server_to_attach"\)\),\s*\);/s,
+    /const errorSessionKey = resolveQueueKeyForQueuedDraft\(drainSessionKey, item\.id\);\s*updateQueueForSessionKey\(errorSessionKey, \(queue\) =>\s*markQueuedDraftError\(queue, item\.id, props\.error \?\? tr\("session\.connect_server_to_attach"\)\),\s*\);/s,
     "rejected queue drains should mark the remapped queued item as error instead of updating the stale pending key",
   );
 });
