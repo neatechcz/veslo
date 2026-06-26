@@ -383,6 +383,100 @@ test("POST /workspace/:id/mcp/hub/:name preserves Veslo connector headers withou
   expect(configRaw).not.toContain("clientSecret");
 });
 
+test("POST /workspace/:id/mcp/:name/runtime-token/refresh rotates Veslo connector token", async () => {
+  let runtimeTokenCalls = 0;
+  const denServer = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      if (url.pathname === "/v1/orgs/org_1/integrations/google/google-gmail/runtime-token") {
+        runtimeTokenCalls += 1;
+        return new Response(JSON.stringify({
+          token: `runtime-token-${runtimeTokenCalls}`,
+          expiresAt: "2030-06-19T12:00:00.000Z",
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({
+        items: [
+          {
+            id: "google-gmail",
+            name: "Google Gmail",
+            config: {
+              type: "remote",
+              url: "https://api.veslo.work/v1/orgs/org_1/integrations/google/google-gmail/mcp",
+              oauth: false,
+              headers: {
+                "X-Veslo-Connector": "google-gmail",
+              },
+            },
+            authorization: {
+              type: "veslo-server-oauth",
+              provider: "google",
+              connectorId: "google-gmail",
+              scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
+              startPath: "/v1/orgs/org_1/integrations/google/google-gmail/oauth/start",
+              runtimeTokenPath: "/v1/orgs/org_1/integrations/google/google-gmail/runtime-token",
+              statusPath: "/v1/orgs/org_1/integrations/google/connections",
+              disconnectPath: "/v1/orgs/org_1/integrations/google/google-gmail/connection",
+            },
+            source: { scope: "platform" },
+            provider: { id: "google", group: "Google" },
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+  runningServers.push(denServer as { stop?: (closeActiveConnections?: boolean) => void });
+
+  const { server, workspaceRoot } = await startFixture({ denApiBase: `http://127.0.0.1:${denServer.port}` });
+  const authHeaders = {
+    Authorization: "Bearer client-token",
+    "x-veslo-den-token": "den-token",
+    "x-veslo-den-org-id": "org_1",
+  };
+
+  const installResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/mcp/hub/google-gmail`, {
+    method: "POST",
+    headers: {
+      ...authHeaders,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({}),
+  });
+  expect(installResponse.status).toBe(200);
+
+  const refreshResponse = await fetch(
+    `http://127.0.0.1:${server.port}/workspace/ws_1/mcp/google-gmail/runtime-token/refresh`,
+    {
+      method: "POST",
+      headers: authHeaders,
+    },
+  );
+
+  expect(refreshResponse.status).toBe(200);
+  const payload = await refreshResponse.json() as { ok: boolean; name: string; action: string; expiresAt: string };
+  expect(payload).toEqual({
+    ok: true,
+    name: "google-gmail",
+    action: "updated",
+    expiresAt: "2030-06-19T12:00:00.000Z",
+  });
+  expect(runtimeTokenCalls).toBe(2);
+
+  const configRaw = await readFile(join(workspaceRoot, "opencode.jsonc"), "utf8");
+  expect(configRaw).toContain("\"X-Veslo-Connector\": \"google-gmail\"");
+  expect(configRaw).toContain("\"X-Veslo-Connector-Token\": \"runtime-token-2\"");
+  expect(configRaw).not.toContain("runtime-token-1");
+});
+
 test("POST /workspace/:id/mcp/hub/:name preserves oauth false in config", async () => {
   const denServer = Bun.serve({
     hostname: "127.0.0.1",

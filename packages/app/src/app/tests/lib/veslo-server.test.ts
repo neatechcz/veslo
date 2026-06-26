@@ -2120,6 +2120,52 @@ test("installHubMcp forwards den auth context headers when provided", async () =
   }
 });
 
+test("refreshMcpRuntimeToken forwards den auth context headers when provided", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; headers: Headers; method?: string }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method,
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+    });
+    return new Response(JSON.stringify({
+      ok: true,
+      name: "google-gmail",
+      action: "updated",
+      expiresAt: "2030-06-19T12:00:00.000Z",
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    await client.refreshMcpRuntimeToken("workspace-1", "google-gmail", {
+      denToken: "den-token",
+      denOrgId: "org_123",
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(
+      calls[0]?.url,
+      "https://veslo.example/workspace/workspace-1/mcp/google-gmail/runtime-token/refresh",
+    );
+    assert.equal(calls[0]?.method, "POST");
+    assert.equal(calls[0]?.headers.get("authorization"), "Bearer token-123");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-token"), "den-token");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-org-id"), "org_123");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("createVesloServerClient exposes workspace automation endpoints", async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string; headers: Headers; body: unknown }> = [];

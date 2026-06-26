@@ -387,11 +387,25 @@ OpenCode config. The entries point at Veslo-owned connector endpoints and may
 include non-secret runtime headers. They must not include Google OAuth client
 secrets, Google access tokens, or Google refresh tokens.
 
+Veslo-managed connector runtime headers are renewable config material, not
+provider authorization state. If a configured connector MCP reports an
+authorization-like runtime failure, the app may ask the local Veslo server to
+fetch a fresh short-lived connector token from Den and update the
+`X-Veslo-Connector-Token` header in the workspace OpenCode config, then retry
+the MCP status read once. This refresh path must not start browser OAuth and
+must not revoke or create Google grants.
+
 Google Workspace authorization is server-managed for production. Den owns the
 Google OAuth callback, exchanges the code with Veslo's Google client secret,
 and stores encrypted per-user grants by organization, user, and connector.
 OpenCode config only represents local runtime installation, not Google grant
 ownership.
+
+Desktop workspace provisioning seeds the default Chrome MCP as a local command
+using `npx -y chrome-devtools-mcp@latest --isolated`. Existing
+`chrome-devtools` or `control-chrome` aliases are not duplicated. Known legacy
+aliases that still use `chrome-devtools-mcp --isolated` are migrated to the
+same npx fallback so they work outside the desktop sidecar PATH as well.
 
 ## Skills Inventory
 

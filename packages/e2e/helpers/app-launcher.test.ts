@@ -6,6 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  buildWindowsManagedChildCleanupScript,
   createAppLaunchEnv,
   resolveLaunchTimeout,
   resolvePilotIdentifier,
@@ -34,6 +35,7 @@ test('createAppLaunchEnv configures pilot and forces x11 on linux so GTK-backed 
   assert.equal(env.TAURI_PILOT_SOCKET, '/tmp/veslo-pilot-runtime/tauri-pilot-com.neatech.veslo.e2e.sock');
   assert.equal(env.OPENCODE_HOME, '/tmp/opencode-home');
   assert.equal(env.VESLO_DATA_DIR, '/tmp/opencode-home/.veslo');
+  assert.equal(env.VESLO_APP_CONFIG_DIR, '/tmp/opencode-home/.veslo/app-config');
   assert.equal(env.VESLO_APP_DATA_DIR, '/tmp/opencode-home/.veslo/app-data');
   assert.equal(env.VESLO_APP_LOCAL_DATA_DIR, '/tmp/opencode-home/.veslo/app-local-data');
   assert.equal(env.VESLO_DEN_AUTH_SNAPSHOT_PATH, '/tmp/opencode-home/.veslo/den-auth.json');
@@ -74,6 +76,7 @@ test('createAppLaunchEnv isolates Windows app, local, and WebView2 storage so st
   assert.equal(env.TAURI_PILOT_SOCKET, '\\\\.\\pipe\\tauri-pilot-com.neatech.veslo.e2e');
   assert.equal(env.OPENCODE_HOME, 'C:\\temp\\veslo-e2e-home');
   assert.equal(env.VESLO_DATA_DIR, 'C:\\temp\\veslo-e2e-home\\.veslo');
+  assert.equal(env.VESLO_APP_CONFIG_DIR, 'C:\\temp\\veslo-e2e-home\\.veslo\\app-config');
   assert.equal(env.VESLO_APP_DATA_DIR, 'C:\\temp\\veslo-e2e-home\\.veslo\\app-data');
   assert.equal(env.VESLO_APP_LOCAL_DATA_DIR, 'C:\\temp\\veslo-e2e-home\\.veslo\\app-local-data');
   assert.equal(env.VESLO_DEN_AUTH_SNAPSHOT_PATH, 'C:\\temp\\veslo-e2e-home\\.veslo\\den-auth.json');
@@ -148,6 +151,17 @@ test('resolveStartAppPort defaults through the shared WebDriver port resolver', 
 test('startApp does not reuse legacy WebDriver servers in the tauri-pilot harness', () => {
   const source = readFileSync(new URL('./app-launcher.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /hasReadyWebDriverServer/);
+});
+
+test('Windows managed child cleanup is scoped to the launched app PID and known Veslo sidecars', () => {
+  const script = buildWindowsManagedChildCleanupScript(12345);
+
+  assert.match(script, /\$targetParentPid = 12345/);
+  assert.match(script, /ParentProcessId -eq \$targetParentPid/);
+  assert.match(script, /veslo-server\.exe/);
+  assert.match(script, /veslo-orchestrator\.exe/);
+  assert.match(script, /veslo-code-router\.exe/);
+  assert.doesNotMatch(script, /Stop-Process -Name/);
 });
 
 test('seedDefaultWorkspaceState skips network-backed enterprise creators for deterministic E2E fixtures', () => {

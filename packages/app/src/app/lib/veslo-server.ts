@@ -3652,6 +3652,22 @@ export function createVesloServerClient(options: {
         method: "DELETE",
       }),
 
+    refreshMcpRuntimeToken: (
+      workspaceId: string,
+      name: string,
+      options?: { denToken?: string; denOrgId?: string },
+    ) =>
+      requestJson<{ ok: true; name: string; action: "updated"; expiresAt: string | null }>(
+        baseUrl,
+        `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}/runtime-token/refresh`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          extraHeaders: buildDenContextHeaders(options),
+        },
+      ),
+
     logoutMcpAuth: (workspaceId: string, name: string) =>
       requestJson<{ ok: true }>(baseUrl, `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}/auth`, {
         token,

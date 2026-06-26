@@ -201,7 +201,10 @@ import {
   createPermissionPollingScheduler,
 } from "./lib/workspace-runtime-schedulers";
 import { createMcpServersRefresher } from "./lib/mcp-server-refresh";
-import { createMcpRuntimeStatusRefresher } from "./lib/mcp-runtime-status-refresh";
+import {
+  createMcpRuntimeStatusRefresher,
+  mcpRuntimeTokenRefreshCandidates,
+} from "./lib/mcp-runtime-status-refresh";
 import { createSkillReloadGuard } from "./lib/skill-reload-guard";
 import { createSkillRegistryEventsListener } from "./lib/skill-registry-events";
 import {
@@ -9976,6 +9979,48 @@ export default function App() {
     currentEntries: () => mcpServers(),
     loadStatus: async (activeClient, directory) =>
       unwrap(await activeClient.mcp.status({ directory })) as McpStatusMap,
+    refreshRuntimeTokens: async ({ entries, status }) => {
+      const candidates = mcpRuntimeTokenRefreshCandidates(status, entries);
+      if (!candidates.length) return false;
+
+      const vesloClient = vesloServerClient();
+      const vesloWorkspaceId = vesloServerWorkspaceId();
+      const denAuth = readDenAuth();
+      const denToken = denAuth?.token?.trim() ?? "";
+      const denOrgId = denAuth?.orgId?.trim() ?? "";
+      if (
+        vesloServerStatus() !== "connected" ||
+        !vesloClient ||
+        !vesloWorkspaceId ||
+        !resolvedVesloCapabilities()?.mcp?.write ||
+        !denToken ||
+        !denOrgId ||
+        typeof vesloClient.refreshMcpRuntimeToken !== "function"
+      ) {
+        return false;
+      }
+
+      let refreshed = false;
+      for (const name of candidates) {
+        try {
+          await vesloClient.refreshMcpRuntimeToken(vesloWorkspaceId, name, {
+            denToken,
+            denOrgId,
+          });
+          refreshed = true;
+          recordPerfLog(developerMode(), "workspace.mcp", "runtime-token-refresh", { name });
+        } catch (error) {
+          recordPerfLog(developerMode(), "workspace.mcp", "runtime-token-refresh-failed", {
+            name,
+            error: error instanceof Error ? error.message : safeStringify(error),
+          });
+        }
+      }
+      if (refreshed) {
+        await refreshMcpServers({ mode: "explicit", reason: "mcp-runtime-token-refresh" });
+      }
+      return refreshed;
+    },
     setStatuses: setMcpStatuses,
     recordEvent: (event, payload) =>
       recordPerfLog(developerMode(), "workspace.mcp", event, payload),

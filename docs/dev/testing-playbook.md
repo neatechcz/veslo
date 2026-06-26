@@ -135,9 +135,15 @@ Focused pilot scenarios can be run from `packages/e2e`:
 ```bash
 pnpm test:pilot:smoke
 pnpm test:pilot:navigation
+pnpm test:pilot:google-mcp
 pnpm test -- --scenario sidebar-session-retention
 pnpm test -- --scenario <name-or-path>
 ```
+
+`test:pilot:google-mcp` runs the converted Google Workspace MCP connector
+scenario with the local Den-compatible fixture enabled. It verifies separate
+Gmail, Calendar, and Drive catalog cards plus Gmail-only install behavior
+without completing Google OAuth.
 
 The E2E launcher uses an isolated app profile under `packages/e2e/.tmp-veslo-home` by default so local desktop state does not leak into tests. It also assigns an isolated local Veslo server port so a user-launched production app on `8787` does not block desktop tests; set `E2E_VESLO_SERVER_PORT` only when a focused test needs a stable port. Set `E2E_USE_EXISTING_PROFILE=1` only when a test explicitly needs the current user profile.
 

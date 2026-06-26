@@ -43,11 +43,14 @@ fn resolve_shared_unsandboxed_engine_override(persisted: Option<bool>) -> Option
 }
 
 fn runtime_preferences_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("Failed to resolve app config dir: {e}"))?
-        .join(RUNTIME_PREFERENCES_FILE))
+    let config_dir = crate::paths::app_config_dir_override()
+        .or_else(|| app.path().app_config_dir().ok())
+        .ok_or_else(|| "Failed to resolve app config dir".to_string())?;
+    Ok(runtime_preferences_path_for_dir(config_dir))
+}
+
+fn runtime_preferences_path_for_dir(config_dir: PathBuf) -> PathBuf {
+    config_dir.join(RUNTIME_PREFERENCES_FILE)
 }
 
 fn env_flag_enabled(value: Option<String>) -> bool {
@@ -141,8 +144,10 @@ pub fn desktop_runtime_preferences_write(
 mod tests {
     use super::{
         default_shared_unsandboxed_engine_override, resolve_shared_unsandboxed_engine_override,
-        shared_unsandboxed_engine_env_overrides, DesktopRuntimePreferences,
+        runtime_preferences_path_for_dir, shared_unsandboxed_engine_env_overrides,
+        DesktopRuntimePreferences,
     };
+    use std::path::PathBuf;
 
     #[test]
     fn default_runtime_preference_uses_windows_non_sandbox_policy() {
@@ -193,5 +198,13 @@ mod tests {
     #[test]
     fn missing_preference_does_not_override_parent_env() {
         assert!(shared_unsandboxed_engine_env_overrides(None).is_empty());
+    }
+
+    #[test]
+    fn runtime_preferences_path_uses_supplied_config_dir() {
+        assert_eq!(
+            runtime_preferences_path_for_dir(PathBuf::from("C:\\veslo\\config")),
+            PathBuf::from("C:\\veslo\\config").join("runtime-preferences.json")
+        );
     }
 }

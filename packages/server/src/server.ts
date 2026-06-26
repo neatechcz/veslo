@@ -20,7 +20,7 @@ import type {
 } from "./types.js";
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
-import { addMcp, installHubMcp, listMcp, removeMcp } from "./mcp.js";
+import { addMcp, installHubMcp, listMcp, refreshMcpRuntimeToken, removeMcp } from "./mcp.js";
 import {
   deleteGlobalSkillRecoverable,
   deleteSkillAtPathRecoverable,
@@ -10093,6 +10093,73 @@ function createRoutes(
     });
 
     return jsonResponse({ ok: true, ...result });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/mcp/:name/runtime-token/refresh", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const name = String(ctx.params.name ?? "").trim();
+    validateMcpName(name);
+
+    const denToken = ctx.request.headers.get("x-veslo-den-token")?.trim() || "";
+    if (!denToken) {
+      throw new ApiError(401, "den_token_required", "Missing Den token header (x-veslo-den-token)");
+    }
+
+    const denOrgId = ctx.request.headers.get("x-veslo-den-org-id")?.trim() || "";
+    if (!denOrgId) {
+      throw new ApiError(400, "den_org_required", "Missing Den org header (x-veslo-den-org-id)");
+    }
+
+    const denApiBase = config.denApiBase?.trim() || "";
+    if (!denApiBase) {
+      throw new ApiError(503, "den_catalog_misconfigured", "Den catalog base URL is missing");
+    }
+
+    const items = await fetchOrgMcpCatalog({
+      baseUrl: denApiBase,
+      orgId: denOrgId,
+      denToken,
+    });
+    const item = items.find((entry) => entry.id === name || entry.name === name);
+    if (!item) {
+      throw new ApiError(404, "hub_mcp_not_found", `Hub MCP not found: ${name}`);
+    }
+    if (item.authorization?.type !== "veslo-server-oauth") {
+      throw new ApiError(400, "mcp_runtime_token_unavailable", "MCP does not use Veslo-managed runtime tokens");
+    }
+
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "mcp.runtime_token.refresh",
+      summary: `Refresh MCP runtime token ${name}`,
+      paths: [opencodeConfigPath(workspace.path)],
+    });
+
+    const runtimeToken = await createOrgMcpRuntimeToken({
+      baseUrl: denApiBase,
+      denToken,
+      runtimeTokenPath: item.authorization.runtimeTokenPath,
+    });
+    const result = await refreshMcpRuntimeToken(workspace.path, name, runtimeToken.token);
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "mcp.runtime_token.refresh",
+      target: "opencode.json",
+      summary: `Refreshed MCP runtime token ${name}`,
+      timestamp: Date.now(),
+    });
+    emitReloadEvent(ctx.reloadEvents, workspace, "mcp", {
+      type: "mcp",
+      name,
+      action: "updated",
+    });
+
+    return jsonResponse({ ok: true, ...result, expiresAt: runtimeToken.expiresAt });
   });
 
   addRoute(routes, "POST", "/workspace/:id/mcp", "client", async (ctx) => {

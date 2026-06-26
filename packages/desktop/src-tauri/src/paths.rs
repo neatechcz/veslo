@@ -33,6 +33,10 @@ pub fn app_data_dir_override() -> Option<PathBuf> {
     env_path("VESLO_APP_DATA_DIR")
 }
 
+pub fn app_config_dir_override() -> Option<PathBuf> {
+    env_path("VESLO_APP_CONFIG_DIR")
+}
+
 pub fn app_local_data_dir_override() -> Option<PathBuf> {
     env_path("VESLO_APP_LOCAL_DATA_DIR")
         .or_else(|| app_data_dir_override().map(|dir| dir.join("local")))

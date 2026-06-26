@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   createMcpRuntimeStatusRefresher,
+  mcpRuntimeTokenRefreshCandidates,
   mcpRuntimeStatusEntriesKey,
 } from "../../lib/mcp-runtime-status-refresh.js";
 import type { McpServerEntry, McpStatusMap } from "../../types.js";
@@ -10,6 +11,15 @@ import type { McpServerEntry, McpStatusMap } from "../../types.js";
 const entry = (name: string): McpServerEntry => ({
   name,
   config: { type: "remote", url: `https://mcp.example/${name}` },
+});
+
+const connectorEntry = (name: string): McpServerEntry => ({
+  name,
+  config: {
+    type: "remote",
+    url: `https://mcp.example/${name}`,
+    headers: { "X-Veslo-Connector-Token": "old-token" },
+  },
 });
 
 function deferred<T>() {
@@ -159,4 +169,59 @@ test("MCP runtime status entries key reflects entry list changes", () => {
     mcpRuntimeStatusEntriesKey([entry("alpha")]),
     mcpRuntimeStatusEntriesKey([entry("alpha"), entry("beta")]),
   );
+});
+
+test("MCP runtime token refresh candidates require connector token header and auth-like failure", () => {
+  assert.deepEqual(
+    mcpRuntimeTokenRefreshCandidates(
+      {
+        google: { status: "failed", error: "401 Unauthorized" },
+        plain: { status: "failed", error: "401 Unauthorized" },
+        flaky: { status: "failed", error: "socket closed" },
+      },
+      [
+        connectorEntry("google"),
+        entry("plain"),
+        connectorEntry("flaky"),
+      ],
+    ),
+    ["google"],
+  );
+});
+
+test("MCP runtime status refresh refreshes connector token once and retries status", async () => {
+  const entries = [connectorEntry("google")];
+  const applied: McpStatusMap[] = [];
+  const loadCalls: string[] = [];
+  const refreshCalls: string[] = [];
+
+  const refresher = createMcpRuntimeStatusRefresher({
+    activeWorkspaceId: () => "ws-1",
+    activeRuntimeActivityId: () => null,
+    activeWorkspaceRuntimeReady: () => true,
+    workspaceProjectDir: () => "/repo",
+    client: () => ({ mcp: { status: async () => ({}) } }),
+    currentEntries: () => entries,
+    loadStatus: async (_client, directory) => {
+      loadCalls.push(directory);
+      return loadCalls.length === 1
+        ? { google: { status: "failed", error: "expired token: 401" } }
+        : { google: { status: "connected" } };
+    },
+    refreshRuntimeTokens: async ({ status }) => {
+      refreshCalls.push(JSON.stringify(status));
+      return true;
+    },
+    setStatuses: (statuses) => {
+      applied.push(statuses);
+    },
+  });
+
+  refresher.schedule("/repo", entries);
+  await tick();
+  await tick();
+
+  assert.equal(loadCalls.length, 2);
+  assert.equal(refreshCalls.length, 1);
+  assert.deepEqual(applied, [{ google: { status: "connected" } }]);
 });

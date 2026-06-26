@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { createEffect, createSignal } from "solid-js";
 
 import { applyEdits, modify } from "jsonc-parser";
 import { join } from "@tauri-apps/api/path";
@@ -282,6 +282,26 @@ export function createExtensionsStore(options: {
       refreshHubMcpInFlight = false;
     }
   }
+
+  createEffect(() => {
+    const root = options.activeWorkspaceRoot().trim();
+    const vesloClient = options.vesloServerClient();
+    const vesloCapabilities = options.vesloServerCapabilities();
+    const denAuth = readDenAuth();
+    const denToken = denAuth?.token?.trim() ?? "";
+    const denOrgId = denAuth?.orgId?.trim() ?? "";
+    const canUseVesloServer =
+      options.vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloCapabilities?.hub?.mcp?.read &&
+      typeof (vesloClient as any).listHubMcp === "function";
+
+    if (!root || !canUseVesloServer || !denToken || !denOrgId) return;
+    void refreshHubMcp().catch(() => {
+      // refreshHubMcp owns user-visible status; this guard keeps the reactive
+      // retry from surfacing unhandled promise noise during startup.
+    });
+  });
 
   const resolveHubSkillsRefreshContext = () => {
     const root = options.activeWorkspaceRoot().trim();

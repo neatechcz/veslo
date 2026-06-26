@@ -212,7 +212,7 @@ export default function McpView(props: McpViewProps) {
   });
 
   return (
-    <section class="space-y-8 animate-in fade-in duration-300">
+    <section data-testid="mcp-page" class="space-y-8 animate-in fade-in duration-300">
       {/* ── Header ───────────────────────────────────── */}
       <Show when={showHeader()}>
         <div>
@@ -280,6 +280,8 @@ export default function McpView(props: McpViewProps) {
               return (
                 <button
                   type="button"
+                  data-testid="mcp-available-app-card"
+                  data-mcp-name={entry.name}
                   disabled={connected() || !canConnect() || connecting()}
                   onClick={() => { if (!connected()) props.connectMcp(entry); }}
                   class={`group text-left rounded-xl border p-4 transition-all ${
@@ -346,6 +348,8 @@ export default function McpView(props: McpViewProps) {
               return (
                 <button
                   type="button"
+                  data-testid="mcp-available-app-card"
+                  data-mcp-name={entry.name}
                   disabled={connected() || !canConnect() || connecting()}
                   onClick={() => {
                     if (connected()) return;
@@ -453,6 +457,8 @@ export default function McpView(props: McpViewProps) {
                     {/* Clickable row */}
                     <button
                       type="button"
+                      data-testid="mcp-installed-app-row"
+                      data-mcp-name={entry.name}
                       class="w-full text-left px-4 py-3.5"
                       onClick={() => props.setSelectedMcp(isSelected() ? null : entry.name)}
                     >

@@ -21,6 +21,11 @@ export type McpRuntimeStatusRefresherOptions<
   client: () => Client | null | undefined;
   currentEntries: () => McpServerEntry[];
   loadStatus: (client: Client, directory: string) => Promise<McpStatusMap>;
+  refreshRuntimeTokens?: (input: {
+    directory: string;
+    entries: McpServerEntry[];
+    status: McpStatusMap;
+  }) => Promise<boolean>;
   setStatuses: (statuses: McpStatusMap) => void;
   recordEvent?: McpRuntimeStatusRefreshEvent;
 };
@@ -37,6 +42,28 @@ export function filterConfiguredMcpStatuses(
   return Object.fromEntries(
     Object.entries(status).filter(([name]) => configured.has(name)),
   ) as McpStatusMap;
+}
+
+const VESLO_CONNECTOR_TOKEN_HEADER = "x-veslo-connector-token";
+const RUNTIME_TOKEN_AUTH_ERROR_RE = /\b(401|unauthorized|invalid token|expired token|token expired)\b/i;
+
+export function mcpRuntimeTokenRefreshCandidates(
+  status: McpStatusMap,
+  entries: McpServerEntry[],
+) {
+  return entries
+    .filter((entry) => {
+      if (entry.config.type !== "remote") return false;
+      const headers = entry.config.headers ?? {};
+      const hasConnectorToken = Object.keys(headers).some(
+        (key) => key.trim().toLowerCase() === VESLO_CONNECTOR_TOKEN_HEADER,
+      );
+      if (!hasConnectorToken) return false;
+
+      const runtimeStatus = status[entry.name];
+      return runtimeStatus?.status === "failed" && RUNTIME_TOKEN_AUTH_ERROR_RE.test(runtimeStatus.error);
+    })
+    .map((entry) => entry.name);
 }
 
 export function createMcpRuntimeStatusRefresher<
@@ -88,7 +115,28 @@ export function createMcpRuntimeStatusRefresher<
           });
           return;
         }
-        const status = await options.loadStatus(activeClient, directory);
+        let status = await options.loadStatus(activeClient, directory);
+        if (!isCurrentTarget(workspaceId, directory, entriesKey)) return;
+        const activeRuntimeActivityIdBeforeRefresh = options.activeRuntimeActivityId()?.trim();
+        if (activeRuntimeActivityIdBeforeRefresh) {
+          options.recordEvent?.("runtime-status-result-skip-active-send", {
+            activeWorkspaceId: workspaceId,
+            activeSendTraceId: activeRuntimeActivityIdBeforeRefresh,
+            projectDir: directory,
+            phase: "before-refresh",
+          });
+          return;
+        }
+        if (options.refreshRuntimeTokens) {
+          const refreshed = await options.refreshRuntimeTokens({
+            directory,
+            entries,
+            status: filterConfiguredMcpStatuses(status, entries),
+          });
+          if (refreshed) {
+            status = await options.loadStatus(activeClient, directory);
+          }
+        }
         const activeRuntimeActivityIdAfterStatus = options.activeRuntimeActivityId()?.trim();
         if (activeRuntimeActivityIdAfterStatus) {
           options.recordEvent?.("runtime-status-result-skip-active-send", {

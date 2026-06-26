@@ -281,6 +281,16 @@ Common app flows:
 
 Use workspace-scoped URLs whenever possible, including the mounted `/w/:id/...` forms.
 
+### MCP Runtime Token Refresh
+
+For Veslo-managed connector MCP entries, the app may call
+`POST /workspace/:id/mcp/:name/runtime-token/refresh` after an
+authorization-like MCP runtime status failure. The route requires the normal
+client token plus Den context headers, looks up the named catalog item, fetches
+a fresh connector runtime token from Den, and updates only the workspace
+OpenCode MCP config header. It does not perform browser OAuth, does not revoke
+provider grants, and must not be used for custom user-supplied MCP auth.
+
 ### Local Workspace Registration
 
 For desktop-local workspaces, the app should preserve the raw platform path when registering the workspace and include current OpenCode routing metadata when available: `baseUrl`, `directory`, `opencodeUsername`, and `opencodePassword`. A duplicate `POST /workspaces/local` with updated OpenCode metadata may update the existing workspace registration instead of failing as a plain duplicate.
