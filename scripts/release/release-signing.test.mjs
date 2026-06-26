@@ -198,6 +198,10 @@ test("workflow routes signing through the release signing resolver", () => {
   assert.match(workflow, /Upload notarized macOS release assets/);
   assert.match(workflow, /notarize-macos-assets\.sh/);
   assert.match(workflow, /gh release upload "\$RELEASE_TAG"/);
+  assert.match(workflow, /veslo-macos-release-assets/);
+  assert.match(workflow, /app_tar_asset_path="\$asset_dir\/veslo-desktop-darwin-\$\{asset_arch\}\.app\.tar\.gz"/);
+  assert.match(workflow, /cp "\$\{\{ steps\.macos_assets\.outputs\.app_tar_path \}\}" "\$app_tar_asset_path"/);
+  assert.doesNotMatch(workflow, /app_tar_path \}\}#veslo-desktop-darwin/);
   assert.match(workflow, /timeout-minutes:\s*35/);
   assert.match(workflow, /APPLE_API_KEY: \$\{\{ secrets\.APPLE_NOTARY_API_KEY_ID \}\}/);
   assert.match(workflow, /APPLE_API_KEY_PATH: \$\{\{ env\.NOTARY_KEY_PATH \}\}/);

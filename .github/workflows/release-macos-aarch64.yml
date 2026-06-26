@@ -567,11 +567,22 @@ jobs:
         run: |
           set -euo pipefail
           asset_arch="${{ steps.macos_assets.outputs.asset_arch }}"
+          asset_dir="$RUNNER_TEMP/veslo-macos-release-assets"
+          rm -rf "$asset_dir"
+          mkdir -p "$asset_dir"
+
+          app_tar_asset_path="$asset_dir/veslo-desktop-darwin-${asset_arch}.app.tar.gz"
+          app_tar_sig_asset_path="$asset_dir/veslo-desktop-darwin-${asset_arch}.app.tar.gz.sig"
+          dmg_asset_path="$asset_dir/veslo-desktop-darwin-${asset_arch}.dmg"
+
+          cp "${{ steps.macos_assets.outputs.app_tar_path }}" "$app_tar_asset_path"
+          cp "${{ steps.macos_assets.outputs.app_tar_sig_path }}" "$app_tar_sig_asset_path"
+          cp "${{ steps.macos_assets.outputs.dmg_path }}" "$dmg_asset_path"
 
           gh release upload "$RELEASE_TAG" \
-            "${{ steps.macos_assets.outputs.app_tar_path }}#veslo-desktop-darwin-${asset_arch}.app.tar.gz" \
-            "${{ steps.macos_assets.outputs.app_tar_sig_path }}#veslo-desktop-darwin-${asset_arch}.app.tar.gz.sig" \
-            "${{ steps.macos_assets.outputs.dmg_path }}#veslo-desktop-darwin-${asset_arch}.dmg" \
+            "$app_tar_asset_path" \
+            "$app_tar_sig_asset_path" \
+            "$dmg_asset_path" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
 
