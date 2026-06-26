@@ -336,6 +336,255 @@ test("runConversation includes the optional send trace id header", async () => {
   }
 });
 
+test("OpenCode Router client methods use the server-owned /opencode-router namespace", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; body: unknown }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    let body: unknown = null;
+    if (typeof init?.body === "string") {
+      body = JSON.parse(init.body);
+    }
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      body,
+    });
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        status: "ok",
+        channels: { telegram: true, slack: true },
+        items: [],
+        bindings: [],
+        applied: true,
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.opencodeRouterHealth();
+    await client.opencodeRouterBindings({ channel: "telegram", identityId: "identity 1" });
+    await client.opencodeRouterTelegramIdentities();
+    await client.opencodeRouterSlackIdentities();
+    await client.setOpenCodeRouterTelegramToken("workspace 1", "tg-token", 3005);
+    await client.setOpenCodeRouterSlackTokens("workspace 1", "xoxb-token", "xapp-token", 3005);
+    await client.getOpenCodeRouterTelegram("workspace 1");
+    await client.getOpenCodeRouterTelegramIdentities("workspace 1", { healthPort: 3005 });
+    await client.upsertOpenCodeRouterTelegramIdentity(
+      "workspace 1",
+      { id: "private", token: "tg-token", enabled: true, access: "private", pairingCode: "123456" },
+      { healthPort: 3005 },
+    );
+    await client.deleteOpenCodeRouterTelegramIdentity("workspace 1", "identity/1", { healthPort: 3005 });
+    await client.getOpenCodeRouterSlackIdentities("workspace 1", { healthPort: 3005 });
+    await client.upsertOpenCodeRouterSlackIdentity(
+      "workspace 1",
+      { id: "slack", botToken: "xoxb-token", appToken: "xapp-token", enabled: false },
+      { healthPort: 3005 },
+    );
+    await client.deleteOpenCodeRouterSlackIdentity("workspace 1", "slack/1", { healthPort: 3005 });
+    await client.getOpenCodeRouterBindings("workspace 1", {
+      channel: "slack",
+      identityId: "slack 1",
+      healthPort: 3005,
+    });
+    await client.setOpenCodeRouterBinding(
+      "workspace 1",
+      { channel: "slack", identityId: "slack", peerId: "C123", directory: "/tmp/workspace" },
+      { healthPort: 3005 },
+    );
+    await client.sendOpenCodeRouterMessage(
+      "workspace 1",
+      { channel: "telegram", text: "hi", identityId: "identity", peerId: "peer", directory: "/tmp/workspace", autoBind: true },
+      { healthPort: 3005 },
+    );
+    await client.setOpenCodeRouterTelegramEnabled("workspace 1", false, { clearToken: true, healthPort: 3005 });
+
+    assert.deepEqual(
+      calls.map((call) => `${call.method} ${call.url}`),
+      [
+        "GET https://veslo.example/opencode-router/health",
+        "GET https://veslo.example/opencode-router/bindings?channel=telegram&identityId=identity+1",
+        "GET https://veslo.example/opencode-router/identities/telegram",
+        "GET https://veslo.example/opencode-router/identities/slack",
+        "POST https://veslo.example/workspace/workspace%201/opencode-router/telegram-token",
+        "POST https://veslo.example/workspace/workspace%201/opencode-router/slack-tokens",
+        "GET https://veslo.example/workspace/workspace%201/opencode-router/telegram",
+        "GET https://veslo.example/workspace/workspace%201/opencode-router/identities/telegram?healthPort=3005",
+        "POST https://veslo.example/workspace/workspace%201/opencode-router/identities/telegram",
+        "DELETE https://veslo.example/workspace/workspace%201/opencode-router/identities/telegram/identity%2F1?healthPort=3005",
+        "GET https://veslo.example/workspace/workspace%201/opencode-router/identities/slack?healthPort=3005",
+        "POST https://veslo.example/workspace/workspace%201/opencode-router/identities/slack",
+        "DELETE https://veslo.example/workspace/workspace%201/opencode-router/identities/slack/slack%2F1?healthPort=3005",
+        "GET https://veslo.example/workspace/workspace%201/opencode-router/bindings?channel=slack&identityId=slack+1&healthPort=3005",
+        "POST https://veslo.example/workspace/workspace%201/opencode-router/bindings",
+        "POST https://veslo.example/workspace/workspace%201/opencode-router/send",
+        "POST https://veslo.example/workspace/workspace%201/opencode-router/telegram-enabled",
+      ],
+    );
+    assert.equal(calls.some((call) => call.url.includes("/veslo-code-router")), false);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("messaging identities domain facade uses the server-owned /opencode-router namespace", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; body: unknown }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    let body: unknown = null;
+    if (typeof init?.body === "string") {
+      body = JSON.parse(init.body);
+    }
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      body,
+    });
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        status: "ok",
+        channels: { telegram: true, slack: true },
+        items: [],
+        bindings: [],
+        applied: true,
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.identities.health();
+    await client.identities.bindings({ channel: "telegram", identityId: "identity 1" });
+    await client.identities.telegramIdentities();
+    await client.identities.slackIdentities();
+    await client.identities.setTelegramToken("workspace 1", "tg-token", 3005);
+    await client.identities.setSlackTokens("workspace 1", "xoxb-token", "xapp-token", 3005);
+    await client.identities.getTelegram("workspace 1");
+    await client.identities.getTelegramIdentities("workspace 1", { healthPort: 3005 });
+    await client.identities.upsertTelegramIdentity(
+      "workspace 1",
+      { id: "private", token: "tg-token", enabled: true, access: "private", pairingCode: "123456" },
+      { healthPort: 3005 },
+    );
+    await client.identities.deleteTelegramIdentity("workspace 1", "identity/1", { healthPort: 3005 });
+    await client.identities.getSlackIdentities("workspace 1", { healthPort: 3005 });
+    await client.identities.upsertSlackIdentity(
+      "workspace 1",
+      { id: "slack", botToken: "xoxb-token", appToken: "xapp-token", enabled: false },
+      { healthPort: 3005 },
+    );
+    await client.identities.deleteSlackIdentity("workspace 1", "slack/1", { healthPort: 3005 });
+    await client.identities.getBindings("workspace 1", {
+      channel: "slack",
+      identityId: "slack 1",
+      healthPort: 3005,
+    });
+    await client.identities.setBinding(
+      "workspace 1",
+      { channel: "slack", identityId: "slack", peerId: "C123", directory: "/tmp/workspace" },
+      { healthPort: 3005 },
+    );
+    await client.identities.sendMessage(
+      "workspace 1",
+      { channel: "telegram", text: "hi", identityId: "identity", peerId: "peer", directory: "/tmp/workspace", autoBind: true },
+      { healthPort: 3005 },
+    );
+    await client.identities.setTelegramEnabled("workspace 1", false, { clearToken: true, healthPort: 3005 });
+
+    assert.deepEqual(
+      calls.map((call) => `${call.method} ${call.url}`),
+      [
+        "GET https://veslo.example/opencode-router/health",
+        "GET https://veslo.example/opencode-router/bindings?channel=telegram&identityId=identity+1",
+        "GET https://veslo.example/opencode-router/identities/telegram",
+        "GET https://veslo.example/opencode-router/identities/slack",
+        "POST https://veslo.example/workspace/workspace%201/opencode-router/telegram-token",
+        "POST https://veslo.example/workspace/workspace%201/opencode-router/slack-tokens",
+        "GET https://veslo.example/workspace/workspace%201/opencode-router/telegram",
+        "GET https://veslo.example/workspace/workspace%201/opencode-router/identities/telegram?healthPort=3005",
+        "POST https://veslo.example/workspace/workspace%201/opencode-router/identities/telegram",
+        "DELETE https://veslo.example/workspace/workspace%201/opencode-router/identities/telegram/identity%2F1?healthPort=3005",
+        "GET https://veslo.example/workspace/workspace%201/opencode-router/identities/slack?healthPort=3005",
+        "POST https://veslo.example/workspace/workspace%201/opencode-router/identities/slack",
+        "DELETE https://veslo.example/workspace/workspace%201/opencode-router/identities/slack/slack%2F1?healthPort=3005",
+        "GET https://veslo.example/workspace/workspace%201/opencode-router/bindings?channel=slack&identityId=slack+1&healthPort=3005",
+        "POST https://veslo.example/workspace/workspace%201/opencode-router/bindings",
+        "POST https://veslo.example/workspace/workspace%201/opencode-router/send",
+        "POST https://veslo.example/workspace/workspace%201/opencode-router/telegram-enabled",
+      ],
+    );
+    assert.equal(calls.some((call) => call.url.includes("/veslo-code-router")), false);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("OpenCode Router send fallback uses mounted /opencode-router paths", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+    });
+    if (calls.length === 1) {
+      return new Response(JSON.stringify({ code: "not_found", message: "Not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true, sent: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example/w/workspace%201",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.sendOpenCodeRouterMessage("workspace 1", { channel: "telegram", text: "hi" });
+
+    assert.deepEqual(
+      calls.map((call) => `${call.method} ${call.url}`),
+      [
+        "POST https://veslo.example/w/workspace%201/workspace/workspace%201/opencode-router/send",
+        "POST https://veslo.example/w/workspace%201/opencode-router/send",
+      ],
+    );
+    assert.equal(calls.some((call) => call.url.includes("/veslo-code-router")), false);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("requestManagedAiAccessBundle fetches the raw managed gateway bundle with the DEN bearer token", async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; method?: string; headers: Headers; body: string | null }> = [];
@@ -2014,38 +2263,40 @@ test("refreshHubMcp preserves platform connector metadata in card state", async 
         workspaceType: () => "local",
         vesloServerClient: () =>
           ({
-            listHubMcp: async () => ({
-              items: [
-                {
-                  id: "google-drive",
-                  name: "Google Drive",
-                  description: "Find Drive files.",
-                  config: {
-                    type: "remote",
-                    url: "https://api.veslo.work/v1/orgs/org_123/integrations/google/google-drive/mcp",
-                    oauth: false,
-                    headers: {
-                      "X-Veslo-Connector": "google-drive",
+            mcp: {
+              listHub: async () => ({
+                items: [
+                  {
+                    id: "google-drive",
+                    name: "Google Drive",
+                    description: "Find Drive files.",
+                    config: {
+                      type: "remote",
+                      url: "https://api.veslo.work/v1/orgs/org_123/integrations/google/google-drive/mcp",
+                      oauth: false,
+                      headers: {
+                        "X-Veslo-Connector": "google-drive",
+                      },
                     },
+                    authorization: {
+                      type: "veslo-server-oauth",
+                      provider: "google",
+                      connectorId: "google-drive",
+                      scopes: [
+                        "https://www.googleapis.com/auth/drive.readonly",
+                        "https://www.googleapis.com/auth/drive.file",
+                      ],
+                      startPath: "/v1/orgs/org_123/integrations/google/google-drive/oauth/start",
+                      runtimeTokenPath: "/v1/orgs/org_123/integrations/google/google-drive/runtime-token",
+                      statusPath: "/v1/orgs/org_123/integrations/google/connections",
+                      disconnectPath: "/v1/orgs/org_123/integrations/google/google-drive/connection",
+                    },
+                    source: { scope: "platform" },
+                    provider: { id: "google", group: "Google" },
                   },
-                  authorization: {
-                    type: "veslo-server-oauth",
-                    provider: "google",
-                    connectorId: "google-drive",
-                    scopes: [
-                      "https://www.googleapis.com/auth/drive.readonly",
-                      "https://www.googleapis.com/auth/drive.file",
-                    ],
-                    startPath: "/v1/orgs/org_123/integrations/google/google-drive/oauth/start",
-                    runtimeTokenPath: "/v1/orgs/org_123/integrations/google/google-drive/runtime-token",
-                    statusPath: "/v1/orgs/org_123/integrations/google/connections",
-                    disconnectPath: "/v1/orgs/org_123/integrations/google/google-drive/connection",
-                  },
-                  source: { scope: "platform" },
-                  provider: { id: "google", group: "Google" },
-                },
-              ],
-            }),
+                ],
+              }),
+            },
           }) as any,
         vesloServerStatus: () => "connected",
         vesloServerCapabilities: () => ({
@@ -2253,6 +2504,306 @@ test("createVesloServerClient exposes workspace automation endpoints", async () 
     for (const call of calls) {
       assert.equal(call.headers.get("authorization"), "Bearer token-123");
       assert.equal(call.headers.get("x-veslo-host-token"), "host-token-123");
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("automations domain facade exposes workspace automation endpoints", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; headers: Headers; body: unknown }> = [];
+  const automation = {
+    id: "auto-1",
+    workspaceId: "ws 1",
+    name: "Daily",
+    enabled: true,
+    status: "active",
+    schedule: { kind: "daily", hour: 9, minute: 0 },
+    prompt: "Run",
+    createdAt: "2026-06-14T00:00:00.000Z",
+    updatedAt: "2026-06-14T00:00:00.000Z",
+  };
+  const run = {
+    id: "run-1",
+    automationId: "auto-1",
+    scheduledFor: "2026-06-15T09:00:00.000Z",
+    status: "queued",
+    createdSession: false,
+  };
+
+  globalThis.fetch = async (input, init) => {
+    let body: unknown = null;
+    if (typeof init?.body === "string") {
+      body = JSON.parse(init.body);
+    }
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body,
+    });
+    return new Response(
+      JSON.stringify({
+        items: [],
+        updatedAt: "2026-06-14T00:00:00.000Z",
+        automation,
+        run,
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.automations.list("ws 1");
+    await client.automations.create("ws 1", {
+      name: "Daily",
+      schedule: { kind: "daily", hour: 9, minute: 0 },
+      prompt: "Run",
+      enabled: true,
+    });
+    await client.automations.update("ws 1", "auto/1", { enabled: false });
+    await client.automations.delete("ws 1", "auto/1");
+    await client.automations.run("ws 1", "auto/1");
+    await client.automations.listRuns("ws 1", "auto/1");
+
+    assert.deepEqual(
+      calls.map((call) => ({ url: call.url, method: call.method })),
+      [
+        { url: "https://veslo.example/workspace/ws%201/automations", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/automations", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/automations/auto%2F1", method: "PATCH" },
+        { url: "https://veslo.example/workspace/ws%201/automations/auto%2F1", method: "DELETE" },
+        { url: "https://veslo.example/workspace/ws%201/automations/auto%2F1/run", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/automations/auto%2F1/runs", method: "GET" },
+      ],
+    );
+    assert.deepEqual(calls[1]?.body, {
+      name: "Daily",
+      schedule: { kind: "daily", hour: 9, minute: 0 },
+      prompt: "Run",
+      enabled: true,
+    });
+    assert.deepEqual(calls[2]?.body, { enabled: false });
+    for (const call of calls) {
+      assert.equal(call.headers.get("authorization"), "Bearer token-123");
+      assert.equal(call.headers.get("x-veslo-host-token"), "host-token-123");
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("plugins domain facade exposes workspace plugin endpoints", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; headers: Headers; body: unknown }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    let body: unknown = null;
+    if (typeof init?.body === "string") {
+      body = JSON.parse(init.body);
+    }
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body,
+    });
+    return new Response(
+      JSON.stringify({
+        items: [],
+        loadOrder: [],
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.plugins.list("ws 1", { includeGlobal: true });
+    await client.plugins.add("ws 1", "veslo/example-plugin");
+    await client.plugins.remove("ws 1", "plugin/name");
+
+    assert.deepEqual(
+      calls.map((call) => ({ url: call.url, method: call.method })),
+      [
+        { url: "https://veslo.example/workspace/ws 1/plugins?includeGlobal=true", method: "GET" },
+        { url: "https://veslo.example/workspace/ws 1/plugins", method: "POST" },
+        { url: "https://veslo.example/workspace/ws 1/plugins/plugin%2Fname", method: "DELETE" },
+      ],
+    );
+    assert.deepEqual(calls[1]?.body, { spec: "veslo/example-plugin" });
+    for (const call of calls) {
+      assert.equal(call.headers.get("authorization"), "Bearer token-123");
+      assert.equal(call.headers.get("x-veslo-host-token"), "host-token-123");
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("commands domain facade exposes workspace command endpoints", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; headers: Headers; body: unknown }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    let body: unknown = null;
+    if (typeof init?.body === "string") {
+      body = JSON.parse(init.body);
+    }
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body,
+    });
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        items: [],
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.commands.list("ws 1", "global");
+    await client.commands.upsert("ws 1", {
+      name: "ship",
+      description: "Ship it",
+      template: "pnpm test",
+      agent: "build",
+      model: "gpt-5.1",
+      subtask: true,
+    });
+    await client.commands.delete("ws 1", "command/name");
+
+    assert.deepEqual(
+      calls.map((call) => ({ url: call.url, method: call.method })),
+      [
+        { url: "https://veslo.example/workspace/ws 1/commands?scope=global", method: "GET" },
+        { url: "https://veslo.example/workspace/ws 1/commands", method: "POST" },
+        { url: "https://veslo.example/workspace/ws 1/commands/command%2Fname", method: "DELETE" },
+      ],
+    );
+    assert.deepEqual(calls[1]?.body, {
+      name: "ship",
+      description: "Ship it",
+      template: "pnpm test",
+      agent: "build",
+      model: "gpt-5.1",
+      subtask: true,
+    });
+    for (const call of calls) {
+      assert.equal(call.headers.get("authorization"), "Bearer token-123");
+      assert.equal(call.headers.get("x-veslo-host-token"), "host-token-123");
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("mcp domain facade exposes hub and workspace mcp endpoints", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; headers: Headers; body: unknown }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    let body: unknown = null;
+    if (typeof init?.body === "string") {
+      body = JSON.parse(init.body);
+    }
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body,
+    });
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        items: [],
+        name: "google-gmail",
+        path: "/workspace/.opencode/mcp/google-gmail.json",
+        action: "updated",
+        written: 1,
+        skipped: 0,
+        expiresAt: null,
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.mcp.listHub({ denToken: "den-token", denOrgId: "org-123" });
+    await client.mcp.installHub("ws 1", "google/gmail", { denToken: "den-token", denOrgId: "org-123" });
+    await client.mcp.list("ws 1");
+    await client.mcp.add("ws 1", { name: "local", config: { type: "local", command: ["node", "server.js"] } });
+    await client.mcp.remove("ws 1", "local/name");
+    await client.mcp.refreshRuntimeToken("ws 1", "google-gmail", { denToken: "den-token", denOrgId: "org-123" });
+    await client.mcp.logoutAuth("ws 1", "google-gmail");
+
+    assert.deepEqual(
+      calls.map((call) => ({ url: call.url, method: call.method })),
+      [
+        { url: "https://veslo.example/hub/mcp", method: "GET" },
+        { url: "https://veslo.example/workspace/ws 1/mcp/hub/google%2Fgmail", method: "POST" },
+        { url: "https://veslo.example/workspace/ws 1/mcp", method: "GET" },
+        { url: "https://veslo.example/workspace/ws 1/mcp", method: "POST" },
+        { url: "https://veslo.example/workspace/ws 1/mcp/local%2Fname", method: "DELETE" },
+        { url: "https://veslo.example/workspace/ws 1/mcp/google-gmail/runtime-token/refresh", method: "POST" },
+        { url: "https://veslo.example/workspace/ws 1/mcp/google-gmail/auth", method: "DELETE" },
+      ],
+    );
+    assert.deepEqual(calls[3]?.body, {
+      name: "local",
+      config: { type: "local", command: ["node", "server.js"] },
+    });
+    for (const call of calls) {
+      assert.equal(call.headers.get("authorization"), "Bearer token-123");
+      assert.equal(call.headers.get("x-veslo-host-token"), "host-token-123");
+    }
+    for (const index of [0, 1, 5]) {
+      assert.equal(calls[index]?.headers.get("x-veslo-den-token"), "den-token");
+      assert.equal(calls[index]?.headers.get("x-veslo-den-org-id"), "org-123");
+    }
+    for (const index of [2, 3, 4, 6]) {
+      assert.equal(calls[index]?.headers.has("x-veslo-den-token"), false);
+      assert.equal(calls[index]?.headers.has("x-veslo-den-org-id"), false);
     }
   } finally {
     globalThis.fetch = previousFetch;

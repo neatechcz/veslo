@@ -38,7 +38,7 @@ export type IdentitiesViewProps = {
   developerMode: boolean;
 };
 
-const OPENCODE_ROUTER_AGENT_FILE_PATH = ".opencode/agents/veslo-code-router.md";
+const OPENCODE_ROUTER_AGENT_FILE_PATH = ".opencode/agents/opencode-router.md";
 const OPENCODE_ROUTER_AGENT_FILE_TEMPLATE = `# OpenCodeRouter Messaging Agent
 
 Use this file to define how the assistant responds in Slack/Telegram for this workspace.
@@ -386,7 +386,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setSendError(null);
     setSendResult(null);
     try {
-      const result = await client.sendOpenCodeRouterMessage(id, {
+      const result = await client.identities.sendMessage(id, {
         channel: sendChannel(),
         text,
         ...(sendDirectory().trim() ? { directory: sendDirectory().trim() } : {}),
@@ -433,10 +433,10 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       }
 
       const [healthRes, tgRes, slackRes, telegramInfo] = await Promise.all([
-        client.opencodeRouterHealth(),
-        client.getOpenCodeRouterTelegramIdentities(id),
-        client.getOpenCodeRouterSlackIdentities(id),
-        client.getOpenCodeRouterTelegram(id).catch(e => { reportError(e, "identities.telegramRouter"); return null; }),
+        client.identities.health(),
+        client.identities.getTelegramIdentities(id),
+        client.identities.getSlackIdentities(id),
+        client.identities.getTelegram(id).catch(e => { reportError(e, "identities.telegramRouter"); return null; }),
       ]);
 
       setTelegramBotUsername(getTelegramUsernameFromResult(telegramInfo));
@@ -520,7 +520,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setTelegramStatus(null);
     setTelegramError(null);
     try {
-      const result = await client.upsertOpenCodeRouterTelegramIdentity(id, {
+      const result = await client.identities.upsertTelegramIdentity(id, {
         token,
         enabled: telegramEnabled(),
         access,
@@ -573,7 +573,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setTelegramStatus(null);
     setTelegramError(null);
     try {
-      const result = await client.deleteOpenCodeRouterTelegramIdentity(id, identityId);
+      const result = await client.identities.deleteTelegramIdentity(id, identityId);
       if (result.ok) {
         setTelegramBotUsername(null);
         setTelegramPairingCode(null);
@@ -619,7 +619,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setSlackStatus(null);
     setSlackError(null);
     try {
-      const result = await client.upsertOpenCodeRouterSlackIdentity(id, { botToken, appToken, enabled: slackEnabled() });
+      const result = await client.identities.upsertSlackIdentity(id, { botToken, appToken, enabled: slackEnabled() });
       if (result.ok) {
         setSlackStatus(result.applied === false ? __vesloT("identities.saved_pending_apply", __vesloCurrentLocale()) : __vesloT("identities.saved", __vesloCurrentLocale()));
       } else {
@@ -651,7 +651,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setSlackStatus(null);
     setSlackError(null);
     try {
-      const result = await client.deleteOpenCodeRouterSlackIdentity(id, identityId);
+      const result = await client.identities.deleteSlackIdentity(id, identityId);
       if (result.ok) {
         setSlackStatus(result.applied === false ? __vesloT("identities.deleted_pending_apply", __vesloCurrentLocale()) : __vesloT("identities.deleted", __vesloCurrentLocale()));
       } else {

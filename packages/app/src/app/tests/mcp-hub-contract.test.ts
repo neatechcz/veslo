@@ -16,13 +16,26 @@ test("extensions store wires hub mcp auth and actions", () => {
   const noAuthBranchSource = refreshHubMcpSource.match(/if \(!denToken \|\| !denOrgId\)\s*\{[\s\S]*?return;/)?.[0] ?? "";
 
   assert.match(extensionsSource, /readDenAuth\(\)/);
-  assert.match(extensionsSource, /listHubMcp/);
+  assert.match(extensionsSource, /vesloClient\.mcp\.listHub/);
   assert.match(extensionsSource, /installHubMcp/);
   assert.match(extensionsSource, /hubMcpCards/);
   assert.match(refreshHubMcpSource, /translate\("mcp\.org_catalog_placeholder"\)/);
   assert.doesNotMatch(refreshHubMcpSource, /translate\("skills\.org_catalog_placeholder"\)/);
   assert.equal(noAuthBranchSource.length > 0, true);
   assert.doesNotMatch(noAuthBranchSource, /hubMcpLoaded = true/);
+});
+
+test("extensions store uses the mcp domain facade for hub mcp server requests", () => {
+  assert.match(extensionsSource, /vesloClient\.mcp\.listHub/);
+  assert.match(extensionsSource, /vesloClient\.mcp\.installHub/);
+  assert.doesNotMatch(extensionsSource, /\(vesloClient as any\)\.(?:listHubMcp|installHubMcp)/);
+});
+
+test("App uses the mcp domain facade for workspace mcp server requests", () => {
+  assert.match(appSource, /remoteContext\.vesloClient\.mcp\.list/);
+  assert.match(appSource, /vesloClient\.mcp\.(?:add|remove|refreshRuntimeToken|logoutAuth)/);
+  assert.doesNotMatch(appSource, /remoteContext\.vesloClient\.listMcp\(/);
+  assert.doesNotMatch(appSource, /vesloClient\.(?:addMcp|removeMcp|refreshMcpRuntimeToken|logoutMcpAuth)\(/);
 });
 
 test("extensions store retries hub mcp after Veslo server auth context becomes ready", () => {

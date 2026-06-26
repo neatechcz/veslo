@@ -2013,7 +2013,7 @@ async function fetchOpenCodeRouterHealth(baseUrl: string): Promise<OpenCodeRoute
 }
 
 async function fetchOpenCodeRouterHealthViaVeslo(vesloUrl: string, token: string): Promise<OpenCodeRouterHealthSnapshot> {
-  const url = `${vesloUrl.replace(/\/$/, "")}/veslo-code-router/health`;
+  const url = `${vesloUrl.replace(/\/$/, "")}/opencode-router/health`;
   return (await fetchJson(url, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -3147,9 +3147,9 @@ async function runChecks(input: {
   await fetchJson(`${baseUrl}/workspace/${workspaceId}/config`, { headers: { ...headers, ...hostHeaders } });
 
   // Smoke test: mounted opencodeRouter proxy and auth behavior.
-  // - /w/:id/veslo-code-router/health is client-readable
-  // - other /w/:id/veslo-code-router/* requires host/owner auth
-  const owMountBase = `${baseUrl}/w/${encodeURIComponent(workspaceId)}/veslo-code-router`;
+  // - /w/:id/opencode-router/health is client-readable
+  // - other /w/:id/opencode-router/* requires host/owner auth
+  const owMountBase = `${baseUrl}/w/${encodeURIComponent(workspaceId)}/opencode-router`;
   const owHealthRes = await fetch(`${owMountBase}/health`, {
     headers,
     signal: AbortSignal.timeout(3000),
@@ -5771,7 +5771,7 @@ async function runStart(args: ParsedArgs) {
         onCopySelection: async (text) => copyToClipboard(text),
         onRouterHealth: async () => fetchOpenCodeRouterHealthViaVeslo(vesloBaseUrl, vesloToken),
         onRouterTelegramIdentities: async () => {
-          const url = `${vesloBaseUrl.replace(/\/$/, "")}/veslo-code-router/identities/telegram`;
+          const url = `${vesloBaseUrl.replace(/\/$/, "")}/opencode-router/identities/telegram`;
           const result = await fetchJson(url, {
             headers: {
               "X-Veslo-Host-Token": vesloHostToken,
@@ -5781,7 +5781,7 @@ async function runStart(args: ParsedArgs) {
           return { items };
         },
         onRouterSlackIdentities: async () => {
-          const url = `${vesloBaseUrl.replace(/\/$/, "")}/veslo-code-router/identities/slack`;
+          const url = `${vesloBaseUrl.replace(/\/$/, "")}/opencode-router/identities/slack`;
           const result = await fetchJson(url, {
             headers: {
               "X-Veslo-Host-Token": vesloHostToken,
@@ -5792,7 +5792,7 @@ async function runStart(args: ParsedArgs) {
         },
         onRouterSetGroupsEnabled: async (enabled) => {
           try {
-            const url = `${vesloBaseUrl.replace(/\/$/, "")}/veslo-code-router/config/groups`;
+            const url = `${vesloBaseUrl.replace(/\/$/, "")}/opencode-router/config/groups`;
             await fetchJson(url, {
               method: "POST",
               headers: {
@@ -5808,7 +5808,7 @@ async function runStart(args: ParsedArgs) {
         },
         onRouterSetTelegramToken: async (token) => {
           try {
-            const url = `${vesloBaseUrl.replace(/\/$/, "")}/veslo-code-router/identities/telegram`;
+            const url = `${vesloBaseUrl.replace(/\/$/, "")}/opencode-router/identities/telegram`;
             await fetchJson(url, {
               method: "POST",
               headers: {
@@ -5824,7 +5824,7 @@ async function runStart(args: ParsedArgs) {
         },
         onRouterSetSlackTokens: async (botToken, appToken) => {
           try {
-            const url = `${vesloBaseUrl.replace(/\/$/, "")}/veslo-code-router/identities/slack`;
+            const url = `${vesloBaseUrl.replace(/\/$/, "")}/opencode-router/identities/slack`;
             await fetchJson(url, {
               method: "POST",
               headers: {

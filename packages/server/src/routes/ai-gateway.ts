@@ -1,0 +1,86 @@
+import { addRoute, type Route } from "../routing.js";
+import type { Actor } from "../types.js";
+
+type AiGatewayProxyRequestInput = {
+  request: Request;
+  url: URL;
+  actor?: Actor;
+  gatewayPath: string;
+  auth: "caller" | "gateway-token";
+  preserveAiAccessToken?: boolean;
+  requireSessionId?: boolean;
+};
+
+type AiGatewayReadinessRequestInput = {
+  request: Request;
+  url: URL;
+};
+
+export type AiGatewayRouteDependencies = {
+  proxyAiGatewayRequest: (input: AiGatewayProxyRequestInput) => Promise<Response>;
+  proxyAiGatewayReadinessRequest: (input: AiGatewayReadinessRequestInput) => Promise<Response>;
+};
+
+export function registerAiGatewayRoutes(routes: Route[], dependencies: AiGatewayRouteDependencies): void {
+  addRoute(routes, "GET", "/ai-gateway/me/ai-access", "client", async (ctx) => {
+    return dependencies.proxyAiGatewayRequest({
+      request: ctx.request,
+      url: ctx.url,
+      actor: ctx.actor,
+      gatewayPath: "/api/me/ai-access",
+      auth: "caller",
+      preserveAiAccessToken: true,
+    });
+  });
+
+  addRoute(routes, "GET", "/ai-gateway/readiness", "client", async (ctx) => {
+    return dependencies.proxyAiGatewayReadinessRequest({
+      request: ctx.request,
+      url: ctx.url,
+    });
+  });
+
+  addRoute(routes, "POST", "/ai-gateway/providers/openai/v1/chat/completions", "client", async (ctx) => {
+    return dependencies.proxyAiGatewayRequest({
+      request: ctx.request,
+      url: ctx.url,
+      actor: ctx.actor,
+      gatewayPath: "/providers/openai/v1/chat/completions",
+      auth: "gateway-token",
+      requireSessionId: true,
+    });
+  });
+
+  addRoute(routes, "POST", "/ai-gateway/providers/anthropic/v1/messages", "client", async (ctx) => {
+    return dependencies.proxyAiGatewayRequest({
+      request: ctx.request,
+      url: ctx.url,
+      actor: ctx.actor,
+      gatewayPath: "/providers/anthropic/v1/messages",
+      auth: "gateway-token",
+      requireSessionId: true,
+    });
+  });
+
+  addRoute(routes, "POST", "/ai-gateway/providers/codex_oauth/v1/chat/completions", "client", async (ctx) => {
+    return dependencies.proxyAiGatewayRequest({
+      request: ctx.request,
+      url: ctx.url,
+      actor: ctx.actor,
+      gatewayPath: "/providers/codex_oauth/v1/chat/completions",
+      auth: "gateway-token",
+      requireSessionId: true,
+    });
+  });
+
+  addRoute(routes, "POST", "/ai-gateway/providers/openai_compatible/v1/chat/completions", "client", async (ctx) => {
+    return dependencies.proxyAiGatewayRequest({
+      request: ctx.request,
+      url: ctx.url,
+      actor: ctx.actor,
+      gatewayPath: "/providers/openai_compatible/v1/chat/completions",
+      auth: "gateway-token",
+      requireSessionId: true,
+    });
+  });
+}

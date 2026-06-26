@@ -177,7 +177,7 @@ Plochý objekt `VesloServerClient` (~80 metod) přeorganizovat na doménové nam
 return {
   // Legacy flat API (deprecated, zachovat pro přechod)
   health: () => ...,
-  
+
   // Nové domain namespaces
   openCodeRouter: { health, bindings, telegramIdentities, slackIdentities, ... },
   conversations: { list, create, getTranscript, submitRun, abort },

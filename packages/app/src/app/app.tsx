@@ -7772,7 +7772,7 @@ export default function App() {
 
     const [skillsResponse, mcpResponse] = await Promise.all([
       remoteContext.vesloClient.listSkills(remoteContext.workspaceId, { includeGlobal: true }),
-      remoteContext.vesloClient.listMcp(remoteContext.workspaceId),
+      remoteContext.vesloClient.mcp.list(remoteContext.workspaceId),
     ]);
     const skillItems = Array.isArray(skillsResponse.items) ? skillsResponse.items : [];
     const workspaceId = scope.workspaceId || workspace.id || directory;
@@ -9394,12 +9394,12 @@ export default function App() {
         readyWorkspaces.map(async (workspace) => {
           const serverWorkspaceId = workspace.serverWorkspaceId!;
           try {
-            const response = await client.listAutomations(serverWorkspaceId);
+            const response = await client.automations.list(serverWorkspaceId);
             const items = Array.isArray(response.items) ? response.items : [];
             const runEntries = await Promise.all(
               items.map(async (automation) => {
                 try {
-                  const runs = await client.listAutomationRuns(serverWorkspaceId, automation.id);
+                  const runs = await client.automations.listRuns(serverWorkspaceId, automation.id);
                   return [automation.id, Array.isArray(runs.items) ? runs.items : []] as const;
                 } catch {
                   return [automation.id, []] as const;
@@ -9488,28 +9488,28 @@ export default function App() {
 
   const createAutomation = async (workspaceId: string, payload: VesloAutomationCreatePayload) => {
     const client = requireAutomationClient(workspaceId);
-    const response = await client.createAutomation(workspaceId, payload);
+    const response = await client.automations.create(workspaceId, payload);
     upsertAutomationItem(workspaceId, response.automation);
     setScheduledJobsUpdatedAt(Date.now());
   };
 
   const updateAutomation = async (workspaceId: string, automationId: string, payload: VesloAutomationUpdatePayload) => {
     const client = requireAutomationClient(workspaceId);
-    const response = await client.updateAutomation(workspaceId, automationId, payload);
+    const response = await client.automations.update(workspaceId, automationId, payload);
     upsertAutomationItem(workspaceId, response.automation);
     setScheduledJobsUpdatedAt(Date.now());
   };
 
   const deleteAutomation = async (workspaceId: string, automationId: string) => {
     const client = requireAutomationClient(workspaceId);
-    const response = await client.deleteAutomation(workspaceId, automationId);
+    const response = await client.automations.delete(workspaceId, automationId);
     upsertAutomationItem(workspaceId, response.automation);
     setScheduledJobsUpdatedAt(Date.now());
   };
 
   const runAutomation = async (workspaceId: string, automationId: string) => {
     const client = requireAutomationClient(workspaceId);
-    const response = await client.runAutomation(workspaceId, automationId);
+    const response = await client.automations.run(workspaceId, automationId);
     const key = automationItemKey(workspaceId, automationId);
     setAutomationItems((current) =>
       current.map((item) =>
@@ -9920,7 +9920,7 @@ export default function App() {
 
     try {
       if (canUseVesloServer) {
-        await vesloClient.addMcp(vesloWorkspaceId, {
+        await vesloClient.mcp.add(vesloWorkspaceId, {
           name: "notion",
           config: {
             type: "remote",
@@ -9995,7 +9995,7 @@ export default function App() {
         !resolvedVesloCapabilities()?.mcp?.write ||
         !denToken ||
         !denOrgId ||
-        typeof vesloClient.refreshMcpRuntimeToken !== "function"
+        typeof vesloClient.mcp.refreshRuntimeToken !== "function"
       ) {
         return false;
       }
@@ -10003,7 +10003,7 @@ export default function App() {
       let refreshed = false;
       for (const name of candidates) {
         try {
-          await vesloClient.refreshMcpRuntimeToken(vesloWorkspaceId, name, {
+          await vesloClient.mcp.refreshRuntimeToken(vesloWorkspaceId, name, {
             denToken,
             denOrgId,
           });
@@ -10253,7 +10253,7 @@ export default function App() {
       }
 
       if (canUseVesloServer && vesloClient && vesloWorkspaceId) {
-        await vesloClient.addMcp(vesloWorkspaceId, {
+        await vesloClient.mcp.add(vesloWorkspaceId, {
           name: slug,
           config: mcpEntryConfig,
         });
@@ -10456,7 +10456,7 @@ export default function App() {
 
     try {
       if (canUseVesloServer && vesloClient && vesloWorkspaceId) {
-        await vesloClient.logoutMcpAuth(vesloWorkspaceId, safeName);
+        await vesloClient.mcp.logoutAuth(vesloWorkspaceId, safeName);
       } else {
         try {
           await activeClient.mcp.disconnect({ directory: resolvedProjectDir, name: safeName });
@@ -10503,7 +10503,7 @@ export default function App() {
       }
 
       if (canUseVesloServer && vesloClient && vesloWorkspaceId) {
-        await vesloClient.removeMcp(vesloWorkspaceId, name);
+        await vesloClient.mcp.remove(vesloWorkspaceId, name);
       } else {
         const projectDir = workspaceProjectDir().trim();
         if (!projectDir) {

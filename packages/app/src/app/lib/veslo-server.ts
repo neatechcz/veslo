@@ -15,6 +15,11 @@ import type { ScheduledJob } from "./tauri";
 import { mergeVesloServerSettingsWithEnv } from "./cloud-policy";
 import { fetchWithTimeout } from "./http";
 import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
+import { createAutomationsClient } from "./veslo-server-domains/automations";
+import { createCommandsClient } from "./veslo-server-domains/commands";
+import { createMessagingIdentitiesClient } from "./veslo-server-domains/messaging-identities";
+import { createMcpClient } from "./veslo-server-domains/mcp";
+import { createPluginsClient } from "./veslo-server-domains/plugins";
 
 export type VesloServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "veslo" | "opencode" };
@@ -2582,23 +2587,55 @@ export function createVesloServerClient(options: {
     soulMemory: 30_000,
   };
 
+  const identities = createMessagingIdentitiesClient({
+    baseUrl,
+    token,
+    hostToken,
+    timeoutMs: timeouts.opencodeRouter,
+    mountedWorkspaceId: parseVesloWorkspaceIdFromUrl(baseUrl),
+    requestJson,
+    requestJsonRaw,
+    isNotFoundError: (error) => error instanceof VesloServerError && error.status === 404,
+  });
+  const automations = createAutomationsClient({
+    baseUrl,
+    token,
+    hostToken,
+    requestJson,
+  });
+  const plugins = createPluginsClient({
+    baseUrl,
+    token,
+    hostToken,
+    requestJson,
+  });
+  const commands = createCommandsClient({
+    baseUrl,
+    token,
+    hostToken,
+    requestJson,
+  });
+  const mcp = createMcpClient({
+    baseUrl,
+    token,
+    hostToken,
+    requestJson,
+  });
+
   return {
     baseUrl,
     token,
+    identities,
+    automations,
+    plugins,
+    commands,
+    mcp,
     health: () =>
       requestJson<{ ok: boolean; version: string; uptimeMs: number }>(baseUrl, "/health", { token, hostToken, timeoutMs: timeouts.health }),
     status: () => requestJson<VesloServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
     capabilities: () => requestJson<VesloServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
-    opencodeRouterHealth: () =>
-      requestJsonRaw<VesloOpenCodeRouterHealthSnapshot>(baseUrl, "/veslo-code-router/health", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
-    opencodeRouterBindings: (filters?: { channel?: string; identityId?: string }) => {
-      const search = new URLSearchParams();
-      if (filters?.channel?.trim()) search.set("channel", filters.channel.trim());
-      if (filters?.identityId?.trim()) search.set("identityId", filters.identityId.trim());
-      const suffix = search.toString();
-      const path = suffix ? `/veslo-code-router/bindings?${suffix}` : "/veslo-code-router/bindings";
-      return requestJsonRaw<VesloOpenCodeRouterBindingsResult>(baseUrl, path, { token, hostToken, timeoutMs: timeouts.opencodeRouter });
-    },
+    opencodeRouterHealth: identities.health,
+    opencodeRouterBindings: identities.bindings,
     getMyAiAccess: (userToken: string) =>
       requestJson<VesloManagedAiAccessBundle>(baseUrl, "/ai-gateway/me/ai-access", {
         token,
@@ -2606,10 +2643,8 @@ export function createVesloServerClient(options: {
         timeoutMs: timeouts.aiAccess,
         extraHeaders: buildGatewayCallerHeaders(userToken),
       }),
-    opencodeRouterTelegramIdentities: () =>
-      requestJsonRaw<VesloOpenCodeRouterTelegramIdentitiesResult>(baseUrl, "/veslo-code-router/identities/telegram", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
-    opencodeRouterSlackIdentities: () =>
-      requestJsonRaw<VesloOpenCodeRouterSlackIdentitiesResult>(baseUrl, "/veslo-code-router/identities/slack", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
+    opencodeRouterTelegramIdentities: identities.telegramIdentities,
+    opencodeRouterSlackIdentities: identities.slackIdentities,
     listWorkspaces: () => requestJson<VesloWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
     listSessionArchives: () =>
       requestJson<{ items: VesloSessionArchiveRecord[] }>(baseUrl, "/session-archives", {
@@ -2849,219 +2884,19 @@ export function createVesloServerClient(options: {
         `/workspace/${workspaceId}/config`,
         { token, hostToken, timeoutMs: timeouts.config },
       ),
-    setOpenCodeRouterTelegramToken: (
-      workspaceId: string,
-      tokenValue: string,
-      healthPort?: number | null,
-    ) =>
-      requestJson<VesloOpenCodeRouterTelegramResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/telegram-token`,
-        {
-          token,
-          hostToken,
-          method: "POST",
-          body: { token: tokenValue, healthPort },
-          timeoutMs: timeouts.opencodeRouter,
-        },
-      ),
-    setOpenCodeRouterSlackTokens: (
-      workspaceId: string,
-      botToken: string,
-      appToken: string,
-      healthPort?: number | null,
-    ) =>
-      requestJson<VesloOpenCodeRouterSlackResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/slack-tokens`,
-        {
-          token,
-          hostToken,
-          method: "POST",
-          body: { botToken, appToken, healthPort },
-          timeoutMs: timeouts.opencodeRouter,
-        },
-      ),
-    getOpenCodeRouterTelegram: (workspaceId: string) =>
-      requestJson<VesloOpenCodeRouterTelegramInfo>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/telegram`,
-        { token, hostToken, timeoutMs: timeouts.opencodeRouter },
-      ),
-    getOpenCodeRouterTelegramIdentities: (workspaceId: string, options?: { healthPort?: number | null }) => {
-      const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJson<VesloOpenCodeRouterTelegramIdentitiesResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/identities/telegram${query}`,
-        { token, hostToken, timeoutMs: timeouts.opencodeRouter },
-      );
-    },
-    upsertOpenCodeRouterTelegramIdentity: (
-      workspaceId: string,
-      input: { id?: string; token: string; enabled?: boolean; access?: "public" | "private"; pairingCode?: string },
-      options?: { healthPort?: number | null },
-    ) =>
-      requestJson<VesloOpenCodeRouterTelegramIdentityUpsertResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/identities/telegram`,
-        {
-          token,
-          hostToken,
-          method: "POST",
-          body: {
-            ...(input.id?.trim() ? { id: input.id.trim() } : {}),
-            token: input.token,
-            ...(typeof input.enabled === "boolean" ? { enabled: input.enabled } : {}),
-            ...(input.access ? { access: input.access } : {}),
-            ...(input.pairingCode?.trim() ? { pairingCode: input.pairingCode.trim() } : {}),
-            healthPort: options?.healthPort ?? null,
-          },
-        },
-      ),
-    deleteOpenCodeRouterTelegramIdentity: (workspaceId: string, identityId: string, options?: { healthPort?: number | null }) => {
-      const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJson<VesloOpenCodeRouterTelegramIdentityDeleteResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/identities/telegram/${encodeURIComponent(identityId)}${query}`,
-        { token, hostToken, method: "DELETE" },
-      );
-    },
-    getOpenCodeRouterSlackIdentities: (workspaceId: string, options?: { healthPort?: number | null }) => {
-      const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJson<VesloOpenCodeRouterSlackIdentitiesResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/identities/slack${query}`,
-        { token, hostToken },
-      );
-    },
-    upsertOpenCodeRouterSlackIdentity: (
-      workspaceId: string,
-      input: { id?: string; botToken: string; appToken: string; enabled?: boolean },
-      options?: { healthPort?: number | null },
-    ) =>
-      requestJson<VesloOpenCodeRouterSlackIdentityUpsertResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/identities/slack`,
-        {
-          token,
-          hostToken,
-          method: "POST",
-          body: {
-            ...(input.id?.trim() ? { id: input.id.trim() } : {}),
-            botToken: input.botToken,
-            appToken: input.appToken,
-            ...(typeof input.enabled === "boolean" ? { enabled: input.enabled } : {}),
-            healthPort: options?.healthPort ?? null,
-          },
-        },
-      ),
-    deleteOpenCodeRouterSlackIdentity: (workspaceId: string, identityId: string, options?: { healthPort?: number | null }) => {
-      const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJson<VesloOpenCodeRouterSlackIdentityDeleteResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/identities/slack/${encodeURIComponent(identityId)}${query}`,
-        { token, hostToken, method: "DELETE" },
-      );
-    },
-    getOpenCodeRouterBindings: (
-      workspaceId: string,
-      filters?: { channel?: string; identityId?: string; healthPort?: number | null },
-    ) => {
-      const search = new URLSearchParams();
-      if (filters?.channel?.trim()) search.set("channel", filters.channel.trim());
-      if (filters?.identityId?.trim()) search.set("identityId", filters.identityId.trim());
-      if (typeof filters?.healthPort === "number") search.set("healthPort", String(filters.healthPort));
-      const suffix = search.toString();
-      return requestJson<VesloOpenCodeRouterBindingsResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/bindings${suffix ? `?${suffix}` : ""}`,
-        { token, hostToken },
-      );
-    },
-    setOpenCodeRouterBinding: (
-      workspaceId: string,
-      input: { channel: string; identityId?: string; peerId: string; directory?: string },
-      options?: { healthPort?: number | null },
-    ) =>
-      requestJson<VesloOpenCodeRouterBindingUpdateResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/bindings`,
-        {
-          token,
-          hostToken,
-          method: "POST",
-          body: {
-            channel: input.channel,
-            ...(input.identityId?.trim() ? { identityId: input.identityId.trim() } : {}),
-            peerId: input.peerId,
-            ...(input.directory?.trim() ? { directory: input.directory.trim() } : {}),
-            healthPort: options?.healthPort ?? null,
-          },
-        },
-      ),
-    sendOpenCodeRouterMessage: (
-      workspaceId: string,
-      input: {
-        channel: "telegram" | "slack";
-        text: string;
-        identityId?: string;
-        directory?: string;
-        peerId?: string;
-        autoBind?: boolean;
-      },
-      options?: { healthPort?: number | null },
-    ) => {
-      const payload = {
-        channel: input.channel,
-        text: input.text,
-        ...(input.identityId?.trim() ? { identityId: input.identityId.trim() } : {}),
-        ...(input.directory?.trim() ? { directory: input.directory.trim() } : {}),
-        ...(input.peerId?.trim() ? { peerId: input.peerId.trim() } : {}),
-        ...(input.autoBind === true ? { autoBind: true } : {}),
-        healthPort: options?.healthPort ?? null,
-      };
-
-      const primaryPath = `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/send`;
-      const mountedWorkspaceId = parseVesloWorkspaceIdFromUrl(baseUrl);
-      const fallbackPath =
-        mountedWorkspaceId && mountedWorkspaceId === workspaceId
-          ? `/veslo-code-router/send`
-          : `/w/${encodeURIComponent(workspaceId)}/veslo-code-router/send`;
-
-      return requestJson<VesloOpenCodeRouterSendResult>(baseUrl, primaryPath, {
-        token,
-        hostToken,
-        method: "POST",
-        body: payload,
-        timeoutMs: timeouts.opencodeRouter,
-      }).catch(async (error) => {
-        if (!(error instanceof VesloServerError) || error.status !== 404) {
-          throw error;
-        }
-        return requestJson<VesloOpenCodeRouterSendResult>(baseUrl, fallbackPath, {
-          token,
-          hostToken,
-          method: "POST",
-          body: payload,
-          timeoutMs: timeouts.opencodeRouter,
-        });
-      });
-    },
-    setOpenCodeRouterTelegramEnabled: (
-      workspaceId: string,
-      enabled: boolean,
-      options?: { clearToken?: boolean; healthPort?: number | null },
-    ) =>
-      requestJson<VesloOpenCodeRouterTelegramEnabledResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/telegram-enabled`,
-        {
-          token,
-          hostToken,
-          method: "POST",
-          body: { enabled, clearToken: options?.clearToken ?? false, healthPort: options?.healthPort ?? null },
-        },
-      ),
+    setOpenCodeRouterTelegramToken: identities.setTelegramToken,
+    setOpenCodeRouterSlackTokens: identities.setSlackTokens,
+    getOpenCodeRouterTelegram: identities.getTelegram,
+    getOpenCodeRouterTelegramIdentities: identities.getTelegramIdentities,
+    upsertOpenCodeRouterTelegramIdentity: identities.upsertTelegramIdentity,
+    deleteOpenCodeRouterTelegramIdentity: identities.deleteTelegramIdentity,
+    getOpenCodeRouterSlackIdentities: identities.getSlackIdentities,
+    upsertOpenCodeRouterSlackIdentity: identities.upsertSlackIdentity,
+    deleteOpenCodeRouterSlackIdentity: identities.deleteSlackIdentity,
+    getOpenCodeRouterBindings: identities.getBindings,
+    setOpenCodeRouterBinding: identities.setBinding,
+    sendOpenCodeRouterMessage: identities.sendMessage,
+    setOpenCodeRouterTelegramEnabled: identities.setTelegramEnabled,
     patchConfig: (workspaceId: string, payload: { opencode?: Record<string, unknown>; veslo?: Record<string, unknown> }) =>
       requestJson<{ updatedAt?: number | null }>(baseUrl, `/workspace/${workspaceId}/config`, {
         token,
@@ -3083,26 +2918,9 @@ export function createVesloServerClient(options: {
         hostToken,
         method: "POST",
       }),
-    listPlugins: (workspaceId: string, options?: { includeGlobal?: boolean }) => {
-      const query = options?.includeGlobal ? "?includeGlobal=true" : "";
-      return requestJson<{ items: VesloPluginItem[]; loadOrder: string[] }>(
-        baseUrl,
-        `/workspace/${workspaceId}/plugins${query}`,
-        { token, hostToken },
-      );
-    },
-    addPlugin: (workspaceId: string, spec: string) =>
-      requestJson<{ items: VesloPluginItem[]; loadOrder: string[] }>(
-        baseUrl,
-        `/workspace/${workspaceId}/plugins`,
-        { token, hostToken, method: "POST", body: { spec } },
-      ),
-    removePlugin: (workspaceId: string, name: string) =>
-      requestJson<{ items: VesloPluginItem[]; loadOrder: string[] }>(
-        baseUrl,
-        `/workspace/${workspaceId}/plugins/${encodeURIComponent(name)}`,
-        { token, hostToken, method: "DELETE" },
-      ),
+    listPlugins: plugins.list,
+    addPlugin: plugins.add,
+    removePlugin: plugins.remove,
     listSkills: (workspaceId: string, options?: { includeGlobal?: boolean; includeDisabled?: boolean }) => {
       const queryParams = new URLSearchParams();
       if (options?.includeGlobal) queryParams.set("includeGlobal", "true");
@@ -3516,20 +3334,7 @@ export function createVesloServerClient(options: {
         ...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
       });
     },
-    listHubMcp: (options?: { denToken?: string; denOrgId?: string }) => {
-      const denToken = options?.denToken?.trim() ?? "";
-      const denOrgId = options?.denOrgId?.trim() ?? "";
-      const extraHeaders = {
-        ...(denToken ? { "x-veslo-den-token": denToken } : {}),
-        ...(denOrgId ? { "x-veslo-den-org-id": denOrgId } : {}),
-      };
-
-      return requestJson<{ items: VesloHubMcpItem[] }>(baseUrl, `/hub/mcp`, {
-        token,
-        hostToken,
-        ...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
-      });
-    },
+    listHubMcp: mcp.listHub,
     installHubSkill: (
       workspaceId: string,
       name: string,
@@ -3548,29 +3353,7 @@ export function createVesloServerClient(options: {
           },
         },
       ),
-    installHubMcp: (
-      workspaceId: string,
-      name: string,
-      options?: { denToken?: string; denOrgId?: string },
-    ) => {
-      const denToken = options?.denToken?.trim() ?? "";
-      const denOrgId = options?.denOrgId?.trim() ?? "";
-      const extraHeaders = {
-        ...(denToken ? { "x-veslo-den-token": denToken } : {}),
-        ...(denOrgId ? { "x-veslo-den-org-id": denOrgId } : {}),
-      };
-
-      return requestJson<{ ok: boolean; name: string; path: string; action: "added" | "updated"; written: number; skipped: number }>(
-        baseUrl,
-        `/workspace/${workspaceId}/mcp/hub/${encodeURIComponent(name)}`,
-        {
-          token,
-          hostToken,
-          method: "POST",
-          ...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
-        },
-      );
-    },
+    installHubMcp: mcp.installHub,
     getSkill: (workspaceId: string, name: string, options?: { includeGlobal?: boolean; path?: string }) => {
       const queryParams = new URLSearchParams();
       if (options?.includeGlobal) queryParams.set("includeGlobal", "true");
@@ -3636,109 +3419,27 @@ export function createVesloServerClient(options: {
         `/skill-removals/${encodeURIComponent(removalId)}/restore`,
         { token, hostToken, method: "POST" },
       ),
-    listMcp: (workspaceId: string) =>
-      requestJson<{ items: VesloMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, { token, hostToken }),
-    addMcp: (workspaceId: string, payload: { name: string; config: Record<string, unknown> }) =>
-      requestJson<{ items: VesloMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, {
-        token,
-        hostToken,
-        method: "POST",
-        body: payload,
-      }),
-    removeMcp: (workspaceId: string, name: string) =>
-      requestJson<{ items: VesloMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}`, {
-        token,
-        hostToken,
-        method: "DELETE",
-      }),
+    listMcp: mcp.list,
+    addMcp: mcp.add,
+    removeMcp: mcp.remove,
+    refreshMcpRuntimeToken: mcp.refreshRuntimeToken,
+    logoutMcpAuth: mcp.logoutAuth,
 
-    refreshMcpRuntimeToken: (
-      workspaceId: string,
-      name: string,
-      options?: { denToken?: string; denOrgId?: string },
-    ) =>
-      requestJson<{ ok: true; name: string; action: "updated"; expiresAt: string | null }>(
-        baseUrl,
-        `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}/runtime-token/refresh`,
-        {
-          token,
-          hostToken,
-          method: "POST",
-          extraHeaders: buildDenContextHeaders(options),
-        },
-      ),
-
-    logoutMcpAuth: (workspaceId: string, name: string) =>
-      requestJson<{ ok: true }>(baseUrl, `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}/auth`, {
-        token,
-        hostToken,
-        method: "DELETE",
-      }),
-
-    listCommands: (workspaceId: string, scope: "workspace" | "global" = "workspace") =>
-      requestJson<{ items: VesloCommandItem[] }>(
-        baseUrl,
-        `/workspace/${workspaceId}/commands?scope=${scope}`,
-        { token, hostToken },
-      ),
+    listCommands: commands.list,
     listAudit: (workspaceId: string, limit = 50) =>
       requestJson<{ items: VesloAuditEntry[] }>(
         baseUrl,
         `/workspace/${workspaceId}/audit?limit=${limit}`,
         { token, hostToken },
       ),
-    upsertCommand: (
-      workspaceId: string,
-      payload: { name: string; description?: string; template: string; agent?: string; model?: string | null; subtask?: boolean },
-    ) =>
-      requestJson<{ items: VesloCommandItem[] }>(baseUrl, `/workspace/${workspaceId}/commands`, {
-        token,
-        hostToken,
-        method: "POST",
-        body: payload,
-      }),
-    deleteCommand: (workspaceId: string, name: string) =>
-      requestJson<{ ok: boolean }>(baseUrl, `/workspace/${workspaceId}/commands/${encodeURIComponent(name)}`, {
-        token,
-        hostToken,
-        method: "DELETE",
-      }),
-    listAutomations: (workspaceId: string) =>
-      requestJson<{ items: VesloAutomation[]; updatedAt: string }>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/automations`,
-        { token, hostToken },
-      ),
-    createAutomation: (workspaceId: string, payload: VesloAutomationCreatePayload) =>
-      requestJson<{ automation: VesloAutomation }>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/automations`,
-        { token, hostToken, method: "POST", body: payload },
-      ),
-    updateAutomation: (workspaceId: string, automationId: string, payload: VesloAutomationUpdatePayload) =>
-      requestJson<{ automation: VesloAutomation }>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/automations/${encodeURIComponent(automationId)}`,
-        { token, hostToken, method: "PATCH", body: payload },
-      ),
-    deleteAutomation: (workspaceId: string, automationId: string) =>
-      requestJson<{ automation: VesloAutomation }>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/automations/${encodeURIComponent(automationId)}`,
-        { token, hostToken, method: "DELETE" },
-      ),
-    runAutomation: (workspaceId: string, automationId: string) =>
-      requestJson<{ run: VesloAutomationRun }>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/automations/${encodeURIComponent(automationId)}/run`,
-        { token, hostToken, method: "POST" },
-      ),
-    listAutomationRuns: (workspaceId: string, automationId: string) =>
-      requestJson<{ items: VesloAutomationRun[] }>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/automations/${encodeURIComponent(automationId)}/runs`,
-        { token, hostToken },
-      ),
+    upsertCommand: commands.upsert,
+    deleteCommand: commands.delete,
+    listAutomations: automations.list,
+    createAutomation: automations.create,
+    updateAutomation: automations.update,
+    deleteAutomation: automations.delete,
+    runAutomation: automations.run,
+    listAutomationRuns: automations.listRuns,
     listScheduledJobs: (workspaceId: string) =>
       requestJson<{ items: ScheduledJob[] }>(baseUrl, `/workspace/${workspaceId}/scheduler/jobs`, { token, hostToken }),
     deleteScheduledJob: (workspaceId: string, name: string) =>

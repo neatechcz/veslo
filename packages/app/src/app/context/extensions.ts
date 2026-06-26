@@ -205,7 +205,7 @@ export function createExtensionsStore(options: {
       options.vesloServerStatus() === "connected" &&
       vesloClient &&
       vesloCapabilities?.hub?.mcp?.read &&
-      typeof (vesloClient as any).listHubMcp === "function";
+      typeof vesloClient.mcp?.listHub === "function";
     const denAuth = readDenAuth();
     const denToken = denAuth?.token?.trim() ?? "";
     const denOrgId = denAuth?.orgId?.trim() ?? "";
@@ -239,7 +239,7 @@ export function createExtensionsStore(options: {
           return;
         }
 
-        const response = await (vesloClient as any).listHubMcp({
+        const response = await vesloClient.mcp.listHub({
           denToken,
           denOrgId,
         });
@@ -294,7 +294,7 @@ export function createExtensionsStore(options: {
       options.vesloServerStatus() === "connected" &&
       vesloClient &&
       vesloCapabilities?.hub?.mcp?.read &&
-      typeof (vesloClient as any).listHubMcp === "function";
+      typeof vesloClient.mcp?.listHub === "function";
 
     if (!root || !canUseVesloServer || !denToken || !denOrgId) return;
     void refreshHubMcp().catch(() => {
@@ -1092,7 +1092,7 @@ export function createExtensionsStore(options: {
       vesloClient &&
       vesloWorkspaceId &&
       vesloCapabilities?.hub?.mcp?.install &&
-      typeof (vesloClient as any).installHubMcp === "function";
+      typeof vesloClient.mcp?.installHub === "function";
 
     if (!canUseVesloServer) {
       if (isRemoteWorkspace) {
@@ -1114,7 +1114,7 @@ export function createExtensionsStore(options: {
         return { ok: false, message: __vesloIndirectT("ui.indirect.missing_den_auth_context_1l81wa", __vesloIndirectLocale()) };
       }
 
-      const result = await (vesloClient as any).installHubMcp(vesloWorkspaceId, trimmed, {
+      const result = await vesloClient.mcp.installHub(vesloWorkspaceId, trimmed, {
         denToken,
         denOrgId,
       });
@@ -1377,7 +1377,7 @@ export function createExtensionsStore(options: {
 
         if (refreshPluginsAborted) return;
 
-        const result = await vesloClient.listPlugins(vesloWorkspaceId, { includeGlobal: false });
+        const result = await vesloClient.plugins.list(vesloWorkspaceId, { includeGlobal: false });
         if (refreshPluginsAborted) return;
 
         const configItems = result.items.filter((item) => item.source === "config" && item.scope === "project");
@@ -1502,7 +1502,7 @@ export function createExtensionsStore(options: {
     if (pluginScope() === "project" && canUseVesloServer) {
       try {
         setPluginStatus(null);
-        await vesloClient.addPlugin(vesloWorkspaceId, pluginName);
+        await vesloClient.plugins.add(vesloWorkspaceId, pluginName);
         if (isManualInput) {
           setPluginInput("");
         }
@@ -1599,7 +1599,7 @@ export function createExtensionsStore(options: {
     if (pluginScope() === "project" && canUseVesloServer) {
       try {
         setPluginStatus(null);
-        await vesloClient.removePlugin(vesloWorkspaceId, name);
+        await vesloClient.plugins.remove(vesloWorkspaceId, name);
         await refreshPlugins("project");
       } catch (e) {
         setPluginStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_remove_plugin_1fuges", __vesloIndirectLocale()));
