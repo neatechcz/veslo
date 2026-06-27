@@ -105,11 +105,14 @@ fn sanitize_live_info_with_health(
         (info.client_token.as_deref(), identity.token.as_deref()),
         (Some(a), Some(b)) if a != b
     );
-    // A matching bearer token is stronger than the PID. In dev-watch mode the
-    // managed child can be the Bun watcher while /health is served by its
-    // worker process, so the PID can differ for a valid server.
-    let pid_mismatch =
-        !token_verified && matches!((info.pid, identity.pid), (Some(a), Some(b)) if a != b);
+    // Newer servers intentionally do not expose bearer tokens on /health. Keep
+    // token comparison for legacy responses, but do not treat a PID mismatch as
+    // authoritative for token-bearing state: dev-watch can report the Bun
+    // watcher PID while /health is served by its worker process.
+    let pid_mismatch = !token_verified
+        && identity.token.is_none()
+        && info.client_token.is_none()
+        && matches!((info.pid, identity.pid), (Some(a), Some(b)) if a != b);
     if !(token_mismatch || pid_mismatch) {
         return (info, false);
     }
@@ -711,8 +714,23 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_live_info_marks_stale_when_pid_mismatch_without_token_match() {
+    fn sanitize_live_info_tolerates_pid_mismatch_when_health_omits_token() {
         let info = sample_live_info();
+        let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| {
+            Some(HealthIdentity {
+                token: None,
+                pid: Some(99999),
+            })
+        });
+        assert!(!stale);
+        assert!(sanitized.running);
+        assert_eq!(sanitized.client_token, info.client_token);
+    }
+
+    #[test]
+    fn sanitize_live_info_marks_tokenless_snapshot_stale_when_pid_mismatch() {
+        let mut info = sample_live_info();
+        info.client_token = None;
         let (sanitized, stale) = sanitize_live_info_with_health(info, |_| {
             Some(HealthIdentity {
                 token: None,

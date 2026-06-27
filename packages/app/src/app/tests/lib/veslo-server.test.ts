@@ -7,9 +7,13 @@ import {
   createVesloServerClient,
   DEFAULT_VESLO_CONNECT_APP_URL,
   deriveLocalVesloServerUrlFromOpencodeBaseUrl,
+  deriveVesloServerUrl,
+  clearVesloServerSettings,
   requestManagedAiAccessBundle,
+  readVesloServerSettings,
   resolveSessionArchiveClientOptions,
   VesloServerError,
+  writeVesloServerSettings,
 } from "../../lib/veslo-server.js";
 
 const LOCAL_SESSION_ARCHIVE_OWNER_KEY = "local:desktop";
@@ -67,6 +71,27 @@ async function withDenAuthStorage(run: () => Promise<void>) {
   }
 }
 
+function withBrowserStorage<T>(seed: Record<string, string>, run: () => T): T {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      localStorage: createMemoryStorage(seed),
+      sessionStorage: createMemoryStorage(),
+    },
+  });
+
+  try {
+    return run();
+  } finally {
+    if (previousWindow) {
+      Object.defineProperty(globalThis, "window", previousWindow);
+    } else {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  }
+}
+
 test("deriveLocalVesloServerUrlFromOpencodeBaseUrl rewrites local loopback hosts to Veslo port", () => {
   const derived = deriveLocalVesloServerUrlFromOpencodeBaseUrl("http://127.0.0.1:64792");
   assert.equal(derived, "http://127.0.0.1:8787");
@@ -85,6 +110,62 @@ test("deriveLocalVesloServerUrlFromOpencodeBaseUrl returns null for non-local ho
 test("deriveLocalVesloServerUrlFromOpencodeBaseUrl accepts explicit target port", () => {
   const derived = deriveLocalVesloServerUrlFromOpencodeBaseUrl("http://localhost:64792", 9999);
   assert.equal(derived, "http://localhost:9999");
+});
+
+test("deriveVesloServerUrl prefers normalized explicit settings override", () => {
+  const derived = deriveVesloServerUrl("http://127.0.0.1:64792/opencode?x=1", {
+    urlOverride: "veslo.example.test/api/",
+    portOverride: 9999,
+  });
+
+  assert.equal(derived, "http://veslo.example.test/api");
+});
+
+test("deriveVesloServerUrl rewrites the OpenCode URL to the configured Veslo port", () => {
+  const derived = deriveVesloServerUrl("http://127.0.0.1:64792/opencode?x=1#hash", {
+    portOverride: 9999,
+  });
+
+  assert.equal(derived, "http://127.0.0.1:9999");
+});
+
+test("Veslo server settings read write and clear canonicalize storage keys", () => {
+  withBrowserStorage(
+    {
+      "openwork.server.urlOverride": "legacy.example.test/path/",
+      "openwork.server.port": "not-a-number",
+      "openwork.server.token": " legacy-token ",
+    },
+    () => {
+      assert.deepEqual(readVesloServerSettings(), {
+        urlOverride: "http://legacy.example.test/path",
+        portOverride: undefined,
+        token: "legacy-token",
+      });
+
+      const written = writeVesloServerSettings({
+        urlOverride: "veslo.example.test/",
+        portOverride: 8788,
+        token: " next-token ",
+      });
+
+      assert.deepEqual(written, {
+        urlOverride: "http://veslo.example.test",
+        portOverride: 8788,
+        token: "next-token",
+      });
+      assert.equal(window.localStorage.getItem("openwork.server.urlOverride"), null);
+      assert.equal(window.localStorage.getItem("openwork.server.port"), null);
+      assert.equal(window.localStorage.getItem("openwork.server.token"), null);
+
+      clearVesloServerSettings();
+      assert.deepEqual(readVesloServerSettings(), {
+        urlOverride: undefined,
+        portOverride: undefined,
+        token: undefined,
+      });
+    },
+  );
 });
 
 test("Veslo connect invite defaults to the owned web app", () => {
@@ -1109,6 +1190,54 @@ test("workspace not found 404 maps to workspace_id_mismatch", async () => {
         return true;
       },
     );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("transport errors preserve status code message details and auth headers", async () => {
+  const previousFetch = globalThis.fetch;
+  let capturedHeaders: Headers | null = null;
+
+  globalThis.fetch = async (_input, init) => {
+    capturedHeaders = new Headers(init?.headers as HeadersInit | undefined);
+    return new Response(
+      JSON.stringify({
+        code: "forbidden_action",
+        message: "Forbidden action",
+        details: { reason: "policy" },
+      }),
+      {
+        status: 403,
+        statusText: "Forbidden",
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await assert.rejects(
+      () => client.status(),
+      (error) => {
+        assert.ok(error instanceof VesloServerError);
+        assert.equal(error.status, 403);
+        assert.equal(error.code, "forbidden_action");
+        assert.equal(error.message, "Forbidden action");
+        assert.deepEqual(error.details, { reason: "policy" });
+        return true;
+      },
+    );
+    const headers = capturedHeaders as Headers | null;
+    assert.ok(headers);
+    assert.equal(headers.get("authorization"), "Bearer token-123");
+    assert.equal(headers.get("x-veslo-host-token"), "host-token-123");
+    assert.equal(headers.get("content-type"), "application/json");
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -2644,9 +2773,9 @@ test("plugins domain facade exposes workspace plugin endpoints", async () => {
     assert.deepEqual(
       calls.map((call) => ({ url: call.url, method: call.method })),
       [
-        { url: "https://veslo.example/workspace/ws 1/plugins?includeGlobal=true", method: "GET" },
-        { url: "https://veslo.example/workspace/ws 1/plugins", method: "POST" },
-        { url: "https://veslo.example/workspace/ws 1/plugins/plugin%2Fname", method: "DELETE" },
+        { url: "https://veslo.example/workspace/ws%201/plugins?includeGlobal=true", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/plugins", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/plugins/plugin%2Fname", method: "DELETE" },
       ],
     );
     assert.deepEqual(calls[1]?.body, { spec: "veslo/example-plugin" });
@@ -2707,9 +2836,9 @@ test("commands domain facade exposes workspace command endpoints", async () => {
     assert.deepEqual(
       calls.map((call) => ({ url: call.url, method: call.method })),
       [
-        { url: "https://veslo.example/workspace/ws 1/commands?scope=global", method: "GET" },
-        { url: "https://veslo.example/workspace/ws 1/commands", method: "POST" },
-        { url: "https://veslo.example/workspace/ws 1/commands/command%2Fname", method: "DELETE" },
+        { url: "https://veslo.example/workspace/ws%201/commands?scope=global", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/commands", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/commands/command%2Fname", method: "DELETE" },
       ],
     );
     assert.deepEqual(calls[1]?.body, {
@@ -2781,12 +2910,12 @@ test("mcp domain facade exposes hub and workspace mcp endpoints", async () => {
       calls.map((call) => ({ url: call.url, method: call.method })),
       [
         { url: "https://veslo.example/hub/mcp", method: "GET" },
-        { url: "https://veslo.example/workspace/ws 1/mcp/hub/google%2Fgmail", method: "POST" },
-        { url: "https://veslo.example/workspace/ws 1/mcp", method: "GET" },
-        { url: "https://veslo.example/workspace/ws 1/mcp", method: "POST" },
-        { url: "https://veslo.example/workspace/ws 1/mcp/local%2Fname", method: "DELETE" },
-        { url: "https://veslo.example/workspace/ws 1/mcp/google-gmail/runtime-token/refresh", method: "POST" },
-        { url: "https://veslo.example/workspace/ws 1/mcp/google-gmail/auth", method: "DELETE" },
+        { url: "https://veslo.example/workspace/ws%201/mcp/hub/google%2Fgmail", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/mcp", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/mcp", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/mcp/local%2Fname", method: "DELETE" },
+        { url: "https://veslo.example/workspace/ws%201/mcp/google-gmail/runtime-token/refresh", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/mcp/google-gmail/auth", method: "DELETE" },
       ],
     );
     assert.deepEqual(calls[3]?.body, {
@@ -3247,5 +3376,341 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.setTimeout = originalSetTimeout;
+  }
+});
+
+test("files domain facade exposes file session, workspace file and artifact endpoints", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; body: unknown }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    let body: unknown = null;
+    if (typeof init?.body === "string") {
+      body = JSON.parse(init.body);
+    }
+    calls.push({ url: String(input), method: init?.method ?? "GET", body });
+    return new Response(JSON.stringify({ ok: true, items: [], session: {} }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Disposition": "attachment; filename=\"artifact.txt\"",
+      },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.files.createSession("ws 1", { ttlSeconds: 60, write: true });
+    await client.files.getCatalogSnapshot("session/1", { prefix: "src", includeDirs: true, limit: 50 });
+    await client.files.readWorkspaceFile("ws 1", "src/index.ts");
+    await client.files.writeWorkspaceFile("ws 1", { path: "src/index.ts", content: "export {};" });
+    await client.files.listArtifacts("ws 1");
+    await client.files.downloadArtifact("ws 1", "artifact/1");
+
+    assert.deepEqual(
+      calls.map((call) => ({ url: call.url, method: call.method })),
+      [
+        { url: "https://veslo.example/workspace/ws%201/files/sessions", method: "POST" },
+        {
+          url: "https://veslo.example/files/sessions/session%2F1/catalog/snapshot?prefix=src&includeDirs=true&limit=50",
+          method: "GET",
+        },
+        { url: "https://veslo.example/workspace/ws%201/files/content?path=src%2Findex.ts", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/files/content", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/artifacts", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/artifacts/artifact%2F1", method: "GET" },
+      ],
+    );
+    assert.deepEqual(calls[0]?.body, { ttlSeconds: 60, write: true });
+    assert.deepEqual(calls[3]?.body, { path: "src/index.ts", content: "export {};" });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("extensions inventory domain facade aggregates read-only extension requests", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({ url: String(input), method: init?.method ?? "GET" });
+    return new Response(JSON.stringify({ ok: true, items: [], loadOrder: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.extensionsInventory.overview("ws 1", {
+      includeGlobalPlugins: true,
+      includeGlobalSkills: true,
+      commandScope: "global",
+    });
+
+    assert.deepEqual(
+      calls.map((call) => ({ url: call.url, method: call.method })),
+      [
+        { url: "https://veslo.example/workspace/ws%201/mcp", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/plugins?includeGlobal=true", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/skills?includeGlobal=true", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/commands?scope=global", method: "GET" },
+      ],
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("createVesloServerClient exposes remaining domain facades", async () => {
+  const client = createVesloServerClient({
+    baseUrl: "https://veslo.example",
+    token: "token-123",
+    hostToken: "host-token-123",
+  });
+
+  assert.equal(typeof client.skills.list, "function");
+  assert.equal(typeof client.soul.overview, "function");
+  assert.equal(typeof client.workspace.list, "function");
+  assert.equal(typeof client.conversations.list, "function");
+  assert.equal(typeof client.files.createSession, "function");
+  assert.equal(typeof client.extensionsInventory.overview, "function");
+});
+
+test("skills domain facade exposes workspace, registry and materialization endpoints", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; headers: Headers; body: unknown }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    let body: unknown = null;
+    if (typeof init?.body === "string") {
+      body = JSON.parse(init.body);
+    }
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body,
+    });
+    const payload = String(input).includes("/v1/skills/search")
+      ? { query: "alpha", skills: [] }
+      : { ok: true, items: [], scope: "personal-global", synced: true, conflicts: [], materializedSkills: [] };
+    return new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.skills.list("ws 1", { includeGlobal: true, includeDisabled: true });
+    await client.skills.searchRegistry({ q: "alpha", workspaceId: "ws 1" });
+    await client.skills.getGlobalMaterializationStatus();
+    await client.skills.syncWorkspaceMaterialization("ws 1", { activeRun: true, denToken: "den-token" });
+    await client.skills.listHub({ denToken: "den-token", denOrgId: "org-123" });
+    await client.skills.installHub("ws 1", "owner/skill", { overwrite: true });
+    await client.skills.deleteGlobal("global/skill", { reason: "cleanup" });
+    await client.skills.listRemovals({ scope: "workspace", workspaceId: "ws 1", includeRestored: true });
+
+    assert.deepEqual(
+      calls.map((call) => ({ url: call.url, method: call.method })),
+      [
+        { url: "https://veslo.example/workspace/ws%201/skills?includeGlobal=true&includeDisabled=true", method: "GET" },
+        { url: "https://veslo.example/v1/skills/search?q=alpha&workspaceId=ws+1", method: "GET" },
+        { url: "https://veslo.example/skills/materialization", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/skills/materialization/sync", method: "POST" },
+        { url: "https://veslo.example/hub/skills", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/skills/hub/owner%2Fskill", method: "POST" },
+        { url: "https://veslo.example/skills/user-global/global%2Fskill?reason=cleanup", method: "DELETE" },
+        { url: "https://veslo.example/skill-removals?scope=workspace&workspaceId=ws+1&includeRestored=true", method: "GET" },
+      ],
+    );
+    assert.deepEqual(calls[3]?.body, { activeRun: true });
+    assert.equal(calls[3]?.headers.get("x-veslo-den-token"), "den-token");
+    assert.equal(calls[4]?.headers.get("x-veslo-den-token"), "den-token");
+    assert.equal(calls[4]?.headers.get("x-veslo-den-org-id"), "org-123");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("soul domain facade exposes soul read and mutation endpoints", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; headers: Headers; body: unknown }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    let body: unknown = null;
+    if (typeof init?.body === "string") {
+      body = JSON.parse(init.body);
+    }
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body,
+    });
+    return new Response(JSON.stringify({ ok: true, items: [], versions: [], total: 0 }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.soul.overview({ denToken: "den-token" });
+    await client.soul.getWorkspace("ws 1", { denOrgId: "org-123" });
+    await client.soul.updateWorkspace("ws 1", {
+      content: "memory",
+      changeSummary: "update",
+      baseVersionId: null,
+      activeWorkspaceIds: ["ws 1", "ws 1"],
+    });
+    await client.soul.restoreWorkspaceVersion("ws 1", "version/1", { activeRun: true });
+    await client.soul.listHeartbeats("ws 1", 5);
+
+    assert.deepEqual(
+      calls.map((call) => ({ url: call.url, method: call.method })),
+      [
+        { url: "https://veslo.example/soul", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/soul", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/soul", method: "PATCH" },
+        { url: "https://veslo.example/workspace/ws%201/soul/versions/version%2F1/restore", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/soul/heartbeats?limit=5", method: "GET" },
+      ],
+    );
+    assert.equal(calls[0]?.headers.get("x-veslo-den-token"), "den-token");
+    assert.equal(calls[1]?.headers.get("x-veslo-den-org-id"), "org-123");
+    assert.deepEqual(calls[2]?.body, {
+      content: "memory",
+      changeSummary: "update",
+      baseVersionId: null,
+      activeWorkspaceIds: ["ws 1"],
+    });
+    assert.deepEqual(calls[3]?.body, { activeRun: true });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("workspace domain facade exposes management and status endpoints", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; body: unknown }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    let body: unknown = null;
+    if (typeof init?.body === "string") {
+      body = JSON.parse(init.body);
+    }
+    calls.push({ url: String(input), method: init?.method ?? "GET", body });
+    return new Response(JSON.stringify({ ok: true, items: [], activeId: null, workspace: null }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.workspace.health();
+    await client.workspace.list();
+    await client.workspace.activate("ws 1");
+    await client.workspace.addLocal({ path: "C:/work", name: "Work" });
+    await client.workspace.patchConfig("ws 1", { opencode: { baseUrl: "http://127.0.0.1:4096" } });
+    await client.workspace.listReloadEvents("ws 1", { since: 12 });
+    await client.workspace.listAudit("ws 1", 10);
+    await client.workspace.deleteScheduledJob("ws 1", "daily/job");
+
+    assert.deepEqual(
+      calls.map((call) => ({ url: call.url, method: call.method })),
+      [
+        { url: "https://veslo.example/health", method: "GET" },
+        { url: "https://veslo.example/workspaces", method: "GET" },
+        { url: "https://veslo.example/workspaces/ws%201/activate", method: "POST" },
+        { url: "https://veslo.example/workspaces/local", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/config", method: "PATCH" },
+        { url: "https://veslo.example/workspace/ws%201/events?since=12", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/audit?limit=10", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/scheduler/jobs/daily%2Fjob", method: "DELETE" },
+      ],
+    );
+    assert.deepEqual(calls[3]?.body, { path: "C:/work", name: "Work" });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("conversations domain facade exposes conversation, transcript and archive endpoints", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; headers: Headers; body: unknown }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    let body: unknown = null;
+    if (typeof init?.body === "string") {
+      body = JSON.parse(init.body);
+    }
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body,
+    });
+    return new Response(JSON.stringify({ ok: true, items: [], queuedSessionIds: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+      accountId: "account-123",
+    });
+
+    await client.conversations.list("ws 1", "src", { sync: true });
+    await client.conversations.create("ws 1", { directory: "src", title: "Task" }, { sendTraceId: "trace-123" });
+    await client.conversations.run("ws 1", "conv/1", { kind: "command", command: "test" }, { sendTraceId: "trace-456" });
+    await client.conversations.getTranscript("ws 1", "session/1", { directory: "src", limit: 20 });
+    await client.conversations.listArchives();
+    await client.conversations.deleteArchive("session/1", { workspaceId: "ws 1" });
+
+    assert.deepEqual(
+      calls.map((call) => ({ url: call.url, method: call.method })),
+      [
+        { url: "https://veslo.example/workspace/ws%201/conversations?directory=src&sync=true", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/conversations", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/conversations/conv%2F1/runs", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/sessions/session%2F1/transcript?limit=20&directory=src", method: "GET" },
+        { url: "https://veslo.example/session-archives", method: "GET" },
+        { url: "https://veslo.example/session-archives/session%2F1?workspaceId=ws+1", method: "DELETE" },
+      ],
+    );
+    assert.equal(calls[1]?.headers.get("x-veslo-send-trace-id"), "trace-123");
+    assert.equal(calls[2]?.headers.get("x-veslo-send-trace-id"), "trace-456");
+    assert.equal(calls[4]?.headers.get("x-veslo-account-id"), "account-123");
+  } finally {
+    globalThis.fetch = previousFetch;
   }
 });

@@ -490,8 +490,9 @@ fn persisted_state_to_info_with_health(
         (Some(expected), Some(actual)) if expected == actual
     );
 
-    // Identity validation: the bearer token is the strongest signal. PID checks
-    // still protect older persisted state that cannot verify a token.
+    // Identity validation: legacy servers may still return the bearer token and
+    // can be rejected on mismatch. Current servers omit the token from /health,
+    // so PID is only authoritative for tokenless persisted state.
     if let (Some(expected), Some(actual)) =
         (state.client_token.as_deref(), identity.token.as_deref())
     {
@@ -502,7 +503,7 @@ fn persisted_state_to_info_with_health(
             return None;
         }
     }
-    if !token_verified {
+    if !token_verified && state.client_token.is_none() {
         if let (Some(expected), Some(actual)) = (state.pid, identity.pid) {
             if expected != actual {
                 eprintln!(
@@ -617,9 +618,9 @@ pub fn recover_persisted_veslo_server_info(
 
     // Dev fallback: a `pnpm dev` workflow can spawn veslo-server outside of
     // Rust (via `bun --watch`), in which case Tauri never wrote state.json.
-    // If the dev scripts expose `VESLO_DEV_SERVER_URL` we probe it, adopt
-    // the live token+pid from /health, and persist so subsequent reads stay
-    // consistent. Skipped in release builds (env var unset by default).
+    // If the dev scripts expose `VESLO_DEV_SERVER_URL` we probe it and persist
+    // explicit env auth so subsequent reads stay consistent. Skipped in release
+    // builds (env var unset by default).
     if let Some(info) = discover_external_veslo_server() {
         let _ = persist_veslo_server_info(app, &info);
         return Ok(Some(info));
@@ -644,6 +645,12 @@ fn discover_external_veslo_server() -> Option<VesloServerInfo> {
         Some(p) => build_urls_for_host(&host, p),
         None => (None, None, None, None),
     };
+    let client_token = std::env::var("VESLO_DEV_SERVER_TOKEN")
+        .ok()
+        .or_else(|| std::env::var("VESLO_TOKEN").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or(identity.token);
     Some(VesloServerInfo {
         running: true,
         host: Some(host),
@@ -653,7 +660,7 @@ fn discover_external_veslo_server() -> Option<VesloServerInfo> {
         mdns_url,
         lan_url,
         engine_url,
-        client_token: identity.token,
+        client_token,
         host_token: None,
         pid: identity.pid,
         last_stdout: None,
@@ -1509,9 +1516,9 @@ mod tests {
     }
 
     #[test]
-    fn read_persisted_server_info_rejects_pid_mismatch_without_token_match() {
+    fn read_persisted_server_info_recovers_token_state_when_health_omits_token() {
         let dir = std::env::temp_dir().join(format!(
-            "veslo-server-state-pid-no-token-{}",
+            "veslo-server-state-pid-omitted-token-{}",
             Uuid::new_v4()
         ));
         fs::create_dir_all(&dir).expect("create test dir");
@@ -1529,9 +1536,39 @@ mod tests {
         )
         .expect("read persisted state");
 
+        let recovered = recovered.expect("token-bearing state should survive tokenless health");
+        assert!(recovered.running);
+        assert_eq!(recovered.client_token.as_deref(), Some("our-token"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn read_persisted_server_info_rejects_tokenless_pid_mismatch() {
+        let dir = std::env::temp_dir().join(format!(
+            "veslo-server-state-tokenless-pid-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let mut state = sample_state("our-token", 4242);
+        state.client_token = None;
+        write_persisted_state(&dir, &state);
+
+        let recovered = read_persisted_veslo_server_info_with_cleanup(
+            &dir,
+            |_| {
+                Some(HealthIdentity {
+                    token: None,
+                    pid: Some(9999),
+                })
+            },
+            |_| Ok(()),
+        )
+        .expect("read persisted state");
+
         assert!(
             recovered.is_none(),
-            "pid mismatch must reject persisted state when token was not verified"
+            "pid mismatch must reject tokenless persisted state"
         );
 
         let _ = fs::remove_dir_all(dir);

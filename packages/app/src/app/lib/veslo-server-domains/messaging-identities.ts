@@ -13,7 +13,7 @@ import type {
   VesloOpenCodeRouterTelegramIdentityUpsertResult,
   VesloOpenCodeRouterTelegramInfo,
   VesloOpenCodeRouterTelegramResult,
-} from "../veslo-server";
+} from "../veslo-server/types";
 
 type RawJsonResponse<T> = {
   ok: boolean;

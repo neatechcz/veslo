@@ -1,5 +1,10 @@
 # Plán: Audit a náprava UI requestů bez controllera/ownera
 
+Status note: this plan is historical. The `/veslo-code-router` to
+`/opencode-router` fix and the UI request facade extraction are complete. In
+current code, messaging identity paths live in
+`packages/app/src/app/lib/veslo-server-domains/messaging-identities.ts`;
+`packages/app/src/app/lib/veslo-server.ts` is only the public barrel.
 ## Context
 
 Deep audit odhalil 3 vrstvy problémů v komunikaci UI ↔ backend:

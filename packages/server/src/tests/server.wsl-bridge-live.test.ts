@@ -333,7 +333,7 @@ maybeDescribe("live WSL bridge networking", () => {
 
     const health = await probeWslUrl(distro, `http://${bridgeHost}:${port}/health`);
     expect(health.code).toBe(0);
-    expect(health.stdout).toContain("client-token");
+    expect(JSON.parse(health.stdout)).not.toHaveProperty("token");
 
     const workspaces = await probeWslUrl(
       distro,

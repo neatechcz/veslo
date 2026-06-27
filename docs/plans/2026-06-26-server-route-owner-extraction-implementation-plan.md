@@ -26,7 +26,7 @@ Pravidlo pro tento plan:
 - `routeAdapter`: novy soubor v `packages/server/src/routes/*`, ktery pouze registruje HTTP routy a vola existujici domenove moduly.
 - `domainClientFacade`: jeden UI-facing soubor pro skupinu pozadavku, napr. `veslo-server-domains/mcp.ts`; vlastni klientsky kontrakt a path mapping pro danou domenu.
 - `aggregateReadEndpoint`: server endpoint, ktery vraci uceleny read model pro jednu obrazovku nebo skupinu UI pozadavku; nepouzivat pro mutace.
-- `legacyFlatClientMethod`: puvodni metoda ve velkem `veslo-server.ts`, ktera muze docasne zustat jako wrapper kvuli migraci call sites.
+- `legacyFlatClientMethod`: puvodni flat metoda na `VesloServerClient`, ktera zustava jako wrapper kvuli kompatibilite call sites; implementacne zije v `packages/app/src/app/lib/veslo-server/client.ts`, zatimco `veslo-server.ts` je public barrel.
 - `done`: stav implementace route adapteru, ne stav business domeny.
 
 ## Korigovane zjisteni
@@ -73,8 +73,8 @@ Co tim zamerne neresime ted:
   - Doporuceny default: ano, ale pouze jako read model/fasada. Nesmime z nej udelat noveho ownera pro MCP, plugins,
     skills nebo commands.
 
-- Otazka: Maji legacy flat metody ve `veslo-server.ts` zustat verejne dostupne behem migrace?
-  - Doporuceny default: ano. Zustanou jako delegujici wrappery, dokud nejsou migrovane call sites a testy dane domeny.
+- Rozhodnuti: Maji legacy flat metody na `VesloServerClient` zustat verejne dostupne behem migrace?
+  - Ano. Zustanou jako delegujici wrappery v `veslo-server/client.ts`, dokud nejsou migrovane call sites a testy dane domeny. Public `veslo-server.ts` zustava jen barrel.
 
 - Otazka: Ma byt server aggregate endpoint povinny hned pri vytvoreni UI fasady?
   - Doporuceny default: ne. Nejdriv udelat klientskou fasadu nad existujicimi endpointy; server aggregate endpoint pridat
@@ -124,8 +124,10 @@ Pro kazdy krok plati:
 ## Cilova mapa UI-facing fasad
 
 - `packages/app/src/app/lib/veslo-server.ts`
-  - zustane root composer/transport a kompatibilni export pro legacy flat metody.
-  - nebude dlouhodobe primarnim mistem, kde UI hleda konkretni feature kontrakt.
+  - zustava public barrel a kompatibilni import path pro app code.
+  - root composer je `packages/app/src/app/lib/veslo-server/client.ts`.
+  - shared transport je `packages/app/src/app/lib/veslo-server/transport.ts`.
+  - nebude mistem, kde UI hleda konkretni feature kontrakt.
 
 - `packages/app/src/app/lib/veslo-server-domains/messaging-identities.ts`
   - UI owner: `identities.tsx`.
@@ -231,21 +233,21 @@ Pro kazdy krok plati:
 ### Faze 0: kontrakt a UI request agregace
 
 - id: define-ui-domain-facade-map
-  done: false
+  done: true
   scope: Zafixovat mapu `domainClientFacade -> routeAdapter -> existingOwner` podle sekce "Cilova mapa UI-facing fasad".
-  validation: plan review, zadne nove duplicitni business ownery.
+  validation: Plan review pri server route extrakci; zbyvajici adaptery ponechaly MCP, plugins, skills, soul, workspace, conversations a files jako oddelene existujici ownery/read-model skupiny bez noveho duplicitniho business ownera.
 
 - id: add-ui-domain-client-directory
   done: true
   scope: Pridat `packages/app/src/app/lib/veslo-server-domains/*` a sdileny typed transport/helpery pro path composition.
-  note: `veslo-server.ts` zustane root composer a kompatibilni adapter pro legacy flat metody.
+  note: `veslo-server.ts` je public barrel; `veslo-server/client.ts` je root composer a kompatibilni adapter pro legacy flat metody.
   validation: Prvni fasady `veslo-server-domains/messaging-identities.ts`, `veslo-server-domains/automations.ts`, `veslo-server-domains/plugins.ts`, `veslo-server-domains/commands.ts` a `veslo-server-domains/mcp.ts` pridany test-first; targeted domain facade tests passed; OpenCode Router, automations, plugins, commands a MCP client tests passed; app typecheck passed.
 
 - id: compose-domain-clients-in-veslo-server-client
-  done: false
+  done: true
   scope: `createVesloServerClient` bude vracet domenove vstupy typu `client.identities`, `client.automations`, `client.mcp`, ...
-  note: Partial: `client.identities`, `client.automations`, `client.plugins`, `client.commands` a `client.mcp` hotove; legacy flat metody zustavaji docasne wrappery delegujici do domenovych fasad, aby migrace nemusela byt big bang.
-  validation: app typecheck, existujici UI client tests zustanou zelene.
+  note: `client.identities`, `client.automations`, `client.plugins`, `client.commands`, `client.mcp`, `client.skills`, `client.soul`, `client.workspace`, `client.conversations`, `client.files` a read-only `client.extensionsInventory` hotove; legacy flat metody zustavaji docasne wrappery delegujici do domenovych fasad, aby migrace nemusela byt big bang.
+  validation: Test-first `createVesloServerClient exposes remaining domain facades`, `skills domain facade exposes workspace, registry and materialization endpoints`, `soul domain facade exposes soul read and mutation endpoints`, `workspace domain facade exposes management and status endpoints`, `conversations domain facade exposes conversation, transcript and archive endpoints`, `files domain facade exposes file session, workspace file and artifact endpoints` and `extensions inventory domain facade aggregates read-only extension requests` added; targeted `veslo-server.test.ts`, route manifest contract test, domain modularization test and app typecheck passed.
 
 - id: migrate-identities-ui-to-domain-facade
   done: true
@@ -299,10 +301,12 @@ Pro kazdy krok plati:
   validation: Test-first `veslo-server-route-manifest-contract.test.ts` added; automations facade requests now match `routes/automations.ts`, messaging identities workspace requests now match `routes/opencode-router.ts`, plugins facade requests now match `routes/plugins.ts`, commands facade requests now match `routes/commands.ts` and MCP facade requests now match `routes/mcp.ts`; targeted manifest test passed.
 
 - id: add-aggregate-read-model-policy
-  done: false
+  done: true
   scope: Pro kazdou obrazovku urcit, zda staci klientska fasada nad existujicimi endpointy, nebo ma vzniknout server aggregate read endpoint.
   rule: Agregovat read modely, ne mutace. Mutace zustavaji explicitni a domenove.
-  validation: plan update u konkretni domeny pred implementaci aggregate endpointu.
+  policy: V tomto checkpointu nevznika zadny novy server aggregate endpoint. `identities`, `automations`, `plugins`, `commands`, `mcp`, `skills`, `soul`, `workspace`, `conversations` a `files` staci jako klientske domenove fasady nad existujicimi endpointy. `extensionsInventory` je pouze client-side read model skladajici `mcp`, `plugins`, `skills` a `commands`; mutace zustavaji v puvodnich domenovych fasadach.
+  futureRule: Server aggregate read endpoint muze vzniknout az po explicitnim plan update pro konkretni obrazovku/read model a nesmi prijimat mutace.
+  validation: `extensionsInventory.overview` pokryto testem jako read-only client aggregate; nebyl pridan novy server aggregate endpoint ani novy `extensions-platform` owner; targeted app client test and app typecheck passed.
 
 ### Faze 1: male route adaptery s jasnym existujicim modulem
 
@@ -432,29 +436,29 @@ Pro kazdy krok plati:
   validation: Test-first `server.user-global-skills-routes.test.ts` added, failed before `routes/user-global-skills.ts` existed and passed after extraction; `user-skill-store.test.ts`, `server.user-skill-store.test.ts`, `skill-removal-journal.test.ts`, app `veslo-server.test.ts`, server typecheck, `build:bin` and `git diff --check` passed.
 
 - id: extract-skill-materialization-routes
-  done: false
+  done: true
   existingOwner: skills-materialization
   routeAdapter: `routes/skill-materialization.ts`
   routes: 5
   namespace: `/skills/materialization`, `/workspace/:id/skills/materialization`, `/workspace/:id/skills/user-global-store/sync`
   sourceModules: `skill-materializer.ts`, `workspace-skill-lockfile.ts`, `platform-managed-skills.ts`, `workspace-skill-set.ts`
   deps: `serverDataDir`
-  validation: `server.skill-materialization.test.ts`, workspace materialization UI contract tests, server typecheck, `build:bin`.
+  validation: Test-first `server.skill-materialization-routes.test.ts` added, failed before `routes/skill-materialization.ts` existed and passed after extraction; `server.skill-materialization.test.ts`, server typecheck and `build:bin` passed.
 
 - id: extract-workspace-skills-routes
-  done: false
+  done: true
   existingOwner: workspace-skills
   resourceOwnerModel: workspace-owned `ResourceOwner`
   routeAdapter: `routes/workspace-skills.ts`
-  routes: 6
+  routes: 7
   namespace: `/hub/skills`, `/workspace/:id/skills`
   sourceModules: `skills.ts`, `skill-hub.ts`, `skill-resolver.ts`
-  validation: skills tests, hub skill tests, app skills route contract tests, server typecheck, `build:bin`.
+  validation: Test-first `server.workspace-skills-routes.test.ts` added, failed before `routes/workspace-skills.ts` existed and passed after extraction; `server.hub-skills.test.ts`, `server.skill-materialization.test.ts`, `skills.test.ts`, `skill-hub.test.ts`, `workspace-skill-set.test.ts`, server typecheck and `build:bin` passed.
 
 ### Faze 4: Soul HTTP adapter
 
 - id: extract-soul-routes
-  done: false
+  done: true
   existingOwner: soul-runtime
   resourceOwnerModel: Soul summaries return organization/user/workspace `ResourceOwner`
   routeAdapter: `routes/soul.ts`
@@ -463,36 +467,36 @@ Pro kazdy krok plati:
   sourceModules: `soul-cache.ts`, `soul-den-client.ts`, `soul-memory.ts`, `soul-materializer.ts`
   deps: `serverDataDir`, soul read/materialization helper slice
   note: Soul business ownership uz existuje; extrahuje se pouze HTTP adapter a jeho orchestrace.
-  validation: `soul-routes.test.ts`, app soul route contract tests, server typecheck, `build:bin`.
+  validation: Test-first `server.soul-routes-registration.test.ts` added, failed before `routes/soul.ts` existed and passed after extraction; `soul-routes.test.ts`, `soul-memory.test.ts`, `soul-den-client.test.ts`, `soul-cache.test.ts`, `soul-materializer.test.ts`, server typecheck and `build:bin` passed.
 
 ### Faze 5: platform/admin a workspace management
 
 - id: extract-health-status-ui-routes
-  done: false
+  done: true
   existingOwner: platform-runtime
-  routeAdapter: `routes/health.ts`, `routes/toy-ui.ts`, `routes/status.ts`
-  routes: subset of current 24
+  routeAdapter: `routes/health.ts`
+  routes: 11
   namespace: `/health`, `/status`, `/capabilities`, `/ui`, `/w/:id/*`
   note: Pred extrakci rozdelit health/ui/status od workspace-management, aby nevznikl novy monolit.
-  validation: health/status tests nebo route contract test, server typecheck, `build:bin`.
+  validation: Test-first `server.health-status-routes.test.ts` added, failed before `routes/health.ts` existed and passed after extraction; hub capabilities tests, server typecheck and `build:bin` passed.
 
 - id: extract-workspace-management-routes
-  done: false
+  done: true
   existingOwner: workspace-management
   routeAdapter: `routes/workspace-management.ts`
-  routes: subset of current 24
+  routes: 13
   namespace: `/workspaces`, `/workspace/:id/config`, `/workspace/:id/events`, `/workspace/:id/system`, `/workspace/:id/audit`, import/export
   deps: `serializeWorkspaceForResponse`, workspace config/provision helpers
-  validation: workspace CRUD/config tests, bounded body tests, server typecheck, `build:bin`.
+  validation: Test-first `server.workspace-management-routes.test.ts` added, failed before `routes/workspace-management.ts` existed and passed after extraction; `server.workspaces-crud.test.ts`, `server.automations.test.ts`, `soul-routes.test.ts`, server typecheck and `build:bin` passed.
 
 - id: extract-admin-token-approval-routes
-  done: false
+  done: true
   existingOwner: platform-infra / approval-workflow
   routeAdapter: `routes/admin.ts`
   routes: 6
   namespace: `/tokens`, `/whoami`, `/approvals`
   note: Tyto routy nejsou produkcni UI feature ownership; jsou platform/admin infrastruktura.
-  validation: tokens/approvals tests, server typecheck, `build:bin`.
+  validation: Test-first `server.admin-routes-registration.test.ts` added, failed before `routes/admin.ts` existed and passed after extraction; `tokens.test.ts`, approval coverage in `server.automations.test.ts` and `soul-routes.test.ts`, server typecheck and `build:bin` passed.
 
 ## Duplicate/remediation notes
 
@@ -512,56 +516,69 @@ Pro kazdy krok plati:
   validation: automations E2E already passed.
 
 - id: do-not-merge-mcp-plugins-skills-under-extensions-platform
-  done: false
+  done: true
   scope: Future route extraction must keep MCP, plugins and skills as separate adapters because the repo already documents separate surfaces.
-  validation: enforce during each extraction PR/checkpoint.
+  validation: Enforced during remaining skills route extraction; `routes/mcp.ts`, `routes/plugins.ts`, `routes/skill-*.ts` and `routes/workspace-skills.ts` remain separate adapters without an extensions-platform owner.
 
 ## Pracovni pravidla pro kazdou extrakci
 
 - id: test-first-one-thing
-  done: false
+  done: true
   rule: Kazda zmena zacina jednim testem pro jednu vec; implementace smi pokryt jen chovani popsane timto testem.
 
 - id: run-targeted-test-before-next-change
-  done: false
+  done: true
   rule: Pred dalsi implementacni jednotkou musi projit cilene testy pro prave dokoncovanou vec.
 
 - id: no-batched-contract-changes
-  done: false
+  done: true
   rule: Nemichat vice kontraktnich zmen v jednom kroku. Pokud se meni route adapter i UI fasada, musi mit samostatne testy a samostatne overeni.
 
 - id: preserve-route-contract
-  done: false
+  done: true
   rule: HTTP metoda, path, auth mode, response shape a error kody zustavaji stejne.
 
 - id: prefer-existing-business-modules
-  done: false
+  done: true
   rule: Route controller ma volat existujici domenove moduly; nepresouvat business logiku zpet do `server.ts`.
 
 - id: avoid-fake-owners
-  done: false
+  done: true
   rule: Nedeklarovat nove ownership hranice, pokud uz v kodu nebo dokumentaci existuji; pojmenovat pouze HTTP adapter ownership.
 
 - id: keep-resource-owner-semantics
-  done: false
+  done: true
   rule: `ResourceOwner` popisuje durable inventar/config vlastnictvi. Nevyvozovat z nej runtime readiness, polling, OAuth granty ani token refresh ownership.
 
 - id: one-ui-entrypoint-per-domain
-  done: false
+  done: true
   rule: Nova nebo migrovana UI feature ma pouzivat jednu `domainClientFacade` pro svou skupinu pozadavku, ne raw path stringy ani nahodne flat metody.
 
 - id: keep-flat-client-methods-as-compat-wrappers
-  done: false
-  rule: Stare metody ve `veslo-server.ts` zustanou jen jako docasne delegujici wrappery, dokud nejsou migrovane vsechny call sites dane domeny.
+  done: true
+  rule: Stare flat metody na `VesloServerClient` zustanou v `veslo-server/client.ts` jako docasne delegujici wrappery, dokud nejsou migrovane vsechny call sites dane domeny.
 
 - id: aggregate-reads-not-mutations
-  done: false
+  done: true
   rule: Agregovat server-side pouze read modely pro obrazovky. Mutace zustavaji explicitni v domenove fasade a route adapteru.
 
 - id: validate-each-domain-before-next
-  done: false
+  done: true
   rule: Po kazde domene pustit cilene testy, server typecheck, `pnpm --filter veslo-server build:bin` a `git diff --check`.
 
 - id: update-this-plan-during-implementation
-  done: false
+  done: true
   rule: Po dokonceni konkretni polozky zmenit pouze jeji `done` na `true` a pripadne doplnit validation poznamku.
+
+## Finalni validace
+
+- `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/lib/veslo-server.test.ts`
+- `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/lib/veslo-server-route-manifest-contract.test.ts`
+- `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/lib/veslo-server-modularization.test.ts`
+- `pnpm --filter @neatech/veslo-ui typecheck`
+- `pnpm --filter veslo-server typecheck`
+- `pnpm --filter veslo-server build:bin`
+- `pnpm --filter veslo-server exec bun test src`
+- `git diff --check`
+
+Poznamka: `git diff --check` prosel bez whitespace chyb; Git pouze vypsal LF -> CRLF warningy pro upravene soubory na Windows.

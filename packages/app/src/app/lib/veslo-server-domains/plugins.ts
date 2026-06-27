@@ -1,4 +1,5 @@
-import type { VesloPluginItem } from "../veslo-server";
+import type { VesloPluginItem } from "../veslo-server/types";
+import { workspacePath } from "./path";
 
 type RequestJsonOptions = {
   method?: string;
@@ -15,7 +16,7 @@ export type PluginsClientContext = {
   requestJson: <T>(baseUrl: string, path: string, options?: RequestJsonOptions) => Promise<T>;
 };
 
-const workspacePluginsPath = (workspaceId: string) => `/workspace/${workspaceId}/plugins`;
+const workspacePluginsPath = (workspaceId: string) => `${workspacePath(workspaceId)}/plugins`;
 
 export function createPluginsClient(context: PluginsClientContext) {
   const { baseUrl, token, hostToken, requestJson } = context;

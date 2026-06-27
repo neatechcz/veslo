@@ -1,5 +1,12 @@
 # Frontend Refactoring: God Objects + Error Handling
 
+Status note: this is historical design material. The `veslo-server.ts`
+fetch/transport references below predate the current Veslo server frontend client
+layout. Today the public barrel is `packages/app/src/app/lib/veslo-server.ts`,
+transport lives in `packages/app/src/app/lib/veslo-server/transport.ts`, and
+client composition lives in `packages/app/src/app/lib/veslo-server/client.ts`.
+Use `docs/dev/veslo-server-app-contract.md` for current client rules.
+
 **Date:** 2026-03-20
 **Status:** Approved
 **Approach:** Incremental extract-by-concern (Approach A)

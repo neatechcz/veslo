@@ -9,15 +9,17 @@ describe("Skill removal routes", () => {
 
     registerSkillRemovalRoutes(routes, dependencies);
 
-    const expectedRoutes: Array<[string, string]> = [
-      ["GET", "/skill-removals"],
-      ["POST", "/skill-removals/removal-1/restore"],
-      ["POST", "/skills/batch-remove"],
+    const expectedRoutes: Array<[string, string, Route["auth"]]> = [
+      ["GET", "/skill-removals", "none"],
+      ["POST", "/skill-removals/removal-1/restore", "host"],
+      ["POST", "/skills/batch-remove", "host"],
     ];
 
     expect(routes).toHaveLength(expectedRoutes.length);
-    for (const [method, path] of expectedRoutes) {
-      expect(matchRoute(routes, method, path)).not.toBeNull();
+    for (const [index, [method, path, auth]] of expectedRoutes.entries()) {
+      const route = matchRoute([routes[index]!], method, path);
+      expect(route).not.toBeNull();
+      expect(route?.auth).toBe(auth);
     }
 
     expect(matchRoute(routes, "DELETE", "/skill-removals/removal-1")).toBeNull();

@@ -1,5 +1,12 @@
 # Fix 10: UI/Server Contract Route Owner Extraction Checkpoint
 
+Status note: this is a historical checkpoint. The completed state is documented in
+`docs/fixes/2026-06-27-fix-11-ui-server-contract-route-owner-extraction-complete.md`
+and `docs/plans/2026-06-27-veslo-server-client-modularization-plan.md`. In the
+current code, `packages/app/src/app/lib/veslo-server.ts` is a public barrel and
+`packages/app/src/app/lib/veslo-server/client.ts` owns the client composition and
+flat compatibility aliases.
+
 ## Problem
 
 Audit UI requestu ukazal, ze hlavni problem neni jen velikost `server.ts`, ale rozpad implicitni smlouvy mezi UI klientem a serverem.

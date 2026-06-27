@@ -93,6 +93,6 @@ The app also supports importing shared bundle payloads into a writable workspace
 
 - workspace config page: `packages/app/src/app/pages/config.tsx`
 - share modal: `packages/app/src/app/components/share-workspace-modal.tsx`
-- invite and bundle URLs: `packages/app/src/app/lib/veslo-server.ts`
+- invite and bundle URLs: `packages/app/src/app/lib/veslo-server/connection.ts` re-exported by `packages/app/src/app/lib/veslo-server.ts`
 - shared bundle parsing: `packages/app/src/app/lib/shared-bundles.ts`
 - import/export workflow: `packages/app/src/app/stores/config-store.ts`

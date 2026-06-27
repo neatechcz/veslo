@@ -71,8 +71,10 @@ describe("veslo-server bridge listener", () => {
 
     const primaryBody = await primary.json();
     const bridgeBody = await bridge.json();
-    // Same shared fetch handler => same health identity (token/pid).
-    expect(bridgeBody).toMatchObject({ token: (primaryBody as { token?: string }).token });
+    // Same shared fetch handler => same non-secret health identity.
+    expect(bridgeBody).toMatchObject({ pid: (primaryBody as { pid?: number }).pid });
+    expect((primaryBody as { token?: unknown }).token).toBeUndefined();
+    expect((bridgeBody as { token?: unknown }).token).toBeUndefined();
   });
 
   test("does not open a bridge listener when bridgeHost is unset", async () => {

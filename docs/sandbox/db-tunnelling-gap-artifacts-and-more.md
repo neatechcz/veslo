@@ -1,5 +1,11 @@
 # Kde všude chybí „tunel do naší DB" (artefakty a další)
 
+Status note: this sandbox audit predates the Veslo server frontend client
+modularization. References to `packages/app/src/app/lib/veslo-server.ts` as the
+implementation file are stale: artifact/file methods now live in
+`packages/app/src/app/lib/veslo-server-domains/files.ts`, conversation
+latest-run artifacts live in `veslo-server-domains/conversations.ts`, and the
+public barrel remains `packages/app/src/app/lib/veslo-server.ts`.
 > Návazná kontrola po opravě sidebaru
 > ([`sidebar-conversations-fix.md`](sidebar-conversations-fix.md)): kde jinde
 > čteme data **sáhnutím do enginu / sandboxu** za běhu místo z vlastního

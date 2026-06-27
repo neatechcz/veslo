@@ -1,4 +1,5 @@
-import type { VesloCommandItem } from "../veslo-server";
+import type { VesloCommandItem } from "../veslo-server/types";
+import { workspacePath } from "./path";
 
 type RequestJsonOptions = {
   method?: string;
@@ -24,7 +25,7 @@ export type CommandUpsertPayload = {
   subtask?: boolean;
 };
 
-const workspaceCommandsPath = (workspaceId: string) => `/workspace/${workspaceId}/commands`;
+const workspaceCommandsPath = (workspaceId: string) => `${workspacePath(workspaceId)}/commands`;
 
 export function createCommandsClient(context: CommandsClientContext) {
   const { baseUrl, token, hostToken, requestJson } = context;

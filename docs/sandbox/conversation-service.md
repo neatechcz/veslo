@@ -1,5 +1,10 @@
 # Conversation service — current session/write architecture
 
+Status note: this sandbox note has stale source line references. The app-facing
+Veslo server public import path is still `packages/app/src/app/lib/veslo-server.ts`,
+but conversation methods now live in
+`packages/app/src/app/lib/veslo-server-domains/conversations.ts` and are wired
+through `packages/app/src/app/lib/veslo-server/client.ts`.
 Tenhle dokument popisuje současnou serverovou vrstvu, která sjednocuje
 Veslo conversation id, OpenCode session id, pasivní čtení transcriptů a
 odesílání runů. Je to aktuální zdroj pravdy pro send/read flow v sandbox

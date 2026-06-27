@@ -1,4 +1,5 @@
-import type { VesloHubMcpItem, VesloMcpItem } from "../veslo-server";
+import type { VesloHubMcpItem, VesloMcpItem } from "../veslo-server/types";
+import { workspacePath } from "./path";
 
 type RequestJsonOptions = {
   method?: string;
@@ -31,7 +32,7 @@ const buildDenHeaders = (options?: DenContextOptions) => {
   return Object.keys(extraHeaders).length > 0 ? extraHeaders : undefined;
 };
 
-const workspaceMcpPath = (workspaceId: string) => `/workspace/${workspaceId}/mcp`;
+const workspaceMcpPath = (workspaceId: string) => `${workspacePath(workspaceId)}/mcp`;
 
 export function createMcpClient(context: McpClientContext) {
   const { baseUrl, token, hostToken, requestJson } = context;

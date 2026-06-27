@@ -76,7 +76,17 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
 ## Config and Persistence Helpers
 
 - `packages/app/src/app/lib/veslo-server.ts`
-  Veslo server settings persistence, workspace URL helpers, invite links, bundle links, skill registry search/materialization client wrappers, and API client types.
+  Public Veslo server client barrel. Keep app imports pointed here for compatibility.
+- `packages/app/src/app/lib/veslo-server/connection.ts`
+  Veslo server settings persistence, workspace URL helpers, invite links, bundle links, and session archive client option resolution.
+- `packages/app/src/app/lib/veslo-server/transport.ts`
+  Shared Veslo server request transport, auth headers, Tauri fetch audit wrapping, binary/multipart helpers, and `VesloServerError`.
+- `packages/app/src/app/lib/veslo-server/client.ts`
+  `createVesloServerClient` composition shell. It wires domain facades and preserves legacy flat aliases.
+- `packages/app/src/app/lib/veslo-server/types.ts`
+  Public Veslo server DTOs, request inputs, and response types re-exported by the barrel.
+- `packages/app/src/app/lib/veslo-server-domains/`
+  Domain client facades for workspace, conversations, files, skills/registry/materialization, soul, MCP, commands, plugins, automations, messaging identities, and read-only extensions inventory.
 - `packages/app/src/app/lib/den-auth.ts`
   Den auth state, browser sign-in handoff, keep-signed-in behavior, and Den endpoint override.
 - `packages/app/src/app/constants.ts`
@@ -107,5 +117,5 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
 - Onboarding or auth issue: start at `onboarding.tsx`, `workspace.ts`, and `den-auth.ts`.
 - Settings or persistence issue: start at `settings.tsx`, `constants.ts`, `theme.ts`, and `app.tsx`.
 - Skills/plugins/MCP issue: start at `extensions.ts`, then the corresponding page component.
-- Sharing/import/export issue: start at `session.tsx` or `dashboard.tsx`, then `veslo-server.ts`, `shared-bundles.ts`, and `config-store.ts`.
+- Sharing/import/export issue: start at `session.tsx` or `dashboard.tsx`, then `lib/veslo-server/connection.ts`, `lib/veslo-server-domains/workspace.ts`, `shared-bundles.ts`, and `config-store.ts`.
 - Runtime contract issue: start at `packages/server/src/server.ts` and `packages/server/README.md`.

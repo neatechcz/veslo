@@ -8,7 +8,7 @@ This document describes the main persistence and config surfaces used by Veslo.
 - Workspace-scoped config: `.opencode/veslo.json`.
 - Workspace automation state: `.opencode/veslo/automations.json`.
 - OpenCode config: `opencode.json` or `opencode.jsonc`.
-- Server connection state: browser storage keys managed by `veslo-server.ts`.
+- Server connection state: browser storage keys managed by `packages/app/src/app/lib/veslo-server/connection.ts` and re-exported through `packages/app/src/app/lib/veslo-server.ts`.
 - Den auth state: browser storage keys managed by `den-auth.ts`.
 - Desktop local proof cache: app-data JSON managed by Tauri commands.
 
@@ -132,7 +132,8 @@ Privacy defaults:
 
 ## Veslo Server Connection State
 
-Managed by `packages/app/src/app/lib/veslo-server.ts`.
+Managed by `packages/app/src/app/lib/veslo-server/connection.ts`.
+Public callers should still import helpers from `packages/app/src/app/lib/veslo-server.ts`.
 
 Primary keys:
 
@@ -142,7 +143,8 @@ Primary keys:
 
 These control which Veslo server URL the app connects to and which bearer token it sends.
 
-Invite-link and bundle-link parsing also lives in `veslo-server.ts`. Incoming query parameters can override the stored connection state for a launch flow.
+Invite-link and bundle-link parsing also lives in `packages/app/src/app/lib/veslo-server/connection.ts`.
+Incoming query parameters can override the stored connection state for a launch flow.
 
 The desktop shell also persists the managed local `veslo-server` process snapshot in the app-local data directory so a new app process can recover a still-running server. For the live managed child, native `veslo_server_info` reports process ownership and keeps the recorded URL/token/PID while the child is alive; HTTP health is polled separately by the frontend. Persisted snapshots from a previous app process still require a successful `/health` check before recovery and are cleaned up when stale.
 
