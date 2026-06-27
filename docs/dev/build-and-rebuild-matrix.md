@@ -46,7 +46,7 @@ pnpm tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json -- -
 
 ```bash
 cd packages/e2e
-pnpm test -- --scenario <name-or-path>
+pnpm test:pilot -- --scenario <name-or-path>
 ```
 
 Legacy WebdriverIO specs are not a runtime gate. Convert the target behavior to `tauri-pilot` before relying on it for validation.
@@ -64,6 +64,7 @@ pnpm test:pilot:core-platform-skills
 ```
 
 The pilot script requires `tauri-pilot` on `PATH`, or `E2E_TAURI_PILOT_BIN=/absolute/path/to/tauri-pilot`.
+The desktop plugin is pinned to the upstream `tauri-pilot` 0.7.2 revision that routes macOS eval results through the Pilot IPC callback; keep the CLI at 0.7.2 or set `E2E_TAURI_PILOT_BIN` to a compatible binary.
 
 ### Release bundle sidecars
 
