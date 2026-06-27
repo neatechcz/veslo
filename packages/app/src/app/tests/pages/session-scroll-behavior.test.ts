@@ -2,8 +2,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
+const sessionSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
+const conversationFlowSource = readFileSync(new URL("../../pages/session-conversation-flow.ts", import.meta.url), "utf8");
+const viewportSource = readFileSync(new URL("../../pages/session-transcript-viewport.ts", import.meta.url), "utf8");
+const centerSource = readFileSync(new URL("../../pages/session-center.tsx", import.meta.url), "utf8");
+const source = `${sessionSource}\n${conversationFlowSource}\n${viewportSource}\n${centerSource}`;
 const appStyles = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
+const flowSendImmediateStart = conversationFlowSource.indexOf("sendPromptImmediate: async (");
+const flowSendImmediateEnd = conversationFlowSource.indexOf("export type RunBaseline", flowSendImmediateStart);
+const flowSendImmediateSource = conversationFlowSource.slice(flowSendImmediateStart, flowSendImmediateEnd);
 
 test("session view accepts active pending draft key for pending queue identity", () => {
   assert.match(
@@ -13,30 +20,36 @@ test("session view accepts active pending draft key for pending queue identity",
   );
 
   assert.match(
-    source,
-    /const pendingDraftKey = props\.activePendingDraftKey\?\.trim\(\);[\s\S]*return createUiConversationKey\(\{[\s\S]*workspaceId,[\s\S]*kind: "pending-draft",[\s\S]*id: pendingDraftKey,[\s\S]*\}\);/s,
+    conversationFlowSource,
+    /const pendingDraftKey = context\.activePendingDraftKey\?\.trim\(\);[\s\S]*return createUiConversationKey\(\{[\s\S]*workspaceId,[\s\S]*kind: "pending-draft",[\s\S]*id: pendingDraftKey,[\s\S]*\}\);/s,
     "pending sessions should key queues by pending draft identity and workspace scope when available",
   );
 
   assert.match(
-    source,
-    /return createUiConversationKey\(\{[\s\S]*workspaceId,[\s\S]*kind: "pending-workspace",[\s\S]*id: "active",[\s\S]*\}\);/s,
+    conversationFlowSource,
+    /return createUiConversationKey\(\{[\s\S]*workspaceId: resolveActiveUiConversationWorkspaceId\(context\),[\s\S]*kind: "pending-workspace",[\s\S]*id: "active",[\s\S]*\}\);/s,
     "pending queue identity should fall back to a workspace-scoped active key when no pending draft key exists",
+  );
+
+  assert.match(
+    sessionSource,
+    /const pendingSessionQueueKey = \(\) => resolvePendingSessionQueueKey\(queueKeyContext\(\)\);/,
+    "session view should wire pending queue identity through the conversation-flow helper",
   );
 });
 
 test("session send flow starts optimistic run UI before prompt handoff resolves", () => {
-  const handlerStart = source.indexOf("const sendPromptImmediate = async (");
-  const optimisticSet = source.indexOf("createPendingSubmittedDraft({", handlerStart);
-  const startRun = source.indexOf("startRun(sessionKey);", optimisticSet);
-  const sendCall = source.indexOf("props.sendPromptAsync(draft, promptSendOptions)", startRun);
-  const rejectedBranch = source.indexOf("if (!accepted) {", sendCall);
-  const markFailed = source.indexOf("markMatchingPendingSubmitFailed(errorMessage);", rejectedBranch);
-  const resetRun = source.indexOf("resetRunState(runStateSessionKeyForHandoffFailure());", rejectedBranch);
-  const failedBranchEnd = source.indexOf("setToastMessage(props.error ?? tr(\"session.connect_server_to_attach\"));", rejectedBranch);
-  const failedBranch = source.slice(rejectedBranch, failedBranchEnd);
+  const handlerStart = 0;
+  const optimisticSet = flowSendImmediateSource.indexOf("createPendingSubmittedDraft({");
+  const startRun = flowSendImmediateSource.indexOf("deps.runState.startRun(sessionKey);", optimisticSet);
+  const sendCall = flowSendImmediateSource.indexOf("deps.transport.sendPromptAsync(draft, promptSendOptions)", startRun);
+  const rejectedBranch = flowSendImmediateSource.indexOf("if (!accepted) {", sendCall);
+  const markFailed = flowSendImmediateSource.indexOf("markMatchingPendingSubmitFailed(errorMessage);", rejectedBranch);
+  const resetRun = flowSendImmediateSource.indexOf("deps.runState.resetRunState(runStateSessionKeyForHandoffFailure());", rejectedBranch);
+  const failedBranchEnd = flowSendImmediateSource.indexOf("deps.feedback.setToastMessage(deps.runtime.error() ?? deps.feedback.tr(\"session.connect_server_to_attach\"));", rejectedBranch);
+  const failedBranch = flowSendImmediateSource.slice(rejectedBranch, failedBranchEnd);
 
-  assert.notEqual(handlerStart, -1, "session send handler should exist");
+  assert.notEqual(flowSendImmediateStart, -1, "session send handler should exist");
   assert.ok(optimisticSet > handlerStart, "session should create a pending submitted draft during send");
   assert.ok(startRun > optimisticSet, "session should start visible run state after the optimistic message is captured");
   assert.ok(sendCall > startRun, "session should show optimistic waiting UI before prompt handoff resolves");
@@ -53,13 +66,18 @@ test("session send flow starts optimistic run UI before prompt handoff resolves"
 
 test("failed handoff marks pending submitted message by immutable submit id", () => {
   assert.match(
-    source,
-    /const markMatchingPendingSubmitFailed = \(errorMessage: string\) => \{[\s\S]*Object\.entries\(draftsBySessionKey\)\.find\(\(\[, draft\]\) => draft\.id === pendingSubmitId\)[\s\S]*const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*return setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\);[\s\S]*\};/,
+    conversationFlowSource,
+    /export const markMatchingPendingSubmittedDraftFailed = \(\{[\s\S]*Object\.entries\(draftsBySessionKey\)\.find\(\(\[, draft\]\) => draft\.id === submitId\)[\s\S]*const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\)[\s\S]*\};/,
     "failed handoff should mark the optimistic submitted draft by id so remapped session keys still fail visibly",
+  );
+  assert.match(
+    conversationFlowSource,
+    /const result = markMatchingPendingSubmittedDraftFailed\(\{[\s\S]*pendingSubmitId,[\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*materializedSessionIdFromHandoff,[\s\S]*errorMessage,[\s\S]*\}\);/,
+    "conversation flow should wire failed handoff marking through the helper",
   );
 
   assert.doesNotMatch(
-    source,
+    conversationFlowSource,
     /markPendingSubmittedFailed[\s\S]{0,120}current\.sessionKey === sessionKey|current\.sessionKey === sessionKey[\s\S]{0,120}markPendingSubmittedFailed/,
     "failed handoff should not require the original session key after a pending submit remap",
   );
@@ -67,19 +85,19 @@ test("failed handoff marks pending submitted message by immutable submit id", ()
 
 test("failed pending handoff restores the pending submit to its original pending draft key after remap", () => {
   assert.match(
-    source,
-    /const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*if \(pendingSessionKeyBeforeHandoff\) \{[\s\S]*return setPendingSubmittedDraftForKey\(draftsBySessionKey, pendingSessionKeyBeforeHandoff, \{[\s\S]*\.\.\.failed,[\s\S]*sessionKey: pendingSessionKeyBeforeHandoff,[\s\S]*sessionId: null,[\s\S]*\}\);[\s\S]*\}[\s\S]*return setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\);/s,
+    conversationFlowSource,
+    /const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*if \(!pendingSessionKeyBeforeHandoff\) \{[\s\S]*setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\)[\s\S]*\}[\s\S]*return \{[\s\S]*setPendingSubmittedDraftForKey\([\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*\{[\s\S]*\.\.\.failed,[\s\S]*sessionKey: pendingSessionKeyBeforeHandoff,[\s\S]*sessionId: null,[\s\S]*\}/s,
     "failed pending handoff should be visible on the restored pending draft route even if session materialization remapped it first",
   );
 });
 
 test("session renders a temporary submitted user message while footer indicator owns responding state", () => {
   const optimisticIndex = source.indexOf("const optimisticSubmittedMessage = createMemo<MessageWithParts | null>(() => {");
-  const renderedIndex = source.indexOf("const renderedMessages = createMemo(() => {");
+  const viewportControllerIndex = source.indexOf("const transcriptViewport = createSessionTranscriptViewport({");
 
   assert.ok(
-    optimisticIndex >= 0 && optimisticIndex < renderedIndex,
-    "the optimistic submitted user memo must be defined before renderedMessages reads it",
+    optimisticIndex >= 0 && optimisticIndex < viewportControllerIndex,
+    "the optimistic submitted user memo must be defined before the transcript viewport controller reads it",
   );
 
   assert.match(
@@ -95,9 +113,9 @@ test("session renders a temporary submitted user message while footer indicator 
   );
 
   assert.match(
-    source,
-    /const optimisticMessage = optimisticSubmittedMessage\(\);\s*const sourceMessages = optimisticMessage \? \[\.\.\.props\.messages, optimisticMessage\] : props\.messages;/,
-    "rendered messages should append only the optimistic user message",
+    viewportSource,
+    /optimisticMessage \? \[\.\.\.messages, optimisticMessage\] : \[\.\.\.messages\]/,
+    "rendered transcript messages should append only the optimistic user message",
   );
 
   assert.match(
@@ -129,28 +147,33 @@ test("failed pending submitted messages become editable only through explicit ac
   );
 
   assert.match(
-    source,
-    /handleEditUserMessage[\s\S]*removePendingSubmittedDraftForKey\(current, currentSessionQueueKey\(\), pendingEditable\.messageId\)[\s\S]*props\.setComposerDraft\(pendingEditable\.draft\);/,
+    conversationFlowSource,
+    /pendingEditable\?\.messageId === editable\.messageId[\s\S]*removePendingSubmittedDraftForKey\(current, sessionKey, pendingEditable\.messageId\)[\s\S]*deps\.composer\.setComposerDraft\(pendingEditable\.draft\);/,
     "explicit edit should clear the pending timeline message and load that exact draft into Composer",
   );
 });
 
 test("accepted handoff does not clear unrelated failed pending submitted messages", () => {
-  const handlerStart = source.indexOf("const sendPromptImmediate = async (");
-  const acceptedBranchStart = source.indexOf(
-    "if (options.expectedSessionKey && currentSessionQueueKey() !== options.expectedSessionKey)",
-    handlerStart,
+  const handlerStart = 0;
+  const acceptedBranchStart = flowSendImmediateSource.indexOf(
+    "options.expectedSessionKey &&",
   );
-  const acceptedBranchEnd = source.indexOf("setStickToBottom(true);", acceptedBranchStart);
-  const acceptedBranch = source.slice(acceptedBranchStart, acceptedBranchEnd);
+  const acceptedBranchEnd = flowSendImmediateSource.indexOf("deps.viewport.setStickToBottom(true);", acceptedBranchStart);
+  const acceptedBranch = flowSendImmediateSource.slice(acceptedBranchStart, acceptedBranchEnd);
 
+  assert.notEqual(flowSendImmediateStart, -1, "send handler should exist");
   assert.ok(acceptedBranchStart > handlerStart, "send handler should guard accepted stale-navigation handoff");
   assert.ok(acceptedBranchEnd > acceptedBranchStart, "accepted handoff branch should lead into run UI update");
 
   assert.match(
-    source,
-    /const clearMatchingPendingSubmit = \(\) => \{[\s\S]*Object\.entries\(current\)\.find\(\(\[, draft\]\) => draft\.id === pendingSubmitId\);[\s\S]*removePendingSubmittedDraftForKey\(current, matchingSessionKey, pendingSubmitId\);[\s\S]*\};/,
+    conversationFlowSource,
+    /export const removePendingSubmittedDraftById = \([\s\S]*Object\.entries\(current\)\.find\(\(\[, draft\]\) => draft\.id === id\);[\s\S]*removePendingSubmittedDraftForKey\(current, matchingSessionKey, id\);[\s\S]*\};/,
     "session should clear pending submit state by immutable pending submit id so remapped session keys still clean up",
+  );
+  assert.match(
+    conversationFlowSource,
+    /const clearMatchingPendingSubmit = \(\) => \{[\s\S]*removePendingSubmittedDraftById\(current, pendingSubmitId\),[\s\S]*\};/,
+    "conversation flow should wire successful pending submit cleanup through the helper",
   );
 
   assert.match(
@@ -168,41 +191,47 @@ test("accepted handoff does not clear unrelated failed pending submitted message
 
 test("message growth keeps bottom pin active when user is already near the latest content", () => {
   assert.match(
-    source,
-    /if \(mLen > prevM \|\| tLen > prevT \|\| pCount > prevP\) \{\s*if \(!initialAnchorPending\(\) && stickToBottom\(\)\) \{\s*scheduleScrollToLatest\("auto"\);/s,
-    "newly appended content should continue auto-scroll while the user is already near bottom",
+    viewportSource,
+    /export const shouldAutoScrollForTranscriptGrowth = \(\{[\s\S]*\}\) => hasTranscriptGrowth\(current, previous\) && !initialAnchorPending && stickToBottom;/,
+    "newly appended content should continue auto-scroll while the viewport is pinned to the bottom",
+  );
+
+  assert.match(
+    sessionSource,
+    /shouldAutoScrollForTranscriptGrowth\(\{[\s\S]*initialAnchorPending: initialAnchorPending\(\),[\s\S]*stickToBottom: stickToBottom\(\),[\s\S]*\}\)[\s\S]*scheduleScrollToLatest\("auto"\);/s,
+    "session should use the transcript viewport growth policy before scheduling bottom scroll",
   );
 });
 
 test("throttled auto-scroll keeps a trailing bottom anchor while pinned", () => {
   assert.match(
-    source,
+    viewportSource,
     /let trailingAutoScrollTimer: number \| undefined;/,
-    "session should track a deferred auto-scroll retry",
+    "transcript viewport should track a deferred auto-scroll retry",
   );
 
   assert.match(
-    source,
-    /const remainingMs = STREAM_SCROLL_MIN_INTERVAL_MS - \(now - lastAutoScrollAt\);\s*if \(nextBehavior === "auto" && remainingMs > 0\) \{\s*if \(trailingAutoScrollTimer === undefined\) \{\s*trailingAutoScrollTimer = window\.setTimeout\(\(\) => \{\s*trailingAutoScrollTimer = undefined;\s*if \(!stickToBottom\(\)\) return;\s*scheduleScrollToLatest\("auto"\);\s*\}, remainingMs\);\s*\}\s*return;\s*\}/s,
+    viewportSource,
+    /const now = deps\.now\(\);\s*const remainingMs = STREAM_SCROLL_MIN_INTERVAL_MS - \(now - lastAutoScrollAt\);\s*if \(nextBehavior === "auto" && remainingMs > 0\) \{\s*if \(trailingAutoScrollTimer === undefined\) \{\s*trailingAutoScrollTimer = window\.setTimeout\(\(\) => \{\s*trailingAutoScrollTimer = undefined;\s*if \(!stickToBottom\(\)\) return;\s*scheduleScrollToLatest\("auto"\);\s*\}, remainingMs\);\s*\}\s*return;\s*\}/s,
     "throttled auto-scroll should schedule one trailing scroll while bottom pinning is still active",
   );
 
   assert.match(
-    source,
+    viewportSource,
     /if \(trailingAutoScrollTimer !== undefined\) \{\s*window\.clearTimeout\(trailingAutoScrollTimer\);\s*trailingAutoScrollTimer = undefined;\s*\}/s,
-    "session cleanup should cancel deferred auto-scroll retries",
+    "transcript viewport cleanup should cancel deferred auto-scroll retries",
   );
 });
 
 test("near-bottom detection follows message sentinel visibility instead of raw scroll height", () => {
   assert.match(
-    source,
-    /const isAtLatest = \(container: HTMLElement, sentinel: HTMLElement\) => \{\s*const containerRect = container\.getBoundingClientRect\(\);\s*const sentinelRect = sentinel\.getBoundingClientRect\(\);\s*return sentinelRect\.bottom <= containerRect\.bottom \+ 1;\s*\};/s,
+    viewportSource,
+    /export const isAtLatest = \(container: HTMLElement, sentinel: HTMLElement\) => \{\s*const containerRect = container\.getBoundingClientRect\(\);\s*const sentinelRect = sentinel\.getBoundingClientRect\(\);\s*return sentinelRect\.bottom <= containerRect\.bottom \+ 1;\s*\};/s,
     "near-bottom should be based on whether the latest-message sentinel is inside the visible viewport",
   );
 
   assert.match(
-    source,
+    viewportSource,
     /const atLatest = isAtLatest\(container, sentinel\);\s*setNearBottom\(atLatest\);\s*setStickToBottom\(atLatest\);/s,
     "scroll-driven bottom updates should derive both visible bottom state and sticky pin intent from the sentinel",
   );
@@ -210,26 +239,26 @@ test("near-bottom detection follows message sentinel visibility instead of raw s
 
 test("auto-scroll keeps a sticky bottom intent so streaming growth does not immediately disable pinning", () => {
   assert.match(
-    source,
+    viewportSource,
     /const \[stickToBottom, setStickToBottom\] = createSignal\(true\);/,
-    "session should track whether bottom pinning is intentionally active",
+    "transcript viewport should track whether bottom pinning is intentionally active",
   );
 
   assert.match(
-    source,
+    viewportSource,
     /const atLatest = Boolean\(entry\?\.isIntersecting\) \|\| isAtLatest\(container, sentinel\);\s*if \(atLatest\) \{\s*setNearBottom\(true\);\s*setStickToBottom\(true\);\s*return;\s*\}\s*if \(!stickToBottom\(\)\) \{\s*setNearBottom\(false\);\s*\}/s,
     "observer updates should avoid dropping near-bottom state while sticky pin is still active",
   );
 
   assert.match(
-    source,
-    /if \(initialAnchorPending\(\)\) return;\s*if \(!stickToBottom\(\)\) return;\s*scheduleScrollToLatest\("auto"\);/s,
+    sessionSource,
+    /shouldAutoScrollForRunProgress\(\{[\s\S]*showRunIndicator: showRunIndicator\(\),[\s\S]*initialAnchorPending: initialAnchorPending\(\),[\s\S]*stickToBottom: stickToBottom\(\),[\s\S]*\}\)[\s\S]*scheduleScrollToLatest\("auto"\);/s,
     "continuous run updates should auto-scroll based on sticky pin intent",
   );
 
   assert.match(
-    source,
-    /if \(mLen > prevM \|\| tLen > prevT \|\| pCount > prevP\) \{\s*if \(!initialAnchorPending\(\) && stickToBottom\(\)\) \{\s*scheduleScrollToLatest\("auto"\);/s,
+    sessionSource,
+    /shouldAutoScrollForTranscriptGrowth\(\{[\s\S]*initialAnchorPending: initialAnchorPending\(\),[\s\S]*stickToBottom: stickToBottom\(\),[\s\S]*\}\)[\s\S]*scheduleScrollToLatest\("auto"\);/s,
     "message growth should keep auto-scrolling when sticky pin is active",
   );
 });
@@ -296,7 +325,7 @@ test("jump-to-latest control is anchored to bottom-right and rendered as small d
 
 test("session main column reserves a top safe strip below titlebar toggles", () => {
   assert.match(
-    source,
+    centerSource,
     /<main class="flex-1 flex flex-col overflow-hidden bg-gray-1 pt-12">/,
     "session main column should keep the titlebar overlay area clear so streamed text does not render underneath the top menu",
   );

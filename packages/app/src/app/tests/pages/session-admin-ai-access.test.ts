@@ -2,23 +2,28 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
+const sessionSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
+const conversationFlowSource = readFileSync(new URL("../../pages/session-conversation-flow.ts", import.meta.url), "utf8");
+const source = `${sessionSource}\n${conversationFlowSource}`;
+const flowSendImmediateStart = conversationFlowSource.indexOf("sendPromptImmediate: async (");
+const flowSendImmediateEnd = conversationFlowSource.indexOf("export type RunBaseline", flowSendImmediateStart);
+const flowSendImmediateSource = conversationFlowSource.slice(flowSendImmediateStart, flowSendImmediateEnd);
 
 test("session blocks prompt sending when admin-managed ai access is unavailable", () => {
-  assert.match(source, /if\s*\(props\.aiAccessBlockedReason\)\s*\{/s);
-  assert.match(source, /setToastMessage\(props\.aiAccessBlockedReason\)/);
-  assert.match(source, /Show when=\{props\.aiAccessBlockedReason\}/);
+  assert.match(conversationFlowSource, /if\s*\(aiAccessBlockedReason\)\s*\{/s);
+  assert.match(conversationFlowSource, /deps\.feedback\.setToastMessage\(aiAccessBlockedReason\)/);
+  assert.match(sessionSource, /Show when=\{props\.aiAccessBlockedReason\}/);
   assert.doesNotMatch(source, /ProviderAuthModal/);
 });
 
 test("ai access blocking keeps the submitted draft as a failed pending message", () => {
-  const handlerStart = source.indexOf("const sendPromptImmediate = async (");
-  const pendingCreate = source.indexOf("createPendingSubmittedDraft({", handlerStart);
-  const aiAccessBlock = source.indexOf("if (props.aiAccessBlockedReason) {", handlerStart);
-  const aiAccessBranchEnd = source.indexOf("return false;", aiAccessBlock);
-  const aiAccessBranch = source.slice(aiAccessBlock, aiAccessBranchEnd);
+  const handlerStart = 0;
+  const pendingCreate = flowSendImmediateSource.indexOf("createPendingSubmittedDraft({", handlerStart);
+  const aiAccessBlock = flowSendImmediateSource.indexOf("if (aiAccessBlockedReason) {", handlerStart);
+  const aiAccessBranchEnd = flowSendImmediateSource.indexOf("return false;", aiAccessBlock);
+  const aiAccessBranch = flowSendImmediateSource.slice(aiAccessBlock, aiAccessBranchEnd);
 
-  assert.notEqual(handlerStart, -1, "sendPromptImmediate should exist");
+  assert.notEqual(flowSendImmediateStart, -1, "sendPromptImmediate should exist in the conversation-flow controller");
   assert.ok(pendingCreate > handlerStart, "normal sends should create pending submit state");
   assert.ok(
     aiAccessBlock > pendingCreate,
@@ -26,7 +31,7 @@ test("ai access blocking keeps the submitted draft as a failed pending message",
   );
   assert.match(
     aiAccessBranch,
-    /markMatchingPendingSubmitFailed\(props\.aiAccessBlockedReason\);/,
+    /markMatchingPendingSubmitFailed\(aiAccessBlockedReason\);/,
     "ai access blocking should leave the submitted draft visible as a failed pending message",
   );
 });

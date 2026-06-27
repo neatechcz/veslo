@@ -3,7 +3,17 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const sessionSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
+const conversationFlowSource = readFileSync(
+  new URL("../../pages/session-conversation-flow.ts", import.meta.url),
+  "utf8",
+);
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
+const flowSendImmediateStart = conversationFlowSource.indexOf("sendPromptImmediate: async (");
+const flowSendImmediateEnd = conversationFlowSource.indexOf("export type RunBaseline", flowSendImmediateStart);
+const flowSendImmediateSource = conversationFlowSource.slice(flowSendImmediateStart, flowSendImmediateEnd);
+const flowHandleSendStart = conversationFlowSource.indexOf("handleSendPrompt: async (");
+const flowHandleSendEnd = conversationFlowSource.indexOf("drainNextQueuedDraft: async (", flowHandleSendStart);
+const flowHandleSendSource = conversationFlowSource.slice(flowHandleSendStart, flowHandleSendEnd);
 
 test("session view computes and passes editable latest-user-message state", () => {
   assert.match(
@@ -31,17 +41,27 @@ test("clicking a transcript edit action loads the draft and arms replacement sen
   );
   assert.match(
     sessionSource,
-    /const handleEditUserMessage = \(editable: EditableUserMessageDraft\) => \{[\s\S]*if \(editableUserMessage\(\)\?\.messageId !== editable\.messageId\) return;[\s\S]*props\.setComposerDraft\(editable\.draft\);[\s\S]*setEditingTranscriptMessageId\(editable\.messageId\);[\s\S]*\};/,
-    "edit action should load the reconstructed draft before arming replacement send",
+    /const handleEditUserMessage = \(editable: EditableUserMessageDraft\) => \{\s*conversationFlow\.handleEditUserMessage\(editable\);\s*\};/,
+    "session view edit callback should delegate to the conversation-flow controller",
   );
   assert.match(
-    sessionSource,
-    /const transcriptEditMessageId = editingTranscriptMessageId\(\);[\s\S]*if \(transcriptEditMessageId\) \{\s*const sessionKey = currentSessionQueueKey\(\);\s*setEditingTranscriptMessageId\(null\);\s*const accepted = await sendPromptImmediate\(draft, \{[\s\S]*reason: "replacement",[\s\S]*expectedSessionKey: sessionKey,[\s\S]*replaceMessageId: transcriptEditMessageId,[\s\S]*\}\);/,
-    "sending while a transcript edit is armed should clear edit state before handoff and use the captured replacement id",
+    conversationFlowSource,
+    /if \(deps\.transcriptEdit\.editableUserMessage\(\)\?\.messageId !== editable\.messageId\) return false;\s*deps\.composer\.setComposerDraft\(editable\.draft\);\s*deps\.transcriptEdit\.setEditingTranscriptMessageId\(editable\.messageId\);/s,
+    "edit action should load the reconstructed draft before arming replacement send in the controller",
+  );
+  assert.match(
+    conversationFlowSource,
+    /const transcriptMessageId = editingTranscriptMessageId\?\.trim\(\) \|\| null;[\s\S]*if \(transcriptMessageId\) \{[\s\S]*return \{ kind: "replace-transcript-message", messageId: transcriptMessageId \};[\s\S]*\}/,
+    "conversation-flow resolver should capture the replacement message id before queue/send branches",
+  );
+  assert.match(
+    flowHandleSendSource,
+    /case "replace-transcript-message": \{\s*const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*deps\.transcriptEdit\.setEditingTranscriptMessageId\(null\);\s*const accepted = await controller\.sendPromptImmediate\(draft, \{[\s\S]*reason: "replacement",[\s\S]*expectedSessionKey: sessionKey,[\s\S]*replaceMessageId: action\.messageId,[\s\S]*\}\);/,
+    "sending while a transcript edit is armed should clear edit state before handoff and use the captured replacement action id",
   );
   assert.doesNotMatch(
-    sessionSource,
-    /const accepted = await sendPromptImmediate\(draft, \{[\s\S]*reason: "replacement"[\s\S]*\}\);[\s\S]*setEditingTranscriptMessageId\(null\);/,
+    flowHandleSendSource,
+    /const accepted = await controller\.sendPromptImmediate\(draft, \{[\s\S]*reason: "replacement"[\s\S]*\}\);[\s\S]*deps\.transcriptEdit\.setEditingTranscriptMessageId\(null\);/,
     "replacement sends should not keep edit state armed until after the handoff settles",
   );
 });
@@ -70,8 +90,8 @@ test("replacement send path reverts to the original message before sending the e
     "session props should expose a replacement send API",
   );
   assert.match(
-    sessionSource,
-    /const accepted = await \(options\.replaceMessageId\s*\? props\.replaceUserMessageAsync\(options\.replaceMessageId, draft, replaceOptions\)\s*: props\.sendPromptAsync\(draft, promptSendOptions\)\s*\);/s,
+    flowSendImmediateSource,
+    /const accepted = await \(options\.replaceMessageId\s*\? deps\.transport\.replaceUserMessageAsync\(options\.replaceMessageId, draft, replaceOptions\)\s*: deps\.transport\.sendPromptAsync\(draft, promptSendOptions\)\s*\);/s,
     "sendPromptImmediate should route replacement sends through replaceUserMessageAsync",
   );
   assert.match(

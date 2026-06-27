@@ -28,7 +28,7 @@ test("dashboard view props expose the directory-picked session callback", () => 
 test("session wires the directory-picked session callback into WorkspaceSessionList", () => {
   assert.match(
     sessionSource,
-    /onAddDirectorySession=\{props\.openDirectorySessionFromPicker\}/,
+    /onAddDirectorySession:\s*props\.openDirectorySessionFromPicker/,
     "Session should pass the picker-driven callback into WorkspaceSessionList",
   );
 });
@@ -68,7 +68,7 @@ test("WorkspaceSessionList exposes the project pending-draft callback", () => {
 test("session wires the project pending-draft callback into WorkspaceSessionList", () => {
   assert.match(
     sessionSource,
-    /onOpenPendingDirectoryDraftInWorkspace=\{openPendingDirectoryDraftFromList\}/,
+    /onOpenPendingDirectoryDraftInWorkspace:\s*openPendingDirectoryDraftFromList/,
     "Session should pass the per-project pending-draft callback into WorkspaceSessionList",
   );
 });
@@ -123,7 +123,7 @@ test("WorkspaceSessionList refreshes project order after registered project prom
 test("session wires archived-items navigation into WorkspaceSessionList", () => {
   assert.match(
     sessionSource,
-    /onOpenArchivedSessions=\{\(\) => openSettings\("archived"\)\}/,
+    /onOpenArchivedSessions:\s*\(\)\s*=>\s*openSettings\("archived"\)/,
     "Session should route archived items into the dedicated archived settings tab",
   );
 });
@@ -167,13 +167,13 @@ test("dashboard view props expose workspace sidebar paging controls", () => {
 test("session wires paging props into WorkspaceSessionList", () => {
   assert.match(
     sessionSource,
-    /workspaceSessionPagingById=\{props\.workspaceSessionPagingById\}/,
+    /workspaceSessionPagingById:\s*props\.workspaceSessionPagingById/,
     "Session should pass workspace paging metadata into WorkspaceSessionList",
   );
 
   assert.match(
     sessionSource,
-    /onLoadMoreWorkspaceSessions=\{props\.loadMoreWorkspaceSidebarSessions\}/,
+    /onLoadMoreWorkspaceSessions:\s*props\.loadMoreWorkspaceSidebarSessions/,
     "Session should pass load-more callback into WorkspaceSessionList",
   );
 });
@@ -225,7 +225,7 @@ test("dashboard view props expose background session activity state", () => {
 test("session wires unread session ids into WorkspaceSessionList", () => {
   assert.match(
     sessionSource,
-    /unreadSessionIds=\{props\.unreadSessionIds\}/,
+    /unreadSessionIds:\s*props\.unreadSessionIds/,
     "Session should pass unread session ids into WorkspaceSessionList",
   );
 });

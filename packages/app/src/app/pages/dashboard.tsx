@@ -33,12 +33,7 @@ import {
   isWindowsPlatform,
   normalizeDirectoryPath,
 } from "../utils";
-import {
-  buildVesloConnectInviteUrl,
-  buildVesloWorkspaceBaseUrl,
-  createVesloServerClient,
-  parseVesloWorkspaceIdFromUrl,
-} from "../lib/veslo-server";
+import { parseVesloWorkspaceIdFromUrl } from "../lib/veslo-server";
 import { reportError } from "../lib/error-reporter";
 import type {
   VesloAuditEntry,
@@ -49,7 +44,6 @@ import type {
   VesloServerClient,
   VesloServerCapabilities,
   VesloServerDiagnostics,
-  VesloWorkspaceExport,
   VesloServerSettings,
   VesloServerStatus,
 } from "../lib/veslo-server";
@@ -61,7 +55,7 @@ import {
   type WorkspaceInfo,
 } from "../lib/tauri";
 import { acquireBlankNativeWindowTitleLease } from "../lib/native-window-title-lease";
-import { DEFAULT_VESLO_PUBLISHER_BASE_URL, publishVesloBundleJson } from "../lib/publisher";
+import { DEFAULT_VESLO_PUBLISHER_BASE_URL } from "../lib/publisher";
 import type { SkillMutationTarget } from "../lib/skill-inventory";
 
 import Button from "../components/button";
@@ -95,6 +89,7 @@ import {
   resolveLeftMenuAction,
   shouldReturnToSessionOnEscape,
 } from "./dashboard-menu-navigation";
+import { createWorkspaceShareController } from "./workspace-share-controller";
 import {
   ArrowLeft,
   Box,
@@ -394,33 +389,6 @@ export type DashboardViewProps = {
   connectNotion: () => void;
   sessionArchives: SessionArchiveItem[];
   onUnarchiveArchivedSession: (workspaceId: string, sessionId: string, workspaceIdentity?: string | null) => Promise<void> | void;
-};
-
-type SharedSkillItem = {
-  name: string;
-  description?: string;
-  content: string;
-  trigger?: string;
-};
-
-type WorkspaceProfileBundleV1 = {
-  schemaVersion: 1;
-  type: "workspace-profile";
-  name: string;
-  description: string;
-  workspace: VesloWorkspaceExport;
-};
-
-type SkillsSetBundleV1 = {
-  schemaVersion: 1;
-  type: "skills-set";
-  name: string;
-  description: string;
-  skills: SharedSkillItem[];
-  sourceWorkspace?: {
-    id?: string;
-    name?: string;
-  };
 };
 
 export default function DashboardView(props: DashboardViewProps) {
@@ -734,387 +702,33 @@ export default function DashboardView(props: DashboardViewProps) {
     props.setTab("scheduled");
   });
 
-  const shareWorkspace = createMemo(() => {
-    const id = shareWorkspaceId();
-    if (!id) return null;
-    return props.workspaces.find((ws) => ws.id === id) ?? null;
+  const shareController = createWorkspaceShareController({
+    shareWorkspaceId,
+    workspaces: () => props.workspaces,
+    workspaceLabel,
+    t: (key) => t(key, currentLocale()),
+    serverHostInfo: () => props.vesloServerHostInfo,
+    serverSettings: () => props.vesloServerSettings,
+    engineRuntime: () => props.engineInfo?.runtime ?? null,
+    isDesktopRuntime: () => isTauriRuntime(),
+    exportWorkspaceBusy: () => props.exportWorkspaceBusy,
+    remoteTokenMissingPlaceholder: () => t("share.set_token_in_advanced", currentLocale()),
   });
-
-  const shareWorkspaceName = createMemo(() => {
-    const ws = shareWorkspace();
-    return ws ? workspaceLabel(ws) : "";
-  });
-
-  const shareWorkspaceDetail = createMemo(() => {
-    const ws = shareWorkspace();
-    if (!ws) return "";
-    if (ws.workspaceType === "remote") {
-      if (ws.remoteType === "veslo") {
-        const hostUrl = ws.vesloHostUrl?.trim() || ws.baseUrl?.trim() || "";
-        const mounted = buildVesloWorkspaceBaseUrl(hostUrl, ws.vesloWorkspaceId);
-        return mounted || hostUrl;
-      }
-      return ws.baseUrl?.trim() || "";
-    }
-    return ws.path?.trim() || "";
-  });
-
-  const [shareLocalVesloWorkspaceId, setShareLocalVesloWorkspaceId] = createSignal<string | null>(null);
-  const [shareWorkspaceProfileBusy, setShareWorkspaceProfileBusy] = createSignal(false);
-  const [shareWorkspaceProfileUrl, setShareWorkspaceProfileUrl] = createSignal<string | null>(null);
-  const [shareWorkspaceProfileError, setShareWorkspaceProfileError] = createSignal<string | null>(null);
-  const [shareSkillsSetBusy, setShareSkillsSetBusy] = createSignal(false);
-  const [shareSkillsSetUrl, setShareSkillsSetUrl] = createSignal<string | null>(null);
-  const [shareSkillsSetError, setShareSkillsSetError] = createSignal<string | null>(null);
-
-  createEffect(
-    on(shareWorkspaceId, () => {
-      setShareWorkspaceProfileBusy(false);
-      setShareWorkspaceProfileUrl(null);
-      setShareWorkspaceProfileError(null);
-      setShareSkillsSetBusy(false);
-      setShareSkillsSetUrl(null);
-      setShareSkillsSetError(null);
-    }),
-  );
-
-  createEffect(() => {
-    const ws = shareWorkspace();
-    const baseUrl = props.vesloServerHostInfo?.baseUrl?.trim() ?? "";
-    const token = props.vesloServerHostInfo?.clientToken?.trim() ?? "";
-    const workspacePath = ws?.workspaceType === "local" ? ws.path?.trim() ?? "" : "";
-
-    if (!ws || ws.workspaceType !== "local" || !workspacePath || !baseUrl || !token) {
-      setShareLocalVesloWorkspaceId(null);
-      return;
-    }
-
-    let cancelled = false;
-    setShareLocalVesloWorkspaceId(null);
-
-    void (async () => {
-      try {
-        const client = createVesloServerClient({ baseUrl, token });
-        const response = await client.listWorkspaces();
-        if (cancelled) return;
-        const items = Array.isArray(response.items) ? response.items : [];
-        const targetPath = normalizeDirectoryPath(workspacePath);
-        const match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
-        setShareLocalVesloWorkspaceId(match?.id ?? null);
-      } catch {
-        if (!cancelled) setShareLocalVesloWorkspaceId(null);
-      }
-    })();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
-  const shareFields = createMemo(() => {
-    const ws = shareWorkspace();
-    if (!ws) {
-      return [] as Array<{
-        label: string;
-        value: string;
-        secret?: boolean;
-        placeholder?: string;
-        hint?: string;
-      }>;
-    }
-
-    if (ws.workspaceType !== "remote") {
-      const hostUrl =
-        props.vesloServerHostInfo?.connectUrl?.trim() ||
-        props.vesloServerHostInfo?.lanUrl?.trim() ||
-        props.vesloServerHostInfo?.mdnsUrl?.trim() ||
-        props.vesloServerHostInfo?.baseUrl?.trim() ||
-        "";
-      const mountedUrl = shareLocalVesloWorkspaceId()
-        ? buildVesloWorkspaceBaseUrl(hostUrl, shareLocalVesloWorkspaceId())
-        : null;
-      const url = mountedUrl || hostUrl;
-      const token = props.vesloServerHostInfo?.clientToken?.trim() || "";
-      const inviteUrl = buildVesloConnectInviteUrl({
-        workspaceUrl: url,
-        token,
-      });
-      return [
-        {
-          label: t("share.invite_link_label", currentLocale()),
-          value: inviteUrl,
-          secret: true,
-          placeholder: !isTauriRuntime() ? t("app.error.tauri_required", currentLocale()) : t("config.starting_server", currentLocale()),
-          hint: t("share.invite_link_hint", currentLocale()),
-        },
-        {
-          label: t("share.worker_url_label", currentLocale()),
-          value: url,
-          placeholder: !isTauriRuntime() ? t("app.error.tauri_required", currentLocale()) : t("config.starting_server", currentLocale()),
-          hint: mountedUrl
-            ? t("share.use_connecting_to_worker", currentLocale())
-            : hostUrl
-              ? t("share.worker_url_resolving", currentLocale())
-              : undefined,
-        },
-        {
-          label: t("dashboard.veslo_host_token_label", currentLocale()),
-          value: token,
-          secret: true,
-          placeholder: isTauriRuntime() ? "-" : t("app.error.tauri_required", currentLocale()),
-          hint: mountedUrl
-            ? t("share.use_connecting_to_worker", currentLocale())
-            : t("share.use_connecting_to_host", currentLocale()),
-        },
-      ];
-    }
-
-    if (ws.remoteType === "veslo") {
-      const hostUrl = ws.vesloHostUrl?.trim() || ws.baseUrl?.trim() || "";
-      const url = buildVesloWorkspaceBaseUrl(hostUrl, ws.vesloWorkspaceId) || hostUrl;
-      const token =
-        ws.vesloToken?.trim() ||
-        props.vesloServerSettings.token?.trim() ||
-        "";
-      const inviteUrl = buildVesloConnectInviteUrl({
-        workspaceUrl: url,
-        token,
-      });
-      return [
-        {
-          label: t("share.invite_link_label", currentLocale()),
-          value: inviteUrl,
-          secret: true,
-          hint: t("share.invite_link_hint", currentLocale()),
-        },
-        {
-          label: t("share.worker_url_label", currentLocale()),
-          value: url,
-        },
-        {
-          label: t("dashboard.veslo_host_token_label", currentLocale()),
-          value: token,
-          secret: true,
-          placeholder: token ? undefined : t("share.set_token_in_advanced", currentLocale()),
-          hint: t("share.token_grants_access", currentLocale()),
-        },
-      ];
-    }
-
-    const baseUrl = ws.baseUrl?.trim() || ws.path?.trim() || "";
-    const directory = ws.directory?.trim() || "";
-    return [
-      {
-        label: t("share.opencode_base_url_label", currentLocale()),
-        value: baseUrl,
-      },
-      {
-        label: t("onboarding.directory", currentLocale()),
-        value: directory,
-        placeholder: "(auto)",
-      },
-    ];
-  });
-
-  const shareNote = createMemo(() => {
-    const ws = shareWorkspace();
-    if (!ws) return null;
-    if (ws.workspaceType === "local" && props.engineInfo?.runtime === "direct") {
-      return t("share.direct_runtime_note", currentLocale());
-    }
-    return null;
-  });
-
-  const shareServiceDisabledReason = createMemo(() => {
-    const ws = shareWorkspace();
-    if (!ws) return t("share.select_worker_first", currentLocale());
-    if (ws.workspaceType === "remote" && ws.remoteType !== "veslo") {
-      return t("share.veslo_workers_only", currentLocale());
-    }
-    if (ws.workspaceType !== "remote") {
-      const baseUrl = props.vesloServerHostInfo?.baseUrl?.trim() ?? "";
-      const token = props.vesloServerHostInfo?.clientToken?.trim() ?? "";
-      if (!baseUrl || !token) {
-        return t("share.local_host_not_ready", currentLocale());
-      }
-    } else {
-      const hostUrl = ws.vesloHostUrl?.trim() || ws.baseUrl?.trim() || "";
-      const token = ws.vesloToken?.trim() || props.vesloServerSettings.token?.trim() || "";
-      if (!hostUrl) return t("share.missing_host_url", currentLocale());
-      if (!token) return t("share.missing_token", currentLocale());
-    }
-    return null;
-  });
-
-  const resolveShareExportContext = async (): Promise<{
-    client: VesloServerClient;
-    workspaceId: string;
-    workspace: WorkspaceInfo;
-  }> => {
-    const ws = shareWorkspace();
-    if (!ws) {
-      throw new Error(t("share.select_worker_first", currentLocale()));
-    }
-
-    if (ws.workspaceType !== "remote") {
-      const baseUrl = props.vesloServerHostInfo?.baseUrl?.trim() ?? "";
-      const token = props.vesloServerHostInfo?.clientToken?.trim() ?? "";
-      if (!baseUrl || !token) {
-        throw new Error(t("share.local_host_not_ready", currentLocale()));
-      }
-      const client = createVesloServerClient({ baseUrl, token });
-
-      let workspaceId = shareLocalVesloWorkspaceId()?.trim() ?? "";
-      if (!workspaceId) {
-        const response = await client.listWorkspaces();
-        const items = Array.isArray(response.items) ? response.items : [];
-        const targetPath = normalizeDirectoryPath(ws.path?.trim() ?? "");
-        const match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
-        workspaceId = (match?.id ?? "").trim();
-        setShareLocalVesloWorkspaceId(workspaceId || null);
-      }
-
-      if (!workspaceId) {
-        throw new Error(t("share.resolve_local_worker_failed", currentLocale()));
-      }
-
-      return { client, workspaceId, workspace: ws };
-    }
-
-    if (ws.remoteType !== "veslo") {
-      throw new Error(t("share.veslo_workers_only", currentLocale()));
-    }
-
-    const hostUrl = ws.vesloHostUrl?.trim() || ws.baseUrl?.trim() || "";
-    const token = ws.vesloToken?.trim() || props.vesloServerSettings.token?.trim() || "";
-    if (!hostUrl || !token) {
-      throw new Error(t("share.host_url_token_required", currentLocale()));
-    }
-
-    const client = createVesloServerClient({ baseUrl: hostUrl, token });
-    let workspaceId =
-      ws.vesloWorkspaceId?.trim() ||
-      parseVesloWorkspaceIdFromUrl(ws.vesloHostUrl ?? "") ||
-      parseVesloWorkspaceIdFromUrl(ws.baseUrl ?? "") ||
-      "";
-
-    if (!workspaceId) {
-      const response = await client.listWorkspaces();
-      const items = Array.isArray(response.items) ? response.items : [];
-      const directoryHint = normalizeDirectoryPath(ws.directory?.trim() ?? ws.path?.trim() ?? "");
-      const match = directoryHint
-        ? items.find((entry) => {
-            const entryPath = normalizeDirectoryPath(
-              (entry.opencode?.directory ?? entry.directory ?? entry.path ?? "").trim(),
-            );
-            return Boolean(entryPath && entryPath === directoryHint);
-          })
-        : (response.activeId ? items.find((entry) => entry.id === response.activeId) : null) ??
-          items[0];
-      workspaceId = (match?.id ?? "").trim();
-    }
-
-    if (!workspaceId) {
-      throw new Error(t("share.resolve_remote_worker_failed", currentLocale()));
-    }
-
-    return { client, workspaceId, workspace: ws };
-  };
-
-  const publishWorkspaceProfileLink = async () => {
-    if (shareWorkspaceProfileBusy()) return;
-    setShareWorkspaceProfileBusy(true);
-    setShareWorkspaceProfileError(null);
-    setShareWorkspaceProfileUrl(null);
-
-    try {
-      const { client, workspaceId, workspace } = await resolveShareExportContext();
-      const exported = await client.exportWorkspace(workspaceId);
-      const payload: WorkspaceProfileBundleV1 = {
-        schemaVersion: 1,
-        type: "workspace-profile",
-        name: `${workspaceLabel(workspace)} profile`,
-        description: t("share.workspace_profile_description", currentLocale()),
-        workspace: exported,
-      };
-
-      const result = await publishVesloBundleJson({
-        payload,
-        bundleType: "workspace-profile",
-        name: payload.name,
-      });
-
-      setShareWorkspaceProfileUrl(result.url);
-      try {
-        await navigator.clipboard.writeText(result.url);
-      } catch {
-        // ignore
-      }
-    } catch (error) {
-      setShareWorkspaceProfileError(error instanceof Error ? error.message : t("share.publish_workspace_failed", currentLocale()));
-    } finally {
-      setShareWorkspaceProfileBusy(false);
-    }
-  };
-
-  const publishSkillsSetLink = async () => {
-    if (shareSkillsSetBusy()) return;
-    setShareSkillsSetBusy(true);
-    setShareSkillsSetError(null);
-    setShareSkillsSetUrl(null);
-
-    try {
-      const { client, workspaceId, workspace } = await resolveShareExportContext();
-      const exported = await client.exportWorkspace(workspaceId);
-      const skills = Array.isArray(exported.skills) ? exported.skills : [];
-      if (!skills.length) {
-        throw new Error(t("share.no_skills_found", currentLocale()));
-      }
-
-      const payload: SkillsSetBundleV1 = {
-        schemaVersion: 1,
-        type: "skills-set",
-        name: `${workspaceLabel(workspace)} skills`,
-        description: t("share.skills_set_description", currentLocale()),
-        skills: skills.map((skill) => ({
-          name: skill.name,
-          description: skill.description,
-          trigger: skill.trigger,
-          content: skill.content,
-        })),
-        sourceWorkspace: {
-          id: workspaceId,
-          name: workspaceLabel(workspace),
-        },
-      };
-
-      const result = await publishVesloBundleJson({
-        payload,
-        bundleType: "skills-set",
-        name: payload.name,
-      });
-
-      setShareSkillsSetUrl(result.url);
-      try {
-        await navigator.clipboard.writeText(result.url);
-      } catch {
-        // ignore
-      }
-    } catch (error) {
-      setShareSkillsSetError(error instanceof Error ? error.message : t("share.publish_skills_failed", currentLocale()));
-    } finally {
-      setShareSkillsSetBusy(false);
-    }
-  };
-
-  const exportDisabledReason = createMemo(() => {
-    const ws = shareWorkspace();
-    if (!ws) return t("share.export_local_desktop", currentLocale());
-    if (ws.workspaceType === "remote") return t("share.export_local_only", currentLocale());
-    if (!isTauriRuntime()) return t("share.export_desktop_only", currentLocale());
-    if (props.exportWorkspaceBusy) return t("share.export_running", currentLocale());
-    return null;
-  });
+  const shareWorkspace = shareController.shareWorkspace;
+  const shareWorkspaceName = shareController.shareWorkspaceName;
+  const shareWorkspaceDetail = shareController.shareWorkspaceDetail;
+  const shareFields = shareController.shareFields;
+  const shareNote = shareController.shareNote;
+  const shareServiceDisabledReason = shareController.shareServiceDisabledReason;
+  const exportDisabledReason = shareController.exportDisabledReason;
+  const shareWorkspaceProfileBusy = shareController.shareWorkspaceProfileBusy;
+  const shareWorkspaceProfileUrl = shareController.shareWorkspaceProfileUrl;
+  const shareWorkspaceProfileError = shareController.shareWorkspaceProfileError;
+  const shareSkillsSetBusy = shareController.shareSkillsSetBusy;
+  const shareSkillsSetUrl = shareController.shareSkillsSetUrl;
+  const shareSkillsSetError = shareController.shareSkillsSetError;
+  const publishWorkspaceProfileLink = shareController.publishWorkspaceProfileLink;
+  const publishSkillsSetLink = shareController.publishSkillsSetLink;
 
   const showUpdatePill = createMemo(() => {
     if (!isTauriRuntime()) return false;

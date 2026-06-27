@@ -24,7 +24,8 @@ This document maps the main Veslo code surfaces so future coding agents can find
 - `packages/app/src/app/pages/dashboard.tsx`
   Dashboard shell and dashboard-tab composition.
 - `packages/app/src/app/pages/session.tsx`
-  Session view, share modal entry points, composer-adjacent behavior, and runtime surface composition.
+  Public `SessionView` page entry point, controller composition, dependency wiring, and top-level
+  runtime surface integration.
 
 ## Dashboard Tabs
 
@@ -68,6 +69,23 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
   Prompt vs shell mode, slash command parsing, mentions, attachments, and command chip behavior.
 - `packages/app/src/app/components/session/message-list.tsx`
   Message rendering, reasoning visibility, timeline grouping, and technical detail rendering.
+- `packages/app/src/app/pages/session-conversation-flow.ts`
+  Session send, queue, pending-session, retry, replacement, and active-run orchestration.
+- `packages/app/src/app/pages/session-transcript-viewport.ts`
+  Transcript windowing, bottom pinning, scroll intent, and latest-message viewport state.
+- `packages/app/src/app/pages/session-search-command-controller.ts`
+  Message search state, command palette state, command item derivation, and session keyboard command
+  routing.
+- `packages/app/src/app/pages/workspace-share-controller.ts`
+  Shared session/dashboard workspace sharing, public-link publishing, export, and share-modal state.
+- `packages/app/src/app/pages/session-left-sidebar.tsx`
+  Session left-sidebar docked/overlay layout, workspace session list placement, dashboard nav, and
+  status controls.
+- `packages/app/src/app/pages/session-right-sidebar.tsx`
+  Session right-sidebar docked/overlay layout, advanced nav, artifacts panel, and capabilities panel.
+- `packages/app/src/app/pages/session-center.tsx`
+  Session main column layout and slot ordering for banners, transcript, todo panel, composer, and
+  conflict modal.
 - `packages/app/src/app/components/session/artifact-family-model.ts`
   Run-scoped artifact family derivation and filtering rules.
 - `packages/app/src/app/lib/opencode-session.ts`
@@ -117,5 +135,15 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
 - Onboarding or auth issue: start at `onboarding.tsx`, `workspace.ts`, and `den-auth.ts`.
 - Settings or persistence issue: start at `settings.tsx`, `constants.ts`, `theme.ts`, and `app.tsx`.
 - Skills/plugins/MCP issue: start at `extensions.ts`, then the corresponding page component.
-- Sharing/import/export issue: start at `session.tsx` or `dashboard.tsx`, then `lib/veslo-server/connection.ts`, `lib/veslo-server-domains/workspace.ts`, `shared-bundles.ts`, and `config-store.ts`.
+- Session send, queue, retry, or pending-session issue: start at `session-conversation-flow.ts`,
+  then the page wiring in `session.tsx`.
+- Session transcript scroll/windowing issue: start at `session-transcript-viewport.ts`, then
+  `components/session/message-list.tsx`.
+- Session search or command-palette issue: start at `session-search-command-controller.ts`, then
+  the page wiring in `session.tsx`.
+- Session sidebar or main-column layout issue: start at `session-left-sidebar.tsx`,
+  `session-right-sidebar.tsx`, or `session-center.tsx`, then the page wiring in `session.tsx`.
+- Sharing/import/export issue: start at `workspace-share-controller.ts`, then the page-specific
+  wiring in `session.tsx` or `dashboard.tsx`, followed by `lib/veslo-server/connection.ts`,
+  `lib/veslo-server-domains/workspace.ts`, `shared-bundles.ts`, and `config-store.ts`.
 - Runtime contract issue: start at `packages/server/src/server.ts` and `packages/server/README.md`.
