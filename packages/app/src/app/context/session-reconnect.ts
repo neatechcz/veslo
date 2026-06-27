@@ -22,10 +22,19 @@ export const isRunningStatus = (status: string | null | undefined): boolean => {
   return normalized === "running" || normalized === "retry";
 };
 
-export const beginOutageEpisode = (sessionStatusById: Record<string, string>): OutageEpisode => {
+export const beginOutageEpisode = (
+  sessionStatusById: Record<string, string>,
+  workspaceId?: string | null,
+): OutageEpisode => {
+  const workspace = workspaceId?.trim() ?? "";
+  const scopedPrefix = workspace ? `${workspace}\0` : "";
   const runningSessionIds = Object.entries(sessionStatusById)
-    .filter(([sessionID, status]) => !sessionID.includes("\0") && isRunningStatus(status))
-    .map(([sessionID]) => sessionID);
+    .filter(([sessionID, status]) => {
+      if (!isRunningStatus(status)) return false;
+      if (!scopedPrefix) return !sessionID.includes("\0");
+      return sessionID.startsWith(scopedPrefix) && sessionID.length > scopedPrefix.length;
+    })
+    .map(([sessionID]) => (scopedPrefix ? sessionID.slice(scopedPrefix.length) : sessionID));
 
   return {
     active: true,

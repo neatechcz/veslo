@@ -1,0 +1,494 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { createRoot } from "solid-js";
+import { createStore } from "solid-js/store";
+
+import { createSessionEventStreamController } from "../../context/session-event-stream.js";
+import type { MessageInfo, OpencodeEvent, SessionErrorTurn, TodoItem } from "../../types";
+
+function makeStore() {
+  return createStore({
+    sessions: [] as any[],
+    sessionStatus: {} as Record<string, string>,
+    sessionErrorTurns: {} as Record<string, SessionErrorTurn[]>,
+    messages: {} as Record<string, MessageInfo[]>,
+    parts: {} as Record<string, any[]>,
+    commandDisplayByMessageID: {} as Record<string, string>,
+    todos: {} as Record<string, TodoItem[]>,
+    pendingPermissions: [],
+    pendingQuestions: [],
+    events: [] as Array<{ type: string; properties?: unknown }>,
+  });
+}
+
+function makeMessage(sessionID: string, id = "msg-a", role = "assistant") {
+  return {
+    id,
+    sessionID,
+    role,
+    time: { created: 1 },
+    parentID: "",
+    modelID: "",
+    providerID: "",
+    mode: "",
+    agent: "",
+    path: { cwd: "", root: "" },
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+  } as unknown as MessageInfo;
+}
+
+function makeController(options: {
+  activeWorkspaceId?: string;
+  selectedSessionId?: string | null;
+  developerMode?: boolean;
+  workspaceSessionIds?: Set<string>;
+  observer?: (sessionID: string) => void;
+  backgroundIngest?: Array<Record<string, unknown>>;
+  permissionRefreshes?: string[];
+  questionRefreshes?: string[];
+  setSseConnected?: (connected: boolean) => void;
+  setMessagesForSession?: (sessionID: string, list: Array<{ info: MessageInfo; parts: any[] }>) => void;
+} = {}) {
+  const [store, setStore] = makeStore();
+  const workspaceSessionIds = options.workspaceSessionIds ?? new Set<string>();
+  const backgroundIngest = options.backgroundIngest ?? [];
+  const permissionRefreshes = options.permissionRefreshes ?? [];
+  const questionRefreshes = options.questionRefreshes ?? [];
+  const busyCalls: Array<{ sessionID: string; status: string; workspaceId?: string }> = [];
+
+  const controller = createSessionEventStreamController({
+    store,
+    setStore: setStore as any,
+    routing: {
+      activeWorkspaceId: () => options.activeWorkspaceId ?? "ws-a",
+      active: () => null,
+      client: () => null,
+      entry: () => null,
+      entryIds: () => [],
+      release: () => {},
+    } as any,
+    client: () => null,
+    activeWorkspaceRoot: () => "/repo",
+    selectedSessionId: () => options.selectedSessionId ?? "sess-a",
+    developerMode: () => options.developerMode ?? false,
+    setError: () => {},
+    setSseConnected: options.setSseConnected ?? (() => {}),
+    onAssistantResponseObserved: options.observer,
+    sessionDebugEnabled: () => options.developerMode ?? false,
+    sessionWarn: () => {},
+    recordSessionStatusTrace: () => {},
+    readStatusForSession: (sessionID, workspaceId) =>
+      store.sessionStatus[`${workspaceId ?? ""}:${sessionID ?? ""}`] ?? "idle",
+    setSessionStatusForWorkspace: (sessionID, status, workspaceId) => {
+      if (!sessionID) return;
+      setStore("sessionStatus", `${workspaceId ?? ""}:${sessionID}`, status);
+    },
+    notifySessionBusy: (sessionID, status, workspaceId) => {
+      busyCalls.push({ sessionID, status, workspaceId: workspaceId ?? undefined });
+    },
+    workspaceSessionIds,
+    applySessionDirectoryOverride: (session) => session,
+    resolveSessionDirectory: (session) => session.directory ?? "",
+    appendSessionErrorTurn: () => {},
+    setCommandDisplay: () => {},
+    recordSyntheticContinueDiagnostic: () => {},
+    maybeMarkReloadRequired: () => {},
+    maybeHandleInvalidToolError: () => {},
+    maybeHandleChromeMcpCompletedError: () => {},
+    resolveTranscriptIngestWorkspaceId: (sourceWsId) => sourceWsId || "ws-a",
+    resolveSessionIdForMessage: () => null,
+    recordPendingTranscriptMessageDeletion: () => {},
+    recordPendingTranscriptPartDeletion: () => {},
+    scheduleTranscriptIngestion: () => {},
+    scheduleBackgroundTranscriptIngestion: (sessionID, workspaceId, reason, delayMs) => {
+      backgroundIngest.push({ sessionID, workspaceId, reason, delayMs });
+    },
+    messageLimitBySession: () => ({}),
+    setMessagesForSession: options.setMessagesForSession ?? (() => {}),
+    setMessageLimitBySession: () => {},
+    setMessageCompleteBySession: () => {},
+    refreshPendingPermissions: async () => {
+      permissionRefreshes.push("permissions");
+    },
+    refreshPendingQuestions: async () => {
+      questionRefreshes.push("questions");
+    },
+    withTimeout: async (promise) => promise,
+    isWorkspaceRuntimeReady: () => true,
+    isActiveWorkspaceRuntimeReady: () => true,
+  });
+
+  return {
+    controller,
+    store,
+    setStore,
+    workspaceSessionIds,
+    busyCalls,
+    backgroundIngest,
+    permissionRefreshes,
+    questionRefreshes,
+  };
+}
+
+async function tick(count = 1) {
+  for (let index = 0; index < count; index += 1) {
+    await Promise.resolve();
+  }
+}
+
+function makeEventClient(
+  subscribe: (options: { signal: AbortSignal }) => Promise<{ stream: AsyncIterable<OpencodeEvent> }>,
+) {
+  return {
+    event: {
+      subscribe: (_input?: unknown, options?: { signal?: AbortSignal }) =>
+        subscribe({ signal: options?.signal ?? new AbortController().signal }),
+    },
+  } as any;
+}
+
+function ok<T>(data: T) {
+  return {
+    data,
+    request: new Request("http://localhost.test"),
+    response: new Response(),
+  };
+}
+
+test("background events update scoped runtime state without mutating active messages", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const { controller, store, busyCalls, backgroundIngest, permissionRefreshes, questionRefreshes } =
+        makeController({ activeWorkspaceId: "ws-a" });
+
+      await controller.applyEvent(
+        {
+          type: "session.status",
+          properties: { sessionID: "sess-b", status: "running" },
+        } as OpencodeEvent,
+        "ws-b",
+      );
+      await controller.applyEvent(
+        {
+          type: "message.updated",
+          properties: { info: makeMessage("sess-b", "msg-b") },
+        } as OpencodeEvent,
+        "ws-b",
+      );
+      await controller.applyEvent({ type: "permission.asked", properties: {} } as OpencodeEvent, "ws-b");
+      await controller.applyEvent({ type: "question.asked", properties: {} } as OpencodeEvent, "ws-b");
+
+      assert.equal(store.sessionStatus["ws-b:sess-b"], "running");
+      assert.deepEqual(busyCalls, [{ sessionID: "sess-b", status: "running", workspaceId: "ws-b" }]);
+      assert.deepEqual(store.messages, {});
+      assert.deepEqual(backgroundIngest, [
+        {
+          sessionID: "sess-b",
+          workspaceId: "ws-b",
+          reason: "background message.updated",
+          delayMs: undefined,
+        },
+      ]);
+      assert.deepEqual(permissionRefreshes, ["permissions"]);
+      assert.deepEqual(questionRefreshes, ["questions"]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("active message updates report assistant responses only after accepting the session", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const observed: string[] = [];
+      const { controller, store } = makeController({
+        workspaceSessionIds: new Set(["sess-a"]),
+        observer: (sessionID) => observed.push(sessionID),
+      });
+
+      await controller.applyEvent(
+        {
+          type: "message.updated",
+          properties: { info: makeMessage("unknown-session", "msg-unknown") },
+        } as OpencodeEvent,
+      );
+      await controller.applyEvent(
+        {
+          type: "message.updated",
+          properties: { info: makeMessage("sess-a", "msg-a") },
+        } as OpencodeEvent,
+      );
+      await controller.applyEvent(
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "part-a",
+              sessionID: "sess-a",
+              messageID: "msg-a",
+              type: "text",
+              text: "hello",
+            },
+          },
+        } as OpencodeEvent,
+      );
+
+      assert.deepEqual(store.messages["sess-a"].map((message) => message.id), ["msg-a"]);
+      assert.deepEqual(observed, ["sess-a"]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("cleanup aborts the currently reconnected SSE controller", async () => {
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  let reconnectCallback: (() => void) | null = null;
+  const signals: AbortSignal[] = [];
+  let subscribeCount = 0;
+
+  globalThis.setTimeout = ((callback: (...args: unknown[]) => void) => {
+    reconnectCallback = () => callback();
+    return 1 as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = (() => {}) as typeof clearTimeout;
+
+  try {
+    const { controller } = makeController();
+    const client = makeEventClient(async ({ signal }) => {
+      signals.push(signal);
+      subscribeCount += 1;
+      if (subscribeCount === 1) {
+        return {
+          stream: (async function* () {})(),
+        };
+      }
+      return {
+        stream: (async function* () {
+          await new Promise<void>(() => {});
+        })(),
+      };
+    });
+
+    const cleanup = controller.setupSseStream("ws-a", client);
+    await tick(4);
+    assert.equal(signals.length, 1);
+    assert.equal(typeof reconnectCallback, "function");
+
+    const runReconnect = reconnectCallback as (() => void) | null;
+    assert.ok(runReconnect);
+    runReconnect();
+    await tick(4);
+    assert.equal(signals.length, 2);
+    assert.equal(signals[1].aborted, false);
+
+    cleanup();
+    assert.equal(signals[1].aborted, true);
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
+});
+
+test("background SSE failures do not mark the global stream disconnected while another stream is connected", async () => {
+  const connectedStates: boolean[] = [];
+  const { controller } = makeController({
+    activeWorkspaceId: "ws-a",
+    setSseConnected: (connected) => connectedStates.push(connected),
+  });
+
+  const activeClient = makeEventClient(async () => ({
+    stream: (async function* () {
+      yield { type: "server.connected" } as OpencodeEvent;
+      await new Promise<void>(() => {});
+    })(),
+  }));
+  const backgroundClient = makeEventClient(async () => ({
+    stream: (async function* () {
+      throw new Error("background stream failed");
+    })(),
+  }));
+
+  const cleanupActive = controller.setupSseStream("ws-a", activeClient);
+  await tick(4);
+  assert.equal(connectedStates.at(-1), true);
+
+  const cleanupBackground = controller.setupSseStream("ws-b", backgroundClient);
+  await tick(4);
+  assert.equal(connectedStates.at(-1), true);
+
+  cleanupBackground();
+  cleanupActive();
+});
+
+test("reconnect catch-up refreshes sessions that were running during the outage", async () => {
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  let reconnectCallback: (() => void) | null = null;
+  const statusRefreshes: string[] = [];
+  const messageRefreshes: string[] = [];
+  const todoRefreshes: string[] = [];
+  const messageWrites: string[] = [];
+  const permissionRefreshes: string[] = [];
+  const questionRefreshes: string[] = [];
+  let subscribeCount = 0;
+
+  globalThis.setTimeout = ((callback: (...args: unknown[]) => void) => {
+    reconnectCallback = () => callback();
+    return 1 as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = (() => {}) as typeof clearTimeout;
+
+  try {
+    const { controller, setStore } = makeController({
+      permissionRefreshes,
+      questionRefreshes,
+      setMessagesForSession: (sessionID) => {
+        messageWrites.push(sessionID);
+      },
+    });
+    setStore("sessionStatus", "sess-a", "running");
+    setStore("sessionStatus", "ws-a\0sess-a", "running");
+
+    const client = {
+      ...makeEventClient(async () => {
+        subscribeCount += 1;
+        if (subscribeCount === 1) {
+          return {
+            stream: (async function* () {})(),
+          };
+        }
+        return {
+          stream: (async function* () {
+            await new Promise<void>(() => {});
+          })(),
+        };
+      }),
+      session: {
+        get: async ({ sessionID }: { sessionID: string }) => {
+          statusRefreshes.push(sessionID);
+          return ok({ id: sessionID, status: "idle" });
+        },
+        messages: async ({ sessionID }: { sessionID: string }) => {
+          messageRefreshes.push(sessionID);
+          return ok([{ info: makeMessage(sessionID), parts: [] }]);
+        },
+        todo: async ({ sessionID }: { sessionID: string }) => {
+          todoRefreshes.push(sessionID);
+          return ok([]);
+        },
+      },
+    } as any;
+
+    const cleanup = controller.setupSseStream("ws-a", client);
+    await tick(4);
+    const runReconnect = reconnectCallback as (() => void) | null;
+    assert.ok(runReconnect);
+
+    runReconnect();
+    await tick(12);
+
+    assert.deepEqual(statusRefreshes, ["sess-a"]);
+    assert.deepEqual(messageRefreshes, ["sess-a"]);
+    assert.deepEqual(todoRefreshes, ["sess-a"]);
+    assert.deepEqual(messageWrites, ["sess-a"]);
+    assert.deepEqual(permissionRefreshes, ["permissions"]);
+    assert.deepEqual(questionRefreshes, ["questions"]);
+
+    cleanup();
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
+});
+
+test("background reconnect catch-up schedules durable ingest without mutating active transcript state", async () => {
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  let reconnectCallback: (() => void) | null = null;
+  const statusRefreshes: string[] = [];
+  const messageRefreshes: string[] = [];
+  const todoRefreshes: string[] = [];
+  const messageWrites: string[] = [];
+  const backgroundIngest: Array<Record<string, unknown>> = [];
+  let subscribeCount = 0;
+
+  globalThis.setTimeout = ((callback: (...args: unknown[]) => void) => {
+    reconnectCallback = () => callback();
+    return 1 as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = (() => {}) as typeof clearTimeout;
+
+  try {
+    const { controller, setStore, store } = makeController({
+      activeWorkspaceId: "ws-a",
+      backgroundIngest,
+      setMessagesForSession: (sessionID) => {
+        messageWrites.push(sessionID);
+      },
+    });
+    setStore("sessionStatus", "sess-b", "running");
+    setStore("sessionStatus", "ws-b\0sess-b", "running");
+
+    const client = {
+      ...makeEventClient(async () => {
+        subscribeCount += 1;
+        if (subscribeCount === 1) {
+          return {
+            stream: (async function* () {})(),
+          };
+        }
+        return {
+          stream: (async function* () {
+            await new Promise<void>(() => {});
+          })(),
+        };
+      }),
+      session: {
+        get: async ({ sessionID }: { sessionID: string }) => {
+          statusRefreshes.push(sessionID);
+          return ok({ id: sessionID, status: "idle" });
+        },
+        messages: async ({ sessionID }: { sessionID: string }) => {
+          messageRefreshes.push(sessionID);
+          return ok([{ info: makeMessage(sessionID), parts: [] }]);
+        },
+        todo: async ({ sessionID }: { sessionID: string }) => {
+          todoRefreshes.push(sessionID);
+          return ok([]);
+        },
+      },
+    } as any;
+
+    const cleanup = controller.setupSseStream("ws-b", client);
+    await tick(4);
+    const runReconnect = reconnectCallback as (() => void) | null;
+    assert.ok(runReconnect);
+
+    runReconnect();
+    await tick(12);
+
+    assert.deepEqual(statusRefreshes, ["sess-b"]);
+    assert.deepEqual(messageRefreshes, []);
+    assert.deepEqual(todoRefreshes, []);
+    assert.deepEqual(messageWrites, []);
+    assert.equal(store.messages["sess-b"], undefined);
+    assert.equal(store.todos["sess-b"], undefined);
+    assert.deepEqual(backgroundIngest, [
+      {
+        sessionID: "sess-b",
+        workspaceId: "ws-b",
+        reason: "reconnect catch-up",
+        delayMs: 0,
+      },
+    ]);
+
+    cleanup();
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
+});

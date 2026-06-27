@@ -73,10 +73,10 @@ test("createSessionAndOpen persists the first composer text as the initial backe
     /initialSessionTitle \|\| undefined,/,
     "createSessionAndOpen should persist the first composer text as the backend session title until an explicit rename/title update happens",
   );
-  assert.match(
+  assert.doesNotMatch(
     createSessionAndOpenSource,
-    /c\.session\.create\(\{[\s\S]*title: initialSessionTitle \|\| undefined,/,
-    "legacy session.create fallback should keep the same initial title contract",
+    /c\.session\.create\(/,
+    "createSessionAndOpen should not keep a legacy session.create fallback after Veslo conversation creation owns new sessions",
   );
   assert.match(
     createSessionAndOpenSource,

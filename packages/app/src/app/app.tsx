@@ -2903,7 +2903,7 @@ export default function App() {
       appendSessionTranscript: async (workspaceId, sessionId, input) => {
         const snapshot = await client.appendSessionTranscript(workspaceId, sessionId, input);
         rememberConversationScopeFromTranscript(workspaceId, input.directory ?? undefined, snapshot);
-        hydrateTranscriptSnapshot(snapshot);
+        hydrateTranscriptSnapshot(snapshot, { allowShorter: true });
         return snapshot;
       },
     };

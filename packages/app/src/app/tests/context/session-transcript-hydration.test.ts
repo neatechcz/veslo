@@ -196,7 +196,7 @@ test("workspace snapshots restore transcript freshness and evict old workspace s
 
 test("app hydrates transcript snapshots returned by veslo prefetch calls", () => {
   const source = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
-  const sessionSource = readFileSync(new URL("../../context/session.ts", import.meta.url), "utf8");
+  const eventStreamSource = readFileSync(new URL("../../context/session-event-stream.ts", import.meta.url), "utf8");
 
   assert.match(
     source,
@@ -244,18 +244,23 @@ test("app hydrates transcript snapshots returned by veslo prefetch calls", () =>
     "hydrated Veslo client should wrap appendSessionTranscript",
   );
   assert.match(
-    sessionSource,
-    /scheduleTranscriptIngestion\(info\.sessionID,\s*sourceWsId,\s*"message\.updated"\);/s,
+    source,
+    /appendSessionTranscript:\s*async\s*\(workspaceId,\s*sessionId,\s*input\)\s*=>[\s\S]*hydrateTranscriptSnapshot\(snapshot,\s*\{ allowShorter: true \}\);/s,
+    "authoritative append transcript snapshots should be allowed to apply shorter deletion results",
+  );
+  assert.match(
+    eventStreamSource,
+    /deps\.scheduleTranscriptIngestion\(info\.sessionID,\s*sourceWsId,\s*"message\.updated"\);/s,
     "message updates should schedule live transcript ingestion",
   );
   assert.match(
-    sessionSource,
-    /scheduleTranscriptIngestion\(part\.sessionID,\s*sourceWsId,\s*"message\.part\.updated"\);/s,
+    eventStreamSource,
+    /deps\.scheduleTranscriptIngestion\(part\.sessionID,\s*sourceWsId,\s*"message\.part\.updated"\);/s,
     "part updates should schedule live transcript ingestion",
   );
   assert.match(
-    sessionSource,
-    /scheduleTranscriptIngestion\(sessionID,\s*sourceWsId,\s*"session\.idle",\s*0\);/s,
+    eventStreamSource,
+    /deps\.scheduleTranscriptIngestion\(sessionID,\s*sourceWsId,\s*"session\.idle",\s*0\);/s,
     "idle events should flush live transcript ingestion immediately",
   );
 });

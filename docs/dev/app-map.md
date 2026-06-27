@@ -65,6 +65,28 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
 
 ## Session Runtime Internals
 
+- `packages/app/src/app/context/session.ts`
+  Public `createSessionStore` facade, Solid store creation, controller composition, and returned
+  session-store API wiring. Do not put new transcript, prompt, selection, SSE, or workspace-cache
+  business logic here unless the public facade itself changes.
+- `packages/app/src/app/context/session-store-model.ts`
+  Pure session/message/part ordering, command display aliases, placeholder messages, and synthetic
+  error-turn modeling.
+- `packages/app/src/app/context/session-transcript-controller.ts`
+  Transcript message/part hydration, live and background transcript ingest, deletion tracking,
+  freshness, and message pagination state.
+- `packages/app/src/app/context/session-runtime-prompts.ts`
+  Permission and question refresh, per-workspace prompt aggregation, reply routing, and stale
+  runtime route release.
+- `packages/app/src/app/context/session-selection-controller.ts`
+  Session list loading, selected-session lifecycle, offline transcript fallback, directory
+  filtering, rename, and load-earlier behavior.
+- `packages/app/src/app/context/session-event-stream.ts`
+  Active/background SSE fan-out, event application, coalescing, reconnect catch-up, unread assistant
+  observation, and background workspace transcript persistence triggers.
+- `packages/app/src/app/context/session-workspace-cache.ts`
+  Workspace snapshot save/load/clear behavior, selected-session validation, transcript metadata
+  restore, and snapshot eviction.
 - `packages/app/src/app/components/session/composer.tsx`
   Prompt vs shell mode, slash command parsing, mentions, attachments, and command chip behavior.
 - `packages/app/src/app/components/session/message-list.tsx`
@@ -137,6 +159,16 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
 - Skills/plugins/MCP issue: start at `extensions.ts`, then the corresponding page component.
 - Session send, queue, retry, or pending-session issue: start at `session-conversation-flow.ts`,
   then the page wiring in `session.tsx`.
+- Session store facade issue: start at `context/session.ts`, then follow the controller wiring to
+  the owning module.
+- Session transcript, deletion, hydration, or pagination issue: start at
+  `context/session-transcript-controller.ts`.
+- Session permission/question prompt issue: start at `context/session-runtime-prompts.ts`.
+- Session SSE, reconnect, unread-event, background workspace, or busy-state issue: start at
+  `context/session-event-stream.ts`, then `context/session-reconnect.ts` for outage notice rules.
+- Session list, selected-session loading, offline fallback, or rename issue: start at
+  `context/session-selection-controller.ts`.
+- Workspace snapshot/cache issue: start at `context/session-workspace-cache.ts`.
 - Session transcript scroll/windowing issue: start at `session-transcript-viewport.ts`, then
   `components/session/message-list.tsx`.
 - Session search or command-palette issue: start at `session-search-command-controller.ts`, then

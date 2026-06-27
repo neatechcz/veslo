@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
-const sessionSource = readFileSync(new URL("../context/session.ts", import.meta.url), "utf8");
+const selectionSource = readFileSync(
+  new URL("../context/session-selection-controller.ts", import.meta.url),
+  "utf8",
+);
 
 function createSessionAndOpenSource(): string {
   const start = source.indexOf("  async function createSessionAndOpen(");
@@ -42,8 +45,8 @@ test("createSessionAndOpen uses the creation flow helpers before selecting the s
 
 test("late session refreshes retain the selected session injected by createSessionAndOpen", () => {
   assert.match(
-    sessionSource,
-    /let nextSessions = sortSessionsByActivity\(Array\.from\(merged\.values\(\)\)\);[\s\S]*const selectedSessionId = options\.selectedSessionId\(\)\?\.trim\(\) \?\? "";[\s\S]*!nextSessions\.some\(\(session\) => session\.id === selectedSessionId\)[\s\S]*store\.sessions\.find\(\(session\) => session\.id === selectedSessionId\)[\s\S]*sessionDirectoryMatchesRoot\(selectedSessionDirectory, root\)[\s\S]*nextSessions = sortSessionsByActivity\(\[selectedSession, \.\.\.nextSessions\]\);/s,
+    selectionSource,
+    /let nextSessions = sortSessionsByActivity\(Array\.from\(merged\.values\(\)\)\);[\s\S]*const selectedSessionId = deps\.selectedSessionId\(\)\?\.trim\(\) \?\? "";[\s\S]*!nextSessions\.some\(\(session\) => session\.id === selectedSessionId\)[\s\S]*deps\.store\.sessions\.find\(\(session\) => session\.id === selectedSessionId\)[\s\S]*sessionDirectoryMatchesRoot\(selectedSessionDirectory, root\)[\s\S]*nextSessions = sortSessionsByActivity\(\[selected, \.\.\.nextSessions\]\);/s,
     "loadSessions should not let a delayed list response remove the currently displayed session before the backend index catches up",
   );
 });

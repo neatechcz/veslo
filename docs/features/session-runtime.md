@@ -5,8 +5,9 @@ This document describes the shipped session behavior that future coding agents s
 ## Main Session Surface
 
 The public session page entry point remains `packages/app/src/app/pages/session.tsx`, but session
-behavior is split across page-local controllers and shell components. New work should start at the
-module that owns the behavior, then inspect `session.tsx` for dependency wiring.
+behavior is split across page-local controllers, context runtime controllers, and shell components.
+New work should start at the module that owns the behavior, then inspect `session.tsx` or
+`context/session.ts` for dependency wiring.
 
 Session view ownership map:
 
@@ -23,6 +24,25 @@ Session view ownership map:
 - `packages/app/src/app/pages/session-left-sidebar.tsx`,
   `packages/app/src/app/pages/session-right-sidebar.tsx`, and
   `packages/app/src/app/pages/session-center.tsx`: large view-shell layout regions only.
+
+Session store ownership map:
+
+- `packages/app/src/app/context/session.ts`: public `createSessionStore` facade, Solid store
+  creation, controller composition, and returned API wiring.
+- `packages/app/src/app/context/session-store-model.ts`: pure session/message/part ordering,
+  command display aliases, placeholder messages, and synthetic error-turn modeling.
+- `packages/app/src/app/context/session-transcript-controller.ts`: transcript hydration, message
+  pagination, live/background transcript ingest, deletion tracking, and freshness.
+- `packages/app/src/app/context/session-runtime-prompts.ts`: permission/question refresh, active
+  prompt selection, per-workspace prompt aggregation, reply routing, and stale route release.
+- `packages/app/src/app/context/session-selection-controller.ts`: session list loading, selected
+  session lifecycle, offline transcript fallback, directory filtering, rename, and load-earlier.
+- `packages/app/src/app/context/session-event-stream.ts`: SSE stream fan-out, active/background
+  event application, event coalescing, reconnect catch-up, unread assistant observation, and
+  background transcript persistence triggers.
+- `packages/app/src/app/context/session-workspace-cache.ts`: workspace snapshot save/load/clear,
+  selected-session validation, transcript metadata restore, and snapshot eviction.
+- `packages/app/src/app/context/session-reconnect.ts`: outage snapshot and reconnect notice rules.
 
 Key sub-surfaces:
 
@@ -117,6 +137,10 @@ Workspace busy state is scoped as `workspaceId -> sessionId -> startedAt`, so mu
 Main source of truth:
 
 - `packages/app/src/app/pages/session-conversation-flow.ts`
+- `packages/app/src/app/context/session-event-stream.ts`
+- `packages/app/src/app/context/session-transcript-controller.ts`
+- `packages/app/src/app/context/session-runtime-prompts.ts`
+- `packages/app/src/app/context/session-workspace-cache.ts`
 - page wiring in `packages/app/src/app/pages/session.tsx`
 
 ## Latest Message Editing
@@ -309,6 +333,13 @@ Those semantics are documented in `docs/features/workspace-config-and-sharing.md
 ## Source of Truth
 
 - session page integration: `packages/app/src/app/pages/session.tsx`
+- session store facade: `packages/app/src/app/context/session.ts`
+- session store model: `packages/app/src/app/context/session-store-model.ts`
+- transcript state and persistence: `packages/app/src/app/context/session-transcript-controller.ts`
+- runtime prompts: `packages/app/src/app/context/session-runtime-prompts.ts`
+- session selection and loading: `packages/app/src/app/context/session-selection-controller.ts`
+- SSE and reconnect catch-up: `packages/app/src/app/context/session-event-stream.ts`
+- workspace cache: `packages/app/src/app/context/session-workspace-cache.ts`
 - send/queue/pending flow: `packages/app/src/app/pages/session-conversation-flow.ts`
 - transcript viewport: `packages/app/src/app/pages/session-transcript-viewport.ts`
 - search and command palette: `packages/app/src/app/pages/session-search-command-controller.ts`
