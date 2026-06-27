@@ -53,6 +53,14 @@ const MANAGED_CHILD_PROCESS_NAMES = [
 let appProcess: ChildProcess | null = null;
 let appProcessOwnedByHarness = false;
 let managedAiGatewayFixture: ManagedAiGatewayFixture | null = null;
+let fixtureCleanupPromise: Promise<void> | null = null;
+let appProcessExitPromise: Promise<AppProcessExit> | null = null;
+let resolveAppProcessExit: ((result: AppProcessExit) => void) | null = null;
+
+type AppProcessExit = {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+};
 
 type TerminateAppProcessOptions = {
   platform?: NodeJS.Platform;
@@ -593,6 +601,16 @@ async function stopManagedAiGatewayFixtureIfRunning(): Promise<void> {
   await stopManagedAiGatewayFixture(fixture);
 }
 
+async function cleanupStartedFixtures(): Promise<void> {
+  fixtureCleanupPromise ??= (async () => {
+    await stopManagedAiGatewayFixtureIfRunning();
+    await stopSkillRegistryFixture();
+  })().finally(() => {
+    fixtureCleanupPromise = null;
+  });
+  return fixtureCleanupPromise;
+}
+
 export async function ensureWebDriverReady(
   _port: number = DEFAULT_WEBDRIVER_PORT,
   _timeout: number = Math.min(5_000, LAUNCH_TIMEOUT),
@@ -725,6 +743,9 @@ export async function startApp(port?: number): Promise<void> {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   appProcessOwnedByHarness = true;
+  appProcessExitPromise = new Promise<AppProcessExit>((resolveExit) => {
+    resolveAppProcessExit = resolveExit;
+  });
 
   appProcess.stdout?.on('data', (data: Buffer) => {
     process.stdout.write(`[app:stdout] ${data}`);
@@ -737,13 +758,21 @@ export async function startApp(port?: number): Promise<void> {
     console.log(`[e2e] App process exited with code ${code}${signal ? ` signal ${signal}` : ''}`);
     appProcess = null;
     appProcessOwnedByHarness = false;
+    resolveAppProcessExit?.({ code, signal });
+    resolveAppProcessExit = null;
+    void cleanupStartedFixtures().catch((error) => {
+      console.warn(`[e2e] Failed to clean up fixtures after app exit: ${error instanceof Error ? error.message : String(error)}`);
+    });
   });
+}
+
+export async function waitForAppExit(): Promise<AppProcessExit | null> {
+  return appProcessExitPromise ? await appProcessExitPromise : null;
 }
 
 export async function stopApp(): Promise<void> {
   if (!appProcessOwnedByHarness || !appProcess) {
-    await stopManagedAiGatewayFixtureIfRunning();
-    await stopSkillRegistryFixture();
+    await cleanupStartedFixtures();
     return;
   }
   const processToStop = appProcess;
@@ -762,8 +791,7 @@ export async function stopApp(): Promise<void> {
   if (stoppedChildren > 0) {
     console.log(`[e2e] Stopped ${stoppedChildren} managed child process${stoppedChildren === 1 ? '' : 'es'} from app PID ${processToStopPid}.`);
   }
-  await stopManagedAiGatewayFixtureIfRunning();
-  await stopSkillRegistryFixture();
+  await cleanupStartedFixtures();
 }
 
 /** Utility for HashRouter-based URL assertions (just the fragment). */

@@ -1,6 +1,7 @@
 .tmp-opencode-home/
 .tmp-veslo-home/
 .tmp-tauri-pilot-runtime/
+.tmp-skill-registry-fixture.json
 .tmp-live-feedback-youtrack/
 .tmp-opencode-home-live/
 tauri-pilot-failures/
