@@ -2,8 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
+const sessionSource = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
+const conversationFlowSource = readFileSync(new URL("./session-conversation-flow.ts", import.meta.url), "utf8");
+const source = `${sessionSource}\n${conversationFlowSource}`;
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const flowSendImmediateStart = conversationFlowSource.indexOf("sendPromptImmediate: async (");
+const flowSendImmediateEnd = conversationFlowSource.indexOf("export type RunBaseline", flowSendImmediateStart);
+const flowSendImmediateSource = conversationFlowSource.slice(flowSendImmediateStart, flowSendImmediateEnd);
 
 test("session view stores optimistic submitted drafts by session key", () => {
   assert.match(
@@ -33,22 +38,33 @@ test("active first-send pending views select the captured pending instance key",
   );
 
   assert.match(
-    source,
-    /const currentSessionQueueKey = createMemo\(\(\) => \{\s*const selectedSessionKey = props\.selectedSessionId\?\.trim\(\);\s*if \(selectedSessionKey\) return sessionQueueKeyForSessionId\(selectedSessionKey\);\s*const basePendingKey = pendingSessionQueueKey\(\);\s*return pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[basePendingKey\] \?\? basePendingKey;\s*\}\);/,
+    conversationFlowSource,
+    /export const resolveCurrentSessionQueueKey = \(\{[\s\S]*const selectedSessionKey = selectedSessionId\?\.trim\(\);[\s\S]*if \(selectedSessionKey\) return resolveSessionQueueKeyForSessionId\(context, selectedSessionKey\);[\s\S]*const basePendingKey = resolvePendingSessionQueueKey\(context\);[\s\S]*return pendingQueueKeyAwaitingSessionIdByBaseKey\[basePendingKey\] \?\? basePendingKey;/,
+    "pending views should select a pending instance only for their own base pending key",
+  );
+
+  assert.match(
+    sessionSource,
+    /const currentSessionQueueKey = createMemo\(\(\) => \{\s*return resolveCurrentSessionQueueKey\(\{[\s\S]*selectedSessionId: props\.selectedSessionId,[\s\S]*pendingQueueKeyAwaitingSessionIdByBaseKey: pendingQueueKeyAwaitingSessionIdByBaseKey\(\),[\s\S]*\}\);\s*\}\);/,
     "pending views should select a pending instance only for their own base pending key",
   );
 });
 
 test("temporary new-private pending draft keys are isolated by active workspace", () => {
   assert.match(
-    source,
-    /const pendingDraftWorkspaceId = \(\) => \{[\s\S]*meta\.kind === "new-private"[\s\S]*\?\s*\(meta\.privateWorkspaceId \?\? meta\.workspaceId\)\.trim\(\)[\s\S]*return workspaceId \|\| activeUiConversationWorkspaceId\(\);[\s\S]*\};/,
+    conversationFlowSource,
+    /export const resolvePendingDraftWorkspaceId = \(context: SessionQueueKeyContext\) => \{[\s\S]*meta\.kind === "new-private"[\s\S]*\?\s*\(meta\.privateWorkspaceId \?\? meta\.workspaceId\)\.trim\(\)[\s\S]*return workspaceId \|\| resolveActiveUiConversationWorkspaceId\(context\);[\s\S]*\};/,
     "the temporary global new-private draft key must not share optimistic send state across private chat workspaces",
   );
   assert.match(
-    source,
-    /return createUiConversationKey\(\{[\s\S]*workspaceId,[\s\S]*kind: "pending-draft",[\s\S]*id: pendingDraftKey,[\s\S]*\}\);/,
+    conversationFlowSource,
+    /export const resolvePendingSessionQueueKey = \(context: SessionQueueKeyContext\) => \{[\s\S]*const pendingDraftKey = context\.activePendingDraftKey\?\.trim\(\);[\s\S]*return createUiConversationKey\(\{[\s\S]*workspaceId,[\s\S]*kind: "pending-draft",[\s\S]*id: pendingDraftKey,[\s\S]*\}\);/,
     "pending draft queue keys should include the resolved workspace scope",
+  );
+  assert.match(
+    sessionSource,
+    /const pendingDraftWorkspaceId = \(\) => resolvePendingDraftWorkspaceId\(queueKeyContext\(\)\);[\s\S]*const pendingSessionQueueKey = \(\) => resolvePendingSessionQueueKey\(queueKeyContext\(\)\);/,
+    "session view should wire pending draft queue keys through the conversation-flow helper",
   );
 });
 
@@ -110,11 +126,9 @@ test("session view stores run UI state by session key", () => {
 });
 
 test("sendPromptImmediate starts run UI state by captured key and resets failures by handoff key", () => {
-  const sendImmediateStart = source.indexOf("  const sendPromptImmediate = async (");
-  const sendImmediateEnd = source.indexOf("  const drainNextQueuedDraft = async (", sendImmediateStart);
-  assert.notEqual(sendImmediateStart, -1, "sendPromptImmediate should exist");
-  assert.notEqual(sendImmediateEnd, -1, "sendPromptImmediate should end before queue draining");
-  const sendImmediateSource = source.slice(sendImmediateStart, sendImmediateEnd);
+  assert.notEqual(flowSendImmediateStart, -1, "sendPromptImmediate should exist in the conversation-flow controller");
+  assert.notEqual(flowSendImmediateEnd, -1, "sendPromptImmediate should end before run-state helpers");
+  const sendImmediateSource = flowSendImmediateSource;
 
   assert.match(
     source,
@@ -128,7 +142,7 @@ test("sendPromptImmediate starts run UI state by captured key and resets failure
   );
   assert.match(
     sendImmediateSource,
-    /startRun\(sessionKey\);/,
+    /deps\.runState\.startRun\(sessionKey\);/,
     "optimistic and accepted sends should start run UI state under the captured send key",
   );
   assert.match(
@@ -138,7 +152,7 @@ test("sendPromptImmediate starts run UI state by captured key and resets failure
   );
   assert.match(
     sendImmediateSource,
-    /const runStateSessionKeyForHandoffFailure = \(\) => \{[\s\S]*const materializedSessionId = materializedSessionIdForRunStateReset \?\? materializedSessionIdFromHandoff;[\s\S]*return materializedSessionId \? sessionQueueKeyForSessionId\(materializedSessionId\) : sessionKey;[\s\S]*\};/,
+    /const runStateSessionKeyForHandoffFailure = \(\) => \{[\s\S]*const materializedSessionId =[\s\S]*materializedSessionIdForRunStateReset \?\? materializedSessionIdFromHandoff;[\s\S]*deps\.sessionKeys\.sessionQueueKeyForSessionId\(materializedSessionId\)[\s\S]*: sessionKey;[\s\S]*\};/,
     "failed sends should reset the key where the handoff run UI state currently lives",
   );
   assert.match(
@@ -147,80 +161,90 @@ test("sendPromptImmediate starts run UI state by captured key and resets failure
     "callback materialization should record the real session id for later failure reset",
   );
   assert.match(
-    sendImmediateSource,
-    /if \(current\.sessionId\) \{\s*materializedSessionIdForRunStateReset = current\.sessionId;\s*return setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\);\s*\}/,
+    conversationFlowSource,
+    /if \(current\.sessionId\) \{[\s\S]*materializedSessionIdForRunStateReset: current\.sessionId,[\s\S]*\}/,
     "failure marking should record the real session id when the matching draft was already materialized",
   );
   assert.match(
     sendImmediateSource,
-    /resetRunState\(runStateSessionKeyForHandoffFailure\(\)\);/,
+    /if \(result\.materializedSessionIdForRunStateReset\) \{\s*materializedSessionIdForRunStateReset = result\.materializedSessionIdForRunStateReset;\s*\}/,
+    "sendPromptImmediate should apply the real reset id returned by the pending-submit failure helper",
+  );
+  assert.match(
+    sendImmediateSource,
+    /deps\.runState\.resetRunState\(runStateSessionKeyForHandoffFailure\(\)\);/,
     "failed sends should reset by the handoff-aware run-state key",
   );
   assert.doesNotMatch(
     sendImmediateSource,
-    /resetRunState\(sessionKey\);/,
+    /deps\.runState\.resetRunState\(sessionKey\);/,
     "failed sends should not always reset the original pending send key",
   );
   assert.doesNotMatch(
     sendImmediateSource,
-    /resetRunState\(\);/,
+    /deps\.runState\.resetRunState\(\);/,
     "sendPromptImmediate should not reset whichever session is active after async handoff",
   );
   assert.doesNotMatch(
     sendImmediateSource,
-    /startRun\(\);/,
+    /deps\.runState\.startRun\(\);/,
     "sendPromptImmediate should not start whichever session is active after async handoff",
   );
 });
 
 test("failed first-send run reset uses the handoff-aware key in every failure branch", () => {
-  const aiAccessStart = source.indexOf("if (props.aiAccessBlockedReason) {");
-  const tryStart = source.indexOf("try {", aiAccessStart);
+  const aiAccessStart = flowSendImmediateSource.indexOf("if (aiAccessBlockedReason) {");
+  const tryStart = flowSendImmediateSource.indexOf("try {", aiAccessStart);
   assert.notEqual(aiAccessStart, -1, "AI access failure branch should exist");
   assert.notEqual(tryStart, -1, "send try block should follow AI access branch");
-  const aiAccessFailure = source.slice(aiAccessStart, tryStart);
+  const aiAccessFailure = flowSendImmediateSource.slice(aiAccessStart, tryStart);
   assert.match(
     aiAccessFailure,
-    /markMatchingPendingSubmitFailed\(props\.aiAccessBlockedReason\);[\s\S]*resetRunState\(runStateSessionKeyForHandoffFailure\(\)\);/,
+    /markMatchingPendingSubmitFailed\(aiAccessBlockedReason\);[\s\S]*deps\.runState\.resetRunState\(runStateSessionKeyForHandoffFailure\(\)\);/,
     "AI-access failures should reset the pending or materialized handoff run key",
   );
 
-  const rejectedStart = source.indexOf("if (!accepted) {", tryStart);
-  const acceptedStart = source.indexOf("if (accepted && pendingSessionKeyBeforeHandoff)", rejectedStart);
+  const rejectedStart = flowSendImmediateSource.indexOf("if (!accepted) {", tryStart);
+  const acceptedStart = flowSendImmediateSource.indexOf("if (accepted && pendingSessionKeyBeforeHandoff)", rejectedStart);
   assert.notEqual(rejectedStart, -1, "rejected send branch should exist");
   assert.notEqual(acceptedStart, -1, "accepted handoff branch should follow rejected send branch");
-  const rejectedFailure = source.slice(rejectedStart, acceptedStart);
+  const rejectedFailure = flowSendImmediateSource.slice(rejectedStart, acceptedStart);
   assert.match(
     rejectedFailure,
-    /markMatchingPendingSubmitFailed\(errorMessage\);[\s\S]*resetRunState\(runStateSessionKeyForHandoffFailure\(\)\);/,
+    /markMatchingPendingSubmitFailed\(errorMessage\);[\s\S]*deps\.runState\.resetRunState\(runStateSessionKeyForHandoffFailure\(\)\);/,
     "rejected sends should reset the pending or materialized handoff run key",
   );
 
-  const thrownStart = source.indexOf("} catch (e) {", acceptedStart);
-  const sendImmediateEnd = source.indexOf("const drainNextQueuedDraft", thrownStart);
+  const thrownStart = flowSendImmediateSource.indexOf("} catch (error) {", acceptedStart);
+  const sendImmediateEnd = flowSendImmediateSource.length;
   assert.notEqual(thrownStart, -1, "thrown send branch should exist");
   assert.notEqual(sendImmediateEnd, -1, "sendPromptImmediate should end before queue draining");
-  const thrownFailure = source.slice(thrownStart, sendImmediateEnd);
+  const thrownFailure = flowSendImmediateSource.slice(thrownStart, sendImmediateEnd);
   assert.match(
     thrownFailure,
-    /markMatchingPendingSubmitFailed\(errorMessage\);[\s\S]*resetRunState\(runStateSessionKeyForHandoffFailure\(\)\);/,
+    /markMatchingPendingSubmitFailed\(errorMessage\);[\s\S]*deps\.runState\.resetRunState\(runStateSessionKeyForHandoffFailure\(\)\);/,
     "thrown sends should reset the pending or materialized handoff run key",
   );
   assert.doesNotMatch(
     `${aiAccessFailure}\n${rejectedFailure}\n${thrownFailure}`,
-    /resetRunState\(sessionKey\);/,
+    /deps\.runState\.resetRunState\(sessionKey\);/,
     "failure branches should not leave materialized real-session run state behind by resetting only the original key",
   );
 });
 
 test("pending session materialization remaps only that pending run UI state", () => {
   assert.match(
-    source,
-    /const remapPendingRunStateToSession = \(pendingKey: string, sessionId: string\) => \{[\s\S]*const pendingRun = current\[pendingKey\];[\s\S]*const \{ \[pendingKey\]: _removedPendingRunState, \.\.\.rest \} = current;[\s\S]*return \{[\s\S]*\.\.\.rest,[\s\S]*\[sessionKey\]: pendingRun,[\s\S]*\};[\s\S]*\};/,
+    conversationFlowSource,
+    /export const remapPendingRunStateToSession = \([\s\S]*const pendingRun = current\[pending\];[\s\S]*const \{ \[pending\]: _removedPendingRunState, \.\.\.rest \} = current;[\s\S]*return \{[\s\S]*\.\.\.rest,[\s\S]*\[real\]: pendingRun,[\s\S]*\};[\s\S]*\};/,
     "materializing a pending session should move only its run UI state to the real session key",
   );
   assert.match(
-    source,
+    sessionSource,
+    /setRunStateBySessionKey\(\(current\) =>\s*remapPendingRunStateToSessionRecord\(current, pendingKey, sessionKey\),\s*\);/,
+    "session view should wire pending run-state remaps through the conversation-flow helper",
+  );
+  assert.match(
+    sessionSource,
     /const remapPendingQueueToSession = \(pendingKey: string, sessionId: string\) => \{[\s\S]*remapPendingRunStateToSession\(pendingKey, sessionId\);/,
     "pending-to-real handoff should remap run UI state with the queue and submitted draft",
   );
@@ -271,67 +295,83 @@ test("opening another project pending draft clears only the visible base mapping
   );
   assert.match(
     source,
-    /onOpenPendingDirectoryDraftInWorkspace=\{openPendingDirectoryDraftFromList\}/,
+    /onOpenPendingDirectoryDraftInWorkspace:\s*openPendingDirectoryDraftFromList/,
     "sidebar project plus should use the wrapper that clears the visible pending base mapping",
   );
 });
 
 test("first-send handoff stores and clears the pending instance by base key", () => {
   assert.match(
-    source,
-    /const pendingSessionBaseKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey\(baseSessionKey\)\s*\? isPendingSessionInstanceId\(baseSessionKey\)\s*\? pendingSessionQueueKey\(\)\s*: baseSessionKey\s*: null;/,
+    conversationFlowSource,
+    /const pendingSessionBaseKeyBeforeHandoff =[\s\S]*!targetSessionId && !resolveSessionIdForQueueKey\(baseKey\)[\s\S]*\? isPendingSessionInstanceId\(baseKey\)[\s\S]*\? pendingSessionQueueKey[\s\S]*: baseKey[\s\S]*: null;/,
     "first sends should capture the base pending key separately from the pending instance key",
   );
 
   assert.match(
-    source,
-    /const needsPendingSessionInstance = Boolean\(pendingSessionBaseKeyBeforeHandoff\) && !isPendingSessionInstanceId\(baseSessionKey\);/,
+    conversationFlowSource,
+    /const needsPendingSessionInstance =[\s\S]*Boolean\(pendingSessionBaseKeyBeforeHandoff\) && !isPendingSessionInstanceId\(baseKey\);/,
     "first sends should not create a new pending instance when already targeting a pending instance",
   );
 
   assert.match(
-    source,
-    /setPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);/,
+    conversationFlowSource,
+    /const handoffScope = resolvePendingSessionHandoffScope\(\{[\s\S]*baseSessionKey,[\s\S]*targetSessionId,[\s\S]*pendingSessionQueueKey: deps\.sessionKeys\.pendingSessionQueueKey\(\),[\s\S]*createPendingSessionInstanceId: deps\.identity\.createPendingSessionInstanceId,[\s\S]*\}\);[\s\S]*pendingSessionBaseKeyBeforeHandoff,[\s\S]*sessionKey,[\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*= handoffScope;/,
+    "conversation flow should derive first-send handoff scope through the helper",
+  );
+
+  assert.match(
+    conversationFlowSource,
+    /deps\.pendingHandoff\.setPendingQueueKeyAwaitingSessionIdForBaseKey\(\s*pendingSessionBaseKeyBeforeHandoff,\s*pendingSessionKeyBeforeHandoff,\s*\);/,
     "first sends should store the pending instance under the captured base key",
   );
 
   assert.match(
-    source,
-    /clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);/,
+    conversationFlowSource,
+    /kind: "clear-matching-pending-instance"[\s\S]*pendingSessionBaseKey: pendingSessionBaseKeyBeforeHandoff,[\s\S]*pendingSessionKey: pendingSessionKeyBeforeHandoff/,
     "accepted or materialized handoff should clear only the matching base-to-pending mapping",
+  );
+  assert.match(
+    conversationFlowSource,
+    /deps\.pendingHandoff\.clearPendingQueueKeyAwaitingSessionIdForBaseKey\(\s*action\.pendingSessionBaseKey,\s*action\.pendingSessionKey,\s*\);/,
+    "conversation flow should apply the handoff cleanup action to the captured mapping keys",
   );
 });
 
 test("failed first-send optimistic drafts keep the captured pending instance selected", () => {
   assert.match(
-    source,
-    /const finishPendingSessionHandoffFailure = \(\) => \{\s*if \(!pendingSessionBaseKeyBeforeHandoff \|\| !pendingSessionKeyBeforeHandoff\) return;[\s\S]*if \(materializedSessionIdFromHandoff\) \{\s*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, null\);\s*return;\s*\}[\s\S]*if \(showOptimisticSubmit && !props\.selectedSessionId\?\.trim\(\)\) \{\s*setPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);\s*return;\s*\}\s*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);\s*\};/,
+    conversationFlowSource,
+    /export const resolvePendingSessionHandoffFailureAction = \([\s\S]*if \(!pendingSessionBaseKeyBeforeHandoff \|\| !pendingSessionKeyBeforeHandoff\)[\s\S]*if \(materializedSessionIdFromHandoff\)[\s\S]*kind: "clear-base-mapping"[\s\S]*if \(showOptimisticSubmit && !selectedSessionId\?\.trim\(\)\)[\s\S]*kind: "keep-pending-instance"[\s\S]*kind: "clear-matching-pending-instance"/,
     "failure cleanup should keep the captured pending instance selected when no real session exists yet",
   );
+  assert.match(
+    conversationFlowSource,
+    /const finishPendingSessionHandoffFailure = \(\) => \{[\s\S]*const action = resolvePendingSessionHandoffFailureAction\(\{[\s\S]*materializedSessionIdFromHandoff,[\s\S]*showOptimisticSubmit,[\s\S]*selectedSessionId: deps\.sessionKeys\.selectedSessionId\(\),[\s\S]*\}\);[\s\S]*if \(action\.kind === "keep-pending-instance"\) \{[\s\S]*deps\.pendingHandoff\.setPendingQueueKeyAwaitingSessionIdForBaseKey\([\s\S]*action\.pendingSessionBaseKey,[\s\S]*action\.pendingSessionKey,[\s\S]*\);[\s\S]*return;[\s\S]*\}[\s\S]*deps\.pendingHandoff\.clearPendingQueueKeyAwaitingSessionIdForBaseKey\(/,
+    "conversation flow should wire handoff failure cleanup through the conversation-flow action",
+  );
 
-  const aiAccessStart = source.indexOf("if (props.aiAccessBlockedReason) {");
-  const tryStart = source.indexOf("try {", aiAccessStart);
+  const aiAccessStart = flowSendImmediateSource.indexOf("if (aiAccessBlockedReason) {");
+  const tryStart = flowSendImmediateSource.indexOf("try {", aiAccessStart);
   assert.notEqual(aiAccessStart, -1, "AI access failure branch should exist");
   assert.notEqual(tryStart, -1, "send try block should follow AI access branch");
-  const aiAccessFailure = source.slice(aiAccessStart, tryStart);
-  assert.match(aiAccessFailure, /markMatchingPendingSubmitFailed\(props\.aiAccessBlockedReason\);/);
+  const aiAccessFailure = flowSendImmediateSource.slice(aiAccessStart, tryStart);
+  assert.match(aiAccessFailure, /markMatchingPendingSubmitFailed\(aiAccessBlockedReason\);/);
   assert.match(aiAccessFailure, /finishPendingSessionHandoffFailure\(\);/);
   assert.doesNotMatch(aiAccessFailure, /setPendingQueueKeyAwaitingSessionId\(null\);/);
 
-  const rejectedStart = source.indexOf("if (!accepted) {", tryStart);
-  const acceptedStart = source.indexOf("if (accepted && pendingSessionKeyBeforeHandoff)", rejectedStart);
+  const rejectedStart = flowSendImmediateSource.indexOf("if (!accepted) {", tryStart);
+  const acceptedStart = flowSendImmediateSource.indexOf("if (accepted && pendingSessionKeyBeforeHandoff)", rejectedStart);
   assert.notEqual(rejectedStart, -1, "rejected send branch should exist");
   assert.notEqual(acceptedStart, -1, "accepted handoff branch should follow rejected send branch");
-  const rejectedFailure = source.slice(rejectedStart, acceptedStart);
+  const rejectedFailure = flowSendImmediateSource.slice(rejectedStart, acceptedStart);
   assert.match(rejectedFailure, /markMatchingPendingSubmitFailed\(errorMessage\);/);
   assert.match(rejectedFailure, /finishPendingSessionHandoffFailure\(\);/);
   assert.doesNotMatch(rejectedFailure, /setPendingQueueKeyAwaitingSessionId\(null\);/);
 
-  const thrownStart = source.indexOf("} catch (e) {", acceptedStart);
-  const sendImmediateEnd = source.indexOf("const drainNextQueuedDraft", thrownStart);
+  const thrownStart = flowSendImmediateSource.indexOf("} catch (error) {", acceptedStart);
+  const sendImmediateEnd = flowSendImmediateSource.length;
   assert.notEqual(thrownStart, -1, "thrown send branch should exist");
   assert.notEqual(sendImmediateEnd, -1, "sendPromptImmediate should end before queue draining");
-  const thrownFailure = source.slice(thrownStart, sendImmediateEnd);
+  const thrownFailure = flowSendImmediateSource.slice(thrownStart, sendImmediateEnd);
   assert.match(thrownFailure, /markMatchingPendingSubmitFailed\(errorMessage\);/);
   assert.match(thrownFailure, /finishPendingSessionHandoffFailure\(\);/);
   assert.doesNotMatch(thrownFailure, /setPendingQueueKeyAwaitingSessionId\(null\);/);
@@ -339,8 +379,8 @@ test("failed first-send optimistic drafts keep the captured pending instance sel
 
 test("materialized first-send failures keep the failed draft on the active real session key", () => {
   assert.match(
-    source,
-    /if \(pendingSessionKeyBeforeHandoff\) \{\s*materializedSessionIdToRestore = current\.sessionId;[\s\S]*if \(!materializedSessionIdToRestore && materializedSessionIdFromHandoff\) \{\s*materializedSessionIdToRestore = materializedSessionIdFromHandoff;\s*\}[\s\S]*if \(current\.sessionId\) \{\s*materializedSessionIdForRunStateReset = current\.sessionId;\s*return setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\);\s*\}/,
+    conversationFlowSource,
+    /const materializedSessionIdToRestore =[\s\S]*current\.sessionId \|\| materializedSessionIdFromHandoff \|\| null;[\s\S]*if \(current\.sessionId\) \{[\s\S]*setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\),[\s\S]*materializedSessionIdForRunStateReset: current\.sessionId,[\s\S]*\}/,
     "a materialized first-send failure should leave the failed optimistic draft under the active real session key",
   );
 
@@ -365,20 +405,20 @@ test("materialized first-send failures keep the failed draft on the active real 
 });
 
 test("successful optimistic submit cleanup removes the draft by submit id wherever it was remapped", () => {
-  const clearStart = source.indexOf("const clearMatchingPendingSubmit = () => {");
-  const markFailedStart = source.indexOf("const markMatchingPendingSubmitFailed", clearStart);
+  const clearStart = flowSendImmediateSource.indexOf("const clearMatchingPendingSubmit = () => {");
+  const markFailedStart = flowSendImmediateSource.indexOf("const markMatchingPendingSubmitFailed", clearStart);
   assert.notEqual(clearStart, -1, "clearMatchingPendingSubmit should exist");
   assert.notEqual(markFailedStart, -1, "clearMatchingPendingSubmit should end before markMatchingPendingSubmitFailed");
-  const clearSource = source.slice(clearStart, markFailedStart);
+  const clearSource = flowSendImmediateSource.slice(clearStart, markFailedStart);
 
   assert.match(
     clearSource,
-    /Object\.entries\(current\)\.find\(\(\[, draft\]\) => draft\.id === pendingSubmitId\)/,
+    /removePendingSubmittedDraftById\(current, pendingSubmitId\)/,
     "successful cleanup should locate the optimistic draft by pending submit id across all session keys",
   );
   assert.match(
-    clearSource,
-    /removePendingSubmittedDraftForKey\(current, matchingSessionKey, pendingSubmitId\)/,
+    conversationFlowSource,
+    /export const removePendingSubmittedDraftById = \([\s\S]*Object\.entries\(current\)\.find\(\(\[, draft\]\) => draft\.id === id\);[\s\S]*removePendingSubmittedDraftForKey\(current, matchingSessionKey, id\);/,
     "successful cleanup should remove the matching draft from the key where it currently lives",
   );
   assert.doesNotMatch(
@@ -389,11 +429,9 @@ test("successful optimistic submit cleanup removes the draft by submit id wherev
 });
 
 test("pending handoffs materialize from the app callback with captured keys", () => {
-  const sendImmediateStart = source.indexOf("  const sendPromptImmediate = async (");
-  const sendImmediateEnd = source.indexOf("  const drainNextQueuedDraft = async (", sendImmediateStart);
-  assert.notEqual(sendImmediateStart, -1, "sendPromptImmediate should exist");
-  assert.notEqual(sendImmediateEnd, -1, "sendPromptImmediate should end before queue draining");
-  const sendImmediateSource = source.slice(sendImmediateStart, sendImmediateEnd);
+  assert.notEqual(flowSendImmediateStart, -1, "sendPromptImmediate should exist in the conversation-flow controller");
+  assert.notEqual(flowSendImmediateEnd, -1, "sendPromptImmediate should end before run-state helpers");
+  const sendImmediateSource = flowSendImmediateSource;
 
   assert.match(
     source,
@@ -406,9 +444,14 @@ test("pending handoffs materialize from the app callback with captured keys", ()
     "sendPromptImmediate should store the materialized id reported by the specific app handoff",
   );
   assert.match(
-    sendImmediateSource,
-    /const materializePendingHandoffToSession = \(handoff: MaterializedSessionHandoff \| null \| undefined\) => \{[\s\S]*const materializedPendingKey = handoff\?\.pendingSessionKey\?\.trim\(\) \|\| pendingSessionKeyBeforeHandoff;[\s\S]*if \(materializedPendingKey !== pendingSessionKeyBeforeHandoff\) return;[\s\S]*if \(handoff\?\.clientMessageId\?\.trim\(\) && handoff\.clientMessageId\.trim\(\) !== clientMessageId\) return;[\s\S]*const materializedSessionId = handoff\?\.sessionId\?\.trim\(\);[\s\S]*materializedSessionIdFromHandoff = materializedSessionId;[\s\S]*const materializedSessionKey = sessionQueueKeyForSessionId\(materializedSessionId\);[\s\S]*batch\(\(\) => \{[\s\S]*setPendingQueueKeyAwaitingSessionIdForBaseKey\(\s*pendingSessionBaseKeyBeforeHandoff,\s*materializedSessionKey,\s*\);[\s\S]*remapPendingQueueToSession\(pendingSessionKeyBeforeHandoff, materializedSessionId\);[\s\S]*\}\);[\s\S]*\};/,
+    conversationFlowSource,
+    /export const resolvePendingSessionHandoffMaterialization = \(\{[\s\S]*const materializedPendingKey = handoff\?\.pendingSessionKey\?\.trim\(\) \|\| pendingSessionKey;[\s\S]*if \(materializedPendingKey !== pendingSessionKey\)[\s\S]*if \(handoffClientMessageId && handoffClientMessageId !== clientMessageId\)[\s\S]*const materializedSessionId = handoff\?\.sessionId\?\.trim\(\);[\s\S]*if \(!materializedSessionId\)[\s\S]*if \(isPendingSessionInstanceId\(materializedSessionId\)\)[\s\S]*kind: "materialize"/,
     "materialization should require the captured pending key/client id and atomically remap to the real queue while keeping the visible base key pointed at it until selectedSessionId catches up",
+  );
+  assert.match(
+    sendImmediateSource,
+    /const materializePendingHandoffToSession = \([\s\S]*handoff: MaterializedSessionHandoff \| null \| undefined,[\s\S]*\) => \{[\s\S]*const materialization = resolvePendingSessionHandoffMaterialization\(\{[\s\S]*pendingSessionBaseKeyBeforeHandoff,[\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*clientMessageId,[\s\S]*handoff,[\s\S]*\}\);[\s\S]*if \(materialization\.kind === "skip"\) return;[\s\S]*const materializedSessionKey = deps\.sessionKeys\.sessionQueueKeyForSessionId\(materializedSessionId\);[\s\S]*deps\.effects\.batch\(\(\) => \{[\s\S]*deps\.pendingHandoff\.setPendingQueueKeyAwaitingSessionIdForBaseKey\(\s*pendingSessionBaseKey,[\s\S]*materializedSessionKey,[\s\S]*\);[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingSessionKey, materializedSessionId\);[\s\S]*\}\);[\s\S]*\};/,
+    "session view should wire materialization validation through the conversation-flow helper before applying remap effects",
   );
   assert.match(
     sendImmediateSource,
@@ -417,13 +460,18 @@ test("pending handoffs materialize from the app callback with captured keys", ()
   );
   assert.match(
     sendImmediateSource,
-    /const materializedSessionId = materializedSessionIdFromHandoff \?\? props\.selectedSessionId\?\.trim\(\);/,
+    /const materializedSessionId =[\s\S]*materializedSessionIdFromHandoff \?\? deps\.sessionKeys\.selectedSessionId\(\)\?\.trim\(\);/,
     "accepted fallback should prefer the materialized id reported by the app handoff over current selected session state",
   );
   assert.match(
-    sendImmediateSource,
-    /if \(materializedSessionIdFromHandoff\) \{\s*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, null\);\s*return;\s*\}/,
+    conversationFlowSource,
+    /if \(materializedSessionIdFromHandoff\) \{[\s\S]*kind: "clear-base-mapping"[\s\S]*pendingSessionKey: null,[\s\S]*\}/,
     "failure cleanup should not restore a pending mapping after that handoff already materialized",
+  );
+  assert.match(
+    sendImmediateSource,
+    /resolvePendingSessionHandoffFailureAction\(\{[\s\S]*materializedSessionIdFromHandoff,[\s\S]*\}\)/,
+    "send failure cleanup should pass the materialized handoff id into the cleanup resolver",
   );
 });
 
@@ -434,30 +482,28 @@ test("pending first sends pass captured sidebar placeholder metadata to app prom
     "session view should use the shared pending sidebar metadata type in prompt send options",
   );
 
-  const sendImmediateStart = source.indexOf("  const sendPromptImmediate = async (");
-  const sendImmediateEnd = source.indexOf("  const drainNextQueuedDraft = async (", sendImmediateStart);
-  assert.notEqual(sendImmediateStart, -1, "sendPromptImmediate should exist");
-  assert.notEqual(sendImmediateEnd, -1, "sendPromptImmediate should end before queue draining");
-  const sendImmediateSource = source.slice(sendImmediateStart, sendImmediateEnd);
+  assert.notEqual(flowSendImmediateStart, -1, "sendPromptImmediate should exist in the conversation-flow controller");
+  assert.notEqual(flowSendImmediateEnd, -1, "sendPromptImmediate should end before run-state helpers");
+  const sendImmediateSource = flowSendImmediateSource;
 
   assert.match(
     sendImmediateSource,
-    /const pendingSidebarSessionCreatedAt = Date\.now\(\);/,
+    /const pendingSidebarSessionCreatedAt = deps\.identity\.now\(\);/,
     "pending sidebar placeholder metadata should use a captured creation time",
   );
   assert.match(
     sendImmediateSource,
-    /const pendingSidebarWorkspaceId = createPendingSidebarSessionWorkspaceId\(\);[\s\S]*const pendingSidebarWorkspaceRoot = createPendingSidebarSessionWorkspaceRoot\(pendingSidebarWorkspaceId\);[\s\S]*const pendingSidebarSession: PendingSidebarSessionMetadata \| null = pendingSessionKeyBeforeHandoff\s*\? \{[\s\S]*id: pendingSessionKeyBeforeHandoff,[\s\S]*workspaceId: pendingSidebarWorkspaceId,[\s\S]*workspaceRoot: pendingSidebarWorkspaceRoot,[\s\S]*title: draft\.text\.trim\(\),[\s\S]*createdAt: pendingSidebarSessionCreatedAt,[\s\S]*\}[\s\S]*: null;/,
+    /const pendingSidebarWorkspaceId = deps\.pendingHandoff\.createPendingSidebarSessionWorkspaceId\(\);[\s\S]*const pendingSidebarWorkspaceRoot =[\s\S]*deps\.pendingHandoff\.createPendingSidebarSessionWorkspaceRoot\(pendingSidebarWorkspaceId\);[\s\S]*const pendingSidebarSession: PendingSidebarSessionMetadata \| null = pendingSessionKeyBeforeHandoff\s*\? \{[\s\S]*id: pendingSessionKeyBeforeHandoff,[\s\S]*workspaceId: pendingSidebarWorkspaceId,[\s\S]*workspaceRoot: pendingSidebarWorkspaceRoot,[\s\S]*title: draft\.text\.trim\(\),[\s\S]*createdAt: pendingSidebarSessionCreatedAt,[\s\S]*\}[\s\S]*: null;/,
     "pending first sends should capture the pending id, target workspace id/root, title, and creation time",
   );
   assert.match(
     sendImmediateSource,
-    /const promptSendOptions: \{[\s\S]*clientMessageId: string;[\s\S]*origin: SessionSendOrigin;[\s\S]*targetSessionId\?: string \| null;[\s\S]*sendTraceId\?: string \| null;[\s\S]*onMaterializedSessionId\?: \(handoff: MaterializedSessionHandoff\) => void;[\s\S]*pendingSession\?: PendingSidebarSessionMetadata \| null;[\s\S]*\} =/,
+    /const promptSendOptions: SessionSendOptionsBase & \{[\s\S]*targetSessionId\?: string \| null;[\s\S]*onMaterializedSessionId\?: \(handoff: MaterializedSessionHandoff\) => void;[\s\S]*pendingSession\?: PendingSidebarSessionMetadata \| null;[\s\S]*\} =/,
     "prompt send options should allow pending sidebar metadata",
   );
   assert.match(
     sendImmediateSource,
-    /\? \{ onMaterializedSessionId: handleMaterializedSessionId, pendingSession: pendingSidebarSession \}|\.\.\.\(pendingSessionKeyBeforeHandoff[\s\S]*onMaterializedSessionId: handleMaterializedSessionId, pendingSession: pendingSidebarSession/,
+    /\.\.\.\(pendingSessionKeyBeforeHandoff[\s\S]*onMaterializedSessionId: handleMaterializedSessionId,[\s\S]*pendingSession: pendingSidebarSession/,
     "pending first sends should pass the captured metadata with the materialization callback",
   );
 });
@@ -567,8 +613,13 @@ test("first sends create unique pending session instance keys before handoff", (
 
 test("pending session instance queue keys are treated as not-yet-real sessions", () => {
   assert.match(
-    source,
-    /isPendingSessionInstanceId\(sessionKey\)/,
+    conversationFlowSource,
+    /const isLegacyPendingSessionKey = \(value: string\) =>[\s\S]*isPendingSessionInstanceId\(value\)[\s\S]*value\.startsWith\("pending:"\)/,
     "pending session instance keys should not resolve to real session ids",
+  );
+  assert.match(
+    conversationFlowSource,
+    /export const resolveSessionIdForQueueKey = \(sessionKey: string\) => \{[\s\S]*return isLegacyPendingSessionKey\(sessionKey\) \? null : sessionKey;/,
+    "pending session instance queue keys should resolve to null target session ids",
   );
 });

@@ -26,6 +26,19 @@ test("beginOutageEpisode ignores scoped status keys as fetchable session ids", (
   assert.deepEqual(state.runningSessionIds, ["a"]);
 });
 
+test("beginOutageEpisode can snapshot running sessions for a specific workspace", () => {
+  const state = beginOutageEpisode(
+    {
+      "shared-session": "running",
+      ["workspace-a\0a"]: "running",
+      ["workspace-b\0b"]: "retry",
+      ["workspace-b\0idle"]: "idle",
+    },
+    "workspace-b",
+  );
+  assert.deepEqual(state.runningSessionIds, ["b"]);
+});
+
 test("beginOutageEpisode tracks idle-only outages without notices", () => {
   const state = beginOutageEpisode({ idleA: "idle", idleB: "idle" });
   assert.equal(state.active, true);

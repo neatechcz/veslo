@@ -89,6 +89,10 @@ export function scenarioSelectionNeedsSkillEnableInventoryFixture(scenarios: str
   return scenarios.some((scenario) => scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/skills-enabled-state.toml'));
 }
 
+export function scenarioSelectionNeedsGoogleMcpCatalogFixture(scenarios: string[]): boolean {
+  return scenarios.some((scenario) => scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/google-mcp-connectors.toml'));
+}
+
 export function scenarioSelectionNeedsManagedAiGatewayFixture(scenarios: string[]): boolean {
   return scenarios.some((scenario) =>
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/message-send-registry-degraded.toml') ||
@@ -187,6 +191,9 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   }
   if (scenarioSelectionNeedsSkillEnableInventoryFixture(scenarios)) {
     process.env.E2E_SEED_SKILL_ENABLE_INVENTORY ||= '1';
+  }
+  if (scenarioSelectionNeedsGoogleMcpCatalogFixture(scenarios)) {
+    process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE ||= '1';
   }
   if (scenarioSelectionNeedsManagedAiGatewayFixture(scenarios)) {
     process.env.E2E_MANAGED_AI_GATEWAY_FIXTURE ||= '1';

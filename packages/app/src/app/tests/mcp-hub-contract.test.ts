@@ -16,7 +16,7 @@ test("extensions store wires hub mcp auth and actions", () => {
   const noAuthBranchSource = refreshHubMcpSource.match(/if \(!denToken \|\| !denOrgId\)\s*\{[\s\S]*?return;/)?.[0] ?? "";
 
   assert.match(extensionsSource, /readDenAuth\(\)/);
-  assert.match(extensionsSource, /listHubMcp/);
+  assert.match(extensionsSource, /vesloClient\.mcp\.listHub/);
   assert.match(extensionsSource, /installHubMcp/);
   assert.match(extensionsSource, /hubMcpCards/);
   assert.match(refreshHubMcpSource, /translate\("mcp\.org_catalog_placeholder"\)/);
@@ -25,11 +25,37 @@ test("extensions store wires hub mcp auth and actions", () => {
   assert.doesNotMatch(noAuthBranchSource, /hubMcpLoaded = true/);
 });
 
+test("extensions store uses the mcp domain facade for hub mcp server requests", () => {
+  assert.match(extensionsSource, /vesloClient\.mcp\.listHub/);
+  assert.match(extensionsSource, /vesloClient\.mcp\.installHub/);
+  assert.doesNotMatch(extensionsSource, /\(vesloClient as any\)\.(?:listHubMcp|installHubMcp)/);
+});
+
+test("App uses the mcp domain facade for workspace mcp server requests", () => {
+  assert.match(appSource, /remoteContext\.vesloClient\.mcp\.list/);
+  assert.match(appSource, /vesloClient\.mcp\.(?:add|remove|refreshRuntimeToken|logoutAuth)/);
+  assert.doesNotMatch(appSource, /remoteContext\.vesloClient\.listMcp\(/);
+  assert.doesNotMatch(appSource, /vesloClient\.(?:addMcp|removeMcp|refreshMcpRuntimeToken|logoutMcpAuth)\(/);
+});
+
+test("extensions store retries hub mcp after Veslo server auth context becomes ready", () => {
+  const autoRefreshSource =
+    extensionsSource.match(/createEffect\(\(\) => \{[\s\S]*?refreshHubMcp\(\)\.catch[\s\S]*?\}\);/)?.[0] ?? "";
+
+  assert.match(extensionsSource, /import \{ createEffect, createSignal \} from "solid-js";/);
+  assert.match(autoRefreshSource, /options\.vesloServerStatus\(\) === "connected"/);
+  assert.match(autoRefreshSource, /vesloCapabilities\?\.hub\?\.mcp\?\.read/);
+  assert.match(autoRefreshSource, /readDenAuth\(\)/);
+  assert.match(autoRefreshSource, /!root \|\| !canUseVesloServer \|\| !denToken \|\| !denOrgId/);
+  assert.match(autoRefreshSource, /refreshHubMcp\(\)\.catch/);
+});
+
 test("mcp page renders hub mcp catalog entries after built-in quick connect", () => {
   assert.match(mcpSource, /props\.hubMcpCards/);
   assert.match(mcpSource, /props\.refreshHubMcp/);
   assert.match(mcpSource, /props\.installHubMcp/);
   assert.match(mcpSource, /props\.quickConnect/);
+  assert.match(mcpSource, /data-testid="mcp-page"/);
 });
 
 test("hub mcp cards preserve provider metadata and install by catalog identity", () => {

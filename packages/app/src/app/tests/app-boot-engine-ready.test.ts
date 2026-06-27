@@ -9,7 +9,7 @@ const globalSyncSource = readFileSync(
 );
 const serverSource = readFileSync(new URL("../context/server.tsx", import.meta.url), "utf8");
 const serverUrlSource = readFileSync(new URL("../context/server-url.ts", import.meta.url), "utf8");
-const sessionSource = readFileSync(new URL("../context/session.ts", import.meta.url), "utf8");
+const eventStreamSource = readFileSync(new URL("../context/session-event-stream.ts", import.meta.url), "utf8");
 const workspaceServerSyncSource = readFileSync(
   new URL("../context/workspace-server-sync.tsx", import.meta.url),
   "utf8",
@@ -30,23 +30,23 @@ test("engineReady boots false so guards block engine API calls until a real conn
 
 test("session SSE does not connect while lazy boot has no ready engine", () => {
   assert.match(
-    sessionSource,
-    /for \(const wsId of entryIds\) \{[\s\S]*if \(!isWorkspaceRuntimeReady\(wsId\)\) continue;[\s\S]*const c = options\.routing\.client\(wsId\);/s,
+    eventStreamSource,
+    /for \(const wsId of entryIds\) \{[\s\S]*if \(!deps\.isWorkspaceRuntimeReady\(wsId\)\) continue;[\s\S]*const c = deps\.routing\.client\(wsId\);/s,
     "workspace SSE streams should only open for routed workspaces whose runtime is ready",
   );
   assert.match(
-    sessionSource,
-    /else if \(fallback && isActiveWorkspaceRuntimeReady\(\)\) \{[\s\S]*targets\.push\(\{ wsId: "", client: fallback \}\);[\s\S]*\}/s,
+    eventStreamSource,
+    /else if \(fallback && deps\.isActiveWorkspaceRuntimeReady\(\)\) \{[\s\S]*targets\.push\(\{ wsId: "", client: fallback \}\);[\s\S]*\}/s,
     "legacy fallback SSE should still require active workspace runtime readiness",
   );
   assert.match(
-    sessionSource,
-    /if \(targets\.length === 0\) \{[\s\S]*options\.setSseConnected\(false\);[\s\S]*return;[\s\S]*\}/s,
+    eventStreamSource,
+    /if \(targets\.length === 0\) \{[\s\S]*deps\.setSseConnected\(false\);[\s\S]*return;[\s\S]*\}/s,
     "lazy boot without any ready workspace target should not leave SSE marked connected",
   );
   assert.doesNotMatch(
-    sessionSource,
-    /if \(options\.engineReady\?\.\(\) === false\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const entryIds = options\.routing\.entryIds\(\);/s,
+    eventStreamSource,
+    /if \(deps\.engineReady\?\.\(\) === false\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const entryIds = deps\.routing\.entryIds\(\);/s,
     "global engineReady must not block already-ready routed workspaces from opening SSE streams",
   );
 });

@@ -40,4 +40,45 @@ describe("mcp remote connect flow", () => {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
   });
+
+  test("rejects malformed custom MCP configs before writing opencode config", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-mcp-validation-"));
+
+    try {
+      await expect(addMcp(workspaceRoot, "bad-url", {
+        type: "remote",
+        url: "file:///tmp/mcp.sock",
+        enabled: true,
+      })).rejects.toMatchObject({
+        status: 400,
+        code: "invalid_mcp_config",
+      });
+
+      await expect(addMcp(workspaceRoot, "bad-command", {
+        type: "local",
+        command: ["node", ""],
+        enabled: true,
+      })).rejects.toMatchObject({
+        status: 400,
+        code: "invalid_mcp_config",
+      });
+
+      await expect(addMcp(workspaceRoot, "bad-header", {
+        type: "remote",
+        url: "https://example.com/mcp",
+        enabled: true,
+        headers: {
+          "X-Veslo-Connector-Token": "runtime-token",
+        },
+      })).rejects.toMatchObject({
+        status: 400,
+        code: "invalid_mcp_config",
+      });
+
+      const listed = await listMcp(workspaceRoot);
+      expect(listed).toEqual([]);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
 });

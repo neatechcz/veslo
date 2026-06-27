@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const sessionSource = readFileSync(new URL("../../context/session.ts", import.meta.url), "utf8");
+const runtimePromptsSource = readFileSync(
+  new URL("../../context/session-runtime-prompts.ts", import.meta.url),
+  "utf8",
+);
 
 const sourceBetween = (source: string, startNeedle: string, endNeedle: string) => {
   const start = source.indexOf(startNeedle);
@@ -14,59 +17,59 @@ const sourceBetween = (source: string, startNeedle: string, endNeedle: string) =
 
 test("pending questions are refreshed per routed workspace", () => {
   const refreshSource = sourceBetween(
-    sessionSource,
+    runtimePromptsSource,
     "  async function refreshPendingQuestions() {",
-    "  function setMessagesForSession(",
+    "  async function respondPermission(",
   );
 
-  assert.match(refreshSource, /options\.routing\.forEach\(\(wsId, client\) => \{/);
+  assert.match(refreshSource, /deps\.routing\.forEach\(\(wsId, client\) => \{/);
   assert.match(refreshSource, /workspaceId: wsId/);
   assert.match(refreshSource, /setPendingQuestionsByWs\(nextByWs\)/);
-  assert.match(refreshSource, /setStore\("pendingQuestions", activeList\)/);
+  assert.match(refreshSource, /deps\.setStore\("pendingQuestions", activeList\)/);
 });
 
 test("pending permission and question modals do not fall back while no real session is selected", () => {
   const permissionSource = sourceBetween(
-    sessionSource,
-    "  const activePermission = createMemo(() => {",
-    "  const activeQuestion = createMemo(() => {",
+    runtimePromptsSource,
+    "  const activePermission = () => {",
+    "  const activeQuestion = () => {",
   );
   const questionSource = sourceBetween(
-    sessionSource,
-    "  const activeQuestion = createMemo(() => {",
-    "  const [questionReplyBusy, setQuestionReplyBusy] = createSignal(false);",
+    runtimePromptsSource,
+    "  const activeQuestion = () => {",
+    "  const setPendingPermissions = ",
   );
 
   assert.match(
     permissionSource,
-    /const id = options\.selectedSessionId\(\);[\s\S]*if \(id\) \{[\s\S]*if \(scoped\) return scoped;[\s\S]*\} else \{\s*return null;\s*\}/s,
+    /const id = deps\.selectedSessionId\(\);[\s\S]*if \(id\) \{[\s\S]*if \(scoped\) return scoped;[\s\S]*\} else \{\s*return null;\s*\}/s,
     "permission modal should not surface an unrelated background request while the UI is on a pending/new chat",
   );
   assert.match(
     questionSource,
-    /const id = options\.selectedSessionId\(\);[\s\S]*if \(id\) \{[\s\S]*if \(scopedFromAnyWorkspace\) return scopedFromAnyWorkspace;[\s\S]*\} else \{\s*return null;\s*\}/s,
+    /const id = deps\.selectedSessionId\(\);[\s\S]*if \(id\) \{[\s\S]*if \(scopedFromAnyWorkspace\) return scopedFromAnyWorkspace;[\s\S]*\} else \{\s*return null;\s*\}/s,
     "question modal should not surface an unrelated background request while the UI is on a pending/new chat",
   );
 });
 
 test("question replies route to the workspace that owns the question", () => {
   const respondSource = sourceBetween(
-    sessionSource,
+    runtimePromptsSource,
     "  async function respondQuestion(",
     "  async function rejectQuestion(",
   );
   const rejectSource = sourceBetween(
-    sessionSource,
+    runtimePromptsSource,
     "  async function rejectQuestion(",
-    "  const setSessions = ",
+    "  const activePermission = ",
   );
 
   for (const block of [respondSource, rejectSource]) {
     assert.match(block, /allPendingQuestions\(\)\.find\(\(q\) => q\.id === requestID\)/);
-    assert.match(block, /question\?\.workspaceId[\s\S]*options\.routing\.client\(question\.workspaceId\)/);
+    assert.match(block, /question\?\.workspaceId[\s\S]*deps\.routing\.client\(question\.workspaceId\)/);
     assert.doesNotMatch(
       block,
-      /const c = options\.routing\.active\(\);/,
+      /const c = deps\.routing\.active\(\);/,
       "question reply/reject must not unconditionally use the active workspace client",
     );
   }

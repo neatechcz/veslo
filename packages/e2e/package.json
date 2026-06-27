@@ -16,6 +16,7 @@
     "test:pilot:smoke": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario smoke",
     "test:pilot:navigation": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario navigation",
     "test:pilot:soul-dashboard": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario soul-dashboard",
+    "test:pilot:google-mcp": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario google-mcp-connectors",
     "test:pilot:wsl-direct-fallback": "node --import=tsx/esm ./specs/wsl-direct-fallback.pilot.ts",
     "test:pilot:core-platform-skills": "node --import=tsx/esm ./specs/core-platform-skills.pilot.ts",
     "test:update-baselines": "wdio run wdio.conf.ts --update-visual-baseline",

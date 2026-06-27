@@ -63,7 +63,7 @@ test("session Soul navigation does not switch views after workspace activation f
   const openSoulSource = sourceBetween(
     sessionSource,
     "  const openSoul = (workspaceId?: string) => {",
-    "  const soulModeEnabled",
+    "  const runtimeAvailableWithoutClient = createMemo(() => {",
   );
 
   assert.match(
@@ -105,7 +105,7 @@ test("session runtime availability is not inferred from local connected browse s
   const runtimeAvailabilitySource = sourceBetween(
     sessionSource,
     "  const runtimeAvailableWithoutClient = createMemo(() => {",
-    "  const soulNavIconClass",
+    "  const leftSidebarContent = () => (",
   );
 
   assert.doesNotMatch(

@@ -12,7 +12,10 @@ const snapshotSource = readFileSync(
   new URL("../../context/workspace-session-snapshots.ts", import.meta.url),
   "utf8",
 );
-const sessionSource = readFileSync(new URL("../../context/session.ts", import.meta.url), "utf8");
+const workspaceCacheSource = readFileSync(
+  new URL("../../context/session-workspace-cache.ts", import.meta.url),
+  "utf8",
+);
 const workspaceSource = readWorkspaceBehaviorSources();
 const snapshotWiringStart = appSource.indexOf("createWorkspaceSessionSnapshots({");
 const snapshotWiringEnd = appSource.indexOf("  type PendingSkillRegistryReplay", snapshotWiringStart);
@@ -126,13 +129,13 @@ test("workspace switch clears stale selected session when incoming workspace has
 
 test("workspace snapshot restore does not keep a selected session missing from that workspace", () => {
   assert.match(
-    sessionSource,
-    /const selectedSessionIdForSnapshot = \(\) => \{[\s\S]*const selectedSessionId = options\.selectedSessionId\(\)\?\.trim\(\) \?\? "";[\s\S]*return store\.sessions\.some\(\(session\) => session\.id === selectedSessionId\) \? selectedSessionId : null;[\s\S]*selectedSessionId: selectedSessionIdForSnapshot\(\),/s,
+    workspaceCacheSource,
+    /const selectedSessionIdForSnapshot = \(\) => \{[\s\S]*const selectedSessionId = deps\.selectedSessionId\(\)\?\.trim\(\) \?\? "";[\s\S]*return deps\.store\.sessions\.some\(\(session\) => session\.id === selectedSessionId\)[\s\S]*selectedSessionId: selectedSessionIdForSnapshot\(\),/s,
     "saved workspace snapshots should only persist selections present in that workspace session list",
   );
   assert.match(
-    sessionSource,
-    /const snapshotSelectedSessionId = snapshot\.selectedSessionId\?\.trim\(\) \?\? "";[\s\S]*snapshot\.sessions\.some\(\(session\) => session\.id === snapshotSelectedSessionId\)[\s\S]*options\.setSelectedSessionId\(selectedSessionId\);[\s\S]*snapshot\.selectedSessionId = selectedSessionId;/s,
+    workspaceCacheSource,
+    /const selectedSessionId = resolveWorkspaceSnapshotSelectedSessionId\(snapshot\);[\s\S]*deps\.setSelectedSessionId\(selectedSessionId\);[\s\S]*snapshot\.selectedSessionId = selectedSessionId;/s,
     "loading a workspace snapshot should clear stale cross-workspace selections instead of preserving them",
   );
 });

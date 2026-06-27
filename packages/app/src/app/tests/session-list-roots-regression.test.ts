@@ -8,7 +8,7 @@ const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
 
 const TARGET_FILES = [
   resolve(CURRENT_DIR, "../app.tsx"),
-  resolve(CURRENT_DIR, "../context/session.ts"),
+  resolve(CURRENT_DIR, "../context/session-selection-controller.ts"),
 ];
 
 test("session.list calls do not force roots=false filtering", () => {

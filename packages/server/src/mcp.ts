@@ -6,7 +6,8 @@ import { localUserResourceOwner, workspaceResourceOwner } from "./resource-owner
 import type { HubMcpItem, McpItem, ResourceOwner } from "./types.js";
 import { readJsoncFile, updateJsoncTopLevel } from "./jsonc.js";
 import { opencodeConfigPath } from "./workspace-files.js";
-import { validateMcpConfig, validateMcpName } from "./validators.js";
+import { ApiError } from "./errors.js";
+import { validateMcpConfig, validateMcpName, type ValidateMcpConfigOptions } from "./validators.js";
 
 export type ListMcpOptions = {
   workspaceOwner?: ResourceOwner;
@@ -85,9 +86,10 @@ export async function addMcp(
   workspaceRoot: string,
   name: string,
   config: Record<string, unknown>,
+  options: ValidateMcpConfigOptions = {},
 ): Promise<{ action: "added" | "updated" }> {
   validateMcpName(name);
-  validateMcpConfig(config);
+  validateMcpConfig(config, options);
   const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
   const mcpMap = getMcpConfig(data);
   const existed = Object.prototype.hasOwnProperty.call(mcpMap, name);
@@ -131,7 +133,45 @@ export async function installHubMcp(
     config.command = item.config.command;
   }
 
-  validateMcpConfig(config);
-  const result = await addMcp(workspaceRoot, name, config);
+  validateMcpConfig(config, { allowVesloConnectorTokenHeader: true });
+  const result = await addMcp(workspaceRoot, name, config, { allowVesloConnectorTokenHeader: true });
   return { name, action: result.action };
+}
+
+export async function refreshMcpRuntimeToken(
+  workspaceRoot: string,
+  name: string,
+  token: string,
+): Promise<{ name: string; action: "updated" }> {
+  validateMcpName(name);
+  const runtimeToken = token.trim();
+  if (!runtimeToken) {
+    throw new ApiError(400, "invalid_mcp_runtime_token", "MCP runtime token is required");
+  }
+
+  const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
+  const mcpMap = getMcpConfig(data);
+  const entry = mcpMap[name];
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    throw new ApiError(404, "mcp_not_found", `MCP not found: ${name}`);
+  }
+  if (entry.type !== "remote") {
+    throw new ApiError(400, "invalid_mcp_config", "MCP runtime token refresh requires a remote MCP");
+  }
+
+  const existingHeaders =
+    entry.headers && typeof entry.headers === "object" && !Array.isArray(entry.headers)
+      ? (entry.headers as Record<string, unknown>)
+      : {};
+  const nextEntry: Record<string, unknown> = {
+    ...entry,
+    headers: {
+      ...existingHeaders,
+      "X-Veslo-Connector-Token": runtimeToken,
+    },
+  };
+  validateMcpConfig(nextEntry, { allowVesloConnectorTokenHeader: true });
+  mcpMap[name] = nextEntry;
+  await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { mcp: mcpMap });
+  return { name, action: "updated" };
 }

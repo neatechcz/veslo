@@ -495,7 +495,7 @@ test("pending permission interval skips active sends and single-client mode cove
   );
   assert.match(
     mcpRuntimeStatusSource,
-    /const activeRuntimeActivityId = options\.activeRuntimeActivityId\(\)\?\.trim\(\);[\s\S]*"runtime-status-skip-active-send"[\s\S]*return;[\s\S]*const status = await options\.loadStatus\(activeClient, directory\);[\s\S]*"runtime-status-result-skip-active-send"[\s\S]*return;/,
+    /const activeRuntimeActivityId = options\.activeRuntimeActivityId\(\)\?\.trim\(\);[\s\S]*"runtime-status-skip-active-send"[\s\S]*return;[\s\S]*(?:const|let) status = await options\.loadStatus\(activeClient, directory\);[\s\S]*"runtime-status-result-skip-active-send"[\s\S]*return;/,
     "MCP runtime status scheduling should skip direct runtime calls and late applies during visible send handoff",
   );
 });

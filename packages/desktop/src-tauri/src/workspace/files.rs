@@ -64,6 +64,40 @@ fn has_chrome_mcp_alias(mcp_obj: &serde_json::Map<String, serde_json::Value>) ->
     mcp_obj.contains_key("chrome-devtools") || mcp_obj.contains_key("control-chrome")
 }
 
+fn chrome_mcp_npx_config() -> serde_json::Value {
+    serde_json::json!({
+      "type": "local",
+      "command": ["npx", "-y", "chrome-devtools-mcp@latest", "--isolated"]
+    })
+}
+
+fn is_legacy_chrome_mcp_command(config: &serde_json::Value) -> bool {
+    if config.get("type").and_then(|value| value.as_str()) != Some("local") {
+        return false;
+    }
+    let Some(command) = config.get("command").and_then(|value| value.as_array()) else {
+        return false;
+    };
+    let parts: Vec<&str> = command.iter().filter_map(|value| value.as_str()).collect();
+    parts.len() == command.len() && parts.as_slice() == ["chrome-devtools-mcp", "--isolated"]
+}
+
+fn migrate_legacy_chrome_mcp_commands(
+    mcp_obj: &mut serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    let mut changed = false;
+    for key in ["chrome-devtools", "control-chrome"] {
+        let Some(config) = mcp_obj.get_mut(key) else {
+            continue;
+        };
+        if is_legacy_chrome_mcp_command(config) {
+            *config = chrome_mcp_npx_config();
+            changed = true;
+        }
+    }
+    changed
+}
+
 fn seed_veslo_agent(agent_root: &PathBuf) -> Result<(), String> {
     let agent_path = agent_root.join("veslo.md");
     if agent_path.exists() {
@@ -643,14 +677,10 @@ pub fn ensure_workspace_files(
                 _ => serde_json::Map::new(),
             };
 
-            if !has_chrome_mcp_alias(&mcp_obj) {
-                mcp_obj.insert(
-                    "chrome-devtools".to_string(),
-                    serde_json::json!({
-                      "type": "local",
-                      "command": ["npx", "-y", "chrome-devtools-mcp@latest", "--isolated"]
-                    }),
-                );
+            if migrate_legacy_chrome_mcp_commands(&mut mcp_obj) {
+                config_changed = true;
+            } else if !has_chrome_mcp_alias(&mcp_obj) {
+                mcp_obj.insert("chrome-devtools".to_string(), chrome_mcp_npx_config());
                 config_changed = true;
             }
 
@@ -975,6 +1005,63 @@ Use this guide for the team's custom process.
 
         assert!(mcp.contains_key("control-chrome"));
         assert!(!mcp.contains_key("chrome-devtools"));
+        assert_eq!(
+            mcp.get("control-chrome")
+                .and_then(|value| value.get("command"))
+                .and_then(|value| value.as_array())
+                .cloned()
+                .expect("control-chrome command"),
+            vec![serde_json::Value::String("existing".to_string())]
+        );
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn ensure_workspace_files_migrates_legacy_control_chrome_command() {
+        let root = temp_workspace_root("legacy-control-chrome");
+        let config_path = root.join("opencode.jsonc");
+        fs::write(
+            &config_path,
+            r#"{
+  "mcp": {
+    "control-chrome": {
+      "type": "local",
+      "command": ["chrome-devtools-mcp", "--isolated"]
+    }
+  }
+}"#,
+        )
+        .expect("write existing config");
+
+        let root_str = root.to_string_lossy().to_string();
+        ensure_workspace_files(&root_str, "minimal", None, None, None)
+            .expect("seed workspace files");
+
+        let config_raw = fs::read_to_string(&config_path).expect("read updated config");
+        let config: serde_json::Value =
+            serde_json::from_str(&config_raw).expect("parse updated config");
+        let mcp = config
+            .get("mcp")
+            .and_then(|value| value.as_object())
+            .expect("mcp object");
+        let command = mcp
+            .get("control-chrome")
+            .and_then(|value| value.get("command"))
+            .and_then(|value| value.as_array())
+            .cloned()
+            .expect("control-chrome command");
+
+        assert!(!mcp.contains_key("chrome-devtools"));
+        assert_eq!(
+            command,
+            vec![
+                serde_json::Value::String("npx".to_string()),
+                serde_json::Value::String("-y".to_string()),
+                serde_json::Value::String("chrome-devtools-mcp@latest".to_string()),
+                serde_json::Value::String("--isolated".to_string()),
+            ]
+        );
 
         fs::remove_dir_all(root).ok();
     }

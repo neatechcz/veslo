@@ -8,7 +8,7 @@ This document describes the main persistence and config surfaces used by Veslo.
 - Workspace-scoped config: `.opencode/veslo.json`.
 - Workspace automation state: `.opencode/veslo/automations.json`.
 - OpenCode config: `opencode.json` or `opencode.jsonc`.
-- Server connection state: browser storage keys managed by `veslo-server.ts`.
+- Server connection state: browser storage keys managed by `packages/app/src/app/lib/veslo-server/connection.ts` and re-exported through `packages/app/src/app/lib/veslo-server.ts`.
 - Den auth state: browser storage keys managed by `den-auth.ts`.
 - Desktop local proof cache: app-data JSON managed by Tauri commands.
 
@@ -132,7 +132,8 @@ Privacy defaults:
 
 ## Veslo Server Connection State
 
-Managed by `packages/app/src/app/lib/veslo-server.ts`.
+Managed by `packages/app/src/app/lib/veslo-server/connection.ts`.
+Public callers should still import helpers from `packages/app/src/app/lib/veslo-server.ts`.
 
 Primary keys:
 
@@ -142,7 +143,8 @@ Primary keys:
 
 These control which Veslo server URL the app connects to and which bearer token it sends.
 
-Invite-link and bundle-link parsing also lives in `veslo-server.ts`. Incoming query parameters can override the stored connection state for a launch flow.
+Invite-link and bundle-link parsing also lives in `packages/app/src/app/lib/veslo-server/connection.ts`.
+Incoming query parameters can override the stored connection state for a launch flow.
 
 The desktop shell also persists the managed local `veslo-server` process snapshot in the app-local data directory so a new app process can recover a still-running server. For the live managed child, native `veslo_server_info` reports process ownership and keeps the recorded URL/token/PID while the child is alive; HTTP health is polled separately by the frontend. Persisted snapshots from a previous app process still require a successful `/health` check before recovery and are cleaned up when stale.
 
@@ -387,11 +389,25 @@ OpenCode config. The entries point at Veslo-owned connector endpoints and may
 include non-secret runtime headers. They must not include Google OAuth client
 secrets, Google access tokens, or Google refresh tokens.
 
+Veslo-managed connector runtime headers are renewable config material, not
+provider authorization state. If a configured connector MCP reports an
+authorization-like runtime failure, the app may ask the local Veslo server to
+fetch a fresh short-lived connector token from Den and update the
+`X-Veslo-Connector-Token` header in the workspace OpenCode config, then retry
+the MCP status read once. This refresh path must not start browser OAuth and
+must not revoke or create Google grants.
+
 Google Workspace authorization is server-managed for production. Den owns the
 Google OAuth callback, exchanges the code with Veslo's Google client secret,
 and stores encrypted per-user grants by organization, user, and connector.
 OpenCode config only represents local runtime installation, not Google grant
 ownership.
+
+Desktop workspace provisioning seeds the default Chrome MCP as a local command
+using `npx -y chrome-devtools-mcp@latest --isolated`. Existing
+`chrome-devtools` or `control-chrome` aliases are not duplicated. Known legacy
+aliases that still use `chrome-devtools-mcp --isolated` are migrated to the
+same npx fallback so they work outside the desktop sidecar PATH as well.
 
 ## Skills Inventory
 

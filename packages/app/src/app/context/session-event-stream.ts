@@ -1,0 +1,1007 @@
+import { batch, createEffect, onCleanup } from "solid-js";
+import { produce } from "solid-js/store";
+
+import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client";
+
+import { engineSseSubscribe, isEngineSseAvailable } from "../lib/engine-sse";
+import { unwrap, type OpencodeAuth } from "../lib/opencode";
+import { perfNow, recordPerfLog } from "../lib/perf-log";
+import { formatSessionError, truncateErrorField } from "../lib/session-error";
+import type {
+  MessageInfo,
+  OpencodeEvent,
+  PendingPermission,
+  PendingQuestion,
+  SessionErrorTurn,
+  TodoItem,
+} from "../types";
+import {
+  addOpencodeCacheHint,
+  extractSessionId,
+  normalizeDirectoryPath,
+  normalizeEvent,
+  normalizeSessionStatus,
+  normalizeTodoItems,
+  sessionDirectoryMatchesRoot,
+} from "../utils";
+import {
+  createPlaceholderMessage,
+  removeMessageInfo,
+  removePartInfo,
+  removeSession,
+  upsertMessageInfo,
+  upsertPartInfo,
+  upsertSession,
+} from "./session-store-model";
+import {
+  beginOutageEpisode,
+  clearOutageEpisode,
+  type ReconnectNotice,
+  shouldShowReconnected,
+  shouldShowReconnecting,
+} from "./session-reconnect";
+import { shouldReleaseStaleWorkspaceRoute } from "./session-runtime-prompts";
+import { INITIAL_SESSION_MESSAGE_LIMIT } from "./session-transcript-controller";
+import type { RoutingClient, WorkspaceRouting } from "./workspace-routing";
+
+type EventStreamStoreState = {
+  sessions: Session[];
+  sessionStatus: Record<string, string>;
+  sessionErrorTurns: Record<string, SessionErrorTurn[]>;
+  messages: Record<string, MessageInfo[]>;
+  parts: Record<string, Part[]>;
+  commandDisplayByMessageID: Record<string, string>;
+  todos: Record<string, TodoItem[]>;
+  pendingPermissions: PendingPermission[];
+  pendingQuestions: PendingQuestion[];
+  events: Array<{ type: string; properties?: unknown }>;
+};
+
+export type SessionEventStreamControllerDeps = {
+  store: EventStreamStoreState;
+  setStore: (...args: any[]) => void;
+  routing: WorkspaceRouting;
+  client: () => RoutingClient | null;
+  activeWorkspaceRoot: () => string;
+  selectedSessionId: () => string | null;
+  developerMode: () => boolean;
+  setError: (message: string | null) => void;
+  setSseConnected: (connected: boolean) => void;
+  onHotReloadApplied?: () => void;
+  onReconnectNotice?: (notice: ReconnectNotice) => void;
+  onAssistantResponseObserved?: (sessionId: string) => void;
+  sessionDebugEnabled: () => boolean;
+  sessionWarn: (label: string, payload?: unknown) => void;
+  recordSessionStatusTrace: (event: string, payload?: Record<string, unknown>) => void;
+  readStatusForSession: (sessionID: string | null | undefined, workspaceId?: string | null) => string;
+  setSessionStatusForWorkspace: (
+    sessionID: string | null | undefined,
+    status: string,
+    workspaceId?: string | null,
+  ) => void;
+  notifySessionBusy: (sessionId: string, status: string, workspaceId?: string) => void;
+  workspaceSessionIds: Set<string>;
+  applySessionDirectoryOverride: <T extends Session>(session: T) => T;
+  resolveSessionDirectory: (session: Pick<Session, "id" | "directory">) => string;
+  appendSessionErrorTurn: (sessionID: string, text: string) => void;
+  setCommandDisplay: (messageID: string, name: string, args: string) => void;
+  recordSyntheticContinueDiagnostic: (part: Part) => void;
+  maybeMarkReloadRequired: (part: Part) => void;
+  maybeHandleInvalidToolError: (part: Part) => void;
+  maybeHandleChromeMcpCompletedError: (part: Part) => void;
+  resolveTranscriptIngestWorkspaceId: (sourceWsId?: string | null) => string;
+  resolveSessionIdForMessage: (messageID: string) => string | null;
+  recordPendingTranscriptMessageDeletion: (
+    workspaceId: string,
+    sessionID: string,
+    messageID: string,
+  ) => void;
+  recordPendingTranscriptPartDeletion: (
+    workspaceId: string,
+    sessionID: string,
+    messageID: string,
+    partID: string,
+  ) => void;
+  scheduleTranscriptIngestion: (
+    sessionID: string,
+    sourceWsId: string,
+    reason: string,
+    delayMs?: number,
+  ) => void;
+  scheduleBackgroundTranscriptIngestion: (
+    sessionID: string,
+    workspaceId: string,
+    reason: string,
+    delayMs?: number,
+  ) => void;
+  messageLimitBySession: () => Record<string, number>;
+  setMessagesForSession: (sessionID: string, list: Array<{ info: MessageInfo; parts: Part[] }>) => void;
+  setMessageLimitBySession: (value: any) => void;
+  setMessageCompleteBySession: (value: any) => void;
+  refreshPendingPermissions: () => Promise<void>;
+  refreshPendingQuestions: () => Promise<void>;
+  withTimeout: <T>(promise: Promise<T>, ms: number, label: string) => Promise<T>;
+  isWorkspaceRuntimeReady: (workspaceId?: string | null) => boolean;
+  isActiveWorkspaceRuntimeReady: () => boolean;
+};
+
+function engineSseAuthOptions(auth?: OpencodeAuth | null) {
+  if (!auth) return {};
+  if (auth.mode === "veslo") {
+    return { bearerToken: auth.token ?? null };
+  }
+  return {
+    username: auth.username ?? null,
+    password: auth.password ?? null,
+  };
+}
+
+export function createSessionEventStreamController(deps: SessionEventStreamControllerDeps) {
+  let lastPartDebugEventAt = 0;
+  let suppressedPartDebugEvents = 0;
+  const sseConnectedByStream = new Map<string, boolean>();
+
+  const sseConnectionKey = (sourceWsId: string) => sourceWsId.trim() || "__active__";
+
+  const publishSseConnected = () => {
+    deps.setSseConnected(Array.from(sseConnectedByStream.values()).some(Boolean));
+  };
+
+  const setStreamSseConnected = (streamKey: string, connected: boolean) => {
+    sseConnectedByStream.set(streamKey, connected);
+    publishSseConnected();
+  };
+
+  const forgetStreamSseConnected = (streamKey: string) => {
+    sseConnectedByStream.delete(streamKey);
+    publishSseConnected();
+  };
+
+  const appendDebugEvent = (event: { type: string; properties?: unknown }) => {
+    deps.setStore("events", (current: Array<{ type: string; properties?: unknown }>) => {
+      const next = [event, ...current];
+      return next.slice(0, 150);
+    });
+  };
+
+  const compactDebugEvent = (event: OpencodeEvent) => {
+    if (event.type === "message.part.updated") {
+      const record = event.properties as Record<string, unknown> | undefined;
+      const part = record?.part as Part | undefined;
+      const delta = typeof record?.delta === "string" ? record.delta : "";
+      const textLength =
+        part?.type === "text" && typeof (part as { text?: unknown }).text === "string"
+          ? String((part as { text?: string }).text).length
+          : null;
+      return {
+        type: event.type,
+        properties: {
+          sessionID: part?.sessionID ?? null,
+          messageID: part?.messageID ?? null,
+          partID: part?.id ?? null,
+          partType: part?.type ?? null,
+          deltaLength: delta.length,
+          textLength,
+        },
+      };
+    }
+
+    return {
+      type: event.type,
+      properties: event.properties,
+    };
+  };
+
+  const isKnownSessionId = (sessionID: string): boolean => {
+    if (deps.workspaceSessionIds.has(sessionID)) return true;
+    if (deps.store.sessions.some((s) => s.id === sessionID)) {
+      deps.workspaceSessionIds.add(sessionID);
+      return true;
+    }
+    if (sessionID === deps.selectedSessionId()) {
+      deps.workspaceSessionIds.add(sessionID);
+      return true;
+    }
+    return false;
+  };
+
+  const applyBackgroundWorkspaceEvent = (event: OpencodeEvent, workspaceId: string) => {
+    if (!workspaceId || !event.properties || typeof event.properties !== "object") return;
+    const record = event.properties as Record<string, unknown>;
+    const sessionID = extractSessionId(record);
+
+    if (event.type === "session.status" && sessionID) {
+      const normalized = normalizeSessionStatus(record.status);
+      deps.recordSessionStatusTrace("background-sse-session-status", {
+        sessionId: sessionID,
+        status: normalized,
+        sourceWorkspaceId: workspaceId,
+        previous: deps.readStatusForSession(sessionID, workspaceId),
+      });
+      deps.setSessionStatusForWorkspace(sessionID, normalized, workspaceId);
+      deps.notifySessionBusy(sessionID, normalized, workspaceId);
+      return;
+    }
+
+    if ((event.type === "session.idle" || event.type === "session.error") && sessionID) {
+      deps.recordSessionStatusTrace("background-sse-session-idle", {
+        sessionId: sessionID,
+        status: "idle",
+        sourceWorkspaceId: workspaceId,
+        previous: deps.readStatusForSession(sessionID, workspaceId),
+      });
+      deps.setSessionStatusForWorkspace(sessionID, "idle", workspaceId);
+      deps.notifySessionBusy(sessionID, "idle", workspaceId);
+      deps.scheduleBackgroundTranscriptIngestion(sessionID, workspaceId, event.type, 0);
+      return;
+    }
+
+    if (event.type === "message.updated") {
+      const info = record.info as Message | undefined;
+      const targetSessionID = info?.sessionID?.trim() || sessionID;
+      if (!targetSessionID) return;
+      if ((info as { role?: string } | undefined)?.role === "assistant") {
+        deps.onAssistantResponseObserved?.(targetSessionID);
+      }
+      deps.scheduleBackgroundTranscriptIngestion(targetSessionID, workspaceId, "background message.updated");
+      return;
+    }
+
+    if (event.type === "message.part.updated") {
+      const part = record.part as Part | undefined;
+      const targetSessionID = part?.sessionID?.trim() || sessionID;
+      if (!targetSessionID) return;
+      deps.scheduleBackgroundTranscriptIngestion(
+        targetSessionID,
+        workspaceId,
+        "background message.part.updated",
+      );
+      return;
+    }
+
+    if (event.type === "message.removed" && sessionID) {
+      deps.scheduleBackgroundTranscriptIngestion(sessionID, workspaceId, "background message.removed", 0);
+      return;
+    }
+
+    if (event.type === "message.part.removed" && sessionID) {
+      deps.scheduleBackgroundTranscriptIngestion(sessionID, workspaceId, "background message.part.removed", 0);
+      return;
+    }
+
+    if (event.type === "permission.asked" || event.type === "permission.replied") {
+      void deps.refreshPendingPermissions();
+      return;
+    }
+
+    if (
+      event.type === "question.asked" ||
+      event.type === "question.replied" ||
+      event.type === "question.rejected"
+    ) {
+      void deps.refreshPendingQuestions();
+    }
+  };
+
+  const applyEvent = async (event: OpencodeEvent, sourceWsId: string = "") => {
+    if (sourceWsId) {
+      const activeWsId = deps.routing.activeWorkspaceId();
+      if (activeWsId && sourceWsId !== activeWsId) {
+        applyBackgroundWorkspaceEvent(event, sourceWsId);
+        return;
+      }
+    }
+
+    if (event.type === "server.connected") {
+      deps.setSseConnected(true);
+    }
+
+    if (deps.developerMode()) {
+      const compact = compactDebugEvent(event);
+      if (event.type === "message.part.updated") {
+        const now = Date.now();
+        if (now - lastPartDebugEventAt < 250) {
+          suppressedPartDebugEvents += 1;
+        } else {
+          lastPartDebugEventAt = now;
+          if (suppressedPartDebugEvents > 0) {
+            compact.properties = {
+              ...(compact.properties ?? {}),
+              suppressed: suppressedPartDebugEvents,
+            };
+            suppressedPartDebugEvents = 0;
+          }
+          appendDebugEvent(compact);
+        }
+      } else {
+        if (suppressedPartDebugEvents > 0) {
+          appendDebugEvent({
+            type: "message.part.updated.sample",
+            properties: { suppressed: suppressedPartDebugEvents },
+          });
+          suppressedPartDebugEvents = 0;
+        }
+        appendDebugEvent(compact);
+      }
+    }
+
+    if (event.type === "session.updated" || event.type === "session.created") {
+      if (event.properties && typeof event.properties === "object") {
+        const record = event.properties as Record<string, unknown>;
+        if (record.info && typeof record.info === "object") {
+          const info = deps.applySessionDirectoryOverride(record.info as Session);
+          const root = normalizeDirectoryPath(deps.activeWorkspaceRoot());
+          const sessionDir = deps.resolveSessionDirectory(info);
+          if (root && sessionDir && !sessionDirectoryMatchesRoot(sessionDir, root)) {
+            deps.sessionWarn("session.updated:ignored:wrong-workspace", {
+              sessionID: info.id,
+              sessionDir,
+              activeRoot: root,
+            });
+            return;
+          }
+          deps.workspaceSessionIds.add(info.id);
+          deps.setStore("sessions", (current: Session[]) => upsertSession(current, info));
+        }
+      }
+    }
+
+    if (event.type === "session.deleted") {
+      if (event.properties && typeof event.properties === "object") {
+        const record = event.properties as Record<string, unknown>;
+        const info = record.info as Session | undefined;
+        if (info?.id) {
+          const removedMessageIDs = (deps.store.messages[info.id] ?? []).map((message) => message.id);
+          deps.setStore("sessions", (current: Session[]) => removeSession(current, info.id));
+          if (removedMessageIDs.length > 0) {
+            deps.setStore(
+              "commandDisplayByMessageID",
+              produce((draft: Record<string, string>) => {
+                removedMessageIDs.forEach((messageID) => {
+                  delete draft[messageID];
+                });
+              }),
+            );
+          }
+          deps.setStore(
+            produce((draft: EventStreamStoreState) => {
+              delete draft.sessionErrorTurns[info.id];
+            }),
+          );
+        }
+      }
+    }
+
+    if (event.type === "session.status") {
+      if (event.properties && typeof event.properties === "object") {
+        const record = event.properties as Record<string, unknown>;
+        const sessionID = extractSessionId(record);
+        if (sessionID && isKnownSessionId(sessionID)) {
+          const normalized = normalizeSessionStatus(record.status);
+          deps.recordSessionStatusTrace("sse-session-status", {
+            sessionId: sessionID,
+            status: normalized,
+            sourceWorkspaceId: sourceWsId ?? null,
+            previous: deps.readStatusForSession(sessionID, sourceWsId),
+          });
+          deps.setSessionStatusForWorkspace(sessionID, normalized, sourceWsId);
+          deps.notifySessionBusy(sessionID, normalized, sourceWsId);
+          if (sessionID === deps.selectedSessionId() && normalized !== "idle") {
+            deps.setError(null);
+          }
+        }
+      }
+    }
+
+    if (event.type === "session.idle") {
+      if (event.properties && typeof event.properties === "object") {
+        const record = event.properties as Record<string, unknown>;
+        const sessionID = extractSessionId(record);
+        if (sessionID && isKnownSessionId(sessionID)) {
+          deps.recordSessionStatusTrace("sse-session-idle", {
+            sessionId: sessionID,
+            status: "idle",
+            sourceWorkspaceId: sourceWsId ?? null,
+            previous: deps.readStatusForSession(sessionID, sourceWsId),
+          });
+          deps.setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
+          deps.notifySessionBusy(sessionID, "idle", sourceWsId);
+          const c = sourceWsId
+            ? deps.routing.client(sourceWsId) ?? deps.client()
+            : deps.client();
+          if (c) {
+            try {
+              const latest = deps.applySessionDirectoryOverride(unwrap(await c.session.get({ sessionID })));
+              deps.setStore("sessions", (current: Session[]) => upsertSession(current, latest));
+            } catch {
+              // ignore
+            }
+          }
+          deps.scheduleTranscriptIngestion(sessionID, sourceWsId, "session.idle", 0);
+        }
+      }
+    }
+
+    if (event.type === "opencode.hotreload.applied") {
+      deps.onHotReloadApplied?.();
+    }
+
+    if (event.type === "session.error") {
+      if (event.properties && typeof event.properties === "object") {
+        const record = event.properties as Record<string, unknown>;
+        const sessionID = extractSessionId(record);
+        if (sessionID) {
+          deps.setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
+          deps.notifySessionBusy(sessionID, "idle", sourceWsId);
+        }
+        const errorObj = record.error as Record<string, unknown> | undefined;
+        if (errorObj) {
+          const errorName = typeof errorObj.name === "string" ? errorObj.name : "UnknownError";
+          if (errorName === "MessageAbortedError") {
+            if (!sessionID) {
+              deps.setError(null);
+            }
+            return;
+          }
+          if (sessionID) {
+            deps.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(formatSessionError(errorObj)));
+          } else {
+            deps.setError(addOpencodeCacheHint(formatSessionError(errorObj)));
+          }
+          return;
+        }
+
+        const fallback = truncateErrorField(record.error, 700) ?? "An unexpected error occurred";
+        if (sessionID) {
+          deps.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(fallback));
+        } else {
+          deps.setError(addOpencodeCacheHint(fallback));
+        }
+      }
+    }
+
+    if (event.type === "message.updated") {
+      if (event.properties && typeof event.properties === "object") {
+        const record = event.properties as Record<string, unknown>;
+        if (record.info && typeof record.info === "object") {
+          const info = record.info as Message;
+          if (!isKnownSessionId(info.sessionID)) return;
+          deps.setStore("messages", info.sessionID, (current: MessageInfo[] = []) =>
+            upsertMessageInfo(current, info as MessageInfo),
+          );
+          if ((info as { role?: string }).role === "assistant") {
+            deps.onAssistantResponseObserved?.(info.sessionID);
+          }
+          deps.scheduleTranscriptIngestion(info.sessionID, sourceWsId, "message.updated");
+        }
+      }
+    }
+
+    if (event.type === "message.removed") {
+      if (event.properties && typeof event.properties === "object") {
+        const record = event.properties as Record<string, unknown>;
+        const sessionID = extractSessionId(record);
+        const messageID = typeof record.messageID === "string" ? record.messageID : null;
+        if (sessionID && messageID) {
+          const workspaceId = deps.resolveTranscriptIngestWorkspaceId(sourceWsId);
+          if (workspaceId && isKnownSessionId(sessionID)) {
+            deps.recordPendingTranscriptMessageDeletion(workspaceId, sessionID, messageID);
+          }
+          deps.setStore("messages", sessionID, (current: MessageInfo[] = []) =>
+            removeMessageInfo(current, messageID),
+          );
+          deps.setStore("parts", messageID, []);
+          deps.setStore(
+            "commandDisplayByMessageID",
+            produce((draft: Record<string, string>) => {
+              delete draft[messageID];
+            }),
+          );
+          if (workspaceId && isKnownSessionId(sessionID)) {
+            deps.scheduleTranscriptIngestion(sessionID, sourceWsId, "message.removed", 0);
+          }
+        }
+      }
+    }
+
+    if (event.type === "command.executed") {
+      if (event.properties && typeof event.properties === "object") {
+        const record = event.properties as Record<string, unknown>;
+        const messageID = typeof record.messageID === "string" ? record.messageID.trim() : "";
+        const name = typeof record.name === "string" ? record.name : "";
+        const args = typeof record.arguments === "string" ? record.arguments : "";
+        deps.setCommandDisplay(messageID, name, args);
+      }
+    }
+
+    if (event.type === "message.part.updated") {
+      if (event.properties && typeof event.properties === "object") {
+        const record = event.properties as Record<string, unknown>;
+        if (record.part && typeof record.part === "object") {
+          const part = record.part as Part;
+
+          if (!isKnownSessionId(part.sessionID)) {
+            deps.sessionWarn("message.part.updated:ignored:unknown-session", {
+              sessionID: part.sessionID,
+              messageID: part.messageID,
+              partID: part.id,
+            });
+            return;
+          }
+
+          const delta = typeof record.delta === "string" ? record.delta : null;
+          const partUpdatedStartedAt = perfNow();
+
+          deps.setStore(
+            produce((draft: EventStreamStoreState) => {
+              const list = draft.messages[part.sessionID] ?? [];
+              if (!list.find((message) => message.id === part.messageID)) {
+                draft.messages[part.sessionID] = upsertMessageInfo(list, createPlaceholderMessage(part));
+              }
+
+              const parts = draft.parts[part.messageID] ?? [];
+              const existingIndex = parts.findIndex((item) => item.id === part.id);
+
+              if (delta && part.type === "text" && existingIndex !== -1) {
+                const existing = parts[existingIndex] as Part & { text?: string };
+                if (typeof existing.text === "string" && !existing.text.endsWith(delta)) {
+                  const next = { ...existing, text: `${existing.text}${delta}` } as Part;
+                  parts[existingIndex] = next;
+                  draft.parts[part.messageID] = parts;
+                  return;
+                }
+              }
+
+              draft.parts[part.messageID] = upsertPartInfo(parts, part);
+            }),
+          );
+          const resolvedPart =
+            deps.store.parts[part.messageID]?.find((item) => item.id === part.id) ??
+            part;
+          deps.recordSyntheticContinueDiagnostic(resolvedPart);
+          const partUpdatedMs = Math.round((perfNow() - partUpdatedStartedAt) * 100) / 100;
+          if (deps.sessionDebugEnabled() && (partUpdatedMs >= 8 || (delta?.length ?? 0) >= 120)) {
+            const textLength =
+              part.type === "text" && typeof (part as { text?: unknown }).text === "string"
+                ? String((part as { text?: string }).text).length
+                : null;
+            recordPerfLog(true, "session.event", "message.part.updated", {
+              sessionID: part.sessionID,
+              messageID: part.messageID,
+              partID: part.id,
+              partType: part.type,
+              deltaLength: delta?.length ?? 0,
+              textLength,
+              ms: partUpdatedMs,
+            });
+          }
+          deps.maybeMarkReloadRequired(part);
+          deps.maybeHandleInvalidToolError(part);
+          deps.maybeHandleChromeMcpCompletedError(resolvedPart);
+          deps.scheduleTranscriptIngestion(part.sessionID, sourceWsId, "message.part.updated");
+        }
+      }
+    }
+
+    if (event.type === "message.part.removed") {
+      if (event.properties && typeof event.properties === "object") {
+        const record = event.properties as Record<string, unknown>;
+        const sessionID = extractSessionId(record);
+        const messageID = typeof record.messageID === "string" ? record.messageID : null;
+        const partID = typeof record.partID === "string" ? record.partID : null;
+        if (messageID && partID) {
+          const resolvedSessionID = sessionID || deps.resolveSessionIdForMessage(messageID);
+          const workspaceId = deps.resolveTranscriptIngestWorkspaceId(sourceWsId);
+          if (workspaceId && resolvedSessionID && isKnownSessionId(resolvedSessionID)) {
+            deps.recordPendingTranscriptPartDeletion(workspaceId, resolvedSessionID, messageID, partID);
+          }
+          deps.setStore("parts", messageID, (current: Part[] = []) => removePartInfo(current, partID));
+          if (resolvedSessionID && isKnownSessionId(resolvedSessionID)) {
+            deps.scheduleTranscriptIngestion(resolvedSessionID, sourceWsId, "message.part.removed");
+          }
+        }
+      }
+    }
+
+    if (event.type === "todo.updated") {
+      if (event.properties && typeof event.properties === "object") {
+        const record = event.properties as Record<string, unknown>;
+        const sessionID = extractSessionId(record);
+        if (sessionID && isKnownSessionId(sessionID) && Array.isArray(record.todos)) {
+          deps.setStore("todos", sessionID, normalizeTodoItems(record.todos));
+        }
+      }
+    }
+
+    if (event.type === "permission.asked" || event.type === "permission.replied") {
+      try {
+        await deps.refreshPendingPermissions();
+      } catch {
+        // ignore
+      }
+    }
+
+    if (
+      event.type === "question.asked" ||
+      event.type === "question.replied" ||
+      event.type === "question.rejected"
+    ) {
+      try {
+        await deps.refreshPendingQuestions();
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const setupSseStream = (sourceWsId: string, c: RoutingClient): (() => void) => {
+    const streamConnectionKey = sseConnectionKey(sourceWsId);
+    let cancelled = false;
+    let reconnectAttempt = 0;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let wasConnected = false;
+    let outageEpisode = clearOutageEpisode();
+    let currentController: AbortController | null = null;
+
+    let queue: Array<OpencodeEvent | undefined> = [];
+    const coalesced = new Map<string, number>();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let last = 0;
+    let queueStartedAt = 0;
+    let peakQueueDepth = 0;
+    let queueHasPartUpdates = false;
+    let coalescedReplaced = 0;
+
+    const keyForEvent = (event: OpencodeEvent) => {
+      if (event.type === "session.status" || event.type === "session.idle") {
+        const record = event.properties as Record<string, unknown> | undefined;
+        const sessionID = record ? (extractSessionId(record) ?? "") : "";
+        return sessionID ? `${event.type}:${sessionID}` : undefined;
+      }
+      if (event.type === "message.part.updated") {
+        const record = event.properties as Record<string, unknown> | undefined;
+        const part = record?.part as Part | undefined;
+        if (part?.messageID && part.id) {
+          return `message.part.updated:${part.messageID}:${part.id}`;
+        }
+      }
+      if (event.type === "todo.updated") {
+        const record = event.properties as Record<string, unknown> | undefined;
+        const sessionID = record ? (extractSessionId(record) ?? "") : "";
+        return sessionID ? `todo.updated:${sessionID}` : undefined;
+      }
+      return undefined;
+    };
+
+    const flush = () => {
+      if (timer) clearTimeout(timer);
+      timer = undefined;
+
+      const eventsToApply = queue;
+      queue = [];
+      coalesced.clear();
+      if (eventsToApply.length === 0) return;
+
+      const queueWaitMs = queueStartedAt > 0 ? Date.now() - queueStartedAt : 0;
+      queueStartedAt = 0;
+      const peakDepth = peakQueueDepth;
+      peakQueueDepth = 0;
+      queueHasPartUpdates = false;
+      const replaced = coalescedReplaced;
+      coalescedReplaced = 0;
+
+      last = Date.now();
+      const startedAt = perfNow();
+      let applied = 0;
+      let partUpdates = 0;
+      let messageUpdates = 0;
+      batch(() => {
+        for (const event of eventsToApply) {
+          if (!event) continue;
+          if (event.type === "message.part.updated") partUpdates += 1;
+          if (event.type === "message.updated") messageUpdates += 1;
+          applied += 1;
+          void applyEvent(event, sourceWsId);
+        }
+      });
+
+      const elapsedMs = Math.round((perfNow() - startedAt) * 100) / 100;
+      const dropped = eventsToApply.length - applied;
+      if (
+        deps.sessionDebugEnabled() &&
+        (elapsedMs >= 10 || queueWaitMs >= 40 || peakDepth >= 25 || applied >= 30 || dropped >= 12)
+      ) {
+        recordPerfLog(true, "session.sse", "flush", {
+          queued: eventsToApply.length,
+          applied,
+          dropped,
+          queueWaitMs,
+          peakQueueDepth: peakDepth,
+          coalescedReplaced: replaced,
+          messageUpdates,
+          partUpdates,
+          ms: elapsedMs,
+        });
+      }
+    };
+
+    const schedule = () => {
+      if (timer) return;
+      const elapsed = Date.now() - last;
+      const interval = queueHasPartUpdates ? 48 : 16;
+      timer = setTimeout(flush, Math.max(0, interval - elapsed));
+    };
+
+    const markOutageAndMaybeNotify = () => {
+      if (!outageEpisode.active) {
+        outageEpisode = beginOutageEpisode(deps.store.sessionStatus, sourceWsId);
+        recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "outage-started", {
+          runningSessions: outageEpisode.runningSessionIds.length,
+        });
+      }
+
+      if (shouldShowReconnecting(outageEpisode)) {
+        deps.onReconnectNotice?.("reconnecting");
+        outageEpisode = { ...outageEpisode, shownReconnecting: true };
+      }
+    };
+
+    const runReconnectCatchup = async () => {
+      if (!outageEpisode.active) return;
+      if (!outageEpisode.hadRunningSessions) {
+        outageEpisode = clearOutageEpisode();
+        return;
+      }
+
+      const sessionIds = outageEpisode.runningSessionIds.slice();
+      recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "catchup-start", {
+        sessions: sessionIds.length,
+      });
+
+      const isBackgroundCatchup = Boolean(sourceWsId && sourceWsId !== deps.routing.activeWorkspaceId());
+      for (const sessionID of sessionIds) {
+        if (!sessionID) continue;
+
+        try {
+          const fetched = unwrap(await c.session.get({ sessionID })) as Record<string, unknown>;
+          const normalized = normalizeSessionStatus(fetched?.status);
+          deps.setSessionStatusForWorkspace(sessionID, normalized, sourceWsId);
+          deps.notifySessionBusy(sessionID, normalized, sourceWsId);
+        } catch {
+          deps.setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
+          deps.notifySessionBusy(sessionID, "idle", sourceWsId);
+          continue;
+        }
+
+        if (isBackgroundCatchup) {
+          deps.scheduleBackgroundTranscriptIngestion(sessionID, sourceWsId, "reconnect catch-up", 0);
+          continue;
+        }
+
+        try {
+          const limit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, deps.messageLimitBySession()[sessionID] ?? 0);
+          const msgs = unwrap(
+            await deps.withTimeout(c.session.messages({ sessionID, limit }), 12000, "session.messages"),
+          );
+          deps.setMessagesForSession(sessionID, msgs);
+          deps.setMessageLimitBySession((prev: Record<string, number>) => ({ ...prev, [sessionID]: limit }));
+          deps.setMessageCompleteBySession((prev: Record<string, boolean>) => ({
+            ...prev,
+            [sessionID]: msgs.length < limit,
+          }));
+        } catch {
+          // fail soft per session
+        }
+
+        try {
+          const list = unwrap(await deps.withTimeout(c.session.todo({ sessionID }), 8000, "session.todo"));
+          deps.setStore("todos", sessionID, normalizeTodoItems(list));
+        } catch {
+          // fail soft per session
+        }
+      }
+
+      try {
+        await deps.withTimeout(deps.refreshPendingPermissions(), 6000, "permission.list");
+      } catch {
+        // ignore
+      }
+
+      try {
+        await deps.withTimeout(deps.refreshPendingQuestions(), 6000, "question.list");
+      } catch {
+        // ignore
+      }
+
+      if (shouldShowReconnected(outageEpisode)) {
+        deps.onReconnectNotice?.("reconnected");
+        outageEpisode = { ...outageEpisode, shownReconnected: true };
+      }
+
+      recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "catchup-complete", {
+        sessions: sessionIds.length,
+      });
+      outageEpisode = clearOutageEpisode();
+    };
+
+    const connectSse = async (controller: AbortController) => {
+      currentController = controller;
+      try {
+        const entry = sourceWsId ? deps.routing.entry(sourceWsId) : null;
+        const sub = await (isEngineSseAvailable() && entry?.baseUrl
+          ? engineSseSubscribe({
+              workspaceId: sourceWsId,
+              baseUrl: entry.baseUrl,
+              directory: entry.directory ?? null,
+              ...engineSseAuthOptions(entry.auth),
+              signal: controller.signal,
+            })
+          : c.event.subscribe(undefined, { signal: controller.signal }));
+        let yielded = Date.now();
+        let lastArrivalAt = Date.now();
+
+        const isReconnection = wasConnected;
+        wasConnected = true;
+        reconnectAttempt = 0;
+        recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "connected");
+
+        if (isReconnection) {
+          await runReconnectCatchup();
+        }
+
+        for await (const raw of sub.stream) {
+          if (cancelled) break;
+
+          const event = normalizeEvent(raw);
+          if (!event) continue;
+          if (event.type === "server.connected") {
+            setStreamSseConnected(streamConnectionKey, true);
+          }
+
+          const arrivedAt = Date.now();
+          const arrivalGapMs = arrivedAt - lastArrivalAt;
+          lastArrivalAt = arrivedAt;
+          if (deps.sessionDebugEnabled() && arrivalGapMs >= 220) {
+            recordPerfLog(true, "session.sse", "arrival-gap", {
+              ms: arrivalGapMs,
+              type: event.type,
+            });
+          }
+
+          const key = keyForEvent(event);
+          if (key) {
+            const existing = coalesced.get(key);
+            if (existing !== undefined) {
+              if (queue[existing] !== undefined) {
+                coalescedReplaced += 1;
+              }
+              queue[existing] = undefined;
+            }
+            coalesced.set(key, queue.length);
+          }
+
+          if (queue.length === 0) {
+            queueStartedAt = Date.now();
+          }
+          if (event.type === "message.part.updated") {
+            queueHasPartUpdates = true;
+          }
+          queue.push(event);
+          if (queue.length > peakQueueDepth) {
+            peakQueueDepth = queue.length;
+          }
+          schedule();
+
+          if (Date.now() - yielded < 8) continue;
+          yielded = Date.now();
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+
+        if (!cancelled) {
+          setStreamSseConnected(streamConnectionKey, false);
+          recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "stream-ended");
+          scheduleReconnect(controller);
+        }
+      } catch (e) {
+        if (cancelled) return;
+        if (controller.signal.aborted) return;
+
+        const message = e instanceof Error ? e.message : String(e);
+        const activeWs = deps.routing.activeWorkspaceId();
+        if (shouldReleaseStaleWorkspaceRoute(sourceWsId, activeWs, message)) {
+          setStreamSseConnected(streamConnectionKey, false);
+          deps.routing.release(sourceWsId);
+          deps.sessionWarn("sse:released-stale-route", {
+            workspaceId: sourceWsId,
+            error: truncateErrorField(message),
+          });
+          recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "released-stale-route", {
+            workspaceId: sourceWsId,
+            error: truncateErrorField(message),
+          });
+          return;
+        }
+
+        setStreamSseConnected(streamConnectionKey, false);
+        recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "stream-error", {
+          error: message,
+        });
+        scheduleReconnect(controller);
+      }
+    };
+
+    const scheduleReconnect = (oldController: AbortController) => {
+      if (cancelled) return;
+      if (reconnectTimer) return;
+      markOutageAndMaybeNotify();
+      oldController.abort();
+
+      reconnectAttempt++;
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempt - 1), 30000);
+      recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "reconnect-scheduled", {
+        attempt: reconnectAttempt,
+        delayMs: delay,
+      });
+
+      reconnectTimer = setTimeout(() => {
+        if (cancelled) return;
+        reconnectTimer = undefined;
+        const newController = new AbortController();
+        void connectSse(newController);
+      }, delay);
+    };
+
+    const controller = new AbortController();
+    void connectSse(controller);
+
+    return () => {
+      cancelled = true;
+      currentController?.abort();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      forgetStreamSseConnected(streamConnectionKey);
+      flush();
+    };
+  };
+
+  const startEventStreams = () => {
+    createEffect(() => {
+      const entryIds = deps.routing.entryIds();
+      const fallback = deps.client();
+
+      const targets: Array<{ wsId: string; client: RoutingClient }> = [];
+      if (entryIds.length > 0) {
+        for (const wsId of entryIds) {
+          if (!deps.isWorkspaceRuntimeReady(wsId)) continue;
+          const c = deps.routing.client(wsId);
+          if (c) targets.push({ wsId, client: c });
+        }
+      } else if (fallback && deps.isActiveWorkspaceRuntimeReady()) {
+        targets.push({ wsId: "", client: fallback });
+      }
+
+      deps.workspaceSessionIds.clear();
+
+      if (targets.length === 0) {
+        sseConnectedByStream.clear();
+        deps.setSseConnected(false);
+        return;
+      }
+
+      const cleanups: Array<() => void> = [];
+      for (const target of targets) {
+        cleanups.push(setupSseStream(target.wsId, target.client));
+      }
+
+      onCleanup(() => {
+        for (const cleanup of cleanups) cleanup();
+      });
+    });
+  };
+
+  return {
+    applyBackgroundWorkspaceEvent,
+    applyEvent,
+    setupSseStream,
+    startEventStreams,
+  };
+}

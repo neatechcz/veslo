@@ -153,6 +153,11 @@ completed or that the live runtime is connected.
 
 Messaging channels and identities are managed through the `identities.tsx` surface and OpenCode Router-backed APIs.
 
+Workspace-specific messaging behavior is loaded from
+`<workspace>/.opencode/agents/opencode-router.md`. The Identities surface reads
+and writes that file, and the OpenCode Router bridge consumes the same path at
+runtime.
+
 Important distinction:
 
 - messaging exists in runtime

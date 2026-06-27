@@ -6,7 +6,7 @@ import { createRoot, createSignal } from "solid-js";
 
 import { createSessionStore } from "../../context/session.js";
 
-const sessionSource = readFileSync(new URL("../../context/session.ts", import.meta.url), "utf8");
+const eventStreamSource = readFileSync(new URL("../../context/session-event-stream.ts", import.meta.url), "utf8");
 
 function ok<T>(data: T) {
   return {
@@ -33,7 +33,7 @@ function createRuntimeStore(options: { routing: any; client?: () => any; setSseC
 
 test("session SSE subscription passes workspace routing auth to the Rust proxy", () => {
   assert.match(
-    sessionSource,
+    eventStreamSource,
     /engineSseSubscribe\(\{[\s\S]*baseUrl: entry\.baseUrl,[\s\S]*directory: entry\.directory \?\? null,[\s\S]*\.\.\.engineSseAuthOptions\(entry\.auth\),[\s\S]*signal: controller\.signal,/,
     "per-workspace desktop SSE must use the same auth as the SDK client",
   );
@@ -41,9 +41,9 @@ test("session SSE subscription passes workspace routing auth to the Rust proxy",
 
 test("session SSE releases stale non-active workspace routes before reconnecting", () => {
   assert.match(
-    sessionSource,
-    /const activeWs = options\.routing\.activeWorkspaceId\(\);[\s\S]*if \(shouldReleaseStaleWorkspaceRoute\(sourceWsId, activeWs, message\)\) \{[\s\S]*options\.routing\.release\(sourceWsId\);[\s\S]*sessionWarn\("sse:released-stale-route"[\s\S]*return;[\s\S]*\}[\s\S]*options\.setSseConnected\(false\);[\s\S]*recordPerfLog\(sessionDebugEnabled\(\), "session\.sse", "stream-error"/,
-    "stale background SSE failures should release the route without marking the active stream disconnected",
+    eventStreamSource,
+    /const activeWs = deps\.routing\.activeWorkspaceId\(\);[\s\S]*if \(shouldReleaseStaleWorkspaceRoute\(sourceWsId, activeWs, message\)\) \{[\s\S]*setStreamSseConnected\(streamConnectionKey, false\);[\s\S]*deps\.routing\.release\(sourceWsId\);[\s\S]*deps\.sessionWarn\("sse:released-stale-route"[\s\S]*return;[\s\S]*\}[\s\S]*setStreamSseConnected\(streamConnectionKey, false\);[\s\S]*recordPerfLog\(deps\.sessionDebugEnabled\(\), "session\.sse", "stream-error"/,
+    "stale background SSE failures should release the route without resetting unrelated connected streams",
   );
 });
 

@@ -4,7 +4,45 @@ This document describes the shipped session behavior that future coding agents s
 
 ## Main Session Surface
 
-The session view lives in `packages/app/src/app/pages/session.tsx`.
+The public session page entry point remains `packages/app/src/app/pages/session.tsx`, but session
+behavior is split across page-local controllers, context runtime controllers, and shell components.
+New work should start at the module that owns the behavior, then inspect `session.tsx` or
+`context/session.ts` for dependency wiring.
+
+Session view ownership map:
+
+- `packages/app/src/app/pages/session.tsx`: public `SessionView`, controller composition, dependency
+  wiring, and top-level page integration.
+- `packages/app/src/app/pages/session-conversation-flow.ts`: send, queue, pending-session, retry,
+  replacement, and active-run orchestration.
+- `packages/app/src/app/pages/session-transcript-viewport.ts`: transcript windowing, bottom pinning,
+  scroll intent, and latest-message viewport state.
+- `packages/app/src/app/pages/session-search-command-controller.ts`: message search, command palette
+  state, command item derivation, and session keyboard command routing.
+- `packages/app/src/app/pages/workspace-share-controller.ts`: shared session/dashboard workspace
+  sharing, public-link publishing, export, and share-modal state.
+- `packages/app/src/app/pages/session-left-sidebar.tsx`,
+  `packages/app/src/app/pages/session-right-sidebar.tsx`, and
+  `packages/app/src/app/pages/session-center.tsx`: large view-shell layout regions only.
+
+Session store ownership map:
+
+- `packages/app/src/app/context/session.ts`: public `createSessionStore` facade, Solid store
+  creation, controller composition, and returned API wiring.
+- `packages/app/src/app/context/session-store-model.ts`: pure session/message/part ordering,
+  command display aliases, placeholder messages, and synthetic error-turn modeling.
+- `packages/app/src/app/context/session-transcript-controller.ts`: transcript hydration, message
+  pagination, live/background transcript ingest, deletion tracking, and freshness.
+- `packages/app/src/app/context/session-runtime-prompts.ts`: permission/question refresh, active
+  prompt selection, per-workspace prompt aggregation, reply routing, and stale route release.
+- `packages/app/src/app/context/session-selection-controller.ts`: session list loading, selected
+  session lifecycle, offline transcript fallback, directory filtering, rename, and load-earlier.
+- `packages/app/src/app/context/session-event-stream.ts`: SSE stream fan-out, active/background
+  event application, event coalescing, reconnect catch-up, unread assistant observation, and
+  background transcript persistence triggers.
+- `packages/app/src/app/context/session-workspace-cache.ts`: workspace snapshot save/load/clear,
+  selected-session validation, transcript metadata restore, and snapshot eviction.
+- `packages/app/src/app/context/session-reconnect.ts`: outage snapshot and reconnect notice rules.
 
 Key sub-surfaces:
 
@@ -96,6 +134,15 @@ Workspace/session visibility is not the runtime boundary. A run in a non-visible
 
 Workspace busy state is scoped as `workspaceId -> sessionId -> startedAt`, so multiple runs in one workspace cannot overwrite each other. Session status readers should prefer workspace-scoped status keys and use plain `session.id` only as a legacy fallback for older callers.
 
+Main source of truth:
+
+- `packages/app/src/app/pages/session-conversation-flow.ts`
+- `packages/app/src/app/context/session-event-stream.ts`
+- `packages/app/src/app/context/session-transcript-controller.ts`
+- `packages/app/src/app/context/session-runtime-prompts.ts`
+- `packages/app/src/app/context/session-workspace-cache.ts`
+- page wiring in `packages/app/src/app/pages/session.tsx`
+
 ## Latest Message Editing
 
 Veslo can show an edit pencil beside the latest user message only when the action is safe at render time. The pencil is hidden while the session is running, while the composer has content, while the selected session queue is non-empty, or when the message is not the latest visible user message.
@@ -107,6 +154,11 @@ Clicking the pencil loads the reconstructed user draft into the composer and arm
 ## Message Scroll Anchoring
 
 When the user is already at the latest message, new user posts and streamed assistant output keep the message list pinned to the bottom. Auto-scroll may be throttled for render performance, but the final pending scroll must still run while the bottom pin intent remains active. If the user scrolls away from the latest message, Veslo stops auto-pinning and shows the jump-to-latest control instead of forcing the viewport downward.
+
+Main source of truth:
+
+- `packages/app/src/app/pages/session-transcript-viewport.ts`
+- `packages/app/src/app/components/session/message-list.tsx`
 
 ## Message Progress Grouping
 
@@ -271,13 +323,28 @@ Main sources:
 
 ## Sharing Entry Points
 
-Session view includes live-access sharing and public-link sharing through `ShareWorkspaceModal`.
+Session and dashboard views include live-access sharing and public-link sharing through
+`ShareWorkspaceModal`. Shared share/export orchestration lives in
+`packages/app/src/app/pages/workspace-share-controller.ts`; `session.tsx` and `dashboard.tsx` only
+provide page-specific labels, runtime state, and modal wiring.
 
 Those semantics are documented in `docs/features/workspace-config-and-sharing.md`.
 
 ## Source of Truth
 
-- session page: `packages/app/src/app/pages/session.tsx`
+- session page integration: `packages/app/src/app/pages/session.tsx`
+- session store facade: `packages/app/src/app/context/session.ts`
+- session store model: `packages/app/src/app/context/session-store-model.ts`
+- transcript state and persistence: `packages/app/src/app/context/session-transcript-controller.ts`
+- runtime prompts: `packages/app/src/app/context/session-runtime-prompts.ts`
+- session selection and loading: `packages/app/src/app/context/session-selection-controller.ts`
+- SSE and reconnect catch-up: `packages/app/src/app/context/session-event-stream.ts`
+- workspace cache: `packages/app/src/app/context/session-workspace-cache.ts`
+- send/queue/pending flow: `packages/app/src/app/pages/session-conversation-flow.ts`
+- transcript viewport: `packages/app/src/app/pages/session-transcript-viewport.ts`
+- search and command palette: `packages/app/src/app/pages/session-search-command-controller.ts`
+- sharing/export orchestration: `packages/app/src/app/pages/workspace-share-controller.ts`
+- session shell layout: `packages/app/src/app/pages/session-left-sidebar.tsx`, `packages/app/src/app/pages/session-right-sidebar.tsx`, `packages/app/src/app/pages/session-center.tsx`
 - composer: `packages/app/src/app/components/session/composer.tsx`
 - message rendering: `packages/app/src/app/components/session/message-list.tsx`
 - artifacts: `packages/app/src/app/components/session/artifact-family-model.ts`

@@ -19,6 +19,39 @@ The app treats Veslo server as the canonical workspace-control API for:
 
 The app should prefer these server surfaces over inventing parallel client-only behavior.
 
+## Frontend Client Module Contract
+
+The app-facing TypeScript client lives behind the stable public barrel:
+
+- `packages/app/src/app/lib/veslo-server.ts`
+  Public export surface only. App code should keep importing `createVesloServerClient`, helper functions, `VesloServerError`, and public `Veslo*` types from this path.
+- `packages/app/src/app/lib/veslo-server/client.ts`
+  Composition shell for `createVesloServerClient`. It wires the domain facades, owns the compatibility flat aliases, and keeps `requestManagedAiAccessBundle` with the current small AI access surface.
+- `packages/app/src/app/lib/veslo-server/types.ts`
+  Public DTO/input/response types. Domain modules import shared types from this file, not from the public barrel.
+- `packages/app/src/app/lib/veslo-server/connection.ts`
+  URL normalization, local server URL derivation, session archive client option resolution, browser storage settings, invite links, and bundle links.
+- `packages/app/src/app/lib/veslo-server/transport.ts`
+  Shared request transport, auth/host/Den headers, Tauri fetch audit wrapping, multipart/binary helpers, and `VesloServerError`.
+- `packages/app/src/app/lib/veslo-server-domains/*.ts`
+  One UI-facing domain client facade per durable request boundary.
+
+Current domain facades:
+
+- `workspace.ts` for health/status/capabilities, workspace registry, config, reload, audit, import/export, provisioning, and scheduled jobs.
+- `conversations.ts` for conversations, runs, transcript reads/prefetch/append, session archives, and session deletion.
+- `files.ts` for inbox, file sessions, batch file ops, workspace file reads/writes, and artifacts.
+- `skills.ts` for workspace skills, hub skills, user-global skill store, removals, enabled state, materialization, and registry operations.
+- `soul.ts` for Soul overview, organization/user/workspace reads and writes, version restore, materialization sync, heartbeat status, and heartbeat list.
+- `mcp.ts`, `plugins.ts`, `commands.ts`, `automations.ts`, and `messaging-identities.ts` for their matching server namespaces.
+- `extensions-inventory.ts` as a read-only client aggregate over MCP, plugins, skills, and commands. It must not own mutations.
+
+Compatibility rule:
+
+- Existing flat methods such as `client.listWorkspaces()` and `client.listSkills()` remain available as aliases from the composition shell while new code may use domain entries such as `client.workspace.list()` and `client.skills.list()`.
+- Do not add endpoint-specific methods directly to the public barrel. Add behavior to the appropriate domain facade, wire it in `client.ts`, and re-export only through the stable barrel when the public API needs it.
+- Route/path tests should live near `src/app/tests/lib/veslo-server.test.ts`, `veslo-server-route-manifest-contract.test.ts`, `veslo-server-session-prefetch.test.ts`, or `veslo-server-modularization.test.ts` depending on the contract being changed.
+
 ## Resource Ownership Contract
 
 App-facing inventory records for local MCP entries, skills, plugins, commands,
@@ -280,6 +313,16 @@ Common app flows:
   Ask the engine to reread config for a workspace.
 
 Use workspace-scoped URLs whenever possible, including the mounted `/w/:id/...` forms.
+
+### MCP Runtime Token Refresh
+
+For Veslo-managed connector MCP entries, the app may call
+`POST /workspace/:id/mcp/:name/runtime-token/refresh` after an
+authorization-like MCP runtime status failure. The route requires the normal
+client token plus Den context headers, looks up the named catalog item, fetches
+a fresh connector runtime token from Den, and updates only the workspace
+OpenCode MCP config header. It does not perform browser OAuth, does not revoke
+provider grants, and must not be used for custom user-supplied MCP auth.
 
 ### Local Workspace Registration
 

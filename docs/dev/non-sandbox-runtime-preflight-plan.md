@@ -304,7 +304,10 @@ Example:
 - App routing/capabilities:
   - `packages/app/src/app/lib/ai-access.ts`
   - `packages/app/src/app/lib/tauri.ts`
-  - `packages/app/src/app/lib/veslo-server.ts`
+  - `packages/app/src/app/lib/veslo-server.ts` public barrel
+  - `packages/app/src/app/lib/veslo-server/client.ts`
+  - `packages/app/src/app/lib/veslo-server/connection.ts`
+  - `packages/app/src/app/lib/veslo-server-domains/workspace.ts`
   - `packages/app/src/app/utils/paths.ts`
 
 - Desktop IPC/runtime:

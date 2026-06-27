@@ -1,5 +1,13 @@
 # Frontend Refactoring Implementation Plan
 
+Status note: this is historical implementation material. Steps that mention
+editing `packages/app/src/app/lib/veslo-server.ts` directly predate the current
+Veslo server frontend client layout. Today `veslo-server.ts` is the public
+barrel; transport lives in `lib/veslo-server/transport.ts`, public types in
+`lib/veslo-server/types.ts`, connection helpers in
+`lib/veslo-server/connection.ts`, and client composition in
+`lib/veslo-server/client.ts`.
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Decompose app.tsx (7,524 lines) and workspace.ts (3,864 lines) into focused modules, replace 36 silent error catches, and consolidate duplicated fetch wrappers.

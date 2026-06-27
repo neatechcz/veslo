@@ -153,8 +153,18 @@ test("App refreshes automations for all mapped workspaces", () => {
 
   assert.match(source, /resolveAutomationWorkspaceMap/);
   assert.match(source, /setAutomationItems/);
-  assert.match(source, /Promise\.all\([\s\S]*listAutomations/);
+  assert.match(source, /Promise\.all\([\s\S]*automations\.list/);
   assert.doesNotMatch(source, /const automationClient = resolveVesloAutomations\(\);[\s\S]*listAutomations\(automationClient\.workspaceId\)/);
+});
+
+test("App uses the automations domain facade for server automation requests", () => {
+  const source = appSource();
+
+  assert.match(source, /client\.automations\./);
+  assert.doesNotMatch(
+    source,
+    /client\.(?:listAutomations|createAutomation|updateAutomation|deleteAutomation|runAutomation|listAutomationRuns)\(/,
+  );
 });
 
 test("App only treats remote automation workspace ids as ready when the connected server lists them", () => {

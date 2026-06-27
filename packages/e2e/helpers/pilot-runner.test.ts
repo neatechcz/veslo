@@ -9,6 +9,7 @@ import {
   resolvePilotBinary,
   resolvePilotScenarioSelection,
   scenarioSelectionNeedsSkillEnableInventoryFixture,
+  scenarioSelectionNeedsGoogleMcpCatalogFixture,
   scenarioSelectionNeedsManagedAiGatewayFixture,
   scenarioSelectionNeedsSkillRegistryAuthFixture,
   scenarioSelectionNeedsAutomationSecondaryWorkspace,
@@ -91,6 +92,19 @@ test('skills enabled-state pilot scenario requests the skill inventory fixture',
   );
   assert.equal(
     scenarioSelectionNeedsSkillEnableInventoryFixture(resolvePilotScenarioSelection({ scenario: ['navigation'] }, e2eRoot)),
+    false,
+  );
+});
+
+test('google mcp pilot scenario requests the google mcp catalog fixture', () => {
+  const e2eRoot = '/repo/packages/e2e';
+
+  assert.equal(
+    scenarioSelectionNeedsGoogleMcpCatalogFixture(resolvePilotScenarioSelection({ scenario: ['google-mcp-connectors'] }, e2eRoot)),
+    true,
+  );
+  assert.equal(
+    scenarioSelectionNeedsGoogleMcpCatalogFixture(resolvePilotScenarioSelection({ scenario: ['navigation'] }, e2eRoot)),
     false,
   );
 });

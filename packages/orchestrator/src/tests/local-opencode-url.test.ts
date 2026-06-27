@@ -46,4 +46,15 @@ describe("local OpenCode URL wiring", () => {
     expect(cliSource).toContain("engineChildKind: proxyTarget.engine.childKind ?? \"direct\"");
     expect(cliSource).toContain("engineChildKind: engine.childKind ?? \"direct\"");
   });
+
+  test("Veslo server OpenCode Router proxy uses the server-owned route namespace", () => {
+    const cliSource = readFileSync(new URL("../cli.ts", import.meta.url), "utf8");
+
+    expect(cliSource).toContain("/opencode-router/health");
+    expect(cliSource).toContain("/opencode-router/identities/telegram");
+    expect(cliSource).toContain("/opencode-router/identities/slack");
+    expect(cliSource).toContain("/opencode-router/config/groups");
+    expect(cliSource).toContain("/w/${encodeURIComponent(workspaceId)}/opencode-router");
+    expect(cliSource).not.toMatch(/[`'"][^`'"]*\/veslo-code-router/);
+  });
 });

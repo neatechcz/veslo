@@ -1,0 +1,154 @@
+[scenario]
+name = "google-mcp-connectors"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "mark onboarding complete"
+action = "eval"
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+true;
+'''
+
+[[step]]
+name = "navigate to mcp"
+action = "eval"
+script = '''
+const oldUrl = window.location.href;
+window.location.hash = "/dashboard/mcp";
+window.dispatchEvent(new HashChangeEvent("hashchange", {
+  oldURL: oldUrl,
+  newURL: window.location.href,
+}));
+true;
+'''
+
+[[step]]
+name = "mcp route active"
+action = "eval"
+timeout_ms = 15000
+script = '''
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const deadline = Date.now() + 15000;
+let rendered = false;
+while (Date.now() < deadline) {
+  if (document.querySelector('[data-testid="mcp-page"]')) {
+    rendered = true;
+    break;
+  }
+  window.localStorage.setItem("veslo.onboardingComplete", "1");
+  const oldUrl = window.location.href;
+  window.location.hash = "/dashboard/mcp";
+  window.dispatchEvent(new HashChangeEvent("hashchange", {
+    oldURL: oldUrl,
+    newURL: window.location.href,
+  }));
+  await sleep(250);
+}
+if (!rendered) {
+  throw new Error(`MCP page did not render, current URL=${window.location.href}`);
+}
+true;
+'''
+
+[[step]]
+name = "mcp url active"
+action = "assert-url"
+expected = "/dashboard/mcp"
+timeout_ms = 10000
+
+[[step]]
+name = "gmail catalog card appears"
+action = "wait"
+target = '[data-testid="mcp-available-app-card"][data-mcp-name="Google Gmail"]'
+timeout_ms = 45000
+
+[[step]]
+name = "calendar catalog card appears"
+action = "wait"
+target = '[data-testid="mcp-available-app-card"][data-mcp-name="Google Calendar"]'
+timeout_ms = 45000
+
+[[step]]
+name = "drive catalog card appears"
+action = "wait"
+target = '[data-testid="mcp-available-app-card"][data-mcp-name="Google Drive"]'
+timeout_ms = 45000
+
+[[step]]
+name = "google mcp catalog cards are separate"
+action = "eval"
+script = '''
+const normalize = (value) => `${value ?? ""}`.replace(/\s+/g, " ").trim();
+const readAvailable = () => {
+  return Array.from(document.querySelectorAll('[data-testid="mcp-available-app-card"]'))
+    .map((button) => ({
+      name: button.getAttribute("data-mcp-name") ?? "",
+      text: normalize(button.textContent ?? button.innerText),
+      disabled: button.disabled === true,
+    }))
+    .filter((card) => card.name.startsWith("Google"));
+};
+const cards = readAvailable();
+const names = cards.map((card) => card.name).sort();
+const expected = ["Google Calendar", "Google Drive", "Google Gmail"].sort();
+if (JSON.stringify(names) !== JSON.stringify(expected)) {
+  throw new Error(`Unexpected Google MCP catalog cards: ${JSON.stringify(cards)}`);
+}
+if (!cards.every((card) => card.text.includes("Google"))) {
+  throw new Error(`Google cards are missing provider text: ${JSON.stringify(cards)}`);
+}
+true;
+'''
+
+[[step]]
+name = "click gmail card"
+action = "eval"
+script = '''
+const gmail = document.querySelector('[data-testid="mcp-available-app-card"][data-mcp-name="Google Gmail"]');
+if (!(gmail instanceof HTMLButtonElement)) {
+  throw new Error("Google Gmail card was not found");
+}
+if (gmail.disabled) {
+  throw new Error("Google Gmail card is disabled");
+}
+gmail.click();
+true;
+'''
+
+[[step]]
+name = "gmail installed row appears"
+action = "wait"
+target = '[data-testid="mcp-installed-app-row"][data-mcp-name="google-gmail"]'
+timeout_ms = 60000
+
+[[step]]
+name = "gmail install leaves calendar and drive uninstalled"
+action = "eval"
+script = '''
+const installedNames = Array.from(document.querySelectorAll('[data-testid="mcp-installed-app-row"]'))
+  .map((button) => button.getAttribute("data-mcp-name") ?? "")
+  .filter(Boolean);
+const availableNames = Array.from(document.querySelectorAll('[data-testid="mcp-available-app-card"]'))
+  .map((button) => button.getAttribute("data-mcp-name") ?? "")
+  .filter(Boolean);
+if (!installedNames.includes("google-gmail")) {
+  throw new Error(`Gmail row is missing: ${JSON.stringify(installedNames)}`);
+}
+for (const forbidden of ["google-calendar", "google-drive", "Google Calendar", "Google Drive"]) {
+  if (installedNames.includes(forbidden)) {
+    throw new Error(`Installing Gmail also installed ${forbidden}: ${JSON.stringify(installedNames)}`);
+  }
+}
+if (!availableNames.includes("Google Calendar") || !availableNames.includes("Google Drive")) {
+  throw new Error(`Calendar/Drive should remain available: ${JSON.stringify(availableNames)}`);
+}
+true;
+'''

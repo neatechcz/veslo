@@ -1,4 +1,4 @@
-import { batch, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { createMemo } from "solid-js";
 import { createStore, produce, reconcile } from "solid-js/store";
 
 import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client";
@@ -11,7 +11,6 @@ import type {
   OpencodeEvent,
   PendingPermission,
   PendingQuestion,
-  PlaceholderAssistantMessage,
   ReloadReason,
   ReloadTrigger,
   SessionErrorTurn,
@@ -20,43 +19,37 @@ import type {
 import {
   addOpencodeCacheHint,
   type DirectoryQueryPathMode,
-  directoryQueryPathVariants,
-  extractSessionId,
-  normalizeDirectoryQueryPath,
   normalizeDirectoryPath,
-  normalizeEvent,
-  normalizeSessionStatus,
-  normalizeTodoItems,
-  sessionDirectoryMatchesRoot,
   safeStringify,
 } from "../utils";
-import { unwrap, type OpencodeAuth } from "../lib/opencode";
-import { engineSseSubscribe, isEngineSseAvailable } from "../lib/engine-sse";
-import {
-  DEFAULT_WORKSPACE_SNAPSHOT_CACHE_LIMIT,
-  selectWorkspaceSnapshotEvictions,
-} from "../lib/workspace-snapshot-cache";
-import type { WorkspaceRouting, RoutingClient } from "./workspace-routing";
-import { finishPerf, perfNow, recordPerfLog, runtimePerfAuditEnabled } from "../lib/perf-log";
-import { formatSessionError, truncateErrorField } from "../lib/session-error";
+import type { WorkspaceRouting } from "./workspace-routing";
+import { perfNow, recordPerfLog } from "../lib/perf-log";
 import { detectChromeMcpCompletedError } from "../lib/chrome-mcp-error";
 import {
-  pickSessionStatusSnapshot,
   readSessionStatus,
   withSessionStatus,
 } from "../lib/scoped-session-status";
-import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../types";
-import { createSelectSessionGuard } from "./select-session-guard";
 import {
-  beginOutageEpisode,
-  clearOutageEpisode,
-  type ReconnectNotice,
-  shouldShowReconnected,
-  shouldShowReconnecting,
-} from "./session-reconnect";
+  appendSessionErrorTurnModel,
+  applyCommandDisplayAlias,
+  formatSlashCommandDisplay,
+  sortSessionsByActivity,
+} from "./session-store-model";
+import {
+  createSessionTranscriptController,
+} from "./session-transcript-controller";
+import { createSessionRuntimePrompts } from "./session-runtime-prompts";
+import {
+  createSessionSelectionController,
+  isSessionNotFoundError,
+} from "./session-selection-controller";
+import { createSessionEventStreamController } from "./session-event-stream";
+import { createSessionWorkspaceCacheController } from "./session-workspace-cache";
+import type { ReconnectNotice } from "./session-reconnect";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 export type SessionStore = ReturnType<typeof createSessionStore>;
+export type { WorkspaceSessionCache } from "./session-workspace-cache";
 
 type SessionStatusTraceRoot = typeof window & {
   __vesloSessionStatusTrace?: Array<Record<string, unknown>>;
@@ -70,24 +63,6 @@ type RuntimeEffectTraceRoot = typeof window & {
 function activeSendTraceId() {
   if (typeof window === "undefined") return null;
   return (window as RuntimeEffectTraceRoot).__vesloActiveSendTraceId ?? null;
-}
-
-function engineSseAuthOptions(auth?: OpencodeAuth | null) {
-  if (!auth) return {};
-  if (auth.mode === "veslo") {
-    return { bearerToken: auth.token ?? null };
-  }
-  return {
-    username: auth.username ?? null,
-    password: auth.password ?? null,
-  };
-}
-
-function shouldReleaseStaleWorkspaceRoute(wsId: string, activeWs: string, message: string) {
-  if (!wsId || wsId === activeWs) return false;
-  return /engine_not_running|Workspace client is stale|Failed to fetch|Request timed out|ECONN|upstream status (?:401|404|502|503)|status (?:401|404|502|503)|Invalid bearer token|unauthorized/i.test(
-    message,
-  );
 }
 
 function recordSessionStatusTrace(event: string, payload?: Record<string, unknown>) {
@@ -113,11 +88,6 @@ function recordSessionStatusTrace(event: string, payload?: Record<string, unknow
   }
 }
 
-type TranscriptFreshness = {
-  fetchedAt: number | null;
-  staleAt: number | null;
-};
-
 type StoreState = {
   sessions: Session[];
   sessionStatus: Record<string, string>;
@@ -131,120 +101,11 @@ type StoreState = {
   events: OpencodeEvent[];
 };
 
-/**
- * VSLO-171 F3Ú6a — per-workspace snapshot of session state cached when the
- * user switches away from a workspace, restored when they come back.
- * Only multi-routing mode populates this; single-active keeps the global
- * store as the single source of truth.
- */
-export type WorkspaceSessionCache = {
-  workspaceId: string;
-  sessions: Session[];
-  sessionStatus: Record<string, string>;
-  sessionErrorTurns: Record<string, SessionErrorTurn[]>;
-  messages: Record<string, MessageInfo[]>;
-  parts: Record<string, Part[]>;
-  messageLimitBySession: Record<string, number>;
-  messageCompleteBySession: Record<string, boolean>;
-  transcriptFreshnessBySession: Record<string, TranscriptFreshness>;
-  todos: Record<string, TodoItem[]>;
-  pendingPermissions: PendingPermission[];
-  pendingQuestions: PendingQuestion[];
-  selectedSessionId: string | null;
-  lastUsed: number;
-};
-
-const sortById = <T extends { id: string }>(list: T[]) =>
-  list.slice().sort((a, b) => a.id.localeCompare(b.id));
-
-const messageActivity = (message: { id: string; time?: { created?: number; updated?: number } }) =>
-  Number.isFinite(message.time?.created ?? NaN)
-    ? message.time!.created!
-    : Number.isFinite(message.time?.updated ?? NaN)
-      ? message.time!.updated!
-      : 0;
-
-const sortMessagesByActivity = <T extends { id: string; time?: { created?: number; updated?: number } }>(list: T[]) =>
-  list
-    .slice()
-    .sort((a, b) => {
-      const delta = messageActivity(a) - messageActivity(b);
-      if (delta !== 0) return delta;
-      return a.id.localeCompare(b.id);
-    });
-
-const sessionActivity = (session: Session) =>
-  session.time?.updated ?? session.time?.created ?? 0;
-
-const sortSessionsByActivity = (list: Session[]) =>
-  list
-    .slice()
-    .sort((a, b) => {
-      const delta = sessionActivity(b) - sessionActivity(a);
-      if (delta !== 0) return delta;
-      return a.id.localeCompare(b.id);
-    });
-
 const SYNTHETIC_CONTINUE_CONTROL_PATTERN =
   /^\s*continue if you have next steps,\s*or stop and ask for clarification if you are unsure how to proceed\.?\s*$/i;
 const COMPACTION_DIAGNOSTIC_WINDOW_MS = 60_000;
 const COMPACTION_LOOP_WARN_THRESHOLD = 3;
 const COMPACTION_LOOP_WARN_MIN_INTERVAL_MS = 10_000;
-const INITIAL_SESSION_MESSAGE_LIMIT = 140;
-const SESSION_MESSAGE_LOAD_CHUNK = 120;
-
-const formatSlashCommandDisplay = (name: string, args: string) => {
-  const cleanName = name.trim().replace(/^\/+/, "");
-  if (!cleanName) return "";
-  const cleanArgs = args.trim();
-  return cleanArgs ? `/${cleanName} ${cleanArgs}` : `/${cleanName}`;
-};
-
-const createPlaceholderMessage = (part: Part): PlaceholderAssistantMessage => ({
-  id: part.messageID,
-  sessionID: part.sessionID,
-  role: "assistant",
-  time: { created: Date.now() },
-  parentID: "",
-  modelID: "",
-  providerID: "",
-  mode: "",
-  agent: "",
-  path: { cwd: "", root: "" },
-  cost: 0,
-  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-});
-
-const upsertSession = (list: Session[], next: Session) => {
-  const index = list.findIndex((session) => session.id === next.id);
-  if (index === -1) return sortSessionsByActivity([...list, next]);
-  const copy = list.slice();
-  copy[index] = next;
-  return sortSessionsByActivity(copy);
-};
-
-const removeSession = (list: Session[], sessionID: string) => list.filter((session) => session.id !== sessionID);
-
-const upsertMessageInfo = (list: MessageInfo[], next: MessageInfo) => {
-  const index = list.findIndex((message) => message.id === next.id);
-  if (index === -1) return sortMessagesByActivity([...list, next]);
-  const copy = list.slice();
-  copy[index] = next;
-  return sortMessagesByActivity(copy);
-};
-
-const removeMessageInfo = (list: MessageInfo[], messageID: string) =>
-  list.filter((message) => message.id !== messageID);
-
-const upsertPartInfo = (list: Part[], next: Part) => {
-  const index = list.findIndex((part) => part.id === next.id);
-  if (index === -1) return sortById([...list, next]);
-  const copy = list.slice();
-  copy[index] = next;
-  return copy;
-};
-
-const removePartInfo = (list: Part[], partID: string) => list.filter((part) => part.id !== partID);
 
 export function createSessionStore(options: {
   client: () => Client | null;
@@ -376,11 +237,6 @@ export function createSessionStore(options: {
     };
   };
 
-  const isSessionNotFoundError = (error: unknown) => {
-    const message = error instanceof Error ? error.message : safeStringify(error);
-    return /Session not found|NotFoundError|status\W*404|\b404\b/i.test(message);
-  };
-
   const hasAnyRefreshableRuntime = () => {
     const entryIds = options.routing.entryIds();
     if (entryIds.length > 0) {
@@ -413,14 +269,6 @@ export function createSessionStore(options: {
     pendingQuestions: [],
     events: [],
   });
-  const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
-  const [messageLimitBySession, setMessageLimitBySession] = createSignal<Record<string, number>>({});
-  const [messageCompleteBySession, setMessageCompleteBySession] = createSignal<Record<string, boolean>>({});
-  const [messageLoadBusyBySession, setMessageLoadBusyBySession] = createSignal<Record<string, boolean>>({});
-  const [transcriptFreshnessBySession, setTranscriptFreshnessBySession] = createSignal<
-    Record<string, TranscriptFreshness>
-  >({});
-
   const statusWorkspaceId = (workspaceId?: string | null) =>
     workspaceId?.trim() || options.routing.activeWorkspaceId().trim();
 
@@ -443,57 +291,6 @@ export function createSessionStore(options: {
   const syntheticContinueEventTimesBySession = new Map<string, number[]>();
   const syntheticContinueLoopLastWarnAtBySession = new Map<string, number>();
   const workspaceSessionIds = new Set<string>();
-  // VSLO-171 F3Ú6a — per-workspace cache for save/load on workspace switch.
-  // Only populated in multi-routing mode (caller decides via options.routing.mode()).
-  const perWorkspaceCache = new Map<string, WorkspaceSessionCache>();
-  const pruneWorkspaceSnapshotCache = (keepIds: Array<string | null | undefined> = []) => {
-    const activeWorkspaceId = options.routing.activeWorkspaceId()?.trim() ?? "";
-    const evictIds = selectWorkspaceSnapshotEvictions(
-      Array.from(perWorkspaceCache.values()).map((entry) => ({
-        workspaceId: entry.workspaceId,
-        lastUsed: entry.lastUsed,
-      })),
-      DEFAULT_WORKSPACE_SNAPSHOT_CACHE_LIMIT,
-      [activeWorkspaceId, ...keepIds],
-    );
-    for (const id of evictIds) perWorkspaceCache.delete(id);
-  };
-  // VSLO-171 F3Ú7a — per-workspace pending permissions. In multi mode the
-  // polling effect (in app.tsx) iterates routing.forEach() and refreshes each
-  // workspace's permissions independently. Sidebar badge reads aggregate
-  // counts via pendingPermissionCountByWs memo.
-  const [pendingPermissionsByWs, setPendingPermissionsByWs] = createSignal<
-    Record<string, PendingPermission[]>
-  >({});
-  let pendingPermissionsRefreshInFlight: Promise<void> | null = null;
-  const [pendingQuestionsByWs, setPendingQuestionsByWs] = createSignal<
-    Record<string, PendingQuestion[]>
-  >({});
-  let pendingQuestionsRefreshInFlight: Promise<void> | null = null;
-
-  // VSLO-171 — flattened view of all per-workspace permissions for the
-  // cross-workspace UI (sidebar badges, activePermission fallback).
-  // Declared near the signal so callers (activePermission memo, respondPermission)
-  // can reference it without TDZ at createSessionStore init.
-  const allPendingPermissions = createMemo(() => {
-    const byWs = pendingPermissionsByWs();
-    const result: PendingPermission[] = [];
-    for (const list of Object.values(byWs)) result.push(...list);
-    return result;
-  });
-  const pendingPermissionCountByWs = createMemo(() => {
-    const byWs = pendingPermissionsByWs();
-    const counts: Record<string, number> = {};
-    for (const [wsId, list] of Object.entries(byWs)) counts[wsId] = list.length;
-    return counts;
-  });
-  const allPendingQuestions = createMemo(() => {
-    const byWs = pendingQuestionsByWs();
-    const result: PendingQuestion[] = [];
-    for (const list of Object.values(byWs)) result.push(...list);
-    return result;
-  });
-
   const skillPathPattern = /(?:^|[\\/])\.opencode[\\/](skill|skills)[\\/]/i;
   const skillNamePattern = /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
   const commandPathPattern = /(?:^|[\\/])\.opencode[\\/](command|commands)[\\/]/i;
@@ -783,23 +580,14 @@ export function createSessionStore(options: {
     if (!sessionID || !text) return;
 
     const list = store.messages[sessionID] ?? [];
-    const lastMessage = list.length > 0 ? list[list.length - 1] : null;
-    const afterMessageID = lastMessage?.id ?? null;
-
-    setStore("sessionErrorTurns", sessionID, (current) => {
-      const existing = current ?? [];
-      const previous = existing[existing.length - 1];
-      if (previous && previous.text === text && previous.afterMessageID === afterMessageID) {
-        return existing;
-      }
-
-      return existing.concat({
-        id: `${SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX}${sessionID}:${Date.now()}:${existing.length}`,
-        text,
-        afterMessageID,
-        time: Date.now(),
-      });
-    });
+    setStore("sessionErrorTurns", sessionID, (current) =>
+      appendSessionErrorTurnModel({
+        current,
+        sessionID,
+        message: text,
+        messages: list,
+      }),
+    );
   };
 
   const setCommandDisplay = (messageID: string, name: string, args: string) => {
@@ -834,26 +622,125 @@ export function createSessionStore(options: {
     }
   };
 
-  let selectRunCounter = 0;
-  const selectGuard = createSelectSessionGuard();
+  const transcriptController = createSessionTranscriptController({
+    store,
+    setStore: setStore as (...args: any[]) => void,
+    routing: options.routing,
+    activeWorkspaceRoot: options.activeWorkspaceRoot,
+    appendTranscriptSnapshot: options.appendTranscriptSnapshot,
+    applySessionDirectoryOverride,
+    resolveSessionDirectory,
+    sessionWarn,
+    withTimeout,
+  });
+  const {
+    messageLimitBySession,
+    setMessageLimitBySession,
+    messageCompleteBySession,
+    setMessageCompleteBySession,
+    messageLoadBusyBySession,
+    setMessageLoadBusyBySession,
+    transcriptFreshnessBySession,
+    setTranscriptFreshnessBySession,
+    setMessagesForSession,
+    hydrateTranscriptSnapshot,
+    hasWarmTranscript,
+    getCachedTranscriptMessageCount,
+    getCachedTranscriptMessages,
+    getTranscriptFreshness,
+    resolveTranscriptIngestWorkspaceId,
+    resolveSessionIdForMessage,
+    recordPendingTranscriptMessageDeletion,
+    recordPendingTranscriptPartDeletion,
+    scheduleTranscriptIngestion,
+    scheduleBackgroundTranscriptIngestion,
+  } = transcriptController;
 
-  const sessions = () => store.sessions;
+  const runtimePrompts = createSessionRuntimePrompts({
+    store,
+    setStore: setStore as any,
+    routing: options.routing,
+    selectedSessionId: options.selectedSessionId,
+    isWorkspaceRuntimeReady,
+    hasAnyRefreshableRuntime,
+    activeSendTraceId,
+    sessionDebug,
+    sessionWarn,
+    setError: options.setError,
+    addError,
+  });
+  const {
+    pendingPermissions,
+    pendingQuestions,
+    pendingPermissionsByWs,
+    pendingQuestionsByWs,
+    allPendingPermissions,
+    allPendingQuestions,
+    pendingPermissionCountByWs,
+    permissionReplyBusy,
+    questionReplyBusy,
+    activePermission,
+    activeQuestion,
+    refreshPendingPermissions,
+    refreshPendingQuestions,
+    respondPermission,
+    respondQuestion,
+    rejectQuestion,
+    setPendingPermissions,
+    setPendingQuestions,
+  } = runtimePrompts;
+
+  const selectionController = createSessionSelectionController({
+    store,
+    setStore: setStore as any,
+    routing: options.routing,
+    selectedSessionId: options.selectedSessionId,
+    setSelectedSessionId: options.setSelectedSessionId,
+    selectSessionScopeKey: options.selectSessionScopeKey,
+    directoryQueryPathMode: options.directoryQueryPathMode,
+    conversationReader: options.conversationReader,
+    loadOfflineTranscript: options.loadOfflineTranscript,
+    shouldBrowseSessionFromDb: options.shouldBrowseSessionFromDb,
+    developerMode: options.developerMode,
+    setError: options.setError,
+    onSessionLoadComplete: options.onSessionLoadComplete,
+    sessionDebug,
+    addError,
+    withTimeout,
+    isWorkspaceRuntimeReady,
+    clientForSession,
+    sessionReadPolicy,
+    isSessionNotFoundError,
+    sessionDirectoryOverrides,
+    applySessionDirectoryOverride,
+    resolveSessionDirectory,
+    readStatusForSession,
+    workspaceSessionIds,
+    setMessagesForSession,
+    hydrateTranscriptSnapshot,
+    messageLimitBySession,
+    setMessageLimitBySession,
+    messageCompleteBySession,
+    setMessageCompleteBySession,
+    messageLoadBusyBySession,
+    setMessageLoadBusyBySession,
+    refreshPendingPermissions,
+  });
+  const {
+    sessions,
+    selectedSession,
+    selectedSessionStatus,
+    todos,
+    selectedSessionHasEarlierMessages,
+    selectedSessionLoadingEarlierMessages,
+    loadSessions,
+    renameSession,
+    selectSession,
+    loadEarlierMessages,
+  } = selectionController;
+
   const sessionStatusById = () => store.sessionStatus;
-  const pendingPermissions = () => store.pendingPermissions;
-  const pendingQuestions = () => store.pendingQuestions;
   const events = () => store.events;
-
-  const selectedSession = createMemo(() => {
-    const id = options.selectedSessionId();
-    if (!id) return null;
-    return store.sessions.find((session) => session.id === id) ?? null;
-  });
-
-  const selectedSessionStatus = createMemo(() => {
-    const id = options.selectedSessionId();
-    if (!id) return "idle";
-    return readStatusForSession(id);
-  });
 
   const messages = createMemo<MessageWithParts[]>(() => {
     const id = options.selectedSessionId();
@@ -862,1033 +749,9 @@ export function createSessionStore(options: {
     return list.map((info) => {
       const parts = store.parts[info.id] ?? [];
       const alias = store.commandDisplayByMessageID[info.id];
-      if (!alias || (info as { role?: string }).role !== "user") {
-        return { info, parts };
-      }
-
-      const firstText = parts.find((part) => part.type === "text");
-      const aliasPart = firstText
-        ? ({ ...firstText, text: alias, synthetic: false, ignored: false } as Part)
-        : ({
-            id: `command-display:${info.id}`,
-            sessionID: info.sessionID,
-            messageID: info.id,
-            type: "text",
-            text: alias,
-            synthetic: false,
-            ignored: false,
-          } as Part);
-      const nonTextParts = parts.filter((part) => part.type !== "text");
-      return { info, parts: [aliasPart, ...nonTextParts] };
+      return applyCommandDisplayAlias(info, parts, alias);
     });
   });
-
-  const todos = createMemo<TodoItem[]>(() => {
-    const id = options.selectedSessionId();
-    if (!id) return [];
-    return store.todos[id] ?? [];
-  });
-
-  const selectedSessionHasEarlierMessages = createMemo(() => {
-    const id = options.selectedSessionId();
-    if (!id) return false;
-    return !messageCompleteBySession()[id];
-  });
-
-  const selectedSessionLoadingEarlierMessages = createMemo(() => {
-    const id = options.selectedSessionId();
-    if (!id) return false;
-    return Boolean(messageLoadBusyBySession()[id]);
-  });
-
-  async function loadSessions(scopeRoot?: string) {
-    // IMPORTANT: OpenCode's session.list() supports server-side filtering by directory.
-    // Use it to avoid fetching every session across every workspace root.
-    //
-    // Note: We intentionally normalize slashes + trailing separators but do NOT
-    // lowercase on Windows for the query value because the server does strict
-    // string equality against the stored session.directory.
-    const queryDirectories = directoryQueryPathVariants(scopeRoot, {
-      mode: options.directoryQueryPathMode?.() ?? "auto",
-    });
-    const queryDirectory = (queryDirectories[0] ?? normalizeDirectoryQueryPath(scopeRoot)) || undefined;
-
-    const start = Date.now();
-    sessionDebug("sessions:load:start", { scopeRoot: scopeRoot ?? null, queryDirectory: queryDirectory ?? null });
-    let list: Session[] | null = null;
-    let usedConversationRead = false;
-    const workspaceId = options.routing.activeWorkspaceId().trim();
-    const c = options.routing.active();
-    const workspaceRuntimeReady = isWorkspaceRuntimeReady(workspaceId);
-    const reader = options.conversationReader?.() ?? null;
-    if (workspaceId && reader) {
-      try {
-        const result = await reader.listConversations(workspaceId, queryDirectory, {
-          sync: Boolean(c) && workspaceRuntimeReady,
-        });
-        if (result.source !== "unavailable" || !workspaceRuntimeReady || !c) {
-          list = result.items;
-          usedConversationRead = true;
-          sessionDebug("sessions:load:conversation-read", {
-            workspaceId,
-            source: result.source ?? "unknown",
-            count: list.length,
-            ms: Date.now() - start,
-          });
-        } else {
-          sessionDebug("sessions:load:conversation-read-unavailable-fallback", {
-            workspaceId,
-            ms: Date.now() - start,
-          });
-        }
-      } catch (error) {
-        sessionDebug("sessions:load:conversation-read-failed", {
-          workspaceId,
-          error: error instanceof Error ? error.message : safeStringify(error),
-        });
-        if (!workspaceRuntimeReady || !c) {
-          list = [];
-          usedConversationRead = true;
-        }
-      }
-    }
-
-    if (!list) {
-      if (!c) return;
-      // Keep `roots` unset so the backend returns both root sessions and child/subagent sessions.
-      const candidates: Array<string | undefined> = queryDirectories.length > 0 ? queryDirectories : [undefined];
-      const mergedById = new Map<string, Session>();
-      const usedQueryDirectories: Array<string | null> = [];
-      for (const candidate of candidates) {
-        usedQueryDirectories.push(candidate ?? null);
-        const fetchedList = unwrap(await c.session.list({ directory: candidate }));
-        for (const session of fetchedList) {
-          mergedById.set(session.id, session);
-        }
-      }
-      list = Array.from(mergedById.values());
-      sessionDebug("sessions:load:raw", {
-        count: list.length,
-        queryDirectory: usedQueryDirectories[0] ?? null,
-        queryDirectories: usedQueryDirectories,
-        queryDirectoryFallbacks: Math.max(0, candidates.length - 1),
-        ms: Date.now() - start,
-      });
-    }
-
-    // Defensive client-side filter in case the server returns sessions spanning
-    // multiple roots (e.g. older servers or proxies).
-    const root = normalizeDirectoryPath(scopeRoot);
-    const filtered = root
-      ? list
-        .map((session) => applySessionDirectoryOverride(session))
-        .filter((session) => sessionDirectoryMatchesRoot(resolveSessionDirectory(session), root))
-      : list.map((session) => applySessionDirectoryOverride(session));
-
-    const overrideIds = root
-      ? Object.entries(sessionDirectoryOverrides())
-        .filter(([, directory]) => sessionDirectoryMatchesRoot(directory, root))
-        .map(([sessionID]) => sessionID)
-      : [];
-
-    const merged = new Map(filtered.map((session) => [session.id, session] as const));
-    for (const sessionID of overrideIds) {
-      if (merged.has(sessionID)) continue;
-      if (usedConversationRead || !c) continue;
-      try {
-        // Fetch by ID without directory filter — the session may still be
-        // registered under the old directory in the engine while the local
-        // override already points to the new workspace root.
-        const fetched = unwrap(await c.session.get({ sessionID }));
-        merged.set(sessionID, applySessionDirectoryOverride(fetched));
-      } catch {
-        // ignore stale local overrides; delete path is handled by app state
-      }
-    }
-
-    let nextSessions = sortSessionsByActivity(Array.from(merged.values()));
-    const selectedSessionId = options.selectedSessionId()?.trim() ?? "";
-    if (selectedSessionId && !nextSessions.some((session) => session.id === selectedSessionId)) {
-      const selectedSession = store.sessions.find((session) => session.id === selectedSessionId) ?? null;
-      const selectedSessionDirectory = selectedSession ? resolveSessionDirectory(selectedSession) : "";
-      if (selectedSession && (!root || sessionDirectoryMatchesRoot(selectedSessionDirectory, root))) {
-        nextSessions = sortSessionsByActivity([selectedSession, ...nextSessions]);
-        sessionDebug("sessions:load:retained-selected", {
-          sessionID: selectedSession.id,
-          root: root || null,
-        });
-      }
-    }
-    sessionDebug("sessions:load:filtered", { root: root || null, count: nextSessions.length });
-
-    // Rebuild the workspace session ID set so SSE event filtering stays in sync.
-    workspaceSessionIds.clear();
-    for (const session of nextSessions) {
-      workspaceSessionIds.add(session.id);
-    }
-
-    setStore("sessions", reconcile(nextSessions, { key: "id" }));
-  }
-
-  async function renameSession(sessionID: string, title: string, workspaceId?: string | null) {
-    const ownerWorkspaceId = workspaceId?.trim() ?? "";
-    const c = ownerWorkspaceId
-      ? options.routing.client(ownerWorkspaceId)
-      : options.routing.active();
-    if (!c) return;
-    const trimmed = title.trim();
-    if (!trimmed) {
-      throw new Error("Session name is required");
-    }
-    const next = applySessionDirectoryOverride(unwrap(await c.session.update({ sessionID, title: trimmed })));
-    setStore("sessions", (current) => upsertSession(current, next));
-  }
-
-  async function refreshPendingPermissions() {
-    if (!hasAnyRefreshableRuntime()) {
-      recordPerfLog(runtimePerfAuditEnabled(), "session.permissions", "skip-engine-not-ready", {
-        activeWorkspaceId: options.routing.activeWorkspaceId() || null,
-        activeSendTraceId: activeSendTraceId(),
-      });
-      sessionDebug("permissions:skip-engine-not-ready", {
-        activeWorkspaceId: options.routing.activeWorkspaceId() || null,
-      });
-      return;
-    }
-    if (pendingPermissionsRefreshInFlight) {
-      recordPerfLog(runtimePerfAuditEnabled(), "session.permissions", "skip-in-flight", {
-        activeWorkspaceId: options.routing.activeWorkspaceId() || null,
-        activeSendTraceId: activeSendTraceId(),
-      });
-      sessionDebug("permissions:skip-in-flight", {
-        activeWorkspaceId: options.routing.activeWorkspaceId() || null,
-      });
-      return;
-    }
-
-    const run = (async () => {
-      const startedAt = perfNow();
-      // VSLO-171 — iterate every per-workspace client and refresh each
-      // workspace's permissions independently. The active workspace's list is
-      // also mirrored into the global store so callers that read
-      // store.pendingPermissions directly (Dialog, activePermission memo) keep
-      // working.
-      const activeWs = options.routing.activeWorkspaceId();
-      const nextByWs: Record<string, PendingPermission[]> = {};
-      const now = Date.now();
-      const prevByWs = pendingPermissionsByWs();
-      const clientsToProbe: Array<{ wsId: string; client: RoutingClient }> = [];
-      options.routing.forEach((wsId, client) => {
-        if (!isWorkspaceRuntimeReady(wsId)) return;
-        clientsToProbe.push({ wsId, client });
-      });
-      // If no per-WS clients have been ensured yet, fall back to the global
-      // active client so the very first prompt still surfaces permissions.
-      if (clientsToProbe.length === 0) {
-        const c = options.routing.active();
-        if (!c) {
-          finishPerf(runtimePerfAuditEnabled(), "session.permissions", "refresh", startedAt, {
-            activeWorkspaceId: activeWs || null,
-            activeSendTraceId: activeSendTraceId(),
-            clientCount: 0,
-            source: "none",
-            permissionCount: 0,
-            errorCount: 0,
-          });
-          return;
-        }
-        const list = unwrap(await c.permission.list()) as Array<PendingPermission>;
-        const byId = new Map(store.pendingPermissions.map((p) => [p.id, p] as const));
-        const next = list.map((perm) => ({
-          ...perm,
-          workspaceId: activeWs || undefined,
-          receivedAt: byId.get(perm.id)?.receivedAt ?? now,
-        }));
-        setStore("pendingPermissions", next);
-        if (activeWs) setPendingPermissionsByWs({ [activeWs]: next });
-        finishPerf(runtimePerfAuditEnabled(), "session.permissions", "refresh", startedAt, {
-          activeWorkspaceId: activeWs || null,
-          activeSendTraceId: activeSendTraceId(),
-          clientCount: 1,
-          source: "active-fallback",
-          permissionCount: next.length,
-          errorCount: 0,
-        });
-        return;
-      }
-      let errorCount = 0;
-      let releasedRouteCount = 0;
-      await Promise.all(
-        clientsToProbe.map(async ({ wsId, client }) => {
-          try {
-            const list = unwrap(await client.permission.list()) as Array<PendingPermission>;
-            const prev = prevByWs[wsId] ?? [];
-            const byId = new Map(prev.map((p) => [p.id, p] as const));
-            nextByWs[wsId] = list.map((perm) => ({
-              ...perm,
-              workspaceId: wsId,
-              receivedAt: byId.get(perm.id)?.receivedAt ?? now,
-            }));
-          } catch (error) {
-            const message = error instanceof Error ? error.message : safeStringify(error);
-            if (shouldReleaseStaleWorkspaceRoute(wsId, activeWs, message)) {
-              releasedRouteCount += 1;
-              options.routing.release(wsId);
-              sessionWarn("permissions:released-stale-route", {
-                workspaceId: wsId,
-                error: truncateErrorField(message),
-              });
-              return;
-            }
-            errorCount += 1;
-            nextByWs[wsId] = prevByWs[wsId] ?? [];
-          }
-        }),
-      );
-      setPendingPermissionsByWs(nextByWs);
-      const activeList = activeWs ? nextByWs[activeWs] ?? [] : [];
-      setStore("pendingPermissions", activeList);
-      finishPerf(runtimePerfAuditEnabled(), "session.permissions", "refresh", startedAt, {
-        activeWorkspaceId: activeWs || null,
-        activeSendTraceId: activeSendTraceId(),
-        clientCount: clientsToProbe.length,
-        source: "workspace-routing",
-        permissionCount: Object.values(nextByWs).reduce((sum, list) => sum + list.length, 0),
-        errorCount,
-        releasedRouteCount,
-      });
-    })();
-
-    pendingPermissionsRefreshInFlight = run;
-    try {
-      await run;
-    } finally {
-      if (pendingPermissionsRefreshInFlight === run) {
-        pendingPermissionsRefreshInFlight = null;
-      }
-    }
-  }
-
-  async function refreshPendingQuestions() {
-    if (pendingQuestionsRefreshInFlight) return pendingQuestionsRefreshInFlight;
-
-    const run = (async () => {
-      const activeWs = options.routing.activeWorkspaceId();
-      const clientsToProbe: Array<{ wsId: string; client: RoutingClient }> = [];
-      options.routing.forEach((wsId, client) => {
-        if (!isWorkspaceRuntimeReady(wsId)) return;
-        clientsToProbe.push({ wsId, client });
-      });
-      const now = Date.now();
-      const prevByWs = pendingQuestionsByWs();
-
-      if (clientsToProbe.length === 0) {
-        const c = options.routing.active();
-        if (!c) return;
-        const list = unwrap(await c.question.list());
-        const byId = new Map(store.pendingQuestions.map((q) => [q.id, q] as const));
-        const next = list.map((q) => ({
-          ...q,
-          workspaceId: activeWs || undefined,
-          receivedAt: byId.get(q.id)?.receivedAt ?? now,
-        }));
-        setStore("pendingQuestions", next);
-        if (activeWs) setPendingQuestionsByWs({ [activeWs]: next });
-        return;
-      }
-
-      const nextByWs: Record<string, PendingQuestion[]> = {};
-      await Promise.all(
-        clientsToProbe.map(async ({ wsId, client }) => {
-          try {
-            const list = unwrap(await client.question.list());
-            const prev = prevByWs[wsId] ?? [];
-            const byId = new Map(prev.map((q) => [q.id, q] as const));
-            nextByWs[wsId] = list.map((q) => ({
-              ...q,
-              workspaceId: wsId,
-              receivedAt: byId.get(q.id)?.receivedAt ?? now,
-            }));
-          } catch (error) {
-            const message = error instanceof Error ? error.message : safeStringify(error);
-            if (shouldReleaseStaleWorkspaceRoute(wsId, activeWs, message)) {
-              options.routing.release(wsId);
-              sessionWarn("questions:released-stale-route", {
-                workspaceId: wsId,
-                error: truncateErrorField(message),
-              });
-              return;
-            }
-            nextByWs[wsId] = prevByWs[wsId] ?? [];
-          }
-        }),
-      );
-      setPendingQuestionsByWs(nextByWs);
-      const activeList = activeWs ? nextByWs[activeWs] ?? [] : [];
-      setStore("pendingQuestions", activeList);
-    })();
-
-    pendingQuestionsRefreshInFlight = run;
-    try {
-      await run;
-    } finally {
-      if (pendingQuestionsRefreshInFlight === run) {
-        pendingQuestionsRefreshInFlight = null;
-      }
-    }
-  }
-
-  function setMessagesForSession(sessionID: string, list: MessageWithParts[]) {
-    const infos = list
-      .map((msg) => msg.info)
-      .filter((info) => !!info?.id)
-      .map((info) => info as MessageInfo);
-
-    batch(() => {
-      setStore("messages", sessionID, reconcile(sortMessagesByActivity(infos), { key: "id" }));
-      for (const message of list) {
-        const parts = message.parts.filter((part) => !!part?.id);
-        setStore("parts", message.info.id, reconcile(sortById(parts), { key: "id" }));
-      }
-    });
-  }
-
-  function hydrateTranscriptSnapshot(snapshot: VesloSessionTranscriptSnapshot) {
-    if (snapshot.source === "unavailable") return;
-
-    const sessionID = snapshot.sessionId.trim();
-    if (!sessionID) return;
-
-    const nextFetchedAt = typeof snapshot.fetchedAt === "number" ? snapshot.fetchedAt : null;
-    const currentFreshness = transcriptFreshnessBySession()[sessionID];
-    if (
-      currentFreshness?.fetchedAt != null &&
-      nextFetchedAt != null &&
-      nextFetchedAt < currentFreshness.fetchedAt
-    ) {
-      return;
-    }
-
-    const nextMessages: MessageWithParts[] = snapshot.messages
-      .filter((info): info is MessageInfo => Boolean(info?.id))
-      .map((info) => ({
-        info,
-        parts: sortById((snapshot.partsByMessageId[info.id] ?? []).filter((part): part is Part => Boolean(part?.id))),
-      }));
-    const existingMessageCount = getCachedTranscriptMessageCount(sessionID);
-
-    batch(() => {
-      setTranscriptFreshnessBySession((current) => ({
-        ...current,
-        [sessionID]: {
-          fetchedAt: nextFetchedAt,
-          staleAt: typeof snapshot.staleAt === "number" ? snapshot.staleAt : null,
-        },
-      }));
-
-      if (existingMessageCount > nextMessages.length) return;
-
-      setMessagesForSession(sessionID, nextMessages);
-
-      const requestedLimit = Math.max(snapshot.limit || 0, nextMessages.length);
-      const currentLimit = messageLimitBySession()[sessionID] ?? 0;
-      const effectiveLimit = Math.max(requestedLimit, currentLimit);
-      setMessageLimitBySession((current) => ({
-        ...current,
-        [sessionID]: effectiveLimit,
-      }));
-      setMessageCompleteBySession((current) => ({
-        ...current,
-        [sessionID]: nextMessages.length < effectiveLimit,
-      }));
-    });
-  }
-
-  function hasWarmTranscript(sessionID: string) {
-    return (store.messages[sessionID] ?? []).length > 0;
-  }
-
-  function getCachedTranscriptMessageCount(sessionID: string) {
-    return (store.messages[sessionID] ?? []).length;
-  }
-
-  function getCachedTranscriptMessages(sessionID: string) {
-    return store.messages[sessionID] ?? [];
-  }
-
-  function getTranscriptFreshness(sessionID: string) {
-    return transcriptFreshnessBySession()[sessionID] ?? null;
-  }
-
-  const transcriptIngestTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const backgroundTranscriptIngestTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const transcriptIngestInFlight = new Map<string, Promise<void>>();
-  const pendingTranscriptDeletedMessageIds = new Map<string, Set<string>>();
-  const pendingTranscriptDeletedPartsByMessageId = new Map<string, Map<string, Set<string>>>();
-  const TRANSCRIPT_INGEST_DEBOUNCE_MS = 600;
-  const BACKGROUND_TRANSCRIPT_INGEST_DEBOUNCE_MS = 2_500;
-
-  const transcriptIngestKey = (workspaceId: string, sessionID: string) => `${workspaceId}\0${sessionID}`;
-
-  const resolveTranscriptIngestWorkspaceId = (sourceWsId?: string | null) =>
-    sourceWsId?.trim() || options.routing.activeWorkspaceId().trim();
-
-  const resolveSessionIdForMessage = (messageID: string) => {
-    const id = messageID.trim();
-    if (!id) return "";
-    for (const [sessionID, messages] of Object.entries(store.messages)) {
-      if (messages.some((message) => message.id === id)) return sessionID;
-    }
-    return "";
-  };
-
-  const recordPendingTranscriptMessageDeletion = (
-    workspaceId: string,
-    sessionID: string,
-    messageID: string,
-  ) => {
-    const key = transcriptIngestKey(workspaceId, sessionID);
-    const id = messageID.trim();
-    if (!id) return;
-    const messages = pendingTranscriptDeletedMessageIds.get(key) ?? new Set<string>();
-    messages.add(id);
-    pendingTranscriptDeletedMessageIds.set(key, messages);
-    pendingTranscriptDeletedPartsByMessageId.get(key)?.delete(id);
-  };
-
-  const recordPendingTranscriptPartDeletion = (
-    workspaceId: string,
-    sessionID: string,
-    messageID: string,
-    partID: string,
-  ) => {
-    const key = transcriptIngestKey(workspaceId, sessionID);
-    const messageId = messageID.trim();
-    const partId = partID.trim();
-    if (!messageId || !partId) return;
-    let partsByMessage = pendingTranscriptDeletedPartsByMessageId.get(key);
-    if (!partsByMessage) {
-      partsByMessage = new Map<string, Set<string>>();
-      pendingTranscriptDeletedPartsByMessageId.set(key, partsByMessage);
-    }
-    const parts = partsByMessage.get(messageId) ?? new Set<string>();
-    parts.add(partId);
-    partsByMessage.set(messageId, parts);
-  };
-
-  const pendingTranscriptDeletionsForKey = (key: string) => {
-    const deletedMessageIds = [...(pendingTranscriptDeletedMessageIds.get(key) ?? new Set<string>())];
-    const deletedPartsByMessageId: Record<string, string[]> = {};
-    for (const [messageID, partIds] of pendingTranscriptDeletedPartsByMessageId.get(key) ?? new Map()) {
-      const values = [...partIds];
-      if (values.length > 0) deletedPartsByMessageId[messageID] = values;
-    }
-    return { deletedMessageIds, deletedPartsByMessageId };
-  };
-
-  const clearPendingTranscriptDeletions = (
-    key: string,
-    deletions: { deletedMessageIds?: string[]; deletedPartsByMessageId?: Record<string, string[]> },
-  ) => {
-    const messageSet = pendingTranscriptDeletedMessageIds.get(key);
-    for (const messageID of deletions.deletedMessageIds ?? []) {
-      messageSet?.delete(messageID);
-    }
-    if (messageSet && messageSet.size === 0) pendingTranscriptDeletedMessageIds.delete(key);
-
-    const partsByMessage = pendingTranscriptDeletedPartsByMessageId.get(key);
-    for (const [messageID, partIds] of Object.entries(deletions.deletedPartsByMessageId ?? {})) {
-      const partSet = partsByMessage?.get(messageID);
-      for (const partID of partIds) partSet?.delete(partID);
-      if (partSet && partSet.size === 0) partsByMessage?.delete(messageID);
-    }
-    if (partsByMessage && partsByMessage.size === 0) {
-      pendingTranscriptDeletedPartsByMessageId.delete(key);
-    }
-  };
-
-  const buildTranscriptIngestPayload = (
-    workspaceId: string,
-    sessionID: string,
-    reason: string,
-  ) => {
-    const activeWorkspaceId = options.routing.activeWorkspaceId().trim();
-    if (activeWorkspaceId && activeWorkspaceId !== workspaceId) return null;
-    const key = transcriptIngestKey(workspaceId, sessionID);
-    const pendingDeletions = pendingTranscriptDeletionsForKey(key);
-
-    const session = store.sessions.find((candidate) => candidate.id === sessionID) ?? null;
-    const directory = session
-      ? resolveSessionDirectory(session)
-      : normalizeDirectoryPath(options.activeWorkspaceRoot());
-    if (!workspaceId || !sessionID || !directory) return null;
-
-    const messagesForSession = sortMessagesByActivity(
-      (store.messages[sessionID] ?? []).filter((message): message is MessageInfo => Boolean(message?.id)),
-    );
-    const hasPendingDeletions =
-      pendingDeletions.deletedMessageIds.length > 0 ||
-      Object.keys(pendingDeletions.deletedPartsByMessageId).length > 0;
-    if (messagesForSession.length === 0 && !hasPendingDeletions) return null;
-
-    const partsByMessageId: Record<string, Part[]> = {};
-    for (const message of messagesForSession) {
-      partsByMessageId[message.id] = sortById(
-        (store.parts[message.id] ?? []).filter((part): part is Part => Boolean(part?.id)),
-      );
-    }
-
-    return {
-      workspaceId,
-      sessionId: sessionID,
-      directory,
-      limit: Math.max(messageLimitBySession()[sessionID] ?? 0, messagesForSession.length),
-      messages: messagesForSession,
-      partsByMessageId,
-      deletedMessageIds: pendingDeletions.deletedMessageIds,
-      deletedPartsByMessageId: pendingDeletions.deletedPartsByMessageId,
-      reason,
-    };
-  };
-
-  const flushTranscriptIngestion = (workspaceId: string, sessionID: string, reason: string) => {
-    const key = transcriptIngestKey(workspaceId, sessionID);
-    const timer = transcriptIngestTimers.get(key);
-    if (timer) {
-      clearTimeout(timer);
-      transcriptIngestTimers.delete(key);
-    }
-
-    const writer = options.appendTranscriptSnapshot;
-    if (!writer) return;
-    const payload = buildTranscriptIngestPayload(workspaceId, sessionID, reason);
-    if (!payload) return;
-
-    const previous = transcriptIngestInFlight.get(key) ?? Promise.resolve();
-    const run = previous
-      .catch(() => undefined)
-      .then(async () => {
-        await writer(payload);
-        clearPendingTranscriptDeletions(key, payload);
-      })
-      .catch((error) => {
-        sessionWarn("transcript-ingest:failed", {
-          workspaceId,
-          sessionID,
-          reason,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    const tracked = run.finally(() => {
-      if (transcriptIngestInFlight.get(key) === tracked) {
-        transcriptIngestInFlight.delete(key);
-      }
-    });
-    transcriptIngestInFlight.set(key, tracked);
-  };
-
-  const scheduleTranscriptIngestion = (
-    sessionID: string,
-    sourceWsId: string | undefined,
-    reason: string,
-    delayMs = TRANSCRIPT_INGEST_DEBOUNCE_MS,
-  ) => {
-    if (!options.appendTranscriptSnapshot) return;
-    const workspaceId = resolveTranscriptIngestWorkspaceId(sourceWsId);
-    if (!workspaceId || !sessionID) return;
-    const key = transcriptIngestKey(workspaceId, sessionID);
-    const existing = transcriptIngestTimers.get(key);
-    if (existing) clearTimeout(existing);
-    transcriptIngestTimers.set(
-      key,
-      setTimeout(() => flushTranscriptIngestion(workspaceId, sessionID, reason), delayMs),
-    );
-  };
-
-  const flushBackgroundTranscriptIngestion = async (
-    workspaceId: string,
-    sessionID: string,
-    reason: string,
-  ) => {
-    const key = transcriptIngestKey(workspaceId, sessionID);
-    const timer = backgroundTranscriptIngestTimers.get(key);
-    if (timer) {
-      clearTimeout(timer);
-      backgroundTranscriptIngestTimers.delete(key);
-    }
-
-    const writer = options.appendTranscriptSnapshot;
-    if (!writer) return;
-    const c = options.routing.client(workspaceId);
-    if (!c) return;
-
-    const previous = transcriptIngestInFlight.get(key) ?? Promise.resolve();
-    const run = previous
-      .catch(() => undefined)
-      .then(async () => {
-        const entry = options.routing.entry(workspaceId);
-        const session = applySessionDirectoryOverride(
-          unwrap(await withTimeout(c.session.get({ sessionID }), 8_000, "background session.get")),
-        );
-        const directory =
-          resolveSessionDirectory(session) ||
-          normalizeDirectoryPath(entry?.directory ?? "");
-        if (!directory) return;
-
-        const limit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, messageLimitBySession()[sessionID] ?? 0);
-        const transcript = unwrap(
-          await withTimeout(c.session.messages({ sessionID, limit }), 12_000, "background session.messages"),
-        ) as MessageWithParts[];
-        const messages = sortMessagesByActivity(
-          transcript
-            .map((message) => message.info)
-            .filter((info): info is MessageInfo => Boolean(info?.id)),
-        );
-        if (messages.length === 0) return;
-
-        const partsByMessageId: Record<string, Part[]> = {};
-        for (const message of transcript) {
-          if (!message.info?.id) continue;
-          partsByMessageId[message.info.id] = sortById(
-            message.parts.filter((part): part is Part => Boolean(part?.id)),
-          );
-        }
-
-        await writer({
-          workspaceId,
-          sessionId: sessionID,
-          directory,
-          limit: Math.max(limit, messages.length),
-          messages,
-          partsByMessageId,
-          reason,
-        });
-      })
-      .catch((error) => {
-        sessionWarn("background-transcript-ingest:failed", {
-          workspaceId,
-          sessionID,
-          reason,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    const tracked = run.finally(() => {
-      if (transcriptIngestInFlight.get(key) === tracked) {
-        transcriptIngestInFlight.delete(key);
-      }
-    });
-    transcriptIngestInFlight.set(key, tracked);
-    await tracked;
-  };
-
-  const scheduleBackgroundTranscriptIngestion = (
-    sessionID: string,
-    workspaceId: string,
-    reason: string,
-    delayMs = BACKGROUND_TRANSCRIPT_INGEST_DEBOUNCE_MS,
-  ) => {
-    if (!options.appendTranscriptSnapshot) return;
-    const normalizedWorkspaceId = workspaceId.trim();
-    const normalizedSessionId = sessionID.trim();
-    if (!normalizedWorkspaceId || !normalizedSessionId) return;
-    const key = transcriptIngestKey(normalizedWorkspaceId, normalizedSessionId);
-    const existing = backgroundTranscriptIngestTimers.get(key);
-    if (existing) clearTimeout(existing);
-    backgroundTranscriptIngestTimers.set(
-      key,
-      setTimeout(() => {
-        void flushBackgroundTranscriptIngestion(normalizedWorkspaceId, normalizedSessionId, reason);
-      }, delayMs),
-    );
-  };
-
-  onCleanup(() => {
-    for (const timer of transcriptIngestTimers.values()) clearTimeout(timer);
-    transcriptIngestTimers.clear();
-    for (const timer of backgroundTranscriptIngestTimers.values()) clearTimeout(timer);
-    backgroundTranscriptIngestTimers.clear();
-  });
-
-  async function selectSession(sessionID: string) {
-    const perfEnabled = options.developerMode();
-    options.setSelectedSessionId(sessionID);
-    options.setError(null);
-    const selectionKey = options.selectSessionScopeKey?.(sessionID)?.trim() || sessionID;
-
-    const existing = selectGuard.tryDedup(selectionKey);
-    if (existing) {
-      recordPerfLog(perfEnabled, "session.select", "dedupe join", {
-        sessionID,
-        selectionKey,
-      });
-      return existing;
-    }
-
-    const runId = ++selectRunCounter;
-    const version = selectGuard.nextVersion();
-    const startedAt = perfNow();
-    const mark = (event: string, payload?: Record<string, unknown>) => {
-      const elapsedMs = Math.round((perfNow() - startedAt) * 100) / 100;
-      recordPerfLog(perfEnabled, "session.select", event, {
-        runId,
-        sessionID,
-        selectionKey,
-        elapsedMs,
-        ...(payload ?? {}),
-      });
-    };
-    const isStale = () =>
-      version !== selectGuard.currentVersion() ||
-      options.selectedSessionId() !== sessionID ||
-      (options.selectSessionScopeKey?.(sessionID)?.trim() || sessionID) !== selectionKey;
-    const abortIfStale = (reason: string) => {
-      if (!isStale()) return false;
-      mark(`aborting: ${reason}`);
-      return true;
-    };
-
-    const run = (async () => {
-      mark("start");
-
-      const existingLimit = messageLimitBySession()[sessionID] ?? 0;
-      const requestLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, existingLimit);
-      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
-      const sessionClient = clientForSession(sessionID);
-      const c = sessionClient.client;
-      const readPolicy = sessionReadPolicy(sessionID, sessionClient.workspaceId);
-      const loadOfflineTranscriptFallback = async (reason: string) => {
-        mark("calling offline transcript fallback", {
-          limit: requestLimit,
-          reason,
-          activeWorkspaceId: readPolicy.activeWorkspaceId || null,
-          sessionWorkspaceId: readPolicy.sessionWorkspaceId || null,
-        });
-        let snapshot: VesloSessionTranscriptSnapshot | null = null;
-        try {
-          snapshot = (await options.loadOfflineTranscript?.(sessionID, requestLimit)) ?? null;
-        } catch (error) {
-          addError(error);
-          mark("offline transcript fallback failed", {
-            reason,
-            error: error instanceof Error ? error.message : safeStringify(error),
-          });
-          return false;
-        }
-        if (abortIfStale("selection changed before offline transcript applied")) return true;
-        if (snapshot) {
-          hydrateTranscriptSnapshot(snapshot);
-          setStore("todos", sessionID, []);
-          mark("offline transcript fallback done", {
-            count: snapshot.messages.length,
-            limit: requestLimit,
-            reason,
-          });
-          return true;
-        }
-        mark("offline transcript fallback unavailable", { reason });
-        return false;
-      };
-      mark("client check", {
-        hasClient: Boolean(c),
-        browseModeOnly: readPolicy.browseModeOnly,
-        browseFromDb: readPolicy.browseFromDb,
-        configuredBrowseFromDb: readPolicy.configuredBrowseFromDb,
-        foreignWorkspace: readPolicy.foreignWorkspace,
-        sessionID,
-        activeWorkspaceId: readPolicy.activeWorkspaceId || null,
-        sessionWorkspaceId: readPolicy.sessionWorkspaceId || null,
-      });
-      // VSLO-86 — in browse mode (engineReady=false), the user hasn't asked
-      // for the engine yet. Hitting `c.session.messages` here would force a
-      // 30-60s sandbox-exec cold spawn just so we could pull the same
-      // messages already cached locally. Fall through to the offline
-      // transcript instead so passive sidebar clicking stays free.
-      if (!c || readPolicy.browseFromDb) {
-        try {
-          await loadOfflineTranscriptFallback(!c ? "client unavailable" : "read policy");
-        } finally {
-          setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
-        }
-        return;
-      }
-      mark("calling session.messages", { limit: requestLimit });
-      let msgs: MessageWithParts[];
-      try {
-        msgs = unwrap(
-          await withTimeout(c.session.messages({ sessionID, limit: requestLimit }), 12000, "session.messages"),
-        );
-      } catch (error) {
-        mark("session.messages failed", {
-          error: error instanceof Error ? error.message : safeStringify(error),
-        });
-        if (isSessionNotFoundError(error)) {
-          const recovered = await loadOfflineTranscriptFallback("session not found");
-          if (recovered) return;
-        }
-        addError(error);
-        return;
-      }
-      mark("session.messages done", { limit: requestLimit, count: msgs.length });
-      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
-      if (abortIfStale("selection changed before messages applied")) return;
-      setMessagesForSession(sessionID, msgs);
-      setMessageLimitBySession((prev) => ({ ...prev, [sessionID]: requestLimit }));
-      setMessageCompleteBySession((prev) => ({ ...prev, [sessionID]: msgs.length < requestLimit }));
-
-      finishPerf(perfEnabled, "session.select", "complete", startedAt, {
-        runId,
-        sessionID,
-        messageCount: msgs.length,
-        todoCount: (store.todos[sessionID] ?? []).length,
-      });
-      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
-
-      void (async () => {
-        try {
-          mark("calling session.todo");
-          const list = unwrap(await withTimeout(c.session.todo({ sessionID }), 8000, "session.todo"));
-          mark("session.todo done");
-          if (abortIfStale("selection changed before todos applied")) return;
-          setStore("todos", sessionID, normalizeTodoItems(list));
-        } catch (error) {
-          mark("session.todo failed/timeout", {
-            error: error instanceof Error ? error.message : safeStringify(error),
-          });
-          if (abortIfStale("selection changed before todo fallback")) return;
-          setStore("todos", sessionID, []);
-        }
-
-        try {
-          mark("calling permission.list");
-          await withTimeout(refreshPendingPermissions(), 6000, "permission.list");
-          mark("permission.list done");
-          if (abortIfStale("selection changed before permissions applied")) return;
-        } catch (error) {
-          mark("permission.list failed/timeout", {
-            error: error instanceof Error ? error.message : safeStringify(error),
-          });
-        }
-      })();
-    })();
-
-    selectGuard.register(selectionKey, version, run);
-    try {
-      await run;
-    } finally {
-      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
-      selectGuard.cleanup(selectionKey, run);
-      options.onSessionLoadComplete?.();
-    }
-  }
-
-  async function loadEarlierMessages(sessionID: string, chunk = SESSION_MESSAGE_LOAD_CHUNK) {
-    if (!sessionID) return;
-    if (messageLoadBusyBySession()[sessionID]) return;
-    if (messageCompleteBySession()[sessionID]) return;
-
-    const currentLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, messageLimitBySession()[sessionID] ?? 0);
-    const nextLimit = currentLimit + Math.max(1, chunk);
-
-    setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
-    try {
-      const sessionClient = clientForSession(sessionID);
-      const c = sessionClient.client;
-      const readPolicy = sessionReadPolicy(sessionID, sessionClient.workspaceId);
-      const loadOfflineTranscriptFallback = async () => {
-        const snapshot = (await options.loadOfflineTranscript?.(sessionID, nextLimit)) ?? null;
-        if (!snapshot) return false;
-        hydrateTranscriptSnapshot(snapshot);
-        return true;
-      };
-      if (!c || readPolicy.browseFromDb) {
-        await loadOfflineTranscriptFallback();
-        return;
-      }
-      try {
-        const msgs = unwrap(
-          await withTimeout(c.session.messages({ sessionID, limit: nextLimit }), 12000, "session.messages"),
-        );
-        setMessagesForSession(sessionID, msgs);
-        setMessageLimitBySession((prev) => ({ ...prev, [sessionID]: nextLimit }));
-        setMessageCompleteBySession((prev) => ({ ...prev, [sessionID]: msgs.length < nextLimit }));
-      } catch (error) {
-        if (isSessionNotFoundError(error) && await loadOfflineTranscriptFallback()) {
-          return;
-        }
-        throw error;
-      }
-    } catch (error) {
-      addError(error);
-    } finally {
-      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
-    }
-  }
-
-  async function respondPermission(requestID: string, reply: "once" | "always" | "reject") {
-    // VSLO-171 F3Ú7b — route the reply to the per-workspace client that owns
-    // this permission. Falls back to active() if the permission has no
-    // workspaceId (single-active mode or pre-F3Ú7a state).
-    const perm = allPendingPermissions().find((p) => p.id === requestID)
-      ?? store.pendingPermissions.find((p) => p.id === requestID);
-    const c = perm?.workspaceId
-      ? options.routing.client(perm.workspaceId) ?? options.routing.active()
-      : options.routing.active();
-    if (!c || permissionReplyBusy()) return;
-
-    setPermissionReplyBusy(true);
-    options.setError(null);
-
-    try {
-      unwrap(await c.permission.reply({ requestID, reply }));
-      await refreshPendingPermissions();
-    } catch (e) {
-      addError(e);
-    } finally {
-      setPermissionReplyBusy(false);
-    }
-  }
-
-  async function respondQuestion(requestID: string, answers: string[][]) {
-    const question = allPendingQuestions().find((q) => q.id === requestID)
-      ?? store.pendingQuestions.find((q) => q.id === requestID);
-    const c = question?.workspaceId
-      ? options.routing.client(question.workspaceId)
-      : options.routing.active();
-    if (!c || questionReplyBusy()) return;
-
-    setQuestionReplyBusy(true);
-    options.setError(null);
-
-    try {
-      unwrap(await c.question.reply({ requestID, answers }));
-      await refreshPendingQuestions();
-    } catch (e) {
-      addError(e);
-    } finally {
-      setQuestionReplyBusy(false);
-    }
-  }
-
-  async function rejectQuestion(requestID: string) {
-    const question = allPendingQuestions().find((q) => q.id === requestID)
-      ?? store.pendingQuestions.find((q) => q.id === requestID);
-    const c = question?.workspaceId
-      ? options.routing.client(question.workspaceId)
-      : options.routing.active();
-    if (!c || questionReplyBusy()) return;
-
-    setQuestionReplyBusy(true);
-    options.setError(null);
-
-    try {
-      unwrap(await c.question.reject({ requestID }));
-      await refreshPendingQuestions();
-    } catch (e) {
-      addError(e);
-    } finally {
-      setQuestionReplyBusy(false);
-    }
-  }
 
   const setSessions = (next: Session[]) => {
     setStore("sessions", reconcile(sortSessionsByActivity(next), { key: "id" }));
@@ -1916,1016 +779,72 @@ export function createSessionStore(options: {
     setStore("todos", id, next);
   };
 
-  const setPendingPermissions = (next: PendingPermission[]) => {
-    setStore("pendingPermissions", next);
-  };
-
-  const setPendingQuestions = (next: PendingQuestion[]) => {
-    setStore("pendingQuestions", next);
-  };
-
-  const activePermission = createMemo(() => {
-    const id = options.selectedSessionId();
-    if (id) {
-      const scoped = store.pendingPermissions.find((perm) => perm.sessionID === id) ?? null;
-      if (scoped) return scoped;
-    } else {
-      return null;
-    }
-    // VSLO-171 — with a real session selected, surface permissions from any
-    // workspace, preferring the active one so the dialog isn't surprising.
-    const all = allPendingPermissions();
-    if (all.length > 0) {
-      const activeWsId = options.routing.activeWorkspaceId();
-      const fromActive = all.find((p) => p.workspaceId === activeWsId);
-      return fromActive ?? all[0];
-    }
-    return store.pendingPermissions[0] ?? null;
+  const eventStreamController = createSessionEventStreamController({
+    store,
+    setStore: setStore as any,
+    routing: options.routing,
+    client: options.client,
+    activeWorkspaceRoot: options.activeWorkspaceRoot,
+    selectedSessionId: options.selectedSessionId,
+    developerMode: options.developerMode,
+    setError: options.setError,
+    setSseConnected: options.setSseConnected,
+    onHotReloadApplied: options.onHotReloadApplied,
+    onReconnectNotice: options.onReconnectNotice,
+    onAssistantResponseObserved: options.onAssistantResponseObserved,
+    sessionDebugEnabled,
+    sessionWarn,
+    recordSessionStatusTrace,
+    readStatusForSession,
+    setSessionStatusForWorkspace,
+    notifySessionBusy,
+    workspaceSessionIds,
+    applySessionDirectoryOverride,
+    resolveSessionDirectory,
+    appendSessionErrorTurn,
+    setCommandDisplay,
+    recordSyntheticContinueDiagnostic,
+    maybeMarkReloadRequired,
+    maybeHandleInvalidToolError,
+    maybeHandleChromeMcpCompletedError,
+    resolveTranscriptIngestWorkspaceId,
+    resolveSessionIdForMessage,
+    recordPendingTranscriptMessageDeletion,
+    recordPendingTranscriptPartDeletion,
+    scheduleTranscriptIngestion,
+    scheduleBackgroundTranscriptIngestion,
+    messageLimitBySession,
+    setMessagesForSession,
+    setMessageLimitBySession,
+    setMessageCompleteBySession,
+    refreshPendingPermissions,
+    refreshPendingQuestions,
+    withTimeout,
+    isWorkspaceRuntimeReady,
+    isActiveWorkspaceRuntimeReady,
   });
+  eventStreamController.startEventStreams();
 
-  const activeQuestion = createMemo(() => {
-    const id = options.selectedSessionId();
-    if (id) {
-      const scoped = store.pendingQuestions.find((q) => q.sessionID === id) ?? null;
-      if (scoped) return scoped;
-      const scopedFromAnyWorkspace = allPendingQuestions().find((q) => q.sessionID === id) ?? null;
-      if (scopedFromAnyWorkspace) return scopedFromAnyWorkspace;
-    } else {
-      return null;
-    }
-    const all = allPendingQuestions();
-    if (all.length > 0) {
-      const activeWsId = options.routing.activeWorkspaceId();
-      const fromActive = all.find((q) => q.workspaceId === activeWsId);
-      return fromActive ?? all[0];
-    }
-    return store.pendingQuestions[0] ?? null;
+  const workspaceCacheController = createSessionWorkspaceCacheController({
+    store,
+    setStore: setStore as any,
+    routing: options.routing,
+    selectedSessionId: options.selectedSessionId,
+    setSelectedSessionId: options.setSelectedSessionId,
+    workspaceSessionIds,
+    messageLimitBySession,
+    setMessageLimitBySession,
+    messageCompleteBySession,
+    setMessageCompleteBySession,
+    setMessageLoadBusyBySession,
+    transcriptFreshnessBySession,
+    setTranscriptFreshnessBySession,
   });
-
-  const [questionReplyBusy, setQuestionReplyBusy] = createSignal(false);
-  let lastPartDebugEventAt = 0;
-  let suppressedPartDebugEvents = 0;
-
-  const appendDebugEvent = (event: { type: string; properties?: unknown }) => {
-    setStore("events", (current) => {
-      const next = [event, ...current];
-      return next.slice(0, 150);
-    });
-  };
-
-  const compactDebugEvent = (event: OpencodeEvent) => {
-    if (event.type === "message.part.updated") {
-      const record = event.properties as Record<string, unknown> | undefined;
-      const part = record?.part as Part | undefined;
-      const delta = typeof record?.delta === "string" ? record.delta : "";
-      const textLength =
-        part?.type === "text" && typeof (part as { text?: unknown }).text === "string"
-          ? String((part as { text?: string }).text).length
-          : null;
-      return {
-        type: event.type,
-        properties: {
-          sessionID: part?.sessionID ?? null,
-          messageID: part?.messageID ?? null,
-          partID: part?.id ?? null,
-          partType: part?.type ?? null,
-          deltaLength: delta.length,
-          textLength,
-        },
-      };
-    }
-
-    return {
-      type: event.type,
-      properties: event.properties,
-    };
-  };
-
-  // Track session IDs that belong to the current workspace so we can
-  // reject SSE events for sessions from other workspaces. Populated by
-  // loadSessions() and session creation; cleared on workspace switch
-  // (when the client changes and the SSE subscription reconnects).
-  const isKnownSessionId = (sessionID: string): boolean => {
-    if (workspaceSessionIds.has(sessionID)) return true;
-    // Also accept if the session is already in the store (e.g. just created)
-    if (store.sessions.some((s) => s.id === sessionID)) {
-      workspaceSessionIds.add(sessionID);
-      return true;
-    }
-    // The currently-selected session is the user's active context. Accept
-    // its events even if workspaceSessionIds is briefly out of sync — for
-    // example right after an engine reload, when the SSE reconnect clears
-    // workspaceSessionIds before loadSessions() repopulates it. Without
-    // this, session.status / session.idle events get dropped and the run
-    // indicator hangs at "thinking" forever.
-    if (sessionID === options.selectedSessionId()) {
-      workspaceSessionIds.add(sessionID);
-      return true;
-    }
-    return false;
-  };
-
-  const applyBackgroundWorkspaceEvent = (event: OpencodeEvent, workspaceId: string) => {
-    if (!workspaceId || !event.properties || typeof event.properties !== "object") return;
-    const record = event.properties as Record<string, unknown>;
-    const sessionID = extractSessionId(record);
-
-    if (event.type === "session.status" && sessionID) {
-      const normalized = normalizeSessionStatus(record.status);
-      recordSessionStatusTrace("background-sse-session-status", {
-        sessionId: sessionID,
-        status: normalized,
-        sourceWorkspaceId: workspaceId,
-        previous: readStatusForSession(sessionID, workspaceId),
-      });
-      setSessionStatusForWorkspace(sessionID, normalized, workspaceId);
-      notifySessionBusy(sessionID, normalized, workspaceId);
-      return;
-    }
-
-    if ((event.type === "session.idle" || event.type === "session.error") && sessionID) {
-      recordSessionStatusTrace("background-sse-session-idle", {
-        sessionId: sessionID,
-        status: "idle",
-        sourceWorkspaceId: workspaceId,
-        previous: readStatusForSession(sessionID, workspaceId),
-      });
-      setSessionStatusForWorkspace(sessionID, "idle", workspaceId);
-      notifySessionBusy(sessionID, "idle", workspaceId);
-      scheduleBackgroundTranscriptIngestion(sessionID, workspaceId, event.type, 0);
-      return;
-    }
-
-    if (event.type === "message.updated") {
-      const info = record.info as Message | undefined;
-      const targetSessionID = info?.sessionID?.trim() || sessionID;
-      if (!targetSessionID) return;
-      if ((info as { role?: string } | undefined)?.role === "assistant") {
-        options.onAssistantResponseObserved?.(targetSessionID);
-      }
-      scheduleBackgroundTranscriptIngestion(targetSessionID, workspaceId, "background message.updated");
-      return;
-    }
-
-    if (event.type === "message.part.updated") {
-      const part = record.part as Part | undefined;
-      const targetSessionID = part?.sessionID?.trim() || sessionID;
-      if (!targetSessionID) return;
-      scheduleBackgroundTranscriptIngestion(targetSessionID, workspaceId, "background message.part.updated");
-      return;
-    }
-
-    if (event.type === "message.removed" && sessionID) {
-      scheduleBackgroundTranscriptIngestion(sessionID, workspaceId, "background message.removed", 0);
-      return;
-    }
-
-    if (event.type === "message.part.removed" && sessionID) {
-      scheduleBackgroundTranscriptIngestion(sessionID, workspaceId, "background message.part.removed", 0);
-      return;
-    }
-
-    if (event.type === "permission.asked" || event.type === "permission.replied") {
-      void refreshPendingPermissions();
-      return;
-    }
-
-    if (
-      event.type === "question.asked" ||
-      event.type === "question.replied" ||
-      event.type === "question.rejected"
-    ) {
-      void refreshPendingQuestions();
-    }
-  };
-
-  const applyEvent = async (event: OpencodeEvent, sourceWsId: string = "") => {
-    // VSLO-86 F4Ú12 — SSE multiplex: each per-workspace stream tags events
-    // with its source workspace id. Background workspaces (source !== active)
-    // skip mutation of the single active-workspace store. The "" source is
-    // the legacy fallback stream (no per-WS routing entries yet) and behaves
-    // like the global stream did before multiplex.
-    if (sourceWsId) {
-      const activeWsId = options.routing.activeWorkspaceId();
-      if (activeWsId && sourceWsId !== activeWsId) {
-        // Background event for a non-active workspace. Keep runtime status,
-        // permission/question prompts, and durable transcript ingestion current,
-        // but do not merge background message parts into the single visible
-        // active-session store.
-        applyBackgroundWorkspaceEvent(event, sourceWsId);
-        return;
-      }
-    }
-
-    if (event.type === "server.connected") {
-      options.setSseConnected(true);
-    }
-
-    if (options.developerMode()) {
-      const compact = compactDebugEvent(event);
-      if (event.type === "message.part.updated") {
-        const now = Date.now();
-        if (now - lastPartDebugEventAt < 250) {
-          suppressedPartDebugEvents += 1;
-        } else {
-          lastPartDebugEventAt = now;
-          if (suppressedPartDebugEvents > 0) {
-            compact.properties = {
-              ...(compact.properties ?? {}),
-              suppressed: suppressedPartDebugEvents,
-            };
-            suppressedPartDebugEvents = 0;
-          }
-          appendDebugEvent(compact);
-        }
-      } else {
-        if (suppressedPartDebugEvents > 0) {
-          appendDebugEvent({
-            type: "message.part.updated.sample",
-            properties: { suppressed: suppressedPartDebugEvents },
-          });
-          suppressedPartDebugEvents = 0;
-        }
-        appendDebugEvent(compact);
-      }
-    }
-
-    if (event.type === "session.updated" || event.type === "session.created") {
-      if (event.properties && typeof event.properties === "object") {
-        const record = event.properties as Record<string, unknown>;
-        if (record.info && typeof record.info === "object") {
-          const info = applySessionDirectoryOverride(record.info as Session);
-          // Validate that the session's directory belongs to the active workspace
-          // before accepting it into the store.
-          const root = normalizeDirectoryPath(options.activeWorkspaceRoot());
-          const sessionDir = resolveSessionDirectory(info);
-          if (root && sessionDir && !sessionDirectoryMatchesRoot(sessionDir, root)) {
-            sessionWarn("session.updated:ignored:wrong-workspace", {
-              sessionID: info.id,
-              sessionDir,
-              activeRoot: root,
-            });
-            return;
-          }
-          workspaceSessionIds.add(info.id);
-          setStore("sessions", (current) => upsertSession(current, info));
-        }
-      }
-    }
-
-    if (event.type === "session.deleted") {
-      if (event.properties && typeof event.properties === "object") {
-        const record = event.properties as Record<string, unknown>;
-        const info = record.info as Session | undefined;
-        if (info?.id) {
-          const removedMessageIDs = (store.messages[info.id] ?? []).map((message) => message.id);
-          syntheticContinueEventTimesBySession.delete(info.id);
-          syntheticContinueLoopLastWarnAtBySession.delete(info.id);
-          setStore("sessions", (current) => removeSession(current, info.id));
-          if (removedMessageIDs.length > 0) {
-            setStore(
-              "commandDisplayByMessageID",
-              produce((draft: Record<string, string>) => {
-                removedMessageIDs.forEach((messageID) => {
-                  delete draft[messageID];
-                });
-              }),
-            );
-          }
-          setStore(
-            produce((draft: StoreState) => {
-              delete draft.sessionErrorTurns[info.id];
-            }),
-          );
-        }
-      }
-    }
-
-    if (event.type === "session.status") {
-      if (event.properties && typeof event.properties === "object") {
-        const record = event.properties as Record<string, unknown>;
-        const sessionID = extractSessionId(record);
-        if (sessionID && isKnownSessionId(sessionID)) {
-          const normalized = normalizeSessionStatus(record.status);
-          recordSessionStatusTrace("sse-session-status", {
-            sessionId: sessionID,
-            status: normalized,
-            sourceWorkspaceId: sourceWsId ?? null,
-            previous: readStatusForSession(sessionID, sourceWsId),
-          });
-          setSessionStatusForWorkspace(sessionID, normalized, sourceWsId);
-          notifySessionBusy(sessionID, normalized, sourceWsId);
-          if (sessionID === options.selectedSessionId() && normalized !== "idle") {
-            options.setError(null);
-          }
-        }
-      }
-    }
-
-    if (event.type === "session.idle") {
-      if (event.properties && typeof event.properties === "object") {
-        const record = event.properties as Record<string, unknown>;
-        const sessionID = extractSessionId(record);
-        if (sessionID && isKnownSessionId(sessionID)) {
-          recordSessionStatusTrace("sse-session-idle", {
-            sessionId: sessionID,
-            status: "idle",
-            sourceWorkspaceId: sourceWsId ?? null,
-            previous: readStatusForSession(sessionID, sourceWsId),
-          });
-          setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
-          notifySessionBusy(sessionID, "idle", sourceWsId);
-          // VSLO-171.F3Ú6: SSE event handler will dispatch on per-workspace
-          // client (from event payload workspaceId) once SSE multiplex lands.
-          const c = sourceWsId
-            ? options.routing.client(sourceWsId) ?? options.client()
-            : options.client();
-          if (c) {
-            try {
-              const latest = applySessionDirectoryOverride(unwrap(await c.session.get({ sessionID })));
-              setStore("sessions", (current) => upsertSession(current, latest));
-            } catch {
-              // ignore
-            }
-          }
-          scheduleTranscriptIngestion(sessionID, sourceWsId, "session.idle", 0);
-        }
-      }
-    }
-
-    if (event.type === "opencode.hotreload.applied") {
-      options.onHotReloadApplied?.();
-    }
-
-    if (event.type === "session.error") {
-      if (event.properties && typeof event.properties === "object") {
-        const record = event.properties as Record<string, unknown>;
-        const sessionID = extractSessionId(record);
-        if (sessionID) {
-          setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
-          notifySessionBusy(sessionID, "idle", sourceWsId);
-        }
-        const errorObj = record.error as Record<string, unknown> | undefined;
-        if (errorObj) {
-          const errorName = typeof errorObj.name === "string" ? errorObj.name : "UnknownError";
-          if (errorName === "MessageAbortedError") {
-            // Cancellation is a user-driven control flow. Don't treat it as a
-            // fatal error banner; the session UI already provides local UX.
-            if (!sessionID) {
-              options.setError(null);
-            }
-            return;
-          }
-          if (sessionID) {
-            appendSessionErrorTurn(sessionID, addOpencodeCacheHint(formatSessionError(errorObj)));
-          } else {
-            options.setError(addOpencodeCacheHint(formatSessionError(errorObj)));
-          }
-          return;
-        }
-
-        const fallback = truncateErrorField(record.error, 700) ?? "An unexpected error occurred";
-        if (sessionID) {
-          appendSessionErrorTurn(sessionID, addOpencodeCacheHint(fallback));
-        } else {
-          options.setError(addOpencodeCacheHint(fallback));
-        }
-      }
-    }
-
-    if (event.type === "message.updated") {
-      if (event.properties && typeof event.properties === "object") {
-        const record = event.properties as Record<string, unknown>;
-        if (record.info && typeof record.info === "object") {
-          const info = record.info as Message;
-          if (!isKnownSessionId(info.sessionID)) return;
-          setStore("messages", info.sessionID, (current = []) => upsertMessageInfo(current, info));
-          if ((info as { role?: string }).role === "assistant") {
-            options.onAssistantResponseObserved?.(info.sessionID);
-          }
-          scheduleTranscriptIngestion(info.sessionID, sourceWsId, "message.updated");
-        }
-      }
-    }
-
-    if (event.type === "message.removed") {
-      if (event.properties && typeof event.properties === "object") {
-        const record = event.properties as Record<string, unknown>;
-        const sessionID = extractSessionId(record);
-        const messageID = typeof record.messageID === "string" ? record.messageID : null;
-        if (sessionID && messageID) {
-          const workspaceId = resolveTranscriptIngestWorkspaceId(sourceWsId);
-          if (workspaceId && isKnownSessionId(sessionID)) {
-            recordPendingTranscriptMessageDeletion(workspaceId, sessionID, messageID);
-          }
-          setStore("messages", sessionID, (current = []) => removeMessageInfo(current, messageID));
-          setStore("parts", messageID, []);
-          setStore(
-            "commandDisplayByMessageID",
-            produce((draft: Record<string, string>) => {
-              delete draft[messageID];
-            }),
-          );
-          if (workspaceId && isKnownSessionId(sessionID)) {
-            scheduleTranscriptIngestion(sessionID, sourceWsId, "message.removed", 0);
-          }
-        }
-      }
-    }
-
-    if (event.type === "command.executed") {
-      if (event.properties && typeof event.properties === "object") {
-        const record = event.properties as Record<string, unknown>;
-        const messageID = typeof record.messageID === "string" ? record.messageID.trim() : "";
-        const name = typeof record.name === "string" ? record.name : "";
-        const args = typeof record.arguments === "string" ? record.arguments : "";
-        setCommandDisplay(messageID, name, args);
-      }
-    }
-
-    if (event.type === "message.part.updated") {
-      if (event.properties && typeof event.properties === "object") {
-        const record = event.properties as Record<string, unknown>;
-        if (record.part && typeof record.part === "object") {
-          const part = record.part as Part;
-
-          // Drop events for sessions that don't belong to the active workspace.
-          // This prevents cross-workspace message leakage through the shared SSE stream.
-          if (!isKnownSessionId(part.sessionID)) {
-            sessionWarn("message.part.updated:ignored:unknown-session", {
-              sessionID: part.sessionID,
-              messageID: part.messageID,
-              partID: part.id,
-            });
-            return;
-          }
-
-          const delta = typeof record.delta === "string" ? record.delta : null;
-          const partUpdatedStartedAt = perfNow();
-
-          setStore(
-            produce((draft: StoreState) => {
-              const list = draft.messages[part.sessionID] ?? [];
-              if (!list.find((message) => message.id === part.messageID)) {
-                draft.messages[part.sessionID] = upsertMessageInfo(list, createPlaceholderMessage(part));
-              }
-
-              const parts = draft.parts[part.messageID] ?? [];
-              const existingIndex = parts.findIndex((item) => item.id === part.id);
-
-              if (delta && part.type === "text" && existingIndex !== -1) {
-                const existing = parts[existingIndex] as Part & { text?: string };
-                if (typeof existing.text === "string" && !existing.text.endsWith(delta)) {
-                  const next = { ...existing, text: `${existing.text}${delta}` } as Part;
-                  parts[existingIndex] = next;
-                  draft.parts[part.messageID] = parts;
-                  return;
-                }
-              }
-
-              draft.parts[part.messageID] = upsertPartInfo(parts, part);
-            }),
-          );
-          const resolvedPart =
-            store.parts[part.messageID]?.find((item) => item.id === part.id) ??
-            part;
-          recordSyntheticContinueDiagnostic(resolvedPart);
-          const partUpdatedMs = Math.round((perfNow() - partUpdatedStartedAt) * 100) / 100;
-          if (sessionDebugEnabled() && (partUpdatedMs >= 8 || (delta?.length ?? 0) >= 120)) {
-            const textLength =
-              part.type === "text" && typeof (part as { text?: unknown }).text === "string"
-                ? String((part as { text?: string }).text).length
-                : null;
-            recordPerfLog(true, "session.event", "message.part.updated", {
-              sessionID: part.sessionID,
-              messageID: part.messageID,
-              partID: part.id,
-              partType: part.type,
-              deltaLength: delta?.length ?? 0,
-              textLength,
-              ms: partUpdatedMs,
-            });
-          }
-          maybeMarkReloadRequired(part);
-          maybeHandleInvalidToolError(part);
-          maybeHandleChromeMcpCompletedError(resolvedPart);
-          scheduleTranscriptIngestion(part.sessionID, sourceWsId, "message.part.updated");
-        }
-      }
-    }
-
-    if (event.type === "message.part.removed") {
-      if (event.properties && typeof event.properties === "object") {
-        const record = event.properties as Record<string, unknown>;
-        const sessionID = extractSessionId(record);
-        const messageID = typeof record.messageID === "string" ? record.messageID : null;
-        const partID = typeof record.partID === "string" ? record.partID : null;
-        if (messageID && partID) {
-          const resolvedSessionID = sessionID || resolveSessionIdForMessage(messageID);
-          const workspaceId = resolveTranscriptIngestWorkspaceId(sourceWsId);
-          if (workspaceId && resolvedSessionID && isKnownSessionId(resolvedSessionID)) {
-            recordPendingTranscriptPartDeletion(workspaceId, resolvedSessionID, messageID, partID);
-          }
-          setStore("parts", messageID, (current = []) => removePartInfo(current, partID));
-          if (resolvedSessionID && isKnownSessionId(resolvedSessionID)) {
-            scheduleTranscriptIngestion(resolvedSessionID, sourceWsId, "message.part.removed");
-          }
-        }
-      }
-    }
-
-    if (event.type === "todo.updated") {
-      if (event.properties && typeof event.properties === "object") {
-        const record = event.properties as Record<string, unknown>;
-        const sessionID = extractSessionId(record);
-        if (sessionID && isKnownSessionId(sessionID) && Array.isArray(record.todos)) {
-          setStore("todos", sessionID, normalizeTodoItems(record.todos));
-        }
-      }
-    }
-
-    if (event.type === "permission.asked" || event.type === "permission.replied") {
-      try {
-        await refreshPendingPermissions();
-      } catch {
-        // ignore
-      }
-    }
-
-    if (
-      event.type === "question.asked" ||
-      event.type === "question.replied" ||
-      event.type === "question.rejected"
-    ) {
-      try {
-        await refreshPendingQuestions();
-      } catch {
-        // ignore
-      }
-    }
-  };
-
-  // VSLO-86 F4Ú12 — SSE multiplex. Each ensured per-workspace client gets its
-  // own SSE stream tagged with `sourceWsId`. The active workspace's stream
-  // mutates the single store as before; background streams' events early-exit
-  // in `applyEvent`. Falls back to a single stream on the legacy global client
-  // signal when no per-WS entries exist yet (boot, single-active path).
-  const setupSseStream = (sourceWsId: string, c: RoutingClient): (() => void) => {
-    let cancelled = false;
-    let reconnectAttempt = 0;
-    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-    let wasConnected = false;
-    let outageEpisode = clearOutageEpisode();
-
-    let queue: Array<OpencodeEvent | undefined> = [];
-    const coalesced = new Map<string, number>();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let last = 0;
-    let queueStartedAt = 0;
-    let peakQueueDepth = 0;
-    let queueHasPartUpdates = false;
-    let coalescedReplaced = 0;
-
-    const keyForEvent = (event: OpencodeEvent) => {
-      if (event.type === "session.status" || event.type === "session.idle") {
-        const record = event.properties as Record<string, unknown> | undefined;
-        const sessionID = record ? (extractSessionId(record) ?? "") : "";
-        return sessionID ? `${event.type}:${sessionID}` : undefined;
-      }
-      if (event.type === "message.part.updated") {
-        const record = event.properties as Record<string, unknown> | undefined;
-        const part = record?.part as Part | undefined;
-        if (part?.messageID && part.id) {
-          return `message.part.updated:${part.messageID}:${part.id}`;
-        }
-      }
-      if (event.type === "todo.updated") {
-        const record = event.properties as Record<string, unknown> | undefined;
-        const sessionID = record ? (extractSessionId(record) ?? "") : "";
-        return sessionID ? `todo.updated:${sessionID}` : undefined;
-      }
-      return undefined;
-    };
-
-    const flush = () => {
-      if (timer) clearTimeout(timer);
-      timer = undefined;
-
-      const eventsToApply = queue;
-      queue = [];
-      coalesced.clear();
-      if (eventsToApply.length === 0) return;
-
-      const queueWaitMs = queueStartedAt > 0 ? Date.now() - queueStartedAt : 0;
-      queueStartedAt = 0;
-      const peakDepth = peakQueueDepth;
-      peakQueueDepth = 0;
-      queueHasPartUpdates = false;
-      const replaced = coalescedReplaced;
-      coalescedReplaced = 0;
-
-      last = Date.now();
-      const startedAt = perfNow();
-      let applied = 0;
-      let partUpdates = 0;
-      let messageUpdates = 0;
-      batch(() => {
-        for (const event of eventsToApply) {
-          if (!event) continue;
-          if (event.type === "message.part.updated") partUpdates += 1;
-          if (event.type === "message.updated") messageUpdates += 1;
-          applied += 1;
-          void applyEvent(event, sourceWsId);
-        }
-      });
-
-      const elapsedMs = Math.round((perfNow() - startedAt) * 100) / 100;
-      const dropped = eventsToApply.length - applied;
-      if (
-        sessionDebugEnabled() &&
-        (elapsedMs >= 10 || queueWaitMs >= 40 || peakDepth >= 25 || applied >= 30 || dropped >= 12)
-      ) {
-        recordPerfLog(true, "session.sse", "flush", {
-          queued: eventsToApply.length,
-          applied,
-          dropped,
-          queueWaitMs,
-          peakQueueDepth: peakDepth,
-          coalescedReplaced: replaced,
-          messageUpdates,
-          partUpdates,
-          ms: elapsedMs,
-        });
-      }
-    };
-
-    const schedule = () => {
-      if (timer) return;
-      const elapsed = Date.now() - last;
-      const interval = queueHasPartUpdates ? 48 : 16;
-      timer = setTimeout(flush, Math.max(0, interval - elapsed));
-    };
-
-    const markOutageAndMaybeNotify = () => {
-      if (!outageEpisode.active) {
-        outageEpisode = beginOutageEpisode(store.sessionStatus);
-        recordPerfLog(sessionDebugEnabled(), "session.sse", "outage-started", {
-          runningSessions: outageEpisode.runningSessionIds.length,
-        });
-      }
-
-      if (shouldShowReconnecting(outageEpisode)) {
-        options.onReconnectNotice?.("reconnecting");
-        outageEpisode = { ...outageEpisode, shownReconnecting: true };
-      }
-    };
-
-    const runReconnectCatchup = async () => {
-      if (!outageEpisode.active) return;
-      if (!outageEpisode.hadRunningSessions) {
-        outageEpisode = clearOutageEpisode();
-        return;
-      }
-
-      const sessionIds = outageEpisode.runningSessionIds.slice();
-      recordPerfLog(sessionDebugEnabled(), "session.sse", "catchup-start", {
-        sessions: sessionIds.length,
-      });
-
-      for (const sessionID of sessionIds) {
-        if (!sessionID) continue;
-
-        try {
-          const fetched = unwrap(await c.session.get({ sessionID })) as Record<string, unknown>;
-          const normalized = normalizeSessionStatus(fetched?.status);
-          setSessionStatusForWorkspace(sessionID, normalized, sourceWsId);
-          notifySessionBusy(sessionID, normalized, sourceWsId);
-        } catch {
-          setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
-          notifySessionBusy(sessionID, "idle", sourceWsId);
-          continue;
-        }
-
-        try {
-          const limit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, messageLimitBySession()[sessionID] ?? 0);
-          const msgs = unwrap(
-            await withTimeout(c.session.messages({ sessionID, limit }), 12000, "session.messages"),
-          );
-          setMessagesForSession(sessionID, msgs);
-          setMessageLimitBySession((prev) => ({ ...prev, [sessionID]: limit }));
-          setMessageCompleteBySession((prev) => ({ ...prev, [sessionID]: msgs.length < limit }));
-        } catch {
-          // fail soft per session
-        }
-
-        try {
-          const list = unwrap(await withTimeout(c.session.todo({ sessionID }), 8000, "session.todo"));
-          setStore("todos", sessionID, normalizeTodoItems(list));
-        } catch {
-          // fail soft per session
-        }
-      }
-
-      try {
-        await withTimeout(refreshPendingPermissions(), 6000, "permission.list");
-      } catch {
-        // ignore
-      }
-
-      try {
-        await withTimeout(refreshPendingQuestions(), 6000, "question.list");
-      } catch {
-        // ignore
-      }
-
-      if (shouldShowReconnected(outageEpisode)) {
-        options.onReconnectNotice?.("reconnected");
-        outageEpisode = { ...outageEpisode, shownReconnected: true };
-      }
-
-      recordPerfLog(sessionDebugEnabled(), "session.sse", "catchup-complete", {
-        sessions: sessionIds.length,
-      });
-      outageEpisode = clearOutageEpisode();
-    };
-
-    const connectSse = async (controller: AbortController) => {
-      try {
-        // VSLO-86 — when running under Tauri, route SSE through the Rust-side
-        // proxy (engineSseSubscribe) so the stream doesn't hold an
-        // `fetch_read_body` invoke on the Tauri http plugin's IPC channel.
-        // That pending invoke was starving paralel short requests (sidebar
-        // session listing across workspaces), surfacing as 60s timeouts. The
-        // SDK path is kept as a fallback for non-Tauri runtimes.
-        const entry = sourceWsId ? options.routing.entry(sourceWsId) : null;
-        const sub = await (isEngineSseAvailable() && entry?.baseUrl
-          ? engineSseSubscribe({
-              workspaceId: sourceWsId,
-              baseUrl: entry.baseUrl,
-              directory: entry.directory ?? null,
-              ...engineSseAuthOptions(entry.auth),
-              signal: controller.signal,
-            })
-          : c.event.subscribe(undefined, { signal: controller.signal }));
-        let yielded = Date.now();
-        let lastArrivalAt = Date.now();
-
-        // Reset reconnect counter on successful connection
-        const isReconnection = wasConnected;
-        wasConnected = true;
-        reconnectAttempt = 0;
-        recordPerfLog(sessionDebugEnabled(), "session.sse", "connected");
-
-        // After SSE reconnection, resync running-at-outage sessions so missed
-        // updates while disconnected are reflected in the local store.
-        if (isReconnection) {
-          await runReconnectCatchup();
-        }
-
-        for await (const raw of sub.stream) {
-          if (cancelled) break;
-
-          const event = normalizeEvent(raw);
-          if (!event) continue;
-
-          const arrivedAt = Date.now();
-          const arrivalGapMs = arrivedAt - lastArrivalAt;
-          lastArrivalAt = arrivedAt;
-          if (sessionDebugEnabled() && arrivalGapMs >= 220) {
-            recordPerfLog(true, "session.sse", "arrival-gap", {
-              ms: arrivalGapMs,
-              type: event.type,
-            });
-          }
-
-          const key = keyForEvent(event);
-          if (key) {
-            const existing = coalesced.get(key);
-            if (existing !== undefined) {
-              if (queue[existing] !== undefined) {
-                coalescedReplaced += 1;
-              }
-              queue[existing] = undefined;
-            }
-            coalesced.set(key, queue.length);
-          }
-
-          if (queue.length === 0) {
-            queueStartedAt = Date.now();
-          }
-          if (event.type === "message.part.updated") {
-            queueHasPartUpdates = true;
-          }
-          queue.push(event);
-          if (queue.length > peakQueueDepth) {
-            peakQueueDepth = queue.length;
-          }
-          schedule();
-
-          if (Date.now() - yielded < 8) continue;
-          yielded = Date.now();
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        }
-
-        // Stream ended normally - attempt reconnect unless cancelled
-        if (!cancelled) {
-          options.setSseConnected(false);
-          recordPerfLog(sessionDebugEnabled(), "session.sse", "stream-ended");
-          scheduleReconnect(controller);
-        }
-      } catch (e) {
-        if (cancelled) return;
-        if (controller.signal.aborted) return;
-
-        const message = e instanceof Error ? e.message : String(e);
-        const activeWs = options.routing.activeWorkspaceId();
-        if (shouldReleaseStaleWorkspaceRoute(sourceWsId, activeWs, message)) {
-          options.routing.release(sourceWsId);
-          sessionWarn("sse:released-stale-route", {
-            workspaceId: sourceWsId,
-            error: truncateErrorField(message),
-          });
-          recordPerfLog(sessionDebugEnabled(), "session.sse", "released-stale-route", {
-            workspaceId: sourceWsId,
-            error: truncateErrorField(message),
-          });
-          return;
-        }
-
-        // Mark SSE as disconnected and schedule reconnect
-        options.setSseConnected(false);
-        recordPerfLog(sessionDebugEnabled(), "session.sse", "stream-error", {
-          error: message,
-        });
-        scheduleReconnect(controller);
-      }
-    };
-
-    const scheduleReconnect = (oldController: AbortController) => {
-      if (cancelled) return;
-      if (reconnectTimer) return;
-      markOutageAndMaybeNotify();
-      oldController.abort();
-
-      // Exponential backoff: 1s, 2s, 4s, 8s, 16s, max 30s
-      reconnectAttempt++;
-      const delay = Math.min(1000 * Math.pow(2, reconnectAttempt - 1), 30000);
-      recordPerfLog(sessionDebugEnabled(), "session.sse", "reconnect-scheduled", {
-        attempt: reconnectAttempt,
-        delayMs: delay,
-      });
-
-      reconnectTimer = setTimeout(() => {
-        if (cancelled) return;
-        reconnectTimer = undefined;
-        const newController = new AbortController();
-        void connectSse(newController);
-      }, delay);
-    };
-
-    const controller = new AbortController();
-    void connectSse(controller);
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      flush();
-    };
-  };
-
-  createEffect(() => {
-    // VSLO-86 F4Ú12 — outer effect tracks routing.entryIds() so streams
-    // re-fan-out when workspaces are ensured/released. Falls back to the
-    // global client signal so the legacy single-active boot path keeps
-    // working before any workspace has been routing.ensure()'d.
-    const entryIds = options.routing.entryIds();
-    const fallback = options.client();
-
-    const targets: Array<{ wsId: string; client: RoutingClient }> = [];
-    if (entryIds.length > 0) {
-      for (const wsId of entryIds) {
-        if (!isWorkspaceRuntimeReady(wsId)) continue;
-        const c = options.routing.client(wsId);
-        if (c) targets.push({ wsId, client: c });
-      }
-    } else if (fallback && isActiveWorkspaceRuntimeReady()) {
-      targets.push({ wsId: "", client: fallback });
-    }
-
-    // Targets changed → workspace registry shifted (switch, ensure, release).
-    // Clear the active-workspace session ID set so stale events from the
-    // previous active workspace are rejected until loadSessions() repopulates.
-    workspaceSessionIds.clear();
-
-    if (targets.length === 0) {
-      options.setSseConnected(false);
-      return;
-    }
-
-    const cleanups: Array<() => void> = [];
-    for (const target of targets) {
-      cleanups.push(setupSseStream(target.wsId, target.client));
-    }
-
-    onCleanup(() => {
-      for (const cleanup of cleanups) cleanup();
-    });
-  });
-
-  // VSLO-171 F3Ú6a — per-workspace cache snapshot/restore helpers. In single-
-  // active routing mode these are no-ops; in multi mode app.tsx wires them to
-  // a createEffect on activeWorkspaceId so each switch saves the outgoing
-  // workspace state and loads the incoming one.
-  const selectedSessionIdForSnapshot = () => {
-    const selectedSessionId = options.selectedSessionId()?.trim() ?? "";
-    if (!selectedSessionId) return null;
-    return store.sessions.some((session) => session.id === selectedSessionId) ? selectedSessionId : null;
-  };
-
-  const pickSnapshotRecord = <T,>(
-    record: Record<string, T>,
-    keys: ReadonlySet<string>,
-  ): Record<string, T> => {
-    const next: Record<string, T> = {};
-    for (const [key, value] of Object.entries(record)) {
-      if (keys.has(key)) next[key] = value;
-    }
-    return next;
-  };
-
-  const saveWorkspaceSnapshot = (workspaceId: string) => {
-    if (!workspaceId) return;
-    const sessionIds = new Set(store.sessions.map((session) => session.id).filter(Boolean));
-    const messagesForSnapshot = pickSnapshotRecord(store.messages, sessionIds);
-    const messageIds = new Set<string>();
-    for (const messages of Object.values(messagesForSnapshot)) {
-      for (const message of messages) {
-        if (message.id) messageIds.add(message.id);
-      }
-    }
-    perWorkspaceCache.set(workspaceId, {
-      workspaceId,
-      sessions: store.sessions.slice(),
-      sessionStatus: pickSessionStatusSnapshot(store.sessionStatus, workspaceId, sessionIds),
-      sessionErrorTurns: pickSnapshotRecord(store.sessionErrorTurns, sessionIds),
-      messages: messagesForSnapshot,
-      parts: pickSnapshotRecord(store.parts, messageIds),
-      messageLimitBySession: pickSnapshotRecord(messageLimitBySession(), sessionIds),
-      messageCompleteBySession: pickSnapshotRecord(messageCompleteBySession(), sessionIds),
-      transcriptFreshnessBySession: pickSnapshotRecord(transcriptFreshnessBySession(), sessionIds),
-      todos: pickSnapshotRecord(store.todos, sessionIds),
-      pendingPermissions: store.pendingPermissions.slice(),
-      pendingQuestions: store.pendingQuestions.slice(),
-      selectedSessionId: selectedSessionIdForSnapshot(),
-      lastUsed: Date.now(),
-    });
-    pruneWorkspaceSnapshotCache([workspaceId]);
-  };
-
-  const loadWorkspaceSnapshot = (workspaceId: string): boolean => {
-    if (!workspaceId) return false;
-    const snapshot = perWorkspaceCache.get(workspaceId);
-    if (!snapshot) return false;
-    setStore(
-      reconcile(
-        {
-          sessions: snapshot.sessions,
-          sessionStatus: snapshot.sessionStatus,
-          sessionErrorTurns: snapshot.sessionErrorTurns,
-          messages: snapshot.messages,
-          parts: snapshot.parts,
-          // commandDisplay + events are session-debug surfaces, not cached.
-          commandDisplayByMessageID: {},
-          todos: snapshot.todos,
-          pendingPermissions: snapshot.pendingPermissions,
-          pendingQuestions: snapshot.pendingQuestions,
-          events: [],
-        },
-        { merge: false }
-      )
-    );
-    setMessageLimitBySession({ ...(snapshot.messageLimitBySession ?? {}) });
-    setMessageCompleteBySession({ ...(snapshot.messageCompleteBySession ?? {}) });
-    setMessageLoadBusyBySession({});
-    setTranscriptFreshnessBySession({ ...(snapshot.transcriptFreshnessBySession ?? {}) });
-    workspaceSessionIds.clear();
-    for (const s of snapshot.sessions) workspaceSessionIds.add(s.id);
-    const snapshotSelectedSessionId = snapshot.selectedSessionId?.trim() ?? "";
-    const selectedSessionId =
-      snapshotSelectedSessionId && snapshot.sessions.some((session) => session.id === snapshotSelectedSessionId)
-        ? snapshotSelectedSessionId
-        : null;
-    options.setSelectedSessionId(selectedSessionId);
-    snapshot.selectedSessionId = selectedSessionId;
-    snapshot.lastUsed = Date.now();
-    pruneWorkspaceSnapshotCache([workspaceId]);
-    return true;
-  };
-
-  const clearWorkspaceSnapshot = (workspaceId: string) => {
-    perWorkspaceCache.delete(workspaceId);
-  };
+  const {
+    saveWorkspaceSnapshot,
+    loadWorkspaceSnapshot,
+    clearWorkspaceSnapshot,
+  } = workspaceCacheController;
 
   return {
     sessions,

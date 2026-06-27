@@ -43,10 +43,24 @@ const APP_IDENTIFIERS = [
   'com.differentai.openwork',
   'com.differentai.openwork.dev',
 ] as const;
+const MANAGED_CHILD_PROCESS_NAMES = [
+  'veslo-server.exe',
+  'veslo-orchestrator.exe',
+  'veslo-code-router.exe',
+  'veslo-code.exe',
+] as const;
 
 let appProcess: ChildProcess | null = null;
 let appProcessOwnedByHarness = false;
 let managedAiGatewayFixture: ManagedAiGatewayFixture | null = null;
+let fixtureCleanupPromise: Promise<void> | null = null;
+let appProcessExitPromise: Promise<AppProcessExit> | null = null;
+let resolveAppProcessExit: ((result: AppProcessExit) => void) | null = null;
+
+type AppProcessExit = {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+};
 
 type TerminateAppProcessOptions = {
   platform?: NodeJS.Platform;
@@ -176,6 +190,44 @@ function childHasExited(child: ChildProcess): boolean {
   return child.exitCode !== null || child.signalCode !== null;
 }
 
+export function buildWindowsManagedChildCleanupScript(parentProcessId: number): string {
+  const names = MANAGED_CHILD_PROCESS_NAMES.map((name) => `'${name.replaceAll("'", "''")}'`).join(',');
+  return [
+    '$ErrorActionPreference = "SilentlyContinue";',
+    `$targetParentPid = ${parentProcessId};`,
+    `$names = @(${names});`,
+    '$children = @(Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq $targetParentPid -and $names -contains $_.Name });',
+    'foreach ($child in $children) { Stop-Process -Id $child.ProcessId -Force -ErrorAction SilentlyContinue; }',
+    'Write-Output $children.Count;',
+  ].join(' ');
+}
+
+async function stopManagedChildProcessesForParent(parentProcessId: number | undefined): Promise<number> {
+  if (process.platform !== 'win32' || !parentProcessId) return 0;
+
+  const script = buildWindowsManagedChildCleanupScript(parentProcessId);
+  return new Promise((resolveCleanup) => {
+    const child = spawn('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-WindowStyle',
+      'Hidden',
+      '-Command',
+      script,
+    ], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+    });
+    const output: Uint8Array[] = [];
+    child.stdout?.on('data', (chunk: Uint8Array) => output.push(chunk));
+    child.on('error', () => resolveCleanup(0));
+    child.on('exit', () => {
+      const count = Number.parseInt(Buffer.concat(output).toString().trim(), 10);
+      resolveCleanup(Number.isFinite(count) ? count : 0);
+    });
+  });
+}
+
 export async function terminateAppProcess(
   child: ChildProcess,
   options: TerminateAppProcessOptions = {},
@@ -241,6 +293,7 @@ export function createAppLaunchEnv(
   const platform = options.platform ?? process.platform;
   const joinForPlatform = platform === 'win32' ? win32.join : posix.join;
   const vesloDataDir = joinForPlatform(options.opencodeHome, '.veslo');
+  const vesloAppConfigDir = joinForPlatform(vesloDataDir, 'app-config');
   const vesloAppDataDir = joinForPlatform(vesloDataDir, 'app-data');
   const vesloAppLocalDataDir = joinForPlatform(vesloDataDir, 'app-local-data');
   const denApiBase = options.denApiBase?.trim().replace(/\/+$/, '') ?? '';
@@ -251,6 +304,7 @@ export function createAppLaunchEnv(
     TAURI_PILOT_SOCKET: pilotSocket,
     OPENCODE_HOME: options.opencodeHome,
     VESLO_DATA_DIR: vesloDataDir,
+    VESLO_APP_CONFIG_DIR: vesloAppConfigDir,
     VESLO_APP_DATA_DIR: vesloAppDataDir,
     VESLO_APP_LOCAL_DATA_DIR: vesloAppLocalDataDir,
     VESLO_DEN_AUTH_SNAPSHOT_PATH: options.snapshotPath,
@@ -547,6 +601,16 @@ async function stopManagedAiGatewayFixtureIfRunning(): Promise<void> {
   await stopManagedAiGatewayFixture(fixture);
 }
 
+async function cleanupStartedFixtures(): Promise<void> {
+  fixtureCleanupPromise ??= (async () => {
+    await stopManagedAiGatewayFixtureIfRunning();
+    await stopSkillRegistryFixture();
+  })().finally(() => {
+    fixtureCleanupPromise = null;
+  });
+  return fixtureCleanupPromise;
+}
+
 export async function ensureWebDriverReady(
   _port: number = DEFAULT_WEBDRIVER_PORT,
   _timeout: number = Math.min(5_000, LAUNCH_TIMEOUT),
@@ -679,6 +743,9 @@ export async function startApp(port?: number): Promise<void> {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   appProcessOwnedByHarness = true;
+  appProcessExitPromise = new Promise<AppProcessExit>((resolveExit) => {
+    resolveAppProcessExit = resolveExit;
+  });
 
   appProcess.stdout?.on('data', (data: Buffer) => {
     process.stdout.write(`[app:stdout] ${data}`);
@@ -691,16 +758,25 @@ export async function startApp(port?: number): Promise<void> {
     console.log(`[e2e] App process exited with code ${code}${signal ? ` signal ${signal}` : ''}`);
     appProcess = null;
     appProcessOwnedByHarness = false;
+    resolveAppProcessExit?.({ code, signal });
+    resolveAppProcessExit = null;
+    void cleanupStartedFixtures().catch((error) => {
+      console.warn(`[e2e] Failed to clean up fixtures after app exit: ${error instanceof Error ? error.message : String(error)}`);
+    });
   });
+}
+
+export async function waitForAppExit(): Promise<AppProcessExit | null> {
+  return appProcessExitPromise ? await appProcessExitPromise : null;
 }
 
 export async function stopApp(): Promise<void> {
   if (!appProcessOwnedByHarness || !appProcess) {
-    await stopManagedAiGatewayFixtureIfRunning();
-    await stopSkillRegistryFixture();
+    await cleanupStartedFixtures();
     return;
   }
   const processToStop = appProcess;
+  const processToStopPid = processToStop.pid;
   console.log(`[e2e] Stopping app process (PID ${processToStop.pid})...`);
 
   const result = await terminateAppProcess(processToStop);
@@ -711,8 +787,11 @@ export async function stopApp(): Promise<void> {
   if (!result.exited) {
     console.warn(`[e2e] App process PID ${processToStop.pid} did not exit after termination request.`);
   }
-  await stopManagedAiGatewayFixtureIfRunning();
-  await stopSkillRegistryFixture();
+  const stoppedChildren = await stopManagedChildProcessesForParent(processToStopPid);
+  if (stoppedChildren > 0) {
+    console.log(`[e2e] Stopped ${stoppedChildren} managed child process${stoppedChildren === 1 ? '' : 'es'} from app PID ${processToStopPid}.`);
+  }
+  await cleanupStartedFixtures();
 }
 
 /** Utility for HashRouter-based URL assertions (just the fragment). */
