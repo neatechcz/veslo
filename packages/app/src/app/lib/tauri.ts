@@ -601,6 +601,20 @@ export async function workspaceAddAuthorizedRoot(input: {
   });
 }
 
+export async function workspaceGrantFolderAccess(input: {
+  workspacePath: string;
+  requestedPath: string;
+  selectedFolderPath: string;
+  accessMode: "read";
+}): Promise<ExecResult> {
+  return invoke<ExecResult>("workspace_grant_folder_access", {
+    workspacePath: input.workspacePath,
+    requestedPath: input.requestedPath,
+    selectedFolderPath: input.selectedFolderPath,
+    accessMode: input.accessMode,
+  });
+}
+
 export async function workspaceExportConfig(input: {
   workspaceId: string;
   outputPath: string;
