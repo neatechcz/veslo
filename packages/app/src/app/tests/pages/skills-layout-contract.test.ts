@@ -50,6 +50,30 @@ test("skills page receives app-wide skill inventory props", () => {
   assert.match(dashboardSource, /refreshSkillInventory=\{props\.refreshSkillInventory\}/);
 });
 
+test("skills page exposes foreign-agent skill import without a scope picker", () => {
+  assert.match(source, /skillImportCandidates:\s*VesloSkillImportCandidate\[\]/);
+  assert.match(source, /refreshSkillImportCandidates:\s*\(options\?: \{ force\?: boolean \}\) => void/);
+  assert.match(source, /importSkillCandidates:\s*\(candidateIds: string\[\]\) => Promise<SkillSaveResult>/);
+  assert.match(dashboardSource, /skillImportCandidates:\s*VesloSkillImportCandidate\[\]/);
+  assert.match(dashboardSource, /skillImportCandidates=\{props\.skillImportCandidates\}/);
+  assert.match(appSource, /\bskillImportCandidates,\s*[\s\S]*\brefreshSkillImportCandidates,\s*[\s\S]*\bimportSkillCandidates,/);
+  assert.match(source, /translate\("skills\.import_from_agents"\)/);
+  assert.match(source, /data-testid="skills-import-open"/);
+  assert.match(source, /const \[skillImportSourceFilter, setSkillImportSourceFilter\] = createSignal<SkillImportSourceFilter>\("all"\)/);
+  assert.match(source, /candidate\.sourceAgent === skillImportSourceFilter\(\)/);
+  assert.match(source, /targetLabelForImportCandidate/);
+  assert.match(source, /translate\("skills\.import_target_user"\)/);
+  assert.match(source, /translate\("skills\.import_target_workspace"/);
+  assert.doesNotMatch(source, /selectedImportScope/);
+  assert.doesNotMatch(source, /setSelectedImportScope/);
+  for (const localeSource of [enSource, csSource, zhSource]) {
+    assert.match(localeSource, /"skills\.import_from_agents":/);
+    assert.match(localeSource, /"skills\.import_source_codex":/);
+    assert.match(localeSource, /"skills\.import_target_user":/);
+    assert.match(localeSource, /"skills\.import_target_workspace":/);
+  }
+});
+
 test("skills page wires remove and restore skill instance actions through app props", () => {
   assert.match(source, /removeSkillInstance:\s*\(target: SkillMutationTarget\) => Promise<SkillSaveResult>/);
   assert.match(source, /batchRemoveSkillInstances:\s*\(targets: SkillMutationTarget\[\]\) => Promise<SkillSaveResult>/);

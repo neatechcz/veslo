@@ -9,6 +9,11 @@ import type {
   SkillSaveResult,
 } from "../types";
 import type { WorkspaceInfo } from "../lib/tauri";
+import type {
+  VesloSkillImportCandidate,
+  VesloSkillImportSourceAgent,
+  VesloSkillImportStatus,
+} from "../lib/veslo-server";
 
 import Button from "../components/button";
 import ModalShell from "../components/modal-shell";
@@ -54,6 +59,8 @@ type InstallResult = { ok: boolean; message: string };
 type ActionSkillCard = SkillCard & { mutationTarget: SkillMutationTarget };
 type InventoryViewMode = "cards" | "table";
 type InventoryScopeFilter = "all" | SkillInstance["scope"];
+type SkillImportSourceFilter = "all" | VesloSkillImportSourceAgent;
+type SkillImportStatusFilter = "all" | VesloSkillImportStatus;
 type WorkspaceInstallAction = {
   name: string;
   source: "detail" | "selection";
@@ -112,11 +119,14 @@ export type SkillsViewProps = {
   accessHint?: string | null;
   refreshSkills: (options?: { force?: boolean }) => void;
   refreshSkillInventory: (options?: { force?: boolean }) => void;
+  refreshSkillImportCandidates: (options?: { force?: boolean }) => void;
   refreshHubSkills: (options?: { force?: boolean }) => void;
   skills: SkillCard[];
   skillsStatus: string | null;
   skillInventory: SkillInventoryItem[];
   skillInventoryStatus: string | null;
+  skillImportCandidates: VesloSkillImportCandidate[];
+  skillImportStatus: string | null;
   hubSkills: HubSkillCard[];
   hubSkillsStatus: string | null;
   workspaces: WorkspaceInfo[];
@@ -134,6 +144,7 @@ export type SkillsViewProps = {
   restoreSkillInstance: (target: SkillMutationTarget) => Promise<SkillSaveResult>;
   copySkillInstanceToGlobal: (target: SkillMutationTarget, options?: { deleteSource?: boolean }) => Promise<SkillSaveResult>;
   copySkillInstanceToWorkspace: (target: SkillMutationTarget, workspaceId: string) => Promise<SkillSaveResult>;
+  importSkillCandidates: (candidateIds: string[]) => Promise<SkillSaveResult>;
   createSessionAndOpen: () => void;
   setPrompt: (value: string) => void;
 };
@@ -213,6 +224,12 @@ export default function SkillsView(props: SkillsViewProps) {
   const [inventoryIncludeDeleted, setInventoryIncludeDeleted] = createSignal(false);
   const [inventoryViewMode, setInventoryViewMode] = createSignal<InventoryViewMode>("cards");
   const [selectedInventoryIds, setSelectedInventoryIds] = createSignal<SkillInventorySelectionId[]>([]);
+  const [skillImportOpen, setSkillImportOpen] = createSignal(false);
+  const [skillImportSearch, setSkillImportSearch] = createSignal("");
+  const [skillImportSourceFilter, setSkillImportSourceFilter] = createSignal<SkillImportSourceFilter>("all");
+  const [skillImportStatusFilter, setSkillImportStatusFilter] = createSignal<SkillImportStatusFilter>("all");
+  const [selectedSkillImportIds, setSelectedSkillImportIds] = createSignal<string[]>([]);
+  const [skillImportBusy, setSkillImportBusy] = createSignal(false);
 
   const [installLinkOpen, setInstallLinkOpen] = createSignal(false);
   const [installLinkUrl, setInstallLinkUrl] = createSignal("");
@@ -541,6 +558,100 @@ export default function SkillsView(props: SkillsViewProps) {
     const allowed = new Set(currentInventorySelectionIds());
     setSelectedInventoryIds((prev) => prev.filter((id) => allowed.has(id)));
   });
+
+  createEffect(() => {
+    const allowed = new Set(props.skillImportCandidates.map((candidate) => candidate.id));
+    setSelectedSkillImportIds((prev) => prev.filter((id) => allowed.has(id)));
+  });
+
+  const skillImportSourceOptions: SkillImportSourceFilter[] = ["all", "codex", "claude", "opencode", "agents"];
+  const skillImportStatusOptions: SkillImportStatusFilter[] = ["all", "ready", "needs-review", "conflict", "invalid"];
+
+  const importSourceLabel = (source: SkillImportSourceFilter) => {
+    if (source === "codex") return translate("skills.import_source_codex");
+    if (source === "claude") return translate("skills.import_source_claude");
+    if (source === "opencode") return translate("skills.import_source_opencode");
+    if (source === "agents") return translate("skills.import_source_agents");
+    return translate("skills.import_source_all");
+  };
+
+  const importStatusLabel = (status: SkillImportStatusFilter) => {
+    if (status === "ready") return translate("skills.import_status_ready");
+    if (status === "needs-review") return translate("skills.import_status_needs_review");
+    if (status === "conflict") return translate("skills.import_status_conflict");
+    if (status === "invalid") return translate("skills.import_status_invalid");
+    return translate("skills.import_status_all");
+  };
+
+  const targetLabelForImportCandidate = (candidate: VesloSkillImportCandidate) =>
+    candidate.target.scope === "user-global"
+      ? translate("skills.import_target_user")
+      : translate("skills.import_target_workspace", { workspace: candidate.target.workspaceName });
+
+  const canImportCandidate = (candidate: VesloSkillImportCandidate) =>
+    candidate.status === "ready" || candidate.status === "needs-review";
+
+  const filteredSkillImportCandidates = createMemo(() => {
+    const query = skillImportSearch().trim().toLowerCase();
+    return props.skillImportCandidates.filter((candidate) => {
+      const sourceMatches = skillImportSourceFilter() === "all" || candidate.sourceAgent === skillImportSourceFilter();
+      const statusMatches = skillImportStatusFilter() === "all" || candidate.status === skillImportStatusFilter();
+      const queryMatches =
+        !query ||
+        candidate.name.toLowerCase().includes(query) ||
+        candidate.description.toLowerCase().includes(query) ||
+        candidate.sourcePath.toLowerCase().includes(query);
+      return sourceMatches && statusMatches && queryMatches;
+    });
+  });
+
+  const selectedSkillImportIdSet = createMemo(() => new Set(selectedSkillImportIds()));
+  const selectedImportableSkillIds = createMemo(() =>
+    filteredSkillImportCandidates()
+      .filter((candidate) => selectedSkillImportIdSet().has(candidate.id) && canImportCandidate(candidate))
+      .map((candidate) => candidate.id)
+  );
+
+  const toggleSkillImportSelection = (candidate: VesloSkillImportCandidate, checked: boolean) => {
+    if (!canImportCandidate(candidate)) return;
+    setSelectedSkillImportIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(candidate.id);
+      else next.delete(candidate.id);
+      return [...next];
+    });
+  };
+
+  const openSkillImport = () => {
+    setSkillImportOpen(true);
+    props.refreshSkillImportCandidates({ force: true });
+  };
+
+  const closeSkillImport = () => {
+    if (skillImportBusy()) return;
+    setSkillImportOpen(false);
+  };
+
+  const confirmSkillImport = async () => {
+    const ids = selectedImportableSkillIds();
+    if (ids.length === 0 || skillImportBusy()) {
+      if (ids.length === 0) setToast(translate("skills.import_select_candidate"));
+      return;
+    }
+    setSkillImportBusy(true);
+    try {
+      const result = await props.importSkillCandidates(ids);
+      setToast(result.message ?? translate(result.ok ? "skills.import_success_count" : "skills.import_failed_count", { count: String(ids.length) }));
+      if (result.ok) {
+        setSelectedSkillImportIds([]);
+        setSkillImportOpen(false);
+      }
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : translate("skills.import_failed_count", { count: "1" }));
+    } finally {
+      setSkillImportBusy(false);
+    }
+  };
 
   const toggleInventorySelection = (id: SkillInventorySelectionId, checked: boolean) => {
     setSelectedInventoryIds((prev) => {
@@ -1754,6 +1865,21 @@ export default function SkillsView(props: SkillsViewProps) {
           <Link2 size={14} />
           {translate("skills.install_from_link")}
         </button>
+        <button
+          type="button"
+          data-testid="skills-import-open"
+          onClick={openSkillImport}
+          disabled={props.busy}
+          class={`font-product type-ui-xs flex items-center gap-1.5 px-3 py-1.5 font-medium rounded-lg transition-colors border ${
+            props.busy
+              ? "border-dls-border bg-dls-hover text-dls-secondary"
+              : "border-dls-border bg-dls-surface text-dls-text hover:bg-dls-active"
+          }`}
+          title={translate("skills.import_from_agents")}
+        >
+          <Upload size={14} />
+          {translate("skills.import_from_agents")}
+        </button>
       </div>
 
       <Show when={props.accessHint}>
@@ -2172,6 +2298,176 @@ export default function SkillsView(props: SkillsViewProps) {
           </div>
         </Show>
       </div>
+
+      <ModalShell
+        open={skillImportOpen()}
+        onClose={closeSkillImport}
+        layer="elevated"
+        backdrop="medium"
+        size="lg"
+        class="max-h-[calc(100vh-2rem)] bg-dls-surface"
+      >
+        <div data-testid="skills-import-modal" class="flex max-h-[calc(100vh-2rem)] min-h-0 flex-col">
+          <header class="shrink-0 border-b border-dls-border px-6 py-5">
+            <div class="flex items-start justify-between gap-4">
+              <div class="min-w-0">
+                <h3 class="font-product type-title-md font-semibold text-dls-text">
+                  {translate("skills.import_from_agents")}
+                </h3>
+                <p class="font-reading type-ui-sm mt-1 text-dls-secondary">
+                  {translate("skills.import_from_agents_desc")}
+                </p>
+              </div>
+              <button
+                type="button"
+                class="rounded-lg border border-dls-border bg-gray-2 p-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label={translate("common.close")}
+                onClick={closeSkillImport}
+                disabled={skillImportBusy()}
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </header>
+
+          <div class="shrink-0 border-b border-dls-border px-6 py-4">
+            <div class="flex flex-wrap items-center gap-3">
+              <div class="relative">
+                <Search size={14} class="absolute left-3 top-1/2 -translate-y-1/2 text-dls-secondary" />
+                <input
+                  type="text"
+                  value={skillImportSearch()}
+                  onInput={(event) => setSkillImportSearch(event.currentTarget.value)}
+                  placeholder={translate("skills.import_search_placeholder")}
+                  class="font-reading type-ui-sm w-64 rounded-lg border border-dls-border bg-dls-hover py-1.5 pl-9 pr-4 focus:outline-none"
+                />
+              </div>
+              <select
+                value={skillImportSourceFilter()}
+                aria-label={translate("skills.import_source_filter")}
+                class="font-product type-ui-xs rounded-lg border border-dls-border bg-dls-surface px-2 py-1.5 text-dls-text"
+                onChange={(event) => setSkillImportSourceFilter(event.currentTarget.value as SkillImportSourceFilter)}
+              >
+                <For each={skillImportSourceOptions}>
+                  {(source) => <option value={source}>{importSourceLabel(source)}</option>}
+                </For>
+              </select>
+              <select
+                value={skillImportStatusFilter()}
+                aria-label={translate("skills.import_status_filter")}
+                class="font-product type-ui-xs rounded-lg border border-dls-border bg-dls-surface px-2 py-1.5 text-dls-text"
+                onChange={(event) => setSkillImportStatusFilter(event.currentTarget.value as SkillImportStatusFilter)}
+              >
+                <For each={skillImportStatusOptions}>
+                  {(status) => <option value={status}>{importStatusLabel(status)}</option>}
+                </For>
+              </select>
+              <button
+                type="button"
+                class="font-product type-ui-xs inline-flex items-center gap-1.5 rounded-lg border border-dls-border bg-dls-surface px-2.5 py-1.5 text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text"
+                onClick={() => props.refreshSkillImportCandidates({ force: true })}
+                disabled={skillImportBusy()}
+              >
+                <RefreshCw size={13} />
+                {translate("skills.refresh")}
+              </button>
+            </div>
+          </div>
+
+          <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+            <Show when={props.skillImportStatus}>
+              <div class="mb-3 rounded-lg border border-dls-border bg-dls-hover px-3 py-2 type-ui-xs text-dls-secondary">
+                {props.skillImportStatus}
+              </div>
+            </Show>
+            <Show
+              when={filteredSkillImportCandidates().length}
+              fallback={
+                <div class="rounded-lg border border-dls-border bg-dls-hover px-4 py-5 type-ui-sm text-dls-secondary">
+                  {translate("skills.import_no_candidates")}
+                </div>
+              }
+            >
+              <div class="space-y-2">
+                <For each={filteredSkillImportCandidates()}>
+                  {(candidate) => {
+                    const importable = () => canImportCandidate(candidate);
+                    const selected = () => selectedSkillImportIdSet().has(candidate.id);
+                    return (
+                      <label
+                        class={`flex items-start gap-3 rounded-lg border px-4 py-3 ${
+                          importable()
+                            ? "border-dls-border bg-dls-surface hover:bg-dls-hover"
+                            : "border-dls-border bg-dls-hover opacity-75"
+                        }`}
+                        data-testid="skills-import-candidate"
+                        data-skill-import-source={candidate.sourceAgent}
+                        data-skill-import-status={candidate.status}
+                      >
+                        <input
+                          type="checkbox"
+                          class="mt-1"
+                          checked={selected()}
+                          disabled={!importable() || skillImportBusy()}
+                          onChange={(event) => toggleSkillImportSelection(candidate, event.currentTarget.checked)}
+                        />
+                        <div class="min-w-0 flex-1">
+                          <div class="flex flex-wrap items-center gap-2">
+                            <span class="font-product type-ui-md font-semibold text-dls-text">{candidate.name}</span>
+                            <span class="rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 type-ui-xs text-dls-secondary">
+                              {importSourceLabel(candidate.sourceAgent)}
+                            </span>
+                            <span class="rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 type-ui-xs text-dls-secondary">
+                              {importStatusLabel(candidate.status)}
+                            </span>
+                          </div>
+                          <Show when={candidate.description}>
+                            <p class="mt-1 font-reading type-ui-sm text-dls-secondary">{candidate.description}</p>
+                          </Show>
+                          <div class="mt-2 flex flex-wrap gap-2 type-ui-xs text-dls-secondary">
+                            <span>{targetLabelForImportCandidate(candidate)}</span>
+                            <span class="truncate">{candidate.sourcePath}</span>
+                          </div>
+                          <Show when={candidate.conflict?.message ?? candidate.warnings[0]}>
+                            {(message) => (
+                              <div class="mt-2 rounded-md border border-amber-7/40 bg-amber-3/20 px-2 py-1 type-ui-xs text-amber-11">
+                                {message()}
+                              </div>
+                            )}
+                          </Show>
+                        </div>
+                      </label>
+                    );
+                  }}
+                </For>
+              </div>
+            </Show>
+          </div>
+
+          <footer class="shrink-0 border-t border-dls-border px-6 py-4">
+            <div class="flex items-center justify-between gap-3">
+              <span class="font-product type-ui-xs text-dls-secondary">
+                {translate("skills.selected_count", { count: String(selectedImportableSkillIds().length) })}
+              </span>
+              <div class="flex justify-end gap-2">
+                <Button variant="outline" onClick={closeSkillImport} disabled={skillImportBusy()}>
+                  {translate("common.cancel")}
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={confirmSkillImport}
+                  disabled={skillImportBusy() || selectedImportableSkillIds().length === 0}
+                >
+                  <Show when={skillImportBusy()} fallback={translate("skills.import_selected")}>
+                    <Loader2 size={14} class="animate-spin" />
+                    {translate("skills.importing_selected")}
+                  </Show>
+                </Button>
+              </div>
+            </div>
+          </footer>
+        </div>
+      </ModalShell>
 
       <Show when={installTargetSkill()}>
         {(skill) => (

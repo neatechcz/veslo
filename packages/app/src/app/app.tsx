@@ -5083,6 +5083,8 @@ export default function App() {
     skillsStatus,
     skillInventory,
     skillInventoryStatus,
+    skillImportCandidates,
+    skillImportStatus,
     hubSkills,
     hubSkillsStatus,
     hubMcpCards,
@@ -5102,6 +5104,7 @@ export default function App() {
     isPluginInstalledByName,
     refreshSkills,
     refreshSkillInventory,
+    refreshSkillImportCandidates,
     refreshHubSkills,
     refreshHubMcp,
     refreshPlugins,
@@ -5122,6 +5125,7 @@ export default function App() {
     restoreSkillInstance,
     copySkillInstanceToGlobal,
     copySkillInstanceToWorkspace,
+    importSkillCandidates,
     abortRefreshes,
   } = extensionsStore;
 
@@ -12776,6 +12780,8 @@ export default function App() {
       refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(e => reportError(e, "skills.refresh")),
       refreshSkillInventory: (options?: { force?: boolean }) =>
         refreshSkillInventory(options).catch(e => reportError(e, "skills.refreshInventory")),
+      refreshSkillImportCandidates: (options?: { force?: boolean }) =>
+        refreshSkillImportCandidates(options).catch(e => reportError(e, "skills.refreshImportCandidates")),
       refreshHubSkills: (options?: { force?: boolean }) => refreshHubSkills(options).catch(e => reportError(e, "skills.refreshHub")),
       refreshPlugins: (scopeOverride?: PluginScope) =>
         refreshPlugins(scopeOverride).catch(e => reportError(e, "plugins.refresh")),
@@ -12783,6 +12789,8 @@ export default function App() {
       skillsStatus: skillsStatus(),
       skillInventory: skillInventory(),
       skillInventoryStatus: skillInventoryStatus(),
+      skillImportCandidates: skillImportCandidates(),
+      skillImportStatus: skillImportStatus(),
       hubSkills: hubSkills(),
       hubSkillsStatus: hubSkillsStatus(),
       skillsAccessHint,
@@ -12802,6 +12810,7 @@ export default function App() {
       restoreSkillInstance,
       copySkillInstanceToGlobal,
       copySkillInstanceToWorkspace,
+      importSkillCandidates,
       pluginsAccessHint,
       canEditPlugins,
       canUseGlobalPluginScope,

@@ -577,6 +577,8 @@ export function createVesloServerClient(options: {
     deleteGlobalSkill: skills.deleteGlobal,
     batchRemoveSkills: skills.batchRemove,
     listSkillRemovals: skills.listRemovals,
+    listSkillImportCandidates: skills.listImportCandidates,
+    importSkillCandidates: skills.importCandidates,
     restoreSkillRemoval: skills.restoreRemoval,
     listMcp: mcp.list,
     addMcp: mcp.add,

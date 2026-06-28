@@ -37,7 +37,7 @@ Current skills surface includes:
 - local filters, table mode, and bulk selection for inventory locations
 - a detail drawer with locations and version-history placeholders
 - hub skills
-- local skill import
+- import candidates from other agent skill folders
 - reading and saving skill content
 
 Workspace skills are filesystem-backed and usually live under
@@ -72,6 +72,14 @@ under `veslo-user` are runtime copies.
 Hub skill installs require an explicit target. Today, the supported target is
 the active workspace; all-workspaces Hub install is visible as unavailable until
 there is a safe global-write backend.
+
+The import-from-other-agents flow scans known Codex, Claude Code, OpenCode, and
+legacy agent skill folders as candidates. These folders are not added as runtime
+skill roots. Import copies the selected candidate into Veslo-owned storage:
+user-level source folders become Veslo user skills, and workspace-local source
+folders become workspace skills in that workspace. The import view lets the user
+filter by source agent and choose specific candidates, but the import target is
+derived automatically from the source location.
 
 User skills can be installed into a local workspace from the skill detail
 drawer. Workspace skills use separate local actions for copying or moving into

@@ -99,6 +99,47 @@ test("materializes enabled user-global skills into a workspace-managed category"
   expect(removed.removedSkillNames).toEqual(["portable-helper"]);
 });
 
+test("materializes user-global skill support files and restores them when missing", async () => {
+  const dataDir = await createTempRoot("data");
+  const workspaceRoot = await createTempRoot("workspace");
+  await mkdir(join(workspaceRoot, ".git"), { recursive: true });
+
+  await upsertUserGlobalSkill(
+    {
+      name: "portable-helper",
+      description: "Portable helper",
+      content: "# Portable helper\n\nUse this helper in any workspace.\n",
+      files: [
+        {
+          path: "scripts/helper.sh",
+          content: Buffer.from("#!/usr/bin/env bash\necho helper\n", "utf8"),
+        },
+      ],
+    },
+    dataDir,
+  );
+
+  const first = await materializeUserGlobalSkillsForWorkspace({ workspaceRoot, dataDir });
+  const helperPath = join(
+    userGlobalMaterializedSkillsRoot(workspaceRoot),
+    "portable-helper",
+    "scripts",
+    "helper.sh",
+  );
+
+  expect(first.reloadRequired).toBe(true);
+  expect(await readFile(helperPath, "utf8")).toContain("echo helper");
+
+  const second = await materializeUserGlobalSkillsForWorkspace({ workspaceRoot, dataDir });
+  expect(second.reloadRequired).toBe(false);
+
+  await rm(helperPath, { force: true });
+  const repaired = await materializeUserGlobalSkillsForWorkspace({ workspaceRoot, dataDir });
+
+  expect(repaired.reloadRequired).toBe(true);
+  expect(await readFile(helperPath, "utf8")).toContain("echo helper");
+});
+
 test("does not materialize over an existing workspace skill with the same name", async () => {
   const dataDir = await createTempRoot("data");
   const workspaceRoot = await createTempRoot("workspace");
