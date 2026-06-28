@@ -3345,6 +3345,48 @@ export default function App() {
     }
   };
 
+  const workspaceAutoReloadAvailable = createMemo(() =>
+    false,
+  );
+
+  const workspaceAutoReloadEnabled = createMemo(() => {
+    if (!workspaceAutoReloadAvailable()) return false;
+    const cfg = workspaceStore.workspaceConfig();
+    return Boolean(cfg?.reload?.auto);
+  });
+
+  const workspaceAutoReloadResumeEnabled = createMemo(() => {
+    if (!workspaceAutoReloadAvailable()) return false;
+    const cfg = workspaceStore.workspaceConfig();
+    return Boolean(cfg?.reload?.resume);
+  });
+
+  const setWorkspaceAutoReloadEnabled = async (next: boolean) => {
+    if (!workspaceAutoReloadAvailable()) return;
+    const cfg = workspaceStore.workspaceConfig();
+    const resume = Boolean(cfg?.reload?.resume);
+    await workspaceStore.persistReloadSettings({ auto: next, resume: next ? resume : false });
+  };
+
+  const setWorkspaceAutoReloadResumeEnabled = async (next: boolean) => {
+    if (!workspaceAutoReloadAvailable()) return;
+    const cfg = workspaceStore.workspaceConfig();
+    const auto = Boolean(cfg?.reload?.auto);
+    await workspaceStore.persistReloadSettings({ auto, resume: auto ? next : false });
+  };
+
+  const reloadWorkspaceEngineAndResume = async (workspaceId?: string) => {
+    const targetWorkspaceId = workspaceId?.trim() ?? "";
+    if (targetWorkspaceId && targetWorkspaceId !== workspaceStore.activeWorkspaceId().trim()) {
+      const activated = await workspaceStore.activateWorkspace(targetWorkspaceId, {
+        origin: "folder-access-consent:reload-workspace",
+        blockingOverlay: true,
+      });
+      if (activated === false) return;
+    }
+    await reloadWorkspaceEngine();
+  };
+
   type ActiveReloadBlockingSession = {
     id: string;
     title: string;

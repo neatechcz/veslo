@@ -84,6 +84,8 @@ test("extracts folder access request from explicit permission metadata", () => {
       },
     },
     workspacePath: "/Users/me/work",
+    activeWorkspaceId: "ws-a",
+    workspaces: [{ id: "ws-a", path: "/Users/me/work", workspaceType: "local" }],
     authorizedDirs: ["/Users/me/work"],
   });
 
@@ -107,6 +109,77 @@ test("does not treat ordinary command permissions as folder access requests", ()
     },
     workspacePath: "/Users/me/work",
     authorizedDirs: ["/Users/me/work"],
+  });
+
+  assert.equal(request, null);
+});
+
+test("does not treat generic permissions with absolute path metadata as folder access requests", () => {
+  const request = resolveFolderAccessRequestFromPermission({
+    permission: {
+      id: "perm-bash-path",
+      permission: "bash",
+      patterns: ["cat /Users/me/Drive/NDA/file.docx"],
+      metadata: {
+        path: "/Users/me/Drive/NDA/file.docx",
+      },
+    },
+    workspacePath: "/Users/me/work",
+    activeWorkspaceId: "ws-a",
+    workspaces: [{ id: "ws-a", path: "/Users/me/work", workspaceType: "local" }],
+    authorizedDirs: ["/Users/me/work"],
+  });
+
+  assert.equal(request, null);
+});
+
+test("uses the permission workspace id to resolve the local workspace path", () => {
+  const request = resolveFolderAccessRequestFromPermission({
+    permission: {
+      id: "perm-folder-b",
+      workspaceId: "ws-b",
+      permission: "folder_access",
+      patterns: [],
+      metadata: {
+        requestedPath: "/Users/me/Drive/NDA/file.docx",
+      },
+    },
+    workspacePath: "/Users/me/work-a",
+    activeWorkspaceId: "ws-a",
+    workspaces: [
+      { id: "ws-a", path: "/Users/me/work-a", workspaceType: "local" },
+      { id: "ws-b", path: "/Users/me/work-b", workspaceType: "local" },
+    ],
+    authorizedDirs: ["/Users/me/work-a"],
+  });
+
+  assert.equal(request?.workspaceId, "ws-b");
+  assert.equal(request?.workspacePath, "/Users/me/work-b");
+});
+
+test("does not resolve folder access requests for remote permission workspaces", () => {
+  const request = resolveFolderAccessRequestFromPermission({
+    permission: {
+      id: "perm-folder-remote",
+      workspaceId: "ws-remote",
+      permission: "folder_access",
+      patterns: [],
+      metadata: {
+        requestedPath: "/Users/me/Drive/NDA/file.docx",
+      },
+    },
+    workspacePath: "/Users/me/work-a",
+    activeWorkspaceId: "ws-a",
+    workspaces: [
+      { id: "ws-a", path: "/Users/me/work-a", workspaceType: "local" },
+      {
+        id: "ws-remote",
+        path: "/Users/me/remote-cache",
+        directory: "/Users/me/remote-cache",
+        workspaceType: "remote",
+      },
+    ],
+    authorizedDirs: ["/Users/me/work-a"],
   });
 
   assert.equal(request, null);

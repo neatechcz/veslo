@@ -392,7 +392,7 @@ export type SessionViewProps = {
   reloadBannerBlocked: boolean;
   reloadBannerActiveCount: number;
   canReloadWorkspace: boolean;
-  reloadWorkspaceEngine: () => Promise<void>;
+  reloadWorkspaceEngine: (workspaceId?: string) => Promise<void>;
   refreshWorkspaceConfig: (workspacePath?: string) => Promise<void>;
   forceStopActiveConversations: () => Promise<void>;
   dismissReloadBanner: () => void;
@@ -515,6 +515,8 @@ export default function SessionView(props: SessionViewProps) {
     resolveFolderAccessRequestFromPermission({
       permission: props.activePermission,
       workspacePath: props.activeWorkspaceRoot,
+      activeWorkspaceId: props.activeWorkspaceId,
+      workspaces: props.workspaces,
       authorizedDirs: props.authorizedDirs,
     }),
   );
@@ -549,7 +551,7 @@ export default function SessionView(props: SessionViewProps) {
         accessMode: "read",
       });
       await props.refreshWorkspaceConfig(request.workspacePath);
-      await props.reloadWorkspaceEngine();
+      await props.reloadWorkspaceEngine(request.workspaceId);
       props.respondPermission(request.permissionId, "once");
     } catch (error) {
       reportError(error, "folderAccessConsent.chooseFolder");
