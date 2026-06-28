@@ -20,7 +20,7 @@ Unpublished chats are modeled as one active pending draft. `Chat`, project `+`, 
 
 Real conversations remain separate. Once a draft is sent and a real conversation exists, the session keeps the existing per-session composer behavior.
 
-The desktop pending-draft store remains the durable home for the unpublished draft payload and attachment copies, but it no longer represents multiple project draft buckets. Old per-workspace pending drafts are treated as obsolete and must not appear in the target picker or resurrect on restart.
+The desktop pending-draft store remains the durable home for the unpublished draft payload and attachment copies, but it no longer represents multiple project draft buckets. Old per-workspace pending drafts are treated as obsolete and must not appear in the target picker, be loaded during target switching, or resurrect on restart.
 
 ## Data Flow
 
@@ -28,7 +28,7 @@ Typing in an unpublished chat writes to one fixed global pending-draft storage k
 
 When the user selects `Chat`, project `+`, or another workspace target, Veslo keeps the same draft text and attachments and records the intended send destination.
 
-On send, Veslo snapshots both the global draft and the selected destination. It then uses the existing first-send materialization path to create the real conversation in that destination. After a successful handoff, Veslo clears the global pending draft. If handoff fails, the draft and selected destination remain available for retry.
+On send, Veslo snapshots both the global draft and the selected destination. It then uses the existing first-send materialization path to create the real conversation in that destination. After a successful handoff, Veslo clears the global pending draft record and the global unpublished composer bucket. If handoff fails, the draft and selected destination remain available for retry.
 
 Post-send behavior should stay the same as it is today. The intended behavior change is only that other unpublished workspace drafts are no longer saved or restored.
 

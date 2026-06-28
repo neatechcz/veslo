@@ -189,15 +189,17 @@ Unstarted sessions are modeled as pending drafts.
 
 Current behavior:
 
-- pending drafts are durable local state
+- unpublished pending drafts are durable local state
+- there is one app-wide unpublished draft body before the first message creates a real conversation
+- the selected pending target is metadata on that one draft: private chat, workspace id, and normalized directory
 - empty pending sessions show a centered composer entry instead of the full conversation layout
 - pending drafts do not appear in the sidebar until the user presses `Run`; when the pending draft is for a newly registered local directory, the directory itself can appear immediately as an empty project/workspace row in by-project mode
-- `Chat` reopens the one existing unpublished private draft instead of creating another unpublished private workspace
-- project `+` actions reopen the pending draft for that project directory when one already exists
-- the composer target picker can switch the centered entry between the private chat draft and workspace pending drafts
-- when the target has no meaningful draft content, switching targets moves the current draft there and consumes the previous pending draft instead of cloning the same text into multiple empty workspaces
-- when switching targets would collide with an existing draft, Veslo requires an explicit choice between keeping the current text for the destination or loading the existing destination draft
+- `Chat`, project `+`, and the composer target picker all open the same unpublished draft body
+- switching between chat and workspace targets keeps the current text and attachments, updates the selected destination metadata, and never loads a destination-specific draft body
+- old per-workspace pending draft records are obsolete; they are ignored and are not migrated into the global draft
 - a real OpenCode session is materialized only when the pending draft is sent successfully
+- first send snapshots both the current global draft and the selected destination; successful handoff clears the global pending draft, while failed handoff keeps the draft and destination available for retry
+- real OpenCode sessions keep the existing per-session composer draft behavior after materialization
 
 ## Titlebar Context
 
