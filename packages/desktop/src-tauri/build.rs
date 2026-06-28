@@ -8,6 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 
 fn main() {
     emit_build_info();
+    emit_glitchtip_build_env();
     ensure_opencode_sidecar();
     ensure_veslo_server_sidecar();
     ensure_opencode_router_sidecar();
@@ -16,6 +17,26 @@ fn main() {
     ensure_versions_manifest();
     ensure_opencode_managed_deps_manifest();
     tauri_build::build();
+}
+
+fn emit_glitchtip_build_env() {
+    for key in [
+        "VESLO_GLITCHTIP_DSN",
+        "VESLO_GLITCHTIP_ENVIRONMENT",
+        "VESLO_GLITCHTIP_TRACES_SAMPLE_RATE",
+    ] {
+        println!("cargo:rerun-if-env-changed={key}");
+        if let Some(value) = read_non_empty_env(key) {
+            println!("cargo:rustc-env={key}={value}");
+        }
+    }
+}
+
+fn read_non_empty_env(key: &str) -> Option<String> {
+    env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn ensure_chrome_devtools_mcp_sidecar() {

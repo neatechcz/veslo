@@ -111,6 +111,8 @@ Desktop auth snapshots can also carry first-run UI metadata such as language and
 
 Veslo can send application errors to a Sentry-compatible service such as the internal Neatech GlitchTip instance. Monitoring is disabled unless a DSN is explicitly configured.
 
+Release desktop builds get their GlitchTip DSN from the public, release-owned `VESLO_GLITCHTIP_DSN` GitHub Actions variable. The same value is passed to `VITE_VESLO_GLITCHTIP_DSN` for the frontend build and embedded into the native Tauri shell at compile time for installed macOS and Windows apps. This DSN is not a secret, but it is not user-configurable and the application must not expose a setting to change it.
+
 Frontend environment variables:
 
 - `VITE_VESLO_GLITCHTIP_DSN` - Sentry-compatible project DSN for browser/Solid errors. Required to enable frontend monitoring.
@@ -120,7 +122,7 @@ Frontend environment variables:
 
 Desktop shell environment variables:
 
-- `VESLO_GLITCHTIP_DSN` - Sentry-compatible project DSN for native Tauri/Rust errors. Required to enable native monitoring.
+- `VESLO_GLITCHTIP_DSN` - Sentry-compatible project DSN for native Tauri/Rust errors. Required to enable native monitoring. Release builds embed this from the GitHub Actions variable when the runtime environment does not provide it.
 - `VESLO_GLITCHTIP_ENVIRONMENT` - optional environment name. Defaults to `production` in release builds and `development` in debug builds.
 - `VESLO_GLITCHTIP_TRACES_SAMPLE_RATE` - optional trace sample rate, clamped to `0..1`. Defaults to `0`.
 
