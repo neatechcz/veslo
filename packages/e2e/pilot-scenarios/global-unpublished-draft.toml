@@ -47,16 +47,20 @@ const firstWorkspace = bootstrap.workspaces.find((workspace) => workspace.id ===
 const firstDirectory = normalizePath(firstWorkspace?.directory || firstWorkspace?.path);
 assert(firstWorkspace?.id && firstDirectory, `Initial workspace is unavailable: ${JSON.stringify(bootstrap)}`);
 
-const parentDirectory = firstDirectory.replace(/\/[^/]+$/, "") || firstDirectory;
-const secondDirectory = `${parentDirectory}/global-unpublished-target-${Date.now()}`;
+const secondDirectoryName = `veslo-global-unpublished-target-${Date.now()}`;
+const requestedSecondDirectory = `/tmp/${secondDirectoryName}`;
 await tauriInvoke("workspace_create", {
-  folderPath: secondDirectory,
+  folderPath: requestedSecondDirectory,
   name: "Global Unpublished Target",
   preset: "starter",
 });
 const afterCreate = await tauriInvoke("workspace_bootstrap");
-const secondWorkspace = afterCreate.workspaces.find((workspace) => normalizePath(workspace.path || workspace.directory) === secondDirectory);
+const secondWorkspace = afterCreate.workspaces.find((workspace) => {
+  const workspacePath = normalizePath(workspace.path || workspace.directory);
+  return workspacePath === normalizePath(requestedSecondDirectory) || workspacePath.endsWith(`/${secondDirectoryName}`);
+});
 assert(secondWorkspace?.id, `Second workspace was not registered: ${JSON.stringify(afterCreate)}`);
+const secondDirectory = normalizePath(secondWorkspace.path || secondWorkspace.directory || requestedSecondDirectory);
 
 await tauriInvoke("workspace_set_active", {
   workspaceId: firstWorkspace.id,
@@ -209,6 +213,12 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
     const newChatLabels = ["New chat", "Novy chat", "Nový chat"];
     const sidebarNewChatLabels = [...newChatLabels, "Chat"];
     const chatsSectionLabels = ["Chats", "Chaty"];
+    const createSessionInProjectLabels = [
+      "Create session in this project",
+      "Vytvorit relaci v tomto projektu",
+      "Vytvořit relaci v tomto projektu",
+      "在此项目中创建会话",
+    ];
     const dispatchClickSequence = (element) => {
       element.focus?.();
       const base = {
@@ -238,9 +248,11 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
       element.dispatchEvent(new MouseEvent("mouseup", { ...base, buttons: 0 }));
       element.dispatchEvent(new MouseEvent("click", { ...base, buttons: 0 }));
     };
+    const byProjectSidebarReady = () =>
+      Boolean(document.querySelector('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"], [data-project-key]'));
     const ensureByProjectSidebarMode = async () => {
       setProgress("ensuring-by-project-sidebar");
-      if (document.querySelector('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"]')) return;
+      if (byProjectSidebarReady()) return;
       const moreButton = await waitUntil(() => findButton(sidebarMoreActionLabels), {
         timeout: 45000,
         interval: 500,
@@ -256,10 +268,10 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
         message: `By-project sidebar menu item did not appear. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).filter(isVisibleElement).map(buttonValues))}`,
       });
       dispatchClickSequence(byProjectButton);
-      await waitUntil(() => document.querySelector('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"]'), {
+      await waitUntil(() => byProjectSidebarReady(), {
         timeout: 45000,
         interval: 500,
-        message: `By-project sidebar did not expose the Chats section. Body=${visibleBodyText().slice(0, 2500)}`,
+        message: `By-project sidebar did not expose project or chat rows. Body=${visibleBodyText().slice(0, 2500)}`,
       });
     };
     const navigateToHash = (path) => {
@@ -521,6 +533,48 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
     const openAnotherUnpublishedChat = async () => {
       setProgress("opening-another-unpublished-chat");
       const previousActivePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
+      try {
+        navigateToHash("/session");
+        return await waitUntil(() => {
+          const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+          if (!(candidate instanceof HTMLElement) || !isVisibleElement(candidate)) return false;
+          const activePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
+          return activePendingDraftKey.includes("new-private") && activePendingDraftKey !== previousActivePendingDraftKey
+            ? candidate
+            : false;
+        }, {
+          timeout: 60000,
+          interval: 500,
+          message: `Bare session route did not open another unpublished chat. PreviousPending=${previousActivePendingDraftKey}. ActivePending=${window.localStorage.getItem("veslo.active-pending-draft.v1") || ""}. Body=${visibleBodyText().slice(0, 2500)}`,
+        });
+      } catch {
+        // Fall back to the sidebar action when a private chat section already exists in the profile.
+      }
+      const fixture = JSON.parse(window.localStorage.getItem("veslo.e2e.globalUnpublishedDraft") || "null");
+      const firstWorkspacePath = normalizePath(fixture?.firstWorkspace?.path || fixture?.firstWorkspace?.directory);
+      const firstProjectRoot = Array.from(document.querySelectorAll("[data-project-key]")).find((projectRoot) => {
+        const key = normalizePath(projectRoot.getAttribute("data-project-key") || "");
+        return firstWorkspacePath && (key === firstWorkspacePath || key.endsWith(`/${firstWorkspacePath.split("/").pop()}`));
+      });
+      const firstProjectButton = firstProjectRoot
+        ? Array.from(firstProjectRoot.querySelectorAll("button")).find((candidate) =>
+          buttonMatchesLabel(candidate, createSessionInProjectLabels))
+        : null;
+      if (firstProjectButton) {
+        dispatchClickSequence(firstProjectButton);
+        return await waitUntil(() => {
+          const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+          if (!(candidate instanceof HTMLElement) || !isVisibleElement(candidate)) return false;
+          const activePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
+          return activePendingDraftKey.includes("directory") && activePendingDraftKey !== previousActivePendingDraftKey
+            ? candidate
+            : false;
+        }, {
+          timeout: 60000,
+          interval: 500,
+          message: `First project unpublished draft did not open. PreviousPending=${previousActivePendingDraftKey}. ActivePending=${window.localStorage.getItem("veslo.active-pending-draft.v1") || ""}. Body=${visibleBodyText().slice(0, 2500)}`,
+        });
+      }
       const chatButton = await waitUntil(() => {
         const chatRoots = Array.from(document.querySelectorAll('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"]'));
         for (const chatRoot of chatRoots) {
@@ -682,6 +736,7 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
         timeout: 10000,
         message: `Composer did not retain the unique draft. Composer=${composerText()}`,
       });
+      await sleep(350);
 
       const secondTargetId = targetIdForWorkspace(secondWorkspace);
       await switchComposerTarget(secondTargetId);
