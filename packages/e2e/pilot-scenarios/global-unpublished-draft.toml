@@ -206,7 +206,8 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
       "立即引导代理",
       "加入队列",
     ];
-    const newChatLabels = ["New chat", "Chat", "Novy chat", "Nový chat"];
+    const newChatLabels = ["New chat", "Novy chat", "Nový chat"];
+    const sidebarNewChatLabels = [...newChatLabels, "Chat"];
     const chatsSectionLabels = ["Chats", "Chaty"];
     const dispatchClickSequence = (element) => {
       element.focus?.();
@@ -378,7 +379,6 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
       }));
     };
     const findComposerSendButton = (textbox) => {
-      const labels = ["Send now", "Steer agent now", "Queue message", "Send"];
       let current = textbox;
       const containers = [];
       for (let depth = 0; depth < 10 && current instanceof HTMLElement; depth += 1) {
@@ -386,10 +386,10 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
         current = current.parentElement;
       }
       for (const container of containers) {
-        const matching = Array.from(container.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+        const matching = Array.from(container.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, sendButtonLabels));
         if (matching) return matching;
       }
-      return findButton(labels);
+      return findButton(sendButtonLabels);
     };
     const readDrafts = async () => {
       const summaries = await tauriInvoke("pending_session_drafts_list");
@@ -525,7 +525,7 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
         const chatRoots = Array.from(document.querySelectorAll('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"]'));
         for (const chatRoot of chatRoots) {
           const button = Array.from(chatRoot.querySelectorAll("button")).find((candidate) =>
-            buttonMatchesLabel(candidate, newChatLabels) &&
+            buttonMatchesLabel(candidate, sidebarNewChatLabels) &&
             !buttonMatchesLabel(candidate, chatsSectionLabels));
           if (button) return button;
         }
