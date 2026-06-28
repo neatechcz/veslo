@@ -7,6 +7,8 @@ import { resolveComposerStorageKey, resolvePendingDraftKey } from "../../lib/pen
 import type { PendingSessionDraft, PendingSessionDraftSummary } from "../../lib/tauri.js";
 import type { ComposerDraft } from "../../types.js";
 
+const GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID = "pending-global-unpublished";
+
 const draft = (text: string): ComposerDraft => ({
   mode: "prompt",
   parts: text ? [{ type: "text", text }] : [],
@@ -33,11 +35,224 @@ const summaryFromDraft = (input: PendingSessionDraft): PendingSessionDraftSummar
   },
 });
 
-test("pending draft controller reopens an existing private draft without creating another scratch workspace", async () => {
+test("pending draft controller ignores old private drafts and opens the global draft record", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const oldPrivateDraft: PendingSessionDraft = {
+        id: "pending-new-private-scratch-old",
+        kind: "new-private",
+        workspaceId: "scratch-old",
+        privateWorkspaceId: "scratch-old",
+        directory: null,
+        createdAt: 5,
+        updatedAt: 10,
+        composer: draft("old private draft"),
+      };
+      const globalDraft: PendingSessionDraft = {
+        id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
+        kind: "new-private",
+        workspaceId: "scratch-global",
+        privateWorkspaceId: "scratch-global",
+        directory: null,
+        createdAt: 20,
+        updatedAt: 30,
+        composer: draft("global draft"),
+      };
+      const activatedWorkspaces: string[] = [];
+      let composerDrafts: Record<string, ComposerDraft> = {};
+
+      const controller = createPendingSessionDraftController({
+        isTauriRuntime: () => true,
+        createSessionAndOpen: async () => {
+          throw new Error("web fallback should not create a real session on desktop");
+        },
+        createEmptyComposerDraft: () => draft(""),
+        pendingSessionDraftsList: async () => [
+          summaryFromDraft(oldPrivateDraft),
+          summaryFromDraft(globalDraft),
+        ],
+        pendingSessionDraftsGet: async (id) => {
+          assert.equal(id, GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID);
+          return { draft: globalDraft, attachmentFailures: [] };
+        },
+        pendingSessionDraftsPut: async () => {
+          throw new Error("existing global draft should be opened, not recreated");
+        },
+        pendingSessionDraftsDelete: async () => {
+          throw new Error("old private draft should be ignored, not deleted");
+        },
+        workspace: {
+          activeWorkspaceId: () => "scratch-global",
+          activeWorkspaceDisplay: () => ({ id: "scratch-global", directory: "C:/scratch-global", path: "C:/scratch-global" }),
+          workspaces: () => [{ id: "scratch-global", directory: "C:/scratch-global", path: "C:/scratch-global" }],
+          activateWorkspace: async (workspaceId) => {
+            activatedWorkspaces.push(workspaceId);
+            return true;
+          },
+          createScratchWorkspace: async () => {
+            throw new Error("existing global draft should not create another scratch workspace");
+          },
+          forgetWorkspace: async () => true,
+          pickWorkspaceFolder: async () => null,
+          ensureWorkspaceForFolder: async () => null,
+        },
+        publishRegisteredWorkspaceToSidebar: () => undefined,
+        setComposerDraftBySessionId: (updater) => {
+          composerDrafts = updater(composerDrafts);
+        },
+        clearDisplayedSession: () => undefined,
+        setView: () => undefined,
+        setError: () => undefined,
+        reportError: (error) => {
+          throw error instanceof Error ? error : new Error(String(error));
+        },
+        safeStringify: (value) => String(value),
+        addOpencodeCacheHint: (message) => message,
+      });
+
+      const opened = await controller.openNewSessionWithDirectory();
+
+      const pendingKey = resolvePendingDraftKey({ kind: "new-private" });
+      const composerStorageKey = resolveComposerStorageKey({ pendingDraftKey: pendingKey });
+      assert.equal(opened, true);
+      assert.deepEqual(activatedWorkspaces, ["scratch-global"]);
+      assert.equal(controller.activePendingDraftKey(), pendingKey);
+      assert.equal(controller.activePendingDraftMeta()?.id, GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID);
+      assert.equal(composerDrafts[composerStorageKey]?.text, "global draft");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("pending draft controller creates the global draft record when only old private drafts exist", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const oldPrivateDraft: PendingSessionDraft = {
+        id: "pending-new-private-scratch-old",
+        kind: "new-private",
+        workspaceId: "scratch-old",
+        privateWorkspaceId: "scratch-old",
+        directory: null,
+        createdAt: 5,
+        updatedAt: 10,
+        composer: draft("old private draft"),
+      };
+      const persistedDrafts: PendingSessionDraft[] = [];
+
+      const controller = createPendingSessionDraftController({
+        isTauriRuntime: () => true,
+        createSessionAndOpen: async () => {
+          throw new Error("web fallback should not create a real session on desktop");
+        },
+        createEmptyComposerDraft: () => draft(""),
+        pendingSessionDraftsList: async () => [summaryFromDraft(oldPrivateDraft)],
+        pendingSessionDraftsGet: async () => ({ draft: oldPrivateDraft, attachmentFailures: [] }),
+        pendingSessionDraftsPut: async (input) => {
+          persistedDrafts.push(input);
+          return summaryFromDraft(input);
+        },
+        pendingSessionDraftsDelete: async () => {
+          throw new Error("old private draft should be ignored, not deleted");
+        },
+        workspace: {
+          activeWorkspaceId: () => "scratch-global",
+          activeWorkspaceDisplay: () => ({ id: "scratch-global", directory: "C:/scratch-global", path: "C:/scratch-global" }),
+          workspaces: () => [{ id: "scratch-global", directory: "C:/scratch-global", path: "C:/scratch-global" }],
+          activateWorkspace: async () => true,
+          createScratchWorkspace: async () => ({ id: "scratch-global" }),
+          forgetWorkspace: async () => true,
+          pickWorkspaceFolder: async () => null,
+          ensureWorkspaceForFolder: async () => null,
+        },
+        publishRegisteredWorkspaceToSidebar: () => undefined,
+        setComposerDraftBySessionId: () => undefined,
+        clearDisplayedSession: () => undefined,
+        setView: () => undefined,
+        setError: () => undefined,
+        reportError: (error) => {
+          throw error instanceof Error ? error : new Error(String(error));
+        },
+        safeStringify: (value) => String(value),
+        addOpencodeCacheHint: (message) => message,
+      });
+
+      const opened = await controller.openNewSessionWithDirectory();
+      const [persistedDraft] = persistedDrafts;
+
+      assert.equal(opened, true);
+      assert.ok(persistedDraft);
+      assert.equal(persistedDraft.id, "pending-global-unpublished");
+      assert.equal(controller.activePendingDraftMeta()?.id, GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("pending draft controller updates one global draft record for directory targets", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const persistedDrafts: PendingSessionDraft[] = [];
+
+      const controller = createPendingSessionDraftController({
+        isTauriRuntime: () => true,
+        createSessionAndOpen: async () => {
+          throw new Error("web fallback should not create a real session on desktop");
+        },
+        createEmptyComposerDraft: () => draft(""),
+        pendingSessionDraftsList: async () => persistedDrafts.map(summaryFromDraft),
+        pendingSessionDraftsGet: async () => null,
+        pendingSessionDraftsPut: async (input) => {
+          persistedDrafts.push(input);
+          return summaryFromDraft(input);
+        },
+        pendingSessionDraftsDelete: async () => {
+          throw new Error("directory target switch should update the global draft, not delete old drafts");
+        },
+        workspace: {
+          activeWorkspaceId: () => "workspace-b",
+          activeWorkspaceDisplay: () => ({ id: "workspace-b", directory: "/repo/b", path: "/repo/b" }),
+          workspaces: () => [{ id: "workspace-b", directory: "/repo/b", path: "/repo/b" }],
+          activateWorkspace: async () => true,
+          createScratchWorkspace: async () => ({ id: "scratch-global" }),
+          forgetWorkspace: async () => true,
+          pickWorkspaceFolder: async () => null,
+          ensureWorkspaceForFolder: async () => null,
+        },
+        publishRegisteredWorkspaceToSidebar: () => undefined,
+        setComposerDraftBySessionId: () => undefined,
+        clearDisplayedSession: () => undefined,
+        setView: () => undefined,
+        setError: () => undefined,
+        reportError: (error) => {
+          throw error instanceof Error ? error : new Error(String(error));
+        },
+        safeStringify: (value) => String(value),
+        addOpencodeCacheHint: (message) => message,
+      });
+
+      await controller.openDirectoryPendingDraft({ workspaceId: "workspace-a", directory: "/repo/a" });
+      await controller.openDirectoryPendingDraft({ workspaceId: "workspace-b", directory: "/repo/b" });
+
+      assert.equal(persistedDrafts.length, 2);
+      assert.equal(persistedDrafts[0]?.id, "pending-global-unpublished");
+      assert.equal(persistedDrafts[0]?.workspaceId, "workspace-a");
+      assert.equal(persistedDrafts[0]?.directory, "/repo/a");
+      assert.equal(persistedDrafts[1]?.id, "pending-global-unpublished");
+      assert.equal(persistedDrafts[1]?.workspaceId, "workspace-b");
+      assert.equal(persistedDrafts[1]?.directory, "/repo/b");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("pending draft controller reopens an existing global private draft without creating another scratch workspace", async () => {
   await createRoot(async (dispose) => {
     try {
       const existingDraft: PendingSessionDraft = {
-        id: "draft-existing",
+        id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
         kind: "new-private",
         workspaceId: "scratch-1",
         privateWorkspaceId: "scratch-1",
@@ -111,7 +326,7 @@ test("pending draft controller reopens an existing private draft without creatin
       assert.equal(opened, true);
       assert.deepEqual(activatedWorkspaces, ["scratch-1"]);
       assert.equal(controller.activePendingDraftKey(), pendingKey);
-      assert.equal(controller.activePendingDraftMeta()?.id, existingDraft.id);
+      assert.equal(controller.activePendingDraftMeta()?.id, GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID);
       assert.equal(composerDrafts[composerStorageKey]?.text, "remember this");
       assert.deepEqual(views, ["session"]);
       assert.deepEqual(openEvents, ["restore-composer", "clear-displayed-session", "view:session"]);

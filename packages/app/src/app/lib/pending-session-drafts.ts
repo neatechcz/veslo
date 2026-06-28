@@ -8,6 +8,11 @@ const GLOBAL_UNPUBLISHED_COMPOSER_STORAGE_KEY = "__unpublished-composer-draft__:
 const NO_SESSION_DRAFT_KEY = "__no-session__";
 const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+export const GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID = "pending-global-unpublished";
+
+export const isGlobalUnpublishedPendingDraftSummary = (draft: { id?: string | null }) =>
+  (draft.id ?? "").trim() === GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID;
+
 export type PendingDraftIdentityInput = {
   kind: PendingSessionDraftKind;
   workspaceId?: string | null;

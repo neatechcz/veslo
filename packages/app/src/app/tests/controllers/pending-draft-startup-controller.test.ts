@@ -11,6 +11,8 @@ import type {
   PendingSessionDraftSummary,
 } from "../../lib/tauri.js";
 
+const GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID = "pending-global-unpublished";
+
 function summary(overrides: Partial<PendingSessionDraftSummary> = {}): PendingSessionDraftSummary {
   return {
     id: "draft-a",
@@ -35,7 +37,7 @@ function summary(overrides: Partial<PendingSessionDraftSummary> = {}): PendingSe
 function loaded(): PendingSessionDraftGetResult {
   return {
     draft: {
-      ...summary(),
+      ...summary({ id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID }),
       composer: {
         mode: "prompt",
         parts: [{ type: "text", text: "hello" }],
@@ -49,32 +51,61 @@ function loaded(): PendingSessionDraftGetResult {
 }
 
 test("finds the stored pending draft only after matching the durable storage key", () => {
-  const first = summary({ id: "draft-a", workspaceId: "workspace-a", directory: "/repo/a" });
-  const second = summary({ id: "draft-b", workspaceId: "workspace-a", directory: "/repo/b" });
+  const oldPerWorkspaceDraft = summary({
+    id: "pending-directory-old-workspace-a",
+    workspaceId: "workspace-a",
+    directory: "/repo/b",
+  });
+  const globalDraft = summary({
+    id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
+    workspaceId: "workspace-a",
+    directory: "/repo/b",
+  });
 
   assert.equal(
     findStoredPendingDraftSummary({
       storedPendingDraftKey: resolvePendingDraftKey({
-        kind: second.kind,
-        workspaceId: second.workspaceId,
-        directory: second.directory,
-        privateWorkspaceId: second.privateWorkspaceId,
+        kind: globalDraft.kind,
+        workspaceId: globalDraft.workspaceId,
+        directory: globalDraft.directory,
+        privateWorkspaceId: globalDraft.privateWorkspaceId,
       }),
-      pendingDrafts: [first, second],
+      pendingDrafts: [oldPerWorkspaceDraft, globalDraft],
     }),
-    second,
+    globalDraft,
   );
   assert.equal(
     findStoredPendingDraftSummary({
       storedPendingDraftKey: "pending:directory:workspace-a:/missing",
-      pendingDrafts: [first, second],
+      pendingDrafts: [oldPerWorkspaceDraft, globalDraft],
+    }),
+    null,
+  );
+});
+
+test("startup hydration ignores old per-workspace pending drafts when no global record exists", () => {
+  const oldPerWorkspaceDraft = summary({
+    id: "pending-directory-old-workspace-a",
+    workspaceId: "workspace-a",
+    directory: "/repo/a",
+  });
+
+  assert.equal(
+    findStoredPendingDraftSummary({
+      storedPendingDraftKey: resolvePendingDraftKey({
+        kind: oldPerWorkspaceDraft.kind,
+        workspaceId: oldPerWorkspaceDraft.workspaceId,
+        directory: oldPerWorkspaceDraft.directory,
+        privateWorkspaceId: oldPerWorkspaceDraft.privateWorkspaceId,
+      }),
+      pendingDrafts: [oldPerWorkspaceDraft],
     }),
     null,
   );
 });
 
 test("startup hydration clears stale stored keys and only hydrates after the draft payload loads", () => {
-  const matchingPendingDraft = summary();
+  const matchingPendingDraft = summary({ id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID });
   const loadedPendingDraft = loaded();
 
   assert.deepEqual(
