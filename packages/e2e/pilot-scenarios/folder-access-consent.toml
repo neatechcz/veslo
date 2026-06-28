@@ -1,0 +1,288 @@
+[scenario]
+name = "folder-access-consent"
+fail_fast = true
+global_timeout_ms = 180000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "prepare stable app state"
+action = "eval"
+timeout_ms = 30000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+window.localStorage.setItem("veslo.language", "en");
+const oldUrl = window.location.href;
+window.location.hash = "/session";
+window.dispatchEvent(new HashChangeEvent("hashchange", {
+  oldURL: oldUrl,
+  newURL: window.location.href,
+}));
+true;
+'''
+
+[[step]]
+name = "session route active"
+action = "assert-url"
+expected = "/session"
+timeout_ms = 10000
+
+[[step]]
+name = "start folder access consent task"
+action = "eval"
+script = '''
+const completeSelector = '[data-testid="folder-access-consent-complete"]';
+const errorSelector = '[data-testid="folder-access-consent-error"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+
+const appendMarker = (selector, payload) => {
+  if (document.querySelector(completeSelector) || document.querySelector(errorSelector)) return;
+  const marker = document.createElement("pre");
+  marker.dataset.testid = selector === completeSelector
+    ? "folder-access-consent-complete"
+    : "folder-access-consent-error";
+  marker.textContent = JSON.stringify(payload, null, 2);
+  document.body.append(marker);
+};
+
+if (!window.__vesloFolderAccessConsentStarted) {
+  window.__vesloFolderAccessConsentStarted = true;
+  window.__vesloFolderAccessConsentPromise = (async () => {
+    let originalInvoke = null;
+    let originalFetch = null;
+    let latestState = null;
+    let watchdog = null;
+    try {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const assert = (condition, message) => {
+        if (!condition) throw new Error(message);
+      };
+      const trimText = (value) => String(value ?? "").trim();
+      const normalizePath = (value) => trimText(value).replace(/\\/g, "/").replace(/\/+$/, "");
+      const bodyText = () => document.body.innerText.replace(/\s+/g, " ").trim();
+      const waitUntil = async (predicate, options = {}) => {
+        const timeout = options.timeout ?? 10000;
+        const interval = options.interval ?? 200;
+        const message = options.message ?? "Condition was not met";
+        const deadline = Date.now() + timeout;
+        let latest = null;
+        while (Date.now() < deadline) {
+          latest = await predicate();
+          if (latest) return latest;
+          await sleep(interval);
+        }
+        throw new Error(`${message}. Latest=${JSON.stringify(latest)} Body=${bodyText().slice(0, 3000)}`);
+      };
+      const tauriInvoke = async (command, payload = {}) => {
+        const invoke = window.__TAURI_INTERNALS__?.invoke;
+        assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+        return await invoke(command, payload);
+      };
+      const navigateToHash = (path) => {
+        const oldUrl = window.location.href;
+        window.location.hash = path;
+        window.dispatchEvent(new HashChangeEvent("hashchange", {
+          oldURL: oldUrl,
+          newURL: window.location.href,
+        }));
+      };
+      const visible = (element) => {
+        if (!(element instanceof HTMLElement)) return false;
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+      };
+      const setPhase = (phase, extra = {}) => {
+        latestState = { ...(latestState ?? {}), phase, ...extra };
+      };
+      watchdog = window.setTimeout(() => {
+        appendMarker(errorSelector, {
+          message: "Folder access consent task timed out",
+          latestState,
+          body: document.body.innerText.replace(/\s+/g, " ").trim().slice(0, 3000),
+        });
+      }, 90000);
+
+      setPhase("waiting-for-e2e-hook");
+      await waitUntil(() => typeof window.__vesloE2EInjectFolderAccessPermission === "function", {
+        timeout: 30000,
+        message: "E2E folder access injection hook was not installed",
+      });
+
+      setPhase("workspace-bootstrap");
+      const bootstrap = await tauriInvoke("workspace_bootstrap");
+      const active = bootstrap.workspaces.find((workspace) => workspace.id === bootstrap.activeId) ?? bootstrap.workspaces[0];
+      const activeWorkspacePath = active?.path || active?.directory;
+      assert(active?.id && activeWorkspacePath, `Active workspace unavailable: ${JSON.stringify(bootstrap)}`);
+
+      const activePath = normalizePath(activeWorkspacePath);
+      const parent = activePath.replace(/\/[^/]+$/, "");
+      const suffix = Date.now();
+      const selectedFolderPath = `${parent}/folder-access-consent-selected-${suffix}`;
+      const requestedPath = `${selectedFolderPath}/Google Drive/NDA/file-${suffix}.docx`;
+      setPhase("workspace-create", { activeWorkspacePath, selectedFolderPath, requestedPath });
+
+      await tauriInvoke("workspace_create", {
+        folderPath: selectedFolderPath,
+        name: `Folder Access Consent ${suffix}`,
+        preset: "starter",
+      });
+      setPhase("workspace-restore-active", { activeWorkspacePath, selectedFolderPath, requestedPath });
+      await tauriInvoke("workspace_set_active", {
+        workspaceId: active.id,
+        promoteToFront: true,
+      });
+
+      originalInvoke = window.__TAURI_INTERNALS__.invoke;
+      originalFetch = window.fetch.bind(window);
+      const dialogCalls = [];
+      window.__TAURI_INTERNALS__.invoke = (command, payload, options) => {
+        if (String(command) === "plugin:dialog|open" && payload?.options?.directory === true) {
+          dialogCalls.push(payload.options);
+          return Promise.resolve(selectedFolderPath);
+        }
+        return originalInvoke.call(window.__TAURI_INTERNALS__, command, payload, options);
+      };
+      window.fetch = (input, init) => {
+        const url = typeof input === "string" ? input : input?.url ?? "";
+        const decodedUrl = (() => {
+          try {
+            return decodeURIComponent(url);
+          } catch {
+            return url;
+          }
+        })();
+        if (decodedUrl === "ipc://localhost/plugin:dialog|open") {
+          const bodyText = typeof init?.body === "string" ? init.body : "";
+          let body = {};
+          try {
+            body = bodyText ? JSON.parse(bodyText) : {};
+          } catch {
+            body = {};
+          }
+          const options = body?.options ?? body?.payload?.options ?? {};
+          if (options.directory === true) {
+            dialogCalls.push(options);
+            return Promise.resolve(new Response(selectedFolderPath, {
+              status: 200,
+              headers: {
+                "content-type": "text/plain",
+                "Tauri-Response": "ok",
+              },
+            }));
+          }
+        }
+        return originalFetch(input, init);
+      };
+
+      setPhase("navigate-session", { activeWorkspacePath, selectedFolderPath, requestedPath });
+      navigateToHash("/session");
+      await waitUntil(() => window.location.hash.includes("/session"), {
+        timeout: 10000,
+        message: "Session route did not become active",
+      });
+
+      setPhase("inject-permission", { activeWorkspacePath, selectedFolderPath, requestedPath });
+      const injection = await window.__vesloE2EInjectFolderAccessPermission({
+        id: `folder-access-consent-${suffix}`,
+        sessionId: `folder-access-consent-session-${suffix}`,
+        workspaceId: active.id,
+        workspacePath: activeWorkspacePath,
+        requestedPath,
+        reason: "E2E needs this document",
+      });
+
+      setPhase("waiting-for-modal", { activeWorkspacePath, selectedFolderPath, requestedPath });
+      const modal = await waitUntil(() => {
+        const element = document.querySelector('[data-testid="folder-access-consent-modal"]');
+        return visible(element) ? element : false;
+      }, {
+        timeout: 30000,
+        message: "Folder access consent modal did not appear",
+      });
+
+      const requestedNode = document.querySelector('[data-testid="folder-access-requested-path"]');
+      assert(requestedNode?.textContent?.includes(requestedPath), "Requested path was not shown in the consent modal.");
+      assert(modal.textContent.includes(requestedPath), "Folder access modal did not include the requested path.");
+
+      const choose = document.querySelector('[data-testid="folder-access-choose-folder"]');
+      assert(choose instanceof HTMLButtonElement, "Choose folder button was not found.");
+      setPhase("click-choose-folder", { activeWorkspacePath, selectedFolderPath, requestedPath });
+      choose.click();
+
+      setPhase("waiting-for-picker", { activeWorkspacePath, selectedFolderPath, requestedPath });
+      await waitUntil(() => dialogCalls.length === 1, {
+        timeout: 10000,
+        message: "Folder picker was not opened",
+      });
+      assert(dialogCalls[0].defaultPath === requestedPath, `Picker defaultPath mismatch: ${JSON.stringify(dialogCalls[0])}`);
+
+      setPhase("waiting-for-modal-close", { activeWorkspacePath, selectedFolderPath, requestedPath });
+      await waitUntil(() => !document.querySelector('[data-testid="folder-access-consent-modal"]'), {
+        timeout: 60000,
+        message: "Folder access modal did not close after grant",
+      });
+
+      setPhase("reading-workspace-config", { activeWorkspacePath, selectedFolderPath, requestedPath });
+      const cfg = await tauriInvoke("workspace_veslo_read", {
+        workspacePath: activeWorkspacePath,
+      });
+      const roots = Array.isArray(cfg.authorizedRoots) ? cfg.authorizedRoots.map(normalizePath) : [];
+      assert(
+        roots.includes(normalizePath(activeWorkspacePath)),
+        `Workspace root missing from authorized roots: ${JSON.stringify(cfg)}`,
+      );
+      assert(
+        roots.includes(normalizePath(selectedFolderPath)),
+        `Selected folder was not authorized: ${JSON.stringify(cfg)}`,
+      );
+
+      const reply = window.__vesloE2ELastFolderAccessPermissionReply;
+      assert(
+        reply?.requestID === injection.permissionId && reply.reply === "once",
+        `Permission reply was not recorded: ${JSON.stringify(reply)}`,
+      );
+      appendMarker(completeSelector, { ok: true, roots, latestState });
+    } catch (error) {
+      appendMarker(errorSelector, {
+        message: error?.message || String(error),
+        stack: error?.stack || null,
+        latestState,
+        body: document.body.innerText.replace(/\s+/g, " ").trim().slice(0, 3000),
+      });
+    } finally {
+      if (watchdog !== null) window.clearTimeout(watchdog);
+      if (originalFetch) {
+        window.fetch = originalFetch;
+      }
+      if (originalInvoke) {
+        window.__TAURI_INTERNALS__.invoke = originalInvoke;
+      }
+    }
+  })();
+}
+
+true;
+'''
+
+[[step]]
+name = "folder access consent task finished"
+action = "wait"
+target = "[data-testid=\"folder-access-consent-complete\"], [data-testid=\"folder-access-consent-error\"]"
+timeout_ms = 120000
+
+[[step]]
+name = "folder access consent succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="folder-access-consent-error"]');
+if (error) {
+  throw new Error(`Folder access consent failed: ${(error.textContent || "").slice(0, 4000)}`);
+}
+true;
+'''

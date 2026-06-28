@@ -25,7 +25,7 @@ import type {
   SubtaskPartInput,
 } from "@opencode-ai/sdk/v2/client";
 
-import { getVersion } from "@tauri-apps/api/app";
+import { getIdentifier, getVersion } from "@tauri-apps/api/app";
 import { listen, type Event as TauriEvent } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parse } from "jsonc-parser";
@@ -268,6 +268,7 @@ import type {
   ResetVesloMode,
   SettingsTab,
   SkillCard,
+  PendingPermission,
   PendingSidebarSessionMetadata,
   SidebarSubagentDecoration,
   SidebarSessionItem,
@@ -528,6 +529,35 @@ type WorkspaceRuntimeDebugRoot = SendTraceRoot & {
   __wsActivateLog?: string;
 };
 
+type E2EFolderAccessPermissionInput = {
+  id?: string;
+  sessionId?: string;
+  workspaceId?: string;
+  workspacePath?: string;
+  requestedPath: string;
+  reason?: string;
+  permission?: string;
+  patterns?: string[];
+};
+
+type E2EFolderAccessPermissionResult = {
+  permissionId: string;
+  sessionId: string;
+  workspaceId: string;
+  workspacePath: string;
+  requestedPath: string;
+};
+
+type E2EFolderAccessPromptRoot = WorkspaceRuntimeDebugRoot & {
+  __vesloE2EInjectFolderAccessPermission?: (
+    input: E2EFolderAccessPermissionInput,
+  ) => Promise<E2EFolderAccessPermissionResult>;
+  __vesloE2ELastFolderAccessPermissionReply?: {
+    requestID: string;
+    reply: "once" | "always" | "reject";
+  };
+};
+
 type DebugProbeResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: string; skipped?: boolean };
@@ -565,6 +595,7 @@ type CommandListScope = {
 };
 
 const SEND_TRACE_LIMIT = 500;
+const E2E_APP_IDENTIFIER = "com.neatech.veslo.e2e";
 const MANAGED_AI_ACCESS_CACHE_STORAGE_KEY = "veslo.managedAiAccess.v1";
 const MANAGED_AI_ACCESS_CACHE_TTL_MS = 30 * 60 * 1000;
 const MANAGED_AI_ACCESS_PROOF_CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
@@ -2771,6 +2802,10 @@ export default function App() {
     hydrateTranscriptSnapshot,
     hasWarmTranscript,
   } = sessionStore;
+
+  const [e2eFolderAccessPermissionIds, setE2eFolderAccessPermissionIds] = createSignal<Set<string>>(
+    new Set(),
+  );
 
   const [visibleRuntimeActivityHold, setVisibleRuntimeActivityHold] = createSignal<{
     sessionId: string;
@@ -5013,13 +5048,35 @@ export default function App() {
     workspaceStore.setAuthorizedDirs(roots.length ? roots : [targetPath]);
   }
 
+  async function respondPermissionForSessionView(
+    requestID: string,
+    reply: "once" | "always" | "reject",
+  ) {
+    const requestId = requestID.trim();
+    if (requestId && e2eFolderAccessPermissionIds().has(requestId)) {
+      setE2eFolderAccessPermissionIds((current) => {
+        if (!current.has(requestId)) return current;
+        const next = new Set(current);
+        next.delete(requestId);
+        return next;
+      });
+      setPendingPermissions(pendingPermissions().filter((permission) => permission.id !== requestId));
+      if (typeof window !== "undefined") {
+        (window as E2EFolderAccessPromptRoot).__vesloE2ELastFolderAccessPermissionReply = { requestID: requestId, reply };
+      }
+      return;
+    }
+
+    await respondPermission(requestID, reply);
+  }
+
   async function respondPermissionAndRemember(
     requestID: string,
     reply: "once" | "always" | "reject"
   ) {
     // Intentional no-op: permission prompts grant session-scoped access only.
     // Persistent workspace roots must be managed explicitly via workspace settings.
-    await respondPermission(requestID, reply);
+    await respondPermissionForSessionView(requestID, reply);
   }
 
   const [notionStatus, setNotionStatus] = createSignal<"disconnected" | "connecting" | "connected" | "error">(
@@ -5816,6 +5873,90 @@ export default function App() {
   });
   workspaceStoreRef = workspaceStore;
   setWorkspaceStoreRefVersion((version) => version + 1);
+
+  let e2eFolderAccessPromptRoot: E2EFolderAccessPromptRoot | null = null;
+  let e2eFolderAccessPromptHookCancelled = false;
+
+  onMount(() => {
+    if (!isTauriRuntime() || typeof window === "undefined") return;
+    void (async () => {
+      const identifier = await getIdentifier().catch(() => "");
+      if (e2eFolderAccessPromptHookCancelled || identifier !== E2E_APP_IDENTIFIER) return;
+
+      const root = window as E2EFolderAccessPromptRoot;
+      e2eFolderAccessPromptRoot = root;
+      root.__vesloE2EInjectFolderAccessPermission = async (input) => {
+        const requestedPath = input.requestedPath.trim();
+        if (!requestedPath) throw new Error("requestedPath is required");
+
+        const workspaceId =
+          input.workspaceId?.trim() ||
+          workspaceStore.activeWorkspaceId().trim();
+        const workspace =
+          workspaceStore.workspaces().find((entry) => entry.id === workspaceId) ?? null;
+        const workspacePath =
+          input.workspacePath?.trim() ||
+          workspace?.path?.trim() ||
+          workspace?.directory?.trim() ||
+          workspaceStore.activeWorkspaceRoot().trim();
+        if (!workspaceId || !workspacePath) throw new Error("workspace is required");
+
+        const sessionId =
+          input.sessionId?.trim() ||
+          selectedSessionId()?.trim() ||
+          `e2e-folder-access-session-${Date.now()}`;
+        if (!sessions().some((session) => session.id === sessionId)) {
+          const now = Date.now();
+          setSessions([
+            {
+              id: sessionId,
+              title: "E2E folder access consent",
+              directory: workspacePath,
+              time: { created: now, updated: now },
+            } as unknown as Session,
+            ...sessions(),
+          ]);
+        }
+        setSelectedSessionId(sessionId);
+        goToSession(sessionId, { replace: true });
+
+        const permissionId = input.id?.trim() || `e2e-folder-access-${Date.now()}`;
+        const permission = {
+          id: permissionId,
+          sessionID: sessionId,
+          permission: input.permission?.trim() || "folder_access",
+          always: [],
+          patterns: input.patterns ?? [],
+          metadata: {
+            requestedPath,
+            reason: input.reason?.trim() || "E2E folder access request",
+          },
+          workspaceId,
+          receivedAt: Date.now(),
+        } as PendingPermission;
+        setPendingPermissions([
+          permission,
+          ...pendingPermissions().filter((item) => item.id !== permissionId),
+        ]);
+        setE2eFolderAccessPermissionIds((current) => new Set(current).add(permissionId));
+
+        return {
+          permissionId,
+          sessionId,
+          workspaceId,
+          workspacePath,
+          requestedPath,
+        };
+      };
+    })();
+  });
+
+  onCleanup(() => {
+    e2eFolderAccessPromptHookCancelled = true;
+    if (e2eFolderAccessPromptRoot) {
+      delete e2eFolderAccessPromptRoot.__vesloE2EInjectFolderAccessPermission;
+    }
+  });
 
   const composerTargetController = createComposerTargetController({
     isTauriRuntime,
@@ -13150,7 +13291,7 @@ export default function App() {
     setComposerDraft: setComposerDraft,
     activePermission: activePermissionMemo(),
     permissionReplyBusy: permissionReplyBusy(),
-    respondPermission: respondPermission,
+    respondPermission: respondPermissionForSessionView,
     respondPermissionAndRemember: respondPermissionAndRemember,
     activeQuestion: activeQuestion(),
     questionReplyBusy: questionReplyBusy(),
