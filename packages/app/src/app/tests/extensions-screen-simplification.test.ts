@@ -5,16 +5,30 @@ import test from "node:test";
 import { resolveDashboardRouteTab } from "../controllers/app-startup-controller.js";
 
 const extensionsSource = readFileSync(new URL("../pages/extensions.tsx", import.meta.url), "utf8");
+const dashboardSource = readFileSync(new URL("../pages/dashboard.tsx", import.meta.url), "utf8");
 const mcpSource = readFileSync(new URL("../pages/mcp.tsx", import.meta.url), "utf8");
 const startupControllerSource = readFileSync(new URL("../controllers/app-startup-controller.ts", import.meta.url), "utf8");
 
-test("extensions screen no longer imports plugin view or section state", () => {
+test("extensions screen remains MCP-only", () => {
   assert.doesNotMatch(extensionsSource, /import PluginsView/);
-  assert.doesNotMatch(extensionsSource, /ExtensionsSection/);
-  assert.doesNotMatch(extensionsSource, /extensions\.plugins/);
-  assert.doesNotMatch(extensionsSource, /extensions\.plugins_opencode/);
-  assert.doesNotMatch(extensionsSource, /tr\("extensions\.all"\)/);
-  assert.doesNotMatch(extensionsSource, /tr\("extensions\.apps"\)/);
+  assert.match(extensionsSource, /tr\("extensions\.title"\)/);
+  assert.match(extensionsSource, /tr\("extensions\.subtitle"\)/);
+  assert.match(extensionsSource, /<McpView\b/);
+});
+
+test("dashboard plugins tab renders PluginsView with plugin management props", () => {
+  assert.match(dashboardSource, /import PluginsView from "\.\/plugins";/);
+
+  const pluginsMatch = dashboardSource.match(
+    /<Match when=\{props\.tab === "plugins"\}>([\s\S]*?)<\/Match>/,
+  );
+  assert.ok(pluginsMatch, "dashboard should have a dedicated plugins Match branch");
+
+  const pluginsBranch = pluginsMatch[1];
+  assert.match(pluginsBranch, /<PluginsView\b/);
+  assert.match(pluginsBranch, /canEditPlugins=\{props\.canEditPlugins\}/);
+  assert.match(pluginsBranch, /addPlugin=\{props\.addPlugin\}/);
+  assert.match(pluginsBranch, /removePlugin=\{props\.removePlugin\}/);
 });
 
 test("mcp screen no longer renders advanced settings or technical details", () => {

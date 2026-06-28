@@ -61,6 +61,7 @@ import type { SkillMutationTarget } from "../lib/skill-inventory";
 import Button from "../components/button";
 import DashboardTabRail, { shouldShowDashboardTabRail } from "../components/dashboard-tab-rail";
 import ExtensionsView from "./extensions";
+import PluginsView from "./plugins";
 import ScheduledTasksView from "./scheduled";
 import SoulView from "./soul";
 import ConfigView from "./config";
@@ -1277,7 +1278,31 @@ export default function DashboardView(props: DashboardViewProps) {
               />
             </Match>
 
-            <Match when={props.tab === "plugins" || props.tab === "mcp"}>
+            <Match when={props.tab === "plugins"}>
+              <PluginsView
+                busy={props.busy}
+                activeWorkspaceRoot={props.activeWorkspaceRoot}
+                canEditPlugins={props.canEditPlugins}
+                canUseGlobalScope={props.canUseGlobalPluginScope}
+                accessHint={props.pluginsAccessHint}
+                pluginScope={props.pluginScope}
+                setPluginScope={props.setPluginScope}
+                pluginConfigPath={props.pluginConfigPath}
+                pluginList={props.pluginList}
+                pluginInput={props.pluginInput}
+                setPluginInput={props.setPluginInput}
+                pluginStatus={props.pluginStatus}
+                activePluginGuide={props.activePluginGuide}
+                setActivePluginGuide={props.setActivePluginGuide}
+                isPluginInstalled={props.isPluginInstalled}
+                suggestedPlugins={props.suggestedPlugins}
+                refreshPlugins={props.refreshPlugins}
+                addPlugin={props.addPlugin}
+                removePlugin={props.removePlugin}
+              />
+            </Match>
+
+            <Match when={props.tab === "mcp"}>
               <ExtensionsView
                 busy={props.busy}
                 activeWorkspaceRoot={props.activeWorkspaceRoot}
