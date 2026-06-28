@@ -4999,6 +4999,19 @@ export default function App() {
     return fileName;
   }
 
+  async function refreshWorkspaceConfigForPath(workspacePath?: string) {
+    const targetPath =
+      workspacePath?.trim() ||
+      workspaceStore.activeWorkspaceRoot().trim() ||
+      workspaceStore.activeWorkspacePath().trim();
+    if (!targetPath || !isTauriRuntime()) return;
+
+    const cfg = await workspaceVesloRead({ workspacePath: targetPath });
+    workspaceStore.setWorkspaceConfig(cfg);
+    workspaceStore.setWorkspaceConfigLoaded(true);
+    const roots = Array.isArray(cfg.authorizedRoots) ? cfg.authorizedRoots : [];
+    workspaceStore.setAuthorizedDirs(roots.length ? roots : [targetPath]);
+  }
 
   async function respondPermissionAndRemember(
     requestID: string,
@@ -13060,6 +13073,7 @@ export default function App() {
     reloadBannerActiveCount: activeReloadBlockingSessions().length,
     canReloadWorkspace: canReloadWorkspace(),
     reloadWorkspaceEngine: reloadWorkspaceEngineAndResume,
+    refreshWorkspaceConfig: refreshWorkspaceConfigForPath,
     forceStopActiveConversations: forceStopActiveSessionsAndReload,
     dismissReloadBanner: clearReloadRequired,
     reloadBusy: reloadBusy(),

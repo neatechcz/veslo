@@ -41,6 +41,109 @@ export function selectedFolderContainsRequestedPath(
   return requested.key.startsWith(`${selected.key}/`);
 }
 
+export type FolderAccessPermission = {
+  id?: string;
+  workspaceId?: string;
+  permission?: string;
+  patterns?: string[];
+  metadata?: unknown;
+};
+
+export type FolderAccessRequestInput = {
+  permission: FolderAccessPermission | null | undefined;
+  workspacePath: string;
+  authorizedDirs: string[];
+};
+
+export type ResolvedFolderAccessRequest = {
+  permissionId: string;
+  workspaceId?: string;
+  workspacePath: string;
+  requestedPath: string;
+  reason: string;
+  pickerStartPath: string;
+};
+
+const FOLDER_ACCESS_METADATA_PATH_KEYS = [
+  "requestedPath",
+  "path",
+  "folderPath",
+  "targetPath",
+  "deniedPath",
+  "filePath",
+] as const;
+
+const FOLDER_ACCESS_METADATA_PICKER_KEYS = [
+  "pickerStartPath",
+  "folderPath",
+  "directory",
+  "dir",
+] as const;
+
+const FOLDER_ACCESS_METADATA_REASON_KEYS = [
+  "reason",
+  "message",
+  "description",
+] as const;
+
+const FOLDER_ACCESS_PERMISSION_MARKERS = [
+  "folder_access",
+  "external_directory",
+  "filesystem",
+  "file_system",
+  "sandbox",
+  "read_file",
+  "read_folder",
+] as const;
+
+export function resolveFolderAccessRequestFromPermission(
+  input: FolderAccessRequestInput,
+): ResolvedFolderAccessRequest | null {
+  const permission = input.permission;
+  if (!permission) return null;
+
+  const permissionId = readString(permission.id).trim();
+  const workspacePath = input.workspacePath.trim();
+  if (!permissionId || !workspacePath) return null;
+
+  const metadata = asRecord(permission.metadata);
+  const permissionName = readString(permission.permission).trim();
+  const metadataRequestedPath = findFirstMetadataString(metadata, FOLDER_ACCESS_METADATA_PATH_KEYS);
+  const markerPermission = permissionLooksLikeFolderAccess(permissionName, metadata);
+  const patternRequestedPath = markerPermission ? findFirstAbsolutePath(permission.patterns ?? []) : "";
+  const requestedPath = (isAbsoluteFolderAccessPath(metadataRequestedPath) ? metadataRequestedPath : patternRequestedPath).trim();
+
+  if (!requestedPath || !isAbsoluteFolderAccessPath(requestedPath)) return null;
+  if (!metadataRequestedPath && !markerPermission) return null;
+  if (input.authorizedDirs.some((directory) => selectedFolderContainsRequestedPath(directory, requestedPath))) {
+    return null;
+  }
+
+  const pickerMetadataPath = findFirstMetadataString(metadata, FOLDER_ACCESS_METADATA_PICKER_KEYS);
+  const existingDirectories = new Set(
+    [workspacePath, ...input.authorizedDirs, pickerMetadataPath]
+      .map((path) => path.trim())
+      .filter((path) => path && isAbsoluteFolderAccessPath(path)),
+  );
+
+  const reason =
+    findFirstMetadataString(metadata, FOLDER_ACCESS_METADATA_REASON_KEYS).trim() ||
+    permissionName ||
+    "Folder access requested";
+
+  return {
+    permissionId,
+    workspaceId: readString(permission.workspaceId).trim() || undefined,
+    workspacePath,
+    requestedPath,
+    reason,
+    pickerStartPath: choosePickerStartPath({
+      requestedPath,
+      existingDirectories,
+    }),
+  };
+}
+
 type NormalizedPath = {
   key: string;
   display: string;
@@ -137,4 +240,55 @@ function parentPathKey(value: string, root: string): string {
   if (root && index === root.length - 1) return root;
 
   return value.slice(0, index) || root || value;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function readString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function findFirstMetadataString(
+  metadata: Record<string, unknown>,
+  keys: readonly string[],
+): string {
+  for (const key of keys) {
+    const value = readString(metadata[key]).trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+function permissionLooksLikeFolderAccess(
+  permissionName: string,
+  metadata: Record<string, unknown>,
+): boolean {
+  const normalized = permissionName.trim().toLowerCase();
+  if (FOLDER_ACCESS_PERMISSION_MARKERS.some((marker) => normalized.includes(marker))) return true;
+
+  const accessMode = readString(metadata.accessMode).trim().toLowerCase();
+  const kind = readString(metadata.kind).trim().toLowerCase();
+  return accessMode === "read" && (kind.includes("folder") || kind.includes("file"));
+}
+
+function findFirstAbsolutePath(values: readonly string[]): string {
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (isAbsoluteFolderAccessPath(trimmed)) return trimmed;
+  }
+  return "";
+}
+
+function isAbsoluteFolderAccessPath(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  const normalized = trimmed.replace(/\\/g, "/");
+  return (
+    normalized.startsWith("/") ||
+    /^[A-Za-z]:\//.test(normalized) ||
+    /^\/\/[^/]+\/[^/]+/.test(normalized)
+  );
 }

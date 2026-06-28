@@ -29,10 +29,12 @@ import type {
 
 import { reportError } from "../lib/error-reporter";
 import {
+  pickDirectory,
   type EngineInfo,
   type PendingSessionDraftSummary,
   type VesloServerInfo,
   type WorkspaceInfo,
+  workspaceGrantFolderAccess,
 } from "../lib/tauri";
 import { acquireBlankNativeWindowTitleLease } from "../lib/native-window-title-lease";
 import { AI_ACCESS_LOADING_MESSAGE } from "../lib/ai-access";
@@ -60,6 +62,7 @@ import {
 
 import Button from "../components/button";
 import ConfirmModal from "../components/confirm-modal";
+import FolderAccessConsentModal from "../components/folder-access-consent-modal";
 import RenameSessionModal from "../components/rename-session-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import { parseVesloWorkspaceIdFromUrl } from "../lib/veslo-server";
@@ -79,6 +82,10 @@ import {
 } from "../utils";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
+import {
+  resolveFolderAccessRequestFromPermission,
+  selectedFolderContainsRequestedPath,
+} from "../lib/folder-access-request";
 import {
   createSessionClientMessageId,
   type MaterializedSessionHandoff,
@@ -382,6 +389,7 @@ export type SessionViewProps = {
   reloadBannerActiveCount: number;
   canReloadWorkspace: boolean;
   reloadWorkspaceEngine: () => Promise<void>;
+  refreshWorkspaceConfig: (workspacePath?: string) => Promise<void>;
   forceStopActiveConversations: () => Promise<void>;
   dismissReloadBanner: () => void;
   reloadBusy: boolean;
@@ -451,6 +459,8 @@ export default function SessionView(props: SessionViewProps) {
   const [renameBusy, setRenameBusy] = createSignal(false);
   const [newSessionBusy, setNewSessionBusy] = createSignal(false);
   const [newSessionError, setNewSessionError] = createSignal<string | null>(null);
+  const [folderAccessGrantBusy, setFolderAccessGrantBusy] = createSignal(false);
+  const [folderAccessError, setFolderAccessError] = createSignal<string | null>(null);
 
   const [sessionMenuOpen, setSessionMenuOpen] = createSignal(false);
   const [deleteSessionOpen, setDeleteSessionOpen] = createSignal(false);
@@ -495,6 +505,58 @@ export default function SessionView(props: SessionViewProps) {
     }
   };
   const newSessionDisplayError = createMemo(() => props.error ?? newSessionError());
+  const activeFolderAccessRequest = createMemo(() =>
+    resolveFolderAccessRequestFromPermission({
+      permission: props.activePermission,
+      workspacePath: props.activeWorkspaceRoot,
+      authorizedDirs: props.authorizedDirs,
+    }),
+  );
+  createEffect(() => {
+    if (activeFolderAccessRequest()) return;
+    setFolderAccessError(null);
+  });
+  const chooseFolderForAccessRequest = async () => {
+    const request = activeFolderAccessRequest();
+    if (!request || folderAccessGrantBusy()) return;
+
+    setFolderAccessGrantBusy(true);
+    setFolderAccessError(null);
+    try {
+      const selectedFolder = await pickDirectory({
+        title: tr("folder_access.choose_folder"),
+        defaultPath: request.pickerStartPath,
+      });
+      const selectedFolderPath = Array.isArray(selectedFolder)
+        ? selectedFolder[0]?.trim() ?? ""
+        : selectedFolder?.trim() ?? "";
+      if (!selectedFolderPath) return;
+      if (!selectedFolderContainsRequestedPath(selectedFolderPath, request.requestedPath)) {
+        setFolderAccessError("invalid_selection");
+        return;
+      }
+
+      await workspaceGrantFolderAccess({
+        workspacePath: request.workspacePath,
+        requestedPath: request.requestedPath,
+        selectedFolderPath,
+        accessMode: "read",
+      });
+      await props.refreshWorkspaceConfig(request.workspacePath);
+      await props.reloadWorkspaceEngine();
+      props.respondPermission(request.permissionId, "once");
+    } catch (error) {
+      reportError(error, "folderAccessConsent.chooseFolder");
+      setFolderAccessError(error instanceof Error ? error.message : props.safeStringify(error));
+    } finally {
+      setFolderAccessGrantBusy(false);
+    }
+  };
+  const cancelFolderAccessRequest = () => {
+    const request = activeFolderAccessRequest();
+    if (!request || folderAccessGrantBusy()) return;
+    props.respondPermission(request.permissionId, "reject");
+  };
   const sessionTitlebarContextModel = createMemo(() => {
     const rootPath = props.activeWorkspaceRoot.trim();
     return resolveSessionTitlebarContext({
@@ -3860,7 +3922,18 @@ export default function SessionView(props: SessionViewProps) {
         onCancel={() => setComposerTargetConflict(null)}
       />
 
-      <Show when={props.activePermission}>
+      <FolderAccessConsentModal
+        open={Boolean(activeFolderAccessRequest())}
+        requestedPath={activeFolderAccessRequest()?.requestedPath ?? ""}
+        pickerStartPath={activeFolderAccessRequest()?.pickerStartPath ?? ""}
+        accessMode="read"
+        duration="workspace"
+        error={folderAccessError()}
+        onChooseFolder={() => void chooseFolderForAccessRequest()}
+        onCancel={cancelFolderAccessRequest}
+      />
+
+      <Show when={props.activePermission && !activeFolderAccessRequest()}>
         <div class="absolute inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div class="bg-gray-2 border border-amber-7/30 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
             <div class="p-6">
