@@ -23,7 +23,8 @@ The CLI flag still requires `VESLO_DISABLE_SANDBOX=1`.
 
 ## Safety Contract
 
-- Default mode remains `pooled-per-workspace`.
+- Sandbox is on by default. The default engine topology remains
+  `pooled-per-workspace`.
 - `VESLO_SHARED_OPENCODE_ENGINE=1` without `VESLO_DISABLE_SANDBOX=1` is a
   configuration error.
 - WSL sandbox and other sandbox backends cannot use the shared engine.
@@ -103,4 +104,3 @@ runtime where available.
   yet migrate workspace identity to upstream OpenCode project ids.
 - OpenCodeRouter multi-workspace fanout is not expanded by this mode; it should
   continue through the workspace-scoped route for the active workspace.
-

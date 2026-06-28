@@ -9,6 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const tauriConfigPath = resolve(__dirname, "../src-tauri/tauri.conf.json");
 const srcTauriDir = resolve(__dirname, "../src-tauri");
+const runtimePreferencesPath = resolve(srcTauriDir, "src/runtime_preferences.rs");
 
 test("desktop window keeps Tauri native drag-drop disabled for HTML5 file drop", () => {
   const config = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
@@ -36,6 +37,21 @@ test("desktop window keeps a 390px minimum width for phone-standard layouts", ()
       "Window must keep the documented minimum width so the desktop shell cannot shrink below the phone-standard layout contract",
     );
   }
+});
+
+test("desktop runtime preferences default to sandbox on", () => {
+  const source = readFileSync(runtimePreferencesPath, "utf8");
+
+  assert.match(
+    source,
+    /fn default_shared_unsandboxed_engine_enabled\(\) -> bool \{\s*false\s*\}/,
+    "Missing desktop runtime preferences must leave the internal shared-unsandboxed opt-out off",
+  );
+  assert.doesNotMatch(
+    source,
+    /fn default_shared_unsandboxed_engine_enabled\(\) -> bool \{\s*cfg!\(windows\)\s*\}/,
+    "Windows must not default to shared non-sandbox mode when no runtime preference has been saved",
+  );
 });
 
 test("Windows updater MSI installs write a verbose diagnostic log", () => {
@@ -117,7 +133,7 @@ test("Windows MSI uses Czech WiX localization", () => {
   assert.match(locale, /Je již nainstalována novější verze aplikace Veslo by Neatech\./);
 });
 
-test("Windows MSI keeps managed WSL sandbox provisioning dormant for non-sandbox installer mode", () => {
+test("Windows MSI keeps managed WSL sandbox provisioning opt-in during installer setup", () => {
   const config = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
   const resources = config?.bundle?.resources ?? {};
   const wix = config?.bundle?.windows?.wix ?? {};
@@ -178,7 +194,7 @@ test("Windows MSI keeps managed WSL sandbox provisioning dormant for non-sandbox
   assert.match(
     fragment,
     /Property\s+Id="VESLO_ENABLE_WSL_INSTALLER"\s+Value="0"/,
-    "WSL installer provisioning must stay disabled by default while Windows builds use shared non-sandbox runtime",
+    "WSL installer provisioning must stay behind the explicit installer rollback flag",
   );
   assert.match(fragment, /RemoveOldVesloWslClientInstaller/);
   assert.match(fragment, /RemoveOldVesloWslPrerequisiteInstaller/);
@@ -648,8 +664,8 @@ test("Windows NSIS builds a current-user client installer with dormant WSL runti
   );
   assert.match(
     hook,
-    /Skipping Veslo WSL runtime preparation; shared non-sandbox runtime is enabled by default\./,
-    "NSIS installer should skip WSL preparation by default",
+    /Skipping Veslo WSL runtime preparation during installation; sandbox setup is handled by the app\./,
+    "NSIS installer should leave default sandbox setup to the installed app",
   );
   assert.match(
     hook,

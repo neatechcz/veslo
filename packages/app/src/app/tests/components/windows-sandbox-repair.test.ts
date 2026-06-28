@@ -14,12 +14,9 @@ test("Windows sandbox repair is gated to Tauri on Windows", () => {
   assert.match(componentSource, /isTauriRuntime\(\)\s*&&\s*isWindowsPlatform\(\)/);
 });
 
-test("Windows sandbox repair WSL path is kept but disabled for installer builds", () => {
-  assert.match(componentSource, /const WINDOWS_WSL_SANDBOX_REPAIR_ENABLED = false;/);
-  assert.match(
-    componentSource,
-    /Windows installer builds now use the shared non-sandbox runtime by default\./,
-  );
+test("Windows sandbox repair WSL path is available while sandbox is the default", () => {
+  assert.match(componentSource, /const WINDOWS_WSL_SANDBOX_REPAIR_ENABLED = true;/);
+  assert.doesNotMatch(componentSource, /shared non-sandbox runtime by default/);
   assert.match(
     componentSource,
     /if \(!WINDOWS_WSL_SANDBOX_REPAIR_ENABLED\) return;[\s\S]*const prereq = await wslPrerequisitesRepair\(\{ checkOnly: true \}\);/,
@@ -33,7 +30,7 @@ test("Windows sandbox repair WSL path is kept but disabled for installer builds"
   assert.match(
     componentSource,
     /isTauriRuntime\(\) && isWindowsPlatform\(\) && WINDOWS_WSL_SANDBOX_REPAIR_ENABLED/,
-    "the WSL repair prompt should not render while the installer uses non-sandbox runtime",
+    "the WSL repair prompt should render from the installed Windows app when sandbox setup is available",
   );
 
   const prerequisiteIndex = componentSource.indexOf("wslPrerequisitesRepair({ checkOnly: true })");

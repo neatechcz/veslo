@@ -27,7 +27,7 @@ impl Default for DesktopRuntimePreferences {
 }
 
 fn default_shared_unsandboxed_engine_enabled() -> bool {
-    cfg!(windows)
+    false
 }
 
 fn default_shared_unsandboxed_engine_override() -> Option<bool> {
@@ -150,23 +150,14 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn default_runtime_preference_uses_windows_non_sandbox_policy() {
-        assert_eq!(
-            DesktopRuntimePreferences::default().shared_unsandboxed_engine,
-            cfg!(windows)
-        );
-        assert_eq!(
-            default_shared_unsandboxed_engine_override(),
-            if cfg!(windows) { Some(true) } else { None }
-        );
-        assert_eq!(
-            resolve_shared_unsandboxed_engine_override(None),
-            if cfg!(windows) { Some(true) } else { None }
-        );
+    fn default_runtime_preference_keeps_sandbox_enabled() {
+        assert!(!DesktopRuntimePreferences::default().shared_unsandboxed_engine);
+        assert_eq!(default_shared_unsandboxed_engine_override(), None);
+        assert_eq!(resolve_shared_unsandboxed_engine_override(None), None);
     }
 
     #[test]
-    fn explicit_runtime_preference_overrides_windows_non_sandbox_policy() {
+    fn explicit_runtime_preference_overrides_sandbox_default() {
         assert_eq!(resolve_shared_unsandboxed_engine_override(Some(true)), Some(true));
         assert_eq!(resolve_shared_unsandboxed_engine_override(Some(false)), Some(false));
     }
