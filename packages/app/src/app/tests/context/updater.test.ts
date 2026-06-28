@@ -17,6 +17,7 @@ import {
   resolveUpdateInstallStartupStatus,
   resolveUpdateAutoDownloadDefaultOffMigration,
   resolveUpdateAutoDownloadPreference,
+  resolveUpdatePostInstallRestartAction,
   resolveUpdateStartupPreferences,
   shouldRelaunchAfterUpdateInstall,
   shouldAutoCheckForUpdatesAt,
@@ -132,6 +133,13 @@ test("Windows MSI updater handoff does not use the frontend relaunch path", () =
   assert.equal(shouldRelaunchAfterUpdateInstall("windows"), false);
   assert.equal(shouldRelaunchAfterUpdateInstall("macos"), true);
   assert.equal(shouldRelaunchAfterUpdateInstall("linux"), true);
+});
+
+test("post-install restart action avoids single-instance relaunch races on macOS", () => {
+  assert.equal(resolveUpdatePostInstallRestartAction("windows"), "installer-handoff");
+  assert.equal(resolveUpdatePostInstallRestartAction("macos"), "native-post-exit-relaunch");
+  assert.equal(resolveUpdatePostInstallRestartAction("linux"), "frontend-relaunch");
+  assert.equal(resolveUpdatePostInstallRestartAction("unknown"), "frontend-relaunch");
 });
 
 test("stored auto-download preference overrides the default", () => {

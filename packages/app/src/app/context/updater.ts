@@ -54,6 +54,10 @@ export type UpdateDownloadRetryInfo =
   | { kind: "exhausted"; retryAttempt: number; maxRetries: number; message?: string };
 
 export type UpdateInstallPlatform = "windows" | "macos" | "linux" | "unknown";
+export type UpdatePostInstallRestartAction =
+  | "installer-handoff"
+  | "native-post-exit-relaunch"
+  | "frontend-relaunch";
 
 export type UpdateInstallState = {
   schemaVersion: 1;
@@ -160,7 +164,15 @@ export function resolveUpdateInstallStartupStatus(input: {
 }
 
 export function shouldRelaunchAfterUpdateInstall(platform: UpdateInstallPlatform) {
-  return platform !== "windows";
+  return resolveUpdatePostInstallRestartAction(platform) !== "installer-handoff";
+}
+
+export function resolveUpdatePostInstallRestartAction(
+  platform: UpdateInstallPlatform,
+): UpdatePostInstallRestartAction {
+  if (platform === "windows") return "installer-handoff";
+  if (platform === "macos") return "native-post-exit-relaunch";
+  return "frontend-relaunch";
 }
 
 export function resolveNextUpdateDownloadRetry(input: { completedRetries: number; now?: number }) {

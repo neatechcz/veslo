@@ -18,7 +18,7 @@ import type {
 } from "./types";
 import type { WorkspaceBusyMap } from "./context/workspace-debug";
 import { currentLocale, t } from "../i18n";
-import { addOpencodeCacheHint, isTauriRuntime, isWindowsPlatform, safeStringify } from "./utils";
+import { addOpencodeCacheHint, isMacPlatform, isTauriRuntime, isWindowsPlatform, safeStringify } from "./utils";
 import { mapConfigProvidersToList } from "./utils/providers";
 import {
   UPDATE_AUTO_DOWNLOAD_MAX_RETRIES,
@@ -27,12 +27,14 @@ import {
   createUpdaterState,
   resolveAutoDownloadFailureStatus,
   resolveAutoDownloadOptOutStatus,
+  resolveUpdatePostInstallRestartAction,
   shouldRelaunchAfterUpdateInstall,
 } from "./context/updater";
 import {
   resetVesloState,
   resetOpencodeCache,
   updaterPrepareInstall,
+  updaterRelaunchAfterInstall,
 } from "./lib/tauri";
 import { unwrap, waitForHealthy } from "./lib/opencode";
 import type { WorkspaceRouting } from "./context/workspace-routing";
@@ -768,7 +770,8 @@ export function createSystemState(options: {
     }
 
     options.setError(null);
-    const platform = isWindowsPlatform() ? "windows" : "unknown";
+    const platform = isWindowsPlatform() ? "windows" : isMacPlatform() ? "macos" : "unknown";
+    const restartAction = resolveUpdatePostInstallRestartAction(platform);
     const startedAt = Date.now();
     const previousStatus = updateStatus();
     const lastCheckedAt =
@@ -813,8 +816,15 @@ export function createSystemState(options: {
       recordPerfLog(true, "workspace.updater", "install-handoff", {
         version: pending.version,
         platform,
-        frontendRelaunch: shouldRelaunchAfterUpdateInstall(platform),
+        frontendRelaunch: restartAction === "frontend-relaunch",
+        restartAction,
       });
+
+      if (restartAction === "native-post-exit-relaunch") {
+        clearUpdateInstallState();
+        await updaterRelaunchAfterInstall();
+        return;
+      }
 
       await pending.update.close().catch((error) => {
         recordPerfLog(true, "workspace.updater", "install-close-error", {
@@ -824,7 +834,7 @@ export function createSystemState(options: {
         });
       });
 
-      if (shouldRelaunchAfterUpdateInstall(platform)) {
+      if (restartAction === "frontend-relaunch" && shouldRelaunchAfterUpdateInstall(platform)) {
         clearUpdateInstallState();
         await relaunch();
       }

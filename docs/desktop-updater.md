@@ -103,11 +103,12 @@ Install is intentionally gated:
   - persist a short-lived install-in-progress marker on Windows
   - stop Veslo-managed desktop services
   - `pending.update.install()`
-  - `pending.update.close()`
-- macOS and other non-Windows runtimes then use the frontend relaunch path
+  - macOS schedules a native post-exit relaunch helper and exits the old app
+  - other non-Windows runtimes close the update handle and use the frontend relaunch path
 - Windows MSI installs do not use the immediate frontend relaunch path; the MSI handoff owns the installer/restart flow
 
 This prevents the app from restarting in the middle of a task run and prevents a restarted old Windows build from offering the same MSI update again while the previous installer handoff is still recent.
+On macOS, the relaunch helper waits until the old Veslo process exits before opening the updated `.app` bundle, so the single-instance guard cannot reject the replacement process while the old app is still shutting down.
 
 On startup, the app checks the persisted Windows install marker:
 
