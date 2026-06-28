@@ -2819,16 +2819,8 @@ export default function App() {
   });
 
   createEffect(() => {
-    if (!developerMode()) {
-      setVesloAuditEntries([]);
-      setVesloAuditStatus("idle");
-      setVesloAuditError(null);
-      return;
-    }
-    if (!documentVisible()) return;
-
-    const client = devtoolsVesloClient();
-    const workspaceId = devtoolsWorkspaceId();
+    const client = vesloServerClient();
+    const workspaceId = devtoolsWorkspaceId() || vesloServerWorkspaceId();
     if (!client || !workspaceId) {
       setVesloAuditEntries([]);
       setVesloAuditStatus("idle");

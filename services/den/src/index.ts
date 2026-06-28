@@ -47,6 +47,7 @@ import { createDbSkillRegistryStore } from "./skills/db-store.js"
 import { ensureCorePlatformSkills } from "./skills/core-platform-skill-bootstrap.js"
 import { createSkillRegistryRouter } from "./skills/routes.js"
 import { SkillRegistryTables } from "./skills/schema.js"
+import { createSoulRouter } from "./http/soul.js"
 import {
   createDefaultProxyDependencies,
   createDefaultRuntimeState,
@@ -161,6 +162,7 @@ app.get(/^\/admin(?:\/(?!api(?:\/|$)).*)?$/, (_, res) => {
   sendNoStoreFile(res, path.join(publicAdminDir, "index.html"))
 })
 app.use("/v1", createSkillRegistryRouter({ store: skillRegistryStore }))
+app.use("/v1", createSoulRouter())
 
 if (managedAiRuntime) {
   app.use(
@@ -852,6 +854,40 @@ async function ensureTables() {
     await ensureIndex("google_workspace_connection", "google_workspace_connection_scope", ["org_id", "user_id", "connector_id"], true)
     await ensureIndex("google_workspace_connection", "google_workspace_connection_org_user", ["org_id", "user_id"])
     await ensureIndex("google_workspace_connection", "google_workspace_connection_state", ["state"])
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`soul_document\` (
+        \`id\` varchar(64) NOT NULL,
+        \`scope\` enum('organization','user') NOT NULL,
+        \`owner_id\` varchar(128) NOT NULL,
+        \`current_version_id\` varchar(64),
+        \`heartbeat_enabled\` boolean NOT NULL DEFAULT false,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT \`soul_document_id\` PRIMARY KEY(\`id\`),
+        CONSTRAINT \`soul_document_scope_owner\` UNIQUE(\`scope\`,\`owner_id\`)
+      )
+    `)
+    await ensureIndex("soul_document", "soul_document_owner", ["owner_id"])
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`soul_version\` (
+        \`id\` varchar(64) NOT NULL,
+        \`document_id\` varchar(64) NOT NULL,
+        \`scope\` enum('organization','user') NOT NULL,
+        \`owner_id\` varchar(128) NOT NULL,
+        \`content\` longtext NOT NULL,
+        \`change_summary\` varchar(2048) NOT NULL,
+        \`created_by\` varchar(64) NOT NULL,
+        \`source\` enum('manual','api','heartbeat','restore','system') NOT NULL,
+        \`base_version_id\` varchar(64),
+        \`restore_source_version_id\` varchar(64),
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        CONSTRAINT \`soul_version_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await ensureIndex("soul_version", "soul_version_document_created", ["document_id", "created_at"])
+    await ensureIndex("soul_version", "soul_version_scope_owner", ["scope", "owner_id"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`feedback_report\` (

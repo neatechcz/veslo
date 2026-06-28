@@ -402,7 +402,7 @@ The app also supports bundle import flows through shared bundle URLs. The server
 
 ## Audit Contract
 
-The app expects Veslo server to record config mutations and host-level actions into the audit trail.
+The app expects Veslo server to record config mutations, host-level actions, and Soul source mutations into the audit trail.
 
 Relevant route:
 

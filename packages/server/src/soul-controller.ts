@@ -529,7 +529,7 @@ export function createSoulController() {
     const cached = den.userId
       ? await readCachedSoulDocument({ dataDir, scope: "user", ownerId: den.userId })
       : null;
-    const pendingEdits = den.userId
+    const pendingEdits = den.userId && !cached?.currentVersionId
       ? await readPendingSoulEditsFor(dataDir, "user", den.userId)
       : [];
     return {

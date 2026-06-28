@@ -12,12 +12,14 @@ const generalUpdateControlsRow = source.match(/<div class="flex flex-wrap items-
 const dashboardTabRailPath = new URL("../../components/dashboard-tab-rail.tsx", import.meta.url);
 const dashboardTabRailSource = existsSync(dashboardTabRailPath) ? readFileSync(dashboardTabRailPath, "utf8") : "";
 
-test("settings exposes archived tab and keeps developer tabs unavailable", () => {
+test("settings exposes archived tab and developer-only debug tab", () => {
   assert.match(source, /import DashboardTabRail/);
   assert.match(source, /<DashboardTabRail[\s\S]*activeDashboardTab="settings"[\s\S]*activeSettingsTab=\{activeTab\(\)\}/);
   assert.match(source, /onOpenDashboardTab=\{\(tab\) => props\.onOpenDashboardTab\?\.\(tab\)\}/);
-  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"general"\s*\}/);
-  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"archived"\s*\}/);
+  assert.match(source, /showDeveloperSettings=\{props\.developerMode\}/);
+  assert.match(dashboardTabRailSource, /baseItems[\s\S]*\{\s*kind:\s*"settings",\s*tab:\s*"general"\s*\}/);
+  assert.match(dashboardTabRailSource, /baseItems[\s\S]*\{\s*kind:\s*"settings",\s*tab:\s*"archived"\s*\}/);
+  assert.match(dashboardTabRailSource, /developerItems[\s\S]*\{\s*kind:\s*"settings",\s*tab:\s*"debug"\s*\}/);
   assert.doesNotMatch(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"scheduled"\s*\}/);
   assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"soul"\s*\}/);
   assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"skills"\s*\}/);
@@ -29,10 +31,11 @@ test("settings exposes archived tab and keeps developer tabs unavailable", () =>
   assert.doesNotMatch(source, /const\s+dashboardLinkTabs\s*=/);
   assert.doesNotMatch(source, /<ExtensionsOverview/);
   assert.doesNotMatch(source, /<Match when=\{activeTab\(\) === "extensions"\}>/);
-  assert.doesNotMatch(source, /if \(props\.developerMode\) tabs\.push\("advanced", "debug"\);/);
+  assert.match(source, /if \(props\.developerMode\) tabs\.push\("debug"\);/);
   assert.match(source, /<Match when=\{activeTab\(\) === "archived"\}>/);
   assert.doesNotMatch(source, /<Match when=\{activeTab\(\) === "model"\}>/);
   assert.match(source, /<Match when=\{activeTab\(\) === "advanced"\}>/);
+  assert.match(source, /<Match when=\{activeTab\(\) === "debug"\}>/);
   assert.match(source, /const\s+showGeneralUpdateControls\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
   assert.match(source, /const\s+generalUpdateLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
   assert.match(source, /const\s+generalUpdateActionLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
@@ -41,6 +44,8 @@ test("settings exposes archived tab and keeps developer tabs unavailable", () =>
     generalSection,
     /<Show when=\{showGeneralUpdateControls\(\)\}>[\s\S]*generalUpdateLabel\(\)[\s\S]*generalUpdateActionLabel\(\)[\s\S]*onClick=\{handleGeneralUpdateAction\}[\s\S]*translate\("settings\.appearance_title"\)/,
   );
+  assert.match(source, /const auditLogPanel = \(\) =>/);
+  assert.match(generalSection, /\{auditLogPanel\(\)\}/);
   assert.match(generalSection, /translate\("settings\.appearance_title"\)/);
   assert.match(generalSection, /translate\("settings\.appearance_hint"\)/);
   assert.match(generalSection, /translate\("settings\.theme_system"\)/);
@@ -60,6 +65,18 @@ test("settings no longer offers a developer mode entry point", () => {
   assert.doesNotMatch(generalSection, /Developer panel enabled\.|Enable this to access the Developer panel\./);
   assert.doesNotMatch(appSource, /setDeveloperMode/);
   assert.doesNotMatch(appSource, /veslo\.developerMode/);
+});
+
+test("settings audit panel is visible and loads outside developer mode", () => {
+  const auditEffect = appSource.match(
+    /createEffect\(\(\) => \{\n    const client = vesloServerClient\(\);\n    const workspaceId = devtoolsWorkspaceId\(\) \|\| vesloServerWorkspaceId\(\);[\s\S]*?client\.listAudit\(workspaceId, 50\);/,
+  )?.[0] ?? "";
+  assert.match(source, /data-testid="settings-audit-log"/);
+  assert.match(generalSection, /\{auditLogPanel\(\)\}/);
+  assert.match(auditEffect, /const client = vesloServerClient\(\);/);
+  assert.match(auditEffect, /const workspaceId = devtoolsWorkspaceId\(\) \|\| vesloServerWorkspaceId\(\);/);
+  assert.doesNotMatch(auditEffect, /developerMode\(\)/);
+  assert.doesNotMatch(auditEffect, /documentVisible\(\)/);
 });
 
 test("settings keeps compact update controls in general instead of a floating toolbar layout", () => {
@@ -129,4 +146,5 @@ test("settings locales include Settings and dashboard labels", () => {
   assert.match(dashboardTabRailSource, /case\s+"plugins":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.plugins", currentLocale\(\)\)/);
   assert.match(dashboardTabRailSource, /data-settings-nav-kind=\{item\.kind\}/);
   assert.match(dashboardTabRailSource, /data-settings-nav-tab=\{item\.tab\}/);
+  assert.match(dashboardTabRailSource, /showDeveloperSettings/);
 });

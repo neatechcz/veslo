@@ -200,11 +200,17 @@ export function createSoulEditorController<TSource extends SoulEditorSource>(
 
   const applyDetailResponse = (response: VesloSoulReadResponse, sourceKey = selectedSourceKey()) => {
     const nextContent = soulVersionContent(response);
+    const nextVersions = Array.isArray(response.document?.versions) ? response.document.versions : null;
     setDetail(response);
     setDetailSourceKey(sourceKey);
     setContent(nextContent);
     setInitialContent(nextContent);
     setChangeSummary("");
+    if (nextVersions) {
+      setVersions(nextVersions);
+      setHistorySourceKey(sourceKey);
+      setHistoryError(null);
+    }
   };
 
   const readSoulSource = (client: VesloServerClient, source: SoulEditorSource) => {

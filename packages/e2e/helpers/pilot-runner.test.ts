@@ -4,9 +4,11 @@ import { join } from 'node:path';
 
 import {
   buildPilotCommand,
+  buildPilotDenAuthSeedScript,
   defaultPilotScenarios,
   pilotReadinessProbeCommands,
   resolvePilotBinary,
+  resolvePilotDenAuthJson,
   resolvePilotScenarioSelection,
   scenarioSelectionNeedsSkillEnableInventoryFixture,
   scenarioSelectionNeedsGoogleMcpCatalogFixture,
@@ -46,6 +48,25 @@ test('defaultPilotScenarios contains the two migrated desktop checks', () => {
 
 test('pilotReadinessProbeCommands waits for both socket and webview readiness', () => {
   assert.deepEqual(pilotReadinessProbeCommands(), [['ping'], ['state']]);
+});
+
+test('resolvePilotDenAuthJson prefers the Veslo-prefixed auth seed', () => {
+  assert.equal(resolvePilotDenAuthJson({}), null);
+  assert.equal(
+    resolvePilotDenAuthJson({
+      E2E_DEN_AUTH_JSON: '{"token":"fallback"}',
+      VESLO_E2E_DEN_AUTH_JSON: '{"token":"preferred"}',
+    }),
+    '{"token":"preferred"}',
+  );
+});
+
+test('buildPilotDenAuthSeedScript writes browser and desktop auth state', () => {
+  const script = buildPilotDenAuthSeedScript('{"denApiBase":"http://127.0.0.1:8788","token":"token"}');
+
+  assert.match(script, /window\.localStorage\.setItem\("veslo\.den\.auth", authJson\)/);
+  assert.match(script, /den_auth_snapshot_write/);
+  assert.match(script, /window\.location\.reload\(\)/);
 });
 
 test('resolvePilotScenarioSelection supports focused scenario names without re-enabling legacy WDIO specs', () => {

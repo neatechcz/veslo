@@ -127,6 +127,13 @@
       "when": 1780707600000,
       "tag": "0016_hash_legacy_organization_invite_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "5",
+      "when": 1782604800000,
+      "tag": "0017_soul",
+      "breakpoints": true
     }
   ]
 }

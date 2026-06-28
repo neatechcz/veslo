@@ -38,6 +38,8 @@ export const FeedbackScreenshotStatus = ["captured", "failed"] as const
 export const FeedbackProjectorAttemptStatus = ["pending", "succeeded", "failed"] as const
 export const GoogleWorkspaceConnector = ["google-gmail", "google-calendar", "google-drive"] as const
 export const GoogleWorkspaceConnectionState = ["connected", "revoked", "error"] as const
+export const SoulScope = ["organization", "user"] as const
+export const SoulVersionSource = ["manual", "api", "heartbeat", "restore", "system"] as const
 
 export const AuthUserTable = mysqlTable(
   "user",
@@ -514,6 +516,43 @@ export const GoogleWorkspaceConnectionTable = mysqlTable(
     uniqueIndex("google_workspace_connection_scope").on(table.org_id, table.user_id, table.connector_id),
     index("google_workspace_connection_org_user").on(table.org_id, table.user_id),
     index("google_workspace_connection_state").on(table.state),
+  ],
+)
+
+export const SoulDocumentTable = mysqlTable(
+  "soul_document",
+  {
+    id: id().primaryKey(),
+    scope: mysqlEnum("scope", SoulScope).notNull(),
+    owner_id: varchar("owner_id", { length: 128 }).notNull(),
+    current_version_id: varchar("current_version_id", { length: 64 }),
+    heartbeat_enabled: boolean("heartbeat_enabled").notNull().default(false),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("soul_document_scope_owner").on(table.scope, table.owner_id),
+    index("soul_document_owner").on(table.owner_id),
+  ],
+)
+
+export const SoulVersionTable = mysqlTable(
+  "soul_version",
+  {
+    id: id().primaryKey(),
+    document_id: varchar("document_id", { length: 64 }).notNull(),
+    scope: mysqlEnum("scope", SoulScope).notNull(),
+    owner_id: varchar("owner_id", { length: 128 }).notNull(),
+    content: longtext("content").notNull(),
+    change_summary: varchar("change_summary", { length: 2048 }).notNull(),
+    created_by: varchar("created_by", { length: 64 }).notNull(),
+    source: mysqlEnum("source", SoulVersionSource).notNull(),
+    base_version_id: varchar("base_version_id", { length: 64 }),
+    restore_source_version_id: varchar("restore_source_version_id", { length: 64 }),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("soul_version_document_created").on(table.document_id, table.created_at),
+    index("soul_version_scope_owner").on(table.scope, table.owner_id),
   ],
 )
 

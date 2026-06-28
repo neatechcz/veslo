@@ -21,11 +21,8 @@ import {
 import {
   cacheSoulDocument,
   clearPendingSoulEdits,
-  listPendingSoulEdits,
   readCachedSoulDocument,
   soulCachePath,
-  soulPendingCacheDir,
-  writePendingSoulEdit,
 } from "../soul-cache.js";
 import {
   createSoulVersion,
@@ -51,6 +48,10 @@ type SoulModel = {
   materialization?: unknown;
 };
 
+type SoulMaterializationAuditSet = {
+  workspaces: Array<{ workspaceId: string; result?: { pending?: boolean; [key: string]: unknown } }>;
+};
+
 export type SoulRouteDependencies = {
   serverDataDir: string;
   readOrganizationSoulModel: (ctx: RequestContext) => Promise<SoulModel>;
@@ -70,7 +71,7 @@ export type SoulRouteDependencies = {
     ctx: RequestContext,
     overrides: Partial<Record<SoulScope, SoulDocument | null>>,
     options?: { activeWorkspaceIds?: Set<string> },
-  ) => Promise<unknown>;
+  ) => Promise<SoulMaterializationAuditSet & { ok: boolean; pending: boolean; manualSyncRequired: false }>;
   activeSoulWorkspaceIdsFromBody: (body: Record<string, unknown>, config?: ServerConfig) => Set<string>;
   soulWorkspaceActiveFromBody: (body: Record<string, unknown>, workspaceId: string) => boolean;
   soulMaterializationApprovalPaths: (workspace: WorkspaceInfo) => string[];
@@ -299,6 +300,11 @@ export function registerSoulRoutes(
     }, {
       activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body, ctx.config),
     });
+    await recordConfiguredSoulAudit(ctx, materialization, {
+      action: "soul.organization.update",
+      target: `organization:${document.ownerId}`,
+      summary: "Update Organization Soul",
+    });
     return jsonResponse(soulReadPayload({
       document,
       summary: soulSummary({
@@ -327,7 +333,6 @@ export function registerSoulRoutes(
       summary: "Update User Soul",
       paths: await configuredSoulMaterializationApprovalPaths(ctx.config, [
         soulCachePath({ dataDir: serverDataDir, scope: "user", ownerId: userId }),
-        soulPendingCacheDir(serverDataDir),
       ]),
     });
 
@@ -347,6 +352,11 @@ export function registerSoulRoutes(
         }, {
           activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body, ctx.config),
         });
+        await recordConfiguredSoulAudit(ctx, materialization, {
+          action: "soul.user.update",
+          target: `user:${document.ownerId}`,
+          summary: "Update User Soul",
+        });
         return jsonResponse(soulReadPayload({
           document,
           summary: soulSummary({
@@ -363,31 +373,38 @@ export function registerSoulRoutes(
       }
     }
 
-    const pendingEdit = await writePendingSoulEdit({
-      dataDir: serverDataDir,
-      edit: {
-        scope: "user",
-        ownerId: userId,
-        content,
-        changeSummary,
-        baseVersionId,
-        createdAt: new Date().toISOString(),
-        createdBy: soulActorId(ctx),
-      },
-    });
     const cached = await readCachedSoulDocument({ dataDir: serverDataDir, scope: "user", ownerId: userId });
+    const document = createSoulVersion(cached ?? emptySoulDocument("user", userId), {
+      id: soulVersionId("user_"),
+      content,
+      changeSummary,
+      createdAt: new Date().toISOString(),
+      createdBy: soulActorId(ctx),
+      source: "api",
+      baseVersionId,
+    });
+    await cacheSoulDocument({ dataDir: serverDataDir, document });
+    const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, ctx.config, ctx, {
+      user: document,
+    }, {
+      activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body),
+    });
+    await recordConfiguredSoulAudit(ctx, materialization, {
+      action: "soul.user.update",
+      target: `user:${document.ownerId}`,
+      summary: "Update User Soul",
+    });
     return jsonResponse(soulReadPayload({
-      document: cached,
+      document,
       summary: soulSummary({
         scope: "user",
         ownerId: userId,
-        document: cached,
+        document,
         canEdit: soulCanEdit(ctx, "user"),
-        status: "pending",
       }),
-      pendingEdits: [pendingEdit],
       denSynced: false,
-    }), 202);
+      materialization,
+    }));
   });
 
   addRoute(routes, "POST", "/soul/organization/versions/:versionId/restore", "client", async (ctx) => {
@@ -423,6 +440,11 @@ export function registerSoulRoutes(
       organization: document,
     }, {
       activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body, ctx.config),
+    });
+    await recordConfiguredSoulAudit(ctx, materialization, {
+      action: "soul.organization.restore",
+      target: `organization:${document.ownerId}`,
+      summary: `Restore Organization Soul version ${ctx.params.versionId}`,
     });
     return jsonResponse(soulReadPayload({
       document,
@@ -470,6 +492,11 @@ export function registerSoulRoutes(
         }, {
           activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body, ctx.config),
         });
+        await recordConfiguredSoulAudit(ctx, materialization, {
+          action: "soul.user.restore",
+          target: `user:${document.ownerId}`,
+          summary: `Restore User Soul version ${ctx.params.versionId}`,
+        });
         return jsonResponse(soulReadPayload({
           document,
           summary: soulSummary({
@@ -501,6 +528,11 @@ export function registerSoulRoutes(
     }, {
       activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body, ctx.config),
     });
+    await recordConfiguredSoulAudit(ctx, materialization, {
+      action: "soul.user.restore",
+      target: `user:${restored.ownerId}`,
+      summary: `Restore User Soul version ${ctx.params.versionId}`,
+    });
     return jsonResponse(soulReadPayload({
       document: restored,
       summary: soulSummary({
@@ -508,9 +540,7 @@ export function registerSoulRoutes(
         ownerId: restored.ownerId,
         document: restored,
         canEdit: soulCanEdit(ctx, "user"),
-        status: "pending",
       }),
-      pendingEdits: await listPendingSoulEdits({ dataDir: serverDataDir }),
       denSynced: false,
       materialization,
     }));
@@ -557,6 +587,11 @@ export function registerSoulRoutes(
     }, {
       workspaceActive: soulWorkspaceActiveFromBody(body, workspace.id),
     });
+    await recordWorkspaceSoulAudit(ctx, workspace, {
+      action: "soul.workspace.update",
+      target: `workspace:${workspace.id}`,
+      summary: `Update Workspace Soul for ${workspace.name}`,
+    });
     return jsonResponse(soulReadPayload({
       document: nextDocument,
       summary: soulSummary({
@@ -602,6 +637,11 @@ export function registerSoulRoutes(
     }, {
       workspaceActive: soulWorkspaceActiveFromBody(body, workspace.id),
     });
+    await recordWorkspaceSoulAudit(ctx, workspace, {
+      action: "soul.workspace.restore",
+      target: `workspace:${workspace.id}`,
+      summary: `Restore Workspace Soul version ${ctx.params.versionId}`,
+    });
     return jsonResponse(soulReadPayload({
       document: restored,
       summary: soulSummary({
@@ -632,6 +672,11 @@ export function registerSoulRoutes(
     });
     const document = { ...(existing ?? emptySoulDocument("workspace", workspace.id)), heartbeatEnabled: enabled };
     await cacheSoulDocument({ dataDir: serverDataDir, document });
+    await recordWorkspaceSoulAudit(ctx, workspace, {
+      action: "soul.workspace.heartbeat-toggle",
+      target: `workspace:${workspace.id}`,
+      summary: `${enabled ? "Enable" : "Disable"} Workspace Soul heartbeat`,
+    });
     return jsonResponse(soulReadPayload({
       document,
       summary: soulSummary({
@@ -657,5 +702,43 @@ export function registerSoulRoutes(
     const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 200) : 20;
     const { items, total, path } = await listSoulHeartbeats(workspace.path, limit);
     return jsonResponse({ items, total, path });
+  });
+}
+
+async function recordConfiguredSoulAudit(
+  ctx: RequestContext,
+  materialization: SoulMaterializationAuditSet,
+  input: { action: string; target: string; summary: string },
+): Promise<void> {
+  const timestamp = Date.now();
+  for (const item of materialization.workspaces) {
+    const workspace = await resolveWorkspace(ctx.config, item.workspaceId);
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: input.action,
+      target: input.target,
+      summary: item.result?.pending
+        ? `${input.summary} (runtime sync pending)`
+        : input.summary,
+      timestamp,
+    });
+  }
+}
+
+async function recordWorkspaceSoulAudit(
+  ctx: RequestContext,
+  workspace: WorkspaceInfo,
+  input: { action: string; target: string; summary: string },
+): Promise<void> {
+  await recordAudit(workspace.path, {
+    id: shortId(),
+    workspaceId: workspace.id,
+    actor: ctx.actor ?? { type: "remote" },
+    action: input.action,
+    target: input.target,
+    summary: input.summary,
+    timestamp: Date.now(),
   });
 }
