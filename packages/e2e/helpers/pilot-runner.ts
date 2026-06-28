@@ -96,7 +96,8 @@ export function scenarioSelectionNeedsGoogleMcpCatalogFixture(scenarios: string[
 export function scenarioSelectionNeedsManagedAiGatewayFixture(scenarios: string[]): boolean {
   return scenarios.some((scenario) =>
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/message-send-registry-degraded.toml') ||
-    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/sidebar-session-retention.toml'),
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/sidebar-session-retention.toml') ||
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/global-unpublished-draft.toml'),
   );
 }
 

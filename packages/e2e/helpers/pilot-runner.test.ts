@@ -134,3 +134,14 @@ test('sidebar session retention pilot scenario requests the managed AI fixture',
     true,
   );
 });
+
+test('global unpublished draft pilot scenario requests the managed AI fixture', () => {
+  const e2eRoot = '/repo/packages/e2e';
+
+  assert.equal(
+    scenarioSelectionNeedsManagedAiGatewayFixture(
+      resolvePilotScenarioSelection({ scenario: ['global-unpublished-draft'] }, e2eRoot),
+    ),
+    true,
+  );
+});
