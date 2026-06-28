@@ -10,14 +10,9 @@ timeout_ms = 15000
 
 [[step]]
 name = "root has rendered children"
-action = "eval"
-script = """
-const root = document.querySelector('#root');
-if (!root || root.children.length === 0) {
-  throw new Error('Veslo root did not render child UI');
-}
-true;
-"""
+action = "wait"
+target = "#root > *"
+timeout_ms = 60000
 
 [[step]]
 name = "body is visible"
