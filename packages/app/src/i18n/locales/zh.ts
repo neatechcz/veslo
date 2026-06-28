@@ -15,6 +15,8 @@ export default {
   "dashboard.plugins": "插件",
   "dashboard.mcps": "MCPs",
   "dashboard.settings": "设置",
+  "nav.extensions": "连接",
+  "nav.plugins": "插件",
   "dashboard.home": "主页",
   "dashboard.runs": "运行",
   "dashboard.find_workspace": "查找工作区...",
@@ -598,8 +600,8 @@ export default {
   "plugins.add_hint": "添加 npm 包名称，例如 opencode-wakatime",
 
   // ==================== Extensions ====================
-  "extensions.title": "扩展",
-  "extensions.subtitle": "为此工作区连接 MCP 应用和服务器。",
+  "extensions.title": "连接",
+  "extensions.subtitle": "通过 MCP 服务器将 Veslo 连接到外部应用和服务。",
   "extensions.apps_connected_one": "已连接 1 个应用",
   "extensions.apps_connected_other": "已连接多个应用",
   "extensions.apps_mcp": "应用（MCP）",

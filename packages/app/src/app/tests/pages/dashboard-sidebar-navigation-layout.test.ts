@@ -45,7 +45,7 @@ test("dashboard keeps the right sidebar reserved for advanced nav only", () => {
 test("dashboard mobile bottom nav hides automations", () => {
   assert.match(
     source,
-    /<nav class="md:hidden border-t border-dls-border bg-dls-surface">[\s\S]*\{t\("nav\.soul", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.skills", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.extensions", currentLocale\(\)\)\}/,
+    /<nav class="md:hidden border-t border-dls-border bg-dls-surface">[\s\S]*\{t\("nav\.soul", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.skills", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.extensions", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.plugins", currentLocale\(\)\)\}/,
   );
   assert.doesNotMatch(
     source,
@@ -60,6 +60,12 @@ test("dashboard mobile bottom nav keeps MCP active state separate from plugins",
   );
   assert.match(mobileBottomNavSource, /props\.tab === "mcp" \? "text-gray-12" : "text-gray-10"/);
   assert.doesNotMatch(mobileBottomNavSource, /props\.tab === "mcp"\s*\|\|\s*props\.tab === "plugins"/);
+  assert.match(
+    mobileBottomNavSource,
+    /onClick=\{\(\) => handleDashboardTabSelection\("plugins"\)\}[\s\S]*\{t\("nav\.plugins", currentLocale\(\)\)\}/,
+  );
+  assert.match(mobileBottomNavSource, /props\.tab === "plugins" \? "text-gray-12" : "text-gray-10"/);
+  assert.doesNotMatch(mobileBottomNavSource, /props\.tab === "plugins"\s*\|\|\s*props\.tab === "mcp"/);
 });
 
 test("dashboard reserves a titlebar-safe top strip for shell columns", () => {

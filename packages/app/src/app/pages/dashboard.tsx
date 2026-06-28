@@ -97,6 +97,7 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
+  Cpu,
   HeartPulse,
   Loader2,
   MoreHorizontal,
@@ -402,7 +403,7 @@ export default function DashboardView(props: DashboardViewProps) {
       case "skills":
         return t("nav.skills", currentLocale());
       case "plugins":
-        return t("nav.extensions", currentLocale());
+        return t("nav.plugins", currentLocale());
       case "mcp":
         return t("nav.extensions", currentLocale());
       case "config":
@@ -1526,7 +1527,7 @@ export default function DashboardView(props: DashboardViewProps) {
         </div>
 
         <nav class="md:hidden border-t border-dls-border bg-dls-surface">
-          <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-4" : "grid-cols-3"}`}>
+          <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-5" : "grid-cols-4"}`}>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
                 props.tab === "soul" ? "text-gray-12" : "text-gray-10"
@@ -1553,6 +1554,15 @@ export default function DashboardView(props: DashboardViewProps) {
             >
               <Box size={18} />
               {t("nav.extensions", currentLocale())}
+            </button>
+            <button
+              class={`flex flex-col items-center gap-1 text-xs ${
+                props.tab === "plugins" ? "text-gray-12" : "text-gray-10"
+              }`}
+              onClick={() => handleDashboardTabSelection("plugins")}
+            >
+              <Cpu size={18} />
+              {t("nav.plugins", currentLocale())}
             </button>
             <Show when={props.developerMode}>
               <button

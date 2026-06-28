@@ -1582,7 +1582,8 @@ export default {
   "nav.automations": "Automatizace",
   "nav.soul": "Soul",
   "nav.skills": "Skills",
-  "nav.extensions": "Rozšíření",
+  "nav.extensions": "Napojení",
+  "nav.plugins": "Pluginy",
   "nav.advanced": "Pokročilé",
   "nav.expand_dashboard_nav": "Rozbalit navigaci panelu",
   "nav.collapse_dashboard_nav": "Sbalit navigaci panelu",
@@ -1738,8 +1739,8 @@ export default {
   "scheduled.delete_failed": "Nepodařilo se smazat úlohu.",
 
   // ==================== Rozšíření ====================
-  "extensions.title": "Rozšíření",
-  "extensions.subtitle": "Připojte MCP aplikace a servery pro tento workspace.",
+  "extensions.title": "Napojení",
+  "extensions.subtitle": "Napojte Veslo na vnější aplikace a služby přes MCP servery.",
   "extensions.apps_connected_one": "aplikace připojena",
   "extensions.apps_connected_other": "aplikací připojeno",
   "extensions.plugin_one": "plugin",

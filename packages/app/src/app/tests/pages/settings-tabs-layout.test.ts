@@ -110,6 +110,10 @@ test("settings exposes updater download retry states", () => {
 test("settings locales include Settings and dashboard labels", () => {
   assert.match(enLocaleSource, /"settings\.archived": "Archived"/);
   assert.match(csLocaleSource, /"settings\.archived": "Archivované"/);
+  assert.match(enLocaleSource, /"nav\.extensions": "Connections"/);
+  assert.match(csLocaleSource, /"nav\.extensions": "Napojení"/);
+  assert.match(enLocaleSource, /"nav\.plugins": "Plugins"/);
+  assert.match(csLocaleSource, /"nav\.plugins": "Pluginy"/);
   assert.doesNotMatch(dashboardTabRailSource, /case\s+"scheduled":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.automations", currentLocale\(\)\)/);
   assert.match(dashboardTabRailSource, /case\s+"soul":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.soul", currentLocale\(\)\)/);
   assert.match(dashboardTabRailSource, /case\s+"skills":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.skills", currentLocale\(\)\)/);
