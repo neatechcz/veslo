@@ -873,9 +873,12 @@ export default function SessionView(props: SessionViewProps) {
   });
   const [composerEntryDismissedBySessionKey, setComposerEntryDismissedBySessionKey] =
     createSignal<Record<string, boolean>>({});
-  const composerEntryDismissed = createMemo(() =>
-    Boolean(composerEntryDismissedBySessionKey()[currentSessionQueueKey()]),
-  );
+  const composerEntryDismissed = createMemo(() => {
+    const dismissedBySessionKey = composerEntryDismissedBySessionKey();
+    if (dismissedBySessionKey[currentSessionQueueKey()]) return true;
+    if (props.selectedSessionId) return false;
+    return Boolean(dismissedBySessionKey[pendingSessionQueueKey()]);
+  });
   const dismissComposerEntryForSessionKey = (sessionKey = currentSessionQueueKey()) => {
     const key = sessionKey.trim();
     if (!key) return;
@@ -1221,6 +1224,10 @@ export default function SessionView(props: SessionViewProps) {
     !composerEntryDismissed() &&
     !showWorkspaceSetupEmptyState() &&
     !showSessionLoadingState(),
+  );
+  const showFooterComposerTargetContext = createMemo(() =>
+    !props.selectedSessionId &&
+    !composerEntryDismissed(),
   );
   createEffect(() => {
     const effectiveMessageCount = effectiveRenderedMessages().length;
@@ -2658,7 +2665,7 @@ export default function SessionView(props: SessionViewProps) {
       queuePaused: queuePaused(),
       showRunIndicator: showRunIndicator(),
     });
-    if (showComposerEntryState()) {
+    if (showComposerEntryState() || showFooterComposerTargetContext()) {
       dismissComposerEntryForSessionKey();
     }
     return conversationFlow.handleSendPrompt(draft, {
@@ -3594,7 +3601,7 @@ export default function SessionView(props: SessionViewProps) {
                   />
                 </div>
               </Show>
-              <Show when={!props.selectedSessionId}>
+              <Show when={showFooterComposerTargetContext()}>
                 <div class={`mx-auto mb-5 flex w-full ${railWidthClass()} flex-col items-center gap-3 text-center`}>
                   <ComposerTargetPicker
                     options={props.composerTargetOptions}

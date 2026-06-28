@@ -97,7 +97,7 @@ Current keyboard behavior:
 Submit behavior:
 
 - a submitted draft is rendered immediately as a temporary user message while workspace/session/message handoff is pending
-- a bare new-session screen shows the Composer entry centered without starter-template action cards; once the user submits from that state, the centered entry is dismissed immediately and the normal footer Composer/run indicator path takes over even if backend handoff is still pending
+- a bare new-session screen shows the Composer entry centered without starter-template action cards; once the user submits from that state, the centered entry and chat/workspace picker are dismissed immediately and the normal footer Composer/run indicator path takes over even if backend handoff is still pending
 - the responding state is not rendered as assistant message text or as a footnote under the submitted user message; it belongs to the footer run indicator and must stay visible while a pending send handoff is still warming up workspace/runtime state
 - while that pending send is still starting a local workspace/runtime, the footer indicator label is `Loading`/`Nahrávám`; once workspace warmup is done and the backend is simply producing the assistant turn, the same indicator returns to `Responding`/`Odpovídám`
 - first-send workspace and session materialization is scoped to the session run state; it must not hold the global app busy/navigation lock or force the user back to chat if they navigate elsewhere while the handoff is still pending
