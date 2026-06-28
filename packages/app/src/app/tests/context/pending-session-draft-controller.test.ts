@@ -3,7 +3,7 @@ import test from "node:test";
 import { createRoot } from "solid-js";
 
 import { createPendingSessionDraftController } from "../../context/pending-session-draft-controller.js";
-import { resolvePendingDraftKey } from "../../lib/pending-session-drafts.js";
+import { resolveComposerStorageKey, resolvePendingDraftKey } from "../../lib/pending-session-drafts.js";
 import type { PendingSessionDraft, PendingSessionDraftSummary } from "../../lib/tauri.js";
 import type { ComposerDraft } from "../../types.js";
 
@@ -107,11 +107,12 @@ test("pending draft controller reopens an existing private draft without creatin
       const opened = await controller.openNewSessionWithDirectory();
 
       const pendingKey = resolvePendingDraftKey({ kind: "new-private" });
+      const composerStorageKey = resolveComposerStorageKey({ pendingDraftKey: pendingKey });
       assert.equal(opened, true);
       assert.deepEqual(activatedWorkspaces, ["scratch-1"]);
       assert.equal(controller.activePendingDraftKey(), pendingKey);
       assert.equal(controller.activePendingDraftMeta()?.id, existingDraft.id);
-      assert.equal(composerDrafts[pendingKey]?.text, "remember this");
+      assert.equal(composerDrafts[composerStorageKey]?.text, "remember this");
       assert.deepEqual(views, ["session"]);
       assert.deepEqual(openEvents, ["restore-composer", "clear-displayed-session", "view:session"]);
     } finally {
@@ -171,4 +172,3 @@ test("pending draft controller reports failure when scratch workspace creation f
     }
   });
 });
-
