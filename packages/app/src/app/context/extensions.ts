@@ -58,6 +58,8 @@ import type {
   VesloServerClient,
   VesloDisabledSkillRecord,
   VesloSkillBatchRemoveResponse,
+  VesloSkillImportCandidate,
+  VesloSkillImportResult,
   VesloSkillMaterializationRequestOptions,
   VesloSkillRemovalItem,
   VesloSkillRemovalScope,
@@ -142,6 +144,8 @@ export function createExtensionsStore(options: {
 
   const [skillInventory, setSkillInventory] = createSignal<SkillInventoryItem[]>([]);
   const [skillInventoryStatus, setSkillInventoryStatus] = createSignal<string | null>(null);
+  const [skillImportCandidates, setSkillImportCandidates] = createSignal<VesloSkillImportCandidate[]>([]);
+  const [skillImportStatus, setSkillImportStatus] = createSignal<string | null>(null);
 
   const [hubSkills, setHubSkills] = createSignal<HubSkillCard[]>([]);
   const [hubSkillsStatus, setHubSkillsStatus] = createSignal<string | null>(null);
@@ -168,22 +172,26 @@ export function createExtensionsStore(options: {
   let refreshSkillInventoryInFlightContextKey = "";
   let refreshPluginsInFlight = false;
   let refreshHubSkillsInFlight = false;
+  let refreshSkillImportCandidatesInFlight = false;
   let refreshHubSkillsPromise: Promise<void> | null = null;
   let refreshHubSkillsInFlightContextKey = "";
   let refreshSkillsAborted = false;
   let refreshSkillInventoryAborted = false;
   let refreshPluginsAborted = false;
   let refreshHubSkillsAborted = false;
+  let refreshSkillImportCandidatesAborted = false;
   let refreshHubMcpInFlight = false;
   let refreshHubMcpAborted = false;
   let skillsLoaded = false;
   let hubSkillsLoaded = false;
+  let skillImportCandidatesLoaded = false;
   let skillInventoryLoaded = false;
   let hubMcpLoaded = false;
   let skillsRoot = "";
   let skillInventoryContextKey = "";
   let hubSkillsRoot = "";
   let hubSkillsContextKey = "";
+  let skillImportCandidatesContextKey = "";
   let hubSkillsRevision = 0;
   let localSkillsRevision = 0;
   let hubMcpRoot = "";
@@ -448,6 +456,22 @@ export function createExtensionsStore(options: {
       return vesloClient as UserGlobalSkillStoreClient;
     }
     return null;
+  };
+
+  type SkillImportClient = VesloServerClient & {
+    listSkillImportCandidates?: () => Promise<{ items: VesloSkillImportCandidate[] }>;
+    importSkillCandidates?: (candidateIds: string[]) => Promise<VesloSkillImportResult>;
+  };
+
+  const getSkillImportClient = (mode: "read" | "write"): SkillImportClient | null => {
+    const vesloClient = options.vesloServerClient();
+    const capabilities = options.vesloServerCapabilities();
+    const hasCapability = mode === "read" ? capabilities?.skills?.read : capabilities?.skills?.write;
+    if (options.vesloServerStatus() !== "connected" || !vesloClient || !hasCapability) return null;
+    const client = vesloClient as SkillImportClient;
+    if (mode === "read" && typeof client.listSkillImportCandidates !== "function") return null;
+    if (mode === "write" && typeof client.importSkillCandidates !== "function") return null;
+    return client;
   };
 
   const isUserGlobalSkillStorePath = (value: string | undefined) =>
@@ -1024,6 +1048,104 @@ export function createExtensionsStore(options: {
     markLocalSkillsSourceChanged();
     skillInventoryLoaded = false;
     await refreshSkillInventory({ force: true });
+  }
+
+  async function refreshSkillImportCandidates(optionsOverride?: { force?: boolean }) {
+    const root = options.activeWorkspaceRoot().trim();
+    const client = getSkillImportClient("read");
+    const contextKey = JSON.stringify({
+      root,
+      client: resolveVesloServerClientIdentity(options.vesloServerClient()),
+      status: options.vesloServerStatus(),
+    });
+
+    if (!root) {
+      setSkillImportCandidates([]);
+      setSkillImportStatus(translate("skills.pick_workspace_first"));
+      return;
+    }
+
+    if (!client) {
+      skillImportCandidatesLoaded = false;
+      setSkillImportCandidates([]);
+      setSkillImportStatus(translate("skills.import_server_required"));
+      return;
+    }
+
+    if (contextKey !== skillImportCandidatesContextKey) {
+      skillImportCandidatesLoaded = false;
+    }
+    if (!optionsOverride?.force && skillImportCandidatesLoaded) return;
+    if (refreshSkillImportCandidatesInFlight) return;
+
+    refreshSkillImportCandidatesInFlight = true;
+    refreshSkillImportCandidatesAborted = false;
+    try {
+      setSkillImportStatus(null);
+      const response = await client.listSkillImportCandidates!();
+      if (refreshSkillImportCandidatesAborted) return;
+      const next = Array.isArray(response.items) ? response.items : [];
+      setSkillImportCandidates(next);
+      if (!next.length) {
+        setSkillImportStatus(translate("skills.import_no_candidates"));
+      }
+      skillImportCandidatesLoaded = true;
+      skillImportCandidatesContextKey = contextKey;
+    } catch (e) {
+      if (refreshSkillImportCandidatesAborted) return;
+      skillImportCandidatesLoaded = false;
+      setSkillImportCandidates([]);
+      setSkillImportStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+    } finally {
+      refreshSkillImportCandidatesInFlight = false;
+    }
+  }
+
+  async function importSkillCandidates(candidateIds: string[]): Promise<SkillSaveResult> {
+    const ids = candidateIds.map((id) => id.trim()).filter(Boolean);
+    if (!ids.length) {
+      const message = translate("skills.import_select_candidate");
+      setSkillImportStatus(message);
+      return { ok: false, message };
+    }
+
+    const client = getSkillImportClient("write");
+    if (!client) {
+      const message = translate("skills.import_server_required");
+      setSkillImportStatus(message);
+      return { ok: false, message };
+    }
+
+    options.setBusy(true);
+    options.setError(null);
+    setSkillImportStatus(null);
+    try {
+      const result = await client.importSkillCandidates!(ids);
+      const successes = result.results.filter((item) => item.ok);
+      const failures = result.results.filter((item) => !item.ok);
+
+      if (successes.length > 0) {
+        await syncUserGlobalSkillStoreForActiveWorkspace();
+        options.markReloadRequired?.("skills", { type: "skill", name: "skills", action: "updated" });
+        await refreshSkills({ force: true });
+        await refreshSkillInventory({ force: true });
+      }
+      await refreshSkillImportCandidates({ force: true });
+
+      const message = failures.length > 0
+        ? translate("skills.import_failed_count").replace("{count}", String(failures.length))
+        : translate("skills.import_success_count").replace("{count}", String(successes.length));
+      setSkillImportStatus(message);
+      return { ok: failures.length === 0, message };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const hintedMessage = addOpencodeCacheHint(message);
+      setSkillImportStatus(hintedMessage);
+      options.setError(hintedMessage);
+      return { ok: false, message: hintedMessage };
+    } finally {
+      options.setBusy(false);
+    }
   }
 
   async function installHubSkill(name: string, target: HubSkillInstallTarget): Promise<{ ok: boolean; message: string }> {
@@ -2941,6 +3063,7 @@ export function createExtensionsStore(options: {
     refreshSkillInventoryAborted = true;
     refreshPluginsAborted = true;
     refreshHubSkillsAborted = true;
+    refreshSkillImportCandidatesAborted = true;
     refreshHubMcpAborted = true;
   }
 
@@ -2949,6 +3072,8 @@ export function createExtensionsStore(options: {
     skillsStatus,
     skillInventory,
     skillInventoryStatus,
+    skillImportCandidates,
+    skillImportStatus,
     hubSkills,
     hubSkillsStatus,
     hubMcpCards,
@@ -2968,6 +3093,7 @@ export function createExtensionsStore(options: {
     isPluginInstalledByName,
     refreshSkills,
     refreshSkillInventory,
+    refreshSkillImportCandidates,
     invalidateSkillRegistryInventory,
     refreshHubSkills,
     refreshHubMcp,
@@ -2975,6 +3101,7 @@ export function createExtensionsStore(options: {
     addPlugin,
     removePlugin,
     importLocalSkill,
+    importSkillCandidates,
     installSkillCreator,
     installHubSkill,
     revealSkillsFolder,

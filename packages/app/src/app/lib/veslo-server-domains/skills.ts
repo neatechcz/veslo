@@ -8,6 +8,8 @@ import type {
   VesloSkillContent,
   VesloSkillEnabledStateResponse,
   VesloSkillEnabledTarget,
+  VesloSkillImportCandidatesResponse,
+  VesloSkillImportResult,
   VesloSkillItem,
   VesloSkillMaterializationRequestOptions,
   VesloSkillMaterializationStatus,
@@ -654,6 +656,20 @@ export function createSkillsClient(context: SkillsClientContext) {
       requestJson<VesloSkillRemovalsResponse>(baseUrl, buildSkillRemovalsPath(params), {
         token,
         hostToken,
+      }),
+
+    listImportCandidates: () =>
+      requestJson<VesloSkillImportCandidatesResponse>(baseUrl, "/skills/import-candidates", {
+        token,
+        hostToken,
+      }),
+
+    importCandidates: (candidateIds: string[]) =>
+      requestJson<VesloSkillImportResult>(baseUrl, "/skills/import-candidates/import", {
+        token,
+        hostToken,
+        method: "POST",
+        body: { candidateIds },
       }),
 
     restoreRemoval: (removalId: string) =>

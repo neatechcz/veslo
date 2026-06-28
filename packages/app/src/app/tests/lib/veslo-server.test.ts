@@ -3523,6 +3523,8 @@ test("skills domain facade exposes workspace, registry and materialization endpo
     await client.skills.installHub("ws 1", "owner/skill", { overwrite: true });
     await client.skills.deleteGlobal("global/skill", { reason: "cleanup" });
     await client.skills.listRemovals({ scope: "workspace", workspaceId: "ws 1", includeRestored: true });
+    await client.skills.listImportCandidates();
+    await client.skills.importCandidates(["candidate-1", "candidate-2"]);
 
     assert.deepEqual(
       calls.map((call) => ({ url: call.url, method: call.method })),
@@ -3535,9 +3537,12 @@ test("skills domain facade exposes workspace, registry and materialization endpo
         { url: "https://veslo.example/workspace/ws%201/skills/hub/owner%2Fskill", method: "POST" },
         { url: "https://veslo.example/skills/user-global/global%2Fskill?reason=cleanup", method: "DELETE" },
         { url: "https://veslo.example/skill-removals?scope=workspace&workspaceId=ws+1&includeRestored=true", method: "GET" },
+        { url: "https://veslo.example/skills/import-candidates", method: "GET" },
+        { url: "https://veslo.example/skills/import-candidates/import", method: "POST" },
       ],
     );
     assert.deepEqual(calls[3]?.body, { activeRun: true });
+    assert.deepEqual(calls[9]?.body, { candidateIds: ["candidate-1", "candidate-2"] });
     assert.equal(calls[3]?.headers.get("x-veslo-den-token"), "den-token");
     assert.equal(calls[4]?.headers.get("x-veslo-den-token"), "den-token");
     assert.equal(calls[4]?.headers.get("x-veslo-den-org-id"), "org-123");

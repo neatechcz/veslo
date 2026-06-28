@@ -264,6 +264,54 @@ export type VesloSkillRemovalMutationResult = {
   trigger?: VesloReloadTrigger & { scope?: VesloSkillRemovalScope };
 };
 
+export type VesloSkillImportSourceAgent = "codex" | "claude" | "opencode" | "agents";
+export type VesloSkillImportSourceLocation = "user-global" | "workspace";
+export type VesloSkillImportStatus = "ready" | "needs-review" | "invalid" | "conflict";
+
+export type VesloSkillImportTarget =
+  | { scope: "user-global" }
+  | { scope: "workspace"; workspaceId: string; workspaceName: string };
+
+export type VesloSkillImportCandidate = {
+  id: string;
+  name: string;
+  description: string;
+  trigger?: string;
+  sourceAgent: VesloSkillImportSourceAgent;
+  sourceLocation: VesloSkillImportSourceLocation;
+  sourcePath: string;
+  sourceRoot: string;
+  target: VesloSkillImportTarget;
+  status: VesloSkillImportStatus;
+  warnings: string[];
+  conflict?: {
+    code: "target-exists" | "duplicate-candidate";
+    message: string;
+    path?: string;
+  };
+  fileCount: number;
+};
+
+export type VesloSkillImportCandidatesResponse = {
+  items: VesloSkillImportCandidate[];
+};
+
+export type VesloSkillImportResultItem = {
+  candidateId: string;
+  name?: string;
+  ok: boolean;
+  code?: string;
+  message?: string;
+  path?: string;
+  target?: VesloSkillImportTarget;
+};
+
+export type VesloSkillImportResult = {
+  ok: boolean;
+  reloadRequired?: boolean;
+  results: VesloSkillImportResultItem[];
+};
+
 export type VesloSkillBatchRemoveScope = VesloSkillRemovalScope | "organization";
 
 export type VesloSkillBatchRemoveItem = {

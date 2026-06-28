@@ -31,10 +31,22 @@ export type UserGlobalSkillRecord = {
   name: string;
   description: string;
   content: string;
+  files?: UserGlobalSkillFileRecord[];
   hash: string;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
+};
+
+export type UserGlobalSkillFileRecord = {
+  path: string;
+  contentBase64: string;
+  hash: string;
+};
+
+export type UserGlobalSkillFileInput = {
+  path: string;
+  content: Uint8Array;
 };
 
 export type UserGlobalSkillSummary = Omit<UserGlobalSkillRecord, "content"> & {
@@ -86,7 +98,43 @@ export type UserGlobalSkillMaterializationResult = {
 
 const nowIso = () => new Date().toISOString();
 
-const hashSkillContent = (content: string) => createHash("sha256").update(content).digest("hex");
+const normalizeStoreFilePath = (value: string): string => {
+  const normalized = value.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  if (
+    parts.length === 0 ||
+    parts.some((part) => part === "." || part === "..") ||
+    normalized === SKILL_ENTRYPOINT
+  ) {
+    throw new ApiError(400, "invalid_user_skill_file", "User skill file path is invalid");
+  }
+  return parts.join("/");
+};
+
+const hashBytes = (content: string | Uint8Array) => createHash("sha256").update(content).digest("hex");
+
+const normalizeFileRecord = (input: UserGlobalSkillFileInput): UserGlobalSkillFileRecord => {
+  const path = normalizeStoreFilePath(input.path);
+  return {
+    path,
+    contentBase64: Buffer.from(input.content).toString("base64"),
+    hash: hashBytes(input.content),
+  };
+};
+
+const compareFileRecords = (left: UserGlobalSkillFileRecord, right: UserGlobalSkillFileRecord) =>
+  left.path.localeCompare(right.path);
+
+const hashSkillRecord = (content: string, files: UserGlobalSkillFileRecord[] = []) => {
+  const hash = createHash("sha256").update(content);
+  for (const file of [...files].sort(compareFileRecords)) {
+    hash.update("\0");
+    hash.update(file.path);
+    hash.update("\0");
+    hash.update(file.hash);
+  }
+  return hash.digest("hex");
+};
 
 export function userGlobalSkillVirtualPath(name: string): string {
   return `${USER_GLOBAL_SKILL_VIRTUAL_PATH_PREFIX}${encodeURIComponent(name)}`;
@@ -133,7 +181,22 @@ const validateRecord = (value: unknown): UserGlobalSkillRecord => {
   if (!content) {
     throw new ApiError(500, "invalid_user_skill_store", "User skill store record is missing content");
   }
-  const hash = String(record.hash ?? "").trim().toLowerCase() || hashSkillContent(content);
+  const files = Array.isArray(record.files)
+    ? record.files.map((file): UserGlobalSkillFileRecord => {
+        if (!file || typeof file !== "object") {
+          throw new ApiError(500, "invalid_user_skill_store", "User skill file record must be an object");
+        }
+        const item = file as Record<string, unknown>;
+        const path = normalizeStoreFilePath(String(item.path ?? ""));
+        const contentBase64 = String(item.contentBase64 ?? "").trim();
+        const hash = String(item.hash ?? "").trim().toLowerCase();
+        if (!contentBase64 || !hash) {
+          throw new ApiError(500, "invalid_user_skill_store", "User skill file record is missing required fields");
+        }
+        return { path, contentBase64, hash };
+      }).sort(compareFileRecords)
+    : [];
+  const hash = String(record.hash ?? "").trim().toLowerCase() || hashSkillRecord(content, files);
   const createdAt = String(record.createdAt ?? "").trim() || nowIso();
   const updatedAt = String(record.updatedAt ?? "").trim() || createdAt;
   const description = String(record.description ?? "").trim();
@@ -141,6 +204,7 @@ const validateRecord = (value: unknown): UserGlobalSkillRecord => {
     name,
     description,
     content,
+    ...(files.length > 0 ? { files } : {}),
     hash,
     enabled: record.enabled !== false,
     createdAt,
@@ -228,7 +292,13 @@ export async function readUserGlobalSkill(
 }
 
 export async function upsertUserGlobalSkill(
-  payload: { name: string; content: string; description?: string; enabled?: boolean },
+  payload: {
+    name: string;
+    content: string;
+    description?: string;
+    enabled?: boolean;
+    files?: UserGlobalSkillFileInput[];
+  },
   dataDirOverride?: string,
   options: UserGlobalSkillStoreOptions = {},
 ): Promise<{ item: UserGlobalSkillSummary; action: "added" | "updated" }> {
@@ -242,12 +312,14 @@ export async function upsertUserGlobalSkill(
   });
   const store = await readStore(dataDirOverride);
   const existing = store.skills.find((skill) => skill.name === name);
+  const files = (payload.files ?? []).map(normalizeFileRecord).sort(compareFileRecords);
   const timestamp = nowIso();
   const next: UserGlobalSkillRecord = {
     name,
     description: metadata.description ?? payload.description?.trim() ?? "",
     content,
-    hash: hashSkillContent(content),
+    ...(files.length > 0 ? { files } : {}),
+    hash: hashSkillRecord(content, files),
     enabled: payload.enabled ?? existing?.enabled ?? true,
     createdAt: existing?.createdAt ?? timestamp,
     updatedAt: timestamp,
@@ -391,6 +463,33 @@ const findLocalSkillConflict = async (workspaceRoot: string, name: string): Prom
   return null;
 };
 
+const writeSkillRecordFiles = async (skillDir: string, skill: UserGlobalSkillRecord): Promise<void> => {
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(join(skillDir, SKILL_ENTRYPOINT), skill.content, "utf8");
+  const skillDirResolved = resolve(skillDir);
+  for (const file of skill.files ?? []) {
+    const target = resolve(skillDir, file.path);
+    if (!isPathInside(skillDirResolved, target)) {
+      throw new ApiError(500, "invalid_user_skill_store", "User skill file path escapes materialization directory");
+    }
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, Buffer.from(file.contentBase64, "base64"));
+  }
+};
+
+const skillRecordFilesMatch = async (skillDir: string, skill: UserGlobalSkillRecord): Promise<boolean> => {
+  const skillDirResolved = resolve(skillDir);
+  for (const file of skill.files ?? []) {
+    const target = resolve(skillDir, file.path);
+    if (!isPathInside(skillDirResolved, target)) {
+      throw new ApiError(500, "invalid_user_skill_store", "User skill file path escapes materialization directory");
+    }
+    const content = await readFile(target).catch(() => null);
+    if (!content || hashBytes(content) !== file.hash) return false;
+  }
+  return true;
+};
+
 const readManagedNamesFromRoot = async (
   rootDir: string,
   manifest: UserGlobalSkillMaterializationManifest | null,
@@ -486,9 +585,11 @@ export async function materializeUserGlobalSkillsForWorkspace(input: {
     };
     const existingContent = (await exists(skillPath)) ? await readFile(skillPath, "utf8").catch(() => null) : null;
     const existingMarker = await readMarker(skillDir).catch(() => null);
-    if (existingContent !== skill.content || !existingMarker || !manifestEntryEquals(existingMarker, entry)) {
-      await mkdir(skillDir, { recursive: true });
-      await writeFile(skillPath, skill.content, "utf8");
+    const markerMatches = Boolean(existingMarker && manifestEntryEquals(existingMarker, entry));
+    const filesMatch = markerMatches ? await skillRecordFilesMatch(skillDir, skill) : false;
+    if (existingContent !== skill.content || !markerMatches || !filesMatch) {
+      await rm(skillDir, { recursive: true, force: true });
+      await writeSkillRecordFiles(skillDir, skill);
       await writeMarker(skillDir, entry);
       changed = true;
     }

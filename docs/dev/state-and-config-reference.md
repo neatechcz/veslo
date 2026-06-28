@@ -426,6 +426,15 @@ The Skills page builds an app-wide inventory from four sources:
 - workspace-local skills discovered per readable local workspace
 - Hub skills from the existing prepared catalog flow
 
+The Skills import flow has a separate candidate list. It scans known foreign
+agent roots such as Codex, Claude Code, OpenCode-compatible roots, and legacy
+agent folders, but those roots are not inventory sources merely because they
+were scanned. A selected user-level candidate is copied into the Veslo user skill
+store. A selected workspace-local candidate is copied into that workspace's
+OpenCode skill root. The UI can filter candidates by source agent and readiness,
+but it does not expose a scope picker; the target is derived from the source
+location.
+
 Use product terminology consistently:
 
 - **User skill** means a skill installed for the current user and available

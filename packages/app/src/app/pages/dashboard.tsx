@@ -46,6 +46,7 @@ import type {
   VesloServerDiagnostics,
   VesloServerSettings,
   VesloServerStatus,
+  VesloSkillImportCandidate,
 } from "../lib/veslo-server";
 import {
   type EngineInfo,
@@ -227,6 +228,7 @@ export type DashboardViewProps = {
   isRemoteWorkspace: boolean;
   refreshSkills: (options?: { force?: boolean }) => void;
   refreshSkillInventory: (options?: { force?: boolean }) => void;
+  refreshSkillImportCandidates: (options?: { force?: boolean }) => void;
   refreshHubSkills: (options?: { force?: boolean }) => void;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
   refreshMcpServers: () => void;
@@ -234,6 +236,8 @@ export type DashboardViewProps = {
   skillsStatus: string | null;
   skillInventory: SkillInventoryItem[];
   skillInventoryStatus: string | null;
+  skillImportCandidates: VesloSkillImportCandidate[];
+  skillImportStatus: string | null;
   hubSkills: HubSkillCard[];
   hubSkillsStatus: string | null;
   hubMcpCards: HubMcpCard[];
@@ -257,6 +261,7 @@ export type DashboardViewProps = {
   restoreSkillInstance: (target: SkillMutationTarget) => Promise<SkillSaveResult>;
   copySkillInstanceToGlobal: (target: SkillMutationTarget, options?: { deleteSource?: boolean }) => Promise<SkillSaveResult>;
   copySkillInstanceToWorkspace: (target: SkillMutationTarget, workspaceId: string) => Promise<SkillSaveResult>;
+  importSkillCandidates: (candidateIds: string[]) => Promise<SkillSaveResult>;
   pluginsAccessHint?: string | null;
   canEditPlugins: boolean;
   canUseGlobalPluginScope: boolean;
@@ -1113,11 +1118,14 @@ export default function DashboardView(props: DashboardViewProps) {
                 accessHint={props.skillsAccessHint}
                 refreshSkills={props.refreshSkills}
                 refreshSkillInventory={props.refreshSkillInventory}
+                refreshSkillImportCandidates={props.refreshSkillImportCandidates}
                 refreshHubSkills={props.refreshHubSkills}
                 skills={props.skills}
                 skillsStatus={props.skillsStatus}
                 skillInventory={props.skillInventory}
                 skillInventoryStatus={props.skillInventoryStatus}
+                skillImportCandidates={props.skillImportCandidates}
+                skillImportStatus={props.skillImportStatus}
                 hubSkills={props.hubSkills}
                 hubSkillsStatus={props.hubSkillsStatus}
                 workspaces={props.workspaces}
@@ -1135,6 +1143,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 restoreSkillInstance={props.restoreSkillInstance}
                 copySkillInstanceToGlobal={props.copySkillInstanceToGlobal}
                 copySkillInstanceToWorkspace={props.copySkillInstanceToWorkspace}
+                importSkillCandidates={props.importSkillCandidates}
                 createSessionAndOpen={props.createSessionAndOpen}
                 setPrompt={props.setPrompt}
               />

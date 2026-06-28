@@ -158,6 +158,7 @@ import { registerPluginRoutes } from "./routes/plugins.js";
 import { registerSchedulerRoutes } from "./routes/scheduler.js";
 import { registerSessionArchiveRoutes } from "./routes/session-archives.js";
 import { registerSkillEnabledRoutes } from "./routes/skill-enabled.js";
+import { registerSkillImportRoutes } from "./routes/skill-imports.js";
 import { registerSkillMaterializationRoutes } from "./routes/skill-materialization.js";
 import { registerSkillRegistryRoutes } from "./routes/skill-registry.js";
 import { registerSkillRemovalRoutes } from "./routes/skill-removals.js";
@@ -3940,6 +3941,8 @@ function createRoutes(
   });
 
   registerSkillEnabledRoutes(routes, { serverDataDir });
+
+  registerSkillImportRoutes(routes, { serverDataDir });
 
   registerUserGlobalSkillRoutes(routes, {
     serverDataDir,
