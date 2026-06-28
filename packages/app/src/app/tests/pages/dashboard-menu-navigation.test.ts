@@ -153,7 +153,7 @@ test("returns to empty session when re-selecting an active dashboard tab without
   assert.deepEqual(result, { kind: "return-to-session" });
 });
 
-test("treats plugins and extensions as the same active destination when re-selected", () => {
+test("opens MCP when selecting MCP from the plugins dashboard tab", () => {
   assert.equal(typeof resolveDashboardTabSelectionAction, "function");
   if (typeof resolveDashboardTabSelectionAction !== "function") return;
 
@@ -163,7 +163,7 @@ test("treats plugins and extensions as the same active destination when re-selec
     selectedSessionId: "sess-123",
   });
 
-  assert.deepEqual(result, { kind: "return-to-session", sessionId: "sess-123" });
+  assert.deepEqual(result, { kind: "open-dashboard-tab", tab: "mcp" });
 });
 
 test("keeps opening dashboard tabs when selecting a different destination", () => {

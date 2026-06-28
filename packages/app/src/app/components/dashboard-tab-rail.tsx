@@ -4,7 +4,7 @@ import type { DashboardTab, SettingsTab } from "../types";
 import { resolveSettingsTabLabel } from "../lib/settings-tab-label";
 import { currentLocale, t } from "../../i18n";
 
-export type DashboardTabRailDashboardTab = Extract<DashboardTab, "soul" | "skills" | "mcp">;
+export type DashboardTabRailDashboardTab = Extract<DashboardTab, "soul" | "skills" | "mcp" | "plugins">;
 export type DashboardTabRailSettingsTab = Extract<SettingsTab, "general" | "archived">;
 
 type DashboardTabRailItem =
@@ -24,6 +24,7 @@ const items: DashboardTabRailItem[] = [
   { kind: "dashboard", tab: "soul" },
   { kind: "dashboard", tab: "skills" },
   { kind: "dashboard", tab: "mcp" },
+  { kind: "dashboard", tab: "plugins" },
 ];
 
 export const shouldShowDashboardTabRail = (tab: DashboardTab) =>
@@ -37,11 +38,13 @@ const resolveDashboardTabLabel = (tab: DashboardTabRailDashboardTab) => {
       return t("nav.skills", currentLocale());
     case "mcp":
       return t("nav.extensions", currentLocale());
+    case "plugins":
+      return t("nav.plugins", currentLocale());
   }
 };
 
 const isDashboardTabActive = (activeTab: DashboardTab, tab: DashboardTabRailDashboardTab) =>
-  activeTab === tab || (tab === "mcp" && activeTab === "plugins");
+  activeTab === tab;
 
 export default function DashboardTabRail(props: DashboardTabRailProps) {
   const resolveLabel = (item: DashboardTabRailItem) =>

@@ -43,8 +43,6 @@ const SESSION_RETURN_TABS = new Set<DashboardTab>([
   "settings",
 ]);
 
-const normalizeDashboardNavTab = (tab: DashboardTab): DashboardTab => (tab === "plugins" ? "mcp" : tab);
-
 const resolveReturnSessionAction = (
   selectedSessionId: string | null | undefined,
   lastWorkspaceSessionId?: string | null | undefined,
@@ -65,10 +63,8 @@ export function resolveDashboardTabSelectionAction(
   input: ResolveDashboardTabSelectionActionInput,
 ): DashboardTabSelectionAction {
   const sessionId = input.selectedSessionId?.trim() ?? "";
-  const currentTab = normalizeDashboardNavTab(input.currentTab);
-  const nextTab = normalizeDashboardNavTab(input.nextTab);
 
-  if (currentTab === nextTab) {
+  if (input.currentTab === input.nextTab) {
     return resolveReturnSessionAction(sessionId, input.lastWorkspaceSessionId);
   }
 

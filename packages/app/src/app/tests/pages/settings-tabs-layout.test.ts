@@ -21,6 +21,7 @@ test("settings exposes archived tab and keeps developer tabs unavailable", () =>
   assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"soul"\s*\}/);
   assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"skills"\s*\}/);
   assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"mcp"\s*\}/);
+  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"plugins"\s*\}/);
   assert.match(dashboardTabRailSource, /tab === "soul"/);
   assert.doesNotMatch(source, /type SettingsNavItem/);
   assert.doesNotMatch(source, /const\s+settingsTabs\s*=/);
@@ -113,6 +114,7 @@ test("settings locales include Settings and dashboard labels", () => {
   assert.match(dashboardTabRailSource, /case\s+"soul":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.soul", currentLocale\(\)\)/);
   assert.match(dashboardTabRailSource, /case\s+"skills":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.skills", currentLocale\(\)\)/);
   assert.match(dashboardTabRailSource, /case\s+"mcp":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.extensions", currentLocale\(\)\)/);
+  assert.match(dashboardTabRailSource, /case\s+"plugins":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.plugins", currentLocale\(\)\)/);
   assert.match(dashboardTabRailSource, /data-settings-nav-kind=\{item\.kind\}/);
   assert.match(dashboardTabRailSource, /data-settings-nav-tab=\{item\.tab\}/);
 });
