@@ -190,6 +190,24 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
     };
     const findButton = (labels, root = document) =>
       Array.from(root.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+    const sidebarMoreActionLabels = ["More actions", "Dalsi akce", "Další akce"];
+    const byProjectLabels = ["By project", "Podle projektu"];
+    const sendButtonLabels = [
+      "Send now",
+      "Steer agent now",
+      "Queue message",
+      "Send",
+      "Poslat hned",
+      "Nasměrovat agenta teď",
+      "Zaradit zpravu",
+      "Zařadit zprávu",
+      "Odeslat",
+      "立即发送",
+      "立即引导代理",
+      "加入队列",
+    ];
+    const newChatLabels = ["New chat", "Chat", "Novy chat", "Nový chat"];
+    const chatsSectionLabels = ["Chats", "Chaty"];
     const dispatchClickSequence = (element) => {
       element.focus?.();
       const base = {
@@ -222,7 +240,7 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
     const ensureByProjectSidebarMode = async () => {
       setProgress("ensuring-by-project-sidebar");
       if (document.querySelector('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"]')) return;
-      const moreButton = await waitUntil(() => findButton(["More actions"]), {
+      const moreButton = await waitUntil(() => findButton(sidebarMoreActionLabels), {
         timeout: 45000,
         interval: 500,
         message: `Sidebar more-actions button did not appear. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).filter(isVisibleElement).map(buttonValues))}`,
@@ -230,7 +248,7 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
       dispatchClickSequence(moreButton);
       const byProjectButton = await waitUntil(() =>
         Array.from(document.querySelectorAll('button[role="menuitemradio"]'))
-          .find((button) => buttonMatchesLabel(button, ["By project"])),
+          .find((button) => buttonMatchesLabel(button, byProjectLabels)),
       {
         timeout: 10000,
         interval: 250,
@@ -378,14 +396,51 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
       const loaded = [];
       for (const summary of summaries) {
         const item = await tauriInvoke("pending_session_drafts_get", { draftId: summary.id });
-        loaded.push({ id: summary.id, workspaceId: summary.workspaceId, text: item?.draft?.composer?.text || "" });
+        loaded.push({
+          id: summary.id,
+          kind: summary.kind,
+          workspaceId: summary.workspaceId,
+          directory: normalizePath(summary.directory ?? item?.draft?.directory ?? ""),
+          privateWorkspaceId: summary.privateWorkspaceId ?? null,
+          text: item?.draft?.composer?.text || "",
+        });
       }
       return { summaries, loaded };
     };
-    const assertDraftTextIsNotDuplicated = async (draftText) => {
-      const { loaded } = await readDrafts();
-      assert(loaded.filter((draft) => draft.text === draftText).length <= 1, "Unpublished draft text was saved into multiple pending drafts.");
-      return loaded;
+    const waitForSinglePersistedDraftOnWorkspace = async (draftText, workspace, directory) => {
+      const expectedWorkspaceId = trimText(workspace?.id);
+      const expectedDirectory = normalizePath(directory || workspace?.path || workspace?.directory);
+      assert(expectedWorkspaceId && expectedDirectory, `Expected draft workspace metadata is missing: ${JSON.stringify({ workspace, directory })}`);
+      let latest = [];
+      return await waitUntil(async () => {
+        const { loaded } = await readDrafts();
+        latest = loaded;
+        const matching = loaded.filter((draft) => draft.text === draftText);
+        if (
+          matching.length === 1 &&
+          matching[0].workspaceId === expectedWorkspaceId &&
+          normalizePath(matching[0].directory) === expectedDirectory
+        ) {
+          return { loaded, matching: matching[0] };
+        }
+        return false;
+      }, {
+        timeout: 45000,
+        interval: 500,
+        message: `Unpublished draft was not persisted exactly once for the selected workspace ${expectedWorkspaceId} (${expectedDirectory}). Drafts=${JSON.stringify(latest)}`,
+      });
+    };
+    const waitForDraftTextRemoved = async (draftText) => {
+      let latest = [];
+      return await waitUntil(async () => {
+        const { loaded } = await readDrafts();
+        latest = loaded;
+        return loaded.every((draft) => draft.text !== draftText) ? loaded : false;
+      }, {
+        timeout: 45000,
+        interval: 500,
+        message: `Submitted unpublished draft text remained in the pending-draft store. Drafts=${JSON.stringify(latest)}`,
+      });
     };
     const targetIdForWorkspace = (workspace) => {
       const workspacePath = normalizePath(workspace?.path || workspace?.directory);
@@ -421,7 +476,7 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
     };
     const assertNoSendFailed = () => {
       const body = visibleBodyText();
-      assert(!/Send failed|Odeslani selhalo|Sending failed/i.test(body), `Send failed appeared. Body=${body.slice(0, 2500)} Trace=${JSON.stringify(sendTrace())}`);
+      assert(!/Send failed|Odeslani selhalo|Odeslání selhalo|Sending failed|发送失败/i.test(body), `Send failed appeared. Body=${body.slice(0, 2500)} Trace=${JSON.stringify(sendTrace())}`);
     };
     const sendCurrentComposer = async (draftText, token) => {
       setProgress("sending-current-composer", { token });
@@ -440,7 +495,7 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
       });
       await waitUntil(() => {
         assertNoSendFailed();
-        return sendTrace().some((entry) => entry?.event === "createSessionAndOpen:create-ok") &&
+        return sendTrace().slice(traceLengthBeforeClick).some((entry) => entry?.event === "createSessionAndOpen:create-ok") &&
           visibleTranscriptText().includes(draftText);
       }, {
         timeout: 120000,
@@ -456,6 +511,12 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
         interval: 1000,
         message: `Managed AI fixture response did not render for token ${token}. Body=${visibleBodyText().slice(0, 2500)} Trace=${JSON.stringify(sendTrace())}`,
       });
+      const createEntries = sendTrace()
+        .slice(traceLengthBeforeClick)
+        .filter((entry) => entry?.event === "createSessionAndOpen:create-ok");
+      const createEntry = createEntries[createEntries.length - 1] ?? null;
+      assert(createEntry?.conversationId || createEntry?.opencodeSessionId, `Materialized conversation metadata was not captured. Trace=${JSON.stringify(sendTrace())}`);
+      return createEntry;
     };
     const openAnotherUnpublishedChat = async () => {
       setProgress("opening-another-unpublished-chat");
@@ -464,11 +525,11 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
         const chatRoots = Array.from(document.querySelectorAll('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"]'));
         for (const chatRoot of chatRoots) {
           const button = Array.from(chatRoot.querySelectorAll("button")).find((candidate) =>
-            buttonMatchesLabel(candidate, ["New chat", "Chat"]) &&
-            !buttonMatchesLabel(candidate, ["Chats"]));
+            buttonMatchesLabel(candidate, newChatLabels) &&
+            !buttonMatchesLabel(candidate, chatsSectionLabels));
           if (button) return button;
         }
-        return findButton(["New chat"]);
+        return findButton(newChatLabels);
       }, {
         timeout: 60000,
         interval: 500,
@@ -487,6 +548,83 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
         interval: 500,
         message: `Another unpublished chat did not open. PreviousPending=${previousActivePendingDraftKey}. ActivePending=${window.localStorage.getItem("veslo.active-pending-draft.v1") || ""}. Body=${visibleBodyText().slice(0, 2500)}`,
       });
+    };
+    const assertComposerDoesNotRestoreOldDraft = async (textbox, draftText, token, stableMs = 4000) => {
+      setProgress("observing-new-chat-composer-stability", { stableMs });
+      const deadline = Date.now() + stableMs;
+      let latest = "";
+      while (Date.now() < deadline) {
+        latest = normalize(textbox.textContent || textbox.value || "");
+        assert(
+          !latest.includes(draftText) && !latest.includes(token),
+          `Old project-specific draft restored in another unpublished chat. Composer=${latest}`,
+        );
+        await sleep(250);
+      }
+      return latest;
+    };
+    const vesloRequest = async (connection, path) => {
+      const response = await fetch(`${connection.baseUrl}${path}`, {
+        headers: {
+          authorization: `Bearer ${connection.clientToken}`,
+          accept: "application/json",
+        },
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(`Veslo server request failed ${response.status} ${path}: ${text.slice(0, 1000)}`);
+      }
+      return text.trim() ? JSON.parse(text) : null;
+    };
+    const listWorkspaceConversations = async (connection, workspaceId, directory) => {
+      const search = new URLSearchParams();
+      const normalizedDirectory = normalizePath(directory);
+      if (normalizedDirectory) search.set("directory", normalizedDirectory);
+      const query = search.toString();
+      return await vesloRequest(
+        connection,
+        `/workspace/${encodeURIComponent(workspaceId)}/conversations${query ? `?${query}` : ""}`,
+      );
+    };
+    const conversationMatches = (item, createEntry) => {
+      const ids = [
+        item?.conversationId,
+        item?.id,
+        item?.opencodeSessionId,
+      ].map((value) => trimText(value)).filter(Boolean);
+      const expected = [
+        createEntry?.conversationId,
+        createEntry?.opencodeSessionId,
+      ].map((value) => trimText(value)).filter(Boolean);
+      return expected.some((id) => ids.includes(id));
+    };
+    const assertMaterializedConversationBelongsToWorkspace = async (connection, createEntry, expected, unexpected) => {
+      const expectedWorkspaceId = trimText(expected?.workspace?.id);
+      const expectedDirectory = normalizePath(expected?.directory || expected?.workspace?.path || expected?.workspace?.directory);
+      const unexpectedWorkspaceId = trimText(unexpected?.workspace?.id);
+      const unexpectedDirectory = normalizePath(unexpected?.directory || unexpected?.workspace?.path || unexpected?.workspace?.directory);
+      assert(expectedWorkspaceId && expectedDirectory, `Expected workspace metadata is missing: ${JSON.stringify(expected)}`);
+      assert(unexpectedWorkspaceId && unexpectedDirectory, `Unexpected workspace metadata is missing: ${JSON.stringify(unexpected)}`);
+
+      let latestExpected = null;
+      const matched = await waitUntil(async () => {
+        latestExpected = await listWorkspaceConversations(connection, expectedWorkspaceId, expectedDirectory);
+        const items = Array.isArray(latestExpected?.items) ? latestExpected.items : [];
+        return items.find((item) => conversationMatches(item, createEntry)) || false;
+      }, {
+        timeout: 60000,
+        interval: 1000,
+        message: `Materialized conversation was not listed under the selected workspace ${expectedWorkspaceId}. Conversation=${JSON.stringify(createEntry)} Latest=${JSON.stringify(latestExpected)}`,
+      });
+
+      const unexpectedList = await listWorkspaceConversations(connection, unexpectedWorkspaceId, unexpectedDirectory);
+      const unexpectedItems = Array.isArray(unexpectedList?.items) ? unexpectedList.items : [];
+      assert(
+        !unexpectedItems.some((item) => conversationMatches(item, createEntry)),
+        `Materialized conversation also appeared under the wrong workspace ${unexpectedWorkspaceId}. Conversation=${JSON.stringify(createEntry)} WrongList=${JSON.stringify(unexpectedList)}`,
+      );
+
+      return { matched, expectedList: latestExpected, unexpectedList };
     };
 
     const watchdog = setTimeout(() => {
@@ -552,27 +690,31 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
         interval: 250,
         message: `Composer text did not survive target switch. Composer=${composerText()}`,
       });
-      const loadedAfterSwitch = await assertDraftTextIsNotDuplicated(draftText);
+      const persistedAfterSwitch = await waitForSinglePersistedDraftOnWorkspace(draftText, secondWorkspace, secondDirectory);
       await waitForWorkspaceEngineReady(secondWorkspace);
 
-      await sendCurrentComposer(draftText, token);
+      const createEntry = await sendCurrentComposer(draftText, token);
+      const workspaceConversationCheck = await assertMaterializedConversationBelongsToWorkspace(
+        connection,
+        createEntry,
+        { workspace: secondWorkspace, directory: secondDirectory },
+        { workspace: firstWorkspace, directory: firstDirectory },
+      );
+      const remainingDraftsAfterSend = await waitForDraftTextRemoved(draftText);
 
       const anotherComposer = await openAnotherUnpublishedChat();
-      await waitUntil(() => {
-        const text = normalize(anotherComposer.textContent || anotherComposer.value || "");
-        return !text.includes(draftText) && !text.includes(token);
-      }, {
-        timeout: 15000,
-        interval: 250,
-        message: `Old project-specific draft restored in another unpublished chat. Composer=${normalize(anotherComposer.textContent || anotherComposer.value || "")}`,
-      });
+      const newChatComposerText = await assertComposerDoesNotRestoreOldDraft(anotherComposer, draftText, token);
 
       appendMarker(completeSelector, {
         ok: true,
         token,
         secondWorkspaceId: secondWorkspace.id,
         secondDirectory,
-        loadedAfterSwitch,
+        persistedAfterSwitch,
+        createEntry,
+        workspaceConversationCheck,
+        remainingDraftsAfterSend,
+        newChatComposerText,
         sendTrace: sendTrace(),
       });
     } catch (error) {
