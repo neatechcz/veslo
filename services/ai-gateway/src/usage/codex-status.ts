@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { CODEX_DEFAULT_MODEL } from "../providers/codex-model-catalog.js";
+import { resolveCodexCliCommand } from "../providers/codex-command.js";
 import { materializeCodexAuthJson } from "../providers/codex-cli-worker-transport.js";
 
 export type CodexUsageStatusSource =
@@ -112,7 +113,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
       ((input) =>
         runCodexExecRateLimitProbe({
           ...input,
-          command: deps.command?.trim() || process.env.AI_GATEWAY_CODEX_COMMAND?.trim() || "codex",
+          command: resolveCodexCliCommand(deps.command ?? process.env.AI_GATEWAY_CODEX_COMMAND),
           workDir: deps.workDir?.trim() || process.env.AI_GATEWAY_CODEX_WORKDIR?.trim() || tmpdir(),
           timeoutMs: deps.timeoutMs ?? parseTimeoutMs(process.env.AI_GATEWAY_CODEX_TIMEOUT_MS, 120000),
           now: this.now,

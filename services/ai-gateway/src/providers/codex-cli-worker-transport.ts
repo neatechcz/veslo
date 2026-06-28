@@ -10,6 +10,7 @@ import {
   type CodexOAuthProviderTransport,
   type ProviderTransportResponse,
 } from "./transport.js"
+import { resolveCodexCliCommand } from "./codex-command.js"
 import type { TokenUsageAccounting } from "../usage/token-accounting.js"
 
 export type CodexCliWorkerRunInput = {
@@ -51,7 +52,7 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
   private readonly randomId: () => string
 
   constructor(deps: CodexCliWorkerTransportDeps = {}) {
-    this.command = deps.command?.trim() || process.env.AI_GATEWAY_CODEX_COMMAND?.trim() || "codex"
+    this.command = resolveCodexCliCommand(deps.command ?? process.env.AI_GATEWAY_CODEX_COMMAND)
     this.codexHome = deps.codexHome?.trim() || process.env.AI_GATEWAY_CODEX_HOME?.trim() || ""
     this.allowHostHome = deps.allowHostHome ?? process.env.AI_GATEWAY_CODEX_ALLOW_HOST_HOME?.trim() === "1"
     this.authJson = deps.authJson?.trim() || process.env.AI_GATEWAY_CODEX_AUTH_JSON?.trim() || ""
