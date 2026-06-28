@@ -797,6 +797,59 @@ pub fn workspace_add_authorized_root(
     let workspace_path =
         validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?;
     let folder_path = validate_workspace_path(&app, &folder_path, ValidationMode::NotSystemPath)?;
+    persist_authorized_root_for_workspace(&workspace_path, &folder_path)?;
+
+    Ok(ExecResult {
+        ok: true,
+        status: 0,
+        stdout: "Updated authorizedRoots".to_string(),
+        stderr: String::new(),
+    })
+}
+
+#[tauri::command]
+pub fn workspace_grant_folder_access(
+    app: tauri::AppHandle,
+    workspace_path: String,
+    requested_path: String,
+    selected_folder_path: String,
+    access_mode: String,
+) -> Result<ExecResult, String> {
+    if access_mode.trim() != "read" {
+        return Err("Only read folder access can be granted".to_string());
+    }
+
+    let workspace_path =
+        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?;
+    let selected_folder =
+        validate_workspace_path(&app, &selected_folder_path, ValidationMode::NotSystemPath)?;
+    if !selected_folder.is_dir() {
+        return Err("selected folder must be an existing directory".to_string());
+    }
+
+    let requested_path = PathBuf::from(requested_path.trim());
+    if !requested_path.is_absolute() {
+        return Err("requested path must be an absolute path".to_string());
+    }
+
+    if !selected_folder_contains_requested_path(&selected_folder, &requested_path)? {
+        return Err("selected folder does not contain the requested path".to_string());
+    }
+
+    persist_authorized_root_for_workspace(&workspace_path, &selected_folder)?;
+
+    Ok(ExecResult {
+        ok: true,
+        status: 0,
+        stdout: "Updated authorizedRoots".to_string(),
+        stderr: String::new(),
+    })
+}
+
+fn persist_authorized_root_for_workspace(
+    workspace_path: &Path,
+    folder_path: &Path,
+) -> Result<WorkspaceVesloConfig, String> {
     let workspace_path_str = workspace_path.to_string_lossy().to_string();
     let folder_path_str = folder_path.to_string_lossy().to_string();
 
@@ -812,16 +865,16 @@ pub fn workspace_add_authorized_root(
             .map_err(|e| format!("Failed to read {}: {e}", veslo_path.display()))?;
         serde_json::from_str(&raw).unwrap_or_default()
     } else {
-        let mut cfg = WorkspaceVesloConfig::default();
-        if !cfg
-            .authorized_roots
-            .iter()
-            .any(|p| p == &workspace_path_str)
-        {
-            cfg.authorized_roots.push(workspace_path_str.clone());
-        }
-        cfg
+        WorkspaceVesloConfig::default()
     };
+
+    if !config
+        .authorized_roots
+        .iter()
+        .any(|p| p == &workspace_path_str)
+    {
+        config.authorized_roots.push(workspace_path_str);
+    }
 
     if !config
         .authorized_roots
@@ -837,12 +890,50 @@ pub fn workspace_add_authorized_root(
     )
     .map_err(|e| format!("Failed to write {}: {e}", veslo_path.display()))?;
 
-    Ok(ExecResult {
-        ok: true,
-        status: 0,
-        stdout: "Updated authorizedRoots".to_string(),
-        stderr: String::new(),
-    })
+    Ok(config)
+}
+
+fn selected_folder_contains_requested_path(
+    selected_folder: &Path,
+    requested_path: &Path,
+) -> Result<bool, String> {
+    let selected = fs::canonicalize(selected_folder)
+        .map_err(|e| format!("Failed to resolve selected folder: {e}"))?;
+    let requested = resolve_existing_or_parent(requested_path)?;
+
+    Ok(requested.starts_with(selected))
+}
+
+fn resolve_existing_or_parent(path: &Path) -> Result<PathBuf, String> {
+    if path.exists() {
+        return fs::canonicalize(path)
+            .map_err(|e| format!("Failed to resolve requested path: {e}"));
+    }
+
+    let mut missing_components = Vec::new();
+    let mut existing = path;
+    while !existing.exists() {
+        let Some(file_name) = existing.file_name() else {
+            return Err(format!(
+                "requested path must have an existing ancestor: {}",
+                path.display()
+            ));
+        };
+        missing_components.push(file_name.to_os_string());
+        existing = existing.parent().ok_or_else(|| {
+            format!(
+                "requested path must have an existing ancestor: {}",
+                path.display()
+            )
+        })?;
+    }
+
+    let mut resolved = fs::canonicalize(existing)
+        .map_err(|e| format!("Failed to resolve requested parent: {e}"))?;
+    for component in missing_components.iter().rev() {
+        resolved.push(component);
+    }
+    Ok(resolved)
 }
 
 #[tauri::command]
@@ -1469,6 +1560,66 @@ mod tests {
             .map(|workspace| workspace.id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(ids, vec!["ws-a", "ws-b", "ws-c"]);
+    }
+
+    #[test]
+    fn workspace_grant_folder_access_accepts_selected_parent_of_requested_path() {
+        let root = temp_workspace_root("grant-parent");
+        let selected = root.join("drive");
+        let requested = selected.join("NDA").join("contract.docx");
+        fs::create_dir_all(requested.parent().expect("requested parent"))
+            .expect("create requested parent");
+        fs::write(&requested, "contract").expect("create requested file");
+
+        assert!(
+            selected_folder_contains_requested_path(&selected, &requested)
+                .expect("selected parent should validate")
+        );
+
+        fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn workspace_grant_folder_access_rejects_unrelated_selected_folder() {
+        let root = temp_workspace_root("grant-unrelated");
+        let selected = root.join("other");
+        let requested = root.join("drive").join("NDA").join("contract.docx");
+        fs::create_dir_all(&selected).expect("create selected folder");
+        fs::create_dir_all(requested.parent().expect("requested parent"))
+            .expect("create requested parent");
+        fs::write(&requested, "contract").expect("create requested file");
+
+        assert!(
+            !selected_folder_contains_requested_path(&selected, &requested)
+                .expect("unrelated selected folder should validate as false")
+        );
+
+        fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn workspace_grant_folder_access_persists_authorized_root() {
+        let root = temp_workspace_root("grant-persist");
+        let selected = root.join("drive");
+        fs::create_dir_all(&selected).expect("create selected folder");
+
+        let config = persist_authorized_root_for_workspace(&root, &selected)
+            .expect("persist authorized root");
+
+        assert!(config
+            .authorized_roots
+            .contains(&root.to_string_lossy().to_string()));
+        assert!(config
+            .authorized_roots
+            .contains(&selected.to_string_lossy().to_string()));
+
+        let raw = fs::read_to_string(root.join(".opencode").join("veslo.json"))
+            .expect("read persisted veslo config");
+        let persisted: WorkspaceVesloConfig =
+            serde_json::from_str(&raw).expect("parse persisted veslo config");
+        assert_eq!(persisted.authorized_roots, config.authorized_roots);
+
+        fs::remove_dir_all(&root).expect("cleanup");
     }
 
     #[test]
