@@ -794,8 +794,7 @@ pub fn workspace_add_authorized_root(
     workspace_path: String,
     folder_path: String,
 ) -> Result<ExecResult, String> {
-    let workspace_path =
-        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?;
+    let workspace_path = validate_registered_local_workspace_path(&app, &workspace_path)?;
     let folder_path = validate_workspace_path(&app, &folder_path, ValidationMode::NotSystemPath)?;
     persist_authorized_root_for_workspace(&workspace_path, &folder_path)?;
 
@@ -819,8 +818,7 @@ pub fn workspace_grant_folder_access(
         return Err("Only read folder access can be granted".to_string());
     }
 
-    let workspace_path =
-        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?;
+    let workspace_path = validate_registered_local_workspace_path(&app, &workspace_path)?;
     let selected_folder =
         validate_workspace_path(&app, &selected_folder_path, ValidationMode::NotSystemPath)?;
     if !selected_folder.is_dir() {
@@ -843,6 +841,31 @@ pub fn workspace_grant_folder_access(
         status: 0,
         stdout: "Updated authorizedRoots".to_string(),
         stderr: String::new(),
+    })
+}
+
+fn validate_registered_local_workspace_path(
+    app: &tauri::AppHandle,
+    workspace_path: &str,
+) -> Result<PathBuf, String> {
+    let validated =
+        validate_workspace_path(app, workspace_path, ValidationMode::IsRegisteredWorkspace)?;
+    let state = load_workspace_state(app)?;
+    if workspace_path_is_registered_local(&state, &validated) {
+        return Ok(validated);
+    }
+    Err("path is not a registered local workspace".to_string())
+}
+
+fn workspace_path_is_registered_local(state: &WorkspaceState, canonical_path: &Path) -> bool {
+    state.workspaces.iter().any(|workspace| {
+        if workspace.workspace_type != WorkspaceType::Local {
+            return false;
+        }
+        let Ok(workspace_canonical) = fs::canonicalize(&workspace.path) else {
+            return false;
+        };
+        workspace_canonical == canonical_path
     })
 }
 
@@ -1418,6 +1441,25 @@ mod tests {
         }
     }
 
+    fn remote_workspace_with_path(id: &str, path: &str) -> WorkspaceInfo {
+        WorkspaceInfo {
+            id: id.to_string(),
+            name: id.to_string(),
+            path: path.to_string(),
+            preset: "remote".to_string(),
+            workspace_type: WorkspaceType::Remote,
+            remote_type: Some(RemoteType::Veslo),
+            base_url: Some("http://127.0.0.1:8787".to_string()),
+            directory: Some(path.to_string()),
+            display_name: None,
+            veslo_host_url: Some("http://127.0.0.1:8787".to_string()),
+            veslo_token: None,
+            veslo_workspace_id: Some(id.to_string()),
+            veslo_workspace_name: None,
+            missing: None,
+        }
+    }
+
     fn temp_workspace_root(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1618,6 +1660,27 @@ mod tests {
         let persisted: WorkspaceVesloConfig =
             serde_json::from_str(&raw).expect("parse persisted veslo config");
         assert_eq!(persisted.authorized_roots, config.authorized_roots);
+
+        fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn workspace_grant_folder_access_rejects_registered_remote_workspace_path() {
+        let root = temp_workspace_root("grant-remote");
+        let canonical = fs::canonicalize(&root).expect("canonicalize remote path");
+        let state = WorkspaceState {
+            version: 4,
+            active_id: "remote-ws".to_string(),
+            workspaces: vec![remote_workspace_with_path(
+                "remote-ws",
+                canonical.to_string_lossy().as_ref(),
+            )],
+        };
+
+        assert!(
+            !workspace_path_is_registered_local(&state, &canonical),
+            "folder grants must not treat registered remote workers as local"
+        );
 
         fs::remove_dir_all(&root).expect("cleanup");
     }
