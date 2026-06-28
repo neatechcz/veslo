@@ -242,12 +242,10 @@ export type DashboardViewProps = {
   skillsAccessHint?: string | null;
   canInstallSkillCreator: boolean;
   canUseDesktopTools: boolean;
-  importLocalSkill: () => void;
   installSkillCreator: () => Promise<{ ok: boolean; message: string }>;
   installHubSkill: (name: string, target: HubSkillInstallTarget) => Promise<{ ok: boolean; message: string }>;
   refreshHubMcp: () => void;
   installHubMcp: (name: string) => Promise<{ ok: boolean; message: string }>;
-  revealSkillsFolder: () => void;
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
   saveSkill: (input: { name: string; path?: string; content: string; description?: string }) => Promise<SkillSaveResult>;
@@ -1256,10 +1254,8 @@ export default function DashboardView(props: DashboardViewProps) {
                 hubSkills={props.hubSkills}
                 hubSkillsStatus={props.hubSkillsStatus}
                 workspaces={props.workspaces}
-                importLocalSkill={props.importLocalSkill}
                 installSkillCreator={props.installSkillCreator}
                 installHubSkill={props.installHubSkill}
-                revealSkillsFolder={props.revealSkillsFolder}
                 uninstallSkill={props.uninstallSkill}
                 readSkill={props.readSkill}
                 saveSkill={props.saveSkill}
