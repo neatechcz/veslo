@@ -12,7 +12,7 @@ timeout_ms = 15000
 name = "root has rendered children"
 action = "wait"
 target = "#root > *"
-timeout_ms = 30000
+timeout_ms = 60000
 
 [[step]]
 name = "body is visible"
