@@ -285,6 +285,7 @@ import {
   writeOpencodeConfig,
   engineInfo,
   workspaceBootstrap,
+  workspaceVesloRead,
   vesloServerInfo,
   vesloServerRestart,
   orchestratorStatus,
@@ -1823,6 +1824,20 @@ export default function App() {
       next[sessionID] = trimmed;
       return next;
     });
+  }
+
+  async function refreshWorkspaceConfigForPath(workspacePath?: string) {
+    const targetPath =
+      workspacePath?.trim() ||
+      workspaceStore.activeWorkspaceRoot().trim() ||
+      workspaceStore.activeWorkspacePath().trim();
+    if (!targetPath || !isTauriRuntime()) return;
+
+    const cfg = await workspaceVesloRead({ workspacePath: targetPath });
+    workspaceStore.setWorkspaceConfig(cfg);
+    workspaceStore.setWorkspaceConfigLoaded(true);
+    const roots = Array.isArray(cfg.authorizedRoots) ? cfg.authorizedRoots : [];
+    workspaceStore.setAuthorizedDirs(roots.length ? roots : [targetPath]);
   }
 
   async function respondPermissionAndRemember(
@@ -4060,6 +4075,7 @@ export default function App() {
     testVesloServerConnection,
     canReloadWorkspace,
     reloadWorkspaceEngine,
+    refreshWorkspaceConfigForPath,
     scheduledAutomationStore,
     soulDataStore,
     reloadBusy,

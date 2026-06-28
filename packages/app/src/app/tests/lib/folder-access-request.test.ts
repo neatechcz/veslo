@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   choosePickerStartPath,
+  resolveFolderAccessRequestFromPermission,
   selectedFolderContainsRequestedPath,
 } from "../../lib/folder-access-request";
 
@@ -68,4 +69,45 @@ test("rejects unrelated selected folder", () => {
     selectedFolderContainsRequestedPath("/Users/me/Other", "/Users/me/Drive/NDA/file.docx"),
     false,
   );
+});
+
+test("extracts folder access request from explicit permission metadata", () => {
+  const request = resolveFolderAccessRequestFromPermission({
+    permission: {
+      id: "perm-folder",
+      workspaceId: "ws-a",
+      permission: "folder_access",
+      patterns: [],
+      metadata: {
+        requestedPath: "/Users/me/Drive/NDA/file.docx",
+        reason: "Read the requested document",
+      },
+    },
+    workspacePath: "/Users/me/work",
+    authorizedDirs: ["/Users/me/work"],
+  });
+
+  assert.deepEqual(request, {
+    permissionId: "perm-folder",
+    workspaceId: "ws-a",
+    workspacePath: "/Users/me/work",
+    requestedPath: "/Users/me/Drive/NDA/file.docx",
+    reason: "Read the requested document",
+    pickerStartPath: "/Users/me/Drive/NDA/file.docx",
+  });
+});
+
+test("does not treat ordinary command permissions as folder access requests", () => {
+  const request = resolveFolderAccessRequestFromPermission({
+    permission: {
+      id: "perm-bash",
+      permission: "bash",
+      patterns: ["git status"],
+      metadata: {},
+    },
+    workspacePath: "/Users/me/work",
+    authorizedDirs: ["/Users/me/work"],
+  });
+
+  assert.equal(request, null);
 });
