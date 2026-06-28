@@ -43,6 +43,7 @@ test("dashboard keeps the right sidebar reserved for advanced nav only", () => {
 });
 
 test("dashboard mobile bottom nav hides automations", () => {
+  assert.match(mobileBottomNavSource, /\$\{props\.developerMode \? "grid-cols-5" : "grid-cols-4"\}/);
   assert.match(
     source,
     /<nav class="md:hidden border-t border-dls-border bg-dls-surface">[\s\S]*\{t\("nav\.soul", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.skills", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.extensions", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.plugins", currentLocale\(\)\)\}/,
@@ -66,6 +67,15 @@ test("dashboard mobile bottom nav keeps MCP active state separate from plugins",
   );
   assert.match(mobileBottomNavSource, /props\.tab === "plugins" \? "text-gray-12" : "text-gray-10"/);
   assert.doesNotMatch(mobileBottomNavSource, /props\.tab === "plugins"\s*\|\|\s*props\.tab === "mcp"/);
+});
+
+test("dashboard mobile bottom nav constrains compact labels", () => {
+  const compactButtonMatches = mobileBottomNavSource.match(/flex flex-col items-center gap-1 text-xs min-w-0/g) ?? [];
+  const constrainedLabelMatches =
+    mobileBottomNavSource.match(/<span class="max-w-full text-center leading-tight \[overflow-wrap:anywhere\]">/g) ?? [];
+
+  assert.equal(compactButtonMatches.length, 5);
+  assert.equal(constrainedLabelMatches.length, 5);
 });
 
 test("dashboard reserves a titlebar-safe top strip for shell columns", () => {

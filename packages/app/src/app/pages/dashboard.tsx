@@ -1529,50 +1529,60 @@ export default function DashboardView(props: DashboardViewProps) {
         <nav class="md:hidden border-t border-dls-border bg-dls-surface">
           <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-5" : "grid-cols-4"}`}>
             <button
-              class={`flex flex-col items-center gap-1 text-xs ${
+              class={`flex flex-col items-center gap-1 text-xs min-w-0 ${
                 props.tab === "soul" ? "text-gray-12" : "text-gray-10"
               }`}
               onClick={() => handleDashboardTabSelection("soul")}
             >
               <HeartPulse size={18} class={soulNavIconClass()} />
-              {t("nav.soul", currentLocale())}
+              <span class="max-w-full text-center leading-tight [overflow-wrap:anywhere]">
+                {t("nav.soul", currentLocale())}
+              </span>
             </button>
             <button
-              class={`flex flex-col items-center gap-1 text-xs ${
+              class={`flex flex-col items-center gap-1 text-xs min-w-0 ${
                 props.tab === "skills" ? "text-gray-12" : "text-gray-10"
               }`}
               onClick={() => handleDashboardTabSelection("skills")}
             >
               <Zap size={18} />
-              {t("nav.skills", currentLocale())}
+              <span class="max-w-full text-center leading-tight [overflow-wrap:anywhere]">
+                {t("nav.skills", currentLocale())}
+              </span>
             </button>
             <button
-              class={`flex flex-col items-center gap-1 text-xs ${
+              class={`flex flex-col items-center gap-1 text-xs min-w-0 ${
                 props.tab === "mcp" ? "text-gray-12" : "text-gray-10"
               }`}
               onClick={() => handleDashboardTabSelection("mcp")}
             >
               <Box size={18} />
-              {t("nav.extensions", currentLocale())}
+              <span class="max-w-full text-center leading-tight [overflow-wrap:anywhere]">
+                {t("nav.extensions", currentLocale())}
+              </span>
             </button>
             <button
-              class={`flex flex-col items-center gap-1 text-xs ${
+              class={`flex flex-col items-center gap-1 text-xs min-w-0 ${
                 props.tab === "plugins" ? "text-gray-12" : "text-gray-10"
               }`}
               onClick={() => handleDashboardTabSelection("plugins")}
             >
               <Cpu size={18} />
-              {t("nav.plugins", currentLocale())}
+              <span class="max-w-full text-center leading-tight [overflow-wrap:anywhere]">
+                {t("nav.plugins", currentLocale())}
+              </span>
             </button>
             <Show when={props.developerMode}>
               <button
-                class={`flex flex-col items-center gap-1 text-xs ${
+                class={`flex flex-col items-center gap-1 text-xs min-w-0 ${
                   props.tab === "config" ? "text-gray-12" : "text-gray-10"
                 }`}
                 onClick={() => handleDashboardTabSelection("config")}
               >
                 <SlidersHorizontal size={18} />
-                {t("nav.advanced", currentLocale())}
+                <span class="max-w-full text-center leading-tight [overflow-wrap:anywhere]">
+                  {t("nav.advanced", currentLocale())}
+                </span>
               </button>
             </Show>
           </div>

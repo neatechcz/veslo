@@ -1738,7 +1738,7 @@ export default {
   "scheduled.run_now_simple": "Spusť tuto automatizaci teď: {name}.\nPlán: {schedule}.",
   "scheduled.delete_failed": "Nepodařilo se smazat úlohu.",
 
-  // ==================== Rozšíření ====================
+  // ==================== Napojení ====================
   "extensions.title": "Napojení",
   "extensions.subtitle": "Napojte Veslo na vnější aplikace a služby přes MCP servery.",
   "extensions.apps_connected_one": "aplikace připojena",

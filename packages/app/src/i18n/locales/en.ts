@@ -1742,7 +1742,7 @@ export default {
   "scheduled.run_now_simple": "Run this automation now: {name}.\nSchedule: {schedule}.",
   "scheduled.delete_failed": "Failed to delete job.",
 
-  // ==================== Extensions ====================
+  // ==================== Connections ====================
   "extensions.title": "Connections",
   "extensions.subtitle": "Connect Veslo to external apps and services through MCP servers.",
   "extensions.apps_connected_one": "app connected",

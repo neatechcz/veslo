@@ -6,6 +6,7 @@ const source = readFileSync(new URL("../../pages/settings.tsx", import.meta.url)
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 const enLocaleSource = readFileSync(new URL("../../../i18n/locales/en.ts", import.meta.url), "utf8");
 const csLocaleSource = readFileSync(new URL("../../../i18n/locales/cs.ts", import.meta.url), "utf8");
+const zhLocaleSource = readFileSync(new URL("../../../i18n/locales/zh.ts", import.meta.url), "utf8");
 const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
 const generalUpdateControlsRow = source.match(/<div class="flex flex-wrap items-center gap-2">[\s\S]*?settings\.auto_update_label[\s\S]*?<\/button>/)?.[0] ?? "";
 const dashboardTabRailPath = new URL("../../components/dashboard-tab-rail.tsx", import.meta.url);
@@ -114,6 +115,13 @@ test("settings locales include Settings and dashboard labels", () => {
   assert.match(csLocaleSource, /"nav\.extensions": "Napojení"/);
   assert.match(enLocaleSource, /"nav\.plugins": "Plugins"/);
   assert.match(csLocaleSource, /"nav\.plugins": "Pluginy"/);
+  assert.match(zhLocaleSource, /"nav\.extensions": "连接"/);
+  assert.match(zhLocaleSource, /"nav\.plugins": "插件"/);
+  assert.match(zhLocaleSource, /"extensions\.title": "连接"/);
+  assert.match(zhLocaleSource, /"extensions\.subtitle": "通过 MCP 服务器将 Veslo 连接到外部应用和服务。"/);
+  assert.match(enLocaleSource, /\/\/ ==================== Connections ====================/);
+  assert.match(csLocaleSource, /\/\/ ==================== Napojení ====================/);
+  assert.match(zhLocaleSource, /\/\/ ==================== Connections ====================/);
   assert.doesNotMatch(dashboardTabRailSource, /case\s+"scheduled":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.automations", currentLocale\(\)\)/);
   assert.match(dashboardTabRailSource, /case\s+"soul":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.soul", currentLocale\(\)\)/);
   assert.match(dashboardTabRailSource, /case\s+"skills":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.skills", currentLocale\(\)\)/);

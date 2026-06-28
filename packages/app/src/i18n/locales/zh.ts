@@ -599,7 +599,7 @@ export default {
   "plugins.placeholder": "opencode-wakatime",
   "plugins.add_hint": "添加 npm 包名称，例如 opencode-wakatime",
 
-  // ==================== Extensions ====================
+  // ==================== Connections ====================
   "extensions.title": "连接",
   "extensions.subtitle": "通过 MCP 服务器将 Veslo 连接到外部应用和服务。",
   "extensions.apps_connected_one": "已连接 1 个应用",
