@@ -11,7 +11,7 @@ export function choosePickerStartPath(input: PickerStartPathInput): string {
   while (candidate) {
     if (existingDirectories.has(candidate)) return candidate;
     const parent = parentPath(candidate);
-    if (parent === candidate) return existingDirectories.has(parent) ? parent : requestedPath;
+    if (parent === candidate) break;
     candidate = parent;
   }
 
@@ -29,6 +29,7 @@ export function selectedFolderContainsRequestedPath(
   if (selected === requested) return true;
 
   const separator = pathSeparatorFor(selected);
+  if (rootLength(selected, separator) === selected.length) return requested.startsWith(selected);
   return requested.startsWith(`${selected}${separator}`);
 }
 
@@ -47,9 +48,12 @@ function normalizePath(value: string): string {
 function parentPath(value: string): string {
   const separator = pathSeparatorFor(value);
   const root = rootLength(value, separator);
+  if (value.length === root) return value;
+
   const index = value.lastIndexOf(separator);
 
-  if (index < root) return value;
+  if (index < 0) return value;
+  if (index < root) return value.slice(0, root);
   if (index === root - 1) return value.slice(0, root);
   return value.slice(0, index);
 }
