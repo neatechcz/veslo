@@ -1,5 +1,5 @@
 import type { ComposerDraft, ComposerPart } from "../types";
-import { resolveComposerStorageKey } from "../lib/pending-session-drafts";
+import { isPendingDraftKey, resolveComposerStorageKey } from "../lib/pending-session-drafts";
 
 type ComposerDraftStorageTarget =
   | string
@@ -13,7 +13,11 @@ type ComposerDraftStorageTarget =
 const resolveDraftStorageKey = (target: ComposerDraftStorageTarget) => {
   if (typeof target === "object" && target !== null) {
     const explicitStorageKey = (target.storageKey ?? "").trim();
-    if (explicitStorageKey) return explicitStorageKey;
+    if (explicitStorageKey) {
+      return isPendingDraftKey(explicitStorageKey)
+        ? resolveComposerStorageKey({ pendingDraftKey: explicitStorageKey })
+        : resolveComposerStorageKey({ sessionId: explicitStorageKey });
+    }
     return resolveComposerStorageKey({ sessionId: target.sessionId });
   }
 

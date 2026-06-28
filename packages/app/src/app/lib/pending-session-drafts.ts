@@ -4,6 +4,7 @@ import type { PendingSessionDraftKind } from "./tauri";
 
 const PENDING_DRAFT_KEY_PREFIX = "__pending-draft__:";
 const GLOBAL_NEW_PRIVATE_PENDING_DRAFT_KEY = `${PENDING_DRAFT_KEY_PREFIX}new-private`;
+const GLOBAL_UNPUBLISHED_COMPOSER_STORAGE_KEY = `${PENDING_DRAFT_KEY_PREFIX}global-unpublished`;
 const NO_SESSION_DRAFT_KEY = "__no-session__";
 const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -69,7 +70,7 @@ export const resolveComposerStorageKey = (input: {
     if (!isPendingDraftKey(pendingDraftKey)) {
       throw new Error("pendingDraftKey must be a pending draft key");
     }
-    return pendingDraftKey;
+    return GLOBAL_UNPUBLISHED_COMPOSER_STORAGE_KEY;
   }
 
   return normalizeSessionId(input.sessionId);

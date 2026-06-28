@@ -9,6 +9,7 @@ import {
 } from "../../lib/pending-session-drafts.js";
 import {
   createEmptyComposerDraft,
+  deleteSessionComposerDraft,
   getSessionComposerDraft,
   setSessionComposerDraft,
   setSessionComposerPrompt,
@@ -99,6 +100,46 @@ test("real session drafts and pending drafts do not overwrite one another", () =
   assert.equal(getSessionComposerDraft(store, { storageKey: sessionStorageKey }).text, "Real session");
   assert.equal(getSessionComposerDraft(store, { storageKey: pendingStorageKey }).text, "Pending draft");
   assert.equal(getSessionComposerDraft(store, { storageKey: pendingStorageKey }).attachments.length, 1);
+});
+
+test("pending composer storage keys share one unpublished draft bucket", () => {
+  const chatKey = resolvePendingDraftKey({ kind: "new-private" });
+  const projectKey = resolvePendingDraftKey({
+    kind: "directory",
+    workspaceId: "workspace-a",
+    directory: "/Users/demo/project",
+  });
+
+  const withChatDraft = setSessionComposerDraft({}, { storageKey: chatKey }, withText("hello"));
+  const projectDraft = getSessionComposerDraft(withChatDraft, { storageKey: projectKey });
+
+  assert.equal(projectDraft.text, "hello");
+});
+
+test("real session composer storage keys remain separate from each other", () => {
+  let store = {};
+  store = setSessionComposerDraft(store, { storageKey: "session-a" }, withText("Draft A"));
+  store = setSessionComposerDraft(store, { storageKey: "session-b" }, withText("Draft B"));
+
+  assert.equal(getSessionComposerDraft(store, { storageKey: "session-a" }).text, "Draft A");
+  assert.equal(getSessionComposerDraft(store, { storageKey: "session-b" }).text, "Draft B");
+});
+
+test("deleting a pending composer draft clears only the unpublished draft bucket", () => {
+  const chatKey = resolvePendingDraftKey({ kind: "new-private" });
+  const projectKey = resolvePendingDraftKey({
+    kind: "directory",
+    workspaceId: "workspace-a",
+    directory: "/Users/demo/project",
+  });
+
+  let store = {};
+  store = setSessionComposerDraft(store, { storageKey: chatKey }, withText("Pending draft"));
+  store = setSessionComposerDraft(store, { storageKey: "session-a" }, withText("Real session"));
+  store = deleteSessionComposerDraft(store, { storageKey: projectKey });
+
+  assert.equal(getSessionComposerDraft(store, { storageKey: chatKey }).text, "");
+  assert.equal(getSessionComposerDraft(store, { storageKey: "session-a" }).text, "Real session");
 });
 
 test("active pending drafts are mirrored back into durable desktop storage for restart restore", () => {

@@ -23,7 +23,30 @@ test("new-private resolves to one global draft key", () => {
 
   assert.equal(first, second);
   assert.equal(isPendingDraftKey(first), true);
-  assert.equal(resolveComposerStorageKey({ pendingDraftKey: first }), first);
+});
+
+test("pending draft keys resolve to one unpublished composer storage bucket", () => {
+  const chatKey = resolvePendingDraftKey({ kind: "new-private" });
+  const projectKey = resolvePendingDraftKey({
+    kind: "directory",
+    workspaceId: "workspace-a",
+    directory: "/Users/demo/project",
+  });
+
+  assert.notEqual(chatKey, projectKey);
+  assert.equal(
+    resolveComposerStorageKey({ pendingDraftKey: chatKey }),
+    resolveComposerStorageKey({ pendingDraftKey: projectKey }),
+  );
+});
+
+test("real session ids resolve to separate composer storage buckets", () => {
+  const pendingKey = resolvePendingDraftKey({ kind: "new-private" });
+  const sessionAKey = resolveComposerStorageKey({ sessionId: "session-a" });
+  const sessionBKey = resolveComposerStorageKey({ sessionId: "session-b" });
+
+  assert.notEqual(sessionAKey, sessionBKey);
+  assert.notEqual(sessionAKey, resolveComposerStorageKey({ pendingDraftKey: pendingKey }));
 });
 
 test("directory drafts resolve to distinct keys per normalized target", () => {
