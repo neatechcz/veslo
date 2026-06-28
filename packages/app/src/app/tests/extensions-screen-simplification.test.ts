@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { resolveDashboardRouteTab } from "../controllers/app-startup-controller.js";
+
 const extensionsSource = readFileSync(new URL("../pages/extensions.tsx", import.meta.url), "utf8");
 const mcpSource = readFileSync(new URL("../pages/mcp.tsx", import.meta.url), "utf8");
 const startupControllerSource = readFileSync(new URL("../controllers/app-startup-controller.ts", import.meta.url), "utf8");
@@ -20,6 +22,7 @@ test("mcp screen no longer renders advanced settings or technical details", () =
   assert.doesNotMatch(mcpSource, /mcp\.technical_details/);
 });
 
-test("legacy dashboard plugins route normalizes to mcp", () => {
-  assert.match(startupControllerSource, /if \(normalized === "plugins"\) return "mcp";/);
+test("dashboard plugins route remains the plugins tab", () => {
+  assert.doesNotMatch(startupControllerSource, /if \(normalized === "plugins"\) return "mcp";/);
+  assert.equal(resolveDashboardRouteTab("plugins"), "plugins");
 });
