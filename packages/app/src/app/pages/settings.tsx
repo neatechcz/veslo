@@ -613,6 +613,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
     const tabs: SettingsTab[] = ["general", "archived", "advanced"];
+    if (props.developerMode) tabs.push("debug");
     return tabs;
   });
 
@@ -929,6 +930,41 @@ export default function SettingsView(props: SettingsViewProps) {
     "inline-flex items-center gap-1.5 rounded-md border border-red-7/35 bg-red-3/25 px-3 py-1.5 text-xs font-medium text-red-11 transition-colors duration-150 hover:border-red-7/50 hover:bg-red-3/45 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-7/35 disabled:cursor-not-allowed disabled:opacity-60";
   const compactInputClass =
     "w-full rounded-md border border-dls-border bg-dls-surface px-3 py-2 text-xs text-dls-text font-mono shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] placeholder:text-dls-secondary/70";
+  const auditLogPanel = () => (
+    <div data-testid="settings-audit-log" class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
+      <div class="flex items-center justify-between gap-3">
+        <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.audit_log_1kguyf", __vesloCurrentLocale())}</div>
+        <div class={`text-xs px-2 py-1 rounded-full border ${vesloAuditStatusStyle()}`}>
+          {vesloAuditStatusLabel()}
+        </div>
+      </div>
+      <Show when={props.vesloAuditError}>
+        <div class="text-xs text-red-11">{props.vesloAuditError}</div>
+      </Show>
+      <Show
+        when={props.vesloAuditEntries.length > 0}
+        fallback={<div class="text-xs text-gray-9">{__vesloT("ui.literal.no_audit_entries_yet_m8w4dn", __vesloCurrentLocale())}</div>}
+      >
+        <div class="divide-y divide-gray-6/50">
+          <For each={props.vesloAuditEntries}>
+            {(entry) => (
+              <div class="flex items-start justify-between gap-4 py-2">
+                <div class="min-w-0">
+                  <div class="text-sm text-gray-12 truncate">{entry.summary}</div>
+                  <div class="text-[11px] text-gray-9 truncate">
+                    {entry.action} · {entry.target} · {formatActor(entry)}
+                  </div>
+                </div>
+                <div class="text-[11px] text-gray-9 whitespace-nowrap">
+                  {entry.timestamp ? formatRelativeTime(entry.timestamp) : "—"}
+                </div>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
+  );
 
   return (
     <section class="space-y-6">
@@ -939,6 +975,7 @@ export default function SettingsView(props: SettingsViewProps) {
           activeSettingsTab={activeTab()}
           onOpenSettingsTab={props.setSettingsTab}
           onOpenDashboardTab={(tab) => props.onOpenDashboardTab?.(tab)}
+          showDeveloperSettings={props.developerMode}
         />
       </div>
 
@@ -1154,6 +1191,8 @@ export default function SettingsView(props: SettingsViewProps) {
                 </Show>
               </div>
             </Show>
+
+            {auditLogPanel()}
 
             <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
               <div>
@@ -2303,39 +2342,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     </pre>
                   </div>
 
-                  <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
-                    <div class="flex items-center justify-between gap-3">
-                      <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.audit_log_1kguyf", __vesloCurrentLocale())}</div>
-                      <div class={`text-xs px-2 py-1 rounded-full border ${vesloAuditStatusStyle()}`}>
-                        {vesloAuditStatusLabel()}
-                      </div>
-                    </div>
-                    <Show when={props.vesloAuditError}>
-                      <div class="text-xs text-red-11">{props.vesloAuditError}</div>
-                    </Show>
-                    <Show
-                      when={props.vesloAuditEntries.length > 0}
-                      fallback={<div class="text-xs text-gray-9">{__vesloT("ui.literal.no_audit_entries_yet_m8w4dn", __vesloCurrentLocale())}</div>}
-                    >
-                      <div class="divide-y divide-gray-6/50">
-                        <For each={props.vesloAuditEntries}>
-                          {(entry) => (
-                            <div class="flex items-start justify-between gap-4 py-2">
-                              <div class="min-w-0">
-                                <div class="text-sm text-gray-12 truncate">{entry.summary}</div>
-                                <div class="text-[11px] text-gray-9 truncate">
-                                  {entry.action} · {entry.target} · {formatActor(entry)}
-                                </div>
-                              </div>
-                              <div class="text-[11px] text-gray-9 whitespace-nowrap">
-                                {entry.timestamp ? formatRelativeTime(entry.timestamp) : "—"}
-                              </div>
-                            </div>
-                          )}
-                        </For>
-                      </div>
-                    </Show>
-                  </div>
+                  {auditLogPanel()}
                 </div>
               </div>
             </section>

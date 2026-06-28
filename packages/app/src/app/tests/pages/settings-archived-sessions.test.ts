@@ -23,14 +23,14 @@ test("settings renders archived sessions inside the archived tab only", () => {
   assert.doesNotMatch(generalMatch[0], /settings\.archived_sessions_label/);
 });
 
-test("settings tab list exposes general and archived only", () => {
-  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"general"\s*\}/);
-  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"archived"\s*\}/);
+test("settings tab list exposes general, archived, and developer-only debug", () => {
+  assert.match(dashboardTabRailSource, /baseItems[\s\S]*\{\s*kind:\s*"settings",\s*tab:\s*"general"\s*\}/);
+  assert.match(dashboardTabRailSource, /baseItems[\s\S]*\{\s*kind:\s*"settings",\s*tab:\s*"archived"\s*\}/);
   assert.doesNotMatch(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"extensions"\s*\}/);
   assert.doesNotMatch(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"advanced"\s*\}/);
-  assert.doesNotMatch(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"debug"\s*\}/);
+  assert.match(dashboardTabRailSource, /developerItems[\s\S]*\{\s*kind:\s*"settings",\s*tab:\s*"debug"\s*\}/);
   assert.doesNotMatch(source, /<Match when=\{activeTab\(\) === "extensions"\}>/);
-  assert.doesNotMatch(source, /if \(props\.developerMode\) tabs\.push\("advanced", "debug"\);/);
+  assert.match(source, /if \(props\.developerMode\) tabs\.push\("debug"\);/);
 });
 
 test("settings keeps appearance in general and developer-gates admin-managed ai access", () => {

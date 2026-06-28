@@ -5058,7 +5058,7 @@ function createRoutes(
     const cached = den.userId
       ? await readCachedSoulDocument({ dataDir: serverDataDir, scope: "user", ownerId: den.userId })
       : null;
-    const pendingEdits = den.userId
+    const pendingEdits = den.userId && !cached?.currentVersionId
       ? await readPendingSoulEditsFor(serverDataDir, "user", den.userId)
       : [];
     return {

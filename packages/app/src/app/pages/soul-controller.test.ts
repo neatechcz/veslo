@@ -308,6 +308,62 @@ test("Soul editor controller saves content with change summary and current baseV
   });
 });
 
+test("Soul editor controller reflects the saved version history before the background list refresh finishes", behaviorTestOptions, async () => {
+  const sourceList = sources().filter((source) => source.scope === "user");
+  const savedVersion = version("user-v2", "Updated user Soul", "Saved user Soul");
+  const postSaveHistory = deferred<{ versions: VesloSoulVersion[] }>();
+  let historyCalls = 0;
+  const { client } = makeClient(sourceList);
+  (client as unknown as { listSoulVersions: VesloServerClient["listSoulVersions"] }).listSoulVersions = async () => {
+    historyCalls += 1;
+    if (historyCalls === 1) {
+      return { versions: [version("user-v1", "Current user", "Current user")], nextCursor: null };
+    }
+    return { ...(await postSaveHistory.promise), nextCursor: null };
+  };
+  (client as unknown as { updateUserSoul: VesloServerClient["updateUserSoul"] }).updateUserSoul = async (input) => {
+    const userSource = sourceList[0];
+    return {
+      summary: {
+        ...userSource.summary!,
+        currentVersionId: savedVersion.id,
+      },
+      document: {
+        id: "user-doc",
+        scope: "user",
+        ownerId: "user-1",
+        currentVersionId: savedVersion.id,
+        heartbeatEnabled: false,
+        versions: [
+          version("user-v1", "Current user", "Current user"),
+          {
+            ...savedVersion,
+            content: input.content,
+          },
+        ],
+      },
+    };
+  };
+
+  await createRoot(async (dispose) => {
+    try {
+      const controller = createController({ sourceList, client });
+      await flush();
+
+      controller.setContent("Updated user Soul");
+      await controller.saveSelectedSoul();
+
+      assert.equal(historyCalls, 2);
+      assert.equal(controller.currentBaseVersionId(), savedVersion.id);
+      assert.deepEqual(controller.versions().map((item) => item.id), ["user-v1", savedVersion.id]);
+      assert.equal(controller.versions().at(-1)?.changeSummary, "Saved user Soul");
+    } finally {
+      postSaveHistory.resolve({ versions: [savedVersion] });
+      dispose();
+    }
+  });
+});
+
 test("Soul editor controller forwards active workspace ids for runtime-safe materialization", behaviorTestOptions, async () => {
   const { client, calls } = makeClient();
   const materializationCallbacks: unknown[] = [];

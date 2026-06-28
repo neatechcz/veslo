@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, test } from "bun:test";
 
 import { setSoulMaterializationTestHookForTests, startServer } from "../server.js";
-import { cacheSoulDocument } from "../soul-cache.js";
+import { cacheSoulDocument, writePendingSoulEdit } from "../soul-cache.js";
 import type { SoulDocument } from "../soul-memory.js";
 
 const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void }> = [];
@@ -441,10 +441,33 @@ test("PATCH /soul/organization uses request Den base header when server Den base
       },
     },
   ]);
+
+  const audit = await readAudit(server, "ws_active");
+  expect(audit.items[0]).toMatchObject({
+    workspaceId: "ws_active",
+    action: "soul.organization.update",
+    target: "organization:org_1",
+    summary: "Update Organization Soul",
+  });
 });
 
-test("GET /soul/user reports persisted pending edit after offline user patch", async () => {
+test("PATCH /soul/user creates a local version when Den is unavailable", async () => {
   const server = await startFixture();
+  const dataDir = tempDirs[tempDirs.length - 3]!;
+  const workspaceRoot = tempDirs[tempDirs.length - 2]!;
+  const inactiveWorkspaceRoot = tempDirs[tempDirs.length - 1]!;
+  await writePendingSoulEdit({
+    dataDir,
+    edit: {
+      scope: "user",
+      ownerId: "user_1",
+      content: "Older queued user memory",
+      changeSummary: "Previous pending edit",
+      baseVersionId: null,
+      createdAt: "2026-06-05T09:00:00.000Z",
+      createdBy: "user_1",
+    },
+  });
 
   const patch = await fetch(`http://127.0.0.1:${server.port}/soul/user`, {
     method: "PATCH",
@@ -456,44 +479,84 @@ test("GET /soul/user reports persisted pending edit after offline user patch", a
     }),
   });
 
-  expect(patch.status).toBe(202);
+  expect(patch.status).toBe(200);
   const patchPayload = await patch.json() as {
-    summary: { status: string };
-    pendingEdits?: Array<{ scope: string; ownerId: string; content: string; denSynced: boolean }>;
+    document: SoulDocument;
+    summary: { status: string; currentVersionId: string | null };
+    materialization?: {
+      pending: boolean;
+      workspaces: Array<{ workspaceId: string; result: { ok: boolean; status: string; pending: boolean } }>;
+    };
+    pendingEdits?: unknown[];
     denSynced?: boolean;
   };
-  expect(patchPayload.summary.status).toBe("pending");
+  expect(patchPayload.summary.status).toBe("active");
   expect(patchPayload.denSynced).toBe(false);
-  expect(patchPayload.pendingEdits).toEqual([
+  expect(patchPayload.pendingEdits).toBeUndefined();
+  const currentVersionId = patchPayload.document.currentVersionId;
+  expect(currentVersionId).toBeTruthy();
+  if (!currentVersionId) throw new Error("Expected user Soul save to create a current version");
+  expect(patchPayload.summary.currentVersionId).toBe(currentVersionId);
+  expect(patchPayload.document.versions).toHaveLength(1);
+  expect(patchPayload.document.versions[0]).toMatchObject({
+    id: currentVersionId,
+    content: "Offline user memory",
+    changeSummary: "Queue offline user memory",
+    createdBy: "user_1",
+    source: "api",
+    baseVersionId: null,
+  });
+  expect(patchPayload.materialization?.pending).toBe(false);
+  expect(patchPayload.materialization?.workspaces).toEqual([
     expect.objectContaining({
-      scope: "user",
-      ownerId: "user_1",
-      content: "Offline user memory",
-      denSynced: false,
+      workspaceId: "ws_active",
+      result: expect.objectContaining({ ok: true, status: "current", pending: false }),
+    }),
+    expect.objectContaining({
+      workspaceId: "ws_inactive",
+      result: expect.objectContaining({ ok: true, status: "current", pending: false }),
     }),
   ]);
+  expect(await readFile(join(workspaceRoot, ".opencode", "soul-user.md"), "utf8")).toBe("Offline user memory\n");
+  expect(await readFile(join(inactiveWorkspaceRoot, ".opencode", "soul-user.md"), "utf8")).toBe("Offline user memory\n");
 
   const read = await fetch(`http://127.0.0.1:${server.port}/soul/user`, { headers: denHeaders });
   expect(read.status).toBe(200);
   const readPayload = await read.json() as {
-    summary: { status: string };
-    pendingEdits?: Array<{ scope: string; ownerId: string; content: string; denSynced: boolean }>;
+    document: SoulDocument;
+    summary: { status: string; currentVersionId: string | null };
+    pendingEdits?: unknown[];
     denSynced?: boolean;
   };
-  expect(readPayload.summary.status).toBe("pending");
+  expect(readPayload.summary.status).toBe("active");
+  expect(readPayload.summary.currentVersionId).toBe(currentVersionId);
+  expect(readPayload.document.versions.map((version) => version.id)).toEqual([currentVersionId]);
   expect(readPayload.denSynced).toBe(false);
-  expect(readPayload.pendingEdits).toEqual([
+  expect(readPayload.pendingEdits).toBeUndefined();
+
+  const versions = await fetch(`http://127.0.0.1:${server.port}/soul/user/versions`, { headers: denHeaders });
+  expect(versions.status).toBe(200);
+  expect((await versions.json() as { versions: Array<{ id: string; content: string }> }).versions).toEqual([
     expect.objectContaining({
-      scope: "user",
-      ownerId: "user_1",
+      id: currentVersionId,
       content: "Offline user memory",
-      denSynced: false,
     }),
   ]);
 
   const overview = await fetch(`http://127.0.0.1:${server.port}/soul`, { headers: denHeaders });
   expect(overview.status).toBe(200);
-  expect((await overview.json() as { user: { status: string } }).user.status).toBe("pending");
+  expect((await overview.json() as { user: { status: string; currentVersionId: string | null } }).user).toMatchObject({
+    status: "active",
+    currentVersionId,
+  });
+
+  const audit = await readAudit(server, "ws_active");
+  expect(audit.items[0]).toMatchObject({
+    workspaceId: "ws_active",
+    action: "soul.user.update",
+    target: "user:user_1",
+    summary: "Update User Soul",
+  });
 });
 
 test("PATCH /soul/user creates a new version", async () => {
@@ -553,6 +616,14 @@ test("PATCH /soul/user creates a new version", async () => {
       },
     },
   ]);
+
+  const audit = await readAudit(server, "ws_active");
+  expect(audit.items[0]).toMatchObject({
+    workspaceId: "ws_active",
+    action: "soul.user.update",
+    target: "user:user_1",
+    summary: "Update User Soul",
+  });
 });
 
 test("workspace soul routes work for configured workspaces that are not active", async () => {
@@ -825,4 +896,16 @@ async function waitForApproval(server: { port: number }): Promise<{
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   throw new Error("Approval request did not appear");
+}
+
+async function readAudit(server: { port: number }, workspaceId: string): Promise<{
+  items: Array<{ workspaceId: string; action: string; target: string; summary: string }>;
+}> {
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspace/${workspaceId}/audit`, {
+    headers: clientHeaders,
+  });
+  expect(response.status).toBe(200);
+  return await response.json() as {
+    items: Array<{ workspaceId: string; action: string; target: string; summary: string }>;
+  };
 }

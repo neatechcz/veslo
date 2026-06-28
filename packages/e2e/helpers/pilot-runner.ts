@@ -62,6 +62,33 @@ export function pilotReadinessProbeCommands(): string[][] {
   return [['ping'], ['state']];
 }
 
+export function resolvePilotDenAuthJson(env: Record<string, string | undefined> = process.env): string | null {
+  const raw = env.VESLO_E2E_DEN_AUTH_JSON?.trim() || env.E2E_DEN_AUTH_JSON?.trim() || '';
+  return raw || null;
+}
+
+export function buildPilotDenAuthSeedScript(authJson: string): string {
+  return `
+const authJson = ${JSON.stringify(authJson)};
+JSON.parse(authJson);
+window.localStorage.setItem("veslo.den.auth", authJson);
+window.localStorage.setItem("veslo.den.keepSignedIn", "1");
+window.sessionStorage.removeItem("veslo.den.auth");
+window.sessionStorage.removeItem("veslo.den.keepSignedIn");
+const invoke = window.__TAURI_INTERNALS__?.invoke;
+if (invoke) {
+  await invoke("den_auth_snapshot_write", {
+    authJson,
+    keepSignedIn: true,
+    language: "en",
+    onboardingComplete: true,
+  });
+}
+window.location.reload();
+true;
+`;
+}
+
 export function resolvePilotScenarioSelection(
   options: ResolvePilotScenarioSelectionOptions = {},
   e2eRoot = resolve(__dirname, '..'),
@@ -170,6 +197,20 @@ export async function ensurePilotReady(options: Omit<RunPilotCommandOptions, 'ar
   throw new Error(`tauri-pilot did not become ready within ${timeoutMs}ms.${message}`);
 }
 
+async function seedPilotDenAuthIfConfigured(
+  options: Omit<RunPilotCommandOptions, 'args'> = {},
+): Promise<void> {
+  const authJson = resolvePilotDenAuthJson(options.env ?? process.env);
+  if (!authJson) return;
+
+  await runPilotCommand({
+    ...options,
+    args: ['eval', buildPilotDenAuthSeedScript(authJson)],
+    timeoutMs: Math.min(10_000, options.timeoutMs ?? resolveLaunchTimeout()),
+  });
+  await ensurePilotReady(options);
+}
+
 export async function runPilotScenarios(options: RunPilotScenariosOptions = {}): Promise<void> {
   const e2eRoot = options.e2eRoot ?? resolve(__dirname, '..');
   const scenarios = resolvePilotScenarioSelection(options, e2eRoot);
@@ -202,6 +243,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   await startApp();
   try {
     await ensurePilotReady({ binary, socket, cwd: e2eRoot, timeoutMs });
+    await seedPilotDenAuthIfConfigured({ binary, socket, cwd: e2eRoot, timeoutMs });
     for (const scenario of scenarios) {
       console.log(`[e2e] Running tauri-pilot scenario: ${scenario}`);
       await runPilotCommand({

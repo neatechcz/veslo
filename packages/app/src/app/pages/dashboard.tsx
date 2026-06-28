@@ -1194,6 +1194,7 @@ export default function DashboardView(props: DashboardViewProps) {
               activeSettingsTab={props.settingsTab}
               onOpenSettingsTab={openSettings}
               onOpenDashboardTab={handleDashboardTabSelection}
+              showDeveloperSettings={props.developerMode}
             />
           </Show>
 

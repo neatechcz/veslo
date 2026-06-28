@@ -84,7 +84,7 @@ Current Soul behavior includes:
 - modal source detail for organization, user, and workspace Soul documents
 - modal close through the close button or Escape
 - textarea editing for sources the current account can edit
-- server-synced version history, version preview, and restore
+- server-synced version history, version preview, restore, and saved change summaries in the modal history
 - workspace heartbeat status and on/off toggle
 - actionable materialization diagnostics when the server reports a runtime conflict or write/config problem
 
@@ -94,12 +94,31 @@ by other Veslo resources, so organization, user, and workspace Soul sources can
 share inventory, audit, and multi-workspace ownership logic without migrating
 the stored Soul document format.
 
+Den exposes the authoritative cloud endpoints for user and organization Soul at
+`/v1/soul/user` and `/v1/soul/organization`. These endpoints persist a current
+document pointer plus immutable versions, support version listing, preview, and
+restore, reject stale `baseVersionId` writes, resolve User Soul to the
+authenticated Den user, and require organization admin access for Organization
+Soul writes. Version history lists return the newest versions first so the
+current saved version remains visible even when older history is paginated.
+
 Soul updates may change the cached source document while an agent run is active,
 but runtime materialization must not write `.opencode` Soul files or instructions
 for an active workspace. In that case the local server returns a pending
 materialization result. The UI passes the current busy workspace ids with Soul
 mutations and replays the workspace materialization sync after the workspace is
 idle.
+
+User Soul saves are local-first when Den is unavailable or not configured. The
+local server creates a normal current user Soul version, records the change in
+the source version history, returns `denSynced: false`, and still attempts
+runtime materialization for configured workspaces. Older queued pending edits do
+not keep the user source in a pending state once a current local version exists.
+
+Successful Soul saves and restores also write workspace audit entries for each
+configured workspace affected by the materialization sync. The audit action
+identifies the Soul scope, and Settings displays the same workspace audit trail
+used by other server-side mutations.
 
 ## Soul Setup Expectations
 

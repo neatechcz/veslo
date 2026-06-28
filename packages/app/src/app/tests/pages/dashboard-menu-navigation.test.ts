@@ -464,13 +464,13 @@ test("dashboard clears the native window title while centered titlebar context i
   );
 });
 
-test("settings tab labels include archived and keep developer tabs unavailable", () => {
+test("settings tab labels include archived and allow debug in developer mode", () => {
   assert.equal(resolveVisibleSettingsTab("archived", false), "archived");
   assert.equal(resolveVisibleSettingsTab("archived", true), "archived");
   assert.equal(resolveVisibleSettingsTab("advanced", false), "advanced");
   assert.equal(resolveVisibleSettingsTab("advanced", true), "advanced");
   assert.equal(resolveVisibleSettingsTab("debug", false), "general");
-  assert.equal(resolveVisibleSettingsTab("debug", true), "general");
+  assert.equal(resolveVisibleSettingsTab("debug", true), "debug");
 
   assert.match(settingsTabLabelSource, /archived:\s*"settings\.archived"/);
   assert.doesNotMatch(settingsTabLabelSource, /model:\s*"settings\.model"/);
@@ -478,6 +478,7 @@ test("settings tab labels include archived and keep developer tabs unavailable",
     settingsTabLabelSource,
     /const visibleSettingsTabs: SettingsTab\[] = \["general", "archived", "advanced"\]/,
   );
+  assert.match(settingsTabLabelSource, /if \(settingsTab === "debug"\) return developerMode \? "debug" : "general";/);
   assert.doesNotMatch(settingsTabLabelSource, /extensions:\s*"settings\.extensions"/);
 
   const enLocale = readFileSync(new URL("../../../i18n/locales/en.ts", import.meta.url), "utf8");
@@ -493,7 +494,7 @@ test("settings tab labels are localized through a shared helper", () => {
   assert.equal(resolveVisibleSettingsTab("advanced", false), "advanced");
   assert.equal(resolveVisibleSettingsTab("advanced", true), "advanced");
   assert.equal(resolveVisibleSettingsTab("debug", false), "general");
-  assert.equal(resolveVisibleSettingsTab("debug", true), "general");
+  assert.equal(resolveVisibleSettingsTab("debug", true), "debug");
   assert.match(settingsTabLabelSource, /settings\.general/);
   assert.match(settingsTabLabelSource, /settings\.advanced/);
   assert.doesNotMatch(settingsTabLabelSource, /settings\.model/);
