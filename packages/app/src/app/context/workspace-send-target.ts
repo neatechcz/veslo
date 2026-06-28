@@ -64,14 +64,7 @@ export function createWorkspaceSendTarget<Client = unknown>(options: WorkspaceSe
         resolveWorkspaceRoot: options.resolveWorkspaceRoot,
       });
       if (pendingScope) {
-        const activeWorkspaceId = options.activeWorkspaceId().trim();
-        if (!activeWorkspaceId || pendingScope.workspaceId === activeWorkspaceId) {
-          return pendingScope;
-        }
-        options.recordSendTrace("sendPrompt:pending-draft-scope-ignored-stale-workspace", {
-          pendingWorkspaceId: pendingScope.workspaceId,
-          activeWorkspaceId,
-        });
+        return pendingScope;
       }
     }
 

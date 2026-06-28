@@ -179,6 +179,7 @@ import {
   setSessionComposerPrompt,
 } from "./pages/session-composer-drafts";
 import {
+  GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
   resolveComposerStorageKey,
 } from "./lib/pending-session-drafts";
 import {
@@ -3922,10 +3923,11 @@ export default function App() {
       const pendingDraftKey = (activePendingDraftKey() ?? "").trim();
       if (sessionID) return null;
       if (!pendingDraftKey) return null;
+      const pendingDraftMeta = activePendingDraftMeta();
       return {
         key: pendingDraftKey,
-        meta: activePendingDraftMeta(),
-        draftId: activePendingDraftMeta()?.id?.trim() || null,
+        meta: pendingDraftMeta,
+        draftId: pendingDraftMeta?.id?.trim() || GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
       };
     })();
     if (!sessionID) {
