@@ -18,14 +18,26 @@ test("extensions screen remains MCP-only", () => {
 
 test("dashboard plugins tab renders PluginsView with plugin management props", () => {
   assert.match(dashboardSource, /import PluginsView from "\.\/plugins";/);
+  assert.doesNotMatch(
+    dashboardSource,
+    /props\.tab === "plugins"\s*\|\|\s*props\.tab === "mcp"/,
+  );
 
   const pluginsMatch = dashboardSource.match(
     /<Match when=\{props\.tab === "plugins"\}>([\s\S]*?)<\/Match>/,
   );
   assert.ok(pluginsMatch, "dashboard should have a dedicated plugins Match branch");
 
+  const mcpMatch = dashboardSource.match(
+    /<Match when=\{props\.tab === "mcp"\}>([\s\S]*?)<\/Match>/,
+  );
+  assert.ok(mcpMatch, "dashboard should have a dedicated MCP Match branch");
+
   const pluginsBranch = pluginsMatch[1];
+  const mcpBranch = mcpMatch[1];
   assert.match(pluginsBranch, /<PluginsView\b/);
+  assert.doesNotMatch(pluginsBranch, /<ExtensionsView\b/);
+  assert.match(mcpBranch, /<ExtensionsView\b/);
   assert.match(pluginsBranch, /canEditPlugins=\{props\.canEditPlugins\}/);
   assert.match(pluginsBranch, /addPlugin=\{props\.addPlugin\}/);
   assert.match(pluginsBranch, /removePlugin=\{props\.removePlugin\}/);
