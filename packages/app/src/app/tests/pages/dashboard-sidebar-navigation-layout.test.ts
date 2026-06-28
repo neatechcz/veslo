@@ -11,6 +11,8 @@ const rightSidebarStart = source.indexOf('<Show when={rightSidebarVisible()}>');
 
 const leftSidebar = leftSidebarStart >= 0 && mainStart >= 0 ? source.slice(leftSidebarStart, mainStart) : "";
 const rightSidebar = rightSidebarStart >= 0 ? source.slice(rightSidebarStart) : "";
+const mobileBottomNavSource =
+  source.match(/<nav class="md:hidden border-t border-dls-border bg-dls-surface">[\s\S]*?<\/nav>/)?.[0] ?? "";
 
 test("dashboard relocates the product nav into the left sidebar above settings", () => {
   assert.match(source, /import SidebarDashboardNav from "\.\.\/components\/session\/sidebar-dashboard-nav";/);
@@ -49,6 +51,15 @@ test("dashboard mobile bottom nav hides automations", () => {
     source,
     /<nav class="md:hidden border-t border-dls-border bg-dls-surface">[\s\S]*\{t\("nav\.automations", currentLocale\(\)\)\}/,
   );
+});
+
+test("dashboard mobile bottom nav keeps MCP active state separate from plugins", () => {
+  assert.match(
+    mobileBottomNavSource,
+    /onClick=\{\(\) => handleDashboardTabSelection\("mcp"\)\}[\s\S]*\{t\("nav\.extensions", currentLocale\(\)\)\}/,
+  );
+  assert.match(mobileBottomNavSource, /props\.tab === "mcp" \? "text-gray-12" : "text-gray-10"/);
+  assert.doesNotMatch(mobileBottomNavSource, /props\.tab === "mcp"\s*\|\|\s*props\.tab === "plugins"/);
 });
 
 test("dashboard reserves a titlebar-safe top strip for shell columns", () => {

@@ -1522,7 +1522,7 @@ export default function DashboardView(props: DashboardViewProps) {
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "mcp" || props.tab === "plugins" ? "text-gray-12" : "text-gray-10"
+                props.tab === "mcp" ? "text-gray-12" : "text-gray-10"
               }`}
               onClick={() => handleDashboardTabSelection("mcp")}
             >
