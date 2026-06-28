@@ -36,7 +36,7 @@ test("hydrates active pending draft state from the desktop draft store and prefe
   );
   assert.match(
     pendingDraftControllerSource,
-    /const storedPendingDraftKey = readActivePendingDraftKey\(\);[\s\S]*const pendingDrafts = \(await deps\.pendingSessionDraftsList\(\)\)\.filter\(\(draft\) => !isConsumedPendingDraftId\(draft\.id\)\);[\s\S]*const matchingPendingDraft = findStoredPendingDraftSummary\(\{[\s\S]*storedPendingDraftKey,[\s\S]*pendingDrafts,[\s\S]*\}\);[\s\S]*const loadedPendingDraft = matchingPendingDraft[\s\S]*await deps\.pendingSessionDraftsGet\(matchingPendingDraft\.id\)[\s\S]*const hydrationDecision = resolvePendingDraftStartupHydration\(\{[\s\S]*storedPendingDraftKey,[\s\S]*matchingPendingDraft,[\s\S]*loadedPendingDraft,[\s\S]*restoreError,[\s\S]*\}\);[\s\S]*case "hydrate":[\s\S]*setActivePendingDraftKey\(hydrationDecision\.storageKey\);[\s\S]*setActivePendingDraftMeta\(hydrationDecision\.summary\);[\s\S]*restorePendingDraftComposer\(hydrationDecision\.storageKey, hydrationDecision\.loadedDraft\.draft\.composer\);/s,
+    /const listGlobalPendingDraftSummaries = async \(\) =>[\s\S]*\(await deps\.pendingSessionDraftsList\(\)\)\.filter\([\s\S]*\(draft\) => isGlobalUnpublishedPendingDraftSummary\(draft\) && !isConsumedPendingDraftId\(draft\.id\),[\s\S]*\);[\s\S]*const storedPendingDraftKey = readActivePendingDraftKey\(\);[\s\S]*const pendingDrafts = await listGlobalPendingDraftSummaries\(\);[\s\S]*const matchingPendingDraft = findStoredPendingDraftSummary\(\{[\s\S]*storedPendingDraftKey,[\s\S]*pendingDrafts,[\s\S]*\}\);[\s\S]*const loadedPendingDraft = matchingPendingDraft[\s\S]*await deps\.pendingSessionDraftsGet\(matchingPendingDraft\.id\)[\s\S]*const hydrationDecision = resolvePendingDraftStartupHydration\(\{[\s\S]*storedPendingDraftKey,[\s\S]*matchingPendingDraft,[\s\S]*loadedPendingDraft,[\s\S]*restoreError,[\s\S]*\}\);[\s\S]*case "hydrate":[\s\S]*setActivePendingDraftKey\(hydrationDecision\.storageKey\);[\s\S]*setActivePendingDraftMeta\(hydrationDecision\.summary\);[\s\S]*restorePendingDraftComposer\(hydrationDecision\.storageKey, hydrationDecision\.loadedDraft\.draft\.composer\);/s,
     "startup should hydrate the active pending draft from durable desktop storage",
   );
 });
@@ -56,7 +56,8 @@ test("pending draft hydration failures clear the active draft key in memory and 
 
 test("session route re-selects once when a client becomes available after bootstrap", () => {
   const routeStart = source.indexOf('let lastRouteClientResumeKey = "";');
-  const routeEnd = source.indexOf("  createEffect(() => {\r\n    const active = workspaceStore.activeWorkspaceDisplay();", routeStart);
+  const routeEndMatch = source.slice(routeStart).match(/  createEffect\(\(\) => \{\r?\n    const active = workspaceStore\.activeWorkspaceDisplay\(\);/);
+  const routeEnd = routeEndMatch?.index === undefined ? -1 : routeStart + routeEndMatch.index;
   assert.notStrictEqual(routeStart, -1, "route resume block should exist");
   assert.notStrictEqual(routeEnd, -1, "route resume block end should exist");
   const routeSource = source.slice(routeStart, routeEnd);
