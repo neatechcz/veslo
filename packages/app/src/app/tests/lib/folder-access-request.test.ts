@@ -30,6 +30,14 @@ test("falls back to filesystem root when root is the nearest existing parent", (
   assert.equal(result, "/");
 });
 
+test("starts picker at nearest existing UNC parent without collapsing the share root", () => {
+  const result = choosePickerStartPath({
+    requestedPath: "\\\\Server\\Share\\Team\\NDA\\file.docx",
+    existingDirectories: new Set(["\\\\Server\\Share", "\\\\Server\\Share\\Team"]),
+  });
+  assert.equal(result, "//Server/Share/Team");
+});
+
 test("accepts selected folder containing requested path", () => {
   assert.equal(
     selectedFolderContainsRequestedPath("/Users/me/Drive", "/Users/me/Drive/NDA/file.docx"),
@@ -39,6 +47,20 @@ test("accepts selected folder containing requested path", () => {
 
 test("accepts filesystem root containing requested path", () => {
   assert.equal(selectedFolderContainsRequestedPath("/", "/Users/me/Drive/NDA/file.docx"), true);
+});
+
+test("accepts Windows paths with mixed separators and drive-letter casing", () => {
+  assert.equal(
+    selectedFolderContainsRequestedPath("C:\\Users\\Me\\Drive", "c:/users/me/drive/NDA/file.docx"),
+    true,
+  );
+});
+
+test("rejects requested paths that traverse outside the selected folder", () => {
+  assert.equal(
+    selectedFolderContainsRequestedPath("/Users/me/Drive", "/Users/me/Drive/../Other/file.docx"),
+    false,
+  );
 });
 
 test("rejects unrelated selected folder", () => {

@@ -6,6 +6,7 @@ import ModalError from "./modal-error";
 import ModalFooter from "./modal-footer";
 import ModalHeader from "./modal-header";
 import ModalShell from "./modal-shell";
+import { useFocusTrap } from "./use-modal-focus";
 
 export type FolderAccessConsentModalProps = {
   open: boolean;
@@ -22,12 +23,19 @@ const titleId = "folder-access-consent-title";
 const descriptionId = "folder-access-consent-description";
 
 export default function FolderAccessConsentModal(props: FolderAccessConsentModalProps) {
+  let dialogRef: HTMLDivElement | undefined;
+  let chooseFolderRef: HTMLButtonElement | undefined;
   const translate = (key: string) => t(key, currentLocale());
 
   const accessLabel = () =>
     props.accessMode === "read" ? translate("folder_access.access_read_only") : props.accessMode;
   const durationLabel = () =>
     props.duration === "workspace" ? translate("folder_access.duration_workspace") : props.duration;
+
+  useFocusTrap(() => props.open, () => dialogRef, {
+    onClose: props.onCancel,
+    getInitialFocus: () => chooseFolderRef,
+  });
 
   return (
     <ModalShell
@@ -39,7 +47,7 @@ export default function FolderAccessConsentModal(props: FolderAccessConsentModal
       ariaLabelledBy={titleId}
       ariaDescribedBy={descriptionId}
     >
-      <div data-testid="folder-access-consent-modal" class="p-6">
+      <div ref={dialogRef} data-testid="folder-access-consent-modal" class="p-6" tabIndex={-1}>
         <ModalHeader
           titleId={titleId}
           descriptionId={descriptionId}
@@ -105,7 +113,7 @@ export default function FolderAccessConsentModal(props: FolderAccessConsentModal
           <Button data-testid="folder-access-cancel" variant="outline" onClick={props.onCancel}>
             {translate("folder_access.cancel")}
           </Button>
-          <Button data-testid="folder-access-choose-folder" onClick={props.onChooseFolder}>
+          <Button ref={chooseFolderRef} data-testid="folder-access-choose-folder" onClick={props.onChooseFolder}>
             <FolderOpen size={16} />
             {translate("folder_access.choose_folder")}
           </Button>
