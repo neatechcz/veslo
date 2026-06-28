@@ -14,7 +14,6 @@ const trim = (value: string | null | undefined) => value?.trim() ?? "";
 
 export function resolveDashboardRouteTab(value?: string | null): DashboardTab {
   const normalized = trim(value).toLowerCase();
-  if (normalized === "plugins") return "mcp";
   if (dashboardTabs.has(normalized as DashboardTab)) {
     return normalized as DashboardTab;
   }
