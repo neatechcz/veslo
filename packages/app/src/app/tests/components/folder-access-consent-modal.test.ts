@@ -58,6 +58,17 @@ test("folder access consent modal surfaces request details before opening the pi
   assert.match(source, /onClick=\{props\.onCancel\}/);
 });
 
+test("folder access consent modal traps focus while the prompt is open", () => {
+  assert.match(source, /import \{ useFocusTrap \} from "\.\/use-modal-focus"/);
+  assert.match(source, /let dialogRef: HTMLDivElement \| undefined/);
+  assert.match(source, /let chooseFolderRef: HTMLButtonElement \| undefined/);
+  assert.match(source, /useFocusTrap\(\(\) => props\.open/);
+  assert.match(source, /getInitialFocus: \(\) => chooseFolderRef/);
+  assert.match(source, /ref=\{dialogRef\}/);
+  assert.match(source, /tabIndex=\{-1\}/);
+  assert.match(source, /ref=\{chooseFolderRef\}/);
+});
+
 test("folder access consent modal localizes all prompt copy in current locales", () => {
   assert.match(source, /currentLocale/);
   assert.match(source, /t\(key, currentLocale\(\)\)/);
