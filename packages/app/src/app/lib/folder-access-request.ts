@@ -49,9 +49,18 @@ export type FolderAccessPermission = {
   metadata?: unknown;
 };
 
+export type FolderAccessWorkspace = {
+  id?: string;
+  path?: string;
+  directory?: string | null;
+  workspaceType?: string | null;
+};
+
 export type FolderAccessRequestInput = {
   permission: FolderAccessPermission | null | undefined;
   workspacePath: string;
+  activeWorkspaceId?: string;
+  workspaces?: FolderAccessWorkspace[];
   authorizedDirs: string[];
 };
 
@@ -103,18 +112,20 @@ export function resolveFolderAccessRequestFromPermission(
   if (!permission) return null;
 
   const permissionId = readString(permission.id).trim();
-  const workspacePath = input.workspacePath.trim();
+  const permissionWorkspaceId = readString(permission.workspaceId).trim();
+  const workspacePath = resolvePermissionWorkspacePath(input, permissionWorkspaceId);
   if (!permissionId || !workspacePath) return null;
 
   const metadata = asRecord(permission.metadata);
   const permissionName = readString(permission.permission).trim();
   const metadataRequestedPath = findFirstMetadataString(metadata, FOLDER_ACCESS_METADATA_PATH_KEYS);
   const markerPermission = permissionLooksLikeFolderAccess(permissionName, metadata);
+  if (!markerPermission) return null;
+
   const patternRequestedPath = markerPermission ? findFirstAbsolutePath(permission.patterns ?? []) : "";
   const requestedPath = (isAbsoluteFolderAccessPath(metadataRequestedPath) ? metadataRequestedPath : patternRequestedPath).trim();
 
   if (!requestedPath || !isAbsoluteFolderAccessPath(requestedPath)) return null;
-  if (!metadataRequestedPath && !markerPermission) return null;
   if (input.authorizedDirs.some((directory) => selectedFolderContainsRequestedPath(directory, requestedPath))) {
     return null;
   }
@@ -133,7 +144,7 @@ export function resolveFolderAccessRequestFromPermission(
 
   return {
     permissionId,
-    workspaceId: readString(permission.workspaceId).trim() || undefined,
+    workspaceId: permissionWorkspaceId || undefined,
     workspacePath,
     requestedPath,
     reason,
@@ -272,6 +283,23 @@ function permissionLooksLikeFolderAccess(
   const accessMode = readString(metadata.accessMode).trim().toLowerCase();
   const kind = readString(metadata.kind).trim().toLowerCase();
   return accessMode === "read" && (kind.includes("folder") || kind.includes("file"));
+}
+
+function resolvePermissionWorkspacePath(
+  input: FolderAccessRequestInput,
+  permissionWorkspaceId: string,
+): string {
+  const activeWorkspacePath = input.workspacePath.trim();
+  if (!permissionWorkspaceId) return activeWorkspacePath;
+
+  const activeWorkspaceId = input.activeWorkspaceId?.trim() ?? "";
+  const workspace = (input.workspaces ?? []).find((item) => readString(item.id).trim() === permissionWorkspaceId);
+  if (!workspace) {
+    return activeWorkspaceId && activeWorkspaceId === permissionWorkspaceId ? activeWorkspacePath : "";
+  }
+  if (readString(workspace.workspaceType).trim() !== "local") return "";
+
+  return readString(workspace.path).trim() || readString(workspace.directory).trim();
 }
 
 function findFirstAbsolutePath(values: readonly string[]): string {

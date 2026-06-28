@@ -9122,7 +9122,15 @@ export default function App() {
     await workspaceStore.persistReloadSettings({ auto, resume: auto ? next : false });
   };
 
-  const reloadWorkspaceEngineAndResume = async () => {
+  const reloadWorkspaceEngineAndResume = async (workspaceId?: string) => {
+    const targetWorkspaceId = workspaceId?.trim() ?? "";
+    if (targetWorkspaceId && targetWorkspaceId !== workspaceStore.activeWorkspaceId().trim()) {
+      const activated = await workspaceStore.activateWorkspace(targetWorkspaceId, {
+        origin: "folder-access-consent:reload-workspace",
+        blockingOverlay: true,
+      });
+      if (activated === false) return;
+    }
     await reloadWorkspaceEngine();
   };
 
