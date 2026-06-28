@@ -49,6 +49,7 @@ type ComposerTargetSnapshot = {
 };
 
 const PENDING_DRAFT_DIRECTORY_PREFIX = '__pending-draft__:directory:';
+const GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID = 'pending-global-unpublished';
 
 async function invokeTauri<T>(command: string, args: Record<string, unknown>): Promise<T> {
   const result = await browser.execute(
@@ -179,7 +180,7 @@ async function seedWorkspacePendingDraft(text: string): Promise<ComposerTargetSn
 
   const now = Date.now();
   await putPendingDraft({
-    id: `e2e_workspace_${now}`,
+    id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
     kind: 'directory',
     workspaceId: target.workspaceId,
     directory: target.directory,
@@ -194,7 +195,7 @@ async function seedWorkspacePendingDraft(text: string): Promise<ComposerTargetSn
 async function seedChatPendingDraft(text: string): Promise<void> {
   const now = Date.now();
   await putPendingDraft({
-    id: `e2e_chat_${now}`,
+    id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
     kind: 'new-private',
     workspaceId: 'e2e-private-workspace',
     directory: null,
