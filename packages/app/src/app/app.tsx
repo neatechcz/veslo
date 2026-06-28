@@ -19,6 +19,11 @@ import type {
   Session,
 } from "@opencode-ai/sdk/v2/client";
 
+import { getIdentifier, getVersion } from "@tauri-apps/api/app";
+import { listen, type Event as TauriEvent } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { parse } from "jsonc-parser";
+
 import { reportError } from "./lib/error-reporter";
 import { recordSendWorkflowTrace } from "./lib/send-workflow-trace";
 import { resolveRunningVesloServerHostInfo } from "./lib/veslo-server-host";
@@ -202,6 +207,7 @@ import type {
   ResetVesloMode,
   SettingsTab,
   SkillCard,
+  PendingPermission,
   PendingSidebarSessionMetadata,
   SidebarSessionItem,
   TodoItem,
@@ -322,6 +328,433 @@ import { waitForManagedAiBootstrapReady } from "./lib/managed-ai-bootstrap-ready
 import { describeRequestError } from "./lib/client-errors";
 import { CLOUD_ONLY_MODE, resolveVesloCloudEnvironment } from "./lib/cloud-policy";
 import { isRemoteUiEnabled } from "./lib/runtime-policy";
+
+type RemoteWorkspaceDefaults = {
+  vesloHostUrl?: string | null;
+  vesloToken?: string | null;
+  directory?: string | null;
+  displayName?: string | null;
+};
+
+type SendTraceRoot = typeof window & {
+  __vesloSendTrace?: Array<Record<string, unknown>>;
+  __vesloActiveSendTraceId?: string | null;
+  __vesloSendTraceSeq?: number;
+  __vesloSendTraceStartPerfMsById?: Record<string, number>;
+};
+
+type WorkspaceRuntimeDebugRoot = SendTraceRoot & {
+  __vesloWorkspaceRuntimeSnapshot?: () => Promise<unknown>;
+  __vesloWorkspaceRuntimeDiff?: () => Promise<unknown>;
+  __vesloWorkspaceRuntimeLastSnapshot?: unknown;
+  __vesloWorkspaceRuntimeDebugHelp?: string;
+  __vesloRequestBrokerSnapshot?: () => unknown;
+  __vesloWorkspaceBusyTrace?: Array<Record<string, unknown>>;
+  __wsActivateLog?: string;
+};
+
+type E2EFolderAccessPermissionInput = {
+  id?: string;
+  sessionId?: string;
+  workspaceId?: string;
+  workspacePath?: string;
+  requestedPath: string;
+  reason?: string;
+  permission?: string;
+  patterns?: string[];
+};
+
+type E2EFolderAccessPermissionResult = {
+  permissionId: string;
+  sessionId: string;
+  workspaceId: string;
+  workspacePath: string;
+  requestedPath: string;
+};
+
+type E2EFolderAccessPromptRoot = WorkspaceRuntimeDebugRoot & {
+  __vesloE2EInjectFolderAccessPermission?: (
+    input: E2EFolderAccessPermissionInput,
+  ) => Promise<E2EFolderAccessPermissionResult>;
+  __vesloE2ELastFolderAccessPermissionReply?: {
+    requestID: string;
+    reply: "once" | "always" | "reject";
+  };
+};
+
+type DebugProbeResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: string; skipped?: boolean };
+
+type SendConversationWorkspaceResolution = {
+  serverClient: VesloServerClient;
+  serverWorkspaceId: string;
+  workspaceId: string;
+  directory: string;
+};
+
+type SendPreflightContext = SendRuntimePreflightContext & {
+  traceId: string;
+  managedAiReady: boolean;
+  runtimeHealthOk: boolean;
+  enginePrepared: boolean;
+  effectiveSandbox: EffectiveRuntimeSandboxState | null;
+  targetWorkspace: SendTargetWorkspaceScope | null;
+  conversationWorkspaceByDirectory: Map<string, Promise<SendConversationWorkspaceResolution | null>>;
+};
+
+type AppSendPromptOptions = SessionSendOptionsBase & {
+  targetSessionId?: string | null;
+  onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
+  pendingSession?: PendingSidebarSessionMetadata | null;
+};
+
+type AppReplaceUserMessageOptions = SessionSendOptionsBase & {
+  targetSessionId?: string | null;
+};
+
+type CommandListScope = {
+  workspaceId?: string | null;
+  directory?: string | null;
+};
+
+const SEND_TRACE_LIMIT = 500;
+const E2E_APP_IDENTIFIER = "com.neatech.veslo.e2e";
+const MANAGED_AI_ACCESS_CACHE_STORAGE_KEY = "veslo.managedAiAccess.v1";
+const MANAGED_AI_ACCESS_CACHE_TTL_MS = 30 * 60 * 1000;
+const MANAGED_AI_ACCESS_PROOF_CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+
+type ManagedAiAccessCacheRecord = {
+  schemaVersion: 1;
+  cacheKey: string;
+  fetchedAt: number;
+  profile: ManagedAiAccessProfile;
+  gatewayAccessToken: string;
+};
+
+type ManagedAiAccessProofCacheState = {
+  cacheKey: string;
+  loaded: boolean;
+  record: ManagedAiAccessCacheRecord | null;
+};
+
+let managedAiAccessRefreshInFlight: {
+  cacheKey: string;
+  promise: Promise<VesloManagedAiAccessBundle>;
+} | null = null;
+
+const roundSendTraceMs = (value: number) => Math.round(value * 100) / 100;
+
+const sendTraceErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) return error.message;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+};
+
+const debugProbeErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) return error.message;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+};
+
+const debugProbeCall = async <T,>(fn: () => Promise<T> | T): Promise<DebugProbeResult<T>> => {
+  try {
+    return { ok: true, value: await fn() };
+  } catch (error) {
+    return { ok: false, error: debugProbeErrorMessage(error) };
+  }
+};
+
+const debugProbeSkipped = <T,>(reason: string): DebugProbeResult<T> => ({
+  ok: false,
+  skipped: true,
+  error: reason,
+});
+
+const debugNormalizePath = (value?: string | null) => normalizeDirectoryPath(value?.trim() ?? "");
+
+const debugSummarizeWorkspace = (workspace?: Partial<WorkspaceInfo> | null) => {
+  if (!workspace) return null;
+  return {
+    id: workspace.id ?? "",
+    name: workspace.displayName || workspace.name || "",
+    type: workspace.workspaceType ?? null,
+    remoteType: workspace.remoteType ?? null,
+    path: workspace.path ?? "",
+    directory: workspace.directory ?? null,
+    baseUrl: workspace.baseUrl ?? null,
+    vesloWorkspaceId: workspace.vesloWorkspaceId ?? null,
+  };
+};
+
+const debugWorkspaceIdFromMountedBaseUrl = (baseUrl?: string | null) => {
+  const value = baseUrl?.trim() ?? "";
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    return decodeURIComponent(url.pathname.match(/^\/workspace\/([^/]+)\/opencode(?:\/.*)?$/)?.[1] ?? "");
+  } catch {
+    return "";
+  }
+};
+
+const makeSendTraceId = () => {
+  const suffix =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`;
+  return `send_${suffix.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64)}`;
+};
+
+const createSendPreflightContext = (traceId?: string | null): SendPreflightContext => ({
+  traceId: traceId?.trim() || makeSendTraceId(),
+  managedAiReady: false,
+  runtimeHealthOk: false,
+  enginePrepared: false,
+  effectiveSandbox: null,
+  targetWorkspace: null,
+  conversationWorkspaceByDirectory: new Map(),
+});
+
+const isManagedAiAccessProfileValue = (value: unknown): value is ManagedAiAccessProfile => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Partial<ManagedAiAccessProfile>;
+  return Boolean(
+    typeof record.userId === "string" &&
+      record.userId.trim() &&
+      typeof record.providerId === "string" &&
+      record.providerId.trim() &&
+      record.defaultModel &&
+      typeof record.defaultModel === "object" &&
+      typeof record.defaultModel.providerID === "string" &&
+      typeof record.defaultModel.modelID === "string" &&
+      Array.isArray(record.allowedModels),
+  );
+};
+
+const buildManagedAiAccessCacheKey = (input: {
+  userId: string | null | undefined;
+  orgId: string | null | undefined;
+  gatewayBaseUrl: string | null | undefined;
+}) => {
+  const userId = input.userId?.trim() ?? "";
+  const orgId = input.orgId?.trim() ?? "";
+  const gatewayBaseUrl = input.gatewayBaseUrl?.trim().replace(/\/+$/, "") ?? "";
+  return userId && gatewayBaseUrl ? `${userId}|${orgId}|${gatewayBaseUrl}` : "";
+};
+
+const readManagedAiAccessCache = (cacheKey: string): ManagedAiAccessCacheRecord | null => {
+  if (isTauriRuntime()) return null;
+  if (!cacheKey || typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(MANAGED_AI_ACCESS_CACHE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ManagedAiAccessCacheRecord>;
+    if (parsed.schemaVersion !== 1) return null;
+    if (parsed.cacheKey !== cacheKey) return null;
+    if (!Number.isFinite(parsed.fetchedAt) || Date.now() - Number(parsed.fetchedAt) > MANAGED_AI_ACCESS_CACHE_TTL_MS) {
+      return null;
+    }
+    if (!isManagedAiAccessProfileValue(parsed.profile)) return null;
+    const gatewayAccessToken = typeof parsed.gatewayAccessToken === "string" ? parsed.gatewayAccessToken.trim() : "";
+    if (!gatewayAccessToken || gatewayAccessToken === "[REDACTED]") return null;
+    return {
+      schemaVersion: 1,
+      cacheKey,
+      fetchedAt: Number(parsed.fetchedAt),
+      profile: parsed.profile,
+      gatewayAccessToken,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const writeManagedAiAccessCache = (cacheKey: string, profile: ManagedAiAccessProfile, gatewayAccessToken: string) => {
+  if (!cacheKey || typeof window === "undefined") return;
+  if (isTauriRuntime()) {
+    void accessProofAiWrite({
+      cacheKey,
+      proof: {
+        providerId: profile.providerId,
+        defaultModel: profile.defaultModel,
+        allowedModels: profile.allowedModels,
+        updatedAt: profile.updatedAt,
+      },
+    }).catch(() => undefined);
+    return;
+  }
+  const token = gatewayAccessToken.trim();
+  if (!token || token === "[REDACTED]") return;
+  try {
+    const record: ManagedAiAccessCacheRecord = {
+      schemaVersion: 1,
+      cacheKey,
+      fetchedAt: Date.now(),
+      profile,
+      gatewayAccessToken: token,
+    };
+    window.localStorage.setItem(MANAGED_AI_ACCESS_CACHE_STORAGE_KEY, JSON.stringify(record));
+  } catch {
+    // ignore storage failures; the live refresh path still owns correctness
+  }
+};
+
+const clearManagedAiAccessCache = (cacheKey?: string | null) => {
+  if (isTauriRuntime()) {
+    void accessProofAiClear(cacheKey).catch(() => undefined);
+  }
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(MANAGED_AI_ACCESS_CACHE_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+};
+
+const readManagedAiAccessProofCache = async (
+  cacheKey: string,
+  userId: string,
+): Promise<ManagedAiAccessCacheRecord | null> => {
+  if (!cacheKey || !userId || !isTauriRuntime()) return null;
+  try {
+    const proof = await accessProofAiRead({
+      cacheKey,
+      maxAgeMs: MANAGED_AI_ACCESS_PROOF_CACHE_TTL_MS,
+    });
+    if (!proof) return null;
+    if (!isGatewayOwnedProvider(proof.providerId)) return null;
+    if (proof.defaultModel.providerID !== proof.providerId || !proof.defaultModel.modelID.trim()) return null;
+    const allowedModels = Array.isArray(proof.allowedModels)
+      ? proof.allowedModels.map((value) => value.trim()).filter(Boolean)
+      : [];
+    if (allowedModels.length > 0 && !allowedModels.includes(proof.defaultModel.modelID)) return null;
+    const profile: ManagedAiAccessProfile = {
+      userId,
+      providerId: proof.providerId,
+      defaultModel: proof.defaultModel,
+      allowedModels,
+      updatedAt: proof.updatedAt ?? null,
+    };
+    if (!isManagedAiAccessProfileValue(profile)) return null;
+    return {
+      schemaVersion: 1,
+      cacheKey,
+      fetchedAt: proof.fetchedAt,
+      profile,
+      gatewayAccessToken: "",
+    };
+  } catch {
+    return null;
+  }
+};
+
+const loadManagedAiAccessSingleFlight = (
+  cacheKey: string,
+  load: () => Promise<VesloManagedAiAccessBundle>,
+): Promise<VesloManagedAiAccessBundle> => {
+  if (cacheKey && managedAiAccessRefreshInFlight?.cacheKey === cacheKey) {
+    return managedAiAccessRefreshInFlight.promise;
+  }
+
+  const promise = load().finally(() => {
+    if (managedAiAccessRefreshInFlight?.cacheKey === cacheKey) {
+      managedAiAccessRefreshInFlight = null;
+    }
+  });
+
+  if (cacheKey) {
+    managedAiAccessRefreshInFlight = { cacheKey, promise };
+  }
+
+  return promise;
+};
+
+const activeSendTraceId = () => {
+  if (typeof window === "undefined") return null;
+  return (window as SendTraceRoot).__vesloActiveSendTraceId ?? null;
+};
+
+function recordSendTrace(event: string, payload?: Record<string, unknown>) {
+  if (typeof window === "undefined") return;
+  try {
+    const root = window as SendTraceRoot;
+    const logs = root.__vesloSendTrace ?? [];
+    const seq = (root.__vesloSendTraceSeq ?? 0) + 1;
+    root.__vesloSendTraceSeq = seq;
+    const payloadTraceId = typeof payload?.traceId === "string" ? payload.traceId.trim() : "";
+    const traceId = payloadTraceId || root.__vesloActiveSendTraceId || undefined;
+    const perfMs = roundSendTraceMs(perfNow());
+    const startPerfMsById = root.__vesloSendTraceStartPerfMsById ?? (root.__vesloSendTraceStartPerfMsById = {});
+    const relativeMs =
+      traceId
+        ? roundSendTraceMs(perfMs - (startPerfMsById[traceId] ?? (startPerfMsById[traceId] = perfMs)))
+        : undefined;
+    const entry = {
+      id: seq,
+      at: new Date().toISOString(),
+      ts: Date.now(),
+      perfMs,
+      ...(relativeMs !== undefined ? { relativeMs } : {}),
+      source: "app",
+      ...(traceId ? { traceId } : {}),
+      event,
+      ...(payload ?? {}),
+    };
+    logs.push(entry);
+    if (logs.length > SEND_TRACE_LIMIT) logs.splice(0, logs.length - SEND_TRACE_LIMIT);
+    root.__vesloSendTrace = logs;
+    recordSendWorkflowTrace("app", event, payload);
+    console.log(`[SENDTRACE] app:${event}`, entry);
+    logUiEvent("send-trace", event, entry);
+  } catch {
+    // ignore
+  }
+}
+
+const sendTraceStep = async <T,>(
+  event: string,
+  fn: () => Promise<T>,
+  payload?: Record<string, unknown>,
+): Promise<T> => {
+  const startedAt = perfNow();
+  recordSendTrace(`${event}:start`, payload);
+  try {
+    const result = await fn();
+    recordSendTrace(`${event}:end`, {
+      ...(payload ?? {}),
+      durationMs: roundSendTraceMs(perfNow() - startedAt),
+      outcome: "ok",
+    });
+    return result;
+  } catch (error) {
+    recordSendTrace(`${event}:error`, {
+      ...(payload ?? {}),
+      durationMs: roundSendTraceMs(perfNow() - startedAt),
+      outcome: "error",
+      message: sendTraceErrorMessage(error),
+    });
+    throw error;
+  }
+};
+
+const recordExternalSendTraceEntries = (entries: unknown) => {
+  if (!Array.isArray(entries)) return;
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const event = typeof record.event === "string" ? record.event.trim() : "";
+    if (!event) continue;
+    const { event: _event, ...payload } = record;
+    recordSendTrace(event, payload);
+  }
+};
 
 function resolveDeveloperModeFromSearch(search: string) {
   const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
@@ -1047,6 +1480,10 @@ export default function App() {
     hydrateTranscriptSnapshot,
     hasWarmTranscript,
   } = sessionStore;
+
+  const [e2eFolderAccessPermissionIds, setE2eFolderAccessPermissionIds] = createSignal<Set<string>>(
+    new Set(),
+  );
 
   const [visibleRuntimeActivityHold, setVisibleRuntimeActivityHold] = createSignal<{
     sessionId: string;
@@ -1840,13 +2277,35 @@ export default function App() {
     workspaceStore.setAuthorizedDirs(roots.length ? roots : [targetPath]);
   }
 
+  async function respondPermissionForSessionView(
+    requestID: string,
+    reply: "once" | "always" | "reject",
+  ) {
+    const requestId = requestID.trim();
+    if (requestId && e2eFolderAccessPermissionIds().has(requestId)) {
+      setE2eFolderAccessPermissionIds((current) => {
+        if (!current.has(requestId)) return current;
+        const next = new Set(current);
+        next.delete(requestId);
+        return next;
+      });
+      setPendingPermissions(pendingPermissions().filter((permission) => permission.id !== requestId));
+      if (typeof window !== "undefined") {
+        (window as E2EFolderAccessPromptRoot).__vesloE2ELastFolderAccessPermissionReply = { requestID: requestId, reply };
+      }
+      return;
+    }
+
+    await respondPermission(requestID, reply);
+  }
+
   async function respondPermissionAndRemember(
     requestID: string,
     reply: "once" | "always" | "reject"
   ) {
     // Intentional no-op: permission prompts grant session-scoped access only.
     // Persistent workspace roots must be managed explicitly via workspace settings.
-    await respondPermission(requestID, reply);
+    await respondPermissionForSessionView(requestID, reply);
   }
 
   const [notionStatus, setNotionStatus] = createSignal<"disconnected" | "connecting" | "connected" | "error">(
@@ -2243,6 +2702,90 @@ export default function App() {
     },
   });
   lateWorkspaceStore.bind(workspaceStore);
+
+  let e2eFolderAccessPromptRoot: E2EFolderAccessPromptRoot | null = null;
+  let e2eFolderAccessPromptHookCancelled = false;
+
+  onMount(() => {
+    if (!isTauriRuntime() || typeof window === "undefined") return;
+    void (async () => {
+      const identifier = await getIdentifier().catch(() => "");
+      if (e2eFolderAccessPromptHookCancelled || identifier !== E2E_APP_IDENTIFIER) return;
+
+      const root = window as E2EFolderAccessPromptRoot;
+      e2eFolderAccessPromptRoot = root;
+      root.__vesloE2EInjectFolderAccessPermission = async (input) => {
+        const requestedPath = input.requestedPath.trim();
+        if (!requestedPath) throw new Error("requestedPath is required");
+
+        const workspaceId =
+          input.workspaceId?.trim() ||
+          workspaceStore.activeWorkspaceId().trim();
+        const workspace =
+          workspaceStore.workspaces().find((entry) => entry.id === workspaceId) ?? null;
+        const workspacePath =
+          input.workspacePath?.trim() ||
+          workspace?.path?.trim() ||
+          workspace?.directory?.trim() ||
+          workspaceStore.activeWorkspaceRoot().trim();
+        if (!workspaceId || !workspacePath) throw new Error("workspace is required");
+
+        const sessionId =
+          input.sessionId?.trim() ||
+          selectedSessionId()?.trim() ||
+          `e2e-folder-access-session-${Date.now()}`;
+        if (!sessions().some((session) => session.id === sessionId)) {
+          const now = Date.now();
+          setSessions([
+            {
+              id: sessionId,
+              title: "E2E folder access consent",
+              directory: workspacePath,
+              time: { created: now, updated: now },
+            } as unknown as Session,
+            ...sessions(),
+          ]);
+        }
+        setSelectedSessionId(sessionId);
+        goToSession(sessionId, { replace: true });
+
+        const permissionId = input.id?.trim() || `e2e-folder-access-${Date.now()}`;
+        const permission = {
+          id: permissionId,
+          sessionID: sessionId,
+          permission: input.permission?.trim() || "folder_access",
+          always: [],
+          patterns: input.patterns ?? [],
+          metadata: {
+            requestedPath,
+            reason: input.reason?.trim() || "E2E folder access request",
+          },
+          workspaceId,
+          receivedAt: Date.now(),
+        } as PendingPermission;
+        setPendingPermissions([
+          permission,
+          ...pendingPermissions().filter((item) => item.id !== permissionId),
+        ]);
+        setE2eFolderAccessPermissionIds((current) => new Set(current).add(permissionId));
+
+        return {
+          permissionId,
+          sessionId,
+          workspaceId,
+          workspacePath,
+          requestedPath,
+        };
+      };
+    })();
+  });
+
+  onCleanup(() => {
+    e2eFolderAccessPromptHookCancelled = true;
+    if (e2eFolderAccessPromptRoot) {
+      delete e2eFolderAccessPromptRoot.__vesloE2EInjectFolderAccessPermission;
+    }
+  });
 
   const composerTargetController = createComposerTargetController({
     isTauriRuntime,
@@ -4316,7 +4859,7 @@ export default function App() {
     setComposerDraft,
     activePermissionMemo,
     permissionReplyBusy,
-    respondPermission,
+    respondPermission: respondPermissionForSessionView,
     respondPermissionAndRemember,
     activeQuestion,
     questionReplyBusy,

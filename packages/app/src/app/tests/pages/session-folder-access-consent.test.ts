@@ -39,3 +39,24 @@ test("app passes a workspace config refresh callback into the session view", () 
   assert.match(appSource, /workspaceStore\.activateWorkspace\(targetWorkspaceId/);
   assert.match(appSource, /refreshWorkspaceConfig: refreshWorkspaceConfigForPath/);
 });
+
+test("app exposes a guarded E2E-only folder access permission injection hook", () => {
+  assert.match(appSource, /import \{ getIdentifier, getVersion \} from "@tauri-apps\/api\/app";/);
+  assert.match(appSource, /const E2E_APP_IDENTIFIER = "com\.neatech\.veslo\.e2e";/);
+  assert.match(appSource, /identifier !== E2E_APP_IDENTIFIER/);
+  assert.match(appSource, /__vesloE2EInjectFolderAccessPermission/);
+  assert.match(appSource, /permission: input\.permission\?\.trim\(\) \|\| "folder_access"/);
+  assert.match(appSource, /metadata: \{[\s\S]*requestedPath,[\s\S]*reason: input\.reason\?\.trim\(\) \|\| "E2E folder access request"/s);
+  assert.match(appSource, /goToSession\(sessionId, \{ replace: true \}\)/);
+});
+
+test("app consumes synthetic E2E folder access permissions without calling the live permission API", () => {
+  assert.match(appSource, /const \[e2eFolderAccessPermissionIds, setE2eFolderAccessPermissionIds\] = createSignal<Set<string>>/);
+  assert.match(appSource, /async function respondPermissionForSessionView\(/);
+  assert.match(appSource, /e2eFolderAccessPermissionIds\(\)\.has\(requestId\)/);
+  assert.match(appSource, /setPendingPermissions\(pendingPermissions\(\)\.filter\(\(permission\) => permission\.id !== requestId\)\)/);
+  assert.match(appSource, /__vesloE2ELastFolderAccessPermissionReply = \{ requestID: requestId, reply \}/);
+  assert.match(appSource, /await respondPermission\(requestID, reply\)/);
+  assert.match(appSource, /respondPermission: respondPermissionForSessionView/);
+  assert.match(appSource, /await respondPermissionForSessionView\(requestID, reply\)/);
+});
