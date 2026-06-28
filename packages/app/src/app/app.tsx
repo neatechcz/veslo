@@ -178,7 +178,6 @@ import {
   setSessionComposerDraft,
   setSessionComposerPrompt,
 } from "./pages/session-composer-drafts";
-import { resolveComposerTargetConflict } from "./lib/composer-target-draft-conflict";
 import {
   resolveComposerStorageKey,
 } from "./lib/pending-session-drafts";
@@ -280,7 +279,6 @@ import type {
   ComposerDraft,
   ComposerPart,
   ComposerTargetOption,
-  ComposerTargetSwitchResolution,
   ComposerTargetSwitchResult,
   ProviderListItem,
   SessionErrorTurn,
@@ -5821,12 +5819,9 @@ export default function App() {
     pendingDraftsReady: activePendingDraftStorageReady,
     currentComposerStorageKey,
     composerDraft,
-    createEmptyComposerDraft,
     pendingSessionDraftsList,
-    pendingSessionDraftsGet,
     pendingSessionDraftsPut,
     pendingSessionDraftsDelete,
-    formatPendingDraftAttachmentRestoreError: pendingSessionDraftController.formatPendingDraftAttachmentRestoreError,
     isConsumedPendingDraftId: pendingSessionDraftController.isConsumedPendingDraftId,
     markPendingDraftConsumed,
     clearConsumedPendingDraftId,

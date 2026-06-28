@@ -21,7 +21,6 @@ const csSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.ur
 const enSource = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
 const zhSource = readFileSync(new URL("../../i18n/locales/zh.ts", import.meta.url), "utf8");
 const pickerSource = readOptionalSource("../components/session/composer-target-picker.tsx");
-const conflictSource = readOptionalSource("../components/session/composer-target-conflict-modal.tsx");
 const composerTargetOptionsSource = composerTargetControllerSource.slice(
   composerTargetControllerSource.indexOf("const composerTargetOptions = createMemo"),
   composerTargetControllerSource.indexOf("const activeWorkspaceComposerTargetId = createMemo"),
@@ -34,14 +33,6 @@ const switchComposerTargetQueueSource = composerTargetControllerSource.slice(
   composerTargetControllerSource.indexOf("let composerTargetSwitchQueue: Promise<void> = Promise.resolve();"),
   composerTargetControllerSource.indexOf("const composerTargetOptions = createMemo"),
 );
-
-const sourceBetween = (source: string, start: string, end: string) => {
-  const startIndex = source.indexOf(start);
-  if (startIndex === -1) return "";
-  const endIndex = source.indexOf(end, startIndex + start.length);
-  if (endIndex === -1) return source.slice(startIndex);
-  return source.slice(startIndex, endIndex);
-};
 
 const assertComposerDraftSeededBeforeActivation = (source: string, draftName: string) => {
   const seedIndex = source.indexOf(`setSessionComposerDraft(current, { storageKey: target.id }, ${draftName})`);
@@ -86,11 +77,11 @@ test("app defaults composer target display to the active workspace when no pendi
   );
 });
 
-test("switchComposerTarget returns conflict before mutating active draft", () => {
-  assert.match(composerTargetControllerSource, /resolveComposerTargetConflict\(\{/);
-  assert.match(composerTargetControllerSource, /status: "conflict"/);
-  assert.match(composerTargetControllerSource, /resolution === "use-current"/);
-  assert.match(composerTargetControllerSource, /resolution === "load-existing"/);
+test("switchComposerTarget keeps the current global draft without conflict resolution", () => {
+  assert.doesNotMatch(composerTargetControllerSource, /resolveComposerTargetConflict\(\{/);
+  assert.doesNotMatch(composerTargetControllerSource, /status: "conflict"/);
+  assert.doesNotMatch(composerTargetControllerSource, /resolution === "use-current"/);
+  assert.doesNotMatch(composerTargetControllerSource, /resolution === "load-existing"/);
   assert.match(composerTargetControllerSource, /deps\.setActivePendingDraftKey\(target\.id\)/);
   assert.match(
     composerTargetControllerSource,
@@ -100,44 +91,22 @@ test("switchComposerTarget returns conflict before mutating active draft", () =>
 
 test("switchComposerTarget seeds the target draft before activating the target key", () => {
   assert.ok(switchComposerTargetSource, "composer target switching source should be present");
-  const useCurrentBranchSource = sourceBetween(
-    switchComposerTargetSource,
-    "if (shouldUseCurrent) {",
-    "if (shouldLoadExisting && destinationSummary && destinationDraft) {",
-  );
-  const loadExistingBranchSource = sourceBetween(
-    switchComposerTargetSource,
-    "if (shouldLoadExisting && destinationSummary && destinationDraft) {",
-    "const emptyDraft = deps.createEmptyComposerDraft();",
-  );
-  const emptyBranchSource = sourceBetween(
-    switchComposerTargetSource,
-    "const emptyDraft = deps.createEmptyComposerDraft();",
-    "  let composerTargetSwitchQueue",
-  );
-
-  assertComposerDraftSeededBeforeActivation(useCurrentBranchSource, "currentDraft");
-  assertComposerDraftSeededBeforeActivation(loadExistingBranchSource, "destinationDraft");
-  assertComposerDraftSeededBeforeActivation(emptyBranchSource, "emptyDraft");
+  assertComposerDraftSeededBeforeActivation(switchComposerTargetSource, "currentDraft");
+  assert.doesNotMatch(switchComposerTargetSource, /destinationDraft/);
+  assert.doesNotMatch(switchComposerTargetSource, /createEmptyComposerDraft/);
 });
 
 test("switchComposerTarget moves current pending drafts instead of cloning them", () => {
   assert.ok(switchComposerTargetSource, "composer target switching source should be present");
-  const useCurrentBranchSource = sourceBetween(
-    switchComposerTargetSource,
-    "if (shouldUseCurrent) {",
-    "if (shouldLoadExisting && destinationSummary && destinationDraft) {",
-  );
-
   assert.match(
-    useCurrentBranchSource,
+    switchComposerTargetSource,
     /const previousPendingDraftKey = deps\.currentComposerStorageKey\(\);[\s\S]*const previousPendingDraftMeta = deps\.activePendingDraftMeta\(\);/,
     "target switches should snapshot the original composer storage before writing the destination",
   );
 
-  const seedIndex = useCurrentBranchSource.indexOf("setSessionComposerDraft(current, { storageKey: target.id }, currentDraft)");
-  const activationIndex = useCurrentBranchSource.indexOf("deps.setActivePendingDraftKey(target.id)");
-  const cleanupIndex = useCurrentBranchSource.indexOf("await consumeMovedPendingDraft({");
+  const seedIndex = switchComposerTargetSource.indexOf("setSessionComposerDraft(current, { storageKey: target.id }, currentDraft)");
+  const activationIndex = switchComposerTargetSource.indexOf("deps.setActivePendingDraftKey(target.id)");
+  const cleanupIndex = switchComposerTargetSource.indexOf("await consumeMovedPendingDraft({");
 
   assert.ok(seedIndex >= 0, "current draft should be seeded into the destination key");
   assert.ok(activationIndex >= 0, "destination key should be activated");
@@ -145,7 +114,7 @@ test("switchComposerTarget moves current pending drafts instead of cloning them"
   assert.ok(seedIndex < activationIndex, "destination draft must be seeded before activation");
   assert.ok(activationIndex < cleanupIndex, "stale source writes must be invalidated before source cleanup");
   assert.match(
-    useCurrentBranchSource,
+    switchComposerTargetSource,
     /previousStorageKey: previousPendingDraftKey,[\s\S]*previousSummary: previousPendingDraftMeta,[\s\S]*nextStorageKey: target\.id,[\s\S]*nextSummary: summary,/s,
     "move cleanup should know both the previous and destination pending identities",
   );
@@ -160,7 +129,7 @@ test("switchComposerTarget serializes rapid target changes", () => {
   );
   assert.match(
     switchComposerTargetQueueSource,
-    /const queuedSwitch = composerTargetSwitchQueue[\s\S]*\.then\(\(\) => switchComposerTargetNow\(targetId, resolution\)\);/,
+    /const queuedSwitch = composerTargetSwitchQueue[\s\S]*\.then\(\(\) => switchComposerTargetNow\(targetId\)\);/,
     "each target switch should run after the previous switch settles",
   );
   assert.match(
@@ -170,31 +139,30 @@ test("switchComposerTarget serializes rapid target changes", () => {
   );
 });
 
-test("switchComposerTarget blocks when an existing destination draft cannot be loaded", () => {
-  assert.match(composerTargetControllerSource, /if \(destinationSummary && !destinationDraft\) \{/);
+test("switchComposerTarget does not load destination draft content", () => {
+  assert.doesNotMatch(composerTargetControllerSource, /loadPendingDraftComposer/);
+  assert.doesNotMatch(composerTargetControllerSource, /pendingSessionDraftsGet/);
+  assert.doesNotMatch(switchComposerTargetSource, /destinationDraft/);
 });
 
 test("switchComposerTarget routes picked workspaces through safe switching", () => {
   assert.match(composerTargetControllerSource, /selectComposerWorkspaceTargetFromPicker/);
-  assert.match(composerTargetControllerSource, /targetId: target\.id/);
+  assert.match(composerTargetControllerSource, /target = pickedTarget;/);
+  assert.match(switchComposerTargetSource, /const summary = await putPendingDraftForTarget\(target, currentDraft, summaries\);/);
   assert.doesNotMatch(
     composerTargetControllerSource,
     /if \(target\.kind === "choose-workspace"\) \{\s*const result = await openDirectorySessionFromPicker\(\);/s,
   );
 });
 
-test("target picker and conflict modal expose stable test hooks", () => {
+test("target picker exposes stable test hooks without a draft conflict modal", () => {
   assert.match(pickerSource, /data-testid="composer-target-picker"/);
   assert.match(pickerSource, /data-testid="composer-target-option"/);
   assert.match(pickerSource, /data-composer-target-kind=\{option\.kind\}/);
   assert.match(pickerSource, /data-composer-target-directory=/);
   assert.match(pickerSource, /data-testid="composer-target-draft-badge"/);
   assert.match(pickerSource, /session\.target_draft_badge/);
-  assert.match(conflictSource, /data-testid="composer-target-conflict-modal"/);
-  assert.match(conflictSource, /data-testid="composer-target-conflict-close"/);
-  assert.match(conflictSource, /data-testid="composer-target-use-current"/);
-  assert.match(conflictSource, /data-testid="composer-target-load-existing"/);
-  assert.match(conflictSource, /session\.target_conflict_escape_hint/);
+  assert.doesNotMatch(sessionSource, /ComposerTargetConflictModal/);
 });
 
 test("target picker menu scrolls and hides workspace paths", () => {
@@ -232,7 +200,6 @@ test("composer target copy is localized in primary locales", () => {
   for (const source of [csSource, enSource, zhSource]) {
     assert.match(source, /"session\.target_chat_label":/);
     assert.match(source, /"session\.target_draft_badge":/);
-    assert.match(source, /"session\.target_conflict_title":/);
-    assert.match(source, /"session\.target_conflict_escape_hint":/);
+    assert.doesNotMatch(source, /"session\.target_conflict_title":/);
   }
 });

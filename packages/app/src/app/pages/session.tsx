@@ -3,9 +3,7 @@ import type { Agent, Part } from "@opencode-ai/sdk/v2/client";
 import type {
   ArtifactItem,
   DashboardTab,
-  ComposerTargetConflict,
   ComposerTargetOption,
-  ComposerTargetSwitchResolution,
   ComposerTargetSwitchResult,
   ComposerDraft,
   MessageGroup,
@@ -93,7 +91,6 @@ import type { UpdateDownloadRetryInfo } from "../context/updater";
 import MessageList, { type PendingMessageState } from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import type { ComposerSendOptions } from "../components/session/composer";
-import ComposerTargetConflictModal from "../components/session/composer-target-conflict-modal";
 import ComposerTargetPicker from "../components/session/composer-target-picker";
 import QueuedMessageList from "../components/session/queued-message-list";
 import { getEditableUserMessageDraft, type EditableUserMessageDraft } from "../components/session/message-editability";
@@ -236,10 +233,7 @@ export type SessionViewProps = {
   activePendingDraftMeta: PendingSessionDraftSummary | null;
   composerTargetOptions: ComposerTargetOption[];
   activeComposerTargetId: string | null;
-  switchComposerTarget: (
-    targetId: string,
-    resolution?: ComposerTargetSwitchResolution,
-  ) => Promise<ComposerTargetSwitchResult>;
+  switchComposerTarget: (targetId: string) => Promise<ComposerTargetSwitchResult>;
   setView: (view: View, sessionId?: string) => void;
   setSessionBrowseScope: (scope: SessionBrowseScope) => void;
   tab: DashboardTab;
@@ -445,7 +439,6 @@ export default function SessionView(props: SessionViewProps) {
   let sidebarLayoutResizeFrame: number | undefined;
 
   const [toastMessage, setToastMessage] = createSignal<string | null>(null);
-  const [composerTargetConflict, setComposerTargetConflict] = createSignal<ComposerTargetConflict | null>(null);
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
@@ -2704,22 +2697,6 @@ export default function SessionView(props: SessionViewProps) {
 
   const handleComposerTargetSelect = async (targetId: string) => {
     const result = await props.switchComposerTarget(targetId);
-    if (result.status === "conflict") {
-      setComposerTargetConflict(result.conflict);
-      return;
-    }
-    if (result.status === "blocked") setToastMessage(result.message);
-  };
-
-  const resolveComposerTargetConflictModal = async (resolution: ComposerTargetSwitchResolution) => {
-    const conflict = composerTargetConflict();
-    if (!conflict) return;
-    const result = await props.switchComposerTarget(conflict.targetId, resolution);
-    if (result.status === "conflict") {
-      setComposerTargetConflict(result.conflict);
-      return;
-    }
-    setComposerTargetConflict(null);
     if (result.status === "blocked") setToastMessage(result.message);
   };
 
@@ -3662,15 +3639,6 @@ export default function SessionView(props: SessionViewProps) {
       </Show>
 
         )}
-        conflictModal={(
-      <ComposerTargetConflictModal
-        conflict={composerTargetConflict()}
-        onResolve={(resolution) => {
-          void resolveComposerTargetConflictModal(resolution);
-        }}
-        onCancel={() => setComposerTargetConflict(null)}
-      />
-        )}
       />
 
       <SessionRightSidebar
@@ -3850,14 +3818,6 @@ export default function SessionView(props: SessionViewProps) {
             }
         }
         exportDisabledReason={exportDisabledReason()}
-      />
-
-      <ComposerTargetConflictModal
-        conflict={composerTargetConflict()}
-        onResolve={(resolution) => {
-          void resolveComposerTargetConflictModal(resolution);
-        }}
-        onCancel={() => setComposerTargetConflict(null)}
       />
 
       <Show when={props.activePermission}>

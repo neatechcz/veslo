@@ -8,7 +8,7 @@ import {
   resolveComposerStorageKey,
   resolvePendingDraftKey,
 } from "../../lib/pending-session-drafts.js";
-import type { PendingSessionDraft, PendingSessionDraftPutInput, PendingSessionDraftSummary } from "../../lib/tauri.js";
+import type { PendingSessionDraftPutInput, PendingSessionDraftSummary } from "../../lib/tauri.js";
 import type { ComposerDraft } from "../../types.js";
 
 const draft = (text: string): ComposerDraft => ({
@@ -68,15 +68,12 @@ test("composer target controller builds workspace options and moves current draf
         setActivePendingDraftMeta,
         currentComposerStorageKey: () => globalComposerStorageKey,
         composerDraft: () => draft("ship this"),
-        createEmptyComposerDraft: () => draft(""),
         pendingSessionDraftsList: async () => (persisted.current ? [persisted.current] : []),
-        pendingSessionDraftsGet: async () => null,
         pendingSessionDraftsPut: async (input) => {
           persisted.current = summaryFromPut(input);
           return persisted.current;
         },
         pendingSessionDraftsDelete: async () => true,
-        formatPendingDraftAttachmentRestoreError: () => null,
         isConsumedPendingDraftId: () => false,
         markPendingDraftConsumed: () => undefined,
         clearConsumedPendingDraftId: () => undefined,
@@ -206,21 +203,16 @@ test("composer target switch ignores obsolete pending summaries before loading o
         pendingDraftsReady: () => true,
         currentComposerStorageKey: () => globalComposerStorageKey,
         composerDraft: () => draft("current draft"),
-        createEmptyComposerDraft: () => draft(""),
         pendingSessionDraftsList: async () => [
           obsoleteDirectorySummary,
           obsoletePrivateSummary,
           ...(persisted.current ? [persisted.current] : []),
         ],
-        pendingSessionDraftsGet: async (draftId) => {
-          throw new Error(`obsolete pending draft should not be loaded: ${draftId}`);
-        },
         pendingSessionDraftsPut: async (input) => {
           persisted.current = summaryFromPut(input);
           return persisted.current;
         },
         pendingSessionDraftsDelete: async () => true,
-        formatPendingDraftAttachmentRestoreError: () => null,
         isConsumedPendingDraftId: () => false,
         markPendingDraftConsumed: () => undefined,
         clearConsumedPendingDraftId: () => undefined,
@@ -329,14 +321,10 @@ test("composer target switch writes the global draft id for private chat targets
         pendingDraftsReady: () => true,
         currentComposerStorageKey: () => workspaceKey,
         composerDraft: () => draft("private draft"),
-        createEmptyComposerDraft: () => draft(""),
         pendingSessionDraftsList: async () => [
           obsoletePrivateSummary,
           ...(persisted.current ? [persisted.current] : []),
         ],
-        pendingSessionDraftsGet: async (draftId) => {
-          throw new Error(`obsolete pending draft should not be loaded: ${draftId}`);
-        },
         pendingSessionDraftsPut: async (input) => {
           persisted.current = summaryFromPut(input);
           return persisted.current;
@@ -344,7 +332,6 @@ test("composer target switch writes the global draft id for private chat targets
         pendingSessionDraftsDelete: async (draftId) => {
           throw new Error(`obsolete pending draft should not be deleted: ${draftId}`);
         },
-        formatPendingDraftAttachmentRestoreError: () => null,
         isConsumedPendingDraftId: () => false,
         markPendingDraftConsumed: () => undefined,
         clearConsumedPendingDraftId: () => undefined,
@@ -410,7 +397,7 @@ test("composer target switch writes the global draft id for private chat targets
   });
 });
 
-test("composer target switch refreshes stale pending draft summaries before conflict resolution", async () => {
+test("composer target switch refreshes stale pending draft summaries before moving the current draft", async () => {
   await createRoot(async (dispose) => {
     try {
       const [activePendingDraftKey, setActivePendingDraftKey] = createSignal<string | null>(null);
@@ -422,7 +409,7 @@ test("composer target switch refreshes stale pending draft summaries before conf
         workspaceId: "workspace-1",
         directory: "C:/work/project",
       });
-      const destinationDraft: PendingSessionDraft = {
+      const destinationSummary: PendingSessionDraftSummary = {
         id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
         kind: "directory",
         workspaceId: "workspace-1",
@@ -430,19 +417,16 @@ test("composer target switch refreshes stale pending draft summaries before conf
         privateWorkspaceId: null,
         createdAt: 10,
         updatedAt: 20,
-        composer: draft("destination draft"),
-      };
-      const destinationSummary: PendingSessionDraftSummary = {
-        ...destinationDraft,
         composer: {
-          mode: destinationDraft.composer.mode,
-          parts: destinationDraft.composer.parts,
+          mode: "prompt",
+          parts: [{ type: "text", text: "destination draft" }],
           attachments: [],
-          text: destinationDraft.composer.text,
-          resolvedText: destinationDraft.composer.resolvedText,
+          text: "destination draft",
+          resolvedText: "destination draft",
         },
       };
       let persistedSummaries: PendingSessionDraftSummary[] = [];
+      const persistedInputs: PendingSessionDraftPutInput[] = [];
       let composerDrafts: Record<string, ComposerDraft> = {};
 
       const controller = createComposerTargetController({
@@ -460,17 +444,14 @@ test("composer target switch refreshes stale pending draft summaries before conf
         pendingDraftsReady: () => true,
         currentComposerStorageKey: () => globalComposerStorageKey,
         composerDraft: () => draft("current draft"),
-        createEmptyComposerDraft: () => draft(""),
         pendingSessionDraftsList: async () => persistedSummaries,
-        pendingSessionDraftsGet: async (draftId) => {
-          assert.equal(draftId, GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID);
-          return { draft: destinationDraft, attachmentFailures: [] };
-        },
-        pendingSessionDraftsPut: async () => {
-          throw new Error("conflict path should not persist over the destination draft");
+        pendingSessionDraftsPut: async (input) => {
+          persistedInputs.push(input);
+          const summary = summaryFromPut(input);
+          persistedSummaries = [summary];
+          return summary;
         },
         pendingSessionDraftsDelete: async () => true,
-        formatPendingDraftAttachmentRestoreError: () => null,
         isConsumedPendingDraftId: () => false,
         markPendingDraftConsumed: () => undefined,
         clearConsumedPendingDraftId: () => undefined,
@@ -516,8 +497,16 @@ test("composer target switch refreshes stale pending draft summaries before conf
 
       const result = await controller.switchComposerTarget(targetKey);
 
-      assert.equal(result.status, "conflict");
-      assert.equal(activePendingDraftKey(), null);
+      assert.deepEqual(result, { status: "switched" });
+      assert.equal(persistedInputs.length, 1);
+      assert.equal(persistedInputs[0]?.id, GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID);
+      assert.equal(persistedInputs[0]?.workspaceId, "workspace-1");
+      assert.equal(persistedInputs[0]?.directory, "C:/work/project");
+      assert.equal(persistedInputs[0]?.composer.text, "current draft");
+      assert.equal(activePendingDraftKey(), targetKey);
+      assert.equal(activePendingDraftMeta()?.id, GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID);
+      assert.equal(activePendingDraftMeta()?.composer.text, "current draft");
+      assert.equal(composerDrafts[globalComposerStorageKey]?.text, "current draft");
       assert.equal(composerDrafts[targetKey], undefined);
     } finally {
       dispose();
