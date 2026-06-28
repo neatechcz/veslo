@@ -5,7 +5,7 @@ import {
   setSessionComposerDraft,
 } from "../pages/session-composer-drafts";
 import { resolveComposerTargetConflict } from "../lib/composer-target-draft-conflict";
-import { resolvePendingDraftKey } from "../lib/pending-session-drafts";
+import { isPendingDraftKey, resolveComposerStorageKey, resolvePendingDraftKey } from "../lib/pending-session-drafts";
 import type {
   PendingSessionDraftGetResult,
   PendingSessionDraftPutInput,
@@ -110,6 +110,14 @@ const composerTargetWorkspaceLabel = (workspace: ComposerTargetWorkspace) =>
   workspace.path?.trim() ||
   workspace.directory?.trim() ||
   workspace.id;
+
+const resolveMovedComposerStorageKey = (storageKey: string | null | undefined) => {
+  const trimmed = storageKey?.trim() ?? "";
+  if (!trimmed) return "";
+  return isPendingDraftKey(trimmed)
+    ? resolveComposerStorageKey({ pendingDraftKey: trimmed })
+    : resolveComposerStorageKey({ sessionId: trimmed });
+};
 
 export function createComposerTargetController(deps: ComposerTargetControllerDeps) {
   const [pendingDraftSummaries, setPendingDraftSummaries] = createSignal<PendingSessionDraftSummary[]>([]);
@@ -323,14 +331,16 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
   }) => {
     const previousStorageKey = input.previousStorageKey?.trim() ?? "";
     const nextStorageKey = input.nextStorageKey.trim();
-    if (!previousStorageKey || !nextStorageKey || previousStorageKey === nextStorageKey) return;
+    const previousComposerStorageKey = resolveMovedComposerStorageKey(previousStorageKey);
+    const nextComposerStorageKey = resolveMovedComposerStorageKey(nextStorageKey);
+    if (previousComposerStorageKey && nextComposerStorageKey && previousComposerStorageKey !== nextComposerStorageKey) {
+      deps.setComposerDraftBySessionId((current) =>
+        deleteSessionComposerDraft(current, { storageKey: previousStorageKey }),
+      );
+    }
 
     const previousDraftId = input.previousSummary?.id.trim() ?? "";
     const nextDraftId = input.nextSummary.id.trim();
-    deps.setComposerDraftBySessionId((current) =>
-      deleteSessionComposerDraft(current, { storageKey: previousStorageKey }),
-    );
-
     if (!previousDraftId || previousDraftId === nextDraftId || !deps.isTauriRuntime()) return;
 
     try {

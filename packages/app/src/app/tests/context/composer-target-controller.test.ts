@@ -3,7 +3,7 @@ import test from "node:test";
 import { createRoot, createSignal } from "solid-js";
 
 import { createComposerTargetController } from "../../context/composer-target-controller.js";
-import { resolvePendingDraftKey } from "../../lib/pending-session-drafts.js";
+import { resolveComposerStorageKey, resolvePendingDraftKey } from "../../lib/pending-session-drafts.js";
 import type { PendingSessionDraft, PendingSessionDraftPutInput, PendingSessionDraftSummary } from "../../lib/tauri.js";
 import type { ComposerDraft } from "../../types.js";
 
@@ -38,6 +38,8 @@ test("composer target controller builds workspace options and moves current draf
     try {
       const [activePendingDraftKey, setActivePendingDraftKey] = createSignal<string | null>(null);
       const [activePendingDraftMeta, setActivePendingDraftMeta] = createSignal<PendingSessionDraftSummary | null>(null);
+      const chatKey = resolvePendingDraftKey({ kind: "new-private" });
+      const globalComposerStorageKey = resolveComposerStorageKey({ pendingDraftKey: chatKey });
       const targetKey = resolvePendingDraftKey({
         kind: "directory",
         workspaceId: "workspace-1",
@@ -60,7 +62,7 @@ test("composer target controller builds workspace options and moves current draf
         setActivePendingDraftKey,
         activePendingDraftMeta,
         setActivePendingDraftMeta,
-        currentComposerStorageKey: () => "__pending-draft__:new-private",
+        currentComposerStorageKey: () => globalComposerStorageKey,
         composerDraft: () => draft("ship this"),
         createEmptyComposerDraft: () => draft(""),
         pendingSessionDraftsList: async () => (persisted.current ? [persisted.current] : []),
@@ -125,7 +127,8 @@ test("composer target controller builds workspace options and moves current draf
       assert.ok(persisted.current);
       assert.equal(activePendingDraftKey(), targetKey);
       assert.equal(activePendingDraftMeta()?.id, persisted.current.id);
-      assert.equal(composerDrafts[targetKey]?.text, "ship this");
+      assert.equal(composerDrafts[globalComposerStorageKey]?.text, "ship this");
+      assert.equal(composerDrafts[targetKey], undefined);
       assert.deepEqual(activatedWorkspaces, []);
       assert.deepEqual(views, ["session"]);
     } finally {
@@ -139,6 +142,8 @@ test("composer target switch refreshes stale pending draft summaries before conf
     try {
       const [activePendingDraftKey, setActivePendingDraftKey] = createSignal<string | null>(null);
       const [activePendingDraftMeta, setActivePendingDraftMeta] = createSignal<PendingSessionDraftSummary | null>(null);
+      const chatKey = resolvePendingDraftKey({ kind: "new-private" });
+      const globalComposerStorageKey = resolveComposerStorageKey({ pendingDraftKey: chatKey });
       const targetKey = resolvePendingDraftKey({
         kind: "directory",
         workspaceId: "workspace-1",
@@ -180,7 +185,7 @@ test("composer target switch refreshes stale pending draft summaries before conf
         activePendingDraftMeta,
         setActivePendingDraftMeta,
         pendingDraftsReady: () => true,
-        currentComposerStorageKey: () => "__pending-draft__:new-private",
+        currentComposerStorageKey: () => globalComposerStorageKey,
         composerDraft: () => draft("current draft"),
         createEmptyComposerDraft: () => draft(""),
         pendingSessionDraftsList: async () => persistedSummaries,

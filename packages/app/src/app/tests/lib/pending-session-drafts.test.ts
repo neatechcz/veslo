@@ -38,6 +38,7 @@ test("pending draft keys resolve to one unpublished composer storage bucket", ()
     resolveComposerStorageKey({ pendingDraftKey: chatKey }),
     resolveComposerStorageKey({ pendingDraftKey: projectKey }),
   );
+  assert.equal(isPendingDraftKey(resolveComposerStorageKey({ pendingDraftKey: chatKey })), false);
 });
 
 test("real session ids resolve to separate composer storage buckets", () => {
