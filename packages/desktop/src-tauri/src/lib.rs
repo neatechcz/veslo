@@ -75,9 +75,9 @@ use commands::window::set_window_decorations;
 use commands::workspace::{
     workspace_add_authorized_root, workspace_bootstrap, workspace_copy_into_folder,
     workspace_create, workspace_create_remote, workspace_export_config, workspace_forget,
-    workspace_import_config, workspace_private_root, workspace_set_active,
-    workspace_update_display_name, workspace_update_remote, workspace_veslo_read,
-    workspace_veslo_write,
+    workspace_grant_folder_access, workspace_import_config, workspace_private_root,
+    workspace_set_active, workspace_update_display_name, workspace_update_remote,
+    workspace_veslo_read, workspace_veslo_write,
 };
 use commands::wsl_sandbox::{wsl_prerequisites_repair, wsl_sandbox_repair};
 use engine::manager::EngineManager;
@@ -311,6 +311,7 @@ pub fn run() {
             workspace_update_remote,
             workspace_forget,
             workspace_add_authorized_root,
+            workspace_grant_folder_access,
             workspace_export_config,
             workspace_import_config,
             opencode_command_list,
