@@ -278,6 +278,8 @@ Managed-AI inference routing is configured separately from signed-in app identit
 
 AI Gateway `/health` is process liveness only. Use `/readiness` when the product, admin UI, or monitors need to show AI inference availability: it checks upstream provider reachability, at least one healthy credential, and at least one enabled AI-access policy. The local server exposes the same frontend-visible readiness through `/ai-gateway/readiness`; send-time provider proxy failures remain authoritative and continue returning normalized upstream failure diagnostics.
 
+Standalone AI Gateway Codex probing uses `AI_GATEWAY_CODEX_COMMAND`. The default value `codex` is supported in owned-server images: at runtime AI Gateway resolves it to the package-local `node_modules/.bin/codex` binary when that binary exists, so capacity probes and Codex worker calls do not depend on the container `PATH` containing package bin directories. Use an absolute `AI_GATEWAY_CODEX_COMMAND` only for an intentional operator override.
+
 The desktop app keeps a local managed-AI access proof cache so it does not have to repeat `GET /ai-gateway/me/ai-access` on every reactive pass or process restart. The cache lives in:
 
 - `${VESLO_APP_DATA_DIR or app_data_dir()}/access-proofs.v1.json`
