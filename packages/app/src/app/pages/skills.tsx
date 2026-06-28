@@ -120,10 +120,8 @@ export type SkillsViewProps = {
   hubSkills: HubSkillCard[];
   hubSkillsStatus: string | null;
   workspaces: WorkspaceInfo[];
-  importLocalSkill: () => void;
   installSkillCreator: () => Promise<InstallResult>;
   installHubSkill: (name: string, target: HubSkillInstallTarget) => Promise<InstallResult>;
-  revealSkillsFolder: () => void;
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
   saveSkill: (input: { name: string; path?: string; content: string; description?: string }) => Promise<SkillSaveResult>;
@@ -1278,40 +1276,6 @@ export default function SkillsView(props: SkillsViewProps) {
     });
   };
 
-  const importLocalSkillAndRefreshInventory = () =>
-    Promise.resolve(props.importLocalSkill())
-      .finally(() => props.refreshSkillInventory({ force: true }));
-
-  const recommendedSkills = createMemo(() => {
-    const items: Array<{
-      id: string;
-      title: string;
-      description: string;
-      icon: any;
-      onClick: () => void | Promise<void>;
-      disabled: boolean;
-    }> = [
-      {
-        id: "import-local",
-        title: translate("skills.import_local"),
-        description: translate("skills.import_local_hint"),
-        icon: Upload,
-        onClick: importLocalSkillAndRefreshInventory,
-        disabled: props.busy || !props.canUseDesktopTools,
-      },
-      {
-        id: "reveal-folder",
-        title: translate("skills.reveal_folder"),
-        description: translate("skills.reveal_folder_hint"),
-        icon: FolderOpen,
-        onClick: props.revealSkillsFolder,
-        disabled: props.busy || !props.canUseDesktopTools,
-      },
-    ];
-
-    return items;
-  });
-
   const openInstallFromLink = () => {
     if (props.busy) return;
     setInstallLinkOpen(true);
@@ -1416,16 +1380,6 @@ export default function SkillsView(props: SkillsViewProps) {
     } finally {
       setInstallLinkBusy(false);
     }
-  };
-
-  const recommendedDisabledReason = (id: string) => {
-    void id;
-
-    if (!props.canUseDesktopTools) {
-      return translate("skills.desktop_required");
-    }
-
-    return null;
   };
 
   const openSkill = async (skill: ActionSkillCard) => {
@@ -2217,78 +2171,6 @@ export default function SkillsView(props: SkillsViewProps) {
             </For>
           </div>
         </Show>
-      </div>
-
-      <div class="space-y-4">
-        <h3 class="text-[11px] font-bold text-dls-secondary uppercase tracking-widest">{translate("skills.capability_setup")}</h3>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <For each={recommendedSkills()}>
-            {(item) => (
-              <div
-                role="button"
-                tabindex="0"
-                class={`bg-dls-surface border border-dls-border rounded-xl p-4 flex items-start justify-between group transition-all text-left ${
-                  item.disabled ? "opacity-80" : "hover:border-dls-border hover:bg-dls-hover"
-                }`}
-                onClick={() => {
-                  if (item.disabled) {
-                    const reason = recommendedDisabledReason(item.id);
-                    if (reason) setToast(reason);
-                    return;
-                  }
-                  void item.onClick();
-                }}
-                onKeyDown={(e) => {
-                  if (e.key !== "Enter" && e.key !== " ") return;
-                  if (e.isComposing || e.keyCode === 229) return;
-                  e.preventDefault();
-                  if (item.disabled) {
-                    const reason = recommendedDisabledReason(item.id);
-                    if (reason) setToast(reason);
-                    return;
-                  }
-                  void item.onClick();
-                }}
-                title={item.disabled ? (recommendedDisabledReason(item.id) ?? item.title) : item.title}
-              >
-                <div class="flex gap-4 min-w-0">
-                  <div class="w-10 h-10 rounded-lg flex items-center justify-center shadow-sm border border-dls-border bg-dls-hover">
-                    <item.icon size={20} class="text-dls-secondary" />
-                  </div>
-                    <div class="min-w-0">
-                      <div class="flex items-center gap-2 mb-0.5">
-                        <h4 class="text-sm font-semibold text-dls-text truncate">{item.title}</h4>
-                      </div>
-                      <p class="text-xs text-dls-secondary line-clamp-2">{item.description}</p>
-                    </div>
-                  </div>
-                <button
-                  type="button"
-                  class={`p-1.5 rounded-md transition-colors ${
-                    item.disabled
-                      ? "text-dls-secondary opacity-40"
-                      : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
-                  }`}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (item.disabled) {
-                      const reason = recommendedDisabledReason(item.id);
-                      if (reason) setToast(reason);
-                      return;
-                    }
-                    void item.onClick();
-                  }}
-                  disabled={item.disabled}
-                  title={item.title}
-                  aria-label={item.title}
-                >
-                  <Plus size={16} />
-                </button>
-              </div>
-            )}
-          </For>
-        </div>
       </div>
 
       <Show when={installTargetSkill()}>

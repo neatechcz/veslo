@@ -138,10 +138,14 @@ test("bulk selection only targets visible inventory rows", () => {
   assert.match(source, /const currentInventorySelectionIds = createMemo\(\(\) =>\s*inventoryTableRows\(\)\.map\(\(row\) => skillInventoryInstanceId\(row\.instance\)\)\s*\)/);
 });
 
-test("local skill import refreshes the app-wide installed inventory", () => {
-  assert.match(source, /const importLocalSkillAndRefreshInventory = \(\) =>\s*Promise\.resolve\(props\.importLocalSkill\(\)\)\s*\.finally\(\(\) => props\.refreshSkillInventory\(\{ force: true \}\)\)/);
-  assert.match(source, /id: "import-local"[\s\S]*onClick: importLocalSkillAndRefreshInventory/);
-  assert.doesNotMatch(source, /id: "import-local"[\s\S]{0,300}onClick: props\.importLocalSkill/);
+test("skills page removes the local skills setup section from every locale", () => {
+  assert.doesNotMatch(source, /translate\("skills\.capability_setup"\)/);
+  assert.doesNotMatch(source, /id: "import-local"/);
+  assert.doesNotMatch(source, /id: "reveal-folder"/);
+  assert.doesNotMatch(source, /importLocalSkillAndRefreshInventory/);
+  assert.doesNotMatch(enSource, /"skills\.(capability_setup|import_local|import_local_hint|reveal_folder|reveal_folder_hint)":/);
+  assert.doesNotMatch(csSource, /"skills\.(capability_setup|import_local|import_local_hint|reveal_folder|reveal_folder_hint)":/);
+  assert.doesNotMatch(zhSource, /"skills\.(capability_setup|import_local|import_local_hint|reveal_folder|reveal_folder_hint)":/);
 });
 
 test("inventory remove actions use target-aware remove and restore helpers", () => {
