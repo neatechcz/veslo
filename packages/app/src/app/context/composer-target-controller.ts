@@ -5,7 +5,13 @@ import {
   setSessionComposerDraft,
 } from "../pages/session-composer-drafts";
 import { resolveComposerTargetConflict } from "../lib/composer-target-draft-conflict";
-import { isPendingDraftKey, resolveComposerStorageKey, resolvePendingDraftKey } from "../lib/pending-session-drafts";
+import {
+  GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
+  isGlobalUnpublishedPendingDraftSummary,
+  isPendingDraftKey,
+  resolveComposerStorageKey,
+  resolvePendingDraftKey,
+} from "../lib/pending-session-drafts";
 import type {
   PendingSessionDraftGetResult,
   PendingSessionDraftPutInput,
@@ -94,13 +100,6 @@ export type ComposerTargetControllerDeps = {
   addOpencodeCacheHint: (message: string) => string;
 };
 
-const createPendingDirectoryDraftId = (now: number) =>
-  `pending-directory-${
-    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : `${now}-${Math.random().toString(16).slice(2)}`
-  }`;
-
 const composerTargetWorkspaceLabel = (workspace: ComposerTargetWorkspace) =>
   workspace.displayName?.trim() ||
   workspace.vesloWorkspaceName?.trim() ||
@@ -134,7 +133,7 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
 
     try {
       const summaries = (await deps.pendingSessionDraftsList()).filter(
-        (draft) => !deps.isConsumedPendingDraftId(draft.id),
+        (draft) => isGlobalUnpublishedPendingDraftSummary(draft) && !deps.isConsumedPendingDraftId(draft.id),
       );
       if (seq === pendingDraftRefreshSeq) {
         setPendingDraftSummaries(summaries);
@@ -228,7 +227,7 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
               composer: draft,
             }
           : {
-              id: createPendingDirectoryDraftId(now),
+              id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
               kind: "directory",
               workspaceId,
               directory,
@@ -300,7 +299,7 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
         }
 
         const summary = await deps.pendingSessionDraftsPut({
-          id: `pending-new-private-${scratch.id}`,
+          id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
           kind: "new-private",
           workspaceId: scratch.id,
           directory: null,
@@ -341,6 +340,7 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
 
     const previousDraftId = input.previousSummary?.id.trim() ?? "";
     const nextDraftId = input.nextSummary.id.trim();
+    if (input.previousSummary && !isGlobalUnpublishedPendingDraftSummary(input.previousSummary)) return;
     if (!previousDraftId || previousDraftId === nextDraftId || !deps.isTauriRuntime()) return;
 
     try {
