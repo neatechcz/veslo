@@ -1437,6 +1437,15 @@ export default function DashboardView(props: DashboardViewProps) {
                 {t("nav.plugins", currentLocale())}
               </span>
             </button>
+            <button
+              class={`flex flex-col items-center gap-1 text-xs ${
+                props.tab === "plugins" ? "text-gray-12" : "text-gray-10"
+              }`}
+              onClick={() => handleDashboardTabSelection("plugins")}
+            >
+              <Cpu size={18} />
+              {t("nav.plugins", currentLocale())}
+            </button>
             <Show when={props.developerMode}>
               <button
                 class={`flex flex-col items-center gap-1 text-xs min-w-0 ${
