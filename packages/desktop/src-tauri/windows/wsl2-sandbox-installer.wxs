@@ -3,10 +3,9 @@
   <Fragment>
     <Property Id="MsiLogging" Value="voicewarmupx!" />
     <!--
-      WSL provisioning is kept as a dormant rollback path. Windows installer
-      builds now start Veslo in shared non-sandbox mode, so the WSL custom
-      action and launch suppression below stay disabled unless explicitly
-      enabled by setting VESLO_ENABLE_WSL_INSTALLER=1.
+      WSL provisioning is app-guided by default. The WSL custom action and
+      launch suppression below stay disabled unless explicitly enabled by
+      setting VESLO_ENABLE_WSL_INSTALLER=1 for installer-driven sandbox setup.
     -->
     <Property Id="VESLO_ENABLE_WSL_INSTALLER" Value="0" />
 

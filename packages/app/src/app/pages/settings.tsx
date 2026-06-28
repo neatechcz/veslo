@@ -181,6 +181,7 @@ export default function SettingsView(props: SettingsViewProps) {
   };
   const [buildInfo, setBuildInfo] = createSignal<AppBuildInfo | null>(null);
   const [sharedUnsandboxedEngine, setSharedUnsandboxedEngine] = createSignal(false);
+  const sandboxEnabled = createMemo(() => !sharedUnsandboxedEngine());
   const [runtimePreferencesReady, setRuntimePreferencesReady] = createSignal(!isTauriRuntime());
   const [runtimePreferencesBusy, setRuntimePreferencesBusy] = createSignal(false);
   const [runtimePreferencesStatus, setRuntimePreferencesStatus] = createSignal<string | null>(null);
@@ -420,15 +421,15 @@ export default function SettingsView(props: SettingsViewProps) {
     );
   };
 
-  const handleToggleSharedUnsandboxedEngine = async () => {
+  const handleToggleSandbox = async () => {
     if (!isTauriRuntime() || runtimePreferencesBusy()) return;
-    const next = !sharedUnsandboxedEngine();
+    const nextSandboxEnabled = !sandboxEnabled();
     setRuntimePreferencesBusy(true);
     setRuntimePreferencesStatus(null);
     setRuntimePreferencesError(null);
     try {
       const saved = await desktopRuntimePreferencesWrite({
-        sharedUnsandboxedEngine: next,
+        sharedUnsandboxedEngine: !nextSandboxEnabled,
       });
       setSharedUnsandboxedEngine(Boolean(saved.sharedUnsandboxedEngine));
       setRuntimePreferencesStatus("Saved. Restart the local server to apply.");
@@ -1070,45 +1071,37 @@ export default function SettingsView(props: SettingsViewProps) {
             </div>
 
             <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
-              <div>
-                <div class="text-sm font-medium text-gray-12">Local runtime</div>
-                <div class="text-xs text-gray-10">Engine isolation and pooling. Restart local server to apply.</div>
-              </div>
-
-              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+              <div class="flex items-center justify-between gap-4">
                 <div class="min-w-0">
-                  <div class="text-sm text-gray-12">Shared unsandboxed engine</div>
-                  <div class="text-xs text-gray-7">
-                    Sets <span class="font-mono">VESLO_DISABLE_SANDBOX</span> and{" "}
-                    <span class="font-mono">VESLO_SHARED_OPENCODE_ENGINE</span> together.
-                  </div>
+                  <div class="text-sm font-medium text-gray-12">Sandbox</div>
+                  <div class="text-xs text-gray-7">A sandbox gives the AI a safe place to work. It can use the files in a folder, but it is kept separate from the rest of your computer.</div>
                 </div>
                 <button
                   type="button"
                   role="switch"
-                  aria-checked={sharedUnsandboxedEngine()}
-                  aria-label="Toggle shared unsandboxed engine"
+                  aria-checked={sandboxEnabled()}
+                  aria-label="Toggle Sandbox"
                   class={`relative h-6 w-11 shrink-0 rounded-full border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] ${
-                    sharedUnsandboxedEngine()
-                      ? "border-amber-7/30 bg-amber-9"
+                    sandboxEnabled()
+                      ? "border-green-7/30 bg-green-9"
                       : "border-gray-6 bg-gray-3 hover:bg-gray-4"
                   }`}
-                  onClick={() => void handleToggleSharedUnsandboxedEngine()}
+                  onClick={() => void handleToggleSandbox()}
                   disabled={!isTauriRuntime() || !runtimePreferencesReady() || runtimePreferencesBusy()}
                 >
                   <span class={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-gray-1 shadow-sm transition-transform ${
-                    sharedUnsandboxedEngine() ? "translate-x-5" : "translate-x-0"
+                    sandboxEnabled() ? "translate-x-5" : "translate-x-0"
                   }`} />
                 </button>
               </div>
 
               <div class="flex flex-wrap items-center gap-2 text-xs">
                 <span class={`rounded-full border px-2 py-1 ${
-                  sharedUnsandboxedEngine()
-                    ? "border-amber-7/35 bg-amber-3/20 text-amber-11"
-                    : "border-green-7/25 bg-green-3/20 text-green-11"
+                  sandboxEnabled()
+                    ? "border-green-7/25 bg-green-3/20 text-green-11"
+                    : "border-amber-7/35 bg-amber-3/20 text-amber-11"
                 }`}>
-                  {sharedUnsandboxedEngine() ? "Shared unsandboxed mode" : "Per-workspace engine mode"}
+                  {sandboxEnabled() ? "Sandbox on" : "Direct local mode"}
                 </span>
                 <Show when={isTauriRuntime()} fallback={<span class="text-gray-8">Desktop app only</span>}>
                   <span class="text-gray-8">
