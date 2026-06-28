@@ -12,10 +12,12 @@ Current visible tabs:
 - `archived`
 - `scheduled` link tab
 - `skills` link tab
-- `mcp` link tab
+- `mcp` link tab for Napojení
+- `plugins` link tab for Pluginy
 
-The `scheduled`, `skills`, and `mcp` entries are navigation links, not Settings-owned content.
-They route to the same dashboard destinations as the left menu and must preserve the left-menu ordering and behavior.
+The `scheduled`, `skills`, `mcp`, and `plugins` entries are navigation links,
+not Settings-owned content. They route to the same dashboard destinations as
+the dashboard tab rail and must preserve that ordering and behavior.
 
 Settings-owned content is limited to the `general` and `archived` tabs. Support and diagnostics controls can still exist behind internal gating, but they are not exposed as visible Settings tabs in the default product surface.
 
