@@ -6,9 +6,10 @@ import {
   resolveDashboardRouteTab,
 } from "../../controllers/app-startup-controller.js";
 
-test("dashboard route tabs preserve aliases and canonicalize missing or legacy tabs", () => {
+test("dashboard route tabs preserve valid tabs and canonicalize missing tabs", () => {
   assert.equal(resolveDashboardRouteTab("skills"), "skills");
-  assert.equal(resolveDashboardRouteTab("plugins"), "mcp");
+  assert.equal(resolveDashboardRouteTab("plugins"), "plugins");
+  assert.equal(resolveDashboardRouteTab("mcp"), "mcp");
   assert.equal(resolveDashboardRouteTab("missing"), "scheduled");
 
   assert.deepEqual(
@@ -17,7 +18,7 @@ test("dashboard route tabs preserve aliases and canonicalize missing or legacy t
       onboardingStep: "welcome",
       isTauriRuntime: true,
     }),
-    { type: "dashboard-route", tab: "mcp", canonicalize: true },
+    { type: "dashboard-route", tab: "plugins", canonicalize: false },
   );
   assert.deepEqual(
     resolveAppStartupRouteDecision({

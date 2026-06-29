@@ -11,6 +11,8 @@ const rightSidebarStart = source.indexOf('<Show when={rightSidebarVisible()}>');
 
 const leftSidebar = leftSidebarStart >= 0 && mainStart >= 0 ? source.slice(leftSidebarStart, mainStart) : "";
 const rightSidebar = rightSidebarStart >= 0 ? source.slice(rightSidebarStart) : "";
+const mobileBottomNavSource =
+  source.match(/<nav class="md:hidden border-t border-dls-border bg-dls-surface">[\s\S]*?<\/nav>/)?.[0] ?? "";
 
 test("dashboard relocates the product nav into the left sidebar above settings", () => {
   assert.match(source, /import SidebarDashboardNav from "\.\.\/components\/session\/sidebar-dashboard-nav";/);
@@ -41,14 +43,39 @@ test("dashboard keeps the right sidebar reserved for advanced nav only", () => {
 });
 
 test("dashboard mobile bottom nav hides automations", () => {
+  assert.match(mobileBottomNavSource, /\$\{props\.developerMode \? "grid-cols-5" : "grid-cols-4"\}/);
   assert.match(
     source,
-    /<nav class="md:hidden border-t border-dls-border bg-dls-surface">[\s\S]*\{t\("nav\.soul", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.skills", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.extensions", currentLocale\(\)\)\}/,
+    /<nav class="md:hidden border-t border-dls-border bg-dls-surface">[\s\S]*\{t\("nav\.soul", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.skills", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.extensions", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.plugins", currentLocale\(\)\)\}/,
   );
   assert.doesNotMatch(
     source,
     /<nav class="md:hidden border-t border-dls-border bg-dls-surface">[\s\S]*\{t\("nav\.automations", currentLocale\(\)\)\}/,
   );
+});
+
+test("dashboard mobile bottom nav keeps MCP active state separate from plugins", () => {
+  assert.match(
+    mobileBottomNavSource,
+    /onClick=\{\(\) => handleDashboardTabSelection\("mcp"\)\}[\s\S]*\{t\("nav\.extensions", currentLocale\(\)\)\}/,
+  );
+  assert.match(mobileBottomNavSource, /props\.tab === "mcp" \? "text-gray-12" : "text-gray-10"/);
+  assert.doesNotMatch(mobileBottomNavSource, /props\.tab === "mcp"\s*\|\|\s*props\.tab === "plugins"/);
+  assert.match(
+    mobileBottomNavSource,
+    /onClick=\{\(\) => handleDashboardTabSelection\("plugins"\)\}[\s\S]*\{t\("nav\.plugins", currentLocale\(\)\)\}/,
+  );
+  assert.match(mobileBottomNavSource, /props\.tab === "plugins" \? "text-gray-12" : "text-gray-10"/);
+  assert.doesNotMatch(mobileBottomNavSource, /props\.tab === "plugins"\s*\|\|\s*props\.tab === "mcp"/);
+});
+
+test("dashboard mobile bottom nav constrains compact labels", () => {
+  const compactButtonMatches = mobileBottomNavSource.match(/flex flex-col items-center gap-1 text-xs min-w-0/g) ?? [];
+  const constrainedLabelMatches =
+    mobileBottomNavSource.match(/<span class="max-w-full text-center leading-tight \[overflow-wrap:anywhere\]">/g) ?? [];
+
+  assert.equal(compactButtonMatches.length, 5);
+  assert.equal(constrainedLabelMatches.length, 5);
 });
 
 test("dashboard reserves a titlebar-safe top strip for shell columns", () => {
