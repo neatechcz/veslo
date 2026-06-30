@@ -252,7 +252,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build());
 
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, feature = "e2e"))]
     let builder = builder.plugin(tauri_plugin_pilot::init());
 
     let app = builder

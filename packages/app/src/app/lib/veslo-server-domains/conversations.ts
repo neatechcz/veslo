@@ -6,6 +6,7 @@ import type {
   VesloConversationList,
   VesloConversationRunInput,
   VesloConversationRunResult,
+  VesloConversationRunStatusResult,
   VesloSessionArchiveRecord,
   VesloSessionLatestRunArtifacts,
   VesloSessionTranscriptAppendInput,
@@ -36,6 +37,7 @@ export type ConversationsClientContext = {
     conversationCreate: number;
     conversationRun: number;
     conversationAbort: number;
+    status: number;
   };
 };
 
@@ -186,6 +188,13 @@ export function createConversationsClient(context: ConversationsClientContext) {
           },
           timeoutMs: timeouts.conversationAbort,
         },
+      ),
+
+    getRunStatus: (workspaceId: string, conversationId: string, runId: string) =>
+      requestJson<VesloConversationRunStatusResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/runs/${encodeURIComponent(runId)}`,
+        { token, hostToken, timeoutMs: timeouts.status },
       ),
 
     getLatestRunArtifacts: (workspaceId: string, sessionId: string, directory?: string | null) => {

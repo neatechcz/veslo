@@ -7,6 +7,13 @@ export type RunKind = "prompt" | "command" | "shell" | "summarize";
 
 export const ACTIVE_RUN_STATUSES = ["submitted", "running", "blocked"] as const satisfies readonly RunStatus[];
 
+export type RunEngineOwner = {
+  engineOwnerId: string | null;
+  enginePid: number | null;
+  engineStartedAt: number | null;
+  engineBaseUrl: string | null;
+};
+
 export type RunRecord = {
   workspaceId: string;
   conversationId: string;
@@ -20,7 +27,7 @@ export type RunRecord = {
   startedAt: number | null;
   completedAt: number | null;
   error: string | null;
-};
+} & RunEngineOwner;
 
 export type RunStore = {
   insert(record: RunRecord): void;
@@ -32,6 +39,8 @@ export type RunStore = {
   get(workspaceId: string, runId: string): RunRecord | null;
   latestForConversation(workspaceId: string, conversationId: string): RunRecord | null;
   activeForConversation(workspaceId: string, conversationId: string): RunRecord | null;
+  activeForEngineOwner(engineOwnerId: string): RunRecord[];
+  activeCreatedBefore(createdBefore: number, limit?: number): RunRecord[];
   /**
    * True when the workspace has any run in an active status created at or
    * after `createdSince` (epoch ms). The lower bound keeps a stale record -
@@ -54,6 +63,10 @@ type RunRow = {
   started_at: number | null;
   completed_at: number | null;
   error: string | null;
+  engine_owner_id: string | null;
+  engine_pid: number | null;
+  engine_started_at: number | null;
+  engine_base_url: string | null;
 };
 
 const ACTIVE_RUN_STATUS_SQL_LIST = ACTIVE_RUN_STATUSES.map((status) => `'${status}'`).join(", ");
@@ -77,7 +90,19 @@ function rowToRecord(row: RunRow): RunRecord {
     startedAt: row.started_at === null ? null : Number(row.started_at),
     completedAt: row.completed_at === null ? null : Number(row.completed_at),
     error: row.error,
+    engineOwnerId: row.engine_owner_id ?? null,
+    enginePid: row.engine_pid === null || row.engine_pid === undefined ? null : Number(row.engine_pid),
+    engineStartedAt: row.engine_started_at === null || row.engine_started_at === undefined
+      ? null
+      : Number(row.engine_started_at),
+    engineBaseUrl: row.engine_base_url ?? null,
   };
+}
+
+function ensureColumn(db: Database, table: string, column: string, definition: string): void {
+  const columns = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
+  if (columns.some((item) => item.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
 }
 
 function openDb(dbPath: string): Database {
@@ -99,6 +124,10 @@ function openDb(dbPath: string): Database {
       started_at INTEGER,
       completed_at INTEGER,
       error TEXT,
+      engine_owner_id TEXT,
+      engine_pid INTEGER,
+      engine_started_at INTEGER,
+      engine_base_url TEXT,
       PRIMARY KEY (workspace_id, run_id)
     );
     CREATE INDEX IF NOT EXISTS conversation_run_conversation_idx
@@ -108,6 +137,14 @@ function openDb(dbPath: string): Database {
     CREATE UNIQUE INDEX IF NOT EXISTS conversation_run_active_conversation_uidx
       ON conversation_run (workspace_id, conversation_id)
       WHERE status IN (${ACTIVE_RUN_STATUS_SQL_LIST});
+  `);
+  ensureColumn(db, "conversation_run", "engine_owner_id", "engine_owner_id TEXT");
+  ensureColumn(db, "conversation_run", "engine_pid", "engine_pid INTEGER");
+  ensureColumn(db, "conversation_run", "engine_started_at", "engine_started_at INTEGER");
+  ensureColumn(db, "conversation_run", "engine_base_url", "engine_base_url TEXT");
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS conversation_run_engine_owner_idx
+      ON conversation_run (engine_owner_id, status, engine_started_at);
   `);
   return db;
 }
@@ -147,8 +184,12 @@ export function createRunStore(options: { dbPath: string }): RunStore {
             created_at,
             started_at,
             completed_at,
-            error
-          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            error,
+            engine_owner_id,
+            engine_pid,
+            engine_started_at,
+            engine_base_url
+          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
           `,
         ).run(
           record.workspaceId,
@@ -163,6 +204,10 @@ export function createRunStore(options: { dbPath: string }): RunStore {
           record.startedAt,
           record.completedAt,
           record.error,
+          record.engineOwnerId,
+          record.enginePid,
+          record.engineStartedAt,
+          record.engineBaseUrl,
         );
       });
     },
@@ -183,7 +228,11 @@ export function createRunStore(options: { dbPath: string }): RunStore {
             created_at = ?9,
             started_at = ?10,
             completed_at = ?11,
-            error = ?12
+            error = ?12,
+            engine_owner_id = ?13,
+            engine_pid = ?14,
+            engine_started_at = ?15,
+            engine_base_url = ?16
            WHERE workspace_id = ?1 AND run_id = ?2`,
         ).run(
           workspaceId,
@@ -198,6 +247,10 @@ export function createRunStore(options: { dbPath: string }): RunStore {
           next.startedAt,
           next.completedAt,
           next.error,
+          next.engineOwnerId,
+          next.enginePid,
+          next.engineStartedAt,
+          next.engineBaseUrl,
         );
         return next;
       });
@@ -230,6 +283,32 @@ export function createRunStore(options: { dbPath: string }): RunStore {
            LIMIT 1`,
         ).get(workspaceId, conversationId);
         return row ? rowToRecord(row) : null;
+      });
+    },
+
+    activeForEngineOwner(engineOwnerId) {
+      return withDb((db) => {
+        const row = db.query<RunRow, [string]>(
+          `SELECT * FROM conversation_run
+           WHERE engine_owner_id = ?1
+             AND status IN (${ACTIVE_RUN_STATUS_SQL_LIST})
+           ORDER BY created_at ASC`,
+        ).all(engineOwnerId);
+        return row.map(rowToRecord);
+      });
+    },
+
+    activeCreatedBefore(createdBefore, limit = 200) {
+      const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 10_000) : 200;
+      return withDb((db) => {
+        const row = db.query<RunRow, [number, number]>(
+          `SELECT * FROM conversation_run
+           WHERE status IN (${ACTIVE_RUN_STATUS_SQL_LIST})
+             AND created_at < ?1
+           ORDER BY created_at ASC
+           LIMIT ?2`,
+        ).all(createdBefore, safeLimit);
+        return row.map(rowToRecord);
       });
     },
 

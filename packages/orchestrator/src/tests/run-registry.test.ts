@@ -60,6 +60,25 @@ function createMemoryRunStore(): RunStore {
         record.createdAt >= createdSince
       );
     },
+
+    activeForEngineOwner(engineOwnerId) {
+      return [...records.values()]
+        .filter((record) =>
+          record.engineOwnerId === engineOwnerId &&
+          isActiveRunStatus(record.status)
+        )
+        .sort((a, b) => a.createdAt - b.createdAt);
+    },
+
+    activeCreatedBefore(createdBefore, limit = 200) {
+      return [...records.values()]
+        .filter((record) =>
+          isActiveRunStatus(record.status) &&
+          record.createdAt < createdBefore
+        )
+        .sort((a, b) => a.createdAt - b.createdAt)
+        .slice(0, limit);
+    },
   };
 }
 
@@ -136,6 +155,141 @@ describe("run registry", () => {
 
     expect(reconciled?.record.status).toBe("completed");
     expect(reconciled?.record.abortRequested).toBe(true);
+  });
+
+  test("markAborted terminalizes the run and releases the active lock", async () => {
+    const { registry } = createRegistry(() => ({ active: true }));
+    await registry.register(input);
+
+    const aborted = registry.markAborted("ws-a", "run-a", "user abort reconciled");
+    const next = await registry.register({ ...input, runId: "run-b" });
+
+    expect(aborted?.status).toBe("aborted");
+    expect(aborted?.abortRequested).toBe(true);
+    expect(aborted?.error).toBe("user abort reconciled");
+    expect(typeof aborted?.completedAt).toBe("number");
+    expect(next.runId).toBe("run-b");
+  });
+
+  test("markEngineLost terminalizes only active runs from the lost engine generation", async () => {
+    const { registry } = createRegistry(() => ({ active: true }));
+    const engineOwner = {
+      engineOwnerId: "ws-a",
+      enginePid: 42,
+      engineStartedAt: 7_000,
+      engineBaseUrl: "http://127.0.0.1:5000",
+    };
+    await registry.register({ ...input, ...engineOwner });
+    await registry.register({
+      ...input,
+      conversationId: "conv-b",
+      runId: "run-b",
+      engineSessionId: "sess-b",
+      ...engineOwner,
+    });
+    await registry.register({
+      ...input,
+      conversationId: "conv-c",
+      runId: "run-c",
+      engineSessionId: "sess-c",
+      enginePid: 99,
+      engineStartedAt: 8_000,
+      engineBaseUrl: "http://127.0.0.1:5001",
+      engineOwnerId: "ws-a",
+    });
+    registry.markAbortRequested("ws-a", "run-b");
+
+    const terminalized = registry.markEngineLost({
+      ...engineOwner,
+      error: "engine process lost",
+    });
+
+    expect(terminalized.map((item) => [item.runId, item.status])).toEqual([
+      ["run-a", "failed"],
+      ["run-b", "aborted"],
+    ]);
+    expect((await registry.get("ws-a", "run-a"))?.record.error).toBe("engine process lost");
+    expect((await registry.get("ws-a", "run-b"))?.record.error).toContain("engine process lost");
+    expect((await registry.get("ws-a", "run-c"))?.record.status).toBe("running");
+  });
+
+  test("startup sweep terminalizes only old active runs", async () => {
+    const { registry, store } = createRegistry(() => ({ active: true }));
+    await registry.register(input);
+    await registry.register({
+      ...input,
+      conversationId: "conv-abort",
+      runId: "run-abort",
+      engineSessionId: "sess-abort",
+    });
+    await registry.register({
+      ...input,
+      conversationId: "conv-recent",
+      runId: "run-recent",
+      engineSessionId: "sess-recent",
+    });
+    store.update("ws-a", "run-a", { createdAt: 100, startedAt: 100 });
+    store.update("ws-a", "run-abort", {
+      createdAt: 200,
+      startedAt: 200,
+      abortRequested: true,
+    });
+    store.update("ws-a", "run-recent", { createdAt: 900, startedAt: 900 });
+
+    const terminalized = registry.sweepLegacyActiveRuns({
+      createdBefore: 500,
+      error: "legacy startup sweep",
+    });
+
+    expect(terminalized.map((item) => [item.runId, item.status])).toEqual([
+      ["run-a", "failed"],
+      ["run-abort", "aborted"],
+    ]);
+    expect(store.get("ws-a", "run-a")).toMatchObject({
+      status: "failed",
+      error: "legacy startup sweep",
+    });
+    expect(store.get("ws-a", "run-abort")).toMatchObject({
+      status: "aborted",
+      abortRequested: true,
+    });
+    expect(store.get("ws-a", "run-recent")?.status).toBe("running");
+  });
+
+  test("attachEngineOwner binds active runs to the real engine generation", async () => {
+    const { registry } = createRegistry(() => ({ active: true }));
+    await registry.register(input);
+    const engineOwner = {
+      engineOwnerId: "ws-a",
+      enginePid: 42,
+      engineStartedAt: 7_000,
+      engineBaseUrl: "http://127.0.0.1:5000",
+    };
+
+    const attached = registry.attachEngineOwner("ws-a", "run-a", engineOwner);
+    const terminalized = registry.markEngineLost({
+      ...engineOwner,
+      error: "engine process lost",
+    });
+
+    expect(attached).toMatchObject(engineOwner);
+    expect(terminalized.map((item) => [item.runId, item.status])).toEqual([["run-a", "failed"]]);
+  });
+
+  test("attachEngineOwner ignores terminal runs", async () => {
+    const { registry } = createRegistry(() => ({ active: false }));
+    await registry.register(input);
+    await registry.get("ws-a", "run-a");
+
+    const attached = registry.attachEngineOwner("ws-a", "run-a", {
+      engineOwnerId: "ws-a",
+      enginePid: 42,
+      engineStartedAt: 7_000,
+      engineBaseUrl: "http://127.0.0.1:5000",
+    });
+
+    expect(attached).toBeNull();
+    expect((await registry.get("ws-a", "run-a"))?.record.engineOwnerId).toBeNull();
   });
 
   test("unreachable probe keeps last status stale", async () => {

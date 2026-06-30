@@ -37,7 +37,6 @@ test("serializeAdminSessionSnapshot exposes platform admin identity and org cont
     capabilities: [
       "organization",
       "users",
-      "billing",
       "credentials",
       "usage",
       "alerts",
@@ -48,7 +47,6 @@ test("serializeAdminSessionSnapshot exposes platform admin identity and org cont
     allowedPages: [
       "organization",
       "users",
-      "billing",
       "credentials",
       "usage",
       "alerts",
@@ -85,8 +83,8 @@ test("serializeAdminSessionSnapshot limits organization admin capabilities to or
     organizations: [
       { id: "org_alpha", name: "Alpha", slug: "alpha", ownerUserId: "usr_org_admin", role: "organization_admin" },
     ],
-    capabilities: ["organization", "users", "billing"],
-    allowedPages: ["organization", "users", "billing"],
+    capabilities: ["organization", "users"],
+    allowedPages: ["organization", "users"],
   })
 })
 

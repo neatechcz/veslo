@@ -1,0 +1,610 @@
+{
+  "ok": true,
+  "port": 8787,
+  "durationMs": 600000,
+  "sampleIntervalMs": 10000,
+  "startedAt": "2026-06-30T17:06:57.051Z",
+  "finishedAt": "2026-06-30T17:16:58.730Z",
+  "maxTotal": 80,
+  "maxTimeWait": 79,
+  "maxEstablished": 2,
+  "brokerSnapshot": {
+    "coalesced": 5,
+    "completed": 152,
+    "endpoints": [
+      {
+        "coalesced": 1,
+        "completed": 61,
+        "failed": 0,
+        "key": "GET http://127.0.0.1:8787/health",
+        "started": 61
+      },
+      {
+        "coalesced": 0,
+        "completed": 2,
+        "failed": 0,
+        "key": "GET http://127.0.0.1:8787/session-archives",
+        "started": 2
+      },
+      {
+        "coalesced": 0,
+        "completed": 0,
+        "failed": 14,
+        "key": "GET http://127.0.0.1:8787/ai-gateway/me/ai-access",
+        "started": 14
+      },
+      {
+        "coalesced": 2,
+        "completed": 2,
+        "failed": 0,
+        "key": "GET http://127.0.0.1:8787/workspaces",
+        "started": 2
+      },
+      {
+        "coalesced": 1,
+        "completed": 60,
+        "failed": 0,
+        "key": "GET http://127.0.0.1:8787/capabilities",
+        "started": 60
+      },
+      {
+        "coalesced": 0,
+        "completed": 1,
+        "failed": 0,
+        "key": "GET http://127.0.0.1:8787/soul",
+        "started": 1
+      },
+      {
+        "coalesced": 0,
+        "completed": 21,
+        "failed": 0,
+        "key": "GET http://127.0.0.1:8787/workspace/ws-ef57f20e8102/config",
+        "started": 21
+      },
+      {
+        "coalesced": 0,
+        "completed": 1,
+        "failed": 0,
+        "key": "GET http://127.0.0.1:8787/hub/mcp",
+        "started": 1
+      },
+      {
+        "coalesced": 0,
+        "completed": 1,
+        "failed": 0,
+        "key": "GET http://127.0.0.1:8787/workspace/ws-ef57f20e8102/soul/status",
+        "started": 1
+      },
+      {
+        "coalesced": 0,
+        "completed": 1,
+        "failed": 0,
+        "key": "GET http://127.0.0.1:8787/workspace/ws-ef57f20e8102/automations",
+        "started": 1
+      },
+      {
+        "coalesced": 1,
+        "completed": 1,
+        "failed": 0,
+        "key": "GET http://127.0.0.1:8787/workspace/ws-ef57f20e8102/conversations?directory",
+        "started": 1
+      },
+      {
+        "coalesced": 0,
+        "completed": 1,
+        "failed": 0,
+        "key": "GET http://127.0.0.1:8787/workspace/ws-ef57f20e8102/soul/heartbeats?limit",
+        "started": 1
+      }
+    ],
+    "failed": 14,
+    "inFlight": 0,
+    "started": 166
+  },
+  "samples": [
+    {
+      "sample": 0,
+      "at": "2026-06-30T17:06:59.1769748Z",
+      "total": 63,
+      "listening": 1,
+      "established": 0,
+      "timeWait": 57,
+      "closeWait": 0
+    },
+    {
+      "sample": 1,
+      "at": "2026-06-30T17:07:10.1894626Z",
+      "total": 74,
+      "listening": 1,
+      "established": 0,
+      "timeWait": 73,
+      "closeWait": 0
+    },
+    {
+      "sample": 2,
+      "at": "2026-06-30T17:07:21.1501487Z",
+      "total": 77,
+      "listening": 1,
+      "established": 0,
+      "timeWait": 76,
+      "closeWait": 0
+    },
+    {
+      "sample": 3,
+      "at": "2026-06-30T17:07:32.1407833Z",
+      "total": 77,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 74,
+      "closeWait": 0
+    },
+    {
+      "sample": 4,
+      "at": "2026-06-30T17:07:43.1239475Z",
+      "total": 77,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 74,
+      "closeWait": 0
+    },
+    {
+      "sample": 5,
+      "at": "2026-06-30T17:07:54.0443945Z",
+      "total": 76,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 73,
+      "closeWait": 0
+    },
+    {
+      "sample": 6,
+      "at": "2026-06-30T17:08:05.0409709Z",
+      "total": 77,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 74,
+      "closeWait": 0
+    },
+    {
+      "sample": 7,
+      "at": "2026-06-30T17:08:15.9516207Z",
+      "total": 77,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 74,
+      "closeWait": 0
+    },
+    {
+      "sample": 8,
+      "at": "2026-06-30T17:08:26.9210729Z",
+      "total": 76,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 73,
+      "closeWait": 0
+    },
+    {
+      "sample": 9,
+      "at": "2026-06-30T17:08:37.8460651Z",
+      "total": 77,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 74,
+      "closeWait": 0
+    },
+    {
+      "sample": 10,
+      "at": "2026-06-30T17:08:49.1046676Z",
+      "total": 80,
+      "listening": 1,
+      "established": 0,
+      "timeWait": 79,
+      "closeWait": 0
+    },
+    {
+      "sample": 11,
+      "at": "2026-06-30T17:09:00.1629557Z",
+      "total": 70,
+      "listening": 1,
+      "established": 0,
+      "timeWait": 69,
+      "closeWait": 0
+    },
+    {
+      "sample": 12,
+      "at": "2026-06-30T17:09:11.2101305Z",
+      "total": 71,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 68,
+      "closeWait": 0
+    },
+    {
+      "sample": 13,
+      "at": "2026-06-30T17:09:22.2240256Z",
+      "total": 70,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 67,
+      "closeWait": 0
+    },
+    {
+      "sample": 14,
+      "at": "2026-06-30T17:09:33.0850057Z",
+      "total": 70,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 67,
+      "closeWait": 0
+    },
+    {
+      "sample": 15,
+      "at": "2026-06-30T17:09:44.0221916Z",
+      "total": 69,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 66,
+      "closeWait": 0
+    },
+    {
+      "sample": 16,
+      "at": "2026-06-30T17:09:54.9398246Z",
+      "total": 69,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 66,
+      "closeWait": 0
+    },
+    {
+      "sample": 17,
+      "at": "2026-06-30T17:10:05.8971984Z",
+      "total": 70,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 67,
+      "closeWait": 0
+    },
+    {
+      "sample": 18,
+      "at": "2026-06-30T17:10:16.8452717Z",
+      "total": 69,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 66,
+      "closeWait": 0
+    },
+    {
+      "sample": 19,
+      "at": "2026-06-30T17:10:27.9042657Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 20,
+      "at": "2026-06-30T17:10:38.8729423Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 21,
+      "at": "2026-06-30T17:10:49.8978872Z",
+      "total": 67,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 64,
+      "closeWait": 0
+    },
+    {
+      "sample": 22,
+      "at": "2026-06-30T17:11:00.8511589Z",
+      "total": 66,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 63,
+      "closeWait": 0
+    },
+    {
+      "sample": 23,
+      "at": "2026-06-30T17:11:11.8094445Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 24,
+      "at": "2026-06-30T17:11:22.7651300Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 25,
+      "at": "2026-06-30T17:11:33.8892454Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 26,
+      "at": "2026-06-30T17:11:44.8430864Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 27,
+      "at": "2026-06-30T17:11:55.7423369Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 28,
+      "at": "2026-06-30T17:12:06.7303298Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 29,
+      "at": "2026-06-30T17:12:17.6155680Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 30,
+      "at": "2026-06-30T17:12:28.9796423Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 31,
+      "at": "2026-06-30T17:12:40.0821427Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 32,
+      "at": "2026-06-30T17:12:51.3085232Z",
+      "total": 66,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 63,
+      "closeWait": 0
+    },
+    {
+      "sample": 33,
+      "at": "2026-06-30T17:13:02.3673739Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 34,
+      "at": "2026-06-30T17:13:13.3557555Z",
+      "total": 69,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 66,
+      "closeWait": 0
+    },
+    {
+      "sample": 35,
+      "at": "2026-06-30T17:13:24.3452068Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 36,
+      "at": "2026-06-30T17:13:35.2513643Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 37,
+      "at": "2026-06-30T17:13:46.3220362Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 38,
+      "at": "2026-06-30T17:13:57.3291934Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 39,
+      "at": "2026-06-30T17:14:08.4007985Z",
+      "total": 69,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 66,
+      "closeWait": 0
+    },
+    {
+      "sample": 40,
+      "at": "2026-06-30T17:14:19.4260222Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 41,
+      "at": "2026-06-30T17:14:30.4992262Z",
+      "total": 69,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 66,
+      "closeWait": 0
+    },
+    {
+      "sample": 42,
+      "at": "2026-06-30T17:14:41.7067058Z",
+      "total": 66,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 63,
+      "closeWait": 0
+    },
+    {
+      "sample": 43,
+      "at": "2026-06-30T17:14:52.7254643Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 44,
+      "at": "2026-06-30T17:15:03.7460623Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 45,
+      "at": "2026-06-30T17:15:14.7478117Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 46,
+      "at": "2026-06-30T17:15:25.5566542Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 47,
+      "at": "2026-06-30T17:15:36.3407343Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 48,
+      "at": "2026-06-30T17:15:47.2820894Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 49,
+      "at": "2026-06-30T17:15:58.1244032Z",
+      "total": 67,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 64,
+      "closeWait": 0
+    },
+    {
+      "sample": 50,
+      "at": "2026-06-30T17:16:08.9919011Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 51,
+      "at": "2026-06-30T17:16:19.8920946Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 52,
+      "at": "2026-06-30T17:16:30.8642984Z",
+      "total": 67,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 64,
+      "closeWait": 0
+    },
+    {
+      "sample": 53,
+      "at": "2026-06-30T17:16:41.7506981Z",
+      "total": 66,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 63,
+      "closeWait": 0
+    },
+    {
+      "sample": 54,
+      "at": "2026-06-30T17:16:52.7083988Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    },
+    {
+      "sample": 55,
+      "at": "2026-06-30T17:16:58.6194146Z",
+      "total": 68,
+      "listening": 1,
+      "established": 2,
+      "timeWait": 65,
+      "closeWait": 0
+    }
+  ]
+}

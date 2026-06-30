@@ -58,6 +58,25 @@ describe("orchestrator lifecycle client", () => {
     })).rejects.toThrow(RunAlreadyActiveError);
   });
 
+  test("markAborted posts terminal abort state to the orchestrator", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchImpl = mockFetch(async (input, init) => {
+      calls.push({ url: String(input), init });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    const client = createOrchestratorLifecycleClient({
+      daemonUrl: "http://127.0.0.1:1234",
+      token: "secret-token",
+      fetchImpl,
+    });
+
+    await client.markAborted("ws-a", "run-a", "user abort reconciled");
+
+    expect(calls[0]?.url).toBe("http://127.0.0.1:1234/workspace/ws-a/runs/run-a/aborted");
+    expect(calls[0]?.init?.method).toBe("POST");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ error: "user abort reconciled" });
+  });
+
   test("register aborts stalled lifecycle requests with a local timeout", async () => {
     let signal: AbortSignal | undefined;
     const fetchImpl = mockFetch(async (_input, init) =>

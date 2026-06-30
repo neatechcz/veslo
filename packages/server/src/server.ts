@@ -244,6 +244,9 @@ const AI_GATEWAY_PROXY_HEADERS_DEFAULT_TIMEOUT_MS = 45_000;
 const AI_GATEWAY_PROVIDER_START_DEFAULT_TIMEOUT_MS = 30_000;
 const AI_GATEWAY_SESSION_HIT_TTL_MS = 5 * 60 * 1000;
 const AI_GATEWAY_ACTIVE_RUN_TTL_MS = 10 * 60 * 1000;
+const CONVERSATION_RUN_LIFECYCLE_RECONCILE_INITIAL_DELAY_DEFAULT_MS = 250;
+const CONVERSATION_RUN_LIFECYCLE_RECONCILE_POLL_DEFAULT_MS = 1_000;
+const CONVERSATION_RUN_LIFECYCLE_RECONCILE_MAX_ATTEMPTS_DEFAULT = 600;
 const AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS = 30_000;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
 const GATEWAY_CALLER_AUTH_HEADER = "x-veslo-gateway-authorization";
@@ -983,6 +986,7 @@ const AI_GATEWAY_LOCAL_ONLY_REQUEST_HEADERS = [
   "x-session-affinity",
   "x-session-id",
 ];
+const VESLO_CONVERSATION_RUN_ID_HEADER = "x-veslo-conversation-run-id";
 
 function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string, workspaceId?: string) {
   const target = new URL(baseUrl);
@@ -1000,6 +1004,16 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string, wo
   return target.toString();
 }
 
+function isWorkspaceOpencodeProxyUrl(url: URL, workspaceId: string): boolean {
+  const match = /^\/workspace\/([^/]+)\/opencode(?:\/|$)/.exec(url.pathname);
+  if (!match) return false;
+  try {
+    return decodeURIComponent(match[1] ?? "") === workspaceId;
+  } catch {
+    return false;
+  }
+}
+
 async function fetchOpencodeJson(
   workspace: WorkspaceInfo,
   path: string,
@@ -1010,6 +1024,7 @@ async function fetchOpencodeJson(
     maxResponseBytes?: number;
     timeoutMs?: number;
     sendTraceId?: string | null;
+    conversationRunId?: string | null;
   },
 ) {
   const baseUrl = workspace.baseUrl?.trim() ?? "";
@@ -1030,6 +1045,11 @@ async function fetchOpencodeJson(
   const sendTraceId = init.sendTraceId?.trim() ?? "";
   if (sendTraceId) {
     headers.set("x-veslo-send-trace-id", sendTraceId);
+  }
+  const conversationRunId = init.conversationRunId?.trim() ?? "";
+  const shouldSendConversationRunId = Boolean(conversationRunId && isWorkspaceOpencodeProxyUrl(url, workspace.id));
+  if (shouldSendConversationRunId) {
+    headers.set(VESLO_CONVERSATION_RUN_ID_HEADER, conversationRunId);
   }
 
   const directoryOverride = init.directory?.trim() ?? "";
@@ -1058,6 +1078,7 @@ async function fetchOpencodeJson(
     timeoutMs,
     hasAuth: Boolean(auth),
     hasBody: init.body !== undefined,
+    hasConversationRunId: shouldSendConversationRunId,
   });
   const controller = new AbortController();
   let timedOut = false;
@@ -4540,14 +4561,30 @@ function createRoutes(
   ) => {
     const query = new URLSearchParams();
     query.set("directory", directory);
-    return kind === "prompt_async"
-      ? `/session/${encodeURIComponent(opencodeSessionId)}/prompt_async?${query.toString()}`
-      : kind === "command"
-        ? `/session/${encodeURIComponent(opencodeSessionId)}/command?${query.toString()}`
-          : kind === "shell"
-            ? `/session/${encodeURIComponent(opencodeSessionId)}/shell?${query.toString()}`
-            : `/session/${encodeURIComponent(opencodeSessionId)}/summarize?${query.toString()}`;
+    const sessionPath = `/session/${encodeURIComponent(opencodeSessionId)}`;
+    switch (kind) {
+      case "prompt_async":
+        return `${sessionPath}/prompt_async?${query.toString()}`;
+      case "command":
+        return `${sessionPath}/command?${query.toString()}`;
+      case "shell":
+        return `${sessionPath}/shell?${query.toString()}`;
+      case "summarize":
+        return `${sessionPath}/summarize?${query.toString()}`;
+    }
   };
+
+  type ConversationRunLifecycleReconcileInput = {
+    workspace: WorkspaceInfo;
+    conversationId: string;
+    runId: string;
+    reason: string;
+    abortRequested?: boolean;
+    delayMs?: number;
+    attempt?: number;
+  };
+  let scheduleConversationRunLifecycleReconcile:
+    ((input: ConversationRunLifecycleReconcileInput) => void) | null = null;
 
   const submitConversationRunToOpenCode = async (input: {
     runTrace: ConversationRunTracer;
@@ -4618,6 +4655,7 @@ function createRoutes(
           timeoutMs: OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS,
           body: opencodeRunBody,
           sendTraceId: runTrace.traceId,
+          conversationRunId: runId,
         }),
         {
           workspaceId: workspace.id,
@@ -4645,6 +4683,13 @@ function createRoutes(
           },
         ).catch(() => undefined);
       }
+      scheduleConversationRunLifecycleReconcile?.({
+        workspace,
+        conversationId: target.conversationId,
+        runId,
+        reason: "submit-failed",
+        delayMs: 0,
+      });
       unregisterRegisteredAiGatewayRun();
       throw error;
     }
@@ -4683,6 +4728,13 @@ function createRoutes(
               timeoutMs: providerStart.timeoutMs,
             },
           ).catch(() => undefined);
+          scheduleConversationRunLifecycleReconcile?.({
+            workspace,
+            conversationId: target.conversationId,
+            runId,
+            reason: "ai-gateway-provider-start-timeout",
+            delayMs: 0,
+          });
           const abortQuery = new URLSearchParams();
           abortQuery.set("directory", target.directory);
           await runTrace.step(
@@ -4722,6 +4774,13 @@ function createRoutes(
     } finally {
       unregisterRegisteredAiGatewayRun();
     }
+    scheduleConversationRunLifecycleReconcile?.({
+      workspace,
+      conversationId: target.conversationId,
+      runId,
+      reason: "accepted",
+      delayMs: resolveConversationRunLifecycleReconcileInitialDelayMs(),
+    });
     return upstream;
   };
 
@@ -4748,6 +4807,161 @@ function createRoutes(
     }, Math.max(0, delayMs));
     (timer as { unref?: () => void }).unref?.();
     conversationQueueDrainTimers.set(key, timer);
+  };
+
+  const conversationRunLifecycleReconcileKey = (workspaceId: string, conversationId: string, runId: string) =>
+    `${workspaceId}\0${conversationId}\0${runId}`;
+  const conversationRunLifecycleReconcileTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const conversationRunLifecycleReconcileInFlight = new Set<string>();
+
+  async function reconcileConversationRunLifecycle(input: ConversationRunLifecycleReconcileInput): Promise<void> {
+    const lifecycleOwner = input.workspace.workspaceType === "remote" ? null : lifecycleClient;
+    if (!lifecycleOwner) return;
+    const conversationId = input.conversationId.trim();
+    const runId = input.runId.trim();
+    if (!conversationId || !runId) return;
+
+    const key = conversationRunLifecycleReconcileKey(input.workspace.id, conversationId, runId);
+    if (conversationRunLifecycleReconcileInFlight.has(key)) {
+      scheduleConversationRunLifecycleReconcile?.({
+        ...input,
+        delayMs: resolveConversationRunLifecycleReconcilePollMs(),
+      });
+      return;
+    }
+
+    const attempt = input.attempt ?? 0;
+    const scheduleNextAttempt = () => {
+      const nextAttempt = attempt + 1;
+      if (nextAttempt >= resolveConversationRunLifecycleReconcileMaxAttempts()) {
+        recordSendWorkflowTrace("server", "server:conversation-run:lifecycle-reconcile-exhausted", {
+          workspaceId: input.workspace.id,
+          conversationId,
+          runId,
+          reason: input.reason,
+          abortRequested: input.abortRequested === true,
+          attempts: nextAttempt,
+        });
+        return;
+      }
+      scheduleConversationRunLifecycleReconcile?.({
+        ...input,
+        conversationId,
+        runId,
+        attempt: nextAttempt,
+        delayMs: resolveConversationRunLifecycleReconcilePollMs(),
+      });
+    };
+
+    conversationRunLifecycleReconcileInFlight.add(key);
+    try {
+      const status = await lifecycleOwner.status(input.workspace.id, conversationId, runId);
+      recordSendWorkflowTrace("server", "server:conversation-run:lifecycle-reconcile", {
+        workspaceId: input.workspace.id,
+        conversationId,
+        runId,
+        reason: input.reason,
+        abortRequested: input.abortRequested === true,
+        status: status?.status ?? null,
+        stale: status?.stale ?? null,
+        attempt,
+      });
+
+      if (!status) {
+        if (input.abortRequested === true) {
+          await lifecycleOwner.markAborted(
+            input.workspace.id,
+            runId,
+            "user abort reconciled after missing lifecycle status",
+          ).catch((error) => {
+            recordSendWorkflowTrace("server", "server:conversation-run:lifecycle-mark-aborted-error", {
+              workspaceId: input.workspace.id,
+              conversationId,
+              runId,
+              reason: input.reason,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }
+        scheduleConversationQueueDrain(input.workspace.id, conversationId, 0);
+        return;
+      }
+
+      if (status.stale === true) {
+        recordSendWorkflowTrace("server", "server:conversation-run:lifecycle-reconcile-stale", {
+          workspaceId: input.workspace.id,
+          conversationId,
+          runId,
+          reason: input.reason,
+          status: status.status,
+          abortRequested: input.abortRequested === true,
+          attempt,
+        });
+        scheduleNextAttempt();
+        return;
+      }
+
+      if (!isActiveLifecycleStatus(status.status)) {
+        if (input.abortRequested === true && status.status !== "aborted") {
+          await lifecycleOwner.markAborted(
+            input.workspace.id,
+            runId,
+            "user abort reconciled after engine became inactive",
+          ).catch((error) => {
+            recordSendWorkflowTrace("server", "server:conversation-run:lifecycle-mark-aborted-error", {
+              workspaceId: input.workspace.id,
+              conversationId,
+              runId,
+              reason: input.reason,
+              status: status.status,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }
+        scheduleConversationQueueDrain(input.workspace.id, conversationId, 0);
+        return;
+      }
+
+      scheduleNextAttempt();
+    } catch (error) {
+      recordSendWorkflowTrace("server", "server:conversation-run:lifecycle-reconcile-error", {
+        workspaceId: input.workspace.id,
+        conversationId,
+        runId,
+        reason: input.reason,
+        abortRequested: input.abortRequested === true,
+        attempt,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      scheduleNextAttempt();
+    } finally {
+      conversationRunLifecycleReconcileInFlight.delete(key);
+    }
+  }
+
+  scheduleConversationRunLifecycleReconcile = (input) => {
+    const conversationId = input.conversationId.trim();
+    const runId = input.runId.trim();
+    if (!conversationId || !runId) return;
+    const key = conversationRunLifecycleReconcileKey(input.workspace.id, conversationId, runId);
+    const delayMs = Math.max(0, input.delayMs ?? 0);
+    const existing = conversationRunLifecycleReconcileTimers.get(key);
+    if (existing) {
+      if (delayMs > 0 && input.abortRequested !== true) return;
+      clearTimeout(existing);
+      conversationRunLifecycleReconcileTimers.delete(key);
+    }
+    const timer = setTimeout(() => {
+      conversationRunLifecycleReconcileTimers.delete(key);
+      void reconcileConversationRunLifecycle({
+        ...input,
+        conversationId,
+        runId,
+        attempt: input.attempt ?? 0,
+      });
+    }, delayMs);
+    (timer as { unref?: () => void }).unref?.();
+    conversationRunLifecycleReconcileTimers.set(key, timer);
   };
 
   const enqueueConversationRun = (input: {
@@ -5158,7 +5372,22 @@ function createRoutes(
       );
       const lifecycleOwner = workspace.workspaceType === "remote" ? null : lifecycleClient;
       if (lifecycleOwner) {
-        await lifecycleOwner.markAbortRequested(workspace.id, runId).catch(() => undefined);
+        await lifecycleOwner.markAbortRequested(workspace.id, runId).catch((error) => {
+          recordSendWorkflowTrace("server", "server:conversation-run:lifecycle-abort-requested-error", {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
+        scheduleConversationRunLifecycleReconcile?.({
+          workspace,
+          conversationId: target.conversationId,
+          runId,
+          reason: "abort-requested",
+          abortRequested: true,
+          delayMs: 0,
+        });
       }
       return { upstream, abortedGatewayRequestCount: abortedGatewayRequests.length };
     },
@@ -5273,6 +5502,30 @@ function resolveAiGatewayProviderStartTimeoutMs(): number {
     return clampNumber(parsed, 10, 600_000);
   }
   return AI_GATEWAY_PROVIDER_START_DEFAULT_TIMEOUT_MS;
+}
+
+function resolveConversationRunLifecycleReconcileInitialDelayMs(): number {
+  const parsed = parseInteger(process.env.VESLO_CONVERSATION_RUN_LIFECYCLE_RECONCILE_INITIAL_DELAY_MS);
+  if (parsed !== null && parsed >= 0) {
+    return clampNumber(parsed, 0, 60_000);
+  }
+  return CONVERSATION_RUN_LIFECYCLE_RECONCILE_INITIAL_DELAY_DEFAULT_MS;
+}
+
+function resolveConversationRunLifecycleReconcilePollMs(): number {
+  const parsed = parseInteger(process.env.VESLO_CONVERSATION_RUN_LIFECYCLE_RECONCILE_POLL_MS);
+  if (parsed !== null && parsed > 0) {
+    return clampNumber(parsed, 10, 60_000);
+  }
+  return CONVERSATION_RUN_LIFECYCLE_RECONCILE_POLL_DEFAULT_MS;
+}
+
+function resolveConversationRunLifecycleReconcileMaxAttempts(): number {
+  const parsed = parseInteger(process.env.VESLO_CONVERSATION_RUN_LIFECYCLE_RECONCILE_MAX_ATTEMPTS);
+  if (parsed !== null && parsed > 0) {
+    return clampNumber(parsed, 1, 600);
+  }
+  return CONVERSATION_RUN_LIFECYCLE_RECONCILE_MAX_ATTEMPTS_DEFAULT;
 }
 
 function isAbortError(error: unknown): boolean {

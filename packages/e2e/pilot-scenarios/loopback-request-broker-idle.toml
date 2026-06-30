@@ -1,0 +1,58 @@
+[scenario]
+name = "loopback-request-broker-idle"
+fail_fast = true
+global_timeout_ms = 90000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "root has rendered children"
+action = "wait"
+target = "#root > *"
+timeout_ms = 30000
+
+[[step]]
+name = "idle while local polling runs 1"
+action = "eval"
+timeout_ms = 10000
+script = """
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+await sleep(8000);
+true;
+"""
+
+[[step]]
+name = "idle while local polling runs 2"
+action = "eval"
+timeout_ms = 10000
+script = """
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+await sleep(8000);
+true;
+"""
+
+[[step]]
+name = "idle while local polling runs 3"
+action = "eval"
+timeout_ms = 10000
+script = """
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+await sleep(8000);
+true;
+"""
+
+[[step]]
+name = "request broker snapshot remains available"
+action = "eval"
+timeout_ms = 10000
+script = """
+const snapshot = window.__vesloRequestBrokerSnapshot?.();
+if (!snapshot || typeof snapshot.started !== 'number') {
+  throw new Error('request broker snapshot unavailable after idle window');
+}
+true;
+"""

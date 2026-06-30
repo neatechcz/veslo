@@ -1,0 +1,38 @@
+[scenario]
+name = "loopback-request-broker"
+fail_fast = true
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "root has rendered children"
+action = "wait"
+target = "#root > *"
+timeout_ms = 30000
+
+[[step]]
+name = "request broker snapshot is available"
+action = "eval"
+script = """
+const readSnapshot = window.__vesloRequestBrokerSnapshot;
+if (typeof readSnapshot !== 'function') {
+  throw new Error('window.__vesloRequestBrokerSnapshot is not installed');
+}
+const snapshot = readSnapshot();
+if (!snapshot || typeof snapshot !== 'object') {
+  throw new Error('request broker snapshot is not an object');
+}
+for (const key of ['started', 'completed', 'failed', 'coalesced', 'inFlight']) {
+  if (typeof snapshot[key] !== 'number') {
+    throw new Error(`request broker snapshot missing numeric ${key}`);
+  }
+}
+if (!Array.isArray(snapshot.endpoints)) {
+  throw new Error('request broker snapshot endpoints is not an array');
+}
+true;
+"""

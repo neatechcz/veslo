@@ -76,7 +76,6 @@ const managedAiProxyJsonParser = express.json({ limit: MANAGED_AI_PROXY_JSON_LIM
 const currentFile = fileURLToPath(import.meta.url)
 const denRoot = path.resolve(path.dirname(currentFile), "..")
 const publicDir = path.resolve(denRoot, "public")
-const publicAdminDir = path.resolve(denRoot, "public-admin")
 const feedbackProjector = createFeedbackProjector({
   projectKey: env.youtrack.projectKey,
   store: createDbFeedbackProjectorStore(db),
@@ -143,23 +142,9 @@ function handleRootRequest(req: express.Request, res: express.Response) {
   res.json({ ok: true, service: "veslo-den" })
 }
 
-function sendNoStoreFile(res: express.Response, filePath: string) {
-  res.setHeader("Cache-Control", "no-store")
-  res.sendFile(filePath)
-}
-
 app.get("/", handleRootRequest)
 app.get("/index.html", handleRootRequest)
 app.use(express.static(publicDir, { index: false }))
-app.get("/admin/app.js", (_, res) => {
-  sendNoStoreFile(res, path.join(publicAdminDir, "app.js"))
-})
-app.get("/admin/app.css", (_, res) => {
-  sendNoStoreFile(res, path.join(publicAdminDir, "app.css"))
-})
-app.get(/^\/admin(?:\/(?!api(?:\/|$)).*)?$/, (_, res) => {
-  sendNoStoreFile(res, path.join(publicAdminDir, "index.html"))
-})
 app.use("/v1", createSkillRegistryRouter({ store: skillRegistryStore }))
 
 if (managedAiRuntime) {

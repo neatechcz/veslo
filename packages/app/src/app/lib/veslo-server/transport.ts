@@ -2,6 +2,7 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../../utils";
 import { fetchWithTimeout } from "../http";
 import { wrapStartupRequestAuditFetch } from "../startup-request-audit";
+import { runVesloJsonRequestWithBroker } from "./request-broker";
 import type { VesloSkillRegistryAuthContext } from "./types";
 
 type RawJsonResponse<T> = {
@@ -106,38 +107,52 @@ export async function requestJson<T>(
   } = {},
 ): Promise<T> {
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch();
-  const response = await fetchWithTimeout(
-    fetchImpl,
+  const method = options.method ?? "GET";
+  const headers = buildHeaders(options.token, options.hostToken, options.extraHeaders);
+  const body = options.body ? JSON.stringify(options.body) : undefined;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_VESLO_SERVER_TIMEOUT_MS;
+
+  return runVesloJsonRequestWithBroker<T>({
+    method,
     url,
-    {
-      method: options.method ?? "GET",
-      headers: buildHeaders(options.token, options.hostToken, options.extraHeaders),
-      body: options.body ? JSON.stringify(options.body) : undefined,
-    },
-    options.timeoutMs ?? DEFAULT_VESLO_SERVER_TIMEOUT_MS,
-  );
+    headers,
+    timeoutMs,
+    shareable: method.trim().toUpperCase() === "GET" && body === undefined,
+    run: async () => {
+      const fetchImpl = resolveFetch();
+      const response = await fetchWithTimeout(
+        fetchImpl,
+        url,
+        {
+          method,
+          headers,
+          body,
+        },
+        timeoutMs,
+      );
 
-  const text = await response.text();
-  const json = text ? JSON.parse(text) : null;
+      const text = await response.text();
+      const json = text ? JSON.parse(text) : null;
 
-  if (!response.ok) {
-    let code = typeof json?.code === "string" ? json.code : "request_failed";
-    let message = typeof json?.message === "string" ? json.message : response.statusText;
-    // Orchestrator proxy returns {"error":"workspace not found"} on 404 for
-    // /workspace/:id/opencode/* and similar per-workspace paths. Map to a
-    // dedicated code so the caller can re-bootstrap the workspace registry and
-    // retry with a fresh ID instead of surfacing a generic 404.
-    if (response.status === 404 && typeof json?.error === "string") {
-      message = json.error;
-      if (json.error === "workspace not found") {
-        code = "workspace_id_mismatch";
+      if (!response.ok) {
+        let code = typeof json?.code === "string" ? json.code : "request_failed";
+        let message = typeof json?.message === "string" ? json.message : response.statusText;
+        // Orchestrator proxy returns {"error":"workspace not found"} on 404 for
+        // /workspace/:id/opencode/* and similar per-workspace paths. Map to a
+        // dedicated code so the caller can re-bootstrap the workspace registry and
+        // retry with a fresh ID instead of surfacing a generic 404.
+        if (response.status === 404 && typeof json?.error === "string") {
+          message = json.error;
+          if (json.error === "workspace not found") {
+            code = "workspace_id_mismatch";
+          }
+        }
+        throw new VesloServerError(response.status, code, message, json?.details);
       }
-    }
-    throw new VesloServerError(response.status, code, message, json?.details);
-  }
 
-  return json as T;
+      return json as T;
+    },
+  });
 }
 
 export async function requestJsonRaw<T>(

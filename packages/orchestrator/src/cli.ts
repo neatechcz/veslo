@@ -32,9 +32,10 @@ import { SharedOpenCodeEngine } from "./shared-opencode-engine.js";
 import { resolveOpencodeProxyTarget } from "./opencode-proxy-target.js";
 import { probeOpenCodeProjectApi } from "./opencode-project-api.js";
 import { proxyToEngine } from "./router-proxy.js";
-import { createRunStore, type RunKind } from "./run-store.js";
+import { createRunStore, type RunEngineOwner, type RunKind } from "./run-store.js";
 import {
   createRunRegistry,
+  DEFAULT_RUN_ABORT_ERROR,
   DEFAULT_RUN_FAILURE_ERROR,
   RunAlreadyActiveError,
 } from "./run-registry.js";
@@ -205,6 +206,7 @@ type RouterWorkspace = {
 
 const ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER = "X-Veslo-Orchestrator-Token";
 const ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER_LOWER = ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER.toLowerCase();
+const VESLO_CONVERSATION_RUN_ID_HEADER = "x-veslo-conversation-run-id";
 type RouterDaemonState = {
   pid: number;
   port: number;
@@ -3820,6 +3822,16 @@ async function runRouterDaemon(args: ParsedArgs) {
   if (!Number.isFinite(idleSuspendMs) || idleSuspendMs < 0) {
     throw new Error("--idle-suspend-ms must be >= 0");
   }
+  const legacyActiveRunSweepAgeMs =
+    readNumber(
+      args.flags,
+      "run-lifecycle-legacy-active-sweep-age-ms",
+      24 * 60 * 60_000,
+      "VESLO_RUN_LIFECYCLE_LEGACY_ACTIVE_SWEEP_AGE_MS",
+    ) ?? 24 * 60 * 60_000;
+  if (!Number.isFinite(legacyActiveRunSweepAgeMs) || legacyActiveRunSweepAgeMs < 0) {
+    throw new Error("--run-lifecycle-legacy-active-sweep-age-ms must be >= 0");
+  }
   const sharedOpencodeEngineRequested = readBool(
     args.flags,
     "shared-opencode-engine",
@@ -3967,6 +3979,69 @@ async function runRouterDaemon(args: ParsedArgs) {
   const runStore = createRunStore({
     dbPath: join(dataDir, "conversations", "runs.sqlite"),
   });
+  let runRegistryForEngineCleanup: ReturnType<typeof createRunRegistry> | null = null;
+
+  const emptyRunEngineOwner = (): RunEngineOwner => ({
+    engineOwnerId: null,
+    enginePid: null,
+    engineStartedAt: null,
+    engineBaseUrl: null,
+  });
+
+  const runEngineOwnerFromEngine = (
+    engineOwnerId: string,
+    engine: Pick<EngineProcess, "pid" | "spawnedAt" | "baseUrl"> | null | undefined,
+  ): RunEngineOwner =>
+    engine
+      ? {
+          engineOwnerId,
+          enginePid: engine.pid || null,
+          engineStartedAt: engine.spawnedAt || null,
+          engineBaseUrl: engine.baseUrl || null,
+        }
+      : emptyRunEngineOwner();
+
+  const cleanupRunsForLostEngine = (input: {
+    source: "engine-pool" | "shared-opencode-engine";
+    workspaceId: string;
+    event: string;
+    owner: RunEngineOwner;
+  }): void => {
+    if (!input.owner.engineOwnerId) return;
+    const registry = runRegistryForEngineCleanup;
+    if (!registry) return;
+    const terminalized = registry.markEngineLost({
+      ...input.owner,
+      error: `${input.source} ${input.event}`,
+    });
+    if (terminalized.length === 0) return;
+    logger.warn(
+      "engine loss terminalized active runs",
+      {
+        source: input.source,
+        event: input.event,
+        workspaceId: input.workspaceId,
+        engineOwnerId: input.owner.engineOwnerId,
+        enginePid: input.owner.enginePid,
+        engineStartedAt: input.owner.engineStartedAt,
+        runIds: terminalized.map((record) => record.runId),
+        conversations: terminalized.map((record) => record.conversationId),
+        statuses: terminalized.map((record) => record.status),
+      },
+      "veslo-orchestrator",
+    );
+    traceRuntime("orchestrator:run-lifecycle:engine-loss-cleanup", {
+      source: input.source,
+      event: input.event,
+      workspaceId: input.workspaceId,
+      engineOwnerId: input.owner.engineOwnerId,
+      enginePid: input.owner.enginePid,
+      engineStartedAt: input.owner.engineStartedAt,
+      runIds: terminalized.map((record) => record.runId),
+      conversations: terminalized.map((record) => record.conversationId),
+      statuses: terminalized.map((record) => record.status),
+    });
+  };
 
   // Engines whose workspace has an active run created within this window are
   // protected from idle suspend and LRU eviction. The bound keeps an orphaned
@@ -4129,6 +4204,14 @@ async function runRouterDaemon(args: ParsedArgs) {
       // F2Ú5 — state transition events. Log + trigger debounced persist.
       onEngineChange: (workspaceId, event) => {
         logger.info("engine event", { workspaceId, event }, "engine-pool");
+        if (event === "crashed" || event === "permanently-failed") {
+          cleanupRunsForLostEngine({
+            source: "engine-pool",
+            workspaceId,
+            event,
+            owner: runEngineOwnerFromEngine(workspaceId, pool.get(workspaceId)),
+          });
+        }
         persistEngines();
       },
       hasActiveWork: (workspaceId) =>
@@ -4271,9 +4354,38 @@ async function runRouterDaemon(args: ParsedArgs) {
               logger.info(msg, attrs, "shared-opencode-engine");
               traceRuntime(runtimeTraceEventName("shared-opencode-engine", msg), attrs ?? {});
             },
+            onEngineChange: (event, engine) => {
+              logger.info(
+                "shared engine event",
+                {
+                  event,
+                  pid: engine?.pid ?? null,
+                  baseUrl: engine?.baseUrl ?? null,
+                  spawnedAt: engine?.spawnedAt ?? null,
+                },
+                "shared-opencode-engine",
+              );
+              if (event === "crashed") {
+                cleanupRunsForLostEngine({
+                  source: "shared-opencode-engine",
+                  workspaceId: "shared-unsandboxed",
+                  event,
+                  owner: runEngineOwnerFromEngine("shared-unsandboxed", engine),
+                });
+              }
+              persistEngines();
+            },
           },
         })
       : null;
+  const sharedEngineLivenessTimer = sharedOpenCodeEngine
+    ? setInterval(() => {
+        sharedOpenCodeEngine.getRunning();
+      }, 5_000)
+    : null;
+  if (sharedEngineLivenessTimer && typeof sharedEngineLivenessTimer === "object" && "unref" in sharedEngineLivenessTimer) {
+    sharedEngineLivenessTimer.unref?.();
+  }
 
   const buildEngineRequest = (
     engine: EngineProcess,
@@ -4321,6 +4433,42 @@ async function runRouterDaemon(args: ParsedArgs) {
     buildEngineRequest,
   });
   const runRegistry = createRunRegistry({ store: runStore, probeRunActivity });
+  runRegistryForEngineCleanup = runRegistry;
+  if (legacyActiveRunSweepAgeMs > 0) {
+    const createdBefore = Date.now() - legacyActiveRunSweepAgeMs;
+    const terminalized = runRegistry.sweepLegacyActiveRuns({
+      createdBefore,
+      error: `legacy active run exceeded startup sweep age ${legacyActiveRunSweepAgeMs}ms`,
+    });
+    if (terminalized.length > 0) {
+      logger.warn(
+        "startup sweep terminalized legacy active runs",
+        {
+          ageMs: legacyActiveRunSweepAgeMs,
+          createdBefore,
+          runIds: terminalized.map((record) => record.runId),
+          conversations: terminalized.map((record) => record.conversationId),
+          statuses: terminalized.map((record) => record.status),
+        },
+        "veslo-orchestrator",
+      );
+    }
+    traceRuntime("orchestrator:run-lifecycle:legacy-active-startup-sweep", {
+      ageMs: legacyActiveRunSweepAgeMs,
+      createdBefore,
+      terminalizedCount: terminalized.length,
+      runIds: terminalized.map((record) => record.runId),
+      conversations: terminalized.map((record) => record.conversationId),
+      statuses: terminalized.map((record) => record.status),
+    });
+  }
+
+  const resolveLifecycleRunEngineOwner = (workspaceId: string): RunEngineOwner => {
+    if (engineTopology.mode === "shared-unsandboxed") {
+      return runEngineOwnerFromEngine("shared-unsandboxed", sharedOpenCodeEngine?.getRunning());
+    }
+    return runEngineOwnerFromEngine(workspaceId, pool.get(workspaceId));
+  };
 
   persistEngines = (): void => {
     state.engines = Object.fromEntries(
@@ -4627,6 +4775,7 @@ async function runRouterDaemon(args: ParsedArgs) {
               engineSessionId: bodyString(body, "engineSessionId"),
               directory: bodyString(body, "directory"),
               kind,
+              ...resolveLifecycleRunEngineOwner(workspace.id),
             });
             send(200, { ok: true, ...record });
             return;
@@ -4655,6 +4804,20 @@ async function runRouterDaemon(args: ParsedArgs) {
               workspace.id,
               runId,
               bodyString(body, "error") || DEFAULT_RUN_FAILURE_ERROR,
+            );
+            if (!record) {
+              send(404, { error: "run not found" });
+              return;
+            }
+            send(200, { ok: true, ...record });
+            return;
+          }
+          if (parts[4] === "aborted") {
+            const body = await readObjectBody();
+            const record = runRegistry.markAborted(
+              workspace.id,
+              runId,
+              bodyString(body, "error") || DEFAULT_RUN_ABORT_ERROR,
             );
             if (!record) {
               send(404, { error: "run not found" });
@@ -4745,6 +4908,10 @@ async function runRouterDaemon(args: ParsedArgs) {
         const sendTraceHeader = req.headers["x-veslo-send-trace-id"];
         const sendTraceId = (
           Array.isArray(sendTraceHeader) ? sendTraceHeader[0] : sendTraceHeader
+        )?.trim() ?? "";
+        const conversationRunHeader = req.headers[VESLO_CONVERSATION_RUN_ID_HEADER];
+        const conversationRunId = (
+          Array.isArray(conversationRunHeader) ? conversationRunHeader[0] : conversationRunHeader
         )?.trim() ?? "";
         const workflowBase = {
           traceId: sendTraceId || null,
@@ -4847,6 +5014,49 @@ async function runRouterDaemon(args: ParsedArgs) {
           return;
         }
         const engine = proxyTarget.engine;
+        if (conversationRunId && proxyMethod !== "GET" && proxyMethod !== "HEAD") {
+          const ownerId = engineTopology.mode === "shared-unsandboxed" ? "shared-unsandboxed" : ws.id;
+          const owner = runEngineOwnerFromEngine(ownerId, engine);
+          try {
+            const attached = runRegistry.attachEngineOwner(ws.id, conversationRunId, owner);
+            traceRuntime("orchestrator:run-lifecycle:engine-owner-attached", {
+              traceId: sendTraceId || null,
+              workspaceId: ws.id,
+              runId: conversationRunId,
+              attached: Boolean(attached),
+              engineOwnerId: owner.engineOwnerId,
+              enginePid: owner.enginePid,
+              engineStartedAt: owner.engineStartedAt,
+              engineBaseUrl: owner.engineBaseUrl,
+            });
+            writeSendWorkflowTrace("orchestrator:run-lifecycle:engine-owner-attached", {
+              ...workflowBase,
+              runId: conversationRunId,
+              attached: Boolean(attached),
+              engineOwnerId: owner.engineOwnerId,
+              enginePid: owner.enginePid,
+              engineStartedAt: owner.engineStartedAt,
+              engineBaseUrl: owner.engineBaseUrl,
+            });
+          } catch (err) {
+            const detail = err instanceof Error ? err.message : String(err);
+            logger.warn(
+              "failed to attach engine owner to run",
+              {
+                workspaceId: ws.id,
+                runId: conversationRunId,
+                error: detail,
+              },
+              "veslo-orchestrator",
+            );
+            traceRuntime("orchestrator:run-lifecycle:engine-owner-attach-error", {
+              traceId: sendTraceId || null,
+              workspaceId: ws.id,
+              runId: conversationRunId,
+              error: detail,
+            });
+          }
+        }
         if (proxyMethod !== "GET" && proxyMethod !== "HEAD") {
           const syncStartedAt = Date.now();
           await syncWorkspaceOpencodeConfigToConfigDir(proxyTarget.directory, engine.configDir);
@@ -4978,6 +5188,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             "x-forwarded-proto",
             "x-opencode-directory",
             "x-veslo-workspace-id",
+            VESLO_CONVERSATION_RUN_ID_HEADER,
           ],
           rewriteJsonBody: rewriteEnginePaths
             ? (value) => rewriteDirectoryFieldsForEngine(value, pathMapping)
@@ -5031,6 +5242,7 @@ async function runRouterDaemon(args: ParsedArgs) {
       // ignore
     }
 
+    if (sharedEngineLivenessTimer) clearInterval(sharedEngineLivenessTimer);
     await pool.killAll();
     await sharedOpenCodeEngine?.dispose();
 

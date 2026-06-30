@@ -167,8 +167,14 @@ mod tests {
 
     #[test]
     fn explicit_runtime_preference_overrides_windows_non_sandbox_policy() {
-        assert_eq!(resolve_shared_unsandboxed_engine_override(Some(true)), Some(true));
-        assert_eq!(resolve_shared_unsandboxed_engine_override(Some(false)), Some(false));
+        assert_eq!(
+            resolve_shared_unsandboxed_engine_override(Some(true)),
+            Some(true)
+        );
+        assert_eq!(
+            resolve_shared_unsandboxed_engine_override(Some(false)),
+            Some(false)
+        );
     }
 
     #[test]

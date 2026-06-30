@@ -76,7 +76,7 @@ describe("mcp remote connect flow", () => {
       });
 
       const listed = await listMcp(workspaceRoot);
-      expect(listed.filter((entry) => entry.source === "config.project")).toEqual([]);
+      expect(listed).toEqual([]);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
