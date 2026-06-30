@@ -6,6 +6,7 @@ const source = readFileSync(new URL("../../pages/settings.tsx", import.meta.url)
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 const enLocaleSource = readFileSync(new URL("../../../i18n/locales/en.ts", import.meta.url), "utf8");
 const csLocaleSource = readFileSync(new URL("../../../i18n/locales/cs.ts", import.meta.url), "utf8");
+const zhLocaleSource = readFileSync(new URL("../../../i18n/locales/zh.ts", import.meta.url), "utf8");
 const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
 const generalUpdateControlsRow = source.match(/<div class="flex flex-wrap items-center gap-2">[\s\S]*?settings\.auto_update_label[\s\S]*?<\/button>/)?.[0] ?? "";
 const dashboardTabRailPath = new URL("../../components/dashboard-tab-rail.tsx", import.meta.url);
@@ -18,9 +19,11 @@ test("settings exposes archived tab and keeps developer tabs unavailable", () =>
   assert.match(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"general"\s*\}/);
   assert.match(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"archived"\s*\}/);
   assert.doesNotMatch(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"scheduled"\s*\}/);
-  assert.doesNotMatch(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"soul"\s*\}/);
+  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"soul"\s*\}/);
   assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"skills"\s*\}/);
   assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"mcp"\s*\}/);
+  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"plugins"\s*\}/);
+  assert.match(dashboardTabRailSource, /tab === "soul"/);
   assert.doesNotMatch(source, /type SettingsNavItem/);
   assert.doesNotMatch(source, /const\s+settingsTabs\s*=/);
   assert.doesNotMatch(source, /const\s+dashboardLinkTabs\s*=/);
@@ -108,10 +111,22 @@ test("settings exposes updater download retry states", () => {
 test("settings locales include Settings and dashboard labels", () => {
   assert.match(enLocaleSource, /"settings\.archived": "Archived"/);
   assert.match(csLocaleSource, /"settings\.archived": "Archivované"/);
+  assert.match(enLocaleSource, /"nav\.extensions": "Connections"/);
+  assert.match(csLocaleSource, /"nav\.extensions": "Napojení"/);
+  assert.match(enLocaleSource, /"nav\.plugins": "Plugins"/);
+  assert.match(csLocaleSource, /"nav\.plugins": "Pluginy"/);
+  assert.match(zhLocaleSource, /"nav\.extensions": "连接"/);
+  assert.match(zhLocaleSource, /"nav\.plugins": "插件"/);
+  assert.match(zhLocaleSource, /"extensions\.title": "连接"/);
+  assert.match(zhLocaleSource, /"extensions\.subtitle": "通过 MCP 服务器将 Veslo 连接到外部应用和服务。"/);
+  assert.match(enLocaleSource, /\/\/ ==================== Connections ====================/);
+  assert.match(csLocaleSource, /\/\/ ==================== Napojení ====================/);
+  assert.match(zhLocaleSource, /\/\/ ==================== Connections ====================/);
   assert.doesNotMatch(dashboardTabRailSource, /case\s+"scheduled":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.automations", currentLocale\(\)\)/);
-  assert.doesNotMatch(dashboardTabRailSource, /case\s+"soul":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.soul", currentLocale\(\)\)/);
+  assert.match(dashboardTabRailSource, /case\s+"soul":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.soul", currentLocale\(\)\)/);
   assert.match(dashboardTabRailSource, /case\s+"skills":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.skills", currentLocale\(\)\)/);
   assert.match(dashboardTabRailSource, /case\s+"mcp":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.extensions", currentLocale\(\)\)/);
+  assert.match(dashboardTabRailSource, /case\s+"plugins":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.plugins", currentLocale\(\)\)/);
   assert.match(dashboardTabRailSource, /data-settings-nav-kind=\{item\.kind\}/);
   assert.match(dashboardTabRailSource, /data-settings-nav-tab=\{item\.tab\}/);
 });

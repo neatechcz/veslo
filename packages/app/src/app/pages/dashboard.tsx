@@ -61,6 +61,7 @@ import type { SkillMutationTarget } from "../lib/skill-inventory";
 import Button from "../components/button";
 import DashboardTabRail, { shouldShowDashboardTabRail } from "../components/dashboard-tab-rail";
 import ExtensionsView from "./extensions";
+import PluginsView from "./plugins";
 import ScheduledTasksView from "./scheduled";
 import SoulView from "./soul";
 import ConfigView from "./config";
@@ -96,6 +97,7 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
+  Cpu,
   HeartPulse,
   Loader2,
   MoreHorizontal,
@@ -401,7 +403,7 @@ export default function DashboardView(props: DashboardViewProps) {
       case "skills":
         return t("nav.skills", currentLocale());
       case "plugins":
-        return t("nav.extensions", currentLocale());
+        return t("nav.plugins", currentLocale());
       case "mcp":
         return t("nav.extensions", currentLocale());
       case "config":
@@ -1277,7 +1279,31 @@ export default function DashboardView(props: DashboardViewProps) {
               />
             </Match>
 
-            <Match when={props.tab === "plugins" || props.tab === "mcp"}>
+            <Match when={props.tab === "plugins"}>
+              <PluginsView
+                busy={props.busy}
+                activeWorkspaceRoot={props.activeWorkspaceRoot}
+                canEditPlugins={props.canEditPlugins}
+                canUseGlobalScope={props.canUseGlobalPluginScope}
+                accessHint={props.pluginsAccessHint}
+                pluginScope={props.pluginScope}
+                setPluginScope={props.setPluginScope}
+                pluginConfigPath={props.pluginConfigPath}
+                pluginList={props.pluginList}
+                pluginInput={props.pluginInput}
+                setPluginInput={props.setPluginInput}
+                pluginStatus={props.pluginStatus}
+                activePluginGuide={props.activePluginGuide}
+                setActivePluginGuide={props.setActivePluginGuide}
+                isPluginInstalled={props.isPluginInstalled}
+                suggestedPlugins={props.suggestedPlugins}
+                refreshPlugins={props.refreshPlugins}
+                addPlugin={props.addPlugin}
+                removePlugin={props.removePlugin}
+              />
+            </Match>
+
+            <Match when={props.tab === "mcp"}>
               <ExtensionsView
                 busy={props.busy}
                 activeWorkspaceRoot={props.activeWorkspaceRoot}
@@ -1501,43 +1527,62 @@ export default function DashboardView(props: DashboardViewProps) {
         </div>
 
         <nav class="md:hidden border-t border-dls-border bg-dls-surface">
-          <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-4" : "grid-cols-3"}`}>
+          <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-5" : "grid-cols-4"}`}>
             <button
-              class={`flex flex-col items-center gap-1 text-xs ${
+              class={`flex flex-col items-center gap-1 text-xs min-w-0 ${
                 props.tab === "soul" ? "text-gray-12" : "text-gray-10"
               }`}
               onClick={() => handleDashboardTabSelection("soul")}
             >
               <HeartPulse size={18} class={soulNavIconClass()} />
-              {t("nav.soul", currentLocale())}
+              <span class="max-w-full text-center leading-tight [overflow-wrap:anywhere]">
+                {t("nav.soul", currentLocale())}
+              </span>
             </button>
             <button
-              class={`flex flex-col items-center gap-1 text-xs ${
+              class={`flex flex-col items-center gap-1 text-xs min-w-0 ${
                 props.tab === "skills" ? "text-gray-12" : "text-gray-10"
               }`}
               onClick={() => handleDashboardTabSelection("skills")}
             >
               <Zap size={18} />
-              {t("nav.skills", currentLocale())}
+              <span class="max-w-full text-center leading-tight [overflow-wrap:anywhere]">
+                {t("nav.skills", currentLocale())}
+              </span>
             </button>
             <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "mcp" || props.tab === "plugins" ? "text-gray-12" : "text-gray-10"
+              class={`flex flex-col items-center gap-1 text-xs min-w-0 ${
+                props.tab === "mcp" ? "text-gray-12" : "text-gray-10"
               }`}
               onClick={() => handleDashboardTabSelection("mcp")}
             >
               <Box size={18} />
-              {t("nav.extensions", currentLocale())}
+              <span class="max-w-full text-center leading-tight [overflow-wrap:anywhere]">
+                {t("nav.extensions", currentLocale())}
+              </span>
+            </button>
+            <button
+              class={`flex flex-col items-center gap-1 text-xs min-w-0 ${
+                props.tab === "plugins" ? "text-gray-12" : "text-gray-10"
+              }`}
+              onClick={() => handleDashboardTabSelection("plugins")}
+            >
+              <Cpu size={18} />
+              <span class="max-w-full text-center leading-tight [overflow-wrap:anywhere]">
+                {t("nav.plugins", currentLocale())}
+              </span>
             </button>
             <Show when={props.developerMode}>
               <button
-                class={`flex flex-col items-center gap-1 text-xs ${
+                class={`flex flex-col items-center gap-1 text-xs min-w-0 ${
                   props.tab === "config" ? "text-gray-12" : "text-gray-10"
                 }`}
                 onClick={() => handleDashboardTabSelection("config")}
               >
                 <SlidersHorizontal size={18} />
-                {t("nav.advanced", currentLocale())}
+                <span class="max-w-full text-center leading-tight [overflow-wrap:anywhere]">
+                  {t("nav.advanced", currentLocale())}
+                </span>
               </button>
             </Show>
           </div>

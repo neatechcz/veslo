@@ -116,7 +116,7 @@ test("desktop hash routing owns dashboard aliases and cleans up its hashchange l
   assert.match(
     source,
     /import \{[\s\S]*resolveAppStartupRouteDecision,[\s\S]*resolveDashboardRouteTab,[\s\S]*\} from "\.\/controllers\/app-startup-controller";/s,
-    "dashboard hash tab resolution should preserve the legacy plugins-to-mcp alias and scheduled fallback",
+    "dashboard hash tab resolution should preserve explicit dashboard tabs and scheduled fallback",
   );
   assert.match(
     hashRouting,

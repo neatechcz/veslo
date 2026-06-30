@@ -255,9 +255,6 @@ pub fn run() {
     #[cfg(all(debug_assertions, feature = "e2e"))]
     let builder = builder.plugin(tauri_plugin_pilot::init());
 
-    #[cfg(debug_assertions)]
-    let builder = builder.plugin(tauri_plugin_pilot::init());
-
     let app = builder
         .setup(|app| {
             let window_config = app.config().app.windows.first().ok_or_else(|| {

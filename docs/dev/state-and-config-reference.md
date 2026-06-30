@@ -383,6 +383,9 @@ Use this surface for:
 - command-related OpenCode settings
 
 Veslo pages that mutate plugins or MCP are usually editing this config, not `.opencode/veslo.json`.
+The UI separates these concerns: Pluginy owns OpenCode plugin management, while
+Napojení owns MCP servers and external-app connections. They are separate
+dashboard tabs even though both can persist changes into OpenCode config.
 
 Platform Google Workspace MCP installs write normal remote MCP entries into
 OpenCode config. The entries point at Veslo-owned connector endpoints and may

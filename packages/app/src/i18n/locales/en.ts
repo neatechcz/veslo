@@ -1586,7 +1586,8 @@ export default {
   "nav.automations": "Automations",
   "nav.soul": "Soul",
   "nav.skills": "Skills",
-  "nav.extensions": "Extensions",
+  "nav.extensions": "Connections",
+  "nav.plugins": "Plugins",
   "nav.advanced": "Advanced",
   "nav.expand_dashboard_nav": "Expand dashboard nav",
   "nav.collapse_dashboard_nav": "Collapse dashboard nav",
@@ -1741,9 +1742,9 @@ export default {
   "scheduled.run_now_simple": "Run this automation now: {name}.\nSchedule: {schedule}.",
   "scheduled.delete_failed": "Failed to delete job.",
 
-  // ==================== Extensions ====================
-  "extensions.title": "Extensions",
-  "extensions.subtitle": "Connect MCP apps and servers for this workspace.",
+  // ==================== Connections ====================
+  "extensions.title": "Connections",
+  "extensions.subtitle": "Connect Veslo to external apps and services through MCP servers.",
   "extensions.apps_connected_one": "app connected",
   "extensions.apps_connected_other": "apps connected",
   "extensions.plugin_one": "plugin",

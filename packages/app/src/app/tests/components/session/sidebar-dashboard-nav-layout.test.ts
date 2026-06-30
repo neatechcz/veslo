@@ -11,9 +11,9 @@ test("sidebar dashboard nav collapses from prefs and exposes a divider toggle", 
   );
   assert.match(source, /const \[collapsed, setCollapsed\] = createSignal\(readSidebarDashboardNavCollapsed\(\)\);/);
   assert.match(source, /writeSidebarDashboardNavCollapsed\(nextCollapsed\);/);
-  assert.match(source, /<Show when=\{\!collapsed\(\)\}>[\s\S]*Zap[\s\S]*Box[\s\S]*<\/Show>/);
-  assert.doesNotMatch(source, /nav\.automations/);
-  assert.doesNotMatch(source, /onSelect\("scheduled"\)/);
+  assert.match(source, /<Show when=\{\!collapsed\(\)\}>[\s\S]*History[\s\S]*Zap[\s\S]*<\/Show>/);
+  assert.match(source, /nav\.automations/);
+  assert.match(source, /onSelect\("scheduled"\)/);
   assert.doesNotMatch(source, /HeartPulse/);
   assert.doesNotMatch(source, /nav\.soul/);
   assert.doesNotMatch(source, /onSelect\("soul"\)/);

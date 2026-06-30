@@ -101,13 +101,17 @@ cd ../e2e
 pnpm test
 ```
 
-`tauri-pilot` is the desktop test driver. The E2E build includes `tauri-plugin-pilot` behind the `e2e` Cargo feature, and `packages/e2e` launches the debug Tauri binary with a deterministic `TAURI_PILOT_SOCKET`. Install the matching CLI when the environment does not already provide it:
+`tauri-pilot` is the desktop test driver. Debug desktop builds include `tauri-plugin-pilot`; the `e2e` Cargo feature enables its `press` support, and `packages/e2e` launches the debug Tauri binary with a deterministic `TAURI_PILOT_SOCKET`. The desktop plugin is pinned to the upstream `tauri-pilot` 0.7.2 revision that routes macOS eval results through the Pilot IPC callback.
 
 The E2E launcher uses an isolated app profile under `packages/e2e/.tmp-veslo-home` by default so local desktop state does not leak into tests. Set `E2E_USE_EXISTING_PROFILE=1` only when a test explicitly needs the current user profile.
 
 For core platform skill materialization coverage, build with the pilot-enabled E2E config and run the targeted pilot script:
 
 Prerequisite: the `tauri-pilot` CLI must be on `PATH`. If it is installed elsewhere, set `E2E_TAURI_PILOT_BIN=/absolute/path/to/tauri-pilot`.
+
+```bash
+cargo install tauri-pilot-cli --version 0.7.2 --locked
+```
 
 ```bash
 # First run the Desktop Test Runtime Preflight above.
@@ -124,20 +128,14 @@ pnpm test:pilot:core-platform-skills
 
 The pilot config uses the isolated `com.neatech.veslo.e2e` app identifier and enables `pilot:default` only for the E2E build. Do not add pilot permissions to the default desktop capability.
 
-For Windows sidecar-launch changes, also run the clean-profile runtime probe after the Tauri E2E build:
-
-```bash
-cargo install tauri-pilot-cli --version 0.7.1 --locked
-```
-
 Focused pilot scenarios can be run from `packages/e2e`:
 
 ```bash
 pnpm test:pilot:smoke
 pnpm test:pilot:navigation
 pnpm test:pilot:google-mcp
-pnpm test -- --scenario sidebar-session-retention
-pnpm test -- --scenario <name-or-path>
+pnpm test:pilot -- --scenario sidebar-session-retention
+pnpm test:pilot -- --scenario <name-or-path>
 ```
 
 `test:pilot:google-mcp` runs the converted Google Workspace MCP connector
