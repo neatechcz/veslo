@@ -438,7 +438,7 @@ test("local runtime readiness restarts the target workspace engine for dead endp
 
 test("local runtime readiness recovers when health throws engine_not_running", async () => {
   const order: string[] = [];
-  const { readiness, clients, ensureEngineCalls, routeReleaseCalls } = createHarness({
+  const { readiness, clients, events, ensureEngineCalls, routeReleaseCalls } = createHarness({
     releaseWorkspaceRoute: (workspaceId: string) => {
       order.push(`release:${workspaceId}`);
       routeReleaseCalls.push(workspaceId);
@@ -469,6 +469,8 @@ test("local runtime readiness recovers when health throws engine_not_running", a
   assert.deepEqual(ensureEngineCalls, ["target"]);
   assert.deepEqual(order, ["release:target", "ensure:target"]);
   assert.equal(preflight.runtimeHealthOk, true);
+  assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-start"));
+  assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-ok"));
 });
 
 test("local runtime readiness recovers when health resolves an SDK engine_not_running error result", async () => {
@@ -735,6 +737,10 @@ test("local runtime health error helpers classify dead endpoints and probe timeo
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("failed to fetch")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("ECONNREFUSED")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"engine_not_running"}')), true);
+  assert.equal(
+    shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"engine_not_running","workspaceId":"target"}')),
+    true,
+  );
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"workspace not found"}')), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("workspace_id_mismatch")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"opencode_request_failed","status":503}')), true);
