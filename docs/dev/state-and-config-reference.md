@@ -58,7 +58,7 @@ Developer-only UI surfaces are not enabled by default. The app derives developer
 
 Session archive records are loaded through the Veslo server archive API. When a cloud account is available, archive requests use that account id as the owner key. In local desktop mode without cloud auth, loopback Veslo server archive requests use the local desktop owner key `local:desktop`; remote archive requests still require a cloud account id.
 
-Pending draft content itself is additionally mirrored into the desktop pending-draft store so unpublished drafts survive restart with their current text and attachment chips.
+Pending draft content itself is additionally mirrored into the desktop pending-draft store so the one unpublished draft survives restart with its current text, attachment chips, and selected send destination.
 
 During workspace switches, the sidebar may already have task rows for the target workspace while the global session store still reflects the previous workspace or is startup-empty. The sidebar must keep those existing target rows until scoped sessions for the target workspace load, so a transient empty store does not hide a remote worker's project list.
 
@@ -111,6 +111,8 @@ Desktop auth snapshots can also carry first-run UI metadata such as language and
 
 Veslo can send application errors to a Sentry-compatible service such as the internal Neatech GlitchTip instance. Monitoring is disabled unless a DSN is explicitly configured.
 
+Release desktop builds get their GlitchTip DSN from the public, release-owned `VESLO_GLITCHTIP_DSN` GitHub Actions variable. The same value is passed to `VITE_VESLO_GLITCHTIP_DSN` for the frontend build and embedded into the native Tauri shell at compile time for installed macOS and Windows apps. This DSN is not a secret, but it is not user-configurable and the application must not expose a setting to change it.
+
 Frontend environment variables:
 
 - `VITE_VESLO_GLITCHTIP_DSN` - Sentry-compatible project DSN for browser/Solid errors. Required to enable frontend monitoring.
@@ -120,7 +122,7 @@ Frontend environment variables:
 
 Desktop shell environment variables:
 
-- `VESLO_GLITCHTIP_DSN` - Sentry-compatible project DSN for native Tauri/Rust errors. Required to enable native monitoring.
+- `VESLO_GLITCHTIP_DSN` - Sentry-compatible project DSN for native Tauri/Rust errors. Required to enable native monitoring. Release builds embed this from the GitHub Actions variable when the runtime environment does not provide it.
 - `VESLO_GLITCHTIP_ENVIRONMENT` - optional environment name. Defaults to `production` in release builds and `development` in debug builds.
 - `VESLO_GLITCHTIP_TRACES_SAMPLE_RATE` - optional trace sample rate, clamped to `0..1`. Defaults to `0`.
 
@@ -588,9 +590,12 @@ Desktop pending drafts are stored outside browser local storage in the Tauri app
 Current behavior:
 
 - pending draft metadata and attachment copies live in the desktop pending-draft store
-- browser local storage keeps the active pending draft key so the app can restore the same unpublished draft on restart
-- `Chat` is globally singleton while unpublished: reopening it returns to the existing private pending draft
-- project pending drafts are keyed by workspace plus normalized directory
+- browser local storage keeps the active pending draft key so the app can restore the global unpublished draft route on restart
+- unpublished chats use one global draft body for the whole app until the first message creates a real session
+- the pending draft record uses a fixed global id, while its metadata records the selected destination: private chat, workspace id, and normalized directory
+- `Chat`, project `+`, and the composer target picker move that one draft between destinations instead of loading separate workspace draft bodies
+- old per-workspace pending draft records are obsolete and ignored rather than migrated
+- real sessions still use normal per-session composer draft storage after the unpublished draft is materialized
 - pending drafts remain out of the sidebar until a real session is created by sending them; a newly registered local directory may still appear immediately as the top empty workspace-only project row in by-project mode
 
 ## Precedence Rules

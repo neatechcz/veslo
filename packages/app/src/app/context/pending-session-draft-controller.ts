@@ -6,6 +6,8 @@ import {
 } from "../pages/session-navigation";
 import { setSessionComposerDraft } from "../pages/session-composer-drafts";
 import {
+  GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
+  isGlobalUnpublishedPendingDraftSummary,
   isPendingDraftKey,
   resolvePendingDraftKey,
 } from "../lib/pending-session-drafts";
@@ -178,6 +180,11 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
     writeConsumedPendingDraftIds(next);
   };
 
+  const listGlobalPendingDraftSummaries = async () =>
+    (await deps.pendingSessionDraftsList()).filter(
+      (draft) => isGlobalUnpublishedPendingDraftSummary(draft) && !isConsumedPendingDraftId(draft.id),
+    );
+
   const formatPendingDraftAttachmentRestoreError = (
     attachmentFailures: { attachmentId: string; name: string; message: string }[],
   ) => {
@@ -263,7 +270,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
     if (!storedPendingDraftKey) return;
 
     try {
-      const pendingDrafts = (await deps.pendingSessionDraftsList()).filter((draft) => !isConsumedPendingDraftId(draft.id));
+      const pendingDrafts = await listGlobalPendingDraftSummaries();
       const matchingPendingDraft = findStoredPendingDraftSummary({
         storedPendingDraftKey,
         pendingDrafts,
@@ -310,7 +317,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
 
     try {
       const newPrivatePendingDraftKey = resolvePendingDraftKey({ kind: "new-private" });
-      const pendingDrafts = (await deps.pendingSessionDraftsList()).filter((draft) => !isConsumedPendingDraftId(draft.id));
+      const pendingDrafts = await listGlobalPendingDraftSummaries();
       const existingPendingDraft = pendingDrafts.find((draft) => draft.kind === "new-private") ?? null;
 
       if (existingPendingDraft) {
@@ -367,7 +374,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
           return false;
         }
         const pendingDraft = await deps.pendingSessionDraftsPut({
-          id: `pending-new-private-${scratch.id}`,
+          id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
           kind: "new-private",
           workspaceId: scratch.id,
           directory: null,
@@ -411,7 +418,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
         workspaceId,
         directory,
       });
-      const pendingDrafts = (await deps.pendingSessionDraftsList()).filter((draft) => !isConsumedPendingDraftId(draft.id));
+      const pendingDrafts = await listGlobalPendingDraftSummaries();
       const existingPendingDraft =
         pendingDrafts.find(
           (draft) =>
@@ -437,12 +444,8 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
 
       const emptyPendingDraft = deps.createEmptyComposerDraft();
       const now = Date.now();
-      const pendingDraftIdSuffix =
-        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-          ? crypto.randomUUID()
-          : `${now}-${Math.random().toString(16).slice(2)}`;
       const pendingDraft = await deps.pendingSessionDraftsPut({
-        id: `pending-directory-${pendingDraftIdSuffix}`,
+        id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
         kind: "directory",
         workspaceId,
         directory,

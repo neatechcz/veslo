@@ -222,3 +222,10 @@ test("system state exposes a manual retry entry point", () => {
   assert.match(source, /downloadUpdate\(\{[\s\S]*refreshBeforeDownload: true[\s\S]*\}\)/);
   assert.match(source, /retryUpdateDownload,/);
 });
+
+test("macOS updater installs use native post-exit relaunch instead of frontend relaunch", () => {
+  assert.match(source, /isMacPlatform\(\) \? "macos"/);
+  assert.match(source, /resolveUpdatePostInstallRestartAction\(platform\)/);
+  assert.match(source, /restartAction === "native-post-exit-relaunch"[\s\S]*updaterRelaunchAfterInstall\(\)/);
+  assert.match(source, /restartAction === "frontend-relaunch"[\s\S]*await relaunch\(\)/);
+});

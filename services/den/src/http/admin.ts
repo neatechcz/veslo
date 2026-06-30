@@ -6,7 +6,7 @@ import type { CodexCapacityOverview } from "../managed-ai/usage/codex-capacity.j
 import type { CodexUsageStatus } from "../managed-ai/usage/codex-status.js"
 import { asyncRoute } from "./errors.js"
 
-export const OrganizationAdminCapabilities = ["organization", "users"] as const
+export const OrganizationAdminCapabilities = ["organization", "users", "billing"] as const
 export const PlatformAdminCapabilities = [
   ...OrganizationAdminCapabilities,
   "credentials",
@@ -16,7 +16,7 @@ export const PlatformAdminCapabilities = [
   "debugLogs",
   "managedAiUserAccess",
 ] as const
-export const OrganizationAdminAllowedPages = ["organization", "users"] as const
+export const OrganizationAdminAllowedPages = ["organization", "users", "billing"] as const
 export const PlatformAdminAllowedPages = [
   ...OrganizationAdminAllowedPages,
   "credentials",

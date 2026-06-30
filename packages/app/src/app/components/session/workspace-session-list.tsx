@@ -1438,12 +1438,16 @@ export default function WorkspaceSessionList(props: Props) {
   });
 
   createEffect(() => {
+    const validArchiveKeys = new Set(
+      projectRowsLoaded().map((row) => archiveKeyFor(row.workspace.id, row.session.id)),
+    );
+    for (const row of recentRowsLoaded()) validArchiveKeys.add(archiveKeyFor(row.workspace.id, row.session.id));
     const validSessionIds = new Set(
       projectRowsLoaded().flatMap((row) => [row.session.id]),
     );
     for (const row of recentRowsLoaded()) validSessionIds.add(row.session.id);
     const pendingId = pendingArchiveConfirmationSessionId();
-    if (pendingId && !validSessionIds.has(pendingId)) {
+    if (pendingId && !validArchiveKeys.has(pendingId)) {
       setPendingArchiveConfirmationSessionId(null);
     }
 

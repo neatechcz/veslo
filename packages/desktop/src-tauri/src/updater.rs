@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::types::UpdaterEnvironment;
@@ -94,6 +95,75 @@ pub fn prepare_update_install(app: &tauri::AppHandle) -> Result<(), String> {
     })
 }
 
+pub fn macos_app_bundle_path_from_executable(executable_path: &Path) -> Option<PathBuf> {
+    let macos_dir = executable_path.parent()?;
+    if macos_dir.file_name()? != "MacOS" {
+        return None;
+    }
+
+    let contents_dir = macos_dir.parent()?;
+    if contents_dir.file_name()? != "Contents" {
+        return None;
+    }
+
+    let bundle_dir = contents_dir.parent()?;
+    if bundle_dir.extension()? != "app" {
+        return None;
+    }
+
+    Some(bundle_dir.to_path_buf())
+}
+
+pub fn macos_relaunch_after_exit_command(current_pid: u32, app_bundle_path: &Path) -> Command {
+    let mut command = Command::new("/bin/sh");
+    command
+        .arg("-c")
+        .arg(
+            "while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; done\n\
+             exec /usr/bin/open -n \"$2\"",
+        )
+        .arg("veslo-relaunch-after-update")
+        .arg(current_pid.to_string())
+        .arg(app_bundle_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_macos_relaunch_after_exit(current_pid: u32, app_bundle_path: &Path) -> Result<(), String> {
+    macos_relaunch_after_exit_command(current_pid, app_bundle_path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Failed to schedule Veslo relaunch after update: {error}"))
+}
+
+pub fn relaunch_after_update_install(app: &tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let executable_path = std::env::current_exe()
+            .map_err(|error| format!("Failed to resolve current Veslo executable: {error}"))?;
+        let app_bundle_path =
+            macos_app_bundle_path_from_executable(&executable_path).ok_or_else(|| {
+                format!(
+                    "Failed to resolve Veslo app bundle from executable path: {}",
+                    executable_path.display()
+                )
+            })?;
+
+        spawn_macos_relaunch_after_exit(std::process::id(), &app_bundle_path)?;
+        app.exit(0);
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        app.request_restart();
+        Ok(())
+    }
+}
+
 pub fn updater_environment() -> UpdaterEnvironment {
     let executable_path = std::env::current_exe().ok();
 
@@ -181,5 +251,41 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().running_pids, vec![303]);
+    }
+
+    #[test]
+    fn resolves_macos_app_bundle_from_bundle_executable() {
+        let bundle = macos_app_bundle_path_from_executable(Path::new(
+            "/Applications/Veslo.app/Contents/MacOS/Veslo",
+        ));
+
+        assert_eq!(bundle, Some(Path::new("/Applications/Veslo.app").to_path_buf()));
+    }
+
+    #[test]
+    fn rejects_non_bundle_executable_for_macos_relaunch() {
+        let bundle = macos_app_bundle_path_from_executable(Path::new(
+            "/Users/dev/Veslo/target/debug/veslo",
+        ));
+
+        assert_eq!(bundle, None);
+    }
+
+    #[test]
+    fn macos_relaunch_command_waits_for_old_pid_before_opening_bundle() {
+        let command =
+            macos_relaunch_after_exit_command(4242, Path::new("/Applications/Veslo.app"));
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(command.get_program(), Path::new("/bin/sh").as_os_str());
+        assert_eq!(args[0], "-c");
+        assert!(args[1].contains("kill -0 \"$1\""));
+        assert!(args[1].contains("/usr/bin/open -n \"$2\""));
+        assert_eq!(args[2], "veslo-relaunch-after-update");
+        assert_eq!(args[3], "4242");
+        assert_eq!(args[4], "/Applications/Veslo.app");
     }
 }

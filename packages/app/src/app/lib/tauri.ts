@@ -1053,6 +1053,10 @@ export async function updaterPrepareInstall(): Promise<void> {
   return invoke<void>("updater_prepare_install");
 }
 
+export async function updaterRelaunchAfterInstall(): Promise<void> {
+  return invoke<void>("updater_relaunch_after_install");
+}
+
 export async function readOpencodeConfig(
   scope: "project" | "global",
   projectDir: string,

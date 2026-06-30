@@ -1,0 +1,814 @@
+[scenario]
+name = "global-unpublished-draft"
+fail_fast = true
+global_timeout_ms = 420000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "configure sidebar grouping"
+action = "eval"
+script = '''
+window.localStorage.setItem("veslo.sidebar-session-view.v1", "by-project");
+window.localStorage.removeItem("veslo.sidebar-collapsed-projects.v1");
+window.localStorage.removeItem("veslo.sidebar-chat-collapsed.v1");
+true;
+'''
+
+[[step]]
+name = "root exists after sidebar grouping"
+action = "wait"
+target = "#root"
+timeout_ms = 30000
+
+[[step]]
+name = "seed second workspace"
+action = "eval"
+timeout_ms = 60000
+script = '''
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const trimText = (value) => String(value ?? "").trim();
+const normalizePath = (value) => trimText(value).replace(/\\/g, "/").replace(/\/+$/, "");
+const assert = (condition, message) => {
+  if (!condition) throw new Error(message);
+};
+const tauriInvoke = async (command, payload = {}) => {
+  const invoke = window.__TAURI_INTERNALS__?.invoke;
+  assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+  return await invoke(command, payload);
+};
+
+const bootstrap = await tauriInvoke("workspace_bootstrap");
+const firstWorkspace = bootstrap.workspaces.find((workspace) => workspace.id === bootstrap.activeId) ?? bootstrap.workspaces[0];
+const firstDirectory = normalizePath(firstWorkspace?.directory || firstWorkspace?.path);
+assert(firstWorkspace?.id && firstDirectory, `Initial workspace is unavailable: ${JSON.stringify(bootstrap)}`);
+
+const secondDirectoryName = `veslo-global-unpublished-target-${Date.now()}`;
+const requestedSecondDirectory = `/tmp/${secondDirectoryName}`;
+await tauriInvoke("workspace_create", {
+  folderPath: requestedSecondDirectory,
+  name: "Global Unpublished Target",
+  preset: "starter",
+});
+const afterCreate = await tauriInvoke("workspace_bootstrap");
+const secondWorkspace = afterCreate.workspaces.find((workspace) => {
+  const workspacePath = normalizePath(workspace.path || workspace.directory);
+  return workspacePath === normalizePath(requestedSecondDirectory) || workspacePath.endsWith(`/${secondDirectoryName}`);
+});
+assert(secondWorkspace?.id, `Second workspace was not registered: ${JSON.stringify(afterCreate)}`);
+const secondDirectory = normalizePath(secondWorkspace.path || secondWorkspace.directory || requestedSecondDirectory);
+
+await tauriInvoke("workspace_set_active", {
+  workspaceId: firstWorkspace.id,
+  promoteToFront: true,
+});
+
+window.localStorage.setItem(
+  "veslo.e2e.globalUnpublishedDraft",
+  JSON.stringify({
+    firstWorkspace,
+    secondWorkspace,
+    secondDirectory,
+  }),
+);
+
+await sleep(100);
+window.location.reload();
+true;
+'''
+
+[[step]]
+name = "root exists after workspace seed"
+action = "wait"
+target = "#root"
+timeout_ms = 30000
+
+[[step]]
+name = "start global unpublished draft task"
+action = "eval"
+script = '''
+const completeSelector = '[data-testid="global-unpublished-draft-complete"]';
+const errorSelector = '[data-testid="global-unpublished-draft-error"]';
+const progressSelector = '[data-testid="global-unpublished-draft-progress"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+document.querySelector(progressSelector)?.remove();
+
+const progressMarker = document.createElement("pre");
+progressMarker.dataset.testid = "global-unpublished-draft-progress";
+progressMarker.style.display = "none";
+progressMarker.textContent = "starting";
+document.body.append(progressMarker);
+
+const setProgress = (stage, detail = null) => {
+  window.__vesloGlobalUnpublishedDraftProgress = {
+    stage,
+    detail,
+    at: new Date().toISOString(),
+  };
+  progressMarker.textContent = JSON.stringify(window.__vesloGlobalUnpublishedDraftProgress);
+};
+
+const appendMarker = (selector, payload) => {
+  if (document.querySelector(completeSelector) || document.querySelector(errorSelector)) return;
+  const marker = document.createElement("pre");
+  marker.dataset.testid = selector === completeSelector
+    ? "global-unpublished-draft-complete"
+    : "global-unpublished-draft-error";
+  marker.textContent = JSON.stringify(payload, null, 2);
+  document.body.append(marker);
+};
+
+if (!window.__vesloGlobalUnpublishedDraftStarted) {
+  window.__vesloGlobalUnpublishedDraftStarted = true;
+  window.__vesloGlobalUnpublishedDraftPromise = (async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const trimText = (value) => String(value ?? "").trim();
+    const normalize = (value) => trimText(value).replace(/\s+/g, " ");
+    const normalizePath = (value) => trimText(value).replace(/\\/g, "/").replace(/\/+$/, "");
+    const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+    const assert = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+    const waitUntil = async (predicate, options = {}) => {
+      const timeout = options.timeout ?? 10000;
+      const interval = options.interval ?? 250;
+      const message = options.message ?? "Condition was not met";
+      const deadline = Date.now() + timeout;
+      let latest;
+      while (Date.now() < deadline) {
+        latest = await predicate();
+        if (latest) return latest;
+        await sleep(interval);
+      }
+      throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
+    };
+    const withTimeout = async (promise, timeout, message) => {
+      let timeoutId;
+      try {
+        return await Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error(message)), timeout);
+          }),
+        ]);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+    };
+    const tauriInvoke = async (command, payload = {}, timeout = 90000) => {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+      return await withTimeout(
+        invoke(command, payload),
+        timeout,
+        `Tauri command ${command} did not resolve within ${timeout}ms`,
+      );
+    };
+    const isVisibleElement = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      return Boolean(element.offsetParent) && rect.width > 0 && rect.height > 0;
+    };
+    const visibleText = (element) => normalize(element?.innerText || element?.textContent || "");
+    const visibleBodyText = () => visibleText(document.querySelector("main") ?? document.body);
+    const conversationPane = () =>
+      document.querySelector('[data-testid="session-conversation-pane"]') ??
+      document.querySelector("main") ??
+      document.body;
+    const visibleTranscriptText = () => visibleText(conversationPane());
+    const sendTrace = () => Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-100) : [];
+    const buttonValues = (button) => [
+      normalize(button.textContent),
+      normalize(button.title),
+      normalize(button.getAttribute("aria-label")),
+    ].filter(Boolean);
+    const buttonMatchesLabel = (button, labels) => {
+      if (!isVisibleElement(button) || button.disabled) return false;
+      const values = buttonValues(button);
+      return labels.some((label) => values.some((value) => value === label || value.includes(label)));
+    };
+    const findButton = (labels, root = document) =>
+      Array.from(root.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+    const sidebarMoreActionLabels = ["More actions", "Dalsi akce", "Další akce"];
+    const byProjectLabels = ["By project", "Podle projektu"];
+    const sendButtonLabels = [
+      "Send now",
+      "Steer agent now",
+      "Queue message",
+      "Send",
+      "Poslat hned",
+      "Nasměrovat agenta teď",
+      "Zaradit zpravu",
+      "Zařadit zprávu",
+      "Odeslat",
+      "立即发送",
+      "立即引导代理",
+      "加入队列",
+    ];
+    const newChatLabels = ["New chat", "Novy chat", "Nový chat"];
+    const sidebarNewChatLabels = [...newChatLabels, "Chat"];
+    const chatsSectionLabels = ["Chats", "Chaty"];
+    const createSessionInProjectLabels = [
+      "Create session in this project",
+      "Vytvorit relaci v tomto projektu",
+      "Vytvořit relaci v tomto projektu",
+      "在此项目中创建会话",
+    ];
+    const dispatchClickSequence = (element) => {
+      element.focus?.();
+      const base = {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        view: window,
+        button: 0,
+      };
+      if (typeof PointerEvent === "function") {
+        element.dispatchEvent(new PointerEvent("pointerdown", {
+          ...base,
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          buttons: 1,
+        }));
+        element.dispatchEvent(new PointerEvent("pointerup", {
+          ...base,
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          buttons: 0,
+        }));
+      }
+      element.dispatchEvent(new MouseEvent("mousedown", { ...base, buttons: 1 }));
+      element.dispatchEvent(new MouseEvent("mouseup", { ...base, buttons: 0 }));
+      element.dispatchEvent(new MouseEvent("click", { ...base, buttons: 0 }));
+    };
+    const byProjectSidebarReady = () =>
+      Boolean(document.querySelector('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"], [data-project-key]'));
+    const ensureByProjectSidebarMode = async () => {
+      setProgress("ensuring-by-project-sidebar");
+      if (byProjectSidebarReady()) return;
+      const moreButton = await waitUntil(() => findButton(sidebarMoreActionLabels), {
+        timeout: 45000,
+        interval: 500,
+        message: `Sidebar more-actions button did not appear. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).filter(isVisibleElement).map(buttonValues))}`,
+      });
+      dispatchClickSequence(moreButton);
+      const byProjectButton = await waitUntil(() =>
+        Array.from(document.querySelectorAll('button[role="menuitemradio"]'))
+          .find((button) => buttonMatchesLabel(button, byProjectLabels)),
+      {
+        timeout: 10000,
+        interval: 250,
+        message: `By-project sidebar menu item did not appear. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).filter(isVisibleElement).map(buttonValues))}`,
+      });
+      dispatchClickSequence(byProjectButton);
+      await waitUntil(() => byProjectSidebarReady(), {
+        timeout: 45000,
+        interval: 500,
+        message: `By-project sidebar did not expose project or chat rows. Body=${visibleBodyText().slice(0, 2500)}`,
+      });
+    };
+    const navigateToHash = (path) => {
+      const oldUrl = window.location.href;
+      window.location.hash = path.startsWith("/") ? path : `/${path}`;
+      window.dispatchEvent(new HashChangeEvent("hashchange", {
+        oldURL: oldUrl,
+        newURL: window.location.href,
+      }));
+    };
+    const waitForLocalVesloServerReady = async () => {
+      let latest = null;
+      setProgress("waiting-local-veslo-server");
+      return await waitUntil(async () => {
+        latest = await tauriInvoke("veslo_server_info").catch(() => null);
+        const baseUrl = trimBaseUrl(latest?.baseUrl);
+        const clientToken = normalize(latest?.clientToken);
+        const hostToken = normalize(latest?.hostToken);
+        if (!latest?.running || !baseUrl || !clientToken || !hostToken) return false;
+        const response = await fetch(`${baseUrl}/health`).catch(() => null);
+        if (!response?.ok) return false;
+        const payload = await response.json().catch(() => null);
+        return payload?.ok === true ? { baseUrl, clientToken, hostToken } : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `Local Veslo server did not become ready. Server info=${JSON.stringify(latest)}`,
+      });
+    };
+    const waitForAiAccessReady = async (connection) => {
+      let latest = null;
+      setProgress("waiting-ai-access");
+      return await waitUntil(async () => {
+        const response = await fetch(`${connection.baseUrl}/ai-gateway/me/ai-access`, {
+          headers: {
+            authorization: `Bearer ${connection.clientToken}`,
+            "x-veslo-gateway-authorization": "Bearer veslo-e2e-managed-ai-token",
+            accept: "application/json",
+          },
+        }).catch((error) => {
+          latest = { error: error?.message || String(error) };
+          return null;
+        });
+        if (!response) return false;
+        const text = await response.text();
+        latest = { status: response.status, body: text.slice(0, 500) };
+        if (!response.ok) return false;
+        const payload = text.trim() ? JSON.parse(text) : null;
+        return payload?.aiAccess?.enabled === true ? payload : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `AI access endpoint did not become ready. Latest=${JSON.stringify(latest)}`,
+      });
+    };
+    const waitForWorkspaceEngineReady = async (workspace) => {
+      const workspacePath = normalizePath(workspace?.path || workspace?.directory);
+      assert(workspacePath, `Workspace path is missing from bootstrap payload: ${JSON.stringify(workspace)}`);
+      setProgress("activating-workspace-engine", { workspacePath });
+      try {
+        await tauriInvoke("orchestrator_workspace_activate", {
+          workspacePath,
+          name: normalize(workspace?.displayName || workspace?.name) || null,
+        });
+      } catch (error) {
+        setProgress("starting-workspace-engine", { workspacePath, error: error?.message || String(error) });
+        await tauriInvoke("engine_start", {
+          projectDir: workspacePath,
+          preferSidecar: true,
+          opencodeBinPath: null,
+          runtime: "veslo-orchestrator",
+          workspacePaths: [workspacePath],
+        });
+        await tauriInvoke("orchestrator_workspace_activate", {
+          workspacePath,
+          name: normalize(workspace?.displayName || workspace?.name) || null,
+        });
+      }
+      return await waitUntil(async () => {
+        const info = await tauriInvoke("engine_info", {
+          workspaceId: workspace?.id ?? null,
+          workspacePath,
+        }).catch(() => null);
+        return trimBaseUrl(info?.baseUrl) ? info : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `Workspace engine did not become ready for ${workspacePath}`,
+      });
+    };
+    const waitForComposer = async () => {
+      setProgress("waiting-composer");
+      return await waitUntil(() => {
+        const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+        return candidate instanceof HTMLElement && isVisibleElement(candidate) ? candidate : false;
+      }, {
+        timeout: 45000,
+        interval: 250,
+        message: `Composer did not appear. Body=${visibleBodyText().slice(0, 2500)}`,
+      });
+    };
+    const composerText = () => {
+      const textbox = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+      return normalize(textbox?.textContent || textbox?.value || "");
+    };
+    const setComposerText = (textbox, text) => {
+      textbox.focus();
+      if (textbox.isContentEditable) {
+        textbox.replaceChildren(document.createTextNode(text));
+      } else {
+        textbox.value = text;
+      }
+      textbox.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        data: text,
+        inputType: "insertText",
+      }));
+    };
+    const findComposerSendButton = (textbox) => {
+      let current = textbox;
+      const containers = [];
+      for (let depth = 0; depth < 10 && current instanceof HTMLElement; depth += 1) {
+        containers.push(current);
+        current = current.parentElement;
+      }
+      for (const container of containers) {
+        const matching = Array.from(container.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, sendButtonLabels));
+        if (matching) return matching;
+      }
+      return findButton(sendButtonLabels);
+    };
+    const readDrafts = async () => {
+      const summaries = await tauriInvoke("pending_session_drafts_list");
+      const loaded = [];
+      for (const summary of summaries) {
+        const item = await tauriInvoke("pending_session_drafts_get", { draftId: summary.id });
+        loaded.push({
+          id: summary.id,
+          kind: summary.kind,
+          workspaceId: summary.workspaceId,
+          directory: normalizePath(summary.directory ?? item?.draft?.directory ?? ""),
+          privateWorkspaceId: summary.privateWorkspaceId ?? null,
+          text: item?.draft?.composer?.text || "",
+        });
+      }
+      return { summaries, loaded };
+    };
+    const waitForSinglePersistedDraftOnWorkspace = async (draftText, workspace, directory) => {
+      const expectedWorkspaceId = trimText(workspace?.id);
+      const expectedDirectory = normalizePath(directory || workspace?.path || workspace?.directory);
+      assert(expectedWorkspaceId && expectedDirectory, `Expected draft workspace metadata is missing: ${JSON.stringify({ workspace, directory })}`);
+      let latest = [];
+      return await waitUntil(async () => {
+        const { loaded } = await readDrafts();
+        latest = loaded;
+        const matching = loaded.filter((draft) => draft.text === draftText);
+        if (
+          matching.length === 1 &&
+          matching[0].workspaceId === expectedWorkspaceId &&
+          normalizePath(matching[0].directory) === expectedDirectory
+        ) {
+          return { loaded, matching: matching[0] };
+        }
+        return false;
+      }, {
+        timeout: 45000,
+        interval: 500,
+        message: `Unpublished draft was not persisted exactly once for the selected workspace ${expectedWorkspaceId} (${expectedDirectory}). Drafts=${JSON.stringify(latest)}`,
+      });
+    };
+    const waitForDraftTextRemoved = async (draftText) => {
+      let latest = [];
+      return await waitUntil(async () => {
+        const { loaded } = await readDrafts();
+        latest = loaded;
+        return loaded.every((draft) => draft.text !== draftText) ? loaded : false;
+      }, {
+        timeout: 45000,
+        interval: 500,
+        message: `Submitted unpublished draft text remained in the pending-draft store. Drafts=${JSON.stringify(latest)}`,
+      });
+    };
+    const targetIdForWorkspace = (workspace) => {
+      const workspacePath = normalizePath(workspace?.path || workspace?.directory);
+      assert(workspace?.id && workspacePath, `Workspace target is unavailable: ${JSON.stringify(workspace)}`);
+      return `__pending-draft__:directory:${workspace.id}:${workspacePath}`;
+    };
+    const switchComposerTarget = async (targetId) => {
+      setProgress("switching-composer-target", { targetId });
+      const picker = await waitUntil(() => {
+        const candidate = document.querySelector('[data-testid="composer-target-picker"]');
+        if (!candidate || candidate.disabled || !isVisibleElement(candidate)) return false;
+        return candidate;
+      }, {
+        timeout: 45000,
+        interval: 250,
+        message: `Composer target picker did not become enabled. Body=${visibleBodyText().slice(0, 2500)}`,
+      });
+      dispatchClickSequence(picker);
+      const option = await waitUntil(() => {
+        const options = Array.from(document.querySelectorAll('[data-testid="composer-target-option"]'));
+        return options.find((candidate) => candidate.dataset.composerTargetId === targetId && !candidate.disabled && isVisibleElement(candidate)) || false;
+      }, {
+        timeout: 45000,
+        interval: 250,
+        message: `Composer target option ${targetId} did not appear.`,
+      });
+      dispatchClickSequence(option);
+      await waitUntil(() => window.localStorage.getItem("veslo.active-pending-draft.v1") === targetId, {
+        timeout: 60000,
+        interval: 500,
+        message: `Composer target ${targetId} did not become active. Active=${window.localStorage.getItem("veslo.active-pending-draft.v1") || ""}`,
+      });
+    };
+    const assertNoSendFailed = () => {
+      const body = visibleBodyText();
+      assert(!/Send failed|Odeslani selhalo|Odeslání selhalo|Sending failed|发送失败/i.test(body), `Send failed appeared. Body=${body.slice(0, 2500)} Trace=${JSON.stringify(sendTrace())}`);
+    };
+    const sendCurrentComposer = async (draftText, token) => {
+      setProgress("sending-current-composer", { token });
+      const textbox = await waitForComposer();
+      const traceLengthBeforeClick = sendTrace().length;
+      const sendButton = await waitUntil(() => findComposerSendButton(textbox), {
+        timeout: 20000,
+        interval: 250,
+        message: `Send button did not become enabled. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).map(buttonValues))}`,
+      });
+      dispatchClickSequence(sendButton);
+      await waitUntil(() => sendTrace().length > traceLengthBeforeClick || visibleTranscriptText().includes(draftText), {
+        timeout: 20000,
+        interval: 250,
+        message: `Send click did not reach composer handler. Trace=${JSON.stringify(sendTrace())}`,
+      });
+      await waitUntil(() => {
+        assertNoSendFailed();
+        return sendTrace().slice(traceLengthBeforeClick).some((entry) => entry?.event === "createSessionAndOpen:create-ok") &&
+          visibleTranscriptText().includes(draftText);
+      }, {
+        timeout: 120000,
+        interval: 500,
+        message: `Draft did not materialize into a real conversation. Transcript=${visibleTranscriptText().slice(0, 2500)} Body=${visibleBodyText().slice(0, 2500)} Trace=${JSON.stringify(sendTrace())}`,
+      });
+      await waitUntil(() => {
+        assertNoSendFailed();
+        const occurrences = visibleBodyText().split(token).length - 1;
+        return occurrences >= 2;
+      }, {
+        timeout: 90000,
+        interval: 1000,
+        message: `Managed AI fixture response did not render for token ${token}. Body=${visibleBodyText().slice(0, 2500)} Trace=${JSON.stringify(sendTrace())}`,
+      });
+      const createEntries = sendTrace()
+        .slice(traceLengthBeforeClick)
+        .filter((entry) => entry?.event === "createSessionAndOpen:create-ok");
+      const createEntry = createEntries[createEntries.length - 1] ?? null;
+      assert(createEntry?.conversationId || createEntry?.opencodeSessionId, `Materialized conversation metadata was not captured. Trace=${JSON.stringify(sendTrace())}`);
+      return createEntry;
+    };
+    const openAnotherUnpublishedChat = async () => {
+      setProgress("opening-another-unpublished-chat");
+      const previousActivePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
+      try {
+        navigateToHash("/session");
+        return await waitUntil(() => {
+          const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+          if (!(candidate instanceof HTMLElement) || !isVisibleElement(candidate)) return false;
+          const activePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
+          return activePendingDraftKey.includes("new-private") && activePendingDraftKey !== previousActivePendingDraftKey
+            ? candidate
+            : false;
+        }, {
+          timeout: 60000,
+          interval: 500,
+          message: `Bare session route did not open another unpublished chat. PreviousPending=${previousActivePendingDraftKey}. ActivePending=${window.localStorage.getItem("veslo.active-pending-draft.v1") || ""}. Body=${visibleBodyText().slice(0, 2500)}`,
+        });
+      } catch {
+        // Fall back to the sidebar action when a private chat section already exists in the profile.
+      }
+      const fixture = JSON.parse(window.localStorage.getItem("veslo.e2e.globalUnpublishedDraft") || "null");
+      const firstWorkspacePath = normalizePath(fixture?.firstWorkspace?.path || fixture?.firstWorkspace?.directory);
+      const firstProjectRoot = Array.from(document.querySelectorAll("[data-project-key]")).find((projectRoot) => {
+        const key = normalizePath(projectRoot.getAttribute("data-project-key") || "");
+        return firstWorkspacePath && (key === firstWorkspacePath || key.endsWith(`/${firstWorkspacePath.split("/").pop()}`));
+      });
+      const firstProjectButton = firstProjectRoot
+        ? Array.from(firstProjectRoot.querySelectorAll("button")).find((candidate) =>
+          buttonMatchesLabel(candidate, createSessionInProjectLabels))
+        : null;
+      if (firstProjectButton) {
+        dispatchClickSequence(firstProjectButton);
+        return await waitUntil(() => {
+          const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+          if (!(candidate instanceof HTMLElement) || !isVisibleElement(candidate)) return false;
+          const activePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
+          return activePendingDraftKey.includes("directory") && activePendingDraftKey !== previousActivePendingDraftKey
+            ? candidate
+            : false;
+        }, {
+          timeout: 60000,
+          interval: 500,
+          message: `First project unpublished draft did not open. PreviousPending=${previousActivePendingDraftKey}. ActivePending=${window.localStorage.getItem("veslo.active-pending-draft.v1") || ""}. Body=${visibleBodyText().slice(0, 2500)}`,
+        });
+      }
+      const chatButton = await waitUntil(() => {
+        const chatRoots = Array.from(document.querySelectorAll('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"]'));
+        for (const chatRoot of chatRoots) {
+          const button = Array.from(chatRoot.querySelectorAll("button")).find((candidate) =>
+            buttonMatchesLabel(candidate, sidebarNewChatLabels) &&
+            !buttonMatchesLabel(candidate, chatsSectionLabels));
+          if (button) return button;
+        }
+        return findButton(newChatLabels);
+      }, {
+        timeout: 60000,
+        interval: 500,
+        message: `New chat action did not appear. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).filter(isVisibleElement).map(buttonValues))}`,
+      });
+      dispatchClickSequence(chatButton);
+      return await waitUntil(() => {
+        const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+        if (!(candidate instanceof HTMLElement) || !isVisibleElement(candidate)) return false;
+        const activePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
+        return activePendingDraftKey.includes("new-private") && activePendingDraftKey !== previousActivePendingDraftKey
+          ? candidate
+          : false;
+      }, {
+        timeout: 120000,
+        interval: 500,
+        message: `Another unpublished chat did not open. PreviousPending=${previousActivePendingDraftKey}. ActivePending=${window.localStorage.getItem("veslo.active-pending-draft.v1") || ""}. Body=${visibleBodyText().slice(0, 2500)}`,
+      });
+    };
+    const assertComposerDoesNotRestoreOldDraft = async (textbox, draftText, token, stableMs = 4000) => {
+      setProgress("observing-new-chat-composer-stability", { stableMs });
+      const deadline = Date.now() + stableMs;
+      let latest = "";
+      while (Date.now() < deadline) {
+        latest = normalize(textbox.textContent || textbox.value || "");
+        assert(
+          !latest.includes(draftText) && !latest.includes(token),
+          `Old project-specific draft restored in another unpublished chat. Composer=${latest}`,
+        );
+        await sleep(250);
+      }
+      return latest;
+    };
+    const vesloRequest = async (connection, path) => {
+      const response = await fetch(`${connection.baseUrl}${path}`, {
+        headers: {
+          authorization: `Bearer ${connection.clientToken}`,
+          accept: "application/json",
+        },
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(`Veslo server request failed ${response.status} ${path}: ${text.slice(0, 1000)}`);
+      }
+      return text.trim() ? JSON.parse(text) : null;
+    };
+    const listWorkspaceConversations = async (connection, workspaceId, directory) => {
+      const search = new URLSearchParams();
+      const normalizedDirectory = normalizePath(directory);
+      if (normalizedDirectory) search.set("directory", normalizedDirectory);
+      const query = search.toString();
+      return await vesloRequest(
+        connection,
+        `/workspace/${encodeURIComponent(workspaceId)}/conversations${query ? `?${query}` : ""}`,
+      );
+    };
+    const conversationMatches = (item, createEntry) => {
+      const ids = [
+        item?.conversationId,
+        item?.id,
+        item?.opencodeSessionId,
+      ].map((value) => trimText(value)).filter(Boolean);
+      const expected = [
+        createEntry?.conversationId,
+        createEntry?.opencodeSessionId,
+      ].map((value) => trimText(value)).filter(Boolean);
+      return expected.some((id) => ids.includes(id));
+    };
+    const assertMaterializedConversationBelongsToWorkspace = async (connection, createEntry, expected, unexpected) => {
+      const expectedWorkspaceId = trimText(expected?.workspace?.id);
+      const expectedDirectory = normalizePath(expected?.directory || expected?.workspace?.path || expected?.workspace?.directory);
+      const unexpectedWorkspaceId = trimText(unexpected?.workspace?.id);
+      const unexpectedDirectory = normalizePath(unexpected?.directory || unexpected?.workspace?.path || unexpected?.workspace?.directory);
+      assert(expectedWorkspaceId && expectedDirectory, `Expected workspace metadata is missing: ${JSON.stringify(expected)}`);
+      assert(unexpectedWorkspaceId && unexpectedDirectory, `Unexpected workspace metadata is missing: ${JSON.stringify(unexpected)}`);
+
+      let latestExpected = null;
+      const matched = await waitUntil(async () => {
+        latestExpected = await listWorkspaceConversations(connection, expectedWorkspaceId, expectedDirectory);
+        const items = Array.isArray(latestExpected?.items) ? latestExpected.items : [];
+        return items.find((item) => conversationMatches(item, createEntry)) || false;
+      }, {
+        timeout: 60000,
+        interval: 1000,
+        message: `Materialized conversation was not listed under the selected workspace ${expectedWorkspaceId}. Conversation=${JSON.stringify(createEntry)} Latest=${JSON.stringify(latestExpected)}`,
+      });
+
+      const unexpectedList = await listWorkspaceConversations(connection, unexpectedWorkspaceId, unexpectedDirectory);
+      const unexpectedItems = Array.isArray(unexpectedList?.items) ? unexpectedList.items : [];
+      assert(
+        !unexpectedItems.some((item) => conversationMatches(item, createEntry)),
+        `Materialized conversation also appeared under the wrong workspace ${unexpectedWorkspaceId}. Conversation=${JSON.stringify(createEntry)} WrongList=${JSON.stringify(unexpectedList)}`,
+      );
+
+      return { matched, expectedList: latestExpected, unexpectedList };
+    };
+
+    const watchdog = setTimeout(() => {
+      appendMarker(errorSelector, {
+        message: "Global unpublished draft watchdog timed out before the task settled.",
+        progress: window.__vesloGlobalUnpublishedDraftProgress ?? null,
+        sendTrace: sendTrace(),
+        body: visibleBodyText().slice(0, 4000),
+      });
+    }, 390000);
+
+    try {
+      await waitUntil(() => document.querySelector("#root")?.children.length > 0, {
+        timeout: 15000,
+        message: "Veslo root did not render child UI",
+      });
+      window.localStorage.setItem("veslo.sidebar-session-view.v1", "by-project");
+      window.localStorage.removeItem("veslo.sidebar-collapsed-projects.v1");
+      window.localStorage.removeItem("veslo.sidebar-chat-collapsed.v1");
+
+      setProgress("loading-workspace-fixture");
+      const fixture = JSON.parse(window.localStorage.getItem("veslo.e2e.globalUnpublishedDraft") || "null");
+      assert(fixture?.firstWorkspace?.id && fixture?.secondWorkspace?.id, `Global unpublished draft fixture is unavailable: ${JSON.stringify(fixture)}`);
+      const bootstrap = await waitUntil(async () => {
+        const info = await tauriInvoke("workspace_bootstrap").catch(() => null);
+        return Array.isArray(info?.workspaces) && info.workspaces.length > 0 ? info : false;
+      }, {
+        timeout: 45000,
+        interval: 500,
+        message: "Workspace bootstrap did not expose a local workspace",
+      });
+      const firstWorkspace = bootstrap.workspaces.find((workspace) => workspace.id === fixture.firstWorkspace.id) ?? fixture.firstWorkspace;
+      const secondWorkspace = bootstrap.workspaces.find((workspace) => workspace.id === fixture.secondWorkspace.id) ?? fixture.secondWorkspace;
+      const firstDirectory = normalizePath(firstWorkspace?.directory || firstWorkspace?.path);
+      const secondDirectory = normalizePath(fixture.secondDirectory || secondWorkspace?.path || secondWorkspace?.directory);
+      assert(firstWorkspace?.id && firstDirectory, `Initial workspace is unavailable: ${JSON.stringify(bootstrap)}`);
+      assert(secondWorkspace?.id && secondDirectory, `Second workspace is unavailable: ${JSON.stringify(bootstrap)}`);
+
+      const connection = await waitForLocalVesloServerReady();
+      await waitForAiAccessReady(connection);
+      await waitForWorkspaceEngineReady(firstWorkspace);
+      await ensureByProjectSidebarMode();
+
+      setProgress("opening-bare-session");
+      navigateToHash("/session");
+      await waitUntil(() => window.location.hash.includes("/session"), {
+        timeout: 10000,
+        message: "Session route did not become active",
+      });
+      const textbox = await waitForComposer();
+      const token = `global-unpublished-draft-${Date.now()}`;
+      const draftText = `Reply with exactly ${token}. No other words.`;
+      setComposerText(textbox, draftText);
+      await waitUntil(() => composerText() === draftText, {
+        timeout: 10000,
+        message: `Composer did not retain the unique draft. Composer=${composerText()}`,
+      });
+      await sleep(350);
+
+      const secondTargetId = targetIdForWorkspace(secondWorkspace);
+      await switchComposerTarget(secondTargetId);
+      await waitUntil(() => composerText() === draftText, {
+        timeout: 10000,
+        interval: 250,
+        message: `Composer text did not survive target switch. Composer=${composerText()}`,
+      });
+      const persistedAfterSwitch = await waitForSinglePersistedDraftOnWorkspace(draftText, secondWorkspace, secondDirectory);
+      await waitForWorkspaceEngineReady(secondWorkspace);
+
+      const createEntry = await sendCurrentComposer(draftText, token);
+      const workspaceConversationCheck = await assertMaterializedConversationBelongsToWorkspace(
+        connection,
+        createEntry,
+        { workspace: secondWorkspace, directory: secondDirectory },
+        { workspace: firstWorkspace, directory: firstDirectory },
+      );
+      const remainingDraftsAfterSend = await waitForDraftTextRemoved(draftText);
+
+      const anotherComposer = await openAnotherUnpublishedChat();
+      const newChatComposerText = await assertComposerDoesNotRestoreOldDraft(anotherComposer, draftText, token);
+
+      appendMarker(completeSelector, {
+        ok: true,
+        token,
+        secondWorkspaceId: secondWorkspace.id,
+        secondDirectory,
+        persistedAfterSwitch,
+        createEntry,
+        workspaceConversationCheck,
+        remainingDraftsAfterSend,
+        newChatComposerText,
+        sendTrace: sendTrace(),
+      });
+    } catch (error) {
+      let drafts = null;
+      try {
+        drafts = await readDrafts();
+      } catch (draftError) {
+        drafts = { error: draftError?.message || String(draftError) };
+      }
+      appendMarker(errorSelector, {
+        message: error?.message || String(error),
+        stack: error?.stack || null,
+        progress: window.__vesloGlobalUnpublishedDraftProgress ?? null,
+        sendTrace: sendTrace(),
+        drafts,
+        body: visibleBodyText().slice(0, 4000),
+      });
+    } finally {
+      clearTimeout(watchdog);
+    }
+  })();
+}
+
+true;
+'''
+
+[[step]]
+name = "global unpublished draft task finished"
+action = "wait"
+target = "[data-testid=\"global-unpublished-draft-complete\"], [data-testid=\"global-unpublished-draft-error\"]"
+timeout_ms = 410000
+
+[[step]]
+name = "global unpublished draft task succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="global-unpublished-draft-error"]');
+if (error) {
+  throw new Error(`Global unpublished draft failed: ${(error.textContent || "").slice(0, 20000)}`);
+}
+true;
+'''

@@ -4,6 +4,22 @@ import test from "node:test";
 
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 
+test("pending draft sends snapshot selected target metadata and fall back to the global draft id", () => {
+  const sendPromptStart = appSource.indexOf("  async function sendPrompt(");
+  const pendingSnapshot = appSource.indexOf("const pendingDraftSendState = (() => {", sendPromptStart);
+  const pendingSnapshotEnd = appSource.indexOf("    })();", pendingSnapshot);
+  assert.notEqual(sendPromptStart, -1, "sendPrompt should exist");
+  assert.notEqual(pendingSnapshot, -1, "sendPrompt should snapshot pending draft state");
+  assert.notEqual(pendingSnapshotEnd, -1, "pending draft snapshot should be bounded");
+  const pendingSnapshotSource = appSource.slice(pendingSnapshot, pendingSnapshotEnd);
+
+  assert.match(
+    pendingSnapshotSource,
+    /const pendingDraftMeta = activePendingDraftMeta\(\);[\s\S]*meta: pendingDraftMeta,[\s\S]*draftId: pendingDraftMeta\?\.id\?\.trim\(\) \|\| GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,/s,
+    "first-send cleanup should use the selected pending metadata and still delete the global draft record if metadata is unavailable",
+  );
+});
+
 test("successful pending draft sends consume the pending draft only after the prompt handoff succeeds", () => {
   assert.match(
     appSource,

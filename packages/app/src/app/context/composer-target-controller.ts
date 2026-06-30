@@ -4,17 +4,20 @@ import {
   deleteSessionComposerDraft,
   setSessionComposerDraft,
 } from "../pages/session-composer-drafts";
-import { resolveComposerTargetConflict } from "../lib/composer-target-draft-conflict";
-import { resolvePendingDraftKey } from "../lib/pending-session-drafts";
+import {
+  GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
+  isGlobalUnpublishedPendingDraftSummary,
+  isPendingDraftKey,
+  resolveComposerStorageKey,
+  resolvePendingDraftKey,
+} from "../lib/pending-session-drafts";
 import type {
-  PendingSessionDraftGetResult,
   PendingSessionDraftPutInput,
   PendingSessionDraftSummary,
 } from "../lib/tauri";
 import type {
   ComposerDraft,
   ComposerTargetOption,
-  ComposerTargetSwitchResolution,
   ComposerTargetSwitchResult,
   View,
   WorkspaceDisplay,
@@ -73,14 +76,9 @@ export type ComposerTargetControllerDeps = {
   pendingDraftsReady?: Accessor<boolean>;
   currentComposerStorageKey: Accessor<string>;
   composerDraft: Accessor<ComposerDraft>;
-  createEmptyComposerDraft: () => ComposerDraft;
   pendingSessionDraftsList: () => Promise<PendingSessionDraftSummary[]>;
-  pendingSessionDraftsGet: (draftId: string) => Promise<PendingSessionDraftGetResult | null>;
   pendingSessionDraftsPut: (draft: PendingSessionDraftPutInput) => Promise<PendingSessionDraftSummary>;
   pendingSessionDraftsDelete: (draftId: string) => Promise<boolean>;
-  formatPendingDraftAttachmentRestoreError: (
-    attachmentFailures: { attachmentId: string; name: string; message: string }[],
-  ) => string | null;
   isConsumedPendingDraftId: (draftId: string | null | undefined) => boolean;
   markPendingDraftConsumed: (draftId: string | null | undefined) => void;
   clearConsumedPendingDraftId: (draftId: string | null | undefined) => void;
@@ -94,13 +92,6 @@ export type ComposerTargetControllerDeps = {
   addOpencodeCacheHint: (message: string) => string;
 };
 
-const createPendingDirectoryDraftId = (now: number) =>
-  `pending-directory-${
-    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : `${now}-${Math.random().toString(16).slice(2)}`
-  }`;
-
 const composerTargetWorkspaceLabel = (workspace: ComposerTargetWorkspace) =>
   workspace.displayName?.trim() ||
   workspace.vesloWorkspaceName?.trim() ||
@@ -110,6 +101,14 @@ const composerTargetWorkspaceLabel = (workspace: ComposerTargetWorkspace) =>
   workspace.path?.trim() ||
   workspace.directory?.trim() ||
   workspace.id;
+
+const resolveMovedComposerStorageKey = (storageKey: string | null | undefined) => {
+  const trimmed = storageKey?.trim() ?? "";
+  if (!trimmed) return "";
+  return isPendingDraftKey(trimmed)
+    ? resolveComposerStorageKey({ pendingDraftKey: trimmed })
+    : resolveComposerStorageKey({ sessionId: trimmed });
+};
 
 export function createComposerTargetController(deps: ComposerTargetControllerDeps) {
   const [pendingDraftSummaries, setPendingDraftSummaries] = createSignal<PendingSessionDraftSummary[]>([]);
@@ -126,7 +125,7 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
 
     try {
       const summaries = (await deps.pendingSessionDraftsList()).filter(
-        (draft) => !deps.isConsumedPendingDraftId(draft.id),
+        (draft) => isGlobalUnpublishedPendingDraftSummary(draft) && !deps.isConsumedPendingDraftId(draft.id),
       );
       if (seq === pendingDraftRefreshSeq) {
         setPendingDraftSummaries(summaries);
@@ -171,27 +170,6 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
     return null;
   };
 
-  const loadPendingDraftComposer = async (summary: PendingSessionDraftSummary): Promise<ComposerDraft | null> => {
-    if (!deps.isTauriRuntime()) return null;
-
-    try {
-      const loaded = await deps.pendingSessionDraftsGet(summary.id);
-      if (!loaded) return null;
-
-      const restoreError = deps.formatPendingDraftAttachmentRestoreError(loaded.attachmentFailures);
-      if (restoreError) {
-        deps.setError(restoreError);
-      }
-
-      return loaded.draft.composer;
-    } catch (error) {
-      deps.reportError(error, "pendingDrafts.switch.load");
-      const message = error instanceof Error ? error.message : deps.safeStringify(error);
-      deps.setError(deps.addOpencodeCacheHint(message));
-      return null;
-    }
-  };
-
   const putPendingDraftForTarget = async (
     target: ComposerTargetOption,
     draft: ComposerDraft,
@@ -220,7 +198,7 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
               composer: draft,
             }
           : {
-              id: createPendingDirectoryDraftId(now),
+              id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
               kind: "directory",
               workspaceId,
               directory,
@@ -292,7 +270,7 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
         }
 
         const summary = await deps.pendingSessionDraftsPut({
-          id: `pending-new-private-${scratch.id}`,
+          id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
           kind: "new-private",
           workspaceId: scratch.id,
           directory: null,
@@ -323,14 +301,17 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
   }) => {
     const previousStorageKey = input.previousStorageKey?.trim() ?? "";
     const nextStorageKey = input.nextStorageKey.trim();
-    if (!previousStorageKey || !nextStorageKey || previousStorageKey === nextStorageKey) return;
+    const previousComposerStorageKey = resolveMovedComposerStorageKey(previousStorageKey);
+    const nextComposerStorageKey = resolveMovedComposerStorageKey(nextStorageKey);
+    if (previousComposerStorageKey && nextComposerStorageKey && previousComposerStorageKey !== nextComposerStorageKey) {
+      deps.setComposerDraftBySessionId((current) =>
+        deleteSessionComposerDraft(current, { storageKey: previousStorageKey }),
+      );
+    }
 
     const previousDraftId = input.previousSummary?.id.trim() ?? "";
     const nextDraftId = input.nextSummary.id.trim();
-    deps.setComposerDraftBySessionId((current) =>
-      deleteSessionComposerDraft(current, { storageKey: previousStorageKey }),
-    );
-
+    if (input.previousSummary && !isGlobalUnpublishedPendingDraftSummary(input.previousSummary)) return;
     if (!previousDraftId || previousDraftId === nextDraftId || !deps.isTauriRuntime()) return;
 
     try {
@@ -416,10 +397,7 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
     };
   };
 
-  const switchComposerTargetNow = async (
-    targetId: string,
-    resolution?: ComposerTargetSwitchResolution,
-  ): Promise<ComposerTargetSwitchResult> => {
+  const switchComposerTargetNow = async (targetId: string): Promise<ComposerTargetSwitchResult> => {
     let target = findComposerTargetOption(targetId);
     if (!target) return { status: "blocked", message: deps.labels.targetUnavailable() };
 
@@ -436,83 +414,32 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
     const summaries = await refreshPendingDraftSummaries({ force: true });
     const currentDraft = deps.composerDraft();
     const destinationSummary = findPendingDraftSummaryForTarget(target, summaries);
-    const destinationDraft = destinationSummary ? await loadPendingDraftComposer(destinationSummary) : null;
-    if (destinationSummary && !destinationDraft) {
-      return { status: "blocked", message: deps.labels.targetUnavailable() };
-    }
-    const decision = resolveComposerTargetConflict({ current: currentDraft, destination: destinationDraft });
-
-    if (decision.kind === "conflict" && !resolution) {
-      return {
-        status: "conflict",
-        conflict: {
-          targetId: target.id,
-          targetLabel: target.label,
-          currentPreview: decision.currentPreview,
-          destinationPreview: decision.destinationPreview,
-        },
-      };
-    }
-
-    const shouldUseCurrent = resolution === "use-current" || decision.kind === "use-current";
-    const shouldLoadExisting = resolution === "load-existing" || decision.kind === "load-destination";
-
-    if (shouldUseCurrent) {
-      const previousPendingDraftKey = deps.currentComposerStorageKey();
-      const previousPendingDraftMeta = deps.activePendingDraftMeta();
-      const activated = await activateTargetWorkspace(target, destinationSummary);
-      if (!activated) return { status: "blocked", message: deps.labels.targetUnavailable() };
-      const summary = await putPendingDraftForTarget(target, currentDraft, summaries);
-      if (!summary) return { status: "blocked", message: deps.labels.targetUnavailable() };
-      deps.setComposerDraftBySessionId((current) =>
-        setSessionComposerDraft(current, { storageKey: target.id }, currentDraft),
-      );
-      deps.setActivePendingDraftKey(target.id);
-      deps.setActivePendingDraftMeta(summary);
-      deps.setView("session");
-      await consumeMovedPendingDraft({
-        previousStorageKey: previousPendingDraftKey,
-        previousSummary: previousPendingDraftMeta,
-        nextStorageKey: target.id,
-        nextSummary: summary,
-      });
-      return { status: "switched" };
-    }
-
-    if (shouldLoadExisting && destinationSummary && destinationDraft) {
-      const activated = await activateTargetWorkspace(target, destinationSummary);
-      if (!activated) return { status: "blocked", message: deps.labels.targetUnavailable() };
-      deps.setComposerDraftBySessionId((current) =>
-        setSessionComposerDraft(current, { storageKey: target.id }, destinationDraft),
-      );
-      deps.setActivePendingDraftKey(target.id);
-      deps.setActivePendingDraftMeta(destinationSummary);
-      deps.setView("session");
-      return { status: "switched" };
-    }
-
-    const emptyDraft = deps.createEmptyComposerDraft();
+    const previousPendingDraftKey = deps.currentComposerStorageKey();
+    const previousPendingDraftMeta = deps.activePendingDraftMeta();
     const activated = await activateTargetWorkspace(target, destinationSummary);
     if (!activated) return { status: "blocked", message: deps.labels.targetUnavailable() };
-    const summary = await putPendingDraftForTarget(target, emptyDraft, summaries);
+    const summary = await putPendingDraftForTarget(target, currentDraft, summaries);
     if (!summary) return { status: "blocked", message: deps.labels.targetUnavailable() };
     deps.setComposerDraftBySessionId((current) =>
-      setSessionComposerDraft(current, { storageKey: target.id }, emptyDraft),
+      setSessionComposerDraft(current, { storageKey: target.id }, currentDraft),
     );
     deps.setActivePendingDraftKey(target.id);
     deps.setActivePendingDraftMeta(summary);
     deps.setView("session");
+    await consumeMovedPendingDraft({
+      previousStorageKey: previousPendingDraftKey,
+      previousSummary: previousPendingDraftMeta,
+      nextStorageKey: target.id,
+      nextSummary: summary,
+    });
     return { status: "switched" };
   };
 
   let composerTargetSwitchQueue: Promise<void> = Promise.resolve();
-  const switchComposerTarget = async (
-    targetId: string,
-    resolution?: ComposerTargetSwitchResolution,
-  ): Promise<ComposerTargetSwitchResult> => {
+  const switchComposerTarget = async (targetId: string): Promise<ComposerTargetSwitchResult> => {
     const queuedSwitch = composerTargetSwitchQueue
       .catch(() => undefined)
-      .then(() => switchComposerTargetNow(targetId, resolution));
+      .then(() => switchComposerTargetNow(targetId));
     composerTargetSwitchQueue = queuedSwitch.then(() => undefined, () => undefined);
     return await queuedSwitch;
   };

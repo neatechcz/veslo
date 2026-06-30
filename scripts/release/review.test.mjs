@@ -54,3 +54,24 @@ test("release review verifies Windows installer WSL provisioning stays dormant b
     assert.equal(report.checks.find((entry) => entry.label === label)?.ok, true);
   }
 });
+
+test("release review verifies GlitchTip release monitoring wiring", () => {
+  const scriptPath = resolve(import.meta.dirname, "./review.mjs");
+  const output = execFileSync("node", [scriptPath, "--json"], {
+    cwd: resolve(import.meta.dirname, "../.."),
+    encoding: "utf8",
+  });
+
+  const report = JSON.parse(output);
+  const labels = new Set(report.checks.map((entry) => entry.label));
+
+  for (const label of [
+    "macOS release builds embed GlitchTip DSN for frontend and native monitoring",
+    "Windows release builds embed GlitchTip DSN for frontend and native monitoring",
+    "Manual Windows MSI workflows embed GlitchTip DSN for frontend and native monitoring",
+    "Release docs describe GlitchTip DSN as public and release-owned",
+  ]) {
+    assert.ok(labels.has(label), `expected release review to report: ${label}`);
+    assert.equal(report.checks.find((entry) => entry.label === label)?.ok, true);
+  }
+});

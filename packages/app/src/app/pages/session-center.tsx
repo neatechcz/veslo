@@ -6,7 +6,6 @@ export type SessionCenterProps = {
   transcript: JSX.Element;
   todoPanel: JSX.Element;
   composerArea: JSX.Element;
-  conflictModal: JSX.Element;
 };
 
 type SessionCenterSlotProps = {
@@ -49,12 +48,6 @@ function SessionCenterBottomStack(props: {
   );
 }
 
-function SessionCenterModalLayer(props: {
-  conflictModal: JSX.Element;
-}) {
-  return <>{props.conflictModal}</>;
-}
-
 export function createSessionCenterSlots(props: SessionCenterProps) {
   return {
     topChrome: (
@@ -74,11 +67,6 @@ export function createSessionCenterSlots(props: SessionCenterProps) {
         composerArea={props.composerArea}
       />
     ),
-    modalLayer: (
-      <SessionCenterModalLayer
-        conflictModal={props.conflictModal}
-      />
-    ),
   };
 }
 
@@ -90,7 +78,6 @@ export default function SessionCenter(props: SessionCenterProps) {
       {slots.topChrome}
       {slots.transcriptRegion}
       {slots.bottomStack}
-      {slots.modalLayer}
     </SessionCenterRoot>
   );
 }

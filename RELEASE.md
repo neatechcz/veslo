@@ -13,6 +13,7 @@ The skill must resolve beta vs production, generate public-safe release notes fr
 - Sync the default branch (currently `main`).
 - Run `pnpm release:review` and fix any mismatches.
 - If you are building sidecar assets, set `SOURCE_DATE_EPOCH` to the tag timestamp for deterministic manifests.
+- Confirm the public, release-owned GitHub Actions variable `VESLO_GLITCHTIP_DSN` is configured before desktop release builds. It is intentionally public in the packaged app, but it is not user-configurable and must not be exposed as an application setting.
 
 ## App release (desktop)
 

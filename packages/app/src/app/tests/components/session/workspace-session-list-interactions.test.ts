@@ -723,3 +723,11 @@ test("archive action stores clicked button as pending confirm target before armi
     "first archive click should capture button target before pending mode, so outside-click cancellation does not clear confirm click",
   );
 });
+
+test("pending archive confirmation cleanup validates workspace-scoped archive keys", () => {
+  assert.match(
+    source,
+    /const validArchiveKeys = new Set\(\s*projectRowsLoaded\(\)\.map\(\(row\) => archiveKeyFor\(row\.workspace\.id, row\.session\.id\)\),\s*\);[\s\S]*for \(const row of recentRowsLoaded\(\)\) validArchiveKeys\.add\(archiveKeyFor\(row\.workspace\.id, row\.session\.id\)\);[\s\S]*const pendingId = pendingArchiveConfirmationSessionId\(\);[\s\S]*if \(pendingId && !validArchiveKeys\.has\(pendingId\)\) \{/s,
+    "pending archive confirmation should not be cleared by comparing an archive key against raw session ids",
+  );
+});

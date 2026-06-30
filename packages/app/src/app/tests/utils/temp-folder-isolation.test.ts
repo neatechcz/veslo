@@ -666,7 +666,7 @@ test("after pending draft deletion New session falls back to a fresh private wor
 
   assert.match(
     openNewSessionSource,
-    /const pendingDrafts = \(await deps\.pendingSessionDraftsList\(\)\)\.filter\(\(draft\) => !isConsumedPendingDraftId\(draft\.id\)\);[\s\S]*const existingPendingDraft = pendingDrafts\.find\(\(draft\) => draft\.kind === "new-private"\) \?\? null;[\s\S]*if \(existingPendingDraft\) \{[\s\S]*return true;\s*\}[\s\S]*const scratch = await deps\.workspace\.createScratchWorkspace\(\);/s,
+    /const pendingDrafts = await listGlobalPendingDraftSummaries\(\);[\s\S]*const existingPendingDraft = pendingDrafts\.find\(\(draft\) => draft\.kind === "new-private"\) \?\? null;[\s\S]*if \(existingPendingDraft\) \{[\s\S]*return true;\s*\}[\s\S]*const scratch = await deps\.workspace\.createScratchWorkspace\(\);/s,
     "when the private pending draft is missing, New session should fall through to fresh scratch workspace creation",
   );
   assert.match(

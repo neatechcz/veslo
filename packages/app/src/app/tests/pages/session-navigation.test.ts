@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { resolvePendingDraftKey } from "../../lib/pending-session-drafts.js";
+import {
+  GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
+  resolvePendingDraftKey,
+} from "../../lib/pending-session-drafts.js";
 import {
   createSessionFromDirectorySelection,
   createSessionWithWorkspaceActivation,
@@ -721,8 +724,8 @@ test("first New session creates one private workspace and opens a persisted pend
   assert.notEqual(openNewSessionSource, "", "New session flow should exist in pending draft controller");
   assert.match(
     openNewSessionSource,
-    /const newPrivatePendingDraftKey = resolvePendingDraftKey\(\{ kind: "new-private" \}\);[\s\S]*const pendingDrafts = \(await deps\.pendingSessionDraftsList\(\)\)\.filter\(\(draft\) => !isConsumedPendingDraftId\(draft\.id\)\);[\s\S]*const existingPendingDraft = pendingDrafts\.find\(\(draft\) => draft\.kind === "new-private"\) \?\? null;/s,
-    "New session should look for an existing private pending draft before creating a workspace",
+    /const newPrivatePendingDraftKey = resolvePendingDraftKey\(\{ kind: "new-private" \}\);[\s\S]*const pendingDrafts = await listGlobalPendingDraftSummaries\(\);[\s\S]*const existingPendingDraft = pendingDrafts\.find\(\(draft\) => draft\.kind === "new-private"\) \?\? null;/s,
+    "New session should look for an existing global private pending draft before creating a workspace",
   );
   assert.match(
     openNewSessionSource,
@@ -872,17 +875,22 @@ test("project plus resolves the target workspace directory after activation", ()
   );
 });
 
-test("fresh directory pending drafts use collision-resistant ids", () => {
+test("fresh directory pending drafts use the fixed global unpublished id", () => {
   assert.notEqual(openDirectoryPendingDraftSource, "", "Directory pending draft flow should exist in pending draft controller");
+  assert.equal(
+    GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
+    "pending-global-unpublished",
+    "global unpublished drafts should keep the fixed durable id",
+  );
   assert.doesNotMatch(
     openDirectoryPendingDraftSource,
     /id: `pending-directory-\$\{workspaceId\}-\$\{now\}`/,
-    "fresh directory drafts should not rely on workspace id plus millisecond clock for uniqueness",
+    "fresh directory drafts should not create per-workspace pending draft ids",
   );
   assert.match(
     openDirectoryPendingDraftSource,
-    /typeof crypto !== "undefined" && typeof crypto\.randomUUID === "function"[\s\S]*crypto\.randomUUID\(\)[\s\S]*Math\.random\(\)\.toString\(16\)\.slice\(2\)/s,
-    "fresh directory drafts should add a collision-resistant suffix independent of clock granularity",
+    /id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,/,
+    "fresh directory drafts should persist through the fixed global unpublished draft id",
   );
 });
 

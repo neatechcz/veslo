@@ -4,6 +4,7 @@ import test from "node:test";
 
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 const sessionSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
+const transcriptViewportSource = readFileSync(new URL("../../pages/session-transcript-viewport.ts", import.meta.url), "utf8");
 const pendingDraftControllerSource = readFileSync(
   new URL("../../context/pending-session-draft-controller.ts", import.meta.url),
   "utf8",
@@ -106,8 +107,8 @@ test("bare new-session screen centers the composer entry without quickstart temp
 test("first submit dismisses the centered composer entry before backend handoff resolves", () => {
   assert.match(
     sessionSource,
-    /const composerEntryDismissed = createMemo\(\(\) =>\s*Boolean\(composerEntryDismissedBySessionKey\(\)\[currentSessionQueueKey\(\)\]\),\s*\);/s,
-    "the centered entry state should have a local per-session dismissal flag",
+    /const composerEntryDismissed = createMemo\(\(\) => \{[\s\S]*const dismissedBySessionKey = composerEntryDismissedBySessionKey\(\);[\s\S]*if \(dismissedBySessionKey\[currentSessionQueueKey\(\)\]\) return true;[\s\S]*if \(props\.selectedSessionId\) return false;[\s\S]*return Boolean\(dismissedBySessionKey\[pendingSessionQueueKey\(\)\]\);[\s\S]*\}\);/s,
+    "the centered entry state should have a local per-session dismissal flag with a base pending-key fallback",
   );
 
   assert.match(
@@ -118,15 +119,29 @@ test("first submit dismisses the centered composer entry before backend handoff 
 
   assert.match(
     sessionSource,
-    /const handleSendPrompt = async \(draft: ComposerDraft, options: ComposerSendOptions = \{\}\) => \{[\s\S]*if \(showComposerEntryState\(\)\) \{[\s\S]*dismissComposerEntryForSessionKey\(\);[\s\S]*\}/s,
-    "the send handler should dismiss the entry immediately when the user submits from the bare new-session state",
+    /const handleSendPrompt = async \(draft: ComposerDraft, options: ComposerSendOptions = \{\}\) => \{[\s\S]*if \(showComposerEntryState\(\) \|\| showFooterComposerTargetContext\(\)\) \{[\s\S]*dismissComposerEntryForSessionKey\(\);[\s\S]*\}/s,
+    "the send handler should dismiss the no-session target context immediately when the user submits from the bare new-session state",
+  );
+});
+
+test("first submit hides the no-session target picker in the footer composer path", () => {
+  assert.match(
+    sessionSource,
+    /const showFooterComposerTargetContext = createMemo\(\(\) =>\s*!props\.selectedSessionId &&\s*!composerEntryDismissed\(\),\s*\);/s,
+    "the footer no-session target picker should be hidden as soon as the entry dismissal flag is set",
+  );
+
+  assert.match(
+    sessionSource,
+    /<Show when=\{showFooterComposerTargetContext\(\)\}>[\s\S]*<ComposerTargetPicker[\s\S]*data-testid="composer-entry-target-heading"[\s\S]*<\/Show>/s,
+    "the footer target picker/heading should use the dismissal-aware guard instead of only checking selectedSessionId",
   );
 });
 
 test("materializing a pending submitted draft preserves the visible run indicator", () => {
   assert.match(
     sessionSource,
-    /const pendingBaseKey = pendingSessionQueueKey\(\);[\s\S]*const pendingKey = !previousSessionId[\s\S]*pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null[\s\S]*const previousSessionKey = previousSessionId \? sessionQueueKeyForSessionId\(previousSessionId\) : null;[\s\S]*if \(!pendingKey && previousSessionKey\) \{\s*resetRunState\(previousSessionKey\);\s*\}/s,
+    /const pendingBaseKey = pendingSessionQueueKey\(\);[\s\S]*const pendingKey = !previousSessionId[\s\S]*pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null[\s\S]*const previousSessionKey = previousSessionId \? sessionQueueKeyForSessionId\(previousSessionId\) : null;[\s\S]*if \(!pendingKey && previousSessionKey\) \{\s*preserveRunStateOnSessionSwitch\(previousSessionKey\);[\s\S]*\}/s,
     "selecting the real session created for a pending submit should remap the optimistic draft without resetting the active run indicator",
   );
 
@@ -138,8 +153,8 @@ test("materializing a pending submitted draft preserves the visible run indicato
 
   assert.match(
     sessionSource,
-    /startRun\(materializedSessionIdFromHandoff \? sessionQueueKeyForSessionId\(materializedSessionIdFromHandoff\) : sessionKey\);/,
-    "accepted pending sends should continue the visible run on the materialized real session key",
+    /createEffect\(\(\) => \{[\s\S]*const status = props\.sessionStatus;[\s\S]*if \(status === "running" \|\| status === "retry"\) \{[\s\S]*const sessionKey = currentSessionQueueKey\(\);[\s\S]*startRun\(sessionKey\);[\s\S]*setRunHasBegunForSessionKey\(sessionKey, true\);[\s\S]*\}[\s\S]*\}\);/s,
+    "running or retry session status should continue the visible run on the current session key",
   );
 });
 
@@ -182,7 +197,13 @@ test("optimistic responding state renders as the footer run indicator, not assis
 
   assert.match(
     sessionSource,
-    /const renderedMessages = createMemo\(\(\) => \{[\s\S]*const optimisticMessage = optimisticSubmittedMessage\(\);[\s\S]*const sourceMessages = optimisticMessage \? \[\.\.\.props\.messages, optimisticMessage\] : props\.messages;/s,
+    /const transcriptViewport = createSessionTranscriptViewport\(\{[\s\S]*messages: \(\) => props\.messages,[\s\S]*optimisticSubmittedMessage,[\s\S]*\}\);[\s\S]*const renderedMessages = transcriptViewport\.renderedMessages;/s,
+    "session view should delegate optimistic user message rendering to the transcript viewport controller",
+  );
+
+  assert.match(
+    transcriptViewportSource,
+    /export const resolveTranscriptSourceMessages = <T,>\(\{[\s\S]*optimisticMessage \? \[\.\.\.messages, optimisticMessage\] : \[\.\.\.messages\];/s,
     "rendered messages should append only the optimistic user message while the run indicator owns responding status",
   );
 

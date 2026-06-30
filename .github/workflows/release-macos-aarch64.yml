@@ -261,6 +261,12 @@ jobs:
       # Ensure Tauri's beforeBuildCommand (prepare:sidecar) uses our fork.
       OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
       OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
+      VESLO_GLITCHTIP_DSN: ${{ vars.VESLO_GLITCHTIP_DSN }}
+      VITE_VESLO_GLITCHTIP_DSN: ${{ vars.VESLO_GLITCHTIP_DSN }}
+      VESLO_GLITCHTIP_ENVIRONMENT: production
+      VITE_VESLO_GLITCHTIP_ENVIRONMENT: production
+      VESLO_GLITCHTIP_TRACES_SAMPLE_RATE: ${{ vars.VESLO_GLITCHTIP_TRACES_SAMPLE_RATE || '0' }}
+      VITE_VESLO_GLITCHTIP_TRACES_SAMPLE_RATE: ${{ vars.VESLO_GLITCHTIP_TRACES_SAMPLE_RATE || '0' }}
 
     strategy:
       fail-fast: false
@@ -325,6 +331,10 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Verify GlitchTip release monitoring env
+        shell: bash
+        run: node scripts/release/verify-glitchtip-release-env.mjs
 
       - name: Install OpenTUI x64 core (macOS x86_64)
         if: matrix.os_type == 'macos' && matrix.target == 'x86_64-apple-darwin'
@@ -694,6 +704,12 @@ jobs:
       VESLO_WINDOWS_SIGNING_DESCRIPTION: Veslo by Neatech
       VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS: 900
       VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS: 2
+      VESLO_GLITCHTIP_DSN: ${{ vars.VESLO_GLITCHTIP_DSN }}
+      VITE_VESLO_GLITCHTIP_DSN: ${{ vars.VESLO_GLITCHTIP_DSN }}
+      VESLO_GLITCHTIP_ENVIRONMENT: production
+      VITE_VESLO_GLITCHTIP_ENVIRONMENT: production
+      VESLO_GLITCHTIP_TRACES_SAMPLE_RATE: ${{ vars.VESLO_GLITCHTIP_TRACES_SAMPLE_RATE || '0' }}
+      VITE_VESLO_GLITCHTIP_TRACES_SAMPLE_RATE: ${{ vars.VESLO_GLITCHTIP_TRACES_SAMPLE_RATE || '0' }}
     steps:
       - name: Enable git long paths (Windows)
         shell: pwsh
@@ -748,6 +764,10 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Verify GlitchTip release monitoring env
+        shell: pwsh
+        run: node scripts/release/verify-glitchtip-release-env.mjs
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

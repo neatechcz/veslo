@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import { Bot, Check, ChevronDown, ChevronRight, CircleAlert, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
+import { Bot, Check, ChevronRight, CircleAlert, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 
 import {
@@ -1339,39 +1339,54 @@ export default function MessageList(props: MessageListProps) {
 
                                       <Show when={canShowTimelineTechnicalDetail(entry)}>
                                         {(() => {
+                                          const rowDetailId = timelineDetailId(entry);
                                           const detailCopyId = `${entry.id}:technical-detail:copy`;
                                           const copyLabel = __vesloT("common.copy", __vesloCurrentLocale());
                                           return (
-                                            <details class="mt-2">
-                                              <summary class="font-product type-ui-xs inline-flex cursor-pointer list-none items-center gap-1 text-gray-10 hover:text-gray-11">
-                                                <ChevronDown size={12} class="shrink-0" />
+                                            <div class="mt-2">
+                                              <button
+                                                type="button"
+                                                class="font-product type-ui-xs inline-flex cursor-pointer items-center gap-1 text-gray-10 hover:text-gray-11"
+                                                aria-expanded={timelineDetailExpanded(rowDetailId)}
+                                                onClick={(event) => {
+                                                  event.preventDefault();
+                                                  event.stopPropagation();
+                                                  toggleTimelineDetail(rowDetailId);
+                                                }}
+                                              >
+                                                <ChevronRight
+                                                  size={12}
+                                                  class={`shrink-0 transition-transform duration-200 ${timelineDetailExpanded(rowDetailId) ? "rotate-90" : ""}`}
+                                                />
                                                 {tr("session.timeline_technical_detail")}
-                                              </summary>
-                                              <div class="mt-1 flex items-start gap-2 rounded-xl bg-gray-2 px-2 py-1">
-                                                <pre
-                                                  data-testid="session-timeline-technical-detail-value"
-                                                  class="min-w-0 flex-1 select-text whitespace-pre-wrap break-all bg-transparent p-0 font-mono type-ui-xs text-gray-10"
-                                                >
-                                                  <code>{row.technicalDetail}</code>
-                                                </pre>
-                                                <button
-                                                  type="button"
-                                                  data-testid="session-timeline-technical-detail-copy"
-                                                  class="mt-0.5 shrink-0 rounded p-1 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.24)] select-none"
-                                                  title={copyLabel}
-                                                  aria-label={copyLabel}
-                                                  onClick={(event) => {
-                                                    event.preventDefault();
-                                                    event.stopPropagation();
-                                                    handleCopy(String(row.technicalDetail ?? ""), detailCopyId);
-                                                  }}
-                                                >
-                                                  <Show when={copyingId() === detailCopyId} fallback={<Copy size={12} />}>
-                                                    <Check size={12} class="text-green-10" />
-                                                  </Show>
-                                                </button>
-                                              </div>
-                                            </details>
+                                              </button>
+                                              <Show when={timelineDetailExpanded(rowDetailId)}>
+                                                <div class="mt-1 flex items-start gap-2 rounded-xl bg-gray-2 px-2 py-1">
+                                                  <pre
+                                                    data-testid="session-timeline-technical-detail-value"
+                                                    class="min-w-0 flex-1 select-text whitespace-pre-wrap break-all bg-transparent p-0 font-mono type-ui-xs text-gray-10"
+                                                  >
+                                                    <code>{row.technicalDetail}</code>
+                                                  </pre>
+                                                  <button
+                                                    type="button"
+                                                    data-testid="session-timeline-technical-detail-copy"
+                                                    class="mt-0.5 shrink-0 rounded p-1 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.24)] select-none"
+                                                    title={copyLabel}
+                                                    aria-label={copyLabel}
+                                                    onClick={(event) => {
+                                                      event.preventDefault();
+                                                      event.stopPropagation();
+                                                      handleCopy(String(row.technicalDetail ?? ""), detailCopyId);
+                                                    }}
+                                                  >
+                                                    <Show when={copyingId() === detailCopyId} fallback={<Copy size={12} />}>
+                                                      <Check size={12} class="text-green-10" />
+                                                    </Show>
+                                                  </button>
+                                                </div>
+                                              </Show>
+                                            </div>
                                           );
                                         })()}
                                       </Show>

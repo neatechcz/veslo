@@ -1,0 +1,106 @@
+[scenario]
+name = "composer-target-picker-submit-dismissal"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "open session and submit with picker open"
+action = "eval"
+script = '''
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const visible = (element) => {
+  if (!(element instanceof HTMLElement)) return false;
+  const rect = element.getBoundingClientRect();
+  return Boolean(element.offsetParent) && rect.width > 0 && rect.height > 0;
+};
+const visibleAll = (selector) => Array.from(document.querySelectorAll(selector)).filter(visible);
+const bodyText = () => document.body.innerText.replace(/\s+/g, " ").trim();
+const waitUntil = async (predicate, options = {}) => {
+  const timeout = options.timeout ?? 10000;
+  const interval = options.interval ?? 150;
+  const message = options.message ?? "Condition was not met";
+  const deadline = Date.now() + timeout;
+  let latest = null;
+  while (Date.now() < deadline) {
+    latest = await predicate();
+    if (latest) return latest;
+    await sleep(interval);
+  }
+  throw new Error(`${message}. Latest=${JSON.stringify(latest)} Body=${bodyText().slice(0, 2000)}`);
+};
+const navigateToHash = (path) => {
+  const oldUrl = window.location.href;
+  window.location.hash = path;
+  window.dispatchEvent(new HashChangeEvent("hashchange", {
+    oldURL: oldUrl,
+    newURL: window.location.href,
+  }));
+};
+const composerRootClass = () => {
+  const textbox = document.querySelector('[role="textbox"]');
+  let root = textbox;
+  while (
+    root instanceof HTMLElement &&
+    !(String(root.className).includes("z-20") && (String(root.className).includes("sticky") || String(root.className).includes("relative")))
+  ) {
+    root = root.parentElement;
+  }
+  return root instanceof HTMLElement ? String(root.className) : "";
+};
+
+navigateToHash("/session");
+await waitUntil(() => window.location.hash.includes("/session"), {
+  timeout: 10000,
+  message: "Session route did not become active",
+});
+
+const targetPicker = await waitUntil(() => visibleAll('[data-testid="composer-target-picker"]')[0] ?? false, {
+  timeout: 30000,
+  message: "Composer target picker did not appear on a fresh session",
+});
+targetPicker.click();
+await waitUntil(() => visibleAll('[data-testid="composer-target-option"]').length > 0, {
+  timeout: 10000,
+  message: "Composer target picker options did not open",
+});
+
+const textbox = await waitUntil(() => visibleAll('[role="textbox"]')[0] ?? false, {
+  timeout: 10000,
+  message: "Composer textbox did not appear",
+});
+const prompt = `Composer target picker dismissal ${Date.now()}`;
+textbox.focus();
+textbox.replaceChildren(document.createTextNode(prompt));
+textbox.dispatchEvent(new InputEvent("input", {
+  bubbles: true,
+  data: prompt,
+  inputType: "insertText",
+}));
+await waitUntil(() => textbox.textContent === prompt, {
+  timeout: 5000,
+  message: "Composer text was not reflected in the editor",
+});
+
+textbox.dispatchEvent(new KeyboardEvent("keydown", {
+  key: "Enter",
+  code: "Enter",
+  bubbles: true,
+  cancelable: true,
+}));
+
+await waitUntil(() => composerRootClass().includes("sticky") && composerRootClass().includes("bottom-0"), {
+  timeout: 5000,
+  message: "Composer did not move to the footer after submit",
+});
+await waitUntil(() => visibleAll('[data-testid="composer-target-picker"]').length === 0, {
+  timeout: 5000,
+  message: "Composer target picker remained visible after submit",
+});
+true;
+'''

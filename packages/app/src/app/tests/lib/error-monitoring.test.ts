@@ -193,6 +193,7 @@ test("desktop shell has native monitoring wiring", () => {
   assert.match(lib, /^mod error_monitoring;/m);
   assert.match(lib, /let _sentry_guard = error_monitoring::init_error_monitoring\(\);/);
   assert.match(monitoring, /VESLO_GLITCHTIP_DSN/);
+  assert.match(monitoring, /option_env!\("VESLO_GLITCHTIP_DSN"\)/);
   assert.match(monitoring, /sentry::init/);
   assert.match(monitoring, /send_default_pii: false/);
 });

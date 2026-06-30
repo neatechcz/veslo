@@ -178,8 +178,8 @@ import {
   setSessionComposerDraft,
   setSessionComposerPrompt,
 } from "./pages/session-composer-drafts";
-import { resolveComposerTargetConflict } from "./lib/composer-target-draft-conflict";
 import {
+  GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
   resolveComposerStorageKey,
 } from "./lib/pending-session-drafts";
 import {
@@ -280,7 +280,6 @@ import type {
   ComposerDraft,
   ComposerPart,
   ComposerTargetOption,
-  ComposerTargetSwitchResolution,
   ComposerTargetSwitchResult,
   ProviderListItem,
   SessionErrorTurn,
@@ -4030,10 +4029,11 @@ export default function App() {
       const pendingDraftKey = (activePendingDraftKey() ?? "").trim();
       if (sessionID) return null;
       if (!pendingDraftKey) return null;
+      const pendingDraftMeta = activePendingDraftMeta();
       return {
         key: pendingDraftKey,
-        meta: activePendingDraftMeta(),
-        draftId: activePendingDraftMeta()?.id?.trim() || null,
+        meta: pendingDraftMeta,
+        draftId: pendingDraftMeta?.id?.trim() || GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
       };
     })();
     if (!sessionID) {
@@ -5969,12 +5969,9 @@ export default function App() {
     pendingDraftsReady: activePendingDraftStorageReady,
     currentComposerStorageKey,
     composerDraft,
-    createEmptyComposerDraft,
     pendingSessionDraftsList,
-    pendingSessionDraftsGet,
     pendingSessionDraftsPut,
     pendingSessionDraftsDelete,
-    formatPendingDraftAttachmentRestoreError: pendingSessionDraftController.formatPendingDraftAttachmentRestoreError,
     isConsumedPendingDraftId: pendingSessionDraftController.isConsumedPendingDraftId,
     markPendingDraftConsumed,
     clearConsumedPendingDraftId,

@@ -65,7 +65,9 @@ use commands::skills::{
     list_local_skills_scoped, read_local_skill, read_local_skill_at_path, uninstall_skill,
     uninstall_skill_at_path, write_local_skill, write_local_skill_at_path,
 };
-use commands::updater::{updater_environment, updater_prepare_install};
+use commands::updater::{
+    updater_environment, updater_prepare_install, updater_relaunch_after_install,
+};
 use commands::veslo_server::{veslo_server_info, veslo_server_restart};
 #[cfg(all(debug_assertions, feature = "e2e"))]
 use commands::window::e2e_position_main_window;
@@ -332,6 +334,7 @@ pub fn run() {
             write_opencode_config,
             updater_environment,
             updater_prepare_install,
+            updater_relaunch_after_install,
             desktop_runtime_preferences_read,
             desktop_runtime_preferences_write,
             app_build_info,

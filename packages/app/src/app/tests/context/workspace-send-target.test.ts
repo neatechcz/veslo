@@ -73,7 +73,7 @@ test("send target resolver keeps direct creation on active workspace after brows
   assert.equal(target.resolveSendTargetWorkspaceScope("b1")?.workspaceId, "ws-b");
 });
 
-test("send target ignores stale pending draft workspace after active workspace switch", () => {
+test("send target keeps the selected pending draft workspace after active workspace switch", () => {
   const events: Array<{ event: string; payload?: Record<string, unknown> }> = [];
   const target = createWorkspaceSendTarget({
     activePendingDraftMeta: () => ({
@@ -97,16 +97,12 @@ test("send target ignores stale pending draft workspace after active workspace s
     messageFromUnknownError: (error) => String(error),
   });
 
-  assert.equal(target.resolveSendTargetWorkspaceScope(null)?.workspaceId, "ws-b");
-  assert.deepEqual(events, [
-    {
-      event: "sendPrompt:pending-draft-scope-ignored-stale-workspace",
-      payload: {
-        pendingWorkspaceId: "ws-a",
-        activeWorkspaceId: "ws-b",
-      },
-    },
-  ]);
+  assert.deepEqual(target.resolveSendTargetWorkspaceScope(null), {
+    workspaceId: "ws-a",
+    workspaceRoot: "/repo/a",
+    directory: "/repo/a",
+  });
+  assert.deepEqual(events, []);
 });
 
 test("send target keeps pending draft scope while it still matches active workspace", () => {

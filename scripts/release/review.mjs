@@ -31,6 +31,12 @@ const tauriBundleResources = tauriConfig.bundle?.resources ?? {};
 const tauriWindowsWix = tauriConfig.bundle?.windows?.wix ?? {};
 const tauriWindowsNsis = tauriConfig.bundle?.windows?.nsis ?? {};
 const tauriWindowsWebviewInstallMode = tauriConfig.bundle?.windows?.webviewInstallMode ?? {};
+const releaseWorkflow = readText(resolve(root, ".github", "workflows", "release-macos-aarch64.yml"));
+const buildDesktopWorkflow = readText(resolve(root, ".github", "workflows", "build-desktop.yml"));
+const buildWindowsMsiWorkflow = readText(resolve(root, ".github", "workflows", "build-windows-msi.yml"));
+const releaseDoc = readText(resolve(root, "RELEASE.md"));
+const stateConfigDoc = readText(resolve(root, "docs", "dev", "state-and-config-reference.md"));
+const applicationLogsDoc = readText(resolve(root, "docs", "dev", "veslo-application-logs.md"));
 
 const versions = {
   app: appPkg.version ?? null,
@@ -75,6 +81,28 @@ const addManifestEntryVersionCheck = (manifest, name, expectedVersion, label) =>
 };
 
 const hostSidecarName = (name) => (process.platform === "win32" ? `${name}.exe` : name);
+
+const hasGlitchTipReleaseEnv = (text) =>
+  /VESLO_GLITCHTIP_DSN:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_DSN\s*\}\}/.test(text) &&
+  /VITE_VESLO_GLITCHTIP_DSN:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_DSN\s*\}\}/.test(text) &&
+  /VESLO_GLITCHTIP_ENVIRONMENT:\s*production/.test(text) &&
+  /VITE_VESLO_GLITCHTIP_ENVIRONMENT:\s*production/.test(text) &&
+  /VESLO_GLITCHTIP_TRACES_SAMPLE_RATE:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_TRACES_SAMPLE_RATE\s*\|\|\s*'0'\s*\}\}/.test(
+    text,
+  ) &&
+  /VITE_VESLO_GLITCHTIP_TRACES_SAMPLE_RATE:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_TRACES_SAMPLE_RATE\s*\|\|\s*'0'\s*\}\}/.test(
+    text,
+  ) &&
+  /Verify GlitchTip release monitoring env/.test(text) &&
+  /verify-glitchtip-release-env\.mjs/.test(text);
+
+const releaseDocsText = [releaseDoc, stateConfigDoc, applicationLogsDoc].join("\n");
+const releaseDocsDescribeGlitchTipDsn =
+  /VESLO_GLITCHTIP_DSN/.test(releaseDocsText) &&
+  /GitHub Actions variable/.test(releaseDocsText) &&
+  /public/.test(releaseDocsText) &&
+  /release-owned/.test(releaseDocsText) &&
+  /not user-configurable/.test(releaseDocsText);
 
 const readHostSidecarVersion = (path) => {
   try {
@@ -365,6 +393,26 @@ addCheck(
     /Invoke-HiddenNativeCommand\s+-FilePath\s+"wsl\.exe"\s+-Arguments\s+\$WslArgs/.test(wslSandboxProvisioner) &&
     !/&\s+wsl\.exe\b/i.test(wslSandboxProvisioner),
   tauriBundleResources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"] ?? "?",
+);
+addCheck(
+  "macOS release builds embed GlitchTip DSN for frontend and native monitoring",
+  hasGlitchTipReleaseEnv(releaseWorkflow),
+  ".github/workflows/release-macos-aarch64.yml",
+);
+addCheck(
+  "Windows release builds embed GlitchTip DSN for frontend and native monitoring",
+  hasGlitchTipReleaseEnv(releaseWorkflow),
+  ".github/workflows/release-macos-aarch64.yml",
+);
+addCheck(
+  "Manual Windows MSI workflows embed GlitchTip DSN for frontend and native monitoring",
+  hasGlitchTipReleaseEnv(buildDesktopWorkflow) && hasGlitchTipReleaseEnv(buildWindowsMsiWorkflow),
+  ".github/workflows/build-desktop.yml + .github/workflows/build-windows-msi.yml",
+);
+addCheck(
+  "Release docs describe GlitchTip DSN as public and release-owned",
+  releaseDocsDescribeGlitchTipDsn,
+  "RELEASE.md + docs/dev",
 );
 const wslInstallerFragmentPath = resolve(
   root,
