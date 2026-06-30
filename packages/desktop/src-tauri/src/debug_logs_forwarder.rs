@@ -785,6 +785,24 @@ fn write_events_file(path: &PathBuf, events: &[serde_json::Value]) -> std::io::R
     Ok(())
 }
 
+fn retain_direct_fallback_events_after_local_accept(
+    path: &PathBuf,
+    events: &[serde_json::Value],
+) -> std::io::Result<Option<Vec<serde_json::Value>>> {
+    let direct_events = events
+        .iter()
+        .filter(|event| is_direct_fallback_event(event))
+        .cloned()
+        .collect::<Vec<_>>();
+    if direct_events.is_empty() {
+        fs::remove_file(path)?;
+        return Ok(None);
+    }
+
+    write_events_file(path, &direct_events)?;
+    Ok(Some(direct_events))
+}
+
 fn post_batch(
     base_url: &str,
     host_token: &str,
@@ -908,7 +926,7 @@ pub fn spawn_flush_task(
         let local_state = collect_server_state(&app);
         let cloud_context = forwarder.cloud_context_snapshot();
         for file in files {
-            let events = match parse_events(&file) {
+            let mut events = match parse_events(&file) {
                 Ok(e) => e,
                 Err(error) => {
                     eprintln!("[debug-logs-forwarder] read error: {error}");
@@ -931,14 +949,16 @@ pub fn spawn_flush_task(
                     }
 
                     let mut local_delivered = true;
+                    let mut local_accepted_without_cloud_upload = false;
                     for chunk_vec in batches {
                         let batch_id = Uuid::new_v4().to_string();
                         match post_batch(base_url, host_token, &batch_id, chunk_vec) {
                             Ok(LocalPostResult::CloudUploaded) => {}
                             Ok(LocalPostResult::CloudNotUploaded) => {
                                 eprintln!(
-                                    "[debug-logs-forwarder] local debug-log post did not confirm cloud upload, trying direct fallback"
+                                    "[debug-logs-forwarder] local debug-log post accepted without cloud upload"
                                 );
+                                local_accepted_without_cloud_upload = true;
                                 local_delivered = false;
                                 break;
                             }
@@ -955,6 +975,24 @@ pub fn spawn_flush_task(
                     if local_delivered {
                         let _ = fs::remove_file(&file);
                         continue;
+                    }
+                    if local_accepted_without_cloud_upload {
+                        match retain_direct_fallback_events_after_local_accept(&file, &events) {
+                            Ok(Some(direct_events)) => {
+                                forwarder.mark_direct_fallback_retry_file(&file);
+                                events = direct_events;
+                            }
+                            Ok(None) => {
+                                forwarder.clear_direct_fallback_retry_file(&file);
+                                continue;
+                            }
+                            Err(error) => {
+                                eprintln!(
+                                    "[debug-logs-forwarder] failed to retain direct fallback debug log events: {error}"
+                                );
+                                continue;
+                            }
+                        }
                     }
                 }
             }
@@ -1217,6 +1255,46 @@ mod tests {
             "stream": "diagnostic",
             "payload": { "eventType": "unbounded:custom" },
         })));
+    }
+
+    #[test]
+    fn local_accept_without_cloud_drops_non_direct_events_and_retains_direct_events() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("flushing-a.jsonl");
+        let ordinary_event = serde_json::json!({
+            "id": "ordinary",
+            "source": "Veslo UI",
+            "stream": "stderr",
+            "payload": { "line": "ordinary ui log" },
+        });
+        let direct_event = serde_json::json!({
+            "id": "direct",
+            "source": "Veslo bootstrap",
+            "stream": "diagnostic",
+            "payload": { "eventType": "new-session:disabled" },
+        });
+
+        fs::write(&file, "placeholder\n").unwrap();
+        let retained = retain_direct_fallback_events_after_local_accept(
+            &file,
+            &[ordinary_event.clone(), direct_event.clone()],
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(retained, vec![direct_event.clone()]);
+        let raw = fs::read_to_string(&file).unwrap();
+        assert!(raw.contains("\"id\":\"direct\""));
+        assert!(!raw.contains("\"id\":\"ordinary\""));
+
+        let ordinary_only = dir.path().join("flushing-b.jsonl");
+        fs::write(&ordinary_only, "placeholder\n").unwrap();
+        let retained =
+            retain_direct_fallback_events_after_local_accept(&ordinary_only, &[ordinary_event])
+                .unwrap();
+
+        assert!(retained.is_none());
+        assert!(!ordinary_only.exists());
     }
 
     #[test]

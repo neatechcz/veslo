@@ -77,8 +77,9 @@ test("new Chat opens the pending draft and then ensures the local Veslo server",
   const wrapperStart = source.indexOf("const openNewSessionWithDirectory = async () => {");
   assert.notStrictEqual(wrapperStart, -1, "app-shell new Chat handler is missing");
 
-  const wrapperEnd = source.indexOf("  const {\n    activePendingDraftKey,", wrapperStart);
-  assert.notStrictEqual(wrapperEnd, -1, "app-shell new Chat handler end marker is missing");
+  const wrapperEndOffset = source.slice(wrapperStart).search(/\r?\n  const \{\r?\n    activePendingDraftKey,/);
+  assert.notStrictEqual(wrapperEndOffset, -1, "app-shell new Chat handler end marker is missing");
+  const wrapperEnd = wrapperStart + wrapperEndOffset;
   const wrapperSource = source.slice(wrapperStart, wrapperEnd);
 
   assert.match(

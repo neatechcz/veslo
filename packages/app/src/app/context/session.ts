@@ -1,4 +1,4 @@
-import { createMemo } from "solid-js";
+import { createEffect, createMemo, onCleanup } from "solid-js";
 import { createStore, produce, reconcile } from "solid-js/store";
 
 import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client";
@@ -44,6 +44,11 @@ import {
   isSessionNotFoundError,
 } from "./session-selection-controller";
 import { createSessionEventStreamController } from "./session-event-stream";
+import {
+  createSessionLifecycleRecoveryController,
+  type SessionLifecycleRecoveryScope,
+  type SessionLifecycleRecoveryStatus,
+} from "./session-lifecycle-recovery";
 import { createSessionWorkspaceCacheController } from "./session-workspace-cache";
 import type { ReconnectNotice } from "./session-reconnect";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
@@ -127,6 +132,13 @@ export function createSessionStore(options: {
   onHotReloadApplied?: () => void;
   onSessionLoadComplete?: () => void;
   loadOfflineTranscript?: (sessionID: string, limit: number) => Promise<VesloSessionTranscriptSnapshot | null>;
+  resolveConversationRunForSession?: (
+    sessionID: string,
+    workspaceIdHint?: string | null,
+  ) => SessionLifecycleRecoveryScope | null;
+  readConversationRunStatus?: (
+    scope: SessionLifecycleRecoveryScope,
+  ) => Promise<SessionLifecycleRecoveryStatus | null>;
   appendTranscriptSnapshot?: (input: {
     workspaceId: string;
     sessionId: string;
@@ -655,6 +667,27 @@ export function createSessionStore(options: {
     scheduleTranscriptIngestion,
     scheduleBackgroundTranscriptIngestion,
   } = transcriptController;
+
+  const lifecycleRecoveryController =
+    options.resolveConversationRunForSession && options.readConversationRunStatus
+      ? createSessionLifecycleRecoveryController({
+          sessionStatusById: () => store.sessionStatus,
+          selectedSessionId: options.selectedSessionId,
+          resolveConversationRunForSession: options.resolveConversationRunForSession,
+          readConversationRunStatus: options.readConversationRunStatus,
+          setSessionStatusForWorkspace,
+          notifySessionBusy,
+          scheduleTranscriptIngestion,
+          scheduleBackgroundTranscriptIngestion,
+          trace: recordSessionStatusTrace,
+        })
+      : null;
+  if (lifecycleRecoveryController) {
+    createEffect(() => {
+      lifecycleRecoveryController.reconcile();
+    });
+    onCleanup(() => lifecycleRecoveryController.dispose());
+  }
 
   const runtimePrompts = createSessionRuntimePrompts({
     store,

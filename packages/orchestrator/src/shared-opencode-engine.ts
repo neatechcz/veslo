@@ -18,6 +18,8 @@ export type SharedOpenCodeEngineSnapshot = {
   configDirectory: string;
 };
 
+export type SharedOpenCodeEngineEvent = "spawned" | "suspended" | "crashed";
+
 export type SharedOpenCodeEngineDeps = {
   prepareRuntime?: () => Promise<void>;
   spawnEngine: (ctx: EngineSpawnContext) => Promise<EngineSpawnResult>;
@@ -27,6 +29,7 @@ export type SharedOpenCodeEngineDeps = {
   isProcessAlive: (pid: number) => boolean;
   now?: () => number;
   log?: (message: string, attributes?: Record<string, unknown>) => void;
+  onEngineChange?: (event: SharedOpenCodeEngineEvent, engine: EngineProcess | null) => void;
 };
 
 export type SharedOpenCodeEngineInput = {
@@ -59,7 +62,12 @@ export class SharedOpenCodeEngine {
     const engine = this.engine;
     if (!engine) return null;
     if (engine.state !== "ready" && engine.state !== "idle") return null;
-    if (!this.deps.isProcessAlive(engine.pid)) return null;
+    if (!this.deps.isProcessAlive(engine.pid)) {
+      this.engine = null;
+      engine.state = "crashed";
+      this.emit("crashed", engine);
+      return null;
+    }
     engine.lastActivityAt = this.deps.now();
     return engine;
   }
@@ -120,6 +128,18 @@ export class SharedOpenCodeEngine {
     if (!engine) return;
     engine.state = "suspended";
     await this.deps.stopChild(engine.child);
+    this.emit("suspended", engine);
+  }
+
+  private emit(event: SharedOpenCodeEngineEvent, engine: EngineProcess | null): void {
+    try {
+      this.deps.onEngineChange?.(event, engine);
+    } catch (error) {
+      this.deps.log?.("shared opencode event listener threw", {
+        event,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private async spawn(reason: string): Promise<EngineProcess> {
@@ -172,6 +192,7 @@ export class SharedOpenCodeEngine {
         port,
         baseUrl: engine.baseUrl,
       });
+      this.emit("spawned", engine);
       return engine;
     } catch (error) {
       if (spawned?.child) {

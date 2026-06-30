@@ -149,6 +149,7 @@ import type {
   VesloConversationRunSubmittedResult,
   VesloConversationRunQueuedResult,
   VesloConversationRunResult,
+  VesloConversationRunStatusResult,
   VesloConversationAbortResult,
   VesloInboxItem,
   VesloInboxList,
@@ -510,6 +511,7 @@ export function createVesloServerClient(options: {
     importConversations: conversations.import,
     runConversation: conversations.run,
     abortConversation: conversations.abort,
+    getConversationRunStatus: conversations.getRunStatus,
     getSessionLatestRunArtifacts: conversations.getLatestRunArtifacts,
     prefetchSessionTranscripts: conversations.prefetchTranscripts,
     getSessionTranscript: (workspaceId: string, sessionId: string, limit = 140, directory?: string) =>

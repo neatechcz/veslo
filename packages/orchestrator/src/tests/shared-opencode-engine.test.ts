@@ -8,7 +8,11 @@ function fakeChild(pid: number): ChildProcess {
   return { pid } as ChildProcess;
 }
 
-function harness(options: { failSpawn?: boolean; failHealth?: boolean } = {}) {
+function harness(options: {
+  failSpawn?: boolean;
+  failHealth?: boolean;
+  onEngineChange?: (event: string, engine: { pid: number } | null) => void;
+} = {}) {
   let spawns = 0;
   let stops = 0;
   let nextPort = 61000;
@@ -40,12 +44,16 @@ function harness(options: { failSpawn?: boolean; failHealth?: boolean } = {}) {
       },
       isProcessAlive: (pid) => alive.has(pid),
       now: () => 123456,
+      onEngineChange: options.onEngineChange,
     },
   });
 
   return {
     manager,
     counts: () => ({ spawns, stops, stoppedPids }),
+    markDead: (pid: number) => {
+      alive.delete(pid);
+    },
   };
 }
 
@@ -108,5 +116,21 @@ describe("SharedOpenCodeEngine", () => {
       runtimeDirectory: "/tmp/veslo/shared-opencode-runtime",
       configDirectory: "/tmp/veslo/shared-opencode-config",
     });
+  });
+
+  test("detects a dead shared engine and emits a crashed event", async () => {
+    const events: Array<{ event: string; pid: number | null }> = [];
+    const h = harness({
+      onEngineChange: (event, engine) => {
+        events.push({ event, pid: engine?.pid ?? null });
+      },
+    });
+    const engine = await h.manager.ensureStarted("prompt");
+
+    h.markDead(engine.pid);
+
+    expect(h.manager.getRunning()).toBeNull();
+    expect(events).toContainEqual({ event: "crashed", pid: engine.pid });
+    expect(h.manager.snapshot().running).toBe(false);
   });
 });

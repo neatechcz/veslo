@@ -153,6 +153,37 @@ describe("conversation service", () => {
     expect(result.items[0]?.title).toBe("Created");
   });
 
+  test("reports unavailable when host store is empty and source read is unavailable", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-source-unavailable-"));
+    tempDirs.push(dataDir);
+    const directory = join(dataDir, "workspace-a");
+    const bindingStore = createConversationBindingStore({ dataDir, now: () => 3_000 });
+    const service = createConversationService({
+      readStore: unavailableReadStore,
+      bindingStore,
+      createOpenCodeSession: async () => ({ id: "unused" }),
+    });
+
+    const result = await service.listConversations({
+      workspace: workspaceFor(directory),
+      directory,
+    });
+    const transcript = await service.loadTranscript({
+      workspace: workspaceFor(directory),
+      sessionId: "sess-missing",
+      limit: 10,
+      directory,
+    });
+
+    expect(result).toEqual({
+      workspaceId: "ws-a",
+      items: [],
+      source: "unavailable",
+    });
+    expect(transcript.source).toBe("unavailable");
+    expect(transcript.messages).toEqual([]);
+  });
+
   test("falls back to persisted bindings when OpenCode sqlite has no matching sessions", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-empty-sqlite-"));
     tempDirs.push(dataDir);

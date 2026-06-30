@@ -260,6 +260,13 @@ function openReadOnlyDatabase(input: {
   return new Database(dbPath, { readonly: true });
 }
 
+function isOpenCodeReadSchemaUnavailableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /no such table:\s*(session|message|part)\b/i.test(message) ||
+    /no such column:\s*(session|message|part)\./i.test(message) ||
+    /no such column:\s*(id|title|directory|parent_id|time_created|time_updated|session_id|data|message_id)\b/i.test(message);
+}
+
 function parseJsonRecord(raw: string | null, fallback: Record<string, unknown>): Record<string, unknown> | null {
   if (!raw) return fallback;
   try {
@@ -344,6 +351,11 @@ export function createConversationReadStore(): ConversationReadStore {
             },
           })),
         };
+      } catch (error) {
+        if (isOpenCodeReadSchemaUnavailableError(error)) {
+          return { workspaceId, items: [], source: "unavailable" };
+        }
+        throw error;
       } finally {
         db.close();
       }
@@ -428,6 +440,11 @@ export function createConversationReadStore(): ConversationReadStore {
           fetchedAt: Date.now(),
           source: "sqlite",
         };
+      } catch (error) {
+        if (isOpenCodeReadSchemaUnavailableError(error)) {
+          return { ...empty, source: "unavailable" };
+        }
+        throw error;
       } finally {
         db.close();
       }

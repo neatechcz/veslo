@@ -192,6 +192,7 @@ async function makeOrchestrator(opts: {
         targetBaseUrl: engine.baseUrl,
         targetPath: restPath,
         targetSearch: url.search,
+        stripIncomingHeaders: ["x-veslo-conversation-run-id"],
         injectHeaders: {
           "x-opencode-directory": ws.path,
           "x-veslo-workspace-id": ws.id,
@@ -404,6 +405,23 @@ describe("router proxy + EnginePool integration", () => {
     expect(res.status).toBe(200);
     expect(echo.captures[0]?.body).toBe(payload);
     expect(echo.captures[0]?.method).toBe("POST");
+  });
+
+  test("internal conversation run header is stripped before engine upstream", async () => {
+    const { echo, orch } = await setup([
+      { id: "ws-a", path: "/tmp/ws-a", type: "local" },
+    ]);
+    const res = await fetch(`${orch.baseUrl}/workspace/ws-a/opencode/echo`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-veslo-conversation-run-id": "run-internal",
+      },
+      body: JSON.stringify({ ok: true }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(echo.captures[0]?.headers["x-veslo-conversation-run-id"]).toBeUndefined();
   });
 
   test("SSE-like streaming chunks pass through", async () => {

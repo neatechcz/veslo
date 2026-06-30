@@ -450,6 +450,14 @@ import {
   VesloServerError,
 } from "./lib/veslo-server";
 import {
+  getVesloRequestBrokerSnapshot,
+  isLocalVesloTransportError,
+} from "./lib/veslo-server/request-broker";
+import {
+  applyVesloServerStatusProbe,
+  createInitialVesloServerStatusStabilityState,
+} from "./lib/veslo-server/status-stability";
+import {
   pickCollisionSafeName,
   toWorkspaceRelativeFromSessionDir,
 } from "./lib/session-attachment-staging";
@@ -524,6 +532,7 @@ type WorkspaceRuntimeDebugRoot = SendTraceRoot & {
   __vesloWorkspaceRuntimeDiff?: () => Promise<unknown>;
   __vesloWorkspaceRuntimeLastSnapshot?: unknown;
   __vesloWorkspaceRuntimeDebugHelp?: string;
+  __vesloRequestBrokerSnapshot?: () => unknown;
   __vesloWorkspaceBusyTrace?: Array<Record<string, unknown>>;
   __wsActivateLog?: string;
 };
@@ -1101,6 +1110,14 @@ export default function App() {
   const [vesloServerUrl, setVesloServerUrl] = createSignal("");
   const [vesloServerStatus, setVesloServerStatus] = createSignal<VesloServerStatus>("disconnected");
   const [vesloServerCapabilities, setVesloServerCapabilities] = createSignal<VesloServerCapabilities | null>(null);
+  let vesloServerLastReachableAt = 0;
+  const markVesloServerReachable = (status: VesloServerStatus, at = Date.now()) => {
+    if (status === "connected" || status === "limited") {
+      vesloServerLastReachableAt = at;
+    }
+  };
+  const vesloServerRecentlyReachable = (now = Date.now()) =>
+    vesloServerLastReachableAt > 0 && now - vesloServerLastReachableAt <= 30_000;
   const vesloServerCapabilitiesStateKey = (value: VesloServerCapabilities | null) =>
     safeStringify(value ?? null);
   const setVesloServerCapabilitiesStable = (next: VesloServerCapabilities | null) => {
@@ -1449,10 +1466,13 @@ export default function App() {
       await client.health();
     } catch (error) {
       if (error instanceof VesloServerError && (error.status === 401 || error.status === 403)) {
-        return { status: "limited" as VesloServerStatus, capabilities: null };
+        const result = { status: "limited" as VesloServerStatus, capabilities: null };
+        markVesloServerReachable(result.status);
+        return result;
       }
       return { status: "disconnected" as VesloServerStatus, capabilities: null };
     }
+    markVesloServerReachable("limited");
 
     if (!token) {
       return { status: "limited" as VesloServerStatus, capabilities: null };
@@ -1460,10 +1480,14 @@ export default function App() {
 
     try {
       const caps = await client.capabilities();
-      return { status: "connected" as VesloServerStatus, capabilities: caps };
+      const result = { status: "connected" as VesloServerStatus, capabilities: caps };
+      markVesloServerReachable(result.status);
+      return result;
     } catch (error) {
       if (error instanceof VesloServerError && (error.status === 401 || error.status === 403)) {
-        return { status: "limited" as VesloServerStatus, capabilities: null };
+        const result = { status: "limited" as VesloServerStatus, capabilities: null };
+        markVesloServerReachable(result.status);
+        return result;
       }
       return { status: "disconnected" as VesloServerStatus, capabilities: null };
     }
@@ -1490,6 +1514,7 @@ export default function App() {
     let busy = false;
     let timeoutId: number | undefined;
     let delayMs = 1_000;
+    let statusStability = createInitialVesloServerStatusStabilityState();
 
     const scheduleNext = () => {
       if (!active) return;
@@ -1502,14 +1527,40 @@ export default function App() {
       try {
         const result = await checkVesloServer(url, token, hostToken);
         if (!active) return;
-        setVesloServerStatus(result.status);
-        setVesloServerCapabilitiesStable(result.capabilities);
-        delayMs =
-          result.status === "connected" || result.status === "limited"
-            ? 10_000
-            : Math.min(delayMs * 2, 5_000);
-      } catch {
-        delayMs = Math.min(delayMs * 2, 5_000);
+        const decision = applyVesloServerStatusProbe(statusStability, result, {
+          nowMs: Date.now(),
+          previousDelayMs: delayMs,
+        });
+        statusStability = decision.state;
+        setVesloServerStatus(decision.visibleStatus);
+        setVesloServerCapabilitiesStable(decision.visibleCapabilities);
+        delayMs = decision.nextDelayMs;
+        if (decision.transientFailure) {
+          recordPerfLog(developerMode(), "workspace.requests", "veslo-status-transient-failure", {
+            visibleStatus: decision.visibleStatus,
+            nextDelayMs: decision.nextDelayMs,
+          });
+        }
+      } catch (error) {
+        const decision = applyVesloServerStatusProbe(
+          statusStability,
+          { status: "disconnected", capabilities: null },
+          {
+            nowMs: Date.now(),
+            previousDelayMs: delayMs,
+          },
+        );
+        statusStability = decision.state;
+        setVesloServerStatus(decision.visibleStatus);
+        setVesloServerCapabilitiesStable(decision.visibleCapabilities);
+        delayMs = decision.nextDelayMs;
+        if (decision.transientFailure) {
+          recordPerfLog(developerMode(), "workspace.requests", "veslo-status-transient-failure", {
+            visibleStatus: decision.visibleStatus,
+            nextDelayMs: decision.nextDelayMs,
+            message: error instanceof Error ? error.message : safeStringify(error),
+          });
+        }
       } finally {
         if (!active) return;
         setVesloServerCheckedAt(Date.now());
@@ -2703,6 +2754,61 @@ export default function App() {
         limit,
         transcriptDirectory || undefined,
       );
+    },
+    resolveConversationRunForSession: (sessionId, workspaceIdHint) => {
+      const normalizedSessionId = sessionId.trim();
+      if (!normalizedSessionId) return null;
+      const scope = resolveSelectedSessionBrowseScope(normalizedSessionId);
+      const workspaceId =
+        scope?.workspaceId?.trim() ||
+        workspaceIdHint?.trim() ||
+        workspaceStore.activeWorkspaceId().trim();
+      if (!workspaceId) return null;
+      const workspaceRoot =
+        scope?.workspaceRoot?.trim() ||
+        resolveWorkspaceRootForConversationScope(workspaceId, scope?.directory) ||
+        workspaceStore.activeWorkspaceRoot().trim();
+      const directory =
+        scope?.directory?.trim() ||
+        sessionDirectoryOverrideById()[normalizedSessionId]?.trim() ||
+        workspaceRoot;
+      const conversationId = scope?.conversationId?.trim() || normalizedSessionId;
+      const opencodeSessionId = scope?.opencodeSessionId?.trim() || normalizedSessionId;
+      const runId = resolveLatestConversationRunId({
+        workspaceId,
+        conversationId,
+        opencodeSessionId,
+        uiSessionId: normalizedSessionId,
+      });
+      if (!runId) return null;
+      return {
+        sessionId: normalizedSessionId,
+        workspaceId,
+        conversationId,
+        opencodeSessionId,
+        directory,
+        runId,
+      };
+    },
+    readConversationRunStatus: async (scope) => {
+      const serverClient = await resolvePassiveConversationReadClient();
+      if (!serverClient) return null;
+      const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(
+        serverClient,
+        scope.workspaceId,
+        scope.directory,
+      );
+      if (!serverWorkspaceId) return null;
+      try {
+        return await serverClient.getConversationRunStatus(
+          serverWorkspaceId,
+          scope.conversationId,
+          scope.runId,
+        );
+      } catch (error) {
+        if (error instanceof VesloServerError && error.status === 404) return null;
+        throw error;
+      }
     },
     appendTranscriptSnapshot: async (input) => {
       const workspaceId = input.workspaceId.trim();
@@ -5290,6 +5396,43 @@ export default function App() {
     recordSendWorkflowTrace("app", event, payload, { developerMode: developerMode() });
   };
 
+  type ManagedAiRuntimeConfigForSend = Awaited<ReturnType<VesloServerClient["getConfig"]>>;
+
+  const shouldRetryManagedAiConfigReadForSend = (error: unknown, baseUrl: string) =>
+    isLoopbackUrl(baseUrl) &&
+    !(error instanceof VesloServerError) &&
+    isLocalVesloTransportError(error) &&
+    vesloServerRecentlyReachable();
+
+  const readManagedAiRuntimeConfigForSend = async (
+    client: VesloServerClient,
+    workspaceId: string,
+    baseUrl: string,
+    tracePayload: Record<string, unknown>,
+  ): Promise<ManagedAiRuntimeConfigForSend> => {
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await client.getConfig(workspaceId);
+      } catch (error) {
+        if (attempt >= maxAttempts || !shouldRetryManagedAiConfigReadForSend(error, baseUrl)) {
+          throw error;
+        }
+        const delayMs = 120 + Math.floor(Math.random() * 180);
+        recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:retry", {
+          ...tracePayload,
+          vesloWorkspaceId: workspaceId,
+          attempt,
+          nextAttempt: attempt + 1,
+          delayMs,
+          message: error instanceof Error ? error.message : safeStringify(error),
+        });
+        await new Promise<void>((resolve) => window.setTimeout(resolve, delayMs));
+      }
+    }
+    throw new Error("managed AI runtime config read retry loop exhausted");
+  };
+
   function resolveRuntimeSandboxStateForTarget(
     targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
   ): EffectiveRuntimeSandboxState {
@@ -5451,7 +5594,12 @@ export default function App() {
           });
           return false;
         }
-        const config = await vesloClient.getConfig(vesloWorkspaceId);
+        const config = await readManagedAiRuntimeConfigForSend(
+          vesloClient,
+          vesloWorkspaceId,
+          vesloClient.baseUrl,
+          routingTracePayload,
+        );
         const ok = hasUsableManagedAiRuntimeConfig({
           content: JSON.stringify(config.opencode ?? {}, null, 2),
           providerId,
@@ -6248,6 +6396,7 @@ export default function App() {
         diagnosticsSignal: vesloServerDiagnostics(),
         status: liveServerStatus,
         workspaces: liveServerWorkspaces,
+        requestBroker: getVesloRequestBrokerSnapshot(),
       },
       orchestrator: {
         warmEngineWorkspaceIds: Array.from(readyEngineWorkspaceIds()),
@@ -6301,11 +6450,13 @@ export default function App() {
     };
     root.__vesloWorkspaceRuntimeSnapshot = snapshotFn;
     root.__vesloWorkspaceRuntimeDiff = diffFn;
+    root.__vesloRequestBrokerSnapshot = getVesloRequestBrokerSnapshot;
     root.__vesloWorkspaceRuntimeDebugHelp =
-      "Use await window.__vesloWorkspaceRuntimeSnapshot() before an action and await window.__vesloWorkspaceRuntimeDiff() after it.";
+      "Use await window.__vesloWorkspaceRuntimeSnapshot() before an action, await window.__vesloWorkspaceRuntimeDiff() after it, or window.__vesloRequestBrokerSnapshot() for Veslo server request counters.";
     wsDebug("runtime-probe:installed", {
       snapshot: "__vesloWorkspaceRuntimeSnapshot()",
       diff: "__vesloWorkspaceRuntimeDiff()",
+      requestBroker: "__vesloRequestBrokerSnapshot()",
     });
   });
 
@@ -6315,6 +6466,7 @@ export default function App() {
     delete root.__vesloWorkspaceRuntimeSnapshot;
     delete root.__vesloWorkspaceRuntimeDiff;
     delete root.__vesloWorkspaceRuntimeDebugHelp;
+    delete root.__vesloRequestBrokerSnapshot;
   });
 
   type PendingSkillRegistryReplay = {

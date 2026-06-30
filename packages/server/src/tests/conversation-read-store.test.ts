@@ -68,6 +68,15 @@ const seedDb = (dbPath: string, directory: string) => {
   }
 };
 
+const seedBadSchemaDb = (dbPath: string) => {
+  const db = new Database(dbPath);
+  try {
+    db.exec("CREATE TABLE unrelated (id TEXT PRIMARY KEY);");
+  } finally {
+    db.close();
+  }
+};
+
 describe("conversation read store DB path resolution", () => {
   test("uses workspace opencodeDbPath before global defaults", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-read-workspace-db-"));
@@ -128,6 +137,42 @@ describe("conversation read store DB path resolution", () => {
     // not render a misleading empty transcript as a completed read.
     expect(transcript.source).toBe("unavailable");
     expect(transcript.messages.length).toBe(0);
+  });
+
+  test("reports unavailable when the OpenCode DB schema is missing session tables", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-read-bad-schema-"));
+    tempDirs.push(workspaceRoot);
+    const dbPath = join(workspaceRoot, "workspace-opencode.db");
+    seedBadSchemaDb(dbPath);
+
+    const store = createConversationReadStore();
+    const workspace = {
+      id: "ws-a",
+      path: workspaceRoot,
+      opencodeDbPath: dbPath,
+    };
+
+    const list = await store.listConversations({
+      workspaceId: "ws-a",
+      directory: workspaceRoot,
+      workspace,
+    });
+    expect(list).toEqual({
+      workspaceId: "ws-a",
+      items: [],
+      source: "unavailable",
+    });
+
+    const transcript = await store.getTranscript({
+      workspaceId: "ws-a",
+      sessionId: "sess-a",
+      limit: 10,
+      directory: workspaceRoot,
+      workspace,
+    });
+    expect(transcript.source).toBe("unavailable");
+    expect(transcript.messages).toEqual([]);
+    expect(transcript.partsByMessageId).toEqual({});
   });
 
   test("matches Windows directory variants when reading OpenCode sqlite", async () => {

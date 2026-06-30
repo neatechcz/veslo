@@ -86,3 +86,27 @@ test("send runtime preflight skips duplicate health only for an explicitly healt
   );
 });
 
+test("managed AI send config preflight retries only local transient transport failures", () => {
+  const retryStart = source.indexOf("const shouldRetryManagedAiConfigReadForSend = ");
+  const retryEnd = source.indexOf("const readManagedAiRuntimeConfigForSend = async", retryStart);
+  assert.ok(retryStart >= 0 && retryEnd > retryStart, "managed AI config retry guard should be present");
+  const retrySource = source.slice(retryStart, retryEnd);
+
+  assert.match(
+    retrySource,
+    /isLoopbackUrl\(baseUrl\)[\s\S]*!\(error instanceof VesloServerError\)[\s\S]*isLocalVesloTransportError\(error\)[\s\S]*vesloServerRecentlyReachable\(\)/,
+    "send config retry should be limited to local transport/socket failures after recent server reachability",
+  );
+
+  const configCheckStart = source.indexOf("const hasUsableManagedAiRuntimeConfigForSend = async");
+  const configCheckEnd = source.indexOf("const ensureManagedAiRuntimeAuthorizationForSend = async", configCheckStart);
+  assert.ok(configCheckStart >= 0 && configCheckEnd > configCheckStart, "managed AI config check should be present");
+  const configCheckSource = source.slice(configCheckStart, configCheckEnd);
+
+  assert.match(
+    configCheckSource,
+    /readManagedAiRuntimeConfigForSend\(\s*vesloClient,\s*vesloWorkspaceId,\s*vesloClient\.baseUrl,\s*routingTracePayload,\s*\)/,
+    "send config preflight should use the narrow retry wrapper instead of a bare getConfig call",
+  );
+});
+

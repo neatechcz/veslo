@@ -54,6 +54,7 @@ export type OrchestratorLifecycleClient = {
     kind: string;
   }): Promise<void>;
   markFailed(workspaceId: string, runId: string, error: string): Promise<void>;
+  markAborted(workspaceId: string, runId: string, error?: string): Promise<void>;
   markAbortRequested(workspaceId: string, runId: string): Promise<void>;
   status(
     workspaceId: string,
@@ -185,6 +186,13 @@ export function createOrchestratorLifecycleClient(options: {
       await post(
         `/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(runId)}/failed`,
         { error },
+      );
+    },
+
+    async markAborted(workspaceId, runId, error) {
+      await post(
+        `/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(runId)}/aborted`,
+        error ? { error } : {},
       );
     },
 

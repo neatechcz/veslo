@@ -92,6 +92,25 @@ function createMemoryRunStore(): RunStore {
         record.createdAt >= createdSince
       );
     },
+
+    activeForEngineOwner(engineOwnerId) {
+      return [...records.values()]
+        .filter((record) =>
+          record.engineOwnerId === engineOwnerId &&
+          isActiveRunStatus(record.status)
+        )
+        .sort((a, b) => a.createdAt - b.createdAt);
+    },
+
+    activeCreatedBefore(createdBefore, limit = 200) {
+      return [...records.values()]
+        .filter((record) =>
+          isActiveRunStatus(record.status) &&
+          record.createdAt < createdBefore
+        )
+        .sort((a, b) => a.createdAt - b.createdAt)
+        .slice(0, limit);
+    },
   };
 }
 
@@ -296,6 +315,10 @@ describe("run activity probe with registry reconciliation", () => {
       startedAt: 1_000,
       completedAt: null,
       error: null,
+      engineOwnerId: null,
+      enginePid: null,
+      engineStartedAt: null,
+      engineBaseUrl: null,
     });
 
     const next = await registry.register({

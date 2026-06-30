@@ -1140,6 +1140,13 @@ export type VesloConversationImportResult = {
 };
 
 export type VesloConversationRunKind = "prompt_async" | "command" | "shell" | "summarize";
+export type VesloConversationRunLifecycleStatus =
+  | "submitted"
+  | "running"
+  | "blocked"
+  | "completed"
+  | "failed"
+  | "aborted";
 
 export type VesloConversationRunInput = {
   kind: VesloConversationRunKind;
@@ -1204,6 +1211,15 @@ export type VesloConversationRunQueuedResult = {
 };
 
 export type VesloConversationRunResult = VesloConversationRunSubmittedResult | VesloConversationRunQueuedResult;
+
+export type VesloConversationRunStatusResult = {
+  ok: boolean;
+  workspaceId: string;
+  conversationId: string;
+  runId: string;
+  status: VesloConversationRunLifecycleStatus;
+  stale: boolean;
+};
 
 export type VesloConversationAbortResult = {
   ok: boolean;
