@@ -129,6 +129,7 @@ import {
   createVesloServerConnection,
   isLoopbackVesloServerConnectionUrl,
 } from "./context/veslo-server-connection";
+import { createSessionCapabilitiesStore } from "./context/session-capabilities-store";
 import ResetModal from "./components/reset-modal";
 import ConfirmModal from "./components/confirm-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
@@ -205,21 +206,9 @@ import {
 import {
   canRemoveMcpFromProjectConfig,
   quickConnectEntryKey,
-  readEffectiveMcpServerEntries,
   removeMcpFromConfig,
   validateMcpServerName,
 } from "./mcp";
-import { buildSkillInventory, type BuildSkillInventoryInput } from "./lib/skill-inventory";
-import {
-  buildSessionMcpRows,
-  buildSessionSkillRows,
-  createSessionCapabilitiesCache,
-  filterSessionSkillInventoryByScope,
-  normalizeSessionCapabilityDirectory,
-  resolveSessionCapabilitySessionSource,
-  type SessionCapabilitiesScope,
-  type SessionCapabilitiesSnapshot,
-} from "./lib/session-capabilities";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "./types";
 import type {
   Client,
@@ -3914,339 +3903,35 @@ export default function App() {
   const devtoolsCapabilities = createMemo(() => vesloServerCapabilities());
   const resolvedDevtoolsWorkspaceId = createMemo(() => devtoolsWorkspaceId() ?? vesloServerWorkspaceId());
 
-  type SessionCapabilitiesLoadStatus = "idle" | "loading" | "ready" | "error";
-
-  const [sessionCapabilitiesSnapshot, setSessionCapabilitiesSnapshot] =
-    createSignal<SessionCapabilitiesSnapshot | null>(null);
-  const [sessionCapabilitiesStatus, setSessionCapabilitiesStatus] =
-    createSignal<SessionCapabilitiesLoadStatus>("idle");
-  const [sessionCapabilitiesError, setSessionCapabilitiesError] = createSignal<string | null>(null);
-
-  const normalizeCapabilityDirectoryForMatch = (value?: string | null) =>
-    normalizeSessionCapabilityDirectory(normalizeDirectoryPath(value ?? ""));
-
-  const workspaceLabelForSessionCapabilities = (workspace: WorkspaceInfo | null | undefined, fallback: string) =>
-    workspace?.displayName?.trim() ||
-    workspace?.name?.trim() ||
-    workspace?.vesloWorkspaceName?.trim() ||
-    workspace?.id ||
-    fallback;
-
-  const findWorkspaceForSessionCapabilityDirectory = (directory: string): WorkspaceInfo | null => {
-    const normalizedDirectory = normalizeCapabilityDirectoryForMatch(directory);
-    if (!normalizedDirectory) return null;
-
-    return (
-      workspaceStore
-        .workspaces()
-        .find((workspace) =>
-          [workspace.path, workspace.directory]
-            .filter((candidate): candidate is string => Boolean(candidate?.trim()))
-            .some((candidate) =>
-              normalizeCapabilityDirectoryForMatch(candidate) === normalizedDirectory ||
-              sessionDirectoryMatchesRoot(directory, candidate),
-            ),
-        ) ?? null
-    );
-  };
-
-  const selectedSessionCapabilitySource = createMemo(() =>
-    resolveSessionCapabilitySessionSource({
-      selectedSessionId: selectedSessionId(),
-      selectedSession: selectedSession(),
-      workspaceGroups: sidebarWorkspaceGroups(),
-      resolveDirectory: (session) => resolveSessionDirectory({ id: session.id, directory: session.directory ?? "" }),
-    }),
-  );
-
-  const selectedSessionCapabilityDirectory = createMemo(() => {
-    const session = selectedSessionCapabilitySource()?.session;
-    return session
-      ? normalizeSessionCapabilityDirectory(resolveSessionDirectory({ id: session.id, directory: session.directory ?? "" }))
-      : "";
+  const sessionCapabilitiesStore = createSessionCapabilitiesStore({
+    selectedSessionId,
+    selectedSession,
+    sidebarWorkspaceGroups,
+    resolveSessionDirectory: (session) => resolveSessionDirectory({ id: session.id, directory: session.directory ?? "" }),
+    workspaces: workspaceStore.workspaces,
+    activeWorkspaceId: workspaceStore.activeWorkspaceId,
+    activeWorkspaceDisplay: workspaceStore.activeWorkspaceDisplay,
+    activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot,
+    workspaceProjectDir: () => workspaceProjectDir(),
+    baseUrl,
+    connectedVersion,
+    client,
+    activeWorkspaceRuntimeReady,
+    activeVisibleRuntimeActivityId,
+    developerMode,
+    vesloServerClient,
+    vesloServerStatus,
+    vesloServerBaseUrl,
+    vesloServerWorkspaceId,
+    vesloCapabilities: resolvedVesloCapabilities,
+    skillInventory,
+    refreshSkillInventory,
+    recordPerfLog,
   });
-
-  const selectedSessionCapabilityWorkspace = createMemo(() =>
-    selectedSessionCapabilitySource()?.workspace ??
-    findWorkspaceForSessionCapabilityDirectory(selectedSessionCapabilityDirectory()),
-  );
-
-  const selectedSessionCapabilitiesScope = createMemo<SessionCapabilitiesScope | null>(() => {
-    const session = selectedSessionCapabilitySource()?.session;
-    if (!session) return null;
-
-    const directory = selectedSessionCapabilityDirectory();
-    const workspace = selectedSessionCapabilityWorkspace();
-    return {
-      directory,
-      workspaceId: workspace?.id,
-      workspaceLabel: workspaceLabelForSessionCapabilities(workspace, directory),
-      workspaceType: workspace?.workspaceType,
-    };
-  });
-
-  resolveSessionCapabilitySkillInventoryWorkspaces = () => {
-    const directory = selectedSessionCapabilityDirectory();
-    if (!directory) return [];
-    const workspace = selectedSessionCapabilityWorkspace();
-    if (workspace?.workspaceType === "remote") return [];
-    return [{
-      id: workspace?.id || `session:${directory}`,
-      label: workspaceLabelForSessionCapabilities(workspace, directory),
-      path: directory,
-    }];
-  };
-
-  const filterSessionMcpStatuses = (status: McpStatusMap, entries: McpServerEntry[]) => {
-    const configured = new Set(entries.map((entry) => entry.name));
-    return Object.fromEntries(Object.entries(status).filter(([name]) => configured.has(name))) as McpStatusMap;
-  };
-
-  const matchingRuntimeClientForSessionCapabilities = (directory: string, workspace: WorkspaceInfo | null) => {
-    const runtimeClient = client();
-    if (!runtimeClient) return null;
-
-    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
-    if (workspace?.id && activeWorkspaceId && workspace.id !== activeWorkspaceId) return null;
-
-    if (workspace?.id && workspace.id === activeWorkspaceId) return runtimeClient;
-
-    const active = workspaceStore.activeWorkspaceDisplay();
-    const normalizedDirectory = normalizeCapabilityDirectoryForMatch(directory);
-    const activeCandidates = [
-      active.path,
-      active.directory,
-      workspaceStore.activeWorkspaceRoot(),
-      workspaceProjectDir(),
-    ].map((candidate) => normalizeCapabilityDirectoryForMatch(candidate));
-    return activeCandidates.includes(normalizedDirectory) ? runtimeClient : null;
-  };
-
-  const runtimeMatchContextForSessionCapabilities = () => {
-    const active = workspaceStore.activeWorkspaceDisplay();
-    return {
-      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
-      activeWorkspacePath: normalizeCapabilityDirectoryForMatch(active.path),
-      activeWorkspaceDirectory: normalizeCapabilityDirectoryForMatch(active.directory),
-      activeWorkspaceRoot: normalizeCapabilityDirectoryForMatch(workspaceStore.activeWorkspaceRoot()),
-      workspaceProjectDir: normalizeCapabilityDirectoryForMatch(workspaceProjectDir()),
-    };
-  };
-
-  const loadSessionMcpStatuses = async (
-    directory: string,
-    entries: McpServerEntry[],
-    workspace: WorkspaceInfo | null,
-  ): Promise<McpStatusMap> => {
-    if (!entries.length) return {};
-    if (!activeWorkspaceRuntimeReady()) return {};
-    const runtimeClient = matchingRuntimeClientForSessionCapabilities(directory, workspace);
-    if (!runtimeClient) return {};
-    const activeRuntimeActivityId = activeVisibleRuntimeActivityId()?.trim();
-    if (activeRuntimeActivityId) {
-      recordPerfLog(developerMode(), "workspace.mcp", "session-capabilities-skip-active-send", {
-        activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
-        activeSendTraceId: activeRuntimeActivityId,
-        directory,
-        workspaceId: workspace?.id ?? null,
-      });
-      return {};
-    }
-
-    try {
-      const status = unwrap(await runtimeClient.mcp.status({ directory }));
-      const nextActiveRuntimeActivityId = activeVisibleRuntimeActivityId()?.trim();
-      if (nextActiveRuntimeActivityId) {
-        recordPerfLog(developerMode(), "workspace.mcp", "session-capabilities-result-skip-active-send", {
-          activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
-          activeSendTraceId: nextActiveRuntimeActivityId,
-          directory,
-          workspaceId: workspace?.id ?? null,
-        });
-        return {};
-      }
-      return filterSessionMcpStatuses(status as McpStatusMap, entries);
-    } catch {
-      return {};
-    }
-  };
-
-  const remoteWorkspaceContextForSessionCapabilities = (workspace: WorkspaceInfo | null) => {
-    if (!workspace || workspace.workspaceType !== "remote" || workspace.remoteType !== "veslo") return null;
-    const vesloClient = vesloServerClient();
-    if (vesloServerStatus() !== "connected" || !vesloClient) return null;
-
-    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
-    const selectedHost = normalizeVesloServerUrl(workspace.vesloHostUrl ?? "") ?? "";
-    const connectedHost = normalizeVesloServerUrl(vesloServerBaseUrl()) ?? "";
-    if (selectedHost && connectedHost && selectedHost !== connectedHost && workspace.id !== activeWorkspaceId) {
-      return null;
-    }
-
-    const inferredWorkspaceId =
-      workspace.vesloWorkspaceId?.trim() ||
-      parseVesloWorkspaceIdFromUrl(workspace.vesloHostUrl ?? "") ||
-      parseVesloWorkspaceIdFromUrl(workspace.baseUrl ?? "") ||
-      (workspace.id === activeWorkspaceId ? vesloServerWorkspaceId()?.trim() ?? "" : "");
-    if (!inferredWorkspaceId) return null;
-
-    return { vesloClient, workspaceId: inferredWorkspaceId };
-  };
-
-  const loadLocalSessionCapabilities = async (
-    scope: SessionCapabilitiesScope,
-    workspace: WorkspaceInfo | null,
-  ): Promise<Omit<SessionCapabilitiesSnapshot, "loadedAt">> => {
-    const directory = scope.directory;
-    const [mcpEntries] = await Promise.all([
-      readEffectiveMcpServerEntries(directory),
-      refreshSkillInventory(),
-    ]);
-    const inventory = filterSessionSkillInventoryByScope(skillInventory(), {
-      directory,
-      workspaceId: scope.workspaceId,
-    });
-    const statuses = await loadSessionMcpStatuses(directory, mcpEntries, workspace);
-    return {
-      directory,
-      skills: buildSessionSkillRows(inventory),
-      mcp: buildSessionMcpRows(mcpEntries, statuses),
-    };
-  };
-
-  const loadRemoteSessionCapabilities = async (
-    scope: SessionCapabilitiesScope,
-    workspace: WorkspaceInfo,
-  ): Promise<Omit<SessionCapabilitiesSnapshot, "loadedAt">> => {
-    const directory = scope.directory;
-    const remoteContext = remoteWorkspaceContextForSessionCapabilities(workspace);
-    if (!remoteContext) {
-      return { directory, skills: [], mcp: [] };
-    }
-
-    const [skillsResponse, mcpResponse] = await Promise.all([
-      remoteContext.vesloClient.listSkills(remoteContext.workspaceId, { includeGlobal: true }),
-      remoteContext.vesloClient.mcp.list(remoteContext.workspaceId),
-    ]);
-    const skillItems = Array.isArray(skillsResponse.items) ? skillsResponse.items : [];
-    const workspaceId = scope.workspaceId || workspace.id || directory;
-    const workspaceLabel = scope.workspaceLabel || workspaceLabelForSessionCapabilities(workspace, directory);
-    const workspaceSkillsByWorkspaceId: BuildSkillInventoryInput["workspaceSkillsByWorkspaceId"] = {
-      [workspaceId]: {
-        workspace: {
-          id: workspaceId,
-          label: workspaceLabel,
-          path: directory,
-          kind: "remote",
-        },
-        skills: skillItems
-          .filter((entry) => entry.scope !== "global")
-          .map((entry) => ({
-            name: entry.name,
-            path: entry.path,
-            description: entry.description,
-            trigger: entry.trigger,
-          })),
-      },
-    };
-    const inventory = buildSkillInventory({
-      globalSkills: skillItems
-        .filter((entry) => entry.scope === "global")
-        .map((entry) => ({
-          name: entry.name,
-          path: entry.path,
-          description: entry.description,
-          trigger: entry.trigger,
-        })),
-      workspaceSkillsByWorkspaceId,
-      hubSkills: [],
-    });
-    const mcpEntries: McpServerEntry[] = (Array.isArray(mcpResponse.items) ? mcpResponse.items : []).map((entry) => ({
-      name: entry.name,
-      config: entry.config as McpServerEntry["config"],
-      source: entry.source,
-      disabledByTools: entry.disabledByTools,
-    }));
-    const statuses = await loadSessionMcpStatuses(directory, mcpEntries, workspace);
-    return {
-      directory,
-      skills: buildSessionSkillRows(inventory),
-      mcp: buildSessionMcpRows(mcpEntries, statuses),
-    };
-  };
-
-  const sessionCapabilitiesCache = createSessionCapabilitiesCache(async (scope) => {
-    const workspace = findWorkspaceForSessionCapabilityDirectory(scope.directory);
-    if (workspace?.workspaceType === "remote") {
-      return loadRemoteSessionCapabilities(scope, workspace);
-    }
-    return loadLocalSessionCapabilities(scope, workspace);
-  });
-  const sessionCapabilitiesLoadContextByDirectory = new Map<string, string>();
-  let sessionCapabilitiesRequestVersion = 0;
-
-  const sessionSkillInventoryContextForCapabilities = (scope: SessionCapabilitiesScope) =>
-    filterSessionSkillInventoryByScope(skillInventory(), scope)
-      .flatMap((item) => [
-        item.globalInstance?.id ?? "",
-        ...item.workspaceInstances.map((instance) => instance.id),
-      ])
-      .filter(Boolean)
-      .join("|");
-
-  createEffect(() => {
-    const scope = selectedSessionCapabilitiesScope();
-    const workspace = selectedSessionCapabilityWorkspace();
-    const serverCapabilities = resolvedVesloCapabilities();
-    const loadContext = scope
-      ? JSON.stringify({
-          directory: scope.directory,
-          workspaceId: scope.workspaceId ?? "",
-          workspaceType: scope.workspaceType ?? "",
-          remoteStatus: vesloServerStatus(),
-          remoteBaseUrl: vesloServerBaseUrl(),
-          remoteWorkspaceId: vesloServerWorkspaceId() ?? "",
-          hasRemoteClient: Boolean(vesloServerClient()),
-          remoteSkillsRead: Boolean(serverCapabilities?.skills?.read),
-          remoteMcpRead: Boolean(serverCapabilities?.mcp?.read),
-          runtimeBaseUrl: baseUrl().trim(),
-          runtimeVersion: connectedVersion() ?? "",
-          hasRuntimeClient: Boolean(client()),
-          runtimeMatch: runtimeMatchContextForSessionCapabilities(),
-          matchedWorkspaceId: workspace?.id ?? "",
-          skillInventory: sessionSkillInventoryContextForCapabilities(scope),
-        })
-      : "";
-
-    const requestVersion = ++sessionCapabilitiesRequestVersion;
-    if (!scope) {
-      setSessionCapabilitiesSnapshot(null);
-      setSessionCapabilitiesStatus("idle");
-      setSessionCapabilitiesError(null);
-      return;
-    }
-
-    setSessionCapabilitiesStatus("loading");
-    setSessionCapabilitiesError(null);
-
-    const previousContext = scope.directory ? sessionCapabilitiesLoadContextByDirectory.get(scope.directory) : undefined;
-    const force = previousContext !== undefined && previousContext !== loadContext;
-    void sessionCapabilitiesCache
-      .load(scope, { force })
-      .then((snapshot) => {
-        if (requestVersion !== sessionCapabilitiesRequestVersion) return;
-        sessionCapabilitiesLoadContextByDirectory.set(snapshot.directory, loadContext);
-        setSessionCapabilitiesSnapshot(snapshot);
-        setSessionCapabilitiesStatus("ready");
-        setSessionCapabilitiesError(null);
-      })
-      .catch((error) => {
-        if (requestVersion !== sessionCapabilitiesRequestVersion) return;
-        setSessionCapabilitiesSnapshot(null);
-        setSessionCapabilitiesStatus("error");
-        setSessionCapabilitiesError(error instanceof Error ? error.message : safeStringify(error));
-      });
-  });
+  resolveSessionCapabilitySkillInventoryWorkspaces = sessionCapabilitiesStore.skillInventoryWorkspaces;
+  const sessionCapabilitiesSnapshot = sessionCapabilitiesStore.sessionCapabilities;
+  const sessionCapabilitiesStatus = sessionCapabilitiesStore.sessionCapabilitiesStatus;
+  const sessionCapabilitiesError = sessionCapabilitiesStore.sessionCapabilitiesError;
 
   const [editRemoteWorkspaceOpen, setEditRemoteWorkspaceOpen] = createSignal(false);
   const [editRemoteWorkspaceId, setEditRemoteWorkspaceId] = createSignal<string | null>(null);

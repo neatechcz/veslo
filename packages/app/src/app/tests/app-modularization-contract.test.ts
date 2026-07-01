@@ -91,7 +91,6 @@ const appSourceContractInventory: AppSourceContractInventoryEntry[] = [
   { path: "context/workspace-activate-order-sync.test.ts", classification: "wiring", retargetBy: "AM23" },
   { path: "context/workspace-session-snapshots.test.ts", classification: "wiring", retargetBy: "AM09/AM17" },
   { path: "context/workspace-switch-overlay-state.test.ts", classification: "wiring", retargetBy: "AM23" },
-  { path: "lib/session-capabilities.test.ts", classification: "wiring", retargetBy: "AM17" },
   { path: "lib/session-route-selection-guard.test.ts", classification: "wiring", retargetBy: "AM16" },
   { path: "mcp-hub-contract.test.ts", classification: "wiring", retargetBy: "AM20" },
   { path: "pages/dashboard-menu-navigation.test.ts", classification: "wiring", retargetBy: "AM24" },

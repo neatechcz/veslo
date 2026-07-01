@@ -23,6 +23,10 @@ const sidebarWorkspaceSessionsSource = readFileSync(
   new URL("../context/sidebar-workspace-sessions.ts", import.meta.url),
   "utf8",
 );
+const sessionCapabilitiesStoreSource = readFileSync(
+  new URL("../context/session-capabilities-store.ts", import.meta.url),
+  "utf8",
+);
 const workspaceSessionSnapshotsSource = readFileSync(
   new URL("../context/workspace-session-snapshots.ts", import.meta.url),
   "utf8",
@@ -496,8 +500,8 @@ test("pending permission interval skips active sends and single-client mode cove
     "sidebar live refresh should use active workspace readiness and defer for the same visible send/run activity token",
   );
   assert.match(
-    source,
-    /const loadSessionMcpStatuses = async[\s\S]*const activeRuntimeActivityId = activeVisibleRuntimeActivityId\(\)\?\.trim\(\);[\s\S]*"session-capabilities-skip-active-send"[\s\S]*return \{\};[\s\S]*const status = unwrap\(await runtimeClient\.mcp\.status\(\{ directory \}\)\);[\s\S]*"session-capabilities-result-skip-active-send"[\s\S]*return \{\};/,
+    sessionCapabilitiesStoreSource,
+    /const loadSessionMcpStatuses = async[\s\S]*const activeRuntimeActivityId = deps\.activeVisibleRuntimeActivityId\(\)\?\.trim\(\);[\s\S]*"session-capabilities-skip-active-send"[\s\S]*return \{\};[\s\S]*const status = unwrap\(await runtimeClient\.mcp\.status\(\{ directory \}\)[\s\S]*"session-capabilities-result-skip-active-send"[\s\S]*return \{\};/,
     "session capability MCP status reads should not run or apply results during the visible send handoff",
   );
   assert.match(

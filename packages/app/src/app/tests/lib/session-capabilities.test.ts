@@ -201,10 +201,10 @@ test("resolveSessionCapabilitySessionSource can use a selected id with a persist
 });
 
 test("app session capabilities load local skills from the shared inventory surface", () => {
-  const source = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../../context/session-capabilities-store.ts", import.meta.url), "utf8");
 
-  assert.match(source, /refreshSkillInventory\(\)/);
-  assert.match(source, /filterSessionSkillInventoryByScope\(skillInventory\(\),/);
+  assert.match(source, /deps\.refreshSkillInventory\(\)/);
+  assert.match(source, /filterSessionSkillInventoryByScope\(deps\.skillInventory\(\),/);
   assert.doesNotMatch(source, /listLocalSkillsScoped\(directory,\s*"workspace"\)/);
 });
 
