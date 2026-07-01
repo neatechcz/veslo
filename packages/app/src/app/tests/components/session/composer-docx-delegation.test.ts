@@ -4,6 +4,10 @@ import test from "node:test";
 
 const composerSource = readFileSync(new URL("../../../components/session/composer.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../../../app.tsx", import.meta.url), "utf8");
+const appShellEnvironmentSource = readFileSync(
+  new URL("../../../context/app-shell-environment.ts", import.meta.url),
+  "utf8",
+);
 
 test("composer keeps dropped files as attachment chips and does not inject path text on drop", () => {
   assert.doesNotMatch(
@@ -96,13 +100,19 @@ test("all attachment staging happens in session-directory send pipeline, not in 
 test("app installs a global file-drop navigation guard for the webview", () => {
   assert.match(
     appSource,
-    /window\.addEventListener\("dragover", handleGlobalFileDropGuard, true\);[\s\S]*window\.addEventListener\("drop", handleGlobalFileDropGuard, true\);/s,
-    "app should suppress browser default file navigation at window scope so dropped files cannot replace the whole UI",
+    /createAppShellEnvironment\(\{[\s\S]*isTauriRuntime,[\s\S]*\}\);/,
+    "app should compose the shell environment module",
   );
 
   assert.match(
-    appSource,
-    /const handleGlobalFileDropGuard = \(event: DragEvent\) => \{\s*if \((?:!isFileDragTransfer\(event\.dataTransfer\)|isFileDragTransfer\(event\.dataTransfer\) === false)\) return;\s*event\.preventDefault\(\);\s*\};/s,
+    appShellEnvironmentSource,
+    /win\.addEventListener\("dragover", handleGlobalFileDropGuard, true\);[\s\S]*win\.addEventListener\("drop", handleGlobalFileDropGuard, true\);/s,
+    "shell environment should suppress browser default file navigation at window scope so dropped files cannot replace the whole UI",
+  );
+
+  assert.match(
+    appShellEnvironmentSource,
+    /const handleGlobalFileDropGuard = \(event: DragEvent\) => \{\s*if \(shouldInterceptFileDrag\(event\.dataTransfer\) === false\) return;\s*event\.preventDefault\(\);\s*\};/s,
     "global file-drop guard should only intercept actual file drags",
   );
 });

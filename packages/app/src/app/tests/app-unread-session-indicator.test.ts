@@ -3,11 +3,14 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const appShellEnvironmentSource = readFileSync(new URL("../context/app-shell-environment.ts", import.meta.url), "utf8");
 
 test("app shell keeps a focus-aware unread session map", () => {
-  assert.match(source, /const \[appFocused,\s*setAppFocused\] = createSignal\(true\)/);
-  assert.match(source, /window\.addEventListener\("focus",\s*updateAppFocused\)/);
-  assert.match(source, /window\.addEventListener\("blur",\s*updateAppFocused\)/);
+  assert.match(source, /const appShellEnvironment = createAppShellEnvironment\(\{[\s\S]*isTauriRuntime,[\s\S]*\}\);/);
+  assert.match(source, /const appFocused = appShellEnvironment\.appFocused;/);
+  assert.match(appShellEnvironmentSource, /const \[appFocused,\s*setAppFocused\] = createSignal\(true\)/);
+  assert.match(appShellEnvironmentSource, /win\.addEventListener\("focus",\s*updateAppFocused\)/);
+  assert.match(appShellEnvironmentSource, /win\.addEventListener\("blur",\s*updateAppFocused\)/);
   assert.match(source, /const \[unreadSessionIds,\s*setUnreadSessionIds\] = createSignal<UnreadSessionMap>\(\{\}\)/);
 });
 

@@ -25,7 +25,7 @@ function assertInOrder(haystack: string, label: string, needles: string[]): void
 test("startup server and bundle links hydrate settings before stripping consumed query params", () => {
   const startupLinkEffect = sectionBetween(
     "hydrateVesloServerSettingsFromEnv();",
-    "const update = () => setDocumentVisible(document.visibilityState !== \"hidden\");",
+    "const pref = startupPreference();",
     "startup link effect",
   );
 

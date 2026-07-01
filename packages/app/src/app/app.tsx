@@ -27,7 +27,6 @@ import type {
 
 import { getVersion } from "@tauri-apps/api/app";
 import { listen, type Event as TauriEvent } from "@tauri-apps/api/event";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parse } from "jsonc-parser";
 
 import { reportError } from "./lib/error-reporter";
@@ -149,6 +148,7 @@ import {
 } from "./context/workspace-send-target";
 import { createPendingSessionDraftController } from "./context/pending-session-draft-controller";
 import { createComposerTargetController } from "./context/composer-target-controller";
+import { createAppShellEnvironment } from "./context/app-shell-environment";
 import {
   createSendRuntimeReadiness,
   type SendRuntimePreflightContext,
@@ -312,7 +312,6 @@ import {
   preferredSessionWorkspaceRoot,
   sessionDirectoryMatchesRoot,
 } from "./utils";
-import { isFileDragTransfer } from "./utils/data-transfer-files";
 import { createStartupGuard } from "./utils/startup-guard";
 import {
   parseAuthCompleteDeepLink,
@@ -409,15 +408,6 @@ import {
   type OpenCodeRouterInfo,
   type WorkspaceInfo,
 } from "./lib/tauri";
-import {
-  FONT_ZOOM_STEP,
-  applyWebviewZoom,
-  applyFontZoom,
-  normalizeFontZoom,
-  parseFontZoomShortcut,
-  persistFontZoom,
-  readStoredFontZoom,
-} from "./lib/font-zoom";
 import {
   parseVesloWorkspaceIdFromUrl,
   readVesloBundleInviteFromSearch,
@@ -922,8 +912,11 @@ export default function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const developerMode = () => resolveDeveloperModeFromSearch(location.search);
-  const [documentVisible, setDocumentVisible] = createSignal(true);
-  const [appFocused, setAppFocused] = createSignal(true);
+  const appShellEnvironment = createAppShellEnvironment({
+    isTauriRuntime,
+  });
+  const documentVisible = appShellEnvironment.documentVisible;
+  const appFocused = appShellEnvironment.appFocused;
 
   const workspaceDebugTraceEnabled = () => {
     const root = globalThis as typeof globalThis & { __vesloWorkspaceDebugEnabled?: boolean };
@@ -1350,94 +1343,6 @@ export default function App() {
     if (cleaned !== window.location.href) {
       window.history.replaceState(window.history.state ?? null, "", cleaned);
     }
-  });
-
-  createEffect(() => {
-    if (typeof document === "undefined") return;
-    const update = () => setDocumentVisible(document.visibilityState !== "hidden");
-    update();
-    document.addEventListener("visibilitychange", update);
-    onCleanup(() => document.removeEventListener("visibilitychange", update));
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined" || typeof document === "undefined") return;
-
-    const updateAppFocused = () => {
-      setAppFocused(document.visibilityState !== "hidden" && document.hasFocus());
-    };
-
-    updateAppFocused();
-    window.addEventListener("focus", updateAppFocused);
-    window.addEventListener("blur", updateAppFocused);
-    document.addEventListener("visibilitychange", updateAppFocused);
-    onCleanup(() => {
-      window.removeEventListener("focus", updateAppFocused);
-      window.removeEventListener("blur", updateAppFocused);
-      document.removeEventListener("visibilitychange", updateAppFocused);
-    });
-  });
-
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const handleGlobalFileDropGuard = (event: DragEvent) => {
-      if (isFileDragTransfer(event.dataTransfer) === false) return;
-      event.preventDefault();
-    };
-
-    window.addEventListener("dragover", handleGlobalFileDropGuard, true);
-    window.addEventListener("drop", handleGlobalFileDropGuard, true);
-    onCleanup(() => {
-      window.removeEventListener("dragover", handleGlobalFileDropGuard, true);
-      window.removeEventListener("drop", handleGlobalFileDropGuard, true);
-    });
-  });
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!isTauriRuntime()) return;
-
-    const applyAndPersistFontZoom = (value: number) => {
-      const next = normalizeFontZoom(value);
-      persistFontZoom(window.localStorage, next);
-
-      try {
-        const webview = getCurrentWebview();
-        void applyWebviewZoom(webview, next)
-          .then(() => {
-            document.documentElement.style.removeProperty("--veslo-font-size");
-          })
-          .catch(() => {
-            applyFontZoom(document.documentElement.style, next);
-          });
-      } catch {
-        applyFontZoom(document.documentElement.style, next);
-      }
-
-      return next;
-    };
-
-    let fontZoom = applyAndPersistFontZoom(readStoredFontZoom(window.localStorage) ?? 1);
-
-    const handleZoomShortcut = (event: KeyboardEvent) => {
-      const action = parseFontZoomShortcut(event);
-      if (!action) return;
-
-      if (action === "in") {
-        fontZoom = applyAndPersistFontZoom(fontZoom + FONT_ZOOM_STEP);
-      } else if (action === "out") {
-        fontZoom = applyAndPersistFontZoom(fontZoom - FONT_ZOOM_STEP);
-      } else {
-        fontZoom = applyAndPersistFontZoom(1);
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-    };
-
-    window.addEventListener("keydown", handleZoomShortcut, true);
-    onCleanup(() => window.removeEventListener("keydown", handleZoomShortcut, true));
   });
 
   createEffect(() => {
