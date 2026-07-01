@@ -402,7 +402,7 @@ Use this ledger for quick discovery. The authoritative task details are below.
 | LFC01 | controller shell and isolated test harness | done | codex-20260702-lfc01-shell | true |
 | LFC02 | submit admission and queue acceptance owner | done | codex-20260702-lfc02-submit-admission | true |
 | LFC03 | OpenCode submit and AI gateway provider watch owner | done | codex-20260702-lfc03-submit-provider-watch | true |
-| LFC04 | queue drain and lifecycle reconcile timers | available | null | false |
+| LFC04 | queue drain and lifecycle reconcile timers | reserved | codex-20260702-lfc04-queue-drain-reconcile | false |
 | LFC05 | transcript and startup wake-up wiring | available | null | false |
 | LFC06 | abort flow consolidation | available | null | false |
 | LFC08 | core diagnostics, docs, and final verification | available | null | false |
@@ -670,9 +670,9 @@ Acceptance:
 
 ```yaml
 id: LFC04
-status: available
-reserved_by: null
-reserved_at: null
+status: reserved
+reserved_by: codex-20260702-lfc04-queue-drain-reconcile
+reserved_at: 2026-07-02T00:43:53.8717385+02:00
 branch: lifecycle/lfc04-queue-drain-reconcile
 worktree: ../veslo-lifecycle-lfc04-queue-drain-reconcile
 done: false
