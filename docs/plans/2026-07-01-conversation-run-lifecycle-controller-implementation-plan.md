@@ -403,7 +403,7 @@ Use this ledger for quick discovery. The authoritative task details are below.
 | LFC02 | submit admission and queue acceptance owner | done | codex-20260702-lfc02-submit-admission | true |
 | LFC03 | OpenCode submit and AI gateway provider watch owner | done | codex-20260702-lfc03-submit-provider-watch | true |
 | LFC04 | queue drain and lifecycle reconcile timers | done | codex-20260702-lfc04-queue-drain-reconcile | true |
-| LFC05 | transcript and startup wake-up wiring | available | null | false |
+| LFC05 | transcript and startup wake-up wiring | reserved | codex-20260702-lfc05-transcript-startup-wakeup | false |
 | LFC06 | abort flow consolidation | available | null | false |
 | LFC08 | core diagnostics, docs, and final verification | available | null | false |
 | LFC07 | deferred app latest-run and abort contract hardening | deferred | null | false |
@@ -731,9 +731,9 @@ Acceptance:
 
 ```yaml
 id: LFC05
-status: available
-reserved_by: null
-reserved_at: null
+status: reserved
+reserved_by: codex-20260702-lfc05-transcript-startup-wakeup
+reserved_at: 2026-07-02T00:56:07.2505847+02:00
 branch: lifecycle/lfc05-transcript-startup-wakeup
 worktree: ../veslo-lifecycle-lfc05-transcript-startup-wakeup
 done: false
