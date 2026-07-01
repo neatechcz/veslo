@@ -51,13 +51,6 @@ import {
 } from "./lib/model-variant";
 import { resolveGlobalRuntimeModel } from "./lib/global-model-runtime";
 import {
-  buildCreatedSidebarSessionItem,
-  resolveCreatedSessionWorkspaceId,
-  shouldRouteCreatedSessionAfterSelect,
-} from "./controllers/session-creation-flow";
-import {
-  resolveCreateSessionManagedAiPreflightDecision,
-  resolveCreateSessionRuntimeHealthPreflightDecision,
   resolveSendPromptBusyOwnership,
 } from "./controllers/send-orchestration-controller";
 import { partitionVesloUtilitySessions } from "./lib/veslo-utility-session";
@@ -130,6 +123,10 @@ import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
 import { createScheduledAutomationStore } from "./pages/scheduled-automation-store";
+import {
+  createSessionCreationWorkflow,
+  type SessionCreationWorkflowCreateOptions,
+} from "./pages/session-creation-workflow";
 import { createSessionMutationWorkflow } from "./pages/session-mutation-workflow";
 import { createSoulDataStore } from "./pages/soul-data-store";
 import { isPendingSessionInstanceId } from "./components/session/pending-session-instance-model";
@@ -4492,401 +4489,66 @@ export default function App() {
     return sessionAgentById()[id] ?? null;
   }
 
+  const sessionCreationWorkflow = createSessionCreationWorkflow({
+    activeSendTraceId,
+    addOpencodeCacheHint,
+    applyPendingInitialSessionTitle,
+    baseUrl,
+    currentView,
+    developerMode,
+    ensureLocalRuntimeReachableForSend,
+    ensureManagedAiBootstrapReady,
+    goToSession,
+    isWorkspaceClientStaleError,
+    managedAiBootstrapBusy,
+    materializePendingSessionInWorkspaceSidebar,
+    perfNow,
+    recordPerfLog,
+    finishPerf,
+    recordSendTrace,
+    registerPendingInitialSessionTitle,
+    reloadBusy: () => reloadBusy(),
+    rememberConversationScope,
+    resolveRuntimeSandboxStateForTarget,
+    resolveSendTargetWorkspaceScope,
+    resolveWorkspaceRootForConversationScope,
+    routedClient: (workspaceId) => routedClient(workspaceId ?? undefined),
+    routedClientForSendTarget: (target) => routedClientForSendTarget(target as SendTargetWorkspaceScope | null),
+    safeStringify,
+    selectSession,
+    sendTraceStep,
+    sessionRouteSync,
+    sessions,
+    setBusy,
+    setBusyLabel,
+    setBusyStartedAt,
+    setCreatingSession,
+    setError,
+    setSessions,
+    unknownErrorMessage: () => t("app.unknown_error", currentLocale()),
+    workspace: {
+      activeWorkspaceDisplay: () => workspaceStore.activeWorkspaceDisplay(),
+      activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+      activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
+      connectingWorkspaceId: () => workspaceStore.connectingWorkspaceId(),
+    },
+    wsDebug,
+    abortRefreshes,
+    createConversationFromVesloWriteApi: (workspaceId, directory, title, preflight) =>
+      createConversationFromVesloWriteApi(
+        workspaceId,
+        directory,
+        title,
+        preflight as Parameters<typeof createConversationFromVesloWriteApi>[3],
+      ),
+  });
+
   async function createSessionAndOpen(
     initialTitle = "",
-    options: {
-      blockAppDuringCreate?: boolean;
-      managedAiRuntimeAlreadyPrepared?: boolean;
-      pendingSession?: PendingSidebarSessionMetadata | null;
-      sendTraceId?: string | null;
-      clientMessageId?: string | null;
-      onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
-      preflight?: SendPreflightContext;
-    } = {},
+    options: SessionCreationWorkflowCreateOptions = {},
   ) {
-    const blockAppDuringCreate = options.blockAppDuringCreate ?? true;
-    const pendingSidebarSession = options.pendingSession ?? null;
-    const preflight = options.preflight;
-    const sendTraceId = options.sendTraceId?.trim() || preflight?.traceId || activeSendTraceId();
-    const tracePayload = sendTraceId ? { traceId: sendTraceId } : undefined;
-    const pendingTargetWorkspace = pendingSidebarSession?.workspaceId?.trim()
-      ? {
-          workspaceId: pendingSidebarSession.workspaceId.trim(),
-          workspaceRoot: pendingSidebarSession.workspaceRoot.trim(),
-          directory: pendingSidebarSession.workspaceRoot.trim(),
-        }
-      : null;
-    const targetWorkspace =
-      preflight?.targetWorkspace ??
-      pendingTargetWorkspace ??
-      resolveSendTargetWorkspaceScope(null) ??
-      null;
-    recordSendTrace("createSessionAndOpen:start", {
-      ...(tracePayload ?? {}),
-      connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
-      activeWorkspaceId: workspaceStore.activeWorkspaceId(),
-      activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
-      targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
-      targetWorkspaceRoot: targetWorkspace?.workspaceRoot ?? null,
-      targetDirectory: targetWorkspace?.directory ?? null,
-      hasClient: Boolean(routedClient()),
-    });
-    // Block session creation while a workspace switch is in progress.
-    // Without this gate, activeWorkspaceRoot() can return a stale or empty
-    // value and the session ends up in the wrong directory.
-    const connectingWorkspaceId = workspaceStore.connectingWorkspaceId()?.trim() ?? "";
-    if (connectingWorkspaceId && (!targetWorkspace || connectingWorkspaceId === targetWorkspace.workspaceId)) {
-      console.warn(
-        "[createSessionAndOpen] Blocked: workspace switch in progress",
-        { connectingWorkspaceId },
-      );
-      recordSendTrace("createSessionAndOpen:blocked-connecting", {
-        ...(tracePayload ?? {}),
-        connectingWorkspaceId,
-        targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
-      });
-      setError("Please wait for the workspace switch to complete.");
-      return undefined;
-    } else if (connectingWorkspaceId) {
-      recordSendTrace("createSessionAndOpen:ignore-unrelated-connecting-workspace", {
-        ...(tracePayload ?? {}),
-        connectingWorkspaceId,
-        targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
-      });
-    }
-
-    const createPreflight: SendRuntimePreflightContext = preflight ?? {
-      traceId: sendTraceId,
-      targetWorkspace,
-      runtimeHealthOk: false,
-    };
-    createPreflight.targetWorkspace = createPreflight.targetWorkspace ?? targetWorkspace;
-    createPreflight.effectiveSandbox = resolveRuntimeSandboxStateForTarget(targetWorkspace);
-    let createRuntimeReady = true;
-    const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision({
-      preflightRuntimeHealthOk: Boolean(createPreflight.runtimeHealthOk),
-    });
-    if (runtimeHealthPreflightDecision.type === "skip") {
-      recordSendTrace("createSessionAndOpen:health-skip", {
-        ...(tracePayload ?? {}),
-        reason: runtimeHealthPreflightDecision.reason,
-      });
-      createPreflight.enginePrepared = true;
-    } else {
-      createRuntimeReady = await sendTraceStep(
-        "createSessionAndOpen:ensure-local-runtime-reachable",
-        () => ensureLocalRuntimeReachableForSend("createSessionAndOpen", createPreflight),
-        {
-          ...(tracePayload ?? {}),
-          activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
-          targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
-          workspaceType: workspaceStore.activeWorkspaceDisplay().workspaceType,
-          hasClient: Boolean(routedClient(targetWorkspace?.workspaceId)),
-        },
-      );
-      if (createPreflight.runtimeHealthOk) {
-        recordSendTrace("createSessionAndOpen:health-ok", tracePayload);
-      }
-    }
-    if (!createRuntimeReady) {
-      recordSendTrace("createSessionAndOpen:blocked-runtime-unreachable", tracePayload);
-      setError("Local runtime is not ready yet.");
-      return undefined;
-    }
-    createPreflight.enginePrepared = true;
-    createPreflight.effectiveSandbox = resolveRuntimeSandboxStateForTarget(targetWorkspace);
-    const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision({
-      preflightManagedAiReady: Boolean(createPreflight.managedAiReady),
-      runtimeAlreadyPrepared: Boolean(options.managedAiRuntimeAlreadyPrepared),
-    });
-    if (managedAiPreflightDecision.type === "skip") {
-      recordSendTrace("createSessionAndOpen:managed-ai-bootstrap-skip", {
-        ...(tracePayload ?? {}),
-        reason: managedAiPreflightDecision.reason,
-      });
-      createPreflight.managedAiReady = true;
-    } else {
-      const managedAiReady = await sendTraceStep(
-        "createSessionAndOpen:ensure-managed-ai-bootstrap-ready",
-        () => ensureManagedAiBootstrapReady(createPreflight),
-        {
-          ...(tracePayload ?? {}),
-          managedAiBootstrapBusy: managedAiBootstrapBusy(),
-          reloadBusy: reloadBusy(),
-          hasClient: Boolean(routedClient(targetWorkspace?.workspaceId)),
-        },
-      );
-      if (!managedAiReady) {
-        recordSendTrace("createSessionAndOpen:blocked-managed-ai-bootstrap", tracePayload);
-        return undefined;
-      }
-      createPreflight.managedAiReady = true;
-    }
-    const c = routedClientForSendTarget(targetWorkspace);
-    if (!c) {
-      recordSendTrace("createSessionAndOpen:blocked-no-client", tracePayload);
-      setError("Local runtime is not ready yet.");
-      return undefined;
-    }
-
-    // Guard against creating a session with an empty directory, which would
-    // cause the bridge to silently fall back to the orchestrator's default
-    // directory (possibly a temp folder or the wrong workspace).
-    const sessionDirectory =
-      pendingSidebarSession?.workspaceRoot?.trim() ||
-      targetWorkspace?.directory ||
-      targetWorkspace?.workspaceRoot ||
-      workspaceStore.activeWorkspaceRoot().trim();
-    if (!sessionDirectory) {
-      console.warn(
-        "[createSessionAndOpen] Blocked: activeWorkspaceRoot is empty",
-      );
-      recordSendTrace("createSessionAndOpen:blocked-empty-root", tracePayload);
-      setError("Workspace directory is not available. Please try again.");
-      return undefined;
-    }
-
-    const perfEnabled = developerMode();
-    const startedAt = perfNow();
-    const runId = (() => {
-      const key = "__veslo_create_session_run__";
-      const w = window as typeof window & { [key]?: number };
-      w[key] = (w[key] ?? 0) + 1;
-      return w[key];
-    })();
-
-    const mark = (event: string, payload?: Record<string, unknown>) => {
-      const elapsed = Math.round((perfNow() - startedAt) * 100) / 100;
-      recordPerfLog(perfEnabled, "session.create", event, {
-        runId,
-        elapsedMs: elapsed,
-        ...(payload ?? {}),
-      });
-    };
-
-    mark("start", {
-      baseUrl: baseUrl(),
-      workspace: sessionDirectory || null,
-      workspaceId: targetWorkspace?.workspaceId || workspaceStore.activeWorkspaceId().trim() || null,
-    });
-
-    await sendTraceStep(
-      "createSessionAndOpen:abort-refresh-settle",
-      async () => {
-        // Abort any in-flight refresh operations to free up connection resources.
-        abortRefreshes();
-      },
-      tracePayload,
-    );
-
-    setError(null);
-    if (blockAppDuringCreate) {
-      setBusy(true);
-      setBusyLabel("status.creating_task");
-      setBusyStartedAt(Date.now());
-      setCreatingSession(true);
-    }
-
-    try {
-      const initialSessionTitle = initialTitle.trim();
-      let session: Session & {
-        conversationId?: string | null;
-        opencodeSessionId?: string | null;
-        parentConversationId?: string | null;
-        branchId?: string | null;
-      };
-      try {
-        mark("session:create:start");
-        const activeWorkspaceId = targetWorkspace?.workspaceId || workspaceStore.activeWorkspaceId().trim();
-        if (!activeWorkspaceId) {
-          throw new Error("Workspace id is required for session creation.");
-        }
-        const vesloCreated = await sendTraceStep(
-          "createSessionAndOpen:veslo-conversation-create",
-          () => createConversationFromVesloWriteApi(
-            activeWorkspaceId,
-            sessionDirectory,
-            initialSessionTitle || undefined,
-            preflight,
-          ),
-          {
-            ...(tracePayload ?? {}),
-            workspaceId: activeWorkspaceId,
-            sessionDirectory,
-          },
-        );
-        if (!vesloCreated) {
-          recordSendTrace("createSessionAndOpen:conversation-create-unavailable", {
-            ...(tracePayload ?? {}),
-            workspaceId: activeWorkspaceId,
-            sessionDirectory,
-          });
-          throw new Error("Conversation service is unavailable for session creation.");
-        }
-        session = vesloCreated;
-        recordSendTrace("createSessionAndOpen:create-ok", {
-          ...(tracePayload ?? {}),
-          sessionDirectory,
-          conversationId: session.conversationId ?? null,
-          opencodeSessionId: session.opencodeSessionId ?? session.id,
-        });
-        mark("session:create:ok");
-      } catch (createErr) {
-        recordSendTrace("createSessionAndOpen:create-error", {
-          ...(tracePayload ?? {}),
-          message: createErr instanceof Error ? createErr.message : safeStringify(createErr),
-        });
-        mark("session:create:error", {
-          error: createErr instanceof Error ? createErr.message : safeStringify(createErr),
-        });
-        throw createErr;
-      }
-
-      if (initialSessionTitle) {
-        registerPendingInitialSessionTitle(session.id, initialSessionTitle);
-      }
-      const createdWorkspaceId = resolveCreatedSessionWorkspaceId({
-        pendingSidebarSession,
-        targetWorkspaceId: targetWorkspace?.workspaceId,
-        connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
-        activeWorkspaceId: workspaceStore.activeWorkspaceId(),
-      });
-      if (createdWorkspaceId) {
-        rememberConversationScope({
-          sessionId: session.id,
-          workspaceId: createdWorkspaceId,
-          workspaceRoot: resolveWorkspaceRootForConversationScope(createdWorkspaceId, sessionDirectory),
-          directory: sessionDirectory,
-          conversationId: session.conversationId,
-          opencodeSessionId: session.opencodeSessionId ?? session.id,
-        });
-      }
-      const displaySession = applyPendingInitialSessionTitle(session);
-      const newItem = buildCreatedSidebarSessionItem({
-        session,
-        displaySession,
-        pendingSidebarSession,
-      });
-      const wsId = createdWorkspaceId;
-      const clientMessageId = options.clientMessageId?.trim() ?? "";
-      if (clientMessageId) {
-        options.onMaterializedSessionId?.({
-          workspaceId: wsId || targetWorkspace?.workspaceId || workspaceStore.activeWorkspaceId().trim(),
-          pendingSessionKey: pendingSidebarSession?.id ?? null,
-          sessionId: session.id,
-          clientMessageId,
-          sendTraceId: sendTraceId || null,
-          conversationId: session.conversationId ?? null,
-          opencodeSessionId: session.opencodeSessionId ?? session.id,
-        });
-      }
-
-      // Inject before selecting so route effects can resolve the new session immediately.
-      if (blockAppDuringCreate) {
-        setBusyLabel("status.loading_session");
-      }
-      // Inject the new session into the reactive sessions() store so
-      // the createEffect bridge (sessions → sidebar) will always include it,
-      // even if the background loadSessionsWithReady hasn't returned yet.
-      const currentStoreSessions = sessions();
-      if (!currentStoreSessions.some((s) => s.id === session.id)) {
-        setSessions([session, ...currentStoreSessions]);
-      }
-
-      if (wsId) {
-        materializePendingSessionInWorkspaceSidebar({
-          workspaceId: wsId,
-          pendingSessionInstanceId: pendingSidebarSession?.id ?? null,
-          item: newItem,
-        });
-      } else {
-        wsDebug("session:create:sidebar-materialize-skipped-empty-workspace", {
-          sessionId: session.id,
-          pendingSessionInstanceId: pendingSidebarSession?.id ?? null,
-          targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
-          activeWorkspaceId: workspaceStore.activeWorkspaceId().trim() || null,
-          connectingWorkspaceId: workspaceStore.connectingWorkspaceId()?.trim() || null,
-        });
-      }
-
-      const shouldRouteCreatedSession = shouldRouteCreatedSessionAfterSelect({
-        blockAppDuringCreate,
-        currentView: currentView(),
-      });
-      if (shouldRouteCreatedSession) {
-        sessionRouteSync.markOwnNavigationSession(session.id);
-      }
-
-      mark("session:select:start", { sessionID: session.id });
-      try {
-        await sendTraceStep(
-          "createSessionAndOpen:select-session",
-          () => selectSession(session.id),
-          {
-            ...(tracePayload ?? {}),
-            sessionID: session.id,
-          },
-        );
-      } catch (selectError) {
-        sessionRouteSync.clearOwnNavigationSessionIf(session.id);
-        throw selectError;
-      }
-      mark("session:select:ok", { sessionID: session.id });
-
-      // setSessionViewLockUntil(Date.now() + 1200);
-      if (shouldRouteCreatedSession) {
-        sessionRouteSync.markOwnNavigationSession(session.id);
-        goToSession(session.id);
-      }
-
-      // The new session is already in the sessions() store (injected above)
-      // and in the sidebar signal. SSE session.created events will handle
-      // any further syncing. Calling loadSessionsWithReady() here would
-      // race with the store injection — the server may not have indexed the
-      // session yet, so reconcile() would wipe it from the store, causing
-      // the sidebar to flash and the route guard to bounce back.
-      finishPerf(perfEnabled, "session.create", "done", startedAt, {
-        runId,
-        sessionID: session.id,
-      });
-      recordSendTrace("createSessionAndOpen:success", {
-        ...(tracePayload ?? {}),
-        sessionID: session.id,
-      });
-      return session.id;
-    } catch (e) {
-      finishPerf(perfEnabled, "session.create", "error", startedAt, {
-        runId,
-        error: e instanceof Error ? e.message : safeStringify(e),
-      });
-      // VSLO-86 Task #20 — workspace switched while session.create was in
-      // flight. The guarded routedClient threw to keep the new session from
-      // landing in the stale workspace's engine. Don't surface a user-visible
-      // error: the user already moved on and the next click will spin up a
-      // fresh session in the right workspace.
-      if (isWorkspaceClientStaleError(e)) {
-        recordSendTrace("createSessionAndOpen:stale-client", {
-          ...(tracePayload ?? {}),
-          entryWorkspaceId: e.entryWorkspaceId,
-          currentWorkspaceId: e.currentWorkspaceId,
-        });
-        return undefined;
-      }
-      const message = e instanceof Error ? e.message : t("app.unknown_error", currentLocale());
-      recordSendTrace("createSessionAndOpen:error", {
-        ...(tracePayload ?? {}),
-        message,
-      });
-      setError(addOpencodeCacheHint(message));
-      return undefined;
-    } finally {
-      if (blockAppDuringCreate) {
-        setCreatingSession(false);
-        setBusy(false);
-      }
-    }
+    return sessionCreationWorkflow.createSessionAndOpen(initialTitle, options);
   }
-
   const chooseFolderForCurrentSession = async () => {
     if (!isTauriRuntime()) return false;
 
