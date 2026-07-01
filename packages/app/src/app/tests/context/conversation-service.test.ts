@@ -35,6 +35,9 @@ function transcript(sessionId: string): VesloSessionTranscriptSnapshot {
 
 function createFakeClient() {
   const calls: string[] = [];
+  let runConversationResult:
+    | Awaited<ReturnType<ConversationServiceClient["runConversation"]>>
+    | null = null;
   const client = {
     baseUrl: "http://127.0.0.1:8787",
     listWorkspaces: async () => {
@@ -82,6 +85,7 @@ function createFakeClient() {
       input: VesloConversationRunInput,
     ) => {
       calls.push(`runConversation:${workspaceId}:${conversationId}:${input.directory ?? ""}`);
+      if (runConversationResult) return runConversationResult;
       return {
         ok: true,
         workspaceId,
@@ -115,11 +119,17 @@ function createFakeClient() {
     appendSessionTranscript: async () => transcript("sess-a"),
   };
 
-  return { client: client as unknown as ConversationServiceClient, calls };
+  return {
+    client: client as unknown as ConversationServiceClient,
+    calls,
+    setRunConversationResult: (result: Awaited<ReturnType<ConversationServiceClient["runConversation"]>>) => {
+      runConversationResult = result;
+    },
+  };
 }
 
 function createService() {
-  const { client, calls } = createFakeClient();
+  const { client, calls, setRunConversationResult } = createFakeClient();
   const rememberedScopes: RememberedScope[] = [];
   const rememberedRuns: Array<{
     workspaceId: string;
@@ -202,7 +212,7 @@ function createService() {
     wsDebug: () => undefined,
   });
 
-  return { service, calls, rememberedScopes, rememberedRuns };
+  return { service, calls, rememberedScopes, rememberedRuns, setRunConversationResult };
 }
 
 test("conversation read workspace registration is cached per client and directory", async () => {
@@ -242,6 +252,36 @@ test("conversation run remembers submitted run ids under Veslo and UI identities
   });
   assert.equal(rememberedScopes[0]?.sessionId, "open-a");
   assert.equal(rememberedScopes[0]?.conversationId, "conv-a");
+});
+
+test("queued conversation runs keep the active run id as the current abort target", async () => {
+  const { service, rememberedRuns, setRunConversationResult } = createService();
+  setRunConversationResult({
+    ok: true,
+    workspaceId: "server-ws",
+    conversationId: "conv-a",
+    opencodeSessionId: "open-a",
+    reservedRunId: "run-reserved",
+    queueItemId: "queue-a",
+    activeRunId: "  run-active  ",
+    queuePosition: 1,
+    status: "queued",
+    kind: "prompt_async",
+  });
+
+  const result = await service.runConversationFromVesloWriteApi("sess-a", {
+    kind: "prompt_async",
+    directory: "/repo",
+  });
+
+  assert.equal(result?.status, "queued");
+  assert.deepEqual(rememberedRuns[0], {
+    workspaceId: "app-ws",
+    conversationId: "conv-a",
+    opencodeSessionId: "open-a",
+    uiSessionId: "sess-a",
+    runId: "run-active",
+  });
 });
 
 test("conversation abort requires an explicit scoped run id before calling Veslo abort", async () => {

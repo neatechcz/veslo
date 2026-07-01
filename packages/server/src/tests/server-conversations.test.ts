@@ -10,6 +10,27 @@ const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void 
 const tempDirs: string[] = [];
 const envRestores: Array<() => void> = [];
 
+const removeTempDir = async (dir: string) => {
+  const attempts = process.platform === "win32" ? 6 : 1;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await rm(dir, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      const code = typeof error === "object" && error !== null && "code" in error
+        ? String((error as { code?: unknown }).code)
+        : "";
+      if (!["EBUSY", "ENOTEMPTY", "EPERM"].includes(code) || attempt === attempts) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, attempt * 25));
+    }
+  }
+  throw lastError;
+};
+
 afterEach(async () => {
   while (runningServers.length > 0) {
     const server = runningServers.pop();
@@ -25,7 +46,7 @@ afterEach(async () => {
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (!dir) continue;
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -73,7 +94,13 @@ async function waitForCondition(
 const startTestServer = (input: {
   workspaceRoot: string;
   upstreamPort: number;
-  workspaces?: Array<{ id: string; name: string; path: string; baseUrl?: string }>;
+  workspaces?: Array<{
+    id: string;
+    name: string;
+    path: string;
+    workspaceType?: "local" | "remote";
+    baseUrl?: string;
+  }>;
   orchestratorDaemonUrl?: string;
   orchestratorLifecycleToken?: string;
 }) => {
@@ -81,7 +108,7 @@ const startTestServer = (input: {
     id: workspace.id,
     name: workspace.name,
     path: workspace.path,
-    workspaceType: "local" as const,
+    workspaceType: workspace.workspaceType ?? ("local" as const),
     baseUrl: workspace.baseUrl ?? `http://127.0.0.1:${input.upstreamPort}`,
   })) ?? [
     {
@@ -540,6 +567,114 @@ describe("conversation routes", () => {
     );
     expect(registerRequests).toHaveLength(1);
     expect(engineSubmits).toEqual(["/session/sess-queued/prompt_async"]);
+  });
+
+  test("remote conversation runs bypass the local lifecycle owner", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-remote-lifecycle-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+
+    const engineRequests: string[] = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({
+            id: "sess-remote",
+            title: "Remote",
+            directory: workspaceRoot,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-remote/prompt_async") {
+          engineRequests.push(url.pathname);
+          return Response.json({ ok: true });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const lifecycleRequests: string[] = [];
+    const lifecycle = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        lifecycleRequests.push(`${request.method} ${url.pathname}`);
+        return Response.json({ error: "remote workspaces must not call local lifecycle" }, { status: 500 });
+      },
+    });
+    runningServers.push(lifecycle as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+      orchestratorDaemonUrl: `http://127.0.0.1:${lifecycle.port}`,
+      orchestratorLifecycleToken: "lifecycle-token",
+      workspaces: [
+        {
+          id: "ws_remote",
+          name: "Remote",
+          path: workspaceRoot,
+          workspaceType: "remote",
+          baseUrl: `http://127.0.0.1:${upstream.port}`,
+        },
+      ],
+    });
+
+    const createResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_remote/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Remote",
+        }),
+      },
+    );
+    expect(createResponse.status).toBe(201);
+    const created = await createResponse.json() as { conversationId: string };
+
+    const runResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_remote/conversations/${encodeURIComponent(created.conversationId)}/runs`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "X-Veslo-Send-Trace-Id": "send-remote",
+        },
+        body: JSON.stringify({
+          kind: "prompt_async",
+          directory: workspaceRoot,
+          parts: [{ type: "text", text: "Remote run" }],
+        }),
+      },
+    );
+    expect(runResponse.status).toBe(200);
+    const payload = await runResponse.json() as {
+      status?: string;
+      debugTrace?: Array<{ event: string; enabled?: boolean }>;
+    };
+    expect(payload.status).toBe("submitted");
+    expect(payload.debugTrace?.some((entry) =>
+      entry.event === "server:conversation-run:lifecycle-owner" && entry.enabled === false
+    )).toBe(true);
+    expect(payload.debugTrace?.some((entry) =>
+      entry.event === "server:conversation-run:lifecycle-active-peek" ||
+      entry.event === "server:conversation-run:lifecycle-register" ||
+      entry.event === "server:conversation-run:queued"
+    )).toBe(false);
+    expect(lifecycleRequests).toEqual([]);
+    expect(engineRequests).toEqual(["/session/sess-remote/prompt_async"]);
   });
 
   test("POST /workspace/:id/sessions/:sessionId/transcript reconciles lifecycle and wakes queued runs", async () => {
