@@ -214,7 +214,7 @@ import {
   mcpRuntimeTokenRefreshCandidates,
 } from "./lib/mcp-runtime-status-refresh";
 import { createSkillReloadGuard } from "./lib/skill-reload-guard";
-import { createSkillRegistryEventsListener } from "./lib/skill-registry-events";
+import { createSkillRegistryOrchestrator } from "./context/skill-registry-orchestrator";
 import {
   classifyNewSessionDisabledReason,
   clearBootstrapDiagnosticsCloudContext,
@@ -4109,199 +4109,19 @@ export default function App() {
     cleanupWorkspaceRuntimeDebugProbe = null;
   });
 
-  type PendingSkillRegistryReplay = {
-    eventId: string;
-  };
-
-  const skillRegistryReloadTriggerForEvent = (event: {
-    skillId?: string | null;
-    installationId?: string | null;
-  }): ReloadTrigger => ({
-    type: "skill",
-    action: "updated",
-    name: event.skillId ?? event.installationId ?? undefined,
+  const skillRegistryOrchestrator = createSkillRegistryOrchestrator({
+    vesloServerClient,
+    vesloServerStatus,
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+    workspaceBusy: () => workspaceStore.workspaceBusy(),
+    denAuthRevision,
+    readDenAuth,
+    refreshSkills,
+    invalidateSkillRegistryInventory: () => extensionsStore.invalidateSkillRegistryInventory(),
+    markReloadRequired,
+    reportError,
   });
-
-  const shouldRefreshAfterSkillRegistryMaterialization = (result: {
-    synced?: boolean;
-    reloadRequired?: boolean;
-  }) => result.synced === true || result.reloadRequired === true;
-
-  const refreshAfterSkillRegistryMaterialization = async (result: {
-    synced?: boolean;
-    reloadRequired?: boolean;
-  }) => {
-    if (!shouldRefreshAfterSkillRegistryMaterialization(result)) return;
-    await refreshSkills({ force: true });
-    await extensionsStore.invalidateSkillRegistryInventory();
-  };
-
-  const skillRegistryMaterializationAuthContext = () => {
-    denAuthRevision();
-    const auth = readDenAuth();
-    return {
-      denApiBase: auth?.denApiBase?.trim() || undefined,
-      denToken: auth?.token?.trim() || undefined,
-      denOrgId: auth?.orgId?.trim() || undefined,
-      denUserId: auth?.user?.id?.trim() || undefined,
-    };
-  };
-
-  const [pendingSkillRegistryWorkspaceReplays, setPendingSkillRegistryWorkspaceReplays] = createSignal<
-    Record<string, PendingSkillRegistryReplay>
-  >({});
-  const [pendingGlobalSkillRegistryReplay, setPendingGlobalSkillRegistryReplay] =
-    createSignal<PendingSkillRegistryReplay | null>(null);
-  const skillRegistryWorkspaceReplayInFlight = new Set<string>();
-  let skillRegistryGlobalReplayInFlight = false;
-
-  const queuePendingSkillRegistryWorkspaceReplay = (workspaceId: string, eventId: string) => {
-    const id = workspaceId.trim();
-    if (!id) return;
-    setPendingSkillRegistryWorkspaceReplays((current) => ({
-      ...current,
-      [id]: { eventId },
-    }));
-  };
-
-  const clearPendingSkillRegistryWorkspaceReplay = (workspaceId: string, eventId: string) => {
-    setPendingSkillRegistryWorkspaceReplays((current) => {
-      if (current[workspaceId]?.eventId !== eventId) return current;
-      const next = { ...current };
-      delete next[workspaceId];
-      return next;
-    });
-  };
-
-  const replayPendingSkillRegistryWorkspaceUpdate = (
-    client: VesloServerClient,
-    workspaceId: string,
-    pending: PendingSkillRegistryReplay,
-  ) => {
-    if (skillRegistryWorkspaceReplayInFlight.has(workspaceId)) return;
-    skillRegistryWorkspaceReplayInFlight.add(workspaceId);
-    void (async () => {
-      try {
-        const result = await client.syncWorkspaceSkillMaterialization(
-          workspaceId,
-          skillRegistryMaterializationAuthContext(),
-        );
-        await refreshAfterSkillRegistryMaterialization(result);
-        clearPendingSkillRegistryWorkspaceReplay(workspaceId, pending.eventId);
-      } catch (error) {
-        reportError(error, "skills.registry.workspace.replay");
-      } finally {
-        skillRegistryWorkspaceReplayInFlight.delete(workspaceId);
-      }
-    })();
-  };
-
-  const replayPendingGlobalSkillRegistryUpdate = (client: VesloServerClient, pending: PendingSkillRegistryReplay) => {
-    if (skillRegistryGlobalReplayInFlight) return;
-    skillRegistryGlobalReplayInFlight = true;
-    void (async () => {
-      try {
-        const result = await client.syncGlobalSkillMaterialization(skillRegistryMaterializationAuthContext());
-        await refreshAfterSkillRegistryMaterialization(result);
-        setPendingGlobalSkillRegistryReplay((current) =>
-          current?.eventId === pending.eventId ? null : current,
-        );
-      } catch (error) {
-        reportError(error, "skills.registry.global.replay");
-      } finally {
-        skillRegistryGlobalReplayInFlight = false;
-      }
-    })();
-  };
-
-  createEffect(() => {
-    const client = vesloServerClient();
-    const status = vesloServerStatus();
-    const busyWorkspaces = workspaceStore.workspaceBusy();
-    const workspaceReplays = pendingSkillRegistryWorkspaceReplays();
-    const globalReplay = pendingGlobalSkillRegistryReplay();
-    skillRegistryMaterializationAuthContext();
-    if (!client || status !== "connected") return;
-
-    for (const [workspaceId, pending] of Object.entries(workspaceReplays)) {
-      if (hasWorkspaceBusySessions(busyWorkspaces, workspaceId)) continue;
-      replayPendingSkillRegistryWorkspaceUpdate(client, workspaceId, pending);
-    }
-
-    const hasActiveRun = hasAnyWorkspaceBusySessions(workspaceStore.workspaceBusy());
-    if (globalReplay && !hasActiveRun) {
-      replayPendingGlobalSkillRegistryUpdate(client, globalReplay);
-    }
-  });
-
-  let skillRegistryEventsKey = "";
-  createEffect(() => {
-    denAuthRevision();
-    const client = vesloServerClient();
-    const auth = readDenAuth();
-    const orgId = auth?.orgId?.trim() ?? "";
-    const baseUrl = client?.baseUrl?.trim() ?? "";
-    const workspaceId = workspaceStore.activeWorkspaceId().trim();
-    const token = client?.token?.trim() ?? "";
-    const status = vesloServerStatus();
-    const nextKey = JSON.stringify({ baseUrl, orgId, token: token ? "set" : "none", workspaceId, status });
-    if (nextKey === skillRegistryEventsKey) return;
-    skillRegistryEventsKey = nextKey;
-
-    if (!client || status !== "connected") return;
-
-    const listener = createSkillRegistryEventsListener({
-      registryBaseUrl: client.baseUrl,
-      token: client.token,
-      orgId,
-      workspaceId: workspaceId || undefined,
-      getActiveWorkspaceId: () => workspaceStore.activeWorkspaceId(),
-      onInventoryInvalidated: () =>
-        extensionsStore.invalidateSkillRegistryInventory().catch(e => reportError(e, "skills.registry.invalidate")),
-      onWorkspaceUpdatePending: async (update) => {
-        const trigger = skillRegistryReloadTriggerForEvent(update.event);
-        if (hasWorkspaceBusySessions(workspaceStore.workspaceBusy(), update.workspaceId)) {
-          await client.syncWorkspaceSkillMaterialization(update.workspaceId, {
-            ...skillRegistryMaterializationAuthContext(),
-            activeRun: true,
-          });
-          markReloadRequired("skills", trigger);
-          queuePendingSkillRegistryWorkspaceReplay(update.workspaceId, update.event.id);
-          return;
-        }
-        const result = await client.syncWorkspaceSkillMaterialization(
-          update.workspaceId,
-          skillRegistryMaterializationAuthContext(),
-        );
-        await refreshAfterSkillRegistryMaterialization(result);
-      },
-      onIdleWorkspaceUpdate: async (update) => {
-        const result = await client.syncWorkspaceSkillMaterialization(
-          update.workspaceId,
-          skillRegistryMaterializationAuthContext(),
-        );
-        await refreshAfterSkillRegistryMaterialization(result);
-      },
-      onGlobalUpdate: async (update) => {
-        const hasActiveRun = hasAnyWorkspaceBusySessions(workspaceStore.workspaceBusy());
-        if (hasActiveRun) {
-          await client.syncGlobalSkillMaterialization({
-            ...skillRegistryMaterializationAuthContext(),
-            activeRun: true,
-          });
-          markReloadRequired("skills", skillRegistryReloadTriggerForEvent(update.event));
-          setPendingGlobalSkillRegistryReplay({ eventId: update.event.id });
-          return;
-        }
-        const result = await client.syncGlobalSkillMaterialization(skillRegistryMaterializationAuthContext());
-        await refreshAfterSkillRegistryMaterialization(result);
-      },
-      onError: (error) => reportError(error, "skills.registry.events"),
-    });
-
-    listener.start();
-    onCleanup(() => listener.stop());
-  });
+  const skillRegistryMaterializationAuthContext = skillRegistryOrchestrator.materializationAuthContext;
 
   const activeArtifactFamilies = createMemo(() =>
     resolveArtifactFamilies({

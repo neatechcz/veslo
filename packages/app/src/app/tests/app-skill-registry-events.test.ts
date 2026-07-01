@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const orchestratorSource = readFileSync(
+  new URL("../context/skill-registry-orchestrator.ts", import.meta.url),
+  "utf8",
+);
 
 function extractArrowObjectPropertyBody(text: string, propertyName: string): string {
   const propertyIndex = text.indexOf(`${propertyName}:`);
@@ -29,23 +33,45 @@ function extractArrowObjectPropertyBody(text: string, propertyName: string): str
   assert.fail(`Could not find end of ${propertyName} callback body`);
 }
 
-test("app wires registry event polling into skill inventory and materialization handling", () => {
-  const workspacePendingHandler = extractArrowObjectPropertyBody(source, "onWorkspaceUpdatePending");
-  const globalUpdateHandler = extractArrowObjectPropertyBody(source, "onGlobalUpdate");
+test("app composes the skill registry event orchestrator after extension store setup", () => {
+  assert.match(
+    appSource,
+    /import \{ createSkillRegistryOrchestrator \} from "\.\/context\/skill-registry-orchestrator";/,
+    "App should import the skill registry orchestrator",
+  );
+
+  const extensionsStoreIndex = appSource.indexOf("const extensionsStore = createExtensionsStore");
+  const orchestratorIndex = appSource.indexOf("createSkillRegistryOrchestrator({");
+  assert.notEqual(extensionsStoreIndex, -1, "App should create the extensions store");
+  assert.ok(
+    orchestratorIndex > extensionsStoreIndex,
+    "Skill registry orchestrator should be composed after the extensions store exists",
+  );
 
   assert.match(
-    source,
+    appSource,
+    /createSkillRegistryOrchestrator\(\{[\s\S]*vesloServerClient,[\s\S]*vesloServerStatus,[\s\S]*activeWorkspaceId:\s*\(\)\s*=>\s*workspaceStore\.activeWorkspaceId\(\),[\s\S]*workspaceBusy:\s*\(\)\s*=>\s*workspaceStore\.workspaceBusy\(\),[\s\S]*denAuthRevision,[\s\S]*readDenAuth,[\s\S]*invalidateSkillRegistryInventory:\s*\(\)\s*=>\s*extensionsStore\.invalidateSkillRegistryInventory\(\),[\s\S]*markReloadRequired/s,
+    "App should pass server connection, workspace, inventory, reload, and Den auth dependencies",
+  );
+});
+
+test("skill registry orchestrator owns event polling, replay, and inventory refresh behavior", () => {
+  const workspacePendingHandler = extractArrowObjectPropertyBody(orchestratorSource, "onWorkspaceUpdatePending");
+  const globalUpdateHandler = extractArrowObjectPropertyBody(orchestratorSource, "onGlobalUpdate");
+
+  assert.match(
+    orchestratorSource,
     /createSkillRegistryEventsListener/,
-    "App should create the registry event listener",
+    "Orchestrator should create the registry event listener",
   );
   assert.match(
-    source,
-    /extensionsStore\.invalidateSkillRegistryInventory\(\)/,
+    orchestratorSource,
+    /deps\.invalidateSkillRegistryInventory\(\)/,
     "Registry events should invalidate skill inventory through the extensions store",
   );
   assert.match(
     workspacePendingHandler,
-    /hasWorkspaceBusySessions\(workspaceStore\.workspaceBusy\(\), update\.workspaceId\)[\s\S]*syncWorkspaceSkillMaterialization\(update\.workspaceId,\s*\{[\s\S]*skillRegistryMaterializationAuthContext\(\)[\s\S]*activeRun: true[\s\S]*\}\)/s,
+    /hasWorkspaceBusySessions\(deps\.workspaceBusy\(\), update\.workspaceId\)[\s\S]*syncWorkspaceSkillMaterialization\(update\.workspaceId,\s*\{[\s\S]*materializationAuthContext\(\)[\s\S]*activeRun: true[\s\S]*\}\)/s,
     "Active workspace updates must request pending materialization instead of mutating files under a running session",
   );
   assert.match(
@@ -54,58 +80,58 @@ test("app wires registry event polling into skill inventory and materialization 
     "Active workspace updates under a running session should be replayed after the run is idle",
   );
   assert.match(
-    source,
+    orchestratorSource,
     /setPendingSkillRegistryWorkspaceReplays/,
     "Workspace registry replay state should be persisted until the workspace becomes idle",
   );
   assert.match(
     workspacePendingHandler,
-    /syncWorkspaceSkillMaterialization\(\s*update\.workspaceId,\s*[\s\S]*skillRegistryMaterializationAuthContext\(\)[\s\S]*\)[\s\S]*refreshAfterSkillRegistryMaterialization\(result\)/s,
+    /syncWorkspaceSkillMaterialization\(\s*update\.workspaceId,\s*[\s\S]*materializationAuthContext\(\)[\s\S]*\)[\s\S]*refreshAfterSkillRegistryMaterialization\(result\)/s,
     "Active workspace updates with no running session should materialize immediately and refresh skills",
   );
   assert.match(
     globalUpdateHandler,
-    /syncGlobalSkillMaterialization\(\{[\s\S]*skillRegistryMaterializationAuthContext\(\)[\s\S]*activeRun: true[\s\S]*\}\)[\s\S]*setPendingGlobalSkillRegistryReplay/s,
+    /syncGlobalSkillMaterialization\(\{[\s\S]*materializationAuthContext\(\)[\s\S]*activeRun: true[\s\S]*\}\)[\s\S]*setPendingGlobalSkillRegistryReplay/s,
     "Global registry updates under active runs should request pending materialization and store a global replay",
   );
   assert.match(
     globalUpdateHandler,
-    /syncGlobalSkillMaterialization\(skillRegistryMaterializationAuthContext\(\)\)[\s\S]*refreshAfterSkillRegistryMaterialization\(result\)/s,
+    /syncGlobalSkillMaterialization\(materializationAuthContext\(\)\)[\s\S]*refreshAfterSkillRegistryMaterialization\(result\)/s,
     "Global registry updates should use the global materialization API and refresh skills",
   );
   assert.match(
-    source,
-    /refreshAfterSkillRegistryMaterialization[\s\S]*refreshSkills\(\{\s*force: true\s*\}\)[\s\S]*extensionsStore\.invalidateSkillRegistryInventory\(\)/s,
+    orchestratorSource,
+    /refreshAfterSkillRegistryMaterialization[\s\S]*refreshSkills\(\{\s*force: true\s*\}\)[\s\S]*deps\.invalidateSkillRegistryInventory\(\)/s,
     "Registry materialization changes should refresh skills and invalidate inventory",
   );
   assert.match(
-    source,
+    orchestratorSource,
     /markReloadRequired\("skills"/,
     "Active workspace registry updates should surface a skill reload prompt",
   );
   assert.match(
-    source,
+    orchestratorSource,
     /pendingSkillRegistryWorkspaceReplays\(\)/,
     "Pending workspace registry replay state should be observed reactively",
   );
   assert.match(
-    source,
+    orchestratorSource,
     /if\s*\(hasWorkspaceBusySessions\(busyWorkspaces,\s*workspaceId\)\)\s*continue;[\s\S]*replayPendingSkillRegistryWorkspaceUpdate\(client,\s*workspaceId,\s*pending\)/s,
     "Pending workspace registry updates should wait until that workspace is no longer busy",
   );
   assert.match(
-    source,
-    /replayPendingSkillRegistryWorkspaceUpdate[\s\S]*syncWorkspaceSkillMaterialization\(\s*workspaceId,\s*[\s\S]*skillRegistryMaterializationAuthContext\(\)[\s\S]*\)/s,
+    orchestratorSource,
+    /replayPendingSkillRegistryWorkspaceUpdate[\s\S]*syncWorkspaceSkillMaterialization\(\s*workspaceId,\s*[\s\S]*materializationAuthContext\(\)[\s\S]*\)/s,
     "Pending workspace registry updates should replay when that workspace is no longer busy",
   );
   assert.match(
-    source,
-    /pendingGlobalSkillRegistryReplay\(\)[\s\S]*hasAnyWorkspaceBusySessions\(workspaceStore\.workspaceBusy\(\)\)[\s\S]*syncGlobalSkillMaterialization\(skillRegistryMaterializationAuthContext\(\)\)/s,
+    orchestratorSource,
+    /pendingGlobalSkillRegistryReplay\(\)[\s\S]*hasAnyWorkspaceBusySessions\(deps\.workspaceBusy\(\)\)[\s\S]*syncGlobalSkillMaterialization\(materializationAuthContext\(\)\)/s,
     "Pending global registry updates should replay once every workspace is idle",
   );
   assert.match(
-    source,
-    /skillRegistryMaterializationAuthContext[\s\S]*denToken[\s\S]*denOrgId[\s\S]*denUserId/s,
+    orchestratorSource,
+    /materializationAuthContext[\s\S]*denToken[\s\S]*denOrgId[\s\S]*denUserId/s,
     "Materialization sync calls should forward Den auth context for org workspace resolution",
   );
 });

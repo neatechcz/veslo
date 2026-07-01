@@ -18,7 +18,7 @@ const workspaceCacheSource = readFileSync(
 );
 const workspaceSource = readWorkspaceBehaviorSources();
 const snapshotWiringStart = appSource.indexOf("createWorkspaceSessionSnapshots({");
-const snapshotWiringEnd = appSource.indexOf("  type PendingSkillRegistryReplay", snapshotWiringStart);
+const snapshotWiringEnd = appSource.indexOf("  const readWorkspaceRuntimeDebugSnapshot", snapshotWiringStart);
 const snapshotWiringSource = appSource.slice(snapshotWiringStart, snapshotWiringEnd);
 
 test("switching workspaces saves outgoing and loads incoming when selected session is unscoped", () => {
