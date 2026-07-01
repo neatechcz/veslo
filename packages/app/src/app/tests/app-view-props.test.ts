@@ -32,7 +32,7 @@ function extractCreateAppViewPropsInputKeys(): string[] {
   const start = appSource.indexOf("const appViewProps = createAppViewProps({");
   assert.notEqual(start, -1, "app.tsx should create app view props");
   const open = appSource.indexOf("{", start);
-  return extractIdentifierList(extractBraceBody(appSource, open));
+  return extractIdentifierList(extractBraceBody(appSource, open), "createAppViewProps input");
 }
 
 function extractCreateAppViewPropsDestructuredKeys(): string[] {
@@ -41,14 +41,22 @@ function extractCreateAppViewPropsDestructuredKeys(): string[] {
   const destructureStart = viewPropsSource.indexOf("const {", functionStart);
   assert.notEqual(destructureStart, -1, "createAppViewProps should destructure deps");
   const open = viewPropsSource.indexOf("{", destructureStart);
-  return extractIdentifierList(extractBraceBody(viewPropsSource, open));
+  return extractIdentifierList(extractBraceBody(viewPropsSource, open), "createAppViewProps destructuring");
 }
 
-function extractIdentifierList(source: string): string[] {
-  return source
+function extractIdentifierList(source: string, label: string): string[] {
+  const parsed = source
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .map((line) => line.match(/^([A-Za-z_$][\w$]*)[,]?$/)?.[1])
+    .map((line) => line.replace(/\/\/.*$/, "").trim())
+    .filter((line) => line.length > 0)
+    .map((line) => ({ line, match: line.match(/^([A-Za-z_$][\w$]*)[,]?$/) }));
+  const unparsed = parsed
+    .filter((entry) => !entry.match)
+    .map((entry) => entry.line);
+
+  assert.deepEqual(unparsed, [], `${label} should stay a one-identifier-per-line dependency list`);
+  return parsed
+    .map((entry) => entry.match?.[1])
     .filter((name): name is string => Boolean(name));
 }
 

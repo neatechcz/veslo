@@ -939,6 +939,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       });
       reportSendErrorToDisplayedTarget(message);
       return false;
+    }
     } finally {
       stopSendPromptBusy();
     }

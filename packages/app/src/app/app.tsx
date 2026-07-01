@@ -831,12 +831,10 @@ export default function App() {
   const SKILL_HOT_RELOAD_GRACE_MS = 5000;
   let markReloadRequiredHandler: ((reason: ReloadReason, trigger?: ReloadTrigger) => void) | undefined;
   let onHotReloadAppliedHandler: (() => void) | undefined;
-  const [pendingSkillFallbackAutoReload, setPendingSkillFallbackAutoReload] = createSignal(false);
   const skillReloadGuard = createSkillReloadGuard({
     graceMs: SKILL_HOT_RELOAD_GRACE_MS,
     onFallbackNeeded: (trigger) => {
       markReloadRequiredHandler?.("skills", trigger);
-      setPendingSkillFallbackAutoReload(true);
     },
   });
 
@@ -3220,10 +3218,7 @@ export default function App() {
 
   markReloadRequiredHandler = systemState.markReloadRequired;
   onHotReloadAppliedHandler = () => {
-    const hadPendingSkillFallback = skillReloadGuard.hotReloadApplied();
-    if (hadPendingSkillFallback) {
-      setPendingSkillFallbackAutoReload(false);
-    }
+    skillReloadGuard.hotReloadApplied();
 
     const reasons = reloadReasons();
     if (reasons.length === 1 && reasons[0] === "skills") {
@@ -3400,17 +3395,6 @@ export default function App() {
     if (!reloadBusy()) return;
     if (!skillReloadGuard.hasPending()) return;
     skillReloadGuard.hotReloadApplied();
-    setPendingSkillFallbackAutoReload(false);
-  });
-
-  // Legacy skill-fallback auto-reload removed. OpenCode now hot-reloads
-  // skills, and the auto-reload was kicking off engine restarts during
-  // workspace browsing — wiping the user's session view. The reload-required
-  // banner is still shown via markReloadRequired so the user can reload
-  // explicitly if they need to.
-  createEffect(() => {
-    if (!pendingSkillFallbackAutoReload()) return;
-    setPendingSkillFallbackAutoReload(false);
   });
 
   const forceStopActiveSessionsAndReload = async () => {
@@ -3424,11 +3408,6 @@ export default function App() {
     }
     await reloadWorkspaceEngineAndResume();
   };
-
-  onMount(() => {
-    // OpenCode hot reload drives freshness now; Veslo no longer listens for
-    // legacy reload-required events.
-  });
 
   const {
     engine,

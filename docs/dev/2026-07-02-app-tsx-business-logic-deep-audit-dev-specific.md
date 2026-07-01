@@ -84,8 +84,6 @@ Files:
 
 - `packages/app/src/app/app.tsx`
 - `packages/app/src/app/context/app-startup-hydration.ts`
-- `packages/app/src/app/app-view-props.ts`
-- `packages/app/src/app/tests/app-view-props.test.ts`
 - `packages/app/src/app/tests/pages/settings-tabs-layout.test.ts`
 
 Current shape:
@@ -96,9 +94,9 @@ Current shape:
   `veslo.autoCompactContext` to JSON `true`.
 - Settings tests assert that `autoCompactContext` / `toggleAutoCompactContext`
   are not exposed in settings.
-- `app.tsx` still passes `autoCompactContext` and `setAutoCompactContext` into
-  `createAppViewProps()`, but `app-view-props.ts` no longer destructures or uses
-  them.
+- Current `createAppViewProps()` wiring is already clean. Do not add an
+  app-view-props cleanup slice for this finding unless the snapshot changes
+  again.
 
 Important distinction:
 
@@ -109,7 +107,7 @@ Important distinction:
 Recommended next-agent decision:
 
 - If auto-compaction should always be on, remove the preference signal, storage
-  key persistence, app-view-props pass-through, and reset-default setter.
+  key persistence, and reset-default setter.
 - If the preference should come back, reintroduce real load/set UI behavior and
   tests.
 
@@ -194,22 +192,24 @@ These pieces look unusual but are probably not dead:
   - These cross sidebar/session transcript/session creation behavior.
   - They may be extraction candidates, but not deletion candidates.
 
-## AppViewProps Boundary Note
+## AppViewProps Boundary Status
 
 `AppViewPropsScope` is currently `Record<string, any>`.
 
-During the audit, a read-only compare found:
+Current snapshot status:
 
-- 293 keys passed from `app.tsx` into `createAppViewProps()`
+- 291 keys passed from `app.tsx` into `createAppViewProps()`
 - 291 keys destructured by `app-view-props.ts`
-- extra pass-through keys:
-  - `autoCompactContext`
-  - `setAutoCompactContext`
+- extra pass-through keys: none
 
-This loose input type lets stale pass-through dependencies survive after the
-view adapter stops using them. If the next agent touches this boundary, prefer a
-typed `AppViewPropsScope` contract or another narrow guard that fails when
-`app.tsx` passes unused view props.
+Earlier audit notes about `autoCompactContext` and `setAutoCompactContext` being
+extra app-view-props pass-through dependencies are stale. That cleanup is already
+done in the current snapshot or in the current dirty diff.
+
+The loose input type can still hide future drift. If a next agent touches this
+boundary for another reason, prefer a typed `AppViewPropsScope` contract or a
+narrow source-contract guard that fails when `app.tsx` passes unused view props.
+Do not make this a standalone cleanup slice right now.
 
 ## Suggested KISS Order
 
@@ -218,20 +218,16 @@ typed `AppViewPropsScope` contract or another narrow guard that fails when
    - `activeMessages`
    - `providerDefaults`
 
-2. Remove app-view-props dead pass-through:
-   - `autoCompactContext`
-   - `setAutoCompactContext`
-
-3. Decide `autoCompactContext` product intent:
+2. Decide `autoCompactContext` product intent:
    - always-on auto-compaction, or real preference toggle.
 
-4. Decide `sessionViewLockUntil`:
+3. Decide `sessionViewLockUntil`:
    - remove obsolete guard, or wire it intentionally.
 
-5. Decide per-session model maps:
+4. Decide per-session model maps:
    - remove dead map layers, or restore real writers.
 
-6. Clean skill fallback leftover:
+5. Clean skill fallback leftover:
    - preserve `createSkillReloadGuard()`
    - remove only no-op local pending state and empty `onMount`, if confirmed.
 
@@ -241,8 +237,8 @@ For tiny cleanup-only slices:
 
 ```bash
 pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm \
-  src/app/tests/app-view-props.test.ts \
   src/app/tests/context/app-route-sync.test.ts \
+  src/app/tests/pages/settings-tabs-layout.test.ts \
   src/app/tests/pages/session-send-workflow.test.ts \
   src/app/tests/lib/skill-reload-guard.test.ts
 
