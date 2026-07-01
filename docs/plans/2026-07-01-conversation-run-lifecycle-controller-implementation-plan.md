@@ -403,7 +403,7 @@ Use this ledger for quick discovery. The authoritative task details are below.
 | LFC02 | submit admission and queue acceptance owner | done | codex-20260702-lfc02-submit-admission | true |
 | LFC03 | OpenCode submit and AI gateway provider watch owner | done | codex-20260702-lfc03-submit-provider-watch | true |
 | LFC04 | queue drain and lifecycle reconcile timers | done | codex-20260702-lfc04-queue-drain-reconcile | true |
-| LFC05 | transcript and startup wake-up wiring | reserved | codex-20260702-lfc05-transcript-startup-wakeup | false |
+| LFC05 | transcript and startup wake-up wiring | done | codex-20260702-lfc05-transcript-startup-wakeup | true |
 | LFC06 | abort flow consolidation | available | null | false |
 | LFC08 | core diagnostics, docs, and final verification | available | null | false |
 | LFC07 | deferred app latest-run and abort contract hardening | deferred | null | false |
@@ -731,12 +731,12 @@ Acceptance:
 
 ```yaml
 id: LFC05
-status: reserved
+status: done
 reserved_by: codex-20260702-lfc05-transcript-startup-wakeup
 reserved_at: 2026-07-02T00:56:07.2505847+02:00
 branch: lifecycle/lfc05-transcript-startup-wakeup
 worktree: ../veslo-lifecycle-lfc05-transcript-startup-wakeup
-done: false
+done: true
 depends_on:
   - LFC04
 target_module: packages/server/src/conversation-run-lifecycle-controller.ts
@@ -1488,3 +1488,24 @@ Notes:
 - Transcript append still does not mark lifecycle rows terminal directly; it only observes latest
   lifecycle status and wakes the queue when the owner reports inactive/terminal.
 - Remote workspace lifecycle behavior was not changed.
+
+### 2026-07-02 LFC05 Merge Verification
+
+Status:
+
+- `done: true`
+- merged commit: `d3c94d9d`
+- original branch: `local/sandbox-merge`
+
+Evidence from original worktree after merge:
+
+- `pnpm --filter veslo-server exec bun test ./src/tests/conversation-run-lifecycle-controller.test.ts src/tests/server-conversations.test.ts`
+  passed: 43 pass, 0 fail.
+- `pnpm --filter veslo-server typecheck` passed.
+- `git diff --check` passed with no output.
+
+Notes:
+
+- LFC05 was rebased onto the current `local/sandbox-merge` before merge because the original
+  worktree had advanced through an unrelated app-cleanup commit.
+- Original worktree still contains an unrelated untracked app cleanup plan outside LFC05.
