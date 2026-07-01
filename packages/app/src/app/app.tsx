@@ -51,21 +51,6 @@ import {
 } from "./lib/model-variant";
 import { resolveGlobalRuntimeModel } from "./lib/global-model-runtime";
 import {
-  emptySubagentDecorationsPersistence,
-  type SubagentDecorationPersistentRole,
-  type SubagentDecorationPersistentSession,
-  type SubagentDecorationsPersistenceV1,
-} from "./lib/subagent-decorations-persistence";
-import {
-  buildSubagentDecorationModel,
-  classifySubagentRoleDeterministic,
-  normalizeSubagentRoleKey,
-  normalizeSubagentLocale,
-  roleProfileFromRoleKey,
-  SUBAGENT_DECORATION_PALETTE,
-  type SubagentLocale,
-} from "./lib/subagent-decoration-model";
-import {
   buildCreatedSidebarSessionItem,
   resolveCreatedSessionWorkspaceId,
   shouldRouteCreatedSessionAfterSelect,
@@ -115,6 +100,7 @@ import {
   debugWorkspaceIdFromMountedBaseUrl,
   type WorkspaceRuntimeDebugRoot,
 } from "./context/workspace-runtime-debug-probe";
+import { createSessionSidebarDecorations } from "./context/session-sidebar-decorations";
 import {
   createSendRuntimeReadiness,
   type SendRuntimePreflightContext,
@@ -225,7 +211,6 @@ import type {
   SettingsTab,
   SkillCard,
   PendingSidebarSessionMetadata,
-  SidebarSubagentDecoration,
   SidebarSessionItem,
   TodoItem,
   WorkspaceDisplay,
@@ -923,15 +908,9 @@ export default function App() {
       // ignore
     }
   };
-  const toSubagentLocale = (language: Language): SubagentLocale => (language === "cs" ? "cs" : "en");
-
   const [sessionDirectoryOverrideById, setSessionDirectoryOverrideById] = createSignal<
     Record<string, string>
   >(readSessionDirectoryOverrides());
-  const [subagentDecorationsState, setSubagentDecorationsState] = createSignal<SubagentDecorationsPersistenceV1>(
-    emptySubagentDecorationsPersistence(),
-  );
-  const [subagentDecorationsReady, setSubagentDecorationsReady] = createSignal(false);
   const persistSessionDirectoryOverride = (sessionID: string, directory?: string | null) => {
     const id = sessionID.trim();
     if (!id) return;
@@ -3460,213 +3439,11 @@ export default function App() {
   const archiveSidebarSession = sessionArchiveStore.archiveSession;
   const unarchiveSession = sessionArchiveStore.unarchiveSession;
 
-  type SidebarSubagentCandidate = {
-    workspaceId: string;
-    sessionId: string;
-    parentSessionId: string;
-    sessionTitle: string;
-    parentSessionTitle: string;
-  };
-
-  const subagentCandidates = createMemo<SidebarSubagentCandidate[]>(() => {
-    const candidates: SidebarSubagentCandidate[] = [];
-    const seenSessionIds = new Set<string>();
-
-    for (const group of sidebarWorkspaceGroups()) {
-      const bySessionId = new Map(
-        group.sessions.map((session) => [session.id, session] as const),
-      );
-      for (const session of group.sessions) {
-        const parentSessionId = typeof session.parentID === "string" ? session.parentID.trim() : "";
-        if (!parentSessionId || seenSessionIds.has(session.id)) continue;
-        seenSessionIds.add(session.id);
-        candidates.push({
-          workspaceId: group.workspace.id,
-          sessionId: session.id,
-          parentSessionId,
-          sessionTitle: session.title?.trim() ?? "",
-          parentSessionTitle: bySessionId.get(parentSessionId)?.title?.trim() ?? "",
-        });
-      }
-    }
-
-    return candidates;
+  const sessionSidebarDecorations = createSessionSidebarDecorations({
+    locale: () => (currentLocale() === "cs" ? "cs" : "en"),
+    sidebarWorkspaceGroups,
   });
-
-  const nextSubagentOccurrenceIndex = (
-    existingSessions: SubagentDecorationPersistentSession[],
-    roleKey: string,
-  ) => {
-    const used = new Set<number>();
-    for (const session of existingSessions) {
-      if (session.roleKey !== roleKey) continue;
-      if (Number.isFinite(session.occurrenceIndex) && session.occurrenceIndex > 0) {
-        used.add(Math.floor(session.occurrenceIndex));
-      }
-    }
-    let index = 1;
-    while (used.has(index)) index += 1;
-    return index;
-  };
-
-  const nextSubagentColor = (existingSessions: SubagentDecorationPersistentSession[]) => {
-    const usedColors = new Set(
-      existingSessions
-        .map((session) => session.color?.trim() ?? "")
-        .filter((color) => color.length > 0),
-    );
-    for (const color of SUBAGENT_DECORATION_PALETTE) {
-      if (!usedColors.has(color)) return color;
-    }
-    let attempt = usedColors.size + 1;
-    while (true) {
-      const generated = `hsl(${(attempt * 47) % 360} 72% 46%)`;
-      if (!usedColors.has(generated)) return generated;
-      attempt += 1;
-    }
-  };
-
-  const buildSubagentRoleEntry = (input: {
-    locale: SubagentLocale;
-    roleKey: string;
-    roleLabel: string;
-    aiFirstName: string;
-    existingRole: SubagentDecorationPersistentRole | null;
-    fallbackPrompt: string;
-  }): SubagentDecorationPersistentRole => {
-    const fallbackProfile = classifySubagentRoleDeterministic({
-      locale: input.locale,
-      prompt: input.fallbackPrompt,
-    });
-    const roleCatalogProfile = roleProfileFromRoleKey(input.roleKey, input.locale);
-    const fallbackCs = roleCatalogProfile?.firstNameByLocale.cs ?? fallbackProfile.firstNameByLocale.cs;
-    const fallbackEn = roleCatalogProfile?.firstNameByLocale.en ?? fallbackProfile.firstNameByLocale.en;
-
-    const aiFirstName = input.aiFirstName.trim();
-    const firstNameByLocale = input.existingRole?.firstNameByLocale ?? {
-      cs: input.locale === "cs" ? (aiFirstName || fallbackCs) : fallbackCs,
-      en: input.locale === "en" ? (aiFirstName || fallbackEn) : fallbackEn,
-    };
-
-    return {
-      roleKey: input.roleKey,
-      roleLabel: input.existingRole?.roleLabel?.trim() || input.roleLabel,
-      firstNameByLocale: {
-        cs: firstNameByLocale.cs.trim() || fallbackCs,
-        en: firstNameByLocale.en.trim() || fallbackEn,
-      },
-    };
-  };
-
-  let subagentDecorationQueue = Promise.resolve();
-  const pendingSubagentDecorationSessionIds = new Set<string>();
-
-  const ensureSubagentDecorationForSession = async (candidate: SidebarSubagentCandidate) => {
-    const locale = toSubagentLocale(currentLocale());
-    const deterministic = classifySubagentRoleDeterministic({
-      locale,
-      prompt: `${candidate.sessionTitle}\n${candidate.parentSessionTitle}`,
-    });
-
-    const roleKey = normalizeSubagentRoleKey(deterministic.roleKey) ?? deterministic.roleKey;
-    const roleProfile = roleProfileFromRoleKey(roleKey, locale);
-    const roleLabel =
-      deterministic.roleLabel?.trim() ||
-      roleProfile?.roleLabel ||
-      deterministic.roleLabel;
-    const aiFirstName = deterministic.firstName;
-
-    setSubagentDecorationsState((current) => {
-      if (current.sessions.some((entry) => entry.sessionId === candidate.sessionId)) {
-        return current;
-      }
-
-      const siblingSessions = current.sessions.filter((entry) =>
-        entry.workspaceId === candidate.workspaceId &&
-        entry.parentSessionId === candidate.parentSessionId
-      );
-      const existingRole = current.roles.find((entry) => entry.roleKey === roleKey) ?? null;
-      const roleEntry = buildSubagentRoleEntry({
-        locale,
-        roleKey,
-        roleLabel,
-        aiFirstName,
-        existingRole,
-        fallbackPrompt: `${candidate.sessionTitle}\n${candidate.parentSessionTitle}`,
-      });
-      const roles = existingRole
-        ? current.roles.map((entry) => (entry.roleKey === roleKey ? roleEntry : entry))
-        : [...current.roles, roleEntry];
-
-      const sessionEntry: SubagentDecorationPersistentSession = {
-        sessionId: candidate.sessionId,
-        workspaceId: candidate.workspaceId,
-        parentSessionId: candidate.parentSessionId,
-        roleKey,
-        roleLabel,
-        color: nextSubagentColor(siblingSessions),
-        occurrenceIndex: nextSubagentOccurrenceIndex(siblingSessions, roleKey),
-      };
-
-      return {
-        ...current,
-        roles,
-        sessions: [...current.sessions, sessionEntry],
-      };
-    });
-  };
-
-  createEffect(() => {
-    if (!subagentDecorationsReady()) return;
-    const knownDecoratedIds = new Set(
-      subagentDecorationsState().sessions.map((entry) => entry.sessionId),
-    );
-    for (const candidate of subagentCandidates()) {
-      if (knownDecoratedIds.has(candidate.sessionId)) continue;
-      if (pendingSubagentDecorationSessionIds.has(candidate.sessionId)) continue;
-
-      pendingSubagentDecorationSessionIds.add(candidate.sessionId);
-      subagentDecorationQueue = subagentDecorationQueue
-        .then(async () => {
-          await ensureSubagentDecorationForSession(candidate);
-        })
-        .catch(() => {})
-        .finally(() => {
-          pendingSubagentDecorationSessionIds.delete(candidate.sessionId);
-        });
-    }
-  });
-
-  const subagentDecorationsBySessionId = createMemo<Record<string, SidebarSubagentDecoration>>(() => {
-    if (!subagentDecorationsReady()) return {};
-    const locale = normalizeSubagentLocale(toSubagentLocale(currentLocale())) ?? "en";
-    const state = subagentDecorationsState();
-    const visibleSubagentIds = new Set(subagentCandidates().map((candidate) => candidate.sessionId));
-    if (visibleSubagentIds.size === 0) return {};
-
-    const model = buildSubagentDecorationModel({
-      locale,
-      roles: state.roles,
-      sessions: state.sessions.map((entry) => ({
-        sessionId: entry.sessionId,
-        parentSessionId: `${entry.workspaceId}:${entry.parentSessionId}`,
-        roleKey: entry.roleKey,
-        roleLabel: entry.roleLabel,
-        color: entry.color,
-        occurrenceIndex: entry.occurrenceIndex,
-      })),
-    });
-
-    const map: Record<string, SidebarSubagentDecoration> = {};
-    for (const item of model.decorations) {
-      if (!visibleSubagentIds.has(item.sessionId)) continue;
-      map[item.sessionId] = {
-        label: item.displayName,
-        color: item.color,
-      };
-    }
-    return map;
-  });
+  const { subagentDecorationsBySessionId } = sessionSidebarDecorations;
 
   pendingSessionDraftController.createActivePendingDraftPersistenceEffect({
     selectedSessionId,
@@ -5319,10 +5096,8 @@ export default function App() {
     setVesloServerSettings,
     pendingSessionDraftController,
     themeMode,
-    setSubagentDecorationsState,
-    subagentDecorationsState,
-    subagentDecorationsReady,
-    setSubagentDecorationsReady,
+    hydrateSubagentDecorations: sessionSidebarDecorations.hydrate,
+    markSubagentDecorationsReady: sessionSidebarDecorations.markReady,
     baseUrl,
     setBaseUrl,
     clientDirectory,
@@ -5393,7 +5168,6 @@ export default function App() {
     workspaceProjectDir: () => workspaceProjectDir(),
     refreshMcpServers,
   });
-
 
   createEffect(() => {
     if (typeof window === "undefined") return;

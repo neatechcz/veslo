@@ -33,12 +33,6 @@ import {
   type EngineSourcePreference,
 } from "../lib/engine-source";
 import {
-  emptySubagentDecorationsPersistence,
-  parseSubagentDecorationsPersistence,
-  serializeSubagentDecorationsPersistence,
-  type SubagentDecorationsPersistenceV1,
-} from "../lib/subagent-decorations-persistence";
-import {
   setWindowDecorations,
   setWindowTitleBarStyle,
   updaterEnvironment,
@@ -106,10 +100,8 @@ export type AppStartupHydrationDeps = {
   setVesloServerSettings: Setter<VesloServerSettings>;
   pendingSessionDraftController: PendingSessionDraftStartupController;
   themeMode: Accessor<ThemeMode>;
-  setSubagentDecorationsState: Setter<SubagentDecorationsPersistenceV1>;
-  subagentDecorationsState: Accessor<SubagentDecorationsPersistenceV1>;
-  subagentDecorationsReady: Accessor<boolean>;
-  setSubagentDecorationsReady: Setter<boolean>;
+  hydrateSubagentDecorations: () => void;
+  markSubagentDecorationsReady: () => void;
   baseUrl: Accessor<string>;
   setBaseUrl: Setter<string>;
   clientDirectory: Accessor<string>;
@@ -171,8 +163,6 @@ export type AppStartupHydrationDeps = {
   reportError: (error: unknown, context: string) => void;
 };
 
-const SUBAGENT_DECORATIONS_PREF_KEY = "veslo.subagent-decorations.v1";
-
 export function createAppStartupHydration(deps: AppStartupHydrationDeps) {
   onMount(async () => {
     const mountCleanupFns: StartupCleanup[] = [];
@@ -216,7 +206,6 @@ export function createAppStartupHydration(deps: AppStartupHydrationDeps) {
 
   createPersistentPreferenceEffects(deps);
 }
-
 function hydrateCloudOnlyStartup(deps: AppStartupHydrationDeps) {
   if (typeof window === "undefined" || !deps.cloudOnlyMode()) {
     return;
@@ -311,12 +300,12 @@ function mountSystemThemeSubscription(deps: AppStartupHydrationDeps) {
 
 function hydrateLocalStoragePreferences(deps: AppStartupHydrationDeps) {
   if (typeof window === "undefined") {
-    deps.setSubagentDecorationsReady(true);
+    deps.markSubagentDecorationsReady();
     return;
   }
 
   try {
-    deps.setSubagentDecorationsState(readSubagentDecorationsState());
+    deps.hydrateSubagentDecorations();
 
     // In Tauri/desktop mode, do NOT restore the cached baseUrl from localStorage.
     // OpenCode is assigned a random port on every restart, so the stored URL is
@@ -491,7 +480,7 @@ function hydrateLocalStoragePreferences(deps: AppStartupHydrationDeps) {
     // ignore
   }
 
-  deps.setSubagentDecorationsReady(true);
+  deps.markSubagentDecorationsReady();
 }
 
 async function hydrateTauriStartup(
@@ -615,11 +604,6 @@ async function hydrateDesktopAuthSnapshot(deps: AppStartupHydrationDeps) {
 }
 
 function createPersistentPreferenceEffects(deps: AppStartupHydrationDeps) {
-  createEffect(() => {
-    if (!deps.subagentDecorationsReady()) return;
-    writeSubagentDecorationsState(deps.subagentDecorationsState());
-  });
-
   createEffect(() => {
     if (typeof window === "undefined") return;
     // In Tauri desktop the orchestrator port rotates on every `pnpm dev`
@@ -846,28 +830,4 @@ function persistTitlebarPreference(deps: AppStartupHydrationDeps) {
       });
     });
   });
-}
-
-function readSubagentDecorationsState(): SubagentDecorationsPersistenceV1 {
-  if (typeof window === "undefined") return emptySubagentDecorationsPersistence();
-  try {
-    const raw = window.localStorage.getItem(SUBAGENT_DECORATIONS_PREF_KEY);
-    return parseSubagentDecorationsPersistence(raw) ?? emptySubagentDecorationsPersistence();
-  } catch {
-    return emptySubagentDecorationsPersistence();
-  }
-}
-
-function writeSubagentDecorationsState(value: SubagentDecorationsPersistenceV1) {
-  if (typeof window === "undefined") return;
-  try {
-    const payload = serializeSubagentDecorationsPersistence(value);
-    if (payload) {
-      window.localStorage.setItem(SUBAGENT_DECORATIONS_PREF_KEY, payload);
-    } else {
-      window.localStorage.removeItem(SUBAGENT_DECORATIONS_PREF_KEY);
-    }
-  } catch {
-    // ignore
-  }
 }
