@@ -401,7 +401,7 @@ Use this ledger for quick discovery. The authoritative task details are below.
 | LFC00 | baseline lifecycle source map and contract freeze | done | codex-20260701-lfc00-baseline | true |
 | LFC01 | controller shell and isolated test harness | done | codex-20260702-lfc01-shell | true |
 | LFC02 | submit admission and queue acceptance owner | done | codex-20260702-lfc02-submit-admission | true |
-| LFC03 | OpenCode submit and AI gateway provider watch owner | reserved | codex-20260702-lfc03-submit-provider-watch | false |
+| LFC03 | OpenCode submit and AI gateway provider watch owner | done | codex-20260702-lfc03-submit-provider-watch | true |
 | LFC04 | queue drain and lifecycle reconcile timers | available | null | false |
 | LFC05 | transcript and startup wake-up wiring | available | null | false |
 | LFC06 | abort flow consolidation | available | null | false |
@@ -601,12 +601,12 @@ Acceptance:
 
 ```yaml
 id: LFC03
-status: reserved
+status: done
 reserved_by: codex-20260702-lfc03-submit-provider-watch
 reserved_at: 2026-07-02T00:36:58.9596202+02:00
 branch: lifecycle/lfc03-submit-provider-watch
 worktree: ../veslo-lifecycle-lfc03-submit-provider-watch
-done: false
+done: true
 depends_on:
   - LFC02
 target_module: packages/server/src/conversation-run-lifecycle-controller.ts
@@ -1358,3 +1358,25 @@ Evidence:
   passed: 37 pass, 0 fail.
 - `pnpm --filter veslo-server typecheck` passed.
 - `git diff --check` passed; Git reported LF-to-CRLF working-copy warnings only.
+
+### 2026-07-02 LFC03 Merge Verification
+
+Status:
+
+- `done: true`
+- merged commit: `d577a77d`
+- original branch: `local/sandbox-merge`
+
+Evidence from original worktree after merge:
+
+- `pnpm --filter veslo-server exec bun test ./src/tests/conversation-run-lifecycle-controller.test.ts src/tests/server-conversations.test.ts src/tests/ai-gateway-runtime-owner.test.ts`
+  passed: 37 pass, 0 fail.
+- `pnpm --filter veslo-server typecheck` passed.
+- `git diff --check` passed; Git reported LF-to-CRLF working-copy warnings in unrelated dirty app
+  files only.
+
+Notes:
+
+- Original worktree still contains unrelated dirty app/audit work outside LFC03.
+- Queue drain still lives in `server.ts`; LFC03 only routes accepted queue submits through the
+  controller to preserve submit/watch behavior until LFC04 owns the drain timers.
