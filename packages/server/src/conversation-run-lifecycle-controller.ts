@@ -126,14 +126,16 @@ export type ConversationRunLifecycleSubmitResult = {
 export type ConversationRunLifecycleControllerOptions = {
   lifecycleClient?: OrchestratorLifecycleClient | null;
   queueStore?: ConversationRunQueueStore | null;
+  resolveWorkspace?: (workspaceId: string) => WorkspaceInfo | null;
+  createBackgroundRunTrace?: () => ConversationRunLifecycleTracer;
   submitOpenCode?: ConversationRunLifecycleSubmitOpenCodePort | null;
   abortOpenCode?: ConversationRunLifecycleAbortOpenCodePort | null;
   aiGatewayActiveRun?: ConversationRunLifecycleAiGatewayActiveRunPort | null;
   aiGatewayProviderWatch?: ConversationRunLifecycleAiGatewayProviderWatchPort | null;
-  scheduleQueueDrain?: (workspaceId: string, conversationId: string, delayMs: number) => void;
   queueDrainPollMs?: number;
-  scheduleLifecycleReconcile?: (input: ConversationRunLifecycleScheduleReconcileInput) => void;
   resolveLifecycleReconcileInitialDelayMs?: () => number;
+  resolveLifecycleReconcilePollMs?: () => number;
+  resolveLifecycleReconcileMaxAttempts?: () => number;
   timers?: Partial<ConversationRunLifecycleTimerPort>;
   trace?: ConversationRunLifecycleTracePort | null;
   diagnostics?: {
@@ -163,6 +165,10 @@ export type ConversationRunLifecycleController = {
     input: ConversationRunLifecycleSubmitInput,
     lifecycleOwner: OrchestratorLifecycleClient | null,
   ): Promise<unknown>;
+  scheduleQueueDrain(workspaceId: string, conversationId: string, delayMs?: number): void;
+  drainConversationQueue(workspaceId: string, conversationId: string): Promise<void>;
+  scheduleLifecycleReconcile(input: ConversationRunLifecycleScheduleReconcileInput): void;
+  reconcileConversationRunLifecycle(input: ConversationRunLifecycleScheduleReconcileInput): Promise<void>;
   start(): void;
   stop(): void;
   snapshotForTests(): ConversationRunLifecycleSnapshot;
@@ -198,10 +204,41 @@ function lifecycleRequestApiError(error: OrchestratorLifecycleRequestError): Api
   });
 }
 
+function parseQueuedRunKind(kind: string): ConversationRunLifecycleKind {
+  if (kind === "prompt_async" || kind === "command" || kind === "shell" || kind === "summarize") {
+    return kind;
+  }
+  throw new Error("queued run kind must be prompt_async, command, shell, or summarize");
+}
+
+function optionalBodyBoolean(body: Record<string, unknown>, key: string): boolean | null {
+  const value = body[key];
+  return typeof value === "boolean" ? value : null;
+}
+
 function normalizeIntervalMs(value: number | null | undefined): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   const normalized = Math.floor(value);
   return normalized > 0 ? normalized : null;
+}
+
+function normalizeNonNegativeDelayMs(value: number | null | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.floor(value));
+}
+
+function createNoopRunTrace(): ConversationRunLifecycleTracer {
+  const entries: Array<Record<string, unknown>> = [];
+  return {
+    entries,
+    traceId: null,
+    record(event: string, payload: Record<string, unknown> = {}) {
+      entries.push({ event, ...payload });
+    },
+    async step<T>(_event: string, fn: () => Promise<T>): Promise<T> {
+      return fn();
+    },
+  };
 }
 
 export function createConversationRunLifecycleController(
@@ -215,6 +252,10 @@ export function createConversationRunLifecycleController(
   const diagnosticsIntervalMs = normalizeIntervalMs(options.diagnostics?.intervalMs);
   const queueDrainPollMs = normalizeIntervalMs(options.queueDrainPollMs) ?? 1_500;
   const activeTimers = new Set<unknown>();
+  const queueDrainTimers = new Map<string, unknown>();
+  const queueDrainInFlight = new Set<string>();
+  const lifecycleReconcileTimers = new Map<string, unknown>();
+  const lifecycleReconcileInFlight = new Set<string>();
   let started = false;
   let diagnosticsRuns = 0;
 
@@ -257,7 +298,7 @@ export function createConversationRunLifecycleController(
       clientMessageId: input.clientMessageId,
       origin: input.origin,
     });
-    options.scheduleQueueDrain?.(input.workspace.id, input.target.conversationId, queueDrainPollMs);
+    scheduleQueueDrain(input.workspace.id, input.target.conversationId, queueDrainPollMs);
     return {
       httpStatus: queued.inserted ? 202 : 200,
       payload: {
@@ -304,12 +345,12 @@ export function createConversationRunLifecycleController(
     });
   };
 
-  const scheduleLifecycleReconcile = (
+  const scheduleAcceptedRunReconcile = (
     input: ConversationRunLifecycleSubmitInput,
     reason: string,
     delayMs: number,
   ) => {
-    options.scheduleLifecycleReconcile?.({
+    scheduleLifecycleReconcile({
       workspace: input.workspace,
       conversationId: input.target.conversationId,
       runId: input.runId,
@@ -399,7 +440,7 @@ export function createConversationRunLifecycleController(
         "server:conversation-run:lifecycle-mark-failed",
         error instanceof Error ? error.message : String(error),
       );
-      scheduleLifecycleReconcile(input, "submit-failed", 0);
+      scheduleAcceptedRunReconcile(input, "submit-failed", 0);
       unregisterRegisteredAiGatewayRun();
       throw error;
     }
@@ -441,7 +482,7 @@ export function createConversationRunLifecycleController(
               timeoutMs: providerStart.timeoutMs,
             },
           );
-          scheduleLifecycleReconcile(input, "ai-gateway-provider-start-timeout", 0);
+          scheduleAcceptedRunReconcile(input, "ai-gateway-provider-start-timeout", 0);
           await abortOpenCodeAfterProviderStartTimeout(input);
           throw new ApiError(504, "ai_gateway_provider_start_timeout", error, {
             workspaceId: input.workspace.id,
@@ -458,7 +499,7 @@ export function createConversationRunLifecycleController(
       unregisterRegisteredAiGatewayRun();
     }
 
-    scheduleLifecycleReconcile(
+    scheduleAcceptedRunReconcile(
       input,
       "accepted",
       options.resolveLifecycleReconcileInitialDelayMs?.() ?? 0,
@@ -475,7 +516,312 @@ export function createConversationRunLifecycleController(
     for (const handle of [...activeTimers]) {
       clearTimer(handle);
     }
+    queueDrainTimers.clear();
+    lifecycleReconcileTimers.clear();
   };
+
+  const queueKey = (workspaceId: string, conversationId: string) => `${workspaceId}\0${conversationId}`;
+  const reconcileKey = (workspaceId: string, conversationId: string, runId: string) =>
+    `${workspaceId}\0${conversationId}\0${runId}`;
+
+  function scheduleQueueDrain(workspaceId: string, conversationId: string, delayMs = 0): void {
+    const normalizedConversationId = conversationId.trim();
+    if (!workspaceId.trim() || !normalizedConversationId) return;
+    const key = queueKey(workspaceId, normalizedConversationId);
+    const normalizedDelayMs = normalizeNonNegativeDelayMs(delayMs);
+    const existing = queueDrainTimers.get(key);
+    if (existing) {
+      if (normalizedDelayMs > 0) return;
+      clearTimer(existing);
+      queueDrainTimers.delete(key);
+    }
+    const handle = scheduleTimeout(() => {
+      activeTimers.delete(handle);
+      queueDrainTimers.delete(key);
+      void drainConversationQueue(workspaceId, normalizedConversationId);
+    }, normalizedDelayMs);
+    activeTimers.add(handle);
+    queueDrainTimers.set(key, handle);
+    unrefTimer(handle);
+    recordTrace("server:conversation-run:queue-drain-scheduled", {
+      workspaceId,
+      conversationId: normalizedConversationId,
+      delayMs: normalizedDelayMs,
+    });
+  }
+
+  function scheduleLifecycleReconcile(input: ConversationRunLifecycleScheduleReconcileInput): void {
+    const conversationId = input.conversationId.trim();
+    const runId = input.runId.trim();
+    if (!input.workspace.id.trim() || !conversationId || !runId) return;
+    const key = reconcileKey(input.workspace.id, conversationId, runId);
+    const delayMs = normalizeNonNegativeDelayMs(input.delayMs);
+    const existing = lifecycleReconcileTimers.get(key);
+    if (existing) {
+      if (delayMs > 0 && input.abortRequested !== true) return;
+      clearTimer(existing);
+      lifecycleReconcileTimers.delete(key);
+    }
+    const handle = scheduleTimeout(() => {
+      activeTimers.delete(handle);
+      lifecycleReconcileTimers.delete(key);
+      void reconcileConversationRunLifecycle({
+        ...input,
+        conversationId,
+        runId,
+        attempt: input.attempt ?? 0,
+      });
+    }, delayMs);
+    activeTimers.add(handle);
+    lifecycleReconcileTimers.set(key, handle);
+    unrefTimer(handle);
+    recordTrace("server:conversation-run:lifecycle-reconcile-scheduled", {
+      workspaceId: input.workspace.id,
+      conversationId,
+      runId,
+      reason: input.reason,
+      abortRequested: input.abortRequested === true,
+      attempt: input.attempt ?? 0,
+      delayMs,
+    });
+  }
+
+  async function reconcileConversationRunLifecycle(input: ConversationRunLifecycleScheduleReconcileInput): Promise<void> {
+    const lifecycleOwner = input.workspace.workspaceType === "remote" ? null : options.lifecycleClient ?? null;
+    if (!lifecycleOwner) return;
+    const conversationId = input.conversationId.trim();
+    const runId = input.runId.trim();
+    if (!conversationId || !runId) return;
+    const key = reconcileKey(input.workspace.id, conversationId, runId);
+    const pollMs = normalizeIntervalMs(options.resolveLifecycleReconcilePollMs?.()) ?? 1_000;
+    const maxAttempts = Math.max(1, Math.floor(options.resolveLifecycleReconcileMaxAttempts?.() ?? 600));
+    if (lifecycleReconcileInFlight.has(key)) {
+      scheduleLifecycleReconcile({
+        ...input,
+        conversationId,
+        runId,
+        delayMs: pollMs,
+      });
+      return;
+    }
+
+    const attempt = input.attempt ?? 0;
+    const scheduleNextAttempt = () => {
+      const nextAttempt = attempt + 1;
+      if (nextAttempt >= maxAttempts) {
+        recordTrace("server:conversation-run:lifecycle-reconcile-exhausted", {
+          workspaceId: input.workspace.id,
+          conversationId,
+          runId,
+          reason: input.reason,
+          abortRequested: input.abortRequested === true,
+          attempts: nextAttempt,
+        });
+        return;
+      }
+      scheduleLifecycleReconcile({
+        ...input,
+        conversationId,
+        runId,
+        attempt: nextAttempt,
+        delayMs: pollMs,
+      });
+    };
+
+    lifecycleReconcileInFlight.add(key);
+    try {
+      const status = await lifecycleOwner.status(input.workspace.id, conversationId, runId);
+      recordTrace("server:conversation-run:lifecycle-reconcile", {
+        workspaceId: input.workspace.id,
+        conversationId,
+        runId,
+        reason: input.reason,
+        abortRequested: input.abortRequested === true,
+        status: status?.status ?? null,
+        stale: status?.stale ?? null,
+        attempt,
+      });
+
+      if (!status) {
+        if (input.abortRequested === true) {
+          await lifecycleOwner.markAborted(
+            input.workspace.id,
+            runId,
+            "user abort reconciled after missing lifecycle status",
+          ).catch((error) => {
+            recordTrace("server:conversation-run:lifecycle-mark-aborted-error", {
+              workspaceId: input.workspace.id,
+              conversationId,
+              runId,
+              reason: input.reason,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }
+        scheduleQueueDrain(input.workspace.id, conversationId, 0);
+        return;
+      }
+
+      if (status.stale === true) {
+        recordTrace("server:conversation-run:lifecycle-reconcile-stale", {
+          workspaceId: input.workspace.id,
+          conversationId,
+          runId,
+          reason: input.reason,
+          status: status.status,
+          abortRequested: input.abortRequested === true,
+          attempt,
+        });
+        scheduleNextAttempt();
+        return;
+      }
+
+      if (!isActiveLifecycleStatus(status.status)) {
+        if (input.abortRequested === true && status.status !== "aborted") {
+          await lifecycleOwner.markAborted(
+            input.workspace.id,
+            runId,
+            "user abort reconciled after engine became inactive",
+          ).catch((error) => {
+            recordTrace("server:conversation-run:lifecycle-mark-aborted-error", {
+              workspaceId: input.workspace.id,
+              conversationId,
+              runId,
+              reason: input.reason,
+              status: status.status,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }
+        scheduleQueueDrain(input.workspace.id, conversationId, 0);
+        return;
+      }
+
+      scheduleNextAttempt();
+    } catch (error) {
+      recordTrace("server:conversation-run:lifecycle-reconcile-error", {
+        workspaceId: input.workspace.id,
+        conversationId,
+        runId,
+        reason: input.reason,
+        abortRequested: input.abortRequested === true,
+        attempt,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      scheduleNextAttempt();
+    } finally {
+      lifecycleReconcileInFlight.delete(key);
+    }
+  }
+
+  async function drainConversationQueue(workspaceId: string, conversationId: string): Promise<void> {
+    const normalizedConversationId = conversationId.trim();
+    if (!workspaceId.trim() || !normalizedConversationId || !options.queueStore) return;
+    const key = queueKey(workspaceId, normalizedConversationId);
+    if (queueDrainInFlight.has(key)) return;
+    queueDrainInFlight.add(key);
+    let item = null as ReturnType<ConversationRunQueueStore["nextPending"]>;
+    try {
+      const workspace = options.resolveWorkspace?.(workspaceId) ?? null;
+      if (!workspace) return;
+      const lifecycleOwner = workspace.workspaceType === "remote" ? null : options.lifecycleClient ?? null;
+      const runTrace = options.createBackgroundRunTrace?.() ?? createNoopRunTrace();
+      if (lifecycleOwner) {
+        try {
+          const latest = await lifecycleOwner.status(workspace.id, normalizedConversationId, "latest");
+          if (latest && isActiveLifecycleStatus(latest.status)) {
+            scheduleQueueDrain(workspaceId, normalizedConversationId, queueDrainPollMs);
+            return;
+          }
+        } catch (error) {
+          runTrace.record("server:conversation-run:queue-drain-status-error", {
+            workspaceId,
+            conversationId: normalizedConversationId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          scheduleQueueDrain(workspaceId, normalizedConversationId, queueDrainPollMs);
+          return;
+        }
+      }
+
+      item = options.queueStore.nextPending(workspaceId, normalizedConversationId);
+      if (!item) return;
+      item = options.queueStore.markStarting(item.queueItemId);
+      if (!item || item.state !== "starting") return;
+
+      let body: Record<string, unknown>;
+      try {
+        const parsed = JSON.parse(item.bodyJson) as unknown;
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("queued run body must be an object");
+        }
+        body = parsed as Record<string, unknown>;
+      } catch (error) {
+        options.queueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
+        return;
+      }
+
+      const kind = parseQueuedRunKind(item.kind);
+      const expectAiGatewayStart = optionalBodyBoolean(body, "expectAiGatewayStart") === true;
+      const target: ConversationRunLifecycleTarget = {
+        directory: item.directory,
+        binding: null,
+        opencodeSessionId: item.opencodeSessionId,
+        conversationId: item.conversationId,
+      };
+
+      if (lifecycleOwner) {
+        try {
+          await runTrace.step(
+            "server:conversation-run:queue-lifecycle-register",
+            () => lifecycleOwner.register({
+              workspaceId: workspace.id,
+              conversationId: item!.conversationId,
+              runId: item!.reservedRunId,
+              engineSessionId: item!.opencodeSessionId,
+              directory: item!.directory,
+              kind: lifecycleRunKind(kind),
+            }),
+            {
+              workspaceId: workspace.id,
+              conversationId: item.conversationId,
+              runId: item.reservedRunId,
+              engineSessionId: item.opencodeSessionId,
+              queueItemId: item.queueItemId,
+            },
+          );
+        } catch (error) {
+          if (error instanceof RunAlreadyActiveError) {
+            options.queueStore.markPending(item.queueItemId, error.activeRunId);
+            scheduleQueueDrain(workspaceId, normalizedConversationId, queueDrainPollMs);
+            return;
+          }
+          options.queueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
+          return;
+        }
+      }
+
+      await submitAcceptedRun({
+        runTrace,
+        workspace,
+        target,
+        runId: item.reservedRunId,
+        kind,
+        body,
+        clientMessageId: item.clientMessageId,
+        origin: item.origin,
+        expectAiGatewayStart,
+      }, lifecycleOwner);
+      options.queueStore.markSubmitted(item.queueItemId);
+      scheduleQueueDrain(workspaceId, normalizedConversationId, queueDrainPollMs);
+    } catch (error) {
+      if (item) {
+        options.queueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      queueDrainInFlight.delete(key);
+    }
+  }
 
   const scheduleDiagnosticsTimer = () => {
     if (!started || diagnosticsIntervalMs === null) return;
@@ -572,6 +918,10 @@ export function createConversationRunLifecycleController(
       };
     },
     submitAcceptedRun,
+    scheduleQueueDrain,
+    drainConversationQueue,
+    scheduleLifecycleReconcile,
+    reconcileConversationRunLifecycle,
     start() {
       if (started) return;
       started = true;

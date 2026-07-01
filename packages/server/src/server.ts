@@ -199,16 +199,12 @@ import { createConversationReadStore } from "./conversation-read-store.js";
 import { createConversationBindingStore } from "./conversation-binding-store.js";
 import { createConversationTranscriptStore } from "./conversation-transcript-store.js";
 import { createConversationService } from "./conversation-service.js";
-import {
-  createConversationRunQueueStore,
-  type ConversationRunQueueItem,
-} from "./conversation-run-queue-store.js";
+import { createConversationRunQueueStore } from "./conversation-run-queue-store.js";
 import {
   createOrchestratorLifecycleClient,
   type LifecycleRunStatus,
   type OrchestratorLifecycleClient,
   OrchestratorLifecycleRequestError,
-  RunAlreadyActiveError,
 } from "./orchestrator-lifecycle-client.js";
 import pkg from "../package.json" with { type: "json" };
 
@@ -2552,13 +2548,6 @@ const CONVERSATION_RUN_BODY_FIELDS: Record<string, string[]> = {
   ],
 };
 
-function parseConversationRunKind(input: unknown): "prompt_async" | "command" | "shell" | "summarize" {
-  const kind = typeof input === "string" ? input.trim() : "";
-  if (kind === "prompt" || kind === "prompt_async") return "prompt_async";
-  if (kind === "command" || kind === "shell" || kind === "summarize") return kind;
-  throw new ApiError(400, "invalid_payload", "kind must be prompt_async, command, shell, or summarize");
-}
-
 function buildConversationRunBody(kind: "prompt_async" | "command" | "shell" | "summarize", body: Record<string, unknown>) {
   const result: Record<string, unknown> = {};
   for (const field of CONVERSATION_RUN_BODY_FIELDS[kind] ?? []) {
@@ -2606,10 +2595,6 @@ function summarizeConversationRunBodyForTrace(body: Record<string, unknown>) {
     hasReasoningEffort: typeof body.reasoning_effort === "string" && body.reasoning_effort.length > 0,
     noReply: body.noReply === true,
   };
-}
-
-function lifecycleRunKind(kind: "prompt_async" | "command" | "shell" | "summarize") {
-  return kind === "prompt_async" ? "prompt" : kind;
 }
 
 function lifecycleRequestApiError(error: OrchestratorLifecycleRequestError): ApiError {
@@ -3605,11 +3590,6 @@ function optionalBodyNullableString(body: Record<string, unknown>, field: string
   return optionalBodyString(body, field);
 }
 
-function optionalBodyBoolean(body: Record<string, unknown>, field: string): boolean | undefined {
-  const value = body[field];
-  return typeof value === "boolean" ? value : undefined;
-}
-
 function optionalBodyHttpUrl(body: Record<string, unknown>, field: string): string | undefined {
   const value = optionalBodyString(body, field);
   if (!value) return undefined;
@@ -3767,18 +3747,6 @@ function createRoutes(
     }
   };
 
-  type ConversationRunLifecycleReconcileInput = {
-    workspace: WorkspaceInfo;
-    conversationId: string;
-    runId: string;
-    reason: string;
-    abortRequested?: boolean;
-    delayMs?: number;
-    attempt?: number;
-  };
-  let scheduleConversationRunLifecycleReconcile:
-    ((input: ConversationRunLifecycleReconcileInput) => void) | null = null;
-
   const submitConversationRunToOpenCode = async (input: {
     runTrace: ConversationRunTracer;
     workspace: WorkspaceInfo;
@@ -3832,191 +3800,15 @@ function createRoutes(
     );
   };
 
-  const conversationQueueKey = (workspaceId: string, conversationId: string) => `${workspaceId}\0${conversationId}`;
-  const conversationQueueDrainTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const conversationQueueDrainInFlight = new Set<string>();
   const CONVERSATION_QUEUE_DRAIN_POLL_MS = 1_500;
-
-  const scheduleConversationQueueDrain = (
-    workspaceId: string,
-    conversationId: string,
-    delayMs = 0,
-  ) => {
-    const key = conversationQueueKey(workspaceId, conversationId);
-    const existing = conversationQueueDrainTimers.get(key);
-    if (existing) {
-      if (delayMs > 0) return;
-      clearTimeout(existing);
-      conversationQueueDrainTimers.delete(key);
-    }
-    const timer = setTimeout(() => {
-      conversationQueueDrainTimers.delete(key);
-      void drainConversationQueue(workspaceId, conversationId);
-    }, Math.max(0, delayMs));
-    (timer as { unref?: () => void }).unref?.();
-    conversationQueueDrainTimers.set(key, timer);
-  };
-
-  const conversationRunLifecycleReconcileKey = (workspaceId: string, conversationId: string, runId: string) =>
-    `${workspaceId}\0${conversationId}\0${runId}`;
-  const conversationRunLifecycleReconcileTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const conversationRunLifecycleReconcileInFlight = new Set<string>();
-
-  async function reconcileConversationRunLifecycle(input: ConversationRunLifecycleReconcileInput): Promise<void> {
-    const lifecycleOwner = input.workspace.workspaceType === "remote" ? null : lifecycleClient;
-    if (!lifecycleOwner) return;
-    const conversationId = input.conversationId.trim();
-    const runId = input.runId.trim();
-    if (!conversationId || !runId) return;
-
-    const key = conversationRunLifecycleReconcileKey(input.workspace.id, conversationId, runId);
-    if (conversationRunLifecycleReconcileInFlight.has(key)) {
-      scheduleConversationRunLifecycleReconcile?.({
-        ...input,
-        delayMs: resolveConversationRunLifecycleReconcilePollMs(),
-      });
-      return;
-    }
-
-    const attempt = input.attempt ?? 0;
-    const scheduleNextAttempt = () => {
-      const nextAttempt = attempt + 1;
-      if (nextAttempt >= resolveConversationRunLifecycleReconcileMaxAttempts()) {
-        recordSendWorkflowTrace("server", "server:conversation-run:lifecycle-reconcile-exhausted", {
-          workspaceId: input.workspace.id,
-          conversationId,
-          runId,
-          reason: input.reason,
-          abortRequested: input.abortRequested === true,
-          attempts: nextAttempt,
-        });
-        return;
-      }
-      scheduleConversationRunLifecycleReconcile?.({
-        ...input,
-        conversationId,
-        runId,
-        attempt: nextAttempt,
-        delayMs: resolveConversationRunLifecycleReconcilePollMs(),
-      });
-    };
-
-    conversationRunLifecycleReconcileInFlight.add(key);
-    try {
-      const status = await lifecycleOwner.status(input.workspace.id, conversationId, runId);
-      recordSendWorkflowTrace("server", "server:conversation-run:lifecycle-reconcile", {
-        workspaceId: input.workspace.id,
-        conversationId,
-        runId,
-        reason: input.reason,
-        abortRequested: input.abortRequested === true,
-        status: status?.status ?? null,
-        stale: status?.stale ?? null,
-        attempt,
-      });
-
-      if (!status) {
-        if (input.abortRequested === true) {
-          await lifecycleOwner.markAborted(
-            input.workspace.id,
-            runId,
-            "user abort reconciled after missing lifecycle status",
-          ).catch((error) => {
-            recordSendWorkflowTrace("server", "server:conversation-run:lifecycle-mark-aborted-error", {
-              workspaceId: input.workspace.id,
-              conversationId,
-              runId,
-              reason: input.reason,
-              message: error instanceof Error ? error.message : String(error),
-            });
-          });
-        }
-        scheduleConversationQueueDrain(input.workspace.id, conversationId, 0);
-        return;
-      }
-
-      if (status.stale === true) {
-        recordSendWorkflowTrace("server", "server:conversation-run:lifecycle-reconcile-stale", {
-          workspaceId: input.workspace.id,
-          conversationId,
-          runId,
-          reason: input.reason,
-          status: status.status,
-          abortRequested: input.abortRequested === true,
-          attempt,
-        });
-        scheduleNextAttempt();
-        return;
-      }
-
-      if (!isActiveLifecycleStatus(status.status)) {
-        if (input.abortRequested === true && status.status !== "aborted") {
-          await lifecycleOwner.markAborted(
-            input.workspace.id,
-            runId,
-            "user abort reconciled after engine became inactive",
-          ).catch((error) => {
-            recordSendWorkflowTrace("server", "server:conversation-run:lifecycle-mark-aborted-error", {
-              workspaceId: input.workspace.id,
-              conversationId,
-              runId,
-              reason: input.reason,
-              status: status.status,
-              message: error instanceof Error ? error.message : String(error),
-            });
-          });
-        }
-        scheduleConversationQueueDrain(input.workspace.id, conversationId, 0);
-        return;
-      }
-
-      scheduleNextAttempt();
-    } catch (error) {
-      recordSendWorkflowTrace("server", "server:conversation-run:lifecycle-reconcile-error", {
-        workspaceId: input.workspace.id,
-        conversationId,
-        runId,
-        reason: input.reason,
-        abortRequested: input.abortRequested === true,
-        attempt,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      scheduleNextAttempt();
-    } finally {
-      conversationRunLifecycleReconcileInFlight.delete(key);
-    }
-  }
-
-  scheduleConversationRunLifecycleReconcile = (input) => {
-    const conversationId = input.conversationId.trim();
-    const runId = input.runId.trim();
-    if (!conversationId || !runId) return;
-    const key = conversationRunLifecycleReconcileKey(input.workspace.id, conversationId, runId);
-    const delayMs = Math.max(0, input.delayMs ?? 0);
-    const existing = conversationRunLifecycleReconcileTimers.get(key);
-    if (existing) {
-      if (delayMs > 0 && input.abortRequested !== true) return;
-      clearTimeout(existing);
-      conversationRunLifecycleReconcileTimers.delete(key);
-    }
-    const timer = setTimeout(() => {
-      conversationRunLifecycleReconcileTimers.delete(key);
-      void reconcileConversationRunLifecycle({
-        ...input,
-        conversationId,
-        runId,
-        attempt: input.attempt ?? 0,
-      });
-    }, delayMs);
-    (timer as { unref?: () => void }).unref?.();
-    conversationRunLifecycleReconcileTimers.set(key, timer);
-  };
 
   const conversationRunLifecycleControllerFactory =
     conversationRunLifecycleControllerFactoryForTests ?? createConversationRunLifecycleController;
   const conversationRunLifecycleController = conversationRunLifecycleControllerFactory({
     lifecycleClient,
     queueStore: conversationRunQueueStore,
+    resolveWorkspace: (workspaceId) => config.workspaces.find((candidate) => candidate.id === workspaceId) ?? null,
+    createBackgroundRunTrace: createBackgroundConversationRunTracer,
     submitOpenCode: submitConversationRunToOpenCode,
     abortOpenCode: async ({ runTrace, workspace, target }) => {
       const abortQuery = new URLSearchParams();
@@ -4035,118 +3827,14 @@ function createRoutes(
     aiGatewayProviderWatch: {
       waitForProviderStart: waitForAiGatewayProviderStart,
     },
-    scheduleQueueDrain: scheduleConversationQueueDrain,
     queueDrainPollMs: CONVERSATION_QUEUE_DRAIN_POLL_MS,
-    scheduleLifecycleReconcile: (input) => scheduleConversationRunLifecycleReconcile?.(input),
     resolveLifecycleReconcileInitialDelayMs: resolveConversationRunLifecycleReconcileInitialDelayMs,
+    resolveLifecycleReconcilePollMs: resolveConversationRunLifecycleReconcilePollMs,
+    resolveLifecycleReconcileMaxAttempts: resolveConversationRunLifecycleReconcileMaxAttempts,
+    trace: {
+      record: (event, payload = {}) => recordSendWorkflowTrace("server", event, payload),
+    },
   });
-
-  async function drainConversationQueue(workspaceId: string, conversationId: string): Promise<void> {
-    const key = conversationQueueKey(workspaceId, conversationId);
-    if (conversationQueueDrainInFlight.has(key)) return;
-    conversationQueueDrainInFlight.add(key);
-    let item: ConversationRunQueueItem | null = null;
-    try {
-      const workspace = config.workspaces.find((candidate) => candidate.id === workspaceId);
-      if (!workspace) return;
-      const lifecycleOwner = workspace.workspaceType === "remote" ? null : lifecycleClient;
-      const runTrace = createBackgroundConversationRunTracer();
-      if (lifecycleOwner) {
-        try {
-          const latest = await lifecycleOwner.status(workspace.id, conversationId, "latest");
-          if (latest && isActiveLifecycleStatus(latest.status)) {
-            scheduleConversationQueueDrain(workspaceId, conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
-            return;
-          }
-        } catch (error) {
-          runTrace.record("server:conversation-run:queue-drain-status-error", {
-            workspaceId,
-            conversationId,
-            message: error instanceof Error ? error.message : String(error),
-          });
-          scheduleConversationQueueDrain(workspaceId, conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
-          return;
-        }
-      }
-
-      item = conversationRunQueueStore.nextPending(workspaceId, conversationId);
-      if (!item) return;
-      item = conversationRunQueueStore.markStarting(item.queueItemId);
-      if (!item || item.state !== "starting") return;
-
-      let body: Record<string, unknown>;
-      try {
-        const parsed = JSON.parse(item.bodyJson) as unknown;
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-          throw new Error("queued run body must be an object");
-        }
-        body = parsed as Record<string, unknown>;
-      } catch (error) {
-        conversationRunQueueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
-        return;
-      }
-
-      const kind = parseConversationRunKind(item.kind);
-      const expectAiGatewayStart = optionalBodyBoolean(body, "expectAiGatewayStart") === true;
-      const target: ConversationExecutionTarget = {
-        directory: item.directory,
-        binding: null,
-        opencodeSessionId: item.opencodeSessionId,
-        conversationId: item.conversationId,
-      };
-
-      if (lifecycleOwner) {
-        try {
-          await runTrace.step(
-            "server:conversation-run:queue-lifecycle-register",
-            () => lifecycleOwner.register({
-              workspaceId: workspace.id,
-              conversationId: item!.conversationId,
-              runId: item!.reservedRunId,
-              engineSessionId: item!.opencodeSessionId,
-              directory: item!.directory,
-              kind: lifecycleRunKind(kind),
-            }),
-            {
-              workspaceId: workspace.id,
-              conversationId: item.conversationId,
-              runId: item.reservedRunId,
-              engineSessionId: item.opencodeSessionId,
-              queueItemId: item.queueItemId,
-            },
-          );
-        } catch (error) {
-          if (error instanceof RunAlreadyActiveError) {
-            conversationRunQueueStore.markPending(item.queueItemId, error.activeRunId);
-            scheduleConversationQueueDrain(workspaceId, conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
-            return;
-          }
-          conversationRunQueueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
-          return;
-        }
-      }
-
-      await conversationRunLifecycleController.submitAcceptedRun({
-        runTrace,
-        workspace,
-        target,
-        runId: item.reservedRunId,
-        kind,
-        body,
-        clientMessageId: item.clientMessageId,
-        origin: item.origin,
-        expectAiGatewayStart,
-      }, lifecycleOwner);
-      conversationRunQueueStore.markSubmitted(item.queueItemId);
-      scheduleConversationQueueDrain(workspaceId, conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
-    } catch (error) {
-      if (item) {
-        conversationRunQueueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
-      }
-    } finally {
-      conversationQueueDrainInFlight.delete(key);
-    }
-  }
 
   const reconcileConversationLifecycleAfterTranscriptAppend = (input: {
     workspace: WorkspaceInfo;
@@ -4174,7 +3862,7 @@ function createRoutes(
           stale: latest?.stale ?? null,
         });
         if (latest && !isActiveLifecycleStatus(latest.status)) {
-          scheduleConversationQueueDrain(input.workspace.id, conversationId, 0);
+          conversationRunLifecycleController.scheduleQueueDrain(input.workspace.id, conversationId, 0);
         }
       } catch (error) {
         recordSendWorkflowTrace("server", "server:conversation-run:transcript-reconcile-error", {
@@ -4189,7 +3877,11 @@ function createRoutes(
   };
 
   for (const pending of conversationRunQueueStore.pendingConversationKeys()) {
-    scheduleConversationQueueDrain(pending.workspaceId, pending.conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
+    conversationRunLifecycleController.scheduleQueueDrain(
+      pending.workspaceId,
+      pending.conversationId,
+      CONVERSATION_QUEUE_DRAIN_POLL_MS,
+    );
   }
 
   const serializeFileSession = (session: {
@@ -4308,7 +4000,7 @@ function createRoutes(
             message: error instanceof Error ? error.message : String(error),
           });
         });
-        scheduleConversationRunLifecycleReconcile?.({
+        conversationRunLifecycleController.scheduleLifecycleReconcile({
           workspace,
           conversationId: target.conversationId,
           runId,

@@ -1380,3 +1380,47 @@ Notes:
 - Original worktree still contains unrelated dirty app/audit work outside LFC03.
 - Queue drain still lives in `server.ts`; LFC03 only routes accepted queue submits through the
   controller to preserve submit/watch behavior until LFC04 owns the drain timers.
+
+### 2026-07-02 LFC04 Queue Drain And Reconcile Worktree
+
+Status:
+
+- `status: reserved`
+- `reserved_by: codex-20260702-lfc04-queue-drain-reconcile`
+- `done: false`
+- implementation branch: `lifecycle/lfc04-queue-drain-reconcile`
+- implementation worktree: `../veslo-lifecycle-lfc04-queue-drain-reconcile`
+
+Scope:
+
+- Moved queue drain timers, lifecycle reconcile timers, and their in-flight guards from `server.ts`
+  into `conversation-run-lifecycle-controller.ts`.
+- Moved queue drain decision logic into the controller: latest active lifecycle blocks queued work,
+  terminal or missing lifecycle wakes the queue, register conflicts re-pend the item, and accepted
+  submit failures mark the queue item failed.
+- Moved lifecycle reconcile polling into the controller: stale or still-active statuses reschedule,
+  terminal statuses wake the queue, and abort-requested missing or inactive statuses are reconciled
+  through `markAborted`.
+- Kept `server.ts` as the composition boundary that supplies workspace lookup, background run trace,
+  OpenCode submit/abort ports, AI gateway ports, poll settings, and trace recording.
+- Left transcript wake-up and startup pending queue triggers in `server.ts` for LFC05, but rewired
+  them to call controller-owned scheduling methods.
+
+Evidence:
+
+- Fresh implementation worktree needed `pnpm install --frozen-lockfile`; install completed with the
+  existing missing generated-bin warnings for local packages.
+- First test-first run failed as expected because `controller.drainConversationQueue`,
+  `controller.reconcileConversationRunLifecycle`, `controller.scheduleQueueDrain`, and
+  `controller.scheduleLifecycleReconcile` did not exist yet.
+- `pnpm --filter veslo-server exec bun test ./src/tests/conversation-run-lifecycle-controller.test.ts src/tests/conversation-run-queue-store.test.ts src/tests/server-conversations.test.ts`
+  passed: 41 pass, 0 fail.
+- `pnpm --filter veslo-server typecheck` passed.
+- `git diff --check` passed; Git reported LF-to-CRLF working-copy warnings only.
+
+Notes:
+
+- The controller owns lifecycle timer cleanup through `stop()`; the existing server shutdown test
+  fixture was updated to cover the expanded controller interface.
+- No app, orchestrator, product behavior, or remote workspace lifecycle behavior was changed in
+  LFC04.

@@ -94,6 +94,8 @@ class TimerHarness {
 class LifecycleHarness implements OrchestratorLifecycleClient {
   activeResult: LifecycleRunStatusResult | null = null;
   activeError: unknown = null;
+  statusResult: LifecycleRunStatusResult | null = null;
+  statusError: unknown = null;
   registerError: unknown = null;
   readonly calls: string[] = [];
 
@@ -121,17 +123,18 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
     this.calls.push(`markFailed:${workspaceId}:${runId}:${reason}`);
   }
 
-  async markAborted(): Promise<void> {
-    this.calls.push("markAborted");
+  async markAborted(workspaceId: string, runId: string, reason: string): Promise<void> {
+    this.calls.push(`markAborted:${workspaceId}:${runId}:${reason}`);
   }
 
   async markAbortRequested(): Promise<void> {
     this.calls.push("markAbortRequested");
   }
 
-  async status(): Promise<LifecycleRunStatusResult | null> {
-    this.calls.push("status");
-    return null;
+  async status(workspaceId: string, conversationId: string, runId: string): Promise<LifecycleRunStatusResult | null> {
+    this.calls.push(`status:${workspaceId}:${conversationId}:${runId}`);
+    if (this.statusError) throw this.statusError;
+    return this.statusResult;
   }
 }
 
@@ -186,28 +189,63 @@ class QueueHarness implements ConversationRunQueueStore {
     };
   }
 
-  nextPending(): ConversationRunQueueItem | null {
-    return null;
+  nextPending(workspaceId: string, conversationId: string): ConversationRunQueueItem | null {
+    return this.items.find((item) =>
+      item.workspaceId === workspaceId && item.conversationId === conversationId && item.state === "pending"
+    ) ?? null;
   }
 
-  markStarting(): ConversationRunQueueItem | null {
-    return null;
+  markStarting(queueItemId: string): ConversationRunQueueItem | null {
+    const item = this.items.find((candidate) => candidate.queueItemId === queueItemId);
+    if (!item || item.state !== "pending") return item ?? null;
+    item.state = "starting";
+    item.attempts += 1;
+    item.startedAt = Date.now();
+    item.updatedAt = item.startedAt;
+    item.error = null;
+    return item;
   }
 
-  markPending(): ConversationRunQueueItem | null {
-    return null;
+  markPending(queueItemId: string, activeRunId?: string | null): ConversationRunQueueItem | null {
+    const item = this.items.find((candidate) => candidate.queueItemId === queueItemId);
+    if (!item || item.state !== "starting") return item ?? null;
+    item.state = "pending";
+    item.activeRunId = activeRunId ?? null;
+    item.startedAt = null;
+    item.updatedAt = Date.now();
+    return item;
   }
 
-  markSubmitted(): ConversationRunQueueItem | null {
-    return null;
+  markSubmitted(queueItemId: string): ConversationRunQueueItem | null {
+    const item = this.items.find((candidate) => candidate.queueItemId === queueItemId);
+    if (!item) return null;
+    const now = Date.now();
+    item.state = "submitted";
+    item.submittedAt = now;
+    item.completedAt = now;
+    item.updatedAt = now;
+    return item;
   }
 
-  markFailed(): ConversationRunQueueItem | null {
-    return null;
+  markFailed(queueItemId: string, error: string): ConversationRunQueueItem | null {
+    const item = this.items.find((candidate) => candidate.queueItemId === queueItemId);
+    if (!item) return null;
+    const now = Date.now();
+    item.state = "failed";
+    item.error = error;
+    item.completedAt = now;
+    item.updatedAt = now;
+    return item;
   }
 
   pendingConversationKeys(): Array<{ workspaceId: string; conversationId: string }> {
-    return [];
+    const keys = new Map<string, { workspaceId: string; conversationId: string }>();
+    for (const item of this.items) {
+      if (item.state !== "pending") continue;
+      const key = `${item.workspaceId}\0${item.conversationId}`;
+      keys.set(key, { workspaceId: item.workspaceId, conversationId: item.conversationId });
+    }
+    return [...keys.values()];
   }
 }
 
@@ -255,6 +293,15 @@ function submitInput(overrides: Partial<ConversationRunLifecycleSubmitInput> = {
 function controllerHarness() {
   const lifecycle = new LifecycleHarness();
   const queue = new QueueHarness();
+  const timers = new TimerHarness();
+  const workspaces = [
+    {
+      id: "ws_1",
+      name: "Workspace",
+      path: "/repo",
+      workspaceType: "local" as const,
+    },
+  ];
   const behavior = {
     submitError: null as unknown,
     providerStartResult: { started: true, timeoutMs: 25 },
@@ -274,6 +321,9 @@ function controllerHarness() {
   const controller = createConversationRunLifecycleController({
     lifecycleClient: lifecycle,
     queueStore: queue,
+    timers: timers.port,
+    resolveWorkspace: (workspaceId) => workspaces.find((workspace) => workspace.id === workspaceId) ?? null,
+    createBackgroundRunTrace: createRunTrace,
     submitOpenCode: async (input) => {
       submitCalls.push(input);
       if (behavior.submitError) throw behavior.submitError;
@@ -298,17 +348,20 @@ function controllerHarness() {
       return { aborted: true };
     },
     queueDrainPollMs: 1_500,
-    scheduleQueueDrain: (workspaceId, conversationId, delayMs) => {
-      drainCalls.push({ workspaceId, conversationId, delayMs });
-    },
-    scheduleLifecycleReconcile: (input) => {
-      reconcileCalls.push({
-        workspaceId: input.workspace.id,
-        conversationId: input.conversationId,
-        runId: input.runId,
-        reason: input.reason,
-        delayMs: input.delayMs,
-      });
+    resolveLifecycleReconcilePollMs: () => 2_000,
+    resolveLifecycleReconcileMaxAttempts: () => 3,
+    trace: {
+      record: (event, payload = {}) => {
+        if (event !== "conversation-run-lifecycle:start" && event !== "conversation-run-lifecycle:stop") {
+          reconcileCalls.push({
+            workspaceId: typeof payload.workspaceId === "string" ? payload.workspaceId : "",
+            conversationId: typeof payload.conversationId === "string" ? payload.conversationId : "",
+            runId: typeof payload.runId === "string" ? payload.runId : "",
+            reason: typeof payload.reason === "string" ? payload.reason : event,
+            delayMs: typeof payload.delayMs === "number" ? payload.delayMs : undefined,
+          });
+        }
+      },
     },
     resolveLifecycleReconcileInitialDelayMs: () => 1_234,
   });
@@ -316,6 +369,8 @@ function controllerHarness() {
     controller,
     lifecycle,
     queue,
+    timers,
+    workspaces,
     behavior,
     submitCalls,
     activeGatewayCalls,
@@ -324,6 +379,22 @@ function controllerHarness() {
     drainCalls,
     reconcileCalls,
   };
+}
+
+function enqueuePendingRun(queue: QueueHarness, overrides: Partial<Parameters<QueueHarness["enqueue"]>[0]> = {}) {
+  return queue.enqueue({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    opencodeSessionId: "sess-a",
+    directory: "/repo",
+    reservedRunId: "run-queued",
+    clientMessageId: "msg-queued",
+    origin: "composer",
+    kind: "prompt_async",
+    bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "Queued" }] }),
+    activeRunId: null,
+    ...overrides,
+  }).item;
 }
 
 function snapshotStub(overrides: Partial<ConversationRunLifecycleSnapshot> = {}): ConversationRunLifecycleSnapshot {
@@ -449,6 +520,18 @@ test("server stop calls the lifecycle controller stop hook", async () => {
     submitAcceptedRun: async () => {
       throw new Error("submitAcceptedRun should not be called by the shutdown fixture");
     },
+    scheduleQueueDrain: () => {
+      throw new Error("scheduleQueueDrain should not be called by the shutdown fixture");
+    },
+    drainConversationQueue: async () => {
+      throw new Error("drainConversationQueue should not be called by the shutdown fixture");
+    },
+    scheduleLifecycleReconcile: () => {
+      throw new Error("scheduleLifecycleReconcile should not be called by the shutdown fixture");
+    },
+    reconcileConversationRunLifecycle: async () => {
+      throw new Error("reconcileConversationRunLifecycle should not be called by the shutdown fixture");
+    },
     start: () => {
       startCalls += 1;
     },
@@ -514,7 +597,7 @@ test("submitRun registers inactive local runs before submitting", async () => {
 });
 
 test("submitRun queues when active peek finds an active run", async () => {
-  const { controller, lifecycle, queue, submitCalls, drainCalls } = controllerHarness();
+  const { controller, lifecycle, queue, submitCalls, timers } = controllerHarness();
   lifecycle.activeResult = { runId: "run-active", status: "running", stale: false };
 
   const result = await controller.submitRun(submitInput());
@@ -528,7 +611,7 @@ test("submitRun queues when active peek finds an active run", async () => {
   expect(lifecycle.calls).toEqual(["active:ws_1:conv-a"]);
   expect(queue.enqueueCalls[0]?.activeRunId).toBe("run-active");
   expect(submitCalls).toEqual([]);
-  expect(drainCalls).toEqual([{ workspaceId: "ws_1", conversationId: "conv-a", delayMs: 1_500 }]);
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500]);
 });
 
 test("submitRun queues when lifecycle register reports an active run", async () => {
@@ -693,4 +776,111 @@ test("submitRun provider-start success clears active gateway context without abo
     reason: "accepted",
     delayMs: 1_234,
   }]);
+});
+
+test("queue drain keeps pending work blocked while latest lifecycle is active", async () => {
+  const { controller, lifecycle, queue, submitCalls, timers } = controllerHarness();
+  enqueuePendingRun(queue);
+  lifecycle.statusResult = { runId: "run-active", status: "running", stale: false };
+
+  await controller.drainConversationQueue("ws_1", "conv-a");
+
+  expect(queue.items[0]?.state).toBe("pending");
+  expect(submitCalls).toEqual([]);
+  expect(lifecycle.calls).toEqual(["status:ws_1:conv-a:latest"]);
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500]);
+});
+
+test("lifecycle reconcile keeps polling stale status until terminal", async () => {
+  const { controller, lifecycle, timers, workspaces } = controllerHarness();
+  lifecycle.statusResult = { runId: "run-stale", status: "running", stale: true };
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-stale",
+    reason: "accepted",
+  });
+
+  expect(lifecycle.calls).toEqual(["status:ws_1:conv-a:run-stale"]);
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([2_000]);
+});
+
+test("queue drain submits the next pending item after terminal latest lifecycle", async () => {
+  const { controller, lifecycle, queue, submitCalls } = controllerHarness();
+  enqueuePendingRun(queue);
+  lifecycle.statusResult = { runId: "run-terminal", status: "completed", stale: false };
+
+  await controller.drainConversationQueue("ws_1", "conv-a");
+
+  expect(queue.items[0]?.state).toBe("submitted");
+  expect(submitCalls).toHaveLength(1);
+  expect(lifecycle.calls).toEqual([
+    "status:ws_1:conv-a:latest",
+    "register:ws_1:conv-a:run-queued:sess-a:prompt",
+  ]);
+});
+
+test("lifecycle reconcile marks missing aborted runs as aborted and wakes queue", async () => {
+  const { controller, lifecycle, timers, workspaces } = controllerHarness();
+  lifecycle.statusResult = null;
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-abort",
+    reason: "abort-requested",
+    abortRequested: true,
+  });
+
+  expect(lifecycle.calls).toContain(
+    "markAborted:ws_1:run-abort:user abort reconciled after missing lifecycle status",
+  );
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
+});
+
+test("queue drain re-pends items when lifecycle register sees another active run", async () => {
+  const { controller, lifecycle, queue, submitCalls, timers } = controllerHarness();
+  enqueuePendingRun(queue);
+  lifecycle.statusResult = null;
+  lifecycle.registerError = new RunAlreadyActiveError("run-active-register");
+
+  await controller.drainConversationQueue("ws_1", "conv-a");
+
+  expect(queue.items[0]?.state).toBe("pending");
+  expect(queue.items[0]?.activeRunId).toBe("run-active-register");
+  expect(submitCalls).toEqual([]);
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500]);
+});
+
+test("queue drain marks pending items failed when accepted submit fails", async () => {
+  const { controller, lifecycle, queue, behavior } = controllerHarness();
+  enqueuePendingRun(queue);
+  lifecycle.statusResult = null;
+  behavior.submitError = new Error("accepted submit failed");
+
+  await controller.drainConversationQueue("ws_1", "conv-a");
+
+  expect(queue.items[0]?.state).toBe("failed");
+  expect(queue.items[0]?.error).toBe("accepted submit failed");
+});
+
+test("stop clears queued drain and lifecycle reconcile timers", () => {
+  const { controller, timers, workspaces } = controllerHarness();
+
+  controller.scheduleQueueDrain("ws_1", "conv-a", 500);
+  controller.scheduleLifecycleReconcile({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-a",
+    reason: "accepted",
+    delayMs: 750,
+  });
+
+  expect(controller.snapshotForTests().activeTimerCount).toBe(2);
+
+  controller.stop();
+
+  expect(controller.snapshotForTests().activeTimerCount).toBe(0);
+  expect(timers.activeTimers()).toEqual([]);
 });
