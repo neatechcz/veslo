@@ -1,9 +1,9 @@
 ---
 title: Conversation Run Lifecycle Controller Implementation Plan
 date: 2026-07-01
-status: draft
-done: false
-core_done: false
+status: implemented
+done: true
+core_done: true
 deferred_followups_done: false
 base_branch: local/sandbox-merge
 base_commit: 6fb52b44
@@ -405,7 +405,7 @@ Use this ledger for quick discovery. The authoritative task details are below.
 | LFC04 | queue drain and lifecycle reconcile timers | done | codex-20260702-lfc04-queue-drain-reconcile | true |
 | LFC05 | transcript and startup wake-up wiring | done | codex-20260702-lfc05-transcript-startup-wakeup | true |
 | LFC06 | abort flow consolidation | done | codex-20260702-lfc06-abort-flow | true |
-| LFC08 | core diagnostics, docs, and final verification | reserved | codex-20260702-lfc08-final-verification | false |
+| LFC08 | core diagnostics, docs, and final verification | done | codex-20260702-lfc08-final-verification | true |
 | LFC07 | deferred app latest-run and abort contract hardening | deferred | null | false |
 
 ## Task Details
@@ -844,12 +844,12 @@ Acceptance:
 
 ```yaml
 id: LFC08
-status: reserved
+status: done
 reserved_by: codex-20260702-lfc08-final-verification
 reserved_at: 2026-07-02T01:06:11.9867500+02:00
 branch: lifecycle/lfc08-diagnostics-final-verification
 worktree: ../veslo-lifecycle-lfc08-diagnostics-final-verification
-done: false
+done: true
 depends_on:
   - LFC06
 target_module: packages/server/src/conversation-run-lifecycle-controller.ts
@@ -1614,4 +1614,33 @@ Notes:
 
 - LFC08 is still not marked done in this worktree. It should be marked done only after merge and
   final verification in the original worktree.
+- Original worktree still contains an unrelated untracked app cleanup plan outside LFC08.
+
+### 2026-07-02 LFC08 Merge Verification
+
+Status:
+
+- `done: true`
+- merged commit: `7b56f5d0`
+- original branch: `local/sandbox-merge`
+- `core_done: true`
+- `deferred_followups_done: false`
+
+Evidence from original worktree after merge:
+
+- `pnpm --filter veslo-orchestrator exec bun test src/tests/run-registry.test.ts src/tests/run-store.test.ts src/tests/run-activity-probe.test.ts`
+  passed: 34 pass, 0 fail.
+- `pnpm --filter veslo-server exec bun test src/tests/conversation-run-lifecycle-controller.test.ts src/tests/conversation-run-queue-store.test.ts src/tests/orchestrator-lifecycle-client.test.ts src/tests/server-conversations.test.ts`
+  passed: 56 pass, 0 fail.
+- `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/conversation-service.test.ts src/app/tests/pages/session-send-workflow.test.ts`
+  passed: 11 pass, 0 fail.
+- `pnpm --filter veslo-server typecheck` passed.
+- `pnpm --filter veslo-orchestrator typecheck` passed.
+- `pnpm --filter @neatech/veslo-ui typecheck` passed.
+- `git diff --check` passed with no output.
+
+Notes:
+
+- Core lifecycle controller implementation is complete and verified.
+- LFC07 remains deferred follow-up work and does not block `core_done`.
 - Original worktree still contains an unrelated untracked app cleanup plan outside LFC08.
