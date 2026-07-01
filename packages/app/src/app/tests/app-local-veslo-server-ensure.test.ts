@@ -3,34 +3,38 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const connectionSource = readFileSync(
+  new URL("../context/veslo-server-connection.ts", import.meta.url),
+  "utf8",
+);
 
 test("local Veslo server ensure is not gated by an existing OpenCode client", () => {
-  const effectStart = source.indexOf('let lastLocalVesloEnsureKey = "";');
+  const effectStart = connectionSource.indexOf('let lastLocalVesloEnsureKey = "";');
   assert.notStrictEqual(effectStart, -1, "local Veslo server ensure effect is missing");
 
   const ensureCall = "void ensureLocalVesloServerRunning()";
-  const ensureIdx = source.indexOf(ensureCall, effectStart);
+  const ensureIdx = connectionSource.indexOf(ensureCall, effectStart);
   assert.notStrictEqual(ensureIdx, -1, "local Veslo server ensure call is missing");
 
-  const effectGuards = source.slice(effectStart, ensureIdx);
+  const effectGuards = connectionSource.slice(effectStart, ensureIdx);
   assert.doesNotMatch(
     effectGuards,
-    /if\s*\(\s*!routedClient\(\)\s*\)\s*return/,
+    /if\s*\(\s*!deps\.routedClient\?\.\(\)\s*\)\s*return/,
     "local Veslo server startup must not depend on an OpenCode client that may require the server first",
   );
 });
 
 test("local Veslo server ensure only deduplicates after a successful ensure", () => {
-  const effectStart = source.indexOf('let lastLocalVesloEnsureKey = "";');
+  const effectStart = connectionSource.indexOf('let lastLocalVesloEnsureKey = "";');
   assert.notStrictEqual(effectStart, -1, "local Veslo server ensure effect is missing");
 
   const ensureCall = "void ensureLocalVesloServerRunning()";
-  const ensureIdx = source.indexOf(ensureCall, effectStart);
+  const ensureIdx = connectionSource.indexOf(ensureCall, effectStart);
   assert.notStrictEqual(ensureIdx, -1, "local Veslo server ensure call is missing");
 
-  const effectEnd = source.indexOf("const restartLocalServer = async () => {", ensureIdx);
+  const effectEnd = connectionSource.indexOf("return {", ensureIdx);
   assert.notStrictEqual(effectEnd, -1, "local Veslo server ensure effect end marker is missing");
-  const effectSource = source.slice(effectStart, effectEnd);
+  const effectSource = connectionSource.slice(effectStart, effectEnd);
 
   assert.doesNotMatch(
     effectSource.slice(0, ensureIdx - effectStart),
@@ -45,20 +49,20 @@ test("local Veslo server ensure only deduplicates after a successful ensure", ()
 });
 
 test("local Veslo server ensure runs as an app service on a clean profile", () => {
-  const effectStart = source.indexOf('let lastLocalVesloEnsureKey = "";');
+  const effectStart = connectionSource.indexOf('let lastLocalVesloEnsureKey = "";');
   assert.notStrictEqual(effectStart, -1, "local Veslo server ensure effect is missing");
 
   const ensureCall = "void ensureLocalVesloServerRunning()";
-  const ensureIdx = source.indexOf(ensureCall, effectStart);
+  const ensureIdx = connectionSource.indexOf(ensureCall, effectStart);
   assert.notStrictEqual(ensureIdx, -1, "local Veslo server ensure call is missing");
 
-  const effectEnd = source.indexOf("const restartLocalServer = async () => {", ensureIdx);
+  const effectEnd = connectionSource.indexOf("return {", ensureIdx);
   assert.notStrictEqual(effectEnd, -1, "local Veslo server ensure effect end marker is missing");
-  const effectSource = source.slice(effectStart, effectEnd);
+  const effectSource = connectionSource.slice(effectStart, effectEnd);
 
   assert.match(
     effectSource,
-    /if \(!workspaceStore\.workspacesHydrated\(\)\) return;/,
+    /if \(!deps\.workspace\?\.workspacesHydrated\(\)\) return;/,
     "clean-profile local server startup should wait for workspace bootstrap hydration",
   );
   assert.match(
@@ -106,14 +110,14 @@ test("new Chat opens the pending draft and then ensures the local Veslo server",
 });
 
 test("local Veslo server ensure effect is registered after the real implementation is assigned", () => {
-  const effectStart = source.indexOf('let lastLocalVesloEnsureKey = "";');
+  const effectStart = connectionSource.indexOf("void ensureLocalVesloServerRunning()");
   assert.notStrictEqual(effectStart, -1, "local Veslo server ensure effect is missing");
 
-  const assignmentStart = source.indexOf("ensureLocalVesloServerRunning = async (options) => {");
-  assert.notStrictEqual(assignmentStart, -1, "local Veslo server ensure assignment is missing");
+  const implementationStart = connectionSource.indexOf("const ensureLocalVesloServerRunning = async");
+  assert.notStrictEqual(implementationStart, -1, "local Veslo server ensure implementation is missing");
 
   assert.ok(
-    effectStart > assignmentStart,
+    effectStart > implementationStart,
     "local Veslo server ensure effect must not call the initial no-op implementation",
   );
 });

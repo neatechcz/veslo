@@ -152,6 +152,10 @@ import {
   type SendRuntimePreflightTargetWorkspace,
 } from "./context/send-runtime-readiness";
 import { createAppRouteSync } from "./context/app-route-sync";
+import {
+  createVesloServerConnection,
+  isLoopbackVesloServerConnectionUrl,
+} from "./context/veslo-server-connection";
 import ResetModal from "./components/reset-modal";
 import ConfirmModal from "./components/confirm-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
@@ -386,7 +390,6 @@ import {
   vesloServerRestart,
   orchestratorStatus,
   orchestratorEnginesList,
-  opencodeRouterInfo,
   setWindowDecorations,
   setWindowTitleBarStyle,
   workspaceCopyIntoFolder,
@@ -394,10 +397,7 @@ import {
   workspaceVesloWrite,
   logUiEvent,
   opencodeDbUpdateSessionDirectory,
-  type OrchestratorEngineSnapshot,
-  type OrchestratorStatus,
   type VesloServerInfo,
-  type OpenCodeRouterInfo,
   type WorkspaceInfo,
 } from "./lib/tauri";
 import {
@@ -411,11 +411,9 @@ import {
   hydrateVesloServerSettingsFromEnv,
   normalizeVesloServerUrl,
   requestManagedAiAccessBundle,
-  resolveSessionArchiveClientOptions,
   readVesloServerSettings,
   writeVesloServerSettings,
   clearVesloServerSettings,
-  type VesloAuditEntry,
   type VesloSoulHeartbeatEntry,
   type VesloSoulOverviewResponse,
   type VesloSoulStatus,
@@ -424,9 +422,6 @@ import {
   type VesloConversationRunInput,
   type VesloManagedAiAccessBundle,
   type VesloServerClient,
-  type VesloServerCapabilities,
-  type VesloServerDiagnostics,
-  type VesloServerStatus,
   type VesloServerSettings,
   VesloServerError,
 } from "./lib/veslo-server";
@@ -434,10 +429,6 @@ import {
   getVesloRequestBrokerSnapshot,
   isLocalVesloTransportError,
 } from "./lib/veslo-server/request-broker";
-import {
-  applyVesloServerStatusProbe,
-  createInitialVesloServerStatusStabilityState,
-} from "./lib/veslo-server/status-stability";
 import {
   pickCollisionSafeName,
   toWorkspaceRelativeFromSessionDir,
@@ -463,7 +454,6 @@ import {
   hasUsableManagedAiRuntimeConfig,
   resolveManagedAiAccessMessageKey,
   resolveManagedAiAccessBundleState,
-  resolveManagedAiGatewayBaseUrl,
   resolveManagedAiProviderRoutingTarget,
   requiresManagedAiEngineBaseUrl,
   shouldPreserveManagedAiConfig,
@@ -996,80 +986,76 @@ export default function App() {
   const [baseUrl, setBaseUrl] = createSignal("http://127.0.0.1:4096");
   const [clientDirectory, setClientDirectory] = createSignal("");
 
-  const [vesloServerSettings, setVesloServerSettings] = createSignal<VesloServerSettings>({});
-  const [vesloServerUrl, setVesloServerUrl] = createSignal("");
-  const [vesloServerStatus, setVesloServerStatus] = createSignal<VesloServerStatus>("disconnected");
-  const [vesloServerCapabilities, setVesloServerCapabilities] = createSignal<VesloServerCapabilities | null>(null);
-  let vesloServerLastReachableAt = 0;
-  const markVesloServerReachable = (status: VesloServerStatus, at = Date.now()) => {
-    if (status === "connected" || status === "limited") {
-      vesloServerLastReachableAt = at;
-    }
-  };
-  const vesloServerRecentlyReachable = (now = Date.now()) =>
-    vesloServerLastReachableAt > 0 && now - vesloServerLastReachableAt <= 30_000;
-  const vesloServerCapabilitiesStateKey = (value: VesloServerCapabilities | null) =>
-    safeStringify(value ?? null);
-  const setVesloServerCapabilitiesStable = (next: VesloServerCapabilities | null) => {
-    const nextKey = vesloServerCapabilitiesStateKey(next);
-    setVesloServerCapabilities((current) =>
-      vesloServerCapabilitiesStateKey(current) === nextKey ? current : next
-    );
-  };
+  const [authenticatedAccountId, setAuthenticatedAccountId] = createSignal<string | null>(null);
+  const vesloServerConnection = createVesloServerConnection({
+    startupPreference,
+    opencodeBaseUrl: baseUrl,
+    authenticatedAccountId,
+    cloudEnvironment,
+    documentVisible,
+    developerMode: () => developerMode(),
+    isTauriRuntime,
+    workspace: {
+      workspacesHydrated: () => workspaceStore.workspacesHydrated(),
+      activeWorkspaceDisplay: () => workspaceStore.activeWorkspaceDisplay(),
+      activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+      activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
+      createRemoteWorkspaceFlow: (input) => workspaceStore.createRemoteWorkspaceFlow(input),
+      refreshEngine: () => workspaceStore.refreshEngine(),
+    },
+    routedClient: () => routedClient(),
+    reportError,
+    setError: (message) => setError(message),
+    addOpencodeCacheHint,
+  });
+  const {
+    vesloServerSettings,
+    setVesloServerSettings,
+    updateVesloServerSettings,
+    resetVesloServerSettings,
+    vesloServerUrl,
+    vesloServerStatus,
+    setVesloServerStatus,
+    vesloServerCapabilities,
+    setVesloServerCapabilitiesStable,
+    vesloServerRecentlyReachable,
+    vesloServerCheckedAt,
+    setVesloServerCheckedAt,
+    vesloServerWorkspaceId,
+    setVesloServerWorkspaceId,
+    vesloServerHostInfo,
+    setVesloServerHostInfoStable,
+    vesloServerDiagnostics,
+    vesloReconnectBusy,
+    opencodeRouterInfoState,
+    orchestratorStatusState,
+    orchestratorEnginesState,
+    readyEngineWorkspaceIds,
+    vesloAuditEntries,
+    setVesloAuditEntries,
+    vesloAuditStatus,
+    setVesloAuditStatus,
+    vesloAuditError,
+    setVesloAuditError,
+    devtoolsWorkspaceId,
+    setDevtoolsWorkspaceId,
+    activeVesloServerHostInfo,
+    activeVesloServerRoutingInfo,
+    vesloServerBaseUrl,
+    vesloServerAuth,
+    vesloServerClient,
+    sessionArchiveOwnerKey,
+    vesloArchiveClient,
+    gatewayVesloServerClient,
+    managedAiGatewayBaseUrl,
+    devtoolsVesloClient,
+    checkVesloServer,
+    testVesloServerConnection,
+    reconnectVesloServer,
+    ensureLocalVesloServerRunning,
+  } = vesloServerConnection;
   const directoryQueryPathMode = () =>
     resolveRuntimeSandboxStateForTarget().directoryQueryMode;
-  const [vesloServerCheckedAt, setVesloServerCheckedAt] = createSignal<number | null>(null);
-  const [vesloServerWorkspaceId, setVesloServerWorkspaceId] = createSignal<string | null>(null);
-  const [vesloServerHostInfo, setVesloServerHostInfo] = createSignal<VesloServerInfo | null>(null);
-  const vesloServerHostInfoStateKey = (value: VesloServerInfo | null) =>
-    safeStringify(value ?? null);
-  const setVesloServerHostInfoStable = (next: VesloServerInfo | null) => {
-    const nextKey = vesloServerHostInfoStateKey(next);
-    setVesloServerHostInfo((current) =>
-      vesloServerHostInfoStateKey(current) === nextKey ? current : next
-    );
-  };
-  const [vesloServerDiagnostics, setVesloServerDiagnostics] = createSignal<VesloServerDiagnostics | null>(null);
-  const [vesloReconnectBusy, setVesloReconnectBusy] = createSignal(false);
-  const [opencodeRouterInfoState, setOpenCodeRouterInfoState] = createSignal<OpenCodeRouterInfo | null>(null);
-  const [orchestratorStatusState, setOrchestratorStatusState] = createSignal<OrchestratorStatus | null>(null);
-  const [orchestratorEnginesState, setOrchestratorEnginesState] = createSignal<OrchestratorEngineSnapshot[]>([]);
-  const readyEngineWorkspaceIds = createMemo(() => {
-    const set = new Set<string>();
-    for (const engine of orchestratorEnginesState()) {
-      if (engine.state === "ready" || engine.state === "idle") set.add(engine.workspaceId);
-    }
-    return set;
-  });
-  const [vesloAuditEntries, setVesloAuditEntries] = createSignal<VesloAuditEntry[]>([]);
-  const [vesloAuditStatus, setVesloAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
-  const [vesloAuditError, setVesloAuditError] = createSignal<string | null>(null);
-  const [devtoolsWorkspaceId, setDevtoolsWorkspaceId] = createSignal<string | null>(null);
-  const [authenticatedAccountId, setAuthenticatedAccountId] = createSignal<string | null>(null);
-  const activeVesloServerHostInfo = createMemo(() =>
-    resolveRunningVesloServerHostInfo(vesloServerHostInfo())
-  );
-  const activeVesloServerRoutingInfo = createMemo(
-    () => {
-      const hostInfo = activeVesloServerHostInfo();
-      if (!hostInfo) return null;
-      return {
-        baseUrl: hostInfo.baseUrl?.trim() ?? "",
-        engineUrl: hostInfo.engineUrl?.trim() ?? "",
-        clientToken: hostInfo.clientToken?.trim() ?? "",
-        hostToken: hostInfo.hostToken?.trim() ?? "",
-      };
-    },
-    undefined,
-    {
-      equals: (prev, next) =>
-        (prev?.baseUrl ?? "") === (next?.baseUrl ?? "") &&
-        (prev?.engineUrl ?? "") === (next?.engineUrl ?? "") &&
-        (prev?.clientToken ?? "") === (next?.clientToken ?? "") &&
-        (prev?.hostToken ?? "") === (next?.hostToken ?? ""),
-    },
-  );
-
   const updateEngineSource = (
     value: EngineSourcePreference,
     options?: {
@@ -1079,123 +1065,6 @@ export default function App() {
     setEngineSource(value);
     setEngineSourceExplicit(options?.explicit === true);
   };
-
-  const vesloServerLocalFallbackBaseUrl = createMemo(() => {
-    if (!isTauriRuntime()) return "";
-    if (startupPreference() === "server") return "";
-    return deriveLocalVesloServerUrlFromOpencodeBaseUrl(baseUrl()) ?? "";
-  });
-
-  const vesloServerBaseUrl = createMemo(() => {
-    const pref = startupPreference();
-    const hostInfo = activeVesloServerHostInfo();
-    const localFallbackUrl = vesloServerLocalFallbackBaseUrl();
-    const settingsUrl = normalizeVesloServerUrl(vesloServerSettings().urlOverride ?? "") ?? "";
-    const preferredLocalUrl = hostInfo?.baseUrl ?? localFallbackUrl;
-
-    if (pref === "local") return preferredLocalUrl;
-    if (pref === "server") return settingsUrl;
-    return preferredLocalUrl || settingsUrl;
-  });
-
-  const vesloServerAuth = createMemo(
-    () => {
-      const pref = startupPreference();
-      const hostInfo = activeVesloServerHostInfo();
-      const localFallbackUrl = vesloServerLocalFallbackBaseUrl();
-      const settingsToken = vesloServerSettings().token?.trim() ?? "";
-      const clientToken = hostInfo?.clientToken?.trim() ?? "";
-      const hostToken = hostInfo?.hostToken?.trim() ?? "";
-
-      if (pref === "local") {
-        return { token: clientToken || undefined, hostToken: hostToken || undefined };
-      }
-      if (pref === "server") {
-        return { token: settingsToken || undefined, hostToken: undefined };
-      }
-      if (hostInfo?.baseUrl) {
-        return { token: clientToken || undefined, hostToken: hostToken || undefined };
-      }
-      if (localFallbackUrl) {
-        return { token: undefined, hostToken: undefined };
-      }
-      return { token: settingsToken || undefined, hostToken: undefined };
-    },
-    undefined,
-    {
-      equals: (prev, next) => prev?.token === next.token && prev?.hostToken === next.hostToken,
-    },
-  );
-
-  const vesloServerClient = createMemo(() => {
-    const baseUrl = vesloServerBaseUrl().trim();
-    if (!baseUrl) return null;
-    const auth = vesloServerAuth();
-    return createVesloServerClient({ baseUrl, token: auth.token, hostToken: auth.hostToken });
-  });
-
-  const vesloArchiveClientOptions = createMemo(() => {
-    const auth = vesloServerAuth();
-    return resolveSessionArchiveClientOptions({
-      accountId: authenticatedAccountId(),
-      activeBaseUrl: vesloServerBaseUrl(),
-      activeToken: auth.token,
-      settingsUrl: vesloServerSettings().urlOverride,
-      settingsToken: vesloServerSettings().token,
-      cloudUrl: cloudEnvironment.vesloUrl,
-      cloudToken: cloudEnvironment.token,
-    });
-  });
-
-  const sessionArchiveOwnerKey = createMemo(() => vesloArchiveClientOptions()?.accountId ?? "");
-
-  const vesloArchiveClient = createMemo(() => {
-    const resolved = vesloArchiveClientOptions();
-    if (!resolved) return null;
-    return createVesloServerClient(resolved);
-  });
-
-  const isLoopbackUrl = (value: string) => {
-    const trimmed = value.trim();
-    if (!trimmed) return false;
-    try {
-      const parsed = new URL(trimmed);
-      const hostname = parsed.hostname.trim().toLowerCase();
-      return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
-    } catch {
-      return false;
-    }
-  };
-
-  const gatewayVesloServerClient = createMemo(() => {
-    const active = vesloServerClient();
-    const activeBaseUrl = active?.baseUrl?.trim() ?? "";
-    const settings = vesloServerSettings();
-    const remoteUrl = normalizeVesloServerUrl(settings.urlOverride ?? "") ?? "";
-    const remoteToken = settings.token?.trim() ?? "";
-
-    if (!remoteUrl || !remoteToken) {
-      return active;
-    }
-
-    if (isLoopbackUrl(activeBaseUrl) && !isLoopbackUrl(remoteUrl)) {
-      return createVesloServerClient({ baseUrl: remoteUrl, token: remoteToken });
-    }
-
-    return active;
-  });
-
-  const managedAiGatewayBaseUrl = createMemo(() => {
-    const settings = vesloServerSettings();
-    return resolveManagedAiGatewayBaseUrl({
-      settingsUrl: normalizeVesloServerUrl(settings.urlOverride ?? "") ?? "",
-      gatewayClientBaseUrl: gatewayVesloServerClient()?.baseUrl?.trim() ?? "",
-      localFallbackBaseUrl: vesloServerLocalFallbackBaseUrl(),
-      isDesktopRuntime: isTauriRuntime(),
-    });
-  });
-
-  const devtoolsVesloClient = createMemo(() => vesloServerClient());
 
   createEffect(() => {
     if (typeof window === "undefined") return;
@@ -1241,317 +1110,6 @@ export default function App() {
     if (cleaned !== window.location.href) {
       window.history.replaceState(window.history.state ?? null, "", cleaned);
     }
-  });
-
-  createEffect(() => {
-    const pref = startupPreference();
-    const info = activeVesloServerHostInfo();
-    const hostUrl = info?.connectUrl ?? info?.lanUrl ?? info?.mdnsUrl ?? info?.baseUrl ?? "";
-    const localFallbackUrl = vesloServerLocalFallbackBaseUrl();
-    const resolvedLocalUrl = hostUrl || localFallbackUrl;
-    const settingsUrl = normalizeVesloServerUrl(vesloServerSettings().urlOverride ?? "") ?? "";
-
-    if (pref === "local") {
-      setVesloServerUrl(resolvedLocalUrl);
-      return;
-    }
-    if (pref === "server") {
-      setVesloServerUrl(settingsUrl);
-      return;
-    }
-    setVesloServerUrl(resolvedLocalUrl || settingsUrl);
-  });
-
-  const checkVesloServer = async (url: string, token?: string, hostToken?: string) => {
-    const client = createVesloServerClient({ baseUrl: url, token, hostToken });
-    try {
-      await client.health();
-    } catch (error) {
-      if (error instanceof VesloServerError && (error.status === 401 || error.status === 403)) {
-        const result = { status: "limited" as VesloServerStatus, capabilities: null };
-        markVesloServerReachable(result.status);
-        return result;
-      }
-      return { status: "disconnected" as VesloServerStatus, capabilities: null };
-    }
-    markVesloServerReachable("limited");
-
-    if (!token) {
-      return { status: "limited" as VesloServerStatus, capabilities: null };
-    }
-
-    try {
-      const caps = await client.capabilities();
-      const result = { status: "connected" as VesloServerStatus, capabilities: caps };
-      markVesloServerReachable(result.status);
-      return result;
-    } catch (error) {
-      if (error instanceof VesloServerError && (error.status === 401 || error.status === 403)) {
-        const result = { status: "limited" as VesloServerStatus, capabilities: null };
-        markVesloServerReachable(result.status);
-        return result;
-      }
-      return { status: "disconnected" as VesloServerStatus, capabilities: null };
-    }
-  };
-
-  let ensureLocalVesloServerRunning: (options?: { ignoreStartupPreference?: boolean }) => Promise<boolean> = async () => false;
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!documentVisible()) return;
-    const url = vesloServerBaseUrl().trim();
-    const auth = vesloServerAuth();
-    const token = auth.token;
-    const hostToken = auth.hostToken;
-
-    if (!url) {
-      setVesloServerStatus("disconnected");
-      setVesloServerCapabilitiesStable(null);
-      setVesloServerCheckedAt(Date.now());
-      return;
-    }
-
-    let active = true;
-    let busy = false;
-    let timeoutId: number | undefined;
-    let delayMs = 1_000;
-    let statusStability = createInitialVesloServerStatusStabilityState();
-
-    const scheduleNext = () => {
-      if (!active) return;
-      timeoutId = window.setTimeout(run, delayMs);
-    };
-
-    const run = async () => {
-      if (busy) return;
-      busy = true;
-      try {
-        const result = await checkVesloServer(url, token, hostToken);
-        if (!active) return;
-        const decision = applyVesloServerStatusProbe(statusStability, result, {
-          nowMs: Date.now(),
-          previousDelayMs: delayMs,
-        });
-        statusStability = decision.state;
-        setVesloServerStatus(decision.visibleStatus);
-        setVesloServerCapabilitiesStable(decision.visibleCapabilities);
-        delayMs = decision.nextDelayMs;
-        if (decision.transientFailure) {
-          recordPerfLog(developerMode(), "workspace.requests", "veslo-status-transient-failure", {
-            visibleStatus: decision.visibleStatus,
-            nextDelayMs: decision.nextDelayMs,
-          });
-        }
-      } catch (error) {
-        const decision = applyVesloServerStatusProbe(
-          statusStability,
-          { status: "disconnected", capabilities: null },
-          {
-            nowMs: Date.now(),
-            previousDelayMs: delayMs,
-          },
-        );
-        statusStability = decision.state;
-        setVesloServerStatus(decision.visibleStatus);
-        setVesloServerCapabilitiesStable(decision.visibleCapabilities);
-        delayMs = decision.nextDelayMs;
-        if (decision.transientFailure) {
-          recordPerfLog(developerMode(), "workspace.requests", "veslo-status-transient-failure", {
-            visibleStatus: decision.visibleStatus,
-            nextDelayMs: decision.nextDelayMs,
-            message: error instanceof Error ? error.message : safeStringify(error),
-          });
-        }
-      } finally {
-        if (!active) return;
-        setVesloServerCheckedAt(Date.now());
-        busy = false;
-        scheduleNext();
-      }
-    };
-
-    run();
-    onCleanup(() => {
-      active = false;
-      if (timeoutId) window.clearTimeout(timeoutId);
-    });
-  });
-
-  createEffect(() => {
-    if (!isTauriRuntime()) return;
-    if (!documentVisible()) return;
-    let active = true;
-    let timeoutId: number | undefined;
-
-    const schedule = (delayMs: number) => {
-      if (!active) return;
-      timeoutId = window.setTimeout(run, delayMs);
-    };
-
-    const run = async () => {
-      try {
-        const info = await vesloServerInfo();
-        if (!active) return;
-        setVesloServerHostInfoStable(info);
-        // Cold-start cadence: 1s while the sidecar is still booting, 10s
-        // once it reports running. Without the tight initial cadence the
-        // first running:false answer would pin the UI to "Unavailable" for
-        // a full 10s tick before the next probe.
-        schedule(info?.running ? 10_000 : 1_000);
-      } catch {
-        if (!active) return;
-        setVesloServerHostInfoStable(null);
-        schedule(1_000);
-      }
-    };
-
-    run();
-    onCleanup(() => {
-      active = false;
-      if (timeoutId) window.clearTimeout(timeoutId);
-    });
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!documentVisible()) return;
-    if (!developerMode()) {
-      setVesloServerDiagnostics(null);
-      return;
-    }
-
-    const client = vesloServerClient();
-    if (!client || vesloServerStatus() === "disconnected") {
-      setVesloServerDiagnostics(null);
-      return;
-    }
-
-    let active = true;
-    let busy = false;
-
-    const run = async () => {
-      if (busy) return;
-      busy = true;
-      try {
-        const status = await client.status();
-        if (active) setVesloServerDiagnostics(status);
-      } catch {
-        if (active) setVesloServerDiagnostics(null);
-      } finally {
-        busy = false;
-      }
-    };
-
-    run();
-    const interval = window.setInterval(run, 10_000);
-    onCleanup(() => {
-      active = false;
-      window.clearInterval(interval);
-    });
-  });
-
-  createEffect(() => {
-    if (!isTauriRuntime()) return;
-    if (!developerMode()) return;
-    if (!documentVisible()) return;
-
-    let busy = false;
-
-    const run = async () => {
-      if (busy) return;
-      busy = true;
-      try {
-        await workspaceStore.refreshEngine();
-      } finally {
-        busy = false;
-      }
-    };
-
-    run();
-    const interval = window.setInterval(run, 10_000);
-    onCleanup(() => {
-      window.clearInterval(interval);
-    });
-  });
-
-  createEffect(() => {
-    if (!isTauriRuntime()) return;
-    if (!developerMode()) {
-      setOpenCodeRouterInfoState(null);
-      return;
-    }
-    if (!documentVisible()) return;
-
-    let active = true;
-
-    const run = async () => {
-      try {
-        const info = await opencodeRouterInfo();
-        if (active) setOpenCodeRouterInfoState(info);
-      } catch {
-        if (active) setOpenCodeRouterInfoState(null);
-      }
-    };
-
-    run();
-    const interval = window.setInterval(run, 10_000);
-    onCleanup(() => {
-      active = false;
-      window.clearInterval(interval);
-    });
-  });
-
-  createEffect(() => {
-    if (!isTauriRuntime()) return;
-    if (!developerMode()) {
-      setOrchestratorStatusState(null);
-      return;
-    }
-    if (!documentVisible()) return;
-
-    let active = true;
-
-    const run = async () => {
-      try {
-        const status = await orchestratorStatus();
-        if (active) setOrchestratorStatusState(status);
-      } catch {
-        if (active) setOrchestratorStatusState(null);
-      }
-    };
-
-    run();
-    const interval = window.setInterval(run, 10_000);
-    onCleanup(() => {
-      active = false;
-      window.clearInterval(interval);
-    });
-  });
-
-  // Poll orchestrator engine pool every 30s so the sidebar can show which
-  // workspaces have a warm engine. 30s (not 5s) — engines change state on
-  // user actions (workspace switch, idle suspend), not continuously. Tight
-  // polling was leaking timers under HMR and pushing veslo-server CPU to
-  // 500%.
-  createEffect(() => {
-    if (!isTauriRuntime()) return;
-    if (!documentVisible()) return;
-    let active = true;
-    const run = async () => {
-      try {
-        const list = await orchestratorEnginesList();
-        if (active) setOrchestratorEnginesState(list);
-      } catch {
-        if (active) setOrchestratorEnginesState([]);
-      }
-    };
-    run();
-    const interval = window.setInterval(run, 30_000);
-    onCleanup(() => {
-      active = false;
-      window.clearInterval(interval);
-    });
   });
 
   const [client, setClient] = createSignal<Client | null>(null);
@@ -5202,7 +4760,7 @@ export default function App() {
   type ManagedAiRuntimeConfigForSend = Awaited<ReturnType<VesloServerClient["getConfig"]>>;
 
   const shouldRetryManagedAiConfigReadForSend = (error: unknown, baseUrl: string) =>
-    isLoopbackUrl(baseUrl) &&
+    isLoopbackVesloServerConnectionUrl(baseUrl) &&
     !(error instanceof VesloServerError) &&
     isLocalVesloTransportError(error) &&
     vesloServerRecentlyReachable();
@@ -7846,16 +7404,6 @@ export default function App() {
       });
   });
 
-  function updateVesloServerSettings(next: VesloServerSettings) {
-    const stored = writeVesloServerSettings(next);
-    setVesloServerSettings(stored);
-  }
-
-  const resetVesloServerSettings = () => {
-    clearVesloServerSettings();
-    setVesloServerSettings({});
-  };
-
   const [editRemoteWorkspaceOpen, setEditRemoteWorkspaceOpen] = createSignal(false);
   const [editRemoteWorkspaceId, setEditRemoteWorkspaceId] = createSignal<string | null>(null);
   const [editRemoteWorkspaceError, setEditRemoteWorkspaceError] = createSignal<string | null>(null);
@@ -8644,174 +8192,6 @@ export default function App() {
       setRenameWorkspaceBusy(false);
     }
   };
-
-  const testVesloServerConnection = async (next: VesloServerSettings) => {
-    const derived = normalizeVesloServerUrl(next.urlOverride ?? "");
-    if (!derived) {
-      setVesloServerStatus("disconnected");
-      setVesloServerCapabilitiesStable(null);
-      setVesloServerCheckedAt(Date.now());
-      return false;
-    }
-    const result = await checkVesloServer(derived, next.token, vesloServerAuth().hostToken);
-    setVesloServerStatus(result.status);
-    setVesloServerCapabilitiesStable(result.capabilities);
-    setVesloServerCheckedAt(Date.now());
-    const ok = result.status === "connected" || result.status === "limited";
-    if (ok && !isTauriRuntime()) {
-      const active = workspaceStore.activeWorkspaceDisplay();
-      const shouldAttach = !routedClient() || active.workspaceType !== "remote" || active.remoteType !== "veslo";
-      if (shouldAttach) {
-        await workspaceStore
-          .createRemoteWorkspaceFlow({
-            vesloHostUrl: derived,
-            vesloToken: next.token ?? null,
-          })
-          .catch(e => reportError(e, "workspace.createRemoteFlow"));
-      }
-    }
-    return ok;
-  };
-
-  const reconnectVesloServer = async () => {
-    if (vesloReconnectBusy()) return false;
-    setVesloReconnectBusy(true);
-    try {
-      if (
-        isTauriRuntime() &&
-        startupPreference() !== "server" &&
-        workspaceStore.activeWorkspaceDisplay().workspaceType === "local"
-      ) {
-        return await ensureLocalVesloServerRunning();
-      }
-
-      let hostInfo = vesloServerHostInfo();
-      if (isTauriRuntime()) {
-        try {
-          hostInfo = await vesloServerInfo();
-          setVesloServerHostInfoStable(hostInfo);
-        } catch {
-          hostInfo = null;
-          setVesloServerHostInfoStable(null);
-        }
-      }
-
-      // Repair stale local token state by syncing settings token from the live host.
-      const runningHostInfo = resolveRunningVesloServerHostInfo(hostInfo);
-      if (runningHostInfo?.clientToken?.trim() && startupPreference() !== "server") {
-        const liveToken = runningHostInfo.clientToken.trim();
-        const settings = vesloServerSettings();
-        if ((settings.token?.trim() ?? "") !== liveToken) {
-          updateVesloServerSettings({ ...settings, token: liveToken });
-        }
-      }
-
-      const url = vesloServerBaseUrl().trim();
-      const auth = vesloServerAuth();
-      if (!url) {
-        setVesloServerStatus("disconnected");
-        setVesloServerCapabilitiesStable(null);
-        setVesloServerCheckedAt(Date.now());
-        return false;
-      }
-
-      const result = await checkVesloServer(url, auth.token, auth.hostToken);
-      setVesloServerStatus(result.status);
-      setVesloServerCapabilitiesStable(result.capabilities);
-      setVesloServerCheckedAt(Date.now());
-      return result.status === "connected" || result.status === "limited";
-    } finally {
-      setVesloReconnectBusy(false);
-    }
-  };
-
-  let ensureLocalVesloServerRunningInFlight: Promise<boolean> | null = null;
-  ensureLocalVesloServerRunning = async (options) => {
-    if (!isTauriRuntime()) return false;
-    if (!options?.ignoreStartupPreference && startupPreference() === "server") return false;
-    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") return false;
-    if (ensureLocalVesloServerRunningInFlight) {
-      return ensureLocalVesloServerRunningInFlight;
-    }
-
-    ensureLocalVesloServerRunningInFlight = (async () => {
-      let info: VesloServerInfo | null = null;
-      try {
-        info = await vesloServerInfo();
-        setVesloServerHostInfoStable(info);
-      } catch {
-        setVesloServerHostInfoStable(null);
-      }
-
-      const liveInfo = resolveRunningVesloServerHostInfo(info);
-      if (liveInfo?.baseUrl?.trim()) {
-        const result = await checkVesloServer(
-          liveInfo.baseUrl.trim(),
-          liveInfo.clientToken?.trim() || undefined,
-          liveInfo.hostToken?.trim() || undefined,
-        );
-        setVesloServerStatus(result.status);
-        setVesloServerCapabilitiesStable(result.capabilities);
-        setVesloServerCheckedAt(Date.now());
-        if (result.status !== "disconnected") {
-          return true;
-        }
-      }
-
-      const restarted = await vesloServerRestart();
-      setVesloServerHostInfoStable(restarted);
-      const restartedInfo = resolveRunningVesloServerHostInfo(restarted);
-      const baseUrl = restartedInfo?.baseUrl?.trim() ?? "";
-      if (!baseUrl) {
-        setVesloServerStatus("disconnected");
-        setVesloServerCapabilitiesStable(null);
-        setVesloServerCheckedAt(Date.now());
-        return false;
-      }
-
-      const result = await checkVesloServer(
-        baseUrl,
-        restartedInfo?.clientToken?.trim() || undefined,
-        restartedInfo?.hostToken?.trim() || undefined,
-      );
-      setVesloServerStatus(result.status);
-      setVesloServerCapabilitiesStable(result.capabilities);
-      setVesloServerCheckedAt(Date.now());
-      return result.status !== "disconnected";
-    })().finally(() => {
-      ensureLocalVesloServerRunningInFlight = null;
-    });
-
-    return ensureLocalVesloServerRunningInFlight;
-  };
-
-  let lastLocalVesloEnsureKey = "";
-  createEffect(() => {
-    if (!isTauriRuntime()) return;
-    if (!workspaceStore.workspacesHydrated()) return;
-    if (startupPreference() === "server") return;
-    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") return;
-
-    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
-    const activeWorkspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
-    const nextKey = activeWorkspaceId || activeWorkspaceRoot
-      ? [activeWorkspaceId, activeWorkspaceRoot, baseUrl().trim()].join("::")
-      : "app-service";
-    if (nextKey === lastLocalVesloEnsureKey) return;
-
-    const scheduledKey = nextKey;
-    void ensureLocalVesloServerRunning()
-      .then((ok) => {
-        if (ok) {
-          lastLocalVesloEnsureKey = scheduledKey;
-        }
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : safeStringify(error);
-        setError(addOpencodeCacheHint(message));
-        reportError(error, "veslo-server.ensure.effect");
-      });
-  });
 
   const restartLocalServer = async () => {
     const activeWorkspace = workspaceStore.activeWorkspaceDisplay();

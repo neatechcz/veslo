@@ -3,8 +3,12 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const connectionSource = readFileSync(
+  new URL("../context/veslo-server-connection.ts", import.meta.url),
+  "utf8",
+);
 
-const countMatches = (pattern: RegExp) => [...source.matchAll(pattern)].length;
+const countMatches = (haystack: string, pattern: RegExp) => [...haystack.matchAll(pattern)].length;
 
 function inactiveWorkspaceBaseUrlHealEffectSource(): string {
   const comment = source.indexOf("// VSLO-86: heal stale gateway baseURL");
@@ -16,22 +20,22 @@ function inactiveWorkspaceBaseUrlHealEffectSource(): string {
 
 test("Veslo server polling stores stable capability and host-info signal values", () => {
   assert.match(
-    source,
-    /const setVesloServerCapabilitiesStable = \(next: VesloServerCapabilities \| null\) => \{[\s\S]*setVesloServerCapabilities\(\(current\) =>[\s\S]*vesloServerCapabilitiesStateKey\(current\) === nextKey \? current : next[\s\S]*\};/,
+    connectionSource,
+    /const setVesloServerCapabilitiesStable = \(next: VesloServerCapabilities \| null\) => \{[\s\S]*setVesloServerCapabilities\(\(current\) =>[\s\S]*stateKey\(current\) === nextKey \? current : next[\s\S]*\};/,
     "capabilities should keep the previous signal value when polled content is unchanged",
   );
   assert.match(
-    source,
-    /const setVesloServerHostInfoStable = \(next: VesloServerInfo \| null\) => \{[\s\S]*setVesloServerHostInfo\(\(current\) =>[\s\S]*vesloServerHostInfoStateKey\(current\) === nextKey \? current : next[\s\S]*\};/,
+    connectionSource,
+    /const setVesloServerHostInfoStable = \(next: VesloServerInfo \| null\) => \{[\s\S]*setVesloServerHostInfo\(\(current\) =>[\s\S]*stateKey\(current\) === nextKey \? current : next[\s\S]*\};/,
     "host info should keep the previous signal value when polled content is unchanged",
   );
   assert.equal(
-    countMatches(/\bsetVesloServerCapabilities\(/g),
+    countMatches(connectionSource, /\bsetVesloServerCapabilities\(/g),
     1,
     "runtime code should update capabilities through the stable setter only",
   );
   assert.equal(
-    countMatches(/\bsetVesloServerHostInfo\(/g),
+    countMatches(connectionSource, /\bsetVesloServerHostInfo\(/g),
     1,
     "runtime code should update host info through the stable setter only",
   );
@@ -39,7 +43,7 @@ test("Veslo server polling stores stable capability and host-info signal values"
 
 test("Veslo server routing effects ignore host-info diagnostic churn", () => {
   assert.match(
-    source,
+    connectionSource,
     /const activeVesloServerRoutingInfo = createMemo\([\s\S]*baseUrl: hostInfo\.baseUrl\?\.trim\(\) \?\? "",[\s\S]*engineUrl: hostInfo\.engineUrl\?\.trim\(\) \?\? "",[\s\S]*clientToken: hostInfo\.clientToken\?\.trim\(\) \?\? "",[\s\S]*equals: \(prev, next\) =>[\s\S]*prev\?\.baseUrl[\s\S]*next\?\.baseUrl[\s\S]*prev\?\.engineUrl[\s\S]*next\?\.engineUrl[\s\S]*prev\?\.clientToken[\s\S]*next\?\.clientToken/s,
     "routing effects should depend on stable routing fields instead of the full host-info object",
   );
