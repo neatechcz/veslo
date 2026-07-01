@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 
@@ -68,10 +69,19 @@ test("release review verifies GlitchTip release monitoring wiring", () => {
   for (const label of [
     "macOS release builds embed GlitchTip DSN for frontend and native monitoring",
     "Windows release builds embed GlitchTip DSN for frontend and native monitoring",
+    "Prerelease desktop builds embed GlitchTip DSN for frontend and native monitoring",
     "Manual Windows MSI workflows embed GlitchTip DSN for frontend and native monitoring",
     "Release docs describe GlitchTip DSN as public and release-owned",
   ]) {
     assert.ok(labels.has(label), `expected release review to report: ${label}`);
     assert.equal(report.checks.find((entry) => entry.label === label)?.ok, true);
   }
+
+  const reviewSource = readFileSync(scriptPath, "utf8");
+  assert.match(reviewSource, /extractWorkflowJob\(releaseWorkflow,\s*"publish-tauri"\)/);
+  assert.match(reviewSource, /extractWorkflowJob\(releaseWorkflow,\s*"publish-tauri-windows"\)/);
+  assert.match(reviewSource, /extractWorkflowJob\(prereleaseWorkflow,\s*"publish-tauri"\)/);
+  assert.match(reviewSource, /hasGlitchTipReleaseEnv\(releaseMacosTauriJob,\s*\{\s*requireStrict:\s*true\s*\}\)/);
+  assert.match(reviewSource, /hasGlitchTipReleaseEnv\(releaseWindowsTauriJob,\s*\{\s*requireStrict:\s*true\s*\}\)/);
+  assert.match(reviewSource, /hasGlitchTipReleaseEnv\(prereleaseTauriJob,\s*\{\s*requireStrict:\s*true\s*\}\)/);
 });

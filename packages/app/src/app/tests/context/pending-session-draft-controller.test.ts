@@ -17,6 +17,20 @@ const draft = (text: string): ComposerDraft => ({
   resolvedText: text,
 });
 
+const draftWithAttachment = (text: string): ComposerDraft => ({
+  ...draft(text),
+  attachments: [
+    {
+      id: "att-1",
+      name: "diagram.png",
+      mimeType: "image/png",
+      size: 42,
+      kind: "image",
+      dataUrl: "data:image/png;base64,AA==",
+    },
+  ],
+});
+
 const summaryFromDraft = (input: PendingSessionDraft): PendingSessionDraftSummary => ({
   id: input.id,
   kind: input.kind,
@@ -242,6 +256,242 @@ test("pending draft controller updates one global draft record for directory tar
       assert.equal(persistedDrafts[1]?.id, "pending-global-unpublished");
       assert.equal(persistedDrafts[1]?.workspaceId, "workspace-b");
       assert.equal(persistedDrafts[1]?.directory, "/repo/b");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("pending draft controller preserves global draft text when switching between directory targets", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      let storedDraft: PendingSessionDraft = {
+        id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
+        kind: "directory",
+        workspaceId: "workspace-a",
+        directory: "/repo/a",
+        privateWorkspaceId: null,
+        createdAt: 10,
+        updatedAt: 20,
+        composer: draft("keep this directory text"),
+      };
+      let composerDrafts: Record<string, ComposerDraft> = {};
+
+      const controller = createPendingSessionDraftController({
+        isTauriRuntime: () => true,
+        createSessionAndOpen: async () => {
+          throw new Error("web fallback should not create a real session on desktop");
+        },
+        createEmptyComposerDraft: () => {
+          throw new Error("existing global draft should preserve composer instead of creating empty draft");
+        },
+        pendingSessionDraftsList: async () => [summaryFromDraft(storedDraft)],
+        pendingSessionDraftsGet: async (id) => {
+          assert.equal(id, GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID);
+          return { draft: storedDraft, attachmentFailures: [] };
+        },
+        pendingSessionDraftsPut: async (input) => {
+          storedDraft = input;
+          return summaryFromDraft(input);
+        },
+        pendingSessionDraftsDelete: async () => {
+          throw new Error("target switch should update the global draft, not delete it");
+        },
+        workspace: {
+          activeWorkspaceId: () => "workspace-b",
+          activeWorkspaceDisplay: () => ({ id: "workspace-b", directory: "/repo/b", path: "/repo/b" }),
+          workspaces: () => [{ id: "workspace-b", directory: "/repo/b", path: "/repo/b" }],
+          activateWorkspace: async () => true,
+          createScratchWorkspace: async () => {
+            throw new Error("directory target switch should not create a scratch workspace");
+          },
+          forgetWorkspace: async () => true,
+          pickWorkspaceFolder: async () => null,
+          ensureWorkspaceForFolder: async () => null,
+        },
+        publishRegisteredWorkspaceToSidebar: () => undefined,
+        setComposerDraftBySessionId: (updater) => {
+          composerDrafts = updater(composerDrafts);
+        },
+        clearDisplayedSession: () => undefined,
+        setView: () => undefined,
+        setError: () => undefined,
+        reportError: (error) => {
+          throw error instanceof Error ? error : new Error(String(error));
+        },
+        safeStringify: (value) => String(value),
+        addOpencodeCacheHint: (message) => message,
+      });
+
+      const openedKey = await controller.openDirectoryPendingDraft({ workspaceId: "workspace-b", directory: "/repo/b" });
+      const composerStorageKey = resolveComposerStorageKey({ pendingDraftKey: openedKey });
+
+      assert.equal(storedDraft.id, GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID);
+      assert.equal(storedDraft.kind, "directory");
+      assert.equal(storedDraft.workspaceId, "workspace-b");
+      assert.equal(storedDraft.directory, "/repo/b");
+      assert.equal(storedDraft.composer.text, "keep this directory text");
+      assert.equal(composerDrafts[composerStorageKey]?.text, "keep this directory text");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("pending draft controller preserves attachments when switching directory draft to private chat", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      let storedDraft: PendingSessionDraft = {
+        id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
+        kind: "directory",
+        workspaceId: "workspace-a",
+        directory: "/repo/a",
+        privateWorkspaceId: null,
+        createdAt: 10,
+        updatedAt: 20,
+        composer: draftWithAttachment("keep this attachment"),
+      };
+      let composerDrafts: Record<string, ComposerDraft> = {};
+
+      const controller = createPendingSessionDraftController({
+        isTauriRuntime: () => true,
+        createSessionAndOpen: async () => {
+          throw new Error("web fallback should not create a real session on desktop");
+        },
+        createEmptyComposerDraft: () => {
+          throw new Error("existing global draft should preserve composer instead of creating empty draft");
+        },
+        pendingSessionDraftsList: async () => [summaryFromDraft(storedDraft)],
+        pendingSessionDraftsGet: async (id) => {
+          assert.equal(id, GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID);
+          return { draft: storedDraft, attachmentFailures: [] };
+        },
+        pendingSessionDraftsPut: async (input) => {
+          storedDraft = input;
+          return summaryFromDraft(input);
+        },
+        pendingSessionDraftsDelete: async () => {
+          throw new Error("target switch should update the global draft, not delete it");
+        },
+        workspace: {
+          activeWorkspaceId: () => "scratch-new",
+          activeWorkspaceDisplay: () => ({ id: "scratch-new", directory: "C:/scratch-new", path: "C:/scratch-new" }),
+          workspaces: () => [{ id: "scratch-new", directory: "C:/scratch-new", path: "C:/scratch-new" }],
+          activateWorkspace: async (workspaceId) => {
+            assert.equal(workspaceId, "scratch-new");
+            return true;
+          },
+          createScratchWorkspace: async () => ({ id: "scratch-new" }),
+          forgetWorkspace: async () => true,
+          pickWorkspaceFolder: async () => null,
+          ensureWorkspaceForFolder: async () => null,
+        },
+        publishRegisteredWorkspaceToSidebar: () => undefined,
+        setComposerDraftBySessionId: (updater) => {
+          composerDrafts = updater(composerDrafts);
+        },
+        clearDisplayedSession: () => undefined,
+        setView: () => undefined,
+        setError: () => undefined,
+        reportError: (error) => {
+          throw error instanceof Error ? error : new Error(String(error));
+        },
+        safeStringify: (value) => String(value),
+        addOpencodeCacheHint: (message) => message,
+      });
+
+      const opened = await controller.openNewSessionWithDirectory();
+      const pendingKey = resolvePendingDraftKey({ kind: "new-private" });
+      const composerStorageKey = resolveComposerStorageKey({ pendingDraftKey: pendingKey });
+
+      assert.equal(opened, true);
+      assert.equal(storedDraft.kind, "new-private");
+      assert.equal(storedDraft.privateWorkspaceId, "scratch-new");
+      assert.equal(storedDraft.composer.text, "keep this attachment");
+      assert.equal(storedDraft.composer.attachments[0]?.dataUrl, "data:image/png;base64,AA==");
+      assert.equal(composerDrafts[composerStorageKey]?.attachments[0]?.name, "diagram.png");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("pending draft controller preserves text and cleans scratch after switching private draft to directory", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      let storedDraft: PendingSessionDraft = {
+        id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
+        kind: "new-private",
+        workspaceId: "scratch-old",
+        directory: null,
+        privateWorkspaceId: "scratch-old",
+        createdAt: 10,
+        updatedAt: 20,
+        composer: draft("private body"),
+      };
+      const forgottenWorkspaces: string[] = [];
+      let composerDrafts: Record<string, ComposerDraft> = {};
+
+      const controller = createPendingSessionDraftController({
+        isTauriRuntime: () => true,
+        createSessionAndOpen: async () => {
+          throw new Error("web fallback should not create a real session on desktop");
+        },
+        createEmptyComposerDraft: () => {
+          throw new Error("existing global draft should preserve composer instead of creating empty draft");
+        },
+        pendingSessionDraftsList: async () => [summaryFromDraft(storedDraft)],
+        pendingSessionDraftsGet: async (id) => {
+          assert.equal(id, GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID);
+          return { draft: storedDraft, attachmentFailures: [] };
+        },
+        pendingSessionDraftsPut: async (input) => {
+          storedDraft = input;
+          return summaryFromDraft(input);
+        },
+        pendingSessionDraftsDelete: async () => {
+          throw new Error("target switch should update the global draft, not delete it");
+        },
+        workspace: {
+          activeWorkspaceId: () => "workspace-b",
+          activeWorkspaceDisplay: () => ({ id: "workspace-b", directory: "/repo/b", path: "/repo/b" }),
+          workspaces: () => [{ id: "workspace-b", directory: "/repo/b", path: "/repo/b" }],
+          activateWorkspace: async () => true,
+          createScratchWorkspace: async () => {
+            throw new Error("private to directory switch should not create another scratch workspace");
+          },
+          forgetWorkspace: async (workspaceId, options) => {
+            assert.deepEqual(options, { deleteLocalData: true });
+            forgottenWorkspaces.push(workspaceId);
+            return true;
+          },
+          pickWorkspaceFolder: async () => null,
+          ensureWorkspaceForFolder: async () => null,
+        },
+        publishRegisteredWorkspaceToSidebar: () => undefined,
+        setComposerDraftBySessionId: (updater) => {
+          composerDrafts = updater(composerDrafts);
+        },
+        clearDisplayedSession: () => undefined,
+        setView: () => undefined,
+        setError: () => undefined,
+        reportError: (error) => {
+          throw error instanceof Error ? error : new Error(String(error));
+        },
+        safeStringify: (value) => String(value),
+        addOpencodeCacheHint: (message) => message,
+      });
+
+      const openedKey = await controller.openDirectoryPendingDraft({ workspaceId: "workspace-b", directory: "/repo/b" });
+      const composerStorageKey = resolveComposerStorageKey({ pendingDraftKey: openedKey });
+
+      assert.equal(storedDraft.kind, "directory");
+      assert.equal(storedDraft.workspaceId, "workspace-b");
+      assert.equal(storedDraft.directory, "/repo/b");
+      assert.equal(storedDraft.privateWorkspaceId, null);
+      assert.equal(storedDraft.composer.text, "private body");
+      assert.deepEqual(forgottenWorkspaces, ["scratch-old"]);
+      assert.equal(composerDrafts[composerStorageKey]?.text, "private body");
     } finally {
       dispose();
     }

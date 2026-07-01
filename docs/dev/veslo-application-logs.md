@@ -354,7 +354,7 @@ Veslo also has Sentry-compatible error monitoring through the internal Neatech G
 - Project: `veslo`
 - Retention: GlitchTip event retention is configured on the GlitchTip service, currently 30 days in the running container
 
-Monitoring is opt-in for local development and release-owned for GitHub desktop builds. Release builds configure the public `VESLO_GLITCHTIP_DSN` GitHub Actions variable once, pass it to `VITE_VESLO_GLITCHTIP_DSN`, and embed it into the native shell for installed macOS and Windows apps. The DSN is public and not user-configurable; the application must not expose a setting to change it. The detailed variable list and privacy rules live in `docs/dev/state-and-config-reference.md`.
+Monitoring is opt-in for local development and release-owned for GitHub desktop builds. Release builds configure the public `VESLO_GLITCHTIP_DSN` GitHub Actions variable once, pass it to `VITE_VESLO_GLITCHTIP_DSN`, and embed it into the native shell for installed macOS and Windows apps. The DSN is public and not user-configurable; the application must not expose a setting to change it. Publish workflows enable strict verification with `VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV=1`; manual validation workflows can keep warning mode for missing values. The detailed variable list and privacy rules live in `docs/dev/state-and-config-reference.md`.
 
 When investigating production errors, start with GlitchTip for grouped exceptions and stack traces. Use this runbook's Docker and Den sections when you need raw process output, encrypted debug-log metadata, sidecar forwarding behavior, or application-queryable log history.
 

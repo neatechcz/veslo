@@ -141,6 +141,129 @@ test("composer target controller builds workspace options and moves current draf
   });
 });
 
+test("composer target switch cleans previous scratch workspace after global draft retarget succeeds", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const chatKey = resolvePendingDraftKey({ kind: "new-private" });
+      const globalComposerStorageKey = resolveComposerStorageKey({ pendingDraftKey: chatKey });
+      const targetKey = resolvePendingDraftKey({
+        kind: "directory",
+        workspaceId: "workspace-1",
+        directory: "C:/work/project",
+      });
+      const previousSummary: PendingSessionDraftSummary = {
+        id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
+        kind: "new-private",
+        workspaceId: "scratch-old",
+        directory: null,
+        privateWorkspaceId: "scratch-old",
+        createdAt: 10,
+        updatedAt: 20,
+        composer: {
+          mode: "prompt",
+          parts: [{ type: "text", text: "current private draft" }],
+          attachments: [],
+          text: "current private draft",
+          resolvedText: "current private draft",
+        },
+      };
+      const [activePendingDraftKey, setActivePendingDraftKey] = createSignal<string | null>(chatKey);
+      const [activePendingDraftMeta, setActivePendingDraftMeta] = createSignal<PendingSessionDraftSummary | null>(
+        previousSummary,
+      );
+      const persisted: { current: PendingSessionDraftSummary | null } = { current: previousSummary };
+      const events: string[] = [];
+      const forgottenWorkspaces: Array<{ workspaceId: string; deleteLocalData?: boolean }> = [];
+      let composerDrafts: Record<string, ComposerDraft> = {};
+
+      const controller = createComposerTargetController({
+        isTauriRuntime: () => true,
+        labels: {
+          chat: () => "Chat only",
+          chooseWorkspace: () => "Choose workspace",
+          chooseWorkspaceDescription: () => "Choose another workspace",
+          targetUnavailable: () => "Target unavailable",
+        },
+        activePendingDraftKey,
+        setActivePendingDraftKey,
+        activePendingDraftMeta,
+        setActivePendingDraftMeta,
+        pendingDraftsReady: () => true,
+        currentComposerStorageKey: () => globalComposerStorageKey,
+        composerDraft: () => draft("move me"),
+        pendingSessionDraftsList: async () => (persisted.current ? [persisted.current] : []),
+        pendingSessionDraftsPut: async (input) => {
+          events.push(`put:${input.kind}`);
+          persisted.current = summaryFromPut(input);
+          return persisted.current;
+        },
+        pendingSessionDraftsDelete: async (draftId) => {
+          throw new Error(`global pending draft should not be deleted: ${draftId}`);
+        },
+        isConsumedPendingDraftId: () => false,
+        markPendingDraftConsumed: () => undefined,
+        clearConsumedPendingDraftId: () => undefined,
+        workspace: {
+          workspaces: () => [
+            {
+              id: "workspace-1",
+              directory: "C:/work/project",
+              path: "C:/work/project",
+              name: "Project",
+            },
+          ],
+          activeWorkspaceId: () => "workspace-1",
+          activeWorkspaceDisplay: () => ({
+            id: "workspace-1",
+            directory: "C:/work/project",
+            path: "C:/work/project",
+            name: "Project",
+          } as any),
+          activeWorkspaceRoot: () => "C:/work/project",
+          isPrivateWorkspacePath: () => false,
+          createScratchWorkspace: async () => ({ id: "scratch-new" }),
+          forgetWorkspace: async (workspaceId, options) => {
+            events.push(`forget:${workspaceId}`);
+            forgottenWorkspaces.push({ workspaceId, deleteLocalData: options?.deleteLocalData });
+            return true;
+          },
+          activateWorkspace: async () => true,
+          pickWorkspaceFolder: async () => null,
+          ensureWorkspaceForFolder: async () => null,
+        },
+        publishRegisteredWorkspaceToSidebar: () => undefined,
+        setComposerDraftBySessionId: (updater) => {
+          composerDrafts = updater(composerDrafts);
+        },
+        setView: () => undefined,
+        setError: () => undefined,
+        reportError: (error) => {
+          throw error instanceof Error ? error : new Error(String(error));
+        },
+        safeStringify: (value) => String(value),
+        addOpencodeCacheHint: (message) => message,
+      });
+
+      await controller.refreshPendingDraftSummaries();
+
+      const result = await controller.switchComposerTarget(targetKey);
+
+      assert.deepEqual(result, { status: "switched" });
+      assert.equal(persisted.current?.id, GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID);
+      assert.equal(persisted.current?.kind, "directory");
+      assert.equal(persisted.current?.workspaceId, "workspace-1");
+      assert.equal(persisted.current?.directory, "C:/work/project");
+      assert.equal(activePendingDraftKey(), targetKey);
+      assert.equal(activePendingDraftMeta()?.kind, "directory");
+      assert.equal(composerDrafts[globalComposerStorageKey]?.text, "move me");
+      assert.deepEqual(forgottenWorkspaces, [{ workspaceId: "scratch-old", deleteLocalData: true }]);
+      assert.deepEqual(events, ["put:directory", "forget:scratch-old"]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("composer target switch ignores obsolete pending summaries before loading or marking targets", async () => {
   await createRoot(async (dispose) => {
     try {

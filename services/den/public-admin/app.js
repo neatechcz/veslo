@@ -2,14 +2,13 @@ const STORAGE_KEY = "veslo.den.admin.token";
 const BROWSER_AUTH_STORAGE_KEY = "veslo.den.admin.browser-auth";
 const OPENAI_OAUTH_STORAGE_KEY = "veslo.den.admin.openai-oauth";
 const CODEX_EXHAUSTED_REASON = "all_codex_credentials_exhausted";
-const DEFAULT_PAGES = ["organization", "users", "billing", "credentials", "sessions", "usage", "alerts", "audit"];
+const DEFAULT_PAGES = ["credentials", "sessions", "usage", "alerts", "users", "audit"];
 const AUTH_STATE_BYTES = 32;
 const AUTH_CODE_VERIFIER_BYTES = 32;
-const initialRoute = normalizeRoute(location.pathname);
 
 const state = {
   token: localStorage.getItem(STORAGE_KEY) || "",
-  page: initialRoute.page,
+  page: normalizePage(location.pathname),
   authBusy: false,
   session: null,
   user: null,
@@ -34,15 +33,10 @@ const state = {
   userMode: "edit",
   userAiAccessByUserId: {},
   userAiAccessAvailableCredentialsByUserId: {},
-  billingView: initialRoute.billingView,
-  selectedBillingOrgId: null,
 };
 
 const els = {
   loginPanel: document.getElementById("login-panel"),
-  adminLoginEmail: document.getElementById("admin-login-email"),
-  adminLoginPassword: document.getElementById("admin-login-password"),
-  adminLoginSubmit: document.getElementById("admin-login-submit"),
   browserSignInButton: document.getElementById("browser-sign-in-button"),
   loginError: document.getElementById("login-error"),
   appPanel: document.getElementById("app-panel"),
@@ -116,53 +110,14 @@ const els = {
   auditEntityFilter: document.getElementById("audit-entity-filter"),
   auditList: document.getElementById("audit-list"),
   auditDetail: document.getElementById("audit-detail"),
-  platformNavItems: Array.from(document.querySelectorAll(".platform-nav")),
-  billingViewButtons: Array.from(document.querySelectorAll("[data-billing-view]")),
-  billingPlatformOnly: Array.from(document.querySelectorAll(".billing-platform-only")),
-  billingOrgOnly: Array.from(document.querySelectorAll(".billing-org-only")),
-  billingOrgSearch: document.getElementById("billing-org-search"),
-  billingStatusFilter: document.getElementById("billing-status-filter"),
-  billingOrganizationList: document.getElementById("billing-organization-list"),
-  billingTargetName: document.getElementById("billing-target-name"),
-  billingSource: document.getElementById("billing-source"),
-  billingLastSync: document.getElementById("billing-last-sync"),
-  billingPaymentState: document.getElementById("billing-payment-state"),
-  billingAuditTarget: document.getElementById("billing-audit-target"),
-  billingLicenseTotal: document.getElementById("billing-license-total"),
-  billingLicenseDetail: document.getElementById("billing-license-detail"),
-  billingActiveUsers: document.getElementById("billing-active-users"),
-  billingUserDetail: document.getElementById("billing-user-detail"),
-  billingInterval: document.getElementById("billing-interval"),
-  billingRenewal: document.getElementById("billing-renewal"),
-  billingStatusChip: document.getElementById("billing-status-chip"),
-  billingNoticeTitle: document.getElementById("billing-notice-title"),
-  billingNoticeText: document.getElementById("billing-notice-text"),
-  billingManagedAi: document.getElementById("billing-managed-ai"),
-  billingLicenseLimit: document.getElementById("billing-license-limit"),
-  billingExtendedInput: document.getElementById("billing-extended-input"),
   heroMetrics: Array.from(document.querySelectorAll(".hero-metrics .metric-card strong")),
 };
 
-function normalizeRoute(pathname) {
-  const path = pathname.replace(/\/+$/, "");
-  if (!path || path === "/admin") {
-    return { page: "overview", billingView: "organization" };
-  }
-  if (path === "/admin/billing" || path.startsWith("/admin/billing/")) {
-    return {
-      page: "billing",
-      billingView: path.endsWith("/platform") ? "platform" : "organization",
-    };
-  }
-  const page = path.split("/").pop();
-  return {
-    page: DEFAULT_PAGES.includes(page) ? page : "overview",
-    billingView: "organization",
-  };
-}
-
 function normalizePage(pathname) {
-  return normalizeRoute(pathname).page;
+  const path = pathname.replace(/\/+$/, "");
+  if (!path || path === "/admin") return "overview";
+  const page = path.split("/").pop();
+  return DEFAULT_PAGES.includes(page) ? page : "overview";
 }
 
 function authStorage() {
@@ -474,26 +429,12 @@ function setBrowserAuthBusy(busy, label = "Sign in with Browser") {
   els.browserSignInButton.textContent = busy ? "Opening browser login..." : label;
 }
 
-function setAdminLoginBusy(busy) {
-  if (els.adminLoginSubmit) {
-    els.adminLoginSubmit.disabled = busy;
-    els.adminLoginSubmit.textContent = busy ? "Signing in..." : "Sign in";
-  }
-  if (els.adminLoginEmail) {
-    els.adminLoginEmail.disabled = busy;
-  }
-  if (els.adminLoginPassword) {
-    els.adminLoginPassword.disabled = busy;
-  }
-}
-
 function showLogin(message = "") {
   els.loginPanel.classList.remove("hidden");
   els.appPanel.classList.add("hidden");
   els.createUserButton.classList.add("hidden");
   els.loginError.textContent = message;
   els.loginError.classList.toggle("hidden", !message);
-  setAdminLoginBusy(false);
   setBrowserAuthBusy(false);
   setStatus("Signed out", "browser sign-in required");
 }
@@ -502,15 +443,11 @@ function showApp() {
   els.loginPanel.classList.add("hidden");
   els.appPanel.classList.remove("hidden");
   els.createUserButton.classList.toggle("hidden", state.page !== "users");
-  updateAdminChromeForSession();
 }
 
 function setActivePage(page) {
   state.page = page;
-  const nextPath =
-    page === "overview" ? "/admin" :
-    page === "billing" ? `/admin/billing/${state.billingView}` :
-    `/admin/${page}`;
+  const nextPath = page === "overview" ? "/admin" : `/admin/${page}`;
   const nextUrl = `${nextPath}${location.search}${location.hash}`;
   if (location.pathname !== nextPath) {
     history.replaceState(null, "", nextUrl);
@@ -524,8 +461,6 @@ function setActivePage(page) {
 
   const titles = {
     overview: ["Veslo managed AI", "Overview", "Inspect credentials, sessions, usage, alerts, users, and audit events from one place."],
-    organization: ["Organization", "Organization", "Manage organization profile, domains, invites, users, and billing context."],
-    billing: ["Billing", "Billing", "Manage organization licenses, Stripe billing state, entitlement, and payment recovery."],
     credentials: ["Veslo managed AI", "Credentials", "Use the Codex/ChatGPT runtime profile first; OpenAI and Anthropic credentials are legacy fallbacks."],
     sessions: ["Veslo managed AI", "Sessions", "Review sticky leases, rebinding history, and worker ownership."],
     usage: ["Veslo managed AI", "Usage", "Analyze total token usage first, then break it down by credential, user, or org."],
@@ -538,17 +473,6 @@ function setActivePage(page) {
   els.pageEyebrow.textContent = eyebrow;
   els.pageTitle.textContent = title;
   els.pageDescription.textContent = description;
-  if (page === "billing") {
-    renderBilling();
-  }
-}
-
-function updateAdminChromeForSession() {
-  const platformAdmin = state.session?.platformAdmin === true;
-  els.platformNavItems.forEach((item) => item.classList.toggle("hidden", !platformAdmin));
-  if (state.session && !platformAdmin && state.billingView === "platform") {
-    state.billingView = "organization";
-  }
 }
 
 async function api(path, options = {}) {
@@ -577,23 +501,9 @@ async function api(path, options = {}) {
 async function fetchJson(path, options = {}) {
   const { response, payload } = await api(path, options);
   if (!response.ok) {
-    const error = new Error(payload?.error || "request_failed");
-    error.status = response.status;
-    error.payload = payload;
-    throw error;
+    throw new Error(payload?.error || "request_failed");
   }
   return payload;
-}
-
-function isNotImplementedError(error) {
-  return error instanceof Error && (error.status === 501 || error.message === "not_implemented");
-}
-
-function logLoadFailure(label, error) {
-  if (isNotImplementedError(error)) {
-    return;
-  }
-  console.error(label, error);
 }
 
 async function fetchDesktopAuthJson(path, body) {
@@ -607,55 +517,6 @@ async function fetchDesktopAuthJson(path, body) {
 
   const payload = await response.json().catch(() => null);
   return { response, payload };
-}
-
-async function signInWithPassword() {
-  const email = els.adminLoginEmail?.value.trim() || "";
-  const password = els.adminLoginPassword?.value || "";
-
-  els.loginError.classList.add("hidden");
-  if (!email || !password) {
-    showLogin("Email and password are required.");
-    return;
-  }
-
-  setAdminLoginBusy(true);
-  try {
-    const response = await fetch("/api/auth/sign-in/email", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      credentials: "include",
-      body: JSON.stringify({ email, password }),
-    });
-
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      showLogin(payload?.message || payload?.error || "Sign in failed.");
-      return;
-    }
-
-    const headerToken = response.headers.get("set-auth-token")?.split(".")[0]?.trim() || "";
-    const token = typeof payload?.token === "string" && payload.token.trim()
-      ? payload.token.trim()
-      : headerToken;
-    if (!token) {
-      showLogin("Sign in succeeded, but no admin token was returned.");
-      return;
-    }
-
-    state.token = token;
-    localStorage.setItem(STORAGE_KEY, token);
-    if (els.adminLoginPassword) {
-      els.adminLoginPassword.value = "";
-    }
-    await bootstrapSession();
-  } catch (error) {
-    showLogin(error instanceof Error ? error.message : "Sign in failed.");
-  } finally {
-    setAdminLoginBusy(false);
-  }
 }
 
 async function bootstrapSession() {
@@ -689,8 +550,7 @@ async function bootstrapSession() {
 
   state.session = payload;
   state.user = payload?.user || null;
-  const adminRole = payload?.platformAdmin === true ? "platform admin" : "organization admin";
-  setStatus("Signed in", state.user ? `${state.user.name || state.user.email} · ${adminRole}` : adminRole);
+  setStatus("Signed in", state.user ? `${state.user.name || state.user.email} · platform admin` : "platform admin");
   showApp();
   populateOrganizationOptions();
   await loadAllData();
@@ -841,7 +701,6 @@ async function loadAllData() {
     loadUsage(),
   ]);
   renderOverview();
-  renderBilling();
 }
 
 async function loadCredentials() {
@@ -853,13 +712,7 @@ async function loadCredentials() {
     }
     renderCredentials();
   } catch (error) {
-    if (isNotImplementedError(error)) {
-      state.credentials = [];
-      state.selectedCredentialId = null;
-      renderCredentials();
-      return;
-    }
-    logLoadFailure("loadCredentials failed", error);
+    console.error("loadCredentials failed", error);
   }
 }
 
@@ -872,13 +725,7 @@ async function loadSessions() {
     }
     renderSessions();
   } catch (error) {
-    if (isNotImplementedError(error)) {
-      state.sessions = [];
-      state.selectedSessionId = null;
-      renderSessions();
-      return;
-    }
-    logLoadFailure("loadSessions failed", error);
+    console.error("loadSessions failed", error);
   }
 }
 
@@ -891,13 +738,7 @@ async function loadAlerts() {
     }
     renderAlerts();
   } catch (error) {
-    if (isNotImplementedError(error)) {
-      state.alerts = [];
-      state.selectedAlertId = null;
-      renderAlerts();
-      return;
-    }
-    logLoadFailure("loadAlerts failed", error);
+    console.error("loadAlerts failed", error);
   }
 }
 
@@ -910,13 +751,7 @@ async function loadAudit() {
     }
     renderAudit();
   } catch (error) {
-    if (isNotImplementedError(error)) {
-      state.audit = [];
-      state.selectedAuditId = null;
-      renderAudit();
-      return;
-    }
-    logLoadFailure("loadAudit failed", error);
+    console.error("loadAudit failed", error);
   }
 }
 
@@ -976,15 +811,7 @@ async function loadUsers() {
     }
     renderUsers();
     if (state.userMode !== "create" && state.selectedUserId) {
-      try {
-        await loadUserAiAccess(state.selectedUserId);
-      } catch (error) {
-        if (!isNotImplementedError(error)) {
-          throw error;
-        }
-        state.userAiAccessAvailableCredentialsByUserId[state.selectedUserId] = [];
-        state.userAiAccessByUserId[state.selectedUserId] = normalizeAiAccess(null);
-      }
+      await loadUserAiAccess(state.selectedUserId);
       const user = currentUser();
       if (user) {
         populateUserEditor(user);
@@ -996,7 +823,7 @@ async function loadUsers() {
         : "Directory changes and AI access assignments are applied separately.",
     );
   } catch (error) {
-    logLoadFailure("loadUsers failed", error);
+    console.error("loadUsers failed", error);
     setUserSaveStatus(
       `Unable to load users: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
@@ -1021,18 +848,7 @@ async function loadUsage() {
     state.usage = payload;
     renderUsage();
   } catch (error) {
-    if (isNotImplementedError(error)) {
-      state.usage = {
-        credentialUsage: [],
-        filters: { credentials: [], users: [], orgs: [] },
-        series: [],
-        summary: { totalTokens: 0, totalRequests: 0 },
-        topCredentials: [],
-      };
-      renderUsage();
-      return;
-    }
-    logLoadFailure("loadUsage failed", error);
+    console.error("loadUsage failed", error);
   }
 }
 
@@ -1047,129 +863,6 @@ function renderOverview() {
       node.textContent = metrics[index];
     }
   });
-}
-
-function collectBillingOrganizations() {
-  const byId = new Map();
-  const sessionOrganizations = Array.isArray(state.session?.organizations) ? state.session.organizations : [];
-  for (const org of sessionOrganizations) {
-    if (org?.id) {
-      byId.set(org.id, {
-        id: org.id,
-        name: org.name || org.slug || org.id,
-        slug: org.slug || org.id,
-      });
-    }
-  }
-
-  for (const user of state.users) {
-    for (const membership of user.memberships || []) {
-      if (!membership?.orgId) continue;
-      if (!byId.has(membership.orgId)) {
-        byId.set(membership.orgId, {
-          id: membership.orgId,
-          name: membership.orgName || membership.orgSlug || membership.orgId,
-          slug: membership.orgSlug || membership.orgId,
-        });
-      }
-    }
-  }
-
-  return Array.from(byId.values()).map((org) => {
-    const activeUsers = state.users.filter((user) =>
-      user.disabled !== true && (user.memberships || []).some((membership) => membership.orgId === org.id),
-    ).length;
-    return {
-      ...org,
-      activeUsers,
-      status: "not_configured",
-      mode: "none",
-      source: "Not configured",
-      licenseLimit: 0,
-      basicQuantity: 0,
-      extendedQuantity: 0,
-      interval: "None",
-      renewal: "None",
-    };
-  });
-}
-
-function selectedBillingOrganization() {
-  const organizations = collectBillingOrganizations();
-  if (organizations.length === 0) {
-    return null;
-  }
-  const selected = organizations.find((org) => org.id === state.selectedBillingOrgId);
-  const fallback = organizations.find((org) => org.id === state.session?.activeOrgId) || organizations[0];
-  state.selectedBillingOrgId = selected?.id || fallback.id;
-  return selected || fallback;
-}
-
-function renderBilling() {
-  if (!els.billingOrganizationList) {
-    return;
-  }
-
-  const platformAdmin = state.session?.platformAdmin === true;
-  if (state.session && !platformAdmin && state.billingView === "platform") {
-    state.billingView = "organization";
-  }
-
-  els.billingViewButtons.forEach((button) => {
-    const view = button.dataset.billingView || "organization";
-    button.classList.toggle("active", view === state.billingView);
-    button.disabled = view === "platform" && !platformAdmin;
-  });
-  els.billingPlatformOnly.forEach((node) => node.classList.toggle("hidden", state.billingView !== "platform" || !platformAdmin));
-  els.billingOrgOnly.forEach((node) => node.classList.toggle("hidden", state.billingView === "platform" && platformAdmin));
-
-  if (state.page === "billing") {
-    els.pageEyebrow.textContent = platformAdmin && state.billingView === "platform" ? "Platform Admin" : "Organization Admin";
-    els.pageTitle.textContent = platformAdmin && state.billingView === "platform" ? "Organization billing" : "Billing";
-    els.pageDescription.textContent = platformAdmin && state.billingView === "platform"
-      ? "Review subscription state across organizations and operate on the selected organization without changing actor identity."
-      : "Manage licenses, billing interval, invoices, payment recovery, and Stripe portal access for your organization.";
-  }
-
-  const organizations = collectBillingOrganizations();
-  const term = els.billingOrgSearch?.value?.trim().toLowerCase() || "";
-  const visibleOrganizations = organizations.filter((org) =>
-    !term || `${org.name} ${org.slug}`.toLowerCase().includes(term),
-  );
-  els.billingOrganizationList.innerHTML = visibleOrganizations.map((org) => `
-    <article class="list-card ${org.id === state.selectedBillingOrgId ? "active" : ""}" data-billing-org-id="${escapeHtml(org.id)}">
-      <div>
-        <strong>${escapeHtml(org.name)}</strong>
-        <p>${escapeHtml(`${org.activeUsers}/${org.licenseLimit} active users · ${org.source}`)}</p>
-      </div>
-      <span class="status-chip info">Not configured</span>
-    </article>
-  `).join("") || `<article class="list-card active"><div><strong>No organizations</strong><p>No organization is available to this admin session.</p></div></article>`;
-
-  const org = selectedBillingOrganization();
-  const activeUsers = org?.activeUsers ?? 0;
-  const licenseLimit = org?.licenseLimit ?? 0;
-  const targetName = org?.name || "No organization selected";
-  els.billingTargetName.textContent = targetName;
-  els.billingSource.textContent = org?.source || "Not configured";
-  els.billingLastSync.textContent = "No Stripe event";
-  els.billingPaymentState.textContent = licenseLimit > 0 ? "Active" : "No paid access";
-  els.billingAuditTarget.textContent = org?.id || "No organization selected";
-  els.billingLicenseTotal.textContent = String(licenseLimit);
-  els.billingLicenseDetail.textContent = `${org?.basicQuantity ?? 0} Basic, ${org?.extendedQuantity ?? 0} Extended`;
-  els.billingActiveUsers.textContent = String(activeUsers);
-  els.billingUserDetail.textContent = `${Math.max(licenseLimit - activeUsers, 0)} licenses available`;
-  els.billingInterval.textContent = org?.interval || "None";
-  els.billingRenewal.textContent = org?.renewal || "None";
-  els.billingStatusChip.textContent = licenseLimit > 0 ? "Active" : "Not configured";
-  els.billingStatusChip.className = `status-chip ${licenseLimit > 0 ? "success" : "info"}`;
-  els.billingNoticeTitle.textContent = licenseLimit > 0 ? "AI inference is enabled" : "Billing is not configured";
-  els.billingNoticeText.textContent = licenseLimit > 0
-    ? "The organization has paid Managed AI access and enough licenses for all active users."
-    : "History and settings remain readable. Managed AI inference requires paid or platform-granted access.";
-  els.billingManagedAi.textContent = licenseLimit > 0 ? "Allowed" : "Blocked";
-  els.billingLicenseLimit.textContent = `${licenseLimit} users`;
-  els.billingExtendedInput.textContent = `${org?.extendedQuantity ?? 0} seats`;
 }
 
 function renderCredentials() {
@@ -2241,17 +1934,6 @@ function bindNavigation() {
 }
 
 function bindActions() {
-  els.adminLoginSubmit.addEventListener("click", () => {
-    void signInWithPassword();
-  });
-  [els.adminLoginEmail, els.adminLoginPassword].forEach((input) => {
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        void signInWithPassword();
-      }
-    });
-  });
   els.browserSignInButton.addEventListener("click", () => {
     void startBrowserAuth();
   });
@@ -2374,25 +2056,6 @@ function bindActions() {
   els.auditActorFilter.addEventListener("change", renderAudit);
   els.auditEntityFilter.addEventListener("change", renderAudit);
   els.auditDateRange.addEventListener("change", renderAudit);
-  els.billingViewButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      const nextView = button.dataset.billingView || "organization";
-      if (nextView === "platform" && state.session?.platformAdmin !== true) {
-        return;
-      }
-      state.billingView = nextView;
-      setActivePage("billing");
-      renderBilling();
-    });
-  });
-  els.billingOrganizationList.addEventListener("click", (event) => {
-    const card = event.target.closest("[data-billing-org-id]");
-    if (!card) return;
-    state.selectedBillingOrgId = card.dataset.billingOrgId;
-    renderBilling();
-  });
-  els.billingOrgSearch.addEventListener("input", renderBilling);
-  els.billingStatusFilter.addEventListener("change", renderBilling);
   els.usageGroupBy.addEventListener("change", () => {
     state.usageFilters.groupBy = els.usageGroupBy.value;
     void loadUsage();

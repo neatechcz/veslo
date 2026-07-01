@@ -32,6 +32,7 @@ const tauriWindowsWix = tauriConfig.bundle?.windows?.wix ?? {};
 const tauriWindowsNsis = tauriConfig.bundle?.windows?.nsis ?? {};
 const tauriWindowsWebviewInstallMode = tauriConfig.bundle?.windows?.webviewInstallMode ?? {};
 const releaseWorkflow = readText(resolve(root, ".github", "workflows", "release-macos-aarch64.yml"));
+const prereleaseWorkflow = readText(resolve(root, ".github", "workflows", "prerelease.yml"));
 const buildDesktopWorkflow = readText(resolve(root, ".github", "workflows", "build-desktop.yml"));
 const buildWindowsMsiWorkflow = readText(resolve(root, ".github", "workflows", "build-windows-msi.yml"));
 const releaseDoc = readText(resolve(root, "RELEASE.md"));
@@ -82,19 +83,44 @@ const addManifestEntryVersionCheck = (manifest, name, expectedVersion, label) =>
 
 const hostSidecarName = (name) => (process.platform === "win32" ? `${name}.exe` : name);
 
-const hasGlitchTipReleaseEnv = (text) =>
-  /VESLO_GLITCHTIP_DSN:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_DSN\s*\}\}/.test(text) &&
-  /VITE_VESLO_GLITCHTIP_DSN:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_DSN\s*\}\}/.test(text) &&
-  /VESLO_GLITCHTIP_ENVIRONMENT:\s*production/.test(text) &&
-  /VITE_VESLO_GLITCHTIP_ENVIRONMENT:\s*production/.test(text) &&
-  /VESLO_GLITCHTIP_TRACES_SAMPLE_RATE:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_TRACES_SAMPLE_RATE\s*\|\|\s*'0'\s*\}\}/.test(
-    text,
-  ) &&
-  /VITE_VESLO_GLITCHTIP_TRACES_SAMPLE_RATE:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_TRACES_SAMPLE_RATE\s*\|\|\s*'0'\s*\}\}/.test(
-    text,
-  ) &&
-  /Verify GlitchTip release monitoring env/.test(text) &&
-  /verify-glitchtip-release-env\.mjs/.test(text);
+const extractWorkflowJob = (text, jobName) => {
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((line) => line === `  ${jobName}:`);
+  if (start === -1) return "";
+
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^  [A-Za-z0-9_-]+:\s*$/.test(lines[index])) {
+      end = index;
+      break;
+    }
+  }
+
+  return lines.slice(start, end).join("\n");
+};
+
+const releaseMacosTauriJob = extractWorkflowJob(releaseWorkflow, "publish-tauri");
+const releaseWindowsTauriJob = extractWorkflowJob(releaseWorkflow, "publish-tauri-windows");
+const prereleaseTauriJob = extractWorkflowJob(prereleaseWorkflow, "publish-tauri");
+
+const hasGlitchTipReleaseEnv = (text, options = {}) => {
+  const requireStrict = Boolean(options.requireStrict);
+  return (
+    /VESLO_GLITCHTIP_DSN:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_DSN\s*\}\}/.test(text) &&
+    /VITE_VESLO_GLITCHTIP_DSN:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_DSN\s*\}\}/.test(text) &&
+    /VESLO_GLITCHTIP_ENVIRONMENT:\s*production/.test(text) &&
+    /VITE_VESLO_GLITCHTIP_ENVIRONMENT:\s*production/.test(text) &&
+    /VESLO_GLITCHTIP_TRACES_SAMPLE_RATE:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_TRACES_SAMPLE_RATE\s*\|\|\s*'0'\s*\}\}/.test(
+      text,
+    ) &&
+    /VITE_VESLO_GLITCHTIP_TRACES_SAMPLE_RATE:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_TRACES_SAMPLE_RATE\s*\|\|\s*'0'\s*\}\}/.test(
+      text,
+    ) &&
+    /Verify GlitchTip release monitoring env/.test(text) &&
+    /verify-glitchtip-release-env\.mjs/.test(text) &&
+    (!requireStrict || /VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV:\s*["']?1["']?/.test(text))
+  );
+};
 
 const releaseDocsText = [releaseDoc, stateConfigDoc, applicationLogsDoc].join("\n");
 const releaseDocsDescribeGlitchTipDsn =
@@ -396,13 +422,18 @@ addCheck(
 );
 addCheck(
   "macOS release builds embed GlitchTip DSN for frontend and native monitoring",
-  hasGlitchTipReleaseEnv(releaseWorkflow),
-  ".github/workflows/release-macos-aarch64.yml",
+  hasGlitchTipReleaseEnv(releaseMacosTauriJob, { requireStrict: true }),
+  ".github/workflows/release-macos-aarch64.yml#publish-tauri",
 );
 addCheck(
   "Windows release builds embed GlitchTip DSN for frontend and native monitoring",
-  hasGlitchTipReleaseEnv(releaseWorkflow),
-  ".github/workflows/release-macos-aarch64.yml",
+  hasGlitchTipReleaseEnv(releaseWindowsTauriJob, { requireStrict: true }),
+  ".github/workflows/release-macos-aarch64.yml#publish-tauri-windows",
+);
+addCheck(
+  "Prerelease desktop builds embed GlitchTip DSN for frontend and native monitoring",
+  hasGlitchTipReleaseEnv(prereleaseTauriJob, { requireStrict: true }),
+  ".github/workflows/prerelease.yml#publish-tauri",
 );
 addCheck(
   "Manual Windows MSI workflows embed GlitchTip DSN for frontend and native monitoring",

@@ -299,6 +299,35 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
     nextStorageKey: string;
     nextSummary: PendingSessionDraftSummary;
   }) => {
+    const cleanupRetargetedScratchWorkspace = async () => {
+      if (!deps.isTauriRuntime()) return;
+      if (!input.previousSummary || !isGlobalUnpublishedPendingDraftSummary(input.previousSummary)) return;
+      if (input.previousSummary.kind !== "new-private") return;
+
+      const previousPrivateWorkspaceId =
+        (input.previousSummary.privateWorkspaceId ?? input.previousSummary.workspaceId).trim();
+      if (!previousPrivateWorkspaceId) return;
+
+      const nextPrivateWorkspaceId = input.nextSummary.kind === "new-private"
+        ? (input.nextSummary.privateWorkspaceId ?? input.nextSummary.workspaceId).trim()
+        : "";
+      if (nextPrivateWorkspaceId === previousPrivateWorkspaceId) return;
+
+      try {
+        const cleanupSucceeded = await deps.workspace.forgetWorkspace(previousPrivateWorkspaceId, {
+          deleteLocalData: true,
+        });
+        if (!cleanupSucceeded) {
+          deps.reportError(
+            new Error(`Failed to clean up retargeted scratch workspace ${previousPrivateWorkspaceId}.`),
+            "pendingDrafts.switch.cleanupPreviousPrivate",
+          );
+        }
+      } catch (error) {
+        deps.reportError(error, "pendingDrafts.switch.cleanupPreviousPrivate");
+      }
+    };
+
     const previousStorageKey = input.previousStorageKey?.trim() ?? "";
     const nextStorageKey = input.nextStorageKey.trim();
     const previousComposerStorageKey = resolveMovedComposerStorageKey(previousStorageKey);
@@ -312,6 +341,7 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
     const previousDraftId = input.previousSummary?.id.trim() ?? "";
     const nextDraftId = input.nextSummary.id.trim();
     if (input.previousSummary && !isGlobalUnpublishedPendingDraftSummary(input.previousSummary)) return;
+    await cleanupRetargetedScratchWorkspace();
     if (!previousDraftId || previousDraftId === nextDraftId || !deps.isTauriRuntime()) return;
 
     try {

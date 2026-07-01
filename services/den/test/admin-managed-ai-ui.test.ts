@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { once } from "node:events"
+import { readFile } from "node:fs/promises"
 import type { AddressInfo } from "node:net"
 import test from "node:test"
 import express from "express"
@@ -12,6 +13,7 @@ Object.assign(process.env, {
 })
 
 const { createManagedAiAdminUiRouter } = await import("../src/managed-ai/http/admin.js")
+const denIndexSource = await readFile(new URL("../src/index.ts", import.meta.url), "utf8")
 
 function createSession() {
   return {
@@ -89,6 +91,24 @@ test("GET /admin redirects to the canonical AI Gateway admin", async () => {
     assert.equal(response.status, 302)
     assert.equal(response.headers.get("location"), "https://ai.veslo.work/admin")
   })
+})
+
+test("mounted DEN app leaves /admin page traffic to the canonical managed-AI router", () => {
+  assert.doesNotMatch(denIndexSource, /publicAdminDir/)
+  assert.doesNotMatch(denIndexSource, /public-admin/)
+  assert.doesNotMatch(denIndexSource, /app\.get\("\/admin\/app\.js"/)
+  assert.doesNotMatch(denIndexSource, /app\.get\("\/admin\/app\.css"/)
+  assert.doesNotMatch(denIndexSource, /app\.get\(\/\^\\\/admin/)
+
+  const managedRouterMount = /app\.use\(\s*createManagedAiAdminUiRouter/.exec(denIndexSource)
+  const managedRouterIndex = managedRouterMount?.index ?? -1
+  const adminApiRuntimeIndex = denIndexSource.indexOf('app.use("/admin/api"')
+  assert.notEqual(managedRouterIndex, -1, "managed-AI admin router must be mounted")
+  assert.notEqual(adminApiRuntimeIndex, -1, "admin API router must stay mounted")
+  assert.ok(
+    managedRouterIndex < adminApiRuntimeIndex,
+    "managed-AI admin router must see /admin page traffic before the admin API fallback",
+  )
 })
 
 test("GET /admin subpages redirect to matching AI Gateway admin subpages", async () => {

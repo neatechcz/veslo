@@ -217,6 +217,52 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
     deps.setView("session");
   };
 
+  const putRetargetedGlobalPendingDraft = async (input: {
+    summary: PendingSessionDraftSummary;
+    composer: ComposerDraft;
+    kind: PendingSessionDraftSummary["kind"];
+    workspaceId: string;
+    directory: string | null;
+    privateWorkspaceId: string | null;
+  }) =>
+    await deps.pendingSessionDraftsPut({
+      id: GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
+      kind: input.kind,
+      workspaceId: input.workspaceId,
+      directory: input.directory,
+      privateWorkspaceId: input.privateWorkspaceId,
+      createdAt: input.summary.createdAt,
+      updatedAt: Date.now(),
+      composer: input.composer,
+    });
+
+  const reportPendingDraftRestoreFailures = (
+    attachmentFailures: { attachmentId: string; name: string; message: string }[],
+  ) => {
+    const restoreError = formatPendingDraftAttachmentRestoreError(attachmentFailures);
+    if (restoreError) {
+      deps.setError(restoreError);
+    }
+  };
+
+  const cleanupPreviousPrivateWorkspace = async (
+    previousPrivateWorkspaceId: string | null | undefined,
+    nextWorkspaceId: string,
+  ) => {
+    const trimmedPrevious = previousPrivateWorkspaceId?.trim() ?? "";
+    if (!trimmedPrevious || trimmedPrevious === nextWorkspaceId.trim()) return;
+
+    try {
+      const cleanupSucceeded = await deps.workspace.forgetWorkspace(trimmedPrevious, { deleteLocalData: true });
+      if (!cleanupSucceeded) {
+        throw new Error(`Failed to clean up previous private chat workspace ${trimmedPrevious}.`);
+      }
+    } catch (error) {
+      deps.reportError(error, "pendingDrafts.cleanupPrivateWorkspace");
+      deps.setError("Private chat workspace cleanup failed. Draft was preserved.");
+    }
+  };
+
   const createActivePendingDraftPersistenceEffect = (input: ActivePendingDraftPersistenceInput) => {
     createEffect(() => {
       if (!activePendingDraftStorageReady()) return;
@@ -323,10 +369,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
       if (existingPendingDraft) {
         const pendingDraft = await deps.pendingSessionDraftsGet(existingPendingDraft.id);
         if (pendingDraft) {
-          const restoreError = formatPendingDraftAttachmentRestoreError(pendingDraft.attachmentFailures);
-          if (restoreError) {
-            deps.setError(restoreError);
-          }
+          reportPendingDraftRestoreFailures(pendingDraft.attachmentFailures);
           const pendingWorkspaceId = (existingPendingDraft.privateWorkspaceId ?? existingPendingDraft.workspaceId).trim();
           if (!pendingWorkspaceId) {
             await deps.pendingSessionDraftsDelete(existingPendingDraft.id);
@@ -346,6 +389,52 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
         } else {
           await deps.pendingSessionDraftsDelete(existingPendingDraft.id);
           markPendingDraftConsumed(existingPendingDraft.id);
+        }
+      }
+
+      const existingGlobalDirectoryDraft = pendingDrafts.find((draft) => draft.kind === "directory") ?? null;
+      if (existingGlobalDirectoryDraft) {
+        const loadedGlobalDraft = await deps.pendingSessionDraftsGet(existingGlobalDirectoryDraft.id);
+        if (loadedGlobalDraft) {
+          reportPendingDraftRestoreFailures(loadedGlobalDraft.attachmentFailures);
+
+          const scratch = await deps.workspace.createScratchWorkspace();
+          if (!scratch?.id) {
+            deps.setError("Failed to create a private chat workspace.");
+            return false;
+          }
+
+          const cleanupFreshScratchWorkspace = async () => {
+            const cleanupSucceeded = await deps.workspace.forgetWorkspace(scratch.id, { deleteLocalData: true });
+            if (!cleanupSucceeded) {
+              throw new Error(`Failed to clean up failed scratch workspace ${scratch.id}.`);
+            }
+          };
+
+          try {
+            const activatedScratchWorkspace = await deps.workspace.activateWorkspace(scratch.id, {
+              origin: "app:new-private-scratch-workspace",
+            });
+            if (!activatedScratchWorkspace) {
+              await cleanupFreshScratchWorkspace();
+              deps.setError("Failed to activate the private chat workspace.");
+              return false;
+            }
+
+            const pendingDraft = await putRetargetedGlobalPendingDraft({
+              summary: existingGlobalDirectoryDraft,
+              composer: loadedGlobalDraft.draft.composer,
+              kind: "new-private",
+              workspaceId: scratch.id,
+              directory: null,
+              privateWorkspaceId: scratch.id,
+            });
+            openPendingDraftSession(newPrivatePendingDraftKey, pendingDraft, loadedGlobalDraft.draft.composer);
+            return true;
+          } catch (error) {
+            await cleanupFreshScratchWorkspace();
+            throw error;
+          }
         }
       }
 
@@ -433,11 +522,32 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
       if (existingPendingDraft) {
         const loadedPendingDraft = await deps.pendingSessionDraftsGet(existingPendingDraft.id);
         if (loadedPendingDraft) {
-          const restoreError = formatPendingDraftAttachmentRestoreError(loadedPendingDraft.attachmentFailures);
-          if (restoreError) {
-            deps.setError(restoreError);
-          }
+          reportPendingDraftRestoreFailures(loadedPendingDraft.attachmentFailures);
           openPendingDraftSession(pendingDraftKey, existingPendingDraft, loadedPendingDraft.draft.composer);
+          return pendingDraftKey;
+        }
+      }
+
+      const existingGlobalPendingDraft = pendingDrafts[0] ?? null;
+      if (existingGlobalPendingDraft) {
+        const loadedGlobalDraft = await deps.pendingSessionDraftsGet(existingGlobalPendingDraft.id);
+        if (loadedGlobalDraft) {
+          reportPendingDraftRestoreFailures(loadedGlobalDraft.attachmentFailures);
+
+          const previousPrivateWorkspaceId =
+            existingGlobalPendingDraft.kind === "new-private"
+              ? existingGlobalPendingDraft.privateWorkspaceId ?? existingGlobalPendingDraft.workspaceId
+              : null;
+          const pendingDraft = await putRetargetedGlobalPendingDraft({
+            summary: existingGlobalPendingDraft,
+            composer: loadedGlobalDraft.draft.composer,
+            kind: "directory",
+            workspaceId,
+            directory,
+            privateWorkspaceId: null,
+          });
+          openPendingDraftSession(pendingDraftKey, pendingDraft, loadedGlobalDraft.draft.composer);
+          await cleanupPreviousPrivateWorkspace(previousPrivateWorkspaceId, workspaceId);
           return pendingDraftKey;
         }
       }
