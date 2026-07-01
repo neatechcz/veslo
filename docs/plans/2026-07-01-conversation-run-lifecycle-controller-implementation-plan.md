@@ -399,7 +399,7 @@ Use this ledger for quick discovery. The authoritative task details are below.
 | id | module | status | reserved_by | done |
 | --- | --- | --- | --- | --- |
 | LFC00 | baseline lifecycle source map and contract freeze | done | codex-20260701-lfc00-baseline | true |
-| LFC01 | controller shell and isolated test harness | reserved | codex-20260702-lfc01-shell | false |
+| LFC01 | controller shell and isolated test harness | blocked | codex-20260702-lfc01-shell | false |
 | LFC02 | submit admission and queue acceptance owner | available | null | false |
 | LFC03 | OpenCode submit and AI gateway provider watch owner | available | null | false |
 | LFC04 | queue drain and lifecycle reconcile timers | available | null | false |
@@ -482,7 +482,7 @@ Acceptance:
 
 ```yaml
 id: LFC01
-status: reserved
+status: blocked
 reserved_by: codex-20260702-lfc01-shell
 reserved_at: 2026-07-02T00:10:58.9291786+02:00
 branch: lifecycle/lfc01-controller-shell
@@ -1196,3 +1196,21 @@ Notes:
 - Original worktree still contains unrelated dirty app/server owner work that is outside LFC00.
 - The pre-merge untracked copy of this plan was moved to a temporary backup before fast-forward
   merge because the LFC00 branch version contained the same plan plus the LFC00 progress log.
+
+### 2026-07-02 LFC01 Merge Blocker
+
+Status:
+
+- `status: blocked`
+- `reserved_by: codex-20260702-lfc01-shell`
+- `done: false`
+- implementation branch commit: `5d6face5`
+
+Blocker:
+
+- LFC01 implementation and focused verification are complete in
+  `../veslo-lifecycle-lfc01-controller-shell`, but merge into the original worktree is blocked
+  because `packages/server/src/server.ts` has unrelated dirty owner-refactor changes. Git refuses
+  fast-forward merge because LFC01 also adds construction-only wiring in `server.ts`.
+- Do not mark LFC01 done or reserve LFC02 until the unrelated `server.ts` work is committed,
+  merged, or parked and LFC01 is merged/verified in the original worktree.
