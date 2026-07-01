@@ -1,9 +1,8 @@
 import type { ConversationService, ConversationTranscriptResult } from "../conversation-service.js";
+import type { ConversationRunLifecycleController } from "../conversation-run-lifecycle-controller.js";
 import { ApiError } from "../errors.js";
 import {
   OrchestratorLifecycleRequestError,
-  RunAlreadyActiveError,
-  type LifecycleRunStatus,
   type OrchestratorLifecycleClient,
 } from "../orchestrator-lifecycle-client.js";
 import { addRoute, type Route } from "../routing.js";
@@ -75,41 +74,15 @@ type ResolveConversationExecutionTarget = (input: {
   missingDirectoryMessage: string;
 }) => Promise<ConversationExecutionTarget>;
 
-type SubmitConversationRunToOpenCode = (input: {
-  runTrace: ConversationRunTracer;
-  workspace: WorkspaceInfo;
-  target: ConversationExecutionTarget;
-  runId: string;
-  kind: ConversationRunKind;
-  body: Record<string, unknown>;
-  clientMessageId: string | null;
-  origin: string | null;
-  expectAiGatewayStart: boolean;
-  lifecycleOwner: OrchestratorLifecycleClient | null;
-}) => Promise<unknown>;
-
-type EnqueueConversationRun = (input: {
-  runTrace: ConversationRunTracer;
-  workspace: WorkspaceInfo;
-  target: ConversationExecutionTarget;
-  runId: string;
-  kind: ConversationRunKind;
-  body: Record<string, unknown>;
-  clientMessageId: string | null;
-  origin: string | null;
-  activeRunId: string | null;
-}) => Response;
-
 export type ConversationSessionRouteDependencies = {
   conversationService: ConversationService;
   sessionTranscriptPrefetch: SessionTranscriptPrefetchPort;
+  conversationRunLifecycleController: ConversationRunLifecycleController;
   lifecycleClient: OrchestratorLifecycleClient | null;
   resolveConversationReadDirectory: ResolveConversationReadDirectory;
   loadConversationTranscriptResponse: LoadConversationTranscriptResponse;
   createConversationRunTracer(request: Request): ConversationRunTracer;
   resolveConversationExecutionTarget: ResolveConversationExecutionTarget;
-  submitConversationRunToOpenCode: SubmitConversationRunToOpenCode;
-  enqueueConversationRun: EnqueueConversationRun;
   deleteOpenCodeSession(input: { workspace: WorkspaceInfo; sessionId: string }): Promise<unknown>;
   abortConversationRun(input: {
     workspace: WorkspaceInfo;
@@ -324,10 +297,6 @@ function parseConversationRunKind(input: unknown): ConversationRunKind {
   throw new ApiError(400, "invalid_payload", "kind must be prompt_async, command, shell, or summarize");
 }
 
-function lifecycleRunKind(kind: ConversationRunKind) {
-  return kind === "prompt_async" ? "prompt" : kind;
-}
-
 function lifecycleRequestApiError(error: OrchestratorLifecycleRequestError): ApiError {
   const status = error.status === 401 || error.status === 403
     ? 503
@@ -346,12 +315,6 @@ function lifecycleRequestApiError(error: OrchestratorLifecycleRequestError): Api
     path: error.path,
     body: error.body,
   });
-}
-
-const ACTIVE_LIFECYCLE_STATUSES = new Set<LifecycleRunStatus>(["submitted", "running", "blocked"]);
-
-function isActiveLifecycleStatus(status: LifecycleRunStatus | string | null | undefined): boolean {
-  return Boolean(status && ACTIVE_LIFECYCLE_STATUSES.has(status as LifecycleRunStatus));
 }
 
 function isVesloConversationId(input: string): boolean {
@@ -373,13 +336,12 @@ export function registerConversationSessionRoutes(
   const {
     conversationService,
     sessionTranscriptPrefetch,
+    conversationRunLifecycleController,
     lifecycleClient,
     resolveConversationReadDirectory,
     loadConversationTranscriptResponse,
     createConversationRunTracer,
     resolveConversationExecutionTarget,
-    submitConversationRunToOpenCode,
-    enqueueConversationRun,
     deleteOpenCodeSession,
     abortConversationRun,
     reconcileConversationLifecycleAfterTranscriptAppend,
@@ -560,85 +522,7 @@ export function registerConversationSessionRoutes(
       },
     );
     const runId = shortId();
-    const lifecycleOwner = workspace.workspaceType === "remote" ? null : lifecycleClient;
-    runTrace.record("server:conversation-run:lifecycle-owner", {
-      workspaceId: workspace.id,
-      runId,
-      clientMessageId: clientMessageId || null,
-      origin: origin || null,
-      enabled: Boolean(lifecycleOwner),
-      workspaceType: workspace.workspaceType,
-    });
-    if (lifecycleOwner) {
-      try {
-        const active = await runTrace.step(
-          "server:conversation-run:lifecycle-active-peek",
-          () => lifecycleOwner.active(workspace.id, target.conversationId),
-          {
-            workspaceId: workspace.id,
-            conversationId: target.conversationId,
-          },
-        );
-        if (active && isActiveLifecycleStatus(active.status)) {
-          return enqueueConversationRun({
-            runTrace,
-            workspace,
-            target,
-            runId,
-            kind,
-            body,
-            clientMessageId: clientMessageId || null,
-            origin: origin || null,
-            activeRunId: active.runId,
-          });
-        }
-      } catch (error) {
-        runTrace.record("server:conversation-run:lifecycle-active-peek-skipped", {
-          workspaceId: workspace.id,
-          conversationId: target.conversationId,
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-      try {
-        await runTrace.step(
-          "server:conversation-run:lifecycle-register",
-          () => lifecycleOwner.register({
-            workspaceId: workspace.id,
-            conversationId: target.conversationId,
-            runId,
-            engineSessionId: target.opencodeSessionId,
-            directory: target.directory,
-            kind: lifecycleRunKind(kind),
-          }),
-          {
-            workspaceId: workspace.id,
-            conversationId: target.conversationId,
-            runId,
-            engineSessionId: target.opencodeSessionId,
-            kind: lifecycleRunKind(kind),
-          },
-        );
-      } catch (error) {
-        if (error instanceof RunAlreadyActiveError) {
-          return enqueueConversationRun({
-            runTrace,
-            workspace,
-            target,
-            runId,
-            kind,
-            body,
-            clientMessageId: clientMessageId || null,
-            origin: origin || null,
-            activeRunId: error.activeRunId || null,
-          });
-        }
-        if (error instanceof OrchestratorLifecycleRequestError) {
-          throw lifecycleRequestApiError(error);
-        }
-        throw error;
-      }
-    }
-    const upstream = await submitConversationRunToOpenCode({
+    const result = await conversationRunLifecycleController.submitRun({
       runTrace,
       workspace,
       target,
@@ -648,21 +532,8 @@ export function registerConversationSessionRoutes(
       clientMessageId: clientMessageId || null,
       origin: origin || null,
       expectAiGatewayStart,
-      lifecycleOwner,
     });
-    return jsonResponse({
-      ok: true,
-      workspaceId: workspace.id,
-      conversationId: target.conversationId,
-      opencodeSessionId: target.opencodeSessionId,
-      runId,
-      clientMessageId: clientMessageId || null,
-      origin: origin || null,
-      status: "submitted",
-      kind,
-      upstream,
-      debugTrace: runTrace.entries,
-    });
+    return jsonResponse(result.payload, result.httpStatus);
   });
 
   addRoute(routes, "POST", "/workspace/:id/conversations/:conversationId/abort", "client", async (ctx) => {

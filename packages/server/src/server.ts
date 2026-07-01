@@ -573,7 +573,9 @@ export function startServer(config: ServerConfig) {
     workspaces: runnerWorkspaces,
     execute: createOpenCodeAutomationExecutor(config),
   });
-  const routes = createRoutes(config, approvals, tokens, automationRunner);
+  const routeBundle = createRoutes(config, approvals, tokens, automationRunner);
+  const routes = routeBundle.routes;
+  const conversationRunLifecycleController = routeBundle.conversationRunLifecycleController;
   const baseLogger = createServerLogger(config);
 
   const debugLogPipeline: DebugLogPipeline = createDebugLogPipeline({
@@ -600,10 +602,6 @@ export function startServer(config: ServerConfig) {
       }).catch(() => undefined);
     },
   };
-
-  const conversationRunLifecycleControllerFactory =
-    conversationRunLifecycleControllerFactoryForTests ?? createConversationRunLifecycleController;
-  const conversationRunLifecycleController = conversationRunLifecycleControllerFactory({});
 
   const shutdownDebugLogPipeline = async () => {
     setAuditDebugLogPipeline(null);
@@ -3634,7 +3632,7 @@ function createRoutes(
   approvals: ApprovalService,
   tokens: TokenService,
   automationRunner: AutomationRunner,
-): Route[] {
+): { routes: Route[]; conversationRunLifecycleController: ConversationRunLifecycleController } {
   const routes: Route[] = [];
   const serializeWorkspaceForResponse = (workspace: WorkspaceInfo) => serializeWorkspace(workspace, config);
   const serverDataDir = resolveVesloDataDir();
@@ -4159,66 +4157,15 @@ function createRoutes(
     conversationRunLifecycleReconcileTimers.set(key, timer);
   };
 
-  const enqueueConversationRun = (input: {
-    runTrace: ConversationRunTracer;
-    workspace: WorkspaceInfo;
-    target: ConversationExecutionTarget;
-    runId: string;
-    kind: "prompt_async" | "command" | "shell" | "summarize";
-    body: Record<string, unknown>;
-    clientMessageId: string | null;
-    origin: string | null;
-    activeRunId: string | null;
-  }) => {
-    const bodyJson = JSON.stringify({
-      ...input.body,
-      directory: input.target.directory,
-      kind: input.kind,
-      ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
-      ...(input.origin ? { origin: input.origin } : {}),
-    });
-    const queued = conversationRunQueueStore.enqueue({
-      workspaceId: input.workspace.id,
-      conversationId: input.target.conversationId,
-      opencodeSessionId: input.target.opencodeSessionId,
-      directory: input.target.directory,
-      reservedRunId: input.runId,
-      clientMessageId: input.clientMessageId,
-      origin: input.origin,
-      kind: input.kind,
-      bodyJson,
-      activeRunId: input.activeRunId,
-    });
-    input.runTrace.record("server:conversation-run:queued", {
-      workspaceId: input.workspace.id,
-      conversationId: input.target.conversationId,
-      opencodeSessionId: input.target.opencodeSessionId,
-      runId: queued.item.reservedRunId,
-      queueItemId: queued.item.queueItemId,
-      activeRunId: queued.item.activeRunId,
-      queuePosition: queued.queuePosition,
-      inserted: queued.inserted,
-      clientMessageId: input.clientMessageId,
-      origin: input.origin,
-    });
-    scheduleConversationQueueDrain(input.workspace.id, input.target.conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
-    return jsonResponse({
-      ok: true,
-      workspaceId: input.workspace.id,
-      conversationId: input.target.conversationId,
-      opencodeSessionId: input.target.opencodeSessionId,
-      runId: queued.item.reservedRunId,
-      reservedRunId: queued.item.reservedRunId,
-      queueItemId: queued.item.queueItemId,
-      activeRunId: queued.item.activeRunId,
-      queuePosition: queued.queuePosition,
-      clientMessageId: input.clientMessageId,
-      origin: input.origin,
-      status: "queued",
-      kind: input.kind,
-      debugTrace: input.runTrace.entries,
-    }, queued.inserted ? 202 : 200);
-  };
+  const conversationRunLifecycleControllerFactory =
+    conversationRunLifecycleControllerFactoryForTests ?? createConversationRunLifecycleController;
+  const conversationRunLifecycleController = conversationRunLifecycleControllerFactory({
+    lifecycleClient,
+    queueStore: conversationRunQueueStore,
+    submitOpenCode: submitConversationRunToOpenCode,
+    scheduleQueueDrain: scheduleConversationQueueDrain,
+    queueDrainPollMs: CONVERSATION_QUEUE_DRAIN_POLL_MS,
+  });
 
   async function drainConversationQueue(workspaceId: string, conversationId: string): Promise<void> {
     const key = conversationQueueKey(workspaceId, conversationId);
@@ -4452,13 +4399,12 @@ function createRoutes(
   registerConversationSessionRoutes(routes, {
     conversationService,
     sessionTranscriptPrefetch,
+    conversationRunLifecycleController,
     lifecycleClient,
     resolveConversationReadDirectory,
     loadConversationTranscriptResponse,
     createConversationRunTracer,
     resolveConversationExecutionTarget,
-    submitConversationRunToOpenCode,
-    enqueueConversationRun,
     deleteOpenCodeSession: async ({ workspace, sessionId }) => {
       await fetchOpencodeJson(workspace, `/session/${encodeURIComponent(sessionId)}`, {
         method: "DELETE",
@@ -4568,7 +4514,7 @@ function createRoutes(
     getSoulStatus,
     listSoulHeartbeats,
   });
-  return routes;
+  return { routes, conversationRunLifecycleController };
 }
 
 function parseInteger(value: string | undefined): number | null {

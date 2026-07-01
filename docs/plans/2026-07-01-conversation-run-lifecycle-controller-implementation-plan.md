@@ -1272,3 +1272,34 @@ Notes:
 
 - Original worktree still contains unrelated dirty app/audit work outside LFC01.
 - No submit, queue, abort, transcript, or route behavior was moved in LFC01.
+
+### 2026-07-02 LFC02 Submit Admission Worktree
+
+Status:
+
+- `status: reserved`
+- `reserved_by: codex-20260702-lfc02-submit-admission`
+- `done: false`
+- implementation branch: `lifecycle/lfc02-submit-admission-owner`
+- implementation worktree: `../veslo-lifecycle-lfc02-submit-admission-owner`
+
+Scope:
+
+- Added controller-owned `submitRun(...)` admission handling for local conversation runs.
+- Moved active lifecycle peek, lifecycle register, `RunAlreadyActiveError` queue fallback, queue
+  persistence, queue response payload shaping, and queue drain scheduling out of the HTTP route.
+- Kept the route responsible for HTTP parsing, target resolution, and response serialization only.
+- Kept OpenCode submit and AI gateway provider-watch internals outside the controller; submit is
+  still called through an injected port.
+- Preserved the remote workspace invariant: remote submits bypass local lifecycle active/register
+  and queue paths.
+
+Evidence:
+
+- Fresh implementation worktree needed `pnpm install --frozen-lockfile`; install completed with the
+  existing missing generated-bin warnings for local packages.
+- First test-first run failed as expected because `controller.submitRun` did not exist yet.
+- `pnpm --filter veslo-server exec bun test ./src/tests/conversation-run-lifecycle-controller.test.ts src/tests/conversation-run-queue-store.test.ts src/tests/server-conversations.test.ts`
+  passed: 30 pass, 0 fail.
+- `pnpm --filter veslo-server typecheck` passed.
+- `git diff --check` passed; Git reported LF-to-CRLF working-copy warnings only.
