@@ -18,7 +18,8 @@ const selectionSource = readFileSync(
 
 function createSessionAndOpenSource(): string {
   const start = creationWorkflowSource.indexOf("  const createSessionAndOpen = async (");
-  const end = creationWorkflowSource.indexOf("\n\n  return {", start);
+  const endMatch = /\r?\n\r?\n  return \{/.exec(creationWorkflowSource.slice(start));
+  const end = endMatch ? start + endMatch.index : -1;
   assert.ok(start >= 0 && end > start, "createSessionAndOpen block should be present");
   return creationWorkflowSource.slice(start, end);
 }
