@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const startupHydrationSource = readFileSync(
+  new URL("../context/app-startup-hydration.ts", import.meta.url),
+  "utf8",
+);
 const archiveStoreSource = readFileSync(new URL("../context/session-archive-store.ts", import.meta.url), "utf8");
 const vesloServerConnectionSource = readFileSync(
   new URL("../context/veslo-server-connection.ts", import.meta.url),
@@ -49,26 +53,31 @@ test("update preference persistence waits for startup preference hydration", () 
     "app should track whether update preferences have been read before writing them back",
   );
   assert.match(
-    appSource,
-    /if \(!updatePreferencesReady\(\)\) return;[\s\S]*?window\.localStorage\.setItem\(\s*"veslo\.updateAutoCheck"/,
+    startupHydrationSource,
+    /if \(!deps\.updatePreferencesReady\(\)\) return;[\s\S]*?window\.localStorage\.setItem\(\s*"veslo\.updateAutoCheck"/,
     "auto-check persistence should not write the default before startup hydration reads stored preferences",
   );
   assert.match(
-    appSource,
-    /if \(!updatePreferencesReady\(\)\) return;[\s\S]*?window\.localStorage\.setItem\(\s*"veslo\.updateAutoDownload"/,
+    startupHydrationSource,
+    /if \(!deps\.updatePreferencesReady\(\)\) return;[\s\S]*?window\.localStorage\.setItem\(\s*"veslo\.updateAutoDownload"/,
     "auto-download persistence should not write the default before startup hydration reads stored preferences",
   );
   assert.match(
-    appSource,
+    startupHydrationSource,
     /resolveUpdateAutoDownloadDefaultOffMigration\(\{[\s\S]*?storedAutoDownload: storedUpdateAutoDownload,[\s\S]*?migrationComplete:[\s\S]*?UPDATE_AUTO_DOWNLOAD_DEFAULT_OFF_MIGRATION_KEY/,
     "startup flow should migrate legacy default-on auto-download before resolving update preferences",
   );
 
-  const startupMount = appSource.match(/onMount\(async \(\) => \{[\s\S]*?pendingSessionDraftController\.markActivePendingDraftStorageReady\(\);/)?.[0] ?? "";
+  const startupMount =
+    startupHydrationSource.match(
+      /onMount\(async \(\) => \{[\s\S]*?deps\.pendingSessionDraftController\.markActivePendingDraftStorageReady\(\);/,
+    )?.[0] ?? "";
   assert.ok(startupMount, "app should define the async startup mount flow");
-  const updatePrefsIndex = startupMount.indexOf("const storedUpdateAutoDownload = window.localStorage.getItem");
-  const pendingDraftAwaitIndex = startupMount.indexOf("await pendingSessionDraftController.hydrateActivePendingDraft()");
-  assert.ok(updatePrefsIndex >= 0, "startup flow should read stored update auto-download preference");
+  const updatePrefsIndex = startupMount.indexOf("hydrateUpdatePreferences(deps);");
+  const pendingDraftAwaitIndex = startupMount.indexOf(
+    "await deps.pendingSessionDraftController.hydrateActivePendingDraft()",
+  );
+  assert.ok(updatePrefsIndex >= 0, "startup flow should hydrate stored update preferences");
   assert.ok(pendingDraftAwaitIndex >= 0, "startup flow should hydrate pending drafts on desktop startup");
   assert.ok(
     updatePrefsIndex < pendingDraftAwaitIndex,

@@ -5,6 +5,10 @@ import test from "node:test";
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const appRouteSyncSource = readFileSync(new URL("../context/app-route-sync.ts", import.meta.url), "utf8");
 const appDeepLinkWorkflowSource = readFileSync(new URL("../context/app-deep-link-workflow.ts", import.meta.url), "utf8");
+const appStartupHydrationSource = readFileSync(
+  new URL("../context/app-startup-hydration.ts", import.meta.url),
+  "utf8",
+);
 
 function sectionBetween(
   startNeedle: string,
@@ -73,8 +77,9 @@ test("startup server and bundle links hydrate settings before stripping consumed
 test("desktop deep-link fan-in dedupes URLs and stops after the first matching handler consumes one", () => {
   const desktopDeepLinkStartup = sectionBetween(
     "const { getCurrent, onOpenUrl } = await import(\"@tauri-apps/plugin-deep-link\");",
-    "if (!isTauriRuntime()) {",
+    "function runWebDeepLinkStartup",
     "desktop deep-link startup",
+    appStartupHydrationSource,
   );
   const workflowFanIn = sectionBetween(
     "const consumeDesktopDeepLinkUrls =",
@@ -94,12 +99,12 @@ test("desktop deep-link fan-in dedupes URLs and stops after the first matching h
     "desktop deep-link handling should stop after one handler consumes the launch URL",
   );
   assertInOrder(desktopDeepLinkStartup, "desktop deep-link channel setup", [
-    "appDeepLinkWorkflow.consumeDesktopDeepLinkUrls(await getCurrent());",
+    "deps.consumeDesktopDeepLinkUrls(await getCurrent());",
     "const unlisten = await onOpenUrl((urls) => {",
-    "appDeepLinkWorkflow.consumeDesktopDeepLinkUrls(urls);",
+    "deps.consumeDesktopDeepLinkUrls(urls);",
     "const unlistenSingleInstance = await listen<string[]>(\"deep-link://new-url\", (event) => {",
-    "appDeepLinkWorkflow.consumeDesktopDeepLinkUrls(event.payload);",
-    "mountCleanupFns.push(() => {",
+    "deps.consumeDesktopDeepLinkUrls(event.payload);",
+    "return () => {",
     "unlisten();",
     "unlistenSingleInstance();",
   ]);
@@ -107,9 +112,10 @@ test("desktop deep-link fan-in dedupes URLs and stops after the first matching h
 
 test("web startup consumes all URL deep-link formats but strips only non-auth query params", () => {
   const webDeepLinkStartup = sectionBetween(
-    "const currentUrl = typeof window === \"undefined\" ? \"\" : window.location.href;",
-    "const hydrationPromise = hydrateDenAuthFromDesktopSnapshot().catch(() => false);",
+    "function runWebDeepLinkStartup",
+    "async function hydrateDesktopAuthSnapshot",
     "web deep-link startup",
+    appStartupHydrationSource,
   );
   const webDeepLinkWorkflow = sectionBetween(
     "const consumeWebDeepLinkUrl =",
@@ -119,7 +125,7 @@ test("web startup consumes all URL deep-link formats but strips only non-auth qu
   );
 
   assertInOrder(webDeepLinkStartup, "web deep-link startup", [
-    "appDeepLinkWorkflow.consumeWebDeepLinkUrl(currentUrl, (cleanedUrl) => {",
+    "deps.consumeWebDeepLinkUrl(currentUrl, (cleanedUrl) => {",
     "window.history.replaceState({}, \"\", cleanedUrl);",
   ]);
   assertInOrder(webDeepLinkWorkflow, "web deep-link workflow", [
@@ -181,10 +187,11 @@ test("baseUrl cache is read and written only for the web runtime", () => {
     "// In Tauri/desktop mode, do NOT restore the cached baseUrl from localStorage.",
     "const storedClientDir = window.localStorage.getItem",
     "startup baseUrl hydration",
+    appStartupHydrationSource,
   );
   assert.match(
     startupStorageHydration,
-    /if \(!isTauriRuntime\(\)\) \{[\s\S]*?const storedBaseUrl = window\.localStorage\.getItem\("veslo\.baseUrl"\);[\s\S]*?if \(storedBaseUrl\) \{[\s\S]*?setBaseUrl\(storedBaseUrl\);[\s\S]*?\}[\s\S]*?\}/s,
+    /if \(!deps\.isTauriRuntime\(\)\) \{[\s\S]*?const storedBaseUrl = window\.localStorage\.getItem\("veslo\.baseUrl"\);[\s\S]*?if \(storedBaseUrl\) \{[\s\S]*?deps\.setBaseUrl\(storedBaseUrl\);[\s\S]*?\}[\s\S]*?\}/s,
     "startup should restore cached baseUrl only outside Tauri",
   );
 
@@ -192,9 +199,10 @@ test("baseUrl cache is read and written only for the web runtime", () => {
     "// In Tauri desktop the orchestrator port rotates on every `pnpm dev`",
     "\"veslo.clientDirectory\",",
     "baseUrl persistence effect",
+    appStartupHydrationSource,
   );
   assertInOrder(baseUrlPersistence, "baseUrl persistence effect", [
-    "if (isTauriRuntime()) return;",
-    "window.localStorage.setItem(\"veslo.baseUrl\", baseUrl());",
+    "if (deps.isTauriRuntime()) return;",
+    "window.localStorage.setItem(\"veslo.baseUrl\", deps.baseUrl());",
   ]);
 });

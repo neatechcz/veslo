@@ -19,8 +19,6 @@ import type {
   Session,
 } from "@opencode-ai/sdk/v2/client";
 
-import { getVersion } from "@tauri-apps/api/app";
-import { listen, type Event as TauriEvent } from "@tauri-apps/api/event";
 import { parse } from "jsonc-parser";
 
 import { reportError } from "./lib/error-reporter";
@@ -37,17 +35,9 @@ import {
 } from "./lib/auto-compaction";
 import {
   DEFAULT_UPDATE_AUTO_DOWNLOAD,
-  UPDATE_AUTO_DOWNLOAD_DEFAULT_OFF_MIGRATION_KEY,
-  UPDATE_INSTALL_STATE_KEY,
-  parseUpdateInstallState,
-  resolveUpdateInstallStartupStatus,
-  resolveUpdateAutoDownloadDefaultOffMigration,
-  resolveUpdateStartupPreferences,
   shouldAutoCheckForUpdatesAt,
 } from "./context/updater";
 import {
-  parseStoredEngineSourceExplicitPreference,
-  resolveStoredEngineSourcePreference,
   type EngineSourcePreference,
 } from "./lib/engine-source";
 import {
@@ -58,17 +48,13 @@ import {
 } from "./lib/model-persistence";
 import {
   DEFAULT_MODEL_VARIANT,
-  MODEL_VARIANT_DEFAULT_MIGRATION_KEY,
   MODEL_VARIANT_OPTIONS,
   normalizeModelVariant,
   resolveCodexReasoningEffort,
-  resolveStartupModelVariant,
 } from "./lib/model-variant";
 import { resolveGlobalRuntimeModel } from "./lib/global-model-runtime";
 import {
   emptySubagentDecorationsPersistence,
-  parseSubagentDecorationsPersistence,
-  serializeSubagentDecorationsPersistence,
   type SubagentDecorationPersistentRole,
   type SubagentDecorationPersistentSession,
   type SubagentDecorationsPersistenceV1,
@@ -143,6 +129,7 @@ import {
 import { createAppRouteSync } from "./context/app-route-sync";
 import { createSessionRouteSync } from "./context/session-route-sync";
 import { createAppDeepLinkWorkflow } from "./context/app-deep-link-workflow";
+import { createAppStartupHydration } from "./context/app-startup-hydration";
 import { createMcpConnectionWorkflow } from "./context/mcp-connection-workflow";
 import {
   createVesloServerConnection,
@@ -158,7 +145,6 @@ import CreateWorkspaceModal from "./components/create-workspace-modal";
 import FeedbackModal from "./components/feedback-modal";
 import RenameWorkspaceModal from "./components/rename-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
-import { resolveNativeWindowDecorationsVisible } from "./components/titlebar-menu-layout";
 import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
@@ -292,9 +278,7 @@ import {
   preferredSessionWorkspaceRoot,
   sessionDirectoryMatchesRoot,
 } from "./utils";
-import { createStartupGuard } from "./utils/startup-guard";
 import {
-  hydrateDenAuthFromDesktopSnapshot,
   readDenAuth,
   readDenKeepSignedIn,
   writeDenKeepSignedIn,
@@ -305,17 +289,13 @@ import {
   isMacPlatform,
   // normalizeDirectoryPath,
   parseModelRef,
-  readStartupPreference,
   safeStringify,
   summarizeStep,
   addOpencodeCacheHint,
   normalizeTodoItems,
 } from "./utils";
 import {
-  applyThemeMode,
   getInitialThemeMode,
-  persistThemeMode,
-  subscribeToSystemTheme,
   type ThemeMode,
 } from "./theme";
 
@@ -347,7 +327,6 @@ import {
   accessProofAiClear,
   accessProofAiRead,
   accessProofAiWrite,
-  updaterEnvironment,
   pendingSessionDraftsDelete,
   pendingSessionDraftsGet,
   pendingSessionDraftsList,
@@ -360,8 +339,6 @@ import {
   vesloServerRestart,
   orchestratorStatus,
   orchestratorEnginesList,
-  setWindowDecorations,
-  setWindowTitleBarStyle,
   workspaceCopyIntoFolder,
   workspaceVesloRead,
   workspaceVesloWrite,
@@ -372,10 +349,8 @@ import {
 } from "./lib/tauri";
 import {
   parseVesloWorkspaceIdFromUrl,
-  readVesloConnectInviteFromSearch,
   createVesloServerClient,
   deriveLocalVesloServerUrlFromOpencodeBaseUrl,
-  hydrateVesloServerSettingsFromEnv,
   normalizeVesloServerUrl,
   requestManagedAiAccessBundle,
   readVesloServerSettings,
@@ -983,7 +958,6 @@ export default function App() {
   } = workspaceSessionSelection;
   const [unreadSessionIds, setUnreadSessionIds] = createSignal<UnreadSessionMap>({});
   const SESSION_DIRECTORY_OVERRIDE_KEY = "veslo.session-workspace-override.v1";
-  const SUBAGENT_DECORATIONS_PREF_KEY = "veslo.subagent-decorations.v1";
   const readSessionDirectoryOverrides = () => {
     if (typeof window === "undefined") return {} as Record<string, string>;
     try {
@@ -1000,28 +974,6 @@ export default function App() {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem(SESSION_DIRECTORY_OVERRIDE_KEY, JSON.stringify(map));
-    } catch {
-      // ignore
-    }
-  };
-  const readSubagentDecorationsState = (): SubagentDecorationsPersistenceV1 => {
-    if (typeof window === "undefined") return emptySubagentDecorationsPersistence();
-    try {
-      const raw = window.localStorage.getItem(SUBAGENT_DECORATIONS_PREF_KEY);
-      return parseSubagentDecorationsPersistence(raw) ?? emptySubagentDecorationsPersistence();
-    } catch {
-      return emptySubagentDecorationsPersistence();
-    }
-  };
-  const writeSubagentDecorationsState = (value: SubagentDecorationsPersistenceV1) => {
-    if (typeof window === "undefined") return;
-    try {
-      const payload = serializeSubagentDecorationsPersistence(value);
-      if (payload) {
-        window.localStorage.setItem(SUBAGENT_DECORATIONS_PREF_KEY, payload);
-      } else {
-        window.localStorage.removeItem(SUBAGENT_DECORATIONS_PREF_KEY);
-      }
     } catch {
       // ignore
     }
@@ -6103,399 +6055,75 @@ export default function App() {
     }
   };
 
-  onMount(async () => {
-    const mountCleanupFns: Array<() => void> = [];
-    const startupGuard = createStartupGuard({
-      timeoutMs: 15_000,
-      onTimeout: () => {
-        console.warn("[boot] app startup timed out after 15s — forcing boot complete");
-        setBooting(false);
-      },
-    });
-    onCleanup(() => {
-      startupGuard.dispose();
-      for (const cleanup of mountCleanupFns.splice(0)) {
-        cleanup();
-      }
-    });
-
-    if (typeof window !== "undefined" && CLOUD_ONLY_MODE) {
-      const invite = readVesloConnectInviteFromSearch(window.location.search);
-      if (!invite) {
-        clearStartupPreference();
-        setRememberStartupChoice(false);
-        try {
-          for (const key of [
-            "veslo.baseUrl",
-            "veslo.clientDirectory",
-            "veslo.projectDir",
-            "veslo.onboardingComplete",
-          ]) {
-            window.localStorage.removeItem(key);
-          }
-        } catch {
-          // ignore
-        }
-        clearVesloServerSettings();
-        hydrateVesloServerSettingsFromEnv();
-        setVesloServerSettings(readVesloServerSettings());
-      }
-    }
-
-    const startupPref = readStartupPreference();
-    if (startupPref) {
-      setRememberStartupChoice(true);
-      setStartupPreference(startupPref);
-    }
-
-    if (typeof window !== "undefined") {
-      try {
-        const storedUpdateAutoCheck = window.localStorage.getItem(
-          "veslo.updateAutoCheck"
-        );
-        const storedUpdateAutoDownload = window.localStorage.getItem(
-          "veslo.updateAutoDownload"
-        );
-        const autoDownloadMigration = resolveUpdateAutoDownloadDefaultOffMigration({
-          storedAutoDownload: storedUpdateAutoDownload,
-          migrationComplete:
-            window.localStorage.getItem(UPDATE_AUTO_DOWNLOAD_DEFAULT_OFF_MIGRATION_KEY) === "1",
-        });
-        if (autoDownloadMigration.writeAutoDownload) {
-          window.localStorage.setItem(
-            "veslo.updateAutoDownload",
-            autoDownloadMigration.storedAutoDownload ?? "0",
-          );
-        }
-        if (autoDownloadMigration.writeMigration) {
-          window.localStorage.setItem(UPDATE_AUTO_DOWNLOAD_DEFAULT_OFF_MIGRATION_KEY, "1");
-        }
-        const startupUpdatePreferences = resolveUpdateStartupPreferences({
-          storedAutoCheck: storedUpdateAutoCheck,
-          storedAutoDownload: autoDownloadMigration.storedAutoDownload,
-        });
-        setUpdateAutoCheck(startupUpdatePreferences.autoCheck);
-        setUpdateAutoDownload(startupUpdatePreferences.autoDownload);
-      } catch {
-        // ignore
-      } finally {
-        setUpdatePreferencesReady(true);
-      }
-    } else {
-      setUpdatePreferencesReady(true);
-    }
-
-    await pendingSessionDraftController.hydrateActivePendingDraft();
-    pendingSessionDraftController.markActivePendingDraftStorageReady();
-
-    const unsubscribeTheme = subscribeToSystemTheme((isDark) => {
-      if (themeMode() !== "system") return;
-      applyThemeMode(isDark ? "dark" : "light");
-    });
-
-    onCleanup(() => {
-      unsubscribeTheme();
-    });
-
-    createEffect(() => {
-      const next = themeMode();
-      persistThemeMode(next);
-      applyThemeMode(next);
-    });
-
-    if (typeof window !== "undefined") {
-      try {
-        setSubagentDecorationsState(readSubagentDecorationsState());
-
-        // In Tauri/desktop mode, do NOT restore the cached baseUrl from localStorage.
-        // OpenCode is assigned a random port on every restart, so the stored URL is
-        // always stale after a relaunch. The correct baseUrl is provided by engine_info().
-        // Web mode still needs the cached value since it connects to a fixed server URL.
-        if (!isTauriRuntime()) {
-          const storedBaseUrl = window.localStorage.getItem("veslo.baseUrl");
-          if (storedBaseUrl) {
-            setBaseUrl(storedBaseUrl);
-          }
-        }
-
-        const storedClientDir = window.localStorage.getItem(
-          "veslo.clientDirectory"
-        );
-        if (storedClientDir) {
-          setClientDirectory(storedClientDir);
-        }
-
-        const storedEngineSource = window.localStorage.getItem(ENGINE_SOURCE_PREF_KEY);
-        const storedEngineSourceExplicit = parseStoredEngineSourceExplicitPreference(
-          window.localStorage.getItem(ENGINE_SOURCE_EXPLICIT_PREF_KEY),
-        );
-        const storedEngineCustomBinPath = window.localStorage.getItem(ENGINE_CUSTOM_BIN_PATH_PREF_KEY);
-        if (storedEngineCustomBinPath) {
-          setEngineCustomBinPath(storedEngineCustomBinPath);
-        }
-        const restoredEngineSource = resolveStoredEngineSourcePreference({
-          isTauriRuntime: isTauriRuntime(),
-          storedSource: storedEngineSource,
-          storedCustomBinPath: storedEngineCustomBinPath,
-          storedSourceExplicit: storedEngineSourceExplicit,
-        });
-        updateEngineSource(restoredEngineSource.source, {
-          explicit: restoredEngineSource.explicit,
-        });
-
-        const storedEngineRuntime = window.localStorage.getItem(
-          "veslo.engineRuntime"
-        );
-        if (storedEngineRuntime === "direct" || storedEngineRuntime === "veslo-orchestrator") {
-          setEngineRuntime(storedEngineRuntime);
-        }
-
-        const storedDefaultModel = window.localStorage.getItem(MODEL_PREF_KEY);
-        const parsedDefaultModel = parseModelRef(storedDefaultModel);
-        if (parsedDefaultModel) {
-          setDefaultModel(parsedDefaultModel);
-          setLegacyDefaultModel(parsedDefaultModel);
-        } else {
-          setDefaultModel(DEFAULT_MODEL);
-          setLegacyDefaultModel(DEFAULT_MODEL);
-          try {
-            window.localStorage.setItem(
-              MODEL_PREF_KEY,
-              formatModelRef(DEFAULT_MODEL)
-            );
-          } catch {
-            // ignore
-          }
-        }
-
-        const storedThinking = window.localStorage.getItem(THINKING_PREF_KEY);
-        if (storedThinking != null) {
-          try {
-            const parsed = JSON.parse(storedThinking);
-            if (typeof parsed === "boolean") {
-              setShowThinking(parsed);
-            }
-          } catch {
-            // ignore
-          }
-        }
-
-        // VSLO-171 F3Ú9 — Performance settings.
-        const storedMax = window.localStorage.getItem(MAX_ENGINES_PREF_KEY);
-        if (storedMax != null) {
-          try {
-            const parsed = JSON.parse(storedMax);
-            if (typeof parsed === "number" && parsed >= 1 && parsed <= 16) {
-              setMaxEngines(parsed);
-            }
-          } catch {
-            // ignore
-          }
-        }
-        const storedIdle = window.localStorage.getItem(IDLE_SUSPEND_MS_PREF_KEY);
-        if (storedIdle != null) {
-          try {
-            const parsed = JSON.parse(storedIdle);
-            if (typeof parsed === "number" && parsed >= 0) {
-              setIdleSuspendMs(parsed);
-            }
-          } catch {
-            // ignore
-          }
-        }
-
-        const storedHideTitlebar = window.localStorage.getItem(HIDE_TITLEBAR_PREF_KEY);
-        if (storedHideTitlebar != null) {
-          try {
-            const parsed = JSON.parse(storedHideTitlebar);
-            if (typeof parsed === "boolean") {
-              setHideTitlebar(parsed);
-            }
-          } catch {
-            // ignore
-          }
-        }
-
-        const storedAutoCompactContext = window.localStorage.getItem(AUTO_COMPACT_CONTEXT_PREF_KEY);
-        if (storedAutoCompactContext !== "true") {
-          try {
-            const parsed = storedAutoCompactContext == null ? null : JSON.parse(storedAutoCompactContext);
-            if (parsed !== true) {
-              window.localStorage.setItem(AUTO_COMPACT_CONTEXT_PREF_KEY, JSON.stringify(true));
-            }
-          } catch {
-            window.localStorage.setItem(AUTO_COMPACT_CONTEXT_PREF_KEY, JSON.stringify(true));
-          }
-        }
-
-        try {
-          const startupVariant = resolveStartupModelVariant({
-            storedVariant: window.localStorage.getItem(VARIANT_PREF_KEY),
-            storedMigrationVersion: window.localStorage.getItem(MODEL_VARIANT_DEFAULT_MIGRATION_KEY),
-          });
-          setModelVariant(startupVariant.variant);
-          if (startupVariant.persistVariant) {
-            window.localStorage.setItem(VARIANT_PREF_KEY, startupVariant.variant);
-          }
-          if (startupVariant.persistMigrationVersion) {
-            window.localStorage.setItem(MODEL_VARIANT_DEFAULT_MIGRATION_KEY, startupVariant.persistMigrationVersion);
-          }
-        } finally {
-          setModelVariantPreferenceReady(true);
-        }
-
-        const storedUpdateCheckedAt = window.localStorage.getItem(
-          "veslo.updateLastCheckedAt"
-        );
-        if (storedUpdateCheckedAt) {
-          const parsed = Number(storedUpdateCheckedAt);
-          if (Number.isFinite(parsed) && parsed > 0) {
-            setUpdateStatus({ state: "idle", lastCheckedAt: parsed });
-          }
-        }
-
-        const storedNotionStatus = window.localStorage.getItem("veslo.notionStatus");
-        if (
-          storedNotionStatus === "disconnected" ||
-          storedNotionStatus === "connected" ||
-          storedNotionStatus === "connecting" ||
-          storedNotionStatus === "error"
-        ) {
-          setNotionStatus(storedNotionStatus);
-        }
-
-        const storedNotionDetail = window.localStorage.getItem("veslo.notionStatusDetail");
-        if (storedNotionDetail) {
-          setNotionStatusDetail(storedNotionDetail);
-        } else if (storedNotionStatus === "connecting") {
-          setNotionStatusDetail(t("mcp.connecting", currentLocale()));
-        }
-
-        void refreshMcpServers().catch(e => reportError(e, "mcp.refreshServers"));
-
-        const storedNotionSkillInstalled = window.localStorage.getItem("veslo.notionSkillInstalled");
-        if (storedNotionSkillInstalled === "1") {
-          setNotionSkillInstalled(true);
-        }
-      } catch {
-        // ignore
-      }
-    }
-    setSubagentDecorationsReady(true);
-
-    if (isTauriRuntime()) {
-      let currentAppVersion: string | null = null;
-      try {
-        currentAppVersion = await getVersion();
-        setAppVersion(currentAppVersion);
-      } catch {
-        // ignore
-      }
-
-      if (typeof window !== "undefined") {
-        try {
-          const installStartup = resolveUpdateInstallStartupStatus({
-            storedState: parseUpdateInstallState(window.localStorage.getItem(UPDATE_INSTALL_STATE_KEY)),
-            currentVersion: currentAppVersion,
-          });
-
-          if (installStartup.action === "clear" || installStartup.action === "stale") {
-            window.localStorage.removeItem(UPDATE_INSTALL_STATE_KEY);
-          }
-
-          if (installStartup.action === "recover" || installStartup.action === "stale") {
-            setUpdateStatus(installStartup.status);
-            setLaunchUpdateCheckTriggered(true);
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      try {
-        setUpdateEnv(await updaterEnvironment());
-      } catch {
-        // ignore
-      }
-
-      if (!launchUpdateCheckTriggered()) {
-        setLaunchUpdateCheckTriggered(true);
-        checkForUpdates({ quiet: true }).catch(e => reportError(e, "updates.check"));
-      }
-
-      try {
-        const { getCurrent, onOpenUrl } = await import("@tauri-apps/plugin-deep-link");
-        const { listen } = await import("@tauri-apps/api/event");
-        appDeepLinkWorkflow.consumeDesktopDeepLinkUrls(await getCurrent());
-        const unlisten = await onOpenUrl((urls) => {
-          appDeepLinkWorkflow.consumeDesktopDeepLinkUrls(urls);
-        });
-        // Single-instance plugin emits this event when a second Veslo instance
-        // is launched with deep-link arguments (typical macOS browser handoff).
-        // The original instance focuses its window via the Rust side; we still
-        // need to deliver the URL payload to the auth/remote-connect handlers.
-        const unlistenSingleInstance = await listen<string[]>("deep-link://new-url", (event) => {
-          appDeepLinkWorkflow.consumeDesktopDeepLinkUrls(event.payload);
-        });
-        mountCleanupFns.push(() => {
-          unlisten();
-          unlistenSingleInstance();
-        });
-      } catch {
-        // ignore
-      }
-    }
-
-    if (!isTauriRuntime()) {
-      const currentUrl = typeof window === "undefined" ? "" : window.location.href;
-      if (currentUrl) {
-        appDeepLinkWorkflow.consumeWebDeepLinkUrl(currentUrl, (cleanedUrl) => {
-          window.history.replaceState({}, "", cleanedUrl);
-        });
-      }
-    }
-
-    if (isTauriRuntime()) {
-      try {
-        const hydrationPromise = hydrateDenAuthFromDesktopSnapshot().catch(() => false);
-        let hydrationTimedOut = false;
-        await Promise.race([
-          hydrationPromise,
-          new Promise<void>((resolve) => {
-            window.setTimeout(() => {
-              hydrationTimedOut = true;
-              resolve();
-            }, 1500);
-          }),
-        ]);
-        if (hydrationTimedOut) {
-          void hydrationPromise.then((imported) => {
-            if (!imported || onboardingStep() !== "auth") {
-              return;
-            }
-            // If the synchronous boot path already established a client by
-            // the time the delayed hydration finishes, the retry bootstrap
-            // is redundant — and would race the user's current session
-            // view through bootstrapOnboarding → connectToServer.
-            if (routedClient()) {
-              return;
-            }
-            setOnboardingStep("connecting");
-            setBooting(true);
-            void workspaceStore.bootstrapOnboarding().finally(() => {
-              setBooting(false);
-            });
-          });
-        }
-      } catch {
-        // ignore desktop auth snapshot hydration failures
-      }
-    }
-
-    void workspaceStore.bootstrapOnboarding().finally(() => {
-      startupGuard.complete();
-      setBooting(false);
-    });
+  createAppStartupHydration({
+    cloudOnlyMode: () => CLOUD_ONLY_MODE,
+    isTauriRuntime,
+    isWindowsPlatform,
+    isMacPlatform,
+    booting,
+    setBooting,
+    setStartupPreference,
+    setRememberStartupChoice,
+    setVesloServerSettings,
+    pendingSessionDraftController,
+    themeMode,
+    setSubagentDecorationsState,
+    subagentDecorationsState,
+    subagentDecorationsReady,
+    setSubagentDecorationsReady,
+    baseUrl,
+    setBaseUrl,
+    clientDirectory,
+    setClientDirectory,
+    workspaceProjectDir,
+    engineSource,
+    engineSourceExplicit,
+    updateEngineSource,
+    engineCustomBinPath,
+    setEngineCustomBinPath,
+    engineRuntime,
+    setEngineRuntime,
+    defaultModel,
+    setDefaultModel,
+    setLegacyDefaultModel,
+    showThinking,
+    setShowThinking,
+    maxEngines,
+    setMaxEngines,
+    idleSuspendMs,
+    setIdleSuspendMs,
+    hideTitlebar,
+    setHideTitlebar,
+    autoCompactContext,
+    modelVariant,
+    setModelVariant,
+    modelVariantPreferenceReady,
+    setModelVariantPreferenceReady,
+    updatePreferencesReady,
+    setUpdatePreferencesReady,
+    updateAutoCheck,
+    setUpdateAutoCheck,
+    updateAutoDownload,
+    setUpdateAutoDownload,
+    updateStatus,
+    setUpdateStatus,
+    setUpdateEnv,
+    launchUpdateCheckTriggered,
+    setLaunchUpdateCheckTriggered,
+    setAppVersion,
+    checkForUpdates,
+    refreshMcpServers,
+    setNotionStatus,
+    setNotionStatusDetail,
+    setNotionSkillInstalled,
+    formatMcpConnectingLabel: () => t("mcp.connecting", currentLocale()),
+    consumeDesktopDeepLinkUrls: appDeepLinkWorkflow.consumeDesktopDeepLinkUrls,
+    consumeWebDeepLinkUrl: appDeepLinkWorkflow.consumeWebDeepLinkUrl,
+    onboardingStep,
+    setOnboardingStep,
+    routedClient,
+    workspaceStore,
+    reportError,
   });
 
   createEffect(() => {
@@ -6514,10 +6142,6 @@ export default function App() {
     refreshMcpServers,
   });
 
-  createEffect(() => {
-    if (!subagentDecorationsReady()) return;
-    writeSubagentDecorationsState(subagentDecorationsState());
-  });
 
   createEffect(() => {
     if (typeof window === "undefined") return;
@@ -7105,233 +6729,6 @@ export default function App() {
     if (!isTauriRuntime()) return;
     if (onboardingStep() !== "local") return;
     void workspaceStore.refreshEngineDoctor();
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    // In Tauri desktop the orchestrator port rotates on every `pnpm dev`
-    // restart and the live URL always comes from `engineInfo()` IPC.
-    // Persisting it to localStorage here only pollutes the cache (the read
-    // path at line ~7509 already skips localStorage in Tauri) and creates
-    // a stale value that a future regression could read by accident.
-    if (isTauriRuntime()) return;
-    try {
-      window.localStorage.setItem("veslo.baseUrl", baseUrl());
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        "veslo.clientDirectory",
-        clientDirectory()
-      );
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    // Legacy key: keep for backwards compatibility.
-    try {
-      window.localStorage.setItem("veslo.projectDir", workspaceProjectDir());
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(ENGINE_SOURCE_PREF_KEY, engineSource());
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      if (engineSourceExplicit()) {
-        window.localStorage.setItem(ENGINE_SOURCE_EXPLICIT_PREF_KEY, "1");
-      } else {
-        window.localStorage.removeItem(ENGINE_SOURCE_EXPLICIT_PREF_KEY);
-      }
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const value = engineCustomBinPath().trim();
-      if (value) {
-        window.localStorage.setItem(ENGINE_CUSTOM_BIN_PATH_PREF_KEY, value);
-      } else {
-        window.localStorage.removeItem(ENGINE_CUSTOM_BIN_PATH_PREF_KEY);
-      }
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem("veslo.engineRuntime", engineRuntime());
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        MODEL_PREF_KEY,
-        formatModelRef(defaultModel())
-      );
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!updatePreferencesReady()) return;
-    try {
-      window.localStorage.setItem(
-        "veslo.updateAutoCheck",
-        updateAutoCheck() ? "1" : "0"
-      );
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!updatePreferencesReady()) return;
-    try {
-      window.localStorage.setItem(
-        "veslo.updateAutoDownload",
-        updateAutoDownload() ? "1" : "0"
-      );
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        THINKING_PREF_KEY,
-        JSON.stringify(showThinking())
-      );
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(MAX_ENGINES_PREF_KEY, JSON.stringify(maxEngines()));
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(IDLE_SUSPEND_MS_PREF_KEY, JSON.stringify(idleSuspendMs()));
-    } catch {
-      // ignore
-    }
-  });
-
-  // Persist and apply hideTitlebar setting
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    const hide = hideTitlebar();
-    try {
-      window.localStorage.setItem(HIDE_TITLEBAR_PREF_KEY, JSON.stringify(hide));
-    } catch {
-      // ignore
-    }
-    // Apply to window decorations (only in Tauri desktop environment)
-    if (isTauriRuntime()) {
-      setWindowDecorations(
-        resolveNativeWindowDecorationsVisible({
-          tauri: true,
-          windows: isWindowsPlatform(),
-          hideTitlebar: hide,
-        }),
-      ).catch(e => reportError(e, "titlebar.setDecorations"));
-    }
-  });
-
-  // On macOS, keep native titlebar controls and surface app controls in overlay area.
-  createEffect(() => {
-    if (!isTauriRuntime() || !isMacPlatform()) return;
-    const titlebarHidden = hideTitlebar();
-    if (titlebarHidden) return;
-    setWindowTitleBarStyle("overlay").catch((error) => {
-      console.error("[app.titlebar] Failed to apply macOS overlay titlebar style", {
-        runtime: "tauri",
-        platform: "macOS",
-        hideTitlebar: titlebarHidden,
-        style: "overlay",
-        error: error instanceof Error ? error.message : String(error),
-        cause: error,
-      });
-    });
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(AUTO_COMPACT_CONTEXT_PREF_KEY, JSON.stringify(autoCompactContext()));
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!modelVariantPreferenceReady()) return;
-    try {
-      const value = modelVariant();
-      if (value) {
-        window.localStorage.setItem(VARIANT_PREF_KEY, value);
-      } else {
-        window.localStorage.removeItem(VARIANT_PREF_KEY);
-      }
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    const state = updateStatus();
-    if (typeof window === "undefined") return;
-    if (state.state === "idle" && state.lastCheckedAt) {
-      try {
-        window.localStorage.setItem(
-          "veslo.updateLastCheckedAt",
-          String(state.lastCheckedAt)
-        );
-      } catch {
-        // ignore
-      }
-    }
   });
 
   createEffect(() => {
