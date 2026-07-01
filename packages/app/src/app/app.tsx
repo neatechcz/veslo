@@ -145,6 +145,7 @@ import {
 import { createPendingSessionDraftController } from "./context/pending-session-draft-controller";
 import { createComposerTargetController } from "./context/composer-target-controller";
 import { createAppShellEnvironment } from "./context/app-shell-environment";
+import { createFeedbackWorkflow } from "./context/feedback-workflow";
 import {
   createSendRuntimeReadiness,
   type SendRuntimePreflightContext,
@@ -158,7 +159,7 @@ import DesktopContextMenu from "./components/desktop-context-menu";
 import VesloLogo from "./components/veslo-logo";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
-import FeedbackModal, { type FeedbackFormValues } from "./components/feedback-modal";
+import FeedbackModal from "./components/feedback-modal";
 import RenameWorkspaceModal from "./components/rename-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
 import { resolveNativeWindowDecorationsVisible } from "./components/titlebar-menu-layout";
@@ -204,10 +205,6 @@ import {
 } from "./lib/mcp-runtime-status-refresh";
 import { createSkillReloadGuard } from "./lib/skill-reload-guard";
 import { createSkillRegistryEventsListener } from "./lib/skill-registry-events";
-import {
-  submitFeedbackReport,
-  type FeedbackRuntimeContext,
-} from "./lib/feedback";
 import {
   classifyNewSessionDisabledReason,
   clearBootstrapDiagnosticsCloudContext,
@@ -976,58 +973,7 @@ export default function App() {
     createSignal<OnboardingStep>(initialOnboardingStep());
   const [rememberStartupChoice, setRememberStartupChoice] = createSignal(false);
   const [denKeepSignedIn, setDenKeepSignedIn] = createSignal(readDenKeepSignedIn());
-  const [feedbackModalOpen, setFeedbackModalOpen] = createSignal(false);
-  const [feedbackSubmitError, setFeedbackSubmitError] = createSignal<string | null>(null);
-  const [feedbackSubmitSuccessIssueId, setFeedbackSubmitSuccessIssueId] = createSignal<string | null>(null);
-  const [feedbackSubmitting, setFeedbackSubmitting] = createSignal(false);
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
-
-  function openFeedbackModal() {
-    setFeedbackSubmitError(null);
-    setFeedbackSubmitSuccessIssueId(null);
-    setFeedbackModalOpen(true);
-  }
-
-  function closeFeedbackModal() {
-    setFeedbackSubmitError(null);
-    setFeedbackSubmitSuccessIssueId(null);
-    setFeedbackModalOpen(false);
-  }
-
-  const normalizeFeedbackOptional = (value?: string | null) => {
-    const trimmed = value?.trim() ?? "";
-    return trimmed ? trimmed : null;
-  };
-
-  const resolveFeedbackPlatform = () => {
-    if (typeof navigator === "undefined") return null;
-    const platform =
-      (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ??
-      navigator.platform;
-    return normalizeFeedbackOptional(platform);
-  };
-
-  const buildFeedbackRuntimeContext = (): FeedbackRuntimeContext => ({
-    view: currentView(),
-    pathname: location.pathname.trim() || "/",
-    tab: tab(),
-    settingsTab: settingsTab(),
-    selectedSessionId: normalizeFeedbackOptional(activeSessionId()),
-    activeWorkspaceId: normalizeFeedbackOptional(workspaceStore.activeWorkspaceId()),
-    vesloServerWorkspaceId: normalizeFeedbackOptional(resolvedDevtoolsWorkspaceId()),
-    activeWorkspaceType: activeWorkspaceDisplay().workspaceType,
-    activeWorkspaceRoot: normalizeFeedbackOptional(
-      currentView() === "session"
-        ? preferredSessionWorkspaceRoot(
-            resolveSessionDirectory(selectedSession() ?? { id: "", directory: "" }),
-            workspaceStore.activeWorkspaceRoot().trim(),
-          )
-        : workspaceStore.activeWorkspaceRoot().trim(),
-    ),
-    locale: currentLocale(),
-    appVersion: normalizeFeedbackOptional(appVersion()),
-    platform: resolveFeedbackPlatform(),
-  });
 
   const setDenKeepSignedInPreference = (value: boolean) => {
     writeDenKeepSignedIn(value);
@@ -9769,6 +9715,25 @@ export default function App() {
   const [appVersion, setAppVersion] = createSignal<string | null>(null);
   const [launchUpdateCheckTriggered, setLaunchUpdateCheckTriggered] = createSignal(false);
 
+  const feedbackWorkflow = createFeedbackWorkflow({
+    runtimeContext: {
+      view: currentView,
+      pathname: () => location.pathname,
+      tab,
+      settingsTab,
+      selectedSessionId: activeSessionId,
+      activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+      vesloServerWorkspaceId: resolvedDevtoolsWorkspaceId,
+      activeWorkspaceType: () => activeWorkspaceDisplay().workspaceType,
+      activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
+      selectedSessionDirectory: () => resolveSessionDirectory(selectedSession() ?? { id: "", directory: "" }),
+      locale: currentLocale,
+      appVersion,
+      resolveSessionWorkspaceRoot: preferredSessionWorkspaceRoot,
+    },
+    reportError,
+    stringifyError: safeStringify,
+  });
 
   const busySeconds = createMemo(() => {
     const start = busyStartedAt();
@@ -13181,31 +13146,6 @@ export default function App() {
     error: error(),
   });
 
-  async function persistFeedback(values: FeedbackFormValues) {
-    if (feedbackSubmitting()) return;
-    setFeedbackSubmitError(null);
-    setFeedbackSubmitSuccessIssueId(null);
-    setFeedbackSubmitting(true);
-    try {
-      const result = await submitFeedbackReport({
-        title: values.title,
-        description: values.description,
-        context: buildFeedbackRuntimeContext(),
-      });
-
-      setFeedbackSubmitSuccessIssueId(result.youtrackIssueId);
-    } finally {
-      setFeedbackSubmitting(false);
-    }
-  }
-
-  function submitFeedback(values: FeedbackFormValues) {
-    void persistFeedback(values).catch((error) => {
-      reportError(error, "feedback.submit");
-      setFeedbackSubmitError(error instanceof Error ? error.message : safeStringify(error));
-    });
-  }
-
   appRouteSync.startHashRouteSync();
 
   appRouteSync.startStartupRouteSync({
@@ -13310,10 +13250,10 @@ export default function App() {
           <OnboardingView {...onboardingProps()} />
         </Match>
         <Match when={currentView() === "session"}>
-          <SessionView {...sessionProps()} onOpenFeedback={openFeedbackModal} />
+          <SessionView {...sessionProps()} onOpenFeedback={feedbackWorkflow.openFeedbackModal} />
         </Match>
         <Match when={true}>
-          <DashboardView {...dashboardProps()} onOpenFeedback={openFeedbackModal} />
+          <DashboardView {...dashboardProps()} onOpenFeedback={feedbackWorkflow.openFeedbackModal} />
         </Match>
       </Switch>
 
@@ -13326,12 +13266,12 @@ export default function App() {
       />
 
       <FeedbackModal
-        open={feedbackModalOpen()}
-        error={feedbackSubmitError()}
-        successIssueId={feedbackSubmitSuccessIssueId()}
-        submitting={feedbackSubmitting()}
-        onClose={closeFeedbackModal}
-        onSubmit={submitFeedback}
+        open={feedbackWorkflow.feedbackModalOpen()}
+        error={feedbackWorkflow.feedbackSubmitError()}
+        successIssueId={feedbackWorkflow.feedbackSubmitSuccessIssueId()}
+        submitting={feedbackWorkflow.feedbackSubmitting()}
+        onClose={feedbackWorkflow.closeFeedbackModal}
+        onSubmit={feedbackWorkflow.submitFeedback}
       />
 
       <ResetModal
