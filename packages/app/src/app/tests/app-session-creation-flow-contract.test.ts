@@ -59,7 +59,7 @@ test("session route own-navigation records conversation identity for later route
   );
   assert.match(
     source,
-    /case "session-route": \{[\s\S]*const routeBrowseScope = id \? resolveSelectedSessionBrowseScope\(id\) : null;[\s\S]*const routeConversationKey = routeConversationIdentityKeyFor\(id, routeBrowseScope\);[\s\S]*case "consume-own-navigation":[\s\S]*routeResumeSelectionAlreadyHandledForSession = "";[\s\S]*if \(routeConversationKey\) \{[\s\S]*lastRouteConversationKey = routeConversationKey;[\s\S]*\}/s,
+    /onSessionRoute: \(\{ rawPath \}\) => \{[\s\S]*const routeBrowseScope = id \? resolveSelectedSessionBrowseScope\(id\) : null;[\s\S]*const routeConversationKey = routeConversationIdentityKeyFor\(id, routeBrowseScope\);[\s\S]*case "consume-own-navigation":[\s\S]*routeResumeSelectionAlreadyHandledForSession = "";[\s\S]*if \(routeConversationKey\) \{[\s\S]*lastRouteConversationKey = routeConversationKey;[\s\S]*\}/s,
     "the startup/session path effect should seed lastRouteConversationKey when it consumes create-session navigation",
   );
 });

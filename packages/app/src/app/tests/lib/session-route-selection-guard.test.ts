@@ -134,7 +134,7 @@ test("falls back when loaded and id is in neither store nor sidebar", () => {
 });
 
 test("real session route fallback ignores active pending draft context", () => {
-  const routeStart = appSource.indexOf('      case "session-route": {');
+  const routeStart = appSource.indexOf("    onSessionRoute: ({ rawPath }) => {");
   const routeEnd = appSource.indexOf("  return (", routeStart);
   assert.notStrictEqual(routeStart, -1, "session route block should exist");
   assert.notStrictEqual(routeEnd, -1, "session route block end should exist");

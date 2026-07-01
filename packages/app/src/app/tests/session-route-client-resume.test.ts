@@ -130,7 +130,7 @@ test("createSessionAndOpen injects the new session before selecting it", () => {
 });
 
 test("bare /session keeps the active pending draft context while clearing real session transcript state", () => {
-  const routeStart = source.indexOf('      case "session-route": {');
+  const routeStart = source.indexOf("    onSessionRoute: ({ rawPath }) => {");
   const routeEnd = source.indexOf("  return (", routeStart);
   assert.notStrictEqual(routeStart, -1, "session route block should exist");
   assert.notStrictEqual(routeEnd, -1, "session route block end should exist");

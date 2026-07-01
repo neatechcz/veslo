@@ -3,13 +3,19 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const appRouteSyncSource = readFileSync(new URL("../context/app-route-sync.ts", import.meta.url), "utf8");
 
-function sectionBetween(startNeedle: string, endNeedle: string, label: string): string {
-  const start = source.indexOf(startNeedle);
+function sectionBetween(
+  startNeedle: string,
+  endNeedle: string,
+  label: string,
+  haystack: string = source,
+): string {
+  const start = haystack.indexOf(startNeedle);
   assert.ok(start >= 0, `${label} start should be present`);
-  const end = source.indexOf(endNeedle, start);
+  const end = haystack.indexOf(endNeedle, start);
   assert.ok(end > start, `${label} end should be present`);
-  return source.slice(start, end);
+  return haystack.slice(start, end);
 }
 
 function assertInOrder(haystack: string, label: string, needles: string[]): void {
@@ -108,29 +114,40 @@ test("web startup consumes all URL deep-link formats but strips only non-auth qu
 
 test("desktop hash routing owns dashboard aliases and cleans up its hashchange listener", () => {
   const hashRouting = sectionBetween(
-    "const syncExternalHashRoute = () => {",
-    "  createEffect(() => {",
+    "const syncExternalHashRoute = (windowTarget?: AppRouteHashWindowTarget | null) => {",
+    "const startStartupRouteSync =",
     "desktop hash routing",
+    appRouteSyncSource,
   );
 
   assert.match(
     source,
-    /import \{[\s\S]*resolveAppStartupRouteDecision,[\s\S]*resolveDashboardRouteTab,[\s\S]*\} from "\.\/controllers\/app-startup-controller";/s,
+    /import \{ createAppRouteSync \} from "\.\/context\/app-route-sync";/,
+    "app.tsx should delegate route/hash shell behavior to the app route sync context",
+  );
+  assert.match(
+    source,
+    /appRouteSync\.startHashRouteSync\(\);/,
+    "app.tsx should install desktop hash routing through the route sync module",
+  );
+  assert.match(
+    appRouteSyncSource,
+    /import \{[\s\S]*resolveDashboardRouteTab,[\s\S]*\} from "\.\.\/controllers\/app-startup-controller";/s,
     "dashboard hash tab resolution should preserve explicit dashboard tabs and scheduled fallback",
   );
   assert.match(
     hashRouting,
-    /const syncExternalHashRoute = \(\) => \{[\s\S]*?if \(!isTauriRuntime\(\)\) return;[\s\S]*?const hashPath = window\.location\.hash\.replace\(\/\^#\/, ""\)\.trim\(\);[\s\S]*?if \(!hashPath\.startsWith\("\/"\)\) return;[\s\S]*?const pathname = hashPath\.split\(\/\[\?#\]\/, 1\)\[0\]\?\.toLowerCase\(\) \?\? "";/s,
+    /const syncExternalHashRoute = \(windowTarget\?: AppRouteHashWindowTarget \| null\) => \{[\s\S]*?if \(!deps\.isTauriRuntime\(\)\) \{[\s\S]*?return;[\s\S]*?const hashPath = target\.location\.hash\.replace\(\/\^#\/, ""\)\.trim\(\);[\s\S]*?if \(!hashPath\.startsWith\("\/"\)\) \{[\s\S]*?return;[\s\S]*?const pathname = routePathFromHash\(hashPath\);/s,
     "desktop hash routing should only consume absolute hash routes in Tauri",
   );
   assert.match(
     hashRouting,
-    /if \(pathname\.startsWith\("\/dashboard"\)\) \{[\s\S]*?const resolvedTab = resolveDashboardRouteTab\(tabSegment\);[\s\S]*?setTabState\(resolvedTab\);[\s\S]*?\}[\s\S]*?if \(location\.pathname\.toLowerCase\(\) !== pathname\) \{[\s\S]*?navigate\(hashPath, \{ replace: true \}\);/s,
+    /syncDashboardHashTab\(pathname\);[\s\S]*?if \(shouldNavigateFromHash\(deps\.pathname\(\), pathname\)\) \{[\s\S]*?deps\.navigate\(hashPath, \{ replace: true \}\);/s,
     "desktop hash routing should sync both dashboard tab state and router location",
   );
   assertInOrder(hashRouting, "desktop hash routing listener lifecycle", [
-    "window.addEventListener(\"hashchange\", syncExternalHashRoute);",
-    "window.removeEventListener(\"hashchange\", syncExternalHashRoute);",
+    "mountedWindowTarget?.addEventListener(\"hashchange\", syncExternalHashRoute);",
+    "mountedWindowTarget.removeEventListener(\"hashchange\", syncExternalHashRoute);",
   ]);
 });
 

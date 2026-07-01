@@ -112,10 +112,6 @@ import {
   shouldRouteCreatedSessionAfterSelect,
 } from "./controllers/session-creation-flow";
 import {
-  resolveAppStartupRouteDecision,
-  resolveDashboardRouteTab,
-} from "./controllers/app-startup-controller";
-import {
   resolveManagedAiAccessRefreshFailure,
   resolveManagedAiAccessRefreshPreflight,
   resolveManagedAiAccessRefreshSuccess,
@@ -154,6 +150,7 @@ import {
   type SendRuntimePreflightContext,
   type SendRuntimePreflightTargetWorkspace,
 } from "./context/send-runtime-readiness";
+import { createAppRouteSync } from "./context/app-route-sync";
 import ResetModal from "./components/reset-modal";
 import ConfirmModal from "./components/confirm-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
@@ -255,7 +252,6 @@ import {
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "./types";
 import type {
   Client,
-  DashboardTab,
   MessageWithParts,
   PlaceholderAssistantMessage,
   StartupPreference,
@@ -272,7 +268,6 @@ import type {
   SidebarSubagentDecoration,
   SidebarSessionItem,
   TodoItem,
-  View,
   WorkspaceDisplay,
   McpServerEntry,
   McpStatusMap,
@@ -948,67 +943,24 @@ export default function App() {
 
   const [creatingSession, setCreatingSession] = createSignal(false);
   const [sessionViewLockUntil, setSessionViewLockUntil] = createSignal(0);
-  const currentView = createMemo<View>(() => {
-    const path = location.pathname.toLowerCase();
-    if (path.startsWith("/onboarding")) return "onboarding";
-    if (path.startsWith("/session")) return "session";
-    if (path.startsWith("/proto")) return "proto";
-    return "dashboard";
+  const appRouteSync = createAppRouteSync({
+    pathname: () => location.pathname,
+    navigate: (to, options) => navigate(to, options),
+    isTauriRuntime,
+    creatingSession,
+    sessionViewLockUntil,
   });
-  const isProtoV1Ux = createMemo(() =>
-    location.pathname.toLowerCase().startsWith("/proto-v1-ux")
-  );
+  const {
+    currentView,
+    isProtoV1Ux,
+    tab,
+    goToDashboard,
+    setTab,
+    setView,
+    goToSession,
+  } = appRouteSync;
 
-  const [tab, setTabState] = createSignal<DashboardTab>("scheduled");
   const [settingsTab, setSettingsTab] = createSignal<SettingsTab>("general");
-
-  const goToDashboard = (nextTab: DashboardTab, options?: { replace?: boolean }) => {
-    setTabState(nextTab);
-    navigate(`/dashboard/${nextTab}`, options);
-  };
-
-  const setTab = (nextTab: DashboardTab) => {
-    if (currentView() === "dashboard") {
-      goToDashboard(nextTab);
-      return;
-    }
-    setTabState(nextTab);
-  };
-
-  const setView = (next: View, sessionId?: string) => {
-    if (next === "dashboard" && creatingSession()) {
-      return;
-    }
-    if (next === "dashboard" && Date.now() < sessionViewLockUntil()) {
-      return;
-    }
-    if (next === "proto") {
-      navigate("/proto/workspaces");
-      return;
-    }
-    if (next === "onboarding") {
-      navigate("/onboarding");
-      return;
-    }
-    if (next === "session") {
-      if (sessionId) {
-        goToSession(sessionId);
-        return;
-      }
-      navigate("/session");
-      return;
-    }
-    goToDashboard(tab());
-  };
-
-  const goToSession = (sessionId: string, options?: { replace?: boolean }) => {
-    const trimmed = sessionId.trim();
-    if (!trimmed) {
-      navigate("/session", options);
-      return;
-    }
-    navigate(`/session/${trimmed}`, options);
-  };
 
   const [startupPreference, setStartupPreference] = createSignal<StartupPreference | null>(null);
   const initialOnboardingStep = (): OnboardingStep => {
@@ -13254,59 +13206,12 @@ export default function App() {
     });
   }
 
-  const syncExternalHashRoute = () => {
-    if (!isTauriRuntime()) return;
-    const hashPath = window.location.hash.replace(/^#/, "").trim();
-    if (!hashPath.startsWith("/")) return;
+  appRouteSync.startHashRouteSync();
 
-    const pathname = hashPath.split(/[?#]/, 1)[0]?.toLowerCase() ?? "";
-    if (pathname.startsWith("/dashboard")) {
-      const [, , tabSegment] = pathname.split("/");
-      const resolvedTab = resolveDashboardRouteTab(tabSegment);
-      if (resolvedTab !== tab()) {
-        setTabState(resolvedTab);
-      }
-    }
-
-    if (location.pathname.toLowerCase() !== pathname) {
-      navigate(hashPath, { replace: true });
-    }
-  };
-
-  onMount(() => {
-    if (!isTauriRuntime()) return;
-    window.addEventListener("hashchange", syncExternalHashRoute);
-  });
-
-  onCleanup(() => {
-    if (!isTauriRuntime()) return;
-    window.removeEventListener("hashchange", syncExternalHashRoute);
-  });
-
-  createEffect(() => {
-    const rawPath = location.pathname.trim();
-    const startupRouteDecision = resolveAppStartupRouteDecision({
-      rawPath,
-      onboardingStep: onboardingStep(),
-      isTauriRuntime: isTauriRuntime(),
-      activeSessionId: activeSessionId(),
-    });
-
-    switch (startupRouteDecision.type) {
-      case "navigate":
-        navigate(startupRouteDecision.to, { replace: startupRouteDecision.replace });
-        return;
-      case "dashboard-route":
-        if (startupRouteDecision.tab !== tab()) {
-          setTabState(startupRouteDecision.tab);
-        }
-        if (startupRouteDecision.canonicalize) {
-          goToDashboard(startupRouteDecision.tab, { replace: true });
-        }
-        return;
-      case "ignore":
-        return;
-      case "session-route": {
+  appRouteSync.startStartupRouteSync({
+    onboardingStep,
+    activeSessionId,
+    onSessionRoute: ({ rawPath }) => {
         const [, , sessionSegment] = rawPath.split("/");
         const id = (sessionSegment ?? "").trim();
         const routeBrowseScope = id ? resolveSelectedSessionBrowseScope(id) : null;
@@ -13381,8 +13286,7 @@ export default function App() {
             return;
         }
         return;
-      }
-    }
+    },
   });
 
   return (
