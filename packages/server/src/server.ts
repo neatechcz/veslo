@@ -202,7 +202,6 @@ import { createConversationService } from "./conversation-service.js";
 import { createConversationRunQueueStore } from "./conversation-run-queue-store.js";
 import {
   createOrchestratorLifecycleClient,
-  type LifecycleRunStatus,
   type OrchestratorLifecycleClient,
   OrchestratorLifecycleRequestError,
 } from "./orchestrator-lifecycle-client.js";
@@ -2731,10 +2730,6 @@ function createBackgroundConversationRunTracer(traceId: string | null = null): C
   return { entries, record, step, traceId: normalizedTraceId };
 }
 
-const ACTIVE_LIFECYCLE_STATUSES = new Set<LifecycleRunStatus>(["submitted", "running", "blocked"]);
-const isActiveLifecycleStatus = (status: LifecycleRunStatus | string | null | undefined): boolean =>
-  Boolean(status && ACTIVE_LIFECYCLE_STATUSES.has(status as LifecycleRunStatus));
-
 function isVesloConversationId(input: string): boolean {
   return /^conv-[0-9a-f]{20}$/i.test(input.trim());
 }
@@ -3836,54 +3831,6 @@ function createRoutes(
     },
   });
 
-  const reconcileConversationLifecycleAfterTranscriptAppend = (input: {
-    workspace: WorkspaceInfo;
-    conversationId: string;
-    sessionId: string;
-    reason: string;
-    shouldReconcile: boolean;
-  }) => {
-    if (!input.shouldReconcile) return;
-    const conversationId = input.conversationId.trim();
-    if (!conversationId) return;
-    const lifecycleOwner = input.workspace.workspaceType === "remote" ? null : lifecycleClient;
-    if (!lifecycleOwner) return;
-
-    void (async () => {
-      try {
-        const latest = await lifecycleOwner.status(input.workspace.id, conversationId, "latest");
-        recordSendWorkflowTrace("server", "server:conversation-run:transcript-reconcile", {
-          workspaceId: input.workspace.id,
-          conversationId,
-          sessionId: input.sessionId,
-          reason: input.reason || null,
-          runId: latest?.runId ?? null,
-          status: latest?.status ?? null,
-          stale: latest?.stale ?? null,
-        });
-        if (latest && !isActiveLifecycleStatus(latest.status)) {
-          conversationRunLifecycleController.scheduleQueueDrain(input.workspace.id, conversationId, 0);
-        }
-      } catch (error) {
-        recordSendWorkflowTrace("server", "server:conversation-run:transcript-reconcile-error", {
-          workspaceId: input.workspace.id,
-          conversationId,
-          sessionId: input.sessionId,
-          reason: input.reason || null,
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    })();
-  };
-
-  for (const pending of conversationRunQueueStore.pendingConversationKeys()) {
-    conversationRunLifecycleController.scheduleQueueDrain(
-      pending.workspaceId,
-      pending.conversationId,
-      CONVERSATION_QUEUE_DRAIN_POLL_MS,
-    );
-  }
-
   const serializeFileSession = (session: {
     id: string;
     workspaceId: string;
@@ -4011,7 +3958,6 @@ function createRoutes(
       }
       return { upstream, abortedGatewayRequestCount: abortedGatewayRequests.length };
     },
-    reconcileConversationLifecycleAfterTranscriptAppend,
     recordSendWorkflowTrace,
   });
 

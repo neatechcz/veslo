@@ -1445,3 +1445,46 @@ Notes:
 - LFC04 was rebased onto the current `local/sandbox-merge` before merge because the original
   worktree had advanced through unrelated app-cleanup commits.
 - Original worktree still contains an unrelated untracked app cleanup plan outside LFC04.
+
+### 2026-07-02 LFC05 Transcript And Startup Wake-Up Worktree
+
+Status:
+
+- `status: reserved`
+- `reserved_by: codex-20260702-lfc05-transcript-startup-wakeup`
+- `done: false`
+- implementation branch: `lifecycle/lfc05-transcript-startup-wakeup`
+- implementation worktree: `../veslo-lifecycle-lfc05-transcript-startup-wakeup`
+
+Scope:
+
+- Added controller-owned `handleTranscriptAppend(...)` for transcript wake-up signals.
+- Preserved the route-owned terminal-looking transcript decision; routes pass only the normalized
+  signal into the controller.
+- Moved the latest lifecycle status check, transcript reconcile trace events, and queue wake-up
+  decision from `server.ts` into the controller.
+- Moved startup pending queue drain scheduling into controller `start()` through the existing queue
+  store port.
+- Removed the free `reconcileConversationLifecycleAfterTranscriptAppend` function and the startup
+  pending queue drain loop from `server.ts`.
+
+Evidence:
+
+- Fresh implementation worktree needed `pnpm install --frozen-lockfile`; install completed with the
+  existing generated-bin warnings for local packages.
+- First focused test attempt failed before assertions because dependencies were not installed in the
+  fresh worktree.
+- Test-first run after install failed as expected: `controller.handleTranscriptAppend is not a
+  function`, and startup did not schedule pending queue drains.
+- `pnpm --filter veslo-server exec bun test ./src/tests/conversation-run-lifecycle-controller.test.ts`
+  passed: 24 pass, 0 fail.
+- `pnpm --filter veslo-server exec bun test ./src/tests/conversation-run-lifecycle-controller.test.ts src/tests/server-conversations.test.ts`
+  passed: 43 pass, 0 fail.
+- `pnpm --filter veslo-server typecheck` passed.
+- `git diff --check` passed; Git reported LF-to-CRLF working-copy warnings only.
+
+Notes:
+
+- Transcript append still does not mark lifecycle rows terminal directly; it only observes latest
+  lifecycle status and wakes the queue when the owner reports inactive/terminal.
+- Remote workspace lifecycle behavior was not changed.

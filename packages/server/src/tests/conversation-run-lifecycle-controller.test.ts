@@ -532,6 +532,9 @@ test("server stop calls the lifecycle controller stop hook", async () => {
     reconcileConversationRunLifecycle: async () => {
       throw new Error("reconcileConversationRunLifecycle should not be called by the shutdown fixture");
     },
+    handleTranscriptAppend: async () => {
+      throw new Error("handleTranscriptAppend should not be called by the shutdown fixture");
+    },
     start: () => {
       startCalls += 1;
     },
@@ -883,4 +886,63 @@ test("stop clears queued drain and lifecycle reconcile timers", () => {
 
   expect(controller.snapshotForTests().activeTimerCount).toBe(0);
   expect(timers.activeTimers()).toEqual([]);
+});
+
+test("transcript wake-up reconciles latest lifecycle and wakes queue only when terminal", async () => {
+  const { controller, lifecycle, timers, workspaces } = controllerHarness();
+  lifecycle.statusResult = { runId: "run-terminal", status: "completed", stale: false };
+
+  await controller.handleTranscriptAppend({
+    workspace: workspaces[0]!,
+    conversationId: " conv-a ",
+    sessionId: "sess-a",
+    reason: "session.idle",
+    shouldReconcile: true,
+  });
+
+  expect(lifecycle.calls).toEqual(["status:ws_1:conv-a:latest"]);
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
+});
+
+test("transcript wake-up does not mark terminal or wake queue while latest lifecycle is active", async () => {
+  const { controller, lifecycle, timers, workspaces } = controllerHarness();
+  lifecycle.statusResult = { runId: "run-active", status: "running", stale: false };
+
+  await controller.handleTranscriptAppend({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    sessionId: "sess-a",
+    reason: "assistant-finish",
+    shouldReconcile: true,
+  });
+
+  expect(lifecycle.calls).toEqual(["status:ws_1:conv-a:latest"]);
+  expect(lifecycle.calls.some((call) => call.startsWith("mark"))).toBe(false);
+  expect(timers.activeTimers()).toEqual([]);
+});
+
+test("transcript wake-up ignores non-terminal transcript signals", async () => {
+  const { controller, lifecycle, timers, workspaces } = controllerHarness();
+  lifecycle.statusResult = { runId: "run-terminal", status: "completed", stale: false };
+
+  await controller.handleTranscriptAppend({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    sessionId: "sess-a",
+    reason: "message.append",
+    shouldReconcile: false,
+  });
+
+  expect(lifecycle.calls).toEqual([]);
+  expect(timers.activeTimers()).toEqual([]);
+});
+
+test("startup schedules queue drains for pending conversation keys", () => {
+  const { controller, queue, timers } = controllerHarness();
+  enqueuePendingRun(queue, { conversationId: "conv-a", reservedRunId: "run-a" });
+  enqueuePendingRun(queue, { conversationId: "conv-b", reservedRunId: "run-b", clientMessageId: "msg-b" });
+
+  controller.start();
+
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500, 1_500]);
 });

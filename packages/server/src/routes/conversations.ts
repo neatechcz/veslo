@@ -90,13 +90,6 @@ export type ConversationSessionRouteDependencies = {
     runId: string;
     sessionOrConversationId: string;
   }): Promise<{ upstream: unknown; abortedGatewayRequestCount: number }>;
-  reconcileConversationLifecycleAfterTranscriptAppend(input: {
-    workspace: WorkspaceInfo;
-    conversationId: string;
-    sessionId: string;
-    reason: string;
-    shouldReconcile: boolean;
-  }): void;
   recordSendWorkflowTrace(source: "server", event: string, payload: Record<string, unknown>): void;
 };
 
@@ -344,7 +337,6 @@ export function registerConversationSessionRoutes(
     resolveConversationExecutionTarget,
     deleteOpenCodeSession,
     abortConversationRun,
-    reconcileConversationLifecycleAfterTranscriptAppend,
     recordSendWorkflowTrace,
   } = dependencies;
 
@@ -708,7 +700,7 @@ export function registerConversationSessionRoutes(
         directory,
       });
     }
-    reconcileConversationLifecycleAfterTranscriptAppend({
+    void conversationRunLifecycleController.handleTranscriptAppend({
       workspace,
       conversationId: result.conversationId ?? binding?.conversationId ?? sessionId,
       sessionId: result.opencodeSessionId,

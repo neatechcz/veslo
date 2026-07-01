@@ -123,6 +123,14 @@ export type ConversationRunLifecycleSubmitResult = {
   payload: Record<string, unknown>;
 };
 
+export type ConversationRunLifecycleTranscriptAppendInput = {
+  workspace: WorkspaceInfo;
+  conversationId: string;
+  sessionId: string;
+  reason: string;
+  shouldReconcile: boolean;
+};
+
 export type ConversationRunLifecycleControllerOptions = {
   lifecycleClient?: OrchestratorLifecycleClient | null;
   queueStore?: ConversationRunQueueStore | null;
@@ -169,6 +177,7 @@ export type ConversationRunLifecycleController = {
   drainConversationQueue(workspaceId: string, conversationId: string): Promise<void>;
   scheduleLifecycleReconcile(input: ConversationRunLifecycleScheduleReconcileInput): void;
   reconcileConversationRunLifecycle(input: ConversationRunLifecycleScheduleReconcileInput): Promise<void>;
+  handleTranscriptAppend(input: ConversationRunLifecycleTranscriptAppendInput): Promise<void>;
   start(): void;
   stop(): void;
   snapshotForTests(): ConversationRunLifecycleSnapshot;
@@ -823,6 +832,46 @@ export function createConversationRunLifecycleController(
     }
   }
 
+  async function handleTranscriptAppend(input: ConversationRunLifecycleTranscriptAppendInput): Promise<void> {
+    if (!input.shouldReconcile) return;
+    const conversationId = input.conversationId.trim();
+    if (!conversationId) return;
+    const lifecycleOwner = input.workspace.workspaceType === "remote" ? null : options.lifecycleClient ?? null;
+    if (!lifecycleOwner) return;
+
+    try {
+      const latest = await lifecycleOwner.status(input.workspace.id, conversationId, "latest");
+      recordTrace("server:conversation-run:transcript-reconcile", {
+        workspaceId: input.workspace.id,
+        conversationId,
+        sessionId: input.sessionId,
+        reason: input.reason || null,
+        runId: latest?.runId ?? null,
+        status: latest?.status ?? null,
+        stale: latest?.stale ?? null,
+      });
+      if (latest && !isActiveLifecycleStatus(latest.status)) {
+        scheduleQueueDrain(input.workspace.id, conversationId, 0);
+      }
+    } catch (error) {
+      recordTrace("server:conversation-run:transcript-reconcile-error", {
+        workspaceId: input.workspace.id,
+        conversationId,
+        sessionId: input.sessionId,
+        reason: input.reason || null,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  function schedulePendingQueueDrains(): void {
+    const pendingConversationKeys = options.queueStore?.pendingConversationKeys;
+    if (typeof pendingConversationKeys !== "function") return;
+    for (const pending of pendingConversationKeys.call(options.queueStore)) {
+      scheduleQueueDrain(pending.workspaceId, pending.conversationId, queueDrainPollMs);
+    }
+  }
+
   const scheduleDiagnosticsTimer = () => {
     if (!started || diagnosticsIntervalMs === null) return;
     const handle = scheduleTimeout(() => {
@@ -922,10 +971,12 @@ export function createConversationRunLifecycleController(
     drainConversationQueue,
     scheduleLifecycleReconcile,
     reconcileConversationRunLifecycle,
+    handleTranscriptAppend,
     start() {
       if (started) return;
       started = true;
       recordTrace("conversation-run-lifecycle:start");
+      schedulePendingQueueDrains();
       scheduleDiagnosticsTimer();
     },
     stop() {
