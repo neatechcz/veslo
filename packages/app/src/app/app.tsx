@@ -814,12 +814,6 @@ export default function App() {
     if (session.title === pendingTitle) return session;
     return { ...session, title: pendingTitle } as T;
   };
-  const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<
-    Record<string, ModelRef>
-  >({});
-  const [sessionModelById, setSessionModelById] = createSignal<
-    Record<string, ModelRef>
-  >({});
   const [workspaceDefaultModelReady, setWorkspaceDefaultModelReady] = createSignal(false);
   const [legacyDefaultModel, setLegacyDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
   const [defaultModelExplicit, setDefaultModelExplicit] = createSignal(false);
@@ -3233,7 +3227,6 @@ export default function App() {
         }
       }
 
-      setSessionModelOverrideById({});
       setThemeMode("system");
       updateEngineSource(isTauriRuntime() ? "sidecar" : "path", { explicit: false });
       setEngineCustomBinPath("");
@@ -3608,12 +3601,6 @@ export default function App() {
     const id = sessionId?.trim() ?? "";
     if (!id) return globalDefault;
 
-    const override = sessionModelOverrideById()[id];
-    if (override) return override;
-
-    const known = sessionModelById()[id];
-    if (known) return known;
-
     if (id === selectedSessionId()) {
       const fromMessages = lastUserModelFromMessages(messages());
       if (fromMessages) return fromMessages;
@@ -3951,13 +3938,6 @@ export default function App() {
     routedClient,
     workspaceStore,
     reportError,
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    const workspaceId = workspaceStore.activeWorkspaceId();
-    if (!workspaceId) return;
-    setSessionModelOverrideById({});
   });
 
   createMcpAutoRefreshScheduler({

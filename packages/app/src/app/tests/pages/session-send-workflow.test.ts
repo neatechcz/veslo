@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -8,6 +9,8 @@ import {
 import type { SendTargetWorkspaceScope } from "../../context/workspace-session-selection.js";
 import type { VesloConversationRunInput } from "../../lib/veslo-server.js";
 import type { Client, ComposerDraft, ModelRef } from "../../types.js";
+
+const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 
 const promptDraft = (text = "hello"): ComposerDraft => ({
   mode: "prompt",
@@ -191,6 +194,35 @@ function createHarness(overrides: Partial<SessionSendWorkflowOptions> = {}): Har
     busyState: () => busyState,
   };
 }
+
+test("app modelForSession keeps the send workflow contract without dead per-session model maps", () => {
+  const helperStart = appSource.indexOf("function modelForSession(sessionId: string | null | undefined): ModelRef {");
+  assert.ok(helperStart >= 0, "app.tsx should expose modelForSession for the send workflow");
+  const helperEnd = appSource.indexOf("\n  function agentForSession", helperStart);
+  assert.ok(helperEnd > helperStart, "modelForSession should end before agentForSession");
+  const helperSource = appSource.slice(helperStart, helperEnd);
+
+  assert.doesNotMatch(
+    appSource,
+    /\b(sessionModelOverrideById|setSessionModelOverrideById|sessionModelById|setSessionModelById)\b/,
+    "app.tsx should not keep unpopulated per-session model maps around modelForSession",
+  );
+  assert.match(
+    helperSource,
+    /const managedModel = managedAiAccessModel\(\);\s+if \(managedModel\) return managedModel;/,
+    "managed AI access should still override the global default model",
+  );
+  assert.match(
+    helperSource,
+    /const id = sessionId\?\.trim\(\) \?\? "";\s+if \(!id\) return globalDefault;/,
+    "missing session ids should still fall back to the global default model",
+  );
+  assert.match(
+    helperSource,
+    /if \(id === selectedSessionId\(\)\) \{[\s\S]*?const fromMessages = lastUserModelFromMessages\(messages\(\)\);[\s\S]*?if \(fromMessages\) return fromMessages;[\s\S]*?\}/,
+    "selected sessions should still reuse the last user-message model when available",
+  );
+});
 
 test("session send workflow blocks sends without a client message id", async () => {
   const harness = createHarness();
