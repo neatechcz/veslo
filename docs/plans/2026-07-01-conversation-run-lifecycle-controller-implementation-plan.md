@@ -398,7 +398,7 @@ Use this ledger for quick discovery. The authoritative task details are below.
 
 | id | module | status | reserved_by | done |
 | --- | --- | --- | --- | --- |
-| LFC00 | baseline lifecycle source map and contract freeze | reserved | codex-20260701-lfc00-baseline | false |
+| LFC00 | baseline lifecycle source map and contract freeze | done | codex-20260701-lfc00-baseline | true |
 | LFC01 | controller shell and isolated test harness | available | null | false |
 | LFC02 | submit admission and queue acceptance owner | available | null | false |
 | LFC03 | OpenCode submit and AI gateway provider watch owner | available | null | false |
@@ -414,12 +414,12 @@ Use this ledger for quick discovery. The authoritative task details are below.
 
 ```yaml
 id: LFC00
-status: reserved
+status: done
 reserved_by: codex-20260701-lfc00-baseline
 reserved_at: 2026-07-01T23:59:18.5632470+02:00
 branch: lifecycle/lfc00-baseline-lifecycle-contract
 worktree: ../veslo-lifecycle-lfc00-baseline-lifecycle-contract
-done: false
+done: true
 depends_on: []
 target_module: none
 source_ranges:
@@ -1135,11 +1135,12 @@ Changes:
 
 Status:
 
-- `status: reserved`
+- `status: done`
 - `reserved_by: codex-20260701-lfc00-baseline`
-- `done: false`
+- `done: true`
 - implementation branch: `lifecycle/lfc00-baseline-lifecycle-contract`
 - implementation worktree: `../veslo-lifecycle-lfc00-baseline-lifecycle-contract`
+- merged into original worktree at `d6246b5e`
 
 Scope:
 
@@ -1170,3 +1171,28 @@ Evidence:
 - `pnpm --filter veslo-server typecheck` passed.
 - `pnpm --filter @neatech/veslo-ui typecheck` passed.
 - `git diff --check` passed; Git reported LF-to-CRLF working-copy warnings only.
+
+### 2026-07-02 LFC00 Merge Verification
+
+Status:
+
+- `done: true`
+- merged commit: `d6246b5e`
+- original branch: `local/sandbox-merge`
+
+Evidence from original worktree after merge:
+
+- `pnpm --filter veslo-orchestrator exec bun test src/tests/run-registry.test.ts src/tests/run-store.test.ts src/tests/run-activity-probe.test.ts`
+  passed: 34 pass, 0 fail.
+- `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/conversation-service.test.ts src/app/tests/pages/session-send-workflow.test.ts`
+  passed: 8 pass, 0 fail.
+- `pnpm --filter veslo-server exec bun test src/tests/conversation-run-queue-store.test.ts src/tests/orchestrator-lifecycle-client.test.ts src/tests/server-conversations.test.ts`
+  passed: 28 pass, 0 fail.
+- `git diff --check` passed; Git reported LF-to-CRLF working-copy warnings in unrelated dirty
+  files only.
+
+Notes:
+
+- Original worktree still contains unrelated dirty app/server owner work that is outside LFC00.
+- The pre-merge untracked copy of this plan was moved to a temporary backup before fast-forward
+  merge because the LFC00 branch version contained the same plan plus the LFC00 progress log.
