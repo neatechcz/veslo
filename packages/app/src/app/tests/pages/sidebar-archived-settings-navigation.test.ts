@@ -12,5 +12,5 @@ test("dashboard routes archived items to settings archived", () => {
 
 test("session routes archived items to settings archived", () => {
   assert.match(sessionSource, /onOpenArchivedSessions:\s*\(\) => openSettings\("archived"\)/);
-  assert.doesNotMatch(sessionSource, /onOpenArchivedSessions:\s*\(\) => openSettings\("general"\)/);
+  assert.doesNotMatch(sessionSource, /onOpenArchivedSessions(?:=|\s*:)\s*\(?\) => openSettings\("general"\)/);
 });

@@ -8,7 +8,8 @@ const conversationFlowSource = readFileSync(
   "utf8",
 );
 const source = `${sessionSource}\n${conversationFlowSource}`;
-const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
+const appViewPropsSource = readFileSync(new URL("../../app-view-props.ts", import.meta.url), "utf8");
+const sendWorkflowSource = readFileSync(new URL("../../pages/session-send-workflow.ts", import.meta.url), "utf8");
 const flowSendImmediateStart = conversationFlowSource.indexOf("sendPromptImmediate: async (");
 const flowSendImmediateEnd = conversationFlowSource.indexOf("export type RunBaseline", flowSendImmediateStart);
 const flowSendImmediateSource = conversationFlowSource.slice(flowSendImmediateStart, flowSendImmediateEnd);
@@ -238,7 +239,7 @@ test("session queue keys follow the UI conversation workspace scope", () => {
   );
 
   assert.match(
-    appSource,
+    appViewPropsSource,
     /activeUiConversationRef: activeUiConversationRef\(\),/,
     "app should pass the scoped visible conversation identity into SessionView",
   );
@@ -348,16 +349,16 @@ test("rejected pending queue drain updates the remapped item key", () => {
 });
 
 test("app prompt send accepts an explicit target session without freezing model bootstrap", () => {
-  const sendStart = appSource.indexOf("async function sendPrompt");
-  const targetCapture = appSource.indexOf("const explicitTargetSessionId = isPendingSessionInstanceId(options.targetSessionId)", sendStart);
-  const bootstrap = appSource.indexOf('prepareSendRuntimeForSend("sendPrompt", sendPreflight)', sendStart);
-  const modelResolution = appSource.indexOf("const model = modelForSession(sessionID);", sendStart);
-  const agentResolution = appSource.indexOf("const agent = agentForSession(sessionID);", sendStart);
+  const sendStart = sendWorkflowSource.indexOf("async function sendPrompt");
+  const targetCapture = sendWorkflowSource.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceId(options.targetSessionId)", sendStart);
+  const bootstrap = sendWorkflowSource.indexOf('deps.prepareSendRuntimeForSend("sendPrompt", sendPreflight)', sendStart);
+  const modelResolution = sendWorkflowSource.indexOf("const model = deps.modelForSession(sessionID);", sendStart);
+  const agentResolution = sendWorkflowSource.indexOf("const agent = deps.agentForSession(sessionID);", sendStart);
 
   assert.notEqual(sendStart, -1, "app sendPrompt should exist");
   assert.ok(targetCapture > sendStart, "sendPrompt should accept a captured target session id");
   assert.match(
-    appSource.slice(targetCapture, bootstrap),
+    sendWorkflowSource.slice(targetCapture, bootstrap),
     /let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;/,
     "sendPrompt should prefer an explicit target session over implicit active-workspace selection",
   );

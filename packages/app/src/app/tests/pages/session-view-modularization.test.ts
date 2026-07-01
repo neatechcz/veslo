@@ -16,7 +16,11 @@ const allowedSessionPageModules = new Set([
   "session-navigation.ts",
   "session-shortcuts.ts",
   "session-titlebar-context.ts",
+  "session-attachment-staging.ts",
   "session-conversation-flow.ts",
+  "session-creation-workflow.ts",
+  "session-mutation-workflow.ts",
+  "session-send-workflow.ts",
   "session-transcript-viewport.ts",
   "session-search-command-controller.ts",
   "session-attachment-staging.ts",
@@ -29,6 +33,10 @@ const allowedSessionPageModules = new Set([
 
 const plannedExtractedModules = [
   "session-conversation-flow.ts",
+  "session-attachment-staging.ts",
+  "session-creation-workflow.ts",
+  "session-mutation-workflow.ts",
+  "session-send-workflow.ts",
   "session-transcript-viewport.ts",
   "session-search-command-controller.ts",
   "session-attachment-staging.ts",

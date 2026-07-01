@@ -18,8 +18,10 @@ const allowedSessionContextModules = new Set([
   "session-event-stream.ts",
   "session-workspace-cache.ts",
   "session-archive-store.ts",
+  "session-capabilities-store.ts",
   "session-lifecycle-recovery.ts",
   "session-route-sync.ts",
+  "session-sidebar-decorations.ts",
 ]);
 
 const plannedExtractedModules = [
@@ -30,8 +32,10 @@ const plannedExtractedModules = [
   "session-event-stream.ts",
   "session-workspace-cache.ts",
   "session-archive-store.ts",
+  "session-capabilities-store.ts",
   "session-lifecycle-recovery.ts",
   "session-route-sync.ts",
+  "session-sidebar-decorations.ts",
 ];
 
 const expectedContextSessionSourceReaders = [

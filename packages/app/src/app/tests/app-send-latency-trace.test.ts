@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const appSendTraceSource = readFileSync(new URL("../context/app-send-trace.ts", import.meta.url), "utf8");
 const conversationServiceSource = readFileSync(
   new URL("../context/conversation-service.ts", import.meta.url),
   "utf8",
@@ -46,9 +47,9 @@ const createWorkflowSource = readFileSync(
 
 test("send preflight records per-step latency trace entries for step 2", () => {
   assert.match(
-    source,
+    appSendTraceSource,
     /const sendTraceStep = async <T,>\(/,
-    "app should expose a helper that records duration for awaited send preflight steps",
+    "app send trace owner should expose a helper that records duration for awaited send preflight steps",
   );
   for (const event of [
     "sendPrompt:maybe-resolve-skill-command",
@@ -80,8 +81,8 @@ test("send preflight records per-step latency trace entries for step 2", () => {
 
 test("send flow preserves UI trace id and forwards trace entries to native logs", () => {
   assert.match(
-    source,
-    /const createSendPreflightContext = \(traceId\?: string \| null\): SendPreflightContext => \(\{\s*traceId: traceId\?\.trim\(\) \|\| makeSendTraceId\(\),/,
+    appSendTraceSource,
+    /const createSendPreflightContext = \(traceId\?: string \| null\): AppSendPreflightContext => \(\{\s*traceId: traceId\?\.trim\(\) \|\| makeSendTraceId\(\),/,
     "send preflight should reuse the trace id created by the UI send action",
   );
   assert.match(
@@ -90,14 +91,19 @@ test("send flow preserves UI trace id and forwards trace entries to native logs"
     "app sendPrompt should seed preflight tracing from composer send options",
   );
   assert.match(
-    source,
+    appSendTraceSource,
     /logUiEvent\("send-trace", event, entry\);/,
-    "app send trace entries should be forwarded to Tauri stderr",
+    "app send trace owner should forward entries to Tauri stderr",
+  );
+  assert.match(
+    appSendTraceSource,
+    /relativeMs/,
+    "send trace entries should include a relative timestamp for cold-start timelines",
   );
   assert.match(
     source,
-    /relativeMs/,
-    "send trace entries should include a relative timestamp for cold-start timelines",
+    /const appSendTrace = createAppSendTrace\(\);[\s\S]*createSendPreflightContext[\s\S]*recordSendTrace[\s\S]*sendTraceStep/,
+    "app should wire send trace helpers from the app send trace owner",
   );
 });
 

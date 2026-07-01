@@ -2,8 +2,8 @@
 title: App TSX Parallel Modularization Implementation Plan
 date: 2026-07-01
 target: packages/app/src/app/app.tsx
-status: draft
-done: false
+status: complete
+done: true
 base_branch: local/sandbox-merge
 base_commit: 96cc1b69
 ---
@@ -221,7 +221,7 @@ Use this ledger for quick discovery. The authoritative task details are below.
 | AM22 | Soul dashboard data store | merged | codex-20260701-am22 | true |
 | AM23 | startup hydration and preference persistence | merged | codex-20260701-am23-app-startup-hydration | true |
 | AM24 | app view prop adapters | merged | codex-20260701-230333-am24 | true |
-| AM25 | final app shell cleanup | reserved | codex-20260701-232727-am25 | false |
+| AM25 | final app shell cleanup | merged | codex-20260701-232727-am25 | true |
 
 ## Phase 0: Baseline And Parallel Safety
 
@@ -1532,12 +1532,12 @@ Acceptance:
 
 ```yaml
 id: AM25
-status: reserved
+status: merged
 reserved_by: codex-20260701-232727-am25
 reserved_at: 2026-07-01T23:27:27.3354699+02:00
 branch: appmod/am25-final-app-shell-cleanup
 worktree: ../veslo-appmod-am25-final-app-shell-cleanup
-done: false
+done: true
 depends_on: [AM01, AM02, AM03, AM04, AM05, AM06, AM07, AM08, AM09, AM10, AM11, AM12, AM13, AM14, AM15, AM16, AM17, AM18, AM19, AM20, AM21, AM22, AM23, AM24]
 target_module: packages/app/src/app/app.tsx
 source_ranges:
@@ -1676,3 +1676,4 @@ Entries:
 2026-07-01 23:17 +02:00 - AM24 - codex-20260701-230333-am24 - final verification - extracted app view prop adapters at 1b61fdd1; focused command passed 129/129 including app-view-props, dashboard/session/settings/skills layout, screenshot regression, and app-modularization-contract; pnpm --filter @neatech/veslo-ui typecheck passed; git diff --cached --check passed; keep done false until main merge verification.
 2026-07-01 23:24 +02:00 - AM24 - codex-20260701-230333-am24 - merge verification - fast-forwarded appmod/am24-app-view-props to local/sandbox-merge at 1b61fdd1; preserved and moved the pre-existing soulWorkspaceMap app prop diff into app-view-props; focused command passed 129/129; pnpm --filter @neatech/veslo-ui typecheck passed; git diff --check passed with existing CRLF warnings only.
 2026-07-01 23:27 +02:00 - AM25 - codex-20260701-232727-am25 - reserved on appmod/am25-final-app-shell-cleanup from main 1b61fdd1; keep done false until main merge verification.
+2026-07-01 23:50 +02:00 - AM25 - codex-20260701-232727-am25 - merge verification - merged appmod/am25-final-app-shell-cleanup commit 840a47b1 into local/sandbox-merge; extracted app send trace owner, retargeted remaining app source-contract tests, and kept unrelated local dashboard/server work outside the merge commit.

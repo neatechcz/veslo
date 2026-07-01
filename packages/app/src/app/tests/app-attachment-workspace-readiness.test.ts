@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const stagingModuleSource = readFileSync(new URL("../pages/session-attachment-staging.ts", import.meta.url), "utf8");
+const sendWorkflowSource = readFileSync(new URL("../pages/session-send-workflow.ts", import.meta.url), "utf8");
 
 test("attachment staging validates cached workspace ids against the active server list", () => {
   const resolverStart = stagingModuleSource.indexOf("const resolveWorkspaceIdForAttachmentStaging = async (");
@@ -65,9 +65,11 @@ test("attachment staging self-heals a missing local server workspace once before
     "file-session creation should retry once after refreshing the local workspace/server state",
   );
 
-  const appStagingCallIndex = appSource.indexOf("stageAttachmentsIntoSessionDirectory(resolvedDraft, sessionID, sendPreflight)");
-  const promptAsyncIndex = appSource.indexOf('kind: "prompt_async"');
-  assert.notEqual(appStagingCallIndex, -1, "app send flow should call the staging module");
+  const appStagingCallIndex = sendWorkflowSource.indexOf(
+    "deps.stageAttachmentsIntoSessionDirectory(resolvedDraft, sessionID, sendPreflight)",
+  );
+  const promptAsyncIndex = sendWorkflowSource.indexOf('kind: "prompt_async"');
+  assert.notEqual(appStagingCallIndex, -1, "send workflow should call the staging module");
   assert.notEqual(promptAsyncIndex, -1, "prompt_async conversation handoff should exist");
   assert.ok(
     appStagingCallIndex < promptAsyncIndex,

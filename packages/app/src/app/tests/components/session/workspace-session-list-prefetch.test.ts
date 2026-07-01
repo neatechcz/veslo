@@ -14,7 +14,7 @@ test("sidebar session surfaces expose the loaded-interest prefetch callback", ()
   assert.match(listSource, /deriveLoadedSidebarPrefetchInterest\(/);
   assert.match(listSource, /props\.onLoadedSessionPrefetchInterestChange\?\.\(/);
   assert.match(sessionPageSource, /onLoadedSessionPrefetchInterestChange:\s*reportLoadedSessionPrefetchInterest/);
-  assert.match(dashboardPageSource, /onLoadedSessionPrefetchInterestChange=\{/);
+  assert.match(dashboardPageSource, /onLoadedSessionPrefetchInterestChange=\{reportLoadedSessionPrefetchInterest\}/);
   assert.match(sessionPageSource, /prefetchSessionTranscripts\(serverWorkspaceId,\s*interest\)/);
   assert.match(dashboardPageSource, /prefetchSessionTranscripts\(serverWorkspaceId,\s*interest\)/);
   assert.doesNotMatch(listSource, /onVisibleSessionIdsChange/);

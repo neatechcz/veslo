@@ -8,6 +8,7 @@ const conversationFlowSource = readFileSync(
   "utf8",
 );
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
+const sendWorkflowSource = readFileSync(new URL("../../pages/session-send-workflow.ts", import.meta.url), "utf8");
 const mutationWorkflowSource = readFileSync(new URL("../../pages/session-mutation-workflow.ts", import.meta.url), "utf8");
 const flowSendImmediateStart = conversationFlowSource.indexOf("sendPromptImmediate: async (");
 const flowSendImmediateEnd = conversationFlowSource.indexOf("export type RunBaseline", flowSendImmediateStart);
@@ -69,16 +70,16 @@ test("clicking a transcript edit action loads the draft and arms replacement sen
 
 test("replacement send path reverts to the original message before sending the edited draft", () => {
   assert.match(
-    appSource,
-    /async function sendPrompt\(\s*draft: ComposerDraft,\s*options: AppSendPromptOptions,[\s\S]*\): Promise<boolean> \{/,
+    sendWorkflowSource,
+    /async function sendPrompt\(\s*draft: ComposerDraft,\s*options: SessionSendWorkflowSendOptions,[\s\S]*\): Promise<boolean> \{/,
     "app send API should require a typed send contract for every prompt handoff",
   );
   assert.doesNotMatch(
-    appSource.slice(appSource.indexOf("async function sendPrompt("), appSource.indexOf("async function abortSession")),
+    sendWorkflowSource.slice(sendWorkflowSource.indexOf("async function sendPrompt("), sendWorkflowSource.indexOf("async function abortSession")),
     /replaceMessageId\?:/,
     "app send API should keep replacement message routing out of the normal prompt send options",
   );
-  const promptAsyncCall = appSource.match(/await runConversationOrFail\(\{\s*kind: "prompt_async",[\s\S]*?\n\s*\}\);/)?.[0] ?? "";
+  const promptAsyncCall = sendWorkflowSource.match(/await runConversationOrFail\(\{\s*kind: "prompt_async",[\s\S]*?\n\s*\}\);/)?.[0] ?? "";
   assert.ok(promptAsyncCall, "conversation prompt send branch should have a clear request object");
   assert.doesNotMatch(
     promptAsyncCall,

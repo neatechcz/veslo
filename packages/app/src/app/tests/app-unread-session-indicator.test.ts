@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const appViewPropsSource = readFileSync(new URL("../app-view-props.ts", import.meta.url), "utf8");
 const appShellEnvironmentSource = readFileSync(new URL("../context/app-shell-environment.ts", import.meta.url), "utf8");
 
 test("app shell keeps a focus-aware unread session map", () => {
@@ -25,6 +26,6 @@ test("app shell marks unread from assistant responses and clears the selected se
 });
 
 test("app shell passes unread state to both sidebar surfaces", () => {
-  const matches = source.match(/unreadSessionIds:\s*unreadSessionIds\(\)/g) ?? [];
+  const matches = appViewPropsSource.match(/unreadSessionIds:\s*unreadSessionIds\(\)/g) ?? [];
   assert.ok(matches.length >= 2, "session and dashboard sidebar props should both receive unreadSessionIds");
 });
