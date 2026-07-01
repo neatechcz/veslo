@@ -141,6 +141,11 @@ import {
   type ConversationRunTracer,
 } from "./routes/conversations.js";
 import {
+  createConversationRunLifecycleController,
+  type ConversationRunLifecycleController,
+  type ConversationRunLifecycleControllerOptions,
+} from "./conversation-run-lifecycle-controller.js";
+import {
   registerFileSessionRoutes,
   resolveInboxEnabled,
   resolveInboxMaxBytes,
@@ -318,10 +323,20 @@ type ServerLogger = {
   log: (level: LogLevel, message: string, attributes?: LogAttributes) => void;
 };
 
+let conversationRunLifecycleControllerFactoryForTests:
+  | ((options: ConversationRunLifecycleControllerOptions) => ConversationRunLifecycleController)
+  | null = null;
+
 export function setSoulMaterializationTestHookForTests(
   hook: ((input: SoulMaterializationTestHookInput) => Promise<void>) | null,
 ): void {
   soulController.setMaterializationTestHookForTests(hook);
+}
+
+export function setConversationRunLifecycleControllerFactoryForTests(
+  factory: ((options: ConversationRunLifecycleControllerOptions) => ConversationRunLifecycleController) | null,
+): void {
+  conversationRunLifecycleControllerFactoryForTests = factory;
 }
 
 function normalizeConfigKey(input: string): string {
@@ -585,6 +600,10 @@ export function startServer(config: ServerConfig) {
       }).catch(() => undefined);
     },
   };
+
+  const conversationRunLifecycleControllerFactory =
+    conversationRunLifecycleControllerFactoryForTests ?? createConversationRunLifecycleController;
+  const conversationRunLifecycleController = conversationRunLifecycleControllerFactory({});
 
   const shutdownDebugLogPipeline = async () => {
     setAuditDebugLogPipeline(null);
@@ -855,6 +874,7 @@ export function startServer(config: ServerConfig) {
 
   type StoppableServer = ReturnType<typeof Bun.serve> & { stop: (closeActiveConnections?: boolean) => void };
   const server = Bun.serve(serverOptions) as StoppableServer;
+  conversationRunLifecycleController.start();
   void automationRunner.start().catch((error) => {
     logger.log("error", "automation runner start failed", {
       error: error instanceof Error ? error.message : String(error),
@@ -888,6 +908,7 @@ export function startServer(config: ServerConfig) {
   const originalStop = server.stop.bind(server);
   const stopBridge = bridgeServer ? bridgeServer.stop.bind(bridgeServer) : null;
   server.stop = (closeActiveConnections?: boolean) => {
+    conversationRunLifecycleController.stop();
     automationRunner.stop();
     if (stopBridge) {
       try {

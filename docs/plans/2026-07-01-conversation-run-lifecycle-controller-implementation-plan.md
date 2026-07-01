@@ -1214,3 +1214,37 @@ Blocker:
   fast-forward merge because LFC01 also adds construction-only wiring in `server.ts`.
 - Do not mark LFC01 done or reserve LFC02 until the unrelated `server.ts` work is committed,
   merged, or parked and LFC01 is merged/verified in the original worktree.
+
+### 2026-07-02 LFC01 Controller Shell Worktree
+
+Status:
+
+- `status: reserved`
+- `reserved_by: codex-20260702-lfc01-shell`
+- `done: false`
+- implementation branch: `lifecycle/lfc01-controller-shell`
+- implementation worktree: `../veslo-lifecycle-lfc01-controller-shell`
+
+Scope:
+
+- Added `packages/server/src/conversation-run-lifecycle-controller.ts` as a server-side controller
+  shell with explicit ports for lifecycle client, queue store, OpenCode submit, AI gateway provider
+  watch, timers, tracing, and internal no-op diagnostics.
+- Added isolated controller tests for construction, idempotent `start()`, idempotent `stop()`,
+  timer cleanup, inert ports, and test snapshots.
+- Added construction-only server wiring: `startServer()` creates and starts the controller and
+  `server.stop()` stops it before existing automation/bridge shutdown.
+- Added a server test hook so the shutdown path can assert `controller.stop()` is called without
+  moving route behavior.
+- No submit, queue, abort, transcript, or route behavior was moved in LFC01.
+
+Evidence:
+
+- Fresh implementation worktree needed `pnpm install --frozen-lockfile`; install completed with the
+  existing missing generated-bin warnings for local packages.
+- First test-first run failed as expected because
+  `conversation-run-lifecycle-controller.js` did not exist.
+- `pnpm --filter veslo-server exec bun test ./src/tests/conversation-run-lifecycle-controller.test.ts`
+  passed: 3 pass, 0 fail.
+- `pnpm --filter veslo-server typecheck` passed.
+- `git diff --check` passed; Git reported LF-to-CRLF working-copy warnings only.
