@@ -14,6 +14,10 @@ const mcpRuntimeStatusSource = readFileSync(
   new URL("../lib/mcp-runtime-status-refresh.ts", import.meta.url),
   "utf8",
 );
+const mcpConnectionWorkflowSource = readFileSync(
+  new URL("../context/mcp-connection-workflow.ts", import.meta.url),
+  "utf8",
+);
 const composerSource = readFileSync(new URL("../components/session/composer.tsx", import.meta.url), "utf8");
 const sidebarWorkspaceSessionsSource = readFileSync(
   new URL("../context/sidebar-workspace-sessions.ts", import.meta.url),
@@ -435,17 +439,17 @@ test("MCP server refresh joins duplicate refreshes for the same workspace contex
   );
   assert.match(
     source,
-    /const refreshMcpServers = createMcpServersRefresher\(\{[\s\S]*projectDir: \(\) => workspaceProjectDir\(\),[\s\S]*workspaceType: \(\) => workspaceStore\.activeWorkspaceDisplay\(\)\.workspaceType,[\s\S]*activeRuntimeActivityId: activeVisibleRuntimeActivityId,[\s\S]*scheduleRuntimeStatusRefresh: scheduleMcpRuntimeStatusRefresh,[\s\S]*\}\);/,
+    /refreshMcpServers = createMcpServersRefresher\(\{[\s\S]*projectDir: \(\) => workspaceProjectDir\(\),[\s\S]*workspaceType: \(\) => workspaceStore\.activeWorkspaceDisplay\(\)\.workspaceType,[\s\S]*activeRuntimeActivityId: activeVisibleRuntimeActivityId,[\s\S]*scheduleRuntimeStatusRefresh: mcpConnectionWorkflow\.scheduleMcpRuntimeStatusRefresh,[\s\S]*\}\);/,
     "app should wire MCP refresh through the dedicated MCP refresh module",
   );
   assert.match(
-    source,
-    /await refreshMcpServers\(\{ mode: "explicit", reason: "mcp-activate-installed" \}\);[\s\S]*await refreshMcpServers\(\{ mode: "explicit", reason: "mcp-activate-installed-complete" \}\);/,
+    mcpConnectionWorkflowSource,
+    /await deps\.refreshMcpServers\(\{ mode: "explicit", reason: "mcp-activate-installed" \}\);[\s\S]*await deps\.refreshMcpServers\(\{ mode: "explicit", reason: "mcp-activate-installed-complete" \}\);/,
     "post-install MCP refreshes should be explicit so active conversation runs do not leave the MCP UI stale",
   );
   assert.match(
-    source,
-    /await refreshMcpServers\(\{ mode: "explicit", reason: "mcp-remove" \}\);/,
+    mcpConnectionWorkflowSource,
+    /await deps\.refreshMcpServers\(\{ mode: "explicit", reason: "mcp-remove" \}\);/,
     "post-remove MCP refresh should be explicit so active conversation runs do not hide the mutation result",
   );
 });
@@ -497,8 +501,8 @@ test("pending permission interval skips active sends and single-client mode cove
     "session capability MCP status reads should not run or apply results during the visible send handoff",
   );
   assert.match(
-    source,
-    /const mcpRuntimeStatusRefresher = createMcpRuntimeStatusRefresher<Client>\(\{[\s\S]*activeRuntimeActivityId: activeVisibleRuntimeActivityId,[\s\S]*activeWorkspaceRuntimeReady,[\s\S]*client: routedClient,[\s\S]*currentEntries: \(\) => mcpServers\(\),[\s\S]*loadStatus: async \(activeClient, directory\) =>[\s\S]*activeClient\.mcp\.status\(\{ directory \}\)[\s\S]*setStatuses: setMcpStatuses,[\s\S]*recordEvent: \(event, payload\) =>[\s\S]*recordPerfLog\(developerMode\(\), "workspace\.mcp", event, payload\),[\s\S]*\}\);[\s\S]*function scheduleMcpRuntimeStatusRefresh\(projectDir: string, entries: McpServerEntry\[\]\) \{[\s\S]*mcpRuntimeStatusRefresher\.schedule\(projectDir, entries\);[\s\S]*\}/,
+    mcpConnectionWorkflowSource,
+    /const mcpRuntimeStatusRefresher = createMcpRuntimeStatusRefresher<Client>\(\{[\s\S]*activeRuntimeActivityId: deps\.activeRuntimeActivityId,[\s\S]*activeWorkspaceRuntimeReady: deps\.activeWorkspaceRuntimeReady,[\s\S]*client: deps\.routedClient,[\s\S]*currentEntries: \(\) => deps\.mcpServers\(\),[\s\S]*loadStatus: async \(activeClient, directory\) =>[\s\S]*activeClient\.mcp\.status\(\{ directory \}\)[\s\S]*setStatuses: deps\.setMcpStatuses,[\s\S]*recordEvent: \(event, payload\) =>[\s\S]*deps\.recordPerfLog\(deps\.developerMode\(\), "workspace\.mcp", event, payload\),[\s\S]*\}\);[\s\S]*function scheduleMcpRuntimeStatusRefresh\(projectDir: string, entries: McpServerEntry\[\]\) \{[\s\S]*mcpRuntimeStatusRefresher\.schedule\(projectDir, entries\);[\s\S]*\}/,
     "MCP runtime status scheduling should be delegated to the testable runtime status refresher",
   );
   assert.match(

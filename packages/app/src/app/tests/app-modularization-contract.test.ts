@@ -93,7 +93,6 @@ const appSourceContractInventory: AppSourceContractInventoryEntry[] = [
   { path: "lib/session-capabilities.test.ts", classification: "wiring", retargetBy: "AM17" },
   { path: "lib/session-route-selection-guard.test.ts", classification: "wiring", retargetBy: "AM16" },
   { path: "mcp-hub-contract.test.ts", classification: "wiring", retargetBy: "AM20" },
-  { path: "mcp-runtime-install-contract.test.ts", classification: "wiring", retargetBy: "AM20" },
   { path: "pages/dashboard-menu-navigation.test.ts", classification: "wiring", retargetBy: "AM24" },
   { path: "pages/session-inline-loading.test.ts", classification: "wiring", retargetBy: "AM24" },
   { path: "pages/session-message-queue.test.ts", classification: "behavior", retargetBy: "AM11" },

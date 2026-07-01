@@ -15,8 +15,6 @@ import { useLocation, useNavigate } from "@solidjs/router";
 
 import type {
   Agent,
-  McpLocalConfig,
-  McpRemoteConfig,
   Part,
   Session,
 } from "@opencode-ai/sdk/v2/client";
@@ -157,6 +155,7 @@ import {
 } from "./context/send-runtime-readiness";
 import { createAppRouteSync } from "./context/app-route-sync";
 import { createSessionRouteSync } from "./context/session-route-sync";
+import { createMcpConnectionWorkflow } from "./context/mcp-connection-workflow";
 import {
   createVesloServerConnection,
   isLoopbackVesloServerConnectionUrl,
@@ -209,10 +208,6 @@ import {
   createPermissionPollingScheduler,
 } from "./lib/workspace-runtime-schedulers";
 import { createMcpServersRefresher } from "./lib/mcp-server-refresh";
-import {
-  createMcpRuntimeStatusRefresher,
-  mcpRuntimeTokenRefreshCandidates,
-} from "./lib/mcp-runtime-status-refresh";
 import { createSkillReloadGuard } from "./lib/skill-reload-guard";
 import { createSkillRegistryOrchestrator } from "./context/skill-registry-orchestrator";
 import {
@@ -6247,7 +6242,76 @@ export default function App() {
     return vesloServerStatus() === "connected" && Boolean(vesloServerClient() && vesloServerWorkspaceId());
   });
 
-  const refreshMcpServers = createMcpServersRefresher({
+  let refreshMcpServers: ReturnType<typeof createMcpServersRefresher>;
+
+  const mcpConnectionWorkflow = createMcpConnectionWorkflow({
+    workspaceType: () => workspaceStore.activeWorkspaceDisplay().workspaceType,
+    workspaceProjectDir: () => workspaceProjectDir(),
+    setWorkspaceProjectDir: (projectDir: string) => workspaceStore.setProjectDir(projectDir),
+    isTauriRuntime,
+    routedClient,
+    createClient,
+    setClient,
+    vesloServerStatus,
+    vesloServerClient,
+    vesloServerWorkspaceId,
+    setVesloServerWorkspaceId,
+    vesloCapabilities: () => resolvedVesloCapabilities(),
+    vesloServerBaseUrl,
+    vesloServerAuth,
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+    activeRuntimeActivityId: activeVisibleRuntimeActivityId,
+    activeWorkspaceRuntimeReady,
+    mcpServers: () => mcpServers(),
+    selectedMcp: () => selectedMcp(),
+    setSelectedMcp,
+    setMcpStatus,
+    setMcpConnectingName,
+    setMcpStatuses,
+    setMcpAuthEntry,
+    setMcpAuthNeedsReload,
+    setMcpAuthModalOpen,
+    setNotionStatus,
+    setNotionStatusDetail,
+    setNotionError,
+    notionBusy,
+    setNotionBusy,
+    setNotionSkillInstalled,
+    setTryNotionPromptVisible,
+    localizedMcpQuickConnect: () => localizedMcpQuickConnect(),
+    hubMcpCards: () => hubMcpCards(),
+    refreshMcpServers: (options) => refreshMcpServers(options),
+    installHubMcp,
+    readOpencodeConfig,
+    writeOpencodeConfig,
+    removeMcpFromConfig,
+    canRemoveMcpFromProjectConfig,
+    quickConnectEntryKey,
+    validateMcpServerName,
+    readDenAuth,
+    fetch: (input, init) => fetch(input, init),
+    openDesktopAuthUrl,
+    unwrap,
+    currentLocale: () => currentLocale(),
+    translate: (key, locale) => t(key, locale as Language),
+    normalizeDirectoryQueryPath,
+    recordPerfLog,
+    finishPerf,
+    developerMode: () => developerMode(),
+    perfNow,
+    safeStringify,
+  });
+
+  const {
+    connectNotion,
+    connectMcp,
+    authorizeMcp,
+    installHubMcpAndActivate,
+    logoutMcpAuth,
+    removeMcp,
+  } = mcpConnectionWorkflow;
+
+  refreshMcpServers = createMcpServersRefresher({
     projectDir: () => workspaceProjectDir(),
     workspaceType: () => workspaceStore.activeWorkspaceDisplay().workspaceType,
     activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
@@ -6262,7 +6326,7 @@ export default function App() {
     setMcpServers,
     setMcpStatuses,
     setMcpLastUpdatedAt,
-    scheduleRuntimeStatusRefresh: scheduleMcpRuntimeStatusRefresh,
+    scheduleRuntimeStatusRefresh: mcpConnectionWorkflow.scheduleMcpRuntimeStatusRefresh,
   });
 
   const reloadWorkspaceEngineFromUi = async () => {
@@ -7245,645 +7309,6 @@ export default function App() {
     const id = sessionId?.trim() ?? "";
     if (!id) return null;
     return sessionAgentById()[id] ?? null;
-  }
-
-  async function connectNotion() {
-    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") {
-      setNotionError("Notion connections are only available for local workspaces.");
-      return;
-    }
-
-    const projectDir = workspaceProjectDir().trim();
-    if (!projectDir) {
-      setNotionError("Pick a workspace folder first.");
-      return;
-    }
-
-    const vesloClient = vesloServerClient();
-    const vesloWorkspaceId = vesloServerWorkspaceId();
-    const vesloCapabilities = resolvedVesloCapabilities();
-    const canUseVesloServer =
-      vesloServerStatus() === "connected" &&
-      vesloClient &&
-      vesloWorkspaceId &&
-      vesloCapabilities?.mcp?.write;
-
-    if (!canUseVesloServer && !isTauriRuntime()) {
-      setNotionError("Notion connections require the desktop app.");
-      return;
-    }
-
-    if (notionBusy()) return;
-
-    setNotionBusy(true);
-    setNotionError(null);
-    setNotionStatus("connecting");
-    setNotionStatusDetail(t("mcp.connecting", currentLocale()));
-    setNotionSkillInstalled(false);
-
-    try {
-      if (canUseVesloServer) {
-        await vesloClient.mcp.add(vesloWorkspaceId, {
-          name: "notion",
-          config: {
-            type: "remote",
-            url: "https://mcp.notion.com/mcp",
-            enabled: true,
-          },
-        });
-      } else {
-        const config = await readOpencodeConfig("project", projectDir);
-        const raw = config.content ?? "";
-        const nextConfig = raw.trim()
-          ? (parse(raw) as Record<string, unknown>)
-          : { $schema: "https://opencode.ai/config.json" };
-
-        const mcp = typeof nextConfig.mcp === "object" && nextConfig.mcp
-          ? { ...(nextConfig.mcp as Record<string, unknown>) }
-          : {};
-        mcp.notion = {
-          type: "remote",
-          url: "https://mcp.notion.com/mcp",
-          enabled: true,
-        };
-
-        nextConfig.mcp = mcp;
-        const formatted = JSON.stringify(nextConfig, null, 2);
-
-        const result = await writeOpencodeConfig("project", projectDir, `${formatted}\n`);
-        if (!result.ok) {
-          throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
-        }
-      }
-
-      await refreshMcpServers({ mode: "explicit", reason: "notion-connect" });
-      setNotionStatusDetail(t("mcp.connecting", currentLocale()));
-      try {
-        window.localStorage.setItem("veslo.notionStatus", "connecting");
-        window.localStorage.setItem("veslo.notionStatusDetail", t("mcp.connecting", currentLocale()));
-        window.localStorage.setItem("veslo.notionSkillInstalled", "0");
-      } catch {
-        // ignore
-      }
-    } catch (e) {
-      setNotionStatus("error");
-      setNotionError(e instanceof Error ? e.message : "Failed to connect Notion.");
-    } finally {
-      setNotionBusy(false);
-    }
-  }
-
-  const mcpRuntimeStatusRefresher = createMcpRuntimeStatusRefresher<Client>({
-    activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
-    activeRuntimeActivityId: activeVisibleRuntimeActivityId,
-    activeWorkspaceRuntimeReady,
-    workspaceProjectDir: () => workspaceProjectDir(),
-    client: routedClient,
-    currentEntries: () => mcpServers(),
-    loadStatus: async (activeClient, directory) =>
-      unwrap(await activeClient.mcp.status({ directory })) as McpStatusMap,
-    refreshRuntimeTokens: async ({ entries, status }) => {
-      const candidates = mcpRuntimeTokenRefreshCandidates(status, entries);
-      if (!candidates.length) return false;
-
-      const vesloClient = vesloServerClient();
-      const vesloWorkspaceId = vesloServerWorkspaceId();
-      const denAuth = readDenAuth();
-      const denToken = denAuth?.token?.trim() ?? "";
-      const denOrgId = denAuth?.orgId?.trim() ?? "";
-      if (
-        vesloServerStatus() !== "connected" ||
-        !vesloClient ||
-        !vesloWorkspaceId ||
-        !resolvedVesloCapabilities()?.mcp?.write ||
-        !denToken ||
-        !denOrgId ||
-        typeof vesloClient.mcp.refreshRuntimeToken !== "function"
-      ) {
-        return false;
-      }
-
-      let refreshed = false;
-      for (const name of candidates) {
-        try {
-          await vesloClient.mcp.refreshRuntimeToken(vesloWorkspaceId, name, {
-            denToken,
-            denOrgId,
-          });
-          refreshed = true;
-          recordPerfLog(developerMode(), "workspace.mcp", "runtime-token-refresh", { name });
-        } catch (error) {
-          recordPerfLog(developerMode(), "workspace.mcp", "runtime-token-refresh-failed", {
-            name,
-            error: error instanceof Error ? error.message : safeStringify(error),
-          });
-        }
-      }
-      if (refreshed) {
-        await refreshMcpServers({ mode: "explicit", reason: "mcp-runtime-token-refresh" });
-      }
-      return refreshed;
-    },
-    setStatuses: setMcpStatuses,
-    recordEvent: (event, payload) =>
-      recordPerfLog(developerMode(), "workspace.mcp", event, payload),
-  });
-
-  function scheduleMcpRuntimeStatusRefresh(projectDir: string, entries: McpServerEntry[]) {
-    mcpRuntimeStatusRefresher.schedule(projectDir, entries);
-  }
-
-  async function ensureMcpRuntimeContext() {
-    const projectDir = workspaceProjectDir().trim();
-
-    let activeClient = routedClient();
-    if (!activeClient) {
-      const vesloBaseUrl = vesloServerBaseUrl().trim();
-      const auth = vesloServerAuth();
-      if (vesloBaseUrl && auth.token) {
-        const opencodeUrl = `${vesloBaseUrl.replace(/\/+$/, "")}/opencode`;
-        activeClient = createClient(opencodeUrl, undefined, { token: auth.token, mode: "veslo" });
-        setClient(activeClient);
-      }
-    }
-    if (!activeClient) {
-      throw new Error(t("mcp.connect_server_first", currentLocale()));
-    }
-
-    let resolvedProjectDir = projectDir;
-    if (!resolvedProjectDir) {
-      try {
-        const pathInfo = unwrap(await activeClient.path.get());
-        const discoveredRaw = normalizeDirectoryQueryPath(pathInfo.directory ?? "");
-        const discovered = discoveredRaw.replace(/^\/private\/tmp(?=\/|$)/, "/tmp");
-        if (discovered) {
-          resolvedProjectDir = discovered;
-          workspaceStore.setProjectDir(discovered);
-        }
-      } catch {
-        // ignore
-      }
-    }
-    if (!resolvedProjectDir) {
-      throw new Error(t("mcp.pick_workspace_first", currentLocale()));
-    }
-
-    return { activeClient, resolvedProjectDir };
-  }
-
-  function buildMcpAddConfig(entry: McpDirectoryInfo): McpLocalConfig | McpRemoteConfig {
-    const entryType = entry.type ?? "remote";
-    if (entryType === "remote") {
-      if (!entry.url) {
-        throw new Error("Missing MCP URL.");
-      }
-      const oauth: McpRemoteConfig["oauth"] =
-        entry.oauth === false ? false : typeof entry.oauth === "object" ? entry.oauth : {};
-      return {
-        type: "remote",
-        url: entry.url,
-        enabled: true,
-        oauth,
-        ...(entry.headers ? { headers: entry.headers } : {}),
-      };
-    }
-
-    if (!entry.command?.length) {
-      throw new Error("Missing MCP command.");
-    }
-
-    return {
-      type: "local",
-      command: entry.command,
-      enabled: true,
-    };
-  }
-
-  async function startServerManagedMcpOAuth(entry: McpDirectoryInfo): Promise<boolean> {
-    if (entry.authorization?.type !== "veslo-server-oauth") {
-      return false;
-    }
-
-    const denAuth = readDenAuth();
-    const denApiBase = denAuth?.denApiBase?.trim().replace(/\/+$/, "") ?? "";
-    const denToken = denAuth?.token?.trim() ?? "";
-    if (!denApiBase || !denToken) {
-      throw new Error("Sign in to Veslo before connecting this provider.");
-    }
-
-    const startPath = entry.authorization.startPath.trim();
-    if (!startPath.startsWith("/v1/")) {
-      throw new Error("Invalid provider authorization path.");
-    }
-
-    const response = await fetch(`${denApiBase}${startPath}`, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${denToken}`,
-      },
-    });
-    if (!response.ok) {
-      const details = await response.text().catch(() => "");
-      throw new Error(details || `Provider authorization failed (${response.status})`);
-    }
-
-    const payload = await response.json().catch(() => null) as { authorizeUrl?: unknown } | null;
-    if (!payload || typeof payload.authorizeUrl !== "string" || !payload.authorizeUrl.trim()) {
-      throw new Error("Provider authorization did not return a browser URL.");
-    }
-
-    await openDesktopAuthUrl(payload.authorizeUrl);
-    setMcpStatus(t("mcp.auth.follow_browser_steps", currentLocale()));
-    return true;
-  }
-
-  async function activateInstalledMcp(entry: McpDirectoryInfo, slug = quickConnectEntryKey(entry)) {
-    const { activeClient, resolvedProjectDir } = await ensureMcpRuntimeContext();
-    const status = unwrap(
-      await activeClient.mcp.add({
-        directory: resolvedProjectDir,
-        name: slug,
-        config: buildMcpAddConfig(entry),
-      }),
-    );
-
-    setMcpStatuses(status as McpStatusMap);
-    await refreshMcpServers({ mode: "explicit", reason: "mcp-activate-installed" });
-
-    if (await startServerManagedMcpOAuth(entry)) {
-      setMcpAuthEntry(null);
-      setMcpAuthNeedsReload(true);
-      setMcpAuthModalOpen(false);
-    } else if (entry.oauth) {
-      setMcpAuthEntry(entry);
-      setMcpAuthNeedsReload(true);
-      setMcpAuthModalOpen(true);
-    } else {
-      setMcpStatus(t("mcp.connected", currentLocale()));
-    }
-
-    await refreshMcpServers({ mode: "explicit", reason: "mcp-activate-installed-complete" });
-  }
-
-  async function connectMcp(entry: (typeof MCP_QUICK_CONNECT)[number]) {
-    const startedAt = perfNow();
-    const isRemoteWorkspace =
-      workspaceStore.activeWorkspaceDisplay().workspaceType === "remote" ||
-      (!isTauriRuntime() && vesloServerStatus() === "connected");
-    const projectDir = workspaceProjectDir().trim();
-    const entryType = entry.type ?? "remote";
-
-    recordPerfLog(developerMode(), "mcp.connect", "start", {
-      name: entry.name,
-      type: entryType,
-      workspaceType: isRemoteWorkspace ? "remote" : "local",
-      projectDir: projectDir || null,
-    });
-
-    const vesloClient = vesloServerClient();
-    let vesloWorkspaceId = vesloServerWorkspaceId();
-    const vesloCapabilities = resolvedVesloCapabilities();
-    if (!vesloWorkspaceId && vesloClient && vesloServerStatus() === "connected") {
-      try {
-        const response = await vesloClient.listWorkspaces();
-        const match = response.items?.[0];
-        if (match?.id) {
-          vesloWorkspaceId = match.id;
-          setVesloServerWorkspaceId(match.id);
-        }
-      } catch {
-        // ignore
-      }
-    }
-    const canUseVesloServer =
-      vesloServerStatus() === "connected" &&
-      vesloClient &&
-      vesloWorkspaceId &&
-      vesloCapabilities?.mcp?.write;
-
-    if (isRemoteWorkspace && !canUseVesloServer) {
-      setMcpStatus("Veslo server unavailable. MCP config is read-only.");
-      finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
-        reason: "veslo-server-unavailable",
-      });
-      return;
-    }
-
-    if (!canUseVesloServer && !isTauriRuntime()) {
-      setMcpStatus(t("mcp.desktop_required", currentLocale()));
-      finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
-        reason: "desktop-required",
-      });
-      return;
-    }
-
-    if (!isRemoteWorkspace && !projectDir) {
-      setMcpStatus(t("mcp.pick_workspace_first", currentLocale()));
-      finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
-        reason: "missing-workspace",
-      });
-      return;
-    }
-
-    const slug = quickConnectEntryKey(entry);
-
-    try {
-      setMcpStatus(null);
-      setMcpConnectingName(entry.name);
-      const { resolvedProjectDir } = await ensureMcpRuntimeContext();
-
-      const mcpEntryConfig: Record<string, unknown> = {
-        type: entryType,
-        enabled: true,
-      };
-
-      if (entryType === "remote") {
-        if (!entry.url) {
-          throw new Error("Missing MCP URL.");
-        }
-        mcpEntryConfig["url"] = entry.url;
-        if (entry.oauth) {
-          mcpEntryConfig["oauth"] = {};
-        }
-      }
-
-      if (entryType === "local") {
-        if (!entry.command?.length) {
-          throw new Error("Missing MCP command.");
-        }
-        mcpEntryConfig["command"] = entry.command;
-      }
-
-      if (canUseVesloServer && vesloClient && vesloWorkspaceId) {
-        await vesloClient.mcp.add(vesloWorkspaceId, {
-          name: slug,
-          config: mcpEntryConfig,
-        });
-      } else {
-        const configFile = await readOpencodeConfig("project", resolvedProjectDir);
-
-        let existingConfig: Record<string, unknown> = {};
-        if (configFile.exists && configFile.content?.trim()) {
-          try {
-            existingConfig = parse(configFile.content) ?? {};
-          } catch (parseErr) {
-            recordPerfLog(developerMode(), "mcp.connect", "config-parse-failed", {
-              error: parseErr instanceof Error ? parseErr.message : String(parseErr),
-            });
-            existingConfig = {};
-          }
-        }
-
-        if (!existingConfig["$schema"]) {
-          existingConfig["$schema"] = "https://opencode.ai/config.json";
-        }
-
-        const mcpSection = (existingConfig["mcp"] as Record<string, unknown>) ?? {};
-        existingConfig["mcp"] = mcpSection;
-        mcpSection[slug] = mcpEntryConfig;
-
-        const writeResult = await writeOpencodeConfig(
-          "project",
-          resolvedProjectDir,
-          `${JSON.stringify(existingConfig, null, 2)}\n`
-        );
-        if (!writeResult.ok) {
-          throw new Error(writeResult.stderr || writeResult.stdout || "Failed to write opencode.json");
-        }
-      }
-
-      await activateInstalledMcp(entry, slug);
-      finishPerf(developerMode(), "mcp.connect", "done", startedAt, {
-        name: entry.name,
-        type: entryType,
-        slug,
-      });
-    } catch (e) {
-      setMcpStatus(e instanceof Error ? e.message : t("mcp.connect_failed", currentLocale()));
-      finishPerf(developerMode(), "mcp.connect", "error", startedAt, {
-        name: entry.name,
-        type: entryType,
-        error: e instanceof Error ? e.message : safeStringify(e),
-      });
-    } finally {
-      setMcpConnectingName(null);
-    }
-  }
-
-  function authorizeMcp(entry: McpServerEntry) {
-    if (entry.config.type !== "remote" || entry.config.oauth === false) {
-      setMcpStatus(t("mcp.login_unavailable", currentLocale()));
-      return;
-    }
-
-    const matchingQuickConnect = localizedMcpQuickConnect().find((candidate) => {
-      const candidateSlug = candidate.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-      return candidateSlug === entry.name || candidate.name === entry.name;
-    });
-
-    setMcpAuthEntry(
-      matchingQuickConnect ?? {
-        name: entry.name,
-        description: "",
-        type: "remote",
-        url: entry.config.url,
-        oauth: true,
-      },
-    );
-    setMcpAuthNeedsReload(false);
-    setMcpAuthModalOpen(true);
-  }
-
-  async function installHubMcpAndActivate(name: string): Promise<{ ok: boolean; message: string }> {
-    const result = await installHubMcp(name);
-    if (!result.ok) {
-      return result;
-    }
-
-    const selectedEntry = result.entry ?? hubMcpCards().find((entry) => entry.id === name || entry.name === name);
-    if (!selectedEntry) {
-      await refreshMcpServers({ mode: "explicit", reason: "hub-mcp-selected-entry-missing" });
-      return result;
-    }
-
-    const entry: McpDirectoryInfo = {
-      id: selectedEntry.id,
-      name: selectedEntry.name,
-      description: selectedEntry.description ?? "",
-      type: selectedEntry.type,
-      ...(selectedEntry.url ? { url: selectedEntry.url } : {}),
-      ...(selectedEntry.command ? { command: selectedEntry.command } : {}),
-      oauth: selectedEntry.oauth,
-      ...(selectedEntry.headers ? { headers: selectedEntry.headers } : {}),
-      ...(selectedEntry.authorization ? { authorization: selectedEntry.authorization } : {}),
-      provider: selectedEntry.provider,
-      source: selectedEntry.source,
-    };
-
-    try {
-      setMcpStatus(null);
-      setMcpConnectingName(entry.name);
-      if (entry.authorization?.type === "veslo-server-oauth") {
-        await refreshMcpServers({ mode: "explicit", reason: "hub-mcp-server-oauth-installed" });
-        await startServerManagedMcpOAuth(entry);
-        await refreshMcpServers({ mode: "explicit", reason: "hub-mcp-server-oauth-started" });
-        return result;
-      }
-
-      await activateInstalledMcp(entry, entry.id || quickConnectEntryKey(entry));
-      return result;
-    } catch (error) {
-      await refreshMcpServers({ mode: "explicit", reason: "hub-mcp-activate-error" });
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      setMcpStatus(message);
-      return { ok: false, message };
-    } finally {
-      setMcpConnectingName(null);
-    }
-  }
-
-  async function logoutMcpAuth(name: string) {
-    const isRemoteWorkspace =
-      workspaceStore.activeWorkspaceDisplay().workspaceType === "remote" ||
-      (!isTauriRuntime() && vesloServerStatus() === "connected");
-    const projectDir = workspaceProjectDir().trim();
-
-    const vesloClient = vesloServerClient();
-    let vesloWorkspaceId = vesloServerWorkspaceId();
-    const vesloCapabilities = resolvedVesloCapabilities();
-    if (!vesloWorkspaceId && vesloClient && vesloServerStatus() === "connected") {
-      try {
-        const response = await vesloClient.listWorkspaces();
-        const match = response.items?.[0];
-        if (match?.id) {
-          vesloWorkspaceId = match.id;
-          setVesloServerWorkspaceId(match.id);
-        }
-      } catch {
-        // ignore
-      }
-    }
-    const canUseVesloServer =
-      vesloServerStatus() === "connected" &&
-      vesloClient &&
-      vesloWorkspaceId &&
-      vesloCapabilities?.mcp?.write;
-
-    if (isRemoteWorkspace && !canUseVesloServer) {
-      setMcpStatus("Veslo server unavailable. MCP auth is read-only.");
-      return;
-    }
-
-    if (!canUseVesloServer && !isTauriRuntime()) {
-      setMcpStatus(t("mcp.desktop_required", currentLocale()));
-      return;
-    }
-
-    let activeClient = routedClient();
-    if (!activeClient) {
-      const vesloBaseUrl = vesloServerBaseUrl().trim();
-      const auth = vesloServerAuth();
-      if (vesloBaseUrl && auth.token) {
-        const opencodeUrl = `${vesloBaseUrl.replace(/\/+$/, "")}/opencode`;
-        activeClient = createClient(opencodeUrl, undefined, { token: auth.token, mode: "veslo" });
-        setClient(activeClient);
-      }
-    }
-    if (!activeClient) {
-      setMcpStatus(t("mcp.connect_server_first", currentLocale()));
-      return;
-    }
-
-    let resolvedProjectDir = projectDir;
-    if (!resolvedProjectDir) {
-      try {
-        const pathInfo = unwrap(await activeClient.path.get());
-        const discoveredRaw = normalizeDirectoryQueryPath(pathInfo.directory ?? "");
-        const discovered = discoveredRaw.replace(/^\/private\/tmp(?=\/|$)/, "/tmp");
-        if (discovered) {
-          resolvedProjectDir = discovered;
-          workspaceStore.setProjectDir(discovered);
-        }
-      } catch {
-        // ignore
-      }
-    }
-    if (!resolvedProjectDir) {
-      setMcpStatus(t("mcp.pick_workspace_first", currentLocale()));
-      return;
-    }
-
-    const safeName = validateMcpServerName(name);
-    setMcpStatus(null);
-
-    try {
-      if (canUseVesloServer && vesloClient && vesloWorkspaceId) {
-        await vesloClient.mcp.logoutAuth(vesloWorkspaceId, safeName);
-      } else {
-        try {
-          await activeClient.mcp.disconnect({ directory: resolvedProjectDir, name: safeName });
-        } catch {
-          // ignore
-        }
-        await activeClient.mcp.auth.remove({ directory: resolvedProjectDir, name: safeName });
-      }
-
-      try {
-        const status = unwrap(await activeClient.mcp.status({ directory: resolvedProjectDir }));
-        setMcpStatuses(status as McpStatusMap);
-      } catch {
-        // ignore
-      }
-
-      await refreshMcpServers({ mode: "explicit", reason: "mcp-logout" });
-      setMcpStatus(t("mcp.logout_success", currentLocale()).replace("{server}", safeName));
-    } catch (e) {
-      setMcpStatus(e instanceof Error ? e.message : t("mcp.logout_failed", currentLocale()));
-    }
-  }
-
-  async function removeMcp(name: string) {
-    try {
-      setMcpStatus(null);
-
-      const vesloClient = vesloServerClient();
-      const vesloWorkspaceId = vesloServerWorkspaceId();
-      const canUseVesloServer =
-        vesloServerStatus() === "connected" &&
-        vesloClient &&
-        vesloWorkspaceId &&
-        resolvedVesloCapabilities()?.mcp?.write;
-
-      const entry = mcpServers().find((server) => server.name === name);
-      if (!entry) {
-        setMcpStatus("This MCP is no longer available. Refresh and try again.");
-        return;
-      }
-      if (!canRemoveMcpFromProjectConfig(entry)) {
-        setMcpStatus("This MCP comes from your global OpenCode config and cannot be removed from this workspace.");
-        return;
-      }
-
-      if (canUseVesloServer && vesloClient && vesloWorkspaceId) {
-        await vesloClient.mcp.remove(vesloWorkspaceId, name);
-      } else {
-        const projectDir = workspaceProjectDir().trim();
-        if (!projectDir) {
-          setMcpStatus(t("mcp.pick_workspace_first", currentLocale()));
-          return;
-        }
-        await removeMcpFromConfig(projectDir, name);
-      }
-
-      await refreshMcpServers({ mode: "explicit", reason: "mcp-remove" });
-      if (selectedMcp() === name) {
-        setSelectedMcp(null);
-      }
-      setMcpStatus(null);
-    } catch (e) {
-      setMcpStatus(e instanceof Error ? e.message : t("mcp.remove_failed", currentLocale()));
-    }
   }
 
   async function createSessionAndOpen(
