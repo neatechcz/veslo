@@ -182,6 +182,12 @@ export type ConversationRunLifecycleSnapshot = {
     intervalMs: number | null;
     runs: number;
   };
+  lifecycle: {
+    pendingQueueDrains: Array<{ workspaceId: string; conversationId: string }>;
+    pendingLifecycleReconciles: Array<{ workspaceId: string; conversationId: string; runId: string }>;
+    inFlightQueueDrains: Array<{ workspaceId: string; conversationId: string }>;
+    inFlightLifecycleReconciles: Array<{ workspaceId: string; conversationId: string; runId: string }>;
+  };
   ports: {
     lifecycleClient: boolean;
     queueStore: boolean;
@@ -258,6 +264,46 @@ function normalizeIntervalMs(value: number | null | undefined): number | null {
 function normalizeNonNegativeDelayMs(value: number | null | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return 0;
   return Math.max(0, Math.floor(value));
+}
+
+function sortQueueDiagnostics(
+  entries: Array<{ workspaceId: string; conversationId: string }>,
+): Array<{ workspaceId: string; conversationId: string }> {
+  return entries.sort((a, b) =>
+    a.workspaceId.localeCompare(b.workspaceId) || a.conversationId.localeCompare(b.conversationId)
+  );
+}
+
+function sortReconcileDiagnostics(
+  entries: Array<{ workspaceId: string; conversationId: string; runId: string }>,
+): Array<{ workspaceId: string; conversationId: string; runId: string }> {
+  return entries.sort((a, b) =>
+    a.workspaceId.localeCompare(b.workspaceId) ||
+    a.conversationId.localeCompare(b.conversationId) ||
+    a.runId.localeCompare(b.runId)
+  );
+}
+
+function queueDiagnosticsFromKeys(keys: Iterable<string>): Array<{ workspaceId: string; conversationId: string }> {
+  const entries: Array<{ workspaceId: string; conversationId: string }> = [];
+  for (const key of keys) {
+    const [workspaceId, conversationId] = key.split("\0");
+    if (!workspaceId || !conversationId) continue;
+    entries.push({ workspaceId, conversationId });
+  }
+  return sortQueueDiagnostics(entries);
+}
+
+function reconcileDiagnosticsFromKeys(
+  keys: Iterable<string>,
+): Array<{ workspaceId: string; conversationId: string; runId: string }> {
+  const entries: Array<{ workspaceId: string; conversationId: string; runId: string }> = [];
+  for (const key of keys) {
+    const [workspaceId, conversationId, runId] = key.split("\0");
+    if (!workspaceId || !conversationId || !runId) continue;
+    entries.push({ workspaceId, conversationId, runId });
+  }
+  return sortReconcileDiagnostics(entries);
 }
 
 function createNoopRunTrace(): ConversationRunLifecycleTracer {
@@ -1063,6 +1109,12 @@ export function createConversationRunLifecycleController(
           enabled: diagnosticsIntervalMs !== null,
           intervalMs: diagnosticsIntervalMs,
           runs: diagnosticsRuns,
+        },
+        lifecycle: {
+          pendingQueueDrains: queueDiagnosticsFromKeys(queueDrainTimers.keys()),
+          pendingLifecycleReconciles: reconcileDiagnosticsFromKeys(lifecycleReconcileTimers.keys()),
+          inFlightQueueDrains: queueDiagnosticsFromKeys(queueDrainInFlight.keys()),
+          inFlightLifecycleReconciles: reconcileDiagnosticsFromKeys(lifecycleReconcileInFlight.keys()),
         },
         ports: {
           lifecycleClient: Boolean(options.lifecycleClient),

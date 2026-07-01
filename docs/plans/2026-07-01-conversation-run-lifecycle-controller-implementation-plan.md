@@ -1570,3 +1570,48 @@ Evidence from original worktree after merge:
 Notes:
 
 - Original worktree still contains an unrelated untracked app cleanup plan outside LFC06.
+
+### 2026-07-02 LFC08 Diagnostics Worktree
+
+Status:
+
+- `status: reserved`
+- `reserved_by: codex-20260702-lfc08-final-verification`
+- `done: false`
+- implementation branch: `lifecycle/lfc08-diagnostics-final-verification`
+- implementation worktree: `../veslo-lifecycle-lfc08-diagnostics-final-verification`
+
+Scope:
+
+- Added test-only lifecycle diagnostics to `snapshotForTests()` for pending queue drain timers,
+  pending lifecycle reconcile timers, in-flight queue drains, and in-flight lifecycle reconciles.
+- Added a focused controller regression test for the new diagnostics snapshot shape.
+- Updated the server/app contract doc to make lifecycle controller ownership explicit and keep the
+  app's local UI queue separate from the server durable run queue.
+- No product API, app behavior, route response, or runtime lifecycle decision was changed.
+
+Evidence:
+
+- Fresh implementation worktree needed `pnpm install --frozen-lockfile`; install completed with the
+  existing generated-bin warnings for local packages and the existing ignored `msgpackr-extract`
+  build-script warning.
+- First focused test attempt failed before assertions because dependencies were not installed in the
+  fresh worktree.
+- Test-first run after install failed as expected because `snapshotForTests()` did not expose the
+  requested `lifecycle` diagnostics object yet.
+- `pnpm --filter veslo-orchestrator exec bun test src/tests/run-registry.test.ts src/tests/run-store.test.ts src/tests/run-activity-probe.test.ts`
+  passed: 34 pass, 0 fail.
+- `pnpm --filter veslo-server exec bun test src/tests/conversation-run-lifecycle-controller.test.ts src/tests/conversation-run-queue-store.test.ts src/tests/orchestrator-lifecycle-client.test.ts src/tests/server-conversations.test.ts`
+  passed: 56 pass, 0 fail.
+- `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/conversation-service.test.ts src/app/tests/pages/session-send-workflow.test.ts`
+  passed: 11 pass, 0 fail.
+- `pnpm --filter veslo-server typecheck` passed.
+- `pnpm --filter veslo-orchestrator typecheck` passed.
+- `pnpm --filter @neatech/veslo-ui typecheck` passed.
+- `git diff --check` passed; Git reported LF-to-CRLF working-copy warnings only.
+
+Notes:
+
+- LFC08 is still not marked done in this worktree. It should be marked done only after merge and
+  final verification in the original worktree.
+- Original worktree still contains an unrelated untracked app cleanup plan outside LFC08.

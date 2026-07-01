@@ -357,6 +357,16 @@ idle or the transcript probe shows a terminal assistant message, the
 orchestrator completes the stale run before the server decides whether to
 queue the new request.
 
+Conversation run lifecycle orchestration is a server-owned control-plane
+concern. The app talks to the conversation routes and should not duplicate
+server decisions about active lifecycle locks, durable queued sends, OpenCode
+submit/abort side effects, AI gateway provider-start watches, lifecycle
+reconcile polling, transcript wake-up, or startup queue draining. The
+orchestrator registry remains the source of truth for active run state; the
+server lifecycle controller owns when to read it, register runs, schedule
+reconcile, and wake the durable queue. The app's local UI queue remains a UI
+workflow concern and is separate from the server durable run queue.
+
 `POST /workspace/:id/sessions/:sessionId/transcript` persists live transcript
 snapshots into the host store. `messages` plus `partsByMessageId` are the
 current snapshot; callers may also send `deletedMessageIds` and

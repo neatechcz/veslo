@@ -414,6 +414,12 @@ function snapshotStub(overrides: Partial<ConversationRunLifecycleSnapshot> = {})
       intervalMs: null,
       runs: 0,
     },
+    lifecycle: {
+      pendingQueueDrains: [],
+      pendingLifecycleReconciles: [],
+      inFlightQueueDrains: [],
+      inFlightLifecycleReconciles: [],
+    },
     ports: {
       lifecycleClient: false,
       queueStore: false,
@@ -915,6 +921,26 @@ test("stop clears queued drain and lifecycle reconcile timers", () => {
 
   expect(controller.snapshotForTests().activeTimerCount).toBe(0);
   expect(timers.activeTimers()).toEqual([]);
+});
+
+test("snapshot exposes pending lifecycle timer diagnostics", () => {
+  const { controller, workspaces } = controllerHarness();
+
+  controller.scheduleQueueDrain("ws_1", "conv-a", 500);
+  controller.scheduleLifecycleReconcile({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-a",
+    reason: "accepted",
+    delayMs: 750,
+  });
+
+  expect(controller.snapshotForTests().lifecycle).toEqual({
+    pendingQueueDrains: [{ workspaceId: "ws_1", conversationId: "conv-a" }],
+    pendingLifecycleReconciles: [{ workspaceId: "ws_1", conversationId: "conv-a", runId: "run-a" }],
+    inFlightQueueDrains: [],
+    inFlightLifecycleReconciles: [],
+  });
 });
 
 test("transcript wake-up reconciles latest lifecycle and wakes queue only when terminal", async () => {
