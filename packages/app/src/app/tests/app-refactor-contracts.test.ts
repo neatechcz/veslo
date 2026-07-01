@@ -4,6 +4,7 @@ import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const appRouteSyncSource = readFileSync(new URL("../context/app-route-sync.ts", import.meta.url), "utf8");
+const appDeepLinkWorkflowSource = readFileSync(new URL("../context/app-deep-link-workflow.ts", import.meta.url), "utf8");
 
 function sectionBetween(
   startNeedle: string,
@@ -30,25 +31,31 @@ function assertInOrder(haystack: string, label: string, needles: string[]): void
 
 test("startup server and bundle links hydrate settings before stripping consumed query params", () => {
   const startupLinkEffect = sectionBetween(
-    "hydrateVesloServerSettingsFromEnv();",
-    "const pref = startupPreference();",
+    "const hydrateStartupInvites =",
+    "const flushPendingRemoteConnectDeepLink =",
     "startup link effect",
+    appDeepLinkWorkflowSource,
   );
 
+  assert.match(
+    source,
+    /import \{ createAppDeepLinkWorkflow \} from "\.\/context\/app-deep-link-workflow";/,
+    "app.tsx should delegate deep-link workflow behavior to the app deep-link workflow context",
+  );
   assertInOrder(startupLinkEffect, "startup link effect", [
-    "const stored = readVesloServerSettings();",
-    "const invite = readVesloConnectInviteFromSearch(window.location.search);",
-    "const bundleInvite = readVesloBundleInviteFromSearch(window.location.search);",
+    "const stored = readSettings();",
+    "const invite = readVesloConnectInviteFromSearch(windowTarget.location.search);",
+    "const bundleInvite = readVesloBundleInviteFromSearch(windowTarget.location.search);",
   ]);
 
   assert.match(
     startupLinkEffect,
-    /const merged: VesloServerSettings = \{[\s\S]*?urlOverride: invite\.url,[\s\S]*?token: invite\.token \?\? stored\.token,[\s\S]*?\};[\s\S]*?const next = writeVesloServerSettings\(merged\);[\s\S]*?setVesloServerSettings\(next\);/s,
+    /const merged: VesloServerSettings = \{[\s\S]*?urlOverride: invite\.url,[\s\S]*?token: invite\.token \?\? stored\.token,[\s\S]*?\};[\s\S]*?const next = writeSettings\(merged\);[\s\S]*?deps\.setVesloServerSettings\(next\);/s,
     "server invite should merge with persisted settings and save the merged result",
   );
   assert.match(
     startupLinkEffect,
-    /if \(invite\.startup === "server"\) \{[\s\S]*?setStartupPreference\("server"\);[\s\S]*?setOnboardingStep\("server"\);/s,
+    /if \(invite\.startup === "server"\) \{[\s\S]*?deps\.setStartupPreference\("server"\);[\s\S]*?deps\.setOnboardingStep\("server"\);/s,
     "server startup invites should move the shell into the server startup path",
   );
   assert.match(
@@ -57,9 +64,9 @@ test("startup server and bundle links hydrate settings before stripping consumed
     "bundle invites should be queued before the URL is cleaned",
   );
   assertInOrder(startupLinkEffect, "startup link cleanup", [
-    "const cleanedConnect = stripVesloConnectInviteFromUrl(window.location.href);",
+    "const cleanedConnect = stripVesloConnectInviteFromUrl(windowTarget.location.href);",
     "const cleaned = stripVesloBundleInviteFromUrl(cleanedConnect);",
-    "window.history.replaceState(window.history.state ?? null, \"\", cleaned);",
+    "windowTarget.history.replaceState(windowTarget.history.state ?? null, \"\", cleaned);",
   ]);
 });
 
@@ -69,21 +76,29 @@ test("desktop deep-link fan-in dedupes URLs and stops after the first matching h
     "if (!isTauriRuntime()) {",
     "desktop deep-link startup",
   );
+  const workflowFanIn = sectionBetween(
+    "const consumeDesktopDeepLinkUrls =",
+    "const consumeWebDeepLinkUrl =",
+    "desktop deep-link workflow fan-in",
+    appDeepLinkWorkflowSource,
+  );
 
   assert.match(
-    desktopDeepLinkStartup,
-    /const seenUrls = new Set<string>\(\);[\s\S]*?const consumeUrls = \(urls: string\[\] \| null \| undefined\) => \{[\s\S]*?if \(seenUrls\.has\(url\)\) continue;[\s\S]*?seenUrls\.add\(url\);/s,
+    appDeepLinkWorkflowSource,
+    /const seenDesktopDeepLinkUrls = new Set<string>\(\);[\s\S]*?if \(seenDesktopDeepLinkUrls\.has\(url\)\) continue;[\s\S]*?seenDesktopDeepLinkUrls\.add\(url\);/s,
     "desktop deep-link delivery should dedupe URLs across startup, open-url, and single-instance channels",
   );
   assert.match(
-    desktopDeepLinkStartup,
-    /if \(queueAuthCompleteDeepLink\(url\) \|\| queueRemoteConnectDeepLink\(url\) \|\| queueSharedBundleDeepLink\(url\)\) \{\s*break;\s*\}/s,
+    workflowFanIn,
+    /if \([\s\S]*?deps\.queueAuthCompleteDeepLink\(url\) \|\|[\s\S]*?queueRemoteConnectDeepLink\(url\) \|\|[\s\S]*?queueSharedBundleDeepLink\(url\)[\s\S]*?\) \{\s*break;\s*\}/s,
     "desktop deep-link handling should stop after one handler consumes the launch URL",
   );
   assertInOrder(desktopDeepLinkStartup, "desktop deep-link channel setup", [
-    "consumeUrls(await getCurrent());",
+    "appDeepLinkWorkflow.consumeDesktopDeepLinkUrls(await getCurrent());",
     "const unlisten = await onOpenUrl((urls) => {",
+    "appDeepLinkWorkflow.consumeDesktopDeepLinkUrls(urls);",
     "const unlistenSingleInstance = await listen<string[]>(\"deep-link://new-url\", (event) => {",
+    "appDeepLinkWorkflow.consumeDesktopDeepLinkUrls(event.payload);",
     "mountCleanupFns.push(() => {",
     "unlisten();",
     "unlistenSingleInstance();",
@@ -96,17 +111,27 @@ test("web startup consumes all URL deep-link formats but strips only non-auth qu
     "const hydrationPromise = hydrateDenAuthFromDesktopSnapshot().catch(() => false);",
     "web deep-link startup",
   );
+  const webDeepLinkWorkflow = sectionBetween(
+    "const consumeWebDeepLinkUrl =",
+    "const hydrateStartupInvites =",
+    "web deep-link workflow",
+    appDeepLinkWorkflowSource,
+  );
 
   assertInOrder(webDeepLinkStartup, "web deep-link startup", [
-    "queueAuthCompleteDeepLink(currentUrl);",
+    "appDeepLinkWorkflow.consumeWebDeepLinkUrl(currentUrl, (cleanedUrl) => {",
+    "window.history.replaceState({}, \"\", cleanedUrl);",
+  ]);
+  assertInOrder(webDeepLinkWorkflow, "web deep-link workflow", [
+    "deps.queueAuthCompleteDeepLink(currentUrl);",
     "queueRemoteConnectDeepLink(currentUrl);",
     "queueSharedBundleDeepLink(currentUrl);",
     "const remoteStripped = stripRemoteConnectQuery(currentUrl) ?? currentUrl;",
     "const bundleStripped = stripSharedBundleQuery(remoteStripped) ?? remoteStripped;",
-    "window.history.replaceState({}, \"\", bundleStripped);",
+    "replaceUrl(bundleStripped);",
   ]);
   assert.doesNotMatch(
-    webDeepLinkStartup,
+    webDeepLinkWorkflow,
     /stripAuth|stripDesktopAuth|strip.*AuthComplete/i,
     "web auth handoff should stay consumable without stripping unknown auth params in this block",
   );

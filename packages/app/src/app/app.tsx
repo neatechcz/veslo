@@ -83,20 +83,6 @@ import {
   type SubagentLocale,
 } from "./lib/subagent-decoration-model";
 import {
-  parseSharedBundleDeepLink,
-  normalizeSharedBundleImportIntent,
-  stripSharedBundleQuery,
-  parseRemoteConnectDeepLink,
-  stripRemoteConnectQuery,
-  type SharedBundleDeepLink,
-  type SharedBundleImportIntent,
-} from "./lib/deep-links";
-import {
-  type SharedBundleV1,
-  fetchSharedBundle,
-  buildImportPayloadFromBundle,
-} from "./lib/shared-bundles";
-import {
   buildCreatedSidebarSessionItem,
   resolveCreatedSessionWorkspaceId,
   shouldRouteCreatedSessionAfterSelect,
@@ -157,6 +143,7 @@ import {
 } from "./context/send-runtime-readiness";
 import { createAppRouteSync } from "./context/app-route-sync";
 import { createSessionRouteSync } from "./context/session-route-sync";
+import { createAppDeepLinkWorkflow } from "./context/app-deep-link-workflow";
 import { createMcpConnectionWorkflow } from "./context/mcp-connection-workflow";
 import {
   createVesloServerConnection,
@@ -386,10 +373,7 @@ import {
 } from "./lib/tauri";
 import {
   parseVesloWorkspaceIdFromUrl,
-  readVesloBundleInviteFromSearch,
   readVesloConnectInviteFromSearch,
-  stripVesloBundleInviteFromUrl,
-  stripVesloConnectInviteFromUrl,
   createVesloServerClient,
   deriveLocalVesloServerUrlFromOpencodeBaseUrl,
   hydrateVesloServerSettingsFromEnv,
@@ -402,7 +386,6 @@ import {
   type VesloConversationRunInput,
   type VesloManagedAiAccessBundle,
   type VesloServerClient,
-  type VesloServerSettings,
   VesloServerError,
 } from "./lib/veslo-server";
 import {
@@ -449,13 +432,6 @@ import { shouldAutoReloadManagedAiConfig } from "./lib/managed-ai-config-reload"
 import { describeRequestError } from "./lib/client-errors";
 import { CLOUD_ONLY_MODE, resolveVesloCloudEnvironment } from "./lib/cloud-policy";
 import { isRemoteUiEnabled } from "./lib/runtime-policy";
-
-type RemoteWorkspaceDefaults = {
-  vesloHostUrl?: string | null;
-  vesloToken?: string | null;
-  directory?: string | null;
-  displayName?: string | null;
-};
 
 type SendTraceRoot = typeof window & {
   __vesloSendTrace?: Array<Record<string, unknown>>;
@@ -951,52 +927,6 @@ export default function App() {
     setEngineSource(value);
     setEngineSourceExplicit(options?.explicit === true);
   };
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    hydrateVesloServerSettingsFromEnv();
-
-    const stored = readVesloServerSettings();
-    const invite = readVesloConnectInviteFromSearch(window.location.search);
-    const bundleInvite = readVesloBundleInviteFromSearch(window.location.search);
-
-    if (!invite) {
-      setVesloServerSettings(stored);
-    } else {
-      const merged: VesloServerSettings = {
-        ...stored,
-        urlOverride: invite.url,
-        token: invite.token ?? stored.token,
-      };
-
-      const next = writeVesloServerSettings(merged);
-      setVesloServerSettings(next);
-
-      if (invite.startup === "server") {
-        setStartupPreference("server");
-        if (untrack(onboardingStep) !== "language") {
-          setOnboardingStep("server");
-        }
-      }
-    }
-
-    if (bundleInvite?.bundleUrl) {
-      setPendingSharedBundleInvite({
-        bundleUrl: bundleInvite.bundleUrl,
-        intent: bundleInvite.intent,
-        source: bundleInvite.source,
-        orgId: bundleInvite.orgId,
-        label: bundleInvite.label,
-      });
-      setSharedBundleNoticeShown(false);
-    }
-
-    const cleanedConnect = stripVesloConnectInviteFromUrl(window.location.href);
-    const cleaned = stripVesloBundleInviteFromUrl(cleanedConnect);
-    if (cleaned !== window.location.href) {
-      window.history.replaceState(window.history.state ?? null, "", cleaned);
-    }
-  });
 
   const [client, setClient] = createSignal<Client | null>(null);
 
@@ -4544,156 +4474,6 @@ export default function App() {
     setVesloServerWorkspaceId(null);
   });
 
-  const resolveSharedBundleWorkerTarget = () => {
-    const pref = startupPreference();
-    const hostInfo = activeVesloServerHostInfo();
-    const settings = vesloServerSettings();
-
-    const localHostUrl = normalizeVesloServerUrl(hostInfo?.baseUrl ?? "") ?? "";
-    const localToken = hostInfo?.clientToken?.trim() ?? "";
-    const serverHostUrl = normalizeVesloServerUrl(settings.urlOverride ?? "") ?? "";
-    const serverToken = settings.token?.trim() ?? "";
-
-    if (pref === "server") {
-      return {
-        hostUrl: serverHostUrl || localHostUrl,
-        token: serverToken || localToken,
-      };
-    }
-
-    if (pref === "local") {
-      return {
-        hostUrl: localHostUrl || serverHostUrl,
-        token: localToken || serverToken,
-      };
-    }
-
-    if (localHostUrl) {
-      return {
-        hostUrl: localHostUrl,
-        token: localToken || serverToken,
-      };
-    }
-
-    return {
-      hostUrl: serverHostUrl,
-      token: serverToken || localToken,
-    };
-  };
-
-  const waitForSharedBundleImportTarget = async (timeoutMs = 20_000) => {
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < timeoutMs) {
-      const client = vesloServerClient();
-      const workspaceId = vesloServerWorkspaceId();
-      if (client && workspaceId && vesloServerStatus() === "connected") {
-        return { client, workspaceId };
-      }
-      await new Promise<void>((resolve) => {
-        window.setTimeout(resolve, 200);
-      });
-    }
-    throw new Error("Veslo worker is not ready yet.");
-  };
-
-  const createWorkerForSharedBundle = async (request: SharedBundleDeepLink, bundle: SharedBundleV1) => {
-    const target = resolveSharedBundleWorkerTarget();
-    const hostUrl = target.hostUrl.trim();
-    const token = target.token.trim();
-    if (!hostUrl || !token) {
-      throw new Error("Share link detected. Configure an Veslo worker host and token, then open the link again.");
-    }
-
-    const label = (request.label?.trim() || bundle.name?.trim() || "Shared setup").slice(0, 80);
-    const ok = await workspaceStore.createRemoteWorkspaceFlow({
-      vesloHostUrl: hostUrl,
-      vesloToken: token,
-      directory: null,
-      displayName: label,
-      manageBusy: false,
-      closeModal: false,
-    });
-
-    if (!ok) {
-      throw new Error("Failed to create a worker from this share link.");
-    }
-  };
-
-  createEffect(() => {
-    const request = pendingSharedBundleInvite();
-    if (!request || booting()) {
-      return;
-    }
-
-    if (sharedBundleImportBusy()) {
-      return;
-    }
-
-    if (request.intent === "import_current") {
-      const client = vesloServerClient();
-      const workspaceId = vesloServerWorkspaceId();
-      const connected = vesloServerStatus() === "connected";
-      if (!client || !workspaceId || !connected) {
-        if (!sharedBundleNoticeShown()) {
-          setSharedBundleNoticeShown(true);
-          setError("Share link detected. Connect to a writable Veslo worker to import this bundle.");
-        }
-        return;
-      }
-    } else {
-      const target = resolveSharedBundleWorkerTarget();
-      if (!target.hostUrl.trim() || !target.token.trim()) {
-        if (!sharedBundleNoticeShown()) {
-          setSharedBundleNoticeShown(true);
-          setError("Share link detected. Configure an Veslo host and token to create a new worker.");
-        }
-        return;
-      }
-    }
-
-    let cancelled = false;
-    setSharedBundleImportBusy(true);
-
-    void (async () => {
-      try {
-        const bundle = await fetchSharedBundle(request.bundleUrl);
-        if (cancelled) return;
-
-        if (request.intent === "new_worker") {
-          await createWorkerForSharedBundle(request, bundle);
-          if (cancelled) return;
-        }
-
-        const { client, workspaceId } = await waitForSharedBundleImportTarget();
-        if (cancelled) return;
-
-        const { payload, importedSkillsCount } = buildImportPayloadFromBundle(bundle);
-        await client.importWorkspace(workspaceId, payload);
-        await refreshSkills({ force: true });
-        await refreshHubSkills({ force: true });
-        setError(null);
-        if (importedSkillsCount > 0) {
-          console.log(`[veslo] imported ${importedSkillsCount} skills from share bundle`);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          const message = error instanceof Error ? error.message : safeStringify(error);
-          setError(addOpencodeCacheHint(message));
-        }
-      } finally {
-        if (!cancelled) {
-          setSharedBundleImportBusy(false);
-          setPendingSharedBundleInvite(null);
-          setSharedBundleNoticeShown(false);
-        }
-      }
-    })();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
   createEffect(() => {
     if (!developerMode()) {
       setDevtoolsWorkspaceId(null);
@@ -5154,34 +4934,51 @@ export default function App() {
   const [editRemoteWorkspaceOpen, setEditRemoteWorkspaceOpen] = createSignal(false);
   const [editRemoteWorkspaceId, setEditRemoteWorkspaceId] = createSignal<string | null>(null);
   const [editRemoteWorkspaceError, setEditRemoteWorkspaceError] = createSignal<string | null>(null);
-  const [deepLinkRemoteWorkspaceDefaults, setDeepLinkRemoteWorkspaceDefaults] = createSignal<RemoteWorkspaceDefaults | null>(null);
-  const [pendingRemoteConnectDeepLink, setPendingRemoteConnectDeepLink] = createSignal<RemoteWorkspaceDefaults | null>(null);
-  const [pendingSharedBundleInvite, setPendingSharedBundleInvite] = createSignal<SharedBundleDeepLink | null>(null);
-  const [sharedBundleImportBusy, setSharedBundleImportBusy] = createSignal(false);
-  const [sharedBundleNoticeShown, setSharedBundleNoticeShown] = createSignal(false);
   const [renameWorkspaceOpen, setRenameWorkspaceOpen] = createSignal(false);
   const [renameWorkspaceId, setRenameWorkspaceId] = createSignal<string | null>(null);
   const [renameWorkspaceName, setRenameWorkspaceName] = createSignal("");
   const [renameWorkspaceBusy, setRenameWorkspaceBusy] = createSignal(false);
 
-  const queueRemoteConnectDeepLink = (rawUrl: string): boolean => {
-    const parsed = parseRemoteConnectDeepLink(rawUrl);
-    if (!parsed) {
-      return false;
-    }
-    setPendingRemoteConnectDeepLink(parsed);
-    return true;
-  };
+  const showRemoteActions = createMemo(() => isRemoteUiEnabled());
+  const quickAddWorkerEnabled = createMemo(
+    () => (CLOUD_ONLY_MODE || showRemoteActions()) && !isTauriRuntime(),
+  );
 
-  const queueSharedBundleDeepLink = (rawUrl: string): boolean => {
-    const parsed = parseSharedBundleDeepLink(rawUrl);
-    if (!parsed) {
-      return false;
-    }
-    setPendingSharedBundleInvite(parsed);
-    setSharedBundleNoticeShown(false);
-    return true;
-  };
+  const appDeepLinkWorkflow = createAppDeepLinkWorkflow({
+    booting,
+    startupPreference: () => startupPreference() ?? "",
+    setStartupPreference,
+    onboardingStep,
+    setOnboardingStep,
+    vesloServerSettings,
+    setVesloServerSettings,
+    readVesloServerSettings,
+    writeVesloServerSettings,
+    activeVesloServerHostInfo,
+    vesloServerClient,
+    vesloServerWorkspaceId,
+    vesloServerStatus,
+    workspace: {
+      createRemoteWorkspaceOpen: workspaceStore.createRemoteWorkspaceOpen,
+      setCreateRemoteWorkspaceOpen: workspaceStore.setCreateRemoteWorkspaceOpen,
+      createRemoteWorkspaceFlow: workspaceStore.createRemoteWorkspaceFlow,
+    },
+    setView,
+    setTab,
+    setError,
+    queueAuthCompleteDeepLink,
+    quickAddWorkerEnabled,
+    cloudOnlyMode: () => CLOUD_ONLY_MODE,
+    refreshSkills,
+    refreshHubSkills,
+    addOpencodeCacheHint,
+    safeStringify,
+  });
+  const {
+    deepLinkRemoteWorkspaceDefaults,
+    clearRemoteDefaultsWhenModalCloses,
+    openCreateRemoteWorkspace,
+  } = appDeepLinkWorkflow;
 
   onMount(() => {
     if (typeof window !== "undefined") {
@@ -5451,70 +5248,6 @@ export default function App() {
       document.removeEventListener("visibilitychange", refresh);
     });
   });
-
-  createEffect(() => {
-    const pending = pendingRemoteConnectDeepLink();
-    if (!pending || booting()) {
-      return;
-    }
-
-    setView("dashboard");
-    setTab("scheduled");
-    setDeepLinkRemoteWorkspaceDefaults(pending);
-    workspaceStore.setCreateRemoteWorkspaceOpen(true);
-    setPendingRemoteConnectDeepLink(null);
-  });
-
-  createEffect(() => {
-    if (workspaceStore.createRemoteWorkspaceOpen()) {
-      return;
-    }
-    if (!deepLinkRemoteWorkspaceDefaults()) {
-      return;
-    }
-    setDeepLinkRemoteWorkspaceDefaults(null);
-  });
-
-  const showRemoteActions = createMemo(() => isRemoteUiEnabled());
-  const quickAddWorkerEnabled = createMemo(
-    () => (CLOUD_ONLY_MODE || showRemoteActions()) && !isTauriRuntime(),
-  );
-
-  const openCreateRemoteWorkspace = () => {
-    if (!quickAddWorkerEnabled()) {
-      workspaceStore.setCreateRemoteWorkspaceOpen(true);
-      return;
-    }
-
-    const target = resolveSharedBundleWorkerTarget();
-    const hostUrl = normalizeVesloServerUrl(target.hostUrl ?? "") ?? "";
-    const token = target.token?.trim() ?? "";
-    const defaults: RemoteWorkspaceDefaults = {
-      vesloHostUrl: hostUrl || null,
-      vesloToken: token || null,
-      directory: null,
-      displayName: null,
-    };
-
-    const requiresToken = !CLOUD_ONLY_MODE;
-    if (!hostUrl || (requiresToken && !token)) {
-      setDeepLinkRemoteWorkspaceDefaults(defaults);
-      workspaceStore.setCreateRemoteWorkspaceOpen(true);
-      return;
-    }
-
-    void (async () => {
-      const ok = await workspaceStore.createRemoteWorkspaceFlow({
-        vesloHostUrl: hostUrl,
-        vesloToken: token,
-        directory: null,
-        displayName: null,
-      });
-      if (ok) return;
-      setDeepLinkRemoteWorkspaceDefaults(defaults);
-      workspaceStore.setCreateRemoteWorkspaceOpen(true);
-    })();
-  };
 
   const editRemoteWorkspaceDefaults = createMemo(() => {
     const workspaceId = editRemoteWorkspaceId();
@@ -7161,35 +6894,16 @@ export default function App() {
       try {
         const { getCurrent, onOpenUrl } = await import("@tauri-apps/plugin-deep-link");
         const { listen } = await import("@tauri-apps/api/event");
-        // Dedupe URLs across both delivery channels (onOpenUrl + single-instance
-        // event). On macOS the same URL can arrive twice — once via Apple Events
-        // and once via argv of a relaunched second instance — and re-running
-        // queueAuthCompleteDeepLink invalidates the one-time auth code.
-        const seenUrls = new Set<string>();
-        const consumeUrls = (urls: string[] | null | undefined) => {
-          if (!Array.isArray(urls)) {
-            return;
-          }
-          for (const url of urls) {
-            if (typeof url !== "string" || url.length === 0) continue;
-            if (seenUrls.has(url)) continue;
-            seenUrls.add(url);
-            if (queueAuthCompleteDeepLink(url) || queueRemoteConnectDeepLink(url) || queueSharedBundleDeepLink(url)) {
-              break;
-            }
-          }
-        };
-
-        consumeUrls(await getCurrent());
+        appDeepLinkWorkflow.consumeDesktopDeepLinkUrls(await getCurrent());
         const unlisten = await onOpenUrl((urls) => {
-          consumeUrls(urls);
+          appDeepLinkWorkflow.consumeDesktopDeepLinkUrls(urls);
         });
         // Single-instance plugin emits this event when a second Veslo instance
         // is launched with deep-link arguments (typical macOS browser handoff).
         // The original instance focuses its window via the Rust side; we still
         // need to deliver the URL payload to the auth/remote-connect handlers.
         const unlistenSingleInstance = await listen<string[]>("deep-link://new-url", (event) => {
-          consumeUrls(event.payload);
+          appDeepLinkWorkflow.consumeDesktopDeepLinkUrls(event.payload);
         });
         mountCleanupFns.push(() => {
           unlisten();
@@ -7203,14 +6917,9 @@ export default function App() {
     if (!isTauriRuntime()) {
       const currentUrl = typeof window === "undefined" ? "" : window.location.href;
       if (currentUrl) {
-        queueAuthCompleteDeepLink(currentUrl);
-        queueRemoteConnectDeepLink(currentUrl);
-        queueSharedBundleDeepLink(currentUrl);
-        const remoteStripped = stripRemoteConnectQuery(currentUrl) ?? currentUrl;
-        const bundleStripped = stripSharedBundleQuery(remoteStripped) ?? remoteStripped;
-        if (bundleStripped !== currentUrl) {
-          window.history.replaceState({}, "", bundleStripped);
-        }
+        appDeepLinkWorkflow.consumeWebDeepLinkUrl(currentUrl, (cleanedUrl) => {
+          window.history.replaceState({}, "", cleanedUrl);
+        });
       }
     }
 
@@ -8982,7 +8691,7 @@ export default function App() {
         open={workspaceStore.createRemoteWorkspaceOpen()}
         onClose={() => {
           workspaceStore.setCreateRemoteWorkspaceOpen(false);
-          setDeepLinkRemoteWorkspaceDefaults(null);
+          clearRemoteDefaultsWhenModalCloses();
         }}
         onConfirm={(input) => workspaceStore.createRemoteWorkspaceFlow(input)}
         initialValues={deepLinkRemoteWorkspaceDefaults() ?? undefined}
