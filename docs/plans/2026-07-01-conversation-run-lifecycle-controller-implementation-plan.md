@@ -1325,3 +1325,36 @@ Notes:
 - Original worktree still contains unrelated dirty app/audit work outside LFC02.
 - LFC02 did not move OpenCode submit internals or AI gateway provider-watch ownership; that remains
   for LFC03.
+
+### 2026-07-02 LFC03 Submit Provider Watch Worktree
+
+Status:
+
+- `status: reserved`
+- `reserved_by: codex-20260702-lfc03-submit-provider-watch`
+- `done: false`
+- implementation branch: `lifecycle/lfc03-submit-provider-watch`
+- implementation worktree: `../veslo-lifecycle-lfc03-submit-provider-watch`
+
+Scope:
+
+- Added controller-owned accepted-run submit orchestration for OpenCode submit failure handling,
+  accepted-run reconcile scheduling, managed prompt provider-start watch, timeout failure handling,
+  timeout abort, and active AI gateway context lifetime.
+- Kept OpenCode submit as an injected port that only builds/sends the OpenCode request through the
+  existing orchestrator fallback.
+- Kept AI gateway runtime/proxy behavior in the existing runtime owner; the controller uses explicit
+  active-run, provider-watch, and abort ports.
+- Routed queue drain accepted submits through the controller-owned accepted-run method so queued runs
+  keep the same submit/watch lifecycle behavior until LFC04 moves drain ownership.
+
+Evidence:
+
+- Fresh implementation worktree needed `pnpm install --frozen-lockfile`; install completed with the
+  existing missing generated-bin warnings for local packages.
+- First test-first run failed as expected because controller submit did not schedule reconcile,
+  mark failed, run provider-start watch, abort on timeout, or clear active AI gateway context.
+- `pnpm --filter veslo-server exec bun test ./src/tests/conversation-run-lifecycle-controller.test.ts src/tests/server-conversations.test.ts src/tests/ai-gateway-runtime-owner.test.ts`
+  passed: 37 pass, 0 fail.
+- `pnpm --filter veslo-server typecheck` passed.
+- `git diff --check` passed; Git reported LF-to-CRLF working-copy warnings only.

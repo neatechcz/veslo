@@ -3788,8 +3788,6 @@ function createRoutes(
     body: Record<string, unknown>;
     clientMessageId: string | null;
     origin: string | null;
-    expectAiGatewayStart: boolean;
-    lifecycleOwner: OrchestratorLifecycleClient | null;
   }) => {
     const {
       runTrace,
@@ -3800,23 +3798,9 @@ function createRoutes(
       body,
       clientMessageId,
       origin,
-      expectAiGatewayStart,
-      lifecycleOwner,
     } = input;
     const path = buildConversationRunSubmitPath(kind, target.opencodeSessionId, target.directory);
-    const aiGatewayProviderWatchStartedAt = Date.now();
     const opencodeRunBody = buildConversationRunBody(kind, body);
-    let activeAiGatewayRunRegistered = false;
-    const unregisterRegisteredAiGatewayRun = () => {
-      if (!activeAiGatewayRunRegistered) return;
-      activeAiGatewayRunRegistered = false;
-      unregisterActiveAiGatewayRun({
-        workspaceId: workspace.id,
-        conversationId: target.conversationId,
-        runId,
-        opencodeSessionId: target.opencodeSessionId,
-      });
-    };
     runTrace.record("server:conversation-run:opencode-submit-body", {
       workspaceId: workspace.id,
       conversationId: target.conversationId,
@@ -3827,154 +3811,25 @@ function createRoutes(
       opencodeSessionId: target.opencodeSessionId,
       body: summarizeConversationRunBodyForTrace(opencodeRunBody),
     });
-    if (kind === "prompt_async" && expectAiGatewayStart) {
-      registerActiveAiGatewayRun({
-        traceId: runTrace.traceId,
+    return runTrace.step(
+      "server:conversation-run:opencode-submit",
+      () => fetchOpencodeJsonWithOrchestratorFallback(config, { ...workspace, directory: target.directory }, path, {
+        method: "POST",
+        timeoutMs: OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS,
+        body: opencodeRunBody,
+        sendTraceId: runTrace.traceId,
+        conversationRunId: runId,
+      }),
+      {
         workspaceId: workspace.id,
         conversationId: target.conversationId,
         runId,
-        opencodeSessionId: target.opencodeSessionId,
+        kind,
         clientMessageId,
         origin,
-      });
-      activeAiGatewayRunRegistered = true;
-    }
-    let upstream: unknown;
-    try {
-      upstream = await runTrace.step(
-        "server:conversation-run:opencode-submit",
-        () => fetchOpencodeJsonWithOrchestratorFallback(config, { ...workspace, directory: target.directory }, path, {
-          method: "POST",
-          timeoutMs: OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS,
-          body: opencodeRunBody,
-          sendTraceId: runTrace.traceId,
-          conversationRunId: runId,
-        }),
-        {
-          workspaceId: workspace.id,
-          conversationId: target.conversationId,
-          runId,
-          kind,
-          clientMessageId,
-          origin,
-          opencodeSessionId: target.opencodeSessionId,
-        },
-      );
-    } catch (error) {
-      if (lifecycleOwner) {
-        await runTrace.step(
-          "server:conversation-run:lifecycle-mark-failed",
-          () => lifecycleOwner.markFailed(
-            workspace.id,
-            runId,
-            error instanceof Error ? error.message : String(error),
-          ),
-          {
-            workspaceId: workspace.id,
-            conversationId: target.conversationId,
-            runId,
-          },
-        ).catch(() => undefined);
-      }
-      scheduleConversationRunLifecycleReconcile?.({
-        workspace,
-        conversationId: target.conversationId,
-        runId,
-        reason: "submit-failed",
-        delayMs: 0,
-      });
-      unregisterRegisteredAiGatewayRun();
-      throw error;
-    }
-    try {
-      if (lifecycleOwner && kind === "prompt_async" && expectAiGatewayStart) {
-        const providerStart = await runTrace.step(
-          "server:conversation-run:ai-gateway-provider-start-watch",
-          () => waitForAiGatewayProviderStart({
-            workspaceId: workspace.id,
-            conversationId: target.conversationId,
-            runId,
-            opencodeSessionId: target.opencodeSessionId,
-            clientMessageId,
-            origin,
-            startedAt: aiGatewayProviderWatchStartedAt,
-          }),
-          {
-            workspaceId: workspace.id,
-            conversationId: target.conversationId,
-            runId,
-            clientMessageId,
-            origin,
-            opencodeSessionId: target.opencodeSessionId,
-          },
-        );
-        if (!providerStart.started) {
-          const error = `AI gateway provider request did not start within ${providerStart.timeoutMs}ms.`;
-          await runTrace.step(
-            "server:conversation-run:lifecycle-mark-failed-ai-gateway-provider-start-timeout",
-            () => lifecycleOwner.markFailed(workspace.id, runId, error),
-            {
-              workspaceId: workspace.id,
-              conversationId: target.conversationId,
-              runId,
-              opencodeSessionId: target.opencodeSessionId,
-              timeoutMs: providerStart.timeoutMs,
-            },
-          ).catch(() => undefined);
-          scheduleConversationRunLifecycleReconcile?.({
-            workspace,
-            conversationId: target.conversationId,
-            runId,
-            reason: "ai-gateway-provider-start-timeout",
-            delayMs: 0,
-          });
-          const abortQuery = new URLSearchParams();
-          abortQuery.set("directory", target.directory);
-          await runTrace.step(
-            "server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout",
-            () => fetchOpencodeJsonWithOrchestratorFallback(
-              config,
-              { ...workspace, directory: target.directory },
-              `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${abortQuery.toString()}`,
-              { method: "POST", sendTraceId: runTrace.traceId },
-            ),
-            {
-              workspaceId: workspace.id,
-              conversationId: target.conversationId,
-              runId,
-              opencodeSessionId: target.opencodeSessionId,
-            },
-          ).catch((abortError) => {
-            runTrace.record("server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout:error", {
-              workspaceId: workspace.id,
-              conversationId: target.conversationId,
-              runId,
-              opencodeSessionId: target.opencodeSessionId,
-              error: abortError instanceof Error ? abortError.message : String(abortError),
-            });
-          });
-          throw new ApiError(504, "ai_gateway_provider_start_timeout", error, {
-            workspaceId: workspace.id,
-            conversationId: target.conversationId,
-            runId,
-            opencodeSessionId: target.opencodeSessionId,
-            clientMessageId,
-            origin,
-            timeoutMs: providerStart.timeoutMs,
-          });
-        }
-      }
-    } finally {
-      unregisterRegisteredAiGatewayRun();
-    }
-    scheduleConversationRunLifecycleReconcile?.({
-      workspace,
-      conversationId: target.conversationId,
-      runId,
-      reason: "accepted",
-      delayMs: resolveConversationRunLifecycleReconcileInitialDelayMs(),
-    });
-    return upstream;
+        opencodeSessionId: target.opencodeSessionId,
+      },
+    );
   };
 
   const conversationQueueKey = (workspaceId: string, conversationId: string) => `${workspaceId}\0${conversationId}`;
@@ -4163,8 +4018,27 @@ function createRoutes(
     lifecycleClient,
     queueStore: conversationRunQueueStore,
     submitOpenCode: submitConversationRunToOpenCode,
+    abortOpenCode: async ({ runTrace, workspace, target }) => {
+      const abortQuery = new URLSearchParams();
+      abortQuery.set("directory", target.directory);
+      return fetchOpencodeJsonWithOrchestratorFallback(
+        config,
+        { ...workspace, directory: target.directory },
+        `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${abortQuery.toString()}`,
+        { method: "POST", sendTraceId: runTrace.traceId },
+      );
+    },
+    aiGatewayActiveRun: {
+      register: registerActiveAiGatewayRun,
+      unregister: unregisterActiveAiGatewayRun,
+    },
+    aiGatewayProviderWatch: {
+      waitForProviderStart: waitForAiGatewayProviderStart,
+    },
     scheduleQueueDrain: scheduleConversationQueueDrain,
     queueDrainPollMs: CONVERSATION_QUEUE_DRAIN_POLL_MS,
+    scheduleLifecycleReconcile: (input) => scheduleConversationRunLifecycleReconcile?.(input),
+    resolveLifecycleReconcileInitialDelayMs: resolveConversationRunLifecycleReconcileInitialDelayMs,
   });
 
   async function drainConversationQueue(workspaceId: string, conversationId: string): Promise<void> {
@@ -4252,7 +4126,7 @@ function createRoutes(
         }
       }
 
-      await submitConversationRunToOpenCode({
+      await conversationRunLifecycleController.submitAcceptedRun({
         runTrace,
         workspace,
         target,
@@ -4262,8 +4136,7 @@ function createRoutes(
         clientMessageId: item.clientMessageId,
         origin: item.origin,
         expectAiGatewayStart,
-        lifecycleOwner,
-      });
+      }, lifecycleOwner);
       conversationRunQueueStore.markSubmitted(item.queueItemId);
       scheduleConversationQueueDrain(workspaceId, conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
     } catch (error) {

@@ -117,8 +117,8 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
     if (this.registerError) throw this.registerError;
   }
 
-  async markFailed(): Promise<void> {
-    this.calls.push("markFailed");
+  async markFailed(workspaceId: string, runId: string, reason: string): Promise<void> {
+    this.calls.push(`markFailed:${workspaceId}:${runId}:${reason}`);
   }
 
   async markAborted(): Promise<void> {
@@ -255,21 +255,75 @@ function submitInput(overrides: Partial<ConversationRunLifecycleSubmitInput> = {
 function controllerHarness() {
   const lifecycle = new LifecycleHarness();
   const queue = new QueueHarness();
+  const behavior = {
+    submitError: null as unknown,
+    providerStartResult: { started: true, timeoutMs: 25 },
+  };
   const submitCalls: unknown[] = [];
+  const activeGatewayCalls: Array<{ kind: "register" | "unregister"; input: unknown }> = [];
+  const providerWatchCalls: unknown[] = [];
+  const abortCalls: unknown[] = [];
   const drainCalls: Array<{ workspaceId: string; conversationId: string; delayMs: number }> = [];
+  const reconcileCalls: Array<{
+    workspaceId: string;
+    conversationId: string;
+    runId: string;
+    reason: string;
+    delayMs: number | undefined;
+  }> = [];
   const controller = createConversationRunLifecycleController({
     lifecycleClient: lifecycle,
     queueStore: queue,
     submitOpenCode: async (input) => {
       submitCalls.push(input);
+      if (behavior.submitError) throw behavior.submitError;
       return { accepted: true };
+    },
+    aiGatewayActiveRun: {
+      register: (input) => {
+        activeGatewayCalls.push({ kind: "register", input });
+      },
+      unregister: (input) => {
+        activeGatewayCalls.push({ kind: "unregister", input });
+      },
+    },
+    aiGatewayProviderWatch: {
+      waitForProviderStart: async (input) => {
+        providerWatchCalls.push(input);
+        return behavior.providerStartResult;
+      },
+    },
+    abortOpenCode: async (input) => {
+      abortCalls.push(input);
+      return { aborted: true };
     },
     queueDrainPollMs: 1_500,
     scheduleQueueDrain: (workspaceId, conversationId, delayMs) => {
       drainCalls.push({ workspaceId, conversationId, delayMs });
     },
+    scheduleLifecycleReconcile: (input) => {
+      reconcileCalls.push({
+        workspaceId: input.workspace.id,
+        conversationId: input.conversationId,
+        runId: input.runId,
+        reason: input.reason,
+        delayMs: input.delayMs,
+      });
+    },
+    resolveLifecycleReconcileInitialDelayMs: () => 1_234,
   });
-  return { controller, lifecycle, queue, submitCalls, drainCalls };
+  return {
+    controller,
+    lifecycle,
+    queue,
+    behavior,
+    submitCalls,
+    activeGatewayCalls,
+    providerWatchCalls,
+    abortCalls,
+    drainCalls,
+    reconcileCalls,
+  };
 }
 
 function snapshotStub(overrides: Partial<ConversationRunLifecycleSnapshot> = {}): ConversationRunLifecycleSnapshot {
@@ -353,7 +407,7 @@ test("controller shell records explicit ports without invoking behavior", () => 
     aiGatewayProviderWatch: {
       waitForProviderStart: async (input) => {
         providerWatchCalls.push(input);
-        return { started: false };
+        return { started: false, timeoutMs: 25 };
       },
     },
   });
@@ -391,6 +445,9 @@ test("server stop calls the lifecycle controller stop hook", async () => {
   const fakeController: ConversationRunLifecycleController = {
     submitRun: async () => {
       throw new Error("submitRun should not be called by the shutdown fixture");
+    },
+    submitAcceptedRun: async () => {
+      throw new Error("submitAcceptedRun should not be called by the shutdown fixture");
     },
     start: () => {
       startCalls += 1;
@@ -453,7 +510,7 @@ test("submitRun registers inactive local runs before submitting", async () => {
   ]);
   expect(queue.items).toEqual([]);
   expect(drainCalls).toEqual([]);
-  expect((submitCalls[0] as { lifecycleOwner?: unknown }).lifecycleOwner).toBe(lifecycle);
+  expect(submitCalls).toHaveLength(1);
 });
 
 test("submitRun queues when active peek finds an active run", async () => {
@@ -507,7 +564,7 @@ test("submitRun bypasses local lifecycle and queue paths for remote workspaces",
   expect(result.payload.status).toBe("submitted");
   expect(lifecycle.calls).toEqual([]);
   expect(queue.items).toEqual([]);
-  expect((submitCalls[0] as { lifecycleOwner?: unknown }).lifecycleOwner).toBeNull();
+  expect(submitCalls).toHaveLength(1);
 });
 
 test("submitRun maps lifecycle request failures to the existing API error shape", async () => {
@@ -534,4 +591,106 @@ test("submitRun returns the existing queue item for an idempotent client message
   expect(second.payload.queueItemId).toBe("queue-1");
   expect(second.payload.reservedRunId).toBe("run-first");
   expect(queue.enqueueCalls).toHaveLength(2);
+});
+
+test("submitRun schedules accepted lifecycle reconciliation after successful OpenCode submit", async () => {
+  const { controller, reconcileCalls, activeGatewayCalls, providerWatchCalls } = controllerHarness();
+
+  const result = await controller.submitRun(submitInput());
+
+  expect(result.httpStatus).toBe(200);
+  expect(result.payload.status).toBe("submitted");
+  expect(reconcileCalls).toEqual([{
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "accepted",
+    delayMs: 1_234,
+  }]);
+  expect(activeGatewayCalls).toEqual([]);
+  expect(providerWatchCalls).toEqual([]);
+});
+
+test("submitRun marks lifecycle failed, schedules reconcile, and clears active gateway context on submit failure", async () => {
+  const {
+    controller,
+    behavior,
+    lifecycle,
+    activeGatewayCalls,
+    providerWatchCalls,
+    reconcileCalls,
+  } = controllerHarness();
+  behavior.submitError = new Error("opencode submit failed");
+
+  await expect(controller.submitRun(submitInput({ expectAiGatewayStart: true }))).rejects.toThrow(
+    "opencode submit failed",
+  );
+
+  expect(lifecycle.calls).toContain("markFailed:ws_1:run-reserved:opencode submit failed");
+  expect(reconcileCalls).toEqual([{
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "submit-failed",
+    delayMs: 0,
+  }]);
+  expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
+  expect(providerWatchCalls).toEqual([]);
+});
+
+test("submitRun provider-start timeout marks failed, aborts OpenCode, and clears active gateway context", async () => {
+  const {
+    controller,
+    behavior,
+    lifecycle,
+    activeGatewayCalls,
+    providerWatchCalls,
+    abortCalls,
+    reconcileCalls,
+  } = controllerHarness();
+  behavior.providerStartResult = { started: false, timeoutMs: 25 };
+
+  await expect(controller.submitRun(submitInput({ expectAiGatewayStart: true }))).rejects.toMatchObject({
+    status: 504,
+    code: "ai_gateway_provider_start_timeout",
+  } satisfies Partial<ApiError>);
+
+  const timeoutMessage = "AI gateway provider request did not start within 25ms.";
+  expect(lifecycle.calls).toContain(`markFailed:ws_1:run-reserved:${timeoutMessage}`);
+  expect(reconcileCalls).toEqual([{
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "ai-gateway-provider-start-timeout",
+    delayMs: 0,
+  }]);
+  expect(providerWatchCalls).toHaveLength(1);
+  expect(typeof (providerWatchCalls[0] as { startedAt?: unknown }).startedAt).toBe("number");
+  expect(abortCalls).toHaveLength(1);
+  expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
+});
+
+test("submitRun provider-start success clears active gateway context without aborting", async () => {
+  const {
+    controller,
+    activeGatewayCalls,
+    providerWatchCalls,
+    abortCalls,
+    reconcileCalls,
+  } = controllerHarness();
+
+  const result = await controller.submitRun(submitInput({ expectAiGatewayStart: true }));
+
+  expect(result.httpStatus).toBe(200);
+  expect(result.payload.status).toBe("submitted");
+  expect(providerWatchCalls).toHaveLength(1);
+  expect(abortCalls).toEqual([]);
+  expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
+  expect(reconcileCalls).toEqual([{
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "accepted",
+    delayMs: 1_234,
+  }]);
 });

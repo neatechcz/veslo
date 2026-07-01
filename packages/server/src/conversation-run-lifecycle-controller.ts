@@ -43,16 +43,67 @@ export type ConversationRunLifecycleSubmitOpenCodeInput = {
   body: Record<string, unknown>;
   clientMessageId: string | null;
   origin: string | null;
-  expectAiGatewayStart: boolean;
-  lifecycleOwner: OrchestratorLifecycleClient | null;
 };
 
 export type ConversationRunLifecycleSubmitOpenCodePort = (
   input: ConversationRunLifecycleSubmitOpenCodeInput,
 ) => Promise<unknown>;
 
+export type ConversationRunLifecycleAiGatewayActiveRunInput = {
+  traceId: string | null;
+  workspaceId: string;
+  conversationId: string;
+  runId: string;
+  opencodeSessionId: string;
+  clientMessageId: string | null;
+  origin: string | null;
+};
+
+export type ConversationRunLifecycleAiGatewayActiveRunPort = {
+  register(input: ConversationRunLifecycleAiGatewayActiveRunInput): void;
+  unregister(input: Omit<ConversationRunLifecycleAiGatewayActiveRunInput, "traceId" | "clientMessageId" | "origin">): void;
+};
+
+export type ConversationRunLifecycleProviderStartWatchInput = {
+  workspaceId: string;
+  conversationId: string;
+  runId: string;
+  opencodeSessionId: string;
+  clientMessageId: string | null;
+  origin: string | null;
+  startedAt: number;
+};
+
+export type ConversationRunLifecycleProviderStartWatchResult = {
+  started: boolean;
+  timeoutMs: number;
+};
+
 export type ConversationRunLifecycleAiGatewayProviderWatchPort = {
-  waitForProviderStart(input: unknown): Promise<unknown>;
+  waitForProviderStart(
+    input: ConversationRunLifecycleProviderStartWatchInput,
+  ): Promise<ConversationRunLifecycleProviderStartWatchResult>;
+};
+
+export type ConversationRunLifecycleAbortOpenCodeInput = {
+  runTrace: ConversationRunLifecycleTracer;
+  workspace: WorkspaceInfo;
+  target: ConversationRunLifecycleTarget;
+  runId: string;
+};
+
+export type ConversationRunLifecycleAbortOpenCodePort = (
+  input: ConversationRunLifecycleAbortOpenCodeInput,
+) => Promise<unknown>;
+
+export type ConversationRunLifecycleScheduleReconcileInput = {
+  workspace: WorkspaceInfo;
+  conversationId: string;
+  runId: string;
+  reason: string;
+  abortRequested?: boolean;
+  delayMs?: number;
+  attempt?: number;
 };
 
 export type ConversationRunLifecycleSubmitInput = {
@@ -76,9 +127,13 @@ export type ConversationRunLifecycleControllerOptions = {
   lifecycleClient?: OrchestratorLifecycleClient | null;
   queueStore?: ConversationRunQueueStore | null;
   submitOpenCode?: ConversationRunLifecycleSubmitOpenCodePort | null;
+  abortOpenCode?: ConversationRunLifecycleAbortOpenCodePort | null;
+  aiGatewayActiveRun?: ConversationRunLifecycleAiGatewayActiveRunPort | null;
   aiGatewayProviderWatch?: ConversationRunLifecycleAiGatewayProviderWatchPort | null;
   scheduleQueueDrain?: (workspaceId: string, conversationId: string, delayMs: number) => void;
   queueDrainPollMs?: number;
+  scheduleLifecycleReconcile?: (input: ConversationRunLifecycleScheduleReconcileInput) => void;
+  resolveLifecycleReconcileInitialDelayMs?: () => number;
   timers?: Partial<ConversationRunLifecycleTimerPort>;
   trace?: ConversationRunLifecycleTracePort | null;
   diagnostics?: {
@@ -104,6 +159,10 @@ export type ConversationRunLifecycleSnapshot = {
 
 export type ConversationRunLifecycleController = {
   submitRun(input: ConversationRunLifecycleSubmitInput): Promise<ConversationRunLifecycleSubmitResult>;
+  submitAcceptedRun(
+    input: ConversationRunLifecycleSubmitInput,
+    lifecycleOwner: OrchestratorLifecycleClient | null,
+  ): Promise<unknown>;
   start(): void;
   stop(): void;
   snapshotForTests(): ConversationRunLifecycleSnapshot;
@@ -220,6 +279,193 @@ export function createConversationRunLifecycleController(
     };
   };
 
+  const registerActiveAiGatewayRun = (input: ConversationRunLifecycleSubmitInput) => {
+    if (input.kind !== "prompt_async" || input.expectAiGatewayStart !== true || !options.aiGatewayActiveRun) {
+      return false;
+    }
+    options.aiGatewayActiveRun.register({
+      traceId: input.runTrace.traceId,
+      workspaceId: input.workspace.id,
+      conversationId: input.target.conversationId,
+      runId: input.runId,
+      opencodeSessionId: input.target.opencodeSessionId,
+      clientMessageId: input.clientMessageId,
+      origin: input.origin,
+    });
+    return true;
+  };
+
+  const unregisterActiveAiGatewayRun = (input: ConversationRunLifecycleSubmitInput) => {
+    options.aiGatewayActiveRun?.unregister({
+      workspaceId: input.workspace.id,
+      conversationId: input.target.conversationId,
+      runId: input.runId,
+      opencodeSessionId: input.target.opencodeSessionId,
+    });
+  };
+
+  const scheduleLifecycleReconcile = (
+    input: ConversationRunLifecycleSubmitInput,
+    reason: string,
+    delayMs: number,
+  ) => {
+    options.scheduleLifecycleReconcile?.({
+      workspace: input.workspace,
+      conversationId: input.target.conversationId,
+      runId: input.runId,
+      reason,
+      delayMs,
+    });
+  };
+
+  const markLifecycleFailed = async (
+    input: ConversationRunLifecycleSubmitInput,
+    lifecycleOwner: OrchestratorLifecycleClient | null,
+    event: string,
+    reason: string,
+    payload: Record<string, unknown> = {},
+  ) => {
+    if (!lifecycleOwner) return;
+    await input.runTrace.step(
+      event,
+      () => lifecycleOwner.markFailed(input.workspace.id, input.runId, reason),
+      {
+        workspaceId: input.workspace.id,
+        conversationId: input.target.conversationId,
+        runId: input.runId,
+        ...payload,
+      },
+    ).catch(() => undefined);
+  };
+
+  const abortOpenCodeAfterProviderStartTimeout = async (input: ConversationRunLifecycleSubmitInput) => {
+    if (!options.abortOpenCode) return;
+    await input.runTrace.step(
+      "server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout",
+      () => options.abortOpenCode!({
+        runTrace: input.runTrace,
+        workspace: input.workspace,
+        target: input.target,
+        runId: input.runId,
+      }),
+      {
+        workspaceId: input.workspace.id,
+        conversationId: input.target.conversationId,
+        runId: input.runId,
+        opencodeSessionId: input.target.opencodeSessionId,
+      },
+    ).catch((abortError) => {
+      input.runTrace.record("server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout:error", {
+        workspaceId: input.workspace.id,
+        conversationId: input.target.conversationId,
+        runId: input.runId,
+        opencodeSessionId: input.target.opencodeSessionId,
+        error: abortError instanceof Error ? abortError.message : String(abortError),
+      });
+    });
+  };
+
+  const submitAcceptedRun = async (
+    input: ConversationRunLifecycleSubmitInput,
+    lifecycleOwner: OrchestratorLifecycleClient | null,
+  ) => {
+    if (!options.submitOpenCode) {
+      throw new Error("OpenCode submit port is required for admitted conversation runs");
+    }
+    const providerWatchStartedAt = Date.now();
+    let activeAiGatewayRunRegistered = registerActiveAiGatewayRun(input);
+    const unregisterRegisteredAiGatewayRun = () => {
+      if (!activeAiGatewayRunRegistered) return;
+      activeAiGatewayRunRegistered = false;
+      unregisterActiveAiGatewayRun(input);
+    };
+
+    let upstream: unknown;
+    try {
+      upstream = await options.submitOpenCode({
+        runTrace: input.runTrace,
+        workspace: input.workspace,
+        target: input.target,
+        runId: input.runId,
+        kind: input.kind,
+        body: input.body,
+        clientMessageId: input.clientMessageId,
+        origin: input.origin,
+      });
+    } catch (error) {
+      await markLifecycleFailed(
+        input,
+        lifecycleOwner,
+        "server:conversation-run:lifecycle-mark-failed",
+        error instanceof Error ? error.message : String(error),
+      );
+      scheduleLifecycleReconcile(input, "submit-failed", 0);
+      unregisterRegisteredAiGatewayRun();
+      throw error;
+    }
+
+    try {
+      if (lifecycleOwner && input.kind === "prompt_async" && input.expectAiGatewayStart) {
+        if (!options.aiGatewayProviderWatch) {
+          throw new Error("AI gateway provider-start watch port is required for managed prompt runs");
+        }
+        const providerStart = await input.runTrace.step(
+          "server:conversation-run:ai-gateway-provider-start-watch",
+          () => options.aiGatewayProviderWatch!.waitForProviderStart({
+            workspaceId: input.workspace.id,
+            conversationId: input.target.conversationId,
+            runId: input.runId,
+            opencodeSessionId: input.target.opencodeSessionId,
+            clientMessageId: input.clientMessageId,
+            origin: input.origin,
+            startedAt: providerWatchStartedAt,
+          }),
+          {
+            workspaceId: input.workspace.id,
+            conversationId: input.target.conversationId,
+            runId: input.runId,
+            clientMessageId: input.clientMessageId,
+            origin: input.origin,
+            opencodeSessionId: input.target.opencodeSessionId,
+          },
+        );
+        if (!providerStart.started) {
+          const error = `AI gateway provider request did not start within ${providerStart.timeoutMs}ms.`;
+          await markLifecycleFailed(
+            input,
+            lifecycleOwner,
+            "server:conversation-run:lifecycle-mark-failed-ai-gateway-provider-start-timeout",
+            error,
+            {
+              opencodeSessionId: input.target.opencodeSessionId,
+              timeoutMs: providerStart.timeoutMs,
+            },
+          );
+          scheduleLifecycleReconcile(input, "ai-gateway-provider-start-timeout", 0);
+          await abortOpenCodeAfterProviderStartTimeout(input);
+          throw new ApiError(504, "ai_gateway_provider_start_timeout", error, {
+            workspaceId: input.workspace.id,
+            conversationId: input.target.conversationId,
+            runId: input.runId,
+            opencodeSessionId: input.target.opencodeSessionId,
+            clientMessageId: input.clientMessageId,
+            origin: input.origin,
+            timeoutMs: providerStart.timeoutMs,
+          });
+        }
+      }
+    } finally {
+      unregisterRegisteredAiGatewayRun();
+    }
+
+    scheduleLifecycleReconcile(
+      input,
+      "accepted",
+      options.resolveLifecycleReconcileInitialDelayMs?.() ?? 0,
+    );
+    return upstream;
+  };
+
   const clearTimer = (handle: unknown) => {
     if (!activeTimers.delete(handle)) return;
     clearScheduledTimeout(handle);
@@ -307,18 +553,7 @@ export function createConversationRunLifecycleController(
       if (!options.submitOpenCode) {
         throw new Error("OpenCode submit port is required for admitted conversation runs");
       }
-      const upstream = await options.submitOpenCode({
-        runTrace: input.runTrace,
-        workspace: input.workspace,
-        target: input.target,
-        runId: input.runId,
-        kind: input.kind,
-        body: input.body,
-        clientMessageId: input.clientMessageId,
-        origin: input.origin,
-        expectAiGatewayStart: input.expectAiGatewayStart,
-        lifecycleOwner,
-      });
+      const upstream = await submitAcceptedRun(input, lifecycleOwner);
       return {
         httpStatus: 200,
         payload: {
@@ -336,6 +571,7 @@ export function createConversationRunLifecycleController(
         },
       };
     },
+    submitAcceptedRun,
     start() {
       if (started) return;
       started = true;
