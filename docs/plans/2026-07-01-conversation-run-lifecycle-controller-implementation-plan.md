@@ -405,7 +405,7 @@ Use this ledger for quick discovery. The authoritative task details are below.
 | LFC04 | queue drain and lifecycle reconcile timers | done | codex-20260702-lfc04-queue-drain-reconcile | true |
 | LFC05 | transcript and startup wake-up wiring | done | codex-20260702-lfc05-transcript-startup-wakeup | true |
 | LFC06 | abort flow consolidation | done | codex-20260702-lfc06-abort-flow | true |
-| LFC08 | core diagnostics, docs, and final verification | available | null | false |
+| LFC08 | core diagnostics, docs, and final verification | reserved | codex-20260702-lfc08-final-verification | false |
 | LFC07 | deferred app latest-run and abort contract hardening | deferred | null | false |
 
 ## Task Details
@@ -844,9 +844,9 @@ Acceptance:
 
 ```yaml
 id: LFC08
-status: available
-reserved_by: null
-reserved_at: null
+status: reserved
+reserved_by: codex-20260702-lfc08-final-verification
+reserved_at: 2026-07-02T01:06:11.9867500+02:00
 branch: lifecycle/lfc08-diagnostics-final-verification
 worktree: ../veslo-lifecycle-lfc08-diagnostics-final-verification
 done: false
