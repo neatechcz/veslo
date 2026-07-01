@@ -1173,7 +1173,6 @@ export default function App() {
   const workingFiles = createMemo(() => deriveWorkingFiles(artifacts()));
   const [latestRunArtifactResponse, setLatestRunArtifactResponse] = createSignal<VesloSessionLatestRunArtifacts | undefined>(undefined);
   const activeSessionId = createMemo(() => selectedSessionId());
-  const activeSessions = createMemo(() => sessions());
   const activeSessionStatusById = createMemo(() => sessionStatusById());
   const busySessionByWorkspaceId = createMemo<WorkspaceBusyMap>(
     () => currentWorkspaceStoreRef()?.workspaceBusy() ?? {},
@@ -1202,7 +1201,6 @@ export default function App() {
     if (label === "status.running") return false;
     return busy();
   });
-  const activeMessages = createMemo(() => messages());
   const activeTodos = createMemo(() => todos());
   const activeArtifacts = createMemo(() => artifacts());
   const activeWorkingFiles = createMemo(() => workingFiles());
@@ -1928,7 +1926,6 @@ export default function App() {
 
   const globalSync = useGlobalSync();
   const providers = createMemo(() => globalSync.data.provider.all ?? []);
-  const providerDefaults = createMemo(() => globalSync.data.provider.default ?? {});
   const setProviders = (value: ProviderListItem[]) => {
     globalSync.set("provider", "all", value);
   };
