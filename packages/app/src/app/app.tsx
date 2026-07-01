@@ -88,11 +88,6 @@ import {
   shouldRouteCreatedSessionAfterSelect,
 } from "./controllers/session-creation-flow";
 import {
-  resolveManagedAiAccessRefreshFailure,
-  resolveManagedAiAccessRefreshPreflight,
-  resolveManagedAiAccessRefreshSuccess,
-} from "./controllers/managed-ai-runtime-controller";
-import {
   resolveManagedAiConfigSyncPreflight,
   resolveManagedAiConfigWriteDecision,
 } from "./controllers/managed-ai-config-sync";
@@ -117,6 +112,10 @@ import {
   createWorkspaceSendTarget,
   type SendTargetWorkspaceScope,
 } from "./context/workspace-send-target";
+import {
+  createManagedAiAccessStore,
+  type ManagedAiAccessStore,
+} from "./context/managed-ai-access-store";
 import {
   createConversationService,
   type ConversationAbortTarget,
@@ -384,7 +383,6 @@ import {
   clearVesloServerSettings,
   type VesloSessionLatestRunArtifacts,
   type VesloConversationRunInput,
-  type VesloManagedAiAccessBundle,
   type VesloServerClient,
   VesloServerError,
 } from "./lib/veslo-server";
@@ -402,31 +400,18 @@ import {
   type UnreadSessionMap,
 } from "./components/session/session-unread-model";
 import {
-  AI_ACCESS_ADMIN_MANAGED_MESSAGE_KEY,
-  AI_ACCESS_LOAD_FAILED_MESSAGE_KEY,
-  AI_ACCESS_LOADING_MESSAGE_KEY,
-  AI_ACCESS_NOT_CONFIGURED_MESSAGE_KEY,
   extractManagedApiKey,
   formatManagedAiAccessConfig,
   hasUsableManagedAiRuntimeConfig,
-  resolveManagedAiAccessMessageKey,
   resolveManagedAiAccessBundleState,
   resolveManagedAiProviderRoutingTarget,
   requiresManagedAiEngineBaseUrl,
   shouldPreserveManagedAiConfig,
-  shouldEnsureManagedAiLocalGateway,
-  shouldDeferManagedAiAccessRefresh,
-  type ManagedAiAccessProfile,
 } from "./lib/ai-access";
 import {
   resolveEffectiveRuntimeSandboxState,
   type EffectiveRuntimeSandboxState,
 } from "./lib/runtime-sandbox-state";
-import { isGatewayOwnedProvider } from "./utils/providers";
-import {
-  resolveManagedAiAccessRetryDelayMs,
-  shouldRetryManagedAiAccessRefresh,
-} from "./lib/managed-ai-access-retry";
 import { waitForManagedAiBootstrapReady } from "./lib/managed-ai-bootstrap-ready";
 import { shouldAutoReloadManagedAiConfig } from "./lib/managed-ai-config-reload";
 import { describeRequestError } from "./lib/client-errors";
@@ -457,28 +442,6 @@ type AppSendPromptOptions = SessionSendOptionsBase & {
 };
 
 const SEND_TRACE_LIMIT = 500;
-const MANAGED_AI_ACCESS_CACHE_STORAGE_KEY = "veslo.managedAiAccess.v1";
-const MANAGED_AI_ACCESS_CACHE_TTL_MS = 30 * 60 * 1000;
-const MANAGED_AI_ACCESS_PROOF_CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
-
-type ManagedAiAccessCacheRecord = {
-  schemaVersion: 1;
-  cacheKey: string;
-  fetchedAt: number;
-  profile: ManagedAiAccessProfile;
-  gatewayAccessToken: string;
-};
-
-type ManagedAiAccessProofCacheState = {
-  cacheKey: string;
-  loaded: boolean;
-  record: ManagedAiAccessCacheRecord | null;
-};
-
-let managedAiAccessRefreshInFlight: {
-  cacheKey: string;
-  promise: Promise<VesloManagedAiAccessBundle>;
-} | null = null;
 
 const roundSendTraceMs = (value: number) => Math.round(value * 100) / 100;
 
@@ -508,160 +471,6 @@ const createSendPreflightContext = (traceId?: string | null): SendPreflightConte
   targetWorkspace: null,
   conversationWorkspaceByDirectory: new Map(),
 });
-
-const isManagedAiAccessProfileValue = (value: unknown): value is ManagedAiAccessProfile => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const record = value as Partial<ManagedAiAccessProfile>;
-  return Boolean(
-    typeof record.userId === "string" &&
-      record.userId.trim() &&
-      typeof record.providerId === "string" &&
-      record.providerId.trim() &&
-      record.defaultModel &&
-      typeof record.defaultModel === "object" &&
-      typeof record.defaultModel.providerID === "string" &&
-      typeof record.defaultModel.modelID === "string" &&
-      Array.isArray(record.allowedModels),
-  );
-};
-
-const buildManagedAiAccessCacheKey = (input: {
-  userId: string | null | undefined;
-  orgId: string | null | undefined;
-  gatewayBaseUrl: string | null | undefined;
-}) => {
-  const userId = input.userId?.trim() ?? "";
-  const orgId = input.orgId?.trim() ?? "";
-  const gatewayBaseUrl = input.gatewayBaseUrl?.trim().replace(/\/+$/, "") ?? "";
-  return userId && gatewayBaseUrl ? `${userId}|${orgId}|${gatewayBaseUrl}` : "";
-};
-
-const readManagedAiAccessCache = (cacheKey: string): ManagedAiAccessCacheRecord | null => {
-  if (isTauriRuntime()) return null;
-  if (!cacheKey || typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(MANAGED_AI_ACCESS_CACHE_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<ManagedAiAccessCacheRecord>;
-    if (parsed.schemaVersion !== 1) return null;
-    if (parsed.cacheKey !== cacheKey) return null;
-    if (!Number.isFinite(parsed.fetchedAt) || Date.now() - Number(parsed.fetchedAt) > MANAGED_AI_ACCESS_CACHE_TTL_MS) {
-      return null;
-    }
-    if (!isManagedAiAccessProfileValue(parsed.profile)) return null;
-    const gatewayAccessToken = typeof parsed.gatewayAccessToken === "string" ? parsed.gatewayAccessToken.trim() : "";
-    if (!gatewayAccessToken || gatewayAccessToken === "[REDACTED]") return null;
-    return {
-      schemaVersion: 1,
-      cacheKey,
-      fetchedAt: Number(parsed.fetchedAt),
-      profile: parsed.profile,
-      gatewayAccessToken,
-    };
-  } catch {
-    return null;
-  }
-};
-
-const writeManagedAiAccessCache = (cacheKey: string, profile: ManagedAiAccessProfile, gatewayAccessToken: string) => {
-  if (!cacheKey || typeof window === "undefined") return;
-  if (isTauriRuntime()) {
-    void accessProofAiWrite({
-      cacheKey,
-      proof: {
-        providerId: profile.providerId,
-        defaultModel: profile.defaultModel,
-        allowedModels: profile.allowedModels,
-        updatedAt: profile.updatedAt,
-      },
-    }).catch(() => undefined);
-    return;
-  }
-  const token = gatewayAccessToken.trim();
-  if (!token || token === "[REDACTED]") return;
-  try {
-    const record: ManagedAiAccessCacheRecord = {
-      schemaVersion: 1,
-      cacheKey,
-      fetchedAt: Date.now(),
-      profile,
-      gatewayAccessToken: token,
-    };
-    window.localStorage.setItem(MANAGED_AI_ACCESS_CACHE_STORAGE_KEY, JSON.stringify(record));
-  } catch {
-    // ignore storage failures; the live refresh path still owns correctness
-  }
-};
-
-const clearManagedAiAccessCache = (cacheKey?: string | null) => {
-  if (isTauriRuntime()) {
-    void accessProofAiClear(cacheKey).catch(() => undefined);
-  }
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(MANAGED_AI_ACCESS_CACHE_STORAGE_KEY);
-  } catch {
-    // ignore
-  }
-};
-
-const readManagedAiAccessProofCache = async (
-  cacheKey: string,
-  userId: string,
-): Promise<ManagedAiAccessCacheRecord | null> => {
-  if (!cacheKey || !userId || !isTauriRuntime()) return null;
-  try {
-    const proof = await accessProofAiRead({
-      cacheKey,
-      maxAgeMs: MANAGED_AI_ACCESS_PROOF_CACHE_TTL_MS,
-    });
-    if (!proof) return null;
-    if (!isGatewayOwnedProvider(proof.providerId)) return null;
-    if (proof.defaultModel.providerID !== proof.providerId || !proof.defaultModel.modelID.trim()) return null;
-    const allowedModels = Array.isArray(proof.allowedModels)
-      ? proof.allowedModels.map((value) => value.trim()).filter(Boolean)
-      : [];
-    if (allowedModels.length > 0 && !allowedModels.includes(proof.defaultModel.modelID)) return null;
-    const profile: ManagedAiAccessProfile = {
-      userId,
-      providerId: proof.providerId,
-      defaultModel: proof.defaultModel,
-      allowedModels,
-      updatedAt: proof.updatedAt ?? null,
-    };
-    if (!isManagedAiAccessProfileValue(profile)) return null;
-    return {
-      schemaVersion: 1,
-      cacheKey,
-      fetchedAt: proof.fetchedAt,
-      profile,
-      gatewayAccessToken: "",
-    };
-  } catch {
-    return null;
-  }
-};
-
-const loadManagedAiAccessSingleFlight = (
-  cacheKey: string,
-  load: () => Promise<VesloManagedAiAccessBundle>,
-): Promise<VesloManagedAiAccessBundle> => {
-  if (cacheKey && managedAiAccessRefreshInFlight?.cacheKey === cacheKey) {
-    return managedAiAccessRefreshInFlight.promise;
-  }
-
-  const promise = load().finally(() => {
-    if (managedAiAccessRefreshInFlight?.cacheKey === cacheKey) {
-      managedAiAccessRefreshInFlight = null;
-    }
-  });
-
-  if (cacheKey) {
-    managedAiAccessRefreshInFlight = { cacheKey, promise };
-  }
-
-  return promise;
-};
 
 const activeSendTraceId = () => {
   if (typeof window === "undefined") return null;
@@ -978,8 +787,17 @@ export default function App() {
     }
     window.open(url, "_blank", "noopener,noreferrer");
   };
+  let managedAiAccessStoreRef: ManagedAiAccessStore | null = null;
+  let pendingManagedAiAccessRefreshFromAuth = false;
   const requestManagedAiAccessRefreshFromAuth = () => {
-    setManagedAiAccessRefreshNonce((value) => value + 1);
+    if (managedAiAccessStoreRef) {
+      managedAiAccessStoreRef.requestManagedAiAccessRefresh();
+      return;
+    }
+    pendingManagedAiAccessRefreshFromAuth = true;
+  };
+  const clearManagedAiAccessCacheFromAuth = () => {
+    managedAiAccessStoreRef?.clearManagedAiAccessCache();
   };
   const denDesktopAuthWorkflow = createDenDesktopAuthWorkflow({
     isTauriRuntime,
@@ -994,7 +812,7 @@ export default function App() {
       setBooting,
     },
     managedAi: {
-      clearManagedAiAccessCache: () => clearManagedAiAccessCache(),
+      clearManagedAiAccessCache: clearManagedAiAccessCacheFromAuth,
       requestManagedAiAccessRefresh: requestManagedAiAccessRefreshFromAuth,
     },
     account: {
@@ -3079,18 +2897,50 @@ export default function App() {
   };
 
   const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
-  const [managedAiAccess, setManagedAiAccess] = createSignal<ManagedAiAccessProfile | null>(null);
-  const [managedAiGatewayAccessToken, setManagedAiGatewayAccessToken] = createSignal("");
-  const [managedAiAccessBusy, setManagedAiAccessBusy] = createSignal(false);
-  const [managedAiAccessError, setManagedAiAccessError] = createSignal<string | null>(null);
+  const managedAiAccessStore = createManagedAiAccessStore({
+    authenticatedUser,
+    denAuthRevision,
+    readDenAuth,
+    isTauriRuntime,
+    gatewayVesloServerClient,
+    managedAiGatewayBaseUrl,
+    vesloServerAuth,
+    activeVesloServerHostInfo,
+    activeWorkspaceDisplay: () => workspaceStore.activeWorkspaceDisplay(),
+    ensureLocalVesloServerRunning,
+    providers,
+    formatModelLabel,
+    translate: (key) => t(key, currentLocale()),
+    reportError,
+    describeRequestError,
+    requestManagedAiAccessBundle,
+    proofCache: {
+      read: accessProofAiRead,
+      write: accessProofAiWrite,
+      clear: accessProofAiClear,
+    },
+  });
+  managedAiAccessStoreRef = managedAiAccessStore;
+  if (pendingManagedAiAccessRefreshFromAuth) {
+    pendingManagedAiAccessRefreshFromAuth = false;
+    managedAiAccessStore.requestManagedAiAccessRefresh();
+  }
+  const {
+    managedAiAccess,
+    managedAiGatewayAccessToken,
+    managedAiAccessBusy,
+    managedAiAccessError,
+    managedAiAccessModel,
+    denGatewayAccessToken,
+    managedAiAccessMessage,
+    managedAiAccessProviderLabel,
+    managedAiAccessDefaultModelLabel,
+    managedAiAccessBlockedReason,
+  } = managedAiAccessStore;
   let lastNewSessionDisabledDiagnosticKey = "";
-  const [managedAiAccessRefreshNonce, setManagedAiAccessRefreshNonce] = createSignal(0);
-  const [managedAiAccessRetryAttempt, setManagedAiAccessRetryAttempt] = createSignal(0);
-  const [managedAiAccessRetryScheduled, setManagedAiAccessRetryScheduled] = createSignal(false);
   const [managedAiBootstrapPendingCount, setManagedAiBootstrapPendingCount] = createSignal(0);
   const [sendPromptInFlightCount, setSendPromptInFlightCount] = createSignal(0);
   const sendPromptInFlight = createMemo(() => sendPromptInFlightCount() > 0);
-  const managedAiAccessModel = createMemo(() => managedAiAccess()?.defaultModel ?? null);
   let lastManagedAiAccessResetKey = "";
   // When the managed AI profile changes (admin reassigns user, credential
   // is rotated, etc.) we need to re-apply config on the next workspace patch.
@@ -3107,64 +2957,6 @@ export default function App() {
   const managedAiBootstrapBusy = createMemo(
     () => managedAiAccessBusy() || managedAiBootstrapPendingCount() > 0,
   );
-  const requestManagedAiAccessRefresh = () => {
-    setManagedAiAccessRefreshNonce((value) => value + 1);
-  };
-  const denGatewayAccessToken = createMemo(() => {
-    denAuthRevision();
-    return readDenAuth()?.token?.trim() ?? "";
-  });
-  const managedAiAccessCacheContext = createMemo(() => {
-    denAuthRevision();
-    const gatewayClient = gatewayVesloServerClient();
-    const managedAiBaseUrl = managedAiGatewayBaseUrl();
-    const denAuth = readDenAuth();
-    const gatewayBaseUrl = managedAiBaseUrl || (isTauriRuntime() ? denAuth?.denApiBase ?? "" : "") || gatewayClient?.baseUrl || "";
-    return {
-      cacheKey: buildManagedAiAccessCacheKey({
-        userId: denAuth?.user?.id,
-        orgId: denAuth?.orgId || denAuth?.org?.id,
-        gatewayBaseUrl,
-      }),
-      userId: denAuth?.user?.id?.trim() ?? "",
-      gatewayBaseUrl,
-    };
-  });
-  const [managedAiAccessProofCacheState, setManagedAiAccessProofCacheState] =
-    createSignal<ManagedAiAccessProofCacheState>({
-      cacheKey: "",
-      loaded: true,
-      record: null,
-    });
-
-  createEffect(() => {
-    if (!isTauriRuntime()) return;
-    const context = managedAiAccessCacheContext();
-    const cacheKey = context.cacheKey.trim();
-    const userId = context.userId.trim();
-    if (!cacheKey || !userId) {
-      setManagedAiAccessProofCacheState({ cacheKey, loaded: true, record: null });
-      return;
-    }
-    const currentState = untrack(managedAiAccessProofCacheState);
-    if (currentState.cacheKey === cacheKey && currentState.loaded) return;
-
-    let cancelled = false;
-    setManagedAiAccessProofCacheState({ cacheKey, loaded: false, record: null });
-    void readManagedAiAccessProofCache(cacheKey, userId)
-      .then((record) => {
-        if (cancelled) return;
-        setManagedAiAccessProofCacheState({ cacheKey, loaded: true, record });
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setManagedAiAccessProofCacheState({ cacheKey, loaded: true, record: null });
-      });
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
 
   const getConfigSnapshot = (content: string | null) => {
     if (!content?.trim()) return "";
@@ -3586,14 +3378,13 @@ export default function App() {
           ok: false,
           reason,
         });
-        if (reason) setManagedAiAccessError(reason);
+        if (reason) managedAiAccessStore.setManagedAiAccessError(reason);
         return false;
       }
 
-      setManagedAiAccess(profile);
-      setManagedAiGatewayAccessToken(gatewayAccessToken);
-      setManagedAiAccessError(null);
-      writeManagedAiAccessCache(managedAiAccessCacheContext().cacheKey, profile, gatewayAccessToken);
+      managedAiAccessStore.applyManagedAiAccessProfile(profile, gatewayAccessToken, {
+        writeCache: true,
+      });
       recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:result", {
         ...tracePayload,
         ok: true,
@@ -4988,265 +4779,6 @@ export default function App() {
         // ignore
       }
     }
-  });
-
-  const translateManagedAiAccessMessage = (message: string | null | undefined) => {
-    const trimmed = message?.trim() ?? "";
-    if (!trimmed) return t(AI_ACCESS_NOT_CONFIGURED_MESSAGE_KEY, currentLocale());
-    const translationKey = resolveManagedAiAccessMessageKey(trimmed);
-    return translationKey ? t(translationKey, currentLocale()) : trimmed;
-  };
-
-  const managedAiAccessMessage = createMemo(() => {
-    if (managedAiAccess()) return t(AI_ACCESS_ADMIN_MANAGED_MESSAGE_KEY, currentLocale());
-    if (managedAiAccessBusy()) return t(AI_ACCESS_LOADING_MESSAGE_KEY, currentLocale());
-    return translateManagedAiAccessMessage(managedAiAccessError());
-  });
-
-  const managedAiAccessProviderLabel = createMemo(() => {
-    const profile = managedAiAccess();
-    if (!profile) return null;
-    const provider = providers().find((entry) => entry.id === profile.providerId);
-    return provider?.name ?? profile.providerId;
-  });
-
-  const managedAiAccessDefaultModelLabel = createMemo(() => {
-    const profile = managedAiAccess();
-    if (!profile) return null;
-    return formatModelLabel(profile.defaultModel, providers());
-  });
-
-  const managedAiAccessBlockedReason = createMemo(() => {
-    const userToken = denGatewayAccessToken();
-    if (!userToken || !gatewayVesloServerClient()) {
-      return null;
-    }
-    if (managedAiAccess()) return null;
-    if (managedAiAccessBusy()) return t(AI_ACCESS_LOADING_MESSAGE_KEY, currentLocale());
-    return translateManagedAiAccessMessage(managedAiAccessError());
-  });
-
-  createEffect(() => {
-    authenticatedUser();
-    if (managedAiAccess()) return;
-
-    const userToken = denGatewayAccessToken();
-    const localAuth = vesloServerAuth();
-    const hostInfo = activeVesloServerHostInfo();
-    const workspace = workspaceStore.activeWorkspaceDisplay();
-
-    if (
-      !shouldEnsureManagedAiLocalGateway({
-        isDesktopRuntime: isTauriRuntime(),
-        workspaceType: workspace.workspaceType,
-        userToken,
-        localServerRunning: Boolean(hostInfo?.baseUrl?.trim()),
-        localClientToken: localAuth.token,
-      })
-    ) {
-      return;
-    }
-
-    let cancelled = false;
-    void ensureLocalVesloServerRunning({ ignoreStartupPreference: true })
-      .then((ok) => {
-        if (!cancelled && ok) {
-          requestManagedAiAccessRefresh();
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) reportError(error, "managedAi.localGateway");
-      });
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
-  createEffect(() => {
-    authenticatedUser();
-    managedAiAccessRefreshNonce();
-
-    const gatewayClient = gatewayVesloServerClient();
-    const managedAiBaseUrl = managedAiGatewayBaseUrl();
-    const userToken = denGatewayAccessToken();
-    const cacheContext = managedAiAccessCacheContext();
-    const managedAiCacheKey = cacheContext.cacheKey;
-    const gatewayLocalAuth = vesloServerAuth();
-    const proofCacheState = managedAiAccessProofCacheState();
-    if (
-      isTauriRuntime() &&
-      managedAiCacheKey &&
-      (!proofCacheState.loaded || proofCacheState.cacheKey !== managedAiCacheKey)
-    ) {
-      if (!managedAiAccess()) {
-        setManagedAiAccessBusy(true);
-      }
-      return;
-    }
-
-    const proofCachedAccess =
-      isTauriRuntime() && proofCacheState.cacheKey === managedAiCacheKey
-        ? proofCacheState.record
-        : null;
-    const cachedAccess = proofCachedAccess ?? readManagedAiAccessCache(managedAiCacheKey);
-    const refreshPreflight = resolveManagedAiAccessRefreshPreflight({
-      hasGatewayClient: Boolean(gatewayClient),
-      managedAiBaseUrl,
-      userToken,
-      deferForLocalGateway: shouldDeferManagedAiAccessRefresh({
-        gatewayBaseUrl: managedAiBaseUrl || gatewayClient?.baseUrl || "",
-        isDesktopRuntime: isTauriRuntime(),
-        localClientToken: gatewayLocalAuth.token,
-      }),
-      cachedAccessPresent: Boolean(cachedAccess),
-      freshCachedAccessPresent: Boolean(proofCachedAccess?.gatewayAccessToken),
-    });
-    if (refreshPreflight.type === "reset") {
-      setManagedAiAccess(null);
-      setManagedAiGatewayAccessToken("");
-      setManagedAiAccessBusy(false);
-      setManagedAiAccessError(null);
-      setManagedAiAccessRetryAttempt(0);
-      setManagedAiAccessRetryScheduled(false);
-      return;
-    }
-    if (refreshPreflight.type === "use-cache") {
-      if (cachedAccess) {
-        setManagedAiAccess(cachedAccess.profile);
-        setManagedAiGatewayAccessToken(cachedAccess.gatewayAccessToken);
-        setManagedAiAccessError(null);
-      }
-      setManagedAiAccessBusy(false);
-      setManagedAiAccessRetryAttempt(0);
-      return;
-    }
-
-    let cancelled = false;
-    let retryTimeoutId: number | null = null;
-    if (refreshPreflight.applyCachedAccessFirst && cachedAccess) {
-      setManagedAiAccess(cachedAccess.profile);
-      setManagedAiGatewayAccessToken(cachedAccess.gatewayAccessToken);
-      setManagedAiAccessError(null);
-    }
-    setManagedAiAccessBusy(true);
-    setManagedAiAccessError(null);
-
-    const scheduleRetry = (profilePresent: boolean) => {
-      if (
-        !shouldRetryManagedAiAccessRefresh({
-          hasGatewayClient: true,
-          userToken,
-          profilePresent,
-        })
-      ) {
-        setManagedAiAccessRetryAttempt(0);
-        setManagedAiAccessRetryScheduled(false);
-        return;
-      }
-
-      const delayMs = resolveManagedAiAccessRetryDelayMs(managedAiAccessRetryAttempt());
-      setManagedAiAccessRetryScheduled(true);
-      retryTimeoutId = window.setTimeout(() => {
-        if (cancelled) return;
-        setManagedAiAccessRetryScheduled(false);
-        setManagedAiAccessRetryAttempt((value) => value + 1);
-        requestManagedAiAccessRefresh();
-      }, delayMs);
-    };
-
-    const loadManagedAiAccess = loadManagedAiAccessSingleFlight(
-      managedAiCacheKey,
-      () =>
-        managedAiBaseUrl
-          ? requestManagedAiAccessBundle(managedAiBaseUrl, userToken)
-          : gatewayClient!.getMyAiAccess(userToken),
-    );
-
-    void loadManagedAiAccess
-      .then((response) => {
-        if (cancelled) return;
-        const { profile, gatewayAccessToken, reason } = resolveManagedAiAccessBundleState({
-          aiAccess: response.aiAccess,
-          accessToken: response.accessToken,
-          fallbackAccessToken: userToken,
-          requireGatewayAccessToken: Boolean(managedAiBaseUrl),
-        });
-        const successDecision = resolveManagedAiAccessRefreshSuccess({
-          profile,
-          gatewayAccessToken,
-          reason,
-        });
-        if (successDecision.type === "apply-profile") {
-          setManagedAiAccess(successDecision.profile);
-          setManagedAiGatewayAccessToken(successDecision.gatewayAccessToken);
-          setManagedAiAccessError(successDecision.error);
-          writeManagedAiAccessCache(
-            managedAiCacheKey,
-            successDecision.profile,
-            successDecision.gatewayAccessToken,
-          );
-          setManagedAiAccessRetryAttempt(0);
-          setManagedAiAccessRetryScheduled(false);
-          return;
-        }
-        setManagedAiAccess(null);
-        setManagedAiGatewayAccessToken(successDecision.gatewayAccessToken);
-        setManagedAiAccessError(successDecision.error);
-        clearManagedAiAccessCache(managedAiCacheKey);
-        scheduleRetry(false);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        const failureDecision = resolveManagedAiAccessRefreshFailure({
-          cachedAccessPresent: Boolean(cachedAccess),
-          errorMessage: describeRequestError(error, t(AI_ACCESS_LOAD_FAILED_MESSAGE_KEY, currentLocale())),
-        });
-        if (failureDecision.clearProfile) {
-          setManagedAiAccess(null);
-        }
-        if (failureDecision.gatewayAccessToken !== null) {
-          setManagedAiGatewayAccessToken(failureDecision.gatewayAccessToken);
-        }
-        setManagedAiAccessError(failureDecision.error);
-        scheduleRetry(false);
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setManagedAiAccessBusy(false);
-      });
-
-    onCleanup(() => {
-      cancelled = true;
-      if (retryTimeoutId != null) {
-        window.clearTimeout(retryTimeoutId);
-      }
-      setManagedAiAccessRetryScheduled(false);
-    });
-  });
-
-  createEffect(() => {
-    authenticatedUser();
-
-    if (typeof window === "undefined") return;
-    const gatewayClient = gatewayVesloServerClient();
-    const userToken = denGatewayAccessToken();
-    if (!gatewayClient || !userToken) return;
-
-    const refresh = () => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
-        return;
-      }
-      requestManagedAiAccessRefresh();
-    };
-
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
-
-    onCleanup(() => {
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
-    });
   });
 
   const editRemoteWorkspaceDefaults = createMemo(() => {

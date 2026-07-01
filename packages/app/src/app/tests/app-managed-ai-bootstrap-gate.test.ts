@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const storeSource = readFileSync(
+  new URL("../context/managed-ai-access-store.ts", import.meta.url),
+  "utf8",
+);
 const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
 
 test("managed AI bootstrap readiness returns a blocking result when setup is not ready", () => {
@@ -89,7 +93,7 @@ test("managed AI bootstrap preserves existing managed routing instead of downgra
 
 test("managed AI access refresh keeps the proxied gateway access token when using the local Veslo server client", () => {
   assert.doesNotMatch(
-    source,
+    storeSource,
     /gatewayClient!\.getMyAiAccess\(userToken\)\.then\(\(response\) => \(\{\s*aiAccess: response\.aiAccess,\s*accessToken: null,\s*\}\)\)/s,
     "managed AI refresh should not discard the access token returned by the local Veslo server proxy",
   );
@@ -186,30 +190,30 @@ test("managed AI runtime config validation is workspace-scoped", () => {
 
 test("managed AI access cache has a bounded TTL and hydrates before background refresh", () => {
   assert.match(
-    source,
-    /const MANAGED_AI_ACCESS_CACHE_TTL_MS = 30 \* 60 \* 1000;/,
+    storeSource,
+    /export const MANAGED_AI_ACCESS_CACHE_TTL_MS = 30 \* 60 \* 1000;/,
     "managed AI access cache should have a bounded lifetime",
   );
   assert.match(
-    source,
-    /const proofCachedAccess =[\s\S]*proofCacheState\.record[\s\S]*const cachedAccess = proofCachedAccess \?\? readManagedAiAccessCache\(managedAiCacheKey\);[\s\S]*if \(refreshPreflight\.applyCachedAccessFirst && cachedAccess\) \{[\s\S]*setManagedAiAccess\(cachedAccess\.profile\);[\s\S]*setManagedAiGatewayAccessToken\(cachedAccess\.gatewayAccessToken\);[\s\S]*setManagedAiAccessBusy\(true\);/,
+    storeSource,
+    /const proofCachedAccess =[\s\S]*proofCacheState\.record[\s\S]*const cachedAccess =[\s\S]*proofCachedAccess \?\? readManagedAiAccessCache\(managedAiCacheKey, cacheOptions\(\)\);[\s\S]*if \(refreshPreflight\.applyCachedAccessFirst && cachedAccess\) \{[\s\S]*setManagedAiAccess\(cachedAccess\.profile\);[\s\S]*setManagedAiGatewayAccessToken\(cachedAccess\.gatewayAccessToken\);[\s\S]*setManagedAiAccessBusy\(true\);/,
     "managed AI access cache should hydrate usable proof or local state before the refresh request marks access busy",
   );
 });
 
 test("managed AI access refresh uses single-flight per cache key", () => {
   assert.match(
-    source,
+    storeSource,
     /let managedAiAccessRefreshInFlight:/,
     "managed AI refresh should keep an in-flight request slot",
   );
   assert.match(
-    source,
+    storeSource,
     /managedAiAccessRefreshInFlight\?\.cacheKey === cacheKey[\s\S]*return managedAiAccessRefreshInFlight\.promise;/,
     "managed AI refresh should reuse the in-flight promise for the same cache key",
   );
   assert.match(
-    source,
+    storeSource,
     /const loadManagedAiAccess = loadManagedAiAccessSingleFlight\(\s*managedAiCacheKey,/,
     "managed AI refresh effect should run through the single-flight helper",
   );

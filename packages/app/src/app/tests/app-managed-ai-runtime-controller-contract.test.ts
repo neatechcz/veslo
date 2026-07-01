@@ -2,21 +2,30 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const storeSource = readFileSync(
+  new URL("../context/managed-ai-access-store.ts", import.meta.url),
+  "utf8",
+);
 
 function managedAiAccessRefreshEffectSource(): string {
-  const nonce = source.indexOf("managedAiAccessRefreshNonce();");
-  const start = source.lastIndexOf("createEffect(() => {", nonce);
-  const end = source.indexOf("  createEffect(() => {", nonce + 1);
+  const nonce = storeSource.indexOf("managedAiAccessRefreshNonce();");
+  const start = storeSource.lastIndexOf("effect(() => {", nonce);
+  const end = storeSource.indexOf("  effect(() => {", nonce + 1);
   assert.ok(nonce >= 0 && start >= 0 && end > start, "managed AI access refresh effect should be present");
-  return source.slice(start, end);
+  return storeSource.slice(start, end);
 }
 
 test("app delegates managed AI access refresh decisions to the runtime controller", () => {
   assert.match(
-    source,
-    /import \{\s*resolveManagedAiAccessRefreshFailure,\s*resolveManagedAiAccessRefreshPreflight,\s*resolveManagedAiAccessRefreshSuccess,\s*\} from "\.\/controllers\/managed-ai-runtime-controller";/,
-    "app.tsx should import managed AI runtime controller helpers",
+    appSource,
+    /createManagedAiAccessStore\(\{/,
+    "app.tsx should compose the managed AI access store",
+  );
+  assert.match(
+    storeSource,
+    /import \{\s*resolveManagedAiAccessRefreshFailure,\s*resolveManagedAiAccessRefreshPreflight,\s*resolveManagedAiAccessRefreshSuccess,\s*\} from "\.\.\/controllers\/managed-ai-runtime-controller";/,
+    "managed AI access store should import runtime controller helpers",
   );
 });
 
@@ -40,18 +49,18 @@ test("managed AI access refresh effect executes controller decisions", () => {
   );
   assert.match(
     effectSource,
-    /const failureDecision = resolveManagedAiAccessRefreshFailure\(\{[\s\S]*cachedAccessPresent: Boolean\(cachedAccess\),[\s\S]*errorMessage: describeRequestError\(error, t\(AI_ACCESS_LOAD_FAILED_MESSAGE_KEY, currentLocale\(\)\)\),[\s\S]*\}\);/,
+    /const failureDecision = resolveManagedAiAccessRefreshFailure\(\{[\s\S]*cachedAccessPresent: Boolean\(cachedAccess\),[\s\S]*errorMessage: options\.describeRequestError\([\s\S]*options\.translate\(AI_ACCESS_LOAD_FAILED_MESSAGE_KEY\),[\s\S]*\}\);/,
     "failed access refresh state transition should be delegated",
   );
 });
 
 test("desktop managed AI proof cache stores policy metadata without gateway tokens", () => {
-  const proofWriteCall = source.match(/void accessProofAiWrite\(\{[\s\S]*?\}\)\.catch/);
+  const proofWriteCall = storeSource.match(/void resolved\.proofCache\?\.write\?\(\{[\s\S]*?\}\)\.catch/);
   assert.ok(proofWriteCall, "desktop proof cache write should be present");
 
   assert.match(
     proofWriteCall[0],
-    /void accessProofAiWrite\(\{[\s\S]*cacheKey,[\s\S]*proof: \{[\s\S]*providerId: profile\.providerId,[\s\S]*defaultModel: profile\.defaultModel,[\s\S]*allowedModels: profile\.allowedModels,[\s\S]*updatedAt: profile\.updatedAt,[\s\S]*\},[\s\S]*\}\)/,
+    /void resolved\.proofCache\?\.write\?\(\{[\s\S]*cacheKey,[\s\S]*proof: \{[\s\S]*providerId: profile\.providerId,[\s\S]*defaultModel: profile\.defaultModel,[\s\S]*allowedModels: profile\.allowedModels,[\s\S]*updatedAt: profile\.updatedAt,[\s\S]*\},[\s\S]*\}\)/,
     "desktop proof cache should write only profile metadata",
   );
   assert.doesNotMatch(
