@@ -15,6 +15,8 @@ import * as sessionNavigation from "../../pages/session-navigation.js";
 import type { WorkspaceActivationOptions } from "../../context/workspace-types.js";
 
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
+const appViewPropsSource = readFileSync(new URL("../../app-view-props.ts", import.meta.url), "utf8");
+const sessionSendWorkflowSource = readFileSync(new URL("../../pages/session-send-workflow.ts", import.meta.url), "utf8");
 const sessionPageSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
 const dashboardSource = readFileSync(new URL("../../pages/dashboard.tsx", import.meta.url), "utf8");
 const workspaceSessionSelectionSource = readFileSync(
@@ -98,7 +100,7 @@ const redoLastUserMessageSource =
     ? appSource.slice(redoLastUserMessageStart, redoLastUserMessageEnd)
     : "";
 const chooseFolderForCurrentSessionStart = appSource.indexOf("  const chooseFolderForCurrentSession = async () => {");
-const chooseFolderForCurrentSessionEnd = appSource.indexOf("  onMount(async () => {", chooseFolderForCurrentSessionStart);
+const chooseFolderForCurrentSessionEnd = appSource.indexOf("  const appViewProps = createAppViewProps({", chooseFolderForCurrentSessionStart);
 const chooseFolderForCurrentSessionSource =
   chooseFolderForCurrentSessionStart >= 0 && chooseFolderForCurrentSessionEnd >= 0
     ? appSource.slice(chooseFolderForCurrentSessionStart, chooseFolderForCurrentSessionEnd)
@@ -109,11 +111,11 @@ const renameSessionTitleSource =
   renameSessionTitleStart >= 0 && renameSessionTitleEnd >= 0
     ? appSource.slice(renameSessionTitleStart, renameSessionTitleEnd)
     : "";
-const sendPromptStart = appSource.indexOf("  async function sendPrompt(");
-const sendPromptEnd = appSource.indexOf("  async function abortSession(", sendPromptStart);
+const sendPromptStart = sessionSendWorkflowSource.indexOf("  async function sendPrompt(");
+const sendPromptEnd = sessionSendWorkflowSource.indexOf("  async function abortSession(", sendPromptStart);
 const sendPromptSource =
   sendPromptStart >= 0 && sendPromptEnd >= 0
-    ? appSource.slice(sendPromptStart, sendPromptEnd)
+    ? sessionSendWorkflowSource.slice(sendPromptStart, sendPromptEnd)
     : "";
 
 function assertScopedWorkspaceGuardBeforeClient(source: string, name: string): void {
@@ -188,7 +190,7 @@ const openPendingDraftFromDirectorySelection = () => {
 
 test("app passes active pending draft key into session view props", () => {
   assert.match(
-    appSource,
+    appViewPropsSource,
     /activePendingDraftKey: activePendingDraftKey\(\),/,
     "session props should pass the active pending draft key into SessionView",
   );
@@ -286,7 +288,7 @@ test("app activates selected session workspace at send time, not browse time", (
   );
   assert.match(
     sendPromptSource,
-    /const explicitTargetSessionId = isPendingSessionInstanceId\(options\.targetSessionId\)[\s\S]*let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;[\s\S]*selectedSessionIgnoredForForeignWorkspace: Boolean\([\s\S]*selectedSessionCandidate && !selectedSessionBelongsToActiveWorkspace && !explicitTargetSessionId,[\s\S]*\),/s,
+    /const explicitTargetSessionId = deps\.isPendingSessionInstanceId\(options\.targetSessionId\)[\s\S]*let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;[\s\S]*selectedSessionIgnoredForForeignWorkspace: Boolean\([\s\S]*selectedSessionCandidate && !selectedSessionBelongsToActiveWorkspace && !explicitTargetSessionId,[\s\S]*\),/s,
     "send trace should expose when a stale selected session was ignored, but not when it was passed as the explicit send target",
   );
   assert.match(
@@ -296,7 +298,7 @@ test("app activates selected session workspace at send time, not browse time", (
   );
   assert.match(
     sendPromptSource,
-    /const scopedSessionID = sessionID\?\.trim\(\) \|\| "";[\s\S]*if \([\s\S]*scopedSessionID &&[\s\S]*sendTraceStep\(\s*"sendPrompt:ensure-scoped-workspace-active",[\s\S]*ensureSelectedSessionWorkspaceActiveForSend\(scopedSessionID, sendTraceId\)[\s\S]*\) \{[\s\S]*recordSendTrace\("sendPrompt:blocked-scoped-workspace",[\s\S]*?\);[\s\S]*return false;[\s\S]*\}[\s\S]*resolvedDraft = await sendTraceStep\(\s*"sendPrompt:maybe-resolve-skill-command"/s,
+    /const scopedSessionID = sessionID\?\.trim\(\) \|\| "";[\s\S]*if \([\s\S]*scopedSessionID &&[\s\S]*deps\.sendTraceStep\(\s*"sendPrompt:ensure-scoped-workspace-active",[\s\S]*deps\.ensureSelectedSessionWorkspaceActiveForSend\(scopedSessionID, sendTraceId\)[\s\S]*deps\.recordSendTrace\("sendPrompt:blocked-scoped-workspace",[\s\S]*?\);[\s\S]*return false;[\s\S]*\}[\s\S]*resolvedDraft = await deps\.sendTraceStep\(\s*"sendPrompt:maybe-resolve-skill-command"/s,
     "scoped workspace activation should run during send before workspace-sensitive prompt routing",
   );
 });

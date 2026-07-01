@@ -6,6 +6,7 @@ import * as dashboardMenuNavigation from "../../pages/dashboard-menu-navigation.
 import { resolveVisibleSettingsTab } from "../../lib/settings-tab-label.js";
 
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
+const appViewPropsSource = readFileSync(new URL("../../app-view-props.ts", import.meta.url), "utf8");
 const workspaceSessionSelectionSource = readFileSync(
   new URL("../../context/workspace-session-selection.ts", import.meta.url),
   "utf8",
@@ -293,7 +294,7 @@ test("app derives the active workspace last session and passes it into Dashboard
     "app should wire active workspace last-session fallback through the workspace session selection controller",
   );
   assert.match(
-    appSource,
+    appViewPropsSource,
     /lastWorkspaceSessionId:\s*activeWorkspaceLastSessionId\(\)/,
     "dashboard props should include the active workspace last session fallback",
   );
