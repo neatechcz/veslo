@@ -33,8 +33,6 @@ export type AppRouteSyncDeps = {
   navigate: AppRouteNavigate;
   isTauriRuntime: Accessor<boolean>;
   creatingSession: Accessor<boolean>;
-  sessionViewLockUntil: Accessor<number>;
-  now?: Accessor<number>;
 };
 
 export type AppSessionRouteContext = {
@@ -147,7 +145,6 @@ function executeStartupRouteDecision(
 }
 
 export function createAppRouteSync(deps: AppRouteSyncDeps): AppRouteSyncController {
-  const now = deps.now ?? (() => Date.now());
   const currentView = createMemo<View>(() => resolveCurrentView(deps.pathname()));
   const isProtoV1Ux = createMemo(() => normalizePath(deps.pathname()).startsWith("/proto-v1-ux"));
   const [tab, writeTabState] = createSignal<DashboardTab>("scheduled");
@@ -180,9 +177,6 @@ export function createAppRouteSync(deps: AppRouteSyncDeps): AppRouteSyncControll
 
   const setView = (next: View, sessionId?: string) => {
     if (next === "dashboard" && deps.creatingSession()) {
-      return;
-    }
-    if (next === "dashboard" && now() < deps.sessionViewLockUntil()) {
       return;
     }
     if (next === "proto") {

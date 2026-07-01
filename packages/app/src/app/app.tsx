@@ -390,13 +390,11 @@ export default function App() {
   };
 
   const [creatingSession, setCreatingSession] = createSignal(false);
-  const [sessionViewLockUntil, setSessionViewLockUntil] = createSignal(0);
   const appRouteSync = createAppRouteSync({
     pathname: () => location.pathname,
     navigate: (to, options) => navigate(to, options),
     isTauriRuntime,
     creatingSession,
-    sessionViewLockUntil,
   });
   const {
     currentView,

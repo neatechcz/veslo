@@ -18,7 +18,6 @@ type Navigation = {
 test("app route sync exposes view and navigation helpers without owning session selection", () => {
   createRoot((dispose) => {
     let creatingSession = false;
-    let sessionViewLockUntil = 0;
     const navigations: Navigation[] = [];
 
     const sessionRouteSync = createAppRouteSync({
@@ -26,8 +25,6 @@ test("app route sync exposes view and navigation helpers without owning session 
       navigate: (to, options) => navigations.push({ to, options }),
       isTauriRuntime: () => true,
       creatingSession: () => creatingSession,
-      sessionViewLockUntil: () => sessionViewLockUntil,
-      now: () => 1_000,
     });
 
     assert.equal(sessionRouteSync.currentView(), "session");
@@ -39,8 +36,6 @@ test("app route sync exposes view and navigation helpers without owning session 
       navigate: (to, options) => navigations.push({ to, options }),
       isTauriRuntime: () => true,
       creatingSession: () => creatingSession,
-      sessionViewLockUntil: () => sessionViewLockUntil,
-      now: () => 1_000,
     });
 
     assert.equal(dashboardRouteSync.currentView(), "dashboard");
@@ -53,8 +48,6 @@ test("app route sync exposes view and navigation helpers without owning session 
       navigate: (to, options) => navigations.push({ to, options }),
       isTauriRuntime: () => true,
       creatingSession: () => creatingSession,
-      sessionViewLockUntil: () => sessionViewLockUntil,
-      now: () => 1_000,
     });
 
     nonDashboardRouteSync.setTab("plugins");
@@ -64,11 +57,8 @@ test("app route sync exposes view and navigation helpers without owning session 
     creatingSession = true;
     nonDashboardRouteSync.setView("dashboard");
     creatingSession = false;
-    sessionViewLockUntil = 1_500;
-    nonDashboardRouteSync.setView("dashboard");
-    assert.equal(navigations.length, 2, "session creation guards should block dashboard navigation");
+    assert.equal(navigations.length, 2, "session creation guard should block dashboard navigation");
 
-    sessionViewLockUntil = 0;
     nonDashboardRouteSync.setView("dashboard");
     assert.deepEqual(navigations.at(-1), { to: "/dashboard/plugins", options: undefined });
 
@@ -84,7 +74,6 @@ test("desktop hash sync consumes absolute Tauri routes and mirrors dashboard tab
       navigate: (to, options) => navigations.push({ to, options }),
       isTauriRuntime: () => true,
       creatingSession: () => false,
-      sessionViewLockUntil: () => 0,
     });
     const windowTarget = {
       location: { hash: "#/dashboard/mcp?panel=runtime" },
@@ -117,7 +106,6 @@ test("startup route sync executes top-level route decisions and delegates sessio
       navigate: (to, options) => navigations.push({ to, options }),
       isTauriRuntime: () => true,
       creatingSession: () => false,
-      sessionViewLockUntil: () => 0,
     });
 
     const startupDeps: AppStartupRouteSyncDeps = {
