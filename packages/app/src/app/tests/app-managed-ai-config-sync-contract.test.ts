@@ -2,103 +2,117 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const runtimeConfigSource = readFileSync(
+  new URL("../context/managed-ai-runtime-config.ts", import.meta.url),
+  "utf8",
+);
 
-function managedAiConfigSyncEffectSource(): string {
-  const marker = source.indexOf("const syncPreflight = resolveManagedAiConfigSyncPreflight");
-  const start = source.lastIndexOf("createEffect(() => {", marker);
-  const end = source.indexOf("  // VSLO-86: heal stale gateway baseURL", marker);
-  assert.ok(marker >= 0 && start >= 0 && end > start, "managed AI config sync effect should be present");
-  return source.slice(start, end);
+function managedAiRuntimeConfigSource(): string {
+  const marker = runtimeConfigSource.indexOf("const syncPreflight = resolveManagedAiConfigSyncPreflight");
+  const start = runtimeConfigSource.lastIndexOf("const syncActiveWorkspaceManagedAiConfig = async", marker);
+  const end = runtimeConfigSource.indexOf("function managedConfigContentsMatch", marker);
+  assert.ok(
+    marker >= 0 && start >= 0 && end > start,
+    "managed AI runtime config sync source should be present",
+  );
+  return runtimeConfigSource.slice(start, end);
 }
 
-test("app delegates managed AI config sync decisions to the config sync controller", () => {
+test("app delegates managed AI config sync side effects to the runtime config module", () => {
   assert.match(
-    source,
-    /import \{\s*resolveManagedAiConfigSyncPreflight,\s*resolveManagedAiConfigWriteDecision,\s*\} from "\.\/controllers\/managed-ai-config-sync";/,
-    "app.tsx should import managed AI config sync controller helpers",
+    appSource,
+    /import \{ createManagedAiRuntimeConfigSync \} from "\.\/context\/managed-ai-runtime-config";/,
+    "app.tsx should import the managed AI runtime config module",
+  );
+  assert.match(
+    appSource,
+    /const managedAiRuntimeConfig = createManagedAiRuntimeConfigSync\(\{[\s\S]*activeWorkspaceDisplay: \(\) => workspaceStore\.activeWorkspaceDisplay\(\),[\s\S]*readOpencodeConfig,[\s\S]*writeOpencodeConfig,[\s\S]*markReloadRequired,[\s\S]*beginManagedAiBootstrap,[\s\S]*\}\);/,
+    "app.tsx should compose the module with app-owned dependencies",
+  );
+  assert.match(
+    runtimeConfigSource,
+    /resolveManagedAiConfigSyncPreflight,[\s\S]*resolveManagedAiConfigWriteDecision,[\s\S]*from "\.\.\/controllers\/managed-ai-config-sync";/,
+    "runtime config module should own managed AI config sync controller decisions",
   );
 });
 
-test("managed AI config sync effect executes controller decisions", () => {
-  const effectSource = managedAiConfigSyncEffectSource();
+test("managed AI runtime config sync executes controller decisions", () => {
+  const syncSource = managedAiRuntimeConfigSource();
 
   assert.match(
-    effectSource,
-    /const syncPreflight = resolveManagedAiConfigSyncPreflight\(\{[\s\S]*workspaceDefaultModelReady: workspaceDefaultModelReady\(\),[\s\S]*isDesktopRuntime: isTauriRuntime\(\),[\s\S]*defaultModelExplicit: defaultModelExplicit\(\),[\s\S]*workspaceType: workspace\.workspaceType,[\s\S]*workspaceRoot: workspaceStore\.activeWorkspacePath\(\),[\s\S]*\}\);/,
+    syncSource,
+    /const syncPreflight = resolveManagedAiConfigSyncPreflight\(\{[\s\S]*workspaceDefaultModelReady: deps\.workspaceDefaultModelReady\(\),[\s\S]*isDesktopRuntime: deps\.isTauriRuntime\(\),[\s\S]*defaultModelExplicit: deps\.defaultModelExplicit\(\),[\s\S]*workspaceType: workspaceKind\(workspace\),[\s\S]*workspaceRoot: deps\.activeWorkspacePath\(\),[\s\S]*\}\);/,
     "sync preflight should be delegated to the config sync controller",
   );
   assert.match(
-    effectSource,
-    /const workspaceId = workspace\.id\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const vesloWorkspaceId = resolveConversationServerWorkspaceId\(workspaceId\);/,
+    syncSource,
+    /const workspaceId = workspace\.id\?\.trim\(\) \|\| deps\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const vesloWorkspaceId = deps\.resolveConversationServerWorkspaceId\(workspaceId\);/,
     "sync should derive the Veslo workspace id from the current app workspace, not stale server active status",
   );
   assert.doesNotMatch(
-    effectSource,
-    /const vesloWorkspaceId = vesloServerWorkspaceId\(\);/,
+    syncSource,
+    /const vesloWorkspaceId = deps\.vesloServerWorkspaceId\(\);/,
     "sync must not read the global server active workspace id while workspace activation is settling",
   );
-
   assert.match(
-    effectSource,
-    /const managedDecision = resolveManagedAiConfigWriteDecision\(\{[\s\S]*managedProfilePresent: Boolean\(managedProfile\),[\s\S]*providerRoutingReady,[\s\S]*managedConfigAlreadyCurrent:[\s\S]*shouldPreserveManagedConfig:[\s\S]*defaultModelAlreadyCurrent:[\s\S]*\}\);/,
-    "managed/server config branch should delegate write decisions",
-  );
-
-  assert.match(
-    effectSource,
-    /const providerRoutingReady = Boolean\(\s*providerRoutingTarget\?\.serverClientToken && gatewayAccessToken,\s*\);/,
+    syncSource,
+    /const providerRoutingReady = Boolean\(\s*routing\.providerRoutingTarget\?\.serverClientToken && gatewayAccessToken,\s*\);/,
     "managed provider routing should not depend on a workspace correlation header",
   );
-
   assert.match(
-    effectSource,
-    /const fileDecision = resolveManagedAiConfigWriteDecision\(\{[\s\S]*managedProfilePresent: Boolean\(managedProfile\),[\s\S]*providerRoutingReady,[\s\S]*managedConfigAlreadyCurrent:[\s\S]*shouldPreserveManagedConfig:[\s\S]*defaultModelAlreadyCurrent:[\s\S]*\}\);/,
+    syncSource,
+    /const managedDecision = resolveManagedAiConfigWriteDecision\(\{[\s\S]*managedProfilePresent: Boolean\(input\.managedProfile\),[\s\S]*providerRoutingReady: input\.providerRoutingReady,[\s\S]*managedConfigAlreadyCurrent:[\s\S]*shouldPreserveManagedConfig:[\s\S]*defaultModelAlreadyCurrent:[\s\S]*\}\);/,
+    "managed/server config branch should delegate write decisions",
+  );
+  assert.match(
+    syncSource,
+    /const fileDecision = resolveManagedAiConfigWriteDecision\(\{[\s\S]*managedProfilePresent: Boolean\(input\.managedProfile\),[\s\S]*providerRoutingReady: input\.providerRoutingReady,[\s\S]*managedConfigAlreadyCurrent:[\s\S]*shouldPreserveManagedConfig:[\s\S]*defaultModelAlreadyCurrent:[\s\S]*\}\);/,
     "file config branch should delegate write decisions",
   );
 });
 
 test("managed AI config sync ignores stale async runs before writing config", () => {
-  const effectSource = managedAiConfigSyncEffectSource();
+  const syncSource = managedAiRuntimeConfigSource();
 
   assert.match(
-    source,
+    runtimeConfigSource,
     /let managedAiConfigSyncGeneration = 0;/,
     "sync should track async generations across effect reruns",
   );
   assert.match(
-    effectSource,
-    /const syncGeneration = \+\+managedAiConfigSyncGeneration;[\s\S]*const isCurrentManagedAiConfigSync = \(\) =>[\s\S]*!cancelled && syncGeneration === managedAiConfigSyncGeneration;/,
+    syncSource,
+    /const syncGeneration = \+\+managedAiConfigSyncGeneration;[\s\S]*const isCurrentManagedAiConfigSync = \(\) =>[\s\S]*!\(options\?\.isCancelled\?\.\(\) \?\? false\) && syncGeneration === managedAiConfigSyncGeneration;/,
     "each sync run should be invalidated when a newer reactive run starts",
   );
   assert.match(
-    effectSource,
-    /const config = await vesloClient\.getConfig\(vesloWorkspaceId\);\s*if \(!isCurrentManagedAiConfigSync\(\)\) return;/,
+    syncSource,
+    /const config = await input\.vesloClient\.getConfig\(input\.vesloWorkspaceId\);\s*if \(!input\.isCurrentManagedAiConfigSync\(\)\) return;/,
     "server config reads must not continue into writes after the run is stale",
   );
   assert.match(
-    effectSource,
-    /if \(!isCurrentManagedAiConfigSync\(\)\) return;\s*await vesloClient\.patchConfig/s,
+    syncSource,
+    /if \(!input\.isCurrentManagedAiConfigSync\(\)\) return;\s*await input\.vesloClient\.patchConfig/s,
     "server config writes should be guarded by the current sync generation",
   );
   assert.match(
-    effectSource,
-    /const configFile = await readOpencodeConfig\("project", root\);\s*if \(!isCurrentManagedAiConfigSync\(\)\) return;/,
+    syncSource,
+    /const configFile = await deps\.readOpencodeConfig\("project", input\.root\);\s*if \(!input\.isCurrentManagedAiConfigSync\(\)\) return;/,
     "project config reads must not continue into writes after the run is stale",
   );
   assert.match(
-    effectSource,
-    /if \(!isCurrentManagedAiConfigSync\(\)\) return;\s*const result = await writeOpencodeConfig/s,
+    syncSource,
+    /if \(!input\.isCurrentManagedAiConfigSync\(\)\) return;\s*const result = await deps\.writeOpencodeConfig/s,
     "project config writes should be guarded by the current sync generation",
   );
 });
 
 test("local Veslo workspace id resolves without listing server workspaces", () => {
-  const effectMarker = source.indexOf("const vesloUrl = vesloServerUrl().trim();");
-  const localBranchStart = source.indexOf('if (active.workspaceType === "local") {', effectMarker);
-  const localBranchEnd = source.indexOf("setVesloServerWorkspaceId(null);", localBranchStart);
+  const effectMarker = appSource.indexOf("const vesloUrl = vesloServerUrl().trim();");
+  const localBranchStart = appSource.indexOf('if (active.workspaceType === "local") {', effectMarker);
+  const localBranchEnd = appSource.indexOf("setVesloServerWorkspaceId(null);", localBranchStart);
   assert.ok(effectMarker >= 0 && localBranchStart > effectMarker && localBranchEnd > localBranchStart);
-  const localBranchSource = source.slice(localBranchStart, localBranchEnd);
+  const localBranchSource = appSource.slice(localBranchStart, localBranchEnd);
 
   assert.match(
     localBranchSource,
@@ -113,15 +127,15 @@ test("local Veslo workspace id resolves without listing server workspaces", () =
 });
 
 test("project managed AI config comparison is semantic, not only byte-exact", () => {
-  const effectSource = managedAiConfigSyncEffectSource();
+  const syncSource = managedAiRuntimeConfigSource();
 
   assert.match(
-    effectSource,
-    /const managedConfigMatches =[\s\S]*exactContentMatches \|\| managedConfigContentsMatchForServerPatch\(configFile\.content, content\);/,
+    syncSource,
+    /const managedConfigMatches =[\s\S]*exactContentMatches \|\| managedConfigContentsMatch\(configFile\.content, content\);/,
     "project config should use the same normalized managed-config comparison as server config",
   );
   assert.match(
-    effectSource,
+    syncSource,
     /managedConfigAlreadyCurrent: managedConfigMatches,/,
     "semantic matches should skip project config rewrites",
   );

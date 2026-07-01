@@ -7,6 +7,10 @@ const storeSource = readFileSync(
   new URL("../context/managed-ai-access-store.ts", import.meta.url),
   "utf8",
 );
+const runtimeConfigSource = readFileSync(
+  new URL("../context/managed-ai-runtime-config.ts", import.meta.url),
+  "utf8",
+);
 const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
 
 test("managed AI bootstrap readiness returns a blocking result when setup is not ready", () => {
@@ -54,39 +58,39 @@ test("sendPrompt blocks when managed bootstrap readiness is unavailable before r
 
 test("managed AI bootstrap waits for runtime gateway authorization before writing managed config", () => {
   assert.match(
-    source,
-    /const managedProfile = managedAiAccess\(\);[\s\S]*?const gatewayClient = gatewayVesloServerClient\(\);[\s\S]*?const providerRoutingTarget = resolveManagedAiProviderRoutingTarget\(\{[\s\S]*?\}\);\s*const gatewayAccessToken = managedAiGatewayAccessToken\(\) \|\| denGatewayAccessToken\(\);/s,
+    runtimeConfigSource,
+    /const managedProfile = deps\.managedAiAccess\(\);[\s\S]*?const routing = buildProviderRoutingContext\(workspace, workspaceId, root\);[\s\S]*?const gatewayAccessToken = deps\.managedAiGatewayAccessToken\(\) \|\| deps\.denGatewayAccessToken\(\);[\s\S]*?const providerRoutingReady = Boolean\(\s*routing\.providerRoutingTarget\?\.serverClientToken && gatewayAccessToken,\s*\);/s,
     "managed AI config writes should wait for the managed gateway token or DEN fallback before treating provider routing as ready",
   );
 });
 
 test("managed AI bootstrap routes desktop local providers through the local Veslo server target", () => {
   assert.match(
-    source,
-    /const providerRoutingLocalHost = activeVesloServerRoutingInfo\(\);[\s\S]*?const providerRoutingLocalBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.baseUrl \?\? deriveLocalVesloServerUrlFromOpencodeBaseUrl\(baseUrl\(\)\) \?\? "";[\s\S]*?const providerRoutingEngineBaseUrl = providerRoutingLocalHost\?\.engineUrl \?\? "";/s,
+    runtimeConfigSource,
+    /const providerRoutingLocalHost = deps\.activeVesloServerRoutingInfo\(\);[\s\S]*?const providerRoutingLocalBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.baseUrl \?\?[\s\S]*?deriveLocalVesloServerUrlFromOpencodeBaseUrl\(deps\.baseUrl\(\)\) \?\?[\s\S]*?"";[\s\S]*?const providerRoutingEngineBaseUrl = providerRoutingLocalHost\?\.engineUrl \?\? "";/s,
     "managed AI config writes should resolve provider routing from the local host snapshot instead of the remote access gateway client",
   );
   assert.match(
-    source,
+    runtimeConfigSource,
     /requiresManagedAiEngineBaseUrl\(\{[\s\S]*?requiresEngineBridgeUrl: runtimeSandboxState\.requiresEngineBridgeUrl,[\s\S]*?configuredSandboxEnabled: runtimeSandboxState\.configuredEnabled,[\s\S]*?configuredSandboxBackend: runtimeSandboxState\.configuredBackend,[\s\S]*?effectiveSandboxBackend: runtimeSandboxState\.effectiveBackend,[\s\S]*?childKind: runtimeSandboxState\.childKind,[\s\S]*?\}\)/s,
     "managed AI routing should require a bridge URL from the runtime sandbox verdict instead of inferring it from an existing URL",
   );
   assert.match(
-    source,
-    /resolveManagedAiProviderRoutingTarget\(\{[\s\S]*?workspaceType: workspace\.workspaceType,[\s\S]*?activeBaseUrl: providerRoutingLocalBaseUrl,[\s\S]*?engineBaseUrl: providerRoutingEngineBaseUrl,[\s\S]*?requireEngineBaseUrl: providerRoutingRequiresEngineBaseUrl,[\s\S]*?activeToken: providerRoutingLocalHost\?\.clientToken \?\? "",[\s\S]*?gatewayBaseUrl: gatewayClient\?\.baseUrl \?\? "",[\s\S]*?\}\)/s,
+    runtimeConfigSource,
+    /resolveManagedAiProviderRoutingTarget\(\{[\s\S]*?workspaceType: workspaceKind\(workspace\),[\s\S]*?activeBaseUrl: providerRoutingLocalBaseUrl,[\s\S]*?engineBaseUrl: providerRoutingEngineBaseUrl,[\s\S]*?requireEngineBaseUrl: providerRoutingRequiresEngineBaseUrl,[\s\S]*?activeToken: providerRoutingLocalHost\?\.clientToken \?\? "",[\s\S]*?gatewayBaseUrl: gatewayClient\?\.baseUrl \?\? "",[\s\S]*?\}\)/s,
     "managed AI config writes should pass the local routing target into provider config resolution",
   );
   assert.match(
-    source,
-    /serverBaseUrl: providerRoutingTarget\.baseUrl,[\s\S]*?engineBaseUrl: providerRoutingTarget\.engineBaseUrl,[\s\S]*?serverClientToken: providerRoutingTarget\.serverClientToken/s,
+    runtimeConfigSource,
+    /serverBaseUrl: input\.providerRoutingTarget\.baseUrl,[\s\S]*?engineBaseUrl: input\.providerRoutingTarget\.engineBaseUrl,[\s\S]*?serverClientToken: input\.providerRoutingTarget\.serverClientToken/s,
     "managed AI provider config should use the resolved engine routing target URL and local server token",
   );
 });
 
 test("managed AI bootstrap preserves existing managed routing instead of downgrading to model-only config on transient access gaps", () => {
   assert.match(
-    source,
-    /shouldPreserveManagedAiConfig\(\{\s*content: configFile\.content,[\s\S]*?const content = formatConfigWithDefaultModel\(configFile\.content, nextModel\);/s,
+    runtimeConfigSource,
+    /shouldPreserveManagedAiConfig\(\{\s*content: configFile\.content,[\s\S]*?const content = formatConfigWithDefaultModel\(configFile\.content, input\.nextModel\);/s,
     "managed AI config writes should preserve existing gateway routing before falling back to a model-only config",
   );
 });
@@ -101,15 +105,15 @@ test("managed AI access refresh keeps the proxied gateway access token when usin
 
 test("managed AI bootstrap skips veslo-server config patches when the computed managed config is unchanged", () => {
   assert.match(
-    source,
-    /const currentOpencodeContent = JSON\.stringify\(config\.opencode \?\? \{\}, null, 2\);[\s\S]*?const content = formatManagedAiAccessConfig\([\s\S]*?const desiredSnapshot = getConfigSnapshot\(content\);[\s\S]*?const cachedSnapshotMatches = lastKnownConfigSnapshotByWs\.get\(wsKey\) === desiredSnapshot;[\s\S]*?const redactedServerConfigMatches = managedConfigContentsMatchForServerPatch\([\s\S]*?const managedDecision = resolveManagedAiConfigWriteDecision\(\{[\s\S]*?managedConfigAlreadyCurrent: cachedSnapshotMatches \|\| redactedServerConfigMatches,[\s\S]*?\}\);[\s\S]*?if \(managedDecision\.type === "skip"\) \{\s*if \(!cachedSnapshotMatches && redactedServerConfigMatches\) \{\s*lastKnownConfigSnapshotByWs\.set\(wsKey, desiredSnapshot\);\s*\}\s*return;\s*\}[\s\S]*?await vesloClient\.patchConfig/s,
+    runtimeConfigSource,
+    /const currentOpencodeContent = JSON\.stringify\(config\.opencode \?\? \{\}, null, 2\);[\s\S]*?const content = formatManagedAiAccessConfig\([\s\S]*?const desiredSnapshot = getConfigSnapshot\(content\);[\s\S]*?const cachedSnapshotMatches = lastKnownConfigSnapshotByWs\.get\(wsKey\) === desiredSnapshot;[\s\S]*?const redactedServerConfigMatches = managedConfigContentsMatch\([\s\S]*?const managedDecision = resolveManagedAiConfigWriteDecision\(\{[\s\S]*?managedConfigAlreadyCurrent: cachedSnapshotMatches \|\| redactedServerConfigMatches,[\s\S]*?\}\);[\s\S]*?if \(managedDecision\.type === "skip"\) \{\s*if \(!cachedSnapshotMatches && redactedServerConfigMatches\) \{\s*lastKnownConfigSnapshotByWs\.set\(wsKey, desiredSnapshot\);\s*\}\s*return;\s*\}[\s\S]*?await input\.vesloClient\.patchConfig/s,
     "managed AI config writes through veslo-server should no-op when the generated config only differs by server-redacted secrets, while still tracking the real secret-bearing snapshot",
   );
 });
 
 test("managed AI config patching does not auto-dispose the engine before Send", () => {
-  const autoApplyBlocks = source.match(
-    /if \(\s*shouldAutoReloadManagedAiConfig\(\{[\s\S]*?\}\) &&\s*lastManagedAiConfigAppliedForServerToken\(\) !== providerRoutingReloadKey\s*\) \{\s*markManagedAiConfigApplied\(providerRoutingReloadKey\);\s*\}/g,
+  const autoApplyBlocks = runtimeConfigSource.match(
+    /maybeMarkManagedConfigApplied\(input\.providerRoutingReloadKey, true\);/g,
   );
 
   assert.equal(
@@ -118,10 +122,10 @@ test("managed AI config patching does not auto-dispose the engine before Send", 
     "both managed AI config branches should record the applied token without calling the destructive reload path",
   );
 
-  const helperStart = source.indexOf("const markManagedAiConfigApplied =");
-  const helperEnd = source.indexOf("markReloadRequiredHandler =", helperStart);
+  const helperStart = runtimeConfigSource.indexOf("const markManagedAiConfigApplied =");
+  const helperEnd = runtimeConfigSource.indexOf("const resolveRuntimeSandboxStateForTarget =", helperStart);
   assert.ok(helperStart >= 0 && helperEnd > helperStart, "managed AI config apply helper should be present");
-  const helperSource = source.slice(helperStart, helperEnd);
+  const helperSource = runtimeConfigSource.slice(helperStart, helperEnd);
   assert.doesNotMatch(
     helperSource,
     /reloadWorkspaceEngine\(/,
@@ -159,8 +163,8 @@ test("managed AI bootstrap primes runtime authorization after config validation"
     "managed bootstrap should prime runtime authorization before it allows the send to continue",
   );
   assert.match(
-    source,
-    /const ensureManagedAiRuntimeAuthorizationForSend = async[\s\S]*createVesloServerClient\(\{[\s\S]*baseUrl: providerRoutingTarget\.baseUrl,[\s\S]*token: providerRoutingTarget\.serverClientToken,[\s\S]*\}\);[\s\S]*runtimeClient\.getMyAiAccess\(userToken\)/,
+    runtimeConfigSource,
+    /const ensureManagedAiRuntimeAuthorizationForSend = async[\s\S]*deps\.createVesloServerClient\(\{[\s\S]*baseUrl: routing\.providerRoutingTarget\.baseUrl,[\s\S]*token: routing\.providerRoutingTarget\.serverClientToken,[\s\S]*\}\);[\s\S]*runtimeClient\.getMyAiAccess\(userToken\)/,
     "app should prime the same local Veslo server runtime used by managed provider routing",
   );
   assert.match(
@@ -171,10 +175,10 @@ test("managed AI bootstrap primes runtime authorization after config validation"
 });
 
 test("managed AI runtime config validation is workspace-scoped", () => {
-  const start = source.indexOf("const hasUsableManagedAiRuntimeConfigForSend = async");
-  const end = source.indexOf("const sendRuntimeReadiness = createSendRuntimeReadiness", start);
+  const start = runtimeConfigSource.indexOf("const hasUsableManagedAiRuntimeConfigForSend = async");
+  const end = runtimeConfigSource.indexOf("const ensureManagedAiRuntimeAuthorizationForSend = async", start);
   assert.ok(start >= 0 && end > start, "managed AI runtime config validation source should be present");
-  const validationSource = source.slice(start, end);
+  const validationSource = runtimeConfigSource.slice(start, end);
 
   assert.match(
     validationSource,
@@ -221,8 +225,8 @@ test("managed AI access refresh uses single-flight per cache key", () => {
 
 test("managed config write effect does not subscribe to access busy state when a profile is present", () => {
   assert.match(
-    source,
-    /const managedProfile = managedAiAccess\(\);[\s\S]*?const managedAccessBusy = managedProfile \? false : managedAiAccessBusy\(\);[\s\S]*?const managedAccessError = managedProfile \? null : managedAiAccessError\(\);/,
+    runtimeConfigSource,
+    /const managedProfile = deps\.managedAiAccess\(\);[\s\S]*?const managedAccessBusy = managedProfile \? false : deps\.managedAiAccessBusy\(\);[\s\S]*?const managedAccessError = managedProfile \? null : deps\.managedAiAccessError\(\);/,
     "managed config writes should only track busy/error for transient no-profile preservation, not for normal cached profile refreshes",
   );
 });

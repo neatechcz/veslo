@@ -19,8 +19,6 @@ import type {
   Session,
 } from "@opencode-ai/sdk/v2/client";
 
-import { parse } from "jsonc-parser";
-
 import { reportError } from "./lib/error-reporter";
 import { recordSendWorkflowTrace } from "./lib/send-workflow-trace";
 import { resolveRunningVesloServerHostInfo } from "./lib/veslo-server-host";
@@ -43,7 +41,6 @@ import {
 import {
   clearLegacySessionModelPersistence,
   parseDefaultModelFromConfig,
-  formatConfigWithDefaultModel,
   resolveWorkspaceDefaultModel,
 } from "./lib/model-persistence";
 import {
@@ -74,10 +71,6 @@ import {
   shouldRouteCreatedSessionAfterSelect,
 } from "./controllers/session-creation-flow";
 import {
-  resolveManagedAiConfigSyncPreflight,
-  resolveManagedAiConfigWriteDecision,
-} from "./controllers/managed-ai-config-sync";
-import {
   resolveCreateSessionManagedAiPreflightDecision,
   resolveCreateSessionRuntimeHealthPreflightDecision,
   resolveSendPromptBusyOwnership,
@@ -102,6 +95,7 @@ import {
   createManagedAiAccessStore,
   type ManagedAiAccessStore,
 } from "./context/managed-ai-access-store";
+import { createManagedAiRuntimeConfigSync } from "./context/managed-ai-runtime-config";
 import {
   createConversationService,
   type ConversationAbortTarget,
@@ -167,7 +161,6 @@ import {
 } from "./lib/pending-session-drafts";
 import {
   createClient,
-  managedConfigContentsMatchForServerPatch,
   unwrap,
   waitForHealthy,
 } from "./lib/opencode";
@@ -350,7 +343,6 @@ import {
 import {
   parseVesloWorkspaceIdFromUrl,
   createVesloServerClient,
-  deriveLocalVesloServerUrlFromOpencodeBaseUrl,
   normalizeVesloServerUrl,
   requestManagedAiAccessBundle,
   readVesloServerSettings,
@@ -374,21 +366,8 @@ import {
   pruneUnreadSessions,
   type UnreadSessionMap,
 } from "./components/session/session-unread-model";
-import {
-  extractManagedApiKey,
-  formatManagedAiAccessConfig,
-  hasUsableManagedAiRuntimeConfig,
-  resolveManagedAiAccessBundleState,
-  resolveManagedAiProviderRoutingTarget,
-  requiresManagedAiEngineBaseUrl,
-  shouldPreserveManagedAiConfig,
-} from "./lib/ai-access";
-import {
-  resolveEffectiveRuntimeSandboxState,
-  type EffectiveRuntimeSandboxState,
-} from "./lib/runtime-sandbox-state";
+import type { EffectiveRuntimeSandboxState } from "./lib/runtime-sandbox-state";
 import { waitForManagedAiBootstrapReady } from "./lib/managed-ai-bootstrap-ready";
-import { shouldAutoReloadManagedAiConfig } from "./lib/managed-ai-config-reload";
 import { describeRequestError } from "./lib/client-errors";
 import { CLOUD_ONLY_MODE, resolveVesloCloudEnvironment } from "./lib/cloud-policy";
 import { isRemoteUiEnabled } from "./lib/runtime-policy";
@@ -838,29 +817,6 @@ export default function App() {
   // See comment in sendPrompt about replacement strategy.
 
   const mountTime = Date.now();
-  // Per-workspace deduplication of opencode.jsonc patches. Key is the Veslo
-  // workspace id (server-backed branch) or absolute root path (local branch).
-  // A global signal would skip the patch for non-active workspaces after the
-  // first one was patched in this session — see VSLO retry-loop bug after
-  // server token rotation.
-  const lastKnownConfigSnapshotByWs = new Map<string, string>();
-  let managedAiConfigSyncGeneration = 0;
-  // Inactive-workspace baseURL healing dedup. Key = Veslo workspace id, value
-  // = the server client token that the last successful patch was made for. If
-  // the server restarts with a fresh token, every entry effectively expires
-  // because the next iteration sees a different token and re-patches.
-  const inactiveWorkspaceBaseUrlHealedFor = new Map<string, string>();
-  let inactiveWorkspaceBaseUrlHealGeneration = 0;
-  // Tracks which Veslo server token we already wrote into managed-AI config.
-  // The Veslo server mints a fresh client token on every restart, so
-  // opencode.jsonc files in workspaces that were not visited since the last
-  // restart still hold the old apiKey. Patching them is fast; automatically
-  // disposing the engine from this reactive path is not, and it can kill a
-  // healthy engine immediately before Send.
-  const [
-    lastManagedAiConfigAppliedForServerToken,
-    setLastManagedAiConfigAppliedForServerToken,
-  ] = createSignal("");
 
   createEffect(() => {
     if (developerMode()) return;
@@ -2893,37 +2849,9 @@ export default function App() {
   const [managedAiBootstrapPendingCount, setManagedAiBootstrapPendingCount] = createSignal(0);
   const [sendPromptInFlightCount, setSendPromptInFlightCount] = createSignal(0);
   const sendPromptInFlight = createMemo(() => sendPromptInFlightCount() > 0);
-  let lastManagedAiAccessResetKey = "";
-  // When the managed AI profile changes (admin reassigns user, credential
-  // is rotated, etc.) we need to re-apply config on the next workspace patch.
-  // Do this by semantic value, not object identity: the access bundle can be
-  // refreshed/recreated during polling without changing the effective profile.
-  createEffect(() => {
-    const nextKey = JSON.stringify(managedAiAccess() ?? null);
-    if (nextKey === lastManagedAiAccessResetKey) return;
-    lastManagedAiAccessResetKey = nextKey;
-    setLastManagedAiConfigAppliedForServerToken("");
-    lastKnownConfigSnapshotByWs.clear();
-    inactiveWorkspaceBaseUrlHealedFor.clear();
-  });
   const managedAiBootstrapBusy = createMemo(
     () => managedAiAccessBusy() || managedAiBootstrapPendingCount() > 0,
   );
-
-  const getConfigSnapshot = (content: string | null) => {
-    if (!content?.trim()) return "";
-    try {
-      const parsed = parse(content) as Record<string, unknown>;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        const copy = { ...parsed };
-        delete copy.model;
-        return JSON.stringify(copy);
-      }
-      return content;
-    } catch {
-      return content;
-    }
-  };
 
   const beginManagedAiBootstrap = () => {
     let released = false;
@@ -2935,424 +2863,70 @@ export default function App() {
     };
   };
 
-  const summarizeUrlForSendWorkflowTrace = (value: string | null | undefined): Record<string, unknown> => {
-    const trimmed = value?.trim() ?? "";
-    if (!trimmed) return { present: false };
-    try {
-      const parsed = new URL(trimmed);
-      return {
-        present: true,
-        origin: parsed.origin,
-        pathname: parsed.pathname.replace(/\/+$/, "") || "/",
-      };
-    } catch {
-      return {
-        present: true,
-        invalid: true,
-        length: trimmed.length,
-      };
-    }
-  };
-
   const recordManagedAiWorkflowTrace = (event: string, payload: Record<string, unknown>) => {
     recordSendWorkflowTrace("app", event, payload, { developerMode: developerMode() });
   };
 
-  type ManagedAiRuntimeConfigForSend = Awaited<ReturnType<VesloServerClient["getConfig"]>>;
-
-  const shouldRetryManagedAiConfigReadForSend = (error: unknown, baseUrl: string) =>
-    isLoopbackVesloServerConnectionUrl(baseUrl) &&
-    !(error instanceof VesloServerError) &&
-    isLocalVesloTransportError(error) &&
-    vesloServerRecentlyReachable();
-
-  const readManagedAiRuntimeConfigForSend = async (
-    client: VesloServerClient,
-    workspaceId: string,
-    baseUrl: string,
-    tracePayload: Record<string, unknown>,
-  ): Promise<ManagedAiRuntimeConfigForSend> => {
-    const maxAttempts = 3;
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      try {
-        return await client.getConfig(workspaceId);
-      } catch (error) {
-        if (attempt >= maxAttempts || !shouldRetryManagedAiConfigReadForSend(error, baseUrl)) {
-          throw error;
-        }
-        const delayMs = 120 + Math.floor(Math.random() * 180);
-        recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:retry", {
-          ...tracePayload,
-          vesloWorkspaceId: workspaceId,
-          attempt,
-          nextAttempt: attempt + 1,
-          delayMs,
-          message: error instanceof Error ? error.message : safeStringify(error),
-        });
-        await new Promise<void>((resolve) => window.setTimeout(resolve, delayMs));
-      }
-    }
-    throw new Error("managed AI runtime config read retry loop exhausted");
-  };
-
-  function resolveRuntimeSandboxStateForTarget(
-    targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
-  ): EffectiveRuntimeSandboxState {
-    let store: typeof workspaceStore | null = null;
-    try {
-      store = workspaceStore;
-    } catch {
-      store = null;
-    }
-
-    const activeWorkspaceId = store?.activeWorkspaceId().trim() ?? "";
-    const targetWorkspaceId = targetWorkspace?.workspaceId?.trim() || activeWorkspaceId;
-    const targetWorkspaceEntry = targetWorkspaceId
-      ? store?.workspaces().find((entry) => entry.id === targetWorkspaceId)
-      : undefined;
-    const targetWorkspaceRoot =
-      targetWorkspace?.workspaceRoot?.trim() ||
-      targetWorkspace?.directory?.trim() ||
-      targetWorkspaceEntry?.path?.trim() ||
-      targetWorkspaceEntry?.directory?.trim() ||
-      (targetWorkspaceId === activeWorkspaceId ? store?.activeWorkspaceRoot().trim() ?? "" : "");
-    const activeEngineInfo = store?.engine() ?? null;
-    const activeEngineProjectDir = normalizeDirectoryPath(activeEngineInfo?.projectDir ?? "");
-    const normalizedTargetRoot = normalizeDirectoryPath(targetWorkspaceRoot);
-    const engineInfoMatchesTarget =
-      !targetWorkspaceId ||
-      targetWorkspaceId === activeWorkspaceId ||
-      (Boolean(activeEngineProjectDir) && activeEngineProjectDir === normalizedTargetRoot);
-    const statusEngines = orchestratorStatusState()?.engines ?? [];
-    const liveEngines = orchestratorEnginesState();
-    return resolveEffectiveRuntimeSandboxState({
-      configuredSandbox: vesloServerCapabilities()?.sandbox,
-      engineInfo: engineInfoMatchesTarget ? activeEngineInfo : null,
-      orchestratorEngines: liveEngines.length ? liveEngines : statusEngines,
-      targetWorkspaceId,
-      targetWorkspaceRoot,
-    });
-  }
-
-  const hasUsableManagedAiRuntimeConfigForSend = async (
-    targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
-  ): Promise<boolean> => {
-    if (!isTauriRuntime()) {
-      recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:skip", {
-        reason: "not-tauri-runtime",
-      });
-      return false;
-    }
-    const targetWorkspaceId = targetWorkspace?.workspaceId?.trim() ?? "";
-    const targetWorkspaceEntry = targetWorkspaceId
-      ? workspaceStore.workspaces().find((entry) => entry.id === targetWorkspaceId)
-      : undefined;
-    const workspace = targetWorkspaceEntry || workspaceStore.activeWorkspaceDisplay();
-    if (workspace.workspaceType !== "local") {
-      recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:skip", {
-        reason: "non-local-workspace",
-        targetWorkspaceId: targetWorkspaceId || null,
-        workspaceType: workspace.workspaceType,
-      });
-      return false;
-    }
-    const targetWorkspaceRoot =
-      targetWorkspace?.workspaceRoot?.trim() ||
-      targetWorkspace?.directory?.trim() ||
-      workspace.path?.trim() ||
-      workspace.directory?.trim() ||
-      (targetWorkspaceId === workspaceStore.activeWorkspaceId().trim()
-        ? workspaceStore.activeWorkspaceRoot().trim()
-        : "");
-
-    const providerRoutingLocalHost = activeVesloServerRoutingInfo();
-    const providerRoutingLocalBaseUrl =
-      providerRoutingLocalHost?.baseUrl ?? deriveLocalVesloServerUrlFromOpencodeBaseUrl(baseUrl()) ?? "";
-    const providerRoutingEngineBaseUrl = providerRoutingLocalHost?.engineUrl ?? "";
-    const runtimeSandboxState = resolveRuntimeSandboxStateForTarget({
-      workspaceId: targetWorkspaceId || null,
-      workspaceRoot: targetWorkspaceRoot || null,
-      directory: targetWorkspaceRoot || null,
-    });
-    const vesloCapabilities = resolvedVesloCapabilities();
-    const providerRoutingRequiresEngineBaseUrl = requiresManagedAiEngineBaseUrl({
-      isDesktopRuntime: isTauriRuntime(),
-      workspaceType: workspace.workspaceType,
-      engineBaseUrl: providerRoutingEngineBaseUrl,
-      requiresEngineBridgeUrl: runtimeSandboxState.requiresEngineBridgeUrl,
-      configuredSandboxEnabled: runtimeSandboxState.configuredEnabled,
-      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
-      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
-      childKind: runtimeSandboxState.childKind,
-      sandboxEnabled: runtimeSandboxState.isSandboxed,
-      sandboxBackend: runtimeSandboxState.effectiveBackend,
-    });
-    const gatewayClient = gatewayVesloServerClient();
-    const providerRoutingTarget = resolveManagedAiProviderRoutingTarget({
-      isDesktopRuntime: isTauriRuntime(),
-      workspaceType: workspace.workspaceType,
-      activeBaseUrl: providerRoutingLocalBaseUrl,
-      engineBaseUrl: providerRoutingEngineBaseUrl,
-      requireEngineBaseUrl: providerRoutingRequiresEngineBaseUrl,
-      activeToken: providerRoutingLocalHost?.clientToken ?? "",
-      gatewayBaseUrl: gatewayClient?.baseUrl ?? "",
-      gatewayToken: gatewayClient?.token ?? "",
-    });
-    const routingTracePayload = {
-      targetWorkspaceId: targetWorkspaceId || null,
-      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim() || null,
-      workspaceType: workspace.workspaceType,
-      workspaceRoot: targetWorkspaceRoot || null,
-      providerId: managedAiAccess()?.providerId ?? null,
-      requiresEngineBaseUrl: providerRoutingRequiresEngineBaseUrl,
-      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
-      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
-      engineChildKind: runtimeSandboxState.childKind,
-      sandboxFallback: runtimeSandboxState.sandboxFallback,
-      localBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingLocalBaseUrl),
-      engineBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingEngineBaseUrl),
-      resolvedBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingTarget?.baseUrl ?? null),
-      resolvedEngineBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingTarget?.engineBaseUrl ?? null),
-      hasLocalClientToken: Boolean(providerRoutingLocalHost?.clientToken),
-      hasGatewayClient: Boolean(gatewayClient),
-      hasGatewayToken: Boolean(gatewayClient?.token),
-      hasRoutingTarget: Boolean(providerRoutingTarget),
-      hasServerClientToken: Boolean(providerRoutingTarget?.serverClientToken),
-    };
-    recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:start", routingTracePayload);
-    if (!providerRoutingTarget?.serverClientToken) {
-      recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:skip", {
-        ...routingTracePayload,
-        reason: "provider-routing-target-missing",
-      });
-      return false;
-    }
-
-    const providerId = managedAiAccess()?.providerId ?? null;
-    const vesloClient = vesloServerClient();
-    let vesloWorkspaceId = resolveConversationServerWorkspaceId(
-      targetWorkspaceId || workspaceStore.activeWorkspaceId().trim(),
-    );
-    const canUseVesloServer =
-      vesloServerStatus() === "connected" &&
-      vesloClient &&
-      vesloCapabilities?.config?.read;
-
-    try {
-      if (canUseVesloServer && vesloClient) {
-        if (!vesloWorkspaceId && targetWorkspaceId) {
-          vesloWorkspaceId = await ensureConversationReadWorkspaceRegistered(
-            vesloClient,
-            targetWorkspaceId,
-            targetWorkspaceRoot,
-          );
-        }
-        if (!vesloWorkspaceId) {
-          recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:result", {
-            ...routingTracePayload,
-            configSource: "veslo-server-config",
-            ok: false,
-            reason: "veslo-workspace-id-missing",
-          });
-          return false;
-        }
-        const config = await readManagedAiRuntimeConfigForSend(
-          vesloClient,
-          vesloWorkspaceId,
-          vesloClient.baseUrl,
-          routingTracePayload,
-        );
-        const ok = hasUsableManagedAiRuntimeConfig({
-          content: JSON.stringify(config.opencode ?? {}, null, 2),
-          providerId,
-          gatewayBaseUrl: providerRoutingTarget.engineBaseUrl,
-          serverClientToken: providerRoutingTarget.serverClientToken,
-          workspaceId: vesloWorkspaceId,
-        });
-        recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:result", {
-          ...routingTracePayload,
-          configSource: "veslo-server-config",
-          vesloWorkspaceId,
-          ok,
-        });
-        return ok;
-      }
-
-      const root = targetWorkspaceRoot || workspaceStore.activeWorkspacePath().trim();
-      if (!root) {
-        recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:result", {
-          ...routingTracePayload,
-          configSource: "project-config-file",
-          ok: false,
-          reason: "workspace-root-missing",
-        });
-        return false;
-      }
-      const configFile = await readOpencodeConfig("project", root);
-      const ok = hasUsableManagedAiRuntimeConfig({
-        content: configFile.content,
-        providerId,
-        gatewayBaseUrl: providerRoutingTarget.engineBaseUrl,
-        serverClientToken: providerRoutingTarget.serverClientToken,
-        workspaceId: vesloWorkspaceId,
-      });
-      recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:result", {
-        ...routingTracePayload,
-        configSource: "project-config-file",
-        root,
-        ok,
-      });
-      return ok;
-    } catch (error) {
-      recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:error", {
-        ...routingTracePayload,
-        message: error instanceof Error ? error.message : safeStringify(error),
-      });
-      return false;
-    }
-  };
-
-  const ensureManagedAiRuntimeAuthorizationForSend = async (
-    targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
-  ): Promise<boolean> => {
-    if (!isTauriRuntime()) return true;
-    const userToken = denGatewayAccessToken();
-    if (!userToken) {
-      recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:skip", {
-        reason: "missing-user-token",
-      });
-      return false;
-    }
-
-    const targetWorkspaceId = targetWorkspace?.workspaceId?.trim() ?? "";
-    const targetWorkspaceEntry = targetWorkspaceId
-      ? workspaceStore.workspaces().find((entry) => entry.id === targetWorkspaceId)
-      : undefined;
-    const workspace = targetWorkspaceEntry || workspaceStore.activeWorkspaceDisplay();
-    if (workspace.workspaceType !== "local") {
-      recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:skip", {
-        reason: "non-local-workspace",
-        targetWorkspaceId: targetWorkspaceId || null,
-        workspaceType: workspace.workspaceType,
-      });
-      return true;
-    }
-
-    const targetWorkspaceRoot =
-      targetWorkspace?.workspaceRoot?.trim() ||
-      targetWorkspace?.directory?.trim() ||
-      workspace.path?.trim() ||
-      workspace.directory?.trim() ||
-      (targetWorkspaceId === workspaceStore.activeWorkspaceId().trim()
-        ? workspaceStore.activeWorkspaceRoot().trim()
-        : "");
-
-    const providerRoutingLocalHost = activeVesloServerRoutingInfo();
-    const providerRoutingLocalBaseUrl =
-      providerRoutingLocalHost?.baseUrl ?? deriveLocalVesloServerUrlFromOpencodeBaseUrl(baseUrl()) ?? "";
-    const providerRoutingEngineBaseUrl = providerRoutingLocalHost?.engineUrl ?? "";
-    const runtimeSandboxState = resolveRuntimeSandboxStateForTarget({
-      workspaceId: targetWorkspaceId || null,
-      workspaceRoot: targetWorkspaceRoot || null,
-      directory: targetWorkspaceRoot || null,
-    });
-    const providerRoutingRequiresEngineBaseUrl = requiresManagedAiEngineBaseUrl({
-      isDesktopRuntime: isTauriRuntime(),
-      workspaceType: workspace.workspaceType,
-      engineBaseUrl: providerRoutingEngineBaseUrl,
-      requiresEngineBridgeUrl: runtimeSandboxState.requiresEngineBridgeUrl,
-      configuredSandboxEnabled: runtimeSandboxState.configuredEnabled,
-      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
-      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
-      childKind: runtimeSandboxState.childKind,
-      sandboxEnabled: runtimeSandboxState.isSandboxed,
-      sandboxBackend: runtimeSandboxState.effectiveBackend,
-    });
-    const gatewayClient = gatewayVesloServerClient();
-    const providerRoutingTarget = resolveManagedAiProviderRoutingTarget({
-      isDesktopRuntime: isTauriRuntime(),
-      workspaceType: workspace.workspaceType,
-      activeBaseUrl: providerRoutingLocalBaseUrl,
-      engineBaseUrl: providerRoutingEngineBaseUrl,
-      requireEngineBaseUrl: providerRoutingRequiresEngineBaseUrl,
-      activeToken: providerRoutingLocalHost?.clientToken ?? "",
-      gatewayBaseUrl: gatewayClient?.baseUrl ?? "",
-      gatewayToken: gatewayClient?.token ?? "",
-    });
-    const tracePayload = {
-      targetWorkspaceId: targetWorkspaceId || null,
-      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim() || null,
-      workspaceType: workspace.workspaceType,
-      workspaceRoot: targetWorkspaceRoot || null,
-      providerId: managedAiAccess()?.providerId ?? null,
-      requiresEngineBaseUrl: providerRoutingRequiresEngineBaseUrl,
-      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
-      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
-      engineChildKind: runtimeSandboxState.childKind,
-      sandboxFallback: runtimeSandboxState.sandboxFallback,
-      localBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingLocalBaseUrl),
-      engineBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingEngineBaseUrl),
-      resolvedBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingTarget?.baseUrl ?? null),
-      resolvedEngineBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingTarget?.engineBaseUrl ?? null),
-      hasLocalClientToken: Boolean(providerRoutingLocalHost?.clientToken),
-      hasLocalHostToken: Boolean(providerRoutingLocalHost?.hostToken),
-      hasGatewayClient: Boolean(gatewayClient),
-      hasGatewayToken: Boolean(gatewayClient?.token),
-      hasRoutingTarget: Boolean(providerRoutingTarget),
-      hasServerClientToken: Boolean(providerRoutingTarget?.serverClientToken),
-    };
-
-    if (!providerRoutingTarget?.baseUrl || !providerRoutingTarget.serverClientToken) {
-      recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:skip", {
-        ...tracePayload,
-        reason: "provider-routing-target-missing",
-      });
-      return false;
-    }
-
-    recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:start", tracePayload);
-    try {
-      const runtimeClient = createVesloServerClient({
-        baseUrl: providerRoutingTarget.baseUrl,
-        token: providerRoutingTarget.serverClientToken,
-        hostToken: providerRoutingLocalHost?.hostToken || undefined,
-      });
-      const response = await runtimeClient.getMyAiAccess(userToken);
-      const { profile, gatewayAccessToken, reason } = resolveManagedAiAccessBundleState({
-        aiAccess: response.aiAccess,
-        accessToken: response.accessToken,
-        fallbackAccessToken: userToken,
-        requireGatewayAccessToken: false,
-      });
-      if (!profile) {
-        recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:result", {
-          ...tracePayload,
-          ok: false,
-          reason,
-        });
-        if (reason) managedAiAccessStore.setManagedAiAccessError(reason);
-        return false;
-      }
-
-      managedAiAccessStore.applyManagedAiAccessProfile(profile, gatewayAccessToken, {
-        writeCache: true,
-      });
-      recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:result", {
-        ...tracePayload,
-        ok: true,
-        providerId: profile.providerId,
-        defaultModelId: profile.defaultModel.modelID,
-        gatewayAccessTokenPresent: Boolean(gatewayAccessToken),
-      });
-      return true;
-    } catch (error) {
-      recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:error", {
-        ...tracePayload,
-        message: error instanceof Error ? error.message : safeStringify(error),
-      });
-      return false;
-    }
-  };
+  const managedAiRuntimeConfig = createManagedAiRuntimeConfigSync({
+    isTauriRuntime,
+    workspaceDefaultModelReady,
+    defaultModelExplicit,
+    defaultModel,
+    managedAiAccess,
+    managedAiAccessBusy,
+    managedAiAccessError,
+    managedAiGatewayAccessToken,
+    denGatewayAccessToken,
+    denAuthRevision,
+    gatewayVesloServerClient,
+    vesloServerClient,
+    vesloServerStatus,
+    vesloServerWorkspaceId,
+    resolvedVesloCapabilities: () => resolvedVesloCapabilities(),
+    activeVesloServerRoutingInfo,
+    baseUrl,
+    activeWorkspaceDisplay: () => workspaceStore.activeWorkspaceDisplay(),
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+    activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
+    activeWorkspacePath: () => workspaceStore.activeWorkspacePath(),
+    workspaces: () => workspaceStore.workspaces(),
+    engine: () => workspaceStore.engine(),
+    orchestratorStatusEngines: () => orchestratorStatusState()?.engines ?? [],
+    orchestratorEngines: () => orchestratorEnginesState(),
+    resolveConversationServerWorkspaceId,
+    ensureConversationReadWorkspaceRegistered: (vesloClient, workspaceId, workspaceRoot) =>
+      ensureConversationReadWorkspaceRegistered(
+        vesloClient as unknown as VesloServerClient,
+        workspaceId,
+        workspaceRoot,
+      ),
+    readOpencodeConfig,
+    writeOpencodeConfig,
+    markReloadRequired,
+    anyActiveRuns: () => anyActiveRuns(),
+    sendPromptInFlight,
+    canReloadWorkspace: () => canReloadWorkspace(),
+    setError,
+    reportError,
+    addOpencodeCacheHint,
+    safeStringify,
+    recordManagedAiWorkflowTrace,
+    createVesloServerClient,
+    applyManagedAiAccessProfile: managedAiAccessStore.applyManagedAiAccessProfile,
+    setManagedAiAccessError: managedAiAccessStore.setManagedAiAccessError,
+    beginManagedAiBootstrap,
+    shouldRetryManagedAiConfigReadForSend: (error, retryBaseUrl) =>
+      isLoopbackVesloServerConnectionUrl(retryBaseUrl) &&
+      !(error instanceof VesloServerError) &&
+      isLocalVesloTransportError(error) &&
+      vesloServerRecentlyReachable(),
+    delay: (ms) => new Promise<void>((resolve) => window.setTimeout(resolve, ms)),
+  });
+  const {
+    resolveRuntimeSandboxStateForTarget,
+    hasUsableManagedAiRuntimeConfigForSend,
+    ensureManagedAiRuntimeAuthorizationForSend,
+  } = managedAiRuntimeConfig;
 
   const sendRuntimeReadiness = createSendRuntimeReadiness<Client>({
     isTauriRuntime,
@@ -5015,13 +4589,6 @@ export default function App() {
     anyActiveRuns,
   } = systemState;
 
-  const markManagedAiConfigApplied = (reloadKey: string): void => {
-    if (!reloadKey) return;
-    if (lastManagedAiConfigAppliedForServerToken() === reloadKey) return;
-    setLastManagedAiConfigAppliedForServerToken(reloadKey);
-    console.log("[managed-ai] config applied; destructive engine reload deferred", { reloadKey });
-  };
-
   markReloadRequiredHandler = systemState.markReloadRequired;
   onHotReloadAppliedHandler = () => {
     const hadPendingSkillFallback = skillReloadGuard.hotReloadApplied();
@@ -6224,7 +5791,7 @@ export default function App() {
       }
 
       if (workspaceType === "local" && workspaceRoot) {
-        lastKnownConfigSnapshotByWs.set(workspaceRoot, getConfigSnapshot(configFileContent));
+        managedAiRuntimeConfig.rememberKnownConfigSnapshot(workspaceRoot, configFileContent);
       }
 
       if (!cancelled) {
@@ -6233,492 +5800,6 @@ export default function App() {
     };
 
     void applyDefault();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
-  createEffect(() => {
-    const workspace = workspaceStore.activeWorkspaceDisplay();
-    const syncPreflight = resolveManagedAiConfigSyncPreflight({
-      workspaceDefaultModelReady: workspaceDefaultModelReady(),
-      isDesktopRuntime: isTauriRuntime(),
-      defaultModelExplicit: defaultModelExplicit(),
-      workspaceType: workspace.workspaceType,
-      workspaceRoot: workspaceStore.activeWorkspacePath(),
-    });
-    if (syncPreflight.type === "skip") return;
-    denAuthRevision();
-
-    const root = syncPreflight.workspaceRoot;
-    const nextModel = defaultModel();
-    const managedProfile = managedAiAccess();
-    const managedAccessBusy = managedProfile ? false : managedAiAccessBusy();
-    const managedAccessError = managedProfile ? null : managedAiAccessError();
-    const gatewayClient = gatewayVesloServerClient();
-    const vesloClient = vesloServerClient();
-    const workspaceId = workspace.id?.trim() || workspaceStore.activeWorkspaceId().trim();
-    const vesloWorkspaceId = resolveConversationServerWorkspaceId(workspaceId);
-    const vesloCapabilities = resolvedVesloCapabilities();
-    const providerRoutingLocalHost = activeVesloServerRoutingInfo();
-    const providerRoutingLocalBaseUrl =
-      providerRoutingLocalHost?.baseUrl ?? deriveLocalVesloServerUrlFromOpencodeBaseUrl(baseUrl()) ?? "";
-    const providerRoutingEngineBaseUrl = providerRoutingLocalHost?.engineUrl ?? "";
-    const runtimeSandboxState = resolveRuntimeSandboxStateForTarget({
-      workspaceId: workspaceId || null,
-      workspaceRoot: root || null,
-      directory: root || null,
-    });
-    const providerRoutingRequiresEngineBaseUrl = requiresManagedAiEngineBaseUrl({
-      isDesktopRuntime: isTauriRuntime(),
-      workspaceType: workspace.workspaceType,
-      engineBaseUrl: providerRoutingEngineBaseUrl,
-      requiresEngineBridgeUrl: runtimeSandboxState.requiresEngineBridgeUrl,
-      configuredSandboxEnabled: runtimeSandboxState.configuredEnabled,
-      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
-      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
-      childKind: runtimeSandboxState.childKind,
-      sandboxEnabled: runtimeSandboxState.isSandboxed,
-      sandboxBackend: runtimeSandboxState.effectiveBackend,
-    });
-    const providerRoutingTarget = resolveManagedAiProviderRoutingTarget({
-      isDesktopRuntime: isTauriRuntime(),
-      workspaceType: workspace.workspaceType,
-      activeBaseUrl: providerRoutingLocalBaseUrl,
-      engineBaseUrl: providerRoutingEngineBaseUrl,
-      requireEngineBaseUrl: providerRoutingRequiresEngineBaseUrl,
-      activeToken: providerRoutingLocalHost?.clientToken ?? "",
-      gatewayBaseUrl: gatewayClient?.baseUrl ?? "",
-      gatewayToken: gatewayClient?.token ?? "",
-    });
-    const gatewayAccessToken = managedAiGatewayAccessToken() || denGatewayAccessToken();
-    const canUseVesloServer =
-      vesloServerStatus() === "connected" &&
-      vesloClient &&
-      vesloWorkspaceId &&
-      vesloCapabilities?.config?.write;
-    const providerRoutingReady = Boolean(
-      providerRoutingTarget?.serverClientToken && gatewayAccessToken,
-    );
-    const providerRoutingReloadKey = providerRoutingTarget
-      ? `${providerRoutingTarget.serverClientToken}@${providerRoutingTarget.engineBaseUrl}`
-      : "";
-    const configSyncTracePayload = {
-      workspaceId: workspace.id || null,
-      workspaceType: workspace.workspaceType,
-      workspaceRoot: root || null,
-      vesloWorkspaceId: vesloWorkspaceId || null,
-      managedProviderId: managedProfile?.providerId ?? null,
-      managedDefaultModelId: managedProfile?.defaultModel.modelID ?? null,
-      managedAllowedModelCount: managedProfile?.allowedModels.length ?? 0,
-      providerRoutingReady,
-      providerRoutingRequiresEngineBaseUrl,
-      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
-      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
-      engineChildKind: runtimeSandboxState.childKind,
-      sandboxFallback: runtimeSandboxState.sandboxFallback,
-      localBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingLocalBaseUrl),
-      engineBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingEngineBaseUrl),
-      resolvedBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingTarget?.baseUrl ?? null),
-      resolvedEngineBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingTarget?.engineBaseUrl ?? null),
-      hasLocalClientToken: Boolean(providerRoutingLocalHost?.clientToken),
-      hasGatewayClient: Boolean(gatewayClient),
-      hasGatewayToken: Boolean(gatewayClient?.token),
-      hasGatewayAccessToken: Boolean(gatewayAccessToken),
-      canUseVesloServer: Boolean(canUseVesloServer),
-      vesloConfigWriteCapable: Boolean(vesloCapabilities?.config?.write),
-    };
-    recordManagedAiWorkflowTrace("managed-ai-config-sync:preflight", configSyncTracePayload);
-    let cancelled = false;
-    const syncGeneration = ++managedAiConfigSyncGeneration;
-    const isCurrentManagedAiConfigSync = () =>
-      !cancelled && syncGeneration === managedAiConfigSyncGeneration;
-    const releaseManagedAiBootstrap =
-      managedProfile && providerRoutingReady ? beginManagedAiBootstrap() : null;
-
-    const writeConfig = async () => {
-      try {
-        const providerReadinessDecision = resolveManagedAiConfigWriteDecision({
-          managedProfilePresent: Boolean(managedProfile),
-          providerRoutingReady,
-          managedConfigAlreadyCurrent: false,
-          shouldPreserveManagedConfig: false,
-          defaultModelAlreadyCurrent: false,
-        });
-        if (
-          providerReadinessDecision.type === "skip" &&
-          providerReadinessDecision.reason === "provider-routing-not-ready"
-        ) {
-          recordManagedAiWorkflowTrace("managed-ai-config-sync:skip", {
-            ...configSyncTracePayload,
-            reason: providerReadinessDecision.reason,
-          });
-          return;
-        }
-
-        if (canUseVesloServer) {
-          const config = await vesloClient.getConfig(vesloWorkspaceId);
-          if (!isCurrentManagedAiConfigSync()) return;
-          const currentOpencodeContent = JSON.stringify(config.opencode ?? {}, null, 2);
-          recordManagedAiWorkflowTrace("managed-ai-config-sync:read-current", {
-            ...configSyncTracePayload,
-            configSource: "veslo-server-config",
-            currentBytes: currentOpencodeContent.length,
-          });
-
-          if (managedProfile && providerRoutingTarget && gatewayAccessToken) {
-            const content = formatManagedAiAccessConfig(
-              currentOpencodeContent,
-              {
-                profile: managedProfile,
-                serverBaseUrl: providerRoutingTarget.baseUrl,
-                engineBaseUrl: providerRoutingTarget.engineBaseUrl,
-                serverClientToken: providerRoutingTarget.serverClientToken,
-                gatewayAccessToken,
-                workspaceId: vesloWorkspaceId,
-              },
-            );
-            const desiredSnapshot = getConfigSnapshot(content);
-            const wsKey = vesloWorkspaceId;
-            // Self-heal: if the file on disk holds an apiKey that differs from
-            // the current server client token, the cached snapshot is stale —
-            // drop it so the patch below runs even when the desired snapshot
-            // matches the cache from a previous workspace.
-            const currentApiKey = extractManagedApiKey(currentOpencodeContent);
-            if (currentApiKey && currentApiKey !== providerRoutingTarget.serverClientToken) {
-              lastKnownConfigSnapshotByWs.delete(wsKey);
-            }
-            const cachedSnapshotMatches = lastKnownConfigSnapshotByWs.get(wsKey) === desiredSnapshot;
-            const redactedServerConfigMatches = managedConfigContentsMatchForServerPatch(
-              currentOpencodeContent,
-              content,
-            );
-            const currentApiKeyMatches = currentApiKey
-              ? currentApiKey === providerRoutingTarget.serverClientToken
-              : null;
-            const managedDecision = resolveManagedAiConfigWriteDecision({
-              managedProfilePresent: Boolean(managedProfile),
-              providerRoutingReady,
-              managedConfigAlreadyCurrent: cachedSnapshotMatches || redactedServerConfigMatches,
-              shouldPreserveManagedConfig: false,
-              defaultModelAlreadyCurrent: false,
-            });
-            const managedDecisionReason = managedDecision.type === "skip" ? managedDecision.reason : null;
-            recordManagedAiWorkflowTrace("managed-ai-config-sync:managed-decision", {
-              ...configSyncTracePayload,
-              configSource: "veslo-server-config",
-              decision: managedDecision.type,
-              reason: managedDecisionReason,
-              cachedSnapshotMatches,
-              redactedServerConfigMatches,
-              currentApiKeyPresent: Boolean(currentApiKey),
-              currentApiKeyMatches,
-              desiredBytes: content.length,
-            });
-            if (managedDecision.type === "skip") {
-              if (!cachedSnapshotMatches && redactedServerConfigMatches) {
-                lastKnownConfigSnapshotByWs.set(wsKey, desiredSnapshot);
-              }
-              return;
-            }
-            if (managedDecision.type !== "write-managed-config") {
-              lastKnownConfigSnapshotByWs.set(wsKey, desiredSnapshot);
-              return;
-            }
-            if (!isCurrentManagedAiConfigSync()) return;
-            await vesloClient.patchConfig(vesloWorkspaceId, {
-              opencode: JSON.parse(content) as Record<string, unknown>,
-            });
-            recordManagedAiWorkflowTrace("managed-ai-config-sync:patch-done", {
-              ...configSyncTracePayload,
-              configSource: "veslo-server-config",
-              desiredBytes: content.length,
-            });
-            lastKnownConfigSnapshotByWs.set(wsKey, desiredSnapshot);
-            markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
-            // Do not auto-dispose/reload the engine here. This effect runs
-            // during boot and before Send; a destructive reload can suspend a
-            // healthy WSL engine and block the first prompt behind runtime
-            // recovery. The banner still marks config as changed, while the
-            // managed provider config is available for OpenCode's next read.
-            if (
-              shouldAutoReloadManagedAiConfig({
-                hasManagedProfile: true,
-                hasConfigChanged: true,
-                hasActiveRuns: anyActiveRuns() || sendPromptInFlight(),
-                canReloadWorkspace: canReloadWorkspace(),
-              }) &&
-              lastManagedAiConfigAppliedForServerToken() !== providerRoutingReloadKey
-            ) {
-              markManagedAiConfigApplied(providerRoutingReloadKey);
-            }
-            return;
-          }
-
-          const preserveManagedConfig = shouldPreserveManagedAiConfig({
-              content: currentOpencodeContent,
-              managedProfile,
-              gatewayBaseUrl: providerRoutingTarget?.engineBaseUrl ?? providerRoutingTarget?.baseUrl ?? "",
-              serverClientToken: providerRoutingTarget?.serverClientToken ?? "",
-              gatewayAccessToken,
-              accessBusy: managedAccessBusy,
-              accessError: managedAccessError,
-          });
-          const currentModel = typeof config.opencode?.model === "string" ? parseModelRef(config.opencode.model) : null;
-          const defaultModelAlreadyCurrent = Boolean(currentModel && modelEquals(currentModel, nextModel));
-          const defaultModelDecision = resolveManagedAiConfigWriteDecision({
-            managedProfilePresent: Boolean(managedProfile),
-            providerRoutingReady,
-            managedConfigAlreadyCurrent: false,
-            shouldPreserveManagedConfig: preserveManagedConfig,
-            defaultModelAlreadyCurrent,
-          });
-          if (defaultModelDecision.type === "skip") {
-            return;
-          }
-          if (defaultModelDecision.type !== "write-default-model") return;
-
-          if (!isCurrentManagedAiConfigSync()) return;
-          await vesloClient.patchConfig(vesloWorkspaceId, {
-            opencode: { model: formatModelRef(nextModel) },
-          });
-          markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
-          return;
-        }
-
-        const configFile = await readOpencodeConfig("project", root);
-        if (!isCurrentManagedAiConfigSync()) return;
-        recordManagedAiWorkflowTrace("managed-ai-config-sync:read-current", {
-          ...configSyncTracePayload,
-          configSource: "project-config-file",
-          currentBytes: configFile.content?.length ?? 0,
-        });
-        if (managedProfile && providerRoutingTarget && gatewayAccessToken) {
-          const content = formatManagedAiAccessConfig(configFile.content, {
-            profile: managedProfile,
-            serverBaseUrl: providerRoutingTarget.baseUrl,
-            engineBaseUrl: providerRoutingTarget.engineBaseUrl,
-            serverClientToken: providerRoutingTarget.serverClientToken,
-            gatewayAccessToken,
-            workspaceId: vesloWorkspaceId,
-          });
-          const exactContentMatches = (configFile.content ?? "").trim() === content.trim();
-          const managedConfigMatches =
-            exactContentMatches || managedConfigContentsMatchForServerPatch(configFile.content, content);
-          const fileDecision = resolveManagedAiConfigWriteDecision({
-            managedProfilePresent: Boolean(managedProfile),
-            providerRoutingReady,
-            managedConfigAlreadyCurrent: managedConfigMatches,
-            shouldPreserveManagedConfig: false,
-            defaultModelAlreadyCurrent: false,
-          });
-          const fileDecisionReason = fileDecision.type === "skip" ? fileDecision.reason : null;
-          recordManagedAiWorkflowTrace("managed-ai-config-sync:managed-decision", {
-            ...configSyncTracePayload,
-            configSource: "project-config-file",
-            decision: fileDecision.type,
-            reason: fileDecisionReason,
-            exactContentMatches,
-            managedConfigMatches,
-            desiredBytes: content.length,
-          });
-          if (fileDecision.type === "skip") return;
-          if (fileDecision.type !== "write-managed-config") return;
-
-          if (!isCurrentManagedAiConfigSync()) return;
-          const result = await writeOpencodeConfig("project", root, content);
-          if (!result.ok) {
-            throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
-          }
-          lastKnownConfigSnapshotByWs.set(root, getConfigSnapshot(content));
-          recordManagedAiWorkflowTrace("managed-ai-config-sync:patch-done", {
-            ...configSyncTracePayload,
-            configSource: "project-config-file",
-            desiredBytes: content.length,
-          });
-          markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
-          // Do not auto-dispose/reload the engine here — see comment above.
-          if (
-            shouldAutoReloadManagedAiConfig({
-              hasManagedProfile: true,
-              hasConfigChanged: true,
-              hasActiveRuns: anyActiveRuns() || sendPromptInFlight(),
-              canReloadWorkspace: canReloadWorkspace(),
-            }) &&
-            lastManagedAiConfigAppliedForServerToken() !== providerRoutingReloadKey
-          ) {
-            markManagedAiConfigApplied(providerRoutingReloadKey);
-          }
-          return;
-        }
-
-        const preserveManagedConfig = shouldPreserveManagedAiConfig({
-            content: configFile.content,
-            managedProfile,
-            gatewayBaseUrl: providerRoutingTarget?.engineBaseUrl ?? providerRoutingTarget?.baseUrl ?? "",
-            serverClientToken: providerRoutingTarget?.serverClientToken ?? "",
-            gatewayAccessToken,
-            accessBusy: managedAccessBusy,
-            accessError: managedAccessError,
-        });
-        const existingModel = parseDefaultModelFromConfig(configFile.content);
-        const defaultModelAlreadyCurrent = Boolean(existingModel && modelEquals(existingModel, nextModel));
-        const fileDecision = resolveManagedAiConfigWriteDecision({
-          managedProfilePresent: Boolean(managedProfile),
-          providerRoutingReady,
-          managedConfigAlreadyCurrent: false,
-          shouldPreserveManagedConfig: preserveManagedConfig,
-          defaultModelAlreadyCurrent,
-        });
-        if (fileDecision.type === "skip") {
-          return;
-        }
-        if (fileDecision.type !== "write-default-model") return;
-
-        if (!isCurrentManagedAiConfigSync()) return;
-        const content = formatConfigWithDefaultModel(configFile.content, nextModel);
-        const result = await writeOpencodeConfig("project", root, content);
-        if (!result.ok) {
-          throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
-        }
-        lastKnownConfigSnapshotByWs.set(root, getConfigSnapshot(content));
-        markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
-      } catch (error) {
-        if (cancelled) return;
-        const message = error instanceof Error ? error.message : safeStringify(error);
-        recordManagedAiWorkflowTrace("managed-ai-config-sync:error", {
-          ...configSyncTracePayload,
-          message,
-        });
-        setError(addOpencodeCacheHint(message));
-      } finally {
-        releaseManagedAiBootstrap?.();
-      }
-    };
-
-    void writeConfig();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
-  // VSLO-86: heal stale gateway baseURL in non-active managed workspaces.
-  // The active-workspace patch effect above only fires for the workspace the
-  // user has currently open, so any other workspace keeps the baseURL from a
-  // previous Veslo server lifetime. After a Tauri restart that allocates a
-  // different server port, the engine spawn for those workspaces fails with
-  // "Unable to connect" the moment the user opens or creates a session in
-  // them. We mirror the same patch flow here for every managed local
-  // workspace once per server-client-token rotation, but without restarting
-  // any engine — the active workspace's effect handles engine reload, and the
-  // other workspaces have no engine running to reload yet.
-  createEffect(() => {
-    if (!isTauriRuntime()) return;
-    const vesloClient = vesloServerClient();
-    if (!vesloClient) return;
-    if (vesloServerStatus() !== "connected") return;
-    const vesloCapabilities = resolvedVesloCapabilities();
-    if (!vesloCapabilities?.config?.write) return;
-    const managedProfile = managedAiAccess();
-    if (!managedProfile) return;
-    const providerRoutingLocalHost = activeVesloServerRoutingInfo();
-    if (!providerRoutingLocalHost?.baseUrl) return;
-    const gatewayClient = gatewayVesloServerClient();
-    const runtimeSandboxState = resolveRuntimeSandboxStateForTarget();
-    const providerRoutingRequiresEngineBaseUrl = requiresManagedAiEngineBaseUrl({
-      isDesktopRuntime: isTauriRuntime(),
-      workspaceType: "local",
-      engineBaseUrl: providerRoutingLocalHost.engineUrl ?? "",
-      requiresEngineBridgeUrl: runtimeSandboxState.requiresEngineBridgeUrl,
-      configuredSandboxEnabled: runtimeSandboxState.configuredEnabled,
-      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
-      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
-      childKind: runtimeSandboxState.childKind,
-      sandboxEnabled: runtimeSandboxState.isSandboxed,
-      sandboxBackend: runtimeSandboxState.effectiveBackend,
-    });
-    const providerRoutingTarget = resolveManagedAiProviderRoutingTarget({
-      isDesktopRuntime: isTauriRuntime(),
-      workspaceType: "local",
-      activeBaseUrl: providerRoutingLocalHost.baseUrl,
-      engineBaseUrl: providerRoutingLocalHost.engineUrl ?? "",
-      requireEngineBaseUrl: providerRoutingRequiresEngineBaseUrl,
-      activeToken: providerRoutingLocalHost?.clientToken ?? "",
-      gatewayBaseUrl: gatewayClient?.baseUrl ?? "",
-      gatewayToken: gatewayClient?.token ?? "",
-    });
-    if (!providerRoutingTarget?.serverClientToken) return;
-    const gatewayAccessToken = managedAiGatewayAccessToken() || denGatewayAccessToken();
-    if (!gatewayAccessToken) return;
-
-    const sessionToken = `${providerRoutingTarget.serverClientToken}@${providerRoutingTarget.engineBaseUrl}`;
-    const activeWorkspace = workspaceStore.activeWorkspaceDisplay();
-    const activeWorkspaceAppId = activeWorkspace.id?.trim() || workspaceStore.activeWorkspaceId().trim();
-    const activeWorkspaceId =
-      resolveConversationServerWorkspaceId(activeWorkspaceAppId) ||
-      (activeWorkspaceAppId.startsWith("ws-") ? activeWorkspaceAppId : "") ||
-      (vesloServerWorkspaceId() ?? "").trim();
-    let cancelled = false;
-    const healGeneration = ++inactiveWorkspaceBaseUrlHealGeneration;
-    const isCurrentInactiveWorkspaceHeal = () =>
-      !cancelled && healGeneration === inactiveWorkspaceBaseUrlHealGeneration;
-
-    const healInactiveWorkspaces = async () => {
-      let workspaceItems: Awaited<ReturnType<typeof vesloClient.listWorkspaces>>["items"];
-      try {
-        const response = await vesloClient.listWorkspaces();
-        if (!isCurrentInactiveWorkspaceHeal()) return;
-        workspaceItems = Array.isArray(response.items) ? response.items : [];
-      } catch (error) {
-        if (!cancelled) reportError(error, "managed-baseurl.listWorkspaces");
-        return;
-      }
-      for (const workspace of workspaceItems) {
-        if (!isCurrentInactiveWorkspaceHeal()) return;
-        if (workspace.workspaceType !== "local") continue;
-        if (workspace.id === activeWorkspaceId) continue;
-        if (inactiveWorkspaceBaseUrlHealedFor.get(workspace.id) === sessionToken) continue;
-        try {
-          const config = await vesloClient.getConfig(workspace.id);
-          if (!isCurrentInactiveWorkspaceHeal()) return;
-          const currentOpencodeContent = JSON.stringify(config.opencode ?? {}, null, 2);
-          const desiredContent = formatManagedAiAccessConfig(currentOpencodeContent, {
-            profile: managedProfile,
-            serverBaseUrl: providerRoutingTarget.baseUrl,
-            engineBaseUrl: providerRoutingTarget.engineBaseUrl,
-            serverClientToken: providerRoutingTarget.serverClientToken,
-            gatewayAccessToken,
-            workspaceId: workspace.id,
-          });
-          if (managedConfigContentsMatchForServerPatch(currentOpencodeContent, desiredContent)) {
-            inactiveWorkspaceBaseUrlHealedFor.set(workspace.id, sessionToken);
-            continue;
-          }
-          if (!isCurrentInactiveWorkspaceHeal()) return;
-          await vesloClient.patchConfig(workspace.id, {
-            opencode: JSON.parse(desiredContent) as Record<string, unknown>,
-          });
-          if (!isCurrentInactiveWorkspaceHeal()) return;
-          inactiveWorkspaceBaseUrlHealedFor.set(workspace.id, sessionToken);
-        } catch (error) {
-          if (cancelled) continue;
-          const message = error instanceof Error ? error.message : safeStringify(error);
-          // Private/system workspaces returned by listWorkspaces() can refuse
-          // GET/PATCH /config with "Workspace is not authorized" — mark them
-          // healed for this server token so the effect doesn't re-spam once
-          // per state-change cycle.
-          if (/not authorized|unauthorized|401/i.test(message)) {
-            inactiveWorkspaceBaseUrlHealedFor.set(workspace.id, sessionToken);
-            continue;
-          }
-          reportError(error, `managed-baseurl.heal:${workspace.id}`);
-        }
-      }
-    };
-
-    void healInactiveWorkspaces();
 
     onCleanup(() => {
       cancelled = true;

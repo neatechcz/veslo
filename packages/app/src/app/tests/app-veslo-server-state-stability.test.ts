@@ -7,15 +7,18 @@ const connectionSource = readFileSync(
   new URL("../context/veslo-server-connection.ts", import.meta.url),
   "utf8",
 );
+const runtimeConfigSource = readFileSync(
+  new URL("../context/managed-ai-runtime-config.ts", import.meta.url),
+  "utf8",
+);
 
 const countMatches = (haystack: string, pattern: RegExp) => [...haystack.matchAll(pattern)].length;
 
 function inactiveWorkspaceBaseUrlHealEffectSource(): string {
-  const comment = source.indexOf("// VSLO-86: heal stale gateway baseURL");
-  const start = source.indexOf("  createEffect(() => {", comment);
-  const end = source.indexOf("  createEffect(() => {", start + 1);
+  const start = runtimeConfigSource.indexOf("const healInactiveManagedAiWorkspaceConfigs = async");
+  const end = runtimeConfigSource.indexOf("effect(() => {", start);
   assert.ok(start >= 0 && end > start, "inactive workspace baseURL heal effect should be present");
-  return source.slice(start, end);
+  return runtimeConfigSource.slice(start, end);
 }
 
 test("Veslo server polling stores stable capability and host-info signal values", () => {
@@ -48,8 +51,8 @@ test("Veslo server routing effects ignore host-info diagnostic churn", () => {
     "routing effects should depend on stable routing fields instead of the full host-info object",
   );
   assert.match(
-    source,
-    /const providerRoutingLocalHost = activeVesloServerRoutingInfo\(\);[\s\S]*managed-ai-config-sync:preflight/s,
+    runtimeConfigSource,
+    /const providerRoutingLocalHost = deps\.activeVesloServerRoutingInfo\(\);[\s\S]*managed-ai-config-sync:preflight/s,
     "managed config sync should use stable routing info",
   );
 });
@@ -58,18 +61,18 @@ test("inactive workspace baseURL healing skips active workspace and stale async 
   const effectSource = inactiveWorkspaceBaseUrlHealEffectSource();
 
   assert.match(
-    source,
+    runtimeConfigSource,
     /let inactiveWorkspaceBaseUrlHealGeneration = 0;/,
     "inactive workspace healing should track async generations across effect reruns",
   );
   assert.match(
     effectSource,
-    /const activeWorkspaceAppId = activeWorkspace\.id\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const activeWorkspaceId =[\s\S]*resolveConversationServerWorkspaceId\(activeWorkspaceAppId\) \|\|[\s\S]*activeWorkspaceAppId\.startsWith\("ws-"\) \? activeWorkspaceAppId : ""[\s\S]*\(vesloServerWorkspaceId\(\) \?\? ""\)\.trim\(\);/,
+    /const activeWorkspaceAppId = activeWorkspace\.id\?\.trim\(\) \|\| deps\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const activeWorkspaceId =[\s\S]*deps\.resolveConversationServerWorkspaceId\(activeWorkspaceAppId\) \|\|[\s\S]*activeWorkspaceAppId\.startsWith\("ws-"\) \? activeWorkspaceAppId : ""[\s\S]*\(deps\.vesloServerWorkspaceId\(\) \?\? ""\)\.trim\(\);/,
     "inactive workspace healing should resolve the active server workspace id before listing workspaces",
   );
   assert.match(
     effectSource,
-    /const healGeneration = \+\+inactiveWorkspaceBaseUrlHealGeneration;[\s\S]*const isCurrentInactiveWorkspaceHeal = \(\) =>[\s\S]*!cancelled && healGeneration === inactiveWorkspaceBaseUrlHealGeneration;/,
+    /const healGeneration = \+\+inactiveWorkspaceBaseUrlHealGeneration;[\s\S]*const isCurrentInactiveWorkspaceHeal = \(\) =>[\s\S]*!\(options\?\.isCancelled\?\.\(\) \?\? false\) &&[\s\S]*healGeneration === inactiveWorkspaceBaseUrlHealGeneration;/,
     "inactive workspace healing should invalidate older async runs",
   );
   assert.match(
