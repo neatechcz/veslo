@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const sendWorkflowSource = readFileSync(
+  new URL("../pages/session-send-workflow.ts", import.meta.url),
+  "utf8",
+);
 const conversationServiceSource = readFileSync(
   new URL("../context/conversation-service.ts", import.meta.url),
   "utf8",
@@ -39,17 +43,17 @@ test("abortSession routes scoped conversations through Veslo abort and scoped le
     "conversation abort should call the local Veslo abort endpoint",
   );
 
-  const abortSessionStart = source.indexOf("  async function abortSession(");
-  const retryStart = source.indexOf("  const sessionMutationWorkflow = createSessionMutationWorkflow({", abortSessionStart);
+  const abortSessionStart = sendWorkflowSource.indexOf("async function abortSession(");
+  const retryStart = sendWorkflowSource.indexOf("return {", abortSessionStart);
   assert.notEqual(abortSessionStart, -1, "abortSession should exist");
-  assert.notEqual(retryStart, -1, "abortSession should end before session mutation workflow wiring");
-  const abortSessionSource = source.slice(abortSessionStart, retryStart);
-  const serviceCall = abortSessionSource.indexOf("abortConversationFromVesloWriteApi(id, target)");
+  assert.notEqual(retryStart, -1, "abortSession should end before the workflow return");
+  const abortSessionSource = sendWorkflowSource.slice(abortSessionStart, retryStart);
+  const serviceCall = abortSessionSource.indexOf("deps.abortConversationFromVesloWriteApi(id, target)");
   const scopedFallbackHelper = abortSessionSource.indexOf("const abortSessionViaScopedLegacy = async");
   const scopedFallbackCall = abortSessionSource.indexOf("if (await abortSessionViaScopedLegacy())");
   const targetScopedFallbackCall = abortSessionSource.indexOf("target?.workspaceId?.trim() && await abortSessionViaScopedLegacy()");
   const fallbackWarn = abortSessionSource.indexOf('console.warn("[conversation-abort] falling back to OpenCode SDK", error);');
-  const legacyAbort = abortSessionSource.indexOf("await abortSessionTyped(c, id);");
+  const legacyAbort = abortSessionSource.indexOf("await deps.abortSessionTyped(c, id);");
   const finalThrow = abortSessionSource.indexOf("throw error;", scopedFallbackCall);
   assert.ok(serviceCall >= 0, "abortSession should attempt Veslo abort first");
   assert.ok(scopedFallbackHelper >= 0 && scopedFallbackHelper < serviceCall, "abortSession should define a scoped legacy fallback before service errors");
@@ -60,7 +64,7 @@ test("abortSession routes scoped conversations through Veslo abort and scoped le
   assert.ok(legacyAbort > fallbackWarn, "active OpenCode abort should remain only as an unscoped migration fallback");
   assert.match(
     abortSessionSource,
-    /const scopedEntry = workspaceRouting\.entry\(scope\.workspaceId\);[\s\S]*scopedEntry\?\.client[\s\S]*await abortSessionTyped\(scopedClient, opencodeSessionId, \{[\s\S]*directory: scope\.directory\?\.trim\(\) \|\| undefined,[\s\S]*\}\);/,
+    /const scopedClient = deps\.routedClient\(scope\.workspaceId\);[\s\S]*await deps\.abortSessionTyped\(scopedClient, opencodeSessionId, \{[\s\S]*directory: scope\.directory\?\.trim\(\) \|\| undefined,[\s\S]*\}\);/,
     "scoped fallback should use the exact workspace entry client and directory, not the active workspace client",
   );
 });

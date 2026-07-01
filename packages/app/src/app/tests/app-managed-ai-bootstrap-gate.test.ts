@@ -3,6 +3,14 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const sendWorkflowSource = readFileSync(
+  new URL("../pages/session-send-workflow.ts", import.meta.url),
+  "utf8",
+);
+const createWorkflowSource = readFileSync(
+  new URL("../pages/session-creation-workflow.ts", import.meta.url),
+  "utf8",
+);
 const storeSource = readFileSync(
   new URL("../context/managed-ai-access-store.ts", import.meta.url),
   "utf8",
@@ -17,12 +25,12 @@ test("managed AI bootstrap readiness returns a blocking result when setup is not
   const start = readinessSource.indexOf("const ensureManagedAiBootstrapReady = async");
   const end = readinessSource.indexOf("async function ensureLocalRuntimeReachableForSend", start);
   assert.ok(start >= 0 && end > start, "ensureManagedAiBootstrapReady source should be present");
-  const sendStart = source.indexOf("async function sendPrompt(");
-  const sendEnd = source.indexOf("async function abortSession", sendStart);
+  const sendStart = sendWorkflowSource.indexOf("async function sendPrompt(");
+  const sendEnd = sendWorkflowSource.indexOf("async function abortSession", sendStart);
   assert.ok(sendStart >= 0 && sendEnd > sendStart, "sendPrompt source should be present");
-  const sendSource = source.slice(sendStart, sendEnd);
-  const gateIndex = sendSource.indexOf('prepareSendRuntimeForSend("sendPrompt", sendPreflight)');
-  const clientIndex = sendSource.indexOf("const c = routedClientForSendTarget(sendTargetWorkspace);");
+  const sendSource = sendWorkflowSource.slice(sendStart, sendEnd);
+  const gateIndex = sendSource.indexOf('deps.prepareSendRuntimeForSend("sendPrompt", sendPreflight)');
+  const clientIndex = sendSource.indexOf("const c = deps.routedClientForSendTarget(sendTargetWorkspace);");
   assert.ok(gateIndex >= 0, "sendPrompt should call the runtime readiness owner");
   assert.ok(clientIndex >= 0, "sendPrompt should read the routed client");
   assert.ok(
@@ -37,16 +45,16 @@ test("managed AI bootstrap readiness returns a blocking result when setup is not
 });
 
 test("sendPrompt blocks when managed bootstrap readiness is unavailable before reading client", () => {
-  const start = source.indexOf("async function sendPrompt(");
-  const end = source.indexOf("async function abortSession", start);
+  const start = sendWorkflowSource.indexOf("async function sendPrompt(");
+  const end = sendWorkflowSource.indexOf("async function abortSession", start);
   assert.ok(start >= 0 && end > start, "sendPrompt source should be present");
-  const createStart = source.indexOf("async function createSessionAndOpen(");
-  const createEnd = source.indexOf("const chooseFolderForCurrentSession = async () =>", createStart);
+  const createStart = createWorkflowSource.indexOf("const createSessionAndOpen = async (");
+  const createEnd = createWorkflowSource.indexOf("return {", createStart);
   assert.ok(createStart >= 0 && createEnd > createStart, "createSessionAndOpen source should be present");
-  const createSource = source.slice(createStart, createEnd);
+  const createSource = createWorkflowSource.slice(createStart, createEnd);
   const skipIndex = createSource.indexOf("createSessionAndOpen:managed-ai-bootstrap-skip");
   const gateIndex = createSource.indexOf('"createSessionAndOpen:ensure-managed-ai-bootstrap-ready"');
-  const clientIndex = createSource.indexOf("const c = routedClientForSendTarget(targetWorkspace);");
+  const clientIndex = createSource.indexOf("const client = deps.routedClientForSendTarget(targetWorkspace);");
   assert.ok(skipIndex >= 0, "createSessionAndOpen should skip the gate when send preflight already passed it");
   assert.ok(gateIndex >= 0, "createSessionAndOpen should still trace the direct-create managed bootstrap gate");
   assert.ok(clientIndex >= 0, "createSessionAndOpen should read the routed client");

@@ -57,8 +57,6 @@ import { partitionVesloUtilitySessions } from "./lib/veslo-utility-session";
 import {
   createSessionClientMessageId,
   normalizeSessionSendCorrelation,
-  type MaterializedSessionHandoff,
-  type SessionSendOptionsBase,
 } from "./lib/session-send-contract";
 import { createUiConversationKey } from "./lib/ui-conversation-scope";
 import {
@@ -76,7 +74,6 @@ import {
 import { createManagedAiRuntimeConfigSync } from "./context/managed-ai-runtime-config";
 import {
   createConversationService,
-  type ConversationAbortTarget,
   type ConversationWorkspaceResolution,
 } from "./context/conversation-service";
 import { createPendingSessionDraftController } from "./context/pending-session-draft-controller";
@@ -127,6 +124,7 @@ import {
   createSessionCreationWorkflow,
   type SessionCreationWorkflowCreateOptions,
 } from "./pages/session-creation-workflow";
+import { createSessionSendWorkflow } from "./pages/session-send-workflow";
 import { createSessionMutationWorkflow } from "./pages/session-mutation-workflow";
 import { createSoulDataStore } from "./pages/soul-data-store";
 import { isPendingSessionInstanceId } from "./components/session/pending-session-instance-model";
@@ -215,7 +213,6 @@ import type {
   McpStatusMap,
   ComposerAttachment,
   ComposerDraft,
-  ComposerPart,
   ComposerTargetOption,
   ComposerTargetSwitchResult,
   ProviderListItem,
@@ -320,7 +317,6 @@ import {
   writeVesloServerSettings,
   clearVesloServerSettings,
   type VesloSessionLatestRunArtifacts,
-  type VesloConversationRunInput,
   type VesloServerClient,
   VesloServerError,
 } from "./lib/veslo-server";
@@ -358,12 +354,6 @@ type SendPreflightContext = SendRuntimePreflightContext & {
   effectiveSandbox: EffectiveRuntimeSandboxState | null;
   targetWorkspace: SendTargetWorkspaceScope | null;
   conversationWorkspaceByDirectory: Map<string, Promise<ConversationWorkspaceResolution<VesloServerClient> | null>>;
-};
-
-type AppSendPromptOptions = SessionSendOptionsBase & {
-  targetSessionId?: string | null;
-  onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
-  pendingSession?: PendingSidebarSessionMetadata | null;
 };
 
 const SEND_TRACE_LIMIT = 500;
@@ -1557,801 +1547,94 @@ export default function App() {
     buildCommandFileParts,
   } = sessionAttachmentStaging;
 
-  async function maybeResolveSkillCommand(
-    draft: ComposerDraft,
-    traceId?: string | null,
-    targetWorkspace?: SendTargetWorkspaceScope | null,
-  ): Promise<ComposerDraft> {
-    const tracePayload = traceId ? { traceId } : undefined;
-    if (draft.mode !== "prompt" || draft.command) {
-      recordSendTrace("maybeResolveSkillCommand:skipped-mode-or-command", {
-        ...(tracePayload ?? {}),
-        mode: draft.mode,
-        hasCommand: Boolean(draft.command),
-      });
-      return draft;
-    }
-
-    const text = (draft.resolvedText ?? draft.text).trim();
-    if (!text || text.startsWith("/")) {
-      recordSendTrace("maybeResolveSkillCommand:skipped-empty-or-slash", {
-        ...(tracePayload ?? {}),
-        hasText: Boolean(text),
-        startsWithSlash: text.startsWith("/"),
-      });
-      return draft;
-    }
-
-    const vesloClient = vesloServerClient();
-    const targetWorkspaceId = targetWorkspace?.workspaceId?.trim() || "";
-    const workspaceId = targetWorkspaceId || resolvedDevtoolsWorkspaceId();
-    if (
-      vesloServerStatus() !== "connected" ||
-      !vesloClient ||
-      !workspaceId ||
-      typeof (vesloClient as unknown as { resolveSkill?: unknown }).resolveSkill !== "function"
-    ) {
-      recordSendTrace("maybeResolveSkillCommand:skipped-veslo-server-unavailable", {
-        ...(tracePayload ?? {}),
-        vesloServerStatus: vesloServerStatus(),
-        hasClient: Boolean(vesloClient),
-        hasWorkspaceId: Boolean(workspaceId),
-        targetWorkspaceId: targetWorkspaceId || null,
-      });
-      return draft;
-    }
-
-    try {
-      const targetWorkspaceType = targetWorkspaceId
-        ? (
-            workspaceStore.workspaces().find((workspace) => workspace.id === targetWorkspaceId)?.workspaceType ??
-            (workspaceStore.activeWorkspaceId().trim() === targetWorkspaceId
-              ? workspaceStore.activeWorkspaceDisplay().workspaceType
-              : undefined)
-          )
-        : workspaceStore.activeWorkspaceDisplay().workspaceType;
-      const includeGlobal = targetWorkspaceType === "local";
-      const resolution = await sendTraceStep(
-        "maybeResolveSkillCommand:resolve-skill",
-        () => (vesloClient as unknown as {
-          resolveSkill: (
-            workspaceId: string,
-            payload: { text: string; includeGlobal?: boolean },
-          ) => Promise<{ match?: { name?: string | null } | null }>;
-        }).resolveSkill(workspaceId, {
-          text,
-          includeGlobal,
-        }),
-        {
-          ...(tracePayload ?? {}),
-          workspaceId,
-          targetWorkspaceId: targetWorkspaceId || null,
-          workspaceType: targetWorkspaceType ?? null,
-          includeGlobal,
-          textLength: text.length,
-        },
-      );
-
-      const matchedName = resolution?.match?.name?.trim();
-      if (!matchedName) {
-        recordSendTrace("maybeResolveSkillCommand:no-match", tracePayload);
-        return draft;
-      }
-
-      const commandDirectory =
-        targetWorkspace?.directory?.trim() ||
-        targetWorkspace?.workspaceRoot?.trim() ||
-        "";
-      const commands = await sendTraceStep(
-        "maybeResolveSkillCommand:list-commands",
-        () =>
-          listCommands(
-            targetWorkspaceId
-              ? {
-                  workspaceId: targetWorkspaceId,
-                  directory: commandDirectory,
-                }
-              : undefined,
-          ),
-        {
-          ...(tracePayload ?? {}),
-          matchedName,
-          targetWorkspaceId: targetWorkspaceId || null,
-          commandDirectory: commandDirectory || null,
-        },
-      );
-      const matchedCommand = commands.find(
-        (entry) => entry.name === matchedName && entry.source === "skill",
-      );
-      if (!matchedCommand) {
-        recordSendTrace("maybeResolveSkillCommand:matched-skill-command-missing", {
-          ...(tracePayload ?? {}),
-          matchedName,
-          commandCount: commands.length,
-        });
-        return draft;
-      }
-
-      recordSendTrace("maybeResolveSkillCommand:matched", {
-        ...(tracePayload ?? {}),
-        matchedName,
-      });
-      return {
-        ...draft,
-        command: {
-          name: matchedName,
-          arguments: text,
-        },
-      };
-    } catch (error) {
-      recordSendTrace("maybeResolveSkillCommand:error", {
-        ...(tracePayload ?? {}),
-        message: messageFromUnknownError(error),
-      });
-      return draft;
-    }
-  }
-
-  async function sendPrompt(
-    draft: ComposerDraft,
-    options: AppSendPromptOptions,
-  ): Promise<boolean> {
-    const sendCorrelation = normalizeSessionSendCorrelation(options);
-    if (!sendCorrelation.clientMessageId) {
-      recordSendTrace("sendPrompt:blocked-missing-client-message-id", {
-        origin: sendCorrelation.origin,
-      });
-      return false;
-    }
-    const sendPreflight = createSendPreflightContext(options.sendTraceId);
-    const sendTraceId = sendPreflight.traceId;
-    const pendingSidebarSession = options.pendingSession ?? null;
-    const sendStartUiScopeToken = activeUiScopeToken();
-    const selectedSessionCandidate = selectedSessionId();
-    const selectedSessionScopeForSend = selectedSessionCandidate
-      ? resolveSelectedSessionBrowseScope(selectedSessionCandidate)
-      : null;
-    const selectedSessionScopeWorkspaceId = selectedSessionScopeForSend?.workspaceId?.trim() ?? "";
-    const activeWorkspaceIdForSend = workspaceStore.activeWorkspaceId().trim();
-    const selectedSessionBelongsToActiveWorkspace =
-      !selectedSessionScopeWorkspaceId ||
-      !activeWorkspaceIdForSend ||
-      selectedSessionScopeWorkspaceId === activeWorkspaceIdForSend;
-    const selectedRealSessionId =
-      isPendingSessionInstanceId(selectedSessionCandidate) || !selectedSessionBelongsToActiveWorkspace
-        ? null
-        : selectedSessionCandidate;
-    const explicitTargetSessionId = isPendingSessionInstanceId(options.targetSessionId)
-      ? ""
-      : options.targetSessionId?.trim() ?? "";
-    let sessionID = explicitTargetSessionId || selectedRealSessionId;
-    const pendingSidebarTargetWorkspace = pendingSidebarSession?.workspaceId?.trim()
-      ? {
-          workspaceId: pendingSidebarSession.workspaceId.trim(),
-          workspaceRoot: pendingSidebarSession.workspaceRoot.trim(),
-          directory: pendingSidebarSession.workspaceRoot.trim(),
-        }
-      : null;
-    recordSendTrace("sendPrompt:start", {
-      traceId: sendTraceId,
-      uiSendTraceId: options.sendTraceId ?? null,
-      clientMessageId: sendCorrelation.clientMessageId,
-      origin: sendCorrelation.origin,
-      engineReady: engineReady(),
-      selectedSessionId: selectedSessionCandidate,
-      selectedSessionScopeWorkspaceId: selectedSessionScopeWorkspaceId || null,
-      activeWorkspaceId: activeWorkspaceIdForSend || null,
-      selectedSessionIgnoredForForeignWorkspace: Boolean(
-        selectedSessionCandidate && !selectedSessionBelongsToActiveWorkspace && !explicitTargetSessionId,
-      ),
-      uiScopeKey: sendStartUiScopeToken.key,
-      uiScopeWorkspaceId: sendStartUiScopeToken.workspaceId || null,
-      uiScopeGeneration: sendStartUiScopeToken.generation,
-      targetSessionId: options.targetSessionId ?? null,
-      hasClient: Boolean(routedClient()),
-      busy: busy(),
-      busyLabel: busyLabel(),
-    });
-    let sendTargetWorkspace = pendingSidebarTargetWorkspace ?? resolveSendTargetWorkspaceScope(sessionID);
-    sendPreflight.targetWorkspace = sendTargetWorkspace;
-    sendPreflight.effectiveSandbox = resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
-    recordSendTrace("sendPrompt:target-workspace-snapshot", {
-      traceId: sendTraceId,
-      sessionID: sessionID ?? null,
-      workspaceId: sendTargetWorkspace?.workspaceId ?? null,
-      workspaceRoot: sendTargetWorkspace?.workspaceRoot ?? null,
-      directory: sendTargetWorkspace?.directory ?? null,
-      clientMessageId: sendCorrelation.clientMessageId,
-      origin: sendCorrelation.origin,
-    });
-    const sendPromptBusyOwnership = resolveSendPromptBusyOwnership({ sessionId: sessionID });
-    const blockAppDuringPromptSend = sendPromptBusyOwnership.ownsBusy;
-    let ownsSendPromptBusy = false;
-    let releaseSendPromptInFlight: (() => void) | null = null;
-    const releasePromptSendInFlight = () => {
-      releaseSendPromptInFlight?.();
-      releaseSendPromptInFlight = null;
-    };
-    const startSendPromptBusy = (label: string) => {
-      if (!blockAppDuringPromptSend) return;
-      ownsSendPromptBusy = true;
-      setBusy(true);
-      setBusyLabel(label);
-      setBusyStartedAt(Date.now());
-    };
-    const stopSendPromptBusy = () => {
-      releasePromptSendInFlight();
-      if (!ownsSendPromptBusy) return;
-      ownsSendPromptBusy = false;
-      setBusy(false);
-      setBusyLabel(null);
-      setBusyStartedAt(null);
-    };
-    let pendingSidebarRowRegistered = false;
-    const cleanupPendingSidebarSession = () => {
-      if (!pendingSidebarRowRegistered || !pendingSidebarSession) return;
-      pendingSidebarRowRegistered = false;
-      removeSessionFromWorkspaceSidebar(pendingSidebarSession.workspaceId, pendingSidebarSession.id);
-      if (selectedSessionId() === pendingSidebarSession.id) {
-        setSelectedSessionId(null);
-      }
-    };
-    const hasExplicitDraft = Boolean(draft);
-    const fallbackDraft = composerDraft();
-    const fallbackText = fallbackDraft.text.trim();
-    const fallbackResolvedText = (fallbackDraft.resolvedText ?? fallbackDraft.text).trim();
-    let resolvedDraft: ComposerDraft = draft ?? {
-      mode: fallbackDraft.mode,
-      parts: fallbackDraft.parts.length ? fallbackDraft.parts : (fallbackText ? [{ type: "text", text: fallbackText } as ComposerPart] : []),
-      attachments: fallbackDraft.attachments,
-      text: fallbackText,
-      resolvedText: fallbackResolvedText || undefined,
-      command: fallbackDraft.command,
-    };
-
-    const preflightContent = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
-    if (!preflightContent && !resolvedDraft.attachments.length) {
-      recordSendTrace("sendPrompt:blocked-empty", {
-        traceId: sendTraceId,
-        phase: "initial-preflight",
-      });
-      return false;
-    }
-
-    const scopedSessionID = sessionID?.trim() || "";
-    if (
-      scopedSessionID &&
-      !(await sendTraceStep(
-        "sendPrompt:ensure-scoped-workspace-active",
-        () => ensureSelectedSessionWorkspaceActiveForSend(scopedSessionID, sendTraceId),
-        {
-          traceId: sendTraceId,
-          sessionID: scopedSessionID,
-        },
-      ))
-    ) {
-      recordSendTrace("sendPrompt:blocked-scoped-workspace", {
-        traceId: sendTraceId,
-        sessionID: scopedSessionID,
-      });
-      stopSendPromptBusy();
-      return false;
-    }
-    if (scopedSessionID) {
-      sendTargetWorkspace = resolveSendTargetWorkspaceScope(scopedSessionID) ?? sendTargetWorkspace;
-      sendPreflight.targetWorkspace = sendTargetWorkspace;
-      sendPreflight.effectiveSandbox = resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
-    }
-
-    resolvedDraft = await sendTraceStep(
-      "sendPrompt:maybe-resolve-skill-command",
-      () => maybeResolveSkillCommand(resolvedDraft, sendTraceId, sendTargetWorkspace),
-      {
-        traceId: sendTraceId,
-        mode: resolvedDraft.mode,
-        targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
-      },
-    );
-
-    const initialSessionTitle = resolvedDraft.text.trim();
-    const initialContent = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
-    if (!initialContent && !resolvedDraft.attachments.length) {
-      recordSendTrace("sendPrompt:blocked-empty", {
-        traceId: sendTraceId,
-        phase: "after-skill-resolution",
-      });
-      return false;
-    }
-    if (!sessionID && pendingSidebarSession) {
-      registerPendingSidebarSession(pendingSidebarSession);
-      pendingSidebarRowRegistered = true;
-    }
-
-    const sendRuntimeWorkspaceId = sendTargetWorkspace?.workspaceId ?? workspaceStore.activeWorkspaceId().trim();
-    const sendRuntimeReady = isWorkspaceRuntimeReady(sendRuntimeWorkspaceId);
-    if (sendRuntimeReady) {
-      sendPreflight.enginePrepared = true;
-      sendPreflight.effectiveSandbox = resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
-    }
-
-    // In browsing mode, target workspace runtime is not connected. Start it before sending.
-    if (!sendRuntimeReady) {
-      // VSLO-171 F3Ú8: cross-workspace takeover dialog removed.
-      // Multi mode (F3Ú6) keeps per-WS clients alive in parallel; single-active
-      // fallback may interrupt another worker silently but that's the legacy
-      // behavior the multi flag is meant to replace.
-
-      startSendPromptBusy("status.connecting");
-      // Yield to the browser's macro task queue so it paints the spinner
-      // before the engine start blocks the microtask chain.
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-
-    if (!(await prepareSendRuntimeForSend("sendPrompt", sendPreflight))) {
-      cleanupPendingSidebarSession();
-      stopSendPromptBusy();
-      return false;
-    }
-    sendPreflight.enginePrepared = true;
-    sendPreflight.effectiveSandbox = resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
-    sendPreflight.managedAiReady = true;
-
-    const c = routedClientForSendTarget(sendTargetWorkspace);
-    if (!c) {
-      recordSendTrace("sendPrompt:blocked-no-client", {
-        traceId: sendTraceId,
-      });
-      cleanupPendingSidebarSession();
-      stopSendPromptBusy();
-      return false;
-    }
-
-    const compactShortcut = /^\/compact(?:\s+.*)?$/i.test(initialContent);
-    const compactCommand = resolvedDraft.command?.name === "compact" || compactShortcut;
-    const commandName = compactCommand ? "compact" : (resolvedDraft.command?.name ?? null);
-    if (compactCommand && !sessionID) {
-      recordSendTrace("sendPrompt:blocked-compact-no-session", {
-        traceId: sendTraceId,
-      });
-      setError("Select a session with messages before running /compact.");
-      cleanupPendingSidebarSession();
-      return false;
-    }
-
-    const pendingDraftSendState = (() => {
-      const pendingDraftKey = (activePendingDraftKey() ?? "").trim();
-      if (sessionID) return null;
-      if (!pendingDraftKey) return null;
-      const pendingDraftMeta = activePendingDraftMeta();
-      return {
-        key: pendingDraftKey,
-        meta: pendingDraftMeta,
-        draftId: pendingDraftMeta?.id?.trim() || GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
-      };
-    })();
-    if (!sessionID) {
-      recordSendTrace("sendPrompt:create-session-needed", {
-        traceId: sendTraceId,
-      });
-      const createdSessionId = await sendTraceStep(
-        "sendPrompt:create-session-and-open",
-        () => createSessionAndOpen(initialSessionTitle, {
-          blockAppDuringCreate: blockAppDuringPromptSend,
-          managedAiRuntimeAlreadyPrepared: true,
-          pendingSession: pendingSidebarSession,
-          sendTraceId,
-          clientMessageId: sendCorrelation.clientMessageId,
-          onMaterializedSessionId: options.onMaterializedSessionId,
-          preflight: sendPreflight,
-        }),
-        {
-          traceId: sendTraceId,
-          blockAppDuringCreate: blockAppDuringPromptSend,
-          targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
-          targetWorkspaceRoot: sendTargetWorkspace?.workspaceRoot ?? null,
-        },
-      );
-      const materializedSessionId = createdSessionId?.trim();
-      if (materializedSessionId) {
-        sessionID = materializedSessionId;
-        pendingSidebarRowRegistered = false;
-      } else {
-        cleanupPendingSidebarSession();
-        const selectedAfterCreate = selectedSessionId();
-        sessionID = isPendingSessionInstanceId(selectedAfterCreate) ? null : selectedAfterCreate;
-      }
-    }
-    if (!sessionID) {
-      recordSendTrace("sendPrompt:blocked-no-session", {
-        traceId: sendTraceId,
-      });
-      cleanupPendingSidebarSession();
-      stopSendPromptBusy();
-      return false;
-    }
-
-    const displayedConversationGuard = captureDisplayedConversationGuard(sessionID);
-    const displayedUiScopeToken = activeUiScopeToken();
-    const sendTargetStillDisplayed = () =>
-      displayedConversationStillMatches(displayedConversationGuard) && isUiScopeTokenCurrent(displayedUiScopeToken);
-    const reportSendErrorToDisplayedTarget = (message: string) => {
-      if (!sendTargetStillDisplayed()) {
-        recordSendTrace("sendPrompt:error-skipped-stale-display", {
-          traceId: sendTraceId,
-          sessionID,
-          message,
-        });
-        return;
-      }
-      setError(addOpencodeCacheHint(message));
-      sessionStore.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(message));
-    };
-    const model = modelForSession(sessionID);
-    let promptSystem: string | undefined;
-    const restorePendingDraftAfterSendFailure = () => {
-      if (!sendTargetStillDisplayed()) return;
-      if (pendingDraftSendState) {
-        setActivePendingDraftKey(pendingDraftSendState.key);
-        setActivePendingDraftMeta(pendingDraftSendState.meta);
-        setView("session");
-      }
-    };
-
-    try {
-      const stagedAttachments = await sendTraceStep(
-        "sendPrompt:stage-attachments",
-        () => stageAttachmentsIntoSessionDirectory(resolvedDraft, sessionID, sendPreflight),
-        {
-          traceId: sendTraceId,
-          sessionID,
-          attachmentCount: resolvedDraft.attachments.length,
-        },
-      );
-      const routedDraft = routeStagedAttachmentsForModel({
-        draft: resolvedDraft,
-        stagedAttachments,
-        model,
-        providers: providers(),
-      });
-      if (routedDraft.error) {
-        recordSendTrace("sendPrompt:staged-attachment-routing-error", {
-          traceId: sendTraceId,
-          sessionID,
-          message: routedDraft.error,
-        });
-        restorePendingDraftAfterSendFailure();
-        if (sendTargetStillDisplayed()) {
-          setError(routedDraft.error);
-        }
-        stopSendPromptBusy();
-        return false;
-      }
-      resolvedDraft = routedDraft.draft;
-      promptSystem = routedDraft.system;
-    } catch (error) {
-      recordSendTrace("sendPrompt:stage-attachments-error", {
-        traceId: sendTraceId,
-        sessionID,
-        message: messageFromUnknownError(error),
-      });
-      restorePendingDraftAfterSendFailure();
-      if (sendTargetStillDisplayed()) {
-        setError(error instanceof Error ? error.message : safeStringify(error));
-      }
-      stopSendPromptBusy();
-      return false;
-    }
-
-    const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
-    if (!content && !resolvedDraft.attachments.length && !promptSystem) {
-      recordSendTrace("sendPrompt:blocked-empty-after-staging", {
-        traceId: sendTraceId,
-        sessionID,
-      });
-      stopSendPromptBusy();
-      return false;
-    }
-
-    startSendPromptBusy("status.running");
-    setError(null);
-
-    const perfEnabled = developerMode();
-    const startedAt = perfNow();
-    const visible = messages();
-    const visibleParts = visible.reduce((total, message) => total + message.parts.length, 0);
-    let commandMessageIDToClear: string | null = null;
-    recordPerfLog(perfEnabled, "session.prompt", "start", {
-      sessionID,
-      mode: resolvedDraft.mode,
-      command: commandName,
-      charCount: content.length,
-      attachmentCount: resolvedDraft.attachments.length,
-      messageCount: visible.length,
-      partCount: visibleParts,
-    });
-
-    try {
-      if (!compactCommand) {
-        setLastPromptSent(content);
-      }
-      if (!hasExplicitDraft) {
-        setPrompt("");
-      }
-
-      const agent = agentForSession(sessionID);
-      const parts = buildPromptParts(resolvedDraft);
-      const selectedVariant = modelVariant() ?? undefined;
-      const reasoningEffort = resolveCodexReasoningEffort(model.modelID, selectedVariant ?? null);
-      const requestVariant = reasoningEffort ? undefined : selectedVariant;
-      const promptOverrides = {
-        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-        ...(promptSystem ? { system: promptSystem } : {}),
-      };
-
-      // Resolve the session directory override so moved sessions operate in the
-      // correct folder, not the original private-workspace path.
-      const sessionDirOverride = sessionDirectoryOverrideById()[sessionID] ?? undefined;
-      const runConversationOrFail = async (input: VesloConversationRunInput) => {
-        const scope = resolveSelectedSessionBrowseScope(sessionID);
-        const inputWithCorrelation: VesloConversationRunInput = {
-          ...input,
-          clientMessageId: sendCorrelation.clientMessageId,
-          origin: sendCorrelation.origin,
-        };
-        try {
-          const result = await runConversationFromVesloWriteApi(sessionID, inputWithCorrelation, {
-            preflight: sendPreflight,
-            targetWorkspace: sendTargetWorkspace,
-          });
-          if (result) return;
-          recordSendTrace("sendPrompt:conversation-run-unavailable", {
-            traceId: sendTraceId,
-            sessionID,
-            kind: input.kind,
-            clientMessageId: sendCorrelation.clientMessageId,
-            origin: sendCorrelation.origin,
-            hasConversationScope: Boolean(scope?.conversationId),
-          });
-          throw new Error("Conversation service is unavailable for this session.");
-        } catch (error) {
-          recordSendTrace("sendPrompt:conversation-run-error", {
-            traceId: sendTraceId,
-            sessionID,
-            kind: input.kind,
-            clientMessageId: sendCorrelation.clientMessageId,
-            origin: sendCorrelation.origin,
-            hasConversationScope: Boolean(scope?.conversationId),
-            message: messageFromUnknownError(error),
-          });
-          throw error;
-        }
-      };
-
-      if (resolvedDraft.mode === "shell") {
-        await runConversationOrFail({
-          kind: "shell",
-          directory: sessionDirOverride,
-          command: content,
-          model,
-          agent: agent ?? undefined,
-        });
-      } else if (resolvedDraft.command || compactCommand) {
-        if (compactCommand) {
-          await compactCurrentSession(sessionID);
-          finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
-            sessionID,
-            mode: resolvedDraft.mode,
-            command: commandName,
-          });
-          recordSendTrace("sendPrompt:compact-success", {
-            traceId: sendTraceId,
-            sessionID,
-          });
-          return true;
-        }
-
-        const command = resolvedDraft.command;
-        if (!command) {
-          throw new Error("Command was not resolved.");
-        }
-
-        // Slash command: route through session.command() API
-        commandMessageIDToClear = sendCorrelation.clientMessageId;
-        const commandMessageID = commandMessageIDToClear;
-        sessionStore.setCommandDisplay(commandMessageID, command.name, command.arguments);
-        const modelString = `${model.providerID}/${model.modelID}`;
-        const files = buildCommandFileParts(resolvedDraft);
-
-        await runConversationOrFail({
-          kind: "command",
-          sessionID,
-          messageID: commandMessageID,
-          command: command.name,
-          arguments: command.arguments,
-          agent: agent ?? undefined,
-          model: modelString,
-          variant: requestVariant,
-          ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-          parts: files.length ? files : undefined,
-          directory: sessionDirOverride,
-        });
-        commandMessageIDToClear = null;
-
-      } else {
-        await runConversationOrFail({
-          kind: "prompt_async",
-          directory: sessionDirOverride,
-          model,
-          agent: agent ?? undefined,
-          variant: requestVariant,
-          ...promptOverrides,
-          parts,
-        });
-      }
-      if (pendingDraftSendState) {
-        const pendingDraftStorageKey = pendingDraftSendState.key;
-        const pendingDraftId = pendingDraftSendState.draftId;
-        const clearDisplayedPendingDraftState = sendTargetStillDisplayed();
-        if (pendingDraftId && isTauriRuntime()) {
-          try {
-            const deleted = await pendingSessionDraftsDelete(pendingDraftId);
-            if (!deleted) {
-              markPendingDraftConsumed(pendingDraftId);
-              console.warn("[pendingDrafts.consume] failed to delete pending draft", { pendingDraftId });
-            } else {
-              clearConsumedPendingDraftId(pendingDraftId);
-            }
-          } catch (error) {
-            markPendingDraftConsumed(pendingDraftId);
-            reportError(error, "pendingDrafts.consume");
-          }
-        }
-        if (clearDisplayedPendingDraftState) {
-          clearActivePendingDraftState();
-        }
-        setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, { storageKey: pendingDraftStorageKey }));
-        void composerTargetController.refreshPendingDraftSummaries();
-      }
-
-      finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
-        sessionID,
-        mode: resolvedDraft.mode,
-        command: commandName,
-      });
-      recordSendTrace("sendPrompt:success", {
-        traceId: sendTraceId,
-        sessionID,
-        clientMessageId: sendCorrelation.clientMessageId,
-        origin: sendCorrelation.origin,
-        mode: resolvedDraft.mode,
-        command: commandName,
-      });
-      holdVisibleRuntimeActivity(sessionID, "sendPrompt:success");
-      return true;
-    } catch (e) {
-      restorePendingDraftAfterSendFailure();
-      if (commandMessageIDToClear) {
-        sessionStore.clearCommandDisplay(commandMessageIDToClear);
-      }
-      // VSLO-86 Task #20 — if the workspace switched while this send was
-      // mid-flight, the routed client's guard proxies throw
-      // WorkspaceClientStaleError before forwarding the SDK call. Treat it
-      // as a silent abort: don't poison the (now-irrelevant) session with
-      // an error turn, just unwind cleanly.
-      if (isWorkspaceClientStaleError(e)) {
-        recordSendTrace("sendPrompt:stale-client", {
-          traceId: sendTraceId,
-          sessionID,
-          clientMessageId: sendCorrelation.clientMessageId,
-          origin: sendCorrelation.origin,
-          entryWorkspaceId: e.entryWorkspaceId,
-          currentWorkspaceId: e.currentWorkspaceId,
-        });
-        return false;
-      }
-      finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
-        sessionID,
-        mode: resolvedDraft.mode,
-        command: commandName,
-        error: e instanceof Error ? e.message : safeStringify(e),
-      });
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      recordSendTrace("sendPrompt:error", {
-        traceId: sendTraceId,
-        sessionID,
-        clientMessageId: sendCorrelation.clientMessageId,
-        origin: sendCorrelation.origin,
-        message,
-      });
-      reportSendErrorToDisplayedTarget(message);
-      return false;
-    } finally {
-      releasePromptSendInFlight();
-      stopSendPromptBusy();
-    }
-  }
-
-  async function abortSession(sessionID?: string, target?: ConversationAbortTarget) {
-    const id = (sessionID ?? selectedSessionId() ?? "").trim();
-    if (!id) return;
-    const scope = resolveConversationAbortScope(id, target);
-    recordSendTrace("abortSession:start", {
-      sessionID: id,
-      workspaceId: scope.workspaceId || null,
-      conversationId: scope.conversationId || null,
-      opencodeSessionId: scope.opencodeSessionId || null,
-      hasConversationScope: scope.hasConversationScope,
-    });
-    const abortSessionViaScopedLegacy = async (): Promise<boolean> => {
-      if (!scope.workspaceId) return false;
-      const opencodeSessionId = scope.opencodeSessionId?.trim() || id;
-      const conversationId = scope.hasConversationScope ? scope.conversationId?.trim() : "";
-      if (!opencodeSessionId || (conversationId && opencodeSessionId === conversationId)) return false;
-      const scopedEntry = workspaceRouting.entry(scope.workspaceId);
-      const scopedClient =
-        scopedEntry?.client ??
-        (scope.workspaceId === workspaceStore.activeWorkspaceId().trim() ? routedClient() : null);
-      if (!scopedClient) return false;
-      await abortSessionTyped(scopedClient, opencodeSessionId, {
-        directory: scope.directory?.trim() || undefined,
-      });
-      return true;
-    };
-    try {
-      const result = await abortConversationFromVesloWriteApi(id, target);
-      if (result) {
-        recordSendTrace("abortSession:conversation-abort-success", {
-          sessionID: id,
-          workspaceId: result.workspaceId,
-          conversationId: result.conversationId,
-          opencodeSessionId: result.opencodeSessionId,
-          runId: result.runId,
-        });
-        return;
-      }
-      recordSendTrace("abortSession:conversation-abort-unavailable", {
-        sessionID: id,
-        hasConversationScope: scope.hasConversationScope,
-      });
-      if (target?.workspaceId?.trim() && await abortSessionViaScopedLegacy()) {
-        recordSendTrace("abortSession:scoped-legacy-fallback", { sessionID: id });
-        return;
-      }
-      if (scope.hasConversationScope) {
-        throw new Error("Conversation service is unavailable for this scoped conversation.");
-      }
-    } catch (error) {
-      recordSendTrace("abortSession:conversation-abort-error", {
-        sessionID: id,
-        hasConversationScope: scope.hasConversationScope,
-        message: messageFromUnknownError(error),
-      });
-      if (scope.hasConversationScope) {
-        // Abort is a safe/idempotent stop operation. If the local app lost the
-        // submitted runId after reload, still stop the scoped OpenCode session
-        // through the exact workspace client instead of failing closed.
-        if (await abortSessionViaScopedLegacy()) {
-          recordSendTrace("abortSession:scoped-legacy-fallback", { sessionID: id });
-          return;
-        }
-        throw error;
-      }
-      if (target?.workspaceId?.trim() && await abortSessionViaScopedLegacy()) {
-        recordSendTrace("abortSession:scoped-legacy-fallback", { sessionID: id });
-        return;
-      }
-      console.warn("[conversation-abort] falling back to OpenCode SDK", error);
-    }
-
-    const c = routedClient();
-    if (!c) return;
-    // OpenCode exposes session.abort which interrupts the active prompt/run.
-    // We intentionally don't mutate global busy state here; the SessionView
-    // provides local UX (button disabled + toast) for cancellation.
-    recordSendTrace("abortSession:legacy-fallback", { sessionID: id });
-    await abortSessionTyped(c, id);
-  }
-
+  const sessionSendWorkflow = createSessionSendWorkflow({
+    abortConversationFromVesloWriteApi,
+    abortSessionTyped,
+    activePendingDraftKey,
+    activePendingDraftMeta,
+    activeUiScopeToken,
+    addOpencodeCacheHint,
+    agentForSession: (sessionId) => agentForSession(sessionId),
+    buildCommandFileParts,
+    buildPromptParts,
+    busy,
+    busyLabel,
+    captureDisplayedConversationGuard,
+    clearActivePendingDraftState,
+    clearConsumedPendingDraftId,
+    compactCurrentSession: (sessionId) => compactCurrentSession(sessionId),
+    composerDraft,
+    createSendPreflightContext,
+    createSessionAndOpen: (initialTitle, options) => createSessionAndOpen(initialTitle, options),
+    developerMode,
+    displayedConversationStillMatches,
+    engineReady,
+    ensureSelectedSessionWorkspaceActiveForSend: (sessionId, sendTraceId) =>
+      ensureSelectedSessionWorkspaceActiveForSend(sessionId, sendTraceId),
+    finishPerf,
+    holdVisibleRuntimeActivity,
+    isPendingSessionInstanceId,
+    isTauriRuntime,
+    isUiScopeTokenCurrent,
+    isWorkspaceClientStaleError,
+    isWorkspaceRuntimeReady,
+    listCommands: (scope) => listCommands(scope),
+    markPendingDraftConsumed,
+    messageFromUnknownError: (error) => messageFromUnknownError(error),
+    messages,
+    modelForSession: (sessionId) => modelForSession(sessionId),
+    modelVariant: () => modelVariant(),
+    pendingSessionDraftsDelete,
+    perfNow,
+    prepareSendRuntimeForSend: (event, preflight) => prepareSendRuntimeForSend(event, preflight),
+    providers: () => providers(),
+    recordPerfLog,
+    recordSendTrace,
+    refreshPendingDraftSummaries: () => composerTargetController.refreshPendingDraftSummaries(),
+    registerPendingSidebarSession: (pendingSession) => registerPendingSidebarSession(pendingSession),
+    removeSessionFromWorkspaceSidebar: (workspaceId, sessionId) => removeSessionFromWorkspaceSidebar(workspaceId, sessionId),
+    reportError,
+    resolveConversationAbortScope,
+    resolveRuntimeSandboxStateForTarget: (target) =>
+      resolveRuntimeSandboxStateForTarget(target as SendRuntimePreflightTargetWorkspace | null),
+    resolveSelectedSessionBrowseScope,
+    resolveSendPromptBusyOwnership,
+    resolveSendTargetWorkspaceScope: (sessionId) => resolveSendTargetWorkspaceScope(sessionId),
+    resolvedDevtoolsWorkspaceId: () => resolvedDevtoolsWorkspaceId() ?? "",
+    routeStagedAttachmentsForModel,
+    routedClient: (workspaceId) => routedClient(workspaceId ?? undefined),
+    routedClientForSendTarget: (target) => routedClientForSendTarget(target),
+    runConversationFromVesloWriteApi,
+    safeStringify,
+    selectedSessionId,
+    sendTraceStep,
+    sessionDirectoryOverrideById,
+    sessionStoreAppendSessionErrorTurn: (sessionId, message) => sessionStore.appendSessionErrorTurn(sessionId, message),
+    sessionStoreClearCommandDisplay: (messageId) => sessionStore.clearCommandDisplay(messageId),
+    sessionStoreSetCommandDisplay: (messageId, command, args) => sessionStore.setCommandDisplay(messageId, command, args),
+    setActivePendingDraftKey,
+    setActivePendingDraftMeta,
+    setBusy,
+    setBusyLabel,
+    setBusyStartedAt,
+    setComposerDraftBySessionId: (updater) => setComposerDraftBySessionId(updater),
+    setError,
+    setLastPromptSent,
+    setPrompt,
+    setSelectedSessionId,
+    setView,
+    stageAttachmentsIntoSessionDirectory,
+    vesloServerClient,
+    vesloServerStatus,
+    workspace: {
+      activeWorkspaceDisplay: () => workspaceStore.activeWorkspaceDisplay(),
+      activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+      activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
+      workspaces: () => workspaceStore.workspaces() as WorkspaceDisplay[],
+    },
+  });
+  const sendPrompt = sessionSendWorkflow.sendPrompt;
+  const abortSession = sessionSendWorkflow.abortSession;
   const sessionMutationWorkflow = createSessionMutationWorkflow({
     lastPromptSent,
     sendPrompt,

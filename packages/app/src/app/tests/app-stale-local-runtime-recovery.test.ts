@@ -2,17 +2,20 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const sendWorkflowSource = readFileSync(
+  new URL("../pages/session-send-workflow.ts", import.meta.url),
+  "utf8",
+);
 const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
 
 test("sendPrompt recovers a stale local runtime before reading the client", () => {
-  const start = source.indexOf("async function sendPrompt(");
-  const end = source.indexOf("async function abortSession", start);
+  const start = sendWorkflowSource.indexOf("async function sendPrompt(");
+  const end = sendWorkflowSource.indexOf("async function abortSession", start);
   assert.ok(start >= 0 && end > start, "sendPrompt source should be present");
 
-  const sendPromptSource = source.slice(start, end);
-  const recoveryCheckIndex = sendPromptSource.indexOf('prepareSendRuntimeForSend("sendPrompt", sendPreflight)');
-  const routedClientIndex = sendPromptSource.indexOf("const c = routedClientForSendTarget(sendTargetWorkspace);");
+  const sendPromptSource = sendWorkflowSource.slice(start, end);
+  const recoveryCheckIndex = sendPromptSource.indexOf('deps.prepareSendRuntimeForSend("sendPrompt", sendPreflight)');
+  const routedClientIndex = sendPromptSource.indexOf("const c = deps.routedClientForSendTarget(sendTargetWorkspace);");
   assert.ok(recoveryCheckIndex >= 0, "sendPrompt should prepare send runtime readiness");
   assert.ok(routedClientIndex >= 0, "sendPrompt should capture the routed client after recovery");
   assert.ok(

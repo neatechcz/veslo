@@ -35,6 +35,14 @@ const mutationWorkflowSource = readFileSync(
   new URL("../pages/session-mutation-workflow.ts", import.meta.url),
   "utf8",
 );
+const sendWorkflowSource = readFileSync(
+  new URL("../pages/session-send-workflow.ts", import.meta.url),
+  "utf8",
+);
+const createWorkflowSource = readFileSync(
+  new URL("../pages/session-creation-workflow.ts", import.meta.url),
+  "utf8",
+);
 
 test("send preflight records per-step latency trace entries for step 2", () => {
   assert.match(
@@ -48,8 +56,8 @@ test("send preflight records per-step latency trace entries for step 2", () => {
     "sendPrompt:create-session-and-open",
   ]) {
     assert.match(
-      source,
-      new RegExp(`sendTraceStep\\(\\s*"${event}"`),
+      sendWorkflowSource,
+      new RegExp(`deps\\.sendTraceStep\\(\\s*"${event}"`),
       `${event} should be timed with sendTraceStep`,
     );
   }
@@ -77,8 +85,8 @@ test("send flow preserves UI trace id and forwards trace entries to native logs"
     "send preflight should reuse the trace id created by the UI send action",
   );
   assert.match(
-    source,
-    /const sendPreflight = createSendPreflightContext\(options\.sendTraceId\);/,
+    sendWorkflowSource,
+    /const sendPreflight = deps\.createSendPreflightContext\(options\.sendTraceId\);/,
     "app sendPrompt should seed preflight tracing from composer send options",
   );
   assert.match(
@@ -95,17 +103,17 @@ test("send flow preserves UI trace id and forwards trace entries to native logs"
 
 test("skill command resolution uses the scoped send target workspace", () => {
   assert.match(
-    source,
+    sendWorkflowSource,
     /async function maybeResolveSkillCommand\(\s*draft: ComposerDraft,\s*traceId\?: string \| null,\s*targetWorkspace\?: SendTargetWorkspaceScope \| null,/,
     "skill resolution should accept the workspace resolved for the current send",
   );
   assert.match(
-    source,
-    /const targetWorkspaceId = targetWorkspace\?\.workspaceId\?\.trim\(\) \|\| "";\s*const workspaceId = targetWorkspaceId \|\| resolvedDevtoolsWorkspaceId\(\);/,
+    sendWorkflowSource,
+    /const targetWorkspaceId = targetWorkspace\?\.workspaceId\?\.trim\(\) \|\| "";\s*const workspaceId = targetWorkspaceId \|\| deps\.resolvedDevtoolsWorkspaceId\(\);/,
     "skill resolution should prefer the scoped send workspace before the devtools fallback",
   );
   assert.match(
-    source,
+    sendWorkflowSource,
     /\(\) => maybeResolveSkillCommand\(resolvedDraft, sendTraceId, sendTargetWorkspace\)/,
     "sendPrompt should pass the scoped target workspace into skill resolution",
   );
@@ -182,10 +190,10 @@ test("conversation read workspace registration dedupes per Veslo client", () => 
 });
 
 test("create session preflight records duration for duplicate gates and server creation", () => {
-  const start = source.indexOf("async function createSessionAndOpen(");
-  const end = source.indexOf("const chooseFolderForCurrentSession", start);
+  const start = createWorkflowSource.indexOf("const createSessionAndOpen = async (");
+  const end = createWorkflowSource.indexOf("return {", start);
   assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
-  const createSource = source.slice(start, end);
+  const createSource = createWorkflowSource.slice(start, end);
 
   for (const event of [
     "createSessionAndOpen:ensure-managed-ai-bootstrap-ready",
@@ -196,27 +204,27 @@ test("create session preflight records duration for duplicate gates and server c
   ]) {
     assert.match(
       createSource,
-      new RegExp(`sendTraceStep\\(\\s*"${event}"`),
+      new RegExp(`deps\\.sendTraceStep\\(\\s*"${event}"`),
       `${event} should be timed with sendTraceStep`,
     );
   }
 });
 
 test("create run and compact do not fall back to legacy OpenCode SDK writes", () => {
-  const sendStart = source.indexOf("  async function sendPrompt(");
-  const sendEnd = source.indexOf("  async function abortSession(", sendStart);
+  const sendStart = sendWorkflowSource.indexOf("async function sendPrompt(");
+  const sendEnd = sendWorkflowSource.indexOf("async function abortSession(", sendStart);
   const compactStart = mutationWorkflowSource.indexOf("  async function compactCurrentSession(");
   const compactEnd = mutationWorkflowSource.indexOf("  async function replaceUserMessage(", compactStart);
-  const createStart = source.indexOf("async function createSessionAndOpen(");
-  const createEnd = source.indexOf("const chooseFolderForCurrentSession", createStart);
+  const createStart = createWorkflowSource.indexOf("const createSessionAndOpen = async (");
+  const createEnd = createWorkflowSource.indexOf("return {", createStart);
 
   assert.ok(sendStart >= 0 && sendEnd > sendStart, "sendPrompt source should be present");
   assert.ok(compactStart >= 0 && compactEnd > compactStart, "compactCurrentSession source should be present");
   assert.ok(createStart >= 0 && createEnd > createStart, "createSessionAndOpen source should be present");
 
-  const sendSource = source.slice(sendStart, sendEnd);
+  const sendSource = sendWorkflowSource.slice(sendStart, sendEnd);
   const compactSource = mutationWorkflowSource.slice(compactStart, compactEnd);
-  const createSource = source.slice(createStart, createEnd);
+  const createSource = createWorkflowSource.slice(createStart, createEnd);
 
   assert.match(sendSource, /const runConversationOrFail = async \(input: VesloConversationRunInput\)/);
   assert.doesNotMatch(sendSource, /runConversationOrLegacy|sendPrompt:legacy-run-fallback|c\.session\.promptAsync|c\.session\.command|shellInSession/);
@@ -226,18 +234,18 @@ test("create run and compact do not fall back to legacy OpenCode SDK writes", ()
 });
 
 test("create session preflight does not add a fixed abort-refresh settle delay", () => {
-  const start = source.indexOf("async function createSessionAndOpen(");
-  const end = source.indexOf("const chooseFolderForCurrentSession", start);
+  const start = createWorkflowSource.indexOf("const createSessionAndOpen = async (");
+  const end = createWorkflowSource.indexOf("return {", start);
   assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
-  const createSource = source.slice(start, end);
+  const createSource = createWorkflowSource.slice(start, end);
   const settleStart = createSource.indexOf('"createSessionAndOpen:abort-refresh-settle"');
-  const settleEnd = createSource.indexOf("setError(null);", settleStart);
+  const settleEnd = createSource.indexOf("deps.setError(null);", settleStart);
   assert.ok(settleStart >= 0 && settleEnd > settleStart, "abort-refresh trace block should be present");
   const settleSource = createSource.slice(settleStart, settleEnd);
 
   assert.match(
     settleSource,
-    /abortRefreshes\(\);/,
+    /deps\.abortRefreshes\(\);/,
     "create session should still synchronously cancel refresh work before session creation",
   );
   assert.doesNotMatch(
@@ -465,8 +473,8 @@ test("pending permission interval skips active sends and single-client mode cove
     "app should keep runtime refresh guards active for the visible send, accepted-before-SSE handoff, and selected running session",
   );
   assert.match(
-    source,
-    /recordSendTrace\("sendPrompt:success"[\s\S]*holdVisibleRuntimeActivity\(sessionID, "sendPrompt:success"\);[\s\S]*return true;/,
+    sendWorkflowSource,
+    /deps\.recordSendTrace\("sendPrompt:success"[\s\S]*deps\.holdVisibleRuntimeActivity\(sessionID, "sendPrompt:success"\);[\s\S]*return true;/,
     "successful sends should hold visible runtime activity until session status catches up",
   );
   assert.match(
