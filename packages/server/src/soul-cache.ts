@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { resolveVesloDataDir } from "./audit.js";
@@ -39,6 +39,11 @@ export type WritePendingSoulEditInput = SoulCacheInput & {
   edit: SoulPendingEditDraft & {
     id?: string;
   };
+};
+
+export type ClearPendingSoulEditsInput = SoulCacheInput & {
+  scope: SoulScope;
+  ownerId: string;
 };
 
 const PENDING_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
@@ -233,4 +238,29 @@ export async function listPendingSoulEdits(input: SoulCacheInput = {}): Promise<
   }
 
   return edits;
+}
+
+export async function clearPendingSoulEdits(input: ClearPendingSoulEditsInput): Promise<number> {
+  const dir = soulPendingCacheDir(input.dataDir);
+  if (!(await exists(dir))) return 0;
+
+  const ownerId = normalizeOwnerId(input.ownerId);
+  let removed = 0;
+  const entries = (await readdir(dir, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"));
+
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    try {
+      const parsed = JSON.parse(await readFile(path, "utf8")) as SoulPendingEdit;
+      const edit = validatePendingEdit(parsed);
+      if (edit.scope !== input.scope || edit.ownerId !== ownerId) continue;
+      await rm(path, { force: true });
+      removed += 1;
+    } catch {
+      continue;
+    }
+  }
+
+  return removed;
 }

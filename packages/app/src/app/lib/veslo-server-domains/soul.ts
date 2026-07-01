@@ -51,11 +51,17 @@ function buildDenContextHeaders(options?: VesloSoulAuthContext): Record<string, 
   return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
-function activeWorkspaceIdsPayload(input?: { activeWorkspaceIds?: string[] }): { activeWorkspaceIds?: string[] } {
+function activeWorkspaceIdsPayload(input?: {
+  activeWorkspaceIds?: string[];
+  activeRun?: boolean;
+}): { activeWorkspaceIds?: string[]; activeRun?: boolean } {
   const activeWorkspaceIds = [
     ...new Set((input?.activeWorkspaceIds ?? []).map((item) => item.trim()).filter(Boolean)),
   ];
-  return activeWorkspaceIds.length ? { activeWorkspaceIds } : {};
+  return {
+    ...(activeWorkspaceIds.length ? { activeWorkspaceIds } : {}),
+    ...(input?.activeRun === true ? { activeRun: true } : {}),
+  };
 }
 
 function soulRestoreBody(
@@ -65,7 +71,6 @@ function soulRestoreBody(
   const body = {
     ...(input.changeSummary !== undefined ? { changeSummary: input.changeSummary } : {}),
     ...activeWorkspaceIdsPayload(input),
-    ...(input.activeRun === true ? { activeRun: true } : {}),
   };
   return Object.keys(body).length ? body : undefined;
 }

@@ -718,6 +718,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
       soulServerConnected: soulDataStore.soulServerConnected(),
       soulAuthContext: soulDataStore.soulAuthContext(),
       soulStatusByWorkspaceId: soulDataStore.soulStatusByWorkspaceId(),
+      soulWorkspaceMap: soulDataStore.soulWorkspaceMap(),
       activeSoulStatus: soulDataStore.activeSoulStatus(),
       activeSoulHeartbeats: soulDataStore.activeSoulHeartbeats(),
       soulStatusBusy: soulDataStore.soulStatusBusy(),

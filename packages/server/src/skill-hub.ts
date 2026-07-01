@@ -5,7 +5,7 @@ import type { HubSkillItem } from "./types.js";
 import { ApiError } from "./errors.js";
 import { exists } from "./utils.js";
 import { validateSkillName } from "./validators.js";
-import { projectSkillsDir } from "./workspace-files.js";
+import { workspaceSkillsRoot } from "./skill-roots.js";
 import { parseSkillMarkdownMetadata } from "./skill-metadata.js";
 
 type HubRepo = { owner: string; repo: string; ref: string };
@@ -160,7 +160,7 @@ export async function installHubSkill(
   };
 
   const prefix = `skills/${name}/`;
-  const baseDir = join(projectSkillsDir(workspaceRoot), name);
+  const baseDir = join(workspaceSkillsRoot(workspaceRoot), name);
   const skillMdPath = join(baseDir, "SKILL.md");
   const existedBefore = await exists(skillMdPath);
 

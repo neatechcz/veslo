@@ -41,17 +41,18 @@ test("desktop context menu lets native right-click open when no text is selected
   );
 });
 
-test("main Tauri window enables devtools for manual runtime debugging", () => {
+test("main Tauri window compiles devtools without exposing the in-app toggle by default", () => {
   const mainWindow = tauriConfig.app?.windows?.[0];
   assert.equal(mainWindow?.devtools, true);
-  assert.ok(
-    tauriCapability.permissions?.includes("core:webview:allow-internal-toggle-devtools"),
-    "default capability should allow toggling webview devtools",
-  );
   assert.equal(
     tauriCapability.permissions?.includes("core:webview:deny-internal-toggle-devtools"),
+    true,
+    "default capability should keep the JS-accessible devtools toggle disabled",
+  );
+  assert.equal(
+    tauriCapability.permissions?.includes("core:webview:allow-internal-toggle-devtools"),
     false,
-    "default capability must not explicitly deny devtools",
+    "default capability should not expose the JS-accessible devtools toggle",
   );
 
   const tauriDependency = tauriCargoToml.match(/^tauri\s*=\s*\{(?<body>[^\n]+)\}/m);

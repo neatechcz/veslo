@@ -16,8 +16,8 @@ const dashboardLeftSidebar =
     ? dashboardSource.slice(dashboardLeftSidebarStart, dashboardMainStart)
     : "";
 
-const sessionLeftSidebarStart = sessionSource.indexOf("const leftSidebarContent = () => (");
-const sessionRightSidebarStart = sessionSource.indexOf("const rightSidebarContent = () => (");
+const sessionLeftSidebarStart = sessionSource.indexOf("const leftSidebarUpdatePill = () => (");
+const sessionRightSidebarStart = sessionSource.indexOf("const feedbackButtonLabel = () =>");
 const sessionLeftSidebar =
   sessionLeftSidebarStart >= 0 && sessionRightSidebarStart >= 0
     ? sessionSource.slice(sessionLeftSidebarStart, sessionRightSidebarStart)

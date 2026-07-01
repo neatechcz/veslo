@@ -1,14 +1,12 @@
 import { readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import type { Dirent } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { homedir } from "node:os";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { localUserResourceOwner, workspaceResourceOwner } from "./resource-owner.js";
 import type { DisabledSkillRecord, ResourceOwner, SkillItem } from "./types.js";
 import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
 import { exists } from "./utils.js";
 import { validateDescription, validateSkillName } from "./validators.js";
 import { ApiError } from "./errors.js";
-import { projectSkillsDir } from "./workspace-files.js";
 import { removeSkillWithSnapshot } from "./skill-removal-journal.js";
 import type { Actor } from "./types.js";
 import {
@@ -16,8 +14,17 @@ import {
   parseSkillMarkdownMetadata,
   type SkillMarkdownMetadata,
 } from "./skill-metadata.js";
+import {
+  SKILL_ENTRYPOINT,
+  findWorkspaceRoots,
+  isPathInside,
+  isVesloManagedSkillRelativePath,
+  userGlobalSkillRoots,
+  userGlobalSkillRootsForMutation,
+  workspaceSkillRootsForMutation,
+  workspaceSkillsRoot,
+} from "./skill-roots.js";
 
-export const SKILL_ENTRYPOINT = "SKILL.md";
 const MANAGED_MARKER_FILE = ".veslo-managed.json";
 const MANAGED_SKILL_SOURCES = new Set(["personal", "workspace", "organization", "platform"]);
 const SKILL_REMOVAL_POLICIES = new Set(["user_removable", "admin_removable", "locked"]);
@@ -86,23 +93,6 @@ function applyDisabledSkillRecords(
       ? { ...item, enabled: false as const, disabledReason: "user" as const }
       : item;
   });
-}
-
-const userHomeDir = (): string => process.env.HOME?.trim() || homedir();
-const userConfigHomeDir = (): string => process.env.XDG_CONFIG_HOME?.trim() || join(userHomeDir(), ".config");
-
-async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
-  const roots: string[] = [];
-  let current = resolve(workspaceRoot);
-  while (true) {
-    roots.push(current);
-    const gitPath = join(current, ".git");
-    if (await exists(gitPath)) break;
-    const parent = resolve(current, "..");
-    if (parent === current) break;
-    current = parent;
-  }
-  return roots;
 }
 
 export const extractTriggerFromBody = extractTriggerFromSkillBody;
@@ -251,23 +241,17 @@ export async function listSkills(
   const items: SkillItem[] = [];
   for (const root of roots) {
     const workspaceOwner = normalizedOptions.workspaceOwner ?? workspaceResourceOwner({ root });
-    const opencodeDir = join(root, ".opencode", "skills");
+    const opencodeDir = workspaceSkillsRoot(root);
     const claudeDir = join(root, ".claude", "skills");
     items.push(...(await listSkillsInDir(opencodeDir, "project", workspaceOwner)));
     items.push(...(await listSkillsInDir(claudeDir, "project", workspaceOwner)));
   }
 
   if (normalizedOptions.includeGlobal) {
-    const homeDir = userHomeDir();
     const globalOwner = normalizedOptions.globalOwner ?? localUserResourceOwner();
-    const globalOpenCode = join(homeDir, ".config", "opencode", "skills");
-    const globalClaude = join(homeDir, ".claude", "skills");
-    const globalAgents = join(homeDir, ".agents", "skills");
-    const globalAgentLegacy = join(homeDir, ".agent", "skills");
-    items.push(...(await listSkillsInDir(globalOpenCode, "global", globalOwner)));
-    items.push(...(await listSkillsInDir(globalClaude, "global", globalOwner)));
-    items.push(...(await listSkillsInDir(globalAgents, "global", globalOwner)));
-    items.push(...(await listSkillsInDir(globalAgentLegacy, "global", globalOwner)));
+    for (const globalRoot of userGlobalSkillRoots()) {
+      items.push(...(await listSkillsInDir(globalRoot, "global", globalOwner)));
+    }
   }
 
   const markedItems = applyDisabledSkillRecords(items, normalizedOptions);
@@ -279,11 +263,6 @@ export async function listSkills(
     return true;
   });
 }
-
-const isPathInside = (parent: string, child: string): boolean => {
-  const rel = relative(parent, child);
-  return rel === "" || (Boolean(rel) && !rel.startsWith("..") && !isAbsolute(rel));
-};
 
 export const prepareSkillContent = (payload: { name: string; content: string; description?: string }): string => {
   const name = payload.name.trim();
@@ -317,22 +296,6 @@ export const prepareSkillContent = (payload: { name: string; content: string; de
   return content.endsWith("\n") ? content : content + "\n";
 };
 
-export const workspaceSkillRootsForMutation = async (workspaceRoot: string): Promise<string[]> => {
-  const roots = await findWorkspaceRoots(workspaceRoot);
-  return roots.flatMap((root) => [
-    join(root, ".opencode", "skills"),
-    join(root, ".claude", "skills"),
-  ]);
-};
-
-export const userGlobalSkillRootsForMutation = (): string[] => Array.from(new Set([
-  join(userConfigHomeDir(), "opencode", "skills"),
-  join(userHomeDir(), ".config", "opencode", "skills"),
-  join(userHomeDir(), ".claude", "skills"),
-  join(userHomeDir(), ".agents", "skills"),
-  join(userHomeDir(), ".agent", "skills"),
-]));
-
 async function resolveExistingWorkspaceSkillTarget(
   workspaceRoot: string,
   name: string,
@@ -353,7 +316,7 @@ async function resolveExistingWorkspaceSkillTarget(
     throw new ApiError(400, "invalid_skill_path", "Skill instance path must be inside a workspace skill root");
   }
   const relativeToRoot = relative(owningRoot, target).replace(/\\/g, "/");
-  if (!options.allowManaged && (relativeToRoot === `veslo-managed/${name}/${SKILL_ENTRYPOINT}` || relativeToRoot.startsWith("veslo-managed/"))) {
+  if (!options.allowManaged && isVesloManagedSkillRelativePath(relativeToRoot)) {
     throw new ApiError(409, "managed_skill_read_only", "Managed materialized skills must be edited through the registry");
   }
   if (!(await exists(target))) {
@@ -383,7 +346,7 @@ async function resolveExistingUserGlobalSkillTarget(
     throw new ApiError(400, "invalid_skill_path", "Skill instance path must be inside a user-global skill root");
   }
   const relativeToRoot = relative(owningRoot, target).replace(/\\/g, "/");
-  if (!options.allowManaged && (relativeToRoot === `veslo-managed/${name}/${SKILL_ENTRYPOINT}` || relativeToRoot.startsWith("veslo-managed/"))) {
+  if (!options.allowManaged && isVesloManagedSkillRelativePath(relativeToRoot)) {
     throw new ApiError(409, "managed_skill_read_only", "Managed materialized skills must be edited through the registry");
   }
   if (!(await exists(target))) {
@@ -408,7 +371,7 @@ export async function upsertSkill(
   const name = payload.name.trim();
   const content = prepareSkillContent({ ...payload, name });
 
-  const baseDir = projectSkillsDir(workspaceRoot);
+  const baseDir = workspaceSkillsRoot(workspaceRoot);
   const skillDir = join(baseDir, name);
   await mkdir(skillDir, { recursive: true });
   const skillPath = join(skillDir, "SKILL.md");
@@ -456,7 +419,7 @@ export async function readGlobalSkillAtPath(
 export async function deleteSkill(workspaceRoot: string, name: string): Promise<{ path: string }> {
   const trimmed = name.trim();
   validateSkillName(trimmed);
-  const baseDir = projectSkillsDir(workspaceRoot);
+  const baseDir = workspaceSkillsRoot(workspaceRoot);
   const skillDir = join(baseDir, trimmed);
   const skillPath = join(skillDir, "SKILL.md");
   if (!(await exists(skillPath))) {
@@ -473,7 +436,7 @@ export async function deleteSkillRecoverable(
 ): Promise<{ path: string; removalId: string }> {
   const trimmed = name.trim();
   validateSkillName(trimmed);
-  const baseDir = projectSkillsDir(workspaceRoot);
+  const baseDir = workspaceSkillsRoot(workspaceRoot);
   const skillDir = join(baseDir, trimmed);
   const skillPath = join(skillDir, SKILL_ENTRYPOINT);
   if (!(await exists(skillPath))) {

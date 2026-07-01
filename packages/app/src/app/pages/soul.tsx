@@ -23,6 +23,13 @@ import type {
 } from "../lib/veslo-server";
 import type { WorkspaceInfo } from "../lib/tauri";
 import type { WorkspaceBusyMap } from "../context/workspace-debug";
+import {
+  buildSoulAppWorkspaceIdByServerWorkspaceId,
+  canReplaySoulMaterialization,
+  resolveSoulActiveWorkspaceGuard,
+  soulReplayRequiresActiveRun,
+  type PendingSoulMaterializationReplay,
+} from "../lib/soul-workspace-map";
 import { formatRelativeTime } from "../utils";
 import { currentLocale, t } from "../../i18n";
 import { createSoulEditorController, type SoulEditorSource } from "./soul-controller";
@@ -36,6 +43,7 @@ type SoulViewProps = {
   authContext: VesloSoulAuthContext;
   refresh: (options?: { force?: boolean }) => void;
   workspaces: WorkspaceInfo[];
+  soulWorkspaceMap: Record<string, string>;
   busySessionByWorkspaceId?: WorkspaceBusyMap;
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
 };
@@ -45,6 +53,7 @@ type SoulSource = SoulEditorSource & {
   label: string;
   description: string;
   icon: typeof Building2;
+  appWorkspaceId?: string | null;
 };
 
 const relativeTime = (value?: string | null) => {
@@ -79,12 +88,15 @@ export default function SoulView(props: SoulViewProps) {
   const userSummary = createMemo(() => props.soulOverview?.user ?? null);
   const workspaceById = createMemo(() => new Map<string, WorkspaceInfo>(
     props.workspaces.flatMap((workspace) =>
-      [workspace.id, workspace.vesloWorkspaceId ?? ""]
+      [workspace.id, workspace.vesloWorkspaceId ?? "", props.soulWorkspaceMap[workspace.id] ?? ""]
         .map((key) => key.trim())
         .filter(Boolean)
         .map((key) => [key, workspace] as [string, WorkspaceInfo]),
     ),
   ));
+  const appWorkspaceIdByServerWorkspaceId = createMemo(() =>
+    buildSoulAppWorkspaceIdByServerWorkspaceId(props.workspaces, props.soulWorkspaceMap)
+  );
   const workspaceSummaries = createMemo(() =>
     (props.soulOverview?.workspaces ?? []).filter((summary) => {
       const workspace = workspaceById().get(summary.ownerId);
@@ -146,6 +158,7 @@ export default function SoulView(props: SoulViewProps) {
       key: `workspace:${summary.ownerId}`,
       scope: "workspace" as const,
       workspaceId: summary.ownerId,
+      appWorkspaceId: appWorkspaceIdByServerWorkspaceId().get(summary.ownerId) ?? null,
       testId: `soul-workspace-source-${summary.ownerId}`,
       label: sourceName(summary),
       description: summary.ownerId,
@@ -163,8 +176,8 @@ export default function SoulView(props: SoulViewProps) {
   });
   const openSoulModal = (sourceKey: string) => setOpenSourceKey(sourceKey);
   const closeSoulModal = () => setOpenSourceKey(null);
-  const [pendingSoulMaterializationWorkspaceIds, setPendingSoulMaterializationWorkspaceIds] =
-    createSignal<Record<string, true>>({});
+  const [pendingSoulMaterializationWorkspaces, setPendingSoulMaterializationWorkspaces] =
+    createSignal<Record<string, PendingSoulMaterializationReplay>>({});
   let soulMaterializationReplayInFlight = false;
 
   const busySoulWorkspaceIds = createMemo(() =>
@@ -173,8 +186,15 @@ export default function SoulView(props: SoulViewProps) {
       .map(([workspaceId]) => workspaceId.trim())
       .filter(Boolean),
   );
-  const isSoulWorkspaceBusy = (workspaceId: string) =>
-    Object.keys((props.busySessionByWorkspaceId ?? {})[workspaceId.trim()] ?? {}).length > 0;
+  const soulActiveWorkspaceGuard = createMemo(() =>
+    resolveSoulActiveWorkspaceGuard({
+      appWorkspaces: props.workspaces,
+      soulWorkspaceMap: props.soulWorkspaceMap,
+      busyWorkspaceIds: busySoulWorkspaceIds(),
+    })
+  );
+  const soulActiveWorkspaceIds = createMemo(() => soulActiveWorkspaceGuard().activeWorkspaceIds);
+  const soulActiveRun = createMemo(() => soulActiveWorkspaceGuard().activeRun);
 
   const queuePendingSoulMaterialization = (
     source: SoulSource,
@@ -191,10 +211,18 @@ export default function SoulView(props: SoulViewProps) {
       }
     }
     if (!pendingWorkspaceIds.size) return;
-    setPendingSoulMaterializationWorkspaceIds((current) => {
+    const appWorkspaceByServerWorkspaceId = appWorkspaceIdByServerWorkspaceId();
+    setPendingSoulMaterializationWorkspaces((current) => {
       const next = { ...current };
       for (const workspaceId of pendingWorkspaceIds) {
-        if (workspaceId.trim()) next[workspaceId.trim()] = true;
+        const serverWorkspaceId = workspaceId.trim();
+        if (!serverWorkspaceId) continue;
+        const appWorkspaceId =
+          appWorkspaceByServerWorkspaceId.get(serverWorkspaceId) ??
+          (source.scope === "workspace" && source.workspaceId === serverWorkspaceId
+            ? source.appWorkspaceId ?? null
+            : null);
+        next[serverWorkspaceId] = { appWorkspaceId, serverWorkspaceId };
       }
       return next;
     });
@@ -224,7 +252,8 @@ export default function SoulView(props: SoulViewProps) {
     serverConnected: () => props.serverConnected,
     authContext: () => props.authContext,
     refresh: props.refresh,
-    activeWorkspaceIds: busySoulWorkspaceIds,
+    activeWorkspaceIds: soulActiveWorkspaceIds,
+    activeRun: soulActiveRun,
     onMaterializationResult: queuePendingSoulMaterialization,
     defaultChangeSummary: () => translate("soul.default_change_summary"),
     defaultRestoreSummary: () => translate("soul.restore_default_summary"),
@@ -236,16 +265,23 @@ export default function SoulView(props: SoulViewProps) {
   createEffect(() => {
     const client = props.client;
     if (!client || !props.serverConnected || soulMaterializationReplayInFlight) return;
-    const workspaceId = Object.keys(pendingSoulMaterializationWorkspaceIds()).find((id) => !isSoulWorkspaceBusy(id));
-    if (!workspaceId) return;
+    const replay = Object.values(pendingSoulMaterializationWorkspaces()).find((entry) =>
+      canReplaySoulMaterialization({ replay: entry, busyWorkspaceIds: busySoulWorkspaceIds() }),
+    );
+    if (!replay) return;
     soulMaterializationReplayInFlight = true;
     void (async () => {
       try {
-        const result = await client.syncWorkspaceSoulMaterialization(workspaceId, props.authContext);
+        const result = await client.syncWorkspaceSoulMaterialization(
+          replay.serverWorkspaceId,
+          soulReplayRequiresActiveRun({ replay, busyWorkspaceIds: busySoulWorkspaceIds() })
+            ? { ...props.authContext, activeRun: true }
+            : props.authContext,
+        );
         if (!result.pending) {
-          setPendingSoulMaterializationWorkspaceIds((current) => {
+          setPendingSoulMaterializationWorkspaces((current) => {
             const next = { ...current };
-            delete next[workspaceId];
+            delete next[replay.serverWorkspaceId];
             return next;
           });
           props.refresh({ force: true });

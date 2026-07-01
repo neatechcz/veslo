@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { resolveVesloDataDir } from "./audit.js";
@@ -9,7 +8,11 @@ import { ApiError } from "./errors.js";
 import { validateSkillPackageManifest } from "./skill-package-model.js";
 import type { SkillPackageArchive } from "./skill-packages.js";
 import { unpackSkillPackage } from "./skill-packages.js";
-import { SKILL_ENTRYPOINT } from "./skills.js";
+import {
+  SKILL_ENTRYPOINT,
+  personalGlobalManagedSkillsRoot,
+  workspaceManagedSkillsRoot,
+} from "./skill-roots.js";
 import type {
   ManagedSkillSource,
   WorkspaceSkillMaterialization,
@@ -17,7 +20,6 @@ import type {
 } from "./types.js";
 import { exists } from "./utils.js";
 import { validateSkillName } from "./validators.js";
-import { projectSkillsDir } from "./workspace-files.js";
 
 export type SkillMaterializationManifestEntry = WorkspaceSkillMaterialization & {
   skillDir: string;
@@ -107,21 +109,6 @@ const compareEntries = (left: SkillMaterializationManifestEntry, right: SkillMat
   left.name.localeCompare(right.name) || left.installationId.localeCompare(right.installationId);
 
 const dataDir = (override?: string) => override?.trim() || resolveVesloDataDir();
-
-export function workspaceManagedSkillsRoot(workspaceRoot: string): string {
-  return join(projectSkillsDir(workspaceRoot), "veslo-managed");
-}
-
-export function personalGlobalManagedSkillsRoot(globalSkillsRoot?: string): string {
-  const configuredRoot = globalSkillsRoot?.trim();
-  if (configuredRoot) return join(configuredRoot, "veslo-managed");
-
-  const xdgConfigHome = process.env.XDG_CONFIG_HOME?.trim();
-  if (xdgConfigHome) return join(xdgConfigHome, "opencode", "skills", "veslo-managed");
-
-  const home = process.env.HOME?.trim() || process.env.USERPROFILE?.trim() || homedir();
-  return join(home, ".config", "opencode", "skills", "veslo-managed");
-}
 
 export function skillMaterializationManifestPath(rootDir: string): string {
   return join(rootDir, ROOT_MARKER_FILE);

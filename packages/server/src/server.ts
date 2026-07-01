@@ -28,8 +28,6 @@ import {
   readSkillAtPath,
   updateSkillAtPath,
   upsertSkill,
-  userGlobalSkillRootsForMutation,
-  workspaceSkillRootsForMutation,
 } from "./skills.js";
 import { installHubSkill } from "./skill-hub.js";
 import {
@@ -55,6 +53,7 @@ import {
 } from "./soul-den-client.js";
 import {
   cacheSoulDocument,
+  clearPendingSoulEdits,
   listPendingSoulEdits,
   readCachedSoulDocument,
   soulCachePath,
@@ -76,6 +75,12 @@ import {
   readSoulMaterializationStatus,
   type SoulMaterializationResult,
 } from "./soul-materializer.js";
+import {
+  getSoulStatus,
+  listSoulHeartbeats,
+  readOpencodeConfig,
+  soulMaterializationApprovalPaths as soulRuntimeMaterializationApprovalPaths,
+} from "./soul-runtime.js";
 import {
   createRegistrySkill,
   createRegistrySkillInstallation,
@@ -101,12 +106,17 @@ import {
 import {
   materializeWorkspaceSkillSet,
   materializePersonalGlobalSkillSet,
-  personalGlobalManagedSkillsRoot,
   readSkillMaterializationManifest,
-  workspaceManagedSkillsRoot,
 } from "./skill-materializer.js";
 import { getPlatformManagedPersonalGlobalSkillSet } from "./platform-managed-skills.js";
 import type { SkillSetMaterializationResult } from "./skill-materializer.js";
+import {
+  personalGlobalManagedSkillsRoot,
+  userGlobalSkillRootsForMutation,
+  workspaceManagedSkillsRoot,
+  workspaceSkillRootsForMutation,
+  workspaceSkillsRoot,
+} from "./skill-roots.js";
 import {
   deleteUserGlobalSkill,
   listUserGlobalSkills,
@@ -132,16 +142,15 @@ import type { WorkspaceSkillRegistryInstallation, WorkspaceSkillRolloutPolicy } 
 import { writeWorkspaceSkillLockfile } from "./workspace-skill-lockfile.js";
 import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
 import { localUserResourceOwner, organizationResourceOwner, workspaceResourceOwner } from "./resource-owner.js";
-import { listScheduledJobs } from "./scheduler.js";
 import { provisionWorkspaceInternalSystem, resolveVesloAppDataDir } from "./internal-system.js";
 import { ApiError, formatError } from "./errors.js";
-import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
+import { updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit, resolveVesloDataDir, setAuditDebugLogPipeline } from "./audit.js";
 import { createDebugLogPipeline, type DebugLogPipeline } from "./debug-log-pipeline.js";
 import { validateDebugLogBatch } from "./debug-log-events.js";
 import { ReloadEventStore } from "./events.js";
 import { parseFrontmatter } from "./frontmatter.js";
-import { opencodeConfigPath, vesloConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
+import { opencodeConfigPath, vesloConfigPath, projectCommandsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
 import { persistServerWorkspaceState, workspaceIdForPath } from "./workspaces.js";
 import { TokenService } from "./tokens.js";
@@ -577,40 +586,6 @@ function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPath: str
     }
   }
 }
-
-type SoulHeartbeatEntry = {
-  id: string;
-  ts: string | null;
-  workspace: string | null;
-  summary: string;
-  looseEnds: string[];
-  nextAction: string | null;
-};
-
-type SoulStatus = {
-  enabled: boolean;
-  state: "off" | "healthy" | "stale" | "error";
-  memoryEnabled: boolean;
-  instructionsEnabled: boolean;
-  heartbeatLogExists: boolean;
-  heartbeatCommandExists: boolean;
-  heartbeatJob: {
-    name: string;
-    slug: string;
-    schedule: string;
-    lastRunAt: string | null;
-    lastRunStatus: string | null;
-    lastRunError: string | null;
-  } | null;
-  heartbeatCount: number;
-  lastHeartbeatAt: string | null;
-  lastHeartbeatSummary: string | null;
-  staleAfterMs: number | null;
-  overdue: boolean;
-  summary: string;
-  memoryPath: string;
-  heartbeatPath: string;
-};
 
 export function startServer(config: ServerConfig) {
   const approvals = new ApprovalService(config.approval);
@@ -3740,13 +3715,20 @@ function soulReadPayload(input: {
   };
 }
 
-function activeSoulWorkspaceIdsFromBody(body: Record<string, unknown>): Set<string> {
+function activeSoulWorkspaceIdsFromBody(body: Record<string, unknown>, config?: ServerConfig): Set<string> {
   const raw = Array.isArray(body.activeWorkspaceIds) ? body.activeWorkspaceIds : [];
-  return new Set(
+  const activeWorkspaceIds = new Set(
     raw
       .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
       .filter(Boolean),
   );
+  if (body.activeRun === true && config) {
+    for (const workspace of config.workspaces) {
+      const workspaceId = workspace.id?.trim() ?? "";
+      if (workspaceId) activeWorkspaceIds.add(workspaceId);
+    }
+  }
+  return activeWorkspaceIds;
 }
 
 function soulWorkspaceActiveFromBody(body: Record<string, unknown>, workspaceId: string): boolean {
@@ -3761,16 +3743,6 @@ function uniqueApprovalPaths(paths: string[]): string[] {
   return [...new Set(paths.filter((path) => path.trim().length > 0))];
 }
 
-function soulMaterializationApprovalPaths(workspace: WorkspaceInfo): string[] {
-  return [
-    opencodeConfigPath(workspace.path),
-    join(workspace.path, ".opencode", "soul-company.md"),
-    join(workspace.path, ".opencode", "soul-user.md"),
-    join(workspace.path, ".opencode", "soul-workspace.md"),
-    join(workspace.path, ".opencode", "veslo", "soul-manifest.json"),
-  ];
-}
-
 async function configuredSoulMaterializationApprovalPaths(
   config: ServerConfig,
   extraPaths: string[],
@@ -3778,7 +3750,7 @@ async function configuredSoulMaterializationApprovalPaths(
   const paths = [...extraPaths];
   for (const configuredWorkspace of config.workspaces) {
     const workspace = await resolveWorkspace(config, configuredWorkspace.id);
-    paths.push(...soulMaterializationApprovalPaths(workspace));
+    paths.push(...soulRuntimeMaterializationApprovalPaths(workspace.path));
   }
   return uniqueApprovalPaths(paths);
 }
@@ -5254,6 +5226,7 @@ function createRoutes(
       try {
         const document = await getUserSoul({ ...den, token: den.denToken });
         await cacheSoulDocument({ dataDir: serverDataDir, document });
+        await clearPendingSoulEdits({ dataDir: serverDataDir, scope: "user", ownerId: document.ownerId });
         return {
           document,
           summary: soulSummary({
@@ -5437,7 +5410,7 @@ function createRoutes(
     materializeSoulForConfiguredWorkspaces,
     activeSoulWorkspaceIdsFromBody,
     soulWorkspaceActiveFromBody,
-    soulMaterializationApprovalPaths,
+    soulMaterializationApprovalPaths: (workspace) => soulRuntimeMaterializationApprovalPaths(workspace.path),
     configuredSoulMaterializationApprovalPaths,
     globalSoulApprovalWorkspaceId,
     validateSoulScopeParam,
@@ -5617,266 +5590,6 @@ async function persistWorkspaceDeletion(configPath: string, workspaceId: string,
       // ignore
     }
   }
-}
-
-function resolveSoulMemoryPath(workspaceRoot: string): string {
-  return join(workspaceRoot, ".opencode", "soul.md");
-}
-
-function resolveSoulHeartbeatPath(workspaceRoot: string): string {
-  return join(workspaceRoot, ".opencode", "soul", "heartbeat.jsonl");
-}
-
-function normalizeSoulTimestamp(value: unknown): string | null {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    const parsed = Date.parse(trimmed);
-    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : trimmed;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return new Date(value).toISOString();
-  }
-  return null;
-}
-
-function toSoulStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value
-      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
-      .filter(Boolean);
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed ? [trimmed] : [];
-  }
-  return [];
-}
-
-function parseSoulHeartbeatLine(rawLine: string, lineIndex: number): SoulHeartbeatEntry | null {
-  const trimmed = rawLine.trim();
-  if (!trimmed) return null;
-  let parsed: Record<string, unknown>;
-  try {
-    const value = JSON.parse(trimmed);
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    parsed = value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-
-  const ts = normalizeSoulTimestamp(parsed.ts);
-  const workspace = typeof parsed.workspace === "string" && parsed.workspace.trim()
-    ? parsed.workspace.trim()
-    : null;
-  const looseEnds = toSoulStringArray(parsed.loose_ends ?? parsed.looseEnds);
-  const nextActionRaw = parsed.next_action ?? parsed.nextAction;
-  const nextAction = typeof nextActionRaw === "string" && nextActionRaw.trim() ? nextActionRaw.trim() : null;
-  const summaryRaw = typeof parsed.summary === "string" ? parsed.summary.trim() : "";
-  const summary =
-    summaryRaw ||
-    nextAction ||
-    (looseEnds.length ? `Loose ends: ${looseEnds.slice(0, 2).join("; ")}` : "(no summary)");
-
-  return {
-    id: `${ts ?? "unknown"}-${lineIndex}`,
-    ts,
-    workspace,
-    summary,
-    looseEnds,
-    nextAction,
-  };
-}
-
-function parseSoulHeartbeatEntries(content: string): SoulHeartbeatEntry[] {
-  const lines = content.split(/\r?\n/);
-  const items: SoulHeartbeatEntry[] = [];
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    const item = parseSoulHeartbeatLine(lines[i] ?? "", i + 1);
-    if (item) items.push(item);
-  }
-  return items;
-}
-
-function configIncludesSoulInstruction(config: Record<string, unknown>): boolean {
-  const target = ".opencode/soul.md";
-  const instructions = config.instructions;
-  if (typeof instructions === "string") {
-    return instructions.includes(target);
-  }
-  if (Array.isArray(instructions)) {
-    return instructions.some((entry) => typeof entry === "string" && entry.includes(target));
-  }
-  return false;
-}
-
-function estimateCronIntervalMs(schedule: string): number | null {
-  const parts = schedule.trim().split(/\s+/);
-  if (parts.length < 5) return null;
-  const [minute, hour, dom, mon, dow] = parts;
-  if (!minute || !hour || !dom || !mon || !dow) return null;
-
-  if (minute === "*" && hour === "*" && dom === "*" && mon === "*" && dow === "*") {
-    return 60_000;
-  }
-
-  const minuteEvery = /^\*\/(\d+)$/.exec(minute);
-  if (minuteEvery && hour === "*" && dom === "*" && mon === "*" && dow === "*") {
-    const interval = Number(minuteEvery[1]);
-    if (Number.isFinite(interval) && interval > 0) {
-      return interval * 60_000;
-    }
-  }
-
-  const hourEvery = /^\*\/(\d+)$/.exec(hour);
-  if (hourEvery && /^\d+$/.test(minute) && dom === "*" && mon === "*" && dow === "*") {
-    const interval = Number(hourEvery[1]);
-    if (Number.isFinite(interval) && interval > 0) {
-      return interval * 60 * 60_000;
-    }
-  }
-
-  if (/^\d+$/.test(minute) && /^\d+$/.test(hour) && dom === "*" && mon === "*" && dow === "*") {
-    return 24 * 60 * 60_000;
-  }
-
-  if (/^\d+$/.test(minute) && /^\d+$/.test(hour) && dom === "*" && mon === "*" && dow !== "*") {
-    return 24 * 60 * 60_000;
-  }
-
-  return null;
-}
-
-async function listSoulHeartbeats(
-  workspaceRoot: string,
-  limit: number,
-): Promise<{ items: SoulHeartbeatEntry[]; total: number; path: string }> {
-  const heartbeatPath = resolveSoulHeartbeatPath(workspaceRoot);
-  const relativePath = ".opencode/soul/heartbeat.jsonl";
-  if (!(await exists(heartbeatPath))) {
-    return { items: [], total: 0, path: relativePath };
-  }
-
-  const content = await readFile(heartbeatPath, "utf8");
-  const all = parseSoulHeartbeatEntries(content);
-  return { items: all.slice(0, Math.max(1, limit)), total: all.length, path: relativePath };
-}
-
-async function getSoulStatus(workspaceRoot: string): Promise<SoulStatus> {
-  const [opencodeConfig, memoryEnabled, heartbeatLogExists] = await Promise.all([
-    readOpencodeConfig(workspaceRoot),
-    exists(resolveSoulMemoryPath(workspaceRoot)),
-    exists(resolveSoulHeartbeatPath(workspaceRoot)),
-  ]);
-
-  let heartbeatCommandExists = false;
-  try {
-    const commands = await listCommands(workspaceRoot, "workspace");
-    heartbeatCommandExists = commands.some((command) => command.name === "soul-heartbeat");
-  } catch {
-    heartbeatCommandExists = false;
-  }
-
-  let heartbeatJob: {
-    name: string;
-    slug: string;
-    schedule: string;
-    lastRunAt: string | null;
-    lastRunStatus: string | null;
-    lastRunError: string | null;
-  } | null = null;
-
-  try {
-    const jobs = await listScheduledJobs(workspaceRoot);
-    const found = jobs.find((job) => {
-      if (job.name === "soul-heartbeat") return true;
-      if (job.slug === "soul-heartbeat") return true;
-      return job.slug.includes("soul-heartbeat");
-    });
-    if (found) {
-      heartbeatJob = {
-        name: found.name,
-        slug: found.slug,
-        schedule: found.schedule,
-        lastRunAt: found.lastRunAt ?? null,
-        lastRunStatus: found.lastRunStatus ?? null,
-        lastRunError: found.lastRunError ?? null,
-      };
-    }
-  } catch {
-    heartbeatJob = null;
-  }
-
-  const instructionsEnabled = configIncludesSoulInstruction(opencodeConfig);
-  const heartbeats = await listSoulHeartbeats(workspaceRoot, 500);
-  const lastHeartbeat = heartbeats.items[0] ?? null;
-  const lastHeartbeatAt = lastHeartbeat?.ts ?? null;
-  const lastHeartbeatSummary = lastHeartbeat?.summary ?? null;
-
-  const enabled =
-    memoryEnabled ||
-    instructionsEnabled ||
-    heartbeatLogExists ||
-    heartbeatCommandExists ||
-    Boolean(heartbeatJob);
-
-  const estimatedIntervalMs = heartbeatJob ? estimateCronIntervalMs(heartbeatJob.schedule) : null;
-  const staleAfterMs = enabled
-    ? Math.max(estimatedIntervalMs ? estimatedIntervalMs * 2 : 24 * 60 * 60_000, 30 * 60_000)
-    : null;
-
-  const parsedLastHeartbeat = lastHeartbeatAt ? Date.parse(lastHeartbeatAt) : NaN;
-  const hasLastHeartbeat = Number.isFinite(parsedLastHeartbeat);
-  const overdue = Boolean(
-    enabled &&
-    staleAfterMs != null &&
-    (heartbeatJob || lastHeartbeatAt) &&
-    (!hasLastHeartbeat || Date.now() - parsedLastHeartbeat > staleAfterMs),
-  );
-
-  let state: SoulStatus["state"] = "off";
-  if (!enabled) {
-    state = "off";
-  } else if ((heartbeatJob?.lastRunStatus ?? "") === "failed" || Boolean(heartbeatJob?.lastRunError?.trim())) {
-    state = "error";
-  } else if (overdue) {
-    state = "stale";
-  } else {
-    state = "healthy";
-  }
-
-  const summary = !enabled
-    ? "Soul mode is not enabled for this worker yet."
-    : state === "error"
-      ? "Soul heartbeat ran into an error."
-      : state === "stale"
-        ? "Soul heartbeat is overdue."
-        : heartbeatJob
-          ? "Soul mode is active and heartbeat is on schedule."
-          : "Soul mode is active. Heartbeat schedule not found.";
-
-  return {
-    enabled,
-    state,
-    memoryEnabled,
-    instructionsEnabled,
-    heartbeatLogExists,
-    heartbeatCommandExists,
-    heartbeatJob,
-    heartbeatCount: heartbeats.total,
-    lastHeartbeatAt,
-    lastHeartbeatSummary,
-    staleAfterMs,
-    overdue,
-    summary,
-    memoryPath: ".opencode/soul.md",
-    heartbeatPath: ".opencode/soul/heartbeat.jsonl",
-  };
-}
-
-async function readOpencodeConfig(workspaceRoot: string): Promise<Record<string, unknown>> {
-  const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
-  return data;
 }
 
 async function readVesloConfig(workspaceRoot: string): Promise<Record<string, unknown>> {
@@ -6091,7 +5804,7 @@ async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string,
 
   if (skills.length > 0) {
     if (modes.skills === "replace") {
-      await rm(projectSkillsDir(workspace.path), { recursive: true, force: true });
+      await rm(workspaceSkillsRoot(workspace.path), { recursive: true, force: true });
     }
     for (const skill of skills) {
       await upsertSkill(workspace.path, skill);

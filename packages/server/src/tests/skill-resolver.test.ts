@@ -61,6 +61,33 @@ describe("resolveSkillMatch", () => {
     expect(result.match?.name).toBe("company-research-czech");
   });
 
+  test("matches the platform DOCX skill from MS Word wording", () => {
+    const skills: SkillItem[] = [
+      skill({
+        name: "veslo-docx",
+        description: "Create, edit, analyze, convert, and validate Word DOCX documents using standard skill execution.",
+        aliases: ["MS Word", "Microsoft Word"],
+        whenToUse: "Use for Word and DOCX document workflows.",
+        scope: "global",
+      }),
+      skill({
+        name: "veslo-pdf",
+        description: "Extract, create, merge, split, annotate, fill forms, and validate PDF documents.",
+        aliases: ["PDF"],
+        scope: "global",
+      }),
+    ];
+
+    const result = resolveSkillMatch({
+      text: "pouzij MS Word skill a priprav upravu brief.docx",
+      skills,
+    });
+
+    expect(result.match?.name).toBe("veslo-docx");
+    expect(result.candidates[0]?.name).toBe("veslo-docx");
+    expect(result.candidates.some((candidate) => candidate.name === "veslo-pdf")).toBe(false);
+  });
+
   test("uses explicit-skill fallback when only one candidate is plausible", () => {
     const skills: SkillItem[] = [
       skill({

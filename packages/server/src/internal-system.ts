@@ -1,6 +1,7 @@
 import { lstat, readdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
+import { SOUL_INSTRUCTIONS } from "./soul-runtime.js";
 import { exists, ensureDir } from "./utils.js";
 
 export const INTERNAL_SYSTEM_VERSION = "2026-06-06.1";
@@ -924,8 +925,6 @@ const DEFAULT_SOUL_USER = `# User Memory
 <!-- Say "remember this" or "zapamatuj si" to add entries. -->
 <!-- Veslo will append new facts below. -->
 `;
-
-const SOUL_INSTRUCTIONS = [".opencode/soul-company.md", ".opencode/soul-user.md"] as const;
 
 async function ensureSoulFiles(workspaceRoot: string, stats: ProvisionStats) {
   const opencodePath = join(workspaceRoot, ".opencode");

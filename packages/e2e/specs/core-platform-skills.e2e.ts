@@ -69,6 +69,7 @@ type ManagedMarker = {
 };
 
 const coreSkill = E2E_SKILL_REGISTRY_FIXTURE.corePlatformDocxSkill;
+const corePlatformInventoryScopes = new Set(["platform", "user-global"]);
 const isolatedProfileRoot = () => join(process.cwd(), ".tmp-veslo-home");
 const workspaceRoot = () => join(isolatedProfileRoot(), "workspaces", "visual-workspace");
 const userManagedSkillsRoot = () => join(isolatedProfileRoot(), ".config", "opencode", "skills", "veslo-managed");
@@ -279,7 +280,7 @@ async function waitForCoreSkillInventoryCard(): Promise<InventoryCard> {
       latestCards = await readInventoryCards();
       return latestCards.some((card) =>
         card.name === coreSkill.name &&
-        card.scope === "user-global" &&
+        corePlatformInventoryScopes.has(card.scope) &&
         card.section === "all-workspaces" &&
         card.text.includes(coreSkill.archive.metadata.description ?? "")
       );
@@ -291,7 +292,9 @@ async function waitForCoreSkillInventoryCard(): Promise<InventoryCard> {
     },
   );
 
-  const card = latestCards.find((candidate) => candidate.name === coreSkill.name && candidate.scope === "user-global");
+  const card = latestCards.find((candidate) =>
+    candidate.name === coreSkill.name && corePlatformInventoryScopes.has(candidate.scope)
+  );
   if (!card) throw new Error(`Core platform skill ${coreSkill.name} inventory card was not captured.`);
   return card;
 }
@@ -356,7 +359,7 @@ runWhenLegacyWdioCorePlatformEnabled("Core platform skills", () => {
 
     await refreshSkillsInventoryFromUi();
     const card = await waitForCoreSkillInventoryCard();
-    expect(card.scope).toBe("user-global");
+    expect(corePlatformInventoryScopes.has(card.scope)).toBe(true);
     expect(card.workspaceId).toBe("");
     expect(card.section).toBe("all-workspaces");
 

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { SoulDocument } from "../soul-memory.js";
 import {
   cacheSoulDocument,
+  clearPendingSoulEdits,
   listPendingSoulEdits,
   readCachedSoulDocument,
   soulCachePath,
@@ -152,5 +153,51 @@ describe("soul cache", () => {
     const pending = await listPendingSoulEdits({ dataDir });
     expect(pending).toEqual([edit]);
     expect(await exists(join(dataDir, "soul-cache", "pending", `${edit.id}.json`))).toBe(true);
+  });
+
+  test("clears pending edits only for the matching scope and owner", async () => {
+    const dataDir = await tempDataDir();
+    const matching = await writePendingSoulEdit({
+      dataDir,
+      edit: {
+        scope: "user",
+        ownerId: "user_123",
+        content: "Offline user memory",
+        changeSummary: "Offline edit",
+        baseVersionId: "version_1",
+        createdAt: "2026-06-05T11:00:00.000Z",
+        createdBy: "user_123",
+      },
+    });
+    const otherUser = await writePendingSoulEdit({
+      dataDir,
+      edit: {
+        scope: "user",
+        ownerId: "user_456",
+        content: "Other user memory",
+        changeSummary: "Other edit",
+        baseVersionId: "version_1",
+        createdAt: "2026-06-05T11:05:00.000Z",
+        createdBy: "user_456",
+      },
+    });
+    const otherScope = await writePendingSoulEdit({
+      dataDir,
+      edit: {
+        scope: "workspace",
+        ownerId: "user_123",
+        content: "Workspace memory",
+        changeSummary: "Workspace edit",
+        baseVersionId: null,
+        createdAt: "2026-06-05T11:10:00.000Z",
+        createdBy: "user_123",
+      },
+    });
+
+    await expect(clearPendingSoulEdits({ dataDir, scope: "user", ownerId: "user_123" })).resolves.toBe(1);
+
+    const pending = await listPendingSoulEdits({ dataDir });
+    expect(pending.map((edit) => edit.id).sort()).toEqual([otherScope.id, otherUser.id].sort());
+    expect(await exists(join(dataDir, "soul-cache", "pending", `${matching.id}.json`))).toBe(false);
   });
 });

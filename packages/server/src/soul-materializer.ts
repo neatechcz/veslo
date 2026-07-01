@@ -8,14 +8,10 @@ import { currentSoulVersion, type SoulDocument, type SoulScope } from "./soul-me
 import type { ResourceOwner } from "./types.js";
 import { opencodeConfigPath } from "./workspace-files.js";
 import { ensureDir, exists } from "./utils.js";
+import { SOUL_INSTRUCTIONS, SOUL_MANIFEST_PATH } from "./soul-runtime.js";
 
 const MANIFEST_SCHEMA_VERSION = 1;
 const MANAGED_BY = "veslo-soul-materializer";
-const SOUL_INSTRUCTIONS = [
-  ".opencode/soul-company.md",
-  ".opencode/soul-user.md",
-  ".opencode/soul-workspace.md",
-] as const;
 
 const SOURCE_FILES: ReadonlyArray<{
   scope: SoulScope;
@@ -111,7 +107,7 @@ type SourceSnapshot = {
 };
 
 export function soulMaterializationManifestPath(workspaceRoot: string): string {
-  return join(workspaceRoot, ".opencode", "veslo", "soul-manifest.json");
+  return join(workspaceRoot, SOUL_MANIFEST_PATH);
 }
 
 export async function readSoulMaterializationManifest(

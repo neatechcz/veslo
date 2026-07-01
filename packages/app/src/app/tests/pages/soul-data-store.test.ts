@@ -190,6 +190,10 @@ test("Soul data store maps local and explicit remote workspaces before refreshin
         { kind: "overview", auth: authContext },
       );
       assert.equal(store.soulStatusByWorkspaceId()["remote-app"], remoteStatus);
+      assert.deepEqual(store.soulWorkspaceMap(), {
+        "local-app": "veslo-local",
+        "remote-app": "veslo-remote",
+      });
       assert.equal(store.activeSoulStatus(), remoteStatus);
       assert.deepEqual(store.activeSoulHeartbeats(), [heartbeat("hb-1")]);
       assert.equal(store.soulError(), null);
@@ -232,6 +236,10 @@ test("Soul data store falls back to remote directory matching and reports partia
 
       assert.deepEqual(store.soulStatusByWorkspaceId()["missing-app"], null);
       assert.equal(store.soulStatusByWorkspaceId()["directory-app"]?.summary, "Directory healthy");
+      assert.deepEqual(store.soulWorkspaceMap(), {
+        "directory-app": "veslo-directory",
+        "missing-app": "veslo-missing",
+      });
       assert.deepEqual(store.activeSoulHeartbeats(), [heartbeat("hb-directory")]);
       assert.equal(store.soulError(), "Soul status is partially unavailable.");
       assert.deepEqual(

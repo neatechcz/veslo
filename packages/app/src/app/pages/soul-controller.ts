@@ -40,6 +40,7 @@ export type SoulEditorControllerInput<TSource extends SoulEditorSource = SoulEdi
   authContext: Accessor<VesloSoulAuthContext>;
   refresh: (options?: { force?: boolean }) => void;
   activeWorkspaceIds?: Accessor<string[]>;
+  activeRun?: Accessor<boolean>;
   onMaterializationResult?: (
     source: TSource,
     materialization: VesloSoulAnyMaterializationResult | undefined,
@@ -328,7 +329,10 @@ export function createSoulEditorController<TSource extends SoulEditorSource>(
   const restoreChangeSummaryValue = () => restoreChangeSummary().trim() || input.defaultRestoreSummary();
   const activeWorkspaceIdsPayload = () => {
     const activeWorkspaceIds = input.activeWorkspaceIds?.() ?? [];
-    return activeWorkspaceIds.length ? { activeWorkspaceIds } : {};
+    return {
+      ...(activeWorkspaceIds.length ? { activeWorkspaceIds } : {}),
+      ...(input.activeRun?.() === true ? { activeRun: true } : {}),
+    };
   };
 
   const previewVersion = async (versionId: string) => {

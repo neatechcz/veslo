@@ -117,6 +117,11 @@ test("managed AI send config preflight retries only local transient transport fa
     /isLoopbackVesloServerConnectionUrl\(retryBaseUrl\)[\s\S]*!\(error instanceof VesloServerError\)[\s\S]*isLocalVesloTransportError\(error\)[\s\S]*vesloServerRecentlyReachable\(\)/,
     "send config retry should be limited to local transport/socket failures after recent server reachability",
   );
+  assert.doesNotMatch(
+    retrySource,
+    /isLoopbackUrl\(/,
+    "send config retry should use the Veslo server connection URL guard instead of a generic loopback check",
+  );
 
   const configCheckStart = managedRuntimeConfigSource.indexOf("const hasUsableManagedAiRuntimeConfigForSend = async");
   const configCheckEnd = managedRuntimeConfigSource.indexOf("const ensureManagedAiRuntimeAuthorizationForSend = async", configCheckStart);

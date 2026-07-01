@@ -1,0 +1,172 @@
+import { normalizeDirectoryPath } from "../utils";
+import { parseVesloWorkspaceIdFromUrl, type VesloWorkspaceInfo } from "./veslo-server";
+
+export type SoulWorkspaceMapWorkspace = {
+  id: string;
+  workspaceType?: string | null;
+  remoteType?: string | null;
+  path?: string | null;
+  directory?: string | null;
+  vesloWorkspaceId?: string | null;
+  vesloHostUrl?: string | null;
+  baseUrl?: string | null;
+};
+
+export type SoulWorkspaceIdMap = Record<string, string>;
+
+export type SoulActiveWorkspaceGuard = {
+  activeWorkspaceIds: string[];
+  activeRun: boolean;
+  unresolvedAppWorkspaceIds: string[];
+};
+
+export type PendingSoulMaterializationReplay = {
+  appWorkspaceId: string | null;
+  serverWorkspaceId: string;
+};
+
+const normalizedText = (value: string | null | undefined): string => value?.trim() ?? "";
+
+const serverWorkspaceDirectoryCandidates = (
+  workspace: Pick<VesloWorkspaceInfo, "path" | "directory" | "opencode">,
+) =>
+  [
+    normalizeDirectoryPath(workspace.path ?? ""),
+    normalizeDirectoryPath(workspace.directory ?? ""),
+    normalizeDirectoryPath(workspace.opencode?.directory ?? ""),
+  ].filter(Boolean);
+
+export function buildSoulWorkspaceIdMap(input: {
+  appWorkspaces: SoulWorkspaceMapWorkspace[];
+  serverWorkspaces: VesloWorkspaceInfo[];
+}): SoulWorkspaceIdMap {
+  const map: SoulWorkspaceIdMap = {};
+  const idByLocalPath = new Map<string, string>();
+
+  for (const item of input.serverWorkspaces) {
+    const path = normalizeDirectoryPath(item.path ?? "");
+    if (path) {
+      idByLocalPath.set(path, item.id);
+    }
+  }
+
+  for (const workspace of input.appWorkspaces) {
+    if (workspace.workspaceType === "local") {
+      const key = normalizeDirectoryPath(workspace.path ?? "");
+      const serverWorkspaceId = key ? idByLocalPath.get(key) : null;
+      if (serverWorkspaceId) {
+        map[workspace.id] = serverWorkspaceId;
+      }
+      continue;
+    }
+
+    if (workspace.remoteType !== "veslo") {
+      continue;
+    }
+
+    const explicitId =
+      workspace.vesloWorkspaceId?.trim() ||
+      parseVesloWorkspaceIdFromUrl(workspace.vesloHostUrl ?? "") ||
+      parseVesloWorkspaceIdFromUrl(workspace.baseUrl ?? "");
+    if (explicitId) {
+      map[workspace.id] = explicitId;
+      continue;
+    }
+
+    const directoryHint = normalizeDirectoryPath(workspace.directory ?? workspace.path ?? "");
+    if (!directoryHint) continue;
+    const match = input.serverWorkspaces.find((entry) =>
+      serverWorkspaceDirectoryCandidates(entry).includes(directoryHint),
+    );
+    if (match?.id) {
+      map[workspace.id] = match.id;
+    }
+  }
+
+  return map;
+}
+
+export function resolveSoulServerWorkspaceId(
+  workspace: SoulWorkspaceMapWorkspace | undefined,
+  soulWorkspaceMap: SoulWorkspaceIdMap,
+): string | null {
+  if (!workspace) return null;
+  const appWorkspaceId = normalizedText(workspace.id);
+  return (
+    normalizedText(appWorkspaceId ? soulWorkspaceMap[appWorkspaceId] : undefined) ||
+    normalizedText(workspace.vesloWorkspaceId) ||
+    normalizedText(workspace.remoteType === "veslo" ? parseVesloWorkspaceIdFromUrl(workspace.vesloHostUrl ?? "") : null) ||
+    normalizedText(workspace.remoteType === "veslo" ? parseVesloWorkspaceIdFromUrl(workspace.baseUrl ?? "") : null) ||
+    null
+  );
+}
+
+export function buildSoulAppWorkspaceIdByServerWorkspaceId(
+  appWorkspaces: SoulWorkspaceMapWorkspace[],
+  soulWorkspaceMap: SoulWorkspaceIdMap,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const workspace of appWorkspaces) {
+    const appWorkspaceId = normalizedText(workspace.id);
+    if (!appWorkspaceId) continue;
+    const serverWorkspaceId = resolveSoulServerWorkspaceId(workspace, soulWorkspaceMap);
+    if (serverWorkspaceId) map.set(serverWorkspaceId, appWorkspaceId);
+  }
+  return map;
+}
+
+const workspaceCanAffectSoulMaterialization = (workspace: SoulWorkspaceMapWorkspace | undefined): boolean => {
+  if (!workspace) return true;
+  return !(workspace.workspaceType === "remote" && workspace.remoteType !== "veslo");
+};
+
+export function resolveSoulActiveWorkspaceGuard(input: {
+  appWorkspaces: SoulWorkspaceMapWorkspace[];
+  soulWorkspaceMap: SoulWorkspaceIdMap;
+  busyWorkspaceIds: string[];
+}): SoulActiveWorkspaceGuard {
+  const workspaceByAppId = new Map(
+    input.appWorkspaces
+      .map((workspace) => [normalizedText(workspace.id), workspace] as const)
+      .filter(([workspaceId]) => Boolean(workspaceId)),
+  );
+  const activeWorkspaceIds = new Set<string>();
+  const unresolvedAppWorkspaceIds: string[] = [];
+
+  for (const rawWorkspaceId of input.busyWorkspaceIds) {
+    const appWorkspaceId = normalizedText(rawWorkspaceId);
+    if (!appWorkspaceId) continue;
+    const workspace = workspaceByAppId.get(appWorkspaceId);
+    if (!workspaceCanAffectSoulMaterialization(workspace)) continue;
+    const serverWorkspaceId = resolveSoulServerWorkspaceId(workspace, input.soulWorkspaceMap);
+    if (serverWorkspaceId) {
+      activeWorkspaceIds.add(serverWorkspaceId);
+    } else {
+      unresolvedAppWorkspaceIds.push(appWorkspaceId);
+    }
+  }
+
+  return {
+    activeWorkspaceIds: [...activeWorkspaceIds],
+    activeRun: unresolvedAppWorkspaceIds.length > 0,
+    unresolvedAppWorkspaceIds,
+  };
+}
+
+export function canReplaySoulMaterialization(input: {
+  replay: PendingSoulMaterializationReplay;
+  busyWorkspaceIds: string[];
+}): boolean {
+  const busyWorkspaceIds = new Set(input.busyWorkspaceIds.map(normalizedText).filter(Boolean));
+  const appWorkspaceId = normalizedText(input.replay.appWorkspaceId);
+  return appWorkspaceId ? !busyWorkspaceIds.has(appWorkspaceId) : busyWorkspaceIds.size === 0;
+}
+
+export function soulReplayRequiresActiveRun(input: {
+  replay: PendingSoulMaterializationReplay;
+  busyWorkspaceIds: string[];
+}): boolean {
+  const busyWorkspaceIds = new Set(input.busyWorkspaceIds.map(normalizedText).filter(Boolean));
+  const appWorkspaceId = normalizedText(input.replay.appWorkspaceId);
+  return appWorkspaceId ? busyWorkspaceIds.has(appWorkspaceId) : busyWorkspaceIds.size > 0;
+}

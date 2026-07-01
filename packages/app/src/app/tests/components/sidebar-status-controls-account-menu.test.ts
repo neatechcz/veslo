@@ -44,5 +44,5 @@ test("dashboard and session pages forward onLogout to SidebarStatusControls", ()
   assert.match(dashboardSource, /onLogout: \(\) => Promise<void> \| void/);
   assert.match(dashboardSource, /onLogout=\{props\.onLogout\}/);
   assert.match(sessionSource, /onLogout: \(\) => Promise<void> \| void/);
-  assert.match(sessionSource, /onLogout=\{props\.onLogout\}/);
+  assert.match(sessionSource, /onLogout:\s*props\.onLogout/);
 });

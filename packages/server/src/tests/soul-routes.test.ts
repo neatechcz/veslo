@@ -496,6 +496,61 @@ test("GET /soul/user reports persisted pending edit after offline user patch", a
   expect((await overview.json() as { user: { status: string } }).user.status).toBe("pending");
 });
 
+test("successful Den user read clears stale offline pending edits", async () => {
+  const user = document({ scope: "user", ownerId: "user_1", versionId: "user_v1", content: "Den user memory" });
+  const den = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request) => {
+      const url = new URL(request.url);
+      if (request.method === "GET" && url.pathname === "/v1/soul/user") return Response.json(user);
+      return Response.json({ code: "not_found" }, { status: 404 });
+    },
+  });
+  runningServers.push(den as { stop?: (closeActiveConnections?: boolean) => void });
+  const server = await startFixture();
+
+  const offlinePatch = await fetch(`http://127.0.0.1:${server.port}/soul/user`, {
+    method: "PATCH",
+    headers: { ...denHeaders, "content-type": "application/json" },
+    body: JSON.stringify({
+      content: "Offline user memory",
+      changeSummary: "Queue offline user memory",
+      baseVersionId: null,
+    }),
+  });
+  expect(offlinePatch.status).toBe(202);
+
+  const onlineRead = await fetch(`http://127.0.0.1:${server.port}/soul/user`, {
+    headers: {
+      ...denHeaders,
+      "x-veslo-den-api-base": `http://127.0.0.1:${den.port}`,
+    },
+  });
+  expect(onlineRead.status).toBe(200);
+  const onlinePayload = await onlineRead.json() as {
+    summary: { status: string; currentVersionId: string | null };
+    pendingEdits?: unknown[];
+    denSynced?: boolean;
+  };
+  expect(onlinePayload.summary.status).toBe("active");
+  expect(onlinePayload.summary.currentVersionId).toBe("user_v1");
+  expect(onlinePayload.pendingEdits).toBeUndefined();
+  expect(onlinePayload.denSynced).toBe(true);
+
+  const offlineReadAgain = await fetch(`http://127.0.0.1:${server.port}/soul/user`, { headers: denHeaders });
+  expect(offlineReadAgain.status).toBe(200);
+  const offlinePayload = await offlineReadAgain.json() as {
+    summary: { status: string; currentVersionId: string | null };
+    pendingEdits?: unknown[];
+    denSynced?: boolean;
+  };
+  expect(offlinePayload.summary.status).toBe("active");
+  expect(offlinePayload.summary.currentVersionId).toBe("user_v1");
+  expect(offlinePayload.pendingEdits).toBeUndefined();
+  expect(offlinePayload.denSynced).toBe(false);
+});
+
 test("PATCH /soul/user creates a new version", async () => {
   const user = document({ scope: "user", ownerId: "user_1", versionId: "user_v1", content: "User memory" });
   const denCalls: Array<{ method: string; pathname: string; body: unknown }> = [];
@@ -555,6 +610,68 @@ test("PATCH /soul/user creates a new version", async () => {
   ]);
 });
 
+test("PATCH /soul/user activeRun marks configured workspace materializations pending", async () => {
+  const user = document({ scope: "user", ownerId: "user_1", versionId: "user_v1", content: "User memory" });
+  const den = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      if (request.method === "GET" && url.pathname === "/v1/soul/user") return Response.json(user);
+      if (request.method === "PATCH" && url.pathname === "/v1/soul/user") {
+        return Response.json({
+          ...user,
+          currentVersionId: "user_v2",
+          versions: [
+            ...user.versions,
+            {
+              id: "user_v2",
+              content: "Updated user memory while active",
+              changeSummary: "Update user while active",
+              createdAt: "2026-06-05T11:00:00.000Z",
+              createdBy: "user_1",
+              source: "api",
+              baseVersionId: "user_v1",
+              restoreSourceVersionId: null,
+            },
+          ],
+        });
+      }
+      return Response.json({ code: "not_found" }, { status: 404 });
+    },
+  });
+  runningServers.push(den as { stop?: (closeActiveConnections?: boolean) => void });
+  const server = await startFixture({ denApiBase: `http://127.0.0.1:${den.port}` });
+  const workspaceRoot = tempDirs[tempDirs.length - 2]!;
+  const inactiveWorkspaceRoot = tempDirs[tempDirs.length - 1]!;
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/soul/user`, {
+    method: "PATCH",
+    headers: { ...denHeaders, "content-type": "application/json" },
+    body: JSON.stringify({
+      content: "Updated user memory while active",
+      changeSummary: "Update user while active",
+      baseVersionId: "user_v1",
+      activeRun: true,
+    }),
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as {
+    materialization?: {
+      pending: boolean;
+      workspaces: Array<{ workspaceId: string; result: { status: string; pending: boolean } }>;
+    };
+  };
+  expect(payload.materialization?.pending).toBe(true);
+  expect(payload.materialization?.workspaces).toEqual([
+    { workspaceId: "ws_active", result: expect.objectContaining({ status: "pending", pending: true }) },
+    { workspaceId: "ws_inactive", result: expect.objectContaining({ status: "pending", pending: true }) },
+  ]);
+  await expect(readFile(join(workspaceRoot, ".opencode", "soul-user.md"), "utf8")).rejects.toThrow();
+  await expect(readFile(join(inactiveWorkspaceRoot, ".opencode", "soul-user.md"), "utf8")).rejects.toThrow();
+});
+
 test("workspace soul routes work for configured workspaces that are not active", async () => {
   const server = await startFixture();
 
@@ -588,6 +705,27 @@ test("workspace soul routes work for configured workspaces that are not active",
   const read = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_inactive/soul`, { headers: clientHeaders });
   expect(read.status).toBe(200);
   expect(await read.json()).toEqual(updatePayload);
+
+  const status = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_inactive/soul/status`, { headers: clientHeaders });
+  expect(status.status).toBe(200);
+  const statusPayload = await status.json() as {
+    enabled: boolean;
+    state: string;
+    memoryEnabled: boolean;
+    instructionsEnabled: boolean;
+    memoryPath: string;
+    memoryPaths?: string[];
+  };
+  expect(statusPayload.enabled).toBe(true);
+  expect(statusPayload.state).toBe("healthy");
+  expect(statusPayload.memoryEnabled).toBe(true);
+  expect(statusPayload.instructionsEnabled).toBe(true);
+  expect(statusPayload.memoryPath).toBe(".opencode/soul-company.md");
+  expect(statusPayload.memoryPaths).toEqual([
+    ".opencode/soul-company.md",
+    ".opencode/soul-user.md",
+    ".opencode/soul-workspace.md",
+  ]);
 });
 
 test("workspace Soul materialization stays pending during active runs and syncs after idle", async () => {

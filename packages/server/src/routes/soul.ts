@@ -20,6 +20,7 @@ import {
 } from "../soul-den-client.js";
 import {
   cacheSoulDocument,
+  clearPendingSoulEdits,
   listPendingSoulEdits,
   readCachedSoulDocument,
   soulCachePath,
@@ -70,7 +71,7 @@ export type SoulRouteDependencies = {
     overrides: Partial<Record<SoulScope, SoulDocument | null>>,
     options?: { activeWorkspaceIds?: Set<string> },
   ) => Promise<unknown>;
-  activeSoulWorkspaceIdsFromBody: (body: Record<string, unknown>) => Set<string>;
+  activeSoulWorkspaceIdsFromBody: (body: Record<string, unknown>, config?: ServerConfig) => Set<string>;
   soulWorkspaceActiveFromBody: (body: Record<string, unknown>, workspaceId: string) => boolean;
   soulMaterializationApprovalPaths: (workspace: WorkspaceInfo) => string[];
   configuredSoulMaterializationApprovalPaths: (
@@ -296,7 +297,7 @@ export function registerSoulRoutes(
     const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, ctx.config, ctx, {
       organization: document,
     }, {
-      activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body),
+      activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body, ctx.config),
     });
     return jsonResponse(soulReadPayload({
       document,
@@ -340,10 +341,11 @@ export function registerSoulRoutes(
           baseVersionId,
         });
         await cacheSoulDocument({ dataDir: serverDataDir, document });
+        await clearPendingSoulEdits({ dataDir: serverDataDir, scope: "user", ownerId: document.ownerId });
         const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, ctx.config, ctx, {
           user: document,
         }, {
-          activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body),
+          activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body, ctx.config),
         });
         return jsonResponse(soulReadPayload({
           document,
@@ -420,7 +422,7 @@ export function registerSoulRoutes(
     const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, ctx.config, ctx, {
       organization: document,
     }, {
-      activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body),
+      activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body, ctx.config),
     });
     return jsonResponse(soulReadPayload({
       document,
@@ -462,10 +464,11 @@ export function registerSoulRoutes(
           changeSummary,
         });
         await cacheSoulDocument({ dataDir: serverDataDir, document });
+        await clearPendingSoulEdits({ dataDir: serverDataDir, scope: "user", ownerId: document.ownerId });
         const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, ctx.config, ctx, {
           user: document,
         }, {
-          activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body),
+          activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body, ctx.config),
         });
         return jsonResponse(soulReadPayload({
           document,
@@ -496,7 +499,7 @@ export function registerSoulRoutes(
     const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, ctx.config, ctx, {
       user: restored,
     }, {
-      activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body),
+      activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body, ctx.config),
     });
     return jsonResponse(soulReadPayload({
       document: restored,

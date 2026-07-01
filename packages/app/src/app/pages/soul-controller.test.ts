@@ -216,6 +216,7 @@ function createController(input?: {
   client?: VesloServerClient;
   refresh?: () => void;
   activeWorkspaceIds?: () => string[];
+  activeRun?: () => boolean;
   onMaterializationResult?: SoulEditorControllerInput<SoulEditorSource>["onMaterializationResult"];
 }) {
   const fallbackClient = input?.client ?? makeClient(input?.sourceList).client;
@@ -226,6 +227,7 @@ function createController(input?: {
     authContext: () => authContext,
     refresh: input?.refresh ?? (() => {}),
     activeWorkspaceIds: input?.activeWorkspaceIds,
+    activeRun: input?.activeRun,
     onMaterializationResult: input?.onMaterializationResult,
     defaultChangeSummary: () => "Update Soul content",
     defaultRestoreSummary: () => "Restore selected Soul version",
@@ -345,6 +347,7 @@ test("Soul editor controller forwards active workspace ids for runtime-safe mate
       const controller = createController({
         client,
         activeWorkspaceIds: () => ["ws-1"],
+        activeRun: () => true,
         onMaterializationResult: (source, materialization) => {
           materializationCallbacks.push({ source, materialization });
         },
@@ -362,6 +365,7 @@ test("Soul editor controller forwards active workspace ids for runtime-safe mate
           changeSummary: "Update Soul content",
           baseVersionId: "user-v1",
           activeWorkspaceIds: ["ws-1"],
+          activeRun: true,
         },
       ]);
       assert.equal(materializationCallbacks.length, 1);
@@ -514,6 +518,39 @@ test("Soul editor controller disables restore for current version and restores a
           input: {
             ...authContext,
             changeSummary: "Return to old preferences",
+          },
+        },
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("Soul editor controller forwards active run guards when restoring a version", behaviorTestOptions, async () => {
+  const { client, calls } = makeClient();
+
+  await createRoot(async (dispose) => {
+    try {
+      const controller = createController({
+        client,
+        activeWorkspaceIds: () => ["ws-1"],
+        activeRun: () => true,
+      });
+      controller.setSelectedSourceKey("user");
+      await flush();
+
+      await controller.previewVersion("user-v0");
+      await controller.restoreSelectedVersion("user-v0");
+
+      assert.deepEqual(calls.restoreUserSoulVersion, [
+        {
+          versionId: "user-v0",
+          input: {
+            ...authContext,
+            changeSummary: "Restore selected Soul version",
+            activeWorkspaceIds: ["ws-1"],
+            activeRun: true,
           },
         },
       ]);

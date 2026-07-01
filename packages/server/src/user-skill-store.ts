@@ -1,16 +1,21 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { resolveVesloDataDir } from "./audit.js";
 import { ApiError } from "./errors.js";
 import { localUserResourceOwner } from "./resource-owner.js";
 import { parseSkillMarkdownMetadata } from "./skill-metadata.js";
-import { prepareSkillContent, SKILL_ENTRYPOINT, workspaceSkillRootsForMutation } from "./skills.js";
+import { prepareSkillContent } from "./skills.js";
+import {
+  SKILL_ENTRYPOINT,
+  isPathInside,
+  workspaceSkillRootsForMutation,
+  workspaceSkillsRoot,
+} from "./skill-roots.js";
 import type { ResourceOwner } from "./types.js";
 import { exists } from "./utils.js";
 import { validateSkillName } from "./validators.js";
-import { projectSkillsDir } from "./workspace-files.js";
 
 export const USER_GLOBAL_SKILL_STORE_SOURCE = "veslo-user-store";
 export const USER_GLOBAL_SKILL_VIRTUAL_PATH_PREFIX = "veslo-user-store://";
@@ -106,13 +111,8 @@ export function userGlobalSkillStorePath(dataDirOverride?: string): string {
 }
 
 export function userGlobalMaterializedSkillsRoot(workspaceRoot: string): string {
-  return join(projectSkillsDir(workspaceRoot), USER_GLOBAL_SKILL_MATERIALIZED_CATEGORY);
+  return join(workspaceSkillsRoot(workspaceRoot), USER_GLOBAL_SKILL_MATERIALIZED_CATEGORY);
 }
-
-const isPathInside = (parent: string, child: string): boolean => {
-  const rel = relative(parent, child);
-  return rel === "" || (Boolean(rel) && !rel.startsWith("..") && !isAbsolute(rel));
-};
 
 const compareRecords = (left: UserGlobalSkillRecord, right: UserGlobalSkillRecord) =>
   left.name.localeCompare(right.name);

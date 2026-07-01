@@ -4,6 +4,7 @@ import test from "node:test";
 
 const dashboardSource = readFileSync(new URL("../../pages/dashboard.tsx", import.meta.url), "utf8");
 const sessionSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
+const sessionLeftSidebarSource = readFileSync(new URL("../../pages/session-left-sidebar.tsx", import.meta.url), "utf8");
 
 test("dashboard sidebar opens selected sessions without selected-parent subagent expansion", () => {
   assert.match(
@@ -15,8 +16,13 @@ test("dashboard sidebar opens selected sessions without selected-parent subagent
 
 test("session sidebar keeps selected-parent row clicks available for subagent expansion", () => {
   assert.match(
+    sessionLeftSidebarSource,
+    /<WorkspaceSessionList\s+\{\.\.\.props\.workspaceSessionListProps\}/,
+    "session left-sidebar shell should forward the page-owned WorkspaceSessionList contract unchanged",
+  );
+  assert.match(
     sessionSource,
-    /<WorkspaceSessionList[\s\S]*?allowSelectedParentExpansion=\{true\}[\s\S]*?onOpenSession=\{openSessionFromList\}/,
+    /workspaceSessionListProps=\{\{[\s\S]*?allowSelectedParentExpansion:\s*true,[\s\S]*?onOpenSession:\s*openSessionFromList,/,
     "session view sidebar should allow the explicit selected-parent row expansion gesture",
   );
 });

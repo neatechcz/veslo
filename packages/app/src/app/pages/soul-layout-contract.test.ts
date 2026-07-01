@@ -30,12 +30,14 @@ test("Dashboard passes Soul overview state and busy flag to SoulView", () => {
   assert.match(dashboardSource, /soulClient:\s*VesloServerClient\s*\|\s*null;/);
   assert.match(dashboardSource, /soulServerConnected:\s*boolean;/);
   assert.match(dashboardSource, /soulAuthContext:\s*VesloSoulAuthContext;/);
+  assert.match(dashboardSource, /soulWorkspaceMap:\s*Record<string,\s*string>;/);
   assert.match(dashboardSource, /busySessionByWorkspaceId\?:\s*WorkspaceBusyMap;/);
   assert.match(appSource, /const soulDataStore = createSoulDataStore\(\{/);
   assert.match(appSource, /soulOverviewBusy:\s*soulDataStore\.soulOverviewBusy\(\)/);
   assert.match(appSource, /soulClient:\s*soulDataStore\.soulClient\(\)/);
   assert.match(appSource, /soulServerConnected:\s*soulDataStore\.soulServerConnected\(\)/);
   assert.match(appSource, /soulAuthContext:\s*soulDataStore\.soulAuthContext\(\)/);
+  assert.match(appSource, /soulWorkspaceMap:\s*soulDataStore\.soulWorkspaceMap\(\)/);
   assert.match(dashboardSource, /<SoulView[\s\S]*soulOverview=\{props\.soulOverview\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*soulOverviewError=\{props\.soulOverviewError\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*soulOverviewBusy=\{props\.soulOverviewBusy\}/);
@@ -43,6 +45,7 @@ test("Dashboard passes Soul overview state and busy flag to SoulView", () => {
   assert.match(dashboardSource, /<SoulView[\s\S]*serverConnected=\{props\.soulServerConnected\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*authContext=\{props\.soulAuthContext\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*refresh=\{props\.refreshSoulData\}/);
+  assert.match(dashboardSource, /<SoulView[\s\S]*soulWorkspaceMap=\{props\.soulWorkspaceMap\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*busySessionByWorkspaceId=\{props\.busySessionByWorkspaceId\}/);
   assert.doesNotMatch(dashboardSource, /<SoulView[\s\S]{0,500}runSoulPrompt=\{props\.runSoulPrompt\}/);
 });
@@ -110,6 +113,22 @@ test("SoulView hides private workspace Soul rows from the workspace source table
   assert.match(soulSource, /props\.isPrivateWorkspacePath\(workspace\.path\)/);
   assert.match(dashboardSource, /<SoulView[\s\S]*workspaces=\{props\.workspaces\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*isPrivateWorkspacePath=\{props\.isPrivateWorkspacePath\}/);
+});
+
+test("SoulView maps app workspace ids to server ids for Soul active-run guards and replay", () => {
+  assert.match(soulSource, /soulWorkspaceMap:\s*Record<string,\s*string>;/);
+  assert.match(soulSource, /const appWorkspaceIdByServerWorkspaceId = createMemo/);
+  assert.match(soulSource, /buildSoulAppWorkspaceIdByServerWorkspaceId\(props\.workspaces,\s*props\.soulWorkspaceMap\)/);
+  assert.match(soulSource, /props\.soulWorkspaceMap\[workspace\.id\]/);
+  assert.match(soulSource, /const soulActiveWorkspaceGuard = createMemo/);
+  assert.match(soulSource, /resolveSoulActiveWorkspaceGuard/);
+  assert.match(soulSource, /activeWorkspaceIds:\s*soulActiveWorkspaceIds/);
+  assert.match(soulSource, /activeRun:\s*soulActiveRun/);
+  assert.match(soulSource, /type PendingSoulMaterializationReplay/);
+  assert.match(soulSource, /syncWorkspaceSoulMaterialization\(\s*replay\.serverWorkspaceId/);
+  assert.match(soulSource, /canReplaySoulMaterialization/);
+  assert.match(soulSource, /soulReplayRequiresActiveRun/);
+  assert.doesNotMatch(soulSource, /syncWorkspaceSoulMaterialization\(workspaceId/);
 });
 
 test("Soul workspace source column shows only the workspace display name", () => {

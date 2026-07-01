@@ -10,7 +10,7 @@ import {
 } from "./skill-package-model.js";
 import type { SkillPackageFile, SkillPackageManifest } from "./skill-package-model.js";
 import { parseSkillMarkdownMetadata } from "./skill-metadata.js";
-import { SKILL_ENTRYPOINT } from "./skills.js";
+import { SKILL_ENTRYPOINT } from "./skill-roots.js";
 
 export const MAX_SKILL_PACKAGE_FILE_COUNT = 256;
 export const MAX_SKILL_PACKAGE_FILE_SIZE_BYTES = 10 * 1024 * 1024;

@@ -10,8 +10,8 @@ import {
   writeGlobalSidebarDockedPrefs,
 } from "../../../components/layout/global-sidebar-prefs.js";
 
-const dashboardSource = readFileSync(new URL("../../pages/dashboard.tsx", import.meta.url), "utf8");
-const sessionSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
+const dashboardSource = readFileSync(new URL("../../../pages/dashboard.tsx", import.meta.url), "utf8");
+const sessionSource = readFileSync(new URL("../../../pages/session.tsx", import.meta.url), "utf8");
 
 const createMemoryStorage = (initial?: Record<string, string>) => {
   const map = new Map<string, string>(Object.entries(initial ?? {}));

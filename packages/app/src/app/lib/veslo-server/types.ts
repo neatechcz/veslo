@@ -1281,6 +1281,7 @@ export type VesloSoulStatus = {
   overdue: boolean;
   summary: string;
   memoryPath: string;
+  memoryPaths?: string[];
   heartbeatPath: string;
 };
 
@@ -1429,6 +1430,7 @@ export type VesloSoulUpdateInput = VesloSoulAuthContext & {
   changeSummary: string;
   baseVersionId: string | null;
   activeWorkspaceIds?: string[];
+  activeRun?: boolean;
 };
 
 export type VesloSoulRestoreInput = VesloSoulAuthContext & {

@@ -107,6 +107,7 @@ const pilotCommand = process.env.E2E_TAURI_PILOT_BIN?.trim() || 'tauri-pilot';
 
 const expectedCoreSkills = E2E_SKILL_REGISTRY_FIXTURE.corePlatformSkills;
 const internalRoutingPattern = /VESLO_INTERNAL_ROUTING|veslo-internal|veslo-delegate|delegate tool|hidden subagent|child session/i;
+const corePlatformInventoryScopes = new Set(['platform', 'user-global']);
 const expectedFilesBySkill = new Map<string, CoreSkillExpectation>([
   ['veslo-docx', {
     skillTextIncludes: '# DOCX creation, editing, and analysis',
@@ -652,14 +653,14 @@ async function waitForCoreSkillInventoryCards(connection: VesloServerConnection)
   const deadline = Date.now() + 30_000;
   let latestCards: InventoryCard[] = [];
   while (Date.now() < deadline) {
-    latestCards = await readInventoryCards();
-    const allPresent = expectedCoreSkills.every((skill) => latestCards.some((card) =>
-      card.name === skill.name &&
-      card.scope === 'user-global' &&
-      card.lifecycle === 'active' &&
-      card.section === 'all-workspaces' &&
-      card.deactivateButtonDisabled === true,
-    ));
+      latestCards = await readInventoryCards();
+      const allPresent = expectedCoreSkills.every((skill) => latestCards.some((card) =>
+        card.name === skill.name &&
+        corePlatformInventoryScopes.has(card.scope) &&
+        card.lifecycle === 'active' &&
+        card.section === 'all-workspaces' &&
+        card.deactivateButtonDisabled === true,
+      ));
     if (allPresent) {
       return latestCards;
     }
@@ -673,9 +674,10 @@ async function waitForCoreSkillInventoryCards(connection: VesloServerConnection)
 
 function verifyInventoryCards(cards: InventoryCard[]): void {
   for (const skill of expectedCoreSkills) {
-    const card = cards.find((candidate) => candidate.name === skill.name && candidate.scope === 'user-global');
+    const card = cards.find((candidate) => candidate.name === skill.name && corePlatformInventoryScopes.has(candidate.scope));
     assert.ok(card, `Expected UI inventory card for ${skill.name}`);
     assert.equal(card.workspaceId, '');
+    assert.ok(corePlatformInventoryScopes.has(card.scope), `Expected platform-compatible UI scope for ${skill.name}`);
     assert.equal(card.lifecycle, 'active');
     assert.equal(card.section, 'all-workspaces');
     assert.equal(card.deactivateButtonDisabled, true, `Expected locked remove action for ${skill.name}`);

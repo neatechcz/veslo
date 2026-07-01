@@ -13,9 +13,11 @@ import {
   deleteGlobalSkillRecoverable,
   deleteSkillAtPathRecoverable,
   deleteSkillRecoverable,
+} from "../skills.js";
+import {
   userGlobalSkillRootsForMutation,
   workspaceSkillRootsForMutation,
-} from "../skills.js";
+} from "../skill-roots.js";
 import {
   listSkillRemovals,
   readSkillRemovalRecord,

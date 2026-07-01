@@ -1,8 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { resolveVesloDataDir } from "./audit.js";
 import { ApiError } from "./errors.js";
+import {
+  SKILL_ENTRYPOINT,
+  isPathInside,
+  isVesloManagedSkillRelativePath,
+} from "./skill-roots.js";
 import type { Actor } from "./types.js";
 import { exists } from "./utils.js";
 
@@ -58,8 +63,6 @@ export interface RestoreSkillRemovalInput {
   authorizedRoots?: string[];
 }
 
-const SKILL_ENTRYPOINT = "SKILL.md";
-
 const resolveDataDir = (dataDir?: string): string => {
   const trimmed = dataDir?.trim();
   return trimmed ? resolve(trimmed) : resolveVesloDataDir();
@@ -74,11 +77,6 @@ const snapshotDir = (dataDir: string | undefined, removalId: string): string => 
 const ensureJournalDirs = async (dataDir?: string): Promise<void> => {
   await mkdir(recordsDir(dataDir), { recursive: true });
   await mkdir(snapshotsDir(dataDir), { recursive: true });
-};
-
-const isPathInside = (parent: string, child: string): boolean => {
-  const rel = relative(parent, child);
-  return rel === "" || (Boolean(rel) && !rel.startsWith("..") && !isAbsolute(rel));
 };
 
 const assertValidRemovalId = (removalId: string): string => {
@@ -196,7 +194,7 @@ const assertRestorePathInsideSkillRoots = (
     throw new ApiError(403, "skill_restore_forbidden", "Skill removal path is outside authorized skill roots");
   }
   const relativeToRoot = relative(owningRoot, originalPath).replace(/\\/g, "/");
-  if (relativeToRoot === `veslo-managed/${record.name}/${SKILL_ENTRYPOINT}` || relativeToRoot.startsWith("veslo-managed/")) {
+  if (isVesloManagedSkillRelativePath(relativeToRoot)) {
     throw new ApiError(409, "managed_skill_read_only", "Managed materialized skills must be restored through the registry");
   }
 };

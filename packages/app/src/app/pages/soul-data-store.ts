@@ -2,7 +2,6 @@ import { createEffect, createSignal, type Accessor } from "solid-js";
 
 import { createSessionClientMessageId as defaultCreateSessionClientMessageId } from "../lib/session-send-contract";
 import {
-  parseVesloWorkspaceIdFromUrl,
   type VesloServerClient,
   type VesloServerStatus,
   type VesloSoulAuthContext,
@@ -10,7 +9,7 @@ import {
   type VesloSoulOverviewResponse,
   type VesloSoulStatus,
 } from "../lib/veslo-server";
-import { normalizeDirectoryPath } from "../utils";
+import { buildSoulWorkspaceIdMap, type SoulWorkspaceIdMap } from "../lib/soul-workspace-map";
 
 export type SoulDataStoreWorkspace = {
   id: string;
@@ -61,6 +60,7 @@ export function createSoulDataStore(deps: SoulDataStoreDeps) {
   const [soulOverview, setSoulOverview] = createSignal<VesloSoulOverviewResponse | null>(null);
   const [soulOverviewError, setSoulOverviewError] = createSignal<string | null>(null);
   const [soulOverviewBusy, setSoulOverviewBusy] = createSignal(false);
+  const [soulWorkspaceMap, setSoulWorkspaceMap] = createSignal<SoulWorkspaceIdMap>({});
   const [activeSoulHeartbeats, setActiveSoulHeartbeats] = createSignal<VesloSoulHeartbeatEntry[]>([]);
   const [soulStatusBusy, setSoulStatusBusy] = createSignal(false);
   const [soulHeartbeatsBusy, setSoulHeartbeatsBusy] = createSignal(false);
@@ -71,58 +71,12 @@ export function createSoulDataStore(deps: SoulDataStoreDeps) {
   const resolveSoulWorkspaceMap = async () => {
     const client = deps.vesloServerClient();
     if (!client || deps.vesloServerStatus() !== "connected") {
-      return {} as Record<string, string>;
+      return {} as SoulWorkspaceIdMap;
     }
 
     const response = await client.listWorkspaces();
     const items = Array.isArray(response.items) ? response.items : [];
-    const map: Record<string, string> = {};
-
-    const idByLocalPath = new Map<string, string>();
-    for (const item of items) {
-      const path = normalizeDirectoryPath(item.path ?? "");
-      if (!path) continue;
-      idByLocalPath.set(path, item.id);
-    }
-
-    for (const workspace of deps.workspaces()) {
-      if (workspace.workspaceType === "local") {
-        const key = normalizeDirectoryPath(workspace.path ?? "");
-        if (!key) continue;
-        const found = idByLocalPath.get(key);
-        if (found) {
-          map[workspace.id] = found;
-        }
-        continue;
-      }
-
-      if (workspace.remoteType !== "veslo") {
-        continue;
-      }
-
-      const explicitId =
-        workspace.vesloWorkspaceId?.trim() ||
-        parseVesloWorkspaceIdFromUrl(workspace.vesloHostUrl ?? "") ||
-        parseVesloWorkspaceIdFromUrl(workspace.baseUrl ?? "");
-      if (explicitId) {
-        map[workspace.id] = explicitId;
-        continue;
-      }
-
-      const directoryHint = normalizeDirectoryPath(workspace.directory ?? workspace.path ?? "");
-      if (!directoryHint) continue;
-      const match = items.find((entry) => {
-        const entryPath = normalizeDirectoryPath(
-          (entry.opencode?.directory ?? entry.directory ?? entry.path ?? "") as string,
-        );
-        return Boolean(entryPath && entryPath === directoryHint);
-      });
-      if (match?.id) {
-        map[workspace.id] = match.id;
-      }
-    }
-
-    return map;
+    return buildSoulWorkspaceIdMap({ appWorkspaces: deps.workspaces(), serverWorkspaces: items });
   };
 
   const refreshSoulOverview = async (client: VesloServerClient) => {
@@ -161,6 +115,7 @@ export function createSoulDataStore(deps: SoulDataStoreDeps) {
       setSoulOverviewError(null);
       setSoulOverviewBusy(false);
       setSoulStatusByWorkspaceId({});
+      setSoulWorkspaceMap({});
       setActiveSoulHeartbeats([]);
       setSoulHeartbeatsBusy(false);
       setSoulError(null);
@@ -174,6 +129,7 @@ export function createSoulDataStore(deps: SoulDataStoreDeps) {
     setSoulError(null);
     try {
       const workspaceMap = await resolveSoulWorkspaceMap();
+      setSoulWorkspaceMap(workspaceMap);
       const workspaceIds = Object.entries(workspaceMap);
 
       const nextStatusByWorkspace: Record<string, VesloSoulStatus | null> = {};
@@ -225,6 +181,7 @@ export function createSoulDataStore(deps: SoulDataStoreDeps) {
       const message = error instanceof Error ? error.message : "Failed to load soul status.";
       setSoulOverview(null);
       setSoulStatusByWorkspaceId({});
+      setSoulWorkspaceMap({});
       setActiveSoulHeartbeats([]);
       setSoulHeartbeatsBusy(false);
       setSoulError(message);
@@ -274,7 +231,15 @@ export function createSoulDataStore(deps: SoulDataStoreDeps) {
         const root = workspace.workspaceType === "local"
           ? workspace.path?.trim() ?? ""
           : workspace.directory?.trim() ?? workspace.path?.trim() ?? "";
-        return [workspace.id, workspace.workspaceType, workspace.remoteType ?? "", root, workspace.vesloWorkspaceId ?? ""].join("|");
+        return [
+          workspace.id,
+          workspace.workspaceType,
+          workspace.remoteType ?? "",
+          root,
+          workspace.vesloWorkspaceId ?? "",
+          workspace.vesloHostUrl ?? "",
+          workspace.baseUrl ?? "",
+        ].join("|");
       })
       .join(";");
     const key = [status, hasClient ? "1" : "0", activeWorkspaceId, workspacesKey, authRevision].join("::");
@@ -291,6 +256,7 @@ export function createSoulDataStore(deps: SoulDataStoreDeps) {
     soulServerConnected: () => deps.vesloServerStatus() === "connected",
     soulAuthContext: deps.soulAuthContext,
     soulStatusByWorkspaceId,
+    soulWorkspaceMap,
     activeSoulStatus,
     activeSoulHeartbeats,
     soulStatusBusy,

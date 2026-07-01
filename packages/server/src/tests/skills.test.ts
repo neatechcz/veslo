@@ -146,6 +146,93 @@ test("listSkills filters disabled skills before de-duping duplicate names", asyn
   }
 });
 
+test("listSkills discovers materialized user-global skills under XDG_CONFIG_HOME", async () => {
+  const previousHome = process.env.HOME;
+  const previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  const homeDir = await mkdtemp(join(tmpdir(), "veslo-skills-xdg-home-"));
+  const xdgConfigHome = await mkdtemp(join(tmpdir(), "veslo-skills-xdg-config-"));
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-skills-xdg-workspace-"));
+  tempDirs.push(homeDir, xdgConfigHome, workspaceRoot);
+
+  process.env.HOME = homeDir;
+  process.env.XDG_CONFIG_HOME = xdgConfigHome;
+
+  try {
+    await mkdir(join(workspaceRoot, ".git"), { recursive: true });
+    const skillDir = join(xdgConfigHome, "opencode", "skills", "veslo-managed", "veslo-docx");
+    const skillPath = join(skillDir, "SKILL.md");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      skillPath,
+      [
+        "---",
+        "name: veslo-docx",
+        "description: Create, edit, analyze, convert, and validate Word DOCX documents using standard skill execution.",
+        "aliases:",
+        "  - MS Word",
+        "  - Microsoft Word",
+        "when_to_use: Use for Word and DOCX document workflows.",
+        "---",
+        "",
+        "# DOCX creation, editing, and analysis",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      join(skillDir, ".veslo-managed.json"),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          installationId: "rollout:policy_platform_docx",
+          skillId: "skill_platform_docx",
+          name: "veslo-docx",
+          versionId: "version_platform_docx_1",
+          packageSha256: "a".repeat(64),
+          target: "personal-global",
+          source: "platform",
+          removalPolicy: "locked",
+          skillDir,
+          materializedAt: new Date(0).toISOString(),
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const items = await listSkills(workspaceRoot, { includeGlobal: true });
+
+    expect(items).toContainEqual(
+      expect.objectContaining({
+        name: "veslo-docx",
+        scope: "global",
+        description: "Create, edit, analyze, convert, and validate Word DOCX documents using standard skill execution.",
+        aliases: ["MS Word", "Microsoft Word"],
+        whenToUse: "Use for Word and DOCX document workflows.",
+        registry: expect.objectContaining({
+          policyId: "policy_platform_docx",
+          skillId: "skill_platform_docx",
+          versionId: "version_platform_docx_1",
+          source: "platform",
+          removalPolicy: "locked",
+        }),
+      }),
+    );
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    if (previousXdgConfigHome === undefined) {
+      delete process.env.XDG_CONFIG_HOME;
+    } else {
+      process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
+    }
+  }
+});
+
 test("listSkills path matching keeps disabled scope boundaries", async () => {
   const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-skills-disabled-scope-"));
   tempDirs.push(workspaceRoot);

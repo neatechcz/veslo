@@ -7,6 +7,7 @@ import {
   provisionWorkspaceInternalSystem,
   resolveVesloAppDataDir,
 } from "../internal-system.js";
+import { SOUL_INSTRUCTIONS } from "../soul-runtime.js";
 
 async function createWorkspaceRoot(label: string) {
   return await mkdtemp(join(tmpdir(), `veslo-internal-system-${label}-`));
@@ -179,6 +180,35 @@ You are Veslo.
       expect(vesloAgent).toContain("save the memory through the Soul memory API or ask the user to save it in Veslo");
       expect(vesloAgent).not.toContain("persist the information to `.opencode/soul-user.md`");
       expect(vesloAgent).not.toContain("Read the file first, append new entries, then write it back");
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("provisions the shared Soul runtime instruction contract into opencode config", async () => {
+    const workspaceRoot = await createWorkspaceRoot("soul-instructions");
+
+    try {
+      await writeFile(
+        join(workspaceRoot, "opencode.json"),
+        JSON.stringify({ instructions: ["AGENTS.md"] }, null, 2),
+        "utf8",
+      );
+
+      const result = await provisionWorkspaceInternalSystem(workspaceRoot);
+      expect(result.status).toBe("updated");
+
+      const config = JSON.parse(await readFile(join(workspaceRoot, "opencode.json"), "utf8")) as {
+        instructions?: string[];
+      };
+      expect(config.instructions).toEqual(["AGENTS.md", ...SOUL_INSTRUCTIONS]);
+
+      const second = await provisionWorkspaceInternalSystem(workspaceRoot);
+      expect(second.status).toBe("unchanged");
+      const secondConfig = JSON.parse(await readFile(join(workspaceRoot, "opencode.json"), "utf8")) as {
+        instructions?: string[];
+      };
+      expect(secondConfig.instructions).toEqual(["AGENTS.md", ...SOUL_INSTRUCTIONS]);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

@@ -23,13 +23,15 @@ import type { RegistrySkillRolloutPolicy } from "../skill-registry-types.js";
 import {
   materializePersonalGlobalSkillSet,
   materializeWorkspaceSkillSet,
-  personalGlobalManagedSkillsRoot,
   readSkillMaterializationManifest,
-  workspaceManagedSkillsRoot,
   type SkillSetMaterializationResult,
 } from "../skill-materializer.js";
 import type { SkillPackageArchive } from "../skill-packages.js";
-import { userGlobalSkillRootsForMutation } from "../skills.js";
+import {
+  personalGlobalManagedSkillsRoot,
+  userGlobalSkillRootsForMutation,
+  workspaceManagedSkillsRoot,
+} from "../skill-roots.js";
 import type {
   ServerConfig,
   WorkspaceInfo,

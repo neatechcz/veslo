@@ -12,8 +12,8 @@ import {
   materializeSkillPackageToRoot,
   materializeWorkspaceSkillSet,
   readSkillMaterializationManifest,
-  workspaceManagedSkillsRoot,
 } from "../skill-materializer.js";
+import { workspaceManagedSkillsRoot } from "../skill-roots.js";
 
 const tempDirs: string[] = [];
 

@@ -219,6 +219,7 @@ export type DashboardViewProps = {
   soulServerConnected: boolean;
   soulAuthContext: VesloSoulAuthContext;
   soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
+  soulWorkspaceMap: Record<string, string>;
   activeSoulStatus: VesloSoulStatus | null;
   activeSoulHeartbeats: VesloSoulHeartbeatEntry[];
   soulStatusBusy: boolean;
@@ -1233,6 +1234,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 authContext={props.soulAuthContext}
                 refresh={props.refreshSoulData}
                 workspaces={props.workspaces}
+                soulWorkspaceMap={props.soulWorkspaceMap}
                 busySessionByWorkspaceId={props.busySessionByWorkspaceId}
                 isPrivateWorkspacePath={props.isPrivateWorkspacePath}
               />
