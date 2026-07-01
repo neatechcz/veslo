@@ -399,7 +399,7 @@ Use this ledger for quick discovery. The authoritative task details are below.
 | id | module | status | reserved_by | done |
 | --- | --- | --- | --- | --- |
 | LFC00 | baseline lifecycle source map and contract freeze | done | codex-20260701-lfc00-baseline | true |
-| LFC01 | controller shell and isolated test harness | blocked | codex-20260702-lfc01-shell | false |
+| LFC01 | controller shell and isolated test harness | done | codex-20260702-lfc01-shell | true |
 | LFC02 | submit admission and queue acceptance owner | available | null | false |
 | LFC03 | OpenCode submit and AI gateway provider watch owner | available | null | false |
 | LFC04 | queue drain and lifecycle reconcile timers | available | null | false |
@@ -482,12 +482,12 @@ Acceptance:
 
 ```yaml
 id: LFC01
-status: blocked
+status: done
 reserved_by: codex-20260702-lfc01-shell
 reserved_at: 2026-07-02T00:10:58.9291786+02:00
 branch: lifecycle/lfc01-controller-shell
 worktree: ../veslo-lifecycle-lfc01-controller-shell
-done: false
+done: true
 depends_on:
   - LFC00
 target_module: packages/server/src/conversation-run-lifecycle-controller.ts
@@ -1201,10 +1201,11 @@ Notes:
 
 Status:
 
-- `status: blocked`
+- `status: resolved`
 - `reserved_by: codex-20260702-lfc01-shell`
-- `done: false`
+- `done: true`
 - implementation branch commit: `5d6face5`
+- rebased and merged commit: `2b161dfd`
 
 Blocker:
 
@@ -1214,6 +1215,8 @@ Blocker:
   fast-forward merge because LFC01 also adds construction-only wiring in `server.ts`.
 - Do not mark LFC01 done or reserve LFC02 until the unrelated `server.ts` work is committed,
   merged, or parked and LFC01 is merged/verified in the original worktree.
+- Resolved after the unrelated owner-refactor landed in `local/sandbox-merge`; LFC01 was rebased
+  onto `e4e1b56f`, reverified, and fast-forward merged.
 
 ### 2026-07-02 LFC01 Controller Shell Worktree
 
@@ -1248,3 +1251,24 @@ Evidence:
   passed: 3 pass, 0 fail.
 - `pnpm --filter veslo-server typecheck` passed.
 - `git diff --check` passed; Git reported LF-to-CRLF working-copy warnings only.
+
+### 2026-07-02 LFC01 Merge Verification
+
+Status:
+
+- `done: true`
+- merged commit: `2b161dfd`
+- original branch: `local/sandbox-merge`
+
+Evidence from original worktree after merge:
+
+- `pnpm --filter veslo-server exec bun test ./src/tests/conversation-run-lifecycle-controller.test.ts`
+  passed: 3 pass, 0 fail.
+- `pnpm --filter veslo-server typecheck` passed.
+- `git diff --check -- docs/plans/2026-07-01-conversation-run-lifecycle-controller-implementation-plan.md packages/server/src/conversation-run-lifecycle-controller.ts packages/server/src/server.ts packages/server/src/tests/conversation-run-lifecycle-controller.test.ts`
+  passed.
+
+Notes:
+
+- Original worktree still contains unrelated dirty app/audit work outside LFC01.
+- No submit, queue, abort, transcript, or route behavior was moved in LFC01.
