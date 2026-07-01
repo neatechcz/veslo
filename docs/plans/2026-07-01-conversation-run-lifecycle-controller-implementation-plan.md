@@ -400,7 +400,7 @@ Use this ledger for quick discovery. The authoritative task details are below.
 | --- | --- | --- | --- | --- |
 | LFC00 | baseline lifecycle source map and contract freeze | done | codex-20260701-lfc00-baseline | true |
 | LFC01 | controller shell and isolated test harness | done | codex-20260702-lfc01-shell | true |
-| LFC02 | submit admission and queue acceptance owner | available | null | false |
+| LFC02 | submit admission and queue acceptance owner | reserved | codex-20260702-lfc02-submit-admission | false |
 | LFC03 | OpenCode submit and AI gateway provider watch owner | available | null | false |
 | LFC04 | queue drain and lifecycle reconcile timers | available | null | false |
 | LFC05 | transcript and startup wake-up wiring | available | null | false |
@@ -540,9 +540,9 @@ Acceptance:
 
 ```yaml
 id: LFC02
-status: available
-reserved_by: null
-reserved_at: null
+status: reserved
+reserved_by: codex-20260702-lfc02-submit-admission
+reserved_at: 2026-07-02T00:26:36.9994597+02:00
 branch: lifecycle/lfc02-submit-admission-owner
 worktree: ../veslo-lifecycle-lfc02-submit-admission-owner
 done: false
