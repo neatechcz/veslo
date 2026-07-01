@@ -174,6 +174,7 @@ import { resolveNativeWindowDecorationsVisible } from "./components/titlebar-men
 import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
+import { createScheduledAutomationStore } from "./pages/scheduled-automation-store";
 import { createSessionMutationWorkflow } from "./pages/session-mutation-workflow";
 import { isPendingSessionInstanceId } from "./components/session/pending-session-instance-model";
 import ProtoWorkspacesView from "./pages/proto-workspaces";
@@ -282,15 +283,8 @@ import type {
   SessionErrorTurn,
   UpdateHandle,
   OpencodeConnectStatus,
-  AutomationWorkspaceSummary,
-  ScheduledJob,
   SuggestedPlugin,
-  VesloAutomation,
-  VesloAutomationCreatePayload,
-  VesloAutomationUpdatePayload,
-  WorkspaceAutomationItem,
 } from "./types";
-import { buildAutomationWorkspaceSummaries } from "./lib/automation-workspace-map";
 import {
   clearStartupPreference,
   deriveArtifacts,
@@ -3029,12 +3023,6 @@ export default function App() {
   const [mcpStatuses, setMcpStatuses] = createSignal<McpStatusMap>({});
   const [mcpConnectingName, setMcpConnectingName] = createSignal<string | null>(null);
   const [selectedMcp, setSelectedMcp] = createSignal<string | null>(null);
-  const [automationItems, setAutomationItems] = createSignal<WorkspaceAutomationItem[]>([]);
-  const [automationWorkspaces, setAutomationWorkspaces] = createSignal<AutomationWorkspaceSummary[]>([]);
-  const [scheduledJobs, setScheduledJobs] = createSignal<ScheduledJob[]>([]);
-  const [scheduledJobsStatus, setScheduledJobsStatus] = createSignal<string | null>(null);
-  const [scheduledJobsBusy, setScheduledJobsBusy] = createSignal(false);
-  const [scheduledJobsUpdatedAt, setScheduledJobsUpdatedAt] = createSignal<number | null>(null);
   const [soulStatusByWorkspaceId, setSoulStatusByWorkspaceId] = createSignal<
     Record<string, VesloSoulStatus | null>
   >({});
@@ -6657,285 +6645,25 @@ export default function App() {
     setEngineInstallLogs,
   } = workspaceStore;
 
-  // Scheduler helpers - must be defined after workspaceStore
-  const automationItemKey = (workspaceId: string, automationId: string) => `${workspaceId}:${automationId}`;
-
-  const automationWorkspaceName = (workspace: WorkspaceInfo) =>
-    workspace.vesloWorkspaceName?.trim() ||
-    workspace.displayName?.trim() ||
-    workspace.name?.trim() ||
-    workspace.path?.trim() ||
-    workspace.id;
-
-  const activeAutomationWorkspace = createMemo(() => {
-    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
-    if (!activeWorkspaceId) return null;
-    return automationWorkspaces().find((workspace) =>
-      workspace.appWorkspaceId === activeWorkspaceId &&
-      workspace.status === "ready" &&
-      Boolean(workspace.serverWorkspaceId)
-    ) ?? null;
+  const scheduledAutomationStore = createScheduledAutomationStore({
+    workspaces: () => workspaceStore.workspaces(),
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId().trim(),
+    activeWorkspaceType: () => workspaceStore.activeWorkspaceDisplay().workspaceType,
+    vesloServerClient,
+    vesloServerStatus,
+    startupPreference,
+    isTauriRuntime,
+    ensureLocalVesloServerRunning,
+    vesloServerInfo,
+    setVesloServerHostInfoStable: (info) => setVesloServerHostInfoStable(info as VesloServerInfo | null),
+    checkVesloServer,
+    setVesloServerStatus,
+    setVesloServerCapabilitiesStable: (capabilities) =>
+      setVesloServerCapabilitiesStable(capabilities as ReturnType<typeof vesloServerCapabilities>),
+    setVesloServerCheckedAt,
+    createVesloServerClient,
+    reportError,
   });
-
-  const resolveAutomationWorkspaceMap = async (
-    client = vesloServerClient(),
-  ): Promise<AutomationWorkspaceSummary[]> => {
-    const appWorkspaces = workspaceStore.workspaces();
-
-    if (vesloServerStatus() !== "connected" || !client) {
-      return appWorkspaces.map((workspace) => ({
-        appWorkspaceId: workspace.id,
-        serverWorkspaceId: null,
-        name: automationWorkspaceName(workspace),
-        path: workspace.directory ?? workspace.path ?? null,
-        workspaceType: workspace.workspaceType,
-        status: "unavailable",
-        error: "Veslo server not ready.",
-      }));
-    }
-
-    const response = await client.listWorkspaces();
-    const items = Array.isArray(response.items) ? response.items : [];
-    return buildAutomationWorkspaceSummaries({
-      appWorkspaces,
-      serverWorkspaces: items,
-      connectedServerBaseUrl: client.baseUrl,
-    });
-  };
-
-  const scheduledJobsSource = createMemo<"local" | "remote">(() => {
-    return workspaceStore.activeWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
-  });
-
-  const scheduledJobsSourceReady = createMemo(() => {
-    const client = vesloServerClient();
-    return vesloServerStatus() === "connected" && Boolean(client);
-  });
-
-  const ensureScheduledJobsSourceReady = async () => {
-    if (scheduledJobsSourceReady()) return true;
-    if (scheduledJobsSource() !== "local" || !isTauriRuntime() || startupPreference() === "server") {
-      return false;
-    }
-    return await ensureLocalVesloServerRunning({ ignoreStartupPreference: true });
-  };
-
-  const ensureScheduledJobsClient = async (): Promise<VesloServerClient | null> => {
-    const currentClient = vesloServerClient();
-    if (vesloServerStatus() === "connected" && currentClient) {
-      return currentClient;
-    }
-
-    if (scheduledJobsSource() !== "local" || !isTauriRuntime() || startupPreference() === "server") {
-      return null;
-    }
-
-    await ensureLocalVesloServerRunning({ ignoreStartupPreference: true });
-
-    const ensuredClient = vesloServerClient();
-    if (vesloServerStatus() === "connected" && ensuredClient) {
-      return ensuredClient;
-    }
-
-    let liveInfo: VesloServerInfo | null = null;
-    try {
-      liveInfo = await vesloServerInfo();
-      setVesloServerHostInfoStable(liveInfo);
-    } catch {
-      setVesloServerHostInfoStable(null);
-    }
-
-    const runningInfo = resolveRunningVesloServerHostInfo(liveInfo);
-    const baseUrl = runningInfo?.baseUrl?.trim() ?? "";
-    if (!baseUrl) {
-      return null;
-    }
-
-    const clientToken = runningInfo?.clientToken?.trim() || undefined;
-    const hostToken = runningInfo?.hostToken?.trim() || undefined;
-    const result = await checkVesloServer(baseUrl, clientToken, hostToken);
-    setVesloServerStatus(result.status);
-    setVesloServerCapabilitiesStable(result.capabilities);
-    setVesloServerCheckedAt(Date.now());
-
-    if (result.status !== "connected") {
-      return null;
-    }
-
-    return createVesloServerClient({ baseUrl, token: clientToken, hostToken });
-  };
-
-  const refreshScheduledJobs = async (options?: { force?: boolean }) => {
-    if (scheduledJobsBusy() && !options?.force) return;
-
-    setScheduledJobsBusy(true);
-    setScheduledJobsStatus(null);
-
-    const client = await ensureScheduledJobsClient().catch((error) => {
-      reportError(error, "scheduled.ensureSourceReady");
-      return null;
-    });
-
-    const serverStatus = vesloServerStatus();
-    if (!client || serverStatus !== "connected") {
-      setScheduledJobs([]);
-      setAutomationItems([]);
-      setAutomationWorkspaces([]);
-      const statusMessage =
-        serverStatus === "disconnected"
-          ? "Veslo server unavailable. Connect to sync automations."
-          : serverStatus === "limited"
-            ? "Veslo server needs a token to load automations."
-            : "Veslo server not ready.";
-      setScheduledJobsStatus(statusMessage);
-      setScheduledJobsBusy(false);
-      return;
-    }
-
-    try {
-      const workspaceMap = await resolveAutomationWorkspaceMap(client);
-      const nextWorkspaces = [...workspaceMap];
-      const readyWorkspaces = nextWorkspaces.filter((workspace) => workspace.status === "ready" && workspace.serverWorkspaceId);
-      let partialFailure = false;
-
-      const itemGroups = await Promise.all(
-        readyWorkspaces.map(async (workspace) => {
-          const serverWorkspaceId = workspace.serverWorkspaceId!;
-          try {
-            const response = await client.automations.list(serverWorkspaceId);
-            const items = Array.isArray(response.items) ? response.items : [];
-            const runEntries = await Promise.all(
-              items.map(async (automation) => {
-                try {
-                  const runs = await client.automations.listRuns(serverWorkspaceId, automation.id);
-                  return [automation.id, Array.isArray(runs.items) ? runs.items : []] as const;
-                } catch {
-                  return [automation.id, []] as const;
-                }
-              }),
-            );
-            const runsByAutomationId = Object.fromEntries(runEntries);
-            return items.map((automation) => ({
-              key: automationItemKey(serverWorkspaceId, automation.id),
-              workspace,
-              automation,
-              runs: runsByAutomationId[automation.id] ?? [],
-            }));
-          } catch (error) {
-            partialFailure = true;
-            const message = error instanceof Error ? error.message : String(error);
-            const index = nextWorkspaces.findIndex((item) => item.appWorkspaceId === workspace.appWorkspaceId);
-            if (index >= 0) {
-              nextWorkspaces[index] = { ...workspace, status: "error", error: message || "Failed to load automations." };
-            }
-            return [] as WorkspaceAutomationItem[];
-          }
-        }),
-      );
-
-      setScheduledJobs([]);
-      setAutomationWorkspaces(nextWorkspaces);
-      setAutomationItems(itemGroups.flat());
-      setScheduledJobsUpdatedAt(Date.now());
-      setScheduledJobsStatus(partialFailure ? "Some workspaces could not load automations." : null);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setScheduledJobs([]);
-      setAutomationItems([]);
-      setAutomationWorkspaces([]);
-      setScheduledJobsStatus(message || "Failed to load automations.");
-    } finally {
-      setScheduledJobsBusy(false);
-    }
-  };
-
-  const reloadScheduledJobsSource = async () => {
-    await ensureScheduledJobsSourceReady().catch((error) => {
-      reportError(error, "scheduled.reloadSource");
-      return false;
-    });
-    await refreshScheduledJobs({ force: true });
-  };
-
-  const requireAutomationClient = (workspaceId: string) => {
-    const client = vesloServerClient();
-    if (!client || vesloServerStatus() !== "connected") {
-      throw new Error("Veslo server unavailable. Connect to sync automations.");
-    }
-    if (!workspaceId) {
-      throw new Error("Workspace is required to manage automations.");
-    }
-    return client;
-  };
-
-  const workspaceSummaryForServerId = (workspaceId: string): AutomationWorkspaceSummary => {
-    return automationWorkspaces().find((workspace) => workspace.serverWorkspaceId === workspaceId) ?? {
-      appWorkspaceId: workspaceId,
-      serverWorkspaceId: workspaceId,
-      name: workspaceId,
-      path: null,
-      workspaceType: "remote",
-      status: "ready",
-      error: null,
-    };
-  };
-
-  const upsertAutomationItem = (workspaceId: string, automation: VesloAutomation) => {
-    const key = automationItemKey(workspaceId, automation.id);
-    setAutomationItems((current) => {
-      const existing = current.find((item) => item.key === key);
-      const nextItem: WorkspaceAutomationItem = {
-        key,
-        workspace: existing?.workspace ?? workspaceSummaryForServerId(workspaceId),
-        automation,
-        runs: existing?.runs ?? [],
-      };
-      return [nextItem, ...current.filter((item) => item.key !== key)];
-    });
-  };
-
-  const createAutomation = async (workspaceId: string, payload: VesloAutomationCreatePayload) => {
-    const client = requireAutomationClient(workspaceId);
-    const response = await client.automations.create(workspaceId, payload);
-    upsertAutomationItem(workspaceId, response.automation);
-    setScheduledJobsUpdatedAt(Date.now());
-  };
-
-  const updateAutomation = async (workspaceId: string, automationId: string, payload: VesloAutomationUpdatePayload) => {
-    const client = requireAutomationClient(workspaceId);
-    const response = await client.automations.update(workspaceId, automationId, payload);
-    upsertAutomationItem(workspaceId, response.automation);
-    setScheduledJobsUpdatedAt(Date.now());
-  };
-
-  const deleteAutomation = async (workspaceId: string, automationId: string) => {
-    const client = requireAutomationClient(workspaceId);
-    const response = await client.automations.delete(workspaceId, automationId);
-    upsertAutomationItem(workspaceId, response.automation);
-    setScheduledJobsUpdatedAt(Date.now());
-  };
-
-  const runAutomation = async (workspaceId: string, automationId: string) => {
-    const client = requireAutomationClient(workspaceId);
-    const response = await client.automations.run(workspaceId, automationId);
-    const key = automationItemKey(workspaceId, automationId);
-    setAutomationItems((current) =>
-      current.map((item) =>
-        item.key === key
-          ? {
-              ...item,
-              runs: [response.run, ...item.runs.filter((run) => run.id !== response.run.id)],
-              automation: {
-                ...item.automation,
-                lastRunId: response.run.id,
-                updatedAt: response.run.finishedAt ?? response.run.startedAt ?? item.automation.updatedAt,
-              },
-            }
-          : item,
-      ),
-    );
-    setScheduledJobsUpdatedAt(Date.now());
-  };
 
   const resolveSoulWorkspaceMap = async () => {
     const client = vesloServerClient();
@@ -9474,7 +9202,7 @@ export default function App() {
       testVesloServerConnection,
       canReloadWorkspace: canReloadWorkspace(),
       reloadWorkspaceEngine: reloadWorkspaceEngineAndResume,
-      reloadScheduledAutomationsSource: reloadScheduledJobsSource,
+      reloadScheduledAutomationsSource: scheduledAutomationStore.reloadScheduledJobsSource,
       reloadBusy: reloadBusy(),
       reloadError: reloadError(),
       workspaceAutoReloadAvailable: workspaceAutoReloadAvailable(),
@@ -9538,21 +9266,21 @@ export default function App() {
       openRenameWorkspace,
       editWorkspaceConnection: openWorkspaceConnectionSettings,
       forgetWorkspace: workspaceStore.forgetWorkspace,
-      automationItems: automationItems(),
-      automationWorkspaces: automationWorkspaces(),
-      defaultAutomationWorkspaceId: activeAutomationWorkspace()?.serverWorkspaceId ?? null,
-      scheduledJobs: scheduledJobs(),
-      scheduledJobsSource: scheduledJobsSource(),
-      scheduledJobsSourceReady: scheduledJobsSourceReady(),
-      scheduledJobsStatus: scheduledJobsStatus(),
-      scheduledJobsBusy: scheduledJobsBusy(),
-      scheduledJobsUpdatedAt: scheduledJobsUpdatedAt(),
+      automationItems: scheduledAutomationStore.automationItems(),
+      automationWorkspaces: scheduledAutomationStore.automationWorkspaces(),
+      defaultAutomationWorkspaceId: scheduledAutomationStore.defaultAutomationWorkspaceId(),
+      scheduledJobs: scheduledAutomationStore.scheduledJobs(),
+      scheduledJobsSource: scheduledAutomationStore.scheduledJobsSource(),
+      scheduledJobsSourceReady: scheduledAutomationStore.scheduledJobsSourceReady(),
+      scheduledJobsStatus: scheduledAutomationStore.scheduledJobsStatus(),
+      scheduledJobsBusy: scheduledAutomationStore.scheduledJobsBusy(),
+      scheduledJobsUpdatedAt: scheduledAutomationStore.scheduledJobsUpdatedAt(),
       refreshScheduledJobs: (options?: { force?: boolean }) =>
-        refreshScheduledJobs(options).catch(e => reportError(e, "scheduled.refresh")),
-      createAutomation,
-      updateAutomation,
-      deleteAutomation,
-      runAutomation,
+        scheduledAutomationStore.refreshScheduledJobs(options).catch(e => reportError(e, "scheduled.refresh")),
+      createAutomation: scheduledAutomationStore.createAutomation,
+      updateAutomation: scheduledAutomationStore.updateAutomation,
+      deleteAutomation: scheduledAutomationStore.deleteAutomation,
+      runAutomation: scheduledAutomationStore.runAutomation,
       soulOverview: soulOverview(),
       soulOverviewError: soulOverviewError(),
       soulOverviewBusy: soulOverviewBusy(),

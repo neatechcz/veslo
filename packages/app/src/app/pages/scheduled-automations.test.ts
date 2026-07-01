@@ -9,6 +9,7 @@ import { buildSchedule } from "./scheduled-automation-schedule";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const scheduledSource = () => readFileSync(join(__dirname, "scheduled.tsx"), "utf8");
 const scheduleHelperSource = () => readFileSync(join(__dirname, "scheduled-automation-schedule.ts"), "utf8");
+const automationStoreSource = () => readFileSync(join(__dirname, "scheduled-automation-store.ts"), "utf8");
 const workspaceMapSource = () => readFileSync(join(__dirname, "../lib/automation-workspace-map.ts"), "utf8");
 const appSource = () => readFileSync(join(__dirname, "../app.tsx"), "utf8");
 const dashboardSource = () => readFileSync(join(__dirname, "dashboard.tsx"), "utf8");
@@ -91,8 +92,20 @@ test("ScheduledTasksView can open create automation without the session new-task
   assert.match(source, /disabled=\{createModalDisabled\(\)\}/);
 });
 
-test("App recovers the local Veslo server before refreshing automations", () => {
-  const source = appSource();
+test("App composes the scheduled automation store instead of owning automation refresh logic", () => {
+  const app = appSource();
+
+  assert.match(app, /import \{ createScheduledAutomationStore \} from "\.\/pages\/scheduled-automation-store";/);
+  assert.match(app, /const scheduledAutomationStore = createScheduledAutomationStore\(\{/);
+  assert.doesNotMatch(app, /const refreshScheduledJobs = async/);
+  assert.doesNotMatch(app, /const ensureScheduledJobsClient = async/);
+  assert.doesNotMatch(app, /client\.automations\./);
+  assert.doesNotMatch(app, /setAutomationItems/);
+});
+
+test("scheduled automation store recovers the local Veslo server before refreshing automations", () => {
+  const source = automationStoreSource();
+  const app = appSource();
   const dashboard = dashboardSource();
   const recovery = source.match(/const ensureScheduledJobsSourceReady[\s\S]*?};/);
   const clientRecovery = source.match(/const ensureScheduledJobsClient[\s\S]*?};/);
@@ -104,33 +117,34 @@ test("App recovers the local Veslo server before refreshing automations", () => 
   assert.match(recovery[0], /ensureLocalVesloServerRunning\(\{ ignoreStartupPreference: true \}\)/);
   assert.ok(clientRecovery, "scheduled automations client recovery helper should be present");
   assert.match(clientRecovery[0], /ensureLocalVesloServerRunning\(\{ ignoreStartupPreference: true \}\)/);
-  assert.match(clientRecovery[0], /await vesloServerInfo\(\)/);
-  assert.match(clientRecovery[0], /createVesloServerClient\(\{ baseUrl, token: clientToken, hostToken \}\)/);
+  assert.match(clientRecovery[0], /await deps\.vesloServerInfo\(\)/);
+  assert.match(clientRecovery[0], /createClient\(\{ baseUrl, token: clientToken, hostToken \}\)/);
   assert.match(refresh, /await ensureScheduledJobsClient\(\)\.catch/);
   assert.ok(
-    refresh.indexOf("await ensureScheduledJobsClient().catch") < refresh.indexOf("const serverStatus = vesloServerStatus()"),
+    refresh.indexOf("await ensureScheduledJobsClient().catch") < refresh.indexOf("const serverStatus = deps.vesloServerStatus()"),
     "automations refresh should recover a concrete Veslo server client before checking server status",
   );
   assert.match(refresh, /resolveAutomationWorkspaceMap\(client\)/);
-  assert.match(source, /reloadScheduledAutomationsSource:\s*reloadScheduledJobsSource/);
+  assert.match(app, /reloadScheduledAutomationsSource:\s*scheduledAutomationStore\.reloadScheduledJobsSource/);
   assert.match(dashboard, /reloadWorkspaceEngine=\{props\.reloadScheduledAutomationsSource\}/);
 });
 
 test("ScheduledTasksView defaults new automations to the active ready workspace when available", () => {
   const source = scheduledSource();
   const app = appSource();
+  const store = automationStoreSource();
 
   assert.match(source, /defaultAutomationWorkspaceId:\s*string\s*\|\s*null/);
   assert.match(source, /props\.defaultAutomationWorkspaceId/);
   assert.match(source, /readyWorkspaces\(\)\.find\(\(workspace\) => workspace\.serverWorkspaceId === props\.defaultAutomationWorkspaceId\)/);
   assert.match(source, /readyWorkspaces\(\)\[0\]\?\.serverWorkspaceId/);
-  assert.match(app, /activeAutomationWorkspace/);
-  assert.match(app, /activeWorkspaceId = workspaceStore\.activeWorkspaceId\(\)\.trim\(\)/);
-  assert.match(app, /workspace\.appWorkspaceId === activeWorkspaceId/);
-  assert.match(app, /defaultAutomationWorkspaceId:\s*activeAutomationWorkspace\(\)\?\.serverWorkspaceId \?\? null/);
+  assert.match(store, /activeAutomationWorkspace/);
+  assert.match(store, /activeWorkspaceId = deps\.activeWorkspaceId\(\)\.trim\(\)/);
+  assert.match(store, /workspace\.appWorkspaceId === activeWorkspaceId/);
+  assert.match(app, /defaultAutomationWorkspaceId:\s*scheduledAutomationStore\.defaultAutomationWorkspaceId\(\)/);
   assert.ok(
-    app.indexOf("const workspaceStore = createWorkspaceStore") < app.indexOf("const activeAutomationWorkspace = createMemo"),
-    "activeAutomationWorkspace must be declared after workspaceStore is initialized",
+    app.indexOf("const workspaceStore = createWorkspaceStore") < app.indexOf("const scheduledAutomationStore = createScheduledAutomationStore"),
+    "scheduledAutomationStore must be declared after workspaceStore is initialized",
   );
 });
 
@@ -148,8 +162,8 @@ test("ScheduledTasksView exposes stable hooks for desktop automation management 
   assert.match(source, /data-testid="scheduled-automation-edit-save"/);
 });
 
-test("App refreshes automations for all mapped workspaces", () => {
-  const source = appSource();
+test("scheduled automation store refreshes automations for all mapped workspaces", () => {
+  const source = automationStoreSource();
 
   assert.match(source, /resolveAutomationWorkspaceMap/);
   assert.match(source, /setAutomationItems/);
@@ -157,8 +171,8 @@ test("App refreshes automations for all mapped workspaces", () => {
   assert.doesNotMatch(source, /const automationClient = resolveVesloAutomations\(\);[\s\S]*listAutomations\(automationClient\.workspaceId\)/);
 });
 
-test("App uses the automations domain facade for server automation requests", () => {
-  const source = appSource();
+test("scheduled automation store uses the automations domain facade for server automation requests", () => {
+  const source = automationStoreSource();
 
   assert.match(source, /client\.automations\./);
   assert.doesNotMatch(
@@ -167,8 +181,8 @@ test("App uses the automations domain facade for server automation requests", ()
   );
 });
 
-test("App only treats remote automation workspace ids as ready when the connected server lists them", () => {
-  const source = appSource();
+test("scheduled automation store only treats remote automation workspace ids as ready when the connected server lists them", () => {
+  const source = automationStoreSource();
   const mapSource = workspaceMapSource();
 
   assert.match(source, /buildAutomationWorkspaceSummaries/);
