@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const routeSyncSource = readFileSync(new URL("../context/session-route-sync.ts", import.meta.url), "utf8");
 const pendingDraftControllerSource = readFileSync(
   new URL("../context/pending-session-draft-controller.ts", import.meta.url),
   "utf8",
@@ -55,14 +56,13 @@ test("pending draft hydration failures clear the active draft key in memory and 
 });
 
 test("session route re-selects once when a client becomes available after bootstrap", () => {
-  const routeStart = source.indexOf('let lastRouteClientResumeKey = "";');
-  const routeEndMatch = source.slice(routeStart).match(/  createEffect\(\(\) => \{\r?\n    const active = workspaceStore\.activeWorkspaceDisplay\(\);/);
-  const routeEnd = routeEndMatch?.index === undefined ? -1 : routeStart + routeEndMatch.index;
+  const routeStart = routeSyncSource.indexOf("  const handleRouteResume = async () => {");
+  const routeEnd = routeSyncSource.indexOf("  const handleSessionRoute = async", routeStart);
   assert.notStrictEqual(routeStart, -1, "route resume block should exist");
   assert.notStrictEqual(routeEnd, -1, "route resume block end should exist");
-  const routeSource = source.slice(routeStart, routeEnd);
+  const routeSource = routeSyncSource.slice(routeStart, routeEnd);
 
-  assert.match(routeSource, /let lastRouteClientResumeKey = "";/);
+  assert.match(routeSyncSource, /let lastRouteClientResumeKey = "";/);
   assert.doesNotMatch(
     routeSource,
     /if \(!client\(\)\) return;/,
@@ -70,12 +70,12 @@ test("session route re-selects once when a client becomes available after bootst
   );
   assert.match(
     routeSource,
-    /const routeBrowseScope = resolveSelectedSessionBrowseScope\(id\);[\s\S]*const routeWorkspaceId = routeBrowseScope\?\.workspaceId\?\.trim\(\) \|\| undefined;[\s\S]*const routeWorkspaceRoot =\s*routeBrowseScope\?\.workspaceRoot\?\.trim\(\) \|\|\s*clientDirectory\(\) \|\|\s*workspaceStore\.activeWorkspaceRoot\(\)\.trim\(\);[\s\S]*const connectionKey = \[\s*id,\s*routedClient\(routeWorkspaceId\) \? "live" : "offline",\s*routeWorkspaceId \?\? "",\s*routeWorkspaceRoot,\s*routeBrowseScope\?\.directory\?\.trim\(\) \|\| "",\s*routeBrowseScope\?\.conversationId\?\.trim\(\) \|\| "",\s*routeBrowseScope\?\.opencodeSessionId\?\.trim\(\) \|\| "",\s*connectedVersion\(\) \?\? "",\s*\]\.join\("::"\);/s,
+    /const routeBrowseScope = deps\.resolveSelectedSessionBrowseScope\(id\);[\s\S]*const routeWorkspaceId = routeBrowseScope\?\.workspaceId\?\.trim\(\) \|\| undefined;[\s\S]*const routeWorkspaceRoot =\s*routeBrowseScope\?\.workspaceRoot\?\.trim\(\) \|\|\s*deps\.clientDirectory\(\) \|\|\s*deps\.activeWorkspaceRoot\(\)\.trim\(\);[\s\S]*const connectionKey = \[\s*id,\s*deps\.routedClient\(routeWorkspaceId\) \? "live" : "offline",\s*routeWorkspaceId \?\? "",\s*routeWorkspaceRoot,\s*routeBrowseScope\?\.directory\?\.trim\(\) \|\| "",\s*routeBrowseScope\?\.conversationId\?\.trim\(\) \|\| "",\s*routeBrowseScope\?\.opencodeSessionId\?\.trim\(\) \|\| "",\s*deps\.connectedVersion\(\) \?\? "",\s*\]\.join\("::"\);/s,
     "route resume key should distinguish live vs offline selection, workspace scope, and workspace root availability",
   );
   assert.match(
     routeSource,
-    /const routeResumeDecision = resolveRouteResumeDecision\(\{[\s\S]*routeWorkspaceId,[\s\S]*activeWorkspaceId: workspaceStore\.activeWorkspaceId\(\)\.trim\(\),[\s\S]*\}\);[\s\S]*case "ignore":[\s\S]*if \(routeResumeDecision\.reason === "foreign-workspace"\) \{[\s\S]*lastRouteClientResumeKey = "";[\s\S]*\}/s,
+    /const routeResumeDecision = resolveRouteResumeDecision\(\{[\s\S]*routeWorkspaceId,[\s\S]*activeWorkspaceId: deps\.activeWorkspaceId\(\)\.trim\(\),[\s\S]*\}\);[\s\S]*case "ignore":[\s\S]*if \(routeResumeDecision\.reason === "foreign-workspace"\) \{[\s\S]*lastRouteClientResumeKey = "";[\s\S]*\}/s,
     "route resume should not reselect an old workspace session after the active workspace changes",
   );
   assert.match(
@@ -85,7 +85,7 @@ test("session route re-selects once when a client becomes available after bootst
   );
   assert.match(
     routeSource,
-    /hasBrowseScope: Boolean\(routeBrowseScope\),[\s\S]*visibleMessageCount: visibleMessages\(\)\.length,/s,
+    /hasBrowseScope: Boolean\(routeBrowseScope\),[\s\S]*visibleMessageCount: deps\.visibleMessages\(\)\.length,/s,
     "route resume guard should not skip explicit browse-scope reselection just because another transcript is visible",
   );
   assert.match(
@@ -100,7 +100,7 @@ test("session route re-selects once when a client becomes available after bootst
   );
   assert.match(
     routeSource,
-    /case "select-session":[\s\S]*lastRouteClientResumeKey = routeResumeDecision\.connectionKey;[\s\S]*void selectSession\(routeResumeDecision\.sessionId\);/s,
+    /case "select-session":[\s\S]*lastRouteClientResumeKey = routeResumeDecision\.connectionKey;[\s\S]*await deps\.selectSession\(routeResumeDecision\.sessionId\);/s,
     "route session should be re-selected once after the client reconnects so deep links survive bootstrap/startHost races",
   );
 });
@@ -114,7 +114,7 @@ test("createSessionAndOpen injects the new session before selecting it", () => {
   const handoffIndex = createSource.indexOf("options.onMaterializedSessionId?.({");
   const setSessionsIndex = createSource.indexOf("setSessions([session, ...currentStoreSessions]);");
   const sidebarIndex = createSource.indexOf("materializePendingSessionInWorkspaceSidebar({");
-  const ownNavigationIndex = createSource.indexOf("routeResumeSelectionAlreadyHandledForSession = session.id;");
+  const ownNavigationIndex = createSource.indexOf("sessionRouteSync.markOwnNavigationSession(session.id);");
   const selectIndex = createSource.indexOf('mark("session:select:start", { sessionID: session.id });');
   assert.ok(handoffIndex >= 0, "createSessionAndOpen should publish the materialized scoped handoff");
   assert.ok(setSessionsIndex > handoffIndex, "pending-to-real handoff should happen before session store injection");
@@ -124,21 +124,21 @@ test("createSessionAndOpen injects the new session before selecting it", () => {
 
   assert.match(
     createSource,
-    /const displaySession = applyPendingInitialSessionTitle\(session\);[\s\S]*options\.onMaterializedSessionId\?\.\(\{[\s\S]*setSessions\(\[session, \.\.\.currentStoreSessions\]\);[\s\S]*materializePendingSessionInWorkspaceSidebar\(\{[\s\S]*const shouldRouteCreatedSession = shouldRouteCreatedSessionAfterSelect\(\{[\s\S]*routeResumeSelectionAlreadyHandledForSession = session\.id;[\s\S]*mark\("session:select:start", \{ sessionID: session\.id \}\);[\s\S]*"createSessionAndOpen:select-session"[\s\S]*mark\("session:select:ok", \{ sessionID: session\.id \}\);[\s\S]*goToSession\(session\.id\);/s,
+    /const displaySession = applyPendingInitialSessionTitle\(session\);[\s\S]*options\.onMaterializedSessionId\?\.\(\{[\s\S]*setSessions\(\[session, \.\.\.currentStoreSessions\]\);[\s\S]*materializePendingSessionInWorkspaceSidebar\(\{[\s\S]*const shouldRouteCreatedSession = shouldRouteCreatedSessionAfterSelect\(\{[\s\S]*sessionRouteSync\.markOwnNavigationSession\(session\.id\);[\s\S]*mark\("session:select:start", \{ sessionID: session\.id \}\);[\s\S]*"createSessionAndOpen:select-session"[\s\S]*mark\("session:select:ok", \{ sessionID: session\.id \}\);[\s\S]*goToSession\(session\.id\);/s,
     "newly created sessions should hand off pending UI, enter session/sidebar state, arm route guard, select, then route",
   );
 });
 
 test("bare /session keeps the active pending draft context while clearing real session transcript state", () => {
-  const routeStart = source.indexOf("    onSessionRoute: ({ rawPath }) => {");
-  const routeEnd = source.indexOf("  return (", routeStart);
+  const routeStart = routeSyncSource.indexOf("  const handleSessionRoute = async");
+  const routeEnd = routeSyncSource.indexOf("  const startRouteResumeEffect = () => {", routeStart);
   assert.notStrictEqual(routeStart, -1, "session route block should exist");
   assert.notStrictEqual(routeEnd, -1, "session route block end should exist");
-  const routeSource = source.slice(routeStart, routeEnd);
+  const routeSource = routeSyncSource.slice(routeStart, routeEnd);
 
   assert.match(
     routeSource,
-    /const sessionPathDecision = resolveSessionPathDecision\(\{[\s\S]*path: rawPath,[\s\S]*routeSessionId: id,[\s\S]*activePendingDraftKey: activePendingDraftKey\(\),[\s\S]*\}\);[\s\S]*case "clear-session-view":[\s\S]*if \(sessionPathDecision\.preservePendingDraft\) \{[\s\S]*void activePendingDraftMeta\(\);[\s\S]*\}[\s\S]*if \(selectedSessionId\(\)\) \{[\s\S]*clearDisplayedSessionForBareRoute\(\);[\s\S]*\}/s,
+    /const sessionPathDecision = resolveSessionPathDecision\(\{[\s\S]*path: rawPath,[\s\S]*routeSessionId: id,[\s\S]*activePendingDraftKey: deps\.activePendingDraftKey\(\),[\s\S]*\}\);[\s\S]*case "clear-session-view":[\s\S]*if \(sessionPathDecision\.preservePendingDraft\) \{[\s\S]*void deps\.activePendingDraftMeta\(\);[\s\S]*\}[\s\S]*if \(deps\.selectedSessionId\(\)\) \{[\s\S]*clearDisplayedSessionForBareRoute\(\);[\s\S]*\}/s,
     "switching from a real session to bare /session should use the explicit route clear helper and keep pending draft context",
   );
   assert.doesNotMatch(

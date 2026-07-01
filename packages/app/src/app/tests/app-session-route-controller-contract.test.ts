@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const routeSyncSource = readFileSync(new URL("../context/session-route-sync.ts", import.meta.url), "utf8");
 
-function sectionBetween(startNeedle: string, endNeedle: string, label: string): string {
+function sectionBetween(source: string, startNeedle: string, endNeedle: string, label: string): string {
   const start = source.indexOf(startNeedle);
   assert.ok(start >= 0, `${label} start should be present`);
   const end = source.indexOf(endNeedle, start);
@@ -14,16 +15,22 @@ function sectionBetween(startNeedle: string, endNeedle: string, label: string): 
 
 test("app delegates session route decisions to the session route controller", () => {
   assert.match(
-    source,
-    /import \{\s*resolveRouteResumeDecision,\s*resolveSessionPathDecision,\s*\} from "\.\/controllers\/session-route-controller";/,
-    "app.tsx should import the route decision helpers from controllers",
+    routeSyncSource,
+    /import \{\s*resolveRouteResumeDecision,\s*resolveSessionPathDecision,\s*\} from "\.\.\/controllers\/session-route-controller";/,
+    "session route sync should import the route decision helpers from controllers",
+  );
+  assert.match(
+    appSource,
+    /import \{ createSessionRouteSync \} from "\.\/context\/session-route-sync";[\s\S]*const sessionRouteSync = createSessionRouteSync\(\{[\s\S]*onSessionRoute: sessionRouteSync\.handleSessionRoute,/,
+    "app.tsx should wire session route effects through the route sync module",
   );
 });
 
 test("route resume effect executes controller decisions instead of owning route policy inline", () => {
   const routeSource = sectionBetween(
-    'let lastRouteClientResumeKey = "";',
-    '  createEffect(() => {\r\n    const active = workspaceStore.activeWorkspaceDisplay();',
+    routeSyncSource,
+    "  const handleRouteResume = async () => {",
+    "  const handleSessionRoute = async",
     "route resume effect",
   );
 
@@ -46,8 +53,9 @@ test("route resume effect executes controller decisions instead of owning route 
 
 test("top-level session route effect executes controller decisions instead of owning fallback policy inline", () => {
   const sessionRouteSource = sectionBetween(
-    "    onSessionRoute: ({ rawPath }) => {",
-    "  return (",
+    routeSyncSource,
+    "  const handleSessionRoute = async",
+    "  const startRouteResumeEffect = () => {",
     "top-level session route effect",
   );
 

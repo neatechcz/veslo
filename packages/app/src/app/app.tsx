@@ -99,10 +99,6 @@ import {
   buildImportPayloadFromBundle,
 } from "./lib/shared-bundles";
 import {
-  resolveRouteResumeDecision,
-  resolveSessionPathDecision,
-} from "./controllers/session-route-controller";
-import {
   buildCreatedSidebarSessionItem,
   resolveCreatedSessionWorkspaceId,
   shouldRouteCreatedSessionAfterSelect,
@@ -121,7 +117,6 @@ import {
   resolveCreateSessionRuntimeHealthPreflightDecision,
   resolveSendPromptBusyOwnership,
 } from "./controllers/send-orchestration-controller";
-import { shouldFallbackFromSessionRoute } from "./lib/session-route-selection-guard";
 import { partitionVesloUtilitySessions } from "./lib/veslo-utility-session";
 import {
   createSessionClientMessageId,
@@ -161,6 +156,7 @@ import {
   type SendRuntimePreflightTargetWorkspace,
 } from "./context/send-runtime-readiness";
 import { createAppRouteSync } from "./context/app-route-sync";
+import { createSessionRouteSync } from "./context/session-route-sync";
 import {
   createVesloServerConnection,
   isLoopbackVesloServerConnectionUrl,
@@ -4902,127 +4898,37 @@ export default function App() {
     return;
   });
 
-  let lastRouteClientResumeKey = "";
-  let lastRouteConversationKey = "";
-  let routeResumeSelectionAlreadyHandledForSession = "";
-  const routeSessionIdMatches = (ids: string[], sessionId: string) => {
-    const id = sessionId.trim();
-    if (!id) return false;
-    return ids.some((item) => item.trim() === id);
-  };
-  const routeSessionIdsInSidebar = () =>
-    sidebarWorkspaceGroups().flatMap((group) => group.sessions.map((session) => session.id));
   function isRouteSelectedSession(sessionId: string) {
     const [, , sessionSegment] = location.pathname.trim().split("/");
     return Boolean(sessionSegment?.trim() && sessionSegment.trim() === sessionId.trim());
   }
-  const routeSessionKnownFor = (
-    sessionId: string,
-    routeBrowseScope: ReturnType<typeof resolveSelectedSessionBrowseScope> | null,
-    sessionIdsInStore = sessions().map((session) => session.id),
-    sessionIdsInSidebar = routeSessionIdsInSidebar(),
-  ) => {
-    const id = sessionId.trim();
-    if (!id) return false;
-    return Boolean(routeBrowseScope) ||
-      routeSessionIdMatches(sessionIdsInStore, id) ||
-      routeSessionIdMatches(sessionIdsInSidebar, id) ||
-      routeSessionIdMatches(scopedSessionIds(), id);
-  };
-  const routeConversationIdentityKeyFor = (
-    sessionId: string,
-    routeBrowseScope: ReturnType<typeof resolveSelectedSessionBrowseScope> | null,
-  ) => {
-    const id = sessionId.trim();
-    if (!id) return "";
-    const routeWorkspaceId =
-      routeBrowseScope?.workspaceId?.trim() ||
-      workspaceStore.activeWorkspaceId().trim();
-    return [
-      id,
-      routeWorkspaceId,
-      routeBrowseScope?.conversationId?.trim() || "",
-      routeBrowseScope?.opencodeSessionId?.trim() || "",
-    ].join("::");
-  };
-  const clearDisplayedSessionForBareRoute = () => {
-    batch(() => {
-      setSelectedSessionId(null);
-      setMessages([]);
-      setTodos([]);
-    });
-  };
 
-  createEffect(() => {
-    const rawPath = location.pathname.trim();
-    const path = rawPath.toLowerCase();
-    if (!path.startsWith("/session/")) return;
-
-    const [, , sessionSegment] = rawPath.split("/");
-    const id = (sessionSegment ?? "").trim();
-
-    const routeBrowseScope = resolveSelectedSessionBrowseScope(id);
-    const routeWorkspaceId = routeBrowseScope?.workspaceId?.trim() || undefined;
-    const routeSessionKnown = routeSessionKnownFor(id, routeBrowseScope);
-    const workspaceReady = Boolean(routeWorkspaceId || workspaceStore.activeWorkspaceId().trim());
-    const routeWorkspaceRoot =
-      routeBrowseScope?.workspaceRoot?.trim() ||
-      clientDirectory() ||
-      workspaceStore.activeWorkspaceRoot().trim();
-    const connectionKey = [
-      id,
-      routedClient(routeWorkspaceId) ? "live" : "offline",
-      routeWorkspaceId ?? "",
-      routeWorkspaceRoot,
-      routeBrowseScope?.directory?.trim() || "",
-      routeBrowseScope?.conversationId?.trim() || "",
-      routeBrowseScope?.opencodeSessionId?.trim() || "",
-      connectedVersion() ?? "",
-    ].join("::");
-    const routeConversationKey = routeConversationIdentityKeyFor(id, routeBrowseScope);
-    const routeResumeDecision = resolveRouteResumeDecision({
-      path: rawPath,
-      routeSessionId: id,
-      isPendingSession: isPendingSessionInstanceId(id),
-      routeWorkspaceId,
-      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
-      connectionKey,
-      lastConnectionKey: lastRouteClientResumeKey,
-      routeConversationKey,
-      lastRouteConversationKey,
-      workspaceReady,
-      routeSessionKnown,
-      sessionsLoaded: sessionsLoadedForActiveWorkspace(),
-      selectedSessionId: selectedSessionId(),
-      hasBrowseScope: Boolean(routeBrowseScope),
-      visibleMessageCount: visibleMessages().length,
-      selectedSessionLoadingEarlierMessages: selectedSessionLoadingEarlierMessages(),
-      ownNavigationSessionId: routeResumeSelectionAlreadyHandledForSession,
-    });
-
-    switch (routeResumeDecision.type) {
-      case "ignore":
-        if (routeResumeDecision.reason === "foreign-workspace") {
-          lastRouteClientResumeKey = "";
-          lastRouteConversationKey = "";
-        }
-        if (routeResumeDecision.reason === "already-loaded") {
-          lastRouteClientResumeKey = connectionKey;
-          lastRouteConversationKey = routeConversationKey;
-        }
-        return;
-      case "consume-own-navigation":
-        routeResumeSelectionAlreadyHandledForSession = "";
-        lastRouteClientResumeKey = routeResumeDecision.connectionKey;
-        lastRouteConversationKey = routeConversationKey;
-        return;
-      case "select-session":
-        lastRouteClientResumeKey = routeResumeDecision.connectionKey;
-        lastRouteConversationKey = routeConversationKey;
-        void selectSession(routeResumeDecision.sessionId);
-        return;
-    }
+  const sessionRouteSync = createSessionRouteSync({
+    pathname: () => location.pathname,
+    sidebarWorkspaceGroups,
+    sessions,
+    scopedSessionIds,
+    resolveSelectedSessionBrowseScope,
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+    activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
+    clientDirectory,
+    routedClient: (workspaceId) => routedClient(workspaceId),
+    connectedVersion,
+    sessionsLoadedForActiveWorkspace,
+    selectedSessionId,
+    visibleMessages,
+    selectedSessionLoadingEarlierMessages,
+    activePendingDraftKey,
+    activePendingDraftMeta,
+    isPendingSessionInstanceId,
+    visibleSelectedSessionStatus,
+    setSelectedSessionId,
+    setMessages,
+    setTodos,
+    selectSession,
+    navigate: (to, options) => navigate(to, options),
   });
+  sessionRouteSync.startRouteResumeEffect();
 
   createEffect(() => {
     const active = workspaceStore.activeWorkspaceDisplay();
@@ -8482,7 +8388,7 @@ export default function App() {
         currentView: currentView(),
       });
       if (shouldRouteCreatedSession) {
-        routeResumeSelectionAlreadyHandledForSession = session.id;
+        sessionRouteSync.markOwnNavigationSession(session.id);
       }
 
       mark("session:select:start", { sessionID: session.id });
@@ -8496,16 +8402,14 @@ export default function App() {
           },
         );
       } catch (selectError) {
-        if (routeResumeSelectionAlreadyHandledForSession === session.id) {
-          routeResumeSelectionAlreadyHandledForSession = "";
-        }
+        sessionRouteSync.clearOwnNavigationSessionIf(session.id);
         throw selectError;
       }
       mark("session:select:ok", { sessionID: session.id });
 
       // setSessionViewLockUntil(Date.now() + 1200);
       if (shouldRouteCreatedSession) {
-        routeResumeSelectionAlreadyHandledForSession = session.id;
+        sessionRouteSync.markOwnNavigationSession(session.id);
         goToSession(session.id);
       }
 
@@ -10817,82 +10721,7 @@ export default function App() {
   appRouteSync.startStartupRouteSync({
     onboardingStep,
     activeSessionId,
-    onSessionRoute: ({ rawPath }) => {
-        const [, , sessionSegment] = rawPath.split("/");
-        const id = (sessionSegment ?? "").trim();
-        const routeBrowseScope = id ? resolveSelectedSessionBrowseScope(id) : null;
-        const routeWorkspaceId = routeBrowseScope?.workspaceId ?? null;
-        const routeConversationKey = routeConversationIdentityKeyFor(id, routeBrowseScope);
-        const sessionIdsInStore = sessions().map((session) => session.id);
-        const sessionIdsInSidebar = routeSessionIdsInSidebar();
-        const routeSessionKnown = routeSessionKnownFor(id, routeBrowseScope, sessionIdsInStore, sessionIdsInSidebar);
-        const workspaceReady = Boolean(routeWorkspaceId?.trim() || workspaceStore.activeWorkspaceId().trim());
-        const shouldFallbackFromRoute = id
-          ? shouldFallbackFromSessionRoute({
-            sessionsLoaded: sessionsLoadedForActiveWorkspace(),
-            routeSessionId: id,
-            routeWorkspaceId,
-            activeWorkspaceId: workspaceStore.activeWorkspaceId(),
-            sessionIdsInStore,
-            sessionIdsInSidebar,
-            scopedSessionIds: scopedSessionIds(),
-            selectedSessionId: selectedSessionId(),
-            visibleMessageCount: visibleMessages().length,
-            selectedSessionStatus: visibleSelectedSessionStatus(),
-            selectedSessionLoadingEarlierMessages: selectedSessionLoadingEarlierMessages(),
-          })
-          : false;
-        const sessionPathDecision = resolveSessionPathDecision({
-          path: rawPath,
-          routeSessionId: id,
-          activePendingDraftKey: activePendingDraftKey(),
-          selectedSessionId: selectedSessionId(),
-          isPendingSession: isPendingSessionInstanceId(id),
-          shouldFallbackFromRoute,
-          ownNavigationSessionId: routeResumeSelectionAlreadyHandledForSession,
-          workspaceReady,
-          routeSessionKnown,
-          sessionsLoaded: sessionsLoadedForActiveWorkspace(),
-        });
-
-        switch (sessionPathDecision.type) {
-          case "ignore":
-            if (sessionPathDecision.reason === "already-selected" && routeConversationKey) {
-              lastRouteConversationKey = routeConversationKey;
-            }
-            return;
-          case "clear-session-view":
-            if (sessionPathDecision.preservePendingDraft) {
-              void activePendingDraftMeta();
-            }
-            if (selectedSessionId()) {
-              clearDisplayedSessionForBareRoute();
-            }
-            return;
-          case "select-pending-session":
-            setSelectedSessionId(sessionPathDecision.sessionId);
-            return;
-          case "fallback-to-session-list":
-            if (sessionPathDecision.clearSelectedSession) {
-              setSelectedSessionId(null);
-            }
-            navigate("/session", { replace: true });
-            return;
-          case "consume-own-navigation":
-            routeResumeSelectionAlreadyHandledForSession = "";
-            if (routeConversationKey) {
-              lastRouteConversationKey = routeConversationKey;
-            }
-            return;
-          case "select-session":
-            if (routeConversationKey) {
-              lastRouteConversationKey = routeConversationKey;
-            }
-            void selectSession(sessionPathDecision.sessionId);
-            return;
-        }
-        return;
-    },
+    onSessionRoute: sessionRouteSync.handleSessionRoute,
   });
 
   return (

@@ -5,6 +5,7 @@ import test from "node:test";
 import { shouldFallbackFromSessionRoute } from "../../lib/session-route-selection-guard.js";
 
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
+const routeSyncSource = readFileSync(new URL("../../context/session-route-sync.ts", import.meta.url), "utf8");
 const pendingDraftControllerSource = readFileSync(
   new URL("../../context/pending-session-draft-controller.ts", import.meta.url),
   "utf8",
@@ -134,11 +135,11 @@ test("falls back when loaded and id is in neither store nor sidebar", () => {
 });
 
 test("real session route fallback ignores active pending draft context", () => {
-  const routeStart = appSource.indexOf("    onSessionRoute: ({ rawPath }) => {");
-  const routeEnd = appSource.indexOf("  return (", routeStart);
+  const routeStart = routeSyncSource.indexOf("  const handleSessionRoute = async");
+  const routeEnd = routeSyncSource.indexOf("  const startRouteResumeEffect = () => {", routeStart);
   assert.notStrictEqual(routeStart, -1, "session route block should exist");
   assert.notStrictEqual(routeEnd, -1, "session route block end should exist");
-  const routeSource = appSource.slice(routeStart, routeEnd);
+  const routeSource = routeSyncSource.slice(routeStart, routeEnd);
 
   assert.match(
     workspaceSessionSelectionSource,
@@ -147,7 +148,7 @@ test("real session route fallback ignores active pending draft context", () => {
   );
   assert.match(
     routeSource,
-    /const routeBrowseScope = id \? resolveSelectedSessionBrowseScope\(id\) : null;[\s\S]*const routeWorkspaceId = routeBrowseScope\?\.workspaceId \?\? null;[\s\S]*shouldFallbackFromSessionRoute\(\{\s*sessionsLoaded: sessionsLoadedForActiveWorkspace\(\),\s*routeSessionId: id,\s*routeWorkspaceId,\s*activeWorkspaceId: workspaceStore\.activeWorkspaceId\(\),\s*sessionIdsInStore,\s*sessionIdsInSidebar,\s*scopedSessionIds: scopedSessionIds\(\),\s*selectedSessionId: selectedSessionId\(\),\s*visibleMessageCount: visibleMessages\(\)\.length,\s*selectedSessionStatus: visibleSelectedSessionStatus\(\),\s*selectedSessionLoadingEarlierMessages: selectedSessionLoadingEarlierMessages\(\),\s*\}\)/s,
+    /const routeBrowseScope = id \? deps\.resolveSelectedSessionBrowseScope\(id\) : null;[\s\S]*const routeWorkspaceId = routeBrowseScope\?\.workspaceId \?\? null;[\s\S]*shouldFallbackFromSessionRoute\(\{\s*sessionsLoaded: deps\.sessionsLoadedForActiveWorkspace\(\),\s*routeSessionId: id,\s*routeWorkspaceId,\s*activeWorkspaceId: deps\.activeWorkspaceId\(\),\s*sessionIdsInStore,\s*sessionIdsInSidebar,\s*scopedSessionIds: deps\.scopedSessionIds\(\),\s*selectedSessionId: deps\.selectedSessionId\(\),\s*visibleMessageCount: deps\.visibleMessages\(\)\.length,\s*selectedSessionStatus: deps\.visibleSelectedSessionStatus\(\),\s*selectedSessionLoadingEarlierMessages: deps\.selectedSessionLoadingEarlierMessages\(\),\s*\}\)/s,
     "real session route fallback should use persisted, sidebar, scoped, and currently displayed session state without pending preloader state",
   );
   assert.match(
