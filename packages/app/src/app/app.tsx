@@ -141,6 +141,7 @@ import { createComposerTargetController } from "./context/composer-target-contro
 import { createAppShellEnvironment } from "./context/app-shell-environment";
 import { createFeedbackWorkflow } from "./context/feedback-workflow";
 import { createDenDesktopAuthWorkflow } from "./context/den-desktop-auth-workflow";
+import { createSessionArchiveStore } from "./context/session-archive-store";
 import {
   createWorkspaceRuntimeDebugProbe,
   debugProbeCall,
@@ -399,7 +400,6 @@ import {
   type VesloSoulHeartbeatEntry,
   type VesloSoulOverviewResponse,
   type VesloSoulStatus,
-  type VesloSessionArchiveRecord,
   type VesloSessionLatestRunArtifacts,
   type VesloConversationRunInput,
   type VesloManagedAiAccessBundle,
@@ -450,14 +450,6 @@ import { waitForManagedAiBootstrapReady } from "./lib/managed-ai-bootstrap-ready
 import { shouldAutoReloadManagedAiConfig } from "./lib/managed-ai-config-reload";
 import { describeRequestError } from "./lib/client-errors";
 import { CLOUD_ONLY_MODE, resolveVesloCloudEnvironment } from "./lib/cloud-policy";
-import {
-  LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY,
-  buildArchivedSidebarSessionKey,
-  buildLegacyArchiveMigration,
-  buildSessionArchiveSnapshot,
-  sortArchivedSessionsByRecency,
-  toSessionArchiveItem,
-} from "./lib/session-archive-model";
 import { isRemoteUiEnabled } from "./lib/runtime-policy";
 
 type RemoteWorkspaceDefaults = {
@@ -4230,269 +4222,20 @@ export default function App() {
     );
     setUnreadSessionIds((current) => pruneUnreadSessions(current, liveIds));
   });
-  const SESSION_ARCHIVE_MIGRATION_KEY_PREFIX = "veslo.session-archives-cloud-migrated.v1:";
-
-  const readLegacyArchivedSessionIds = () => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = window.localStorage.getItem(LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed
-        .map((value) => (typeof value === "string" ? value.trim() : ""))
-        .filter(Boolean);
-    } catch {
-      return [];
-    }
-  };
-
-  const clearLegacyArchivedSessionIds = () => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.removeItem(LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY);
-    } catch {
-      // ignore
-    }
-  };
-
-  const readArchiveMigrationDone = (accountId: string) => {
-    if (typeof window === "undefined") return false;
-    try {
-      return window.localStorage.getItem(`${SESSION_ARCHIVE_MIGRATION_KEY_PREFIX}${accountId}`) === "true";
-    } catch {
-      return false;
-    }
-  };
-
-  const writeArchiveMigrationDone = (accountId: string) => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(`${SESSION_ARCHIVE_MIGRATION_KEY_PREFIX}${accountId}`, "true");
-    } catch {
-      // ignore
-    }
-  };
-
-  const [sessionArchiveRecords, setSessionArchiveRecords] = createSignal<VesloSessionArchiveRecord[]>([]);
-  const [sessionArchiveReady, setSessionArchiveReady] = createSignal(false);
-  const [sessionArchivePendingIds, setSessionArchivePendingIds] = createSignal<Set<string>>(new Set());
-
-  const applySessionArchiveRecords = (items: VesloSessionArchiveRecord[]) => {
-    setSessionArchiveRecords(sortArchivedSessionsByRecency(items));
-    setSessionArchiveReady(true);
-  };
-
-  const archivedSessionIds = createMemo(() => {
-    const workspaces = workspaceStore.workspaces();
-    return sessionArchiveRecords().map((record) => {
-      const item = toSessionArchiveItem(record, workspaces);
-      return buildArchivedSidebarSessionKey({
-        workspaceId: item.workspaceId,
-        workspaceIdentity: item.workspaceIdentity,
-        sessionId: item.sessionId,
-      });
-    });
+  const sessionArchiveStore = createSessionArchiveStore({
+    vesloArchiveClient,
+    sessionArchiveOwnerKey,
+    vesloServerStatus,
+    vesloServerCheckedAt,
+    workspaces: workspaceStore.workspaces,
+    sidebarWorkspaceGroups,
+    reportError,
+    setError,
   });
-  const sessionArchives = createMemo(() =>
-    sortArchivedSessionsByRecency(
-      sessionArchiveRecords().map((record) => toSessionArchiveItem(record, workspaceStore.workspaces())),
-    ),
-  );
-
-  const withPendingArchivedSession = async (
-    workspaceId: string,
-    sessionId: string,
-    task: () => Promise<void>,
-    workspaceIdentity?: string | null,
-  ) => {
-    const id = buildArchivedSidebarSessionKey({ workspaceId, workspaceIdentity, sessionId });
-    if (!id) return;
-    if (sessionArchivePendingIds().has(id)) return;
-
-    setSessionArchivePendingIds((current) => {
-      const next = new Set(current);
-      next.add(id);
-      return next;
-    });
-    try {
-      await task();
-    } finally {
-      setSessionArchivePendingIds((current) => {
-        const next = new Set(current);
-        next.delete(id);
-        return next;
-      });
-    }
-  };
-
-  const loadSessionArchives = async () => {
-    const client = vesloArchiveClient();
-    const ownerKey = sessionArchiveOwnerKey();
-    if (!client || !ownerKey) {
-      setSessionArchiveRecords([]);
-      setSessionArchiveReady(true);
-      return;
-    }
-
-    const response = await client.listSessionArchives();
-    applySessionArchiveRecords(response.items ?? []);
-  };
-
-  let lastSessionArchiveClientKey = "";
-  let failedSessionArchiveClientKey = "";
-  let sessionArchiveLoadInFlightKey = "";
-  let lastSessionArchiveRetryCheckedAt: number | null = null;
-  createEffect(() => {
-    const client = vesloArchiveClient();
-    const ownerKey = sessionArchiveOwnerKey();
-    const archiveServerStatus = vesloServerStatus();
-    const archiveServerCheckedAt = vesloServerCheckedAt();
-    const key = client && ownerKey ? `${client.baseUrl}::${client.token ?? ""}::${ownerKey}` : "";
-    const retryFailedSessionArchiveLoad =
-      Boolean(key) &&
-      failedSessionArchiveClientKey === key &&
-      archiveServerStatus === "connected" &&
-      archiveServerCheckedAt !== null &&
-      archiveServerCheckedAt !== lastSessionArchiveRetryCheckedAt;
-
-    if (key === lastSessionArchiveClientKey && !retryFailedSessionArchiveLoad) return;
-    if (sessionArchiveLoadInFlightKey === key) return;
-
-    lastSessionArchiveClientKey = key;
-    if (retryFailedSessionArchiveLoad) {
-      lastSessionArchiveRetryCheckedAt = archiveServerCheckedAt;
-    } else {
-      lastSessionArchiveRetryCheckedAt = null;
-    }
-    sessionArchiveLoadInFlightKey = key;
-    setSessionArchiveReady(false);
-    void loadSessionArchives()
-      .then(() => {
-        if (sessionArchiveLoadInFlightKey !== key) return;
-        failedSessionArchiveClientKey = "";
-        lastSessionArchiveRetryCheckedAt = null;
-      })
-      .catch((error) => {
-        if (sessionArchiveLoadInFlightKey !== key) return;
-        failedSessionArchiveClientKey = key;
-        reportError(error, "sessionArchives.load");
-        setSessionArchiveRecords([]);
-        setSessionArchiveReady(true);
-      })
-      .finally(() => {
-        if (sessionArchiveLoadInFlightKey === key) {
-          sessionArchiveLoadInFlightKey = "";
-        }
-      });
-  });
-
-  let sessionArchiveMigrationRunning = false;
-  createEffect(() => {
-    const client = vesloArchiveClient();
-    const ownerKey = sessionArchiveOwnerKey();
-    const ready = sessionArchiveReady();
-    const records = sessionArchiveRecords();
-    const groups = sidebarWorkspaceGroups();
-
-    if (!client || !ownerKey || !ready || sessionArchiveMigrationRunning) return;
-    if (readArchiveMigrationDone(ownerKey)) return;
-
-    const legacyIds = readLegacyArchivedSessionIds();
-    if (legacyIds.length === 0) {
-      writeArchiveMigrationDone(ownerKey);
-      return;
-    }
-
-    if (records.length > 0) {
-      clearLegacyArchivedSessionIds();
-      writeArchiveMigrationDone(ownerKey);
-      return;
-    }
-
-    const migrationRecords = buildLegacyArchiveMigration(legacyIds, groups);
-    if (migrationRecords.length === 0) {
-      const allGroupsSettled =
-        groups.length > 0 && groups.every((group) => group.status === "ready" || group.status === "error");
-      if (allGroupsSettled) {
-        clearLegacyArchivedSessionIds();
-        writeArchiveMigrationDone(ownerKey);
-      }
-      return;
-    }
-
-    sessionArchiveMigrationRunning = true;
-    void (async () => {
-      try {
-        let latest: VesloSessionArchiveRecord[] = records;
-        for (const record of migrationRecords) {
-          const { sessionId, ...payload } = record;
-          latest = (await client.putSessionArchive(sessionId, payload)).items ?? [];
-        }
-        applySessionArchiveRecords(latest);
-        clearLegacyArchivedSessionIds();
-        writeArchiveMigrationDone(ownerKey);
-      } catch (error) {
-        reportError(error, "sessionArchives.migrateLegacy");
-      } finally {
-        sessionArchiveMigrationRunning = false;
-      }
-    })();
-  });
-
-  const archiveSidebarSession = async (workspaceId: string, sessionId: string) => {
-    const client = vesloArchiveClient();
-    const ownerKey = sessionArchiveOwnerKey();
-    if (!client || !ownerKey) {
-      setError("A Veslo server connection or cloud sign-in is required to archive sessions.");
-      return;
-    }
-
-    const group = sidebarWorkspaceGroups().find((entry) => entry.workspace.id === workspaceId) ?? null;
-    const session = group?.sessions.find((entry) => entry.id === sessionId) ?? null;
-    if (!group || !session) return;
-
-    await withPendingArchivedSession(workspaceId, sessionId, async () => {
-      const response = await client.putSessionArchive(
-        sessionId,
-        buildSessionArchiveSnapshot({ session, workspace: group.workspace }),
-      );
-      applySessionArchiveRecords(response.items ?? []);
-      clearLegacyArchivedSessionIds();
-      writeArchiveMigrationDone(ownerKey);
-    });
-  };
-
-  const unarchiveSession = async (
-    workspaceId: string,
-    sessionId: string,
-    workspaceIdentityHint?: string | null,
-  ) => {
-    const client = vesloArchiveClient();
-    const ownerKey = sessionArchiveOwnerKey();
-    if (!client || !ownerKey) {
-      setError("A Veslo server connection or cloud sign-in is required to unarchive sessions.");
-      return;
-    }
-
-    const workspaces = workspaceStore.workspaces();
-    const normalizedIdentityHint = workspaceIdentityHint?.trim() ?? "";
-    const archiveItem = sessionArchiveRecords()
-      .map((record) => toSessionArchiveItem(record, workspaces))
-      .find((item) =>
-        item.sessionId === sessionId &&
-        item.workspaceId === workspaceId &&
-        (!normalizedIdentityHint || item.workspaceIdentity === normalizedIdentityHint)
-      );
-    const workspaceIdentity = normalizedIdentityHint || archiveItem?.workspaceIdentity?.trim() || undefined;
-
-    await withPendingArchivedSession(workspaceId, sessionId, async () => {
-      const response = await client.deleteSessionArchive(sessionId, { workspaceId, workspaceIdentity });
-      applySessionArchiveRecords(response.items ?? []);
-      clearLegacyArchivedSessionIds();
-      writeArchiveMigrationDone(ownerKey);
-    }, workspaceIdentity);
-  };
+  const archivedSessionIds = sessionArchiveStore.archivedSessionIds;
+  const sessionArchives = sessionArchiveStore.sessionArchives;
+  const archiveSidebarSession = sessionArchiveStore.archiveSession;
+  const unarchiveSession = sessionArchiveStore.unarchiveSession;
 
   type SidebarSubagentCandidate = {
     workspaceId: string;

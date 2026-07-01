@@ -2,33 +2,39 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const archiveStoreSource = readFileSync(new URL("../context/session-archive-store.ts", import.meta.url), "utf8");
+const vesloServerConnectionSource = readFileSync(
+  new URL("../context/veslo-server-connection.ts", import.meta.url),
+  "utf8",
+);
 
 test("session archive flow uses the resolved archive owner key instead of requiring cloud auth directly", () => {
   assert.match(
-    source,
+    vesloServerConnectionSource,
     /const vesloArchiveClientOptions = createMemo\(\(\) => \{[\s\S]*?resolveSessionArchiveClientOptions\(/,
     "archive client resolution should be exposed as a memo so local owner fallback is available to archive handlers",
   );
 
   assert.match(
-    source,
+    vesloServerConnectionSource,
     /const sessionArchiveOwnerKey = createMemo\(\(\) => vesloArchiveClientOptions\(\)\?\.accountId \?\? ""\);/,
     "archive handlers should share the resolved owner key from client options",
   );
 
-  const archiveFlow = source.match(
-    /const loadSessionArchives = async \(\) => \{[\s\S]*?const unarchiveSession = async \([\s\S]*?workspaceIdentityHint\?: string \| null,[\s\S]*?\) => \{[\s\S]*?^\s*\};/m,
-  )?.[0] ?? "";
+  const archiveFlow =
+    archiveStoreSource.match(
+      /export function createSessionArchiveStore[\s\S]*?const unarchiveSession = async \([\s\S]*?workspaceIdentityHint\?: string \| null,[\s\S]*?\) => \{[\s\S]*?^\s*\};/m,
+    )?.[0] ?? "";
 
-  assert.ok(archiveFlow, "app should define the session archive load/archive/unarchive flow");
+  assert.ok(archiveFlow, "session archive store should define the load/archive/unarchive flow");
   assert.doesNotMatch(
     archiveFlow,
     /authenticatedAccountId\(\)/,
     "archive load/archive/unarchive must not bypass the local archive owner fallback",
   );
-  assert.match(archiveFlow, /const ownerKey = sessionArchiveOwnerKey\(\);/);
-  assert.match(archiveFlow, /writeArchiveMigrationDone\(ownerKey\);/);
+  assert.match(archiveFlow, /const ownerKey = deps\.sessionArchiveOwnerKey\(\);/);
+  assert.match(archiveFlow, /writeArchiveMigrationDone\(storage, ownerKey\);/);
   assert.match(
     archiveFlow,
     /client\.deleteSessionArchive\(sessionId, \{ workspaceId, workspaceIdentity \}\)/,
@@ -38,27 +44,27 @@ test("session archive flow uses the resolved archive owner key instead of requir
 
 test("update preference persistence waits for startup preference hydration", () => {
   assert.match(
-    source,
+    appSource,
     /const \[updatePreferencesReady, setUpdatePreferencesReady\] = createSignal\(false\);/,
     "app should track whether update preferences have been read before writing them back",
   );
   assert.match(
-    source,
+    appSource,
     /if \(!updatePreferencesReady\(\)\) return;[\s\S]*?window\.localStorage\.setItem\(\s*"veslo\.updateAutoCheck"/,
     "auto-check persistence should not write the default before startup hydration reads stored preferences",
   );
   assert.match(
-    source,
+    appSource,
     /if \(!updatePreferencesReady\(\)\) return;[\s\S]*?window\.localStorage\.setItem\(\s*"veslo\.updateAutoDownload"/,
     "auto-download persistence should not write the default before startup hydration reads stored preferences",
   );
   assert.match(
-    source,
+    appSource,
     /resolveUpdateAutoDownloadDefaultOffMigration\(\{[\s\S]*?storedAutoDownload: storedUpdateAutoDownload,[\s\S]*?migrationComplete:[\s\S]*?UPDATE_AUTO_DOWNLOAD_DEFAULT_OFF_MIGRATION_KEY/,
     "startup flow should migrate legacy default-on auto-download before resolving update preferences",
   );
 
-  const startupMount = source.match(/onMount\(async \(\) => \{[\s\S]*?pendingSessionDraftController\.markActivePendingDraftStorageReady\(\);/)?.[0] ?? "";
+  const startupMount = appSource.match(/onMount\(async \(\) => \{[\s\S]*?pendingSessionDraftController\.markActivePendingDraftStorageReady\(\);/)?.[0] ?? "";
   assert.ok(startupMount, "app should define the async startup mount flow");
   const updatePrefsIndex = startupMount.indexOf("const storedUpdateAutoDownload = window.localStorage.getItem");
   const pendingDraftAwaitIndex = startupMount.indexOf("await pendingSessionDraftController.hydrateActivePendingDraft()");
@@ -71,7 +77,7 @@ test("update preference persistence waits for startup preference hydration", () 
 });
 
 test("startup update check waits for preferences and updater environment", () => {
-  const startupUpdateCheckEffect = source.match(
+  const startupUpdateCheckEffect = appSource.match(
     /createEffect\(\(\) => \{[\s\S]*?if \(launchUpdateCheckTriggered\(\)\) return;[\s\S]*?checkForUpdates\(\{ quiet: true \}\)/,
   )?.[0] ?? "";
 
@@ -89,19 +95,19 @@ test("startup update check waits for preferences and updater environment", () =>
 });
 
 test("session archive loader retries the same client after server readiness changes", () => {
-  const archiveLoadEffect = source.match(
+  const archiveLoadEffect = archiveStoreSource.match(
     /let lastSessionArchiveClientKey = "";[\s\S]*?let sessionArchiveMigrationRunning = false;/m,
   )?.[0] ?? "";
 
-  assert.ok(archiveLoadEffect, "app should define the session archive startup load effect");
+  assert.ok(archiveLoadEffect, "session archive store should define the startup load effect");
   assert.match(
     archiveLoadEffect,
-    /const archiveServerStatus = vesloServerStatus\(\);/,
+    /const archiveServerStatus = deps\.vesloServerStatus\(\);/,
     "archive startup loading should track server status so a failed initial load retries when the server becomes ready",
   );
   assert.match(
     archiveLoadEffect,
-    /const archiveServerCheckedAt = vesloServerCheckedAt\(\);/,
+    /const archiveServerCheckedAt = deps\.vesloServerCheckedAt\(\);/,
     "archive startup loading should track server health checks so retryable startup failures are not stuck until a mutation",
   );
   assert.match(
