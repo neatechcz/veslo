@@ -4,6 +4,7 @@ import test from "node:test";
 
 const composerSource = readFileSync(new URL("../../../components/session/composer.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../../../app.tsx", import.meta.url), "utf8");
+const stagingSource = readFileSync(new URL("../../../pages/session-attachment-staging.ts", import.meta.url), "utf8");
 const appShellEnvironmentSource = readFileSync(
   new URL("../../../context/app-shell-environment.ts", import.meta.url),
   "utf8",
@@ -26,12 +27,18 @@ test("composer keeps dropped files as attachment chips and does not inject path 
 test("all attachment staging happens in session-directory send pipeline, not in composer", () => {
   assert.match(
     appSource,
-    /const stageAttachmentsIntoSessionDirectory = async \(\s*draft: ComposerDraft,\s*sessionID: string,\s*preflight\?: SendPreflightContext,\s*\): Promise<StagedSessionAttachment\[]> =>/,
+    /createSessionAttachmentStaging\(\{[\s\S]*stageAttachmentsIntoSessionDirectory/s,
+    "app send pipeline should compose the attachment staging module",
+  );
+
+  assert.match(
+    stagingSource,
+    /const stageAttachmentsIntoSessionDirectory = async \(\s*draft: ComposerDraft,\s*sessionID: string,\s*preflight\?: [^,]+,\s*\): Promise<StagedSessionAttachment\[]> =>/,
     "app send pipeline should stage attachments into the active session directory",
   );
 
   assert.match(
-    appSource,
+    stagingSource,
     /const attachmentsToStage = draft\.attachments;/,
     "staging should process every composer attachment",
   );
@@ -43,37 +50,37 @@ test("all attachment staging happens in session-directory send pipeline, not in 
   );
 
   assert.match(
-    appSource,
+    stagingSource,
     /ready\.client\.createFileSession\(ready\.workspaceId, \{[\s\S]*write: true,/,
     "staging should open a writable file session",
   );
 
   assert.match(
-    appSource,
-    /const resolveWorkspaceIdForAttachmentStaging = async \(\s*client: NonNullable<ReturnType<typeof vesloServerClient>>,\s*\) => \{[\s\S]*const response = await client\.listWorkspaces\(\);/s,
+    stagingSource,
+    /const resolveWorkspaceIdForAttachmentStaging = async \(client: Client\) => \{[\s\S]*const response = await client\.listWorkspaces\(\);/s,
     "attachment staging should include a dedicated lazy Veslo workspace resolver",
   );
 
   assert.match(
-    appSource,
-    /let ready: AttachmentStagingWorkspaceReady = resolution\?\.serverWorkspaceId[\s\S]*ensureWorkspaceReadyForAttachmentStaging\(client\);/,
+    stagingSource,
+    /let ready: AttachmentStagingWorkspaceReady[\s\S]*resolution\?\.serverWorkspaceId[\s\S]*ensureWorkspaceReadyForAttachmentStaging\(client\);/,
     "staging should reuse the send preflight workspace resolution and lazily resolve the Veslo workspace id as a fallback",
   );
 
   assert.match(
-    appSource,
+    stagingSource,
     /await client\.readFileBatch\([^,]+, \[candidatePath\]\)/,
     "staging should probe for filename collisions in the session directory",
   );
 
   assert.match(
-    appSource,
+    stagingSource,
     /await ready\.client\.writeFileBatch\([^,]+, \[/,
     "staging should write attachments into the session directory",
   );
 
   assert.match(
-    appSource,
+    stagingSource,
     /absolutePath: resolveWorkspaceAbsolutePath\(relativePath\),/,
     "staging should record the exact absolute path for each staged attachment",
   );

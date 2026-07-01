@@ -19,10 +19,6 @@ import type {
   McpRemoteConfig,
   Part,
   Session,
-  TextPartInput,
-  FilePartInput,
-  AgentPartInput,
-  SubtaskPartInput,
 } from "@opencode-ai/sdk/v2/client";
 
 import { getVersion } from "@tauri-apps/api/app";
@@ -442,14 +438,8 @@ import {
   getVesloRequestBrokerSnapshot,
   isLocalVesloTransportError,
 } from "./lib/veslo-server/request-broker";
-import {
-  pickCollisionSafeName,
-  toWorkspaceRelativeFromSessionDir,
-} from "./lib/session-attachment-staging";
-import {
-  routeStagedAttachmentsForModel,
-  type StagedSessionAttachment,
-} from "./lib/attachment-prompt-routing";
+import { routeStagedAttachmentsForModel } from "./lib/attachment-prompt-routing";
+import { createSessionAttachmentStaging } from "./pages/session-attachment-staging";
 import { resolveArtifactFamilies } from "./components/session/artifact-family-model";
 import {
   clearUnreadSession,
@@ -1911,430 +1901,37 @@ export default function App() {
   const prompt = createMemo(() => composerDraft().text);
   const [lastPromptSent, setLastPromptSent] = createSignal("");
 
-  type PartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput;
-
-  const attachmentToFile = async (attachment: ComposerAttachment): Promise<File> => {
-    const response = await fetch(attachment.dataUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to read attachment ${attachment.name}.`);
-    }
-    const blob = await response.blob();
-    return new File([blob], attachment.name, {
-      type: attachment.mimeType || blob.type || "application/octet-stream",
-    });
-  };
-
-  const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
-    const bytes = new Uint8Array(buffer);
-    const fallbackBuffer = (globalThis as {
-      Buffer?: { from: (input: Uint8Array) => { toString: (encoding: string) => string } };
-    }).Buffer;
-    if (fallbackBuffer) {
-      return fallbackBuffer.from(bytes).toString("base64");
-    }
-    if (typeof btoa !== "function") {
-      throw new Error("Base64 encoder is unavailable");
-    }
-    let binary = "";
-    const chunkSize = 0x8000;
-    for (let index = 0; index < bytes.length; index += chunkSize) {
-      const slice = bytes.subarray(index, index + chunkSize);
-      for (const byte of slice) {
-        binary += String.fromCharCode(byte);
-      }
-    }
-    return btoa(binary);
-  };
-
-  const resolveSessionDirectoryRelativePath = (sessionID: string, filename: string) => {
-    const workspaceRoot = workspaceProjectDir().trim();
-    const sessionDirectory = (sessionDirectoryOverrideById()[sessionID] ?? workspaceRoot).trim();
-    if (!workspaceRoot || !sessionDirectory) {
-      throw new Error("Session directory is not available for attachment staging.");
-    }
-
-    const workspaceRootForCheck = normalizeDirectoryPath(workspaceRoot) || workspaceRoot;
-    const sessionDirectoryForCheck = normalizeDirectoryPath(sessionDirectory) || sessionDirectory;
-    return toWorkspaceRelativeFromSessionDir({
-      workspaceRoot: workspaceRootForCheck,
-      sessionDirectory: sessionDirectoryForCheck,
-      filename,
-    });
-  };
-
-  const resolveWorkspaceAbsolutePath = (relativePath: string) => {
-    const workspaceRoot = workspaceProjectDir().trim().replace(/[\\/]+$/, "");
-    const normalizedRelativePath = relativePath.trim().replace(/\\/g, "/").replace(/^\/+/, "");
-    if (!workspaceRoot || !normalizedRelativePath) {
-      throw new Error("Workspace path is not available for staged attachments.");
-    }
-    return `${workspaceRoot}/${normalizedRelativePath}`;
-  };
-
-  const resolveCollisionSafeAttachmentPath = async (
-    client: NonNullable<ReturnType<typeof vesloServerClient>>,
-    fileSessionId: string,
-    preferredPath: string,
-    reservedPaths: Set<string>,
-  ) => {
-    const normalizedPreferred = preferredPath.trim().replace(/\\/g, "/").replace(/^\/+/, "");
-    const slashIndex = normalizedPreferred.lastIndexOf("/");
-    const directoryRel = slashIndex === -1 ? "" : normalizedPreferred.slice(0, slashIndex);
-    const filename = slashIndex === -1 ? normalizedPreferred : normalizedPreferred.slice(slashIndex + 1);
-    const knownCollisions = new Set(reservedPaths);
-
-    let attempt = 0;
-    while (attempt < 512) {
-      const candidatePath = pickCollisionSafeName({
-        directoryRel,
-        filename,
-        existingPaths: knownCollisions,
-      });
-
-      const result = await client.readFileBatch(fileSessionId, [candidatePath]);
-      const item = result.items[0];
-      if (item?.ok) {
-        knownCollisions.add(candidatePath);
-        attempt += 1;
-        continue;
-      }
-      if (!item || item.code === "file_not_found") {
-        reservedPaths.add(candidatePath);
-        return candidatePath;
-      }
-      throw new Error(item.message ?? `Unable to stage ${filename}.`);
-    }
-
-    throw new Error(`Failed to resolve a unique filename for ${filename}.`);
-  };
-
-  const resolveWorkspaceIdForAttachmentStaging = async (
-    client: NonNullable<ReturnType<typeof vesloServerClient>>,
-  ) => {
-    const response = await client.listWorkspaces();
-    const items = Array.isArray(response.items) ? response.items : [];
-    const active = workspaceStore.activeWorkspaceDisplay();
-    const activeId = response.activeId?.trim() ?? "";
-    const cachedWorkspaceId = (vesloServerWorkspaceId() ?? "").trim();
-
-    const findByPath = (targetPath: string) => {
-      const normalizedTarget = normalizeDirectoryPath(targetPath.trim());
-      if (normalizedTarget === "") return null;
-      return items.find((entry) => {
-        const candidates = [
-          normalizeDirectoryPath((entry.path ?? "").trim()),
-          normalizeDirectoryPath((entry.directory ?? "").trim()),
-          normalizeDirectoryPath((entry.opencode?.directory ?? "").trim()),
-        ].filter(Boolean);
-        return candidates.includes(normalizedTarget);
-      }) ?? null;
-    };
-
-    let resolved = "";
-    if (active.workspaceType === "remote" && active.remoteType === "veslo") {
-      const inferredWorkspaceId =
-        parseVesloWorkspaceIdFromUrl(active.vesloHostUrl ?? "") ??
-        parseVesloWorkspaceIdFromUrl(active.baseUrl ?? "") ??
-        parseVesloWorkspaceIdFromUrl(vesloServerUrl().trim());
-      const storedId = active.vesloWorkspaceId?.trim() || inferredWorkspaceId || envVesloWorkspaceId || "";
-      resolved =
-        (storedId && items.find((entry) => entry.id === storedId)?.id) ||
-        (cachedWorkspaceId && items.find((entry) => entry.id === cachedWorkspaceId)?.id) ||
-        findByPath(active.directory?.trim() ?? active.path?.trim() ?? "")?.id ||
-        activeId ||
-        (items.length === 1 ? items[0]?.id ?? "" : "");
-    } else if (active.workspaceType === "local") {
-      const activeRoot = workspaceStore.activeWorkspaceRoot().trim();
-      resolved =
-        findByPath(activeRoot)?.id ||
-        (!activeRoot && items.length === 1 ? (activeId || items[0]?.id || "") : "");
-    }
-
-    if (resolved) {
-      setVesloServerWorkspaceId(resolved);
-    }
-
-    return resolved;
-  };
-
-  type AttachmentStagingWorkspaceReady = {
-    client: NonNullable<ReturnType<typeof vesloServerClient>>;
-    workspaceId: string;
-  };
-
-  const recoverWorkspaceReadyForAttachmentStaging = async (
-    fallbackClient: NonNullable<ReturnType<typeof vesloServerClient>>,
-  ): Promise<AttachmentStagingWorkspaceReady> => {
-    const active = workspaceStore.activeWorkspaceDisplay();
-    if (!isTauriRuntime() || startupPreference() === "server" || active.workspaceType !== "local") {
-      throw new Error("Veslo server workspace is not ready for attachments.");
-    }
-
-    recordSendTrace("sendPrompt:attachment-workspace-recover", {
-      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
-      activeRoot: workspaceStore.activeWorkspaceRoot().trim(),
-    });
-
-    const restarted = await vesloServerRestart();
-    setVesloServerHostInfoStable(restarted);
-    const running = resolveRunningVesloServerHostInfo(restarted);
-    if (!running?.baseUrl?.trim()) {
-      setVesloServerStatus("disconnected");
-      setVesloServerCapabilitiesStable(null);
-      setVesloServerCheckedAt(Date.now());
-      throw new Error("Veslo server workspace is not ready for attachments.");
-    }
-
-    const result = await checkVesloServer(
-      running.baseUrl.trim(),
-      running.clientToken?.trim() || undefined,
-      running.hostToken?.trim() || undefined,
-    );
-    setVesloServerStatus(result.status);
-    setVesloServerCapabilitiesStable(result.capabilities);
-    setVesloServerCheckedAt(Date.now());
-    if (result.status !== "connected") {
-      throw new Error("Veslo server workspace is not ready for attachments.");
-    }
-
-    const client = vesloServerClient() ?? fallbackClient;
-    const workspaceId = await resolveWorkspaceIdForAttachmentStaging(client);
-    if (!workspaceId) {
-      throw new Error("Veslo server workspace is not ready for attachments.");
-    }
-    return { client, workspaceId };
-  };
-
-  const ensureWorkspaceReadyForAttachmentStaging = async (
-    client: NonNullable<ReturnType<typeof vesloServerClient>>,
-  ): Promise<AttachmentStagingWorkspaceReady> => {
-    const workspaceId = await resolveWorkspaceIdForAttachmentStaging(client);
-    if (workspaceId) return { client, workspaceId };
-    return await recoverWorkspaceReadyForAttachmentStaging(client);
-  };
-
-  const shouldRecoverAttachmentStagingWorkspace = (error: unknown) => {
-    if (error instanceof VesloServerError) {
-      return error.status === 404;
-    }
-    const message = messageFromUnknownError(error).toLowerCase();
-    return message.includes("workspace") && message.includes("not");
-  };
-
-  const stageAttachmentsIntoSessionDirectory = async (
-    draft: ComposerDraft,
-    sessionID: string,
-    preflight?: SendPreflightContext,
-  ): Promise<StagedSessionAttachment[]> => {
-    const tracePayload = preflight ? { traceId: preflight.traceId } : undefined;
-    const attachmentsToStage = draft.attachments;
-    if (!attachmentsToStage.length) {
-      recordSendTrace("stageAttachmentsIntoSessionDirectory:skip-empty", {
-        ...(tracePayload ?? {}),
-        sessionID,
-      });
-      return [];
-    }
-
-    let client = vesloServerClient();
-    if (!client || vesloServerStatus() !== "connected") {
-      throw new Error("Connect to Veslo server before sending attachments.");
-    }
-    const scope = resolveSelectedSessionBrowseScope(sessionID);
-    const workspaceIdForResolution = scope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
-    const directoryForResolution =
-      scope?.directory?.trim() ||
-      sessionDirectoryOverrideById()[sessionID]?.trim() ||
-      workspaceStore.activeWorkspaceRoot().trim();
-    const resolution =
-      workspaceIdForResolution && directoryForResolution
-        ? await resolveConversationServerWorkspaceForSend(
-            workspaceIdForResolution,
-            directoryForResolution,
-            preflight,
-            "stageAttachmentsIntoSessionDirectory",
-          )
-        : null;
-    if (resolution) {
-      client = resolution.serverClient;
-    }
-    let ready: AttachmentStagingWorkspaceReady = resolution?.serverWorkspaceId
-      ? { client, workspaceId: resolution.serverWorkspaceId }
-      : await ensureWorkspaceReadyForAttachmentStaging(client);
-
-    const reservedPaths = new Set<string>();
-    const stagedAttachments: StagedSessionAttachment[] = [];
-    let fileSession: Awaited<ReturnType<typeof ready.client.createFileSession>>;
-    try {
-      fileSession = await sendTraceStep(
-        "stageAttachmentsIntoSessionDirectory:create-file-session",
-        () => ready.client.createFileSession(ready.workspaceId, {
-          ttlSeconds: 15 * 60,
-          write: true,
-        }),
-        {
-          ...(tracePayload ?? {}),
-          sessionID,
-          workspaceId: ready.workspaceId,
-          attachmentCount: attachmentsToStage.length,
-        },
-      );
-    } catch (error) {
-      if (!shouldRecoverAttachmentStagingWorkspace(error)) {
-        throw error;
-      }
-      ready = await recoverWorkspaceReadyForAttachmentStaging(ready.client);
-      fileSession = await sendTraceStep(
-        "stageAttachmentsIntoSessionDirectory:create-file-session",
-        () => ready.client.createFileSession(ready.workspaceId, {
-          ttlSeconds: 15 * 60,
-          write: true,
-        }),
-        {
-          ...(tracePayload ?? {}),
-          sessionID,
-          workspaceId: ready.workspaceId,
-          attachmentCount: attachmentsToStage.length,
-        },
-      );
-    }
-
-    try {
-      for (const attachment of attachmentsToStage) {
-        const file = await attachmentToFile(attachment);
-        const preferredPath = resolveSessionDirectoryRelativePath(sessionID, file.name);
-        const relativePath = await resolveCollisionSafeAttachmentPath(
-          ready.client,
-          fileSession.session.id,
-          preferredPath,
-          reservedPaths,
-        );
-        const contentBase64 = arrayBufferToBase64(await file.arrayBuffer());
-        const writeResult = await ready.client.writeFileBatch(fileSession.session.id, [
-          {
-            path: relativePath,
-            contentBase64,
-          },
-        ]);
-        const item = writeResult.items[0];
-        if (!item?.ok) {
-          throw new Error(item?.message ?? `Failed to stage ${attachment.name}.`);
-        }
-        stagedAttachments.push({
-          name: attachment.name,
-          kind: attachment.kind,
-          mimeType: attachment.mimeType,
-          relativePath,
-          absolutePath: resolveWorkspaceAbsolutePath(relativePath),
-        });
-      }
-      recordSendTrace("stageAttachmentsIntoSessionDirectory:done", {
-        ...(tracePayload ?? {}),
-        sessionID,
-        workspaceId: ready.workspaceId,
-        attachmentCount: stagedAttachments.length,
-      });
-    } finally {
-      await ready.client.closeFileSession(fileSession.session.id).catch(() => undefined);
-    }
-
-    return stagedAttachments;
-  };
-
-  const buildPromptParts = (draft: ComposerDraft): PartInput[] => {
-    const parts: PartInput[] = [];
-    const text = draft.resolvedText ?? draft.text;
-    parts.push({ type: "text", text } as TextPartInput);
-
-    const root = workspaceProjectDir().trim();
-    const toAbsolutePath = (path: string) => {
-      const trimmed = path.trim();
-      if (!trimmed) return "";
-      if (trimmed.startsWith("/")) return trimmed;
-      // Windows absolute path, e.g. C:\foo\bar
-      if (/^[a-zA-Z]:[\\/]/.test(trimmed)) return trimmed;
-      // Without a workspace root, we cannot safely resolve relative paths.
-      // Returning "" avoids emitting invalid file:// URLs.
-      if (!root) return "";
-      return (root + "/" + trimmed).replace("//", "/");
-    };
-    const filenameFromPath = (path: string) => {
-      const normalized = path.replace(/\\/g, "/");
-      const segments = normalized.split("/").filter(Boolean);
-      return segments[segments.length - 1] ?? "file";
-    };
-
-    for (const part of draft.parts) {
-      if (part.type === "agent") {
-        parts.push({ type: "agent", name: part.name } as AgentPartInput);
-        continue;
-      }
-      if (part.type === "file") {
-        const absolute = toAbsolutePath(part.path);
-        if (!absolute) continue;
-        parts.push({
-          type: "file",
-          mime: "text/plain",
-          url: `file://${absolute}`,
-          filename: filenameFromPath(part.path),
-        } as FilePartInput);
-      }
-    }
-
-    for (const attachment of draft.attachments) {
-      parts.push({
-        type: "file",
-        url: attachment.dataUrl,
-        filename: attachment.name,
-        mime: attachment.mimeType,
-      } as FilePartInput);
-    }
-
-    return parts;
-  };
-
-  const buildCommandFileParts = (draft: ComposerDraft): FilePartInput[] => {
-    const parts: FilePartInput[] = [];
-    const root = workspaceProjectDir().trim();
-
-    const toAbsolutePath = (path: string) => {
-      const trimmed = path.trim();
-      if (!trimmed) return "";
-      if (trimmed.startsWith("/")) return trimmed;
-      if (/^[a-zA-Z]:[\\/]/.test(trimmed)) return trimmed;
-      if (!root) return "";
-      return (root + "/" + trimmed).replace("//", "/");
-    };
-
-    const filenameFromPath = (path: string) => {
-      const normalized = path.replace(/\\/g, "/");
-      const segments = normalized.split("/").filter(Boolean);
-      return segments[segments.length - 1] ?? "file";
-    };
-
-    for (const part of draft.parts) {
-      if (part.type !== "file") continue;
-      const absolute = toAbsolutePath(part.path);
-      if (!absolute) continue;
-      parts.push({
-        type: "file",
-        mime: "text/plain",
-        url: `file://${absolute}`,
-        filename: filenameFromPath(part.path),
-      } as FilePartInput);
-    }
-
-    for (const attachment of draft.attachments) {
-      parts.push({
-        type: "file",
-        url: attachment.dataUrl,
-        filename: attachment.name,
-        mime: attachment.mimeType,
-      } as FilePartInput);
-    }
-
-    return parts;
-  };
+  const sessionAttachmentStaging = createSessionAttachmentStaging({
+    vesloServerClient,
+    vesloServerStatus,
+    vesloServerWorkspaceId,
+    setVesloServerWorkspaceId,
+    vesloServerUrl,
+    envVesloWorkspaceId,
+    workspaceProjectDir: () => workspaceStore.projectDir(),
+    sessionDirectoryForId: (sessionID) => sessionDirectoryOverrideById()[sessionID] ?? workspaceStore.projectDir(),
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId().trim(),
+    activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot().trim(),
+    activeWorkspaceDisplay: () => workspaceStore.activeWorkspaceDisplay(),
+    selectedSessionBrowseScope: (sessionID) => resolveSelectedSessionBrowseScope(sessionID),
+    isTauriRuntime,
+    startupPreference: () => startupPreference() ?? "local",
+    vesloServerRestart,
+    setVesloServerHostInfoStable: (info) => setVesloServerHostInfoStable(info as VesloServerInfo | null),
+    setVesloServerStatus,
+    setVesloServerCapabilitiesStable: (capabilities) => setVesloServerCapabilitiesStable(capabilities as ReturnType<typeof vesloServerCapabilities>),
+    setVesloServerCheckedAt,
+    checkVesloServer,
+    resolveConversationServerWorkspaceForSend,
+    recordSendTrace,
+    sendTraceStep,
+    safeStringify,
+  });
+  const {
+    stageAttachmentsIntoSessionDirectory,
+    buildPromptParts,
+    buildCommandFileParts,
+  } = sessionAttachmentStaging;
 
   async function maybeResolveSkillCommand(
     draft: ComposerDraft,

@@ -5,6 +5,7 @@ import test from "node:test";
 const appSource = readFileSync(new URL("../../../app.tsx", import.meta.url), "utf8");
 const composerSource = readFileSync(new URL("../../../components/session/composer.tsx", import.meta.url), "utf8");
 const sessionPageSource = readFileSync(new URL("../../../pages/session.tsx", import.meta.url), "utf8");
+const stagingSource = readFileSync(new URL("../../../pages/session-attachment-staging.ts", import.meta.url), "utf8");
 
 test("staging failure blocks send with an explicit error and no draft clear", () => {
   const stagingStart = appSource.indexOf(
@@ -146,7 +147,7 @@ test("send flow blocks screenshot analysis on non-vision models instead of relyi
   );
 
   assert.match(
-    appSource,
+    stagingSource,
     /for \(const attachment of draft\.attachments\) \{\s*parts\.push\(\{\s*type: "file",\s*url: attachment\.dataUrl,\s*filename: attachment\.name,\s*mime: attachment\.mimeType,/s,
     "prompt building should still include staged image attachments as file parts",
   );
