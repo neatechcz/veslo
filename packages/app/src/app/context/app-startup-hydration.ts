@@ -11,7 +11,6 @@ import { listen } from "@tauri-apps/api/event";
 
 import { resolveNativeWindowDecorationsVisible } from "../components/titlebar-menu-layout";
 import {
-  AUTO_COMPACT_CONTEXT_PREF_KEY,
   DEFAULT_MODEL,
   ENGINE_CUSTOM_BIN_PATH_PREF_KEY,
   ENGINE_SOURCE_EXPLICIT_PREF_KEY,
@@ -128,7 +127,6 @@ export type AppStartupHydrationDeps = {
   setIdleSuspendMs: Setter<number>;
   hideTitlebar: Accessor<boolean>;
   setHideTitlebar: Setter<boolean>;
-  autoCompactContext: Accessor<boolean>;
   modelVariant: Accessor<string | null>;
   setModelVariant: Setter<string | null>;
   modelVariantPreferenceReady: Accessor<boolean>;
@@ -412,18 +410,6 @@ function hydrateLocalStoragePreferences(deps: AppStartupHydrationDeps) {
         }
       } catch {
         // ignore
-      }
-    }
-
-    const storedAutoCompactContext = window.localStorage.getItem(AUTO_COMPACT_CONTEXT_PREF_KEY);
-    if (storedAutoCompactContext !== "true") {
-      try {
-        const parsed = storedAutoCompactContext == null ? null : JSON.parse(storedAutoCompactContext);
-        if (parsed !== true) {
-          window.localStorage.setItem(AUTO_COMPACT_CONTEXT_PREF_KEY, JSON.stringify(true));
-        }
-      } catch {
-        window.localStorage.setItem(AUTO_COMPACT_CONTEXT_PREF_KEY, JSON.stringify(true));
       }
     }
 
@@ -754,15 +740,6 @@ function createPersistentPreferenceEffects(deps: AppStartupHydrationDeps) {
   });
 
   persistTitlebarPreference(deps);
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(AUTO_COMPACT_CONTEXT_PREF_KEY, JSON.stringify(deps.autoCompactContext()));
-    } catch {
-      // ignore
-    }
-  });
 
   createEffect(() => {
     if (typeof window === "undefined") return;

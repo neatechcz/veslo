@@ -167,7 +167,6 @@ import {
   setBootstrapDiagnosticsCloudContext,
 } from "./lib/bootstrap-diagnostics";
 import {
-  AUTO_COMPACT_CONTEXT_PREF_KEY,
   ENGINE_CUSTOM_BIN_PATH_PREF_KEY,
   ENGINE_SOURCE_EXPLICIT_PREF_KEY,
   ENGINE_SOURCE_PREF_KEY,
@@ -1596,7 +1595,6 @@ export default function App() {
   const saveSessionExport = sessionMutationWorkflow.saveSessionExport;
 
   const triggerAutoCompaction = async (sessionID: string) => {
-    if (!autoCompactContext()) return;
     if (autoCompactingSessionId() === sessionID) return;
 
     setAutoCompactingSessionId(sessionID);
@@ -1617,7 +1615,6 @@ export default function App() {
     setLastSessionStatus(status);
 
     if (!sessionID) return;
-    if (!autoCompactContext()) return;
     if (status !== "idle") return;
     if (!previous || previous === "idle") return;
 
@@ -2102,7 +2099,6 @@ export default function App() {
   // VSLO-171 F3Ú9 — maxEngines, idleSuspendMs were moved up to ~ř.1097 so
   // workspaceRouting closures (and downstream session store memos) can
   // access them without TDZ at createSessionStore init.
-  const [autoCompactContext, setAutoCompactContext] = createSignal(true);
   const [modelVariant, setModelVariant] = createSignal<string | null>(DEFAULT_MODEL_VARIANT);
   const [modelVariantPreferenceReady, setModelVariantPreferenceReady] = createSignal(false);
   const [updatePreferencesReady, setUpdatePreferencesReady] = createSignal(false);
@@ -3249,7 +3245,6 @@ export default function App() {
       setDefaultModelExplicit(false);
       setShowThinking(false);
       setHideTitlebar(false);
-      setAutoCompactContext(true);
       setModelVariant(DEFAULT_MODEL_VARIANT);
       setUpdateAutoCheck(true);
       setUpdateAutoDownload(DEFAULT_UPDATE_AUTO_DOWNLOAD);
@@ -3929,7 +3924,6 @@ export default function App() {
     setIdleSuspendMs,
     hideTitlebar,
     setHideTitlebar,
-    autoCompactContext,
     modelVariant,
     setModelVariant,
     modelVariantPreferenceReady,

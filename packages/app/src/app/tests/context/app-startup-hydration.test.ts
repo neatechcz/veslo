@@ -114,6 +114,29 @@ test("persistent preference effects keep desktop baseUrl out of storage and gate
   );
 });
 
+test("automatic context compaction no longer has a persisted preference layer", () => {
+  assert.doesNotMatch(
+    startupSource,
+    /AUTO_COMPACT_CONTEXT_PREF_KEY|autoCompactContext|veslo\.autoCompactContext/,
+    "startup hydration should not restore or persist the removed auto-compaction preference",
+  );
+  assert.doesNotMatch(
+    appSource,
+    /autoCompactContext|setAutoCompactContext|AUTO_COMPACT_CONTEXT_PREF_KEY/,
+    "app.tsx should not keep a user preference signal for automatic compaction",
+  );
+  assert.match(
+    appSource,
+    /const triggerAutoCompaction = async \(sessionID: string\) => \{[\s\S]*await compactCurrentSession\(sessionID\);/,
+    "automatic compaction should remain wired as always-on behavior",
+  );
+  assert.match(
+    appSource,
+    /shouldAutoCompact\(messages\(\), selectedSessionModel\(\), providers\(\)\)/,
+    "automatic compaction should still respect the context-threshold predicate",
+  );
+});
+
 test("startup guard completes only after bootstrap and desktop auth recovery are scheduled", () => {
   const mountFlow = sectionBetween(
     "onMount(async () => {",
