@@ -55,16 +55,18 @@ test("managed AI access refresh effect executes controller decisions", () => {
 });
 
 test("desktop managed AI proof cache stores policy metadata without gateway tokens", () => {
-  const proofWriteCall = storeSource.match(/void resolved\.proofCache\?\.write\?\(\{[\s\S]*?\}\)\.catch/);
-  assert.ok(proofWriteCall, "desktop proof cache write should be present");
+  const start = storeSource.indexOf("export const writeManagedAiAccessCache = (");
+  const end = storeSource.indexOf("export const clearManagedAiAccessCache", start);
+  assert.ok(start >= 0 && end > start, "managed AI cache writer should be present");
+  const cacheWriterSource = storeSource.slice(start, end);
 
   assert.match(
-    proofWriteCall[0],
-    /void resolved\.proofCache\?\.write\?\(\{[\s\S]*cacheKey,[\s\S]*proof: \{[\s\S]*providerId: profile\.providerId,[\s\S]*defaultModel: profile\.defaultModel,[\s\S]*allowedModels: profile\.allowedModels,[\s\S]*updatedAt: profile\.updatedAt,[\s\S]*\},[\s\S]*\}\)/,
+    cacheWriterSource,
+    /void resolved\.proofCache\?\.write\?\.\(\{[\s\S]*cacheKey,[\s\S]*proof: \{[\s\S]*providerId: profile\.providerId,[\s\S]*defaultModel: profile\.defaultModel,[\s\S]*allowedModels: profile\.allowedModels,[\s\S]*updatedAt: profile\.updatedAt,[\s\S]*\},[\s\S]*\}\)/,
     "desktop proof cache should write only profile metadata",
   );
   assert.doesNotMatch(
-    proofWriteCall[0],
+    cacheWriterSource.slice(cacheWriterSource.indexOf("if (resolved.isTauriRuntime())"), cacheWriterSource.indexOf("if (!resolved.storage)")),
     /gatewayAccessToken/,
     "desktop proof cache must not persist gateway access tokens",
   );

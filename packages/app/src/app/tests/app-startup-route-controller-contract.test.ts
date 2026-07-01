@@ -30,7 +30,7 @@ test("app delegates top-level startup route decisions to the startup controller"
   );
   assert.match(
     source,
-    /appRouteSync\.startStartupRouteSync\(\{[\s\S]*onboardingStep,[\s\S]*activeSessionId,[\s\S]*onSessionRoute: \(\{ rawPath \}\) => \{/,
+    /appRouteSync\.startStartupRouteSync\(\{[\s\S]*onboardingStep,[\s\S]*activeSessionId,[\s\S]*onSessionRoute: sessionRouteSync\.handleSessionRoute/,
     "app.tsx should delegate top-level startup route execution while keeping session-route wiring local",
   );
   assert.match(

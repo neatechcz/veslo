@@ -72,10 +72,7 @@ import {
   type ManagedAiAccessStore,
 } from "./context/managed-ai-access-store";
 import { createManagedAiRuntimeConfigSync } from "./context/managed-ai-runtime-config";
-import {
-  createConversationService,
-  type ConversationWorkspaceResolution,
-} from "./context/conversation-service";
+import { createConversationService } from "./context/conversation-service";
 import { createPendingSessionDraftController } from "./context/pending-session-draft-controller";
 import { createComposerTargetController } from "./context/composer-target-controller";
 import { createAppShellEnvironment } from "./context/app-shell-environment";
@@ -98,6 +95,7 @@ import {
 } from "./context/send-runtime-readiness";
 import { createAppRouteSync } from "./context/app-route-sync";
 import { createSessionRouteSync } from "./context/session-route-sync";
+import { createAppSendTrace } from "./context/app-send-trace";
 import { createAppDeepLinkWorkflow } from "./context/app-deep-link-workflow";
 import { createAppStartupHydration } from "./context/app-startup-hydration";
 import { createMcpConnectionWorkflow } from "./context/mcp-connection-workflow";
@@ -249,7 +247,6 @@ import { currentLocale, isLanguage, setLocale, t, type Language } from "../i18n"
 import {
   isWindowsPlatform,
   isMacPlatform,
-  // normalizeDirectoryPath,
   parseModelRef,
   safeStringify,
   summarizeStep,
@@ -304,7 +301,6 @@ import {
   workspaceCopyIntoFolder,
   workspaceVesloRead,
   workspaceVesloWrite,
-  logUiEvent,
   opencodeDbUpdateSessionDirectory,
   type VesloServerInfo,
   type WorkspaceInfo,
@@ -334,139 +330,10 @@ import {
   pruneUnreadSessions,
   type UnreadSessionMap,
 } from "./components/session/session-unread-model";
-import type { EffectiveRuntimeSandboxState } from "./lib/runtime-sandbox-state";
 import { waitForManagedAiBootstrapReady } from "./lib/managed-ai-bootstrap-ready";
 import { describeRequestError } from "./lib/client-errors";
 import { CLOUD_ONLY_MODE, resolveVesloCloudEnvironment } from "./lib/cloud-policy";
 import { isRemoteUiEnabled } from "./lib/runtime-policy";
-
-type SendTraceRoot = typeof window & {
-  __vesloSendTrace?: Array<Record<string, unknown>>;
-  __vesloActiveSendTraceId?: string | null;
-  __vesloSendTraceSeq?: number;
-  __vesloSendTraceStartPerfMsById?: Record<string, number>;
-};
-
-type SendPreflightContext = SendRuntimePreflightContext & {
-  traceId: string;
-  managedAiReady: boolean;
-  runtimeHealthOk: boolean;
-  enginePrepared: boolean;
-  effectiveSandbox: EffectiveRuntimeSandboxState | null;
-  targetWorkspace: SendTargetWorkspaceScope | null;
-  conversationWorkspaceByDirectory: Map<string, Promise<ConversationWorkspaceResolution<VesloServerClient> | null>>;
-};
-
-const SEND_TRACE_LIMIT = 500;
-
-const roundSendTraceMs = (value: number) => Math.round(value * 100) / 100;
-
-const sendTraceErrorMessage = (error: unknown): string => {
-  if (error instanceof Error) return error.message;
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
-};
-
-const makeSendTraceId = () => {
-  const suffix =
-    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`;
-  return `send_${suffix.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64)}`;
-};
-
-const createSendPreflightContext = (traceId?: string | null): SendPreflightContext => ({
-  traceId: traceId?.trim() || makeSendTraceId(),
-  managedAiReady: false,
-  runtimeHealthOk: false,
-  enginePrepared: false,
-  effectiveSandbox: null,
-  targetWorkspace: null,
-  conversationWorkspaceByDirectory: new Map(),
-});
-
-const activeSendTraceId = () => {
-  if (typeof window === "undefined") return null;
-  return (window as SendTraceRoot).__vesloActiveSendTraceId ?? null;
-};
-
-function recordSendTrace(event: string, payload?: Record<string, unknown>) {
-  if (typeof window === "undefined") return;
-  try {
-    const root = window as SendTraceRoot;
-    const logs = root.__vesloSendTrace ?? [];
-    const seq = (root.__vesloSendTraceSeq ?? 0) + 1;
-    root.__vesloSendTraceSeq = seq;
-    const payloadTraceId = typeof payload?.traceId === "string" ? payload.traceId.trim() : "";
-    const traceId = payloadTraceId || root.__vesloActiveSendTraceId || undefined;
-    const perfMs = roundSendTraceMs(perfNow());
-    const startPerfMsById = root.__vesloSendTraceStartPerfMsById ?? (root.__vesloSendTraceStartPerfMsById = {});
-    const relativeMs =
-      traceId
-        ? roundSendTraceMs(perfMs - (startPerfMsById[traceId] ?? (startPerfMsById[traceId] = perfMs)))
-        : undefined;
-    const entry = {
-      id: seq,
-      at: new Date().toISOString(),
-      ts: Date.now(),
-      perfMs,
-      ...(relativeMs !== undefined ? { relativeMs } : {}),
-      source: "app",
-      ...(traceId ? { traceId } : {}),
-      event,
-      ...(payload ?? {}),
-    };
-    logs.push(entry);
-    if (logs.length > SEND_TRACE_LIMIT) logs.splice(0, logs.length - SEND_TRACE_LIMIT);
-    root.__vesloSendTrace = logs;
-    recordSendWorkflowTrace("app", event, payload);
-    console.log(`[SENDTRACE] app:${event}`, entry);
-    logUiEvent("send-trace", event, entry);
-  } catch {
-    // ignore
-  }
-}
-
-const sendTraceStep = async <T,>(
-  event: string,
-  fn: () => Promise<T>,
-  payload?: Record<string, unknown>,
-): Promise<T> => {
-  const startedAt = perfNow();
-  recordSendTrace(`${event}:start`, payload);
-  try {
-    const result = await fn();
-    recordSendTrace(`${event}:end`, {
-      ...(payload ?? {}),
-      durationMs: roundSendTraceMs(perfNow() - startedAt),
-      outcome: "ok",
-    });
-    return result;
-  } catch (error) {
-    recordSendTrace(`${event}:error`, {
-      ...(payload ?? {}),
-      durationMs: roundSendTraceMs(perfNow() - startedAt),
-      outcome: "error",
-      message: sendTraceErrorMessage(error),
-    });
-    throw error;
-  }
-};
-
-const recordExternalSendTraceEntries = (entries: unknown) => {
-  if (!Array.isArray(entries)) return;
-  for (const entry of entries) {
-    if (!entry || typeof entry !== "object") continue;
-    const record = entry as Record<string, unknown>;
-    const event = typeof record.event === "string" ? record.event.trim() : "";
-    if (!event) continue;
-    const { event: _event, ...payload } = record;
-    recordSendTrace(event, payload);
-  }
-};
 
 function resolveDeveloperModeFromSearch(search: string) {
   const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
@@ -480,6 +347,14 @@ export default function App() {
   const envVesloWorkspaceId = cloudEnvironment.workspaceId ?? null;
   const location = useLocation();
   const navigate = useNavigate();
+  const appSendTrace = createAppSendTrace();
+  const {
+    createSendPreflightContext,
+    recordExternalSendTraceEntries,
+    recordSendTrace,
+    sendTraceStep,
+    activeSendTraceId,
+  } = appSendTrace;
   const developerMode = () => resolveDeveloperModeFromSearch(location.search);
   const appShellEnvironment = createAppShellEnvironment({
     isTauriRuntime,

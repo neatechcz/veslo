@@ -5,6 +5,7 @@ import test from "node:test";
 const composerSource = readFileSync(new URL("../../../components/session/composer.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../../../app.tsx", import.meta.url), "utf8");
 const stagingSource = readFileSync(new URL("../../../pages/session-attachment-staging.ts", import.meta.url), "utf8");
+const sendWorkflowSource = readFileSync(new URL("../../../pages/session-send-workflow.ts", import.meta.url), "utf8");
 const appShellEnvironmentSource = readFileSync(
   new URL("../../../context/app-shell-environment.ts", import.meta.url),
   "utf8",
@@ -86,19 +87,19 @@ test("all attachment staging happens in session-directory send pipeline, not in 
   );
 
   assert.match(
-    appSource,
-    /const routedDraft = routeStagedAttachmentsForModel\(\{\s*draft: resolvedDraft,\s*stagedAttachments,\s*model,\s*providers: providers\(\),\s*\}\);/s,
+    sendWorkflowSource,
+    /const routedDraft = deps\.routeStagedAttachmentsForModel\(\{\s*draft: resolvedDraft,\s*stagedAttachments,\s*model,\s*providers: deps\.providers\(\),\s*\}\);/s,
     "send pipeline should route staged attachments only after it knows the selected model capabilities",
   );
 
   assert.match(
-    appSource,
-    /stageAttachmentsIntoSessionDirectory\(resolvedDraft, sessionID, sendPreflight\)/,
+    sendWorkflowSource,
+    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, sessionID, sendPreflight\)/,
     "send pipeline should stage attachments after session selection and before provider calls",
   );
 
   assert.doesNotMatch(
-    appSource,
+    sendWorkflowSource,
     /stagedPaths\.join\("\\n"\)/,
     "staging should not append attachment filenames directly into prompt text",
   );

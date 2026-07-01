@@ -20,6 +20,7 @@ type AppSourceContractInventoryEntry = {
 };
 
 const testsDir = fileURLToPath(new URL(".", import.meta.url));
+const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 
 const plannedAppModules: PlannedAppModule[] = [
   { id: "AM01", relativePath: "context/app-shell-environment.ts", owner: "context" },
@@ -46,13 +47,12 @@ const plannedAppModules: PlannedAppModule[] = [
   { id: "AM22", relativePath: "pages/soul-data-store.ts", owner: "page-workflow" },
   { id: "AM23", relativePath: "context/app-startup-hydration.ts", owner: "context" },
   { id: "AM24", relativePath: "app-view-props.ts", owner: "app-props", minimumImplementationLines: 100 },
+  { id: "AM25", relativePath: "context/app-send-trace.ts", owner: "context" },
 ];
 
 const appSourceContractInventory: AppSourceContractInventoryEntry[] = [
-  { path: "app-attachment-workspace-readiness.test.ts", classification: "behavior", retargetBy: "AM10" },
   { path: "app-boot-engine-ready.test.ts", classification: "behavior", retargetBy: "AM23/AM08" },
   { path: "app-conversation-abort.test.ts", classification: "behavior", retargetBy: "AM09" },
-  { path: "app-create-session-health-fallback.test.ts", classification: "behavior", retargetBy: "AM04" },
   { path: "app-feedback-flow.contract.test.ts", classification: "behavior", retargetBy: "AM03" },
   { path: "app-local-veslo-server-ensure.test.ts", classification: "behavior", retargetBy: "AM04" },
   { path: "app-managed-ai-bootstrap-gate.test.ts", classification: "behavior", retargetBy: "AM07" },
@@ -68,7 +68,6 @@ const appSourceContractInventory: AppSourceContractInventoryEntry[] = [
   { path: "app-send-workspace-scope.test.ts", classification: "behavior", retargetBy: "AM11" },
   { path: "app-session-archives.test.ts", classification: "behavior", retargetBy: "AM14/AM23" },
   { path: "app-session-creation-flow-contract.test.ts", classification: "wiring", retargetBy: "AM12" },
-  { path: "app-session-prompt-error.test.ts", classification: "behavior", retargetBy: "AM13" },
   { path: "app-session-route-controller-contract.test.ts", classification: "wiring", retargetBy: "AM16" },
   { path: "app-skill-registry-events.test.ts", classification: "behavior", retargetBy: "AM19" },
   { path: "app-startup-route-controller-contract.test.ts", classification: "wiring", retargetBy: "AM02" },
@@ -86,17 +85,13 @@ const appSourceContractInventory: AppSourceContractInventoryEntry[] = [
   { path: "context/workspace-session-snapshots.test.ts", classification: "wiring", retargetBy: "AM09/AM17" },
   { path: "context/workspace-switch-overlay-state.test.ts", classification: "wiring", retargetBy: "AM23" },
   { path: "lib/session-route-selection-guard.test.ts", classification: "wiring", retargetBy: "AM16" },
-  { path: "mcp-hub-contract.test.ts", classification: "wiring", retargetBy: "AM20" },
   { path: "pages/dashboard-menu-navigation.test.ts", classification: "wiring", retargetBy: "AM24" },
   { path: "pages/session-inline-loading.test.ts", classification: "wiring", retargetBy: "AM24" },
-  { path: "pages/session-message-queue.test.ts", classification: "behavior", retargetBy: "AM11" },
   { path: "pages/session-message-replacement.test.ts", classification: "behavior", retargetBy: "AM13" },
   { path: "pages/session-mutation-workspace-routing.test.ts", classification: "behavior", retargetBy: "AM13" },
   { path: "pages/session-navigation.test.ts", classification: "wiring", retargetBy: "AM16/AM24" },
-  { path: "pages/session-pending-sidebar-cleanup.test.ts", classification: "behavior", retargetBy: "AM11" },
   { path: "pages/session-view-modularization.test.ts", classification: "placement", retargetBy: "AM24/AM25" },
   { path: "pages/settings-tabs-layout.test.ts", classification: "wiring", retargetBy: "AM24" },
-  { path: "pages/sidebar-update-prompt-actions.test.ts", classification: "wiring", retargetBy: "AM13/AM24" },
   { path: "pages/skills-layout-contract.test.ts", classification: "wiring", retargetBy: "AM20/AM24" },
   { path: "session-list-roots-regression.test.ts", classification: "placement", retargetBy: "AM14" },
   { path: "session-route-client-resume.test.ts", classification: "behavior", retargetBy: "AM16" },
@@ -182,7 +177,7 @@ test("planned app extraction modules stay inside durable owner boundaries", () =
   });
 
   assert.deepEqual(violations, [], "planned app modules should stay inside the directories approved by the plan");
-  assert.equal(new Set(plannedAppModules.map((module) => module.id)).size, 24, "AM01-AM24 should each have one target module");
+  assert.equal(new Set(plannedAppModules.map((module) => module.id)).size, 25, "AM01-AM25 should each have one target module");
 });
 
 test("modularization guard rejects tiny wrappers", () => {
@@ -246,4 +241,59 @@ test("app.tsx source-contract readers are classified for later retargeting", () 
     appSourceContractInventory.some((entry) => entry.classification === "placement"),
     "inventory should keep brittle placement contracts visible for retargeting",
   );
+});
+
+test("app.tsx stays the default exported composition shell after final cleanup", () => {
+  assert.match(appSource, /export default function App\(\)/, "app.tsx should remain the default App component");
+
+  for (const factoryName of [
+    "createAppShellEnvironment",
+    "createAppRouteSync",
+    "createFeedbackWorkflow",
+    "createVesloServerConnection",
+    "createWorkspaceRuntimeDebugProbe",
+    "createDenDesktopAuthWorkflow",
+    "createManagedAiAccessStore",
+    "createManagedAiRuntimeConfigSync",
+    "createConversationService",
+    "createSessionAttachmentStaging",
+    "createSessionSendWorkflow",
+    "createSessionCreationWorkflow",
+    "createSessionMutationWorkflow",
+    "createSessionArchiveStore",
+    "createSessionSidebarDecorations",
+    "createSessionRouteSync",
+    "createSessionCapabilitiesStore",
+    "createAppDeepLinkWorkflow",
+    "createSkillRegistryOrchestrator",
+    "createMcpConnectionWorkflow",
+    "createScheduledAutomationStore",
+    "createSoulDataStore",
+    "createAppStartupHydration",
+    "createAppViewProps",
+    "createAppSendTrace",
+  ]) {
+    assert.match(appSource, new RegExp(`\\b${factoryName}\\b`), `app.tsx should compose ${factoryName}`);
+  }
+});
+
+test("app.tsx delegates send trace ownership instead of keeping an inline diagnostics block", () => {
+  assert.match(
+    appSource,
+    /import \{ createAppSendTrace \} from "\.\/context\/app-send-trace";/,
+    "app.tsx should import the send trace owner",
+  );
+  assert.match(
+    appSource,
+    /const appSendTrace = createAppSendTrace\(\);[\s\S]*createSendPreflightContext[\s\S]*recordExternalSendTraceEntries[\s\S]*recordSendTrace[\s\S]*sendTraceStep/,
+    "app.tsx should wire send trace helpers from the send trace owner",
+  );
+  assert.doesNotMatch(appSource, /type SendTraceRoot = typeof window/, "send trace root typing should live outside app.tsx");
+  assert.doesNotMatch(
+    appSource,
+    /const createSendPreflightContext = \(traceId\?: string \| null\)/,
+    "send preflight context construction should live outside app.tsx",
+  );
+  assert.doesNotMatch(appSource, /function recordSendTrace\(/, "send trace recording should live outside app.tsx");
+  assert.doesNotMatch(appSource, /const sendTraceStep = async <T,>\(/, "send trace timing should live outside app.tsx");
 });

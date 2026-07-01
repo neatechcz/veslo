@@ -105,7 +105,7 @@ test("session runtime availability is not inferred from local connected browse s
   const runtimeAvailabilitySource = sourceBetween(
     sessionSource,
     "  const runtimeAvailableWithoutClient = createMemo(() => {",
-    "  const leftSidebarContent = () => (",
+    "  const leftSidebarUpdatePill = () => (",
   );
 
   assert.doesNotMatch(

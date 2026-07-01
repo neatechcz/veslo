@@ -4,6 +4,7 @@ import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const routeSyncSource = readFileSync(new URL("../context/session-route-sync.ts", import.meta.url), "utf8");
+const createWorkflowSource = readFileSync(new URL("../pages/session-creation-workflow.ts", import.meta.url), "utf8");
 const pendingDraftControllerSource = readFileSync(
   new URL("../context/pending-session-draft-controller.ts", import.meta.url),
   "utf8",
@@ -106,16 +107,16 @@ test("session route re-selects once when a client becomes available after bootst
 });
 
 test("createSessionAndOpen injects the new session before selecting it", () => {
-  const createStart = source.indexOf("  async function createSessionAndOpen(");
-  const createEnd = source.indexOf("  const chooseFolderForCurrentSession = async () =>", createStart);
+  const createStart = createWorkflowSource.indexOf("  const createSessionAndOpen = async (");
+  const createEnd = createWorkflowSource.indexOf("  return {", createStart);
   assert.notStrictEqual(createStart, -1, "createSessionAndOpen should exist");
   assert.notStrictEqual(createEnd, -1, "createSessionAndOpen block end should exist");
-  const createSource = source.slice(createStart, createEnd);
-  const handoffIndex = createSource.indexOf("options.onMaterializedSessionId?.({");
-  const setSessionsIndex = createSource.indexOf("setSessions([session, ...currentStoreSessions]);");
-  const sidebarIndex = createSource.indexOf("materializePendingSessionInWorkspaceSidebar({");
-  const ownNavigationIndex = createSource.indexOf("sessionRouteSync.markOwnNavigationSession(session.id);");
-  const selectIndex = createSource.indexOf('mark("session:select:start", { sessionID: session.id });');
+  const createSource = createWorkflowSource.slice(createStart, createEnd);
+  const handoffIndex = createSource.indexOf("(options.onMaterializedSessionId ?? deps.onMaterializedSessionId)?.(handoff);");
+  const setSessionsIndex = createSource.indexOf("deps.setSessions([createdSession, ...currentStoreSessions]);");
+  const sidebarIndex = createSource.indexOf("deps.materializePendingSessionInWorkspaceSidebar({");
+  const ownNavigationIndex = createSource.indexOf("deps.sessionRouteSync.markOwnNavigationSession(createdSession.id);");
+  const selectIndex = createSource.indexOf('mark("session:select:start", { sessionID: createdSession.id });');
   assert.ok(handoffIndex >= 0, "createSessionAndOpen should publish the materialized scoped handoff");
   assert.ok(setSessionsIndex > handoffIndex, "pending-to-real handoff should happen before session store injection");
   assert.ok(sidebarIndex > setSessionsIndex, "sidebar materialization should happen after session store injection");
@@ -124,7 +125,7 @@ test("createSessionAndOpen injects the new session before selecting it", () => {
 
   assert.match(
     createSource,
-    /const displaySession = applyPendingInitialSessionTitle\(session\);[\s\S]*options\.onMaterializedSessionId\?\.\(\{[\s\S]*setSessions\(\[session, \.\.\.currentStoreSessions\]\);[\s\S]*materializePendingSessionInWorkspaceSidebar\(\{[\s\S]*const shouldRouteCreatedSession = shouldRouteCreatedSessionAfterSelect\(\{[\s\S]*sessionRouteSync\.markOwnNavigationSession\(session\.id\);[\s\S]*mark\("session:select:start", \{ sessionID: session\.id \}\);[\s\S]*"createSessionAndOpen:select-session"[\s\S]*mark\("session:select:ok", \{ sessionID: session\.id \}\);[\s\S]*goToSession\(session\.id\);/s,
+    /const displaySession = deps\.applyPendingInitialSessionTitle\(createdSession\);[\s\S]*\(options\.onMaterializedSessionId \?\? deps\.onMaterializedSessionId\)\?\.\(handoff\);[\s\S]*deps\.setSessions\(\[createdSession, \.\.\.currentStoreSessions\]\);[\s\S]*deps\.materializePendingSessionInWorkspaceSidebar\(\{[\s\S]*const shouldRouteCreatedSession = shouldRouteCreatedSessionAfterSelect\(\{[\s\S]*deps\.sessionRouteSync\.markOwnNavigationSession\(createdSession\.id\);[\s\S]*mark\("session:select:start", \{ sessionID: createdSession\.id \}\);[\s\S]*"createSessionAndOpen:select-session"[\s\S]*mark\("session:select:ok", \{ sessionID: createdSession\.id \}\);[\s\S]*deps\.goToSession\(createdSession\.id\);/s,
     "newly created sessions should hand off pending UI, enter session/sidebar state, arm route guard, select, then route",
   );
 });

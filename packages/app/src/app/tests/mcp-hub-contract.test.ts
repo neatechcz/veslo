@@ -4,8 +4,8 @@ import test from "node:test";
 
 const extensionsSource = readFileSync(new URL("../context/extensions.ts", import.meta.url), "utf8");
 const mcpSource = readFileSync(new URL("../pages/mcp.tsx", import.meta.url), "utf8");
-const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const workflowSource = readFileSync(new URL("../context/mcp-connection-workflow.ts", import.meta.url), "utf8");
+const mcpRefreshSource = readFileSync(new URL("../lib/mcp-server-refresh.ts", import.meta.url), "utf8");
 const authModalSource = readFileSync(new URL("../components/mcp-auth-modal.tsx", import.meta.url), "utf8");
 const constantsSource = readFileSync(new URL("../constants.ts", import.meta.url), "utf8");
 const enLocaleSource = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
@@ -33,9 +33,9 @@ test("extensions store uses the mcp domain facade for hub mcp server requests", 
 });
 
 test("App and MCP workflow use the mcp domain facade for workspace mcp server requests", () => {
-  assert.match(appSource, /remoteContext\.vesloClient\.mcp\.list/);
+  assert.match(mcpRefreshSource, /client\.mcp\.list\(workspaceId\)/);
   assert.match(workflowSource, /vesloClient\.mcp\.(?:add|remove|refreshRuntimeToken|logoutAuth)/);
-  assert.doesNotMatch(appSource, /remoteContext\.vesloClient\.listMcp\(/);
+  assert.doesNotMatch(mcpRefreshSource, /client\.listMcp\(/);
   assert.doesNotMatch(workflowSource, /vesloClient\.(?:addMcp|removeMcp|refreshMcpRuntimeToken|logoutMcpAuth)\(/);
 });
 

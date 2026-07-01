@@ -54,7 +54,7 @@ export function createMcpServersRefresher(options: McpServersRefresherOptions) {
   };
 
   const readFromVesloServer = async (client: VesloServerClient, workspaceId: string): Promise<McpServerEntry[]> => {
-    const response = await client.listMcp(workspaceId);
+    const response = await client.mcp.list(workspaceId);
     return response.items.map((entry) => ({
       name: entry.name,
       config: entry.config as McpServerEntry["config"],

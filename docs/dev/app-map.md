@@ -18,7 +18,9 @@ This document maps the main Veslo code surfaces so future coding agents can find
 ## App Entry Points
 
 - `packages/app/src/app/app.tsx`
-  Main app composition, top-level signals, persistence wiring, workspace activation, share-link handling, feedback submission, and cross-surface coordination.
+  Main app composition root, top-level signal ownership, dependency injection, modal mounting, and route shell composition. New business workflows should live in a context/page module below and be wired here.
+- `packages/app/src/app/app-view-props.ts`
+  Page prop adapters for onboarding, dashboard, and session views. Use this when a page prop is assembled from app-level stores but the page itself should not know the full app shell.
 - `packages/app/src/app/pages/onboarding.tsx`
   First-run onboarding UI and browser sign-in handoff UI.
 - `packages/app/src/app/pages/dashboard.tsx`
@@ -58,6 +60,10 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
   Workspace lifecycle, onboarding completion, workspace switching, activation, and remote/local policy branching.
 - `packages/app/src/app/context/extensions.ts`
   Skills, plugins, and MCP loading/mutation wiring.
+- `packages/app/src/app/context/app-send-trace.ts`
+  App-level send trace id creation, preflight trace context, timed step wrapper, and external trace fan-in from Veslo server conversation runs.
+- `packages/app/src/app/context/app-startup-hydration.ts`
+  Startup storage hydration, web/desktop deep-link startup wiring, updater preference restoration, and route startup signal ordering.
 - `packages/app/src/app/context/updater.ts`
   Desktop updater state and preferences.
 - `packages/app/src/app/stores/config-store.ts`
@@ -157,11 +163,13 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
 ## When Looking For Something
 
 - Onboarding or auth issue: start at `onboarding.tsx`, `workspace.ts`, and `den-auth.ts`.
-- Settings or persistence issue: start at `settings.tsx`, `constants.ts`, `theme.ts`, and `app.tsx`.
+- Settings or persistence issue: start at `settings.tsx`, `constants.ts`, `theme.ts`, and `context/app-startup-hydration.ts`; use `app.tsx` only for final shell wiring.
 - Skills/Pluginy/Napojení/MCP issue: start at `extensions.ts`, then the
   corresponding page component.
-- Session send, queue, retry, or pending-session issue: start at `session-conversation-flow.ts`,
-  then the page wiring in `session.tsx`.
+- Session send, queue, retry, or pending-session issue: start at `session-send-workflow.ts`,
+  `session-creation-workflow.ts`, or `session-mutation-workflow.ts`, then the page wiring in `session.tsx`.
+- Send trace, preflight trace id, or native send diagnostics issue: start at `context/app-send-trace.ts`,
+  then follow the injected dependency into the send, creation, mutation, attachment, and conversation-service modules.
 - Session store facade issue: start at `context/session.ts`, then follow the controller wiring to
   the owning module.
 - Session transcript, deletion, hydration, or pagination issue: start at

@@ -16,7 +16,7 @@ test("dashboard sidebar opens selected sessions without selected-parent subagent
 test("session sidebar keeps selected-parent row clicks available for subagent expansion", () => {
   assert.match(
     sessionSource,
-    /<WorkspaceSessionList[\s\S]*?allowSelectedParentExpansion=\{true\}[\s\S]*?onOpenSession=\{openSessionFromList\}/,
+    /workspaceSessionListProps=\{\{[\s\S]*?allowSelectedParentExpansion:\s*true[\s\S]*?onOpenSession:\s*openSessionFromList/,
     "session view sidebar should allow the explicit selected-parent row expansion gesture",
   );
 });
