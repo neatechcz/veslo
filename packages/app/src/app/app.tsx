@@ -140,6 +140,7 @@ import { createPendingSessionDraftController } from "./context/pending-session-d
 import { createComposerTargetController } from "./context/composer-target-controller";
 import { createAppShellEnvironment } from "./context/app-shell-environment";
 import { createFeedbackWorkflow } from "./context/feedback-workflow";
+import { createDenDesktopAuthWorkflow } from "./context/den-desktop-auth-workflow";
 import {
   createWorkspaceRuntimeDebugProbe,
   debugProbeCall,
@@ -305,24 +306,10 @@ import {
 } from "./utils";
 import { createStartupGuard } from "./utils/startup-guard";
 import {
-  parseAuthCompleteDeepLink,
-  clearDenAuth,
-  exchangeHandoffCode,
-  flushPendingDesktopSnapshotWrite,
-  getDesktopBrowserAuthStatus,
   hydrateDenAuthFromDesktopSnapshot,
   readDenAuth,
-  resolveAuthenticatedDenUserLabel,
-  resolvePreferredDenUserLabel,
-  subscribeDenAuthChanges,
-  writeDenAuth,
   readDenKeepSignedIn,
   writeDenKeepSignedIn,
-  getDenApiBase,
-  startDesktopBrowserAuth,
-  readDesktopAuthExchangeProof,
-  readPendingDesktopAuthSession,
-  clearDesktopAuthExchangeProof,
 } from "./lib/den-auth";
 import { currentLocale, isLanguage, setLocale, t, type Language } from "../i18n";
 import {
@@ -1063,6 +1050,55 @@ export default function App() {
   const [error, setError] = createSignal<string | null>(null);
   const [opencodeConnectStatus, setOpencodeConnectStatus] = createSignal<OpencodeConnectStatus | null>(null);
   const [booting, setBooting] = createSignal(true);
+  const openDesktopAuthUrl = async (url: string) => {
+    if (isTauriRuntime()) {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(url);
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+  const requestManagedAiAccessRefreshFromAuth = () => {
+    setManagedAiAccessRefreshNonce((value) => value + 1);
+  };
+  const denDesktopAuthWorkflow = createDenDesktopAuthWorkflow({
+    isTauriRuntime,
+    workspace: {
+      activeWorkspaceId: () => currentWorkspaceStoreRef()?.activeWorkspaceId() ?? "",
+      bootstrapOnboarding: async () => currentWorkspaceStoreRef()?.bootstrapOnboarding() ?? false,
+    },
+    ui: {
+      setError,
+      setOnboardingStep,
+      setView,
+      setBooting,
+    },
+    managedAi: {
+      clearManagedAiAccessCache: () => clearManagedAiAccessCache(),
+      requestManagedAiAccessRefresh: requestManagedAiAccessRefreshFromAuth,
+    },
+    account: {
+      setAuthenticatedAccountId,
+    },
+    diagnostics: {
+      setBootstrapDiagnosticsCloudContext,
+      clearBootstrapDiagnosticsCloudContext,
+      recordBootstrapDiagnostic,
+    },
+    browser: {
+      openDesktopAuthUrl,
+    },
+    safeStringify,
+  });
+  const {
+    denAuthRevision,
+    authCompleteExchangeBusy,
+    authenticatedUser,
+    logout: logoutLocalDenAuth,
+    startDesktopBrowserSignIn,
+    resumeDesktopBrowserSignIn,
+    queueAuthCompleteDeepLink,
+  } = denDesktopAuthWorkflow;
   // Send-timeout fix 2026-06-10 — boots false: on cold/lazy boot no engine is
   // running, and the old initial `true` opened a window where engineReady
   // guards (permission polls, MCP status, capabilities) passed and their GETs
@@ -3138,8 +3174,6 @@ export default function App() {
   const [managedAiGatewayAccessToken, setManagedAiGatewayAccessToken] = createSignal("");
   const [managedAiAccessBusy, setManagedAiAccessBusy] = createSignal(false);
   const [managedAiAccessError, setManagedAiAccessError] = createSignal<string | null>(null);
-  const [denAuthRevision, setDenAuthRevision] = createSignal(0);
-  let lastBootstrapDiagnosticsCloudContextKey = "";
   let lastNewSessionDisabledDiagnosticKey = "";
   const [managedAiAccessRefreshNonce, setManagedAiAccessRefreshNonce] = createSignal(0);
   const [managedAiAccessRetryAttempt, setManagedAiAccessRetryAttempt] = createSignal(0);
@@ -3166,18 +3200,6 @@ export default function App() {
   );
   const requestManagedAiAccessRefresh = () => {
     setManagedAiAccessRefreshNonce((value) => value + 1);
-  };
-  const logoutLocalDenAuth = async () => {
-    clearDenAuth();
-    if (isTauriRuntime()) {
-      lastBootstrapDiagnosticsCloudContextKey = "";
-      void clearBootstrapDiagnosticsCloudContext();
-    }
-    clearManagedAiAccessCache();
-    setOnboardingStep("auth");
-    setView("onboarding");
-    await flushPendingDesktopSnapshotWrite();
-    requestManagedAiAccessRefresh();
   };
   const denGatewayAccessToken = createMemo(() => {
     denAuthRevision();
@@ -5431,280 +5453,6 @@ export default function App() {
     return true;
   };
 
-  const [authCompleteExchangeBusy, setAuthCompleteExchangeBusy] = createSignal(false);
-  const [authenticatedUser, setAuthenticatedUser] = createSignal<string | null>(null);
-  let desktopAuthStatusPollController: AbortController | null = null;
-  let exchangedCodes = new Set<string>();
-
-  const cancelDesktopAuthStatusPolling = () => {
-    if (!desktopAuthStatusPollController) return;
-    try {
-      desktopAuthStatusPollController.abort();
-    } catch {
-      // ignore
-    }
-    desktopAuthStatusPollController = null;
-  };
-
-  const sleepDesktopAuthPoll = (ms: number, signal?: AbortSignal) =>
-    new Promise<void>((resolve, reject) => {
-      const timeoutId = window.setTimeout(() => {
-        cleanup();
-        resolve();
-      }, ms);
-
-      const onAbort = () => {
-        cleanup();
-        reject(new DOMException("Aborted", "AbortError"));
-      };
-
-      const cleanup = () => {
-        window.clearTimeout(timeoutId);
-        signal?.removeEventListener("abort", onAbort);
-      };
-
-      if (signal) {
-        if (signal.aborted) {
-          cleanup();
-          reject(new DOMException("Aborted", "AbortError"));
-          return;
-        }
-        signal.addEventListener("abort", onAbort, { once: true });
-      }
-    });
-
-  const finishDesktopBrowserAuth = (code: string, exchangeProof?: ReturnType<typeof readDesktopAuthExchangeProof>) => {
-    if (authCompleteExchangeBusy()) {
-      return;
-    }
-    if (exchangedCodes.has(code)) {
-      return;
-    }
-
-    cancelDesktopAuthStatusPolling();
-    setAuthCompleteExchangeBusy(true);
-    setError(null);
-    void exchangeHandoffCode(code, exchangeProof)
-      .then(async (result) => {
-        if (result.ok) {
-          exchangedCodes.add(code);
-          writeDenAuth(result.state);
-          if (isTauriRuntime()) {
-            const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
-            await setBootstrapDiagnosticsCloudContext({
-              denApiBase: result.state.denApiBase,
-              token: result.state.token,
-              userId: result.state.user.id,
-              orgId: result.state.orgId || result.state.org.id,
-              workspaceId: activeWorkspaceId,
-            });
-            void recordBootstrapDiagnostic("desktop-auth:exchange-success", {
-              denApiBase: result.state.denApiBase,
-              userId: result.state.user.id,
-              orgId: result.state.orgId || result.state.org.id,
-              workspaceId: activeWorkspaceId || null,
-            });
-            void recordBootstrapDiagnostic("desktop-auth:post-auth-bootstrap-start", {
-              userId: result.state.user.id,
-              orgId: result.state.orgId || result.state.org.id,
-              workspaceId: activeWorkspaceId || null,
-            });
-          }
-          await flushPendingDesktopSnapshotWrite();
-          clearDesktopAuthExchangeProof(exchangeProof?.sessionId);
-          requestManagedAiAccessRefresh();
-          setError(null);
-          setOnboardingStep("connecting");
-          setView("onboarding");
-          setBooting(true);
-          const rebootstrapTimeout = setTimeout(() => {
-            console.warn("[boot] post-auth bootstrap timed out after 15s - forcing boot complete");
-            if (isTauriRuntime()) {
-              void recordBootstrapDiagnostic("desktop-auth:post-auth-bootstrap-timeout", {
-                userId: result.state.user.id,
-                orgId: result.state.orgId || result.state.org.id,
-                workspaceId: workspaceStore.activeWorkspaceId().trim() || null,
-                timeoutMs: 15_000,
-              });
-            }
-            setBooting(false);
-          }, 15_000);
-          void workspaceStore.bootstrapOnboarding()
-            .catch((error) => {
-              if (isTauriRuntime()) {
-                void recordBootstrapDiagnostic("desktop-auth:post-auth-bootstrap-failed", {
-                  userId: result.state.user.id,
-                  orgId: result.state.orgId || result.state.org.id,
-                  workspaceId: workspaceStore.activeWorkspaceId().trim() || null,
-                  message: error instanceof Error ? error.message : safeStringify(error),
-                });
-              }
-            })
-            .finally(() => {
-              clearTimeout(rebootstrapTimeout);
-              setBooting(false);
-            });
-          return;
-        }
-
-        console.error("[den-auth] exchange failed:", result.error);
-        if (exchangeProof) {
-          clearDesktopAuthExchangeProof(exchangeProof.sessionId);
-        }
-        setError(`Sign in failed: ${result.error}`);
-        setOnboardingStep("auth");
-        setView("onboarding");
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : safeStringify(error);
-        console.error("[den-auth] exchange failed:", message);
-        if (exchangeProof) {
-          clearDesktopAuthExchangeProof(exchangeProof.sessionId);
-        }
-        setError(`Sign in failed: ${message}`);
-        setOnboardingStep("auth");
-        setView("onboarding");
-      })
-      .finally(() => {
-        setAuthCompleteExchangeBusy(false);
-      });
-  };
-
-  const startDesktopAuthStatusPolling = (sessionId: string) => {
-    const initialProof = readDesktopAuthExchangeProof(sessionId);
-    if (!initialProof) {
-      return;
-    }
-
-    cancelDesktopAuthStatusPolling();
-    const controller = new AbortController();
-    desktopAuthStatusPollController = controller;
-
-    void (async () => {
-      let consecutiveFailures = 0;
-
-      while (!controller.signal.aborted) {
-        const latestProof = readDesktopAuthExchangeProof(sessionId);
-        if (!latestProof) {
-          return;
-        }
-
-        if (authCompleteExchangeBusy()) {
-          return;
-        }
-
-        const statusResult = await getDesktopBrowserAuthStatus(sessionId, controller.signal);
-        if (controller.signal.aborted) {
-          return;
-        }
-
-        if (!statusResult.ok) {
-          if (statusResult.statusCode === 404) {
-            return;
-          }
-          consecutiveFailures += 1;
-          if (consecutiveFailures >= 3) {
-            console.warn("[den-auth] desktop auth polling stopped after repeated failures:", statusResult.error);
-            return;
-          }
-        } else {
-          consecutiveFailures = 0;
-          if (statusResult.status === "authorized" && statusResult.code) {
-            finishDesktopBrowserAuth(statusResult.code, latestProof);
-            return;
-          }
-
-          if (
-            statusResult.status === "expired" ||
-            statusResult.status === "cancelled" ||
-            statusResult.status === "exchanged"
-          ) {
-            return;
-          }
-        }
-
-        try {
-          await sleepDesktopAuthPoll(1_250, controller.signal);
-        } catch (error) {
-          const name = error instanceof DOMException ? error.name : "";
-          if (name === "AbortError") {
-            return;
-          }
-          throw error;
-        }
-      }
-    })().catch((error) => {
-      if (controller.signal.aborted) {
-        return;
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn("[den-auth] desktop auth polling failed:", message);
-    });
-  };
-
-  const openDesktopAuthUrl = async (url: string) => {
-    if (isTauriRuntime()) {
-      const { openUrl } = await import("@tauri-apps/plugin-opener");
-      await openUrl(url);
-      return;
-    }
-    window.open(url, "_blank", "noopener,noreferrer");
-  };
-
-  const resumePendingDesktopBrowserAuth = async (reopenBrowser: boolean): Promise<boolean> => {
-    const pending = readPendingDesktopAuthSession();
-    if (!pending) {
-      return false;
-    }
-
-    setError(null);
-    startDesktopAuthStatusPolling(pending.sessionId);
-    if (reopenBrowser && pending.authorizeUrl) {
-      await openDesktopAuthUrl(pending.authorizeUrl);
-    }
-    return true;
-  };
-
-  const startDesktopBrowserSignIn = async () => {
-    setError(null);
-    if (await resumePendingDesktopBrowserAuth(true)) {
-      return;
-    }
-
-    let url = `${getDenApiBase()}/?desktopOnboarding=1`;
-    const startResult = await startDesktopBrowserAuth("signin");
-    if (startResult.ok) {
-      url = startResult.authorizeUrl;
-      startDesktopAuthStatusPolling(startResult.sessionId);
-    } else {
-      console.warn("[den-auth] /start failed, falling back to legacy onboarding URL:", startResult.error);
-    }
-    await openDesktopAuthUrl(url);
-  };
-
-  const resumeDesktopBrowserSignIn = async () => {
-    if (await resumePendingDesktopBrowserAuth(false)) {
-      return;
-    }
-    await startDesktopBrowserSignIn();
-  };
-
-  const queueAuthCompleteDeepLink = (rawUrl: string): boolean => {
-    const payload = parseAuthCompleteDeepLink(rawUrl);
-    if (!payload) {
-      return false;
-    }
-
-    if (authCompleteExchangeBusy()) {
-      return true;
-    }
-
-    const exchangeProof = readDesktopAuthExchangeProof(payload.sessionId);
-    finishDesktopBrowserAuth(payload.code, exchangeProof);
-
-    return true;
-  };
-
   onMount(() => {
     if (typeof window !== "undefined") {
       try {
@@ -5713,100 +5461,6 @@ export default function App() {
         // ignore
       }
     }
-  });
-
-  onCleanup(() => {
-    cancelDesktopAuthStatusPolling();
-  });
-
-  onMount(() => {
-    const unsubscribe = subscribeDenAuthChanges(() => {
-      setDenAuthRevision((value) => value + 1);
-    });
-    onCleanup(unsubscribe);
-  });
-
-  createEffect(() => {
-    if (!isTauriRuntime()) return;
-
-    denAuthRevision();
-    const auth = readDenAuth();
-    const denApiBase = auth?.denApiBase?.trim() ?? "";
-    const token = auth?.token?.trim() ?? "";
-    const userId = auth?.user?.id?.trim() ?? "";
-    const orgId = auth?.orgId?.trim() || auth?.org?.id?.trim() || "";
-    const workspaceId = workspaceStore.activeWorkspaceId().trim();
-    const nextKey = [denApiBase, token, userId, orgId, workspaceId].join("\u0000");
-
-    if (nextKey === lastBootstrapDiagnosticsCloudContextKey) return;
-    lastBootstrapDiagnosticsCloudContextKey = nextKey;
-
-    if (!denApiBase || !token || !userId || !orgId) {
-      void clearBootstrapDiagnosticsCloudContext();
-      return;
-    }
-
-    void setBootstrapDiagnosticsCloudContext({
-      denApiBase,
-      token,
-      userId,
-      orgId,
-      workspaceId,
-    });
-  });
-
-  const resolveDenUserLabel = (auth: ReturnType<typeof readDenAuth>) => {
-    return resolveAuthenticatedDenUserLabel(auth);
-  };
-
-  createEffect(() => {
-    denAuthRevision();
-
-    const auth = readDenAuth();
-    setAuthenticatedUser(resolveDenUserLabel(auth));
-    setAuthenticatedAccountId(auth?.user?.id?.trim() || null);
-    if (!auth) return;
-
-    const token = auth?.token?.trim() ?? "";
-    const denApiBase = auth?.denApiBase?.trim() ?? "";
-    if (!token || !denApiBase) return;
-    if ((auth?.user?.name?.trim() ?? "") || (auth?.user?.email?.trim() ?? "")) return;
-
-    let canceled = false;
-    void (async () => {
-      try {
-        const response = await fetch(`${denApiBase.replace(/\/+$/, "")}/v1/me`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!response.ok || canceled) return;
-        const payload = (await response.json()) as { user?: { id?: unknown; name?: unknown; email?: unknown } };
-        const userId = typeof payload?.user?.id === "string" ? payload.user.id.trim() : "";
-        if (!userId) return;
-        const userName = typeof payload?.user?.name === "string" ? payload.user.name.trim() : "";
-        const userEmail = typeof payload?.user?.email === "string" ? payload.user.email.trim() : "";
-        if (canceled) return;
-        setAuthenticatedUser(resolvePreferredDenUserLabel({
-          id: userId,
-          name: userName || undefined,
-          email: userEmail || undefined,
-        }));
-        setAuthenticatedAccountId(userId);
-        writeDenAuth({
-          ...auth,
-          user: {
-            id: userId,
-            name: userName || undefined,
-            email: userEmail || undefined,
-          },
-        });
-      } catch {
-        // keep local value
-      }
-    })();
-
-    onCleanup(() => {
-      canceled = true;
-    });
   });
 
   const translateManagedAiAccessMessage = (message: string | null | undefined) => {
