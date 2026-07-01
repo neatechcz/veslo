@@ -98,7 +98,7 @@ const redoLastUserMessageSource =
     ? appSource.slice(redoLastUserMessageStart, redoLastUserMessageEnd)
     : "";
 const chooseFolderForCurrentSessionStart = appSource.indexOf("  const chooseFolderForCurrentSession = async () => {");
-const chooseFolderForCurrentSessionEnd = appSource.indexOf("  function runSoulPrompt(", chooseFolderForCurrentSessionStart);
+const chooseFolderForCurrentSessionEnd = appSource.indexOf("  onMount(async () => {", chooseFolderForCurrentSessionStart);
 const chooseFolderForCurrentSessionSource =
   chooseFolderForCurrentSessionStart >= 0 && chooseFolderForCurrentSessionEnd >= 0
     ? appSource.slice(chooseFolderForCurrentSessionStart, chooseFolderForCurrentSessionEnd)
@@ -743,7 +743,7 @@ test("second New session reopens the same pending draft and does not create anot
   assert.notEqual(openNewSessionSource, "", "New session flow should exist in pending draft controller");
   assert.match(
     openNewSessionSource,
-    /if \(existingPendingDraft\) \{\s*const pendingDraft = await deps\.pendingSessionDraftsGet\(existingPendingDraft\.id\);[\s\S]*if \(pendingDraft\) \{\s*const restoreError = formatPendingDraftAttachmentRestoreError\(pendingDraft\.attachmentFailures\);[\s\S]*if \(restoreError\) \{\s*deps\.setError\(restoreError\);[\s\S]*\}\s*const pendingWorkspaceId = \(existingPendingDraft\.privateWorkspaceId \?\? existingPendingDraft\.workspaceId\)\.trim\(\);[\s\S]*const activatedPendingWorkspace = await deps\.workspace\.activateWorkspace\(pendingWorkspaceId, \{[\s\S]*origin: "app:new-private-existing-pending-draft"[\s\S]*\}\);[\s\S]*if \(!activatedPendingWorkspace\) \{[\s\S]*await deps\.pendingSessionDraftsDelete\(existingPendingDraft\.id\);[\s\S]*markPendingDraftConsumed\(existingPendingDraft\.id\);[\s\S]*\} else \{[\s\S]*openPendingDraftSession\(newPrivatePendingDraftKey, existingPendingDraft, pendingDraft\.draft\.composer\);[\s\S]*return true;[\s\S]*\}[\s\S]*\}[\s\S]*\}/s,
+    /if \(existingPendingDraft\) \{[\s\S]*const pendingDraft = await deps\.pendingSessionDraftsGet\(existingPendingDraft\.id\);[\s\S]*if \(pendingDraft\) \{[\s\S]*reportPendingDraftRestoreFailures\(pendingDraft\.attachmentFailures\);[\s\S]*const pendingWorkspaceId = \(existingPendingDraft\.privateWorkspaceId \?\? existingPendingDraft\.workspaceId\)\.trim\(\);[\s\S]*const activatedPendingWorkspace = await deps\.workspace\.activateWorkspace\(pendingWorkspaceId, \{[\s\S]*origin: "app:new-private-existing-pending-draft"[\s\S]*\}\);[\s\S]*if \(!activatedPendingWorkspace\) \{[\s\S]*await deps\.pendingSessionDraftsDelete\(existingPendingDraft\.id\);[\s\S]*markPendingDraftConsumed\(existingPendingDraft\.id\);[\s\S]*\} else \{[\s\S]*openPendingDraftSession\(newPrivatePendingDraftKey, existingPendingDraft, pendingDraft\.draft\.composer\);[\s\S]*return true;[\s\S]*\}[\s\S]*\}[\s\S]*\}/s,
     "repeat New session should reopen the existing private pending draft instead of creating a new workspace",
   );
   const existingBranchMatch = openNewSessionSource.match(/if \(existingPendingDraft\) \{[\s\S]*?return true;\s*\}/);

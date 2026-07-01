@@ -178,6 +178,7 @@ import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
 import { createScheduledAutomationStore } from "./pages/scheduled-automation-store";
 import { createSessionMutationWorkflow } from "./pages/session-mutation-workflow";
+import { createSoulDataStore } from "./pages/soul-data-store";
 import { isPendingSessionInstanceId } from "./components/session/pending-session-instance-model";
 import ProtoWorkspacesView from "./pages/proto-workspaces";
 import ProtoV1UxView from "./pages/proto-v1-ux";
@@ -397,9 +398,6 @@ import {
   readVesloServerSettings,
   writeVesloServerSettings,
   clearVesloServerSettings,
-  type VesloSoulHeartbeatEntry,
-  type VesloSoulOverviewResponse,
-  type VesloSoulStatus,
   type VesloSessionLatestRunArtifacts,
   type VesloConversationRunInput,
   type VesloManagedAiAccessBundle,
@@ -3051,17 +3049,6 @@ export default function App() {
   const [mcpStatuses, setMcpStatuses] = createSignal<McpStatusMap>({});
   const [mcpConnectingName, setMcpConnectingName] = createSignal<string | null>(null);
   const [selectedMcp, setSelectedMcp] = createSignal<string | null>(null);
-  const [soulStatusByWorkspaceId, setSoulStatusByWorkspaceId] = createSignal<
-    Record<string, VesloSoulStatus | null>
-  >({});
-  const [soulOverview, setSoulOverview] = createSignal<VesloSoulOverviewResponse | null>(null);
-  const [soulOverviewError, setSoulOverviewError] = createSignal<string | null>(null);
-  const [soulOverviewBusy, setSoulOverviewBusy] = createSignal(false);
-  const [activeSoulHeartbeats, setActiveSoulHeartbeats] = createSignal<VesloSoulHeartbeatEntry[]>([]);
-  const [soulStatusBusy, setSoulStatusBusy] = createSignal(false);
-  const [soulHeartbeatsBusy, setSoulHeartbeatsBusy] = createSignal(false);
-  const [soulError, setSoulError] = createSignal<string | null>(null);
-
   // MCP OAuth modal state
   const [mcpAuthModalOpen, setMcpAuthModalOpen] = createSignal(false);
   const [mcpAuthEntry, setMcpAuthEntry] = createSignal<McpDirectoryInfo | null>(null);
@@ -6062,195 +6049,18 @@ export default function App() {
     reportError,
   });
 
-  const resolveSoulWorkspaceMap = async () => {
-    const client = vesloServerClient();
-    if (!client || vesloServerStatus() !== "connected") {
-      return {} as Record<string, string>;
-    }
-
-    const response = await client.listWorkspaces();
-    const items = Array.isArray(response.items) ? response.items : [];
-    const map: Record<string, string> = {};
-
-    const idByLocalPath = new Map<string, string>();
-    for (const item of items) {
-      const path = normalizeDirectoryPath(item.path ?? "");
-      if (!path) continue;
-      idByLocalPath.set(path, item.id);
-    }
-
-    for (const workspace of workspaceStore.workspaces()) {
-      if (workspace.workspaceType === "local") {
-        const key = normalizeDirectoryPath(workspace.path ?? "");
-        if (!key) continue;
-        const found = idByLocalPath.get(key);
-        if (found) {
-          map[workspace.id] = found;
-        }
-        continue;
-      }
-
-      if (workspace.remoteType !== "veslo") {
-        continue;
-      }
-
-      const explicitId =
-        workspace.vesloWorkspaceId?.trim() ||
-        parseVesloWorkspaceIdFromUrl(workspace.vesloHostUrl ?? "") ||
-        parseVesloWorkspaceIdFromUrl(workspace.baseUrl ?? "");
-      if (explicitId) {
-        map[workspace.id] = explicitId;
-        continue;
-      }
-
-      const directoryHint = normalizeDirectoryPath(workspace.directory ?? workspace.path ?? "");
-      if (!directoryHint) continue;
-      const match = items.find((entry) => {
-        const entryPath = normalizeDirectoryPath(
-          (entry.opencode?.directory ?? entry.directory ?? entry.path ?? "") as string,
-        );
-        return Boolean(entryPath && entryPath === directoryHint);
-      });
-      if (match?.id) {
-        map[workspace.id] = match.id;
-      }
-    }
-
-    return map;
-  };
-
-  let soulOverviewRefreshSeq = 0;
-  const refreshSoulOverview = async (client: VesloServerClient) => {
-    const requestSeq = ++soulOverviewRefreshSeq;
-    setSoulOverviewBusy(true);
-    const isCurrentRequest = () =>
-      requestSeq === soulOverviewRefreshSeq && vesloServerClient() === client && vesloServerStatus() === "connected";
-    try {
-      const overview = await client.getSoulOverview(skillRegistryMaterializationAuthContext());
-      if (!isCurrentRequest()) {
-        return;
-      }
-      setSoulOverview(overview);
-      setSoulOverviewError(null);
-    } catch (error) {
-      if (!isCurrentRequest()) {
-        return;
-      }
-      const message = error instanceof Error ? error.message : "Failed to load Soul overview.";
-      setSoulOverview(null);
-      setSoulOverviewError(message);
-    } finally {
-      if (isCurrentRequest()) {
-        setSoulOverviewBusy(false);
-      }
-    }
-  };
-
-  const refreshSoulData = async (options?: { force?: boolean }) => {
-    const client = vesloServerClient();
-    if (!client || vesloServerStatus() !== "connected") {
-      soulOverviewRefreshSeq += 1;
-      setSoulOverview(null);
-      setSoulOverviewError(null);
-      setSoulOverviewBusy(false);
-      setSoulStatusByWorkspaceId({});
-      setActiveSoulHeartbeats([]);
-      setSoulHeartbeatsBusy(false);
-      setSoulError(null);
-      return;
-    }
-
-    void refreshSoulOverview(client);
-    if (soulStatusBusy() && !options?.force) return;
-
-    setSoulStatusBusy(true);
-    setSoulError(null);
-    try {
-      const workspaceMap = await resolveSoulWorkspaceMap();
-      const workspaceIds = Object.entries(workspaceMap);
-
-      const nextStatusByWorkspace: Record<string, VesloSoulStatus | null> = {};
-      for (const workspace of workspaceStore.workspaces()) {
-        nextStatusByWorkspace[workspace.id] = null;
-      }
-
-      let hadStatusError = false;
-      await Promise.all(
-        workspaceIds.map(async ([workspaceId, vesloId]) => {
-          try {
-            const status = await client.getSoulStatus(vesloId);
-            nextStatusByWorkspace[workspaceId] = status;
-          } catch {
-            hadStatusError = true;
-            nextStatusByWorkspace[workspaceId] = null;
-          }
-        }),
-      );
-      setSoulStatusByWorkspaceId(nextStatusByWorkspace);
-
-      const activeWorkspaceId = workspaceStore.activeWorkspaceId();
-      const activeVesloId = workspaceMap[activeWorkspaceId];
-      if (!activeVesloId) {
-        setActiveSoulHeartbeats([]);
-        setSoulHeartbeatsBusy(false);
-        if (hadStatusError) {
-          setSoulError("Soul status is partially unavailable.");
-        }
-        return;
-      }
-
-      setSoulHeartbeatsBusy(true);
-      try {
-        const response = await client.listSoulHeartbeats(activeVesloId, 30);
-        setActiveSoulHeartbeats(Array.isArray(response.items) ? response.items : []);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to load soul heartbeats.";
-        setActiveSoulHeartbeats([]);
-        setSoulError(message);
-      } finally {
-        setSoulHeartbeatsBusy(false);
-      }
-
-      if (hadStatusError && !soulError()) {
-        setSoulError("Soul status is partially unavailable.");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to load soul status.";
-      setSoulOverview(null);
-      setSoulStatusByWorkspaceId({});
-      setActiveSoulHeartbeats([]);
-      setSoulHeartbeatsBusy(false);
-      setSoulError(message);
-    } finally {
-      setSoulStatusBusy(false);
-    }
-  };
-
-  const activeSoulStatus = createMemo(() => {
-    const id = workspaceStore.activeWorkspaceId();
-    if (!id) return null;
-    return soulStatusByWorkspaceId()[id] ?? null;
-  });
-
-  let lastSoulRefreshKey = "";
-  createEffect(() => {
-    const status = vesloServerStatus();
-    const hasClient = Boolean(vesloServerClient());
-    const activeWorkspaceId = workspaceStore.activeWorkspaceId();
-    const denRevision = denAuthRevision();
-    const workspacesKey = workspaceStore
-      .workspaces()
-      .map((workspace) => {
-        const root = workspace.workspaceType === "local"
-          ? workspace.path?.trim() ?? ""
-          : workspace.directory?.trim() ?? workspace.path?.trim() ?? "";
-        return [workspace.id, workspace.workspaceType, workspace.remoteType ?? "", root, workspace.vesloWorkspaceId ?? ""].join("|");
-      })
-      .join(";");
-    const key = [status, hasClient ? "1" : "0", activeWorkspaceId, workspacesKey, denRevision].join("::");
-    if (key === lastSoulRefreshKey) return;
-    lastSoulRefreshKey = key;
-    void refreshSoulData().catch(e => reportError(e, "soul.refresh"));
+  const soulDataStore = createSoulDataStore({
+    vesloServerClient,
+    vesloServerStatus,
+    workspaces: () => workspaceStore.workspaces(),
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+    soulAuthContext: skillRegistryMaterializationAuthContext,
+    authRevision: denAuthRevision,
+    createSessionAndOpen,
+    sendPrompt,
+    setPrompt,
+    createClientMessageId: createSessionClientMessageId,
+    reportError,
   });
 
   const activeAuthorizedDirs = createMemo(() => workspaceStore.authorizedDirs());
@@ -7027,31 +6837,6 @@ export default function App() {
       return true;
     }
   };
-
-  function runSoulPrompt(promptText: string) {
-    const text = promptText.trim();
-    if (!text) return;
-    void (async () => {
-      const sessionId = await createSessionAndOpen();
-      if (!sessionId) {
-        setPrompt(text);
-        return;
-      }
-
-      await sendPrompt({
-        mode: "prompt",
-        text,
-        resolvedText: text,
-        parts: [{ type: "text", text }],
-        attachments: [],
-      }, {
-        targetSessionId: sessionId,
-        clientMessageId: createSessionClientMessageId(),
-        origin: "app:soul-prompt",
-      });
-    })();
-  }
-
 
   onMount(async () => {
     const mountCleanupFns: Array<() => void> = [];
@@ -8678,20 +8463,20 @@ export default function App() {
       updateAutomation: scheduledAutomationStore.updateAutomation,
       deleteAutomation: scheduledAutomationStore.deleteAutomation,
       runAutomation: scheduledAutomationStore.runAutomation,
-      soulOverview: soulOverview(),
-      soulOverviewError: soulOverviewError(),
-      soulOverviewBusy: soulOverviewBusy(),
-      soulClient: vesloServerClient(),
-      soulServerConnected: vesloServerStatus() === "connected",
-      soulAuthContext: skillRegistryMaterializationAuthContext(),
-      soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
-      activeSoulStatus: activeSoulStatus(),
-      activeSoulHeartbeats: activeSoulHeartbeats(),
-      soulStatusBusy: soulStatusBusy(),
-      soulHeartbeatsBusy: soulHeartbeatsBusy(),
-      soulError: soulError(),
-      refreshSoulData: (options?: { force?: boolean }) => refreshSoulData(options).catch(e => reportError(e, "soul.refresh")),
-      runSoulPrompt,
+      soulOverview: soulDataStore.soulOverview(),
+      soulOverviewError: soulDataStore.soulOverviewError(),
+      soulOverviewBusy: soulDataStore.soulOverviewBusy(),
+      soulClient: soulDataStore.soulClient(),
+      soulServerConnected: soulDataStore.soulServerConnected(),
+      soulAuthContext: soulDataStore.soulAuthContext(),
+      soulStatusByWorkspaceId: soulDataStore.soulStatusByWorkspaceId(),
+      activeSoulStatus: soulDataStore.activeSoulStatus(),
+      activeSoulHeartbeats: soulDataStore.activeSoulHeartbeats(),
+      soulStatusBusy: soulDataStore.soulStatusBusy(),
+      soulHeartbeatsBusy: soulDataStore.soulHeartbeatsBusy(),
+      soulError: soulDataStore.soulError(),
+      refreshSoulData: (options?: { force?: boolean }) => soulDataStore.refreshSoulData(options).catch(e => reportError(e, "soul.refresh")),
+      runSoulPrompt: soulDataStore.runSoulPrompt,
       activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
       isRemoteWorkspace: workspaceStore.activeWorkspaceDisplay().workspaceType === "remote",
       refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(e => reportError(e, "skills.refresh")),
@@ -9017,7 +8802,7 @@ export default function App() {
       }),
     loadMoreWorkspaceSidebarSessions,
     isPrivateWorkspacePath: workspaceStore.isPrivateWorkspacePath,
-    soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
+    soulStatusByWorkspaceId: soulDataStore.soulStatusByWorkspaceId(),
     openRenameWorkspace,
     selectSession: selectSession,
     selectedSessionTitle: selectedSessionDisplayTitle(),

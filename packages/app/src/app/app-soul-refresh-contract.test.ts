@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const appSource = readFileSync(new URL("./app.tsx", import.meta.url), "utf8");
+const soulDataStoreSource = readFileSync(new URL("./pages/soul-data-store.ts", import.meta.url), "utf8");
 const dashboardSource = readFileSync(new URL("./pages/dashboard.tsx", import.meta.url), "utf8");
 
 function extractFunctionBody(source: string, name: string): string {
@@ -30,7 +30,7 @@ function extractFunctionBody(source: string, name: string): string {
 }
 
 test("Soul overview refresh is started without blocking legacy status and heartbeat refresh", () => {
-  const refreshBody = extractFunctionBody(appSource, "refreshSoulData");
+  const refreshBody = extractFunctionBody(soulDataStoreSource, "refreshSoulData");
 
   assert.equal(
     refreshBody.includes("await client.getSoulOverview"),
@@ -50,10 +50,10 @@ test("Soul overview refresh is started without blocking legacy status and heartb
 });
 
 test("Soul overview refresh is not skipped by the legacy status busy guard", () => {
-  const refreshBody = extractFunctionBody(appSource, "refreshSoulData");
+  const refreshBody = extractFunctionBody(soulDataStoreSource, "refreshSoulData");
 
-  const clientRead = refreshBody.indexOf("const client = vesloServerClient();");
-  const disconnectedGuard = refreshBody.indexOf('if (!client || vesloServerStatus() !== "connected")');
+  const clientRead = refreshBody.indexOf("const client = deps.vesloServerClient();");
+  const disconnectedGuard = refreshBody.indexOf('if (!client || deps.vesloServerStatus() !== "connected")');
   const overviewKickoff = refreshBody.indexOf("void refreshSoulOverview(client);");
   const legacyBusyGuard = refreshBody.indexOf("if (soulStatusBusy() && !options?.force) return;");
   const legacyStatusBusySet = refreshBody.indexOf("setSoulStatusBusy(true);");
