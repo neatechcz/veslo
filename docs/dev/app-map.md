@@ -25,9 +25,19 @@ This document maps the main Veslo code surfaces so future coding agents can find
   First-run onboarding UI and browser sign-in handoff UI.
 - `packages/app/src/app/pages/dashboard.tsx`
   Dashboard shell and dashboard-tab composition.
+- `packages/app/src/app/pages/dashboard-update-pill-model.ts`
+  Pure update prompt view model used by dashboard/session navigation surfaces.
 - `packages/app/src/app/pages/session.tsx`
   Public `SessionView` page entry point, controller composition, dependency wiring, and top-level
   runtime surface integration.
+
+## App Shell Modularization Status
+
+The `app.tsx` modularization plan in
+`docs/plans/2026-07-01-app-tsx-parallel-modularization-implementation-plan.md` is complete as of
+Fix 18 (`docs/fixes/2026-07-02-fix-18-app-tsx-modularization-complete.md`). `app.tsx` should stay a
+composition root. Put new business behavior into the owning context/page/lib module and wire it
+through the shell only when the behavior needs app-level dependencies.
 
 ## Dashboard Tabs
 
@@ -49,8 +59,12 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
   Napojení/Connections dashboard shell around MCP servers and connected apps.
 - `scheduled.tsx`
   Scheduled jobs, templates, scheduler status, and run-now entry points.
+- `scheduled-automation-store.ts`
+  Scheduled automation loading, mutation, run-now orchestration, templates, and scheduler status.
 - `soul.tsx`
   Soul health, heartbeat status, setup audit, and heartbeat trigger flow.
+- `soul-data-store.ts`
+  Soul health/setup/heartbeat loading and refresh behavior for the dashboard tab.
 - `identities.tsx`
   Messaging channels and OpenCode Router identities management for workspace-scoped messaging.
 
@@ -60,6 +74,35 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
   Workspace lifecycle, onboarding completion, workspace switching, activation, and remote/local policy branching.
 - `packages/app/src/app/context/extensions.ts`
   Skills, plugins, and MCP loading/mutation wiring.
+- `packages/app/src/app/context/app-shell-environment.ts`
+  App-level DOM/runtime effects such as overlay class state, locale application, and browser-only
+  shell side effects.
+- `packages/app/src/app/context/app-route-sync.ts`
+  Dashboard/session route and hash synchronization that is shared by the app shell.
+- `packages/app/src/app/context/feedback-workflow.ts`
+  Feedback modal state, runtime metadata collection, submission flow, and post-submit cleanup.
+- `packages/app/src/app/context/veslo-server-connection.ts`
+  Veslo server settings, connection status, current client selection, invite/share link helpers,
+  and server polling owned outside the app shell.
+- `packages/app/src/app/context/workspace-runtime-debug-probe.ts`
+  Runtime diagnostics probing and workspace busy/debug state refresh behavior.
+- `packages/app/src/app/context/den-desktop-auth-workflow.ts`
+  Desktop Den browser sign-in handoff, callback polling, keep-signed-in behavior, and auth status
+  wiring.
+- `packages/app/src/app/context/managed-ai-access-store.ts`
+  Managed-AI access profile loading, local proof cache handling, and read-only access state.
+- `packages/app/src/app/context/managed-ai-runtime-config.ts`
+  Managed-AI runtime config sync, provider/model routing repair, and OpenCode config patching.
+- `packages/app/src/app/context/conversation-service.ts`
+  Conversation read/write adapter used by app/session workflows instead of calling server APIs
+  inline from `app.tsx`.
+- `packages/app/src/app/context/app-deep-link-workflow.ts`
+  Shared bundle import, remote-connect deep-link handling, and queued deep-link processing.
+- `packages/app/src/app/context/skill-registry-orchestrator.ts`
+  Skill registry refresh orchestration after extension, workspace, auth, and server state changes.
+- `packages/app/src/app/context/mcp-connection-workflow.ts`
+  MCP and Notion connection flow state, auth start/polling, reload banners, and quick-connect
+  mutations.
 - `packages/app/src/app/context/app-send-trace.ts`
   App-level send trace id creation, preflight trace context, timed step wrapper, and external trace fan-in from Veslo server conversation runs.
 - `packages/app/src/app/context/app-startup-hydration.ts`
@@ -101,6 +144,25 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
   Message rendering, reasoning visibility, timeline grouping, and technical detail rendering.
 - `packages/app/src/app/pages/session-conversation-flow.ts`
   Session send, queue, pending-session, retry, replacement, and active-run orchestration.
+- `packages/app/src/app/pages/session-attachment-staging.ts`
+  Session attachment staging, DOCX/screenshot/imported-file materialization, and staged prompt part
+  conversion.
+- `packages/app/src/app/pages/session-send-workflow.ts`
+  Prompt, shell, command, retry, pending-draft, managed-AI preflight, queue, trace, and
+  conversation-run send orchestration.
+- `packages/app/src/app/pages/session-creation-workflow.ts`
+  New-session creation, directory/workspace targeting, optimistic handoff, and route opening.
+- `packages/app/src/app/pages/session-mutation-workflow.ts`
+  Retry/replace/undo/redo/rename/delete/list-agents/list-commands/export session mutations.
+- `packages/app/src/app/context/session-archive-store.ts`
+  Session archive/unarchive state, migration, and archive-aware session visibility.
+- `packages/app/src/app/context/session-sidebar-decorations.ts`
+  Subagent sidebar role decoration persistence, deterministic classification, and visible
+  decoration projection.
+- `packages/app/src/app/context/session-route-sync.ts`
+  Session route resume/open behavior and selected-session synchronization from route state.
+- `packages/app/src/app/context/session-capabilities-store.ts`
+  Per-session capabilities loading, admin AI access status, and capability fallback state.
 - `packages/app/src/app/pages/session-transcript-viewport.ts`
   Transcript windowing, bottom pinning, scroll intent, and latest-message viewport state.
 - `packages/app/src/app/pages/session-search-command-controller.ts`
@@ -154,7 +216,16 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
 ## Server and CLI Source of Truth
 
 - `packages/server/src/server.ts`
-  API routes, auth gates, import/export, config mutation, audit, and capability reporting.
+  API route registration, auth gates, owner composition, audit, and capability reporting.
+- `packages/server/src/ai-gateway-runtime-owner.ts`
+  Local AI Gateway runtime state: runtime authorization, active run/session resolution, proxy abort
+  tracking, and provider hit watchdogs.
+- `packages/server/src/soul-controller.ts`
+  Server-side Soul owner for Den context, edit permissions, read payloads, pending user edits, and
+  workspace materialization orchestration.
+- `packages/server/src/workspace-config-owner.ts`
+  Workspace config owner for `.opencode/veslo.json`, conversation directory authorization,
+  OpenCode reload helpers, and workspace import/export logic.
 - `packages/server/src/config.ts`
   Server config loading and normalization, including `authorizedRoots`.
 - `packages/orchestrator/src/`
@@ -164,8 +235,17 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
 
 - Onboarding or auth issue: start at `onboarding.tsx`, `workspace.ts`, and `den-auth.ts`.
 - Settings or persistence issue: start at `settings.tsx`, `constants.ts`, `theme.ts`, and `context/app-startup-hydration.ts`; use `app.tsx` only for final shell wiring.
+- Dashboard/session update prompt issue: start at `dashboard-update-pill-model.ts`, then the
+  consuming page or sidebar surface.
 - Skills/Pluginy/Napojení/MCP issue: start at `extensions.ts`, then the
   corresponding page component.
+- Workspace config, reload, import/export, or conversation-directory authorization issue: start at
+  `config.tsx`, `config-store.ts`, and `packages/server/src/workspace-config-owner.ts`.
+- Soul source, permission, pending edit, or materialization issue: start at `soul.tsx`,
+  `soul-data-store.ts`, and `packages/server/src/soul-controller.ts`.
+- Local managed-AI proxy runtime state issue: start at
+  `packages/server/src/ai-gateway-runtime-owner.ts`, then the proxy transport wiring in
+  `packages/server/src/server.ts`.
 - Session send, queue, retry, or pending-session issue: start at `session-send-workflow.ts`,
   `session-creation-workflow.ts`, or `session-mutation-workflow.ts`, then the page wiring in `session.tsx`.
 - Send trace, preflight trace id, or native send diagnostics issue: start at `context/app-send-trace.ts`,
@@ -189,4 +269,5 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
 - Sharing/import/export issue: start at `workspace-share-controller.ts`, then the page-specific
   wiring in `session.tsx` or `dashboard.tsx`, followed by `lib/veslo-server/connection.ts`,
   `lib/veslo-server-domains/workspace.ts`, `shared-bundles.ts`, and `config-store.ts`.
-- Runtime contract issue: start at `packages/server/src/server.ts` and `packages/server/README.md`.
+- General runtime contract issue: start at `packages/server/src/server.ts`,
+  `packages/server/README.md`, and then the owning server module for the affected domain.

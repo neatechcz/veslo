@@ -26,6 +26,10 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 6. The local Veslo server forwards managed prompt traffic to the configured managed-AI service.
 7. The managed-AI service enforces provider/model policy, selects the platform credential, forwards upstream, and records usage/audit state.
 
+Local Veslo server runtime state for this proxy path is owned by
+`packages/server/src/ai-gateway-runtime-owner.ts`. The HTTP transport remains
+wired through `packages/server/src/server.ts`.
+
 ## App behavior
 
 - End users no longer get provider connect/disconnect controls.

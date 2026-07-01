@@ -26,6 +26,22 @@ function createSessionAndOpenSource(): string {
   return createWorkflowSource.slice(start, end);
 }
 
+function appSourceBetween(startNeedle: string, endNeedle: string, label: string): string {
+  const start = appSource.indexOf(startNeedle);
+  assert.ok(start >= 0, `${label} start should be present`);
+  const end = appSource.indexOf(endNeedle, start);
+  assert.ok(end > start, `${label} end should be present`);
+  return appSource.slice(start, end);
+}
+
+function sessionSendWorkflowWiringSource(): string {
+  return appSourceBetween(
+    "const sessionSendWorkflow = createSessionSendWorkflow({",
+    "  const sendPrompt = sessionSendWorkflow.sendPrompt;",
+    "session send workflow wiring",
+  );
+}
+
 test("app delegates send orchestration decisions to the send orchestration controller", () => {
   assert.match(
     appSource,
@@ -44,6 +60,31 @@ test("sendPrompt uses the controller to decide busy ownership", () => {
     sendPromptSource(),
     /const sendPromptBusyOwnership = deps\.resolveSendPromptBusyOwnership\(\{ sessionId: sessionID \}\);[\s\S]*const blockAppDuringPromptSend = sendPromptBusyOwnership\.ownsBusy;/,
     "sendPrompt busy ownership should be delegated",
+  );
+});
+
+test("app wires prompt send in-flight tracking into the send workflow", () => {
+  const trackerStart = appSource.indexOf("const startSendPromptInFlight = () => {");
+  const workflowStart = appSource.indexOf("const sessionSendWorkflow = createSessionSendWorkflow({");
+  assert.ok(trackerStart >= 0, "app.tsx should declare startSendPromptInFlight");
+  assert.ok(workflowStart > trackerStart, "app.tsx should declare the in-flight tracker before wiring send workflow deps");
+
+  const trackerSource = appSourceBetween(
+    "const startSendPromptInFlight = () => {",
+    "  const sessionSendWorkflow = createSessionSendWorkflow({",
+    "prompt send in-flight tracker",
+  );
+  const wiringSource = sessionSendWorkflowWiringSource();
+
+  assert.match(
+    trackerSource,
+    /const startSendPromptInFlight = \(\) => \{[\s\S]*setSendPromptInFlightCount\(\(count\) => count \+ 1\);[\s\S]*setSendPromptInFlightCount\(\(count\) => Math\.max\(0, count - 1\)\);[\s\S]*\};/,
+    "app.tsx should expose an idempotent prompt send in-flight tracker",
+  );
+  assert.match(
+    wiringSource,
+    /\bstartSendPromptInFlight,/,
+    "session send workflow deps should include the in-flight tracker used by managed AI reload guards",
   );
 });
 

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const dashboardSource = readFileSync(new URL("../../pages/dashboard.tsx", import.meta.url), "utf8");
+const dashboardUpdatePillModelSource = readFileSync(new URL("../../pages/dashboard-update-pill-model.ts", import.meta.url), "utf8");
 const sessionSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
 const appViewPropsSource = readFileSync(new URL("../../app-view-props.ts", import.meta.url), "utf8");
 const enLocale = readFileSync(new URL("../../../i18n/locales/en.ts", import.meta.url), "utf8");
@@ -20,8 +21,10 @@ test("left-menu update prompts expose direct download and update actions", () =>
   assert.match(dashboardSource, /settings\.sidebar_download_update/);
   assert.match(dashboardSource, /settings\.sidebar_install_update/);
   assert.match(dashboardLeftSidebar, /updatePillActionLabel\(\)/);
-  assert.match(dashboardLeftSidebar, /props\.downloadUpdate\(\)/);
-  assert.match(dashboardLeftSidebar, /props\.installUpdateAndRestart\(\)/);
+  assert.match(dashboardSource, /resolveDashboardUpdatePillModel/);
+  assert.match(dashboardLeftSidebar, /handleUpdatePillClick\(\)/);
+  assert.match(dashboardSource, /props\.downloadUpdate\(\)/);
+  assert.match(dashboardSource, /props\.installUpdateAndRestart\(\)/);
 
   assert.match(sessionSource, /downloadUpdate: \(\) => void;/);
   assert.match(sessionSource, /settings\.sidebar_download_update/);
@@ -32,7 +35,7 @@ test("left-menu update prompts expose direct download and update actions", () =>
 });
 
 test("left-menu manual download action is only exposed when auto-download is disabled", () => {
-  assert.match(dashboardSource, /state === "available" && !props\.updateAutoDownload/);
+  assert.match(dashboardUpdatePillModelSource, /status\?\.state === "available" && !input\.updateAutoDownload/);
   assert.match(sessionSource, /state === "available" && !props\.updateAutoDownload/);
   assert.match(sessionSource, /updateAutoDownload: boolean;/);
   assert.match(appViewPropsSource, /updateAutoDownload: updateAutoDownload\(\)/);
@@ -40,7 +43,7 @@ test("left-menu manual download action is only exposed when auto-download is dis
 });
 
 test("left-menu update prompts expose exhausted download retry", () => {
-  assert.match(dashboardSource, /state === "error"[\s\S]*retry\?\.kind === "exhausted"/);
+  assert.match(dashboardUpdatePillModelSource, /status\?\.state === "error"[\s\S]*status\.retry\?\.kind === "exhausted"/);
   assert.match(sessionSource, /state === "error"[\s\S]*retry\?\.kind === "exhausted"/);
   assert.match(dashboardSource, /props\.retryUpdateDownload\(\)/);
   assert.match(sessionSource, /props\.retryUpdateDownload\(\)/);

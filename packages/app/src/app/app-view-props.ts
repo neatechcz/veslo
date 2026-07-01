@@ -397,8 +397,6 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     selectedSessionDisplayTitle,
     visibleMessages,
     activeTodos,
-    autoCompactContext,
-    setAutoCompactContext,
     groupMessageParts,
     summarizeStep,
     expandedStepIds,
@@ -567,7 +565,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     authExchangeBusy: authCompleteExchangeBusy(),
     keepSignedIn: denKeepSignedIn(),
     onKeepSignedInChange: setDenKeepSignedInPreference,
-  });
+  } satisfies OnboardingViewProps);
 
   const dashboardProps = () => {
     const workspaceType = activeWorkspaceDisplay().workspaceType;
@@ -668,10 +666,6 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
       importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
       exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
       exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
-      createWorkspaceOpen: workspaceStore.createWorkspaceOpen(),
-      setCreateWorkspaceOpen: workspaceStore.setCreateWorkspaceOpen,
-      createWorkspaceFlow: workspaceStore.createWorkspaceFlow,
-      pickWorkspaceFolder: workspaceStore.pickWorkspaceFolder,
       workspaceSessionGroups: sidebarWorkspaceGroups(),
       unreadSessionIds: unreadSessionIds(),
       workspaceSessionPagingById: workspaceSessionPagingById(),
@@ -886,7 +880,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
       reloadMcpEngine: () => reloadWorkspaceEngineAndResume(),
       language: currentLocale(),
       setLanguage: setLocale,
-    };
+    } satisfies DashboardViewAdapterProps;
   };
 
   const searchWorkspaceFiles = async (query: string) => {
@@ -1060,8 +1054,6 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     busyLabel: busyLabel(),
     developerMode: developerMode(),
     showThinking: showThinking(),
-    autoCompactContext: autoCompactContext(),
-    toggleAutoCompactContext: () => setAutoCompactContext(true),
     groupMessageParts,
     summarizeStep,
     expandedStepIds: expandedStepIds(),
@@ -1118,7 +1110,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     sessionStatus: visibleSelectedSessionStatus(),
     renameSession: renameSessionTitle,
     error: error(),
-  });
+  } satisfies SessionViewAdapterProps);
 
 
   return {

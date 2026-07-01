@@ -20,6 +20,7 @@ type Harness = {
   events: string[];
   actions: string[];
   options: SessionSendWorkflowOptions;
+  sendPromptInFlightCount: () => number;
 };
 
 function createHarness(overrides: Partial<SessionSendWorkflowOptions> = {}): Harness {
@@ -175,7 +176,7 @@ function createHarness(overrides: Partial<SessionSendWorkflowOptions> = {}): Har
     ...overrides,
   };
 
-  return { events, actions, options };
+  return { events, actions, options, sendPromptInFlightCount: () => sendPromptInFlightCount };
 }
 
 test("session send workflow blocks sends without a client message id", async () => {
@@ -187,6 +188,61 @@ test("session send workflow blocks sends without a client message id", async () 
   assert.equal(sent, false);
   assert.deepEqual(harness.actions, []);
   assert.ok(harness.events.includes("sendPrompt:blocked-missing-client-message-id"));
+});
+
+test("session send workflow releases in-flight tracking when runtime preparation throws", async () => {
+  const busyValues: boolean[] = [];
+  const harness = createHarness({
+    isWorkspaceRuntimeReady: () => false,
+    releaseSendPromptInFlight: undefined,
+    prepareSendRuntimeForSend: async () => {
+      throw new Error("runtime preparation failed");
+    },
+    resolveSendPromptBusyOwnership: () => ({ ownsBusy: true }),
+    setBusy: (value) => {
+      busyValues.push(value);
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  await assert.rejects(
+    () => workflow.sendPrompt(promptDraft("runtime failure"), {
+      clientMessageId: "client-runtime-failure",
+      origin: "session:normal",
+    }),
+    /runtime preparation failed/,
+  );
+
+  assert.equal(harness.sendPromptInFlightCount(), 0);
+  assert.deepEqual(busyValues, [true, false]);
+});
+
+test("session send workflow releases in-flight tracking when conversation run throws", async () => {
+  const busyValues: boolean[] = [];
+  const harness = createHarness({
+    resolveSendPromptBusyOwnership: () => ({ ownsBusy: true }),
+    runConversationFromVesloWriteApi: async (sessionId) => {
+      harness.actions.push(`run:${sessionId}`);
+      throw new Error("conversation run failed");
+    },
+    setBusy: (value) => {
+      busyValues.push(value);
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("downstream failure"), {
+    clientMessageId: "client-run-failure",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent, false);
+  assert.equal(harness.sendPromptInFlightCount(), 0);
+  assert.deepEqual(busyValues, [true, false]);
+  assert.ok(harness.actions.includes("run:sess-target"));
+  assert.ok(harness.events.includes("sendPrompt:conversation-run-error"));
+  assert.ok(harness.events.includes("sendPrompt:error"));
 });
 
 test("session send workflow ignores a selected session from another workspace when no explicit target is provided", async () => {
@@ -207,6 +263,30 @@ test("session send workflow ignores a selected session from another workspace wh
   assert.ok(harness.actions.includes("create-session"));
   assert.ok(harness.actions.includes("run:sess-created"));
   assert.ok(!harness.actions.includes("run:sess-selected"));
+});
+
+test("session send workflow selects the model from the materialized session id", async () => {
+  const modelSessionIds: Array<string | null | undefined> = [];
+  const harness = createHarness({
+    modelForSession: (sessionId) => {
+      modelSessionIds.push(sessionId);
+      return {
+        providerID: "openai",
+        modelID: sessionId === "sess-created" ? "gpt-4.1" : "wrong-session",
+      };
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("create then send"), {
+    clientMessageId: "client-created-model",
+    origin: "session:normal",
+  });
+
+  assert.equal(sent, true);
+  assert.deepEqual(modelSessionIds, ["sess-created"]);
+  assert.ok(harness.actions.includes("create-session"));
+  assert.ok(harness.actions.includes("run:sess-created"));
 });
 
 test("session send workflow sends to an explicit target session without creating a new one", async () => {

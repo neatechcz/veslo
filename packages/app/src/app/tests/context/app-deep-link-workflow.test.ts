@@ -115,6 +115,32 @@ function createHarness(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function createManualEffectRunner() {
+  const effects: Array<() => void> = [];
+
+  return {
+    effect: (fn: () => void) => {
+      effects.push(fn);
+      fn();
+    },
+    flush: async () => {
+      for (let index = 0; index < 4; index += 1) {
+        await settle();
+        for (const fn of effects) fn();
+      }
+      await settle();
+    },
+  };
+}
+
+async function settle() {
+  for (let index = 0; index < 4; index += 1) await Promise.resolve();
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 0);
+  });
+  for (let index = 0; index < 4; index += 1) await Promise.resolve();
+}
+
 test("desktop deep-link fan-in dedupes URLs and stops after the first consumed handler", () => {
   createRoot((dispose) => {
     const harness = createHarness();
@@ -200,6 +226,33 @@ test("shared bundle import creates a worker then waits for the connected writabl
       "fetch:https://share.example/bundle.json",
       "create-worker:Shared Team",
       "sleep",
+      "import:workspace-1:{\"skills\":[{\"id\":\"planning\"}]}",
+      "refresh-skills",
+      "refresh-hub-skills",
+      "error:",
+    ]);
+    assert.equal(workflow.sharedBundleImportBusy(), false);
+    assert.equal(workflow.pendingSharedBundleInvite(), null);
+
+    dispose();
+  });
+});
+
+test("queued shared bundle import survives the busy-state effect rerun", async () => {
+  await createRoot(async (dispose) => {
+    const effects = createManualEffectRunner();
+    const harness = createHarness({ effect: effects.effect });
+    harness.setServerReady();
+    const workflow = createAppDeepLinkWorkflow(harness.deps);
+    const currentUrl =
+      "https://app.example/dashboard?bundleUrl=https%3A%2F%2Fshare.example%2Fbundle.json&intent=import_current";
+
+    workflow.consumeWebDeepLinkUrl(currentUrl, () => {});
+    await effects.flush();
+
+    assert.deepEqual(harness.calls, [
+      `auth:${currentUrl}`,
+      "fetch:https://share.example/bundle.json",
       "import:workspace-1:{\"skills\":[{\"id\":\"planning\"}]}",
       "refresh-skills",
       "refresh-hub-skills",

@@ -14,17 +14,22 @@ Definované v `composer.tsx:465-469`, cyklování přes Shift+Tab (`session-shor
 
 ## Jak se agent předává do OpenCode
 
-`app.tsx:1260-1268` — při odeslání zprávy:
+Odesílání zprávy dnes vlastní `packages/app/src/app/pages/session-send-workflow.ts`.
+`createSessionSendWorkflow(...)` řeší prompt, shell i command větve a předává vybraného agenta do
+conversation-run vstupu:
 ```typescript
-await c.session.promptAsync({
-  sessionID, model,
-  agent: agent ?? undefined,  // string jméno agenta
+await runConversationOrFail({
+  kind: "prompt_async",
+  model,
+  agent: agent ?? undefined,
   variant: requestVariant,
   parts,
 });
 ```
 
-Agent per session se ukládá jako string v signálu `sessionAgentById` (`app.tsx:898`).
+Agent per session se pořád ukládá jako string v app-level signálu `sessionAgentById`
+v `packages/app/src/app/app.tsx`, protože výběr agenta je sdílený stav pro shell prop wiring a
+`SessionView`.
 
 ## Definice agentů — `.opencode/agents/*.md`
 
@@ -84,7 +89,8 @@ type Agent = {
 };
 ```
 
-Načítání: `c.app.agents()` → filtr: `!agent.hidden && agent.mode !== "subagent"` (`app.tsx:1687`).
+Načítání vlastní `packages/app/src/app/pages/session-mutation-workflow.ts`: `listAgents()` volá
+`c.app.agents()` a filtruje `!agent.hidden && agent.mode !== "subagent"`.
 
 ## Konfigurovatelnost z UI
 
@@ -117,7 +123,9 @@ subtask: false
 |--------|------|
 | `app/src/app/components/session/composer.tsx` | UI výběr agenta, @mention |
 | `app/src/app/pages/session-shortcuts.ts` | Shift+Tab cyklování |
-| `app/src/app/app.tsx` | `listAgents()`, `setSessionAgent()`, API volání |
+| `app/src/app/pages/session-send-workflow.ts` | Předání vybraného agenta do prompt/shell/command conversation-run vstupu |
+| `app/src/app/pages/session-mutation-workflow.ts` | `listAgents()`, `listCommands()`, session mutation/export helpery |
+| `app/src/app/app.tsx` | `sessionAgentById`, `setSessionAgent()`, shell prop wiring |
 | `server/src/internal-system.ts` | Workspace instrukce a cleanup starších managed artifactů |
 | `server/src/commands.ts` | Commands s agent/model override |
 | `server/src/frontmatter.ts` | YAML frontmatter parser |

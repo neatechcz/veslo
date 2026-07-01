@@ -352,7 +352,7 @@ test("app prompt send accepts an explicit target session without freezing model 
   const sendStart = sendWorkflowSource.indexOf("async function sendPrompt");
   const targetCapture = sendWorkflowSource.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceId(options.targetSessionId)", sendStart);
   const bootstrap = sendWorkflowSource.indexOf('deps.prepareSendRuntimeForSend("sendPrompt", sendPreflight)', sendStart);
-  const modelResolution = sendWorkflowSource.indexOf("const model = deps.modelForSession(sessionID);", sendStart);
+  const modelResolution = sendWorkflowSource.indexOf("const model = deps.modelForSession(materializedSessionID);", sendStart);
   const agentResolution = sendWorkflowSource.indexOf("const agent = deps.agentForSession(sessionID);", sendStart);
 
   assert.notEqual(sendStart, -1, "app sendPrompt should exist");

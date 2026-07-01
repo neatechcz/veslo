@@ -1,5 +1,12 @@
 # Implementacni plan: route adapter extrakce a UI request agregace
 
+Status note: this plan is historical implementation history. The route adapter
+and UI domain facade work described here is complete, and newer controller/owner
+extraction work added `ai-gateway-runtime-owner.ts`, `soul-controller.ts`,
+`workspace-config-owner.ts`, and `dashboard-update-pill-model.ts`. For the
+current source-of-truth map, use `docs/dev/app-map.md` and
+`docs/fixes/2026-07-01-fix-17-controller-owner-extraction.md`.
+
 ## Kontext
 
 Puvodni audit spravne nasel rozpad smlouvy mezi UI klientem a serverem a prilis velky `server.ts`.

@@ -448,7 +448,10 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
     let ownsSendPromptBusy = false;
     let releaseSendPromptInFlight: (() => void) | null =
       deps.startSendPromptInFlight?.() ?? null;
+    let sendPromptInFlightReleased = false;
     const releasePromptSendInFlight = () => {
+      if (sendPromptInFlightReleased) return;
+      sendPromptInFlightReleased = true;
       releaseSendPromptInFlight?.();
       deps.releaseSendPromptInFlight?.();
       releaseSendPromptInFlight = null;
@@ -468,6 +471,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       deps.setBusyLabel(null);
       deps.setBusyStartedAt(null);
     };
+    try {
     let pendingSidebarRowRegistered = false;
     const cleanupPendingSidebarSession = () => {
       if (!pendingSidebarRowRegistered || !pendingSidebarSession) return;
@@ -643,7 +647,9 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       return false;
     }
 
-    const displayedConversationGuard = deps.captureDisplayedConversationGuard(sessionID);
+    const materializedSessionID: string = sessionID;
+
+    const displayedConversationGuard = deps.captureDisplayedConversationGuard(materializedSessionID);
     const displayedUiScopeToken = deps.activeUiScopeToken();
     const sendTargetStillDisplayed = () =>
       deps.displayedConversationStillMatches(displayedConversationGuard) && deps.isUiScopeTokenCurrent(displayedUiScopeToken);
@@ -651,16 +657,16 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       if (!sendTargetStillDisplayed()) {
         deps.recordSendTrace("sendPrompt:error-skipped-stale-display", {
           traceId: sendTraceId,
-          sessionID,
+          sessionID: materializedSessionID,
           message,
         });
         return;
       }
       const hintedMessage = deps.addOpencodeCacheHint(message);
       deps.setError(hintedMessage);
-      deps.sessionStoreAppendSessionErrorTurn(sessionID, hintedMessage);
+      deps.sessionStoreAppendSessionErrorTurn(materializedSessionID, hintedMessage);
     };
-    const model = deps.modelForSession(sessionID);
+    const model = deps.modelForSession(materializedSessionID);
     let promptSystem: string | undefined;
     const restorePendingDraftAfterSendFailure = () => {
       if (!sendTargetStillDisplayed()) return;
@@ -674,7 +680,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
     try {
       const stagedAttachments = await deps.sendTraceStep(
         "sendPrompt:stage-attachments",
-        () => deps.stageAttachmentsIntoSessionDirectory(resolvedDraft, sessionID, sendPreflight),
+        () => deps.stageAttachmentsIntoSessionDirectory(resolvedDraft, materializedSessionID, sendPreflight),
         {
           traceId: sendTraceId,
           sessionID,
@@ -762,16 +768,16 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         ...(promptSystem ? { system: promptSystem } : {}),
       };
 
-      const sessionDirOverride = deps.sessionDirectoryOverrideById()[sessionID] ?? undefined;
+      const sessionDirOverride = deps.sessionDirectoryOverrideById()[materializedSessionID] ?? undefined;
       const runConversationOrFail = async (input: VesloConversationRunInput) => {
-        const scope = deps.resolveSelectedSessionBrowseScope(sessionID);
+        const scope = deps.resolveSelectedSessionBrowseScope(materializedSessionID);
         const inputWithCorrelation: VesloConversationRunInput = {
           ...input,
           clientMessageId: sendCorrelation.clientMessageId,
           origin: sendCorrelation.origin,
         };
         try {
-          const result = await deps.runConversationFromVesloWriteApi(sessionID, inputWithCorrelation, {
+          const result = await deps.runConversationFromVesloWriteApi(materializedSessionID, inputWithCorrelation, {
             preflight: sendPreflight,
             targetWorkspace: sendTargetWorkspace,
           });
@@ -934,7 +940,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       reportSendErrorToDisplayedTarget(message);
       return false;
     } finally {
-      releasePromptSendInFlight();
       stopSendPromptBusy();
     }
   }

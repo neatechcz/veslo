@@ -94,7 +94,7 @@ test("all attachment staging happens in session-directory send pipeline, not in 
 
   assert.match(
     sendWorkflowSource,
-    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, sessionID, sendPreflight\)/,
+    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, (?:sessionID|materializedSessionID), sendPreflight\)/,
     "send pipeline should stage attachments after session selection and before provider calls",
   );
 

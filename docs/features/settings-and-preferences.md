@@ -110,6 +110,7 @@ Settings includes a debug path to reveal `.opencode/veslo.json`. That file is th
 ## Source of Truth
 
 - settings UI: `packages/app/src/app/pages/settings.tsx`
+- dashboard/session update prompt model: `packages/app/src/app/pages/dashboard-update-pill-model.ts`
 - preference keys: `packages/app/src/app/constants.ts`
 - theme persistence: `packages/app/src/app/theme.ts`
 - updater state: `packages/app/src/app/context/updater.ts`

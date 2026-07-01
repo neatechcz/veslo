@@ -5,6 +5,10 @@ Status note: this plan is historical. The `/veslo-code-router` to
 current code, messaging identity paths live in
 `packages/app/src/app/lib/veslo-server-domains/messaging-identities.ts`;
 `packages/app/src/app/lib/veslo-server.ts` is only the public barrel.
+Do not implement the server route/owner phases below literally. For the current
+server owner/controller map, use `docs/dev/app-map.md` and
+`docs/fixes/2026-07-01-fix-17-controller-owner-extraction.md`.
+
 ## Context
 
 Deep audit odhalil 3 vrstvy problémů v komunikaci UI ↔ backend:

@@ -90,7 +90,6 @@ const appSourceContractInventory: AppSourceContractInventoryEntry[] = [
   { path: "pages/session-message-replacement.test.ts", classification: "behavior", retargetBy: "AM13" },
   { path: "pages/session-mutation-workspace-routing.test.ts", classification: "behavior", retargetBy: "AM13" },
   { path: "pages/session-navigation.test.ts", classification: "wiring", retargetBy: "AM16/AM24" },
-  { path: "pages/session-view-modularization.test.ts", classification: "placement", retargetBy: "AM24/AM25" },
   { path: "pages/settings-tabs-layout.test.ts", classification: "wiring", retargetBy: "AM24" },
   { path: "pages/skills-layout-contract.test.ts", classification: "wiring", retargetBy: "AM20/AM24" },
   { path: "session-list-roots-regression.test.ts", classification: "placement", retargetBy: "AM14" },
@@ -162,6 +161,14 @@ function relativeTestPath(path: string): string {
   return relative(testsDir, path).split(sep).join("/");
 }
 
+function readsAppSourceContract(source: string): boolean {
+  return [
+    /readFileSync\(\s*new URL\(\s*["'][^"']*app\.tsx["']/,
+    /readFileSync\(\s*resolve\([^)]*["'][^"']*app\.tsx["']/,
+    /(?:new URL|resolve)\([^)]*["'][^"']*app\.tsx["']/,
+  ].some((pattern) => pattern.test(source));
+}
+
 test("planned app extraction modules stay inside durable owner boundaries", () => {
   const violations = plannedAppModules.flatMap((module) => {
     if (module.owner === "context" && !module.relativePath.startsWith("context/")) {
@@ -222,10 +229,11 @@ test("planned app extraction modules are substantial once they exist", () => {
 
 test("app.tsx source-contract readers are classified for later retargeting", () => {
   const inventory = new Map(appSourceContractInventory.map((entry) => [entry.path, entry]));
+  const plannedModuleIds = new Set(plannedAppModules.map((module) => module.id));
   const appSourceReaders = findTestFiles(testsDir)
     .map((path) => ({ path: relativeTestPath(path), source: readFileSync(path, "utf8") }))
     .filter((entry) => entry.path !== "app-modularization-contract.test.ts")
-    .filter((entry) => entry.source.includes("app.tsx"))
+    .filter((entry) => readsAppSourceContract(entry.source))
     .map((entry) => entry.path)
     .sort();
   const unclassifiedReaders = appSourceReaders.filter((path) => !inventory.has(path));
@@ -233,7 +241,19 @@ test("app.tsx source-contract readers are classified for later retargeting", () 
     .filter((path) => existsSync(join(testsDir, path)))
     .filter((path) => !appSourceReaders.includes(path));
   const missingFiles = [...inventory.keys()].filter((path) => !existsSync(join(testsDir, path)));
+  const duplicateInventoryEntries = appSourceContractInventory
+    .map((entry) => entry.path)
+    .filter((path, index, entries) => entries.indexOf(path) !== index);
+  const unknownRetargets = appSourceContractInventory.flatMap((entry) =>
+    entry.retargetBy
+      .split("/")
+      .filter((moduleId) => !plannedModuleIds.has(moduleId))
+      .map((moduleId) => `${entry.path}: ${moduleId}`),
+  );
 
+  assert.ok(appSourceReaders.length > 0, "inventory should detect real app.tsx source readers");
+  assert.deepEqual(duplicateInventoryEntries, [], "app.tsx source reader inventory should not contain duplicate paths");
+  assert.deepEqual(unknownRetargets, [], "app.tsx source reader retargets should reference planned module ids");
   assert.deepEqual(unclassifiedReaders, [], "new app.tsx source readers should be classified before extraction work proceeds");
   assert.deepEqual(staleInventory, [], "retargeted app.tsx source readers should be removed from the baseline inventory");
   assert.deepEqual(missingFiles, [], "inventory entries should point to existing tests");

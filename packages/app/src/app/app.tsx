@@ -1423,6 +1423,18 @@ export default function App() {
     buildCommandFileParts,
   } = sessionAttachmentStaging;
 
+  const [sendPromptInFlightCount, setSendPromptInFlightCount] = createSignal(0);
+  const sendPromptInFlight = createMemo(() => sendPromptInFlightCount() > 0);
+  const startSendPromptInFlight = () => {
+    let released = false;
+    setSendPromptInFlightCount((count) => count + 1);
+    return () => {
+      if (released) return;
+      released = true;
+      setSendPromptInFlightCount((count) => Math.max(0, count - 1));
+    };
+  };
+
   const sessionSendWorkflow = createSessionSendWorkflow({
     abortConversationFromVesloWriteApi,
     abortSessionTyped,
@@ -1500,6 +1512,7 @@ export default function App() {
     setSelectedSessionId,
     setView,
     stageAttachmentsIntoSessionDirectory,
+    startSendPromptInFlight,
     vesloServerClient,
     vesloServerStatus,
     workspace: {
@@ -1971,8 +1984,6 @@ export default function App() {
   } = managedAiAccessStore;
   let lastNewSessionDisabledDiagnosticKey = "";
   const [managedAiBootstrapPendingCount, setManagedAiBootstrapPendingCount] = createSignal(0);
-  const [sendPromptInFlightCount, setSendPromptInFlightCount] = createSignal(0);
-  const sendPromptInFlight = createMemo(() => sendPromptInFlightCount() > 0);
   const managedAiBootstrapBusy = createMemo(
     () => managedAiAccessBusy() || managedAiBootstrapPendingCount() > 0,
   );
@@ -4420,8 +4431,6 @@ export default function App() {
     selectedSessionDisplayTitle,
     visibleMessages,
     activeTodos,
-    autoCompactContext,
-    setAutoCompactContext,
     groupMessageParts,
     summarizeStep,
     expandedStepIds,

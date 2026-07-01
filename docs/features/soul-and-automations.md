@@ -137,5 +137,7 @@ When debugging Soul issues, check both:
 ## Source of Truth
 
 - Soul page: `packages/app/src/app/pages/soul.tsx`
+- Soul app data store: `packages/app/src/app/pages/soul-data-store.ts`
+- Soul server owner: `packages/server/src/soul-controller.ts`
 - scheduled jobs page: `packages/app/src/app/pages/scheduled.tsx`
 - Soul setup command template: `packages/app/src/app/data/commands/give-me-a-soul.md`

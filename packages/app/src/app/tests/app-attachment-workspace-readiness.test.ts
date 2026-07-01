@@ -65,8 +65,8 @@ test("attachment staging self-heals a missing local server workspace once before
     "file-session creation should retry once after refreshing the local workspace/server state",
   );
 
-  const appStagingCallIndex = sendWorkflowSource.indexOf(
-    "deps.stageAttachmentsIntoSessionDirectory(resolvedDraft, sessionID, sendPreflight)",
+  const appStagingCallIndex = sendWorkflowSource.search(
+    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, sendPreflight\)/,
   );
   const promptAsyncIndex = sendWorkflowSource.indexOf('kind: "prompt_async"');
   assert.notEqual(appStagingCallIndex, -1, "send workflow should call the staging module");

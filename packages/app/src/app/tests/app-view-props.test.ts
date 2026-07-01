@@ -13,6 +13,45 @@ import {
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const viewPropsSource = readFileSync(new URL("../app-view-props.ts", import.meta.url), "utf8");
 
+function extractBraceBody(source: string, openIndex: number): string {
+  let depth = 0;
+  for (let index = openIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(openIndex + 1, index);
+      }
+    }
+  }
+  assert.fail("expected a balanced brace body");
+}
+
+function extractCreateAppViewPropsInputKeys(): string[] {
+  const start = appSource.indexOf("const appViewProps = createAppViewProps({");
+  assert.notEqual(start, -1, "app.tsx should create app view props");
+  const open = appSource.indexOf("{", start);
+  return extractIdentifierList(extractBraceBody(appSource, open));
+}
+
+function extractCreateAppViewPropsDestructuredKeys(): string[] {
+  const functionStart = viewPropsSource.indexOf("export function createAppViewProps");
+  assert.notEqual(functionStart, -1, "app-view-props should export createAppViewProps");
+  const destructureStart = viewPropsSource.indexOf("const {", functionStart);
+  assert.notEqual(destructureStart, -1, "createAppViewProps should destructure deps");
+  const open = viewPropsSource.indexOf("{", destructureStart);
+  return extractIdentifierList(extractBraceBody(viewPropsSource, open));
+}
+
+function extractIdentifierList(source: string): string[] {
+  return source
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .map((line) => line.match(/^([A-Za-z_$][\w$]*)[,]?$/)?.[1])
+    .filter((name): name is string => Boolean(name));
+}
+
 test("app view prop helpers preserve header and busy labels", () => {
   assert.equal(
     resolveHeaderConnectedVersion({
@@ -124,6 +163,24 @@ test("dashboard view access preserves remote and local skill/plugin permissions"
   );
 });
 
+test("app view prop adapter dependency list stays symmetric", () => {
+  const inputKeys = extractCreateAppViewPropsInputKeys();
+  const destructuredKeys = extractCreateAppViewPropsDestructuredKeys();
+
+  assert.ok(inputKeys.length > 0, "app.tsx should pass dependencies into createAppViewProps");
+  assert.ok(destructuredKeys.length > 0, "createAppViewProps should destructure dependencies");
+  assert.deepEqual(
+    inputKeys.filter((key) => !destructuredKeys.includes(key)),
+    [],
+    "app.tsx should not pass unused dependencies into createAppViewProps",
+  );
+  assert.deepEqual(
+    destructuredKeys.filter((key) => !inputKeys.includes(key)),
+    [],
+    "createAppViewProps should not destructure dependencies that app.tsx does not pass",
+  );
+});
+
 test("app delegates view prop construction to the app view prop adapter", () => {
   assert.match(appSource, /createAppViewProps\(\{/);
   assert.doesNotMatch(appSource, /const onboardingProps = \(\) =>/);
@@ -134,4 +191,8 @@ test("app delegates view prop construction to the app view prop adapter", () => 
   assert.match(viewPropsSource, /Omit<DashboardViewProps, "onOpenFeedback">/);
   assert.match(viewPropsSource, /Omit<SessionViewProps, "onOpenFeedback">/);
   assert.match(viewPropsSource, /OnboardingViewProps/);
+  assert.match(viewPropsSource, /satisfies OnboardingViewProps/);
+  assert.match(viewPropsSource, /satisfies DashboardViewAdapterProps/);
+  assert.match(viewPropsSource, /satisfies SessionViewAdapterProps/);
+  assert.doesNotMatch(viewPropsSource, /autoCompactContext|toggleAutoCompactContext/);
 });

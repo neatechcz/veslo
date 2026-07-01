@@ -411,6 +411,7 @@ export function createSessionCapabilitiesStore(deps: SessionCapabilitiesStoreDep
           runtimeBaseUrl: deps.baseUrl().trim(),
           runtimeVersion: deps.connectedVersion() ?? "",
           hasRuntimeClient: Boolean(deps.client()),
+          activeRuntimeActivityId: deps.activeVisibleRuntimeActivityId()?.trim() ?? "",
           runtimeMatch: runtimeMatchContextForSessionCapabilities(),
           matchedWorkspaceId: workspace?.id ?? "",
           skillInventory: sessionSkillInventoryContextForCapabilities(scope),

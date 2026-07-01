@@ -319,6 +319,49 @@ test("session capabilities store skips runtime MCP status while an active send o
   });
 });
 
+test("session capabilities store refreshes skipped MCP statuses after active send finishes", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const effects = createManualEffectRunner();
+      const [activeRuntimeActivityId, setActiveRuntimeActivityId] = createSignal<string | null>("send-trace-1");
+      let runtimeCalls = 0;
+      const store = createSessionCapabilitiesStore(baseDeps({
+        client: () => ({
+          mcp: {
+            status: async () => {
+              runtimeCalls += 1;
+              return { data: { browser: { status: "connected" } } satisfies McpStatusMap };
+            },
+          },
+        }),
+        activeWorkspaceRuntimeReady: () => true,
+        activeVisibleRuntimeActivityId: activeRuntimeActivityId,
+        readEffectiveMcpServerEntries: async () => [
+          { name: "browser", config: { type: "remote", url: "https://mcp.example" }, source: "config.global" },
+        ],
+        effect: effects.effect,
+      }));
+
+      await effects.flush();
+
+      assert.equal(runtimeCalls, 0);
+      assert.deepEqual(store.sessionCapabilities()?.mcp.map((row) => `${row.name}:${row.status}`), [
+        "browser:disconnected",
+      ]);
+
+      setActiveRuntimeActivityId(null);
+      await effects.flush();
+
+      assert.equal(runtimeCalls, 1);
+      assert.deepEqual(store.sessionCapabilities()?.mcp.map((row) => `${row.name}:${row.status}`), [
+        "browser:connected",
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("session capabilities store force reloads when inventory or remote context changes", async () => {
   await createRoot(async (dispose) => {
     try {

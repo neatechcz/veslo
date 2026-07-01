@@ -163,6 +163,40 @@ test("session creation reuses send preflight readiness without rerunning runtime
   assert.doesNotMatch(harness.actions.join("\n"), /ensure-runtime|ensure-managed-ai/);
 });
 
+test("session creation passes the prepared create preflight to conversation creation", async () => {
+  let observedPreflight: SendRuntimePreflightContext | undefined;
+  const harness = createHarness({
+    ensureLocalRuntimeReachableForSend: async (_reason, preflight) => {
+      preflight.runtimeHealthOk = true;
+      return true;
+    },
+    ensureManagedAiBootstrapReady: async (preflight) => {
+      preflight.managedAiReady = true;
+      return true;
+    },
+    resolveRuntimeSandboxStateForTarget: () => ({ mode: "test" }),
+    createConversationFromVesloWriteApi: async (_workspaceId, _directory, _title, preflight) => {
+      observedPreflight = preflight;
+      return {
+        ...session(),
+        conversationId: "conv-created",
+        opencodeSessionId: "open-created",
+      };
+    },
+  });
+  const workflow = createSessionCreationWorkflow(harness.options);
+
+  const result = await workflow.createSessionAndOpen("hello");
+
+  assert.equal(result, "sess-created");
+  assert.equal(observedPreflight?.traceId, "trace-active");
+  assert.equal(observedPreflight?.runtimeHealthOk, true);
+  assert.equal(observedPreflight?.enginePrepared, true);
+  assert.equal(observedPreflight?.managedAiReady, true);
+  assert.deepEqual(observedPreflight?.targetWorkspace, targetWorkspace);
+  assert.deepEqual(observedPreflight?.effectiveSandbox, { mode: "test" });
+});
+
 test("session creation materializes sidebar state and own-navigation guard before selecting", async () => {
   const pendingSession: PendingSidebarSessionMetadata = {
     id: "pending-1",

@@ -88,6 +88,7 @@ export type AppDeepLinkWorkflowDeps = {
   addOpencodeCacheHint: (message: string) => string;
   safeStringify: (value: unknown) => string;
   consoleLog?: (message: string) => void;
+  effect?: (callback: () => void) => void;
   timers?: {
     now?: () => number;
     sleep?: (ms: number) => Promise<void>;
@@ -111,6 +112,14 @@ export function createAppDeepLinkWorkflow(deps: AppDeepLinkWorkflowDeps) {
   const buildImportPayload = deps.buildImportPayloadFromBundle ?? buildImportPayloadFromBundle;
   const now = deps.timers?.now ?? (() => Date.now());
   const sleep = deps.timers?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const effect = deps.effect ?? createEffect;
+  let disposed = false;
+  let sharedBundleImportRunId = 0;
+
+  onCleanup(() => {
+    disposed = true;
+    sharedBundleImportRunId += 1;
+  });
 
   const queueRemoteConnectDeepLink = (rawUrl: string): boolean => {
     const parsed = parseRemoteConnectDeepLink(rawUrl);
@@ -343,9 +352,11 @@ export function createAppDeepLinkWorkflow(deps: AppDeepLinkWorkflowDeps) {
       }
     } finally {
       if (!isCancelled()) {
+        if (pendingSharedBundleInvite() === request) {
+          setPendingSharedBundleInvite(null);
+          setSharedBundleNoticeShown(false);
+        }
         setSharedBundleImportBusy(false);
-        setPendingSharedBundleInvite(null);
-        setSharedBundleNoticeShown(false);
       }
     }
   };
@@ -382,11 +393,9 @@ export function createAppDeepLinkWorkflow(deps: AppDeepLinkWorkflowDeps) {
       }
     }
 
-    let cancelled = false;
-    void importSharedBundleInvite(request, { isCancelled: () => cancelled });
-
-    onCleanup(() => {
-      cancelled = true;
+    const runId = ++sharedBundleImportRunId;
+    void importSharedBundleInvite(request, {
+      isCancelled: () => disposed || runId !== sharedBundleImportRunId,
     });
   };
 
@@ -426,13 +435,13 @@ export function createAppDeepLinkWorkflow(deps: AppDeepLinkWorkflowDeps) {
     })();
   };
 
-  createEffect(() => {
+  effect(() => {
     hydrateStartupInvites(typeof window === "undefined" ? undefined : window);
   });
 
-  createEffect(flushPendingRemoteConnectDeepLink);
-  createEffect(clearRemoteDefaultsWhenModalCloses);
-  createEffect(startPendingSharedBundleImport);
+  effect(flushPendingRemoteConnectDeepLink);
+  effect(clearRemoteDefaultsWhenModalCloses);
+  effect(startPendingSharedBundleImport);
 
   return {
     deepLinkRemoteWorkspaceDefaults,

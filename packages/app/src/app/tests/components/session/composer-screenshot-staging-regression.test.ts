@@ -19,7 +19,7 @@ test("staging failure blocks send with an explicit error and no draft clear", ()
 
   assert.match(
     stagingWindow,
-    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, sessionID, sendPreflight\)[\s\S]*const routedDraft = deps\.routeStagedAttachmentsForModel\(\{[\s\S]*if \(routedDraft\.error\) \{[\s\S]*restorePendingDraftAfterSendFailure\(\);[\s\S]*deps\.setError\(routedDraft\.error\);[\s\S]*stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\} catch \(error\) \{[\s\S]*restorePendingDraftAfterSendFailure\(\);[\s\S]*deps\.setError\(error instanceof Error \? error\.message : deps\.safeStringify\(error\)\);[\s\S]*stopSendPromptBusy\(\);[\s\S]*return false;/s,
+    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, (?:sessionID|materializedSessionID), sendPreflight\)[\s\S]*const routedDraft = deps\.routeStagedAttachmentsForModel\(\{[\s\S]*if \(routedDraft\.error\) \{[\s\S]*restorePendingDraftAfterSendFailure\(\);[\s\S]*deps\.setError\(routedDraft\.error\);[\s\S]*stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\} catch \(error\) \{[\s\S]*restorePendingDraftAfterSendFailure\(\);[\s\S]*deps\.setError\(error instanceof Error \? error\.message : deps\.safeStringify\(error\)\);[\s\S]*stopSendPromptBusy\(\);[\s\S]*return false;/s,
     "send flow should hard-fail when attachment staging or routing fails",
   );
 

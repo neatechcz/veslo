@@ -90,6 +90,7 @@ import {
   resolveLeftMenuAction,
   shouldReturnToSessionOnEscape,
 } from "./dashboard-menu-navigation";
+import { resolveDashboardUpdatePillModel } from "./dashboard-update-pill-model";
 import { createWorkspaceShareController } from "./workspace-share-controller";
 import {
   ArrowLeft,
@@ -733,177 +734,53 @@ export default function DashboardView(props: DashboardViewProps) {
   const publishWorkspaceProfileLink = shareController.publishWorkspaceProfileLink;
   const publishSkillsSetLink = shareController.publishSkillsSetLink;
 
-  const showUpdatePill = createMemo(() => {
-    if (!isTauriRuntime()) return false;
-    const state = props.updateStatus?.state;
-    const retry = props.updateStatus?.retry;
-    return (
-      state === "available" ||
-      state === "downloading" ||
-      state === "installing" ||
-      state === "ready" ||
-      (state === "error" && retry?.kind === "exhausted")
-    );
-  });
-
-  const updateDownloadPercent = createMemo<number | null>(() => {
-    const total = props.updateStatus?.totalBytes;
-    if (total == null || total <= 0) return null;
-    const downloaded = props.updateStatus?.downloadedBytes ?? 0;
-    const clamped = Math.max(0, Math.min(1, downloaded / total));
-    return Math.floor(clamped * 100);
-  });
-
-  const updatePillLabel = createMemo(() => {
-    const state = props.updateStatus?.state;
-    const retry = props.updateStatus?.retry;
-    if (state === "ready") {
-      return t("settings.sidebar_update_ready", currentLocale());
-    }
-    if (state === "installing") {
-      return t("settings.update_installing", currentLocale());
-    }
-    if (state === "available" && props.updateAutoDownload) {
-      return t("settings.sidebar_update_preparing", currentLocale());
-    }
-    if (state === "error" && retry?.kind === "exhausted") {
-      return t("settings.update_download_failed", currentLocale());
-    }
-    if (state === "downloading") {
-      if (retry?.kind === "scheduled" || retry?.kind === "active") {
-        return t("settings.update_retrying_download", currentLocale());
-      }
-      const percent = updateDownloadPercent();
-      const label = t("settings.update_downloading", currentLocale());
-      return percent == null ? label : `${label} ${percent}%`;
-    }
-    return t("settings.sidebar_update_available", currentLocale());
-  });
-
-  const updatePillActionLabel = createMemo(() => {
-    const state = props.updateStatus?.state;
-    const retry = props.updateStatus?.retry;
-    if (state === "available" && !props.updateAutoDownload) return t("settings.sidebar_download_update", currentLocale());
-    if (state === "ready") return t("settings.sidebar_install_update", currentLocale());
-    if (state === "error" && retry?.kind === "exhausted") return t("settings.retry_update_download", currentLocale());
-    return null;
-  });
-
-  const updatePillActionDisabled = createMemo(() => props.updateStatus?.state === "ready" && props.anyActiveRuns);
-
-  const updatePillActionTitle = createMemo(() => {
-    if (props.updateStatus?.state === "ready" && props.anyActiveRuns) {
-      return t("settings.stop_runs_to_update", currentLocale());
-    }
-    const label = updatePillActionLabel();
-    if (!label) return "";
-    const version = props.updateStatus?.version ? `v${props.updateStatus.version}` : "";
-    return version ? `${label} ${version}` : label;
-  });
-
-  const updatePillButtonTone = createMemo(() => {
-    const state = props.updateStatus?.state;
-    const retry = props.updateStatus?.retry;
-    if (state === "ready") {
-      return props.anyActiveRuns
-        ? "text-amber-11 hover:text-amber-11 hover:bg-amber-3/30"
-        : "text-green-11 hover:text-green-11 hover:bg-green-3/30";
-    }
-    if (state === "error" && retry?.kind === "exhausted") {
-      return "text-red-11 hover:text-red-11 hover:bg-red-3/30";
-    }
-    if (state === "downloading" || state === "installing") {
-      return "text-blue-11 hover:text-blue-11 hover:bg-blue-3/30";
-    }
-    return "text-dls-secondary hover:text-emerald-11 hover:bg-emerald-3/25";
-  });
-
-  const updatePillBorderTone = createMemo(() => {
-    const state = props.updateStatus?.state;
-    const retry = props.updateStatus?.retry;
-    if (state === "ready") {
-      return props.anyActiveRuns ? "border-amber-7/35" : "border-green-7/35";
-    }
-    if (state === "error" && retry?.kind === "exhausted") {
-      return "border-red-7/35";
-    }
-    if (state === "downloading" || state === "installing") {
-      return "border-blue-7/35";
-    }
-    return "border-dls-border";
-  });
-
-  const updatePillDotTone = createMemo(() => {
-    const state = props.updateStatus?.state;
-    const retry = props.updateStatus?.retry;
-    if (state === "ready") {
-      return props.anyActiveRuns ? "text-amber-10 fill-amber-10" : "text-green-10 fill-green-10";
-    }
-    if (state === "error" && retry?.kind === "exhausted") {
-      return "text-red-10 fill-red-10";
-    }
-    if (state === "downloading" || state === "installing") {
-      return "text-blue-10";
-    }
-    return "text-emerald-10 fill-emerald-10";
-  });
-
-  const updatePillVersionTone = createMemo(() => {
-    const state = props.updateStatus?.state;
-    const retry = props.updateStatus?.retry;
-    if (state === "ready") {
-      return props.anyActiveRuns ? "text-amber-11/75" : "text-green-11/75";
-    }
-    if (state === "error" && retry?.kind === "exhausted") {
-      return "text-red-11/75";
-    }
-    if (state === "downloading" || state === "installing") {
-      return "text-blue-11/75";
-    }
-    return "text-dls-secondary";
-  });
-
-  const updatePillTitle = createMemo(() => {
-    const version = props.updateStatus?.version ? ` v${props.updateStatus.version}` : "";
-    const state = props.updateStatus?.state;
-    const retry = props.updateStatus?.retry;
-    if (state === "ready") {
-      return props.anyActiveRuns
-        ? `${t("settings.sidebar_update_ready", currentLocale())}${version}. ${t("settings.stop_runs_to_update", currentLocale())}.`
-        : `${t("settings.sidebar_update_ready", currentLocale())}${version}`;
-    }
-    if (state === "error" && retry?.kind === "exhausted") {
-      return `${t("settings.update_download_failed", currentLocale())}${version}`;
-    }
-    if (state === "downloading" && (retry?.kind === "scheduled" || retry?.kind === "active")) {
-      return `${t("settings.update_retrying_download", currentLocale())}${version}`;
-    }
-    if (state === "downloading") return `${t("settings.update_downloading", currentLocale())}${version}`;
-    if (state === "installing") return `${t("settings.update_installing", currentLocale())}${version}`;
-    if (state === "available" && props.updateAutoDownload) {
-      return `${t("settings.sidebar_update_preparing", currentLocale())}${version}`;
-    }
-    return `${t("settings.sidebar_update_available", currentLocale())}${version}`;
-  });
+  const updatePillModel = createMemo(() => resolveDashboardUpdatePillModel({
+    anyActiveRuns: props.anyActiveRuns,
+    copy: {
+      available: t("settings.sidebar_update_available", currentLocale()),
+      downloadFailed: t("settings.update_download_failed", currentLocale()),
+      downloading: t("settings.update_downloading", currentLocale()),
+      downloadUpdate: t("settings.sidebar_download_update", currentLocale()),
+      installing: t("settings.update_installing", currentLocale()),
+      installUpdate: t("settings.sidebar_install_update", currentLocale()),
+      preparing: t("settings.sidebar_update_preparing", currentLocale()),
+      ready: t("settings.sidebar_update_ready", currentLocale()),
+      retryDownload: t("settings.retry_update_download", currentLocale()),
+      retryingDownload: t("settings.update_retrying_download", currentLocale()),
+      stopRunsToUpdate: t("settings.stop_runs_to_update", currentLocale()),
+    },
+    isDesktopRuntime: isTauriRuntime(),
+    updateAutoDownload: props.updateAutoDownload,
+    updateStatus: props.updateStatus,
+  }));
+  const showUpdatePill = createMemo(() => updatePillModel().show);
+  const updatePillLabel = createMemo(() => updatePillModel().label);
+  const updatePillActionLabel = createMemo(() => updatePillModel().actionLabel);
+  const updatePillActionDisabled = createMemo(() => updatePillModel().actionDisabled);
+  const updatePillActionTitle = createMemo(() => updatePillModel().actionTitle);
+  const updatePillButtonTone = createMemo(() => updatePillModel().buttonTone);
+  const updatePillBorderTone = createMemo(() => updatePillModel().borderTone);
+  const updatePillDotTone = createMemo(() => updatePillModel().dotTone);
+  const updatePillVersionTone = createMemo(() => updatePillModel().versionTone);
+  const updatePillTitle = createMemo(() => updatePillModel().title);
 
   const handleUpdatePillClick = () => {
-    const state = props.updateStatus?.state;
-    const retry = props.updateStatus?.retry;
-    if (state === "error" && retry?.kind === "exhausted") {
+    const action = updatePillModel().clickAction;
+    if (action === "retry") {
       props.retryUpdateDownload();
       return;
     }
-    if (state === "available") {
-      if (!props.updateAutoDownload) {
-        props.downloadUpdate();
-      }
+    if (action === "download") {
+      props.downloadUpdate();
       return;
     }
-    if (state === "ready" && !props.anyActiveRuns) {
+    if (action === "install") {
       props.installUpdateAndRestart();
       return;
     }
-    openSettings("advanced");
+    if (action === "open-settings") {
+      openSettings("advanced");
+    }
   };
 
   const leftMenuAction = createMemo(() =>
@@ -1031,19 +908,7 @@ export default function DashboardView(props: DashboardViewProps) {
                       aria-label={updatePillActionTitle()}
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (props.updateStatus?.state === "available") {
-                          if (!props.updateAutoDownload) {
-                            props.downloadUpdate();
-                          }
-                          return;
-                        }
-                        if (props.updateStatus?.state === "error" && props.updateStatus?.retry?.kind === "exhausted") {
-                          props.retryUpdateDownload();
-                          return;
-                        }
-                        if (props.updateStatus?.state === "ready" && !props.anyActiveRuns) {
-                          props.installUpdateAndRestart();
-                        }
+                        handleUpdatePillClick();
                       }}
                     >
                       {label()}

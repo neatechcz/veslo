@@ -58,14 +58,17 @@ test("sendPrompt skips first-session creation when a browsed session is the expl
   const scopedActivationIndex = source.indexOf('"sendPrompt:ensure-scoped-workspace-active"', sessionAssignmentIndex);
   const createGuardIndex = source.indexOf("if (!sessionID) {", scopedActivationIndex);
   const createNeededIndex = source.indexOf('recordSendTrace("sendPrompt:create-session-needed"', createGuardIndex);
-  const conversationRunIndex = source.indexOf("deps.runConversationFromVesloWriteApi(sessionID", createGuardIndex);
+  const conversationRunIndex = source.indexOf(
+    "deps.runConversationFromVesloWriteApi(materializedSessionID",
+    createGuardIndex,
+  );
 
   assert.ok(explicitTargetIndex >= 0, "sendPrompt should normalize an explicit target session id");
   assert.ok(sessionAssignmentIndex > explicitTargetIndex, "explicit target should become the send session id before create checks");
   assert.ok(scopedActivationIndex > sessionAssignmentIndex, "explicit target should activate its scoped workspace before sending");
   assert.ok(createGuardIndex > scopedActivationIndex, "first-session creation should be guarded by the resolved session id");
   assert.ok(createNeededIndex > createGuardIndex, "new-session creation should stay inside the missing-session branch");
-  assert.ok(conversationRunIndex > createGuardIndex, "prompt sends should still route existing sessions through the conversation run API");
+  assert.ok(conversationRunIndex > createGuardIndex, "prompt sends should route the materialized session through the conversation run API");
 });
 
 test("createSessionAndOpen persists the first composer text as the initial backend title", () => {

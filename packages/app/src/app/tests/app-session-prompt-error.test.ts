@@ -18,13 +18,13 @@ test("prompt send failures only update the still-displayed conversation error st
   );
 
   const helperStart = source.indexOf("    const reportSendErrorToDisplayedTarget = (message: string) => {");
-  const helperEnd = source.indexOf("    const model = deps.modelForSession(sessionID);", helperStart);
+  const helperEnd = source.indexOf("    const model = deps.modelForSession(materializedSessionID);", helperStart);
   assert.notEqual(helperStart, -1, "displayed-target error helper should exist");
   assert.notEqual(helperEnd, -1, "displayed-target error helper should end before model resolution");
   const helperSource = source.slice(helperStart, helperEnd);
   assert.match(
     helperSource,
-    /if \(!sendTargetStillDisplayed\(\)\) \{[\s\S]*deps\.recordSendTrace\("sendPrompt:error-skipped-stale-display"[\s\S]*return;[\s\S]*\}[\s\S]*const hintedMessage = deps\.addOpencodeCacheHint\(message\);[\s\S]*deps\.setError\(hintedMessage\);[\s\S]*deps\.sessionStoreAppendSessionErrorTurn\(sessionID, hintedMessage\);/s,
+    /if \(!sendTargetStillDisplayed\(\)\) \{[\s\S]*deps\.recordSendTrace\("sendPrompt:error-skipped-stale-display"[\s\S]*return;[\s\S]*\}[\s\S]*const hintedMessage = deps\.addOpencodeCacheHint\(message\);[\s\S]*deps\.setError\(hintedMessage\);[\s\S]*deps\.sessionStoreAppendSessionErrorTurn\(materializedSessionID, hintedMessage\);/s,
     "stale sends should not write the active error banner or synthetic error turn",
   );
 });

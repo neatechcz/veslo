@@ -329,7 +329,7 @@ export function createSessionCreationWorkflow(
             activeWorkspaceId,
             sessionDirectory,
             initialSessionTitle || undefined,
-            preflight,
+            createPreflight,
           ),
           {
             ...(tracePayload ?? {}),
