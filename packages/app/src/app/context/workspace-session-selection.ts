@@ -158,41 +158,55 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
     return currentSessionId === guard.sessionId || currentOpenCodeSessionId === guard.opencodeSessionId;
   };
 
+  type ConversationRunIdInput = {
+    workspaceId: string;
+    conversationId?: string | null;
+    opencodeSessionId?: string | null;
+    uiSessionId?: string | null;
+    runId?: string | null;
+  };
+
+  type ConversationRunIdScopeInput = Omit<ConversationRunIdInput, "runId">;
+
   const latestConversationRunIdByScope = new Map<string, string>();
+  const latestConversationLifecycleRunIdByScope = new Map<string, string>();
   const conversationRunScopeKey = (workspaceId: string, conversationId: string) => {
     const workspaceKey = workspaceId.trim();
     const conversationKey = conversationId.trim();
     return workspaceKey && conversationKey ? `${workspaceKey}\0${conversationKey}` : "";
   };
 
-  const rememberLatestConversationRunId = (input: {
-    workspaceId: string;
-    conversationId?: string | null;
-    opencodeSessionId?: string | null;
-    uiSessionId?: string | null;
-    runId?: string | null;
-  }) => {
+  const rememberConversationRunId = (store: Map<string, string>, input: ConversationRunIdInput) => {
     const runId = input.runId?.trim();
     if (!runId) return;
     for (const id of [input.conversationId, input.opencodeSessionId, input.uiSessionId]) {
       const key = id ? conversationRunScopeKey(input.workspaceId, id) : "";
-      if (key) latestConversationRunIdByScope.set(key, runId);
+      if (key) store.set(key, runId);
     }
   };
 
-  const resolveLatestConversationRunId = (input: {
-    workspaceId: string;
-    conversationId?: string | null;
-    opencodeSessionId?: string | null;
-    uiSessionId?: string | null;
-  }) => {
+  const resolveConversationRunId = (store: Map<string, string>, input: ConversationRunIdScopeInput) => {
     for (const id of [input.conversationId, input.opencodeSessionId, input.uiSessionId]) {
       const key = id ? conversationRunScopeKey(input.workspaceId, id) : "";
-      const runId = key ? latestConversationRunIdByScope.get(key) : undefined;
+      const runId = key ? store.get(key) : undefined;
       if (runId) return runId;
     }
     return "";
   };
+
+  const rememberLatestConversationRunId = (input: ConversationRunIdInput) => {
+    rememberConversationRunId(latestConversationRunIdByScope, input);
+  };
+
+  const resolveLatestConversationRunId = (input: ConversationRunIdScopeInput) =>
+    resolveConversationRunId(latestConversationRunIdByScope, input);
+
+  const rememberLatestConversationLifecycleRunId = (input: ConversationRunIdInput) => {
+    rememberConversationRunId(latestConversationLifecycleRunIdByScope, input);
+  };
+
+  const resolveLatestConversationLifecycleRunId = (input: ConversationRunIdScopeInput) =>
+    resolveConversationRunId(latestConversationLifecycleRunIdByScope, input);
 
   const setSessionBrowseScope = (scope: SessionBrowseScope) => {
     const sessionId = scope.sessionId.trim();
@@ -416,6 +430,8 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
     displayedConversationStillMatches,
     rememberLatestConversationRunId,
     resolveLatestConversationRunId,
+    rememberLatestConversationLifecycleRunId,
+    resolveLatestConversationLifecycleRunId,
     setSessionBrowseScope,
     resolveWorkspaceRootForConversationScope,
     rememberConversationScopesFromSessions,

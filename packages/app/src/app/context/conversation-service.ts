@@ -188,6 +188,19 @@ export type ConversationServiceDeps<Client extends ConversationServiceClient = C
     opencodeSessionId?: string | null;
     uiSessionId?: string | null;
   }) => string;
+  rememberLatestConversationLifecycleRunId: (input: {
+    workspaceId: string;
+    conversationId?: string | null;
+    opencodeSessionId?: string | null;
+    uiSessionId?: string | null;
+    runId?: string | null;
+  }) => void;
+  resolveLatestConversationLifecycleRunId: (input: {
+    workspaceId: string;
+    conversationId?: string | null;
+    opencodeSessionId?: string | null;
+    uiSessionId?: string | null;
+  }) => string;
   managedAiAccess: () => ConversationManagedProfile | null;
   activeSendTraceId: () => string | null;
   recordSendTrace: (event: string, payload?: Record<string, unknown>) => void;
@@ -703,7 +716,7 @@ export function createConversationService<Client extends ConversationServiceClie
       conversationId: result.conversationId,
       opencodeSessionId: result.opencodeSessionId,
     });
-    const latestRunId = result.status === "submitted"
+    const abortRunId = result.status === "submitted"
       ? result.runId
       : result.activeRunId?.trim() || result.reservedRunId;
     deps.rememberLatestConversationRunId({
@@ -711,7 +724,17 @@ export function createConversationService<Client extends ConversationServiceClie
       conversationId: result.conversationId,
       opencodeSessionId: result.opencodeSessionId,
       uiSessionId: normalizedSessionId,
-      runId: latestRunId,
+      runId: abortRunId,
+    });
+    const lifecycleRunId = result.status === "submitted"
+      ? result.runId
+      : result.reservedRunId;
+    deps.rememberLatestConversationLifecycleRunId({
+      workspaceId,
+      conversationId: result.conversationId,
+      opencodeSessionId: result.opencodeSessionId,
+      uiSessionId: normalizedSessionId,
+      runId: lifecycleRunId,
     });
     return result;
   };
@@ -827,7 +850,12 @@ export function createConversationService<Client extends ConversationServiceClie
       workspaceRoot;
     const conversationId = scope?.conversationId?.trim() || normalizedSessionId;
     const opencodeSessionId = scope?.opencodeSessionId?.trim() || normalizedSessionId;
-    const runId = deps.resolveLatestConversationRunId({
+    const runId = deps.resolveLatestConversationLifecycleRunId({
+      workspaceId,
+      conversationId,
+      opencodeSessionId,
+      uiSessionId: normalizedSessionId,
+    }) || deps.resolveLatestConversationRunId({
       workspaceId,
       conversationId,
       opencodeSessionId,
