@@ -142,6 +142,11 @@ import {
   createWorkspaceSendTarget,
   type SendTargetWorkspaceScope,
 } from "./context/workspace-send-target";
+import {
+  createConversationService,
+  type ConversationAbortTarget,
+  type ConversationWorkspaceResolution,
+} from "./context/conversation-service";
 import { createPendingSessionDraftController } from "./context/pending-session-draft-controller";
 import { createComposerTargetController } from "./context/composer-target-controller";
 import { createAppShellEnvironment } from "./context/app-shell-environment";
@@ -506,13 +511,6 @@ type SendTraceRoot = typeof window & {
   __vesloSendTraceStartPerfMsById?: Record<string, number>;
 };
 
-type SendConversationWorkspaceResolution = {
-  serverClient: VesloServerClient;
-  serverWorkspaceId: string;
-  workspaceId: string;
-  directory: string;
-};
-
 type SendPreflightContext = SendRuntimePreflightContext & {
   traceId: string;
   managedAiReady: boolean;
@@ -520,7 +518,7 @@ type SendPreflightContext = SendRuntimePreflightContext & {
   enginePrepared: boolean;
   effectiveSandbox: EffectiveRuntimeSandboxState | null;
   targetWorkspace: SendTargetWorkspaceScope | null;
-  conversationWorkspaceByDirectory: Map<string, Promise<SendConversationWorkspaceResolution | null>>;
+  conversationWorkspaceByDirectory: Map<string, Promise<ConversationWorkspaceResolution<VesloServerClient> | null>>;
 };
 
 type AppSendPromptOptions = SessionSendOptionsBase & {
@@ -1375,624 +1373,46 @@ export default function App() {
     skillReloadGuard.dispose();
   });
 
-  const resolveConversationServerWorkspaceId = (workspaceIdRaw: string) => {
-    const workspaceId = workspaceIdRaw.trim();
-    if (!workspaceId) return "";
-
-    const workspace = workspaceStore.workspaces().find((entry) => entry.id === workspaceId) ?? null;
-    if (!workspace) return workspaceId;
-
-    if (workspace.workspaceType === "remote" && workspace.remoteType === "veslo") {
-      return (
-        workspace.vesloWorkspaceId?.trim() ||
-        parseVesloWorkspaceIdFromUrl(workspace.vesloHostUrl ?? "") ||
-        parseVesloWorkspaceIdFromUrl(workspace.baseUrl ?? "") ||
-        workspaceId
-      );
-    }
-
-    return workspace.vesloWorkspaceId?.trim() || workspaceId;
-  };
-
-  const resolvePassiveConversationReadClient = async () => {
-    let serverClient = vesloServerClient();
-    if (isTauriRuntime() && startupPreference() !== "server" && vesloServerStatus() === "disconnected") {
-      await ensureLocalVesloServerRunning().catch((error) => {
-        wsDebug("conversation-read:server-start:failed", {
-          error: error instanceof Error ? error.message : safeStringify(error),
-        });
-      });
-      serverClient = vesloServerClient();
-    }
-    if (serverClient) return serverClient;
-
-    if (isTauriRuntime()) {
-      await ensureLocalVesloServerRunning().catch((error) => {
-        wsDebug("conversation-read:server-start:failed", {
-          error: error instanceof Error ? error.message : safeStringify(error),
-        });
-      });
-      serverClient = vesloServerClient();
-    }
-
-    return serverClient;
-  };
-
-  const conversationWorkspaceRegistrationCacheByClient = new WeakMap<
-    object,
-    Map<string, Promise<{ id: string; cacheable: boolean }>>
-  >();
-  const conversationWorkspaceRegistrationCacheFor = (
-    serverClient: NonNullable<ReturnType<typeof vesloServerClient>>,
-  ) => {
-    const key = serverClient as object;
-    let cache = conversationWorkspaceRegistrationCacheByClient.get(key);
-    if (!cache) {
-      cache = new Map<string, Promise<{ id: string; cacheable: boolean }>>();
-      conversationWorkspaceRegistrationCacheByClient.set(key, cache);
-    }
-    return cache;
-  };
-  const conversationWorkspaceRegistrationCacheKey = (workspaceId: string, directory: string) => [
-    workspaceId.trim(),
-    normalizeDirectoryPath(directory) || directory.trim(),
-  ].join("\n");
-
-  const ensureConversationReadWorkspaceRegistered = async (
-    serverClient: NonNullable<ReturnType<typeof vesloServerClient>>,
-    workspaceIdRaw: string,
-    directoryRaw?: string | null,
-  ) => {
-    const workspaceId = workspaceIdRaw.trim();
-    const fallback = resolveConversationServerWorkspaceId(workspaceId);
-    if (!workspaceId) return "";
-
-    const workspace = workspaceStore.workspaces().find((entry) => entry.id === workspaceId) ?? null;
-    if (!workspace || workspace.workspaceType !== "local") return fallback;
-
-    const workspaceRootRaw = workspace.path?.trim() || workspace.directory?.trim() || "";
-    const targetDirectoryRaw = directoryRaw?.trim() || workspaceRootRaw;
-    const workspaceRoot = normalizeDirectoryPath(workspaceRootRaw);
-    const targetDirectory = normalizeDirectoryPath(targetDirectoryRaw);
-    if (!targetDirectory) return fallback;
-    const matchDirectories = new Set([workspaceRoot, targetDirectory].filter(Boolean));
-    type ConversationWorkspaceRegistryEntry = {
-      id: string;
-      path?: string;
-      directory?: string;
-      baseUrl?: string;
-      opencodeUsername?: string;
-      opencodePassword?: string;
-      opencode?: {
-        baseUrl?: string;
-        directory?: string;
-        username?: string;
-      };
-    };
-
-    const normalizeBaseUrlForCompare = (value: string | null | undefined) =>
-      value?.trim().replace(/\/+$/, "") ?? "";
-    const parseWorkspaceMountId = (value: string | null | undefined) => {
-      const baseUrl = normalizeBaseUrlForCompare(value);
-      if (!baseUrl) return "";
-      try {
-        const match = new URL(baseUrl).pathname.match(/^\/workspace\/([^/]+)\/opencode(?:\/.*)?$/);
-        return match ? decodeURIComponent(match[1] ?? "").trim() : "";
-      } catch {
-        return "";
-      }
-    };
-
-    const resolveLocalOpencodeRegistration = async () => {
-      if (!isTauriRuntime()) return null;
-      try {
-        const info = await engineInfo(workspaceId, workspaceRootRaw || targetDirectoryRaw);
-        const resolvedBaseUrl = normalizeBaseUrlForCompare(info.baseUrl);
-        if (!resolvedBaseUrl) return null;
-        return {
-          baseUrl: resolvedBaseUrl,
-          directory: info.projectDir?.trim() || targetDirectoryRaw || workspaceRootRaw,
-          opencodeUsername: info.opencodeUsername?.trim() || null,
-          opencodePassword: info.opencodePassword?.trim() || null,
-        };
-      } catch (error) {
-        wsDebug("conversation-read:engine-info:failed", {
-          workspaceId,
-          directory: targetDirectory,
-          error: error instanceof Error ? error.message : safeStringify(error),
-        });
-        return null;
-      }
-    };
-
-    const matchesRegistration = (
-      entry: ConversationWorkspaceRegistryEntry,
-      registration: Awaited<ReturnType<typeof resolveLocalOpencodeRegistration>>,
-    ) => {
-      if (!registration?.baseUrl) return true;
-      const existingBaseUrl = normalizeBaseUrlForCompare(entry.baseUrl || entry.opencode?.baseUrl);
-      const mountId = parseWorkspaceMountId(registration.baseUrl);
-      if (mountId && entry.id !== mountId) return false;
-      return existingBaseUrl === registration.baseUrl;
-    };
-
-    const findMatchingWorkspace = (items: ConversationWorkspaceRegistryEntry[]) => {
-      const exact = items.find((entry) => entry.id === fallback);
-      if (exact) return exact;
-      const match = items.find((entry) => {
-        const candidates = [
-          entry.path,
-          entry.directory,
-          entry.opencode?.directory,
-        ]
-          .map((value) => normalizeDirectoryPath(value?.trim() ?? ""))
-          .filter(Boolean);
-        return candidates.some((candidate) => matchDirectories.has(candidate));
-      });
-      return match ?? null;
-    };
-
-    const registrationCache = conversationWorkspaceRegistrationCacheFor(serverClient);
-    const registrationCacheKey = conversationWorkspaceRegistrationCacheKey(workspaceId, targetDirectoryRaw);
-    const cachedRegistration = registrationCache.get(registrationCacheKey);
-    if (cachedRegistration) {
-      return (await cachedRegistration).id;
-    }
-
-    const registrationPromise = (async (): Promise<{ id: string; cacheable: boolean }> => {
-      const opencodeRegistration = await resolveLocalOpencodeRegistration();
-
-      try {
-        const listed = await serverClient.listWorkspaces();
-        const existing = findMatchingWorkspace(listed.items);
-        if (existing && matchesRegistration(existing, opencodeRegistration)) {
-          return { id: existing.id, cacheable: true };
-        }
-      } catch (error) {
-        wsDebug("conversation-read:workspace-list:failed", {
-          workspaceId,
-          error: error instanceof Error ? error.message : safeStringify(error),
-        });
-      }
-
-      try {
-        // Explicit read bootstrap: registers workspace metadata with Veslo server
-        // so passive reads can be routed by workspace id. This does not start
-        // or contact the OpenCode engine.
-        const added = await serverClient.addLocalWorkspace({
-          path: workspaceRootRaw || targetDirectoryRaw,
-          name: workspace.name?.trim() || undefined,
-          baseUrl: opencodeRegistration?.baseUrl ?? undefined,
-          directory: opencodeRegistration?.directory || targetDirectoryRaw,
-          opencodeUsername: opencodeRegistration?.opencodeUsername ?? undefined,
-          opencodePassword: opencodeRegistration?.opencodePassword ?? undefined,
-        });
-        const registered = findMatchingWorkspace(added.items);
-        if (registered) return { id: registered.id, cacheable: true };
-      } catch (error) {
-        wsDebug("conversation-read:workspace-register:failed", {
-          workspaceId,
-          directory: targetDirectory,
-          hasBaseUrl: Boolean(opencodeRegistration?.baseUrl),
-          error: error instanceof Error ? error.message : safeStringify(error),
-        });
-      }
-
-      return { id: fallback, cacheable: false };
-    })();
-
-    registrationCache.set(registrationCacheKey, registrationPromise);
-    try {
-      const result = await registrationPromise;
-      if (!result.cacheable && registrationCache.get(registrationCacheKey) === registrationPromise) {
-        registrationCache.delete(registrationCacheKey);
-      }
-      return result.id;
-    } catch (error) {
-      if (registrationCache.get(registrationCacheKey) === registrationPromise) {
-        registrationCache.delete(registrationCacheKey);
-      }
-      throw error;
-    }
-  };
-
-  const conversationWorkspaceCacheKey = (workspaceId: string, directory: string) => [
-    workspaceId.trim(),
-    normalizeDirectoryPath(directory) || directory.trim(),
-  ].join("\n");
-
-  const resolveConversationServerWorkspaceForSend = async (
-    workspaceId: string,
-    directory: string,
-    preflight: SendPreflightContext | undefined,
-    reason: string,
-  ): Promise<SendConversationWorkspaceResolution | null> => {
-    const normalizedWorkspaceId = workspaceId.trim();
-    const normalizedDirectory = directory.trim();
-    const tracePayload = preflight ? { traceId: preflight.traceId } : undefined;
-    if (!normalizedWorkspaceId || !normalizedDirectory) {
-      recordSendTrace(`${reason}:conversation-workspace-skipped-empty`, {
-        ...(tracePayload ?? {}),
-        hasWorkspaceId: Boolean(normalizedWorkspaceId),
-        hasDirectory: Boolean(normalizedDirectory),
-      });
-      return null;
-    }
-
-    const cacheKey = conversationWorkspaceCacheKey(normalizedWorkspaceId, normalizedDirectory);
-    const cached = preflight?.conversationWorkspaceByDirectory.get(cacheKey);
-    if (cached) {
-      recordSendTrace(`${reason}:conversation-workspace-cache-hit`, {
-        ...(tracePayload ?? {}),
-        workspaceId: normalizedWorkspaceId,
-        directory: normalizedDirectory,
-      });
-      return await cached;
-    }
-
-    const promise = sendTraceStep(
-      `${reason}:conversation-workspace-resolve`,
-      async () => {
-        const serverClient = await sendTraceStep(
-          `${reason}:resolve-passive-client`,
-          () => resolvePassiveConversationReadClient(),
-          {
-            ...(tracePayload ?? {}),
-            vesloServerStatus: vesloServerStatus(),
-            hasCachedClient: Boolean(vesloServerClient()),
-          },
-        );
-        if (!serverClient) {
-          recordSendTrace(`${reason}:conversation-workspace-unavailable-client`, tracePayload);
-          return null;
-        }
-
-        const serverWorkspaceId = await sendTraceStep(
-          `${reason}:ensure-workspace-registered`,
-          () => ensureConversationReadWorkspaceRegistered(
-            serverClient,
-            normalizedWorkspaceId,
-            normalizedDirectory,
-          ),
-          {
-            ...(tracePayload ?? {}),
-            workspaceId: normalizedWorkspaceId,
-            directory: normalizedDirectory,
-          },
-        );
-        if (!serverWorkspaceId) {
-          recordSendTrace(`${reason}:conversation-workspace-unavailable-id`, {
-            ...(tracePayload ?? {}),
-            workspaceId: normalizedWorkspaceId,
-            directory: normalizedDirectory,
-          });
-          return null;
-        }
-
-        recordSendTrace(`${reason}:conversation-workspace-resolved`, {
-          ...(tracePayload ?? {}),
-          workspaceId: normalizedWorkspaceId,
-          serverWorkspaceId,
-          directory: normalizedDirectory,
-        });
-        return {
-          serverClient,
-          serverWorkspaceId,
-          workspaceId: normalizedWorkspaceId,
-          directory: normalizedDirectory,
-        };
-      },
-      {
-        ...(tracePayload ?? {}),
-        workspaceId: normalizedWorkspaceId,
-        directory: normalizedDirectory,
-      },
-    );
-
-    preflight?.conversationWorkspaceByDirectory.set(cacheKey, promise);
-    return await promise;
-  };
-
-  const listConversationsFromVesloReadApi = async (
-    workspaceId: string,
-    directory?: string,
-    options?: { sync?: boolean },
-  ) => {
-    const serverClient = await resolvePassiveConversationReadClient();
-    if (!serverClient) {
-      return { workspaceId, serverWorkspaceId: "", items: [], source: "unavailable" as const };
-    }
-    const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
-    if (!serverWorkspaceId) {
-      return { workspaceId, serverWorkspaceId: "", items: [], source: "unavailable" as const };
-    }
-    const result = await serverClient.listConversations(serverWorkspaceId, directory, {
-      sync: options?.sync === true,
-    });
-    rememberConversationScopesFromSessions(workspaceId, directory, result.items);
-    return { ...result, serverWorkspaceId };
-  };
-
-  const backfillConversationsToVesloReadApi = async (
-    workspaceId: string,
-    directory: string,
-    sessionsToImport: Session[],
-  ) => {
-    if (sessionsToImport.length === 0) return;
-    const serverClient = await resolvePassiveConversationReadClient();
-    if (!serverClient) return;
-    const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
-    if (!serverWorkspaceId) return;
-    const result = await serverClient.importConversations(serverWorkspaceId, {
-      directory,
-      sessions: sessionsToImport,
-    });
-    rememberConversationScopesFromSessions(workspaceId, directory, result.items);
-  };
-
-  const getTranscriptFromVesloReadApi = async (
-    workspaceId: string,
-    sessionId: string,
-    limit: number,
-    directory?: string,
-  ) => {
-    const serverClient = await resolvePassiveConversationReadClient();
-    if (!serverClient) return null;
-    const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
-    if (!serverWorkspaceId) return null;
-    const snapshot = await serverClient.getSessionTranscript(serverWorkspaceId, sessionId, limit, directory);
-    rememberConversationScopeFromTranscript(workspaceId, directory, snapshot);
-    return snapshot.source === "unavailable" ? null : snapshot;
-  };
-
-  const createConversationFromVesloWriteApi = async (
-    workspaceId: string,
-    directory: string,
-    title?: string,
-    preflight?: SendPreflightContext,
-  ) => {
-    const tracePayload = preflight ? { traceId: preflight.traceId } : undefined;
-    recordSendTrace("createConversationFromVesloWriteApi:start", {
-      ...(tracePayload ?? {}),
-      workspaceId,
-      directory,
-      hasTitle: Boolean(title?.trim()),
-    });
-    const resolution = await resolveConversationServerWorkspaceForSend(
-      workspaceId,
-      directory,
-      preflight,
-      "createConversationFromVesloWriteApi",
-    );
-    if (!resolution) {
-      recordSendTrace("createConversationFromVesloWriteApi:unavailable", tracePayload);
-      return null;
-    }
-    const result = await sendTraceStep(
-      "createConversationFromVesloWriteApi:create",
-      () => resolution.serverClient.createConversation(resolution.serverWorkspaceId, {
-        directory,
-        title,
-      }, {
-        sendTraceId: preflight?.traceId ?? null,
-      }),
-      {
-        ...(tracePayload ?? {}),
-        workspaceId,
-        serverWorkspaceId: resolution.serverWorkspaceId,
-        directory,
-      },
-    );
-    rememberConversationScope({
-      sessionId: result.id,
-      workspaceId,
-      workspaceRoot: resolveWorkspaceRootForConversationScope(workspaceId, directory),
-      directory,
-      conversationId: result.conversationId,
-      opencodeSessionId: result.opencodeSessionId,
-    });
-    return result;
-  };
-
-  const runConversationFromVesloWriteApi = async (
-    sessionId: string,
-    input: VesloConversationRunInput,
-    options: {
-      sendTraceId?: string | null;
-      preflight?: SendPreflightContext;
-      targetWorkspace?: SendTargetWorkspaceScope | null;
-    } = {},
-  ) => {
-    const traceId = options.preflight?.traceId || options.sendTraceId?.trim() || activeSendTraceId() || "";
-    const tracePayload = traceId ? { traceId } : undefined;
-    const normalizedSessionId = sessionId.trim();
-    if (!normalizedSessionId) {
-      throw new Error("Session id is required.");
-    }
-    const scope = resolveSelectedSessionBrowseScope(normalizedSessionId);
-    const targetWorkspace = options.targetWorkspace ?? options.preflight?.targetWorkspace ?? null;
-    const managedProfile = managedAiAccess();
-    const expectAiGatewayStart = input.kind === "prompt_async" && Boolean(managedProfile);
-    const workspaceId = scope?.workspaceId?.trim() || targetWorkspace?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
-    if (!workspaceId) {
-      throw new Error("Workspace id is required for conversation run.");
-    }
-    const targetWorkspaceId = targetWorkspace?.workspaceId?.trim() || "";
-    if (targetWorkspaceId && workspaceId !== targetWorkspaceId) {
-      throw new Error("Conversation workspace does not match the send target workspace.");
-    }
-    const workspaceRoot = scope?.workspaceRoot?.trim() || targetWorkspace?.workspaceRoot?.trim() || workspaceStore.activeWorkspaceRoot().trim();
-    const directory = input.directory?.trim() || scope?.directory?.trim() || targetWorkspace?.directory?.trim() || workspaceRoot;
-    if (!directory) {
-      throw new Error("Conversation directory is required.");
-    }
-
-    recordSendTrace("runConversationFromVesloWriteApi:start", {
-      ...(tracePayload ?? {}),
-      sessionId: normalizedSessionId,
-      workspaceId,
-      directory,
-      kind: input.kind,
-      clientMessageId: typeof input.clientMessageId === "string" ? input.clientMessageId : null,
-      origin: typeof input.origin === "string" ? input.origin : null,
-      hasConversationScope: Boolean(scope?.conversationId),
-      expectAiGatewayStart,
-      managedProviderId: managedProfile?.providerId ?? null,
-      managedModelId: managedProfile?.defaultModel.modelID ?? null,
-      preflightManagedAiReady: options.preflight?.managedAiReady ?? null,
-      preflightRuntimeHealthOk: options.preflight?.runtimeHealthOk ?? null,
-    });
-    const resolution = await resolveConversationServerWorkspaceForSend(
-      workspaceId,
-      directory,
-      options.preflight,
-      "runConversationFromVesloWriteApi",
-    );
-    if (!resolution) {
-      recordSendTrace("runConversationFromVesloWriteApi:unavailable", tracePayload);
-      return null;
-    }
-    const conversationId = scope?.conversationId?.trim() || normalizedSessionId;
-    const result = await sendTraceStep(
-      "runConversationFromVesloWriteApi:run",
-      () => resolution.serverClient.runConversation(
-        resolution.serverWorkspaceId,
-        conversationId,
-        {
-          ...input,
-          directory,
-          ...(expectAiGatewayStart ? { expectAiGatewayStart: true } : {}),
-        },
-        {
-          sendTraceId: traceId || undefined,
-        },
-      ),
-      {
-        ...(tracePayload ?? {}),
-        workspaceId,
-        serverWorkspaceId: resolution.serverWorkspaceId,
-        conversationId,
-        kind: input.kind,
-      },
-    );
-    recordExternalSendTraceEntries(result.debugTrace);
-    rememberConversationScope({
-      sessionId: result.opencodeSessionId || normalizedSessionId,
-      workspaceId,
-      workspaceRoot: resolveWorkspaceRootForConversationScope(workspaceId, directory),
-      directory,
-      conversationId: result.conversationId,
-      opencodeSessionId: result.opencodeSessionId,
-    });
-    const latestRunId = result.status === "submitted"
-      ? result.runId
-      : result.activeRunId?.trim() || result.reservedRunId;
-    rememberLatestConversationRunId({
-      workspaceId,
-      conversationId: result.conversationId,
-      opencodeSessionId: result.opencodeSessionId,
-      uiSessionId: normalizedSessionId,
-      runId: latestRunId,
-    });
-    return result;
-  };
-
-  type ConversationAbortTarget = {
-    workspaceId?: string | null;
-    workspaceRoot?: string | null;
-    directory?: string | null;
-    conversationId?: string | null;
-    opencodeSessionId?: string | null;
-  };
-
-  const resolveConversationAbortScope = (
-    sessionId: string,
-    target?: ConversationAbortTarget,
-  ) => {
-    const normalizedSessionId = sessionId.trim();
-    const existingScope = resolveSelectedSessionBrowseScope(normalizedSessionId);
-    const workspaceId = target?.workspaceId?.trim() || existingScope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
-    const directory = target?.directory?.trim() || existingScope?.directory?.trim() || sessionDirectoryOverrideById()[normalizedSessionId]?.trim() || "";
-    const workspaceRoot =
-      target?.workspaceRoot?.trim() ||
-      existingScope?.workspaceRoot?.trim() ||
-      resolveWorkspaceRootForConversationScope(workspaceId, directory) ||
-      workspaceStore.activeWorkspaceRoot().trim();
-    return {
-      sessionId: normalizedSessionId,
-      workspaceId,
-      workspaceRoot,
-      directory: directory || workspaceRoot,
-      hasConversationScope: Boolean(target?.conversationId?.trim() || existingScope?.conversationId?.trim()),
-      conversationId: target?.conversationId?.trim() || existingScope?.conversationId?.trim() || normalizedSessionId,
-      opencodeSessionId: target?.opencodeSessionId?.trim() || existingScope?.opencodeSessionId?.trim() || normalizedSessionId,
-    };
-  };
-
-  const abortConversationFromVesloWriteApi = async (
-    sessionId: string,
-    target?: ConversationAbortTarget,
-  ) => {
-    const normalizedSessionId = sessionId.trim();
-    if (!normalizedSessionId) {
-      throw new Error("Session id is required.");
-    }
-    const scope = resolveConversationAbortScope(normalizedSessionId, target);
-    const workspaceId = scope.workspaceId;
-    if (!workspaceId) {
-      throw new Error("Workspace id is required for conversation abort.");
-    }
-    const directory = scope.directory;
-    if (!directory) {
-      throw new Error("Conversation directory is required.");
-    }
-    const conversationId = scope.conversationId || normalizedSessionId;
-    const runId = resolveLatestConversationRunId({
-      workspaceId,
-      conversationId,
-      opencodeSessionId: scope.opencodeSessionId,
-      uiSessionId: normalizedSessionId,
-    });
-    if (!runId) {
-      throw new Error("Conversation run id is not available for abort.");
-    }
-
-    const serverClient = await resolvePassiveConversationReadClient();
-    if (!serverClient) return null;
-    const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
-    if (!serverWorkspaceId) return null;
-    recordSendTrace("abortConversation:request", {
-      sessionID: normalizedSessionId,
-      workspaceId,
-      serverWorkspaceId,
-      conversationId,
-      opencodeSessionId: scope?.opencodeSessionId ?? null,
-      runId,
-    });
-    const result = await serverClient.abortConversation(serverWorkspaceId, conversationId, {
-      directory,
-      runId,
-    });
-    recordSendTrace("abortConversation:success", {
-      sessionID: normalizedSessionId,
-      workspaceId,
-      serverWorkspaceId,
-      conversationId: result.conversationId,
-      opencodeSessionId: result.opencodeSessionId,
-      runId: result.runId,
-      status: result.status,
-    });
-    rememberConversationScope({
-      sessionId: result.opencodeSessionId || normalizedSessionId,
-      workspaceId,
-      workspaceRoot: scope.workspaceRoot || resolveWorkspaceRootForConversationScope(workspaceId, directory),
-      directory,
-      conversationId: result.conversationId,
-      opencodeSessionId: result.opencodeSessionId,
-    });
-    return result;
-  };
-
+  const conversationService = createConversationService({
+    vesloServerClient,
+    vesloServerStatus,
+    isTauriRuntime,
+    startupPreference,
+    ensureLocalVesloServerRunning: () => ensureLocalVesloServerRunning(),
+    workspaces: () => workspaceStore.workspaces(),
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId().trim(),
+    activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot().trim(),
+    sessionDirectoryOverrideById,
+    resolveSelectedSessionBrowseScope,
+    resolveWorkspaceRootForConversationScope,
+    rememberConversationScope,
+    rememberConversationScopesFromSessions,
+    rememberConversationScopeFromTranscript,
+    rememberLatestConversationRunId,
+    resolveLatestConversationRunId,
+    managedAiAccess: () => managedAiAccess(),
+    activeSendTraceId,
+    recordSendTrace,
+    sendTraceStep,
+    recordExternalSendTraceEntries,
+    engineInfo: (workspaceId, directory) => engineInfo(workspaceId, directory),
+    wsDebug: (event, payload) => wsDebug(event, payload),
+  });
+  const {
+    resolveConversationServerWorkspaceId,
+    resolvePassiveConversationReadClient,
+    ensureConversationReadWorkspaceRegistered,
+    resolveConversationServerWorkspaceForSend,
+    listConversationsFromVesloReadApi,
+    backfillConversationsToVesloReadApi,
+    getTranscriptFromVesloReadApi,
+    createConversationFromVesloWriteApi,
+    runConversationFromVesloWriteApi,
+    resolveConversationAbortScope,
+    abortConversationFromVesloWriteApi,
+    resolveConversationRunForSession,
+    readConversationRunStatus,
+  } = conversationService;
   const sessionStore = createSessionStore({
     client,
     routing: runtimeOwnedRouting,
@@ -2059,61 +1479,8 @@ export default function App() {
         transcriptDirectory || undefined,
       );
     },
-    resolveConversationRunForSession: (sessionId, workspaceIdHint) => {
-      const normalizedSessionId = sessionId.trim();
-      if (!normalizedSessionId) return null;
-      const scope = resolveSelectedSessionBrowseScope(normalizedSessionId);
-      const workspaceId =
-        scope?.workspaceId?.trim() ||
-        workspaceIdHint?.trim() ||
-        workspaceStore.activeWorkspaceId().trim();
-      if (!workspaceId) return null;
-      const workspaceRoot =
-        scope?.workspaceRoot?.trim() ||
-        resolveWorkspaceRootForConversationScope(workspaceId, scope?.directory) ||
-        workspaceStore.activeWorkspaceRoot().trim();
-      const directory =
-        scope?.directory?.trim() ||
-        sessionDirectoryOverrideById()[normalizedSessionId]?.trim() ||
-        workspaceRoot;
-      const conversationId = scope?.conversationId?.trim() || normalizedSessionId;
-      const opencodeSessionId = scope?.opencodeSessionId?.trim() || normalizedSessionId;
-      const runId = resolveLatestConversationRunId({
-        workspaceId,
-        conversationId,
-        opencodeSessionId,
-        uiSessionId: normalizedSessionId,
-      });
-      if (!runId) return null;
-      return {
-        sessionId: normalizedSessionId,
-        workspaceId,
-        conversationId,
-        opencodeSessionId,
-        directory,
-        runId,
-      };
-    },
-    readConversationRunStatus: async (scope) => {
-      const serverClient = await resolvePassiveConversationReadClient();
-      if (!serverClient) return null;
-      const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(
-        serverClient,
-        scope.workspaceId,
-        scope.directory,
-      );
-      if (!serverWorkspaceId) return null;
-      try {
-        return await serverClient.getConversationRunStatus(
-          serverWorkspaceId,
-          scope.conversationId,
-          scope.runId,
-        );
-      } catch (error) {
-        if (error instanceof VesloServerError && error.status === 404) return null;
-        throw error;
-      }
-    },
+    resolveConversationRunForSession,
+    readConversationRunStatus,
     appendTranscriptSnapshot: async (input) => {
       const workspaceId = input.workspaceId.trim();
       const sessionId = input.sessionId.trim();

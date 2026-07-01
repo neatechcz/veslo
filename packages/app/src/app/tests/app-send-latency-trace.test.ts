@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const conversationServiceSource = readFileSync(
+  new URL("../context/conversation-service.ts", import.meta.url),
+  "utf8",
+);
 const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
 const schedulerSource = readFileSync(new URL("../lib/workspace-runtime-schedulers.ts", import.meta.url), "utf8");
 const mcpRefreshSource = readFileSync(new URL("../lib/mcp-server-refresh.ts", import.meta.url), "utf8");
@@ -149,17 +153,17 @@ test("latest-run artifacts resolve workspace from scoped selected session", () =
 
 test("conversation read workspace registration dedupes per Veslo client", () => {
   assert.match(
-    source,
+    conversationServiceSource,
     /const conversationWorkspaceRegistrationCacheByClient = new WeakMap<[\s\S]*Map<string, Promise<\{ id: string; cacheable: boolean \}>>[\s\S]*>\(\);/,
     "conversation workspace registration should keep a cache scoped to the current Veslo client object",
   );
   assert.match(
-    source,
+    conversationServiceSource,
     /const cachedRegistration = registrationCache\.get\(registrationCacheKey\);[\s\S]*return \(await cachedRegistration\)\.id;/,
     "repeated local conversation reads should join the same workspace registration lookup",
   );
   assert.match(
-    source,
+    conversationServiceSource,
     /if \(!result\.cacheable && registrationCache\.get\(registrationCacheKey\) === registrationPromise\) \{[\s\S]*registrationCache\.delete\(registrationCacheKey\);[\s\S]*\}/,
     "failed fallback-only registration attempts should not be cached forever",
   );
@@ -350,8 +354,8 @@ test("local sidebar runtime failures fall back to passive conversation read", ()
     "successful live sidebar reads should backfill Veslo conversation bindings without blocking visible UI",
   );
   assert.match(
-    source,
-    /const backfillConversationsToVesloReadApi = async[\s\S]*serverClient\.importConversations\(serverWorkspaceId,[\s\S]*rememberConversationScopesFromSessions\(workspaceId, directory, result\.items\);/,
+    conversationServiceSource,
+    /const backfillConversationsToVesloReadApi = async[\s\S]*serverClient\.importConversations\(serverWorkspaceId,[\s\S]*deps\.rememberConversationScopesFromSessions\(workspaceId, directory, result\.items\);/,
     "app should backfill imported live sessions through the Veslo read API registration path",
   );
   assert.match(

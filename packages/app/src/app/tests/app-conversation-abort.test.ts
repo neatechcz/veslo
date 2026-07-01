@@ -3,30 +3,34 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const conversationServiceSource = readFileSync(
+  new URL("../context/conversation-service.ts", import.meta.url),
+  "utf8",
+);
 
 test("conversation runs remember the submitted run id for scoped abort", () => {
-  const runStart = source.indexOf("  const runConversationFromVesloWriteApi = async (");
-  const abortStart = source.indexOf("  const abortConversationFromVesloWriteApi = async (", runStart);
+  const runStart = conversationServiceSource.indexOf("  const runConversationFromVesloWriteApi = async (");
+  const abortStart = conversationServiceSource.indexOf("  const resolveConversationAbortScope = (", runStart);
   assert.notEqual(runStart, -1, "runConversationFromVesloWriteApi should exist");
   assert.notEqual(abortStart, -1, "abortConversationFromVesloWriteApi should follow runConversationFromVesloWriteApi");
 
-  const runSource = source.slice(runStart, abortStart);
+  const runSource = conversationServiceSource.slice(runStart, abortStart);
   assert.match(
     runSource,
-    /const latestRunId = result\.status === "submitted"[\s\S]*\? result\.runId[\s\S]*: result\.activeRunId\?\.trim\(\) \|\| result\.reservedRunId;[\s\S]*rememberLatestConversationRunId\(\{[\s\S]*workspaceId,[\s\S]*conversationId: result\.conversationId,[\s\S]*opencodeSessionId: result\.opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*runId: latestRunId,[\s\S]*\}\);/,
+    /const latestRunId = result\.status === "submitted"[\s\S]*\? result\.runId[\s\S]*: result\.activeRunId\?\.trim\(\) \|\| result\.reservedRunId;[\s\S]*deps\.rememberLatestConversationRunId\(\{[\s\S]*workspaceId,[\s\S]*conversationId: result\.conversationId,[\s\S]*opencodeSessionId: result\.opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*runId: latestRunId,[\s\S]*\}\);/,
     "conversation runs should remember submitted run ids and queued active/reserved run ids under Veslo and UI identities",
   );
 });
 
 test("abortSession routes scoped conversations through Veslo abort and scoped legacy fallback", () => {
-  const abortWrapperStart = source.indexOf("  const abortConversationFromVesloWriteApi = async (");
-  const sessionStoreStart = source.indexOf("  const sessionStore = createSessionStore(", abortWrapperStart);
+  const abortWrapperStart = conversationServiceSource.indexOf("  const abortConversationFromVesloWriteApi = async (");
+  const serviceReturnStart = conversationServiceSource.indexOf("  return {", abortWrapperStart);
   assert.notEqual(abortWrapperStart, -1, "abortConversationFromVesloWriteApi should exist");
-  assert.notEqual(sessionStoreStart, -1, "abortConversationFromVesloWriteApi should end before session store setup");
-  const abortWrapperSource = source.slice(abortWrapperStart, sessionStoreStart);
+  assert.notEqual(serviceReturnStart, -1, "abortConversationFromVesloWriteApi should end before service return");
+  const abortWrapperSource = conversationServiceSource.slice(abortWrapperStart, serviceReturnStart);
   assert.match(
     abortWrapperSource,
-    /const runId = resolveLatestConversationRunId\(\{[\s\S]*conversationId,[\s\S]*opencodeSessionId: scope\.opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*\}\);[\s\S]*if \(!runId\) \{[\s\S]*throw new Error\("Conversation run id is not available for abort\."\);[\s\S]*\}/,
+    /const runId = deps\.resolveLatestConversationRunId\(\{[\s\S]*conversationId,[\s\S]*opencodeSessionId: scope\.opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*\}\);[\s\S]*if \(!runId\) \{[\s\S]*throw new Error\("Conversation run id is not available for abort\."\);[\s\S]*\}/,
     "conversation abort should require an explicit run id from the scoped run map",
   );
   assert.match(
