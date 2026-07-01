@@ -1509,3 +1509,45 @@ Notes:
 - LFC05 was rebased onto the current `local/sandbox-merge` before merge because the original
   worktree had advanced through an unrelated app-cleanup commit.
 - Original worktree still contains an unrelated untracked app cleanup plan outside LFC05.
+
+### 2026-07-02 LFC06 Abort Flow Worktree
+
+Status:
+
+- `status: reserved`
+- `reserved_by: codex-20260702-lfc06-abort-flow`
+- `done: false`
+- implementation branch: `lifecycle/lfc06-abort-flow-consolidation`
+- implementation worktree: `../veslo-lifecycle-lfc06-abort-flow-consolidation`
+
+Scope:
+
+- Added controller-owned `abortRun(...)` for conversation abort side effects.
+- Kept route responsibilities limited to auth, request parsing, target resolution, trace start/done,
+  response serialization, and preserving the existing response shape.
+- Moved active AI gateway proxy request aborting, OpenCode abort submission, lifecycle
+  `markAbortRequested`, and abort-requested reconcile scheduling into the controller.
+- Preserved current failure ordering: active gateway proxy requests are aborted before OpenCode
+  abort, and lifecycle side effects run only after OpenCode abort succeeds.
+- Added an explicit inactive-after-abort reconcile regression test alongside the existing missing
+  lifecycle abort reconcile coverage.
+
+Evidence:
+
+- Fresh implementation worktree needed `pnpm install --frozen-lockfile`; install completed with the
+  existing generated-bin warnings for local packages.
+- First focused test attempt failed before assertions because dependencies were not installed in the
+  fresh worktree.
+- Test-first run after install failed as expected because `controller.abortRun` did not exist.
+- `pnpm --filter veslo-server exec bun test ./src/tests/conversation-run-lifecycle-controller.test.ts`
+  passed: 27 pass, 0 fail.
+- `pnpm --filter veslo-server exec bun test ./src/tests/conversation-run-lifecycle-controller.test.ts src/tests/server-conversations.test.ts`
+  passed: 46 pass, 0 fail.
+- `pnpm --filter veslo-server typecheck` passed.
+- `git diff --check` passed; Git reported LF-to-CRLF working-copy warnings only.
+
+Notes:
+
+- Remote workspace lifecycle behavior was not changed; remote aborts still bypass lifecycle
+  `markAbortRequested` and reconcile scheduling.
+- No app-side behavior was changed in LFC06.

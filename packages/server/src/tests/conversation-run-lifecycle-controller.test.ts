@@ -127,8 +127,8 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
     this.calls.push(`markAborted:${workspaceId}:${runId}:${reason}`);
   }
 
-  async markAbortRequested(): Promise<void> {
-    this.calls.push("markAbortRequested");
+  async markAbortRequested(workspaceId: string, runId: string): Promise<void> {
+    this.calls.push(`markAbortRequested:${workspaceId}:${runId}`);
   }
 
   async status(workspaceId: string, conversationId: string, runId: string): Promise<LifecycleRunStatusResult | null> {
@@ -304,10 +304,12 @@ function controllerHarness() {
   ];
   const behavior = {
     submitError: null as unknown,
+    abortError: null as unknown,
     providerStartResult: { started: true, timeoutMs: 25 },
   };
   const submitCalls: unknown[] = [];
   const activeGatewayCalls: Array<{ kind: "register" | "unregister"; input: unknown }> = [];
+  const activeProxyAbortCalls: unknown[] = [];
   const providerWatchCalls: unknown[] = [];
   const abortCalls: unknown[] = [];
   const drainCalls: Array<{ workspaceId: string; conversationId: string; delayMs: number }> = [];
@@ -345,7 +347,12 @@ function controllerHarness() {
     },
     abortOpenCode: async (input) => {
       abortCalls.push(input);
+      if (behavior.abortError) throw behavior.abortError;
       return { aborted: true };
+    },
+    abortActiveGatewayProxyRequests: (input) => {
+      activeProxyAbortCalls.push(input);
+      return [{ requestId: "proxy-1" }];
     },
     queueDrainPollMs: 1_500,
     resolveLifecycleReconcilePollMs: () => 2_000,
@@ -374,6 +381,7 @@ function controllerHarness() {
     behavior,
     submitCalls,
     activeGatewayCalls,
+    activeProxyAbortCalls,
     providerWatchCalls,
     abortCalls,
     drainCalls,
@@ -519,6 +527,9 @@ test("server stop calls the lifecycle controller stop hook", async () => {
     },
     submitAcceptedRun: async () => {
       throw new Error("submitAcceptedRun should not be called by the shutdown fixture");
+    },
+    abortRun: async () => {
+      throw new Error("abortRun should not be called by the shutdown fixture");
     },
     scheduleQueueDrain: () => {
       throw new Error("scheduleQueueDrain should not be called by the shutdown fixture");
@@ -842,6 +853,24 @@ test("lifecycle reconcile marks missing aborted runs as aborted and wakes queue"
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
 });
 
+test("lifecycle reconcile marks inactive abort-requested runs as aborted and wakes queue", async () => {
+  const { controller, lifecycle, timers, workspaces } = controllerHarness();
+  lifecycle.statusResult = { runId: "run-abort", status: "completed", stale: false };
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-abort",
+    reason: "abort-requested",
+    abortRequested: true,
+  });
+
+  expect(lifecycle.calls).toContain(
+    "markAborted:ws_1:run-abort:user abort reconciled after engine became inactive",
+  );
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
+});
+
 test("queue drain re-pends items when lifecycle register sees another active run", async () => {
   const { controller, lifecycle, queue, submitCalls, timers } = controllerHarness();
   enqueuePendingRun(queue);
@@ -945,4 +974,72 @@ test("startup schedules queue drains for pending conversation keys", () => {
   controller.start();
 
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500, 1_500]);
+});
+
+test("abortRun aborts gateway requests, calls OpenCode abort, marks requested, and schedules reconcile", async () => {
+  const {
+    controller,
+    lifecycle,
+    workspaces,
+    activeProxyAbortCalls,
+    abortCalls,
+    reconcileCalls,
+  } = controllerHarness();
+
+  const result = await controller.abortRun({
+    workspace: workspaces[0]!,
+    target: {
+      directory: "/repo",
+      binding: null,
+      opencodeSessionId: "sess-a",
+      conversationId: "conv-a",
+    },
+    runId: "run-abort",
+  });
+
+  expect(result).toEqual({ upstream: { aborted: true }, abortedGatewayRequestCount: 1 });
+  expect(activeProxyAbortCalls).toEqual([{
+    workspaceId: "ws_1",
+    runId: "run-abort",
+    sessionId: "sess-a",
+    reason: "conversation-abort",
+  }]);
+  expect(abortCalls).toHaveLength(1);
+  expect(lifecycle.calls).toContain("markAbortRequested:ws_1:run-abort");
+  expect(reconcileCalls).toContainEqual({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-abort",
+    reason: "abort-requested",
+    delayMs: 0,
+  });
+});
+
+test("abortRun preserves OpenCode abort failure behavior without lifecycle side effects", async () => {
+  const {
+    controller,
+    lifecycle,
+    workspaces,
+    behavior,
+    activeProxyAbortCalls,
+    abortCalls,
+    timers,
+  } = controllerHarness();
+  behavior.abortError = new Error("opencode abort failed");
+
+  await expect(controller.abortRun({
+    workspace: workspaces[0]!,
+    target: {
+      directory: "/repo",
+      binding: null,
+      opencodeSessionId: "sess-a",
+      conversationId: "conv-a",
+    },
+    runId: "run-abort",
+  })).rejects.toThrow("opencode abort failed");
+
+  expect(activeProxyAbortCalls).toHaveLength(1);
+  expect(abortCalls).toHaveLength(1);
+  expect(lifecycle.calls.some((call) => call.startsWith("markAbortRequested"))).toBe(false);
+  expect(timers.activeTimers()).toEqual([]);
 });

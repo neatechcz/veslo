@@ -96,6 +96,17 @@ export type ConversationRunLifecycleAbortOpenCodePort = (
   input: ConversationRunLifecycleAbortOpenCodeInput,
 ) => Promise<unknown>;
 
+export type ConversationRunLifecycleAbortActiveGatewayProxyRequestsInput = {
+  workspaceId: string;
+  runId: string;
+  sessionId: string;
+  reason: string;
+};
+
+export type ConversationRunLifecycleAbortActiveGatewayProxyRequestsPort = (
+  input: ConversationRunLifecycleAbortActiveGatewayProxyRequestsInput,
+) => unknown[];
+
 export type ConversationRunLifecycleScheduleReconcileInput = {
   workspace: WorkspaceInfo;
   conversationId: string;
@@ -131,6 +142,17 @@ export type ConversationRunLifecycleTranscriptAppendInput = {
   shouldReconcile: boolean;
 };
 
+export type ConversationRunLifecycleAbortInput = {
+  workspace: WorkspaceInfo;
+  target: ConversationRunLifecycleTarget;
+  runId: string;
+};
+
+export type ConversationRunLifecycleAbortResult = {
+  upstream: unknown;
+  abortedGatewayRequestCount: number;
+};
+
 export type ConversationRunLifecycleControllerOptions = {
   lifecycleClient?: OrchestratorLifecycleClient | null;
   queueStore?: ConversationRunQueueStore | null;
@@ -138,6 +160,7 @@ export type ConversationRunLifecycleControllerOptions = {
   createBackgroundRunTrace?: () => ConversationRunLifecycleTracer;
   submitOpenCode?: ConversationRunLifecycleSubmitOpenCodePort | null;
   abortOpenCode?: ConversationRunLifecycleAbortOpenCodePort | null;
+  abortActiveGatewayProxyRequests?: ConversationRunLifecycleAbortActiveGatewayProxyRequestsPort | null;
   aiGatewayActiveRun?: ConversationRunLifecycleAiGatewayActiveRunPort | null;
   aiGatewayProviderWatch?: ConversationRunLifecycleAiGatewayProviderWatchPort | null;
   queueDrainPollMs?: number;
@@ -178,6 +201,7 @@ export type ConversationRunLifecycleController = {
   scheduleLifecycleReconcile(input: ConversationRunLifecycleScheduleReconcileInput): void;
   reconcileConversationRunLifecycle(input: ConversationRunLifecycleScheduleReconcileInput): Promise<void>;
   handleTranscriptAppend(input: ConversationRunLifecycleTranscriptAppendInput): Promise<void>;
+  abortRun(input: ConversationRunLifecycleAbortInput): Promise<ConversationRunLifecycleAbortResult>;
   start(): void;
   stop(): void;
   snapshotForTests(): ConversationRunLifecycleSnapshot;
@@ -864,6 +888,51 @@ export function createConversationRunLifecycleController(
     }
   }
 
+  async function abortRun(input: ConversationRunLifecycleAbortInput): Promise<ConversationRunLifecycleAbortResult> {
+    if (!options.abortOpenCode) {
+      throw new Error("OpenCode abort port is required for conversation aborts");
+    }
+    const runTrace = options.createBackgroundRunTrace?.() ?? createNoopRunTrace();
+    const abortedGatewayRequests = options.abortActiveGatewayProxyRequests?.({
+      workspaceId: input.workspace.id,
+      runId: input.runId,
+      sessionId: input.target.opencodeSessionId,
+      reason: "conversation-abort",
+    }) ?? [];
+
+    const upstream = await options.abortOpenCode({
+      runTrace,
+      workspace: input.workspace,
+      target: input.target,
+      runId: input.runId,
+    });
+
+    const lifecycleOwner = input.workspace.workspaceType === "remote" ? null : options.lifecycleClient ?? null;
+    if (lifecycleOwner) {
+      await lifecycleOwner.markAbortRequested(input.workspace.id, input.runId).catch((error) => {
+        recordTrace("server:conversation-run:lifecycle-abort-requested-error", {
+          workspaceId: input.workspace.id,
+          conversationId: input.target.conversationId,
+          runId: input.runId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+      scheduleLifecycleReconcile({
+        workspace: input.workspace,
+        conversationId: input.target.conversationId,
+        runId: input.runId,
+        reason: "abort-requested",
+        abortRequested: true,
+        delayMs: 0,
+      });
+    }
+
+    return {
+      upstream,
+      abortedGatewayRequestCount: abortedGatewayRequests.length,
+    };
+  }
+
   function schedulePendingQueueDrains(): void {
     const pendingConversationKeys = options.queueStore?.pendingConversationKeys;
     if (typeof pendingConversationKeys !== "function") return;
@@ -972,6 +1041,7 @@ export function createConversationRunLifecycleController(
     scheduleLifecycleReconcile,
     reconcileConversationRunLifecycle,
     handleTranscriptAppend,
+    abortRun,
     start() {
       if (started) return;
       started = true;

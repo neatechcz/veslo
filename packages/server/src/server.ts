@@ -3815,6 +3815,7 @@ function createRoutes(
         { method: "POST", sendTraceId: runTrace.traceId },
       );
     },
+    abortActiveGatewayProxyRequests: abortActiveAiGatewayProxyRequests,
     aiGatewayActiveRun: {
       register: registerActiveAiGatewayRun,
       unregister: unregisterActiveAiGatewayRun,
@@ -3921,42 +3922,6 @@ function createRoutes(
       await fetchOpencodeJson(workspace, `/session/${encodeURIComponent(sessionId)}`, {
         method: "DELETE",
       });
-    },
-    abortConversationRun: async ({ workspace, target, runId }) => {
-      const abortedGatewayRequests = abortActiveAiGatewayProxyRequests({
-        workspaceId: workspace.id,
-        runId,
-        sessionId: target.opencodeSessionId,
-        reason: "conversation-abort",
-      });
-      const query = new URLSearchParams();
-      query.set("directory", target.directory);
-      const upstream = await fetchOpencodeJsonWithOrchestratorFallback(
-        config,
-        { ...workspace, directory: target.directory },
-        `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${query.toString()}`,
-        { method: "POST" },
-      );
-      const lifecycleOwner = workspace.workspaceType === "remote" ? null : lifecycleClient;
-      if (lifecycleOwner) {
-        await lifecycleOwner.markAbortRequested(workspace.id, runId).catch((error) => {
-          recordSendWorkflowTrace("server", "server:conversation-run:lifecycle-abort-requested-error", {
-            workspaceId: workspace.id,
-            conversationId: target.conversationId,
-            runId,
-            message: error instanceof Error ? error.message : String(error),
-          });
-        });
-        conversationRunLifecycleController.scheduleLifecycleReconcile({
-          workspace,
-          conversationId: target.conversationId,
-          runId,
-          reason: "abort-requested",
-          abortRequested: true,
-          delayMs: 0,
-        });
-      }
-      return { upstream, abortedGatewayRequestCount: abortedGatewayRequests.length };
     },
     recordSendWorkflowTrace,
   });

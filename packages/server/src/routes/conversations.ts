@@ -84,12 +84,6 @@ export type ConversationSessionRouteDependencies = {
   createConversationRunTracer(request: Request): ConversationRunTracer;
   resolveConversationExecutionTarget: ResolveConversationExecutionTarget;
   deleteOpenCodeSession(input: { workspace: WorkspaceInfo; sessionId: string }): Promise<unknown>;
-  abortConversationRun(input: {
-    workspace: WorkspaceInfo;
-    target: ConversationExecutionTarget;
-    runId: string;
-    sessionOrConversationId: string;
-  }): Promise<{ upstream: unknown; abortedGatewayRequestCount: number }>;
   recordSendWorkflowTrace(source: "server", event: string, payload: Record<string, unknown>): void;
 };
 
@@ -336,7 +330,6 @@ export function registerConversationSessionRoutes(
     createConversationRunTracer,
     resolveConversationExecutionTarget,
     deleteOpenCodeSession,
-    abortConversationRun,
     recordSendWorkflowTrace,
   } = dependencies;
 
@@ -552,11 +545,10 @@ export function registerConversationSessionRoutes(
       opencodeSessionId: target.opencodeSessionId,
       sessionOrConversationId,
     });
-    const { upstream, abortedGatewayRequestCount } = await abortConversationRun({
+    const { upstream, abortedGatewayRequestCount } = await conversationRunLifecycleController.abortRun({
       workspace,
       target,
       runId,
-      sessionOrConversationId,
     });
     recordSendWorkflowTrace("server", "server:conversation-abort:done", {
       traceId: null,
