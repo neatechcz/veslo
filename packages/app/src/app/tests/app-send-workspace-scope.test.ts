@@ -8,6 +8,10 @@ const workspaceSendTargetSource = readFileSync(
   new URL("../context/workspace-send-target.ts", import.meta.url),
   "utf8",
 );
+const mutationWorkflowSource = readFileSync(
+  new URL("../pages/session-mutation-workflow.ts", import.meta.url),
+  "utf8",
+);
 
 test("send preflight snapshots the target workspace before cold-start awaits", () => {
   const sendStart = source.indexOf("async function sendPrompt(");
@@ -108,13 +112,13 @@ test("scoped send and session creation do not fall back to the active client", (
 
 test("skill command lookup follows the scoped target workspace", () => {
   assert.match(
-    source,
-    /async function listCommands\(\s*scope: CommandListScope = \{\},[\s\S]*const scopedWorkspaceId = scope\.workspaceId\?\.trim\(\) \?\? "";[\s\S]*const c = scopedWorkspaceId \? routedClient\(scopedWorkspaceId\) : routedClient\(\);/,
+    mutationWorkflowSource,
+    /async function listCommands\(\s*scope: SessionMutationCommandListScope = \{\},[\s\S]*const scopedWorkspaceId = scope\.workspaceId\?\.trim\(\) \?\? "";[\s\S]*const c = scopedWorkspaceId \? deps\.routedClient\(scopedWorkspaceId\) : deps\.routedClient\(\);/,
     "listCommands should use the explicitly scoped workspace client when one is provided",
   );
   assert.match(
-    source,
-    /const directory =[\s\S]*scopedDirectory \|\|[\s\S]*workspaceRootForId\(scopedWorkspaceId, null\)[\s\S]*workspaceStore\.activeWorkspaceRoot\(\)\.trim\(\)[\s\S]*const list = await listCommandsTyped\(c, directory\);/,
+    mutationWorkflowSource,
+    /const directory =[\s\S]*scopedDirectory \|\|[\s\S]*deps\.workspaceRootForId\(scopedWorkspaceId, null\)[\s\S]*deps\.activeWorkspaceRoot\(\)\.trim\(\)[\s\S]*const list = await listCommandsTyped\(c, directory\)/,
     "listCommands should resolve command directory from the scoped workspace before the active workspace root",
   );
   assert.match(

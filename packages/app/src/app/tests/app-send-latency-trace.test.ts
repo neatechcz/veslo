@@ -23,6 +23,10 @@ const workspaceSessionSnapshotsSource = readFileSync(
   new URL("../context/workspace-session-snapshots.ts", import.meta.url),
   "utf8",
 );
+const mutationWorkflowSource = readFileSync(
+  new URL("../pages/session-mutation-workflow.ts", import.meta.url),
+  "utf8",
+);
 
 test("send preflight records per-step latency trace entries for step 2", () => {
   assert.match(
@@ -193,8 +197,8 @@ test("create session preflight records duration for duplicate gates and server c
 test("create run and compact do not fall back to legacy OpenCode SDK writes", () => {
   const sendStart = source.indexOf("  async function sendPrompt(");
   const sendEnd = source.indexOf("  async function abortSession(", sendStart);
-  const compactStart = source.indexOf("  async function compactCurrentSession(");
-  const compactEnd = source.indexOf("  const triggerAutoCompaction", compactStart);
+  const compactStart = mutationWorkflowSource.indexOf("  async function compactCurrentSession(");
+  const compactEnd = mutationWorkflowSource.indexOf("  async function replaceUserMessage(", compactStart);
   const createStart = source.indexOf("async function createSessionAndOpen(");
   const createEnd = source.indexOf("const chooseFolderForCurrentSession", createStart);
 
@@ -203,7 +207,7 @@ test("create run and compact do not fall back to legacy OpenCode SDK writes", ()
   assert.ok(createStart >= 0 && createEnd > createStart, "createSessionAndOpen source should be present");
 
   const sendSource = source.slice(sendStart, sendEnd);
-  const compactSource = source.slice(compactStart, compactEnd);
+  const compactSource = mutationWorkflowSource.slice(compactStart, compactEnd);
   const createSource = source.slice(createStart, createEnd);
 
   assert.match(sendSource, /const runConversationOrFail = async \(input: VesloConversationRunInput\)/);

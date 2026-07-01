@@ -6,7 +6,7 @@ const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8"
 
 test("sendPrompt removes optimistic pending sidebar rows when session creation does not materialize", () => {
   const start = appSource.indexOf("  async function sendPrompt(");
-  const end = appSource.indexOf("  async function replaceUserMessage(", start);
+  const end = appSource.indexOf("  const sessionMutationWorkflow = createSessionMutationWorkflow({", start);
   assert.ok(start >= 0 && end > start, "sendPrompt source should be present");
   const source = appSource.slice(start, end);
 

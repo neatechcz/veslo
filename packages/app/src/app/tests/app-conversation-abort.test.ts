@@ -40,9 +40,9 @@ test("abortSession routes scoped conversations through Veslo abort and scoped le
   );
 
   const abortSessionStart = source.indexOf("  async function abortSession(");
-  const retryStart = source.indexOf("  function retryLastPrompt()", abortSessionStart);
+  const retryStart = source.indexOf("  const sessionMutationWorkflow = createSessionMutationWorkflow({", abortSessionStart);
   assert.notEqual(abortSessionStart, -1, "abortSession should exist");
-  assert.notEqual(retryStart, -1, "abortSession should end before retryLastPrompt");
+  assert.notEqual(retryStart, -1, "abortSession should end before session mutation workflow wiring");
   const abortSessionSource = source.slice(abortSessionStart, retryStart);
   const serviceCall = abortSessionSource.indexOf("abortConversationFromVesloWriteApi(id, target)");
   const scopedFallbackHelper = abortSessionSource.indexOf("const abortSessionViaScopedLegacy = async");

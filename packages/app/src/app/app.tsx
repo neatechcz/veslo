@@ -179,6 +179,7 @@ import { resolveNativeWindowDecorationsVisible } from "./components/titlebar-men
 import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
+import { createSessionMutationWorkflow } from "./pages/session-mutation-workflow";
 import { isPendingSessionInstanceId } from "./components/session/pending-session-instance-model";
 import ProtoWorkspacesView from "./pages/proto-workspaces";
 import ProtoV1UxView from "./pages/proto-v1-ux";
@@ -515,15 +516,6 @@ type AppSendPromptOptions = SessionSendOptionsBase & {
   targetSessionId?: string | null;
   onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
   pendingSession?: PendingSidebarSessionMetadata | null;
-};
-
-type AppReplaceUserMessageOptions = SessionSendOptionsBase & {
-  targetSessionId?: string | null;
-};
-
-type CommandListScope = {
-  workspaceId?: string | null;
-  directory?: string | null;
 };
 
 const SEND_TRACE_LIMIT = 500;
@@ -2728,89 +2720,80 @@ export default function App() {
     await abortSessionTyped(c, id);
   }
 
-  function retryLastPrompt() {
-    const text = lastPromptSent().trim();
-    if (!text) return;
-    void sendPrompt({
-      mode: "prompt",
-      text,
-      parts: [{ type: "text", text }],
-      attachments: [],
-    }, {
-      clientMessageId: createSessionClientMessageId(),
-      origin: "app:retry-last-prompt",
-    });
-  }
+  const sessionMutationWorkflow = createSessionMutationWorkflow({
+    lastPromptSent,
+    sendPrompt,
+    createClientMessageId: createSessionClientMessageId,
+    selectedSessionId,
+    selectedSession,
+    messages,
+    setPrompt,
+    ensureSelectedSessionWorkspaceActiveForSend: (sessionId, sendTraceId) =>
+      ensureSelectedSessionWorkspaceActiveForSend(sessionId, sendTraceId),
+    routedClient: (workspaceId) => routedClient(workspaceId ?? undefined),
+    abortSessionSafe,
+    revertSession,
+    unrevertSession,
+    upsertLocalSession: (session) => upsertLocalSession(session),
+    normalizeSendCorrelation: normalizeSessionSendCorrelation,
+    createSendPreflightContext,
+    recordSendTrace,
+    sendTraceStep,
+    resolveSendTargetWorkspaceScope: (sessionId) => resolveSendTargetWorkspaceScope(sessionId),
+    prepareSendRuntimeForSend: (event, preflight) => prepareSendRuntimeForSend(event, preflight as SendRuntimePreflightContext),
+    resolveRuntimeSandboxStateForTarget: (target) => resolveRuntimeSandboxStateForTarget(target as SendRuntimePreflightTargetWorkspace | null),
+    routedClientForSendTarget: (target) => routedClientForSendTarget(target as SendTargetWorkspaceScope | null),
+    engineReady,
+    client,
+    reportError,
+    selectedSessionModel: () => selectedSessionModel(),
+    developerMode,
+    modelVariant: () => modelVariant(),
+    finishPerf,
+    recordPerfLog,
+    perfNow,
+    sessionDirectoryOverrideById,
+    workspaceProjectDir: () => workspaceProjectDir(),
+    resolveSelectedSessionBrowseScope,
+    runConversationFromVesloWriteApi,
+    messageFromUnknownError: (error) => messageFromUnknownError(error),
+    safeStringify,
+    renameSession,
+    refreshSidebarWorkspaceSessions: (workspaceId) => refreshSidebarWorkspaceSessions(workspaceId),
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+    workspaces: () => workspaceStore.workspaces() as WorkspaceDisplay[],
+    activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
+    sessionDirectoryOverride: sessionDirectoryOverrideById,
+    persistSessionDirectoryOverride,
+    sessions,
+    setSessions,
+    deleteSessionComposerDraft,
+    setComposerDraftBySessionId,
+    removeSessionFromWorkspaceSidebar: (workspaceId, sessionId) => removeSessionFromWorkspaceSidebar(workspaceId, sessionId),
+    pathname: () => location.pathname,
+    navigate: (to, options) => navigate(to, options),
+    setSelectedSessionId,
+    clearWorkspaceLastSessionIfSelected,
+    sessionStatusById,
+    setSessionStatusById,
+    withoutSessionStatus,
+    unwrap,
+    listCommands: listCommandsTyped,
+    compactCommandDescription: () => t("commands.compact_description", currentLocale()),
+    workspaceRootForId: (workspaceId, fallbackDirectory) => workspaceRootForId(workspaceId, fallbackDirectory),
+    normalizeTodoItems,
+  });
 
-  async function compactCurrentSession(sessionIdOverride?: string) {
-    const sessionID = (sessionIdOverride ?? selectedSessionId() ?? "").trim();
-    if (!sessionID) {
-      throw new Error("Select a session before compacting.");
-    }
-    if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
-      return;
-    }
-    const c = routedClient();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-
-    const visible = messages();
-    if (!visible.length) {
-      throw new Error("Nothing to compact yet.");
-    }
-
-    const model = selectedSessionModel();
-    const startedAt = perfNow();
-    const modelLabel = `${model.providerID}/${model.modelID}`;
-    recordPerfLog(developerMode(), "session.compact", "start", {
-      sessionID,
-      messageCount: visible.length,
-      model: modelLabel,
-      variant: modelVariant() ?? null,
-    });
-
-    try {
-      const directory = sessionDirectoryOverrideById()[sessionID] ?? (workspaceProjectDir().trim() || undefined);
-      const scope = resolveSelectedSessionBrowseScope(sessionID);
-      try {
-        const result = await runConversationFromVesloWriteApi(sessionID, {
-          kind: "summarize",
-          directory,
-          providerID: model.providerID,
-          modelID: model.modelID,
-        });
-        if (result) {
-          finishPerf(developerMode(), "session.compact", "done", startedAt, {
-            sessionID,
-            messageCount: visible.length,
-            model: modelLabel,
-          });
-          return;
-        }
-        recordSendTrace("compactSession:conversation-run-unavailable", {
-          sessionID,
-          hasConversationScope: Boolean(scope?.conversationId),
-        });
-        throw new Error("Conversation service is unavailable for this session.");
-      } catch (error) {
-        recordSendTrace("compactSession:conversation-run-error", {
-          sessionID,
-          hasConversationScope: Boolean(scope?.conversationId),
-          message: messageFromUnknownError(error),
-        });
-        throw error;
-      }
-    } catch (error) {
-      finishPerf(developerMode(), "session.compact", "error", startedAt, {
-        sessionID,
-        messageCount: visible.length,
-        model: modelLabel,
-        error: error instanceof Error ? error.message : safeStringify(error),
-      });
-      throw error;
-    }
-  }
+  const retryLastPrompt = sessionMutationWorkflow.retryLastPrompt;
+  const compactCurrentSession = sessionMutationWorkflow.compactCurrentSession;
+  const replaceUserMessage = sessionMutationWorkflow.replaceUserMessage;
+  const undoLastUserMessage = sessionMutationWorkflow.undoLastUserMessage;
+  const redoLastUserMessage = sessionMutationWorkflow.redoLastUserMessage;
+  const renameSessionTitle = sessionMutationWorkflow.renameSessionTitle;
+  const deleteSessionById = sessionMutationWorkflow.deleteSessionById;
+  const listAgents = sessionMutationWorkflow.listAgents;
+  const listCommands = sessionMutationWorkflow.listCommands;
+  const saveSessionExport = sessionMutationWorkflow.saveSessionExport;
 
   const triggerAutoCompaction = async (sessionID: string) => {
     if (!autoCompactContext()) return;
@@ -2997,284 +2980,6 @@ export default function App() {
     );
   });
 
-  const restorePromptFromUserMessage = (message: MessageWithParts) => {
-    const text = message.parts
-      .filter(isVisibleTextPart)
-      .map((part) => String((part as { text?: string }).text ?? ""))
-      .join("");
-    setPrompt(text);
-  };
-
-  async function replaceUserMessage(
-    messageID: string,
-    draft: ComposerDraft,
-    options: AppReplaceUserMessageOptions,
-  ): Promise<boolean> {
-    const sendCorrelation = normalizeSessionSendCorrelation(options);
-    if (!sendCorrelation.clientMessageId) {
-      recordSendTrace("replaceUserMessage:blocked-missing-client-message-id", {
-        origin: sendCorrelation.origin,
-      });
-      return false;
-    }
-    const replacePreflight = createSendPreflightContext(options.sendTraceId);
-    const sendTraceId = replacePreflight.traceId;
-    const sessionID = (options.targetSessionId?.trim() || selectedSessionId() || "").trim();
-    if (!sessionID || !messageID.trim()) return false;
-
-    recordSendTrace("replaceUserMessage:start", {
-      traceId: sendTraceId,
-      sessionID,
-      messageID,
-      clientMessageId: sendCorrelation.clientMessageId,
-      origin: sendCorrelation.origin,
-      engineReady: engineReady(),
-      hasClient: Boolean(client()),
-    });
-    if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
-      recordSendTrace("replaceUserMessage:blocked-scoped-workspace", { sessionID });
-      return false;
-    }
-
-    if (
-      !(await sendTraceStep(
-        "replaceUserMessage:ensure-scoped-workspace-active",
-        () => ensureSelectedSessionWorkspaceActiveForSend(sessionID, sendTraceId),
-        { traceId: sendTraceId, sessionID },
-      ))
-    ) {
-      recordSendTrace("replaceUserMessage:blocked-scoped-workspace", { traceId: sendTraceId, sessionID });
-      return false;
-    }
-    const sendTargetWorkspace = resolveSendTargetWorkspaceScope(sessionID);
-    replacePreflight.targetWorkspace = sendTargetWorkspace;
-    if (!(await prepareSendRuntimeForSend("replaceUserMessage", replacePreflight))) return false;
-    replacePreflight.enginePrepared = true;
-    replacePreflight.effectiveSandbox = resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
-    replacePreflight.managedAiReady = true;
-    const c = routedClientForSendTarget(sendTargetWorkspace);
-    if (!c) {
-      recordSendTrace("replaceUserMessage:blocked-no-client", {
-        traceId: sendTraceId,
-        sessionID,
-        workspaceId: sendTargetWorkspace?.workspaceId ?? null,
-      });
-      return false;
-    }
-
-    await abortSessionSafe(c, sessionID);
-
-    const previousRevertMessageID = selectedSession()?.revert?.messageID ?? null;
-    const next = await revertSession(c, sessionID, messageID);
-    upsertLocalSession(next);
-
-    const accepted = await sendPrompt(draft, {
-      targetSessionId: sessionID,
-      sendTraceId: options.sendTraceId,
-      clientMessageId: sendCorrelation.clientMessageId,
-      origin: sendCorrelation.origin,
-    });
-    if (!accepted) {
-      try {
-        const restored = previousRevertMessageID
-          ? await revertSession(c, sessionID, previousRevertMessageID)
-          : await unrevertSession(c, sessionID);
-        upsertLocalSession(restored);
-      } catch (error) {
-        reportError(error, "session.replaceUserMessage.restore");
-      }
-    }
-    return accepted;
-  }
-
-  async function undoLastUserMessage() {
-    const sessionID = (selectedSessionId() ?? "").trim();
-    if (!sessionID) return;
-    if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
-      return;
-    }
-    const c = routedClient();
-    if (!c) return;
-
-    // Revert is rejected while the session is busy. We *usually* have an accurate
-    // session status via SSE, but to be resilient to transient desync we attempt
-    // an abort even when we think we're idle.
-    await abortSessionSafe(c, sessionID);
-
-    const revertMessageID = selectedSession()?.revert?.messageID ?? null;
-    const users = messages().filter((message) => {
-      const role = (message.info as { role?: string }).role;
-      return role === "user";
-    });
-
-    let target: MessageWithParts | null = null;
-    for (let idx = users.length - 1; idx >= 0; idx -= 1) {
-      const candidate = users[idx];
-      const id = messageIdFromInfo(candidate);
-      if (!id) continue;
-      if (!revertMessageID || id < revertMessageID) {
-        target = candidate;
-        break;
-      }
-    }
-
-    if (!target) return;
-    const messageID = messageIdFromInfo(target);
-    if (!messageID) return;
-
-    const next = await revertSession(c, sessionID, messageID);
-    upsertLocalSession(next);
-    restorePromptFromUserMessage(target);
-  }
-
-  async function redoLastUserMessage() {
-    const sessionID = (selectedSessionId() ?? "").trim();
-    if (!sessionID) return;
-    if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
-      return;
-    }
-    const c = routedClient();
-    if (!c) return;
-
-    await abortSessionSafe(c, sessionID);
-
-    const revertMessageID = selectedSession()?.revert?.messageID ?? null;
-    if (!revertMessageID) return;
-
-    const users = messages().filter((message) => {
-      const role = (message.info as { role?: string }).role;
-      return role === "user";
-    });
-
-    const next = users.find((message) => {
-      const id = messageIdFromInfo(message);
-      return Boolean(id) && id > revertMessageID;
-    });
-
-    if (!next) {
-      const session = await unrevertSession(c, sessionID);
-      upsertLocalSession(session);
-      setPrompt("");
-      return;
-    }
-
-    const messageID = messageIdFromInfo(next);
-    if (!messageID) return;
-
-    const nextSession = await revertSession(c, sessionID, messageID);
-    upsertLocalSession(nextSession);
-
-    let prior: MessageWithParts | null = null;
-    for (let idx = users.length - 1; idx >= 0; idx -= 1) {
-      const candidate = users[idx];
-      const id = messageIdFromInfo(candidate);
-      if (id && id < messageID) {
-        prior = candidate;
-        break;
-      }
-    }
-
-    if (prior) {
-      restorePromptFromUserMessage(prior);
-      return;
-    }
-
-    setPrompt("");
-  }
-
-  async function renameSessionTitle(sessionID: string, title: string) {
-    const trimmed = title.trim();
-    if (!trimmed) {
-      throw new Error("Session name is required");
-    }
-    const targetWorkspaceId =
-      resolveSelectedSessionBrowseScope(sessionID)?.workspaceId?.trim() ||
-      workspaceStore.activeWorkspaceId().trim();
-
-    await renameSession(sessionID, trimmed, targetWorkspaceId || undefined);
-    await refreshSidebarWorkspaceSessions(targetWorkspaceId || workspaceStore.activeWorkspaceId())
-      .catch(e => reportError(e, "sidebar.refreshSessions"));
-  }
-
-  async function deleteSessionById(sessionID: string, workspaceID?: string) {
-    const trimmed = sessionID.trim();
-    if (!trimmed) return;
-    const workspaceId =
-      (workspaceID ?? "").trim() ||
-      resolveSelectedSessionBrowseScope(trimmed)?.workspaceId?.trim() ||
-      workspaceStore.activeWorkspaceId().trim();
-    const c = routedClient(workspaceId);
-    if (!c) {
-      throw new Error("Target workspace is not connected to a server");
-    }
-
-    const workspace = workspaceId
-      ? workspaceStore.workspaces().find((item) => item.id === workspaceId)
-      : null;
-    const workspaceRoot = workspace
-      ? workspace.workspaceType === "local"
-        ? workspace.path?.trim() ?? ""
-        : workspace.directory?.trim() ?? ""
-      : workspaceStore.activeWorkspaceRoot().trim();
-
-    // Session may have been moved to a different directory via chooseFolderForCurrentSession.
-    // Use the override directory so the engine deletes from the correct .opencode/sessions/.
-    const overrideDir = sessionDirectoryOverrideById()[trimmed] ?? "";
-    const root = normalizeDirectoryPath(overrideDir) || workspaceRoot;
-
-    const params = root ? { sessionID: trimmed, directory: root } : { sessionID: trimmed };
-    unwrap(await c.session.delete(params));
-
-    // Remove the deleted session from the store and sidebar locally.
-    // SSE will handle any further sync — calling loadSessions/refreshSidebarWorkspaceSessions
-    // here races with SSE and can wipe unrelated sessions from the store.
-    persistSessionDirectoryOverride(trimmed, null);
-    setSessions(sessions().filter((s) => s.id !== trimmed));
-    setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, trimmed));
-    const sidebarWorkspaceId = workspace?.id ?? workspaceId ?? workspaceStore.activeWorkspaceId();
-    removeSessionFromWorkspaceSidebar(sidebarWorkspaceId, trimmed);
-
-    // If we're currently routed to the deleted session, navigate away immediately.
-    // (Otherwise the route effect can try to re-select a session that no longer exists.)
-    try {
-      const path = location.pathname.toLowerCase();
-      if (path === `/session/${trimmed.toLowerCase()}`) {
-        navigate("/session", { replace: true });
-      }
-    } catch {
-      // ignore
-    }
-
-    // If the deleted session was selected, clear selection so routing can fall back cleanly.
-    if (selectedSessionId() === trimmed) {
-      setSelectedSessionId(null);
-      const activeWorkspace = workspaceStore.activeWorkspaceId().trim();
-      if (activeWorkspace) {
-        clearWorkspaceLastSessionIfSelected(activeWorkspace, trimmed);
-      }
-    }
-
-    const nextStatus = withoutSessionStatus(sessionStatusById(), sidebarWorkspaceId, trimmed);
-    if (nextStatus !== sessionStatusById()) {
-      setSessionStatusById(nextStatus);
-    }
-  }
-
-
-  async function listAgents(): Promise<Agent[]> {
-    const c = routedClient();
-    if (!c) return [];
-    const list = unwrap(await c.app.agents());
-    return list.filter((agent) => !agent.hidden && agent.mode !== "subagent");
-  }
-
-  const BUILTIN_COMPACT_COMMAND = {
-    id: "builtin:compact",
-    name: "compact",
-    description: t("commands.compact_description", currentLocale()),
-    source: "command" as const,
-  };
-
   const localizedSuggestedPlugins = createMemo<SuggestedPlugin[]>(() =>
     SUGGESTED_PLUGINS.map((plugin) => ({
       ...plugin,
@@ -3296,26 +3001,6 @@ export default function App() {
     })),
   );
 
-  async function listCommands(
-    scope: CommandListScope = {},
-  ): Promise<{ id: string; name: string; description?: string; source?: "command" | "mcp" | "skill" }[]> {
-    const scopedWorkspaceId = scope.workspaceId?.trim() ?? "";
-    const c = scopedWorkspaceId ? routedClient(scopedWorkspaceId) : routedClient();
-    if (!c) return [];
-    const scopedDirectory = scope.directory?.trim() ?? "";
-    const directory =
-      scopedDirectory ||
-      (scopedWorkspaceId
-        ? workspaceRootForId(scopedWorkspaceId, null)
-        : workspaceStore.activeWorkspaceRoot().trim()) ||
-      undefined;
-    const list = await listCommandsTyped(c, directory);
-    if (list.some((entry) => entry.name === "compact")) {
-      return list;
-    }
-    return [BUILTIN_COMPACT_COMMAND, ...list];
-  }
-
   function setSessionAgent(sessionID: string, agent: string | null) {
     const trimmed = agent?.trim() ?? "";
     setSessionAgentById((current) => {
@@ -3328,52 +3013,6 @@ export default function App() {
       return next;
     });
   }
-
-  async function saveSessionExport(sessionID: string) {
-    const c = routedClient();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-
-    const session = unwrap(await c.session.get({ sessionID }));
-    const messages = unwrap(await c.session.messages({ sessionID }));
-    let todos: TodoItem[] = [];
-    try {
-      todos = normalizeTodoItems(unwrap(await c.session.todo({ sessionID })));
-    } catch {
-      // ignore
-    }
-
-    const payload = {
-      session,
-      messages,
-      todos,
-      exportedAt: new Date().toISOString(),
-      source: "veslo",
-    };
-
-    const baseName = session.title || session.slug || session.id;
-    const safeName = baseName
-      .toLowerCase()
-      .replace(/[^a-z0-9\-_.]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 80);
-    const fileName = `session-${safeName || session.id}.json`;
-    return downloadSessionExport(payload, fileName);
-  }
-
-  function downloadSessionExport(payload: unknown, fileName: string) {
-    const json = JSON.stringify(payload, null, 2);
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = fileName;
-    link.click();
-    URL.revokeObjectURL(url);
-    return fileName;
-  }
-
 
   async function respondPermissionAndRemember(
     requestID: string,

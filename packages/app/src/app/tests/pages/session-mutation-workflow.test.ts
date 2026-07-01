@@ -1,0 +1,258 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import type { Session } from "@opencode-ai/sdk/v2/client";
+
+import type { MessageWithParts } from "../../types.js";
+import { createSessionMutationWorkflow } from "../../pages/session-mutation-workflow.js";
+
+function userMessage(id: string, text: string): MessageWithParts {
+  return {
+    info: {
+      id,
+      sessionID: "ses_1",
+      role: "user",
+    } as never,
+    parts: [
+      {
+        id: `${id}:text`,
+        sessionID: "ses_1",
+        messageID: id,
+        type: "text",
+        text,
+      } as never,
+    ],
+  };
+}
+
+function assistantMessage(id: string): MessageWithParts {
+  return {
+    info: {
+      id,
+      sessionID: "ses_1",
+      role: "assistant",
+    } as never,
+    parts: [],
+  };
+}
+
+function createHarness(overrides: Record<string, unknown> = {}) {
+  let selectedSessionId: string | null = "ses_1";
+  let sessions: Session[] = [{ id: "ses_1", title: "Session", revert: null } as never];
+  let prompt = "";
+  let statusById: Record<string, string> = { ses_1: "idle" };
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const deps = {
+    lastPromptSent: () => "retry prompt",
+    sendPrompt: async (...args: unknown[]) => {
+      calls.push({ name: "sendPrompt", args });
+      return true;
+    },
+    createClientMessageId: () => "client_msg_1",
+    selectedSessionId: () => selectedSessionId,
+    selectedSession: () => sessions.find((session) => session.id === selectedSessionId) ?? null,
+    messages: () => [userMessage("msg_1", "first"), assistantMessage("msg_2"), userMessage("msg_3", "latest")],
+    setPrompt: (value: string) => {
+      prompt = value;
+    },
+    ensureSelectedSessionWorkspaceActiveForSend: async (...args: unknown[]) => {
+      calls.push({ name: "ensureWorkspace", args });
+      return true;
+    },
+    routedClient: (...args: unknown[]) => {
+      calls.push({ name: "routedClient", args });
+      return {
+        session: {
+          delete: async (...deleteArgs: unknown[]) => {
+            calls.push({ name: "session.delete", args: deleteArgs });
+            return {};
+          },
+          get: async () => ({ id: "ses_1", title: "Session" }),
+          messages: async () => [],
+          todo: async () => [],
+        },
+        app: {
+          agents: async () => [],
+        },
+      };
+    },
+    abortSessionSafe: async (...args: unknown[]) => {
+      calls.push({ name: "abortSessionSafe", args });
+    },
+    revertSession: async (...args: unknown[]) => {
+      calls.push({ name: "revertSession", args });
+      return { id: "ses_1", revert: { messageID: String(args[2]) } };
+    },
+    unrevertSession: async (...args: unknown[]) => {
+      calls.push({ name: "unrevertSession", args });
+      return { id: "ses_1", revert: null };
+    },
+    upsertLocalSession: (session: Session | null | undefined) => {
+      calls.push({ name: "upsertLocalSession", args: [session] });
+      if (session) sessions = [session];
+    },
+    normalizeSendCorrelation: (options: { clientMessageId?: string; origin?: string }) => ({
+      clientMessageId: options.clientMessageId ?? "",
+      origin: options.origin ?? "test",
+    }),
+    createSendPreflightContext: () => ({ traceId: "trace_1" }),
+    recordSendTrace: (event: string, payload?: Record<string, unknown>) => {
+      calls.push({ name: "recordSendTrace", args: [event, payload] });
+    },
+    sendTraceStep: async (_event: string, run: () => Promise<boolean>) => run(),
+    resolveSendTargetWorkspaceScope: () => null,
+    prepareSendRuntimeForSend: async () => true,
+    resolveRuntimeSandboxStateForTarget: () => null,
+    routedClientForSendTarget: () => ({}),
+    engineReady: () => true,
+    client: () => ({}),
+    reportError: (...args: unknown[]) => {
+      calls.push({ name: "reportError", args });
+    },
+    selectedSessionModel: () => ({ providerID: "openai", modelID: "gpt-5" }),
+    developerMode: () => false,
+    modelVariant: () => null,
+    recordPerfLog: (...args: unknown[]) => {
+      calls.push({ name: "recordPerfLog", args });
+    },
+    finishPerf: (...args: unknown[]) => {
+      calls.push({ name: "finishPerf", args });
+    },
+    perfNow: () => 100,
+    sessionDirectoryOverrideById: () => ({}),
+    workspaceProjectDir: () => "/repo",
+    resolveSelectedSessionBrowseScope: () => null,
+    runConversationFromVesloWriteApi: async (...args: unknown[]) => {
+      calls.push({ name: "runConversationFromVesloWriteApi", args });
+      return { ok: true };
+    },
+    messageFromUnknownError: String,
+    safeStringify: JSON.stringify,
+    renameSession: async (...args: unknown[]) => {
+      calls.push({ name: "renameSession", args });
+    },
+    refreshSidebarWorkspaceSessions: async (...args: unknown[]) => {
+      calls.push({ name: "refreshSidebarWorkspaceSessions", args });
+    },
+    activeWorkspaceId: () => "ws_1",
+    workspaces: () => [{ id: "ws_1", workspaceType: "local", path: "/repo" }],
+    activeWorkspaceRoot: () => "/repo",
+    sessionDirectoryOverride: () => ({}),
+    persistSessionDirectoryOverride: (...args: unknown[]) => {
+      calls.push({ name: "persistSessionDirectoryOverride", args });
+    },
+    setSessions: (next: Session[]) => {
+      sessions = next;
+    },
+    sessions: () => sessions,
+    deleteSessionComposerDraft: (current: Record<string, unknown>, sessionId: string) => ({ ...current, deleted: sessionId }),
+    setComposerDraftBySessionId: (updater: (current: Record<string, unknown>) => Record<string, unknown>) => {
+      calls.push({ name: "setComposerDraftBySessionId", args: [updater({})] });
+    },
+    removeSessionFromWorkspaceSidebar: (...args: unknown[]) => {
+      calls.push({ name: "removeSessionFromWorkspaceSidebar", args });
+    },
+    pathname: () => "/session/ses_1",
+    navigate: (...args: unknown[]) => {
+      calls.push({ name: "navigate", args });
+    },
+    setSelectedSessionId: (value: string | null) => {
+      selectedSessionId = value;
+    },
+    clearWorkspaceLastSessionIfSelected: (...args: unknown[]) => {
+      calls.push({ name: "clearWorkspaceLastSessionIfSelected", args });
+    },
+    sessionStatusById: () => statusById,
+    setSessionStatusById: (next: Record<string, string>) => {
+      statusById = next;
+    },
+    withoutSessionStatus: (current: Record<string, string>, _workspaceId: string, sessionId: string) => {
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    },
+    unwrap: async (value: unknown) => value,
+    listCommands: async () => [],
+    compactCommandDescription: () => "Compact",
+    downloadSessionExport: (...args: unknown[]) => {
+      calls.push({ name: "downloadSessionExport", args });
+      return "session-export.json";
+    },
+    normalizeTodoItems: (value: unknown) => value,
+    ...overrides,
+  };
+
+  const workflow = createSessionMutationWorkflow(deps as never);
+  return {
+    workflow,
+    calls,
+    get prompt() {
+      return prompt;
+    },
+    get selectedSessionId() {
+      return selectedSessionId;
+    },
+    get sessions() {
+      return sessions;
+    },
+    get statusById() {
+      return statusById;
+    },
+  };
+}
+
+test("session mutation workflow retries the last prompt with a fresh send correlation", () => {
+  const harness = createHarness();
+  harness.workflow.retryLastPrompt();
+
+  assert.equal(harness.calls[0]?.name, "sendPrompt");
+  assert.deepEqual(harness.calls[0]?.args[1], {
+    clientMessageId: "client_msg_1",
+    origin: "app:retry-last-prompt",
+  });
+});
+
+test("session mutation workflow undo reverts the latest visible user message and restores its prompt", async () => {
+  const harness = createHarness();
+  await harness.workflow.undoLastUserMessage();
+
+  assert.equal(harness.calls.find((call) => call.name === "revertSession")?.args[2], "msg_3");
+  assert.equal(harness.prompt, "latest");
+});
+
+test("session mutation workflow redo unreverts at the end of the revert chain and clears prompt", async () => {
+  const harness = createHarness({
+    selectedSession: () => ({ id: "ses_1", revert: { messageID: "msg_3" } }),
+  });
+  await harness.workflow.redoLastUserMessage();
+
+  assert.equal(harness.calls.some((call) => call.name === "unrevertSession"), true);
+  assert.equal(harness.prompt, "");
+});
+
+test("session mutation workflow delete clears selected state and removes sidebar/session state", async () => {
+  const harness = createHarness();
+  await harness.workflow.deleteSessionById("ses_1");
+
+  assert.equal(harness.selectedSessionId, null);
+  assert.deepEqual(harness.sessions, []);
+  assert.equal(harness.calls.some((call) => call.name === "removeSessionFromWorkspaceSidebar"), true);
+  assert.equal(harness.statusById.ses_1, undefined);
+});
+
+test("session mutation workflow compact preserves the selected session and runs summarize", async () => {
+  const harness = createHarness();
+  await harness.workflow.compactCurrentSession("ses_1");
+
+  assert.equal(harness.selectedSessionId, "ses_1");
+  const runCall = harness.calls.find((call) => call.name === "runConversationFromVesloWriteApi");
+  assert.equal((runCall?.args[1] as { kind?: string })?.kind, "summarize");
+});
+
+test("session mutation workflow lists the built-in compact command when backend commands omit it", async () => {
+  const harness = createHarness();
+  const commands = await harness.workflow.listCommands();
+
+  assert.equal(commands[0]?.id, "builtin:compact");
+  assert.equal(commands[0]?.name, "compact");
+});
