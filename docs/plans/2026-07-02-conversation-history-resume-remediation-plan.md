@@ -118,7 +118,7 @@ only in a reserved worktree.
 | id | task | status | reserved_by | done |
 | --- | --- | --- | --- | --- |
 | CHR01 | explicit history availability contract | merged | codex-20260702-chr01 | true |
-| CHR02 | live fallback for active scoped sessions | reserved | codex-20260702-chr02 | false |
+| CHR02 | live fallback for active scoped sessions | merged | codex-20260702-chr02 | true |
 | CHR03 | backfill host transcript after live recovery | available | null | false |
 | CHR04 | durable empty transcript marker | available | null | false |
 | CHR05 | unavailable-history UI/state and retry path | available | null | false |
@@ -191,12 +191,12 @@ pnpm --filter @neatech/veslo-ui typecheck
 
 ```yaml
 id: CHR02
-status: reserved
+status: merged
 reserved_by: codex-20260702-chr02
 reserved_at: 2026-07-02T02:42:04.1892652+02:00
 branch: conversation-history/chr02-active-live-fallback
 worktree: ../veslo-conversation-history-chr02-active-live-fallback
-done: false
+done: true
 depends_on: [CHR01]
 target_files:
   - packages/app/src/app/context/session-selection-controller.ts
@@ -542,3 +542,21 @@ git diff --check
 - 2026-07-02: CHR01 merged into `local/sandbox-merge` and re-verified in the
   original worktree with the same 56 focused app tests, app typecheck, and
   `git diff --check`.
+- 2026-07-02: CHR02 behavior tests added first in
+  `conversation-history/chr02-active-live-fallback`. Pre-implementation
+  focused run
+  `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm
+  src/app/tests/context/session-selection-controller.test.ts` failed as
+  expected: 9 passed, 2 failed. The failures prove active scoped
+  `unavailable` history does not yet call live `session.messages` with the
+  OpenCode session id.
+- 2026-07-02: CHR02 implementation in
+  `conversation-history/chr02-active-live-fallback`: active scoped
+  `unavailable` history now performs one live recovery read through the
+  OpenCode session id while keeping UI state under the selected Veslo session
+  id. Inactive scoped workspaces remain passive, and live NotFound keeps
+  history unavailable. Verified with focused controller test (12 passed),
+  CHR02 focused suite (51 passed), app typecheck, and `git diff --check`.
+- 2026-07-02: CHR02 merged into `local/sandbox-merge` and re-verified in the
+  original worktree with the CHR02 focused suite (51 passed), app typecheck,
+  and `git diff --check`.
