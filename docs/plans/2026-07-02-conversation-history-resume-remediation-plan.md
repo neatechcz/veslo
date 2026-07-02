@@ -122,7 +122,7 @@ only in a reserved worktree.
 | CHR03 | backfill host transcript after live recovery | merged | codex-20260702-chr03 | true |
 | CHR04 | durable empty transcript marker | merged | codex-20260702-chr04 | true |
 | CHR05 | unavailable-history UI/state and retry path | merged | codex-20260702-chr05 | true |
-| CHR06 | focused integration coverage and docs note | reserved | codex-20260702-chr06 | false |
+| CHR06 | focused integration coverage and docs note | merged | codex-20260702-chr06 | true |
 
 ## Tasks
 
@@ -436,12 +436,12 @@ pnpm --filter @neatech/veslo-ui typecheck
 
 ```yaml
 id: CHR06
-status: reserved
+status: merged
 reserved_by: codex-20260702-chr06
 reserved_at: 2026-07-02T03:14:00.8463627+02:00
 branch: conversation-history/chr06-integration-docs
 worktree: ../veslo-conversation-history-chr06-integration-docs
-done: false
+done: true
 depends_on: [CHR05]
 target_files:
   - packages/app/src/app/tests/pages/session-navigation.test.ts
@@ -626,3 +626,21 @@ git diff --check
   typecheck, and `git diff --check`. Pre-existing local archive-session
   changes in `app.tsx` and `app-session-archives.test.ts` were preserved
   separately and not included in the CHR05 merge or plan commit.
+- 2026-07-02: CHR06 coverage tests added first in
+  `conversation-history/chr06-integration-docs`: app selection coverage now
+  asserts old scoped session live recovery keeps the UI id while backfilling
+  the OpenCode id, and server route coverage now asserts transcript/run/abort
+  resolve the same binding while cross-workspace transcript/run/abort requests
+  fail before engine contact. Focused test-first run passed: app suite 60
+  passed, server suite 73 passed.
+- 2026-07-02: CHR06 implementation in
+  `conversation-history/chr06-integration-docs`: added
+  `docs/dev/conversation-history-resume.md` to document host-first passive
+  browse, live fallback limits, durable backfill, and the distinction between a
+  Veslo transcript and real OpenCode session resume. Verified with the CHR06
+  focused app suite (60 passed), focused server suite (73 passed), app
+  typecheck, server typecheck, and `git diff --check`.
+- 2026-07-02: CHR06 merged into `local/sandbox-merge` and re-verified in the
+  original worktree with the CHR06 focused app suite (60 passed), focused
+  server suite (73 passed), app typecheck, server typecheck, and
+  `git diff --check`.
