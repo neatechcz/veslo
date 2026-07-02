@@ -153,6 +153,7 @@ import {
   listCommands as listCommandsTyped,
 } from "./lib/opencode-session";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
+import { createLateBound } from "./lib/late-bound";
 import {
   createMcpAutoRefreshScheduler,
   createPermissionPollingScheduler,
@@ -389,6 +390,16 @@ export default function App() {
     }
   };
 
+  // Late-bound composition seams (lib/late-bound.ts): the store graph has true
+  // cycles, so these slots bind after creation. Pre-bind access used to be a
+  // silent no-op; now the first one lands in bootstrap diagnostics.
+  const reportLateBoundEarlyAccess = (name: string) => {
+    wsDebug("late-bound:early-access", { name });
+    if (isTauriRuntime()) {
+      void recordBootstrapDiagnostic("app:late-bound-early-access", { name });
+    }
+  };
+
   const [creatingSession, setCreatingSession] = createSignal(false);
   const appRouteSync = createAppRouteSync({
     pathname: () => location.pathname,
@@ -534,12 +545,11 @@ export default function App() {
   // VSLO-171 — workspace routing service. Multi mode is the only mode (no
   // single-active fallback, no feature flag). Instantiated before
   // createSessionStore so memos that read routing.mode() at init can resolve.
-  let workspaceStoreRef: ReturnType<typeof createWorkspaceStore> | null = null;
-  const [workspaceStoreRefVersion, setWorkspaceStoreRefVersion] = createSignal(0);
-  const currentWorkspaceStoreRef = () => {
-    workspaceStoreRefVersion();
-    return workspaceStoreRef;
-  };
+  const lateWorkspaceStore = createLateBound<ReturnType<typeof createWorkspaceStore>>(
+    "workspace-store",
+    { onEarlyAccess: reportLateBoundEarlyAccess },
+  );
+  const currentWorkspaceStoreRef = () => lateWorkspaceStore.current();
   const activateWorkspaceThroughBrowsePolicy = (
     workspaceId: string | undefined,
     options: Parameters<ReturnType<typeof createWorkspaceStore>["activateWorkspace"]>[1],
@@ -575,17 +585,18 @@ export default function App() {
     }
     window.open(url, "_blank", "noopener,noreferrer");
   };
-  let managedAiAccessStoreRef: ManagedAiAccessStore | null = null;
-  let pendingManagedAiAccessRefreshFromAuth = false;
+  const lateManagedAiAccessStore = createLateBound<ManagedAiAccessStore>(
+    "managed-ai-access-store",
+    { onEarlyAccess: reportLateBoundEarlyAccess },
+  );
   const requestManagedAiAccessRefreshFromAuth = () => {
-    if (managedAiAccessStoreRef) {
-      managedAiAccessStoreRef.requestManagedAiAccessRefresh();
-      return;
-    }
-    pendingManagedAiAccessRefreshFromAuth = true;
+    lateManagedAiAccessStore.whenBound(
+      (store) => store.requestManagedAiAccessRefresh(),
+      { key: "refresh-from-auth" },
+    );
   };
   const clearManagedAiAccessCacheFromAuth = () => {
-    managedAiAccessStoreRef?.clearManagedAiAccessCache();
+    lateManagedAiAccessStore.current()?.clearManagedAiAccessCache();
   };
   const denDesktopAuthWorkflow = createDenDesktopAuthWorkflow({
     isTauriRuntime,
@@ -820,12 +831,17 @@ export default function App() {
   const [sessionAgentById, setSessionAgentById] = createSignal<Record<string, string>>({});
 
   const SKILL_HOT_RELOAD_GRACE_MS = 5000;
-  let markReloadRequiredHandler: ((reason: ReloadReason, trigger?: ReloadTrigger) => void) | undefined;
-  let onHotReloadAppliedHandler: (() => void) | undefined;
+  const lateMarkReloadRequired = createLateBound<
+    (reason: ReloadReason, trigger?: ReloadTrigger) => void
+  >("mark-reload-required", { onEarlyAccess: reportLateBoundEarlyAccess });
+  const lateOnHotReloadApplied = createLateBound<() => void>(
+    "on-hot-reload-applied",
+    { onEarlyAccess: reportLateBoundEarlyAccess },
+  );
   const skillReloadGuard = createSkillReloadGuard({
     graceMs: SKILL_HOT_RELOAD_GRACE_MS,
     onFallbackNeeded: (trigger) => {
-      markReloadRequiredHandler?.("skills", trigger);
+      lateMarkReloadRequired.current()?.("skills", trigger);
     },
   });
 
@@ -835,7 +851,7 @@ export default function App() {
       return;
     }
 
-    markReloadRequiredHandler?.(reason, trigger);
+    lateMarkReloadRequired.current()?.(reason, trigger);
   };
 
   onCleanup(() => {
@@ -913,7 +929,7 @@ export default function App() {
     onReconnectNotice: (notice) => setSessionReconnectNotice(notice),
     markReloadRequired,
     onHotReloadApplied: () => {
-      onHotReloadAppliedHandler?.();
+      lateOnHotReloadApplied.current()?.();
     },
     conversationReader: () => ({
       listConversations: async (workspaceId, directory, options) => {
@@ -1831,7 +1847,9 @@ export default function App() {
   const [mcpAuthModalOpen, setMcpAuthModalOpen] = createSignal(false);
   const [mcpAuthEntry, setMcpAuthEntry] = createSignal<McpDirectoryInfo | null>(null);
   const [mcpAuthNeedsReload, setMcpAuthNeedsReload] = createSignal(false);
-  let resolveSessionCapabilitySkillInventoryWorkspaces: () => { id: string; label: string; path: string }[] = () => [];
+  const lateSessionCapabilitySkillInventoryWorkspaces = createLateBound<
+    () => { id: string; label: string; path: string }[]
+  >("session-capability-skill-inventory-workspaces", { onEarlyAccess: reportLateBoundEarlyAccess });
 
   const extensionsStore = createExtensionsStore({
     client,
@@ -1841,7 +1859,8 @@ export default function App() {
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
     workspaceType: () => workspaceStore.activeWorkspaceDisplay().workspaceType,
     workspaces: () => workspaceStore.workspaces(),
-    extraSkillInventoryWorkspaces: () => resolveSessionCapabilitySkillInventoryWorkspaces(),
+    extraSkillInventoryWorkspaces: () =>
+      lateSessionCapabilitySkillInventoryWorkspaces.current()?.() ?? [],
     vesloServerClient,
     vesloServerStatus,
     vesloServerCapabilities,
@@ -1949,11 +1968,7 @@ export default function App() {
       clear: accessProofAiClear,
     },
   });
-  managedAiAccessStoreRef = managedAiAccessStore;
-  if (pendingManagedAiAccessRefreshFromAuth) {
-    pendingManagedAiAccessRefreshFromAuth = false;
-    managedAiAccessStore.requestManagedAiAccessRefresh();
-  }
+  lateManagedAiAccessStore.bind(managedAiAccessStore);
   const {
     managedAiAccess,
     managedAiGatewayAccessToken,
@@ -2204,8 +2219,7 @@ export default function App() {
       await selectSession(latest.id);
     },
   });
-  workspaceStoreRef = workspaceStore;
-  setWorkspaceStoreRefVersion((version) => version + 1);
+  lateWorkspaceStore.bind(workspaceStore);
 
   const composerTargetController = createComposerTargetController({
     isTauriRuntime,
@@ -2855,7 +2869,7 @@ export default function App() {
     refreshSkillInventory,
     recordPerfLog,
   });
-  resolveSessionCapabilitySkillInventoryWorkspaces = sessionCapabilitiesStore.skillInventoryWorkspaces;
+  lateSessionCapabilitySkillInventoryWorkspaces.bind(sessionCapabilitiesStore.skillInventoryWorkspaces);
   const sessionCapabilitiesSnapshot = sessionCapabilitiesStore.sessionCapabilities;
   const sessionCapabilitiesStatus = sessionCapabilitiesStore.sessionCapabilitiesStatus;
   const sessionCapabilitiesError = sessionCapabilitiesStore.sessionCapabilitiesError;
@@ -3201,8 +3215,8 @@ export default function App() {
     anyActiveRuns,
   } = systemState;
 
-  markReloadRequiredHandler = systemState.markReloadRequired;
-  onHotReloadAppliedHandler = () => {
+  lateMarkReloadRequired.bind(systemState.markReloadRequired);
+  lateOnHotReloadApplied.bind(() => {
     skillReloadGuard.hotReloadApplied();
 
     const reasons = reloadReasons();
@@ -3213,7 +3227,7 @@ export default function App() {
     void refreshSkills({ force: true });
     void refreshPlugins(pluginScope());
     void refreshMcpServers();
-  };
+  });
 
   const UPDATE_AUTO_CHECK_POLL_MS = 60_000;
 

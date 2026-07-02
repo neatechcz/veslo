@@ -63,12 +63,12 @@ test("app keeps skill reload guard without legacy fallback auto-reload state", (
   );
   assert.match(
     appSource,
-    /createSkillReloadGuard\(\{[\s\S]*onFallbackNeeded:\s*\(trigger\)\s*=>\s*\{[\s\S]*markReloadRequiredHandler\?\.\("skills",\s*trigger\);[\s\S]*\}/,
+    /createSkillReloadGuard\(\{[\s\S]*onFallbackNeeded:\s*\(trigger\)\s*=>\s*\{[\s\S]*lateMarkReloadRequired\.current\(\)\?\.\("skills",\s*trigger\);[\s\S]*\}/,
     "App should still surface the reload-required banner when hot reload does not arrive",
   );
   assert.match(
     appSource,
-    /onHotReloadAppliedHandler\s*=\s*\(\)\s*=>\s*\{[\s\S]*skillReloadGuard\.hotReloadApplied\(\);[\s\S]*refreshSkills\(\{\s*force:\s*true\s*\}\)/,
+    /lateOnHotReloadApplied\.bind\(\(\)\s*=>\s*\{[\s\S]*skillReloadGuard\.hotReloadApplied\(\);[\s\S]*refreshSkills\(\{\s*force:\s*true\s*\}\)/,
     "Hot-reload confirmation should still cancel pending fallback and refresh skill views",
   );
   assert.doesNotMatch(
