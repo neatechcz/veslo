@@ -240,12 +240,21 @@ export function createSessionStore(options: {
     const configuredBrowseFromDb = options.shouldBrowseSessionFromDb?.(sessionID) ?? false;
     const browseModeOnly = !runtimeReady;
     const browseFromDb = configuredBrowseFromDb || browseModeOnly || foreignWorkspace;
+    const liveRecoveryFromUnavailable = Boolean(
+      configuredBrowseFromDb &&
+      workspaceId &&
+      activeWorkspaceId &&
+      workspaceId === activeWorkspaceId &&
+      runtimeReady &&
+      !foreignWorkspace,
+    );
     return {
       activeWorkspaceId,
       browseFromDb,
       browseModeOnly,
       configuredBrowseFromDb,
       foreignWorkspace,
+      liveRecoveryFromUnavailable,
       sessionWorkspaceId: workspaceId,
     };
   };
