@@ -121,7 +121,7 @@ only in a reserved worktree.
 | CHR02 | live fallback for active scoped sessions | merged | codex-20260702-chr02 | true |
 | CHR03 | backfill host transcript after live recovery | merged | codex-20260702-chr03 | true |
 | CHR04 | durable empty transcript marker | merged | codex-20260702-chr04 | true |
-| CHR05 | unavailable-history UI/state and retry path | available | null | false |
+| CHR05 | unavailable-history UI/state and retry path | merged | codex-20260702-chr05 | true |
 | CHR06 | focused integration coverage and docs note | available | null | false |
 
 ## Tasks
@@ -375,12 +375,12 @@ pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm \
 
 ```yaml
 id: CHR05
-status: available
-reserved_by: null
-reserved_at: null
+status: merged
+reserved_by: codex-20260702-chr05
+reserved_at: 2026-07-02T03:02:39.1974938+02:00
 branch: conversation-history/chr05-unavailable-retry
 worktree: ../veslo-conversation-history-chr05-unavailable-retry
-done: false
+done: true
 depends_on: [CHR03, CHR04]
 target_files:
   - packages/app/src/app/context/session-selection-controller.ts
@@ -602,3 +602,27 @@ git diff --check
   original worktree with server transcript/service/routes suite (40 passed),
   app conversation-service + selection-controller suite (22 passed), app
   typecheck, server typecheck, and `git diff --check`.
+- 2026-07-02: CHR05 behavior tests added first in
+  `conversation-history/chr05-unavailable-retry`. Pre-implementation focused
+  run
+  `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm
+  src/app/tests/pages/session-conversation-flow.test.ts
+  src/app/tests/pages/session-navigation.test.ts
+  src/app/tests/context/session-selection-controller.test.ts
+  src/app/tests/app-view-props.test.ts` failed as expected: 97 passed, 4
+  failed. The failures prove unavailable history state is not exposed by the
+  selection controller, is not propagated through session view props, and has
+  no explicit retry action that activates the owning workspace.
+- 2026-07-02: CHR05 implementation in
+  `conversation-history/chr05-unavailable-retry`: unavailable transcript reads
+  are now preserved as selected-session state without marking the transcript
+  complete, loaded empty transcripts are marked as durable empty, the app props
+  boundary carries unavailable/retrying/retry state into `SessionView`, and the
+  retry action preserves the scoped identity while explicitly activating the
+  owning workspace before re-selecting. Verified with the CHR05 focused app
+  suite (101 passed), app typecheck, and `git diff --check`.
+- 2026-07-02: CHR05 merged into `local/sandbox-merge` and re-verified in the
+  original worktree with the CHR05 focused app suite (101 passed), app
+  typecheck, and `git diff --check`. Pre-existing local archive-session
+  changes in `app.tsx` and `app-session-archives.test.ts` were preserved
+  separately and not included in the CHR05 merge or plan commit.
