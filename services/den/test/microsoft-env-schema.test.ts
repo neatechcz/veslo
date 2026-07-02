@@ -56,6 +56,30 @@ test("den env rejects missing or weak Microsoft token encryption keys in product
   )
 })
 
+test("den env requires Microsoft client id and secret together in production", async () => {
+  const { parseEnv } = await import("../src/env.js")
+
+  assert.throws(
+    () => parseEnv({
+      ...baseEnv,
+      NODE_ENV: "production",
+      MICROSOFT_CLIENT_ID: "microsoft-client-id",
+      MICROSOFT_TOKEN_SECRET_KEY: "microsoft-token-secret-012345678901",
+    }),
+    /MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET must be configured together/,
+  )
+
+  assert.throws(
+    () => parseEnv({
+      ...baseEnv,
+      NODE_ENV: "production",
+      MICROSOFT_CLIENT_SECRET: "microsoft-client-secret",
+      MICROSOFT_TOKEN_SECRET_KEY: "microsoft-token-secret-012345678901",
+    }),
+    /MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET must be configured together/,
+  )
+})
+
 test(".env.example documents Microsoft OAuth environment variables", () => {
   const envExample = readFileSync(new URL("../.env.example", import.meta.url), "utf8")
 
@@ -64,4 +88,27 @@ test(".env.example documents Microsoft OAuth environment variables", () => {
   assert.match(envExample, /MICROSOFT_REDIRECT_URI=/)
   assert.match(envExample, /MICROSOFT_TOKEN_SECRET_KEY=/)
   assert.match(envExample, /MICROSOFT_CONNECTOR_BASE_URL=/)
+})
+
+test("owned-server compose and env example pass Microsoft OAuth env into Den", () => {
+  const compose = readFileSync(new URL("../../../packaging/owned-server/compose.yml", import.meta.url), "utf8")
+  const envExample = readFileSync(new URL("../../../packaging/owned-server/env.example", import.meta.url), "utf8")
+
+  assert.match(compose, /MICROSOFT_CLIENT_ID: \$\{MICROSOFT_CLIENT_ID:-\}/)
+  assert.match(compose, /MICROSOFT_CLIENT_SECRET: \$\{MICROSOFT_CLIENT_SECRET:-\}/)
+  assert.match(
+    compose,
+    /MICROSOFT_REDIRECT_URI: \$\{MICROSOFT_REDIRECT_URI:-https:\/\/api\.veslo\.work\/v1\/integrations\/microsoft\/oauth\/callback\}/,
+  )
+  assert.match(compose, /MICROSOFT_TOKEN_SECRET_KEY: \$\{MICROSOFT_TOKEN_SECRET_KEY:-\}/)
+  assert.match(
+    compose,
+    /MICROSOFT_CONNECTOR_BASE_URL: \$\{MICROSOFT_CONNECTOR_BASE_URL:-https:\/\/api\.veslo\.work\}/,
+  )
+
+  assert.match(envExample, /^MICROSOFT_CLIENT_ID=/m)
+  assert.match(envExample, /^MICROSOFT_CLIENT_SECRET=/m)
+  assert.match(envExample, /^MICROSOFT_REDIRECT_URI=https:\/\/api\.veslo\.work\/v1\/integrations\/microsoft\/oauth\/callback$/m)
+  assert.match(envExample, /^MICROSOFT_TOKEN_SECRET_KEY=/m)
+  assert.match(envExample, /^MICROSOFT_CONNECTOR_BASE_URL=https:\/\/api\.veslo\.work$/m)
 })
