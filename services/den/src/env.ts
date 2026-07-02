@@ -67,6 +67,11 @@ const schema = z.object({
   GOOGLE_WORKSPACE_OAUTH_SUCCESS_REDIRECT_URL: z.string().optional(),
   GOOGLE_WORKSPACE_TOKEN_SECRET_KEY: z.string().optional(),
   GOOGLE_WORKSPACE_CONNECTOR_BASE_URL: z.string().optional(),
+  MICROSOFT_CLIENT_ID: z.string().optional(),
+  MICROSOFT_CLIENT_SECRET: z.string().optional(),
+  MICROSOFT_REDIRECT_URI: z.string().optional(),
+  MICROSOFT_TOKEN_SECRET_KEY: z.string().optional(),
+  MICROSOFT_CONNECTOR_BASE_URL: z.string().optional(),
 })
 
 function parseJsonStringArray(raw: string | undefined, label: string) {
@@ -129,6 +134,13 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
     "GOOGLE_WORKSPACE_TOKEN_SECRET_KEY",
   )
   const googleOauthConfigured = Boolean(googleOauthClientId || googleOauthClientSecret)
+  const microsoftClientId = parsed.MICROSOFT_CLIENT_ID?.trim() || null
+  const microsoftClientSecret = parsed.MICROSOFT_CLIENT_SECRET?.trim() || null
+  const microsoftTokenSecretKey = normalizedSecret(
+    parsed.MICROSOFT_TOKEN_SECRET_KEY,
+    "MICROSOFT_TOKEN_SECRET_KEY",
+  )
+  const microsoftOauthConfigured = Boolean(microsoftClientId || microsoftClientSecret)
 
   if (nodeEnv === "production" && (corsOrigins ?? []).includes("*")) {
     throw new Error("CORS_ORIGINS cannot contain '*' in production for DEN")
@@ -139,6 +151,14 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
     }
     if (!googleTokenSecretKey) {
       throw new Error("GOOGLE_WORKSPACE_TOKEN_SECRET_KEY is required when Google Workspace OAuth is enabled in production.")
+    }
+  }
+  if (nodeEnv === "production" && microsoftOauthConfigured) {
+    if (!microsoftClientId || !microsoftClientSecret) {
+      throw new Error("MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET must be configured together.")
+    }
+    if (!microsoftTokenSecretKey) {
+      throw new Error("MICROSOFT_TOKEN_SECRET_KEY is required when Microsoft OAuth is enabled in production.")
     }
   }
 
@@ -225,6 +245,16 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
         "https://app.veslo.work/settings/integrations/google",
       tokenSecretKey: googleTokenSecretKey,
       connectorBaseUrl: parsed.GOOGLE_WORKSPACE_CONNECTOR_BASE_URL?.trim().replace(/\/+$/, "") ||
+        parsed.BETTER_AUTH_URL.trim().replace(/\/+$/, ""),
+    },
+    microsoft: {
+      clientId: microsoftClientId,
+      clientSecret: microsoftClientSecret,
+      redirectUri: parsed.MICROSOFT_REDIRECT_URI?.trim() || null,
+      stateSecret: parsed.BETTER_AUTH_SECRET.trim(),
+      successRedirectUrl: "https://app.veslo.work/settings/integrations/microsoft",
+      tokenSecretKey: microsoftTokenSecretKey,
+      connectorBaseUrl: parsed.MICROSOFT_CONNECTOR_BASE_URL?.trim().replace(/\/+$/, "") ||
         parsed.BETTER_AUTH_URL.trim().replace(/\/+$/, ""),
     },
   }

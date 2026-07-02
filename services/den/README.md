@@ -79,6 +79,13 @@ cp .env.development .env
 - `DEN_LOG_MASTER_KEY` master key material used to encrypt debug log payloads at ingest
 - `DEN_LOG_MASTER_KEY_VERSION` operator-managed key version stored with each encrypted payload
 - `DEN_LOG_RETENTION_DAYS` retention window for debug log events and accepted batch ids (default `30`)
+- `MICROSOFT_CLIENT_ID` optional OAuth app client ID for the Microsoft connector
+- `MICROSOFT_CLIENT_SECRET` optional OAuth app client secret for the Microsoft connector
+- `MICROSOFT_REDIRECT_URI` optional OAuth callback URL override for the Microsoft connector
+- `MICROSOFT_TOKEN_SECRET_KEY` 32+ char secret used to encrypt Microsoft OAuth tokens server-side
+- `MICROSOFT_CONNECTOR_BASE_URL` optional Den public base URL used for Microsoft connector callbacks (defaults to `BETTER_AUTH_URL`)
+
+Microsoft connector OAuth tokens are encrypted server-side before storage. Configure `MICROSOFT_TOKEN_SECRET_KEY` in production whenever Microsoft OAuth is enabled, and use key material distinct from other providers.
 
 ## Auth setup (Better Auth)
 
