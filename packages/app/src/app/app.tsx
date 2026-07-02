@@ -942,13 +942,41 @@ export default function App() {
       const transcriptWorkspaceId = transcriptScope?.workspaceId ?? workspaceStore.activeWorkspaceId().trim();
       const workspaceRoot = transcriptScope?.workspaceRoot || workspaceStore.activeWorkspaceRoot().trim();
       const transcriptDirectory = transcriptScope?.directory || workspaceRoot;
-      if (!workspaceRoot) return null;
-      return await getTranscriptFromVesloReadApi(
+      const scope = {
+        sessionId,
+        workspaceId: transcriptWorkspaceId,
+        workspaceRoot,
+        directory: transcriptDirectory,
+        conversationId: transcriptScope?.conversationId ?? null,
+        opencodeSessionId: transcriptScope?.opencodeSessionId ?? null,
+      };
+      if (!workspaceRoot) {
+        return { status: "unavailable" as const, scope, reason: "missing-workspace-root" };
+      }
+      const snapshot = await getTranscriptFromVesloReadApi(
         transcriptWorkspaceId,
         sessionId,
         limit,
         transcriptDirectory || undefined,
       );
+      if (!snapshot) {
+        return { status: "unavailable" as const, scope, reason: "veslo-read-api-unavailable" };
+      }
+      if (snapshot.source === "unavailable") {
+        return {
+          status: "unavailable" as const,
+          scope: {
+            ...scope,
+            directory: snapshot.directory ?? scope.directory,
+            conversationId: snapshot.conversationId ?? scope.conversationId,
+            opencodeSessionId: snapshot.opencodeSessionId ?? scope.opencodeSessionId,
+          },
+          reason: "source-unavailable",
+        };
+      }
+      return snapshot.messages.length === 0
+        ? { status: "empty" as const, snapshot }
+        : { status: "loaded" as const, snapshot };
     },
     resolveConversationRunForSession,
     readConversationRunStatus,

@@ -42,6 +42,7 @@ import { createSessionRuntimePrompts } from "./session-runtime-prompts";
 import {
   createSessionSelectionController,
   isSessionNotFoundError,
+  type SessionOfflineTranscriptLoadResult,
 } from "./session-selection-controller";
 import { createSessionEventStreamController } from "./session-event-stream";
 import {
@@ -131,7 +132,7 @@ export function createSessionStore(options: {
   markReloadRequired?: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
   onHotReloadApplied?: () => void;
   onSessionLoadComplete?: () => void;
-  loadOfflineTranscript?: (sessionID: string, limit: number) => Promise<VesloSessionTranscriptSnapshot | null>;
+  loadOfflineTranscript?: (sessionID: string, limit: number) => Promise<SessionOfflineTranscriptLoadResult>;
   resolveConversationRunForSession?: (
     sessionID: string,
     workspaceIdHint?: string | null,
