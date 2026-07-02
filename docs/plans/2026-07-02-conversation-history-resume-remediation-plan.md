@@ -119,7 +119,7 @@ only in a reserved worktree.
 | --- | --- | --- | --- | --- |
 | CHR01 | explicit history availability contract | merged | codex-20260702-chr01 | true |
 | CHR02 | live fallback for active scoped sessions | merged | codex-20260702-chr02 | true |
-| CHR03 | backfill host transcript after live recovery | available | null | false |
+| CHR03 | backfill host transcript after live recovery | merged | codex-20260702-chr03 | true |
 | CHR04 | durable empty transcript marker | available | null | false |
 | CHR05 | unavailable-history UI/state and retry path | available | null | false |
 | CHR06 | focused integration coverage and docs note | available | null | false |
@@ -256,12 +256,12 @@ pnpm --filter @neatech/veslo-ui typecheck
 
 ```yaml
 id: CHR03
-status: available
-reserved_by: null
-reserved_at: null
+status: merged
+reserved_by: codex-20260702-chr03
+reserved_at: 2026-07-02T02:49:52.4436881+02:00
 branch: conversation-history/chr03-live-backfill
 worktree: ../veslo-conversation-history-chr03-live-backfill
-done: false
+done: true
 depends_on: [CHR02]
 target_files:
   - packages/app/src/app/context/conversation-service.ts
@@ -560,3 +560,22 @@ git diff --check
 - 2026-07-02: CHR02 merged into `local/sandbox-merge` and re-verified in the
   original worktree with the CHR02 focused suite (51 passed), app typecheck,
   and `git diff --check`.
+- 2026-07-02: CHR03 behavior tests added first in
+  `conversation-history/chr03-live-backfill`. Pre-implementation focused run
+  `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm
+  src/app/tests/context/session-selection-controller.test.ts` failed as
+  expected: 12 passed, 3 failed. The failures prove live recovery does not yet
+  call the transcript append path, backfill failures are not traced, and a
+  later passive browse cannot read a recovered transcript without another live
+  call.
+- 2026-07-02: CHR03 implementation in
+  `conversation-history/chr03-live-backfill`: live recovery now backfills
+  recovered messages through the existing app `appendTranscriptSnapshot` path
+  under the OpenCode session id, traces append failures without hiding live
+  messages, and retargets loaded host snapshots to the selected UI session key.
+  Verified with focused controller test (15 passed), app focused suite (20
+  passed), server append-path suite (31 passed), app typecheck, server
+  typecheck, and `git diff --check`.
+- 2026-07-02: CHR03 merged into `local/sandbox-merge` and re-verified in the
+  original worktree with the app focused suite (20 passed), server append-path
+  suite (31 passed), app typecheck, server typecheck, and `git diff --check`.
