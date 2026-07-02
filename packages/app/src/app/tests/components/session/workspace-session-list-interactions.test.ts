@@ -13,17 +13,23 @@ const recentRenderBranch = () => {
   return source.slice(fallbackIndex, byProjectBranchIndex);
 };
 
-test("project header click opens the accordion and activates workspace while drawer icons only toggle", () => {
+test("project header click toggles the accordion without activating workspace while drawer icons still toggle", () => {
   assert.match(
     source,
-    /const handleProjectOpenClick = \(projectKey: string, workspaceId: string\) => \{[\s\S]*openProjectAccordion\(projectKey\);[\s\S]*void Promise\.resolve\(props\.onActivateWorkspace\(workspaceId, \{ origin: "workspace-session-list:project-open" \}\)\);[\s\S]*\};/,
-    "project header should open the drawer before routing through workspace activation",
+    /const handleProjectOpenClick = \(projectKey: string\) => \{[\s\S]*toggleProjectAccordion\(projectKey\);[\s\S]*\};/,
+    "project header should toggle the drawer",
   );
 
   assert.match(
     source,
-    /onClick=\{\(\) => handleProjectOpenClick\(project\.key, workspace\(\)\.id\)\}/,
-    "project header button should activate its workspace",
+    /onClick=\{\(\) => handleProjectOpenClick\(project\.key\)\}/,
+    "project header button should call the shared project toggle handler",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /handleProjectOpenClick\(project\.key, workspace\(\)\.id\)/,
+    "project header button should not activate its workspace",
   );
 
   assert.match(
@@ -34,14 +40,8 @@ test("project header click opens the accordion and activates workspace while dra
 
   assert.match(
     source,
-    /aria-label=\{project\.projectLabel \? `\$\{tr\("sidebar\.open_project"\)\} \$\{project\.projectLabel\}` : tr\("sidebar\.open_project"\)\}[\s\S]*onClick=\{\(\) => handleProjectOpenClick\(project\.key, workspace\(\)\.id\)\}/,
-    "project label button should browse/open the workspace",
-  );
-
-  assert.doesNotMatch(
-    source,
-    /aria-label=\{project\.projectLabel \? `\$\{tr\("sidebar\.open_project"\)\} \$\{project\.projectLabel\}` : tr\("sidebar\.open_project"\)\}[\s\S]*onClick=\{\(\) => toggleProjectAccordion\(project\.key\)\}/,
-    "open-project button must not be wired to collapse-only behavior",
+    /data-project-collapse-toggle="true"[\s\S]*aria-expanded=\{!drawerCollapsed\(\)\}[\s\S]*onClick=\{\(\) => handleProjectOpenClick\(project\.key\)\}/,
+    "project label button should expose and use accordion toggle behavior",
   );
 });
 
@@ -274,7 +274,7 @@ test("project rows expose drag lifecycle bindings without dedicated grip handle"
 
   assert.match(
     source,
-    /data-project-drag-preview[\s\S]*<button[\s\S]*onPointerDown=\{\(event\) => handleProjectPointerDown\(event, project\.key, projectDragLabel\(\)\)\}[\s\S]*onClick=\{\(\) => handleProjectOpenClick\(project\.key, workspace\(\)\.id\)\}/,
+    /data-project-drag-preview[\s\S]*<button[\s\S]*onPointerDown=\{\(event\) => handleProjectPointerDown\(event, project\.key, projectDragLabel\(\)\)\}[\s\S]*data-project-collapse-toggle="true"[\s\S]*onClick=\{\(\) => handleProjectOpenClick\(project\.key\)\}/,
     "project open button should stay clickable while drag behavior lives on the wrapper",
   );
 
@@ -487,10 +487,10 @@ test("project accordion uses a route-driven open key instead of persisted collap
     "accordion state should be an explicit single-open project key",
   );
 
-  assert.match(
+  assert.doesNotMatch(
     source,
-    /const openProjectAccordion = \(projectKey: string\) => \{[\s\S]*manualAccordionWorkspaceId = "";[\s\S]*manualAccordionProjectKey = "";[\s\S]*setProjectAccordionOpenKey\(key, "project-open"\);[\s\S]*\};/,
-    "explicit project-open clicks should clear manual drawer override",
+    /const openProjectAccordion = \(projectKey: string\) => \{/,
+    "project name clicks should not use a one-way open helper",
   );
 
   assert.match(

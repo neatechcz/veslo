@@ -531,13 +531,6 @@ export default function WorkspaceSessionList(props: Props) {
   };
   let manualAccordionWorkspaceId = "";
   let manualAccordionProjectKey = "";
-  const openProjectAccordion = (projectKey: string) => {
-    const key = projectKey.trim();
-    if (!key) return;
-    manualAccordionWorkspaceId = "";
-    manualAccordionProjectKey = "";
-    setProjectAccordionOpenKey(key, "project-open");
-  };
   const toggleProjectAccordion = (projectKey: string) => {
     const key = projectKey.trim();
     if (!key) return;
@@ -563,13 +556,12 @@ export default function WorkspaceSessionList(props: Props) {
           clearSuppressedProjectClickTimer = null;
         }, 0);
   };
-  const handleProjectOpenClick = (projectKey: string, workspaceId: string) => {
+  const handleProjectOpenClick = (projectKey: string) => {
     if (suppressedProjectClickKey === projectKey) {
       suppressedProjectClickKey = null;
       return;
     }
-    openProjectAccordion(projectKey);
-    void Promise.resolve(props.onActivateWorkspace(workspaceId, { origin: "workspace-session-list:project-open" }));
+    toggleProjectAccordion(projectKey);
   };
   onCleanup(() => {
     if (clearSuppressedProjectClickTimer !== null && typeof window !== "undefined") {
@@ -2680,8 +2672,14 @@ export default function WorkspaceSessionList(props: Props) {
                             <button
                               type="button"
                               class="min-w-0 flex-1 appearance-none border-none bg-transparent p-0 text-left text-inherit"
-                              aria-label={project.projectLabel ? `${tr("sidebar.open_project")} ${project.projectLabel}` : tr("sidebar.open_project")}
-                              onClick={() => handleProjectOpenClick(project.key, workspace().id)}
+                              data-project-collapse-toggle="true"
+                              aria-expanded={!drawerCollapsed()}
+                              aria-label={
+                                drawerCollapsed()
+                                  ? `${tr("sidebar.expand_project_conversations")} ${project.projectLabel}`
+                                  : `${tr("sidebar.collapse_project_conversations")} ${project.projectLabel}`
+                              }
+                              onClick={() => handleProjectOpenClick(project.key)}
                             >
                               <span class="flex items-center gap-2 min-w-0">
                                 <Folder size={13} class="shrink-0 text-gray-8" />
