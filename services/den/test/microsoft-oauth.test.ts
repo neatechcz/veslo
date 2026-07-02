@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 
-import { DefaultMicrosoftOAuthClient } from "../src/microsoft/oauth.js"
+import { createUnavailableMicrosoftOAuthClient, DefaultMicrosoftOAuthClient } from "../src/microsoft/oauth.js"
 
 test("Microsoft OAuth startAuthorization builds an organizations authorize URL", async () => {
   const client = new DefaultMicrosoftOAuthClient({
@@ -41,6 +41,7 @@ test("Microsoft OAuth exchangeCode parses token responses", async () => {
       assert.equal(body.get("client_id"), "client-id")
       assert.equal(body.get("client_secret"), "client-secret")
       assert.equal(body.get("code"), "code-123")
+      assert.equal(body.get("redirect_uri"), "https://api.example/callback")
       return new Response(JSON.stringify({
         access_token: "access-token",
         refresh_token: "refresh-token",
@@ -70,10 +71,19 @@ test("Microsoft OAuth refresh preserves existing refresh token when response omi
     clientId: "client-id",
     clientSecret: "client-secret",
     now: () => new Date("2026-07-02T12:00:00.000Z"),
-    fetchImpl: async () => new Response(JSON.stringify({
-      access_token: "new-access-token",
-      expires_in: 1800,
-    }), { status: 200, headers: { "content-type": "application/json" } }),
+    fetchImpl: async (url, init) => {
+      assert.equal(url, "https://login.microsoftonline.com/organizations/oauth2/v2.0/token")
+      assert.equal(init?.method, "POST")
+      const body = init?.body as URLSearchParams
+      assert.equal(body.get("grant_type"), "refresh_token")
+      assert.equal(body.get("refresh_token"), "existing-refresh-token")
+      assert.equal(body.get("client_id"), "client-id")
+      assert.equal(body.get("client_secret"), "client-secret")
+      return new Response(JSON.stringify({
+        access_token: "new-access-token",
+        expires_in: 1800,
+      }), { status: 200, headers: { "content-type": "application/json" } })
+    },
   })
 
   const grant = await client.refreshToken({
@@ -84,4 +94,27 @@ test("Microsoft OAuth refresh preserves existing refresh token when response omi
   assert.equal(grant.accessToken, "new-access-token")
   assert.equal(grant.refreshToken, "existing-refresh-token")
   assert.equal(grant.expiresAt, "2026-07-02T12:30:00.000Z")
+})
+
+test("createUnavailableMicrosoftOAuthClient rejects OAuth actions and allows revoke", async () => {
+  const client = createUnavailableMicrosoftOAuthClient("microsoft_oauth_disabled")
+  const expectedError = { message: "microsoft_oauth_disabled" }
+
+  await assert.rejects(() => client.startAuthorization({
+    state: "state-123",
+    scopes: ["openid"],
+    redirectUri: "https://api.example/callback",
+    connectorId: "microsoft-sharepoint",
+  }), expectedError)
+  await assert.rejects(() => client.exchangeCode({
+    code: "code-123",
+    redirectUri: "https://api.example/callback",
+    connectorId: "microsoft-sharepoint",
+    scopes: ["https://graph.microsoft.com/Sites.Read.All"],
+  }), expectedError)
+  await assert.rejects(() => client.refreshToken({
+    refreshToken: "refresh-token",
+    connectorId: "microsoft-sharepoint",
+  }), expectedError)
+  await assert.doesNotReject(() => client.revokeToken("refresh-token"))
 })

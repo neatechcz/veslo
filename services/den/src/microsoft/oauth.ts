@@ -41,6 +41,21 @@ export interface MicrosoftOAuthClient {
   revokeToken(refreshToken: string): Promise<void>
 }
 
+export function createUnavailableMicrosoftOAuthClient(
+  message = "microsoft_oauth_not_configured",
+): MicrosoftOAuthClient {
+  async function reject(): Promise<never> {
+    throw new Error(message)
+  }
+
+  return {
+    startAuthorization: reject,
+    exchangeCode: reject,
+    refreshToken: reject,
+    revokeToken: async () => undefined,
+  }
+}
+
 export type DefaultMicrosoftOAuthClientDeps = {
   clientId: string
   clientSecret: string
