@@ -378,7 +378,7 @@ export function createConversationService(options: {
     messages: unknown[],
     partsByMessageId: Record<string, unknown[]>,
   ) => {
-    if (!options.transcriptStore || messages.length === 0) return;
+    if (!options.transcriptStore) return;
     try {
       await options.transcriptStore.appendTranscript({
         workspaceId,
@@ -461,7 +461,7 @@ export function createConversationService(options: {
       // opencode.db, then tunnel what we find back into the host store so every
       // later read is host-only (survives sandbox reset and app restart).
       const host = await readPersistedTranscript(workspaceId, opencodeSessionId, input.limit);
-      if (host && host.messages.length > 0) {
+      if (host) {
         return {
           workspaceId,
           sessionId: opencodeSessionId,
@@ -482,7 +482,7 @@ export function createConversationService(options: {
         directory: input.directory,
         workspace: input.workspace,
       });
-      if (snapshot.source === "sqlite" && snapshot.messages.length > 0) {
+      if (snapshot.source === "sqlite") {
         await persistTranscriptSnapshot(
           workspaceId,
           opencodeSessionId,
@@ -519,10 +519,6 @@ export function createConversationService(options: {
       }
       const deletedMessageIds = normalizeStringList(input.deletedMessageIds);
       const deletedPartsByMessageId = normalizeStringListRecord(input.deletedPartsByMessageId);
-      const hasDeletions = deletedMessageIds.length > 0 || Object.keys(deletedPartsByMessageId).length > 0;
-      if (input.messages.length === 0 && !hasDeletions) {
-        throw new ApiError(400, "invalid_payload", "messages or transcript deletions are required");
-      }
 
       const binding = await resolveOpenCodeSessionForRead({
         workspaceId,

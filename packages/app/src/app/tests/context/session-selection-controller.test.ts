@@ -599,6 +599,48 @@ test("selectSession backfills active scoped live recovery under the OpenCode ses
   });
 });
 
+test("selectSession backfills empty active scoped live recovery", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const backfills: any[] = [];
+      const { controller, store } = makeController({
+        shouldBrowseSessionFromDb: (sessionID) => sessionID === "conv-empty-backfill",
+        resolveSessionWorkspaceId: (sessionID) => sessionID === "conv-empty-backfill" ? "ws-a" : null,
+        activeClient: {
+          session: {
+            messages: async () => ok([]),
+          },
+        },
+        loadOfflineTranscript: async (sessionID) => ({
+          status: "unavailable",
+          scope: {
+            sessionId: sessionID,
+            workspaceId: "ws-a",
+            directory: "/repo",
+            conversationId: "conv-empty-backfill",
+            opencodeSessionId: "open-empty-backfill",
+          },
+          reason: "source-unavailable",
+        }),
+        appendTranscriptSnapshot: async (input) => {
+          backfills.push(input);
+        },
+      });
+
+      await controller.selectSession("conv-empty-backfill");
+
+      assert.deepEqual(store.messages["conv-empty-backfill"], []);
+      assert.equal(backfills.length, 1);
+      assert.equal(backfills[0]?.sessionId, "open-empty-backfill");
+      assert.equal(backfills[0]?.reason, "live-recovery");
+      assert.deepEqual(backfills[0]?.messages, []);
+      assert.deepEqual(backfills[0]?.partsByMessageId, {});
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("selectSession keeps recovered live messages visible when backfill fails", async () => {
   await createRoot(async (dispose) => {
     try {

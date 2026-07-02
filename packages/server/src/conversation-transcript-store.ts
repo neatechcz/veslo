@@ -105,6 +105,13 @@ function createDatabase(dbPath: string): Database {
     );
     CREATE INDEX IF NOT EXISTS conversation_part_message_idx
       ON conversation_part (workspace_id, engine_session_id, message_id, part_id);
+    CREATE TABLE IF NOT EXISTS conversation_transcript_empty (
+      workspace_id TEXT NOT NULL,
+      engine_session_id TEXT NOT NULL,
+      first_seen_at INTEGER NOT NULL,
+      last_seen_at INTEGER NOT NULL,
+      PRIMARY KEY (workspace_id, engine_session_id)
+    );
   `);
   return db;
 }
@@ -133,10 +140,21 @@ export function createConversationTranscriptStore(options?: {
       const hasDeletedMessages = normalizeTextList(input.deletedMessageIds).length > 0;
       const hasDeletedParts = Object.values(input.deletedPartsByMessageId ?? {})
         .some((partIds) => normalizeTextList(partIds).length > 0);
-      if (!workspaceId || !engineSessionId || (input.messages.length === 0 && !hasDeletedMessages && !hasDeletedParts)) return;
+      if (!workspaceId || !engineSessionId) return;
 
       withDb((db) => {
         const seenAt = now();
+        const upsertEmptyMarker = db.query(
+          `INSERT INTO conversation_transcript_empty (
+             workspace_id, engine_session_id, first_seen_at, last_seen_at
+           ) VALUES (?1, ?2, ?3, ?3)
+           ON CONFLICT(workspace_id, engine_session_id) DO UPDATE SET
+             last_seen_at = excluded.last_seen_at`,
+        );
+        const deleteEmptyMarker = db.query(
+          `DELETE FROM conversation_transcript_empty
+           WHERE workspace_id = ?1 AND engine_session_id = ?2`,
+        );
         const insertMessage = db.query(
           `INSERT INTO conversation_message (
              workspace_id, engine_session_id, message_id, role,
@@ -174,6 +192,12 @@ export function createConversationTranscriptStore(options?: {
 
         db.exec("BEGIN IMMEDIATE");
         try {
+          if (input.messages.length === 0 && !hasDeletedMessages && !hasDeletedParts) {
+            upsertEmptyMarker.run(workspaceId, engineSessionId, seenAt);
+            db.exec("COMMIT");
+            return;
+          }
+
           for (const messageId of normalizeTextList(input.deletedMessageIds)) {
             deletePartsForMessage.run(workspaceId, engineSessionId, messageId);
             deleteMessage.run(workspaceId, engineSessionId, messageId);
@@ -184,6 +208,10 @@ export function createConversationTranscriptStore(options?: {
             for (const partId of normalizeTextList(rawPartIds)) {
               deletePart.run(workspaceId, engineSessionId, messageId, partId);
             }
+          }
+
+          if (input.messages.length > 0) {
+            deleteEmptyMarker.run(workspaceId, engineSessionId);
           }
 
           for (const message of input.messages) {
@@ -251,7 +279,16 @@ export function createConversationTranscriptStore(options?: {
              LIMIT ?3`,
           )
           .all(workspaceId, engineSessionId, limit);
-        if (messageRows.length === 0) return null;
+        if (messageRows.length === 0) {
+          const marker = db
+            .query<{ found: number }, [string, string]>(
+              `SELECT 1 AS found FROM conversation_transcript_empty
+               WHERE workspace_id = ?1 AND engine_session_id = ?2
+               LIMIT 1`,
+            )
+            .get(workspaceId, engineSessionId);
+          return marker ? { messages: [], partsByMessageId: {} } : null;
+        }
 
         const messages = messageRows
           .map((row) => safeParse(row.payload_json))

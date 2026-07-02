@@ -210,7 +210,7 @@ function buildLiveRecoveryBackfillPayload(
       .map((message) => message.info)
       .filter((info): info is MessageInfo => Boolean(info?.id)),
   );
-  if (!workspaceId || !sessionId || messages.length === 0) return null;
+  if (!workspaceId || !sessionId) return null;
 
   const partsByMessageId: Record<string, Part[]> = {};
   for (const message of transcript) {

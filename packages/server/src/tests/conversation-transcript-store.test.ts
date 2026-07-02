@@ -28,6 +28,38 @@ describe("conversation transcript store", () => {
     expect(result).toBeNull();
   });
 
+  test("persists a durable empty transcript marker", async () => {
+    const store = await newStore();
+    await store.appendTranscript({
+      workspaceId: "ws-a",
+      engineSessionId: "ses-empty",
+      messages: [],
+    });
+
+    const result = await store.getTranscript({ workspaceId: "ws-a", engineSessionId: "ses-empty" });
+
+    expect(result).toEqual({ messages: [], partsByMessageId: {} });
+  });
+
+  test("non-empty append overrides a previous empty transcript marker", async () => {
+    const store = await newStore();
+    await store.appendTranscript({
+      workspaceId: "ws-a",
+      engineSessionId: "ses-empty",
+      messages: [],
+    });
+    await store.appendTranscript({
+      workspaceId: "ws-a",
+      engineSessionId: "ses-empty",
+      messages: [{ id: "msg-1", role: "assistant", createdAt: 10, payload: { id: "msg-1" }, parts: [] }],
+    });
+
+    const result = await store.getTranscript({ workspaceId: "ws-a", engineSessionId: "ses-empty" });
+
+    expect(result!.messages.map((m) => (m as { id: string }).id)).toEqual(["msg-1"]);
+    expect(result!.partsByMessageId).toEqual({});
+  });
+
   test("persists messages + parts and reads them back in creation order", async () => {
     const store = await newStore();
     await store.appendTranscript({
