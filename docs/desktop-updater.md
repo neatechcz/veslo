@@ -110,6 +110,8 @@ Install is intentionally gated:
 This prevents the app from restarting in the middle of a task run and prevents a restarted old Windows build from offering the same MSI update again while the previous installer handoff is still recent.
 On macOS, the relaunch helper waits until the old Veslo process exits before opening the updated `.app` bundle, so the single-instance guard cannot reject the replacement process while the old app is still shutting down.
 
+Desktop-managed services must shut down before `pending.update.install()` is called. The orchestrator daemon accepts `/shutdown`, starts closing its HTTP listener, then stops OpenCode engines before waiting briefly for existing server connections to close. This ordering matters because long-lived event streams can otherwise keep the HTTP server open and delay process exit. The desktop updater waits up to 15 seconds for managed processes to disappear before it fails the install preflight.
+
 On startup, the app checks the persisted Windows install marker:
 
 - if the launched app version matches the target version, the marker is cleared
@@ -370,6 +372,10 @@ Check:
 - the public release exists in `neatechcz/veslo-updates`
 - `latest.json` was uploaded successfully
 - the public release contains assets for the current platform
+
+### Install fails while waiting for managed services
+
+If the UI reports an install error before the updater hands off to Tauri, check the desktop debug log spool for `workspace.updater:install-error`. A message containing `Timed out waiting ... for managed Veslo processes to stop before installing update` means the updater never started applying the package; it failed while waiting for Veslo-managed child processes to exit. Inspect nearby orchestrator shutdown logs for `Daemon shutdown stopping engines`, `Daemon shutdown engines stopped`, `Daemon server closed`, or `Daemon server close timed out after engine shutdown`.
 
 ### macOS release jobs fail before artifact upload
 

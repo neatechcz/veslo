@@ -33,6 +33,7 @@ import { resolveOpencodeProxyTarget } from "./opencode-proxy-target.js";
 import { probeOpenCodeProjectApi } from "./opencode-project-api.js";
 import { proxyToEngine } from "./router-proxy.js";
 import { createRunStore, type RunEngineOwner, type RunKind } from "./run-store.js";
+import { createOrchestratorShutdown } from "./shutdown.js";
 import {
   createRunRegistry,
   DEFAULT_RUN_ABORT_ERROR,
@@ -5234,24 +5235,23 @@ async function runRouterDaemon(args: ParsedArgs) {
     }
   });
 
-  const shutdown = async () => {
-    logger.info("Daemon shutting down", { host, port }, "veslo-orchestrator-router");
-    try {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    } catch {
-      // ignore
-    }
-
-    if (sharedEngineLivenessTimer) clearInterval(sharedEngineLivenessTimer);
-    await pool.killAll();
-    await sharedOpenCodeEngine?.dispose();
-
-    state.daemon = undefined;
-    state.engines = {};
-    await flushPersist();
-    await saveRouterState(statePath, state);
-    process.exit(0);
-  };
+  const shutdown = createOrchestratorShutdown({
+    server,
+    pool,
+    sharedOpenCodeEngine,
+    clearSharedEngineLivenessTimer: () => {
+      if (sharedEngineLivenessTimer) clearInterval(sharedEngineLivenessTimer);
+    },
+    persistShutdownState: async () => {
+      state.daemon = undefined;
+      state.engines = {};
+      await flushPersist();
+      await saveRouterState(statePath, state);
+    },
+    exitProcess: (code) => process.exit(code),
+    logger,
+    context: { host, port },
+  });
 
   server.listen(port, host, async () => {
     state.daemon = {

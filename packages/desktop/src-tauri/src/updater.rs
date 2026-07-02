@@ -4,6 +4,9 @@ use std::time::{Duration, Instant};
 
 use crate::types::UpdaterEnvironment;
 
+pub const MANAGED_PROCESS_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
+const MANAGED_PROCESS_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedProcessShutdownTimeout {
     pub running_pids: Vec<u32>,
@@ -83,13 +86,14 @@ pub fn prepare_update_install(app: &tauri::AppHandle) -> Result<(), String> {
 
     wait_for_managed_process_shutdown(
         &pids,
-        Duration::from_secs(5),
-        Duration::from_millis(100),
+        MANAGED_PROCESS_SHUTDOWN_TIMEOUT,
+        MANAGED_PROCESS_SHUTDOWN_POLL_INTERVAL,
         is_process_running,
     )
     .map_err(|error| {
         format!(
-            "Timed out waiting for managed Veslo processes to stop before installing update: {:?}",
+            "Timed out waiting {:?} for managed Veslo processes to stop before installing update: {:?}",
+            MANAGED_PROCESS_SHUTDOWN_TIMEOUT,
             error.running_pids
         )
     })
@@ -251,6 +255,11 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().running_pids, vec![303]);
+    }
+
+    #[test]
+    fn allows_slow_graceful_managed_process_shutdown_before_update_install() {
+        assert_eq!(MANAGED_PROCESS_SHUTDOWN_TIMEOUT, Duration::from_secs(15));
     }
 
     #[test]
