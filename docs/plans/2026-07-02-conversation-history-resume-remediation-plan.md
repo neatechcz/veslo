@@ -120,7 +120,7 @@ only in a reserved worktree.
 | CHR01 | explicit history availability contract | merged | codex-20260702-chr01 | true |
 | CHR02 | live fallback for active scoped sessions | merged | codex-20260702-chr02 | true |
 | CHR03 | backfill host transcript after live recovery | merged | codex-20260702-chr03 | true |
-| CHR04 | durable empty transcript marker | available | null | false |
+| CHR04 | durable empty transcript marker | merged | codex-20260702-chr04 | true |
 | CHR05 | unavailable-history UI/state and retry path | available | null | false |
 | CHR06 | focused integration coverage and docs note | available | null | false |
 
@@ -317,12 +317,12 @@ pnpm --filter veslo-server typecheck
 
 ```yaml
 id: CHR04
-status: available
-reserved_by: null
-reserved_at: null
+status: merged
+reserved_by: codex-20260702-chr04
+reserved_at: 2026-07-02T02:56:35.4841713+02:00
 branch: conversation-history/chr04-durable-empty-marker
 worktree: ../veslo-conversation-history-chr04-durable-empty-marker
-done: false
+done: true
 depends_on: [CHR03]
 target_files:
   - packages/server/src/conversation-transcript-store.ts
@@ -579,3 +579,26 @@ git diff --check
 - 2026-07-02: CHR03 merged into `local/sandbox-merge` and re-verified in the
   original worktree with the app focused suite (20 passed), server append-path
   suite (31 passed), app typecheck, server typecheck, and `git diff --check`.
+- 2026-07-02: CHR04 behavior tests added first in
+  `conversation-history/chr04-durable-empty-marker`. Pre-implementation focused
+  runs failed as expected: server transcript/service tests had 19 passed, 2
+  failed, and app conversation-service test had 5 passed, 1 failed. The
+  failures prove empty transcript appends are currently dropped/rejected and no
+  durable empty marker exists.
+- 2026-07-02: CHR04 added a boundary controller test for zero-message live
+  recovery backfill. Pre-implementation
+  `session-selection-controller.test.ts` failed as expected: 15 passed, 1
+  failed, proving the CHR03 backfill payload builder currently skips empty live
+  recovery results.
+- 2026-07-02: CHR04 implementation in
+  `conversation-history/chr04-durable-empty-marker`: added a durable empty
+  transcript marker in the server transcript store, allowed empty transcript
+  append through server/app append paths, treated host empty snapshots as valid
+  sqlite transcripts, and allowed zero-message live recovery backfill payloads.
+  Verified with server transcript/service/routes suite (40 passed), app
+  conversation-service + selection-controller suite (22 passed), app
+  typecheck, server typecheck, and `git diff --check`.
+- 2026-07-02: CHR04 merged into `local/sandbox-merge` and re-verified in the
+  original worktree with server transcript/service/routes suite (40 passed),
+  app conversation-service + selection-controller suite (22 passed), app
+  typecheck, server typecheck, and `git diff --check`.
