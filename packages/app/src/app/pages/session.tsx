@@ -227,6 +227,16 @@ type TempRuntimeUiRenderSource = {
   at: number;
 };
 
+export type SessionHistoryUnavailableView = {
+  sessionId: string;
+  workspaceId?: string | null;
+  workspaceRoot?: string | null;
+  directory?: string | null;
+  conversationId?: string | null;
+  opencodeSessionId?: string | null;
+  reason?: string | null;
+};
+
 export type SessionViewProps = {
   selectedSessionId: string | null;
   activePendingDraftKey: string | null;
@@ -409,6 +419,9 @@ export type SessionViewProps = {
   saveSession: (sessionId: string) => Promise<string>;
   sessionStatusById: Record<string, string>;
   busySessionByWorkspaceId?: WorkspaceBusyMap;
+  historyUnavailable: SessionHistoryUnavailableView | null;
+  historyUnavailableRetrying: boolean;
+  retryUnavailableHistory: (sessionId: string) => Promise<void> | void;
   hasEarlierMessages: boolean;
   loadingEarlierMessages: boolean;
   loadEarlierMessages: (sessionId: string) => Promise<void>;
@@ -3393,6 +3406,30 @@ export default function SessionView(props: SessionViewProps) {
 
           <Show when={!showWorkspaceSetupEmptyState()}>
             {tempRuntimeUiDiagnosticBadge("conversation")}
+          </Show>
+
+          <Show when={props.historyUnavailable}>
+            {(history) => (
+              <div class="mx-auto mb-4 flex w-full max-w-[min(100%,72rem)] flex-col gap-3 rounded-xl border border-amber-7/40 bg-amber-2/40 px-4 py-3 text-sm text-amber-12 sm:flex-row sm:items-center sm:justify-between">
+                <div class="min-w-0 leading-relaxed">
+                  {tr("session.history_unavailable")}
+                </div>
+                <button
+                  type="button"
+                  class="shrink-0 rounded-lg border border-amber-7 bg-amber-4 px-3 py-2 text-xs font-medium text-amber-12 transition-colors hover:bg-amber-5 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => {
+                    void Promise.resolve(props.retryUnavailableHistory(history().sessionId)).catch((error) =>
+                      reportError(error, "session.historyUnavailable.retry"),
+                    );
+                  }}
+                  disabled={props.historyUnavailableRetrying}
+                >
+                  {props.historyUnavailableRetrying
+                    ? tr("session.history_retrying")
+                    : tr("session.history_retry")}
+                </button>
+              </div>
+            )}
           </Show>
 
           <Show when={hiddenMessageCount() > 0 || hasServerEarlierMessages()}>

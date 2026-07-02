@@ -301,6 +301,14 @@ test("app activates selected session workspace at send time, not browse time", (
   );
 });
 
+test("app retries unavailable scoped history by activating the owning workspace", () => {
+  assert.match(
+    appSource,
+    /const retryUnavailableHistory = async \(sessionId: string\) => \{[\s\S]*const scope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*const workspaceId = scope\?\.workspaceId\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*if \(scope\) setSessionBrowseScope\(scope\);[\s\S]*await handleActivateWorkspace\(workspaceId, \{ origin: "session-history:retry-unavailable" \}\);[\s\S]*await selectSession\(sessionId\);[\s\S]*\};/s,
+    "retrying unavailable history should preserve the selected browse scope, explicitly activate the owning workspace, and re-run selection",
+  );
+});
+
 test("workspace snapshot effect preserves scoped browse session during send-time activation", () => {
   assert.match(
     appSource,

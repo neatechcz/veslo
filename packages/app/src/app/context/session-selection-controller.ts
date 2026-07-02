@@ -1,3 +1,4 @@
+import { createSignal } from "solid-js";
 import { reconcile } from "solid-js/store";
 
 import type { Part, Session } from "@opencode-ai/sdk/v2/client";
@@ -78,6 +79,10 @@ export type SessionHistoryLoadResult =
   | { status: "loaded"; snapshot: VesloSessionTranscriptSnapshot }
   | { status: "empty"; snapshot: VesloSessionTranscriptSnapshot }
   | { status: "unavailable"; scope: SessionHistoryLoadScope; reason?: string | null };
+
+export type SelectedSessionHistoryUnavailable = SessionHistoryLoadScope & {
+  reason?: string | null;
+};
 
 export type SessionOfflineTranscriptLoadResult =
   | SessionHistoryLoadResult
@@ -235,6 +240,7 @@ function buildLiveRecoveryBackfillPayload(
 export function createSessionSelectionController(deps: SessionSelectionControllerDeps) {
   let selectRunCounter = 0;
   const selectGuard = createSelectSessionGuard();
+  const [historyUnavailable, setHistoryUnavailable] = createSignal<SelectedSessionHistoryUnavailable | null>(null);
 
   const sessions = () => deps.store.sessions;
   const selectedSession = () => {
@@ -252,15 +258,51 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
     if (!id) return [];
     return deps.store.todos[id] ?? [];
   };
+  const selectedSessionHistoryUnavailable = () => {
+    const id = deps.selectedSessionId()?.trim() ?? "";
+    const unavailable = historyUnavailable();
+    if (!id || unavailable?.sessionId !== id) return null;
+    return unavailable;
+  };
   const selectedSessionHasEarlierMessages = () => {
     const id = deps.selectedSessionId();
     if (!id) return false;
+    if (selectedSessionHistoryUnavailable()) return false;
     return !deps.messageCompleteBySession()[id];
   };
   const selectedSessionLoadingEarlierMessages = () => {
     const id = deps.selectedSessionId();
     if (!id) return false;
     return Boolean(deps.messageLoadBusyBySession()[id]);
+  };
+  const clearSessionHistoryUnavailable = (sessionID: string) => {
+    setHistoryUnavailable((current) => (current?.sessionId === sessionID ? null : current));
+  };
+  const markSessionHistoryLoaded = (sessionID: string, messageCount: number, limit: number) => {
+    clearSessionHistoryUnavailable(sessionID);
+    deps.setMessageLimitBySession((prev: Record<string, number>) => ({
+      ...prev,
+      [sessionID]: limit,
+    }));
+    deps.setMessageCompleteBySession((prev: Record<string, boolean>) => ({
+      ...prev,
+      [sessionID]: messageCount < limit,
+    }));
+  };
+  const markSessionHistoryUnavailable = (
+    sessionID: string,
+    history: Extract<SessionHistoryLoadResult, { status: "unavailable" }>,
+  ) => {
+    deps.setStore("todos", sessionID, []);
+    setHistoryUnavailable({
+      sessionId: history.scope.sessionId?.trim() || sessionID,
+      workspaceId: history.scope.workspaceId ?? null,
+      workspaceRoot: history.scope.workspaceRoot ?? null,
+      directory: history.scope.directory ?? null,
+      conversationId: history.scope.conversationId ?? null,
+      opencodeSessionId: history.scope.opencodeSessionId ?? null,
+      reason: history.reason ?? null,
+    });
   };
 
   const backfillRecoveredLiveHistory = async (input: {
@@ -471,6 +513,12 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
 
       const existingLimit = deps.messageLimitBySession()[sessionID] ?? 0;
       const requestLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, existingLimit);
+      const clearMessageLoadBusy = () => {
+        deps.setMessageLoadBusyBySession((prev: Record<string, boolean>) => ({
+          ...prev,
+          [sessionID]: false,
+        }));
+      };
       deps.setMessageLoadBusyBySession((prev: Record<string, boolean>) => ({
         ...prev,
         [sessionID]: true,
@@ -510,6 +558,7 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
           const snapshot = retargetSnapshotForUiSession(history.snapshot, sessionID);
           deps.hydrateTranscriptSnapshot(snapshot);
           deps.setStore("todos", sessionID, []);
+          markSessionHistoryLoaded(sessionID, snapshot.messages.length, requestLimit);
           mark("offline transcript fallback done", {
             count: snapshot.messages.length,
             limit: requestLimit,
@@ -571,14 +620,7 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
         if (abortIfStale("selection changed before live recovery messages applied")) return true;
         deps.setMessagesForSession(sessionID, msgs);
         deps.setStore("todos", sessionID, []);
-        deps.setMessageLimitBySession((prev: Record<string, number>) => ({
-          ...prev,
-          [sessionID]: requestLimit,
-        }));
-        deps.setMessageCompleteBySession((prev: Record<string, boolean>) => ({
-          ...prev,
-          [sessionID]: msgs.length < requestLimit,
-        }));
+        markSessionHistoryLoaded(sessionID, msgs.length, requestLimit);
         await backfillRecoveredLiveHistory({
           history,
           transcript: msgs,
@@ -608,7 +650,10 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
         try {
           const fallback = await loadOfflineTranscriptFallback(!c ? "client unavailable" : "read policy");
           if (fallback.status === "unavailable") {
-            await recoverUnavailableHistoryFromLive(fallback.history);
+            const recovered = await recoverUnavailableHistoryFromLive(fallback.history);
+            if (!recovered && !abortIfStale("selection changed before unavailable history applied")) {
+              markSessionHistoryUnavailable(sessionID, fallback.history);
+            }
           }
         } finally {
           deps.setMessageLoadBusyBySession((prev: Record<string, boolean>) => ({
@@ -630,9 +675,20 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
         });
         if (deps.isSessionNotFoundError(error)) {
           const recovered = await loadOfflineTranscriptFallback("session not found");
-          if (recovered.status === "applied" || recovered.status === "stale") return;
+          if (recovered.status === "applied" || recovered.status === "stale") {
+            clearMessageLoadBusy();
+            return;
+          }
+          if (recovered.status === "unavailable") {
+            if (!abortIfStale("selection changed before unavailable history applied")) {
+              markSessionHistoryUnavailable(sessionID, recovered.history);
+            }
+            clearMessageLoadBusy();
+            return;
+          }
         }
         deps.addError(error);
+        clearMessageLoadBusy();
         return;
       }
       mark("session.messages done", { limit: requestLimit, count: msgs.length });
@@ -642,14 +698,7 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
       }));
       if (abortIfStale("selection changed before messages applied")) return;
       deps.setMessagesForSession(sessionID, msgs);
-      deps.setMessageLimitBySession((prev: Record<string, number>) => ({
-        ...prev,
-        [sessionID]: requestLimit,
-      }));
-      deps.setMessageCompleteBySession((prev: Record<string, boolean>) => ({
-        ...prev,
-        [sessionID]: msgs.length < requestLimit,
-      }));
+      markSessionHistoryLoaded(sessionID, msgs.length, requestLimit);
 
       finishPerf(perfEnabled, "session.select", "complete", startedAt, {
         runId,
@@ -732,6 +781,7 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
           return { status: "unavailable" as const, history };
         }
         deps.hydrateTranscriptSnapshot(retargetSnapshotForUiSession(history.snapshot, sessionID));
+        markSessionHistoryLoaded(sessionID, history.snapshot.messages.length, nextLimit);
         return { status: "applied" as const, history };
       };
       const recoverUnavailableHistoryFromLive = async (
@@ -748,14 +798,7 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
             ),
           );
           deps.setMessagesForSession(sessionID, msgs);
-          deps.setMessageLimitBySession((prev: Record<string, number>) => ({
-            ...prev,
-            [sessionID]: nextLimit,
-          }));
-          deps.setMessageCompleteBySession((prev: Record<string, boolean>) => ({
-            ...prev,
-            [sessionID]: msgs.length < nextLimit,
-          }));
+          markSessionHistoryLoaded(sessionID, msgs.length, nextLimit);
           await backfillRecoveredLiveHistory({
             history,
             transcript: msgs,
@@ -770,7 +813,8 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
       if (!c || readPolicy.browseFromDb) {
         const fallback = await loadOfflineTranscriptFallback();
         if (fallback.status === "unavailable") {
-          await recoverUnavailableHistoryFromLive(fallback.history);
+          const recovered = await recoverUnavailableHistoryFromLive(fallback.history);
+          if (!recovered) markSessionHistoryUnavailable(sessionID, fallback.history);
         }
         return;
       }
@@ -779,18 +823,15 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
           await deps.withTimeout(c.session.messages({ sessionID, limit: nextLimit }), 12000, "session.messages"),
         );
         deps.setMessagesForSession(sessionID, msgs);
-        deps.setMessageLimitBySession((prev: Record<string, number>) => ({
-          ...prev,
-          [sessionID]: nextLimit,
-        }));
-        deps.setMessageCompleteBySession((prev: Record<string, boolean>) => ({
-          ...prev,
-          [sessionID]: msgs.length < nextLimit,
-        }));
+        markSessionHistoryLoaded(sessionID, msgs.length, nextLimit);
       } catch (error) {
         if (deps.isSessionNotFoundError(error)) {
           const fallback = await loadOfflineTranscriptFallback();
           if (fallback.status === "applied") return;
+          if (fallback.status === "unavailable") {
+            markSessionHistoryUnavailable(sessionID, fallback.history);
+            return;
+          }
         }
         throw error;
       }
@@ -809,6 +850,7 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
     selectedSession,
     selectedSessionStatus,
     todos,
+    selectedSessionHistoryUnavailable,
     selectedSessionHasEarlierMessages,
     selectedSessionLoadingEarlierMessages,
     loadSessions,
