@@ -7,9 +7,10 @@ import {
   canReplaySoulMaterialization,
   resolveSoulActiveWorkspaceGuard,
   resolveSoulServerWorkspaceId,
+  soulMaterializationRequiresActiveRuntimeReload,
   soulReplayRequiresActiveRun,
 } from "../../lib/soul-workspace-map.js";
-import type { VesloWorkspaceInfo } from "../../lib/veslo-server.js";
+import type { VesloSoulMaterializationResult, VesloWorkspaceInfo } from "../../lib/veslo-server.js";
 
 const serverWorkspace = (input: Partial<VesloWorkspaceInfo> & { id: string }): VesloWorkspaceInfo => ({
   id: input.id,
@@ -18,6 +19,22 @@ const serverWorkspace = (input: Partial<VesloWorkspaceInfo> & { id: string }): V
   workspaceType: input.workspaceType ?? "local",
   directory: input.directory,
   opencode: input.opencode,
+});
+
+const soulMaterializationResult = (
+  input: Partial<Extract<VesloSoulMaterializationResult, { ok: true }>> = {},
+): Extract<VesloSoulMaterializationResult, { ok: true }> => ({
+  ok: true,
+  status: "current",
+  workspaceRoot: "/repo",
+  effectiveContent: "Soul content",
+  manifestPath: "/repo/.opencode/veslo/soul-manifest.json",
+  instructionsPath: "/repo/opencode.jsonc",
+  files: [],
+  pending: false,
+  reloadRequired: true,
+  manualSyncRequired: false,
+  ...input,
 });
 
 test("buildSoulWorkspaceIdMap maps local paths and explicit Veslo remote ids", () => {
@@ -194,5 +211,71 @@ test("pending Soul replay waits for busy app ids and unknown app ids fail closed
       busyWorkspaceIds: ["some-busy-workspace"],
     }),
     true,
+  );
+});
+
+test("Soul materialization requests active runtime reload only after current active workspace writes", () => {
+  assert.equal(
+    soulMaterializationRequiresActiveRuntimeReload({
+      activeServerWorkspaceId: "ws-active",
+      materialization: {
+        ok: true,
+        pending: false,
+        manualSyncRequired: false,
+        workspaces: [
+          { workspaceId: "ws-active", result: soulMaterializationResult() },
+          { workspaceId: "ws-other", result: soulMaterializationResult() },
+        ],
+      },
+    }),
+    true,
+  );
+
+  assert.equal(
+    soulMaterializationRequiresActiveRuntimeReload({
+      activeServerWorkspaceId: "ws-active",
+      materialization: {
+        ok: true,
+        pending: true,
+        manualSyncRequired: false,
+        workspaces: [
+          { workspaceId: "ws-active", result: soulMaterializationResult({ status: "pending", pending: true }) },
+        ],
+      },
+    }),
+    false,
+  );
+
+  assert.equal(
+    soulMaterializationRequiresActiveRuntimeReload({
+      activeServerWorkspaceId: "ws-active",
+      materialization: {
+        ok: true,
+        pending: false,
+        manualSyncRequired: false,
+        workspaces: [
+          { workspaceId: "ws-other", result: soulMaterializationResult() },
+        ],
+      },
+    }),
+    false,
+  );
+
+  assert.equal(
+    soulMaterializationRequiresActiveRuntimeReload({
+      activeServerWorkspaceId: "ws-active",
+      sourceWorkspaceId: "ws-active",
+      materialization: soulMaterializationResult(),
+    }),
+    true,
+  );
+
+  assert.equal(
+    soulMaterializationRequiresActiveRuntimeReload({
+      activeServerWorkspaceId: "ws-active",
+      sourceWorkspaceId: "ws-other",
+      materialization: soulMaterializationResult(),
+    }),
+    false,
   );
 });

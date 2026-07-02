@@ -1,5 +1,10 @@
 import { normalizeDirectoryPath } from "../utils";
-import { parseVesloWorkspaceIdFromUrl, type VesloWorkspaceInfo } from "./veslo-server";
+import {
+  parseVesloWorkspaceIdFromUrl,
+  type VesloSoulAnyMaterializationResult,
+  type VesloSoulMaterializationResult,
+  type VesloWorkspaceInfo,
+} from "./veslo-server";
 
 export type SoulWorkspaceMapWorkspace = {
   id: string;
@@ -169,4 +174,30 @@ export function soulReplayRequiresActiveRun(input: {
   const busyWorkspaceIds = new Set(input.busyWorkspaceIds.map(normalizedText).filter(Boolean));
   const appWorkspaceId = normalizedText(input.replay.appWorkspaceId);
   return appWorkspaceId ? busyWorkspaceIds.has(appWorkspaceId) : busyWorkspaceIds.size > 0;
+}
+
+const materializationResultNeedsRuntimeReload = (
+  result: VesloSoulMaterializationResult | null | undefined,
+): boolean => result?.ok === true && result.pending !== true && result.reloadRequired === true;
+
+export function soulMaterializationRequiresActiveRuntimeReload(input: {
+  activeServerWorkspaceId: string | null | undefined;
+  materialization: VesloSoulAnyMaterializationResult | null | undefined;
+  sourceWorkspaceId?: string | null | undefined;
+}): boolean {
+  const activeServerWorkspaceId = normalizedText(input.activeServerWorkspaceId);
+  if (!activeServerWorkspaceId || !input.materialization) return false;
+
+  if ("workspaces" in input.materialization) {
+    return input.materialization.workspaces.some((item) =>
+      normalizedText(item.workspaceId) === activeServerWorkspaceId &&
+      materializationResultNeedsRuntimeReload(item.result)
+    );
+  }
+
+  if (input.sourceWorkspaceId !== undefined && normalizedText(input.sourceWorkspaceId) !== activeServerWorkspaceId) {
+    return false;
+  }
+
+  return materializationResultNeedsRuntimeReload(input.materialization);
 }

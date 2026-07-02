@@ -27,6 +27,8 @@ import {
   buildSoulAppWorkspaceIdByServerWorkspaceId,
   canReplaySoulMaterialization,
   resolveSoulActiveWorkspaceGuard,
+  resolveSoulServerWorkspaceId,
+  soulMaterializationRequiresActiveRuntimeReload,
   soulReplayRequiresActiveRun,
   type PendingSoulMaterializationReplay,
 } from "../lib/soul-workspace-map";
@@ -43,8 +45,10 @@ type SoulViewProps = {
   authContext: VesloSoulAuthContext;
   refresh: (options?: { force?: boolean }) => void;
   workspaces: WorkspaceInfo[];
+  activeWorkspaceId: string;
   soulWorkspaceMap: Record<string, string>;
   busySessionByWorkspaceId?: WorkspaceBusyMap;
+  reloadWorkspaceEngine: () => Promise<void>;
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
 };
 
@@ -94,6 +98,9 @@ export default function SoulView(props: SoulViewProps) {
         .map((key) => [key, workspace] as [string, WorkspaceInfo]),
     ),
   ));
+  const activeServerWorkspaceId = createMemo(() =>
+    resolveSoulServerWorkspaceId(workspaceById().get(props.activeWorkspaceId), props.soulWorkspaceMap)
+  );
   const appWorkspaceIdByServerWorkspaceId = createMemo(() =>
     buildSoulAppWorkspaceIdByServerWorkspaceId(props.workspaces, props.soulWorkspaceMap)
   );
@@ -227,6 +234,51 @@ export default function SoulView(props: SoulViewProps) {
       return next;
     });
   };
+  let soulRuntimeReloadInFlight = false;
+  let soulRuntimeReloadQueued = false;
+
+  const requestSoulRuntimeReload = () => {
+    if (soulRuntimeReloadInFlight) {
+      soulRuntimeReloadQueued = true;
+      return;
+    }
+    soulRuntimeReloadInFlight = true;
+    void (async () => {
+      try {
+        do {
+          soulRuntimeReloadQueued = false;
+          await props.reloadWorkspaceEngine();
+        } while (soulRuntimeReloadQueued);
+      } catch (error) {
+        console.warn("Failed to reload workspace engine after Soul materialization", error);
+      } finally {
+        soulRuntimeReloadInFlight = false;
+      }
+    })();
+  };
+
+  const reloadSoulRuntimeForMaterialization = (
+    materialization: VesloSoulAnyMaterializationResult | undefined,
+    sourceWorkspaceId?: string | null,
+  ) => {
+    if (!soulMaterializationRequiresActiveRuntimeReload({
+      activeServerWorkspaceId: activeServerWorkspaceId(),
+      materialization,
+      sourceWorkspaceId,
+    })) return;
+    requestSoulRuntimeReload();
+  };
+
+  const handleSoulMaterializationResult = (
+    source: SoulSource,
+    materialization: VesloSoulAnyMaterializationResult | undefined,
+  ) => {
+    queuePendingSoulMaterialization(source, materialization);
+    reloadSoulRuntimeForMaterialization(
+      materialization,
+      source.scope === "workspace" ? source.workspaceId : undefined,
+    );
+  };
 
   createEffect(() => {
     const key = openSourceKey();
@@ -254,7 +306,7 @@ export default function SoulView(props: SoulViewProps) {
     refresh: props.refresh,
     activeWorkspaceIds: soulActiveWorkspaceIds,
     activeRun: soulActiveRun,
-    onMaterializationResult: queuePendingSoulMaterialization,
+    onMaterializationResult: handleSoulMaterializationResult,
     defaultChangeSummary: () => translate("soul.default_change_summary"),
     defaultRestoreSummary: () => translate("soul.restore_default_summary"),
     detailErrorMessage: () => translate("soul.detail_error"),
@@ -285,6 +337,7 @@ export default function SoulView(props: SoulViewProps) {
             return next;
           });
           props.refresh({ force: true });
+          reloadSoulRuntimeForMaterialization(result, replay.serverWorkspaceId);
         }
       } catch (error) {
         console.warn("Failed to replay pending Soul materialization", error);

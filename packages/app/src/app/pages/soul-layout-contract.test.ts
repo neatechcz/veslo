@@ -6,6 +6,7 @@ const soulSource = readFileSync(new URL("./soul.tsx", import.meta.url), "utf8");
 const soulControllerSource = readFileSync(new URL("./soul-controller.ts", import.meta.url), "utf8");
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const appViewPropsSource = readFileSync(new URL("../app-view-props.ts", import.meta.url), "utf8");
 const vesloServerSource = readFileSync(new URL("../lib/veslo-server/types.ts", import.meta.url), "utf8");
 const enSource = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
 const csSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
@@ -33,11 +34,11 @@ test("Dashboard passes Soul overview state and busy flag to SoulView", () => {
   assert.match(dashboardSource, /soulWorkspaceMap:\s*Record<string,\s*string>;/);
   assert.match(dashboardSource, /busySessionByWorkspaceId\?:\s*WorkspaceBusyMap;/);
   assert.match(appSource, /const soulDataStore = createSoulDataStore\(\{/);
-  assert.match(appSource, /soulOverviewBusy:\s*soulDataStore\.soulOverviewBusy\(\)/);
-  assert.match(appSource, /soulClient:\s*soulDataStore\.soulClient\(\)/);
-  assert.match(appSource, /soulServerConnected:\s*soulDataStore\.soulServerConnected\(\)/);
-  assert.match(appSource, /soulAuthContext:\s*soulDataStore\.soulAuthContext\(\)/);
-  assert.match(appSource, /soulWorkspaceMap:\s*soulDataStore\.soulWorkspaceMap\(\)/);
+  assert.match(appViewPropsSource, /soulOverviewBusy:\s*soulDataStore\.soulOverviewBusy\(\)/);
+  assert.match(appViewPropsSource, /soulClient:\s*soulDataStore\.soulClient\(\)/);
+  assert.match(appViewPropsSource, /soulServerConnected:\s*soulDataStore\.soulServerConnected\(\)/);
+  assert.match(appViewPropsSource, /soulAuthContext:\s*soulDataStore\.soulAuthContext\(\)/);
+  assert.match(appViewPropsSource, /soulWorkspaceMap:\s*soulDataStore\.soulWorkspaceMap\(\)/);
   assert.match(dashboardSource, /<SoulView[\s\S]*soulOverview=\{props\.soulOverview\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*soulOverviewError=\{props\.soulOverviewError\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*soulOverviewBusy=\{props\.soulOverviewBusy\}/);
@@ -45,8 +46,10 @@ test("Dashboard passes Soul overview state and busy flag to SoulView", () => {
   assert.match(dashboardSource, /<SoulView[\s\S]*serverConnected=\{props\.soulServerConnected\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*authContext=\{props\.soulAuthContext\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*refresh=\{props\.refreshSoulData\}/);
+  assert.match(dashboardSource, /<SoulView[\s\S]*activeWorkspaceId=\{props\.activeWorkspaceId\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*soulWorkspaceMap=\{props\.soulWorkspaceMap\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*busySessionByWorkspaceId=\{props\.busySessionByWorkspaceId\}/);
+  assert.match(dashboardSource, /<SoulView[\s\S]*reloadWorkspaceEngine=\{props\.reloadWorkspaceEngine\}/);
   assert.doesNotMatch(dashboardSource, /<SoulView[\s\S]{0,500}runSoulPrompt=\{props\.runSoulPrompt\}/);
 });
 
@@ -266,6 +269,9 @@ test("SoulView exposes heartbeat toggle only for workspace Soul sources", () => 
 
 test("SoulView keeps runtime materialization automatic and shows diagnostics only", () => {
   assert.match(soulControllerSource, /materialization/);
+  assert.match(soulSource, /soulMaterializationRequiresActiveRuntimeReload/);
+  assert.match(soulSource, /reloadWorkspaceEngine:\s*\(\)\s*=>\s*Promise<void>/);
+  assert.match(soulSource, /await props\.reloadWorkspaceEngine\(\)/);
   assert.match(soulSource, /requiresAction/);
   assert.match(soulSource, /conflicts/);
   assert.doesNotMatch(soulSource, /manual sync|manualSync|sync toggle|syncSoul|runtime sync/i);
