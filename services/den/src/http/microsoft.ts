@@ -58,7 +58,15 @@ export function createMicrosoftRouter(options: MicrosoftRouterOptions) {
       scopes: connector.scopes,
       redirectUri,
       connectorId: connector.id,
+    }).catch((error) => {
+      if (sendMicrosoftUnavailableError(res, error, connector.id)) {
+        return null
+      }
+      throw error
     })
+    if (!authorization) {
+      return
+    }
 
     res.json({
       authorizeUrl: authorization.authorizeUrl,
@@ -142,7 +150,15 @@ export function createMicrosoftRouter(options: MicrosoftRouterOptions) {
       redirectUri: verified.redirectUri,
       connectorId: connector.id,
       scopes: connector.scopes,
+    }).catch((error) => {
+      if (sendMicrosoftUnavailableError(res, error, connector.id)) {
+        return null
+      }
+      throw error
     })
+    if (!grant) {
+      return
+    }
 
     await options.store.upsertConnection({
       orgId: verified.orgId,
@@ -150,7 +166,15 @@ export function createMicrosoftRouter(options: MicrosoftRouterOptions) {
       connectorId: connector.id,
       scopes: connector.scopes,
       grant,
+    }).catch((error) => {
+      if (sendMicrosoftUnavailableError(res, error, connector.id)) {
+        return null
+      }
+      throw error
     })
+    if (res.headersSent) {
+      return
+    }
 
     res.redirect(buildRedirectUrl(options.successRedirectUrl, {
       status: "connected",
@@ -263,7 +287,15 @@ export function createMicrosoftRouter(options: MicrosoftRouterOptions) {
       connectorId: connector.id,
       scopes: connector.scopes,
       now: options.now,
+    }).catch((error) => {
+      if (sendMicrosoftUnavailableError(res, error, connector.id)) {
+        return null
+      }
+      throw error
     })
+    if (res.headersSent) {
+      return
+    }
     if (!grant?.accessToken) {
       res.status(401).json({ error: "microsoft_connection_required", connectorId: connector.id })
       return
@@ -325,6 +357,36 @@ function firstQueryValue(value: unknown) {
     return typeof value[0] === "string" ? value[0] : null
   }
   return typeof value === "string" ? value : null
+}
+
+function sendMicrosoftUnavailableError(
+  res: express.Response,
+  error: unknown,
+  connectorId: MicrosoftConnectorId,
+) {
+  const errorCode = microsoftUnavailableErrorCode(error)
+  if (!errorCode) {
+    return false
+  }
+
+  res.status(503).json({
+    error: errorCode,
+    connectorId,
+  })
+  return true
+}
+
+function microsoftUnavailableErrorCode(error: unknown) {
+  if (!(error instanceof Error)) {
+    return null
+  }
+  if (
+    error.message === "microsoft_oauth_not_configured" ||
+    error.message === "microsoft_token_secret_not_configured"
+  ) {
+    return error.message
+  }
+  return null
 }
 
 function buildRedirectUrl(baseUrl: string, params: Record<string, string>) {

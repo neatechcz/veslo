@@ -4,7 +4,16 @@ import type { AddressInfo } from "node:net"
 import test from "node:test"
 import express from "express"
 
-import { InMemoryMicrosoftConnectionStore } from "../src/microsoft/store.js"
+import { errorMiddleware } from "../src/http/errors.js"
+import {
+  createUnavailableMicrosoftOAuthClient,
+  type MicrosoftOAuthClient,
+} from "../src/microsoft/oauth.js"
+import {
+  InMemoryMicrosoftConnectionStore,
+  UnavailableMicrosoftConnectionStore,
+  type MicrosoftConnectionStore,
+} from "../src/microsoft/store.js"
 
 Object.assign(process.env, {
   DATABASE_URL: "mysql://root:root@localhost:3306/veslo_test",
@@ -35,7 +44,8 @@ function createOrgContext(orgId: string) {
 }
 
 async function startServer(input: {
-  store?: InMemoryMicrosoftConnectionStore
+  store?: MicrosoftConnectionStore
+  oauth?: MicrosoftOAuthClient
   now?: () => number
   exchange?: (code: string) => Promise<{
     accessToken: string
@@ -48,7 +58,7 @@ async function startServer(input: {
   const exchangeCalls: string[] = []
   const revokedTokens: string[] = []
   const { createMicrosoftRouter } = await import("../src/http/microsoft.js")
-  const oauth = {
+  const oauth = input.oauth ?? {
     startAuthorization: async (input: any) => {
       const authorizeUrl = new URL("https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize")
       authorizeUrl.searchParams.set("state", input.state)
@@ -87,6 +97,7 @@ async function startServer(input: {
       now: input.now,
     }),
   )
+  app2.use(errorMiddleware)
 
   const server = app2.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -151,6 +162,26 @@ test("microsoft OAuth start rejects unknown connector ids", async () => {
   }
 })
 
+test("microsoft OAuth start reports unavailable OAuth configuration clearly", async () => {
+  const server = await startServer({
+    oauth: createUnavailableMicrosoftOAuthClient(),
+  })
+
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/oauth/start`,
+    )
+
+    assert.equal(response.status, 503)
+    assert.deepEqual(await response.json(), {
+      error: "microsoft_oauth_not_configured",
+      connectorId: "microsoft-sharepoint",
+    })
+  } finally {
+    await server.close()
+  }
+})
+
 test("microsoft OAuth callback stores a grant and redirects without token material", async () => {
   const server = await startServer()
 
@@ -177,6 +208,33 @@ test("microsoft OAuth callback stores a grant and redirects without token materi
     assert.equal(connections.length, 1)
     assert.equal(connections[0]?.connectorId, "microsoft-sharepoint")
     assert.equal(connections[0]?.state, "connected")
+  } finally {
+    await server.close()
+  }
+})
+
+test("microsoft OAuth callback reports unavailable grant storage clearly", async () => {
+  const server = await startServer({
+    store: new UnavailableMicrosoftConnectionStore(),
+  })
+
+  try {
+    const startResponse = await fetch(
+      `http://127.0.0.1:${server.port}/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/oauth/start`,
+    )
+    const startPayload = await startResponse.json() as { state: string }
+
+    const callbackResponse = await fetch(
+      `http://127.0.0.1:${server.port}/v1/integrations/microsoft/oauth/callback?code=microsoft_code_123&state=${encodeURIComponent(startPayload.state)}`,
+      { redirect: "manual" },
+    )
+
+    assert.equal(callbackResponse.status, 503)
+    assert.deepEqual(await callbackResponse.json(), {
+      error: "microsoft_token_secret_not_configured",
+      connectorId: "microsoft-sharepoint",
+    })
+    assert.deepEqual(server.exchangeCalls, ["microsoft_code_123"])
   } finally {
     await server.close()
   }
