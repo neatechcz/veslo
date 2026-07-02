@@ -1039,6 +1039,7 @@ export default function App() {
     setMessages,
     setTodos,
     setPendingPermissions,
+    selectedSessionHistoryUnavailable,
     selectedSessionHasEarlierMessages,
     selectedSessionLoadingEarlierMessages,
     hydrateTranscriptSnapshot,
@@ -2584,6 +2585,33 @@ export default function App() {
       return activateWorkspaceThroughBrowsePolicy(workspaceId, options);
     }
     return workspaceStore.activateWorkspace(workspaceId, options);
+  };
+
+  const [historyUnavailableRetryingBySession, setHistoryUnavailableRetryingBySession] = createSignal<Record<string, true>>({});
+  const selectedSessionHistoryRetrying = () => {
+    const sessionId = selectedSessionHistoryUnavailable()?.sessionId ?? selectedSessionId();
+    return Boolean(sessionId && historyUnavailableRetryingBySession()[sessionId]);
+  };
+  const retryUnavailableHistory = async (sessionId: string) => {
+    const scope = resolveSelectedSessionBrowseScope(sessionId);
+    const workspaceId = scope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
+    const retrySessionId = sessionId.trim();
+    if (!retrySessionId || !workspaceId) return;
+    setHistoryUnavailableRetryingBySession((current) => ({
+      ...current,
+      [retrySessionId]: true,
+    }));
+    try {
+      if (scope) setSessionBrowseScope(scope);
+      await handleActivateWorkspace(workspaceId, { origin: "session-history:retry-unavailable" });
+      await selectSession(sessionId);
+    } finally {
+      setHistoryUnavailableRetryingBySession((current) => {
+        const next = { ...current };
+        delete next[retrySessionId];
+        return next;
+      });
+    }
   };
 
   createEffect(() => {
@@ -4204,6 +4232,9 @@ export default function App() {
     selectedSessionAgent,
     setSessionAgent,
     saveSessionExport,
+    selectedSessionHistoryUnavailable,
+    selectedSessionHistoryRetrying,
+    retryUnavailableHistory,
     selectedSessionHasEarlierMessages,
     selectedSessionLoadingEarlierMessages,
     loadEarlierMessages,

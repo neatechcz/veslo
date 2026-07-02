@@ -204,3 +204,12 @@ test("app delegates view prop construction to the app view prop adapter", () => 
   assert.match(viewPropsSource, /satisfies SessionViewAdapterProps/);
   assert.doesNotMatch(viewPropsSource, /autoCompactContext|toggleAutoCompactContext/);
 });
+
+test("session view props carry unavailable history state and retry action", () => {
+  assert.match(viewPropsSource, /historyUnavailable: selectedSessionHistoryUnavailable\(\)/);
+  assert.match(viewPropsSource, /historyUnavailableRetrying: selectedSessionHistoryRetrying\(\)/);
+  assert.match(viewPropsSource, /retryUnavailableHistory,/);
+  assert.match(appSource, /selectedSessionHistoryUnavailable,/);
+  assert.match(appSource, /selectedSessionHistoryRetrying,/);
+  assert.match(appSource, /retryUnavailableHistory,/);
+});

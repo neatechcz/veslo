@@ -90,6 +90,7 @@ function makeController(options: {
   const workspaceSessionIds = new Set<string>();
   const hydratedSnapshots: any[] = [];
   const messageWrites: Array<{ sessionID: string; messages: MessageWithParts[] }> = [];
+  const [messageCompleteBySession, setMessageCompleteBySession] = createSignal<Record<string, boolean>>({});
   let refreshPermissionCalls = 0;
   const activeClient = options.activeClient ?? null;
   const activeWorkspaceId = options.activeWorkspaceId ?? "ws-a";
@@ -172,8 +173,11 @@ function makeController(options: {
     },
     messageLimitBySession: () => ({}),
     setMessageLimitBySession: () => {},
-    messageCompleteBySession: () => ({}),
-    setMessageCompleteBySession: () => {},
+    messageCompleteBySession,
+    setMessageCompleteBySession: (value) => {
+      if (typeof value === "function") setMessageCompleteBySession(value);
+      else setMessageCompleteBySession(value);
+    },
     messageLoadBusyBySession: () => ({}),
     setMessageLoadBusyBySession: () => {},
     refreshPendingPermissions: async () => {
@@ -188,6 +192,7 @@ function makeController(options: {
     workspaceSessionIds,
     hydratedSnapshots,
     messageWrites,
+    messageCompleteBySession,
     refreshPermissionCalls: () => refreshPermissionCalls,
   };
 }
@@ -320,7 +325,7 @@ test("selectSession hydrates explicit loaded history results", async () => {
 test("selectSession treats explicit empty history as loaded state", async () => {
   await createRoot(async (dispose) => {
     try {
-      const { controller, hydratedSnapshots } = makeController({
+      const { controller, hydratedSnapshots, messageCompleteBySession } = makeController({
         shouldBrowseSessionFromDb: (sessionID) => sessionID === "sess-empty",
         loadOfflineTranscript: async (sessionID) => ({
           status: "empty",
@@ -333,6 +338,9 @@ test("selectSession treats explicit empty history as loaded state", async () => 
       assert.equal(hydratedSnapshots.length, 1);
       assert.equal(hydratedSnapshots[0]?.sessionId, "sess-empty");
       assert.deepEqual(hydratedSnapshots[0]?.messages, []);
+      assert.equal(controller.selectedSessionHistoryUnavailable(), null);
+      assert.equal(messageCompleteBySession()["sess-empty"], true);
+      assert.equal(controller.selectedSessionHasEarlierMessages(), false);
     } finally {
       dispose();
     }
@@ -343,7 +351,7 @@ test("selectSession preserves explicit unavailable history without hydrating a f
   await createRoot(async (dispose) => {
     try {
       let messageCalls = 0;
-      const { controller, hydratedSnapshots } = makeController({
+      const { controller, hydratedSnapshots, messageCompleteBySession } = makeController({
         shouldBrowseSessionFromDb: (sessionID) => sessionID === "sess-unavailable",
         activeClient: {
           session: {
@@ -364,6 +372,10 @@ test("selectSession preserves explicit unavailable history without hydrating a f
 
       assert.equal(hydratedSnapshots.length, 0);
       assert.equal(messageCalls, 0, "CHR01 should preserve host-first behavior; CHR02 owns live fallback");
+      assert.equal(messageCompleteBySession()["sess-unavailable"], undefined);
+      assert.equal(controller.selectedSessionHistoryUnavailable()?.sessionId, "sess-unavailable");
+      assert.equal(controller.selectedSessionHistoryUnavailable()?.reason, "source-unavailable");
+      assert.equal(controller.selectedSessionHasEarlierMessages(), false);
     } finally {
       dispose();
     }
@@ -407,6 +419,7 @@ test("selectSession recovers active scoped unavailable history from live OpenCod
       assert.equal(messageWrites[0]?.sessionID, "conv-active");
       assert.deepEqual(store.messages["conv-active"], liveMessages.map((message) => message.info));
       assert.equal(store.messages["open-active"], undefined);
+      assert.equal(controller.selectedSessionHistoryUnavailable(), null);
     } finally {
       dispose();
     }
@@ -446,6 +459,9 @@ test("selectSession keeps active scoped unavailable history unavailable when liv
       assert.deepEqual(messageCalls, [{ sessionID: "open-missing", limit: 140 }]);
       assert.equal(hydratedSnapshots.length, 0);
       assert.equal(messageWrites.length, 0);
+      assert.equal(controller.selectedSessionHistoryUnavailable()?.sessionId, "conv-missing");
+      assert.equal(controller.selectedSessionHistoryUnavailable()?.opencodeSessionId, "open-missing");
+      assert.equal(controller.selectedSessionHasEarlierMessages(), false);
     } finally {
       dispose();
     }
@@ -497,6 +513,8 @@ test("selectSession does not recover inactive scoped unavailable history through
       assert.equal(foreignLiveCalls, 0);
       assert.equal(hydratedSnapshots.length, 0);
       assert.equal(messageWrites.length, 0);
+      assert.equal(controller.selectedSessionHistoryUnavailable()?.sessionId, "conv-foreign");
+      assert.equal(controller.selectedSessionHistoryUnavailable()?.workspaceId, "ws-b");
     } finally {
       dispose();
     }
