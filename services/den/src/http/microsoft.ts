@@ -343,6 +343,10 @@ export function createMicrosoftRouter(options: MicrosoftRouterOptions) {
       graph,
       body: req.body,
     })
+    if (!response) {
+      res.status(204).end()
+      return
+    }
 
     res.json(response)
   }))

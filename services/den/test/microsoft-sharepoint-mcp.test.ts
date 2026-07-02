@@ -305,6 +305,96 @@ test("microsoft SharePoint MCP tools/list exposes read-only tools", async () => 
   }
 })
 
+test("microsoft SharePoint MCP supports initialize lifecycle requests", async () => {
+  const server = await startServer()
+
+  try {
+    await connectStore(server.store)
+
+    const response = await postMcp(server, {
+      jsonrpc: "2.0",
+      method: "initialize",
+      params: {
+        protocolVersion: "2024-11-05",
+        clientInfo: {
+          name: "opencode",
+          version: "test",
+        },
+      },
+      id: "init",
+    })
+
+    assert.equal(response.status, 200)
+    const envelope = await response.json() as {
+      jsonrpc?: string
+      result?: {
+        protocolVersion?: string
+        serverInfo?: {
+          name?: string
+          version?: string
+        }
+        capabilities?: {
+          tools?: Record<string, unknown>
+        }
+      }
+      id?: unknown
+    }
+    assert.equal(envelope.jsonrpc, "2.0")
+    assert.equal(envelope.id, "init")
+    assert.equal(typeof envelope.result?.protocolVersion, "string")
+    assert.deepEqual(envelope.result?.serverInfo, {
+      name: "veslo-microsoft-sharepoint",
+      version: "0.1.0",
+    })
+    assert.deepEqual(envelope.result?.capabilities, {
+      tools: {},
+    })
+  } finally {
+    await server.close()
+  }
+})
+
+test("microsoft SharePoint MCP accepts notifications/initialized without a JSON-RPC response", async () => {
+  const server = await startServer()
+
+  try {
+    await connectStore(server.store)
+
+    const response = await postMcp(server, {
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    })
+
+    assert.equal(response.status, 204)
+    assert.equal(await response.text(), "")
+  } finally {
+    await server.close()
+  }
+})
+
+test("microsoft SharePoint MCP supports ping lifecycle requests", async () => {
+  const server = await startServer()
+
+  try {
+    await connectStore(server.store)
+
+    const response = await postMcp(server, {
+      jsonrpc: "2.0",
+      method: "ping",
+      id: "ping",
+    })
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), {
+      jsonrpc: "2.0",
+      result: {},
+      id: "ping",
+    })
+  } finally {
+    await server.close()
+  }
+})
+
 test("microsoft SharePoint MCP dispatches read-only tools to Microsoft Graph with compact payloads", async () => {
   const graph = createGraphFetch((call) => {
     assert.equal(call.authorization, "Bearer stored_access")
@@ -474,6 +564,41 @@ test("microsoft SharePoint MCP dispatches read-only tools to Microsoft Graph wit
       "GET /v1.0/drives/drive_1/items/item_1",
       "GET /v1.0/drives/drive_1/items/item_1/content",
     ])
+  } finally {
+    await server.close()
+  }
+})
+
+test("microsoft SharePoint MCP rejects invalid SharePoint search entity types locally", async () => {
+  const graph = createGraphFetch(() => {
+    throw new Error("Graph should not be called for invalid entityTypes")
+  })
+  const server = await startServer({ fetchImpl: graph.fetchImpl })
+
+  try {
+    await connectStore(server.store)
+
+    const response = await postMcp(server, {
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        name: "sharepoint.search",
+        arguments: {
+          query: "roadmap",
+          entityTypes: ["driveItem", "message"],
+        },
+      },
+      id: "bad-entity-type",
+    })
+    const error = await readJsonRpcError(response)
+
+    assert.equal(error.code, -32602)
+    assert.equal(error.message, "invalid_params")
+    assert.deepEqual(error.data, {
+      invalid: "entityTypes",
+      allowed: ["driveItem", "site", "list", "listItem"],
+    })
+    assert.equal(graph.calls.length, 0)
   } finally {
     await server.close()
   }

@@ -26,6 +26,8 @@ type SharePointMcpInput = {
   body: unknown
 }
 
+const MCP_PROTOCOL_VERSION = "2024-11-05"
+
 const SHAREPOINT_TOOL_NAMES = [
   "sharepoint.search",
   "sharepoint.listSites",
@@ -37,9 +39,11 @@ const SHAREPOINT_TOOL_NAMES = [
 
 type SharePointToolName = (typeof SHAREPOINT_TOOL_NAMES)[number]
 
+const SHAREPOINT_SEARCH_ENTITY_TYPES = ["driveItem", "site", "list", "listItem"] as const
+
 const WRITE_TOOL_PATTERN = /^sharepoint\.(create|update|delete|remove|move|copy|upload|patch|put|set|write)/i
 
-export async function dispatchSharePointMcpRequest(input: SharePointMcpInput): Promise<JsonRpcResponse> {
+export async function dispatchSharePointMcpRequest(input: SharePointMcpInput): Promise<JsonRpcResponse | null> {
   const request = asRecord(input.body) as JsonRpcRequest | null
   const id = jsonRpcId(request?.id)
   if (!request || request.jsonrpc !== "2.0" || typeof request.method !== "string") {
@@ -47,6 +51,24 @@ export async function dispatchSharePointMcpRequest(input: SharePointMcpInput): P
   }
 
   try {
+    if (request.method === "initialize") {
+      return jsonRpcResult(id, {
+        protocolVersion: requestedProtocolVersion(request.params),
+        serverInfo: {
+          name: "veslo-microsoft-sharepoint",
+          version: "0.1.0",
+        },
+        capabilities: {
+          tools: {},
+        },
+      })
+    }
+    if (request.method === "notifications/initialized") {
+      return null
+    }
+    if (request.method === "ping") {
+      return jsonRpcResult(id, {})
+    }
     if (request.method === "tools/list") {
       return jsonRpcResult(id, { tools: SHAREPOINT_TOOLS })
     }
@@ -183,7 +205,7 @@ async function callSharePointTool(graph: MicrosoftGraphClient, params: unknown) 
 
 async function searchSharePoint(graph: MicrosoftGraphClient, args: JsonRecord) {
   const query = requiredString(args, "query")
-  const entityTypes = optionalStringArray(args, "entityTypes") ?? ["driveItem", "site"]
+  const entityTypes = searchEntityTypes(args)
   const from = optionalInteger(args, "from")
   const request: JsonRecord = {
     entityTypes,
@@ -201,6 +223,26 @@ async function searchSharePoint(graph: MicrosoftGraphClient, args: JsonRecord) {
   return withNextLink({
     items: compactSearchHits(payload),
   }, payload)
+}
+
+function requestedProtocolVersion(params: unknown) {
+  const requestParams = asRecord(params)
+  const protocolVersion = requestParams?.protocolVersion
+  return typeof protocolVersion === "string" && protocolVersion.trim()
+    ? protocolVersion
+    : MCP_PROTOCOL_VERSION
+}
+
+function searchEntityTypes(args: JsonRecord) {
+  const entityTypes = optionalStringArray(args, "entityTypes") ?? ["driveItem", "site"]
+  const allowed = SHAREPOINT_SEARCH_ENTITY_TYPES as readonly string[]
+  if (entityTypes.some((item) => !allowed.includes(item))) {
+    throw new JsonRpcDispatchError(-32602, "invalid_params", {
+      invalid: "entityTypes",
+      allowed: [...SHAREPOINT_SEARCH_ENTITY_TYPES],
+    })
+  }
+  return entityTypes
 }
 
 async function listSites(graph: MicrosoftGraphClient, args: JsonRecord) {
