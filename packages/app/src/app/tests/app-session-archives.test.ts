@@ -125,3 +125,41 @@ test("session archive loader retries the same client after server readiness chan
     "archive startup loading should remember the failed archive client key and retry that same key after readiness changes",
   );
 });
+
+test("archiving the active sidebar session clears the displayed conversation only after archive succeeds", () => {
+  assert.match(
+    appSource,
+    /import \{ buildArchivedSidebarSessionKey \} from "\.\/lib\/session-archive-model";/,
+    "app should use the same workspace-scoped archive key as the sidebar filter before clearing active selection",
+  );
+
+  assert.match(
+    appSource,
+    /const archivedSessionMatchesSidebarTarget = \(workspaceId: string, sessionId: string\) => \{[\s\S]*buildArchivedSidebarSessionKey\(\{ workspaceId, sessionId \}\)[\s\S]*archivedSessionIds\(\)\.includes\(key\)/,
+    "active-session cleanup should verify that the mutation actually published an archived sidebar key",
+  );
+
+  assert.match(
+    appSource,
+    /const activeSessionMatchesArchiveTarget = \(workspaceId: string, sessionId: string\) => \{[\s\S]*selectedSessionId\(\)\?\.trim\(\) !== normalizedSessionId[\s\S]*resolveSelectedSessionBrowseScope\(normalizedSessionId\)[\s\S]*workspaceStore\.activeWorkspaceId\(\)\.trim\(\)[\s\S]*activeWorkspaceId === normalizedWorkspaceId/s,
+    "cleanup should only target the selected session in the archived workspace, so duplicate session ids stay safe",
+  );
+
+  assert.match(
+    appSource,
+    /const clearArchivedActiveSession = \(sessionId: string\) => \{[\s\S]*batch\(\(\) => \{[\s\S]*setSelectedSessionId\(null\);[\s\S]*setMessages\(\[\]\);[\s\S]*setTodos\(\[\]\);[\s\S]*navigate\("\/session", \{ replace: true \}\);/s,
+    "clearing an archived active session should remove stale transcript state and canonicalize /session/:id to /session",
+  );
+
+  assert.match(
+    appSource,
+    /const archiveSidebarSessionAndClearActive = async \(workspaceId: string, sessionId: string\) => \{[\s\S]*const shouldClearActiveSession = activeSessionMatchesArchiveTarget\(workspaceId, sessionId\);[\s\S]*await archiveSidebarSession\(workspaceId, sessionId\);[\s\S]*if \(!shouldClearActiveSession\) return;[\s\S]*if \(!activeSessionMatchesArchiveTarget\(workspaceId, sessionId\)\) return;[\s\S]*if \(!archivedSessionMatchesSidebarTarget\(workspaceId, sessionId\)\) return;[\s\S]*clearArchivedActiveSession\(sessionId\);[\s\S]*\};/s,
+    "archive wrapper should not clear if archive failed or the user switched sessions while the mutation was in flight",
+  );
+
+  assert.match(
+    appSource,
+    /archiveSidebarSession: archiveSidebarSessionAndClearActive,/,
+    "session and dashboard sidebars should receive the cleanup-aware archive handler",
+  );
+});

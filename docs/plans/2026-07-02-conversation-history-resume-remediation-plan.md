@@ -122,7 +122,7 @@ only in a reserved worktree.
 | CHR03 | backfill host transcript after live recovery | merged | codex-20260702-chr03 | true |
 | CHR04 | durable empty transcript marker | merged | codex-20260702-chr04 | true |
 | CHR05 | unavailable-history UI/state and retry path | merged | codex-20260702-chr05 | true |
-| CHR06 | focused integration coverage and docs note | available | null | false |
+| CHR06 | focused integration coverage and docs note | reserved | codex-20260702-chr06 | false |
 
 ## Tasks
 
@@ -436,9 +436,9 @@ pnpm --filter @neatech/veslo-ui typecheck
 
 ```yaml
 id: CHR06
-status: available
-reserved_by: null
-reserved_at: null
+status: reserved
+reserved_by: codex-20260702-chr06
+reserved_at: 2026-07-02T03:14:00.8463627+02:00
 branch: conversation-history/chr06-integration-docs
 worktree: ../veslo-conversation-history-chr06-integration-docs
 done: false

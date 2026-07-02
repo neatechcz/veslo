@@ -75,6 +75,7 @@ import { createAppShellEnvironment } from "./context/app-shell-environment";
 import { createFeedbackWorkflow } from "./context/feedback-workflow";
 import { createDenDesktopAuthWorkflow } from "./context/den-desktop-auth-workflow";
 import { createSessionArchiveStore } from "./context/session-archive-store";
+import { buildArchivedSidebarSessionKey } from "./lib/session-archive-model";
 import {
   createWorkspaceRuntimeDebugProbe,
   debugProbeCall,
@@ -2635,6 +2636,48 @@ export default function App() {
   const archiveSidebarSession = sessionArchiveStore.archiveSession;
   const unarchiveSession = sessionArchiveStore.unarchiveSession;
 
+  const archivedSessionMatchesSidebarTarget = (workspaceId: string, sessionId: string) => {
+    const key = buildArchivedSidebarSessionKey({ workspaceId, sessionId });
+    return Boolean(key) && archivedSessionIds().includes(key);
+  };
+
+  const activeSessionMatchesArchiveTarget = (workspaceId: string, sessionId: string) => {
+    const normalizedWorkspaceId = workspaceId.trim();
+    const normalizedSessionId = sessionId.trim();
+    if (!normalizedWorkspaceId || !normalizedSessionId) return false;
+    if (selectedSessionId()?.trim() !== normalizedSessionId) return false;
+
+    const scope = resolveSelectedSessionBrowseScope(normalizedSessionId);
+    const activeWorkspaceId = scope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
+    return !activeWorkspaceId || activeWorkspaceId === normalizedWorkspaceId;
+  };
+
+  const clearArchivedActiveSession = (sessionId: string) => {
+    const normalizedSessionId = sessionId.trim();
+    if (!normalizedSessionId) return;
+
+    batch(() => {
+      setSelectedSessionId(null);
+      setMessages([]);
+      setTodos([]);
+    });
+
+    const [, , routeSessionSegment] = location.pathname.trim().split("/");
+    if (routeSessionSegment?.trim() === normalizedSessionId) {
+      navigate("/session", { replace: true });
+    }
+  };
+
+  const archiveSidebarSessionAndClearActive = async (workspaceId: string, sessionId: string) => {
+    const shouldClearActiveSession = activeSessionMatchesArchiveTarget(workspaceId, sessionId);
+    await archiveSidebarSession(workspaceId, sessionId);
+    if (!shouldClearActiveSession) return;
+    if (!activeSessionMatchesArchiveTarget(workspaceId, sessionId)) return;
+    if (!archivedSessionMatchesSidebarTarget(workspaceId, sessionId)) return;
+
+    clearArchivedActiveSession(sessionId);
+  };
+
   const sessionSidebarDecorations = createSessionSidebarDecorations({
     locale: () => (currentLocale() === "cs" ? "cs" : "en"),
     sidebarWorkspaceGroups,
@@ -4039,7 +4082,7 @@ export default function App() {
     archivedSessionIds,
     activeSessionStatusById,
     busySessionByWorkspaceId,
-    archiveSidebarSession,
+    archiveSidebarSession: archiveSidebarSessionAndClearActive,
     reportError,
     setError,
     safeStringify,
