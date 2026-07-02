@@ -6,8 +6,10 @@ import {
   exchangeHandoffCode,
   flushPendingDesktopSnapshotWrite,
   getDesktopBrowserAuthStatus,
+  getDenApiBase,
   hydrateDenAuthFromDesktopSnapshot,
   parseAuthCompleteDeepLink,
+  readDenApiBaseOverride,
   readDenAuth,
   readDenKeepSignedIn,
   readDesktopAuthExchangeProof,
@@ -16,6 +18,7 @@ import {
   startDesktopBrowserAuth,
   subscribeDenAuthChanges,
   writeDenAuth,
+  writeDenApiBaseOverride,
   writeDenKeepSignedIn,
 } from "../../lib/den-auth.js";
 
@@ -141,6 +144,50 @@ function installNavigator(overrides: Partial<Navigator>) {
     });
   };
 }
+
+test("readDenAuth migrates a legacy OnRender DEN base to the canonical API base", () => {
+  const storage = installDomStorage();
+  const staleAuth = {
+    denApiBase: "https://den-control-plane-veslo.onrender.com/",
+    token: "token_from_legacy_render",
+    orgId: "org_legacy_render",
+    user: { id: "user_legacy_render", email: "legacy-render@example.com" },
+    org: { id: "org_legacy_render", slug: "legacy-render-org" },
+  };
+
+  try {
+    storage.localStorage.setItem("veslo.den.auth", JSON.stringify(staleAuth));
+
+    const auth = readDenAuth();
+    assert.equal(auth?.denApiBase, "https://api.veslo.work");
+
+    const persisted = JSON.parse(storage.localStorage.getItem("veslo.den.auth") ?? "{}") as {
+      denApiBase?: string;
+    };
+    assert.equal(persisted.denApiBase, "https://api.veslo.work");
+  } finally {
+    storage.restore();
+  }
+});
+
+test("DEN API base overrides cannot keep forwarding to OnRender", () => {
+  const storage = installDomStorage();
+
+  try {
+    storage.localStorage.setItem("veslo.den.apiBaseOverride", "https://den-control-plane-veslo.onrender.com/");
+
+    assert.equal(readDenApiBaseOverride(), null);
+    assert.equal(getDenApiBase(), "https://api.veslo.work");
+    assert.equal(storage.localStorage.getItem("veslo.den.apiBaseOverride"), null);
+
+    const result = writeDenApiBaseOverride("https://another-den-service.onrender.com");
+    assert.deepEqual(result, { ok: true, value: null });
+    assert.equal(getDenApiBase(), "https://api.veslo.work");
+    assert.equal(storage.localStorage.getItem("veslo.den.apiBaseOverride"), null);
+  } finally {
+    storage.restore();
+  }
+});
 
 test("startDesktopBrowserAuth uses v2 start and stores exchange proof by transaction id", async () => {
   const storage = installDomStorage();

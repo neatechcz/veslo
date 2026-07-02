@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 
 import { recordAudit } from "../audit.js";
 import { fetchOrgSkillsCatalog } from "../den-catalog.js";
+import { normalizeDenApiBaseUrl } from "../den-api-base.js";
 import { ApiError } from "../errors.js";
 import { workspaceResourceOwner } from "../resource-owner.js";
 import {
@@ -76,7 +77,7 @@ export function registerWorkspaceSkillRoutes(
       throw new ApiError(400, "den_org_required", "Missing Den org header (x-veslo-den-org-id)");
     }
 
-    const denApiBase = ctx.config.denApiBase?.trim() || "";
+    const denApiBase = normalizeDenApiBaseUrl(ctx.config.denApiBase) ?? "";
     if (!denApiBase) {
       return jsonResponse({ items: [] });
     }

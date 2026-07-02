@@ -35,6 +35,18 @@ describe("den api base config", () => {
     expect(config.denApiBase).toBe("https://den.example");
   });
 
+  test("resolveServerConfig maps legacy OnRender den api base to the canonical Veslo API", async () => {
+    for (const key of ENV_KEYS) snapshot.set(key, process.env[key]);
+
+    process.env.VESLO_DEN_API_BASE = "https://den-control-plane-veslo.onrender.com/";
+    delete process.env.VESLO_SKILL_REGISTRY_BASE_URL;
+
+    const config = await resolveServerConfig(parseCliArgs([]));
+
+    expect(config.denApiBase).toBe("https://api.veslo.work");
+    expect(config.skillRegistryBaseUrl).toBe("https://api.veslo.work");
+  });
+
   test("resolveServerConfig prefers env den api base over config file", async () => {
     for (const key of ENV_KEYS) snapshot.set(key, process.env[key]);
 

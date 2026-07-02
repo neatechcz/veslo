@@ -94,6 +94,18 @@ describe("createSoulController", () => {
     expect(controller.soulCanEdit(missingOrgDenCtx, "organization")).toBe(false);
   });
 
+  test("canonicalizes legacy OnRender Den headers for Soul requests", () => {
+    const controller = createSoulController();
+    const ctx = requestContext({
+      "x-veslo-den-api-base": "https://den-control-plane-veslo.onrender.com/",
+      "x-veslo-den-token": "den-token",
+      "x-veslo-den-org-id": "org-1",
+      "x-veslo-user-id": "user-1",
+    });
+
+    expect(controller.soulDenContext(ctx).baseUrl).toBe("https://api.veslo.work");
+  });
+
   test("builds read payloads with stable empty documents instead of null document holes", () => {
     const controller = createSoulController();
     const summary = controller.soulSummary({

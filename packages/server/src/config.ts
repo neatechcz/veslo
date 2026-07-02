@@ -8,6 +8,7 @@ import type {
   WorkspaceConfig,
   LogFormat,
 } from "./types.js";
+import { normalizeDenApiBaseUrl } from "./den-api-base.js";
 import { buildWorkspaceInfos } from "./workspaces.js";
 import { parseList, readJsonFile, shortId } from "./utils.js";
 
@@ -405,10 +406,13 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     spoolMaxBytes: debugLogSpoolMaxBytes,
     flushIntervalMs: debugLogFlushIntervalMs,
   };
-  const denApiBase = normalizeOptionalUrl(process.env.VESLO_DEN_API_BASE) ?? normalizeOptionalUrl(fileConfig.denApiBase);
+  const denApiBase =
+    normalizeDenApiBaseUrl(process.env.VESLO_DEN_API_BASE) ??
+    normalizeDenApiBaseUrl(fileConfig.denApiBase) ??
+    undefined;
   const skillRegistryBaseUrl =
-    normalizeOptionalUrl(process.env.VESLO_SKILL_REGISTRY_BASE_URL) ??
-    normalizeOptionalUrl(fileConfig.skillRegistryBaseUrl) ??
+    normalizeDenApiBaseUrl(process.env.VESLO_SKILL_REGISTRY_BASE_URL) ??
+    normalizeDenApiBaseUrl(fileConfig.skillRegistryBaseUrl) ??
     denApiBase;
   const skillRegistryToken = process.env.VESLO_SKILL_REGISTRY_TOKEN?.trim() || undefined;
 

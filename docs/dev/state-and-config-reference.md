@@ -103,6 +103,8 @@ Meaning:
 - `veslo.den.desktopAuthPending`
   Temporary desktop auth handoff state during browser sign-in.
 
+Legacy Den bases on `*.onrender.com` are treated as stale migration state. The app and local server normalize those values to `https://api.veslo.work` before using or forwarding Den requests, and stale browser sign-in endpoint overrides are cleared instead of preserved.
+
 In Tauri startup flows, the desktop auth snapshot is allowed to repair stale browser auth state. A snapshot is explicitly signed out only when it carries no auth and disables `keepSignedIn`; a signed-in snapshot may still disable `keepSignedIn` to request session-only auth. If the snapshot explicitly represents a signed-out state, or if the snapshot user identity conflicts with the browser-stored user identity, the snapshot wins before the rest of app bootstrap continues. Matching or identity-ambiguous browser auth stays in place and re-syncs the desktop snapshot instead, while still honoring the snapshot's `keepSignedIn` preference.
 
 Desktop auth snapshots can also carry first-run UI metadata such as language and onboarding completion. Those snapshot values only fill missing or invalid browser-stored UI preferences; they must not overwrite a valid local `veslo.language` or `veslo.onboardingComplete` value.

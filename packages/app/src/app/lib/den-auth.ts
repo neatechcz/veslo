@@ -11,6 +11,7 @@ const DEN_DESKTOP_AUTH_PENDING_STORAGE_KEY = "veslo.den.desktopAuthPending";
 const DEN_AUTH_SNAPSHOT_READ_COMMAND = "den_auth_snapshot_read";
 const DEN_AUTH_SNAPSHOT_WRITE_COMMAND = "den_auth_snapshot_write";
 const DEFAULT_DEN_API_BASE = "https://api.veslo.work";
+const ONRENDER_HOST_SUFFIX = ".onrender.com";
 const DEN_START_TIMEOUT_MS = 12_000;
 const DEN_STATUS_TIMEOUT_MS = 8_000;
 const DEN_EXCHANGE_TIMEOUT_MS = 12_000;
@@ -191,12 +192,29 @@ function normalizeDenApiBase(value: string): string | null {
       return null;
     }
     if (!parsed.hostname) return null;
+    if (isOnrenderDenApiHost(parsed.hostname)) return DEFAULT_DEN_API_BASE;
     parsed.search = "";
     parsed.hash = "";
     const pathname = parsed.pathname.replace(/\/+$/, "");
     return `${parsed.protocol}//${parsed.host}${pathname === "/" ? "" : pathname}`;
   } catch {
     return null;
+  }
+}
+
+function isOnrenderDenApiHost(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return normalized === "onrender.com" || normalized.endsWith(ONRENDER_HOST_SUFFIX);
+}
+
+function isOnrenderDenApiBase(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  try {
+    const parsed = new URL(trimmed);
+    return isOnrenderDenApiHost(parsed.hostname);
+  } catch {
+    return false;
   }
 }
 
@@ -221,7 +239,7 @@ export function readDenApiBaseOverride(): string | null {
     const raw = store.getItem(DEN_API_BASE_OVERRIDE_STORAGE_KEY);
     if (!raw) return null;
     const normalized = normalizeDenApiBase(raw);
-    if (!normalized) {
+    if (!normalized || isOnrenderDenApiBase(raw)) {
       store.removeItem(DEN_API_BASE_OVERRIDE_STORAGE_KEY);
       return null;
     }
@@ -253,6 +271,10 @@ export function writeDenApiBaseOverride(value: string): DenApiBaseOverrideWriteR
   }
 
   try {
+    if (isOnrenderDenApiBase(trimmed) || normalized === getDefaultDenApiBase()) {
+      store.removeItem(DEN_API_BASE_OVERRIDE_STORAGE_KEY);
+      return { ok: true, value: null };
+    }
     store.setItem(DEN_API_BASE_OVERRIDE_STORAGE_KEY, normalized);
     return { ok: true, value: normalized };
   } catch {
@@ -272,9 +294,18 @@ function parseDenAuthCandidate(candidate: unknown): DenAuthState | null {
     "token" in candidate &&
     "orgId" in candidate
   ) {
-    return candidate as DenAuthState;
+    const denApiBaseValue = (candidate as { denApiBase?: unknown }).denApiBase;
+    const denApiBase = typeof denApiBaseValue === "string" ? normalizeDenApiBase(denApiBaseValue) : null;
+    if (!denApiBase) return null;
+    return { ...(candidate as DenAuthState), denApiBase };
   }
   return null;
+}
+
+function normalizeDenAuthState(state: DenAuthState): DenAuthState | null {
+  const denApiBase = normalizeDenApiBase(state.denApiBase);
+  if (!denApiBase) return null;
+  return denApiBase === state.denApiBase ? state : { ...state, denApiBase };
 }
 
 function readDenAuthFromStorage(store: Storage | null): DenAuthState | null {
@@ -282,7 +313,18 @@ function readDenAuthFromStorage(store: Storage | null): DenAuthState | null {
   try {
     const raw = store.getItem(DEN_AUTH_STORAGE_KEY);
     if (!raw) return null;
-    return parseDenAuthCandidate(JSON.parse(raw));
+    const candidate = JSON.parse(raw) as unknown;
+    const parsed = parseDenAuthCandidate(candidate);
+    if (
+      parsed &&
+      typeof candidate === "object" &&
+      candidate !== null &&
+      typeof (candidate as { denApiBase?: unknown }).denApiBase === "string" &&
+      parsed.denApiBase !== (candidate as { denApiBase: string }).denApiBase
+    ) {
+      writeDenAuthToStorage(store, parsed);
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -630,23 +672,26 @@ export function readDenAuth(): DenAuthState | null {
 }
 
 export function writeDenAuth(state: DenAuthState): void {
+  const normalizedState = normalizeDenAuthState(state);
+  if (!normalizedState) return;
+
   const keepSignedIn = readDenKeepSignedIn();
   const localStore = localStorageAccess();
   const sessionStore = sessionStorageAccess();
 
   if (keepSignedIn) {
-    const wroteLocal = writeDenAuthToStorage(localStore, state);
+    const wroteLocal = writeDenAuthToStorage(localStore, normalizedState);
     if (wroteLocal) {
       clearDenAuthFromStorage(sessionStore);
     } else {
-      writeDenAuthToStorage(sessionStore, state);
+      writeDenAuthToStorage(sessionStore, normalizedState);
     }
   } else {
-    const wroteSession = writeDenAuthToStorage(sessionStore, state);
+    const wroteSession = writeDenAuthToStorage(sessionStore, normalizedState);
     if (wroteSession) {
       clearDenAuthFromStorage(localStore);
     } else {
-      writeDenAuthToStorage(localStore, state);
+      writeDenAuthToStorage(localStore, normalizedState);
     }
   }
 
@@ -1052,10 +1097,13 @@ export async function exchangeHandoffCode(
 export type DenAuthValidationResult = "valid" | "invalid" | "unreachable";
 
 export async function validateDenAuth(state: DenAuthState): Promise<DenAuthValidationResult> {
+  const denApiBase = normalizeDenApiBase(state.denApiBase);
+  if (!denApiBase) return "invalid";
+
   try {
     const response = await fetchWithTimeout(
       resolveFetch(),
-      `${state.denApiBase}/v1/me`,
+      `${denApiBase}/v1/me`,
       {
         headers: { Authorization: `Bearer ${state.token}` },
       },

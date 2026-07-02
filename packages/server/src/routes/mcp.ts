@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { recordAudit } from "../audit.js";
 import { createOrgMcpRuntimeToken, fetchOrgMcpCatalog } from "../den-catalog.js";
+import { normalizeDenApiBaseUrl } from "../den-api-base.js";
 import { ApiError } from "../errors.js";
 import { addMcp, installHubMcp, listMcp, refreshMcpRuntimeToken, removeMcp } from "../mcp.js";
 import { workspaceResourceOwner } from "../resource-owner.js";
@@ -52,7 +53,7 @@ const requireDenCatalogContext = (ctx: Parameters<Route["handler"]>[0]) => {
     throw new ApiError(400, "den_org_required", "Missing Den org header (x-veslo-den-org-id)");
   }
 
-  const denApiBase = ctx.config.denApiBase?.trim() || "";
+  const denApiBase = normalizeDenApiBaseUrl(ctx.config.denApiBase) ?? "";
   if (!denApiBase) {
     throw new ApiError(503, "den_catalog_misconfigured", "Den catalog base URL is missing");
   }
@@ -72,7 +73,7 @@ export function registerMcpRoutes(routes: Route[], dependencies: McpRouteDepende
       throw new ApiError(400, "den_org_required", "Missing Den org header (x-veslo-den-org-id)");
     }
 
-    const denApiBase = ctx.config.denApiBase?.trim() || "";
+    const denApiBase = normalizeDenApiBaseUrl(ctx.config.denApiBase) ?? "";
     if (!denApiBase) {
       return jsonResponse({ items: [] });
     }

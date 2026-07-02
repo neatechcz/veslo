@@ -37,6 +37,7 @@ import {
 } from "./soul-materializer.js";
 import { soulMaterializationApprovalPaths as soulRuntimeMaterializationApprovalPaths } from "./soul-runtime.js";
 import type { ResourceOwner, ServerConfig, WorkspaceInfo } from "./types.js";
+import { normalizeDenApiBaseUrl } from "./den-api-base.js";
 import { shortId } from "./utils.js";
 
 export type SoulSummary = {
@@ -74,16 +75,7 @@ export type SoulMaterializationTestHookInput = {
 };
 
 function normalizeHttpBaseUrl(value: string | null | undefined): string {
-  const trimmed = value?.trim() ?? "";
-  if (!trimmed) return "";
-  try {
-    const url = new URL(trimmed);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
-    if (url.username || url.password || url.search || url.hash) return "";
-    return url.toString().replace(/\/+$/, "");
-  } catch {
-    return "";
-  }
+  return normalizeDenApiBaseUrl(value) ?? "";
 }
 
 function ownerForWorkspace(workspace: WorkspaceInfo): ResourceOwner {
@@ -166,8 +158,9 @@ export function createSoulController() {
       ctx.request.headers.get("x-veslo-user-id")?.trim() ||
       ctx.request.headers.get("x-veslo-account-id")?.trim() ||
       undefined;
+    const configuredBaseUrl = normalizeHttpBaseUrl(ctx.config.denApiBase);
     return {
-      baseUrl: ctx.config.denApiBase?.trim() || normalizeHttpBaseUrl(ctx.request.headers.get("x-veslo-den-api-base")),
+      baseUrl: configuredBaseUrl || normalizeHttpBaseUrl(ctx.request.headers.get("x-veslo-den-api-base")),
       denToken: ctx.request.headers.get("x-veslo-den-token")?.trim() || undefined,
       orgId: ctx.request.headers.get("x-veslo-den-org-id")?.trim() || undefined,
       userId,

@@ -1,4 +1,5 @@
 import { ApiError } from "../errors.js";
+import { normalizeDenApiBaseUrl } from "../den-api-base.js";
 import { addRoute, type RequestContext, type Route } from "../routing.js";
 import {
   approveRegistrySkillReviewRequest,
@@ -34,16 +35,7 @@ import {
 } from "../route-helpers.js";
 
 function normalizeSkillRegistryBaseUrl(value: string | null | undefined): string {
-  const trimmed = value?.trim() ?? "";
-  if (!trimmed) return "";
-  try {
-    const url = new URL(trimmed);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
-    if (url.username || url.password || url.search || url.hash) return "";
-    return url.toString().replace(/\/+$/, "");
-  } catch {
-    return "";
-  }
+  return normalizeDenApiBaseUrl(value) ?? "";
 }
 
 function skillRegistryRequestBaseUrl(ctx: RequestContext): string {

@@ -41,6 +41,7 @@ import {
   setSkillEnabledState,
 } from "./skill-enabled-overrides.js";
 import { fetchOrgSkillsCatalog } from "./den-catalog.js";
+import { normalizeDenApiBaseUrl } from "./den-api-base.js";
 import type { SoulPendingEdit } from "./soul-cache.js";
 import type { SoulDocument, SoulScope, SoulVersion } from "./soul-memory.js";
 import { createSoulController, type SoulMaterializationTestHookInput } from "./soul-controller.js";
@@ -2780,16 +2781,7 @@ function skillRegistryBaseUrl(config: ServerConfig): string {
 }
 
 function normalizeSkillRegistryBaseUrl(value: string | null | undefined): string {
-  const trimmed = value?.trim() ?? "";
-  if (!trimmed) return "";
-  try {
-    const url = new URL(trimmed);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
-    if (url.username || url.password || url.search || url.hash) return "";
-    return url.toString().replace(/\/+$/, "");
-  } catch {
-    return "";
-  }
+  return normalizeDenApiBaseUrl(value) ?? "";
 }
 
 function skillRegistryRequestBaseUrl(ctx: RequestContext): string {
