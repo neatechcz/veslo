@@ -90,6 +90,7 @@ const appSourceContractInventory: AppSourceContractInventoryEntry[] = [
   { path: "pages/session-message-replacement.test.ts", classification: "behavior", retargetBy: "AM13" },
   { path: "pages/session-mutation-workspace-routing.test.ts", classification: "behavior", retargetBy: "AM13" },
   { path: "pages/session-navigation.test.ts", classification: "wiring", retargetBy: "AM16/AM24" },
+  { path: "pages/session-send-workflow.test.ts", classification: "behavior", retargetBy: "AM11/AM13" },
   { path: "pages/settings-tabs-layout.test.ts", classification: "wiring", retargetBy: "AM24" },
   { path: "pages/skills-layout-contract.test.ts", classification: "wiring", retargetBy: "AM20/AM24" },
   { path: "session-list-roots-regression.test.ts", classification: "placement", retargetBy: "AM14" },

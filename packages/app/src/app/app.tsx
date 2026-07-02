@@ -53,6 +53,7 @@ import { resolveGlobalRuntimeModel } from "./lib/global-model-runtime";
 import {
   resolveSendPromptBusyOwnership,
 } from "./controllers/send-orchestration-controller";
+import { createSessionFolderMoveController } from "./controllers/session-folder-move-controller";
 import { partitionVesloUtilitySessions } from "./lib/veslo-utility-session";
 import {
   createSessionClientMessageId,
@@ -302,10 +303,6 @@ import {
   vesloServerRestart,
   orchestratorStatus,
   orchestratorEnginesList,
-  workspaceCopyIntoFolder,
-  workspaceVesloRead,
-  workspaceVesloWrite,
-  opencodeDbUpdateSessionDirectory,
   type VesloServerInfo,
   type WorkspaceInfo,
 } from "./lib/tauri";
@@ -3681,202 +3678,33 @@ export default function App() {
   ) {
     return sessionCreationWorkflow.createSessionAndOpen(initialTitle, options);
   }
-  const chooseFolderForCurrentSession = async () => {
-    if (!isTauriRuntime()) return false;
-
-    const sessionID = (selectedSessionId() ?? "").trim();
-    if (!sessionID) {
-      throw new Error("No session selected");
-    }
-
-    const activeRoot = workspaceStore.activeWorkspaceRoot().trim();
-    const sessionRecord = sessions().find((session) => session.id === sessionID) ?? null;
-    const sourceRoot = preferredSessionWorkspaceRoot(
-      sessionRecord ? resolveSessionDirectory(sessionRecord) : "",
-      activeRoot,
-    );
-    const normalizedSourceRoot = normalizeDirectoryPath(sourceRoot);
-    const sourceWorkspaceMatch = normalizedSourceRoot
-      ? workspaceStore.workspaces().find(
-          (workspace) =>
-            workspace.workspaceType === "local" &&
-            normalizeDirectoryPath(workspace.path?.trim() ?? "") === normalizedSourceRoot,
-        ) ?? null
-      : null;
-    const sourceWorkspace = sourceWorkspaceMatch ?? workspaceStore.activeWorkspaceDisplay();
-    const sourceWorkspaceId = sourceWorkspace.id?.trim() || workspaceStore.activeWorkspaceId().trim();
-
-    if (sourceWorkspace.workspaceType !== "local" || !workspaceStore.isPrivateWorkspacePath(sourceRoot)) {
-      throw new Error("Choose folder is only available for private workspaces.");
-    }
-    if (!sourceRoot) {
-      throw new Error("Private workspace folder is unavailable.");
-    }
-
-    while (true) {
-      const selectedDirectory = await workspaceStore.pickWorkspaceFolder();
-      if (!selectedDirectory) return false;
-
-      let transfer = await workspaceCopyIntoFolder({
-        sourcePath: sourceRoot,
-        targetPath: selectedDirectory,
-        overwrite: false,
-      });
-
-      if (transfer.kind === "conflict") {
-        const preview = transfer.conflicts.slice(0, 6);
-        const suffix =
-          transfer.conflicts.length > preview.length
-            ? `\n…and ${transfer.conflicts.length - preview.length} more.`
-            : "";
-        const overwrite = window.confirm(
-          `This folder already has conflicting files:\n\n${preview.join("\n")}${suffix}\n\nReplace conflicting files?`,
-        );
-        if (!overwrite) {
-          const chooseAnother = window.confirm(
-            "Choose another folder? Click Cancel to keep using the private workspace.",
-          );
-          if (chooseAnother) continue;
-          return false;
-        }
-
-        transfer = await workspaceCopyIntoFolder({
-          sourcePath: sourceRoot,
-          targetPath: selectedDirectory,
-          overwrite: true,
-        });
-      }
-
-      if (transfer.kind !== "ok") {
-        return false;
-      }
-
-      // Fix stale authorizedRoots copied from the private workspace.
-      // The copied veslo.json still points to the old private-workspaces path;
-      // replace it with the actual target directory before the engine starts.
-      try {
-        const copiedConfig = await workspaceVesloRead({ workspacePath: selectedDirectory });
-        if (copiedConfig) {
-          const oldRoots = Array.isArray(copiedConfig.authorizedRoots) ? copiedConfig.authorizedRoots : [];
-          const fixedRoots = oldRoots
-            .map((r) => (r === sourceRoot ? selectedDirectory : r))
-            .filter((r, i, arr) => arr.indexOf(r) === i);
-          if (!fixedRoots.includes(selectedDirectory)) fixedRoots.push(selectedDirectory);
-          await workspaceVesloWrite({
-            workspacePath: selectedDirectory,
-            config: { ...copiedConfig, authorizedRoots: fixedRoots },
-          });
-        }
-      } catch {
-        // veslo.json may not exist yet — ensureWorkspaceForFolder will create it
-      }
-
-      // Snapshot the session BEFORE activating the target workspace.
-      // ensureLocalWorkspaceActive → connectToServer → loadSessions scopes
-      // to the target directory and won't include this session (it was
-      // created in the temp workspace). Without the snapshot, the session
-      // data would be lost after activation.
-      const sessionSnapshot = sessions().find((s) => s.id === sessionID) ?? null;
-
-      // Update session directory in the OpenCode SQLite database BEFORE
-      // activating the new workspace.  ensureLocalWorkspaceActive restarts the
-      // engine, so the restarted engine will read the corrected directory from
-      // the DB and won't generate stale external_directory permission prompts.
-      if (isTauriRuntime()) {
-        try {
-          const dbUpdate = await opencodeDbUpdateSessionDirectory({
-            sessionId: sessionID,
-            oldDirectory: sourceRoot,
-            directory: selectedDirectory,
-          });
-          if (!dbUpdate.ok) {
-            throw new Error(dbUpdate.stderr || "Failed to update OpenCode session directory.");
-          }
-        } catch (error) {
-          reportError(error, "workspace.move.updateSessionDirectory");
-          // Non-fatal: the session will still work, just with a permission prompt.
-        }
-      }
-
-      const targetWorkspace = await workspaceStore.ensureWorkspaceForFolder(selectedDirectory);
-      if (!targetWorkspace?.id) return false;
-      const ready = await workspaceStore.ensureLocalWorkspaceActive(targetWorkspace.id);
-      if (!ready) return false;
-
-      persistSessionDirectoryOverride(sessionID, targetWorkspace.path);
-
-      // Ensure the session is in sessions() with the correct directory so
-      // the route effect (which validates session existence) doesn't
-      // redirect away when goToSession changes the URL.
-      const currentSessions = sessions();
-      const existingIdx = currentSessions.findIndex((s) => s.id === sessionID);
-      if (existingIdx >= 0) {
-        const copy = [...currentSessions];
-        copy[existingIdx] = { ...copy[existingIdx], directory: targetWorkspace.path };
-        setSessions(copy);
-      } else if (sessionSnapshot) {
-        setSessions([{ ...sessionSnapshot, directory: targetWorkspace.path }, ...currentSessions]);
-      }
-
-      moveWorkspaceLastSession({
-        sourceWorkspaceId,
-        targetWorkspaceId: targetWorkspace.id,
-        sessionId: sessionID,
-      });
-
-      // Optimistically move the session in the sidebar so the user sees
-      // immediate feedback. Uses the snapshot captured before activation.
-      moveSessionBetweenWorkspaceSidebars({
-        sourceWorkspaceId,
-        targetWorkspaceId: targetWorkspace.id,
-        item: {
-          id: sessionID,
-          title: sessionSnapshot?.title ?? "",
-          slug: sessionSnapshot?.slug,
-          parentID: sessionSnapshot?.parentID ?? null,
-          time: sessionSnapshot?.time,
-          directory: targetWorkspace.path,
-        },
-      });
-
-      // Navigate and load messages before forgetWorkspace (which may
-      // trigger disruptive reactive effects).
-      // Yield a microtask so the reactive session/client state from
-      // ensureLocalWorkspaceActive has settled before selecting.
-      await Promise.resolve();
-      goToSession(sessionID, { replace: true });
-      // Yield again so the route effect (triggered by goToSession) runs
-      // first — then our explicit selectSession call won't be deduped
-      // against a stale in-flight load.
-      await new Promise((r) => setTimeout(r, 100));
-      await selectSession(sessionID);
-
-      // Refresh sidebar from API, then clean up the old private workspace.
-      await refreshSidebarWorkspaceSessions(targetWorkspace.id).catch((e) =>
-        reportError(e, "sidebar.refreshSessions"),
-      );
-
-      if (sourceWorkspaceId && sourceWorkspaceId !== targetWorkspace.id) {
-        await workspaceStore.forgetWorkspace(sourceWorkspaceId, { deleteLocalData: true });
-      }
-
-      // forgetWorkspace → setWorkspaces() triggers a reactive sidebar
-      // refresh (fire-and-forget). That refresh uses the directory override
-      // to find the session, so it should include it. As a safety net,
-      // re-ensure the session appears in case the async refresh hasn't
-      // completed or failed to find it.
-      ensureSessionInWorkspaceSidebar(targetWorkspace.id, {
-          id: sessionID,
-          title: sessionSnapshot?.title ?? "",
-          slug: sessionSnapshot?.slug,
-          parentID: sessionSnapshot?.parentID ?? null,
-          time: sessionSnapshot?.time,
-          directory: targetWorkspace.path,
-      });
-
-      return true;
-    }
-  };
+  const sessionFolderMoveController = createSessionFolderMoveController({
+    isTauriRuntime,
+    selectedSessionId,
+    sessions,
+    setSessions,
+    resolveSessionDirectory,
+    persistSessionDirectoryOverride,
+    workspace: {
+      activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+      activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
+      activeWorkspaceDisplay: () => workspaceStore.activeWorkspaceDisplay(),
+      workspaces: () => workspaceStore.workspaces(),
+      isPrivateWorkspacePath: (path) => workspaceStore.isPrivateWorkspacePath(path),
+      pickWorkspaceFolder: () => workspaceStore.pickWorkspaceFolder(),
+      ensureWorkspaceForFolder: (folder) => workspaceStore.ensureWorkspaceForFolder(folder),
+      ensureLocalWorkspaceActive: (workspaceId) => workspaceStore.ensureLocalWorkspaceActive(workspaceId),
+      forgetWorkspace: (workspaceId, options) => workspaceStore.forgetWorkspace(workspaceId, options),
+    },
+    moveWorkspaceLastSession,
+    moveSessionBetweenWorkspaceSidebars,
+    ensureSessionInWorkspaceSidebar,
+    refreshSidebarWorkspaceSessions: (workspaceId) => refreshSidebarWorkspaceSessions(workspaceId),
+    goToSession,
+    selectSession,
+    reportError,
+  });
+  const chooseFolderForCurrentSession = sessionFolderMoveController.chooseFolderForCurrentSession;
 
   createAppStartupHydration({
     cloudOnlyMode: () => CLOUD_ONLY_MODE,

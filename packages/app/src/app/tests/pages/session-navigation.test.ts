@@ -99,12 +99,10 @@ const redoLastUserMessageSource =
   redoLastUserMessageStart >= 0 && redoLastUserMessageEnd >= 0
     ? appSource.slice(redoLastUserMessageStart, redoLastUserMessageEnd)
     : "";
-const chooseFolderForCurrentSessionStart = appSource.indexOf("  const chooseFolderForCurrentSession = async () => {");
-const chooseFolderForCurrentSessionEnd = appSource.indexOf("  const appViewProps = createAppViewProps({", chooseFolderForCurrentSessionStart);
-const chooseFolderForCurrentSessionSource =
-  chooseFolderForCurrentSessionStart >= 0 && chooseFolderForCurrentSessionEnd >= 0
-    ? appSource.slice(chooseFolderForCurrentSessionStart, chooseFolderForCurrentSessionEnd)
-    : "";
+const chooseFolderForCurrentSessionSource = readFileSync(
+  new URL("../../controllers/session-folder-move-controller.ts", import.meta.url),
+  "utf8",
+);
 const renameSessionTitleStart = appSource.indexOf("  async function renameSessionTitle(");
 const renameSessionTitleEnd = appSource.indexOf("  async function deleteSessionById(", renameSessionTitleStart);
 const renameSessionTitleSource =
@@ -795,15 +793,24 @@ test("fresh New session surfaces cleanup failure instead of silently assuming ro
 });
 
 test("Choose folder cleanup removes the old private workspace directory", () => {
-  assert.notEqual(chooseFolderForCurrentSessionSource, "", "Choose folder flow should exist in app shell");
+  assert.match(
+    appSource,
+    /const chooseFolderForCurrentSession = sessionFolderMoveController\.chooseFolderForCurrentSession;/,
+    "Choose folder flow should be wired from the session folder move controller",
+  );
   assert.match(
     chooseFolderForCurrentSessionSource,
-    /if \(sourceWorkspace\.workspaceType !== "local" \|\| !workspaceStore\.isPrivateWorkspacePath\(sourceRoot\)\) \{[\s\S]*throw new Error\("Choose folder is only available for private workspaces\."\);[\s\S]*\}/s,
+    /if \(sourceWorkspace\.workspaceType !== "local" \|\| !input\.isPrivateWorkspacePath\(sourceRoot\)\) \{[\s\S]*return \{ ok: false, reason: "not-private" \};[\s\S]*\}/s,
     "Choose folder should only detach/delete a source workspace after proving it is an app private workspace",
   );
   assert.match(
     chooseFolderForCurrentSessionSource,
-    /if \(sourceWorkspaceId && sourceWorkspaceId !== targetWorkspace\.id\) \{\s*await workspaceStore\.forgetWorkspace\(sourceWorkspaceId, \{ deleteLocalData: true \}\);\s*\}/s,
+    /throw new Error\([\s\S]*"Choose folder is only available for private workspaces\."/,
+    "non-private sources must fail the move with the private-workspace error",
+  );
+  assert.match(
+    chooseFolderForCurrentSessionSource,
+    /if \(sourceWorkspaceId && sourceWorkspaceId !== targetWorkspace\.id\) \{\s*await deps\.workspace\.forgetWorkspace\(sourceWorkspaceId, \{ deleteLocalData: true \}\);\s*\}/s,
     "moving a private chat into a chosen folder should remove the old app-owned private workspace directory",
   );
 });
