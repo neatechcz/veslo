@@ -43,6 +43,21 @@ function makeMessage(sessionID = "sess-a", messageID = "msg-a"): MessageWithPart
   return { info, parts: [] };
 }
 
+function makeTranscriptSnapshot(
+  sessionID: string,
+  messages: MessageInfo[] = [makeMessage(sessionID).info],
+) {
+  return {
+    workspaceId: "ws-a",
+    sessionId: sessionID,
+    limit: 140,
+    fetchedAt: 1,
+    messages,
+    partsByMessageId: {},
+    source: "sqlite" as const,
+  };
+}
+
 function makeController(options: {
   activeClient?: any;
   selectedSessionId?: string | null;
@@ -247,6 +262,86 @@ test("selectSession uses offline fallback for browse policy instead of live mess
       assert.equal(messageCalls, 0);
       assert.equal(offlineCalls, 1);
       assert.equal(hydratedSnapshots.length, 1);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("selectSession hydrates explicit loaded history results", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const { controller, hydratedSnapshots } = makeController({
+        shouldBrowseSessionFromDb: (sessionID) => sessionID === "sess-loaded",
+        activeClient: {
+          session: {
+            messages: async () => ok([makeMessage("sess-loaded")]),
+          },
+        },
+        loadOfflineTranscript: async (sessionID) => ({
+          status: "loaded",
+          snapshot: makeTranscriptSnapshot(sessionID),
+        }),
+      });
+
+      await controller.selectSession("sess-loaded");
+
+      assert.equal(hydratedSnapshots.length, 1);
+      assert.equal(hydratedSnapshots[0]?.sessionId, "sess-loaded");
+      assert.equal(hydratedSnapshots[0]?.messages.length, 1);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("selectSession treats explicit empty history as loaded state", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const { controller, hydratedSnapshots } = makeController({
+        shouldBrowseSessionFromDb: (sessionID) => sessionID === "sess-empty",
+        loadOfflineTranscript: async (sessionID) => ({
+          status: "empty",
+          snapshot: makeTranscriptSnapshot(sessionID, []),
+        }),
+      });
+
+      await controller.selectSession("sess-empty");
+
+      assert.equal(hydratedSnapshots.length, 1);
+      assert.equal(hydratedSnapshots[0]?.sessionId, "sess-empty");
+      assert.deepEqual(hydratedSnapshots[0]?.messages, []);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("selectSession preserves explicit unavailable history without hydrating a fake transcript", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      let messageCalls = 0;
+      const { controller, hydratedSnapshots } = makeController({
+        shouldBrowseSessionFromDb: (sessionID) => sessionID === "sess-unavailable",
+        activeClient: {
+          session: {
+            messages: async () => {
+              messageCalls += 1;
+              return ok([makeMessage("sess-unavailable")]);
+            },
+          },
+        },
+        loadOfflineTranscript: async (sessionID) => ({
+          status: "unavailable",
+          scope: { sessionId: sessionID, workspaceId: "ws-a", directory: "/repo" },
+          reason: "source-unavailable",
+        }),
+      });
+
+      await controller.selectSession("sess-unavailable");
+
+      assert.equal(hydratedSnapshots.length, 0);
+      assert.equal(messageCalls, 0, "CHR01 should preserve host-first behavior; CHR02 owns live fallback");
     } finally {
       dispose();
     }

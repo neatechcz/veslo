@@ -67,6 +67,14 @@ function createFakeClient() {
     },
     getSessionTranscript: async (workspaceId: string, sessionId: string) => {
       calls.push(`getSessionTranscript:${workspaceId}:${sessionId}`);
+      if (sessionId === "sess-unavailable") {
+        return {
+          ...transcript(sessionId),
+          source: "unavailable" as const,
+          messages: [],
+          partsByMessageId: {},
+        };
+      }
       return transcript(sessionId);
     },
     createConversation: async (workspaceId: string) => {
@@ -232,6 +240,26 @@ test("conversation read workspace registration is cached per client and director
   assert.deepEqual(calls.filter((call) => call.startsWith("addLocalWorkspace")), [
     "addLocalWorkspace:/repo",
   ]);
+});
+
+test("conversation transcript read preserves unavailable snapshots at the app boundary", async () => {
+  const { service, rememberedScopes } = createService();
+
+  const snapshot = await service.getTranscriptFromVesloReadApi(
+    "app-ws",
+    "sess-unavailable",
+    12,
+    "/repo",
+  );
+
+  assert.equal(snapshot?.source, "unavailable");
+  assert.equal(snapshot?.sessionId, "sess-unavailable");
+  assert.deepEqual(snapshot?.messages, []);
+  assert.equal(
+    rememberedScopes.length,
+    1,
+    "unavailable snapshots still carry identity sidecars that must be remembered",
+  );
 });
 
 test("conversation run remembers submitted run ids under Veslo and UI identities", async () => {

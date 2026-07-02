@@ -565,7 +565,7 @@ export function createConversationService<Client extends ConversationServiceClie
     if (!serverWorkspaceId) return null;
     const snapshot = await serverClient.getSessionTranscript(serverWorkspaceId, sessionId, limit, directory);
     deps.rememberConversationScopeFromTranscript(workspaceId, directory, snapshot);
-    return snapshot.source === "unavailable" ? null : snapshot;
+    return snapshot;
   };
 
   const createConversationFromVesloWriteApi = async (

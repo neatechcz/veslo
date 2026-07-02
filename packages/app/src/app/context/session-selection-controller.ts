@@ -49,6 +49,26 @@ type ConversationReader = {
   ) => Promise<{ items: Session[]; source?: "sqlite" | "unavailable" }>;
 };
 
+export type SessionHistoryLoadScope = {
+  sessionId: string;
+  workspaceId?: string | null;
+  workspaceRoot?: string | null;
+  directory?: string | null;
+  conversationId?: string | null;
+  opencodeSessionId?: string | null;
+};
+
+export type SessionHistoryLoadResult =
+  | { status: "loaded"; snapshot: VesloSessionTranscriptSnapshot }
+  | { status: "empty"; snapshot: VesloSessionTranscriptSnapshot }
+  | { status: "unavailable"; scope: SessionHistoryLoadScope; reason?: string | null };
+
+export type SessionOfflineTranscriptLoadResult =
+  | SessionHistoryLoadResult
+  | VesloSessionTranscriptSnapshot
+  | null
+  | undefined;
+
 export type SessionSelectionControllerDeps = {
   store: SelectionStoreState;
   setStore: (...args: any[]) => void;
@@ -58,7 +78,7 @@ export type SessionSelectionControllerDeps = {
   selectSessionScopeKey?: (sessionID: string) => string;
   directoryQueryPathMode?: () => DirectoryQueryPathMode;
   conversationReader?: () => ConversationReader | null;
-  loadOfflineTranscript?: (sessionID: string, limit: number) => Promise<VesloSessionTranscriptSnapshot | null>;
+  loadOfflineTranscript?: (sessionID: string, limit: number) => Promise<SessionOfflineTranscriptLoadResult>;
   shouldBrowseSessionFromDb?: (sessionID: string) => boolean;
   developerMode: () => boolean;
   setError: (message: string | null) => void;
@@ -89,6 +109,61 @@ export type SessionSelectionControllerDeps = {
 export function isSessionNotFoundError(error: unknown) {
   const message = error instanceof Error ? error.message : safeStringify(error);
   return /Session not found|NotFoundError|status\W*404|\b404\b/i.test(message);
+}
+
+function isHistoryLoadResult(input: SessionOfflineTranscriptLoadResult): input is SessionHistoryLoadResult {
+  return Boolean(input && typeof input === "object" && "status" in input);
+}
+
+function normalizeHistoryLoadScope(
+  fallback: SessionHistoryLoadScope,
+  snapshot?: VesloSessionTranscriptSnapshot | null,
+  scope?: Partial<SessionHistoryLoadScope> | null,
+): SessionHistoryLoadScope {
+  return {
+    sessionId: scope?.sessionId?.trim() || snapshot?.sessionId?.trim() || fallback.sessionId,
+    workspaceId: scope?.workspaceId ?? snapshot?.workspaceId ?? fallback.workspaceId,
+    workspaceRoot: scope?.workspaceRoot ?? fallback.workspaceRoot,
+    directory: scope?.directory ?? snapshot?.directory ?? fallback.directory,
+    conversationId: scope?.conversationId ?? snapshot?.conversationId ?? fallback.conversationId,
+    opencodeSessionId: scope?.opencodeSessionId ?? snapshot?.opencodeSessionId ?? fallback.opencodeSessionId,
+  };
+}
+
+function normalizeHistoryLoadResult(
+  input: SessionOfflineTranscriptLoadResult,
+  fallbackScope: SessionHistoryLoadScope,
+  unavailableReason: string,
+): SessionHistoryLoadResult {
+  if (!input) {
+    return {
+      status: "unavailable",
+      scope: fallbackScope,
+      reason: unavailableReason,
+    };
+  }
+  if (isHistoryLoadResult(input)) {
+    if (input.status === "unavailable") {
+      return {
+        ...input,
+        scope: normalizeHistoryLoadScope(fallbackScope, null, input.scope),
+        reason: input.reason ?? unavailableReason,
+      };
+    }
+    const status = input.snapshot.messages.length === 0 ? "empty" : input.status;
+    return { status, snapshot: input.snapshot };
+  }
+  if (input.source === "unavailable") {
+    return {
+      status: "unavailable",
+      scope: normalizeHistoryLoadScope(fallbackScope, input),
+      reason: "source-unavailable",
+    };
+  }
+  return {
+    status: input.messages.length === 0 ? "empty" : "loaded",
+    snapshot: input,
+  };
 }
 
 export function createSessionSelectionController(deps: SessionSelectionControllerDeps) {
@@ -310,9 +385,13 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
           activeWorkspaceId: readPolicy.activeWorkspaceId || null,
           sessionWorkspaceId: readPolicy.sessionWorkspaceId || null,
         });
-        let snapshot: VesloSessionTranscriptSnapshot | null = null;
+        let history: SessionHistoryLoadResult;
         try {
-          snapshot = (await deps.loadOfflineTranscript?.(sessionID, requestLimit)) ?? null;
+          history = normalizeHistoryLoadResult(
+            await deps.loadOfflineTranscript?.(sessionID, requestLimit),
+            { sessionId: sessionID },
+            "offline-transcript-unavailable",
+          );
         } catch (error) {
           deps.addError(error);
           mark("offline transcript fallback failed", {
@@ -322,17 +401,23 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
           return false;
         }
         if (abortIfStale("selection changed before offline transcript applied")) return true;
-        if (snapshot) {
+        if (history.status === "loaded" || history.status === "empty") {
+          const snapshot = history.snapshot;
           deps.hydrateTranscriptSnapshot(snapshot);
           deps.setStore("todos", sessionID, []);
           mark("offline transcript fallback done", {
             count: snapshot.messages.length,
             limit: requestLimit,
             reason,
+            status: history.status,
           });
           return true;
         }
-        mark("offline transcript fallback unavailable", { reason });
+        mark("offline transcript fallback unavailable", {
+          reason,
+          unavailableReason: history.reason ?? null,
+          scope: history.scope,
+        });
         return false;
       };
       mark("client check", {
@@ -458,9 +543,13 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
       const c = sessionClient.client;
       const readPolicy = deps.sessionReadPolicy(sessionID, sessionClient.workspaceId);
       const loadOfflineTranscriptFallback = async () => {
-        const snapshot = (await deps.loadOfflineTranscript?.(sessionID, nextLimit)) ?? null;
-        if (!snapshot) return false;
-        deps.hydrateTranscriptSnapshot(snapshot);
+        const history = normalizeHistoryLoadResult(
+          await deps.loadOfflineTranscript?.(sessionID, nextLimit),
+          { sessionId: sessionID },
+          "offline-transcript-unavailable",
+        );
+        if (history.status === "unavailable") return false;
+        deps.hydrateTranscriptSnapshot(history.snapshot);
         return true;
       };
       if (!c || readPolicy.browseFromDb) {

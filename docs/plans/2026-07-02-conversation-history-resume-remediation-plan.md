@@ -117,7 +117,7 @@ only in a reserved worktree.
 
 | id | task | status | reserved_by | done |
 | --- | --- | --- | --- | --- |
-| CHR01 | explicit history availability contract | available | null | false |
+| CHR01 | explicit history availability contract | reserved | codex-20260702-chr01 | false |
 | CHR02 | live fallback for active scoped sessions | available | null | false |
 | CHR03 | backfill host transcript after live recovery | available | null | false |
 | CHR04 | durable empty transcript marker | available | null | false |
@@ -130,9 +130,9 @@ only in a reserved worktree.
 
 ```yaml
 id: CHR01
-status: available
-reserved_by: null
-reserved_at: null
+status: reserved
+reserved_by: codex-20260702-chr01
+reserved_at: 2026-07-02T02:32:49.8134941+02:00
 branch: conversation-history/chr01-availability-contract
 worktree: ../veslo-conversation-history-chr01-availability-contract
 done: false
@@ -532,3 +532,10 @@ git diff --check
 - 2026-07-02: Added CHR01 conversation-service verification, server typecheck
   to server-touching slices, wider frontmatter targets, and a final acceptance
   command block for the whole plan.
+- 2026-07-02: CHR01 implementation in
+  `conversation-history/chr01-availability-contract`: added explicit
+  `HistoryLoadResult` handling, preserved unavailable transcript snapshots at
+  the app boundary, and verified with
+  `session-selection-controller.test.ts`, `conversation-service.test.ts`,
+  `session-select-background-hydration.test.ts`,
+  `session-navigation.test.ts`, and app typecheck.
