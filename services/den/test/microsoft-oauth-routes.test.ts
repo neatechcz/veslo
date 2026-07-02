@@ -305,12 +305,74 @@ test("microsoft connection status and disconnect are SharePoint-scoped", async (
     assert.deepEqual(await deleteResponse.json(), {
       ok: true,
       connectorId: "microsoft-sharepoint",
-      revokeOk: true,
+      revokeOk: null,
     })
-    assert.deepEqual(server.revokedTokens, ["sharepoint_refresh"])
+    assert.deepEqual(server.revokedTokens, [])
 
     const afterDelete = await server.store.listConnections({ orgId: "org_1", userId: "user_1" })
     assert.equal(afterDelete.find((item) => item.connectorId === "microsoft-sharepoint")?.state, "revoked")
+  } finally {
+    await server.close()
+  }
+})
+
+test("microsoft runtime token reports unavailable grant storage clearly", async () => {
+  const server = await startServer({
+    store: new UnavailableMicrosoftConnectionStore(),
+  })
+
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/runtime-token`,
+      { method: "POST" },
+    )
+
+    assert.equal(response.status, 503)
+    assert.deepEqual(await response.json(), {
+      error: "microsoft_token_secret_not_configured",
+      connectorId: "microsoft-sharepoint",
+    })
+  } finally {
+    await server.close()
+  }
+})
+
+test("microsoft connection status reports unavailable grant storage clearly", async () => {
+  const server = await startServer({
+    store: new UnavailableMicrosoftConnectionStore(),
+  })
+
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/v1/orgs/org_1/integrations/microsoft/connections`,
+    )
+
+    assert.equal(response.status, 503)
+    assert.deepEqual(await response.json(), {
+      error: "microsoft_token_secret_not_configured",
+      connectorId: "microsoft-sharepoint",
+    })
+  } finally {
+    await server.close()
+  }
+})
+
+test("microsoft disconnect reports unavailable grant storage clearly", async () => {
+  const server = await startServer({
+    store: new UnavailableMicrosoftConnectionStore(),
+  })
+
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/connection`,
+      { method: "DELETE" },
+    )
+
+    assert.equal(response.status, 503)
+    assert.deepEqual(await response.json(), {
+      error: "microsoft_token_secret_not_configured",
+      connectorId: "microsoft-sharepoint",
+    })
   } finally {
     await server.close()
   }

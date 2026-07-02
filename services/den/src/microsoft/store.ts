@@ -162,15 +162,15 @@ export class UnavailableMicrosoftConnectionStore implements MicrosoftConnectionS
   }
 
   async listConnections(): Promise<MicrosoftConnection[]> {
-    return []
+    throw new Error("microsoft_token_secret_not_configured")
   }
 
   async getGrant(): Promise<MicrosoftOAuthGrant | null> {
-    return null
+    throw new Error("microsoft_token_secret_not_configured")
   }
 
   async disconnectConnection(): Promise<boolean> {
-    return false
+    throw new Error("microsoft_token_secret_not_configured")
   }
 }
 

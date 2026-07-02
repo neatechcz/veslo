@@ -91,6 +91,21 @@ export function createMicrosoftRouter(options: MicrosoftRouterOptions) {
       return
     }
 
+    const storeAvailable = await assertMicrosoftConnectionStoreAvailable({
+      store: options.store,
+      orgId: context.organization.id,
+      userId: context.session.user.id,
+      connectorId: connector.id,
+    }).catch((error) => {
+      if (sendMicrosoftUnavailableError(res, error, connector.id)) {
+        return false
+      }
+      throw error
+    })
+    if (!storeAvailable) {
+      return
+    }
+
     const token = createSignedMicrosoftRuntimeToken({
       orgId: context.organization.id,
       userId: context.session.user.id,
@@ -195,7 +210,15 @@ export function createMicrosoftRouter(options: MicrosoftRouterOptions) {
     const connections = await options.store.listConnections({
       orgId: context.organization.id,
       userId: context.session.user.id,
+    }).catch((error) => {
+      if (sendMicrosoftUnavailableError(res, error, defaultMicrosoftConnectorId())) {
+        return null
+      }
+      throw error
     })
+    if (!connections) {
+      return
+    }
     const byConnector = new Map(connections.map((connection) => [connection.connectorId, connection]))
 
     res.json({
@@ -230,30 +253,34 @@ export function createMicrosoftRouter(options: MicrosoftRouterOptions) {
       return
     }
 
-    const grant = await options.store.getGrant({
+    await options.store.getGrant({
       orgId: context.organization.id,
       userId: context.session.user.id,
       connectorId: connector.id,
+    }).catch((error) => {
+      if (sendMicrosoftUnavailableError(res, error, connector.id)) {
+        return null
+      }
+      throw error
     })
-    let revokeOk: boolean | null = grant?.refreshToken ? true : null
-    if (grant?.refreshToken) {
-      await options.oauth.revokeToken(grant.refreshToken).catch((error) => {
-        revokeOk = false
-        const message = error instanceof Error ? error.message : String(error)
-        console.warn("[microsoft] revoke token failed", {
-          connectorId: connector.id,
-          orgId: context.organization.id,
-          userId: context.session.user.id,
-          error: message,
-        })
-      })
+    if (res.headersSent) {
+      return
     }
+    const revokeOk: boolean | null = null
 
     await options.store.disconnectConnection({
       orgId: context.organization.id,
       userId: context.session.user.id,
       connectorId: connector.id,
+    }).catch((error) => {
+      if (sendMicrosoftUnavailableError(res, error, connector.id)) {
+        return null
+      }
+      throw error
     })
+    if (res.headersSent) {
+      return
+    }
 
     res.json({ ok: true, connectorId: connector.id, revokeOk })
   }))
@@ -310,6 +337,20 @@ export function createMicrosoftRouter(options: MicrosoftRouterOptions) {
   return router
 }
 
+async function assertMicrosoftConnectionStoreAvailable(input: {
+  store: MicrosoftConnectionStore
+  orgId: string
+  userId: string
+  connectorId: MicrosoftConnectorId
+}) {
+  await input.store.getGrant({
+    orgId: input.orgId,
+    userId: input.userId,
+    connectorId: input.connectorId,
+  })
+  return true
+}
+
 async function resolveUsableGrant(input: {
   store: MicrosoftConnectionStore
   oauth: MicrosoftOAuthClient
@@ -362,17 +403,16 @@ function firstQueryValue(value: unknown) {
 function sendMicrosoftUnavailableError(
   res: express.Response,
   error: unknown,
-  connectorId: MicrosoftConnectorId,
+  connectorId?: MicrosoftConnectorId,
 ) {
   const errorCode = microsoftUnavailableErrorCode(error)
   if (!errorCode) {
     return false
   }
 
-  res.status(503).json({
-    error: errorCode,
-    connectorId,
-  })
+  res.status(503).json(connectorId
+    ? { error: errorCode, connectorId }
+    : { error: errorCode })
   return true
 }
 
@@ -387,6 +427,10 @@ function microsoftUnavailableErrorCode(error: unknown) {
     return error.message
   }
   return null
+}
+
+function defaultMicrosoftConnectorId() {
+  return MicrosoftConnectors[0]?.id
 }
 
 function buildRedirectUrl(baseUrl: string, params: Record<string, string>) {
