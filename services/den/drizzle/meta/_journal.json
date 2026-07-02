@@ -134,6 +134,13 @@
       "when": 1782604800000,
       "tag": "0017_soul",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "5",
+      "when": 1783007885542,
+      "tag": "0019_fuzzy_red_ghost",
+      "breakpoints": true
     }
   ]
 }
