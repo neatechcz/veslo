@@ -26,11 +26,7 @@ import {
   readSessionStatus,
   withoutSessionStatus,
 } from "./lib/scoped-session-status";
-import {
-  COMPACTION_THRESHOLD_RATIO,
-  resolveCompactionThreshold,
-  shouldAutoCompact,
-} from "./lib/auto-compaction";
+import { shouldAutoCompact } from "./lib/auto-compaction";
 import {
   DEFAULT_UPDATE_AUTO_DOWNLOAD,
   shouldAutoCheckForUpdatesAt,
@@ -47,7 +43,6 @@ import {
   DEFAULT_MODEL_VARIANT,
   MODEL_VARIANT_OPTIONS,
   normalizeModelVariant,
-  resolveCodexReasoningEffort,
 } from "./lib/model-variant";
 import { resolveGlobalRuntimeModel } from "./lib/global-model-runtime";
 import {
@@ -137,10 +132,7 @@ import {
   setSessionComposerDraft,
   setSessionComposerPrompt,
 } from "./pages/session-composer-drafts";
-import {
-  GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
-  resolveComposerStorageKey,
-} from "./lib/pending-session-drafts";
+import { resolveComposerStorageKey } from "./lib/pending-session-drafts";
 import {
   createClient,
   unwrap,
@@ -226,22 +218,24 @@ import type {
   SuggestedPlugin,
 } from "./types";
 import {
+  addOpencodeCacheHint,
   clearStartupPreference,
   deriveArtifacts,
   deriveWorkingFiles,
-  formatBytes,
   formatModelLabel,
-  formatModelRef,
-  formatRelativeTime,
   groupMessageParts,
-  isVisibleTextPart,
-  lastUserModelFromMessages,
+  isMacPlatform,
   isTauriRuntime,
+  isWindowsPlatform,
+  lastUserModelFromMessages,
   modelEquals,
-  normalizeDirectoryQueryPath,
   normalizeDirectoryPath,
+  normalizeDirectoryQueryPath,
+  normalizeTodoItems,
+  parseModelRef,
   preferredSessionWorkspaceRoot,
-  sessionDirectoryMatchesRoot,
+  safeStringify,
+  summarizeStep,
 } from "./utils";
 import {
   readDenAuth,
@@ -249,15 +243,6 @@ import {
   writeDenKeepSignedIn,
 } from "./lib/den-auth";
 import { currentLocale, isLanguage, setLocale, t, type Language } from "../i18n";
-import {
-  isWindowsPlatform,
-  isMacPlatform,
-  parseModelRef,
-  safeStringify,
-  summarizeStep,
-  addOpencodeCacheHint,
-  normalizeTodoItems,
-} from "./utils";
 import {
   getInitialThemeMode,
   type ThemeMode,
@@ -2608,21 +2593,8 @@ export default function App() {
     composerDraft,
   });
 
-  createEffect(() => {
-    // Only auto-select on bare /session. If the URL already includes /session/:id,
-    // let the route-driven selector own the fetch to avoid duplicate selection runs.
-    if (currentView() !== "session") return;
-    const normalizedPath = location.pathname.toLowerCase().replace(/\/+$/, "");
-    if (normalizedPath !== "/session") return;
-    if (!routedClient()) return;
-    if (!sessionsLoadedForActiveWorkspace()) return;
-    if (creatingSession()) return;
-    if (selectedSessionId()) return;
-
-    // Keep /session as a draft-ready empty state until the user picks a session
-    // or sends a prompt. Avoid auto-selecting prior sessions on app launch.
-    return;
-  });
+  // Bare /session stays a draft-ready empty state until the user picks a
+  // session or sends a prompt; /session/:id selection is route-driven.
 
   function isRouteSelectedSession(sessionId: string) {
     const [, , sessionSegment] = location.pathname.trim().split("/");
@@ -3268,40 +3240,6 @@ export default function App() {
     }
   };
 
-  const workspaceAutoReloadAvailable = createMemo(() =>
-    false,
-  );
-
-  const workspaceAutoReloadEnabled = createMemo(() => {
-    if (!workspaceAutoReloadAvailable()) return false;
-    const cfg = workspaceStore.workspaceConfig();
-    return Boolean(cfg?.reload?.auto);
-  });
-
-  const workspaceAutoReloadResumeEnabled = createMemo(() => {
-    if (!workspaceAutoReloadAvailable()) return false;
-    const cfg = workspaceStore.workspaceConfig();
-    return Boolean(cfg?.reload?.resume);
-  });
-
-  const setWorkspaceAutoReloadEnabled = async (next: boolean) => {
-    if (!workspaceAutoReloadAvailable()) return;
-    const cfg = workspaceStore.workspaceConfig();
-    const resume = Boolean(cfg?.reload?.resume);
-    await workspaceStore.persistReloadSettings({ auto: next, resume: next ? resume : false });
-  };
-
-  const setWorkspaceAutoReloadResumeEnabled = async (next: boolean) => {
-    if (!workspaceAutoReloadAvailable()) return;
-    const cfg = workspaceStore.workspaceConfig();
-    const auto = Boolean(cfg?.reload?.auto);
-    await workspaceStore.persistReloadSettings({ auto, resume: auto ? next : false });
-  };
-
-  const reloadWorkspaceEngineAndResume = async () => {
-    await reloadWorkspaceEngine();
-  };
-
   type ActiveReloadBlockingSession = {
     id: string;
     title: string;
@@ -3392,7 +3330,7 @@ export default function App() {
         // ignore and continue stopping the rest before reload
       }
     }
-    await reloadWorkspaceEngineAndResume();
+    await reloadWorkspaceEngine();
   };
 
   const {
@@ -4031,16 +3969,11 @@ export default function App() {
     resetVesloServerSettings,
     testVesloServerConnection,
     canReloadWorkspace,
-    reloadWorkspaceEngineAndResume,
+    reloadWorkspaceEngine,
     scheduledAutomationStore,
     soulDataStore,
     reloadBusy,
     reloadError,
-    workspaceAutoReloadAvailable,
-    workspaceAutoReloadEnabled,
-    setWorkspaceAutoReloadEnabled,
-    workspaceAutoReloadResumeEnabled,
-    setWorkspaceAutoReloadResumeEnabled,
     readyEngineWorkspaceIds,
     handleActivateWorkspace,
     openCreateRemoteWorkspace,
@@ -4351,7 +4284,9 @@ export default function App() {
           setMcpAuthNeedsReload(false);
           await refreshMcpServers({ mode: "explicit", reason: "mcp-auth-complete" });
         }}
-        onReloadEngine={() => reloadWorkspaceEngineAndResume()}
+        onReloadEngine={async () => {
+          await reloadWorkspaceEngine();
+        }}
       />
 
       <CreateWorkspaceModal

@@ -160,11 +160,6 @@ export type DashboardViewProps = {
   reloadScheduledAutomationsSource: () => Promise<void>;
   reloadBusy: boolean;
   reloadError: string | null;
-  workspaceAutoReloadAvailable: boolean;
-  workspaceAutoReloadEnabled: boolean;
-  setWorkspaceAutoReloadEnabled: (value: boolean) => void | Promise<void>;
-  workspaceAutoReloadResumeEnabled: boolean;
-  setWorkspaceAutoReloadResumeEnabled: (value: boolean) => void | Promise<void>;
   activeWorkspaceDisplay: WorkspaceInfo;
   workspaces: WorkspaceInfo[];
   activeWorkspaceId: string;
@@ -1215,11 +1210,6 @@ export default function DashboardView(props: DashboardViewProps) {
                 reloadWorkspaceEngine={props.reloadWorkspaceEngine}
                 reloadBusy={props.reloadBusy}
                 reloadError={props.reloadError}
-                workspaceAutoReloadAvailable={props.workspaceAutoReloadAvailable}
-                workspaceAutoReloadEnabled={props.workspaceAutoReloadEnabled}
-                setWorkspaceAutoReloadEnabled={props.setWorkspaceAutoReloadEnabled}
-                workspaceAutoReloadResumeEnabled={props.workspaceAutoReloadResumeEnabled}
-                setWorkspaceAutoReloadResumeEnabled={props.setWorkspaceAutoReloadResumeEnabled}
                 developerMode={props.developerMode}
               />
             </Match>

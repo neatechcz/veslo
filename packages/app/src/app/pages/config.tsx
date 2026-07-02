@@ -35,12 +35,6 @@ export type ConfigViewProps = {
   reloadBusy: boolean;
   reloadError: string | null;
 
-  workspaceAutoReloadAvailable: boolean;
-  workspaceAutoReloadEnabled: boolean;
-  setWorkspaceAutoReloadEnabled: (value: boolean) => void | Promise<void>;
-  workspaceAutoReloadResumeEnabled: boolean;
-  setWorkspaceAutoReloadResumeEnabled: (value: boolean) => void | Promise<void>;
-
   developerMode: boolean;
 };
 
@@ -176,9 +170,6 @@ export default function ConfigView(props: ConfigViewProps) {
       },
       reload: {
         canReloadWorkspace: props.canReloadWorkspace,
-        autoReloadAvailable: props.workspaceAutoReloadAvailable,
-        autoReloadEnabled: props.workspaceAutoReloadEnabled,
-        autoReloadResumeEnabled: props.workspaceAutoReloadResumeEnabled,
       },
       sharing: {
         hostConnectUrl: hostConnectUrl() || null,
@@ -260,44 +251,6 @@ export default function ConfigView(props: ConfigViewProps) {
           </Button>
         </div>
 
-        <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-          <div class="min-w-0 space-y-1">
-            <div class="text-sm text-gray-12">{__vesloT("ui.literal.auto_reload_local_hr3rzh", __vesloCurrentLocale())}</div>
-            <div class="text-xs text-gray-7">{__vesloT("ui.literal.reload_automatically_after_agents_skills_com_16cu26", __vesloCurrentLocale())}</div>
-            <Show when={!props.workspaceAutoReloadAvailable}>
-              <div class="text-[11px] text-gray-9">{__vesloT("ui.literal.available_for_local_workspaces_in_the_deskto_zafle9", __vesloCurrentLocale())}</div>
-            </Show>
-          </div>
-          <Button
-            variant="outline"
-            class="text-xs h-8 py-0 px-3 shrink-0"
-            onClick={() => props.setWorkspaceAutoReloadEnabled(!props.workspaceAutoReloadEnabled)}
-            disabled={props.busy || !props.workspaceAutoReloadAvailable}
-          >
-            {props.workspaceAutoReloadEnabled ? tr("common.on") : tr("common.off")}
-          </Button>
-        </div>
-
-        <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-          <div class="min-w-0 space-y-1">
-            <div class="text-sm text-gray-12">{__vesloT("ui.literal.resume_sessions_after_auto_reload_18y2dh", __vesloCurrentLocale())}</div>
-            <div class="text-xs text-gray-7">
-              {__vesloT("ui.literal.if_a_reload_was_queued_while_tasks_were_runn_1sl29n", __vesloCurrentLocale())}</div>
-          </div>
-          <Button
-            variant="outline"
-            class="text-xs h-8 py-0 px-3 shrink-0"
-            onClick={() => props.setWorkspaceAutoReloadResumeEnabled(!props.workspaceAutoReloadResumeEnabled)}
-            disabled={
-              props.busy ||
-              !props.workspaceAutoReloadAvailable ||
-              !props.workspaceAutoReloadEnabled
-            }
-            title={props.workspaceAutoReloadEnabled ? "" : tr("config.enable_auto_reload_first")}
-          >
-            {props.workspaceAutoReloadResumeEnabled ? tr("common.on") : tr("common.off")}
-          </Button>
-        </div>
       </div>
 
       <Show when={props.developerMode}>
