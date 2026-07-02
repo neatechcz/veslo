@@ -117,7 +117,7 @@ only in a reserved worktree.
 
 | id | task | status | reserved_by | done |
 | --- | --- | --- | --- | --- |
-| CHR01 | explicit history availability contract | reserved | codex-20260702-chr01 | false |
+| CHR01 | explicit history availability contract | merged | codex-20260702-chr01 | true |
 | CHR02 | live fallback for active scoped sessions | available | null | false |
 | CHR03 | backfill host transcript after live recovery | available | null | false |
 | CHR04 | durable empty transcript marker | available | null | false |
@@ -130,12 +130,12 @@ only in a reserved worktree.
 
 ```yaml
 id: CHR01
-status: reserved
+status: merged
 reserved_by: codex-20260702-chr01
 reserved_at: 2026-07-02T02:32:49.8134941+02:00
 branch: conversation-history/chr01-availability-contract
 worktree: ../veslo-conversation-history-chr01-availability-contract
-done: false
+done: true
 depends_on: []
 target_files:
   - packages/app/src/app/context/session-selection-controller.ts
@@ -539,3 +539,6 @@ git diff --check
   `session-selection-controller.test.ts`, `conversation-service.test.ts`,
   `session-select-background-hydration.test.ts`,
   `session-navigation.test.ts`, and app typecheck.
+- 2026-07-02: CHR01 merged into `local/sandbox-merge` and re-verified in the
+  original worktree with the same 56 focused app tests, app typecheck, and
+  `git diff --check`.
