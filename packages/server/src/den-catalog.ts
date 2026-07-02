@@ -203,6 +203,9 @@ function toHubMcpItem(item: unknown, index: number): HubMcpItem {
   const oauth = toMcpOAuthConfig(config.oauth, index);
   const headers = toMcpHeaders(config.headers, index);
   const authorization = toMcpAuthorization(payload.authorization, index);
+  if (authorization?.type === "veslo-server-oauth" && oauth !== undefined && oauth !== false) {
+    throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
+  }
 
   return {
     id: payload.id,
