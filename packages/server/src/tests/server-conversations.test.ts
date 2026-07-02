@@ -1542,6 +1542,11 @@ describe("conversation routes", () => {
     expect(abortPayload.kind).toBe("abort");
     expect(receivedAbortPaths[0]).toBe(`/session/sess-created/abort?directory=${encodeURIComponent(workspaceRoot)}`);
     expect(receivedAbortDirectories[0]).toBe(workspaceRoot);
+    expect([
+      transcriptPayload.opencodeSessionId,
+      runPayload.opencodeSessionId,
+      abortPayload.opencodeSessionId,
+    ]).toEqual(["sess-created", "sess-created", "sess-created"]);
 
     const missingRunIdAbortResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(payload.conversationId)}/abort`,
@@ -1681,6 +1686,17 @@ describe("conversation routes", () => {
     expect(createResponse.status).toBe(201);
     const created = await createResponse.json() as { conversationId: string };
     expect(created.conversationId).toMatch(/^conv-/);
+    expect(upstreamHits).toBe(1);
+
+    const transcriptResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_b/sessions/${encodeURIComponent(created.conversationId)}/transcript?directory=${encodeURIComponent(workspaceRootB)}`,
+      {
+        headers: {
+          Authorization: "Bearer client-token",
+        },
+      },
+    );
+    expect(transcriptResponse.status).toBe(404);
     expect(upstreamHits).toBe(1);
 
     const runResponse = await fetch(

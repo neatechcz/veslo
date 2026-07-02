@@ -617,6 +617,65 @@ test("selectSession backfills active scoped live recovery under the OpenCode ses
   });
 });
 
+test("old scoped session recovery keeps UI identity while backfilling the OpenCode history id", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const offlineReads: any[] = [];
+      const liveReads: any[] = [];
+      const backfills: any[] = [];
+      const liveMessages = [makeMessage("open-legacy", "msg-legacy-live")];
+      const { controller, store } = makeController({
+        selectedSessionId: "conv-legacy",
+        shouldBrowseSessionFromDb: (sessionID) => sessionID === "conv-legacy",
+        resolveSessionWorkspaceId: (sessionID) => sessionID === "conv-legacy" ? "ws-a" : null,
+        activeClient: {
+          session: {
+            messages: async (input: any) => {
+              liveReads.push(input);
+              return ok(liveMessages);
+            },
+          },
+        },
+        loadOfflineTranscript: async (sessionID, limit) => {
+          offlineReads.push({ sessionID, limit });
+          return {
+            status: "unavailable",
+            scope: {
+              sessionId: sessionID,
+              workspaceId: "ws-a",
+              workspaceRoot: "/repo",
+              directory: "/repo",
+              conversationId: "conv-legacy",
+              opencodeSessionId: "open-legacy",
+            },
+            reason: "source-unavailable",
+          };
+        },
+        appendTranscriptSnapshot: async (input) => {
+          backfills.push(input);
+        },
+      });
+
+      await controller.selectSession("conv-legacy");
+
+      assert.deepEqual(offlineReads, [{ sessionID: "conv-legacy", limit: 140 }]);
+      assert.deepEqual(liveReads, [{ sessionID: "open-legacy", limit: 140 }]);
+      assert.deepEqual(store.messages["conv-legacy"], liveMessages.map((message) => message.info));
+      assert.equal(store.messages["open-legacy"], undefined);
+      assert.equal(backfills.length, 1);
+      assert.equal(backfills[0]?.workspaceId, "ws-a");
+      assert.equal(backfills[0]?.sessionId, "open-legacy");
+      assert.equal(backfills[0]?.directory, "/repo");
+      assert.equal(backfills[0]?.reason, "live-recovery");
+      assert.deepEqual(backfills[0]?.messages, liveMessages.map((message) => message.info));
+      assert.equal(controller.selectedSessionHistoryUnavailable(), null);
+      assert.equal(controller.selectedSessionHasEarlierMessages(), false);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("selectSession backfills empty active scoped live recovery", async () => {
   await createRoot(async (dispose) => {
     try {
