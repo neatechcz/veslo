@@ -98,6 +98,16 @@ function toMcpHeaders(value: unknown, index: number): Record<string, string> | u
   return result;
 }
 
+const FORBIDDEN_MCP_AUTHORIZATION_FIELD_NAMES = new Set([
+  "accesstoken",
+  "refreshtoken",
+  "idtoken",
+  "runtimetoken",
+  "token",
+  "clientid",
+  "clientsecret",
+]);
+
 function toMcpAuthorization(value: unknown, index: number): HubMcpAuthorization | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -105,7 +115,10 @@ function toMcpAuthorization(value: unknown, index: number): HubMcpAuthorization 
   }
 
   const payload = value as Record<string, unknown>;
+  const hasForbiddenTokenMaterial = Object.keys(payload).some((key) =>
+    FORBIDDEN_MCP_AUTHORIZATION_FIELD_NAMES.has(key.replace(/[-_]/g, "").toLowerCase()));
   if (
+    hasForbiddenTokenMaterial ||
     payload.type !== "veslo-server-oauth" ||
     typeof payload.provider !== "string" ||
     typeof payload.connectorId !== "string" ||

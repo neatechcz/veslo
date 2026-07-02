@@ -267,6 +267,158 @@ test("fetchOrgMcpCatalog preserves non-secret headers and server OAuth metadata"
   });
 });
 
+test("fetchOrgMcpCatalog preserves Microsoft provider server OAuth metadata without token material", async () => {
+  globalThis.fetch = asFetch(async () =>
+    new Response(JSON.stringify({
+      items: [
+        {
+          id: "microsoft-sharepoint",
+          name: "Microsoft SharePoint",
+          config: {
+            type: "remote",
+            url: "https://api.veslo.work/v1/orgs/org_123/integrations/microsoft/microsoft-sharepoint/mcp",
+            oauth: false,
+            headers: {
+              "X-Veslo-Connector": "microsoft-sharepoint",
+            },
+          },
+          authorization: {
+            type: "veslo-server-oauth",
+            provider: "microsoft",
+            connectorId: "microsoft-sharepoint",
+            scopes: [
+              "openid",
+              "profile",
+              "offline_access",
+              "https://graph.microsoft.com/Files.Read.All",
+              "https://graph.microsoft.com/Sites.Read.All",
+            ],
+            startPath: "/v1/orgs/org_123/integrations/microsoft/microsoft-sharepoint/oauth/start",
+            runtimeTokenPath: "/v1/orgs/org_123/integrations/microsoft/microsoft-sharepoint/runtime-token",
+            statusPath: "/v1/orgs/org_123/integrations/microsoft/connections",
+            disconnectPath: "/v1/orgs/org_123/integrations/microsoft/microsoft-sharepoint/connection",
+          },
+          source: { scope: "platform" },
+          provider: { id: "microsoft", group: "Microsoft" },
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+
+  const items = await fetchOrgMcpCatalog({
+    baseUrl: "https://den.example",
+    orgId: "org_123",
+    denToken: "token_abc",
+  });
+
+  expect(items[0]).toEqual({
+    id: "microsoft-sharepoint",
+    name: "Microsoft SharePoint",
+    config: {
+      type: "remote",
+      url: "https://api.veslo.work/v1/orgs/org_123/integrations/microsoft/microsoft-sharepoint/mcp",
+      oauth: false,
+      headers: {
+        "X-Veslo-Connector": "microsoft-sharepoint",
+      },
+    },
+    authorization: {
+      type: "veslo-server-oauth",
+      provider: "microsoft",
+      connectorId: "microsoft-sharepoint",
+      scopes: [
+        "openid",
+        "profile",
+        "offline_access",
+        "https://graph.microsoft.com/Files.Read.All",
+        "https://graph.microsoft.com/Sites.Read.All",
+      ],
+      startPath: "/v1/orgs/org_123/integrations/microsoft/microsoft-sharepoint/oauth/start",
+      runtimeTokenPath: "/v1/orgs/org_123/integrations/microsoft/microsoft-sharepoint/runtime-token",
+      statusPath: "/v1/orgs/org_123/integrations/microsoft/connections",
+      disconnectPath: "/v1/orgs/org_123/integrations/microsoft/microsoft-sharepoint/connection",
+    },
+    source: { scope: "platform" },
+    provider: { id: "microsoft", group: "Microsoft" },
+  });
+
+  const authorization = items[0]?.authorization as (Record<string, unknown> | undefined);
+  expect(authorization?.accessToken).toBeUndefined();
+  expect(authorization?.refreshToken).toBeUndefined();
+  expect(authorization?.runtimeToken).toBeUndefined();
+});
+
+test("fetchOrgMcpCatalog rejects malformed Microsoft authorization fields and token material", async () => {
+  const validAuthorization = {
+    type: "veslo-server-oauth",
+    provider: "microsoft",
+    connectorId: "microsoft-sharepoint",
+    scopes: [
+      "openid",
+      "profile",
+      "offline_access",
+      "https://graph.microsoft.com/Files.Read.All",
+      "https://graph.microsoft.com/Sites.Read.All",
+    ],
+    startPath: "/v1/orgs/org_123/integrations/microsoft/microsoft-sharepoint/oauth/start",
+    runtimeTokenPath: "/v1/orgs/org_123/integrations/microsoft/microsoft-sharepoint/runtime-token",
+    statusPath: "/v1/orgs/org_123/integrations/microsoft/connections",
+    disconnectPath: "/v1/orgs/org_123/integrations/microsoft/microsoft-sharepoint/connection",
+  };
+  const validItem = {
+    id: "microsoft-sharepoint",
+    name: "Microsoft SharePoint",
+    config: {
+      type: "remote",
+      url: "https://api.veslo.work/v1/orgs/org_123/integrations/microsoft/microsoft-sharepoint/mcp",
+      oauth: false,
+      headers: {
+        "X-Veslo-Connector": "microsoft-sharepoint",
+      },
+    },
+    authorization: validAuthorization,
+    source: { scope: "platform" },
+    provider: { id: "microsoft", group: "Microsoft" },
+  };
+
+  const invalidAuthorizations: unknown[] = [
+    { ...validAuthorization, provider: 123 },
+    { ...validAuthorization, connectorId: 123 },
+    { ...validAuthorization, scopes: "https://graph.microsoft.com/Sites.Read.All" },
+    { ...validAuthorization, scopes: ["https://graph.microsoft.com/Sites.Read.All", 123] },
+    { ...validAuthorization, runtimeTokenPath: 123 },
+    { ...validAuthorization, accessToken: "access-token-secret" },
+    { ...validAuthorization, refreshToken: "refresh-token-secret" },
+    { ...validAuthorization, runtimeToken: "runtime-token-secret" },
+  ];
+
+  for (const authorization of invalidAuthorizations) {
+    globalThis.fetch = asFetch(async () =>
+      new Response(JSON.stringify({
+        items: [
+          {
+            ...validItem,
+            authorization,
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+
+    await expect(fetchOrgMcpCatalog({
+      baseUrl: "https://den.example",
+      orgId: "org_123",
+      denToken: "token_abc",
+    })).rejects.toMatchObject({
+      status: 502,
+      code: "den_catalog_invalid_payload",
+    });
+  }
+});
+
 test("fetchOrgMcpCatalog rejects malformed header values", async () => {
   globalThis.fetch = asFetch(async () =>
     new Response(JSON.stringify({

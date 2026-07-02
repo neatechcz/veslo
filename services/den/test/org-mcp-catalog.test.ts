@@ -16,10 +16,16 @@ async function loadRouter() {
   return import("../src/http/org-mcp-catalog.js")
 }
 
-async function startServer(authorize: (req: any, res: any, options: any) => Promise<unknown>) {
+async function startServer(
+  authorize: (req: any, res: any, options: any) => Promise<unknown>,
+  options: { connectorBaseUrl?: string } = {},
+) {
   const { createOrgMcpCatalogRouter } = await loadRouter()
   const app = express()
-  app.use("/v1/orgs", createOrgMcpCatalogRouter({ authorize }))
+  app.use("/v1/orgs", createOrgMcpCatalogRouter({
+    authorize,
+    connectorBaseUrl: options.connectorBaseUrl,
+  }))
 
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -93,7 +99,7 @@ test("org mcp catalog authorizes allowed org access", async () => {
   }
 })
 
-test("org mcp catalog includes platform Google Workspace connectors", async () => {
+test("org mcp catalog includes platform Google Workspace and Microsoft connectors", async () => {
   const server = await startServer(async (req, _res, options) => ({
     session: {
       user: {
@@ -112,7 +118,7 @@ test("org mcp catalog includes platform Google Workspace connectors", async () =
     membershipId: "membership_1",
     orgRole: "member",
     isPlatformAdmin: false,
-  }))
+  }), { connectorBaseUrl: "https://api.veslo.work" })
 
   try {
     const response = await fetch(`http://127.0.0.1:${server.port}/v1/orgs/org_1/mcp/catalog`)
@@ -146,6 +152,7 @@ test("org mcp catalog includes platform Google Workspace connectors", async () =
       "google-gmail",
       "google-calendar",
       "google-drive",
+      "microsoft-sharepoint",
     ])
 
     const expectedConnectors = [
@@ -206,9 +213,42 @@ test("org mcp catalog includes platform Google Workspace connectors", async () =
       )
     }
 
+    assert.deepEqual(itemsById.get("microsoft-sharepoint"), {
+      id: "microsoft-sharepoint",
+      name: "Microsoft SharePoint",
+      config: {
+        type: "remote",
+        url: "https://api.veslo.work/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/mcp",
+        oauth: false,
+        headers: {
+          "X-Veslo-Connector": "microsoft-sharepoint",
+        },
+      },
+      authorization: {
+        type: "veslo-server-oauth",
+        provider: "microsoft",
+        connectorId: "microsoft-sharepoint",
+        scopes: [
+          "openid",
+          "profile",
+          "offline_access",
+          "https://graph.microsoft.com/Files.Read.All",
+          "https://graph.microsoft.com/Sites.Read.All",
+        ],
+        startPath: "/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/oauth/start",
+        runtimeTokenPath: "/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/runtime-token",
+        statusPath: "/v1/orgs/org_1/integrations/microsoft/connections",
+        disconnectPath: "/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/connection",
+      },
+      source: { scope: "platform" },
+      provider: { id: "microsoft", group: "Microsoft" },
+    })
+
     const serializedPayload = JSON.stringify(payload)
     assert.doesNotMatch(serializedPayload, /VESLO_GOOGLE_MCP_CLIENT_ID/)
     assert.doesNotMatch(serializedPayload, /VESLO_GOOGLE_MCP_CLIENT_SECRET/)
+    assert.doesNotMatch(serializedPayload, /MICROSOFT_CLIENT_ID/)
+    assert.doesNotMatch(serializedPayload, /MICROSOFT_CLIENT_SECRET/)
     assert.doesNotMatch(serializedPayload, /clientSecret/)
   } finally {
     await server.close()

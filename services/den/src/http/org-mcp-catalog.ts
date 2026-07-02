@@ -1,4 +1,5 @@
 import express from "express"
+import { MicrosoftConnectors } from "../microsoft/connectors.js"
 import { asyncRoute } from "./errors.js"
 import { requireOrganizationAccess } from "./org-auth.js"
 
@@ -79,6 +80,34 @@ function buildGoogleMcpConnectors(input: { baseUrl: string; orgId: string }) {
   }))
 }
 
+function buildMicrosoftMcpConnectors(input: { baseUrl: string; orgId: string }) {
+  const orgPath = `/v1/orgs/${encodeURIComponent(input.orgId)}`
+  return MicrosoftConnectors.map((connector) => ({
+    id: connector.id,
+    name: connector.name,
+    config: {
+      type: "remote",
+      url: `${input.baseUrl}${orgPath}/integrations/microsoft/${connector.id}/mcp`,
+      oauth: false,
+      headers: {
+        "X-Veslo-Connector": connector.id,
+      },
+    },
+    authorization: {
+      type: "veslo-server-oauth",
+      provider: "microsoft",
+      connectorId: connector.id,
+      scopes: connector.scopes,
+      startPath: `${orgPath}/integrations/microsoft/${connector.id}/oauth/start`,
+      runtimeTokenPath: `${orgPath}/integrations/microsoft/${connector.id}/runtime-token`,
+      statusPath: `${orgPath}/integrations/microsoft/connections`,
+      disconnectPath: `${orgPath}/integrations/microsoft/${connector.id}/connection`,
+    },
+    source: { scope: "platform" },
+    provider: { id: "microsoft", group: "Microsoft" },
+  }))
+}
+
 export type OrgMcpCatalogAuthorize = typeof requireOrganizationAccess
 
 export type OrgMcpCatalogRouterOptions = {
@@ -101,11 +130,19 @@ export function createOrgMcpCatalogRouter(options: OrgMcpCatalogRouterOptions = 
       return
     }
 
+    const baseUrl = connectorBaseUrl ?? resolvePublicBaseUrl(req)
+
     res.json({
-      items: buildGoogleMcpConnectors({
-        baseUrl: connectorBaseUrl ?? resolvePublicBaseUrl(req),
-        orgId: req.params.orgId,
-      }),
+      items: [
+        ...buildGoogleMcpConnectors({
+          baseUrl,
+          orgId: req.params.orgId,
+        }),
+        ...buildMicrosoftMcpConnectors({
+          baseUrl,
+          orgId: req.params.orgId,
+        }),
+      ],
     })
   }))
 
