@@ -336,5 +336,6 @@ test("org mcp catalog resolves provider-specific connector base urls", async () 
 test("den index mounts org mcp catalog router under /v1/orgs", () => {
   const source = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8")
   assert.match(source, /app\.use\("\/v1\/orgs",\s*createOrgMcpCatalogRouter\(/)
-  assert.match(source, /connectorBaseUrl:\s*env\.googleWorkspace\.connectorBaseUrl/)
+  assert.match(source, /googleConnectorBaseUrl:\s*env\.googleWorkspace\.connectorBaseUrl/)
+  assert.match(source, /microsoftConnectorBaseUrl:\s*env\.microsoft\.connectorBaseUrl/)
 })
