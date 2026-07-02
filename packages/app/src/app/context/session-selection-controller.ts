@@ -1,6 +1,6 @@
 import { reconcile } from "solid-js/store";
 
-import type { Session } from "@opencode-ai/sdk/v2/client";
+import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 
 import type { VesloSessionTranscriptSnapshot } from "../lib/veslo-server";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
@@ -17,7 +17,12 @@ import {
   sessionDirectoryMatchesRoot,
 } from "../utils";
 import type { MessageInfo, MessageWithParts, TodoItem } from "../types";
-import { sortSessionsByActivity, upsertSession } from "./session-store-model";
+import {
+  sortById,
+  sortMessagesByActivity,
+  sortSessionsByActivity,
+  upsertSession,
+} from "./session-store-model";
 import type { WorkspaceRouting } from "./workspace-routing";
 import {
   INITIAL_SESSION_MESSAGE_LIMIT,
@@ -50,6 +55,16 @@ type ConversationReader = {
   ) => Promise<{ items: Session[]; source?: "sqlite" | "unavailable" }>;
 };
 
+type AppendTranscriptSnapshot = (input: {
+  workspaceId: string;
+  sessionId: string;
+  directory?: string | null;
+  limit?: number;
+  messages: MessageInfo[];
+  partsByMessageId: Record<string, Part[]>;
+  reason?: string;
+}) => Promise<void> | void;
+
 export type SessionHistoryLoadScope = {
   sessionId: string;
   workspaceId?: string | null;
@@ -80,11 +95,13 @@ export type SessionSelectionControllerDeps = {
   directoryQueryPathMode?: () => DirectoryQueryPathMode;
   conversationReader?: () => ConversationReader | null;
   loadOfflineTranscript?: (sessionID: string, limit: number) => Promise<SessionOfflineTranscriptLoadResult>;
+  appendTranscriptSnapshot?: AppendTranscriptSnapshot;
   shouldBrowseSessionFromDb?: (sessionID: string) => boolean;
   developerMode: () => boolean;
   setError: (message: string | null) => void;
   onSessionLoadComplete?: () => void;
   sessionDebug: (label: string, payload?: unknown) => void;
+  sessionWarn: (label: string, payload?: unknown) => void;
   addError: (error: unknown, fallback?: string) => void;
   withTimeout: <T>(promise: Promise<T>, ms: number, label: string) => Promise<T>;
   isWorkspaceRuntimeReady: (workspaceId?: string | null) => boolean;
@@ -167,6 +184,54 @@ function normalizeHistoryLoadResult(
   };
 }
 
+function retargetSnapshotForUiSession(
+  snapshot: VesloSessionTranscriptSnapshot,
+  uiSessionID: string,
+): VesloSessionTranscriptSnapshot {
+  const id = uiSessionID.trim();
+  if (!id || snapshot.sessionId === id) return snapshot;
+  return {
+    ...snapshot,
+    sessionId: id,
+    opencodeSessionId: snapshot.opencodeSessionId ?? snapshot.sessionId,
+  };
+}
+
+function buildLiveRecoveryBackfillPayload(
+  history: Extract<SessionHistoryLoadResult, { status: "unavailable" }>,
+  transcript: MessageWithParts[],
+  limit: number,
+) {
+  const workspaceId = history.scope.workspaceId?.trim() ?? "";
+  const sessionId = history.scope.opencodeSessionId?.trim() ?? "";
+  const directory = history.scope.directory?.trim() || history.scope.workspaceRoot?.trim() || null;
+  const messages = sortMessagesByActivity(
+    transcript
+      .map((message) => message.info)
+      .filter((info): info is MessageInfo => Boolean(info?.id)),
+  );
+  if (!workspaceId || !sessionId || messages.length === 0) return null;
+
+  const partsByMessageId: Record<string, Part[]> = {};
+  for (const message of transcript) {
+    const messageId = message.info?.id?.trim() ?? "";
+    if (!messageId) continue;
+    partsByMessageId[messageId] = sortById(
+      message.parts.filter((part): part is Part => Boolean(part?.id)),
+    );
+  }
+
+  return {
+    workspaceId,
+    sessionId,
+    directory,
+    limit: Math.max(limit, messages.length),
+    messages,
+    partsByMessageId,
+    reason: "live-recovery",
+  };
+}
+
 export function createSessionSelectionController(deps: SessionSelectionControllerDeps) {
   let selectRunCounter = 0;
   const selectGuard = createSelectSessionGuard();
@@ -196,6 +261,40 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
     const id = deps.selectedSessionId();
     if (!id) return false;
     return Boolean(deps.messageLoadBusyBySession()[id]);
+  };
+
+  const backfillRecoveredLiveHistory = async (input: {
+    history: Extract<SessionHistoryLoadResult, { status: "unavailable" }>;
+    transcript: MessageWithParts[];
+    limit: number;
+    mark?: (event: string, payload?: Record<string, unknown>) => void;
+  }) => {
+    const writer = deps.appendTranscriptSnapshot;
+    if (!writer) return;
+    const payload = buildLiveRecoveryBackfillPayload(input.history, input.transcript, input.limit);
+    if (!payload) return;
+    try {
+      await writer(payload);
+      input.mark?.("live recovery backfill done", {
+        workspaceId: payload.workspaceId,
+        sessionID: payload.sessionId,
+        count: payload.messages.length,
+        limit: payload.limit,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      input.mark?.("live recovery backfill failed", {
+        workspaceId: payload.workspaceId,
+        sessionID: payload.sessionId,
+        error: message,
+      });
+      deps.sessionWarn("live-recovery-backfill:failed", {
+        workspaceId: payload.workspaceId,
+        sessionID: payload.sessionId,
+        reason: payload.reason,
+        error: message,
+      });
+    }
   };
 
   async function loadSessions(scopeRoot?: string) {
@@ -408,7 +507,7 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
           return { status: "stale" as const };
         }
         if (history.status === "loaded" || history.status === "empty") {
-          const snapshot = history.snapshot;
+          const snapshot = retargetSnapshotForUiSession(history.snapshot, sessionID);
           deps.hydrateTranscriptSnapshot(snapshot);
           deps.setStore("todos", sessionID, []);
           mark("offline transcript fallback done", {
@@ -480,6 +579,12 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
           ...prev,
           [sessionID]: msgs.length < requestLimit,
         }));
+        await backfillRecoveredLiveHistory({
+          history,
+          transcript: msgs,
+          limit: requestLimit,
+          mark,
+        });
         finishPerf(perfEnabled, "session.select", "complete", startedAt, {
           runId,
           sessionID,
@@ -626,7 +731,7 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
         if (history.status === "unavailable") {
           return { status: "unavailable" as const, history };
         }
-        deps.hydrateTranscriptSnapshot(history.snapshot);
+        deps.hydrateTranscriptSnapshot(retargetSnapshotForUiSession(history.snapshot, sessionID));
         return { status: "applied" as const, history };
       };
       const recoverUnavailableHistoryFromLive = async (
@@ -651,6 +756,11 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
             ...prev,
             [sessionID]: msgs.length < nextLimit,
           }));
+          await backfillRecoveredLiveHistory({
+            history,
+            transcript: msgs,
+            limit: nextLimit,
+          });
           return true;
         } catch (error) {
           if (deps.isSessionNotFoundError(error)) return false;
