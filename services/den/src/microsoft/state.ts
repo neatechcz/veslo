@@ -59,7 +59,12 @@ export function verifySignedMicrosoftOAuthState(
     now?: () => number
   },
 ): MicrosoftOAuthStatePayload | null {
-  const [encoded, signature] = state.split(".")
+  const parts = state.split(".")
+  if (parts.length !== 2) {
+    return null
+  }
+
+  const [encoded, signature] = parts
   if (!encoded || !signature) {
     return null
   }
@@ -84,7 +89,7 @@ export function verifySignedMicrosoftOAuthState(
       typeof parsed.redirectUri !== "string" ||
       typeof parsed.issuedAt !== "number" ||
       typeof parsed.expiresAt !== "number" ||
-      parsed.expiresAt < now
+      parsed.expiresAt <= now
     ) {
       return null
     }
@@ -136,7 +141,12 @@ export function verifySignedMicrosoftRuntimeToken(
     now?: () => number
   },
 ): MicrosoftRuntimeTokenPayload | null {
-  const [encoded, signature] = token.split(".")
+  const parts = token.split(".")
+  if (parts.length !== 2) {
+    return null
+  }
+
+  const [encoded, signature] = parts
   if (!encoded || !signature) {
     return null
   }
@@ -161,7 +171,7 @@ export function verifySignedMicrosoftRuntimeToken(
       !isMicrosoftConnectorId(parsed.connectorId) ||
       typeof parsed.issuedAt !== "number" ||
       typeof parsed.expiresAt !== "number" ||
-      parsed.expiresAt < now
+      parsed.expiresAt <= now
     ) {
       return null
     }

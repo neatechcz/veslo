@@ -292,7 +292,7 @@ export class DbMicrosoftConnectionStore implements MicrosoftConnectionStore {
   }): Promise<boolean> {
     const now = this.now()
     const encrypted = encryptMicrosoftGrant(this.key, emptyRevokedGrant())
-    await this.input.db
+    const result = await this.input.db
       .update(MicrosoftConnectionTable)
       .set({
         state: "revoked",
@@ -309,8 +309,20 @@ export class DbMicrosoftConnectionStore implements MicrosoftConnectionStore {
         eq(MicrosoftConnectionTable.connector_id, input.connectorId),
       ))
 
-    return true
+    return (getAffectedRows(result) ?? 0) > 0
   }
+}
+
+function getAffectedRows(value: unknown): number | null {
+  if (Array.isArray(value) && value.length > 0) {
+    return getAffectedRows(value[0])
+  }
+
+  if (!value || typeof value !== "object" || !("affectedRows" in value)) {
+    return null
+  }
+
+  return typeof value.affectedRows === "number" ? value.affectedRows : null
 }
 
 function emptyRevokedGrant(): MicrosoftOAuthGrant {

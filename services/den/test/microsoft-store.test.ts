@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   createMicrosoftGrantEncryptionKey,
+  DbMicrosoftConnectionStore,
   decryptMicrosoftGrant,
   encryptMicrosoftGrant,
   InMemoryMicrosoftConnectionStore,
@@ -113,3 +114,170 @@ test("disconnected Microsoft rows are revoked and expose no usable grant", async
     connectorId: "microsoft-sharepoint",
   }), null)
 })
+
+test("DB Microsoft connection store returns false when disconnect affects no rows", async () => {
+  const fakeDb = new FakeMicrosoftConnectionDb()
+  const store = new DbMicrosoftConnectionStore({
+    db: fakeDb.asDb(),
+    secretKey: "microsoft_secret_key_01234567890123456789",
+    now: () => new Date("2026-07-02T12:00:00.000Z"),
+  })
+
+  assert.equal(await store.disconnectConnection({
+    orgId: "org_missing",
+    userId: "user_missing",
+    connectorId: "microsoft-sharepoint",
+  }), false)
+})
+
+test("DB Microsoft connection store upserts encrypted grants and hides revoked grants", async () => {
+  const fakeDb = new FakeMicrosoftConnectionDb()
+  const store = new DbMicrosoftConnectionStore({
+    db: fakeDb.asDb(),
+    secretKey: "microsoft_secret_key_01234567890123456789",
+    now: () => new Date("2026-07-02T12:00:00.000Z"),
+  })
+
+  const created = await store.upsertConnection({
+    orgId: "org_1",
+    userId: "user_1",
+    connectorId: "microsoft-sharepoint",
+    scopes: ["https://graph.microsoft.com/Sites.Read.All"],
+    grant,
+  })
+
+  assert.equal(created.state, "connected")
+  assert.equal(fakeDb.rows.length, 1)
+  assert.doesNotMatch(fakeDb.rows[0]?.grant_ciphertext ?? "", /microsoft_access_token/)
+  assert.deepEqual(await store.getGrant({
+    orgId: "org_1",
+    userId: "user_1",
+    connectorId: "microsoft-sharepoint",
+  }), grant)
+
+  await store.upsertConnection({
+    orgId: "org_1",
+    userId: "user_1",
+    connectorId: "microsoft-sharepoint",
+    scopes: ["https://graph.microsoft.com/Files.Read.All"],
+    grant: {
+      ...grant,
+      accessToken: "updated_microsoft_access_token",
+      expiresAt: "2030-07-02T13:00:00.000Z",
+      scope: "https://graph.microsoft.com/Files.Read.All",
+    },
+  })
+
+  assert.equal(fakeDb.rows.length, 1)
+  assert.deepEqual(await store.getGrant({
+    orgId: "org_1",
+    userId: "user_1",
+    connectorId: "microsoft-sharepoint",
+  }), {
+    ...grant,
+    accessToken: "updated_microsoft_access_token",
+    expiresAt: "2030-07-02T13:00:00.000Z",
+    scope: "https://graph.microsoft.com/Files.Read.All",
+  })
+
+  assert.equal(await store.disconnectConnection({
+    orgId: "org_1",
+    userId: "user_1",
+    connectorId: "microsoft-sharepoint",
+  }), true)
+  assert.equal(fakeDb.rows[0]?.state, "revoked")
+  assert.equal(await store.getGrant({
+    orgId: "org_1",
+    userId: "user_1",
+    connectorId: "microsoft-sharepoint",
+  }), null)
+})
+
+type FakeMicrosoftConnectionRow = {
+  id: string
+  org_id: string
+  user_id: string
+  connector_id: "microsoft-sharepoint"
+  state: "connected" | "revoked" | "error"
+  scopes: string
+  access_token_expires_at: Date | null
+  grant_iv: string
+  grant_auth_tag: string
+  grant_ciphertext: string
+  connected_at: Date
+  revoked_at: Date | null
+  created_at: Date
+  updated_at: Date
+}
+
+class FakeMicrosoftConnectionDb {
+  readonly rows: FakeMicrosoftConnectionRow[] = []
+
+  asDb() {
+    return this as unknown as ConstructorParameters<typeof DbMicrosoftConnectionStore>[0]["db"]
+  }
+
+  insert() {
+    return {
+      values: (row: FakeMicrosoftConnectionRow) => ({
+        onDuplicateKeyUpdate: async ({ set }: { set: Partial<FakeMicrosoftConnectionRow> }) => {
+          const existing = this.findRow(row)
+          if (existing) {
+            Object.assign(existing, set)
+          } else {
+            this.rows.push({ ...row })
+          }
+          return [{ affectedRows: 1 }]
+        },
+      }),
+    }
+  }
+
+  update() {
+    return {
+      set: (patch: Partial<FakeMicrosoftConnectionRow>) => ({
+        where: async () => {
+          if (this.rows.length === 0) {
+            return [{ affectedRows: 0 }]
+          }
+
+          for (const row of this.rows) {
+            Object.assign(row, patch)
+          }
+          return [{ affectedRows: this.rows.length }]
+        },
+      }),
+    }
+  }
+
+  select(selection?: Record<string, unknown>) {
+    return {
+      from: () => ({
+        where: () => this.queryResult(Boolean(selection && "grant_iv" in selection)),
+      }),
+    }
+  }
+
+  private queryResult(grantOnly: boolean) {
+    const rows = grantOnly
+      ? this.rows
+        .filter((row) => row.state === "connected")
+        .map((row) => ({
+          grant_iv: row.grant_iv,
+          grant_auth_tag: row.grant_auth_tag,
+          grant_ciphertext: row.grant_ciphertext,
+        }))
+      : this.rows
+    return Object.assign([...rows], {
+      limit: async (count: number) => rows.slice(0, count),
+    })
+  }
+
+  private findRow(row: Pick<FakeMicrosoftConnectionRow, "org_id" | "user_id" | "connector_id">) {
+    return this.rows.find((candidate) =>
+      candidate.org_id === row.org_id &&
+      candidate.user_id === row.user_id &&
+      candidate.connector_id === row.connector_id
+    )
+  }
+}
