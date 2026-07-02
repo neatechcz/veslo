@@ -60,6 +60,8 @@ function makeTranscriptSnapshot(
 
 function makeController(options: {
   activeClient?: any;
+  activeWorkspaceId?: string;
+  clientByWorkspaceId?: Record<string, any>;
   selectedSessionId?: string | null;
   conversationReader?: () => {
     listConversations: (
@@ -88,10 +90,17 @@ function makeController(options: {
   const messageWrites: Array<{ sessionID: string; messages: MessageWithParts[] }> = [];
   let refreshPermissionCalls = 0;
   const activeClient = options.activeClient ?? null;
+  const activeWorkspaceId = options.activeWorkspaceId ?? "ws-a";
+  const clientByWorkspaceId = options.clientByWorkspaceId ?? {};
   const routing = {
     active: () => activeClient,
-    client: (workspaceId?: string) => (workspaceId === "ws-b" ? activeClient : activeClient),
-    activeWorkspaceId: () => "ws-a",
+    client: (workspaceId?: string) => {
+      const id = workspaceId?.trim() ?? "";
+      return id && Object.prototype.hasOwnProperty.call(clientByWorkspaceId, id)
+        ? clientByWorkspaceId[id]
+        : activeClient;
+    },
+    activeWorkspaceId: () => activeWorkspaceId,
   };
 
   const controller = createSessionSelectionController({
@@ -119,15 +128,24 @@ function makeController(options: {
       return { workspaceId, client: workspaceId ? routing.client(workspaceId) : routing.active() };
     },
     sessionReadPolicy: (sessionID, workspaceId) => {
-      const foreignWorkspace = Boolean(workspaceId && workspaceId !== "ws-a");
-      const runtimeReady = options.isWorkspaceRuntimeReady?.(workspaceId || "ws-a") ?? true;
+      const foreignWorkspace = Boolean(workspaceId && workspaceId !== activeWorkspaceId);
+      const runtimeReady = options.isWorkspaceRuntimeReady?.(workspaceId || activeWorkspaceId) ?? true;
       const configuredBrowseFromDb = options.shouldBrowseSessionFromDb?.(sessionID) ?? false;
+      const liveRecoveryFromUnavailable = Boolean(
+        configuredBrowseFromDb &&
+        workspaceId &&
+        activeWorkspaceId &&
+        workspaceId === activeWorkspaceId &&
+        runtimeReady &&
+        !foreignWorkspace,
+      );
       return {
-        activeWorkspaceId: "ws-a",
+        activeWorkspaceId,
         browseFromDb: configuredBrowseFromDb || !runtimeReady || foreignWorkspace,
         browseModeOnly: !runtimeReady,
         configuredBrowseFromDb,
         foreignWorkspace,
+        liveRecoveryFromUnavailable,
         sessionWorkspaceId: workspaceId,
       };
     },
@@ -342,6 +360,188 @@ test("selectSession preserves explicit unavailable history without hydrating a f
 
       assert.equal(hydratedSnapshots.length, 0);
       assert.equal(messageCalls, 0, "CHR01 should preserve host-first behavior; CHR02 owns live fallback");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("selectSession recovers active scoped unavailable history from live OpenCode messages", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const messageCalls: any[] = [];
+      const liveMessages = [makeMessage("open-active", "msg-live")];
+      const { controller, hydratedSnapshots, messageWrites, store } = makeController({
+        shouldBrowseSessionFromDb: (sessionID) => sessionID === "conv-active",
+        resolveSessionWorkspaceId: (sessionID) => sessionID === "conv-active" ? "ws-a" : null,
+        activeClient: {
+          session: {
+            messages: async (input: any) => {
+              messageCalls.push(input);
+              return ok(liveMessages);
+            },
+          },
+        },
+        loadOfflineTranscript: async (sessionID) => ({
+          status: "unavailable",
+          scope: {
+            sessionId: sessionID,
+            workspaceId: "ws-a",
+            directory: "/repo",
+            conversationId: "conv-active",
+            opencodeSessionId: "open-active",
+          },
+          reason: "source-unavailable",
+        }),
+      });
+
+      await controller.selectSession("conv-active");
+
+      assert.deepEqual(messageCalls, [{ sessionID: "open-active", limit: 140 }]);
+      assert.equal(hydratedSnapshots.length, 0);
+      assert.equal(messageWrites.length, 1);
+      assert.equal(messageWrites[0]?.sessionID, "conv-active");
+      assert.deepEqual(store.messages["conv-active"], liveMessages.map((message) => message.info));
+      assert.equal(store.messages["open-active"], undefined);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("selectSession keeps active scoped unavailable history unavailable when live OpenCode is missing", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const messageCalls: any[] = [];
+      const { controller, hydratedSnapshots, messageWrites } = makeController({
+        shouldBrowseSessionFromDb: (sessionID) => sessionID === "conv-missing",
+        resolveSessionWorkspaceId: (sessionID) => sessionID === "conv-missing" ? "ws-a" : null,
+        activeClient: {
+          session: {
+            messages: async (input: any) => {
+              messageCalls.push(input);
+              throw new Error("NotFoundError: Session not found");
+            },
+          },
+        },
+        loadOfflineTranscript: async (sessionID) => ({
+          status: "unavailable",
+          scope: {
+            sessionId: sessionID,
+            workspaceId: "ws-a",
+            directory: "/repo",
+            conversationId: "conv-missing",
+            opencodeSessionId: "open-missing",
+          },
+          reason: "source-unavailable",
+        }),
+      });
+
+      await controller.selectSession("conv-missing");
+
+      assert.deepEqual(messageCalls, [{ sessionID: "open-missing", limit: 140 }]);
+      assert.equal(hydratedSnapshots.length, 0);
+      assert.equal(messageWrites.length, 0);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("selectSession does not recover inactive scoped unavailable history through a foreign live client", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      let activeLiveCalls = 0;
+      let foreignLiveCalls = 0;
+      const { controller, hydratedSnapshots, messageWrites } = makeController({
+        shouldBrowseSessionFromDb: (sessionID) => sessionID === "conv-foreign",
+        resolveSessionWorkspaceId: (sessionID) => sessionID === "conv-foreign" ? "ws-b" : null,
+        activeClient: {
+          session: {
+            messages: async () => {
+              activeLiveCalls += 1;
+              return ok([makeMessage("open-active")]);
+            },
+          },
+        },
+        clientByWorkspaceId: {
+          "ws-b": {
+            session: {
+              messages: async () => {
+                foreignLiveCalls += 1;
+                return ok([makeMessage("open-foreign")]);
+              },
+            },
+          },
+        },
+        loadOfflineTranscript: async (sessionID) => ({
+          status: "unavailable",
+          scope: {
+            sessionId: sessionID,
+            workspaceId: "ws-b",
+            directory: "/repo-b",
+            conversationId: "conv-foreign",
+            opencodeSessionId: "open-foreign",
+          },
+          reason: "source-unavailable",
+        }),
+      });
+
+      await controller.selectSession("conv-foreign");
+
+      assert.equal(activeLiveCalls, 0);
+      assert.equal(foreignLiveCalls, 0);
+      assert.equal(hydratedSnapshots.length, 0);
+      assert.equal(messageWrites.length, 0);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("loadEarlierMessages continues active scoped unavailable history through live OpenCode messages", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const messageCalls: any[] = [];
+      const firstBatch = Array.from({ length: 140 }, (_, index) =>
+        makeMessage("open-active-long", `msg-${index + 1}`),
+      );
+      const expandedBatch = Array.from({ length: 160 }, (_, index) =>
+        makeMessage("open-active-long", `msg-${index + 1}`),
+      );
+      const { controller, store } = makeController({
+        shouldBrowseSessionFromDb: (sessionID) => sessionID === "conv-active-long",
+        resolveSessionWorkspaceId: (sessionID) => sessionID === "conv-active-long" ? "ws-a" : null,
+        activeClient: {
+          session: {
+            messages: async (input: any) => {
+              messageCalls.push(input);
+              return ok(input.limit === 160 ? expandedBatch : firstBatch);
+            },
+          },
+        },
+        loadOfflineTranscript: async (sessionID) => ({
+          status: "unavailable",
+          scope: {
+            sessionId: sessionID,
+            workspaceId: "ws-a",
+            directory: "/repo",
+            conversationId: "conv-active-long",
+            opencodeSessionId: "open-active-long",
+          },
+          reason: "source-unavailable",
+        }),
+      });
+
+      await controller.selectSession("conv-active-long");
+      await controller.loadEarlierMessages("conv-active-long", 20);
+
+      assert.deepEqual(messageCalls, [
+        { sessionID: "open-active-long", limit: 140 },
+        { sessionID: "open-active-long", limit: 160 },
+      ]);
+      assert.equal(store.messages["conv-active-long"]?.length, 160);
+      assert.equal(store.messages["open-active-long"], undefined);
     } finally {
       dispose();
     }

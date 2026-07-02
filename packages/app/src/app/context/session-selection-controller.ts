@@ -38,6 +38,7 @@ type SessionReadPolicy = {
   browseModeOnly: boolean;
   configuredBrowseFromDb: boolean;
   foreignWorkspace: boolean;
+  liveRecoveryFromUnavailable: boolean;
   sessionWorkspaceId: string;
 };
 
@@ -389,7 +390,10 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
         try {
           history = normalizeHistoryLoadResult(
             await deps.loadOfflineTranscript?.(sessionID, requestLimit),
-            { sessionId: sessionID },
+            {
+              sessionId: sessionID,
+              workspaceId: readPolicy.sessionWorkspaceId || readPolicy.activeWorkspaceId || null,
+            },
             "offline-transcript-unavailable",
           );
         } catch (error) {
@@ -398,9 +402,11 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
             reason,
             error: error instanceof Error ? error.message : safeStringify(error),
           });
-          return false;
+          return { status: "failed" as const };
         }
-        if (abortIfStale("selection changed before offline transcript applied")) return true;
+        if (abortIfStale("selection changed before offline transcript applied")) {
+          return { status: "stale" as const };
+        }
         if (history.status === "loaded" || history.status === "empty") {
           const snapshot = history.snapshot;
           deps.hydrateTranscriptSnapshot(snapshot);
@@ -411,14 +417,76 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
             reason,
             status: history.status,
           });
-          return true;
+          return { status: "applied" as const, history };
         }
         mark("offline transcript fallback unavailable", {
           reason,
           unavailableReason: history.reason ?? null,
           scope: history.scope,
         });
-        return false;
+        return { status: "unavailable" as const, history };
+      };
+      const recoverUnavailableHistoryFromLive = async (
+        history: Extract<SessionHistoryLoadResult, { status: "unavailable" }>,
+      ) => {
+        const engineSessionID = history.scope.opencodeSessionId?.trim() ?? "";
+        if (!c || !readPolicy.liveRecoveryFromUnavailable || !engineSessionID) {
+          mark("live recovery skipped", {
+            hasClient: Boolean(c),
+            liveRecoveryFromUnavailable: readPolicy.liveRecoveryFromUnavailable,
+            hasEngineSessionId: Boolean(engineSessionID),
+            activeWorkspaceId: readPolicy.activeWorkspaceId || null,
+            sessionWorkspaceId: readPolicy.sessionWorkspaceId || null,
+          });
+          return false;
+        }
+        mark("calling live recovery session.messages", {
+          limit: requestLimit,
+          uiSessionID: sessionID,
+          engineSessionID,
+        });
+        let msgs: MessageWithParts[];
+        try {
+          msgs = unwrap(
+            await deps.withTimeout(
+              c.session.messages({ sessionID: engineSessionID, limit: requestLimit }),
+              12000,
+              "session.messages",
+            ),
+          );
+        } catch (error) {
+          mark("live recovery session.messages failed", {
+            engineSessionID,
+            error: error instanceof Error ? error.message : safeStringify(error),
+          });
+          if (deps.isSessionNotFoundError(error)) return false;
+          deps.addError(error);
+          return false;
+        }
+        mark("live recovery session.messages done", {
+          limit: requestLimit,
+          count: msgs.length,
+          uiSessionID: sessionID,
+          engineSessionID,
+        });
+        if (abortIfStale("selection changed before live recovery messages applied")) return true;
+        deps.setMessagesForSession(sessionID, msgs);
+        deps.setStore("todos", sessionID, []);
+        deps.setMessageLimitBySession((prev: Record<string, number>) => ({
+          ...prev,
+          [sessionID]: requestLimit,
+        }));
+        deps.setMessageCompleteBySession((prev: Record<string, boolean>) => ({
+          ...prev,
+          [sessionID]: msgs.length < requestLimit,
+        }));
+        finishPerf(perfEnabled, "session.select", "complete", startedAt, {
+          runId,
+          sessionID,
+          messageCount: msgs.length,
+          todoCount: (deps.store.todos[sessionID] ?? []).length,
+        });
+        return true;
       };
       mark("client check", {
         hasClient: Boolean(c),
@@ -426,13 +494,17 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
         browseFromDb: readPolicy.browseFromDb,
         configuredBrowseFromDb: readPolicy.configuredBrowseFromDb,
         foreignWorkspace: readPolicy.foreignWorkspace,
+        liveRecoveryFromUnavailable: readPolicy.liveRecoveryFromUnavailable,
         sessionID,
         activeWorkspaceId: readPolicy.activeWorkspaceId || null,
         sessionWorkspaceId: readPolicy.sessionWorkspaceId || null,
       });
       if (!c || readPolicy.browseFromDb) {
         try {
-          await loadOfflineTranscriptFallback(!c ? "client unavailable" : "read policy");
+          const fallback = await loadOfflineTranscriptFallback(!c ? "client unavailable" : "read policy");
+          if (fallback.status === "unavailable") {
+            await recoverUnavailableHistoryFromLive(fallback.history);
+          }
         } finally {
           deps.setMessageLoadBusyBySession((prev: Record<string, boolean>) => ({
             ...prev,
@@ -453,7 +525,7 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
         });
         if (deps.isSessionNotFoundError(error)) {
           const recovered = await loadOfflineTranscriptFallback("session not found");
-          if (recovered) return;
+          if (recovered.status === "applied" || recovered.status === "stale") return;
         }
         deps.addError(error);
         return;
@@ -545,15 +617,51 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
       const loadOfflineTranscriptFallback = async () => {
         const history = normalizeHistoryLoadResult(
           await deps.loadOfflineTranscript?.(sessionID, nextLimit),
-          { sessionId: sessionID },
+          {
+            sessionId: sessionID,
+            workspaceId: readPolicy.sessionWorkspaceId || readPolicy.activeWorkspaceId || null,
+          },
           "offline-transcript-unavailable",
         );
-        if (history.status === "unavailable") return false;
+        if (history.status === "unavailable") {
+          return { status: "unavailable" as const, history };
+        }
         deps.hydrateTranscriptSnapshot(history.snapshot);
-        return true;
+        return { status: "applied" as const, history };
+      };
+      const recoverUnavailableHistoryFromLive = async (
+        history: Extract<SessionHistoryLoadResult, { status: "unavailable" }>,
+      ) => {
+        const engineSessionID = history.scope.opencodeSessionId?.trim() ?? "";
+        if (!c || !readPolicy.liveRecoveryFromUnavailable || !engineSessionID) return false;
+        try {
+          const msgs = unwrap(
+            await deps.withTimeout(
+              c.session.messages({ sessionID: engineSessionID, limit: nextLimit }),
+              12000,
+              "session.messages",
+            ),
+          );
+          deps.setMessagesForSession(sessionID, msgs);
+          deps.setMessageLimitBySession((prev: Record<string, number>) => ({
+            ...prev,
+            [sessionID]: nextLimit,
+          }));
+          deps.setMessageCompleteBySession((prev: Record<string, boolean>) => ({
+            ...prev,
+            [sessionID]: msgs.length < nextLimit,
+          }));
+          return true;
+        } catch (error) {
+          if (deps.isSessionNotFoundError(error)) return false;
+          throw error;
+        }
       };
       if (!c || readPolicy.browseFromDb) {
-        await loadOfflineTranscriptFallback();
+        const fallback = await loadOfflineTranscriptFallback();
+        if (fallback.status === "unavailable") {
+          await recoverUnavailableHistoryFromLive(fallback.history);
+        }
         return;
       }
       try {
@@ -570,8 +678,9 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
           [sessionID]: msgs.length < nextLimit,
         }));
       } catch (error) {
-        if (deps.isSessionNotFoundError(error) && await loadOfflineTranscriptFallback()) {
-          return;
+        if (deps.isSessionNotFoundError(error)) {
+          const fallback = await loadOfflineTranscriptFallback();
+          if (fallback.status === "applied") return;
         }
         throw error;
       }
