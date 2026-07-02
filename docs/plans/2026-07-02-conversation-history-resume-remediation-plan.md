@@ -644,3 +644,9 @@ git diff --check
   original worktree with the CHR06 focused app suite (60 passed), focused
   server suite (73 passed), app typecheck, server typecheck, and
   `git diff --check`.
+- 2026-07-02: Final Acceptance completed in the original worktree after
+  CHR01-CHR06 were merged. The first app run exposed an unrelated
+  `app-changes` dependency-list regression in archive handler wiring; fixed by
+  passing the cleanup-aware archive handler as a plain adapter dependency.
+  Re-run passed with app focused suite (111 passed), server suite (73 passed),
+  app typecheck, server typecheck, and `git diff --check`.

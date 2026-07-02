@@ -159,7 +159,7 @@ test("archiving the active sidebar session clears the displayed conversation onl
 
   assert.match(
     appSource,
-    /archiveSidebarSession: archiveSidebarSessionAndClearActive,/,
+    /archiveSidebarSessionAndClearActive,/,
     "session and dashboard sidebars should receive the cleanup-aware archive handler",
   );
 });

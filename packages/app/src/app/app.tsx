@@ -4082,7 +4082,7 @@ export default function App() {
     archivedSessionIds,
     activeSessionStatusById,
     busySessionByWorkspaceId,
-    archiveSidebarSession: archiveSidebarSessionAndClearActive,
+    archiveSidebarSessionAndClearActive,
     reportError,
     setError,
     safeStringify,

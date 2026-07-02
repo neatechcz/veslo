@@ -232,7 +232,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     archivedSessionIds,
     activeSessionStatusById,
     busySessionByWorkspaceId,
-    archiveSidebarSession,
+    archiveSidebarSessionAndClearActive,
     reportError,
     setError,
     safeStringify,
@@ -667,7 +667,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
       sessionStatusById: activeSessionStatusById(),
       busySessionByWorkspaceId: busySessionByWorkspaceId(),
       archiveSession: (workspaceId: string, sessionId: string) =>
-        archiveSidebarSession(workspaceId, sessionId).catch((error: unknown) => {
+        archiveSidebarSessionAndClearActive(workspaceId, sessionId).catch((error: unknown) => {
           reportError(error, "sessionArchives.archiveSidebar");
           setError(error instanceof Error ? error.message : safeStringify(error));
         }),
@@ -1027,7 +1027,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     subagentDecorationsBySessionId: subagentDecorationsBySessionId(),
     archivedSessionIds: archivedSessionIds(),
     archiveSession: (workspaceId: string, sessionId: string) =>
-      archiveSidebarSession(workspaceId, sessionId).catch((error: unknown) => {
+      archiveSidebarSessionAndClearActive(workspaceId, sessionId).catch((error: unknown) => {
         reportError(error, "sessionArchives.archiveSidebar");
         setError(error instanceof Error ? error.message : safeStringify(error));
       }),
