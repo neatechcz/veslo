@@ -39,6 +39,12 @@ Fix 18 (`docs/fixes/2026-07-02-fix-18-app-tsx-modularization-complete.md`). `app
 composition root. Put new business behavior into the owning context/page/lib module and wire it
 through the shell only when the behavior needs app-level dependencies.
 
+Fix 19 (`docs/fixes/2026-07-02-fix-19-app-tsx-architecture-hardening.md`) hardened the shell
+itself: init-cycle dependencies bind through `lib/late-bound.ts` (never new ad-hoc mutable refs;
+pre-bind access is reported to bootstrap diagnostics), session id joins go through
+`lib/session-identity.ts`, and navigation-aware destructive workflows belong in `controllers/`
+(see `controllers/session-folder-move-controller.ts`).
+
 ## Dashboard Tabs
 
 These live under `packages/app/src/app/pages/` and are composed by `dashboard.tsx`.

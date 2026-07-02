@@ -162,6 +162,24 @@ test("session hover action uses archive icon instead of three dots", () => {
 
   assert.match(
     source,
+    /const archiveActionTestId = \(workspaceId: string, sessionId: string\) =>[\s\S]*"session-sidebar-archive-confirm-button"[\s\S]*"session-sidebar-unarchive-button"[\s\S]*"session-sidebar-archive-button"/,
+    "archive action should expose stable test ids for archive, confirm, and unarchive states",
+  );
+
+  assert.match(
+    source,
+    /data-testid=\{archiveActionTestId\(workspace\(\)\.id, session\(\)\.id\)\}[\s\S]*data-session-id=\{session\(\)\.id\}[\s\S]*data-workspace-id=\{workspace\(\)\.id\}/,
+    "recent row archive action should expose stable test selectors and scope attributes",
+  );
+
+  assert.match(
+    source,
+    /data-testid=\{archiveActionTestId\(row\.workspace\.id, row\.session\.id\)\}[\s\S]*data-session-id=\{row\.session\.id\}[\s\S]*data-workspace-id=\{row\.workspace\.id\}/,
+    "by-project row archive action should expose stable test selectors and scope attributes",
+  );
+
+  assert.match(
+    source,
     /<Show when=\{archiveConfirmationPending\(\)\} fallback=\{<Archive size=\{14\} \/>\}>\s*\{tr\("sidebar\.archive_confirm"\)\}/,
     "archive action should switch to localized inline confirm text before final archive",
   );

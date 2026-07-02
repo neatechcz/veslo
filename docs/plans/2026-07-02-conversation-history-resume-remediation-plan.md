@@ -118,7 +118,7 @@ only in a reserved worktree.
 | id | task | status | reserved_by | done |
 | --- | --- | --- | --- | --- |
 | CHR01 | explicit history availability contract | merged | codex-20260702-chr01 | true |
-| CHR02 | live fallback for active scoped sessions | available | null | false |
+| CHR02 | live fallback for active scoped sessions | reserved | codex-20260702-chr02 | false |
 | CHR03 | backfill host transcript after live recovery | available | null | false |
 | CHR04 | durable empty transcript marker | available | null | false |
 | CHR05 | unavailable-history UI/state and retry path | available | null | false |
@@ -191,9 +191,9 @@ pnpm --filter @neatech/veslo-ui typecheck
 
 ```yaml
 id: CHR02
-status: available
-reserved_by: null
-reserved_at: null
+status: reserved
+reserved_by: codex-20260702-chr02
+reserved_at: 2026-07-02T02:42:04.1892652+02:00
 branch: conversation-history/chr02-active-live-fallback
 worktree: ../veslo-conversation-history-chr02-active-live-fallback
 done: false

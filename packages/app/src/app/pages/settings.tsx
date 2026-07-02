@@ -1240,7 +1240,12 @@ export default function SettingsView(props: SettingsViewProps) {
                   <div class="space-y-2">
                     <For each={archivedSessionRows()}>
                       {(item) => (
-                        <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-3 space-y-3">
+                        <div
+                          class="rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-3 space-y-3"
+                          data-testid="settings-archived-session-row"
+                          data-session-id={item.sessionId}
+                          data-workspace-id={item.workspaceId}
+                        >
                           <div class="flex items-start justify-between gap-3">
                             <div class="min-w-0 space-y-1">
                               <div class="flex flex-wrap items-center gap-2">
@@ -1258,6 +1263,9 @@ export default function SettingsView(props: SettingsViewProps) {
                             </div>
                             <Button
                               variant="outline"
+                              data-testid="settings-archived-session-unarchive-button"
+                              data-session-id={item.sessionId}
+                              data-workspace-id={item.workspaceId}
                               class="text-xs h-8 py-0 px-3 shrink-0"
                               onClick={() => void handleUnarchiveArchivedSession(item)}
                               disabled={props.busy || !props.onUnarchiveSession}

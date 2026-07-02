@@ -48,3 +48,10 @@ test("settings exposes unavailable-on-this-device copy for archived sessions", (
   assert.match(source, /settings\.archived_sessions_unavailable_on_device/);
   assert.match(source, /settings\.archived_sessions_unarchive/);
 });
+
+test("settings archived sessions expose stable row and unarchive selectors", () => {
+  assert.match(archivedSection, /data-testid=["']settings-archived-session-row["']/);
+  assert.match(archivedSection, /data-testid=["']settings-archived-session-unarchive-button["']/);
+  assert.match(archivedSection, /data-session-id=\{item\.sessionId\}/);
+  assert.match(archivedSection, /data-workspace-id=\{item\.workspaceId\}/);
+});

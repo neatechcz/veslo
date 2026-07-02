@@ -589,6 +589,12 @@ export default function WorkspaceSessionList(props: Props) {
     archivedSessionIdSet().has(archiveKeyFor(workspaceId, sessionId));
   const isArchiveConfirmationPending = (workspaceId: string, sessionId: string) =>
     pendingArchiveConfirmationSessionId() === archiveKeyFor(workspaceId, sessionId);
+  const archiveActionTestId = (workspaceId: string, sessionId: string) =>
+    isArchiveConfirmationPending(workspaceId, sessionId)
+      ? "session-sidebar-archive-confirm-button"
+      : isSessionArchived(workspaceId, sessionId)
+      ? "session-sidebar-unarchive-button"
+      : "session-sidebar-archive-button";
   const sessionHoverActionsSuspended = createMemo(() => Boolean(props.pendingSelectedSessionId?.trim()));
   const shouldShowSessionRow = (row: FlatSessionRow) => !isSessionArchived(row.workspace.id, row.session.id);
 
@@ -2024,6 +2030,9 @@ export default function WorkspaceSessionList(props: Props) {
         >
           <button
             type="button"
+            data-testid={archiveActionTestId(row.workspace.id, row.session.id)}
+            data-session-id={row.session.id}
+            data-workspace-id={row.workspace.id}
             class={archiveConfirmationPending()
               ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
               : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
@@ -2169,6 +2178,9 @@ export default function WorkspaceSessionList(props: Props) {
         >
           <button
             type="button"
+            data-testid={archiveActionTestId(workspace().id, session().id)}
+            data-session-id={session().id}
+            data-workspace-id={workspace().id}
             class={archiveConfirmationPending()
               ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
               : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
