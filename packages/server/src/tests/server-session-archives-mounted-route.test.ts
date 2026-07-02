@@ -152,6 +152,67 @@ test("mounted workspace URLs can archive, list, and unarchive sessions", async (
   expect(await deleteResponse.json()).toEqual({ items: [] });
 });
 
+test("session archive CORS preflight allows browser archive mutations", async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-archive-cors-"));
+  tempDirs.push(workspaceRoot);
+  await useTempArchiveStore();
+
+  const server = startServer({
+    host: "127.0.0.1",
+    port: 0,
+    token: "client-token",
+    hostToken: "host-token",
+    approval: { mode: "auto", timeoutMs: 1_000 },
+    corsOrigins: ["*"],
+    workspaces: [
+      {
+        id: "ws_1",
+        name: "Workspace",
+        path: workspaceRoot,
+        workspaceType: "local",
+      },
+    ],
+    authorizedRoots: [workspaceRoot],
+    readOnly: false,
+    startedAt: Date.now(),
+    tokenSource: "cli",
+    hostTokenSource: "cli",
+    logFormat: "pretty",
+    logRequests: false,
+    debugLogs: {
+      enabled: false,
+      ingestUrl: null,
+      ingestToken: null,
+      batchMaxEvents: 200,
+      batchMaxBytes: 256 * 1024,
+      spoolMaxBytes: 100 * 1024 * 1024,
+      flushIntervalMs: 5000,
+    },
+  });
+  runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
+
+  for (const requestedMethod of ["PUT", "DELETE"] as const) {
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/session-archives/session-a`,
+      {
+        method: "OPTIONS",
+        headers: {
+          Origin: "http://127.0.0.1:51217",
+          "Access-Control-Request-Method": requestedMethod,
+          "Access-Control-Request-Headers": "authorization,content-type,x-veslo-account-id",
+        },
+      },
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe("*");
+    const allowedMethods = response.headers.get("access-control-allow-methods") ?? "";
+    expect(allowedMethods.split(",").map((method) => method.trim())).toContain(requestedMethod);
+    const allowedHeaders = response.headers.get("access-control-allow-headers")?.toLowerCase() ?? "";
+    expect(allowedHeaders).toContain("x-veslo-account-id");
+  }
+});
+
 test("session archives keep duplicate session ids scoped by workspace", async () => {
   const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-archive-scoped-"));
   tempDirs.push(workspaceRoot);
