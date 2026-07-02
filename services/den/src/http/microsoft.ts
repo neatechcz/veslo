@@ -1,7 +1,9 @@
 import express from "express"
 
 import { MicrosoftConnectors, getMicrosoftConnector, type MicrosoftConnectorId } from "../microsoft/connectors.js"
+import { MicrosoftGraphClient } from "../microsoft/graph.js"
 import type { MicrosoftOAuthClient } from "../microsoft/oauth.js"
+import { dispatchSharePointMcpRequest } from "../microsoft/sharepoint-mcp.js"
 import type { MicrosoftConnectionStore } from "../microsoft/store.js"
 import {
   createSignedMicrosoftOAuthState,
@@ -23,6 +25,9 @@ export type MicrosoftRouterOptions = {
   successRedirectUrl: string
   now?: () => number
   runtimeTokenTtlMs?: number
+  fetchImpl?: typeof fetch
+  microsoftGraphBaseUrl?: string
+  microsoftGraphMaxContentBytes?: number
 }
 
 export function createMicrosoftRouter(options: MicrosoftRouterOptions) {
@@ -328,10 +333,18 @@ export function createMicrosoftRouter(options: MicrosoftRouterOptions) {
       return
     }
 
-    res.status(501).json({
-      error: "microsoft_mcp_tools_not_implemented",
-      connectorId: connector.id,
+    const graph = new MicrosoftGraphClient({
+      accessToken: grant.accessToken,
+      baseUrl: options.microsoftGraphBaseUrl ?? connector.mcpUrl,
+      fetchImpl: options.fetchImpl,
+      maxContentBytes: options.microsoftGraphMaxContentBytes,
     })
+    const response = await dispatchSharePointMcpRequest({
+      graph,
+      body: req.body,
+    })
+
+    res.json(response)
   }))
 
   return router

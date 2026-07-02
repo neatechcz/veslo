@@ -421,11 +421,22 @@ test("microsoft MCP route is mounted behind runtime token and grant guards", asy
       },
     )
 
-    assert.equal(proxyResponse.status, 501)
-    assert.deepEqual(await proxyResponse.json(), {
-      error: "microsoft_mcp_tools_not_implemented",
-      connectorId: "microsoft-sharepoint",
-    })
+    assert.equal(proxyResponse.status, 200)
+    const payload = await proxyResponse.json() as {
+      jsonrpc: string
+      result: { tools: Array<{ name: string }> }
+      id: number
+    }
+    assert.equal(payload.jsonrpc, "2.0")
+    assert.equal(payload.id, 1)
+    assert.deepEqual(payload.result.tools.map((tool) => tool.name), [
+      "sharepoint.search",
+      "sharepoint.listSites",
+      "sharepoint.listDrives",
+      "sharepoint.listChildren",
+      "sharepoint.getItem",
+      "sharepoint.getContent",
+    ])
   } finally {
     await server.close()
   }
