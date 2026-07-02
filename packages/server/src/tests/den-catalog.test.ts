@@ -554,6 +554,9 @@ test("fetchOrgMcpCatalog rejects malformed header values", async () => {
 test("fetchOrgMcpCatalog rejects secret-like catalog headers", async () => {
   for (const headers of [
     { Authorization: "Bearer token" },
+    { "X-Api-Key": "api-key-secret" },
+    { "X-Client-Secret": "client-secret" },
+    { "X-Access-Token": "access-token" },
     { "X-Veslo-Connector-Token": "runtime-token" },
     { "X-Custom": "{env:VESLO_SECRET}" },
   ]) {

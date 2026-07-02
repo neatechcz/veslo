@@ -41,12 +41,14 @@ const GOOGLE_MCP_CONNECTORS: GoogleConnectorDefinition[] = [
   },
 ]
 
-function resolvePublicBaseUrl(req: express.Request) {
-  const configured = process.env.GOOGLE_WORKSPACE_CONNECTOR_BASE_URL?.trim() ||
-    process.env.BETTER_AUTH_URL?.trim() ||
-    ""
+function normalizeBaseUrl(value: string | null | undefined) {
+  return value?.trim().replace(/\/+$/, "") || null
+}
+
+function resolvePublicBaseUrl(req: express.Request, configuredBaseUrl: string | null | undefined) {
+  const configured = normalizeBaseUrl(configuredBaseUrl) || normalizeBaseUrl(process.env.BETTER_AUTH_URL)
   if (configured) {
-    return configured.replace(/\/+$/, "")
+    return configured
   }
   return `${req.protocol}://${req.get("host") || "api.veslo.work"}`.replace(/\/+$/, "")
 }
@@ -113,11 +115,15 @@ export type OrgMcpCatalogAuthorize = typeof requireOrganizationAccess
 export type OrgMcpCatalogRouterOptions = {
   authorize?: OrgMcpCatalogAuthorize
   connectorBaseUrl?: string
+  googleConnectorBaseUrl?: string
+  microsoftConnectorBaseUrl?: string
 }
 
 export function createOrgMcpCatalogRouter(options: OrgMcpCatalogRouterOptions = {}) {
   const authorize = options.authorize ?? requireOrganizationAccess
-  const connectorBaseUrl = options.connectorBaseUrl?.trim().replace(/\/+$/, "") || null
+  const googleConnectorBaseUrl = normalizeBaseUrl(options.googleConnectorBaseUrl) ||
+    normalizeBaseUrl(options.connectorBaseUrl)
+  const microsoftConnectorBaseUrl = normalizeBaseUrl(options.microsoftConnectorBaseUrl)
   const router = express.Router()
 
   router.get("/:orgId/mcp/catalog", asyncRoute(async (req, res) => {
@@ -130,16 +136,23 @@ export function createOrgMcpCatalogRouter(options: OrgMcpCatalogRouterOptions = 
       return
     }
 
-    const baseUrl = connectorBaseUrl ?? resolvePublicBaseUrl(req)
+    const googleBaseUrl = resolvePublicBaseUrl(
+      req,
+      googleConnectorBaseUrl || process.env.GOOGLE_WORKSPACE_CONNECTOR_BASE_URL,
+    )
+    const microsoftBaseUrl = resolvePublicBaseUrl(
+      req,
+      microsoftConnectorBaseUrl || process.env.MICROSOFT_CONNECTOR_BASE_URL,
+    )
 
     res.json({
       items: [
         ...buildGoogleMcpConnectors({
-          baseUrl,
+          baseUrl: googleBaseUrl,
           orgId: req.params.orgId,
         }),
         ...buildMicrosoftMcpConnectors({
-          baseUrl,
+          baseUrl: microsoftBaseUrl,
           orgId: req.params.orgId,
         }),
       ],

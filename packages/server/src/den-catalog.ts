@@ -75,6 +75,44 @@ const FORBIDDEN_MCP_HEADER_NAMES = new Set([
   "x-veslo-connector-token",
 ]);
 
+const SAFE_MCP_HEADER_NAMES = new Set([
+  "x-veslo-connector",
+]);
+
+const FORBIDDEN_MCP_HEADER_NAME_PARTS = new Set([
+  "authorization",
+  "cookie",
+  "key",
+  "secret",
+  "token",
+]);
+
+const FORBIDDEN_MCP_HEADER_NAME_FRAGMENTS = [
+  "apikey",
+  "accesstoken",
+  "clientsecret",
+  "idtoken",
+  "refreshtoken",
+];
+
+function isForbiddenMcpHeaderName(key: string) {
+  const normalizedKey = key.trim().toLowerCase();
+  if (SAFE_MCP_HEADER_NAMES.has(normalizedKey)) {
+    return false;
+  }
+  if (FORBIDDEN_MCP_HEADER_NAMES.has(normalizedKey)) {
+    return true;
+  }
+
+  const parts = normalizedKey.split(/[^a-z0-9]+/).filter(Boolean);
+  if (parts.some((part) => FORBIDDEN_MCP_HEADER_NAME_PARTS.has(part))) {
+    return true;
+  }
+
+  const compactKey = parts.join("");
+  return FORBIDDEN_MCP_HEADER_NAME_FRAGMENTS.some((fragment) => compactKey.includes(fragment));
+}
+
 function toMcpHeaders(value: unknown, index: number): Record<string, string> | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -83,10 +121,9 @@ function toMcpHeaders(value: unknown, index: number): Record<string, string> | u
 
   const result: Record<string, string> = {};
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    const normalizedKey = key.trim().toLowerCase();
     if (
       !key.trim() ||
-      FORBIDDEN_MCP_HEADER_NAMES.has(normalizedKey) ||
+      isForbiddenMcpHeaderName(key) ||
       typeof entry !== "string" ||
       /bearer\s+/i.test(entry) ||
       /\{env:/i.test(entry)

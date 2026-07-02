@@ -18,13 +18,19 @@ async function loadRouter() {
 
 async function startServer(
   authorize: (req: any, res: any, options: any) => Promise<unknown>,
-  options: { connectorBaseUrl?: string } = {},
+  options: {
+    connectorBaseUrl?: string
+    googleConnectorBaseUrl?: string
+    microsoftConnectorBaseUrl?: string
+  } = {},
 ) {
   const { createOrgMcpCatalogRouter } = await loadRouter()
   const app = express()
   app.use("/v1/orgs", createOrgMcpCatalogRouter({
     authorize,
     connectorBaseUrl: options.connectorBaseUrl,
+    googleConnectorBaseUrl: options.googleConnectorBaseUrl,
+    microsoftConnectorBaseUrl: options.microsoftConnectorBaseUrl,
   }))
 
   const server = app.listen(0, "127.0.0.1")
@@ -118,7 +124,10 @@ test("org mcp catalog includes platform Google Workspace and Microsoft connector
     membershipId: "membership_1",
     orgRole: "member",
     isPlatformAdmin: false,
-  }), { connectorBaseUrl: "https://api.veslo.work" })
+  }), {
+    googleConnectorBaseUrl: "https://api.veslo.work",
+    microsoftConnectorBaseUrl: "https://api.veslo.work",
+  })
 
   try {
     const response = await fetch(`http://127.0.0.1:${server.port}/v1/orgs/org_1/mcp/catalog`)
@@ -252,6 +261,75 @@ test("org mcp catalog includes platform Google Workspace and Microsoft connector
     assert.doesNotMatch(serializedPayload, /clientSecret/)
   } finally {
     await server.close()
+  }
+})
+
+test("org mcp catalog resolves provider-specific connector base urls", async () => {
+  const originalGoogleBaseUrl = process.env.GOOGLE_WORKSPACE_CONNECTOR_BASE_URL
+  const originalMicrosoftBaseUrl = process.env.MICROSOFT_CONNECTOR_BASE_URL
+  const originalBetterAuthUrl = process.env.BETTER_AUTH_URL
+  process.env.GOOGLE_WORKSPACE_CONNECTOR_BASE_URL = "https://google-connectors.example/base/"
+  process.env.MICROSOFT_CONNECTOR_BASE_URL = "https://microsoft-connectors.example/root/"
+  process.env.BETTER_AUTH_URL = "https://better-auth.example"
+
+  const server = await startServer(async (req, _res, _options) => ({
+    session: {
+      user: {
+        id: "user_1",
+        email: "user@example.com",
+        emailVerified: true,
+        name: "User One",
+      },
+    },
+    organization: {
+      id: req.params.orgId,
+      name: "Org One",
+      slug: "org-one",
+      ownerUserId: "user_1",
+    },
+    membershipId: "membership_1",
+    orgRole: "member",
+    isPlatformAdmin: false,
+  }))
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/orgs/org_1/mcp/catalog`)
+    assert.equal(response.status, 200)
+    const payload = await response.json() as {
+      items: Array<{
+        id: string
+        config: {
+          url: string
+        }
+      }>
+    }
+    const itemsById = new Map(payload.items.map((item) => [item.id, item]))
+
+    assert.equal(
+      itemsById.get("google-gmail")?.config.url,
+      "https://google-connectors.example/base/v1/orgs/org_1/integrations/google/google-gmail/mcp",
+    )
+    assert.equal(
+      itemsById.get("microsoft-sharepoint")?.config.url,
+      "https://microsoft-connectors.example/root/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/mcp",
+    )
+  } finally {
+    await server.close()
+    if (originalGoogleBaseUrl === undefined) {
+      delete process.env.GOOGLE_WORKSPACE_CONNECTOR_BASE_URL
+    } else {
+      process.env.GOOGLE_WORKSPACE_CONNECTOR_BASE_URL = originalGoogleBaseUrl
+    }
+    if (originalMicrosoftBaseUrl === undefined) {
+      delete process.env.MICROSOFT_CONNECTOR_BASE_URL
+    } else {
+      process.env.MICROSOFT_CONNECTOR_BASE_URL = originalMicrosoftBaseUrl
+    }
+    if (originalBetterAuthUrl === undefined) {
+      delete process.env.BETTER_AUTH_URL
+    } else {
+      process.env.BETTER_AUTH_URL = originalBetterAuthUrl
+    }
   }
 })
 
