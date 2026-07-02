@@ -155,6 +155,10 @@ import {
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
 import { createLateBound } from "./lib/late-bound";
 import {
+  sessionIdentityCandidates,
+  sessionIdentityMatches,
+} from "./lib/session-identity";
+import {
   createMcpAutoRefreshScheduler,
   createPermissionPollingScheduler,
 } from "./lib/workspace-runtime-schedulers";
@@ -1080,12 +1084,7 @@ export default function App() {
     if (!id) return "idle";
     const scope = resolveSelectedSessionBrowseScope(id);
     const resolvedWorkspaceId = workspaceId?.trim() || scope?.workspaceId?.trim() || workspaceIdForSessionStatus(id);
-    const ids = [
-      id,
-      scope?.opencodeSessionId?.trim() ?? "",
-      scope?.conversationId?.trim() ?? "",
-    ].filter(Boolean);
-    for (const candidate of [...new Set(ids)]) {
+    for (const candidate of sessionIdentityCandidates(id, scope)) {
       const status = readSessionStatus(sessionStatusById(), resolvedWorkspaceId, candidate);
       if (status !== "idle") return status;
     }
@@ -1196,11 +1195,9 @@ export default function App() {
     const workspaceId = scope?.workspaceId?.trim() || currentWorkspaceStoreRef()?.activeWorkspaceId().trim() || "";
     const sessionsForWorkspace = workspaceId ? busySessionByWorkspaceId()[workspaceId] : null;
     if (!sessionsForWorkspace || !sessionId) return false;
-    return [
-      sessionId,
-      scope?.opencodeSessionId?.trim() ?? "",
-      scope?.conversationId?.trim() ?? "",
-    ].filter(Boolean).some((id) => Boolean(sessionsForWorkspace[id]));
+    return sessionIdentityCandidates(sessionId, scope).some((id) =>
+      Boolean(sessionsForWorkspace[id]),
+    );
   });
   const activeComposerBusy = createMemo(() => {
     if (activeConversationBusy()) return true;
@@ -3331,12 +3328,7 @@ export default function App() {
   const findSidebarSessionForWorkspace = (workspaceId: string, sessionId: string) => {
     const group = sidebarWorkspaceGroups().find((item) => item.workspace.id === workspaceId);
     if (!group) return null;
-    return group.sessions.find((session) => {
-      const ids = [session.id, session.conversationId ?? "", session.opencodeSessionId ?? ""]
-        .map((value) => value.trim())
-        .filter(Boolean);
-      return ids.includes(sessionId);
-    }) ?? null;
+    return group.sessions.find((session) => sessionIdentityMatches(sessionId, session)) ?? null;
   };
 
   const activeReloadBlockingSessions = createMemo<ActiveReloadBlockingSession[]>(() => {

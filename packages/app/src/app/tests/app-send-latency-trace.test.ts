@@ -146,7 +146,7 @@ test("send-time workspace activation preserves scoped browsed conversation state
 test("active conversation busy state follows scoped selected session workspace", () => {
   assert.match(
     source,
-    /const activeConversationBusy = createMemo\(\(\) => \{[\s\S]*const sessionId = activeSessionId\(\);[\s\S]*const scope = sessionId \? resolveSelectedSessionBrowseScope\(sessionId\) : null;[\s\S]*const workspaceId = scope\?\.workspaceId\?\.trim\(\) \|\| currentWorkspaceStoreRef\(\)\?\.activeWorkspaceId\(\)\.trim\(\) \|\| "";[\s\S]*const sessionsForWorkspace = workspaceId \? busySessionByWorkspaceId\(\)\[workspaceId\] : null;[\s\S]*if \(!sessionsForWorkspace \|\| !sessionId\) return false;[\s\S]*scope\?\.opencodeSessionId\?\.trim\(\)[\s\S]*scope\?\.conversationId\?\.trim\(\)[\s\S]*some\(\(id\) => Boolean\(sessionsForWorkspace\[id\]\)\);[\s\S]*\}\);/,
+    /const activeConversationBusy = createMemo\(\(\) => \{[\s\S]*const sessionId = activeSessionId\(\);[\s\S]*const scope = sessionId \? resolveSelectedSessionBrowseScope\(sessionId\) : null;[\s\S]*const workspaceId = scope\?\.workspaceId\?\.trim\(\) \|\| currentWorkspaceStoreRef\(\)\?\.activeWorkspaceId\(\)\.trim\(\) \|\| "";[\s\S]*const sessionsForWorkspace = workspaceId \? busySessionByWorkspaceId\(\)\[workspaceId\] : null;[\s\S]*if \(!sessionsForWorkspace \|\| !sessionId\) return false;[\s\S]*sessionIdentityCandidates\(sessionId, scope\)\.some\(\(id\) =>[\s\S]*Boolean\(sessionsForWorkspace\[id\]\),[\s\S]*\);[\s\S]*\}\);/,
     "composer busy state should use the displayed scoped session workspace instead of only the active workspace",
   );
 });
