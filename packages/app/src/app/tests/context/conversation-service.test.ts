@@ -124,7 +124,14 @@ function createFakeClient() {
       status: "running" as const,
       stale: false,
     }),
-    appendSessionTranscript: async () => transcript("sess-a"),
+    appendSessionTranscript: async (workspaceId: string, sessionId: string, input: { messages: unknown[]; partsByMessageId: Record<string, unknown[]> }) => {
+      calls.push(`appendSessionTranscript:${workspaceId}:${sessionId}:${input.messages.length}`);
+      return {
+        ...transcript(sessionId),
+        messages: input.messages as VesloSessionTranscriptSnapshot["messages"],
+        partsByMessageId: input.partsByMessageId as VesloSessionTranscriptSnapshot["partsByMessageId"],
+      };
+    },
   };
 
   return {
@@ -260,6 +267,24 @@ test("conversation transcript read preserves unavailable snapshots at the app bo
     1,
     "unavailable snapshots still carry identity sidecars that must be remembered",
   );
+});
+
+test("conversation transcript append forwards empty available snapshots", async () => {
+  const { service, calls } = createService();
+
+  await service.appendTranscriptSnapshot({
+    workspaceId: "app-ws",
+    sessionId: "open-empty",
+    directory: "/repo",
+    limit: 140,
+    reason: "live-recovery",
+    messages: [],
+    partsByMessageId: {},
+  });
+
+  assert.deepEqual(calls.filter((call) => call.startsWith("appendSessionTranscript")), [
+    "appendSessionTranscript:server-ws:open-empty:0",
+  ]);
 });
 
 test("conversation run remembers submitted run ids under Veslo and UI identities", async () => {

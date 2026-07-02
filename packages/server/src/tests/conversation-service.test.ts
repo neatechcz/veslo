@@ -539,6 +539,72 @@ describe("conversation service", () => {
     expect((loaded.partsByMessageId["msg-2"]?.[0] as { text: string }).text).toBe("hello");
   });
 
+  test("appendTranscript persists an empty host transcript marker", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-empty-transcript-"));
+    tempDirs.push(dataDir);
+    const directory = join(dataDir, "workspace-a");
+    const bindingStore = createConversationBindingStore({ dataDir, now: () => 1_000 });
+    const transcriptStore = createConversationTranscriptStore({ dataDir, now: () => 2_000 });
+    const binding = await bindingStore.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory,
+      engineSessionId: "ses-empty",
+      title: "Empty",
+      createdAt: 10,
+      updatedAt: 20,
+    });
+
+    let sandboxTranscriptReads = 0;
+    const service = createConversationService({
+      readStore: {
+        ...unavailableReadStore,
+        async getTranscript(input) {
+          sandboxTranscriptReads += 1;
+          return {
+            workspaceId: input.workspaceId,
+            sessionId: input.sessionId,
+            limit: input.limit,
+            messages: [],
+            partsByMessageId: {},
+            fetchedAt: 100,
+            source: "unavailable",
+          };
+        },
+      },
+      bindingStore,
+      transcriptStore,
+      createOpenCodeSession: async () => ({ id: "unused" }),
+      now: () => 3_000,
+    });
+
+    const appended = await service.appendTranscript({
+      workspace: workspaceFor(directory),
+      sessionId: binding.conversationId,
+      directory,
+      limit: 10,
+      messages: [],
+      partsByMessageId: {},
+    });
+
+    expect(appended.sessionId).toBe("ses-empty");
+    expect(appended.conversationId).toBe(binding.conversationId);
+    expect(appended.source).toBe("sqlite");
+    expect(appended.messages).toEqual([]);
+
+    const loaded = await service.loadTranscript({
+      workspace: workspaceFor(directory),
+      sessionId: binding.conversationId,
+      limit: 10,
+      directory,
+    });
+
+    expect(sandboxTranscriptReads).toBe(0);
+    expect(loaded.source).toBe("sqlite");
+    expect(loaded.sessionId).toBe("ses-empty");
+    expect(loaded.messages).toEqual([]);
+    expect(loaded.partsByMessageId).toEqual({});
+  });
+
   test("loadTranscript falls back to the sandbox when no transcript store is configured", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-no-transcript-"));
     tempDirs.push(dataDir);

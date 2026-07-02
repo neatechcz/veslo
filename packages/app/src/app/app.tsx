@@ -984,10 +984,7 @@ export default function App() {
       const workspaceId = input.workspaceId.trim();
       const sessionId = input.sessionId.trim();
       const directory = input.directory?.trim() || undefined;
-      const hasDeletedMessages = (input.deletedMessageIds?.length ?? 0) > 0;
-      const hasDeletedParts = Object.values(input.deletedPartsByMessageId ?? {})
-        .some((partIds) => partIds.length > 0);
-      if (!workspaceId || !sessionId || (input.messages.length === 0 && !hasDeletedMessages && !hasDeletedParts)) return;
+      if (!workspaceId || !sessionId) return;
       const serverClient = hydratedVesloServerClient();
       if (!serverClient) return;
       const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
