@@ -13,8 +13,8 @@ target:
   - packages/server/src/conversation-transcript-store.ts
   - packages/server/src/routes/conversations.ts
   - packages/server/src/server.ts
-status: proposed
-done: false
+status: complete
+done: true
 base_branch: local/sandbox-merge
 source_audit: 2026-07-02 conversation history / OpenCode resume audit
 ---
