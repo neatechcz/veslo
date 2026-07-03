@@ -12,6 +12,30 @@ const enLocaleSource = readFileSync(new URL("../../i18n/locales/en.ts", import.m
 const csLocaleSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
 const zhLocaleSource = readFileSync(new URL("../../i18n/locales/zh.ts", import.meta.url), "utf8");
 
+const microsoftSharePointCatalogItem = {
+  id: "microsoft-sharepoint",
+  name: "Microsoft SharePoint",
+  description: "Search and read SharePoint content.",
+  type: "remote",
+  url: "https://api.veslo.work/v1/orgs/org_123/integrations/microsoft/microsoft-sharepoint/mcp",
+  oauth: false,
+  headers: {
+    "X-Veslo-Connector-Token": "runtime-token",
+  },
+  authorization: {
+    type: "veslo-server-oauth",
+    provider: "microsoft",
+    connectorId: "microsoft-sharepoint",
+    scopes: ["Sites.Read.All", "Files.Read.All"],
+    startPath: "/v1/orgs/org_123/integrations/microsoft/microsoft-sharepoint/oauth/start",
+    runtimeTokenPath: "/v1/orgs/org_123/integrations/microsoft/microsoft-sharepoint/runtime-token",
+    statusPath: "/v1/orgs/org_123/integrations/microsoft/connections",
+    disconnectPath: "/v1/orgs/org_123/integrations/microsoft/microsoft-sharepoint/connection",
+  },
+  source: { scope: "platform" },
+  provider: { id: "microsoft", group: "Microsoft" },
+} as const;
+
 test("extensions store wires hub mcp auth and actions", () => {
   const refreshHubMcpSource = extensionsSource.match(/async function refreshHubMcp[\s\S]*?async function refreshHubSkills/)?.[0] ?? "";
   const noAuthBranchSource = refreshHubMcpSource.match(/if \(!denToken \|\| !denOrgId\)\s*\{[\s\S]*?return;/)?.[0] ?? "";
@@ -59,6 +83,22 @@ test("mcp page renders hub mcp catalog entries after built-in quick connect", ()
   assert.match(mcpSource, /data-testid="mcp-page"/);
 });
 
+test("mcp page displays Microsoft SharePoint from catalog name and provider metadata", () => {
+  const pageConversionSource =
+    mcpSource.match(/const orgCatalogQuickConnect[\s\S]*?\}\)\),\s*\);/)?.[0] ?? "";
+  const providerLabelSource =
+    mcpSource.match(/const hubProviderLabel = \(entry: McpDirectoryInfo\) => \{[\s\S]*?\};/)?.[0] ?? "";
+
+  assert.equal(microsoftSharePointCatalogItem.name, "Microsoft SharePoint");
+  assert.equal(microsoftSharePointCatalogItem.provider.id, "microsoft");
+  assert.equal(microsoftSharePointCatalogItem.provider.group, "Microsoft");
+  assert.match(pageConversionSource, /name:\s*entry\.name,/);
+  assert.match(pageConversionSource, /provider:\s*entry\.provider,/);
+  assert.match(providerLabelSource, /entry\.provider\?\.group\?\.trim\(\) \|\| entry\.provider\?\.id\?\.trim\(\)/);
+  assert.match(mcpSource, /\{entry\.name\}<\/h4>/);
+  assert.doesNotMatch(providerLabelSource, /Google|google/);
+});
+
 test("hub mcp cards preserve provider metadata and install by catalog identity", () => {
   const pageConversionSource =
     mcpSource.match(/const orgCatalogQuickConnect[\s\S]*?\}\)\),\s*\);/)?.[0] ?? "";
@@ -79,6 +119,41 @@ test("hub mcp cards preserve provider metadata and install by catalog identity",
   assert.match(installClickSource, /props\.installHubMcp\(entry\.id \|\| entry\.name\)/);
 });
 
+test("Microsoft SharePoint catalog metadata stays provider-generic through app normalization", () => {
+  const refreshHubMcpSource = extensionsSource.match(/async function refreshHubMcp[\s\S]*?createEffect/)?.[0] ?? "";
+  const pageConversionSource =
+    mcpSource.match(/const orgCatalogQuickConnect[\s\S]*?\}\)\),\s*\);/)?.[0] ?? "";
+  const selectedEntrySource =
+    workflowSource.match(/const entry: McpDirectoryInfo = \{[\s\S]*?\};\s*try \{/)?.[0] ?? "";
+  const serverOAuthSource =
+    workflowSource.match(/async function startServerManagedMcpOAuth[\s\S]*?async function activateInstalledMcp/)?.[0] ?? "";
+  const hubActivationSource =
+    workflowSource.match(/async function installHubMcpAndActivate[\s\S]*?async function logoutMcpAuth/)?.[0] ?? "";
+
+  assert.equal(microsoftSharePointCatalogItem.id, "microsoft-sharepoint");
+  assert.equal(microsoftSharePointCatalogItem.name, "Microsoft SharePoint");
+  assert.equal(microsoftSharePointCatalogItem.source?.scope, "platform");
+  assert.equal(microsoftSharePointCatalogItem.provider?.id, "microsoft");
+  assert.equal(microsoftSharePointCatalogItem.provider?.group, "Microsoft");
+
+  assert.match(refreshHubMcpSource, /provider:\s*entry\.provider,/);
+  assert.match(refreshHubMcpSource, /source:\s*entry\.source,/);
+  assert.match(refreshHubMcpSource, /authorization:\s*entry\.authorization,/);
+  assert.match(refreshHubMcpSource, /headers:\s*entry\.config\.headers,/);
+  assert.match(pageConversionSource, /id:\s*entry\.id,/);
+  assert.match(pageConversionSource, /name:\s*entry\.name,/);
+  assert.match(pageConversionSource, /provider:\s*entry\.provider,/);
+  assert.match(pageConversionSource, /authorization:\s*entry\.authorization,/);
+  assert.match(selectedEntrySource, /id:\s*selectedEntry\.id,/);
+  assert.match(selectedEntrySource, /name:\s*selectedEntry\.name,/);
+  assert.match(selectedEntrySource, /provider:\s*selectedEntry\.provider,/);
+  assert.match(selectedEntrySource, /authorization:\s*selectedEntry\.authorization/);
+  assert.match(serverOAuthSource, /const startPath = entry\.authorization\.startPath\.trim\(\)/);
+  assert.match(serverOAuthSource, /\$\{denApiBase\}\$\{startPath\}/);
+  assert.doesNotMatch(serverOAuthSource, /google|Google/);
+  assert.doesNotMatch(hubActivationSource, /google|Google/);
+});
+
 test("hub mcp cards label shared provider context without merging card installs", () => {
   assert.match(mcpSource, /hubProviderLabel/);
   assert.match(mcpSource, /entry\.provider\?\.group/);
@@ -95,6 +170,17 @@ test("mcp auth modal explains local token ownership in localized copy", () => {
   assert.doesNotMatch(csLocaleSource, /"mcp\.auth\.local_token_notice":\s*"[^"]*Google/);
   assert.match(zhLocaleSource, /"mcp\.auth\.local_token_notice":\s*"[^"]*浏览器[^"]*Veslo 配置[^"]*MCP OAuth 客户端配置[^"]*本地 MCP\/OpenCode 运行时[^"]*不会存储在 Veslo 云/);
   assert.doesNotMatch(zhLocaleSource, /"mcp\.auth\.local_token_notice":\s*"[^"]*Google/);
+});
+
+test("mcp auth modal copy stays provider-neutral for Microsoft SharePoint", () => {
+  assert.equal(microsoftSharePointCatalogItem.authorization.provider, "microsoft");
+  assert.equal(microsoftSharePointCatalogItem.name, "Microsoft SharePoint");
+  assert.match(authModalSource, /const serverName = \(\) => props\.entry\?\.name \?\? translate\("mcp\.server_fallback"\)/);
+  assert.match(authModalSource, /translate\("mcp\.auth\.connect_server", \{ server: serverName\(\) \}\)/);
+  assert.match(enLocaleSource, /"mcp\.auth\.connect_server":\s*"Connect \{server\}"/);
+  assert.match(enLocaleSource, /"mcp\.auth\.step1_description":\s*"[^"]*\{server\}[^"]*"/);
+  assert.doesNotMatch(authModalSource, /Google|google/);
+  assert.doesNotMatch(enLocaleSource, /"mcp\.auth\.[^"]+":\s*"[^"]*Google/);
 });
 
 test("mcp auth modal uses catalog id as the runtime server key when present", () => {

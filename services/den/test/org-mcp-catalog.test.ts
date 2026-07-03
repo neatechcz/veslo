@@ -16,10 +16,22 @@ async function loadRouter() {
   return import("../src/http/org-mcp-catalog.js")
 }
 
-async function startServer(authorize: (req: any, res: any, options: any) => Promise<unknown>) {
+async function startServer(
+  authorize: (req: any, res: any, options: any) => Promise<unknown>,
+  options: {
+    connectorBaseUrl?: string
+    googleConnectorBaseUrl?: string
+    microsoftConnectorBaseUrl?: string
+  } = {},
+) {
   const { createOrgMcpCatalogRouter } = await loadRouter()
   const app = express()
-  app.use("/v1/orgs", createOrgMcpCatalogRouter({ authorize }))
+  app.use("/v1/orgs", createOrgMcpCatalogRouter({
+    authorize,
+    connectorBaseUrl: options.connectorBaseUrl,
+    googleConnectorBaseUrl: options.googleConnectorBaseUrl,
+    microsoftConnectorBaseUrl: options.microsoftConnectorBaseUrl,
+  }))
 
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -93,7 +105,7 @@ test("org mcp catalog authorizes allowed org access", async () => {
   }
 })
 
-test("org mcp catalog includes platform Google Workspace connectors", async () => {
+test("org mcp catalog includes platform Google Workspace and Microsoft connectors", async () => {
   const server = await startServer(async (req, _res, options) => ({
     session: {
       user: {
@@ -112,7 +124,10 @@ test("org mcp catalog includes platform Google Workspace connectors", async () =
     membershipId: "membership_1",
     orgRole: "member",
     isPlatformAdmin: false,
-  }))
+  }), {
+    googleConnectorBaseUrl: "https://api.veslo.work",
+    microsoftConnectorBaseUrl: "https://api.veslo.work",
+  })
 
   try {
     const response = await fetch(`http://127.0.0.1:${server.port}/v1/orgs/org_1/mcp/catalog`)
@@ -146,6 +161,7 @@ test("org mcp catalog includes platform Google Workspace connectors", async () =
       "google-gmail",
       "google-calendar",
       "google-drive",
+      "microsoft-sharepoint",
     ])
 
     const expectedConnectors = [
@@ -206,17 +222,120 @@ test("org mcp catalog includes platform Google Workspace connectors", async () =
       )
     }
 
+    assert.deepEqual(itemsById.get("microsoft-sharepoint"), {
+      id: "microsoft-sharepoint",
+      name: "Microsoft SharePoint",
+      config: {
+        type: "remote",
+        url: "https://api.veslo.work/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/mcp",
+        oauth: false,
+        headers: {
+          "X-Veslo-Connector": "microsoft-sharepoint",
+        },
+      },
+      authorization: {
+        type: "veslo-server-oauth",
+        provider: "microsoft",
+        connectorId: "microsoft-sharepoint",
+        scopes: [
+          "openid",
+          "profile",
+          "offline_access",
+          "https://graph.microsoft.com/Files.Read.All",
+          "https://graph.microsoft.com/Sites.Read.All",
+        ],
+        startPath: "/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/oauth/start",
+        runtimeTokenPath: "/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/runtime-token",
+        statusPath: "/v1/orgs/org_1/integrations/microsoft/connections",
+        disconnectPath: "/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/connection",
+      },
+      source: { scope: "platform" },
+      provider: { id: "microsoft", group: "Microsoft" },
+    })
+
     const serializedPayload = JSON.stringify(payload)
     assert.doesNotMatch(serializedPayload, /VESLO_GOOGLE_MCP_CLIENT_ID/)
     assert.doesNotMatch(serializedPayload, /VESLO_GOOGLE_MCP_CLIENT_SECRET/)
+    assert.doesNotMatch(serializedPayload, /MICROSOFT_CLIENT_ID/)
+    assert.doesNotMatch(serializedPayload, /MICROSOFT_CLIENT_SECRET/)
     assert.doesNotMatch(serializedPayload, /clientSecret/)
   } finally {
     await server.close()
   }
 })
 
+test("org mcp catalog resolves provider-specific connector base urls", async () => {
+  const originalGoogleBaseUrl = process.env.GOOGLE_WORKSPACE_CONNECTOR_BASE_URL
+  const originalMicrosoftBaseUrl = process.env.MICROSOFT_CONNECTOR_BASE_URL
+  const originalBetterAuthUrl = process.env.BETTER_AUTH_URL
+  process.env.GOOGLE_WORKSPACE_CONNECTOR_BASE_URL = "https://google-connectors.example/base/"
+  process.env.MICROSOFT_CONNECTOR_BASE_URL = "https://microsoft-connectors.example/root/"
+  process.env.BETTER_AUTH_URL = "https://better-auth.example"
+
+  const server = await startServer(async (req, _res, _options) => ({
+    session: {
+      user: {
+        id: "user_1",
+        email: "user@example.com",
+        emailVerified: true,
+        name: "User One",
+      },
+    },
+    organization: {
+      id: req.params.orgId,
+      name: "Org One",
+      slug: "org-one",
+      ownerUserId: "user_1",
+    },
+    membershipId: "membership_1",
+    orgRole: "member",
+    isPlatformAdmin: false,
+  }))
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/orgs/org_1/mcp/catalog`)
+    assert.equal(response.status, 200)
+    const payload = await response.json() as {
+      items: Array<{
+        id: string
+        config: {
+          url: string
+        }
+      }>
+    }
+    const itemsById = new Map(payload.items.map((item) => [item.id, item]))
+
+    assert.equal(
+      itemsById.get("google-gmail")?.config.url,
+      "https://google-connectors.example/base/v1/orgs/org_1/integrations/google/google-gmail/mcp",
+    )
+    assert.equal(
+      itemsById.get("microsoft-sharepoint")?.config.url,
+      "https://microsoft-connectors.example/root/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/mcp",
+    )
+  } finally {
+    await server.close()
+    if (originalGoogleBaseUrl === undefined) {
+      delete process.env.GOOGLE_WORKSPACE_CONNECTOR_BASE_URL
+    } else {
+      process.env.GOOGLE_WORKSPACE_CONNECTOR_BASE_URL = originalGoogleBaseUrl
+    }
+    if (originalMicrosoftBaseUrl === undefined) {
+      delete process.env.MICROSOFT_CONNECTOR_BASE_URL
+    } else {
+      process.env.MICROSOFT_CONNECTOR_BASE_URL = originalMicrosoftBaseUrl
+    }
+    if (originalBetterAuthUrl === undefined) {
+      delete process.env.BETTER_AUTH_URL
+    } else {
+      process.env.BETTER_AUTH_URL = originalBetterAuthUrl
+    }
+  }
+})
+
 test("den index mounts org mcp catalog router under /v1/orgs", () => {
   const source = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8")
   assert.match(source, /app\.use\("\/v1\/orgs",\s*createOrgMcpCatalogRouter\(/)
-  assert.match(source, /connectorBaseUrl:\s*env\.googleWorkspace\.connectorBaseUrl/)
+  assert.match(source, /googleConnectorBaseUrl:\s*env\.googleWorkspace\.connectorBaseUrl/)
+  assert.match(source, /microsoftConnectorBaseUrl:\s*env\.microsoft\.connectorBaseUrl/)
 })

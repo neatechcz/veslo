@@ -11,6 +11,7 @@ import {
   E2E_SKILL_REGISTRY_TOKEN,
   E2E_SKILL_REGISTRY_USER_ID,
   shouldUseGoogleMcpCatalogFixture,
+  shouldUseSharePointMcpCatalogFixture,
   startSkillRegistryFixture,
   stopSkillRegistryFixture,
 } from './skill-registry-fixture.js';
@@ -579,6 +580,16 @@ function shouldUseManagedAiGatewayFixture(): boolean {
   return process.env.E2E_MANAGED_AI_GATEWAY_FIXTURE?.trim() === '1';
 }
 
+export function resolveMcpCatalogFixtureDenApiBase(input: {
+  skillRegistryFixtureBaseUrl: string | null;
+  useGoogleMcpCatalogFixture: boolean;
+  useSharePointMcpCatalogFixture: boolean;
+}): string | null {
+  if (!input.skillRegistryFixtureBaseUrl) return null;
+  if (!input.useGoogleMcpCatalogFixture && !input.useSharePointMcpCatalogFixture) return null;
+  return input.skillRegistryFixtureBaseUrl;
+}
+
 async function startManagedAiGatewayFixtureIfRequested(): Promise<ManagedAiGatewayFixture | null> {
   if (!shouldUseManagedAiGatewayFixture()) {
     return null;
@@ -630,10 +641,17 @@ export async function startApp(port?: number): Promise<void> {
   console.log(`[e2e] Launching Tauri binary: ${binaryPath}`);
   console.log(`[e2e] WebDriver port: ${resolvedPort}`);
   const useGoogleMcpCatalogFixture = shouldUseGoogleMcpCatalogFixture();
-  const skillRegistryFixtureBaseUrl = process.env.E2E_SKILL_REGISTRY_FIXTURE?.trim() === '0' && !useGoogleMcpCatalogFixture
+  const useSharePointMcpCatalogFixture = shouldUseSharePointMcpCatalogFixture();
+  const useMcpCatalogFixture = useGoogleMcpCatalogFixture || useSharePointMcpCatalogFixture;
+  const skillRegistryFixtureBaseUrl = process.env.E2E_SKILL_REGISTRY_FIXTURE?.trim() === '0' && !useMcpCatalogFixture
     ? null
     : await startSkillRegistryFixture();
   const googleMcpCatalogFixtureBaseUrl = useGoogleMcpCatalogFixture ? skillRegistryFixtureBaseUrl : null;
+  const mcpCatalogFixtureDenApiBase = resolveMcpCatalogFixtureDenApiBase({
+    skillRegistryFixtureBaseUrl,
+    useGoogleMcpCatalogFixture,
+    useSharePointMcpCatalogFixture,
+  });
   const managedAiGatewayFixtureBaseUrl = (await startManagedAiGatewayFixtureIfRequested())?.baseUrl ?? null;
   const exposeSkillRegistryServerEnv = process.env.E2E_SKILL_REGISTRY_SERVER_ENV?.trim() !== '0';
   const seedDenAuthFromSkillRegistryFixture =
@@ -672,6 +690,9 @@ export async function startApp(port?: number): Promise<void> {
   if (googleMcpCatalogFixtureBaseUrl) {
     console.log(`[e2e] Google MCP catalog fixture: ${googleMcpCatalogFixtureBaseUrl}`);
   }
+  if (useSharePointMcpCatalogFixture && mcpCatalogFixtureDenApiBase) {
+    console.log(`[e2e] SharePoint MCP catalog fixture: ${mcpCatalogFixtureDenApiBase}`);
+  }
 
   const tmpDir = join(resolveDesktopRoot(), '..', 'e2e', '.tmp-opencode-home');
   const vesloServerPort = await resolveVesloServerPortForLaunch();
@@ -685,7 +706,7 @@ export async function startApp(port?: number): Promise<void> {
       vesloServerPort,
       opencodeHome: CUSTOM_OPENCODE_HOME,
       snapshotPath,
-      denApiBase: googleMcpCatalogFixtureBaseUrl,
+      denApiBase: mcpCatalogFixtureDenApiBase,
     });
     seedDefaultWorkspaceState(CUSTOM_OPENCODE_HOME, env);
     console.log(`[e2e] Using custom OPENCODE_HOME: ${CUSTOM_OPENCODE_HOME}`);
@@ -697,7 +718,7 @@ export async function startApp(port?: number): Promise<void> {
       vesloServerPort,
       opencodeHome: tmpDir,
       snapshotPath,
-      denApiBase: googleMcpCatalogFixtureBaseUrl,
+      denApiBase: mcpCatalogFixtureDenApiBase,
     });
     env.HOME = ISOLATED_PROFILE_ROOT;
     env.USERPROFILE = ISOLATED_PROFILE_ROOT;
@@ -711,7 +732,7 @@ export async function startApp(port?: number): Promise<void> {
     env = {
       ...process.env,
       TAURI_WEBDRIVER_PORT: String(resolvedPort),
-      ...(googleMcpCatalogFixtureBaseUrl ? { VESLO_DEN_API_BASE: googleMcpCatalogFixtureBaseUrl } : {}),
+      ...(mcpCatalogFixtureDenApiBase ? { VESLO_DEN_API_BASE: mcpCatalogFixtureDenApiBase } : {}),
     } as NodeJS.ProcessEnv;
     if (process.platform !== 'win32') {
       env.XDG_RUNTIME_DIR = pilotRuntimeDir;

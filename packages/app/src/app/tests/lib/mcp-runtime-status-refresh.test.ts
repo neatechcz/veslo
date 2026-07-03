@@ -176,21 +176,23 @@ test("MCP runtime token refresh candidates require connector token header and au
     mcpRuntimeTokenRefreshCandidates(
       {
         google: { status: "failed", error: "401 Unauthorized" },
+        "microsoft-sharepoint": { status: "failed", error: "token expired" },
         plain: { status: "failed", error: "401 Unauthorized" },
         flaky: { status: "failed", error: "socket closed" },
       },
       [
         connectorEntry("google"),
+        connectorEntry("microsoft-sharepoint"),
         entry("plain"),
         connectorEntry("flaky"),
       ],
     ),
-    ["google"],
+    ["google", "microsoft-sharepoint"],
   );
 });
 
-test("MCP runtime status refresh refreshes connector token once and retries status", async () => {
-  const entries = [connectorEntry("google")];
+test("MCP runtime status refresh refreshes Microsoft SharePoint connector token once and retries status", async () => {
+  const entries = [connectorEntry("microsoft-sharepoint")];
   const applied: McpStatusMap[] = [];
   const loadCalls: string[] = [];
   const refreshCalls: string[] = [];
@@ -205,8 +207,8 @@ test("MCP runtime status refresh refreshes connector token once and retries stat
     loadStatus: async (_client, directory) => {
       loadCalls.push(directory);
       return loadCalls.length === 1
-        ? { google: { status: "failed", error: "expired token: 401" } }
-        : { google: { status: "connected" } };
+        ? { "microsoft-sharepoint": { status: "failed", error: "expired token: 401" } }
+        : { "microsoft-sharepoint": { status: "connected" } };
     },
     refreshRuntimeTokens: async ({ status }) => {
       refreshCalls.push(JSON.stringify(status));
@@ -223,5 +225,5 @@ test("MCP runtime status refresh refreshes connector token once and retries stat
 
   assert.equal(loadCalls.length, 2);
   assert.equal(refreshCalls.length, 1);
-  assert.deepEqual(applied, [{ google: { status: "connected" } }]);
+  assert.deepEqual(applied, [{ "microsoft-sharepoint": { status: "connected" } }]);
 });

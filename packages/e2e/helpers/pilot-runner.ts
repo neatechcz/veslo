@@ -120,12 +120,39 @@ export function scenarioSelectionNeedsGoogleMcpCatalogFixture(scenarios: string[
   return scenarios.some((scenario) => scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/google-mcp-connectors.toml'));
 }
 
+export function scenarioSelectionNeedsSharePointMcpCatalogFixture(scenarios: string[]): boolean {
+  return scenarios.some((scenario) => scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/sharepoint-mcp-connectors.toml'));
+}
+
 export function scenarioSelectionNeedsManagedAiGatewayFixture(scenarios: string[]): boolean {
   return scenarios.some((scenario) =>
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/message-send-registry-degraded.toml') ||
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/sidebar-session-retention.toml') ||
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/global-unpublished-draft.toml'),
   );
+}
+
+export function applyPilotScenarioFixtureEnv(scenarios: string[], env: NodeJS.ProcessEnv = process.env): void {
+  if (scenarioSelectionNeedsAutomationSecondaryWorkspace(scenarios)) {
+    env.E2E_SEED_AUTOMATIONS_SECONDARY_WORKSPACE ||= '1';
+  }
+  if (scenarioSelectionNeedsSkillRegistryAuthFixture(scenarios)) {
+    env.E2E_SKILL_REGISTRY_AUTH_BASE ||= 'fixture';
+  }
+  if (scenarioSelectionNeedsSkillEnableInventoryFixture(scenarios)) {
+    env.E2E_SEED_SKILL_ENABLE_INVENTORY ||= '1';
+  }
+  if (scenarioSelectionNeedsGoogleMcpCatalogFixture(scenarios)) {
+    env.E2E_GOOGLE_MCP_CATALOG_FIXTURE ||= '1';
+  }
+  if (scenarioSelectionNeedsSharePointMcpCatalogFixture(scenarios)) {
+    env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE ||= '1';
+    env.E2E_SKILL_REGISTRY_FIXTURE ||= '1';
+    env.E2E_SKILL_REGISTRY_AUTH_BASE ||= 'fixture';
+  }
+  if (scenarioSelectionNeedsManagedAiGatewayFixture(scenarios)) {
+    env.E2E_MANAGED_AI_GATEWAY_FIXTURE ||= '1';
+  }
 }
 
 export async function runPilotCommand(options: RunPilotCommandOptions): Promise<void> {
@@ -225,21 +252,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     }
   }
 
-  if (scenarioSelectionNeedsAutomationSecondaryWorkspace(scenarios)) {
-    process.env.E2E_SEED_AUTOMATIONS_SECONDARY_WORKSPACE ||= '1';
-  }
-  if (scenarioSelectionNeedsSkillRegistryAuthFixture(scenarios)) {
-    process.env.E2E_SKILL_REGISTRY_AUTH_BASE ||= 'fixture';
-  }
-  if (scenarioSelectionNeedsSkillEnableInventoryFixture(scenarios)) {
-    process.env.E2E_SEED_SKILL_ENABLE_INVENTORY ||= '1';
-  }
-  if (scenarioSelectionNeedsGoogleMcpCatalogFixture(scenarios)) {
-    process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE ||= '1';
-  }
-  if (scenarioSelectionNeedsManagedAiGatewayFixture(scenarios)) {
-    process.env.E2E_MANAGED_AI_GATEWAY_FIXTURE ||= '1';
-  }
+  applyPilotScenarioFixtureEnv(scenarios);
 
   await startApp();
   try {

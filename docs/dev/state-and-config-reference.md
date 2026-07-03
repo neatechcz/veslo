@@ -416,10 +416,10 @@ The UI separates these concerns: Pluginy owns OpenCode plugin management, while
 Napojení owns MCP servers and external-app connections. They are separate
 dashboard tabs even though both can persist changes into OpenCode config.
 
-Platform Google Workspace MCP installs write normal remote MCP entries into
-OpenCode config. The entries point at Veslo-owned connector endpoints and may
-include non-secret runtime headers. They must not include Google OAuth client
-secrets, Google access tokens, or Google refresh tokens.
+Platform MCP installs write normal remote MCP entries into OpenCode config.
+The entries point at Veslo-owned connector endpoints and may include
+non-secret runtime headers. They must not include provider OAuth client
+secrets, provider access tokens, or provider refresh tokens.
 
 Veslo-managed connector runtime headers are renewable config material, not
 provider authorization state. If a configured connector MCP reports an
@@ -427,12 +427,19 @@ authorization-like runtime failure, the app may ask the local Veslo server to
 fetch a fresh short-lived connector token from Den and update the
 `X-Veslo-Connector-Token` header in the workspace OpenCode config, then retry
 the MCP status read once. This refresh path must not start browser OAuth and
-must not revoke or create Google grants.
+must not revoke or create provider grants.
 
 Google Workspace authorization is server-managed for production. Den owns the
 Google OAuth callback, exchanges the code with Veslo's Google client secret,
 and stores encrypted per-user grants by organization, user, and connector.
 OpenCode config only represents local runtime installation, not Google grant
+ownership.
+
+Microsoft SharePoint authorization follows the same production boundary. Den
+owns the Microsoft OAuth callback, exchanges the code with Veslo's Microsoft
+client secret, and stores encrypted per-user Microsoft grants by organization,
+user, and connector. The SharePoint platform connector is read-only and local
+OpenCode config only represents runtime installation, not Microsoft grant
 ownership.
 
 Desktop workspace provisioning seeds the default Chrome MCP as a local command

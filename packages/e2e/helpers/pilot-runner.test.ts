@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 
 import {
+  applyPilotScenarioFixtureEnv,
   buildPilotCommand,
   buildPilotDenAuthSeedScript,
   defaultPilotScenarios,
@@ -12,6 +13,7 @@ import {
   resolvePilotScenarioSelection,
   scenarioSelectionNeedsSkillEnableInventoryFixture,
   scenarioSelectionNeedsGoogleMcpCatalogFixture,
+  scenarioSelectionNeedsSharePointMcpCatalogFixture,
   scenarioSelectionNeedsManagedAiGatewayFixture,
   scenarioSelectionNeedsSkillRegistryAuthFixture,
   scenarioSelectionNeedsAutomationSecondaryWorkspace,
@@ -128,6 +130,37 @@ test('google mcp pilot scenario requests the google mcp catalog fixture', () => 
     scenarioSelectionNeedsGoogleMcpCatalogFixture(resolvePilotScenarioSelection({ scenario: ['navigation'] }, e2eRoot)),
     false,
   );
+});
+
+test('sharepoint mcp pilot scenario requests the sharepoint mcp catalog fixture', () => {
+  const e2eRoot = '/repo/packages/e2e';
+
+  assert.equal(
+    scenarioSelectionNeedsSharePointMcpCatalogFixture(
+      resolvePilotScenarioSelection({ scenario: ['sharepoint-mcp-connectors'] }, e2eRoot),
+    ),
+    true,
+  );
+  assert.equal(
+    scenarioSelectionNeedsSharePointMcpCatalogFixture(resolvePilotScenarioSelection({ scenario: ['google-mcp-connectors'] }, e2eRoot)),
+    false,
+  );
+  assert.equal(
+    scenarioSelectionNeedsGoogleMcpCatalogFixture(resolvePilotScenarioSelection({ scenario: ['sharepoint-mcp-connectors'] }, e2eRoot)),
+    false,
+  );
+});
+
+test('sharepoint mcp pilot scenario applies the sharepoint fixture env without enabling google', () => {
+  const e2eRoot = '/repo/packages/e2e';
+  const env: NodeJS.ProcessEnv = {};
+
+  applyPilotScenarioFixtureEnv(resolvePilotScenarioSelection({ scenario: ['sharepoint-mcp-connectors'] }, e2eRoot), env);
+
+  assert.equal(env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE, '1');
+  assert.equal(env.E2E_SKILL_REGISTRY_FIXTURE, '1');
+  assert.equal(env.E2E_SKILL_REGISTRY_AUTH_BASE, 'fixture');
+  assert.equal(env.E2E_GOOGLE_MCP_CATALOG_FIXTURE, undefined);
 });
 
 test('message send degraded registry pilot scenario requests the managed AI fixture', () => {
