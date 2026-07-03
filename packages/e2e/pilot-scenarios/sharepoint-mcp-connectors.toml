@@ -90,6 +90,19 @@ true;
 '''
 
 [[step]]
+name = "google catalog cards are absent"
+action = "eval"
+script = '''
+for (const name of ["Google Gmail", "Google Calendar", "Google Drive"]) {
+  const card = document.querySelector(`[data-testid="mcp-available-app-card"][data-mcp-name="${name}"]`);
+  if (card) {
+    throw new Error(`Unexpected Google catalog card is visible in SharePoint scenario: ${name}`);
+  }
+}
+true;
+'''
+
+[[step]]
 name = "click sharepoint card"
 action = "eval"
 script = '''
