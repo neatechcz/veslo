@@ -57,6 +57,24 @@ Required GitHub Actions configuration:
 
 Do not store production secrets in the repository. Keep production environment values in the server-side env file and GitHub secrets only.
 
+## Owned server staging
+
+The durable staging environment is documented in `docs/dev/staging-deployments.md`.
+It is production-shaped but isolated:
+
+- host: `62.109.146.56`
+- access model: VPN2-only
+- hostnames: `api.staging.veslo.work`, `ai.staging.veslo.work`, `admin.staging.veslo.work`, `app.staging.veslo.work`, and `*.workers.staging.veslo.work`
+- runner label: `veslo-staging-server`
+- server deploy workflow: `Deploy Staging Server`
+- desktop artifact workflow: `Build Staging App`
+
+Staging deploys are manual-only. They must not use production env files,
+production runner labels, production hostnames, or the public updater repository.
+Staging desktop artifacts are private workflow artifacts with updater checks
+disabled; production updater artifacts still belong only to
+`neatechcz/veslo-updates`.
+
 ## Production ops workflows
 
 Production operations that mutate Den state must run on the owned-server runner

@@ -25,6 +25,13 @@ Today the updater feed is served from:
 
 That public feed is produced by the release workflow in this repo and published after desktop artifacts are mirrored to the public `veslo-updates` repository.
 
+Staging desktop builds are not part of this updater feed. The `Build Staging
+App` workflow creates private manual-download artifacts with
+`VITE_VESLO_UPDATER_ENABLED=false` and `bundle.createUpdaterArtifacts=false`.
+Staging builds connect to `api.staging.veslo.work`, `ai.staging.veslo.work`,
+and `app.staging.veslo.work`, and they never publish to
+`neatechcz/veslo-updates`.
+
 ## Runtime Flow In The App
 
 The updater flow is split between the Tauri shell and the Solid app state.

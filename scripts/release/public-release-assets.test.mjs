@@ -109,3 +109,16 @@ test("owned-server deployment docs define the desktop updater hosting boundary",
   assert.match(workflow, /windows-2022/);
   assert.match(workflow, /ubuntu-latest/);
 });
+
+test("staging docs keep staging artifacts out of veslo-updates", () => {
+  const docsPath = resolve(import.meta.dirname, "../../docs/dev/staging-deployments.md");
+  const docs = readFileSync(docsPath, "utf8");
+
+  assert.match(docs, /62\.109\.146\.56/);
+  assert.match(docs, /VPN2-only/i);
+  assert.match(docs, /veslo-staging-server/);
+  assert.match(docs, /api\.staging\.veslo\.work/);
+  assert.match(docs, /Build Staging App/);
+  assert.match(docs, /Deploy Staging Server/);
+  assert.match(docs, /never publishes to `neatechcz\/veslo-updates`/i);
+});

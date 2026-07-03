@@ -43,7 +43,15 @@ Auth email and standalone AI Gateway alert email use Lettr over HTTPS via `LETTR
 
 The web app reads public `NEXT_PUBLIC_*` values at image build time. Rebuild the `web` image after changing those values.
 
-For database restore rehearsals, use `env.staging.example` and `rehearsal/README.md`. The rehearsal commands use a separate Compose project name and start only `den`, `ai-gateway`, and their database dependencies. They do not start `proxy` or bind public ports 80/443.
+For the durable staging server, use `env.staging.example`,
+`Caddyfile.staging`, and `docs/dev/staging-deployments.md`. That path binds the
+staging hostnames and uses the `Deploy Staging Server` workflow on the
+`veslo-staging-server` runner.
+
+For database restore rehearsals, use `env.rehearsal.example` and
+`rehearsal/README.md`. The rehearsal commands use a separate Compose project
+name and start only `den`, `ai-gateway`, and their database dependencies. They
+do not start `proxy` or bind public ports 80/443.
 
 For Phase 4 dark launch, use `dark-launch/README.md`. The dark-launch path
 requires production-equivalent env values and real Den plus AI Gateway dumps.
@@ -104,6 +112,11 @@ Required GitHub Actions configuration:
 On each run, the workflow creates or updates the stable checkout, checks out the requested branch with the job `GITHUB_TOKEN`, validates the Compose configuration, builds `worker-runtime-image`, `worker-manager`, `backup`, `den`, `ai-gateway`, and `web`, starts database dependencies, runs Den and AI Gateway migrations, starts the full stack, and verifies internal plus public health endpoints. When requested, it also verifies the backup scheduler and creates one immediate backup set.
 
 Keep production secrets in the server-side env file and GitHub secrets. Do not commit them.
+
+Staging deploys use `Deploy Staging Server` instead. That workflow is also
+manual-only, runs on the `veslo-staging-server` runner, uses
+`/srv/veslo/env/staging.env`, and verifies the `staging.veslo.work` hostname
+family. Keep staging secrets in the server-side staging env file, not in git.
 
 ## Health Check
 
