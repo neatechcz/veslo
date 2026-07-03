@@ -256,12 +256,18 @@ pub fn build_veslo_args(
 fn resolve_managed_ai_base_url_from_env(
     managed_ai_base_url: Option<&str>,
     legacy_ai_gateway_base_url: Option<&str>,
+    build_time_managed_ai_base_url: Option<&str>,
 ) -> String {
     managed_ai_base_url
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .or_else(|| {
             legacy_ai_gateway_base_url
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .or_else(|| {
+            build_time_managed_ai_base_url
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
         })
@@ -274,6 +280,7 @@ fn resolve_managed_ai_base_url() -> String {
     resolve_managed_ai_base_url_from_env(
         std::env::var("VESLO_MANAGED_AI_BASE_URL").ok().as_deref(),
         std::env::var("VESLO_AI_GATEWAY_BASE_URL").ok().as_deref(),
+        option_env!("VESLO_MANAGED_AI_BASE_URL"),
     )
 }
 
@@ -679,6 +686,7 @@ mod tests {
         let resolved = resolve_managed_ai_base_url_from_env(
             Some(" https://managed.example.test/ "),
             Some("https://legacy.example.test/"),
+            Some("https://build.example.test/"),
         );
 
         assert_eq!(resolved, "https://managed.example.test");
@@ -686,15 +694,29 @@ mod tests {
 
     #[test]
     fn managed_ai_base_url_falls_back_to_legacy_env() {
-        let resolved =
-            resolve_managed_ai_base_url_from_env(None, Some("https://legacy.example.test/"));
+        let resolved = resolve_managed_ai_base_url_from_env(
+            None,
+            Some("https://legacy.example.test/"),
+            Some("https://build.example.test/"),
+        );
 
         assert_eq!(resolved, "https://legacy.example.test");
     }
 
     #[test]
+    fn managed_ai_base_url_falls_back_to_build_time_env() {
+        let resolved = resolve_managed_ai_base_url_from_env(
+            None,
+            None,
+            Some(" https://build.example.test/ "),
+        );
+
+        assert_eq!(resolved, "https://build.example.test");
+    }
+
+    #[test]
     fn managed_ai_base_url_defaults_to_owned_gateway() {
-        let resolved = resolve_managed_ai_base_url_from_env(None, None);
+        let resolved = resolve_managed_ai_base_url_from_env(None, None, None);
 
         assert_eq!(resolved, "https://ai.veslo.work");
     }

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { createRoot } from "solid-js";
@@ -19,9 +20,13 @@ import {
   resolveUpdateAutoDownloadPreference,
   resolveUpdatePostInstallRestartAction,
   resolveUpdateStartupPreferences,
+  isUpdaterEnabled,
   shouldRelaunchAfterUpdateInstall,
   shouldAutoCheckForUpdatesAt,
 } from "../../context/updater.js";
+
+const systemStateSource = () =>
+  readFileSync(new URL("../../system-state.ts", import.meta.url), "utf8");
 
 test("auto-download defaults to disabled", () => {
   assert.equal(DEFAULT_UPDATE_AUTO_DOWNLOAD, false);
@@ -31,6 +36,13 @@ test("auto-download defaults to disabled", () => {
     assert.equal(updater.updateAutoDownload(), false);
     dispose();
   });
+});
+
+test("updater can be disabled for staging builds", () => {
+  assert.equal(isUpdaterEnabled(), true);
+  assert.equal(isUpdaterEnabled({ VITE_VESLO_UPDATER_ENABLED: "false" }), false);
+  assert.equal(isUpdaterEnabled({ VITE_VESLO_UPDATER_ENABLED: "0" }), true);
+  assert.match(systemStateSource(), /if \(!isUpdaterEnabled\(\)\) return;/);
 });
 
 test("Windows update install state is persisted with target version and start time", () => {

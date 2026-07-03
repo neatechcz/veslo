@@ -9,6 +9,7 @@ import {
   formatManagedAiAccessConfig,
   hasUsableManagedAiRuntimeConfig,
   type ManagedAiAccessProfile,
+  resolveDefaultManagedAiGatewayBaseUrl,
   resolveManagedAiAccess,
   resolveManagedAiAccessBundleState,
   resolveManagedAiGatewayBaseUrl,
@@ -37,6 +38,21 @@ const managedCodexProfile: ManagedAiAccessProfile = {
 
 test("desktop managed AI defaults to the owned server gateway", () => {
   assert.equal(DEFAULT_MANAGED_AI_GATEWAY_BASE_URL, "https://ai.veslo.work");
+});
+
+test("desktop managed AI default can be baked into staging builds", () => {
+  assert.equal(
+    resolveDefaultManagedAiGatewayBaseUrl({
+      VITE_MANAGED_AI_GATEWAY_BASE_URL: " https://ai.staging.veslo.work/ ",
+    }),
+    "https://ai.staging.veslo.work",
+  );
+  assert.equal(
+    resolveDefaultManagedAiGatewayBaseUrl({
+      VITE_MANAGED_AI_GATEWAY_BASE_URL: "not a url",
+    }),
+    DEFAULT_MANAGED_AI_GATEWAY_BASE_URL,
+  );
 });
 
 test("resolveManagedAiAccess returns a configured profile for valid admin policy", () => {
@@ -506,8 +522,11 @@ test("resolveManagedAiGatewayBaseUrl uses managed AI gateway instead of remote V
       gatewayClientBaseUrl: "https://den-worker-dev-dev-cloud-worker-2.onrender.com",
       localFallbackBaseUrl: "",
       isDesktopRuntime: true,
+      env: {
+        VITE_MANAGED_AI_GATEWAY_BASE_URL: "https://ai.staging.veslo.work",
+      },
     }),
-    DEFAULT_MANAGED_AI_GATEWAY_BASE_URL,
+    "https://ai.staging.veslo.work",
   );
 });
 

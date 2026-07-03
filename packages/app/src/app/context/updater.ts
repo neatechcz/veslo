@@ -47,6 +47,7 @@ export const UPDATE_AUTO_DOWNLOAD_RETRY_DELAYS_MS = [
   10 * 60_000,
 ] as const;
 export const UPDATE_AUTO_DOWNLOAD_MAX_RETRIES = UPDATE_AUTO_DOWNLOAD_RETRY_DELAYS_MS.length;
+type BuildEnv = Record<string, string | undefined>;
 
 export type UpdateDownloadRetryInfo =
   | { kind: "active"; retryAttempt: number; maxRetries: number }
@@ -294,6 +295,17 @@ export function shouldAutoCheckForUpdatesAt(state: UpdateStatus, now = Date.now(
   const lastCheckedAt = getUpdateLastCheckedAt(state);
   if (!lastCheckedAt) return true;
   return now - lastCheckedAt >= UPDATE_AUTO_CHECK_EVERY_MS;
+}
+
+function readBuildEnv(): BuildEnv | undefined {
+  if (typeof import.meta !== "undefined") {
+    return (import.meta as { env?: BuildEnv }).env;
+  }
+  return undefined;
+}
+
+export function isUpdaterEnabled(env: BuildEnv | undefined = readBuildEnv()) {
+  return String(env?.VITE_VESLO_UPDATER_ENABLED ?? "true").trim().toLowerCase() !== "false";
 }
 
 export function createUpdaterState() {

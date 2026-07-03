@@ -11,6 +11,7 @@ import {
   clearVesloServerSettings,
   requestManagedAiAccessBundle,
   readVesloServerSettings,
+  resolveDefaultVesloConnectAppUrl,
   resolveSessionArchiveClientOptions,
   VesloServerError,
   writeVesloServerSettings,
@@ -177,6 +178,31 @@ test("Veslo connect invite defaults to the owned web app", () => {
   });
 
   assert.equal(new URL(url).origin, "https://app.veslo.work");
+});
+
+test("Veslo connect invite default can be baked into staging builds", () => {
+  assert.equal(
+    resolveDefaultVesloConnectAppUrl({
+      VITE_VESLO_CONNECT_APP_URL: " https://app.staging.veslo.work/ ",
+    }),
+    "https://app.staging.veslo.work",
+  );
+  assert.equal(
+    resolveDefaultVesloConnectAppUrl({
+      VITE_VESLO_CONNECT_APP_URL: "not a url",
+    }),
+    "https://app.veslo.work",
+  );
+
+  const url = buildVesloConnectInviteUrl({
+    workspaceUrl: "https://worker.example.test",
+    token: "token_123",
+    env: {
+      VITE_VESLO_CONNECT_APP_URL: "https://app.staging.veslo.work",
+    },
+  });
+
+  assert.equal(new URL(url).origin, "https://app.staging.veslo.work");
 });
 
 test("Veslo bundle invite defaults to the owned web app", () => {

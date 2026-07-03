@@ -6,6 +6,7 @@ import {
   exchangeHandoffCode,
   flushPendingDesktopSnapshotWrite,
   getDesktopBrowserAuthStatus,
+  getDefaultDenApiBase,
   getDenApiBase,
   hydrateDenAuthFromDesktopSnapshot,
   parseAuthCompleteDeepLink,
@@ -187,6 +188,21 @@ test("DEN API base overrides cannot keep forwarding to OnRender", () => {
   } finally {
     storage.restore();
   }
+});
+
+test("default DEN API base can be baked into staging builds", () => {
+  assert.equal(
+    getDefaultDenApiBase({
+      VITE_DEN_API_BASE: " https://api.staging.veslo.work/ ",
+    }),
+    "https://api.staging.veslo.work",
+  );
+  assert.equal(
+    getDefaultDenApiBase({
+      VITE_DEN_API_BASE: "not a url",
+    }),
+    "https://api.veslo.work",
+  );
 });
 
 test("startDesktopBrowserAuth uses v2 start and stores exchange proof by transaction id", async () => {

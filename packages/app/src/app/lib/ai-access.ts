@@ -25,6 +25,7 @@ export const AI_ACCESS_INVALID_MESSAGE_KEY = "ai_access.invalid";
 export const AI_ACCESS_LOAD_FAILED_MESSAGE_KEY = "ai_access.load_failed";
 export const DEFAULT_MANAGED_AI_GATEWAY_BASE_URL = "https://ai.veslo.work";
 const REDACTED_SECRET_VALUE = "[REDACTED]";
+type BuildEnv = Record<string, string | undefined>;
 
 const AI_ACCESS_MESSAGE_KEY_BY_TEXT = new Map<string, string>([
   [AI_ACCESS_ADMIN_MANAGED_MESSAGE, AI_ACCESS_ADMIN_MANAGED_MESSAGE_KEY],
@@ -71,11 +72,42 @@ function normalizeHttpUrl(value: string | null | undefined): string {
   }
 }
 
+function normalizeHttpBuildBaseUrl(value: string | null | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    if (!parsed.hostname) return "";
+    parsed.search = "";
+    parsed.hash = "";
+    parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function readBuildEnv(): BuildEnv | undefined {
+  if (typeof import.meta !== "undefined") {
+    return (import.meta as { env?: BuildEnv }).env;
+  }
+  return undefined;
+}
+
+export function resolveDefaultManagedAiGatewayBaseUrl(
+  env: BuildEnv | undefined = readBuildEnv(),
+): string {
+  return normalizeHttpBuildBaseUrl(env?.VITE_MANAGED_AI_GATEWAY_BASE_URL) ||
+    DEFAULT_MANAGED_AI_GATEWAY_BASE_URL;
+}
+
 export function resolveManagedAiGatewayBaseUrl(input: {
   settingsUrl: string | null | undefined;
   gatewayClientBaseUrl: string | null | undefined;
   localFallbackBaseUrl: string | null | undefined;
   isDesktopRuntime: boolean;
+  env?: BuildEnv;
 }): string {
   const settingsUrl = normalizeHttpUrl(input.settingsUrl);
   const gatewayClientBaseUrl = normalizeHttpUrl(input.gatewayClientBaseUrl);
@@ -87,7 +119,7 @@ export function resolveManagedAiGatewayBaseUrl(input: {
   }
 
   if (input.isDesktopRuntime) {
-    return DEFAULT_MANAGED_AI_GATEWAY_BASE_URL;
+    return resolveDefaultManagedAiGatewayBaseUrl(input.env);
   }
 
   if (settingsUrl && !isLoopbackHttpUrl(settingsUrl)) {

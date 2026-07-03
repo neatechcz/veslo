@@ -25,6 +25,7 @@ import {
   UPDATE_INSTALL_STATE_KEY,
   createUpdateInstallState,
   createUpdaterState,
+  isUpdaterEnabled,
   resolveAutoDownloadFailureStatus,
   resolveAutoDownloadOptOutStatus,
   resolveUpdatePostInstallRestartAction,
@@ -479,6 +480,7 @@ export function createSystemState(options: {
 
   async function checkForUpdates(optionsCheck?: { quiet?: boolean }) {
     if (!isTauriRuntime()) return;
+    if (!isUpdaterEnabled()) return;
     if (updateStatus().state === "installing") return;
 
     const startedAt = Date.now();

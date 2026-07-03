@@ -164,6 +164,7 @@ export function buildVesloWorkspaceBaseUrl(hostUrl: string, workspaceId?: string
 }
 
 export const DEFAULT_VESLO_CONNECT_APP_URL = "https://app.veslo.work";
+type BuildEnv = Record<string, string | undefined>;
 
 const VESLO_INVITE_PARAM_URL = "veslo_url";
 const VESLO_INVITE_PARAM_TOKEN = "veslo_token";
@@ -182,6 +183,35 @@ const LEGACY_INVITE_PARAM_BUNDLE_INTENT = "ow_intent";
 const LEGACY_INVITE_PARAM_BUNDLE_SOURCE = "ow_source";
 const LEGACY_INVITE_PARAM_BUNDLE_ORG = "ow_org";
 const LEGACY_INVITE_PARAM_BUNDLE_LABEL = "ow_label";
+
+function readBuildEnv(): BuildEnv | undefined {
+  if (typeof import.meta !== "undefined") {
+    return (import.meta as { env?: BuildEnv }).env;
+  }
+  return undefined;
+}
+
+function normalizeHttpBuildBaseUrl(value: string | null | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    if (!parsed.hostname) return "";
+    parsed.search = "";
+    parsed.hash = "";
+    parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+}
+
+export function resolveDefaultVesloConnectAppUrl(
+  env: BuildEnv | undefined = readBuildEnv(),
+): string {
+  return normalizeHttpBuildBaseUrl(env?.VITE_VESLO_CONNECT_APP_URL) || DEFAULT_VESLO_CONNECT_APP_URL;
+}
 
 export type VesloConnectInvite = {
   url: string;
@@ -211,12 +241,14 @@ export function buildVesloConnectInviteUrl(input: {
   workspaceUrl: string;
   token?: string | null;
   appUrl?: string | null;
+  env?: BuildEnv;
   startup?: "server";
 }) {
   const workspaceUrl = normalizeVesloServerUrl(input.workspaceUrl ?? "") ?? "";
   if (!workspaceUrl) return "";
 
-  const base = normalizeVesloServerUrl(input.appUrl ?? "") ?? DEFAULT_VESLO_CONNECT_APP_URL;
+  const defaultAppUrl = resolveDefaultVesloConnectAppUrl(input.env);
+  const base = normalizeVesloServerUrl(input.appUrl ?? "") ?? defaultAppUrl;
 
   try {
     const url = new URL(base);
@@ -241,7 +273,7 @@ export function buildVesloConnectInviteUrl(input: {
       search.set(VESLO_INVITE_PARAM_TOKEN, token);
     }
     search.set(VESLO_INVITE_PARAM_STARTUP, input.startup ?? "server");
-    return `${DEFAULT_VESLO_CONNECT_APP_URL}?${search.toString()}`;
+    return `${defaultAppUrl}?${search.toString()}`;
   }
 }
 
@@ -281,6 +313,7 @@ export function readVesloConnectInviteFromSearch(input: string | URLSearchParams
 export function buildVesloBundleInviteUrl(input: {
   bundleUrl: string;
   appUrl?: string | null;
+  env?: BuildEnv;
   intent?: VesloBundleInviteIntent;
   source?: string | null;
   orgId?: string | null;
@@ -296,7 +329,8 @@ export function buildVesloBundleInviteUrl(input: {
     return "";
   }
 
-  const base = normalizeVesloServerUrl(input.appUrl ?? "") ?? DEFAULT_VESLO_CONNECT_APP_URL;
+  const defaultAppUrl = resolveDefaultVesloConnectAppUrl(input.env);
+  const base = normalizeVesloServerUrl(input.appUrl ?? "") ?? defaultAppUrl;
 
   try {
     const url = new URL(base);
@@ -343,7 +377,7 @@ export function buildVesloBundleInviteUrl(input: {
       search.set(VESLO_INVITE_PARAM_BUNDLE_LABEL, label);
     }
 
-    return `${DEFAULT_VESLO_CONNECT_APP_URL}?${search.toString()}`;
+    return `${defaultAppUrl}?${search.toString()}`;
   }
 }
 

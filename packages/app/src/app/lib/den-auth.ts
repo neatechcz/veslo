@@ -21,6 +21,7 @@ const DESKTOP_AUTH_CODE_VERIFIER_BYTES = 48;
 const DESKTOP_AUTH_FALLBACK_TTL_MS = 10 * 60 * 1000;
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+type BuildEnv = Record<string, string | undefined>;
 
 const auditedTauriFetch = wrapStartupRequestAuditFetch(
   tauriFetch as unknown as typeof globalThis.fetch,
@@ -218,18 +219,21 @@ function isOnrenderDenApiBase(value: string): boolean {
   }
 }
 
-function envDenApiBase(): string | null {
+function readBuildEnv(): BuildEnv | undefined {
   if (typeof import.meta !== "undefined") {
-    const env = (import.meta as { env?: Record<string, string | undefined> }).env;
-    const fromEnv = env?.VITE_DEN_API_BASE;
-    const normalized = fromEnv ? normalizeDenApiBase(fromEnv) : null;
-    if (normalized) return normalized;
+    return (import.meta as { env?: BuildEnv }).env;
   }
-  return null;
+  return undefined;
 }
 
-export function getDefaultDenApiBase(): string {
-  return envDenApiBase() ?? DEFAULT_DEN_API_BASE;
+function envDenApiBase(env: BuildEnv | undefined): string | null {
+  const fromEnv = env?.VITE_DEN_API_BASE;
+  const normalized = fromEnv ? normalizeDenApiBase(fromEnv) : null;
+  return normalized || null;
+}
+
+export function getDefaultDenApiBase(env: BuildEnv | undefined = readBuildEnv()): string {
+  return envDenApiBase(env) ?? DEFAULT_DEN_API_BASE;
 }
 
 export function readDenApiBaseOverride(): string | null {
