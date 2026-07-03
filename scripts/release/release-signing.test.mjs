@@ -335,17 +335,39 @@ test("release checklist documents Windows signing timeout controls", () => {
 
 test("Windows signing workflows allow slow Azure signing responses", () => {
   const workflowPaths = [
-    "../../.github/workflows/build-desktop.yml",
-    "../../.github/workflows/build-windows-msi.yml",
-    "../../.github/workflows/prerelease.yml",
-    "../../.github/workflows/release-macos-aarch64.yml",
+    {
+      path: "../../.github/workflows/build-desktop.yml",
+      timeoutSeconds: 900,
+      maxAttempts: 2,
+    },
+    {
+      path: "../../.github/workflows/build-windows-msi.yml",
+      timeoutSeconds: 900,
+      maxAttempts: 2,
+    },
+    {
+      path: "../../.github/workflows/prerelease.yml",
+      timeoutSeconds: 900,
+      maxAttempts: 2,
+    },
+    {
+      path: "../../.github/workflows/release-macos-aarch64.yml",
+      timeoutSeconds: 1800,
+      maxAttempts: 3,
+    },
   ];
 
   for (const workflowPath of workflowPaths) {
-    const workflow = readFileSync(resolve(import.meta.dirname, workflowPath), "utf8");
+    const workflow = readFileSync(resolve(import.meta.dirname, workflowPath.path), "utf8");
 
-    assert.match(workflow, /VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS:\s*900/);
-    assert.match(workflow, /VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS:\s*2/);
+    assert.match(
+      workflow,
+      new RegExp(`VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS:\\s*${workflowPath.timeoutSeconds}`),
+    );
+    assert.match(
+      workflow,
+      new RegExp(`VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS:\\s*${workflowPath.maxAttempts}`),
+    );
   }
 });
 
