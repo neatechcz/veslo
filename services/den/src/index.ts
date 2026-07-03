@@ -41,6 +41,14 @@ import {
   DbGoogleWorkspaceConnectionStore,
   UnavailableGoogleWorkspaceConnectionStore,
 } from "./google-workspace/store.js"
+import {
+  DefaultMicrosoftOAuthClient,
+  createUnavailableMicrosoftOAuthClient,
+} from "./microsoft/oauth.js"
+import {
+  DbMicrosoftConnectionStore,
+  UnavailableMicrosoftConnectionStore,
+} from "./microsoft/store.js"
 import { createProxyRouter } from "./managed-ai/http/proxy.js"
 import { createUserCredentialsRouter } from "./managed-ai/http/user-credentials.js"
 import { createDbSkillRegistryStore } from "./skills/db-store.js"
@@ -60,6 +68,7 @@ import { orgsRouter } from "./http/orgs.js"
 import { createOrgMcpCatalogRouter } from "./http/org-mcp-catalog.js"
 import { orgSkillsCatalogRouter } from "./http/org-skills-catalog.js"
 import { createGoogleWorkspaceRouter } from "./http/google-workspace.js"
+import { createMicrosoftRouter } from "./http/microsoft.js"
 import { workersRouter } from "./http/workers.js"
 import { createYouTrackRestIssueClient } from "./integrations/youtrack-rest.js"
 
@@ -206,7 +215,8 @@ app.use("/v1/admin", createAdminRuntimeRouter({ managedAi: managedAiRuntime, deb
 app.use("/admin/api", createAdminRuntimeRouter({ managedAi: managedAiRuntime, debugLogs: debugLogService }))
 app.use("/v1/orgs", orgsRouter)
 app.use("/v1/orgs", createOrgMcpCatalogRouter({
-  connectorBaseUrl: env.googleWorkspace.connectorBaseUrl,
+  googleConnectorBaseUrl: env.googleWorkspace.connectorBaseUrl,
+  microsoftConnectorBaseUrl: env.microsoft.connectorBaseUrl,
 }))
 app.use("/v1/orgs", orgSkillsCatalogRouter)
 app.use("/v1", createGoogleWorkspaceRouter({
@@ -215,6 +225,13 @@ app.use("/v1", createGoogleWorkspaceRouter({
   stateSecret: env.googleWorkspace.oauthStateSecret,
   redirectUri: env.googleWorkspace.oauthRedirectUri,
   successRedirectUrl: env.googleWorkspace.oauthSuccessRedirectUrl,
+}))
+app.use("/v1", createMicrosoftRouter({
+  oauth: createMicrosoftOAuthClient(),
+  store: createMicrosoftConnectionStore(),
+  stateSecret: env.microsoft.stateSecret,
+  redirectUri: env.microsoft.redirectUri,
+  successRedirectUrl: env.microsoft.successRedirectUrl,
 }))
 app.use("/v1/workers", workersRouter)
 app.use(errorMiddleware)
@@ -251,6 +268,30 @@ function createGoogleWorkspaceConnectionStore() {
   }
 
   return new DbGoogleWorkspaceConnectionStore({
+    db,
+    secretKey: config.tokenSecretKey,
+  })
+}
+
+function createMicrosoftOAuthClient() {
+  const config = env.microsoft
+  if (!config.clientId || !config.clientSecret) {
+    return createUnavailableMicrosoftOAuthClient()
+  }
+
+  return new DefaultMicrosoftOAuthClient({
+    clientId: config.clientId,
+    clientSecret: config.clientSecret,
+  })
+}
+
+function createMicrosoftConnectionStore() {
+  const config = env.microsoft
+  if (!config.tokenSecretKey) {
+    return new UnavailableMicrosoftConnectionStore()
+  }
+
+  return new DbMicrosoftConnectionStore({
     db,
     secretKey: config.tokenSecretKey,
   })

@@ -383,6 +383,114 @@ test("POST /workspace/:id/mcp/hub/:name preserves Veslo connector headers withou
   expect(configRaw).not.toContain("clientSecret");
 });
 
+test("POST /workspace/:id/mcp/hub/:name installs SharePoint MCP with runtime token headers only", async () => {
+  const denCalls: Array<{ pathname: string; method: string; authHeader: string | null }> = [];
+  const denServer = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      denCalls.push({
+        pathname: url.pathname,
+        method: request.method,
+        authHeader: request.headers.get("authorization"),
+      });
+
+      if (url.pathname === "/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/runtime-token") {
+        return new Response(JSON.stringify({
+          token: "runtime-token-sharepoint-1",
+          expiresAt: "2030-06-19T12:00:00.000Z",
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({
+          items: [
+            {
+              id: "microsoft-sharepoint",
+              name: "Microsoft SharePoint",
+              config: {
+                type: "remote",
+                url: "https://api.veslo.work/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/mcp",
+                oauth: false,
+                headers: {
+                  "X-Veslo-Connector": "microsoft-sharepoint",
+                },
+              },
+              authorization: {
+                type: "veslo-server-oauth",
+                provider: "microsoft",
+                connectorId: "microsoft-sharepoint",
+                scopes: [
+                  "openid",
+                  "profile",
+                  "offline_access",
+                  "https://graph.microsoft.com/Files.Read.All",
+                  "https://graph.microsoft.com/Sites.Read.All",
+                ],
+                startPath: "/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/oauth/start",
+                runtimeTokenPath: "/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/runtime-token",
+                statusPath: "/v1/orgs/org_1/integrations/microsoft/connections",
+                disconnectPath: "/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/connection",
+              },
+              source: { scope: "platform" },
+              provider: { id: "microsoft", group: "Microsoft" },
+            },
+          ],
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+    },
+  });
+  runningServers.push(denServer as { stop?: (closeActiveConnections?: boolean) => void });
+
+  const { server, workspaceRoot } = await startFixture({ denApiBase: `http://127.0.0.1:${denServer.port}` });
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/mcp/hub/microsoft-sharepoint`, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer client-token",
+      "x-veslo-den-token": "den-token",
+      "x-veslo-den-org-id": "org_1",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({}),
+  });
+
+  expect(response.status).toBe(200);
+  const configRaw = await readFile(join(workspaceRoot, "opencode.jsonc"), "utf8");
+  expect(configRaw).toContain("\"microsoft-sharepoint\"");
+  expect(configRaw).toContain("https://api.veslo.work/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/mcp");
+  expect(configRaw).toContain("\"oauth\": false");
+  expect(configRaw).toContain("\"X-Veslo-Connector\": \"microsoft-sharepoint\"");
+  expect(configRaw).toContain("\"X-Veslo-Connector-Token\": \"runtime-token-sharepoint-1\"");
+  expect(configRaw).not.toContain("MICROSOFT_CLIENT_SECRET");
+  expect(configRaw).not.toContain("MICROSOFT_ACCESS_TOKEN");
+  expect(configRaw).not.toContain("MICROSOFT_REFRESH_TOKEN");
+  expect(configRaw).not.toContain("VESLO_MICROSOFT_MCP_CLIENT_SECRET");
+  expect(configRaw).not.toContain("access_token");
+  expect(configRaw).not.toContain("refresh_token");
+  expect(configRaw).not.toContain("accessToken");
+  expect(configRaw).not.toContain("refreshToken");
+  expect(configRaw).not.toContain("clientSecret");
+  expect(configRaw).not.toContain("client_secret");
+  expect(denCalls).toEqual([
+    {
+      pathname: "/v1/orgs/org_1/mcp/catalog",
+      method: "GET",
+      authHeader: "Bearer den-token",
+    },
+    {
+      pathname: "/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/runtime-token",
+      method: "POST",
+      authHeader: "Bearer den-token",
+    },
+  ]);
+});
+
 test("POST /workspace/:id/mcp/:name/runtime-token/refresh rotates Veslo connector token", async () => {
   let runtimeTokenCalls = 0;
   const denServer = Bun.serve({

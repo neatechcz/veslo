@@ -75,6 +75,44 @@ const FORBIDDEN_MCP_HEADER_NAMES = new Set([
   "x-veslo-connector-token",
 ]);
 
+const SAFE_MCP_HEADER_NAMES = new Set([
+  "x-veslo-connector",
+]);
+
+const FORBIDDEN_MCP_HEADER_NAME_PARTS = new Set([
+  "authorization",
+  "cookie",
+  "key",
+  "secret",
+  "token",
+]);
+
+const FORBIDDEN_MCP_HEADER_NAME_FRAGMENTS = [
+  "apikey",
+  "accesstoken",
+  "clientsecret",
+  "idtoken",
+  "refreshtoken",
+];
+
+function isForbiddenMcpHeaderName(key: string) {
+  const normalizedKey = key.trim().toLowerCase();
+  if (SAFE_MCP_HEADER_NAMES.has(normalizedKey)) {
+    return false;
+  }
+  if (FORBIDDEN_MCP_HEADER_NAMES.has(normalizedKey)) {
+    return true;
+  }
+
+  const parts = normalizedKey.split(/[^a-z0-9]+/).filter(Boolean);
+  if (parts.some((part) => FORBIDDEN_MCP_HEADER_NAME_PARTS.has(part))) {
+    return true;
+  }
+
+  const compactKey = parts.join("");
+  return FORBIDDEN_MCP_HEADER_NAME_FRAGMENTS.some((fragment) => compactKey.includes(fragment));
+}
+
 function toMcpHeaders(value: unknown, index: number): Record<string, string> | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -83,10 +121,9 @@ function toMcpHeaders(value: unknown, index: number): Record<string, string> | u
 
   const result: Record<string, string> = {};
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    const normalizedKey = key.trim().toLowerCase();
     if (
       !key.trim() ||
-      FORBIDDEN_MCP_HEADER_NAMES.has(normalizedKey) ||
+      isForbiddenMcpHeaderName(key) ||
       typeof entry !== "string" ||
       /bearer\s+/i.test(entry) ||
       /\{env:/i.test(entry)
@@ -98,6 +135,16 @@ function toMcpHeaders(value: unknown, index: number): Record<string, string> | u
   return result;
 }
 
+const FORBIDDEN_MCP_AUTHORIZATION_FIELD_NAMES = new Set([
+  "accesstoken",
+  "refreshtoken",
+  "idtoken",
+  "runtimetoken",
+  "token",
+  "clientid",
+  "clientsecret",
+]);
+
 function toMcpAuthorization(value: unknown, index: number): HubMcpAuthorization | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -105,7 +152,10 @@ function toMcpAuthorization(value: unknown, index: number): HubMcpAuthorization 
   }
 
   const payload = value as Record<string, unknown>;
+  const hasForbiddenTokenMaterial = Object.keys(payload).some((key) =>
+    FORBIDDEN_MCP_AUTHORIZATION_FIELD_NAMES.has(key.replace(/[-_]/g, "").toLowerCase()));
   if (
+    hasForbiddenTokenMaterial ||
     payload.type !== "veslo-server-oauth" ||
     typeof payload.provider !== "string" ||
     typeof payload.connectorId !== "string" ||
@@ -190,6 +240,9 @@ function toHubMcpItem(item: unknown, index: number): HubMcpItem {
   const oauth = toMcpOAuthConfig(config.oauth, index);
   const headers = toMcpHeaders(config.headers, index);
   const authorization = toMcpAuthorization(payload.authorization, index);
+  if (authorization?.type === "veslo-server-oauth" && oauth !== undefined && oauth !== false) {
+    throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
+  }
 
   return {
     id: payload.id,

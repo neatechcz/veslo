@@ -1,4 +1,5 @@
 import express from "express"
+import { MicrosoftConnectors } from "../microsoft/connectors.js"
 import { asyncRoute } from "./errors.js"
 import { requireOrganizationAccess } from "./org-auth.js"
 
@@ -40,12 +41,14 @@ const GOOGLE_MCP_CONNECTORS: GoogleConnectorDefinition[] = [
   },
 ]
 
-function resolvePublicBaseUrl(req: express.Request) {
-  const configured = process.env.GOOGLE_WORKSPACE_CONNECTOR_BASE_URL?.trim() ||
-    process.env.BETTER_AUTH_URL?.trim() ||
-    ""
+function normalizeBaseUrl(value: string | null | undefined) {
+  return value?.trim().replace(/\/+$/, "") || null
+}
+
+function resolvePublicBaseUrl(req: express.Request, configuredBaseUrl: string | null | undefined) {
+  const configured = normalizeBaseUrl(configuredBaseUrl) || normalizeBaseUrl(process.env.BETTER_AUTH_URL)
   if (configured) {
-    return configured.replace(/\/+$/, "")
+    return configured
   }
   return `${req.protocol}://${req.get("host") || "api.veslo.work"}`.replace(/\/+$/, "")
 }
@@ -79,16 +82,48 @@ function buildGoogleMcpConnectors(input: { baseUrl: string; orgId: string }) {
   }))
 }
 
+function buildMicrosoftMcpConnectors(input: { baseUrl: string; orgId: string }) {
+  const orgPath = `/v1/orgs/${encodeURIComponent(input.orgId)}`
+  return MicrosoftConnectors.map((connector) => ({
+    id: connector.id,
+    name: connector.name,
+    config: {
+      type: "remote",
+      url: `${input.baseUrl}${orgPath}/integrations/microsoft/${connector.id}/mcp`,
+      oauth: false,
+      headers: {
+        "X-Veslo-Connector": connector.id,
+      },
+    },
+    authorization: {
+      type: "veslo-server-oauth",
+      provider: "microsoft",
+      connectorId: connector.id,
+      scopes: connector.scopes,
+      startPath: `${orgPath}/integrations/microsoft/${connector.id}/oauth/start`,
+      runtimeTokenPath: `${orgPath}/integrations/microsoft/${connector.id}/runtime-token`,
+      statusPath: `${orgPath}/integrations/microsoft/connections`,
+      disconnectPath: `${orgPath}/integrations/microsoft/${connector.id}/connection`,
+    },
+    source: { scope: "platform" },
+    provider: { id: "microsoft", group: "Microsoft" },
+  }))
+}
+
 export type OrgMcpCatalogAuthorize = typeof requireOrganizationAccess
 
 export type OrgMcpCatalogRouterOptions = {
   authorize?: OrgMcpCatalogAuthorize
   connectorBaseUrl?: string
+  googleConnectorBaseUrl?: string
+  microsoftConnectorBaseUrl?: string
 }
 
 export function createOrgMcpCatalogRouter(options: OrgMcpCatalogRouterOptions = {}) {
   const authorize = options.authorize ?? requireOrganizationAccess
-  const connectorBaseUrl = options.connectorBaseUrl?.trim().replace(/\/+$/, "") || null
+  const googleConnectorBaseUrl = normalizeBaseUrl(options.googleConnectorBaseUrl) ||
+    normalizeBaseUrl(options.connectorBaseUrl)
+  const microsoftConnectorBaseUrl = normalizeBaseUrl(options.microsoftConnectorBaseUrl)
   const router = express.Router()
 
   router.get("/:orgId/mcp/catalog", asyncRoute(async (req, res) => {
@@ -101,11 +136,26 @@ export function createOrgMcpCatalogRouter(options: OrgMcpCatalogRouterOptions = 
       return
     }
 
+    const googleBaseUrl = resolvePublicBaseUrl(
+      req,
+      googleConnectorBaseUrl || process.env.GOOGLE_WORKSPACE_CONNECTOR_BASE_URL,
+    )
+    const microsoftBaseUrl = resolvePublicBaseUrl(
+      req,
+      microsoftConnectorBaseUrl || process.env.MICROSOFT_CONNECTOR_BASE_URL,
+    )
+
     res.json({
-      items: buildGoogleMcpConnectors({
-        baseUrl: connectorBaseUrl ?? resolvePublicBaseUrl(req),
-        orgId: req.params.orgId,
-      }),
+      items: [
+        ...buildGoogleMcpConnectors({
+          baseUrl: googleBaseUrl,
+          orgId: req.params.orgId,
+        }),
+        ...buildMicrosoftMcpConnectors({
+          baseUrl: microsoftBaseUrl,
+          orgId: req.params.orgId,
+        }),
+      ],
     })
   }))
 

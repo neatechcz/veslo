@@ -9,6 +9,7 @@ import {
   buildWindowsManagedChildCleanupScript,
   createAppLaunchEnv,
   resolveLaunchTimeout,
+  resolveMcpCatalogFixtureDenApiBase,
   resolvePilotIdentifier,
   resolvePilotRuntimeDir,
   resolvePilotSocketPath,
@@ -59,6 +60,33 @@ test('createAppLaunchEnv forwards the Den API base for fixture-backed catalog E2
   );
 
   assert.equal(env.VESLO_DEN_API_BASE, 'http://127.0.0.1:54321');
+});
+
+test('resolveMcpCatalogFixtureDenApiBase forwards the fixture base for Google or SharePoint catalog scenarios', () => {
+  assert.equal(
+    resolveMcpCatalogFixtureDenApiBase({
+      skillRegistryFixtureBaseUrl: 'http://127.0.0.1:54321',
+      useGoogleMcpCatalogFixture: true,
+      useSharePointMcpCatalogFixture: false,
+    }),
+    'http://127.0.0.1:54321',
+  );
+  assert.equal(
+    resolveMcpCatalogFixtureDenApiBase({
+      skillRegistryFixtureBaseUrl: 'http://127.0.0.1:54321',
+      useGoogleMcpCatalogFixture: false,
+      useSharePointMcpCatalogFixture: true,
+    }),
+    'http://127.0.0.1:54321',
+  );
+  assert.equal(
+    resolveMcpCatalogFixtureDenApiBase({
+      skillRegistryFixtureBaseUrl: 'http://127.0.0.1:54321',
+      useGoogleMcpCatalogFixture: false,
+      useSharePointMcpCatalogFixture: false,
+    }),
+    null,
+  );
 });
 
 test('createAppLaunchEnv isolates Windows app, local, and WebView2 storage so stale desktop state does not override the E2E snapshot', () => {

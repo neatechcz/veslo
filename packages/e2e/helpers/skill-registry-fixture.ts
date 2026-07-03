@@ -65,6 +65,8 @@ export const E2E_SKILL_REGISTRY_TOKEN = 'veslo-e2e-default-token';
 export const E2E_SKILL_REGISTRY_WORKSPACE_ID = 'e2e-visual-workspace';
 export const E2E_GOOGLE_MCP_CATALOG_USER_ID = 'user_veslo_google_mcp_e2e';
 
+const E2E_SHAREPOINT_MCP_CONNECTOR_ID = 'microsoft-sharepoint';
+
 const E2E_GOOGLE_MCP_CONNECTOR_DEFINITIONS = [
   {
     id: 'google-gmail',
@@ -96,6 +98,18 @@ const E2E_GOOGLE_MCP_CONNECTOR_DEFINITIONS = [
   },
 ] as const;
 
+const E2E_SHAREPOINT_MCP_CONNECTOR_DEFINITION = {
+  id: E2E_SHAREPOINT_MCP_CONNECTOR_ID,
+  name: 'Microsoft SharePoint',
+  scopes: [
+    'openid',
+    'profile',
+    'offline_access',
+    'https://graph.microsoft.com/Files.Read.All',
+    'https://graph.microsoft.com/Sites.Read.All',
+  ],
+} as const;
+
 export function buildE2EGoogleMcpConnectors(baseUrl: string, orgId = E2E_SKILL_REGISTRY_ORG_ID) {
   const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, '');
   const orgPath = `/v1/orgs/${encodeURIComponent(orgId)}`;
@@ -126,12 +140,50 @@ export function buildE2EGoogleMcpConnectors(baseUrl: string, orgId = E2E_SKILL_R
   }));
 }
 
+export function buildE2ESharePointMcpConnectors(baseUrl: string, orgId = E2E_SKILL_REGISTRY_ORG_ID) {
+  const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, '');
+  const orgPath = `/v1/orgs/${encodeURIComponent(orgId)}`;
+  const connector = E2E_SHAREPOINT_MCP_CONNECTOR_DEFINITION;
+  return [
+    {
+      id: connector.id,
+      name: connector.name,
+      config: {
+        type: 'remote',
+        url: `${normalizedBaseUrl}${orgPath}/integrations/microsoft/${connector.id}/mcp`,
+        oauth: false,
+        headers: {
+          'X-Veslo-Connector': connector.id,
+        },
+      },
+      authorization: {
+        type: 'veslo-server-oauth',
+        provider: 'microsoft',
+        connectorId: connector.id,
+        scopes: [...connector.scopes],
+        startPath: `${orgPath}/integrations/microsoft/${connector.id}/oauth/start`,
+        runtimeTokenPath: `${orgPath}/integrations/microsoft/${connector.id}/runtime-token`,
+        statusPath: `${orgPath}/integrations/microsoft/connections`,
+        disconnectPath: `${orgPath}/integrations/microsoft/${connector.id}/connection`,
+      },
+      source: { scope: 'platform' },
+      provider: { id: 'microsoft', group: 'Microsoft' },
+    },
+  ];
+}
+
 export const E2E_GOOGLE_MCP_CONNECTORS = buildE2EGoogleMcpConnectors('https://api.veslo.work');
 
 export function shouldUseGoogleMcpCatalogFixture(
   env: Record<string, string | undefined> = process.env,
 ): boolean {
   return env.E2E_GOOGLE_MCP_CATALOG_FIXTURE?.trim() === '1';
+}
+
+export function shouldUseSharePointMcpCatalogFixture(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE?.trim() === '1';
 }
 
 export function createGoogleMcpCatalogDenAuthJson(baseUrl: string): string {
@@ -770,9 +822,11 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
     return;
   }
 
-  const googleMcpCatalogMatch = /^\/v1\/orgs\/([^/]+)\/mcp\/catalog$/.exec(url.pathname);
-  if (req.method === 'GET' && googleMcpCatalogMatch?.[1]) {
-    if (!shouldUseGoogleMcpCatalogFixture()) {
+  const mcpCatalogMatch = /^\/v1\/orgs\/([^/]+)\/mcp\/catalog$/.exec(url.pathname);
+  if (req.method === 'GET' && mcpCatalogMatch?.[1]) {
+    const useGoogleMcpCatalog = shouldUseGoogleMcpCatalogFixture();
+    const useSharePointMcpCatalog = shouldUseSharePointMcpCatalogFixture();
+    if (!useGoogleMcpCatalog && !useSharePointMcpCatalog) {
       json(res, 404, { code: 'not_found', message: `Unhandled registry fixture path: ${url.pathname}` });
       return;
     }
@@ -783,7 +837,12 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
       return;
     }
 
-    json(res, 200, { items: buildE2EGoogleMcpConnectors(base, googleMcpCatalogMatch[1]) });
+    json(res, 200, {
+      items: [
+        ...(useGoogleMcpCatalog ? buildE2EGoogleMcpConnectors(base, mcpCatalogMatch[1]) : []),
+        ...(useSharePointMcpCatalog ? buildE2ESharePointMcpConnectors(base, mcpCatalogMatch[1]) : []),
+      ],
+    });
     return;
   }
 
@@ -827,6 +886,51 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
       state: `e2e-state-${connectorId}`,
       connectorId,
       scopes: E2E_GOOGLE_MCP_CONNECTOR_DEFINITIONS.find((connector) => connector.id === connectorId)?.scopes ?? [],
+    });
+    return;
+  }
+
+  const sharePointMcpRuntimeTokenMatch = /^\/v1\/orgs\/([^/]+)\/integrations\/microsoft\/([^/]+)\/runtime-token$/.exec(url.pathname);
+  if (req.method === 'POST' && sharePointMcpRuntimeTokenMatch?.[1] && sharePointMcpRuntimeTokenMatch?.[2]) {
+    const connectorId = decodeURIComponent(sharePointMcpRuntimeTokenMatch[2]);
+    if (!shouldUseSharePointMcpCatalogFixture() || connectorId !== E2E_SHAREPOINT_MCP_CONNECTOR_ID) {
+      json(res, 404, { code: 'not_found', message: `Unhandled registry fixture path: ${url.pathname}` });
+      return;
+    }
+
+    const authHeader = req.headers.authorization?.trim() ?? '';
+    if (authHeader !== `Bearer ${E2E_SKILL_REGISTRY_TOKEN}`) {
+      json(res, 401, { code: 'den_token_required', message: 'Missing or invalid Den token header' });
+      return;
+    }
+
+    json(res, 200, {
+      token: 'e2e-runtime-token-microsoft-sharepoint',
+      connectorId,
+      expiresAt: '2030-06-19T12:00:00.000Z',
+    });
+    return;
+  }
+
+  const sharePointMcpOAuthStartMatch = /^\/v1\/orgs\/([^/]+)\/integrations\/microsoft\/([^/]+)\/oauth\/start$/.exec(url.pathname);
+  if (req.method === 'GET' && sharePointMcpOAuthStartMatch?.[1] && sharePointMcpOAuthStartMatch?.[2]) {
+    const connectorId = decodeURIComponent(sharePointMcpOAuthStartMatch[2]);
+    if (!shouldUseSharePointMcpCatalogFixture() || connectorId !== E2E_SHAREPOINT_MCP_CONNECTOR_ID) {
+      json(res, 404, { code: 'not_found', message: `Unhandled registry fixture path: ${url.pathname}` });
+      return;
+    }
+
+    const authHeader = req.headers.authorization?.trim() ?? '';
+    if (authHeader !== `Bearer ${E2E_SKILL_REGISTRY_TOKEN}`) {
+      json(res, 401, { code: 'den_token_required', message: 'Missing or invalid Den token header' });
+      return;
+    }
+
+    json(res, 200, {
+      authorizeUrl: `${base}/__e2e/microsoft-oauth/${encodeURIComponent(connectorId)}`,
+      state: `e2e-state-${connectorId}`,
+      connectorId,
+      scopes: [...E2E_SHAREPOINT_MCP_CONNECTOR_DEFINITION.scopes],
     });
     return;
   }

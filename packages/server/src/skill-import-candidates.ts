@@ -6,7 +6,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { ApiError } from "./errors.js";
 import { parseSkillMarkdownMetadata } from "./skill-metadata.js";
-import { SKILL_ENTRYPOINT } from "./skills.js";
+import { SKILL_ENTRYPOINT } from "./skill-roots.js";
 import type { Actor, WorkspaceInfo } from "./types.js";
 import {
   listUserGlobalSkills,
