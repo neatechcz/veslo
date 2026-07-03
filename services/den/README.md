@@ -87,6 +87,11 @@ cp .env.development .env
 
 Microsoft connector OAuth tokens are encrypted server-side before storage. Configure `MICROSOFT_TOKEN_SECRET_KEY` in production whenever Microsoft OAuth is enabled, and use key material distinct from other providers.
 
+The initial Microsoft platform connector is read-only SharePoint. It uses
+Veslo-managed Microsoft OAuth and stores user grants server-side; MCP catalog
+metadata and local OpenCode config must not contain Microsoft client secrets,
+access tokens, or refresh tokens.
+
 ## Auth setup (Better Auth)
 
 Set `LETTR_API_KEY` and `AUTH_EMAIL_ADDRESS` to enable email verification and password reset delivery through Lettr. `AUTH_EMAIL_FROM_NAME` is optional. Blank or unset values disable email verification and password reset delivery.

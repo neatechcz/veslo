@@ -168,6 +168,30 @@ Keep these states distinct in product behavior and docs:
 Catalog visibility and installed config are not proof that Google OAuth has
 completed or that the live runtime is connected.
 
+### Platform Microsoft SharePoint MCP Connector
+
+Veslo provides Microsoft SharePoint as a separate platform MCP connector, not
+as a local folder mount or a generic Microsoft account import. The connector is
+distributed through Veslo/Den catalog metadata and points local runtimes at a
+Veslo-owned Microsoft connector endpoint.
+
+The SharePoint connector is read-only. It requests Microsoft Graph delegated
+read scopes for SharePoint and file access, plus OpenID/offline access scopes
+needed for Veslo-managed sign-in. It must not request write scopes for the
+initial platform connector.
+
+The production token boundary matches the Google platform connector model:
+catalog metadata and local OpenCode config do not contain Microsoft OAuth client
+secrets, Microsoft access tokens, or Microsoft refresh tokens. Den starts
+Microsoft OAuth, receives the callback, exchanges the code using Veslo's
+Microsoft client secret, and stores encrypted per-user Microsoft grants
+server-side.
+
+The connector exposes read-only MCP tools for search, site/drive browsing, item
+metadata, and bounded file-content reads. Runtime-connected still means the
+live MCP server can answer those read calls; it is stronger than catalog-visible
+or installed/configured.
+
 ## Messaging
 
 Messaging channels and identities are managed through the `identities.tsx` surface and OpenCode Router-backed APIs.
