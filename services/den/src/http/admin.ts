@@ -1,4 +1,11 @@
 import express from "express"
+import type {
+  OrganizationBillingEntitlement,
+  OrganizationBillingMode,
+  OrganizationBillingQuantities,
+  OrganizationBillingStatus,
+} from "../billing/organization-billing.js"
+import type { OrganizationBillingSource } from "../billing/repository.js"
 import { OrgRole } from "../db/schema.js"
 import type { DebugLogDetail, DebugLogListEntry } from "../debug-logs/types.js"
 import type { ManagedAiProvider } from "../managed-ai/providers/ids.js"
@@ -57,6 +64,7 @@ export type AdminUserMembership = {
   orgName: string
   orgSlug: string
   role: (typeof OrgRole)[number]
+  status?: "active" | "disabled" | "removed"
 }
 
 export type AdminUserRecord = {
@@ -257,6 +265,60 @@ export type AdminAuditRecord = {
   changedFields: string[]
 }
 
+export type AdminOrganizationBillingAccountRecord = {
+  id: string
+  orgId: string
+  mode: OrganizationBillingMode
+  source: OrganizationBillingSource | null
+  status: OrganizationBillingStatus
+  billingInterval: string | null
+  quantities: OrganizationBillingQuantities
+  manualAccess: {
+    enabled: boolean
+    expiresAt: string | null
+  }
+  localModels: {
+    unitAmount: number | null
+    currency: string | null
+  }
+  stripe: {
+    customerConfigured: boolean
+    subscriptionConfigured: boolean
+  }
+  paymentProblem: {
+    code: string | null
+    message: string | null
+  }
+  graceUntil: string | null
+  cancelAtPeriodEnd: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export type AdminOrganizationBillingTierRecord = {
+  tier: "managed_ai_basic" | "managed_ai_extended" | string
+  enabled: boolean
+}
+
+export type AdminManagedAiBillingTierDefinition = {
+  tier: "managed_ai_basic" | "managed_ai_extended"
+  key: "basic" | "extended"
+  name: "Basic" | "Extended"
+}
+
+export type AdminOrganizationBillingSummary = {
+  account: AdminOrganizationBillingAccountRecord | null
+  entitlement: OrganizationBillingEntitlement
+  allowedTiers: AdminOrganizationBillingTierRecord[]
+  activeUserCount: number
+  licenseLimit: number
+  availableManagedAiTiers: AdminManagedAiBillingTierDefinition[]
+}
+
+export type AdminOrganizationBillingResponse = {
+  billing: AdminOrganizationBillingSummary
+}
+
 export type AdminRouteDeps = {
   getSessionSnapshot: (req: express.Request, res: express.Response) => Promise<AdminSessionSnapshot | null>
   listOrganizations?: (
@@ -271,6 +333,30 @@ export type AdminRouteDeps = {
     req: express.Request,
     res: express.Response,
   ) => Promise<{ organization: AdminOrganizationRecord } | null>
+  getOrganizationBilling?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<AdminOrganizationBillingResponse | null>
+  createOrganizationBillingCheckout?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ checkout: { id: string; url: string | null } } | null>
+  createOrganizationBillingPortalSession?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ portal: { id: string; url: string | null } } | null>
+  updateOrganizationBillingPlan?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<AdminOrganizationBillingResponse | null>
+  cancelOrganizationBilling?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ ok: true } | null>
+  updatePlatformOrganizationBilling?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<AdminOrganizationBillingResponse | null>
   listOrganizationMembers?: (
     req: express.Request,
     res: express.Response,
@@ -495,6 +581,90 @@ export function createAdminRouter(deps: AdminRouteDeps) {
     }
 
     const payload = await deps.updateOrganization(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  route.get("/organizations/:orgId/billing", async (req, res) => {
+    if (!deps.getOrganizationBilling) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.getOrganizationBilling(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  route.post("/organizations/:orgId/billing/checkout", async (req, res) => {
+    if (!deps.createOrganizationBillingCheckout) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.createOrganizationBillingCheckout(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  route.post("/organizations/:orgId/billing/portal", async (req, res) => {
+    if (!deps.createOrganizationBillingPortalSession) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.createOrganizationBillingPortalSession(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  route.patch("/organizations/:orgId/billing/plan", async (req, res) => {
+    if (!deps.updateOrganizationBillingPlan) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.updateOrganizationBillingPlan(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  route.post("/organizations/:orgId/billing/cancel", async (req, res) => {
+    if (!deps.cancelOrganizationBilling) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.cancelOrganizationBilling(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  route.patch("/organizations/:orgId/billing/platform", async (req, res) => {
+    if (!deps.updatePlatformOrganizationBilling) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.updatePlatformOrganizationBilling(req, res)
     if (!payload) {
       return
     }

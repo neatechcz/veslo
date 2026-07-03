@@ -167,23 +167,24 @@
                 <label>
                   <span>Billing interval</span>
                   <div class="segmented" role="group" aria-label="Billing interval">
-                    <button class="segment" type="button">Monthly</button>
-                    <button class="segment active" type="button">Annual</button>
+                    <button class="segment active" type="button" data-billing-interval="monthly">Monthly</button>
+                    <button class="segment" type="button" data-billing-interval="annual">Annual</button>
                   </div>
                 </label>
                 <div class="billing-quantity-grid">
-                  <label><span>Basic licenses</span><strong>2,000 CZK / 80 EUR</strong><input class="input" type="number" value="0" min="0" /></label>
-                  <label><span>Extended licenses</span><strong>5,000 CZK / 200 EUR</strong><input class="input" type="number" value="0" min="0" /></label>
+                  <label><span>Basic licenses</span><strong>2,000 CZK / 80 EUR</strong><input class="input" id="billing-basic-quantity" type="number" value="0" min="0" /></label>
+                  <label><span>Extended licenses</span><strong>5,000 CZK / 200 EUR</strong><input class="input" id="billing-extended-quantity" type="number" value="0" min="0" /></label>
                 </div>
                 <div class="billing-notice">
                   <strong id="billing-notice-title">Billing is not configured</strong>
                   <span id="billing-notice-text">History and settings remain readable. Managed AI inference requires paid or platform-granted access.</span>
                 </div>
                 <div class="button-row">
-                  <button class="button button-primary" type="button">Update licenses</button>
-                  <button class="button button-secondary" type="button">Open Stripe portal</button>
-                  <button class="button button-secondary billing-platform-only" type="button">Sync Stripe state</button>
+                  <button class="button button-primary" id="billing-update-button" type="button">Update licenses</button>
+                  <button class="button button-secondary" id="billing-portal-button" type="button">Open Stripe portal</button>
+                  <button class="button button-secondary billing-platform-only" id="billing-refresh-button" type="button">Refresh billing state</button>
                 </div>
+                <p class="editor-note" id="billing-action-status"></p>
               </div>
             </div>
 

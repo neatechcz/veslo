@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
@@ -7,11 +8,14 @@ const PLATFORM_EMAIL = process.env.VESLO_E2E_DEN_PLATFORM_ADMIN_EMAIL ?? 'vaclav
 const PLATFORM_PASSWORD = process.env.VESLO_E2E_DEN_PLATFORM_ADMIN_PASSWORD ?? 'VesloAdmin123!';
 const ORG_ADMIN_EMAIL = process.env.VESLO_E2E_DEN_ORG_ADMIN_EMAIL ?? 'org.admin@example.com';
 const ORG_ADMIN_PASSWORD = process.env.VESLO_E2E_DEN_ORG_ADMIN_PASSWORD ?? 'VesloOrg123!';
+const BILLING_ORG_ID = process.env.VESLO_E2E_DEN_BILLING_ORG_ID ?? '';
+const DEN_DB_CONTAINER = process.env.VESLO_E2E_DEN_DB_CONTAINER ?? '';
 
 test.describe('Integrated Den admin billing UI', () => {
   test.beforeEach(async ({ request }) => {
     const health = await request.get(`${ADMIN_BASE}/health`);
     expect(health.ok(), `Expected Den backend health check to pass at ${ADMIN_BASE}/health`).toBe(true);
+    resetLocalBillingState();
   });
 
   test('platform admin can sign in, inspect billing, and navigate to users', async ({ page }, testInfo) => {
@@ -60,7 +64,7 @@ test.describe('Integrated Den admin billing UI', () => {
     await expect(page.locator('#page-eyebrow')).toHaveText('Organization Admin');
     await expect(page.locator('#auth-user')).toContainText('organization admin');
     await expect(page.locator('[data-billing-view="platform"]')).toBeDisabled();
-    await expect(page.locator('#billing-notice-title')).toContainText('Billing is not configured');
+    await expect(page.locator('#billing-notice-title')).toContainText('Managed AI is blocked');
     await expect(page.locator('#billing-managed-ai')).toHaveText('Blocked');
     await expectVisibleNav(page, ['Overview', 'Organization', 'Users', 'Billing']);
     await expect(page.getByRole('link', { name: 'Credentials' })).toBeHidden();
@@ -129,6 +133,29 @@ async function screenshot(page: Page, testInfo: TestInfo, name: string) {
   const path = testInfo.outputPath(`${name}.png`);
   await mkdir(dirname(path), { recursive: true });
   await page.screenshot({ path, fullPage: true });
+}
+
+function resetLocalBillingState() {
+  if (!DEN_DB_CONTAINER || !BILLING_ORG_ID) {
+    return;
+  }
+
+  const orgId = BILLING_ORG_ID.replaceAll("'", "''");
+  const sql = [
+    `DELETE FROM organization_billing_event WHERE org_id = '${orgId}';`,
+    `DELETE FROM organization_billing_account WHERE org_id = '${orgId}';`,
+  ].join(' ');
+  execFileSync('docker', [
+    'exec',
+    '-i',
+    DEN_DB_CONTAINER,
+    'mysql',
+    '-uden',
+    '-pden',
+    'den',
+    '--execute',
+    sql,
+  ], { stdio: 'pipe' });
 }
 
 function normalizeBase(value: string) {

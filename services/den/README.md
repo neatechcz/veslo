@@ -71,6 +71,12 @@ cp .env.development .env
 - `POLAR_BENEFIT_ID` Polar benefit ID required to unlock cloud workers (required when paywall enabled)
 - `POLAR_SUCCESS_URL` redirect URL after successful checkout (required when paywall enabled)
 - `POLAR_RETURN_URL` return URL shown in checkout (required when paywall enabled)
+- `STRIPE_ORG_BILLING_ENABLED` enables Stripe-backed organization Managed AI billing when set to `true`
+- `STRIPE_ORG_BILLING_SECRET_KEY` Stripe secret key for the current mode (`sk_test` for sandbox, live secret key for production)
+- `STRIPE_ORG_BILLING_WEBHOOK_SECRET` Stripe webhook signing secret for `POST /v1/organization-billing/stripe/webhook`
+- `STRIPE_ORG_BILLING_SUCCESS_URL`, `STRIPE_ORG_BILLING_CANCEL_URL`, `STRIPE_ORG_BILLING_PORTAL_RETURN_URL` billing return URLs
+- `STRIPE_ORG_BILLING_BASIC_MONTHLY_PRICE_ID`, `STRIPE_ORG_BILLING_BASIC_ANNUAL_PRICE_ID`, `STRIPE_ORG_BILLING_EXTENDED_MONTHLY_PRICE_ID`, `STRIPE_ORG_BILLING_EXTENDED_ANNUAL_PRICE_ID` configured Stripe Price IDs
+- `STRIPE_ORG_BILLING_TAX_MODE` `manual` or `stripe_tax`; defaults to `manual`
 - `YOUTRACK_PROJECT_KEY` default YouTrack project key used for feedback issues
 - `YOUTRACK_URL` YouTrack REST base URL, for example `https://neatech.myjetbrains.com`
 - `YOUTRACK_TOKEN` YouTrack permanent token used by feedback projection
@@ -147,6 +153,10 @@ pnpm db:migrate
   - Requires `Authorization: Bearer <DEN_LOG_INGEST_TOKEN>`.
   - Accepts `{ batchId, events }`, stores encrypted event payloads, and returns `202 { acceptedBatchIds }`.
   - Repeated `batchId` or `Idempotency-Key` values are treated as accepted retries and do not duplicate event rows.
+- `POST /v1/organization-billing/stripe/webhook`
+  - Stripe webhook endpoint for organization Managed AI billing.
+  - Must receive raw request bytes for signature verification.
+  - In local sandbox testing, forward this endpoint through Stripe CLI or a trusted tunnel and use the generated `whsec` value.
 - `POST /v1/desktop-diagnostics`
   - Desktop fallback route used when local `veslo-server` cannot be trusted as the diagnostics carrier.
   - Requires the signed-in user's Better Auth bearer token and verifies the requested organization.

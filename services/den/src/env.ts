@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { parseStripeOrganizationBillingConfig } from "./billing/stripe-config.js"
 import { parseManagedAiEnv } from "./managed-ai/env.js"
 
 const schema = z.object({
@@ -46,6 +47,17 @@ const schema = z.object({
   POLAR_BENEFIT_ID: z.string().optional(),
   POLAR_SUCCESS_URL: z.string().optional(),
   POLAR_RETURN_URL: z.string().optional(),
+  STRIPE_ORG_BILLING_ENABLED: z.string().optional(),
+  STRIPE_ORG_BILLING_SECRET_KEY: z.string().optional(),
+  STRIPE_ORG_BILLING_WEBHOOK_SECRET: z.string().optional(),
+  STRIPE_ORG_BILLING_SUCCESS_URL: z.string().optional(),
+  STRIPE_ORG_BILLING_CANCEL_URL: z.string().optional(),
+  STRIPE_ORG_BILLING_PORTAL_RETURN_URL: z.string().optional(),
+  STRIPE_ORG_BILLING_BASIC_MONTHLY_PRICE_ID: z.string().optional(),
+  STRIPE_ORG_BILLING_BASIC_ANNUAL_PRICE_ID: z.string().optional(),
+  STRIPE_ORG_BILLING_EXTENDED_MONTHLY_PRICE_ID: z.string().optional(),
+  STRIPE_ORG_BILLING_EXTENDED_ANNUAL_PRICE_ID: z.string().optional(),
+  STRIPE_ORG_BILLING_TAX_MODE: z.string().optional(),
   YOUTRACK_PROJECT_KEY: z.string().optional(),
   YOUTRACK_URL: z.string().optional(),
   YOUTRACK_TOKEN: z.string().optional(),
@@ -199,6 +211,9 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
       benefitId: parsed.POLAR_BENEFIT_ID,
       successUrl: parsed.POLAR_SUCCESS_URL,
       returnUrl: parsed.POLAR_RETURN_URL,
+    },
+    organizationBilling: {
+      stripe: parseStripeOrganizationBillingConfig(parsed),
     },
     youtrack: {
       projectKey: parsed.YOUTRACK_PROJECT_KEY?.trim() || null,

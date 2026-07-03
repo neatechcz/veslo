@@ -308,6 +308,28 @@ The desktop app recognizes managed Codex credential exhaustion or missing eligib
 
 DEN managed-AI uses `MANAGED_AI_DATABASE_URL`. Standalone AI Gateway uses `AI_GATEWAY_DATABASE_URL`. Their assignment, credential, eligibility, and usage views match only when those services are intentionally pointed at the same managed-AI backing database and compatible config.
 
+### Organization Billing Config
+
+Den organization billing is disabled unless `STRIPE_ORG_BILLING_ENABLED=true`. The Stripe integration uses the same environment variable names for sandbox and live mode; switching later means replacing test keys, webhook secret, and test `price_` ids with live values, not changing code.
+
+Required when enabled:
+
+- `STRIPE_ORG_BILLING_SECRET_KEY`
+- `STRIPE_ORG_BILLING_WEBHOOK_SECRET`
+- `STRIPE_ORG_BILLING_SUCCESS_URL`
+- `STRIPE_ORG_BILLING_CANCEL_URL`
+- `STRIPE_ORG_BILLING_PORTAL_RETURN_URL`
+- `STRIPE_ORG_BILLING_BASIC_MONTHLY_PRICE_ID`
+- `STRIPE_ORG_BILLING_BASIC_ANNUAL_PRICE_ID`
+- `STRIPE_ORG_BILLING_EXTENDED_MONTHLY_PRICE_ID`
+- `STRIPE_ORG_BILLING_EXTENDED_ANNUAL_PRICE_ID`
+
+Optional:
+
+- `STRIPE_ORG_BILLING_TAX_MODE=manual|stripe_tax`
+
+Secrets belong in deployment/runtime env or ignored local env files only. `services/den/.env.example` documents the keys with blank secret values and must not contain test or live Stripe secrets.
+
 Managed-AI provider assignments may use `openai`, `anthropic`, `codex_oauth`, or `openai_compatible`. The desktop app treats these assignments as read-only policy and writes local OpenCode routing for the assigned provider. AI access rows also store `assignment_origin`: `auto_assigned` for DEN sign-up Codex defaults and `admin_assigned` for explicit admin edits or legacy rows. For `codex_oauth`, OpenCode still owns local tool execution and calls the local Veslo server route `/ai-gateway/providers/codex_oauth/v1`; the configured managed-AI service keeps the Codex OAuth auth JSON server-side, translates the OpenAI-compatible request to the ChatGPT Codex Responses endpoint, and translates the response back for OpenCode. Standalone AI Gateway admin model pickers use live upstream discovery for `openai_compatible` credentials and a gateway-owned Codex model catalog for `codex_oauth` credentials. Codex status probes run from temporary Codex homes with the gateway's default Codex model, and refreshed probe auth JSON is written back to the credential's encrypted secret when Codex rotates it. If a Codex status probe reports refresh-token reuse, the standalone admin service quarantines the credential as unhealthy; the admin Reconnect action replaces the stored auth JSON in place and marks the same credential healthy again. If a Codex status probe reports that a specific model is unsupported for the credential's ChatGPT account, the credential remains available and that model is filtered from the credential's admin model list. Any assigned Codex row can be repaired to another healthy eligible Codex credential on the next request when its assigned credential becomes unhealthy, revoked, missing, permanently unavailable, or exhausted; the original assignment origin is preserved after repair, and legacy repairs without a stored model use the Codex catalog default. For `openai_compatible`, OpenCode uses the local Veslo server route `/ai-gateway/providers/openai_compatible/v1`; the upstream custom base URL and API key remain server-side in the configured managed-AI service's encrypted secret store.
 
 Standalone AI Gateway credentials can be soft-deleted only after they are no longer usable and are not referenced by user AI-access policy. Active leases and assignment references still block soft-delete unless the credential is already revoked. Soft-deleted rows keep their credential id for audit, usage, and alert history, but `deleted_at` removes them from default admin lists, assignment options, rotation, and runtime selection; their stored secret is replaced with a deleted tombstone.
