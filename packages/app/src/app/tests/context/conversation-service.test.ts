@@ -154,6 +154,7 @@ function createService() {
     runId?: string | null;
   }> = [];
   const runIds = new Map<string, string>();
+  const lifecycleRunIds = new Map<string, string>();
 
   const service = createConversationService({
     vesloServerClient: () => client,
@@ -209,6 +210,20 @@ function createService() {
     resolveLatestConversationRunId: (input) => {
       for (const id of [input.conversationId, input.opencodeSessionId, input.uiSessionId]) {
         const runId = id?.trim() ? runIds.get(`${input.workspaceId}\0${id.trim()}`) : "";
+        if (runId) return runId;
+      }
+      return "";
+    },
+    rememberLatestConversationLifecycleRunId: (input) => {
+      const runId = input.runId?.trim();
+      if (!runId) return;
+      for (const id of [input.conversationId, input.opencodeSessionId, input.uiSessionId]) {
+        if (id?.trim()) lifecycleRunIds.set(`${input.workspaceId}\0${id.trim()}`, runId);
+      }
+    },
+    resolveLatestConversationLifecycleRunId: (input) => {
+      for (const id of [input.conversationId, input.opencodeSessionId, input.uiSessionId]) {
+        const runId = id?.trim() ? lifecycleRunIds.get(`${input.workspaceId}\0${id.trim()}`) : "";
         if (runId) return runId;
       }
       return "";
