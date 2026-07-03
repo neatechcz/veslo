@@ -13,9 +13,10 @@ const locationsTabSource = source.slice(
 );
 
 test("skill detail drawer exports tab and data contracts", () => {
-  assert.match(source, /export type SkillDetailTab = "overview" \| "locations" \| "versions" \| "sharing" \| "audit"/);
+  assert.match(source, /export type SkillDetailTab = "overview" \| "files" \| "locations" \| "versions" \| "sharing" \| "audit"/);
   assert.match(source, /export const SKILL_DETAIL_TABS = \[/);
   assert.match(source, /export type SkillDetailMetadata = \{/);
+  assert.match(source, /export type SkillDetailFile = \{/);
   assert.match(source, /export type SkillDetailLocation = \{/);
   assert.match(source, /export type SkillAuditEntry = \{/);
   assert.match(source, /export type SkillDetailDrawerProps = \{/);
@@ -30,6 +31,8 @@ test("skill detail drawer props support required operational callbacks", () => {
   assert.match(source, /onPublishSkill\?: \(input: SkillDetailActionInput\) => void/);
   assert.match(source, /onRequestApproval\?: \(input: SkillDetailActionInput\) => void/);
   assert.match(source, /onRestoreVersion\?: \(version: SkillVersionRow\) => void/);
+  assert.match(source, /onSelectFile\?: \(file: SkillDetailFile\) => void/);
+  assert.match(source, /onRetryFiles\?: \(\) => void/);
   assert.match(source, /onDeleteSkill\?: \(input: SkillDetailActionInput\) => void/);
 });
 
@@ -66,6 +69,7 @@ test("skill detail drawer closes on Escape while open and cleans up the key list
 test("skill detail drawer renders all requested tabs without wiring into the skills page", () => {
   for (const key of [
     "skills.detail_tab_overview",
+    "skills.detail_tab_files",
     "skills.detail_tab_locations",
     "skills.detail_tab_versions",
     "skills.detail_tab_sharing",
@@ -77,6 +81,29 @@ test("skill detail drawer renders all requested tabs without wiring into the ski
     assert.match(zhSource, new RegExp(`"${key}":`));
   }
   assert.equal(source.includes("skills.tsx"), false);
+});
+
+test("skill detail drawer exposes an Extend-style read-only skill file browser", () => {
+  assert.match(source, /data-testid="skill-detail-files-tab"/);
+  assert.match(source, /data-extend-ui="file-system-block"/);
+  assert.match(source, /data-testid="skill-detail-file-row"/);
+  assert.match(source, /data-testid="skill-detail-file-preview"/);
+  assert.match(source, /const selectedFile = createMemo/);
+  assert.match(source, /files\.find\(\(file\) => file\.path === "SKILL\.md"\)/);
+  assert.match(source, /<pre[\s\S]*?<code>\{file\.text\}<\/code>[\s\S]*?<\/pre>/);
+  assert.match(source, /translate\("skills\.detail_files_binary_unavailable"\)/);
+  for (const key of [
+    "skills.detail_files",
+    "skills.detail_files_empty",
+    "skills.detail_files_loading",
+    "skills.detail_files_retry",
+    "skills.detail_files_binary_unavailable",
+    "skills.detail_files_executable",
+  ]) {
+    assert.match(enSource, new RegExp(`"${key}":`));
+    assert.match(csSource, new RegExp(`"${key}":`));
+    assert.match(zhSource, new RegExp(`"${key}":`));
+  }
 });
 
 test("skill detail drawer localizes all visible static copy", () => {

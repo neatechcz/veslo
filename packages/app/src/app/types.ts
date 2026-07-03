@@ -413,6 +413,14 @@ export type SkillPackageManifest = {
   };
 };
 
+export type SkillFileEntry = {
+  path: string;
+  sizeBytes: number;
+  mediaType: string;
+  executable?: boolean;
+  text?: string;
+};
+
 export type HubSkillCard = {
   name: string;
   description?: string;

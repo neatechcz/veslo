@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "workspace": {
+    "name": "Veslo",
+    "createdAt": 1782982811791,
+    "preset": "starter"
+  },
+  "authorizedRoots": [
+    "/Users/vaclavsoukup/AI agent projects/Veslo"
+  ]
+}

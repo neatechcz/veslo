@@ -4,6 +4,7 @@ import type {
   HubSkillCard,
   HubSkillInstallTarget,
   SkillCard,
+  SkillFileEntry,
   SkillInstance,
   SkillInventoryItem,
   SkillSaveResult,
@@ -19,6 +20,7 @@ import Button from "../components/button";
 import ModalShell from "../components/modal-shell";
 import SkillDetailDrawer, {
   type SkillDetailActionInput,
+  type SkillDetailFile,
   type SkillDetailLocation,
   type SkillDetailMetadata,
   type SkillDetailTab,
@@ -135,6 +137,7 @@ export type SkillsViewProps = {
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
   saveSkill: (input: { name: string; path?: string; content: string; description?: string }) => Promise<SkillSaveResult>;
+  readSkillInstanceFiles: (target: SkillMutationTarget) => Promise<{ files: SkillFileEntry[] } | null>;
   readSkillInstance: (target: SkillMutationTarget) => Promise<{ name: string; path: string; content: string } | null>;
   saveSkillInstance: (target: SkillMutationTarget, content: string) => Promise<SkillSaveResult>;
   setSkillInstanceEnabled: (target: SkillMutationTarget, enabled: boolean) => Promise<SkillSaveResult>;
@@ -251,6 +254,11 @@ export default function SkillsView(props: SkillsViewProps) {
   const [selectedError, setSelectedError] = createSignal<string | null>(null);
   const [selectedDetail, setSelectedDetail] = createSignal<{ item: SkillInventoryItem; instance: SkillInstance } | null>(null);
   const [selectedDetailTab, setSelectedDetailTab] = createSignal<SkillDetailTab>("overview");
+  const [selectedDetailFiles, setSelectedDetailFiles] = createSignal<SkillDetailFile[]>([]);
+  const [selectedDetailFilesLoading, setSelectedDetailFilesLoading] = createSignal(false);
+  const [selectedDetailFilesError, setSelectedDetailFilesError] = createSignal<string | null>(null);
+  const [selectedDetailFilesTargetId, setSelectedDetailFilesTargetId] = createSignal<string | null>(null);
+  const [selectedDetailFilePath, setSelectedDetailFilePath] = createSignal<string | null>(null);
   const [reviewDialog, setReviewDialog] = createSignal<{
     mode: "request" | "review";
     targetScope: SkillReviewTargetScope;
@@ -837,8 +845,61 @@ export default function SkillsView(props: SkillsViewProps) {
     mode === "keep-both" || (installedNames().has(name.trim()) && !canOverwriteInstallLinkBundle(name));
 
   const openSkillDetail = (item: SkillInventoryItem, instance: SkillInstance) => {
+    resetSelectedDetailFiles();
     setSelectedDetail({ item, instance });
     setSelectedDetailTab("overview");
+  };
+
+  const closeSkillDetail = () => {
+    setSelectedDetail(null);
+    setSelectedDetailTab("overview");
+    resetSelectedDetailFiles();
+  };
+
+  function resetSelectedDetailFiles() {
+    setSelectedDetailFiles([]);
+    setSelectedDetailFilesLoading(false);
+    setSelectedDetailFilesError(null);
+    setSelectedDetailFilesTargetId(null);
+    setSelectedDetailFilePath(null);
+  }
+
+  const firstPreferredSkillFilePath = (files: SkillDetailFile[]) =>
+    files.find((file) => file.path === "SKILL.md")?.path ?? files[0]?.path ?? null;
+
+  const loadSelectedDetailFiles = async (options?: { force?: boolean }) => {
+    const detail = selectedDetail();
+    if (!detail) return;
+    const targetId = detail.instance.id;
+    if (!options?.force && selectedDetailFilesTargetId() === targetId && (selectedDetailFiles().length > 0 || selectedDetailFilesError())) {
+      return;
+    }
+    setSelectedDetailFilesLoading(true);
+    setSelectedDetailFilesError(null);
+    const result = await props.readSkillInstanceFiles(skillMutationTargetFromInstance(detail.instance));
+    const currentDetail = selectedDetail();
+    if (!currentDetail || currentDetail.instance.id !== targetId) return;
+    if (!result) {
+      setSelectedDetailFiles([]);
+      setSelectedDetailFilesTargetId(targetId);
+      setSelectedDetailFilesError(props.skillsStatus || translate("skills.failed_to_load"));
+      setSelectedDetailFilePath(null);
+      setSelectedDetailFilesLoading(false);
+      return;
+    }
+    setSelectedDetailFiles(result.files);
+    setSelectedDetailFilesTargetId(targetId);
+    setSelectedDetailFilePath((current) =>
+      current && result.files.some((file) => file.path === current)
+        ? current
+        : firstPreferredSkillFilePath(result.files)
+    );
+    setSelectedDetailFilesLoading(false);
+  };
+
+  const selectSkillDetailTab = (tab: SkillDetailTab) => {
+    setSelectedDetailTab(tab);
+    if (tab === "files") void loadSelectedDetailFiles();
   };
 
   const toggleTableRowSelection = (instance: SkillInstance) => {
@@ -2898,8 +2959,14 @@ export default function SkillsView(props: SkillsViewProps) {
         versions={selectedDetailVersions()}
         versionTargets={selectedDetailVersionTarget() ? [selectedDetailVersionTarget()!] : []}
         selectedTab={selectedDetailTab()}
-        onSelectTab={setSelectedDetailTab}
-        onClose={() => setSelectedDetail(null)}
+        files={selectedDetailFiles()}
+        filesLoading={selectedDetailFilesLoading()}
+        filesError={selectedDetailFilesError()}
+        selectedFilePath={selectedDetailFilePath()}
+        onSelectTab={selectSkillDetailTab}
+        onSelectFile={(file) => setSelectedDetailFilePath(file.path)}
+        onRetryFiles={() => void loadSelectedDetailFiles({ force: true })}
+        onClose={closeSkillDetail}
         actionUnavailableReason={{
           copy: selectedDetailCanTransferToUserSkill() ? null : selectedDetailGlobalTransferDisabledReason(),
           move: selectedDetailCanTransferToUserSkill() ? null : selectedDetailGlobalTransferDisabledReason(),

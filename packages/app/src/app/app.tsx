@@ -2311,6 +2311,7 @@ export default function App() {
     // Persistent workspace roots must be managed explicitly via workspace settings.
     await respondPermissionForSessionView(requestID, reply);
   }
+  const respondPermissionForAppViewProps = respondPermissionForSessionView;
 
   const [notionStatus, setNotionStatus] = createSignal<"disconnected" | "connecting" | "connected" | "error">(
     "disconnected",
@@ -2405,6 +2406,7 @@ export default function App() {
     uninstallSkill,
     readSkill,
     saveSkill,
+    readSkillInstanceFiles,
     readSkillInstance,
     saveSkillInstance,
     setSkillInstanceEnabled,
@@ -4709,6 +4711,7 @@ export default function App() {
     uninstallSkill,
     readSkill,
     saveSkill,
+    readSkillInstanceFiles,
     readSkillInstance,
     saveSkillInstance,
     setSkillInstanceEnabled,
@@ -4863,7 +4866,7 @@ export default function App() {
     setComposerDraft,
     activePermissionMemo,
     permissionReplyBusy,
-    respondPermission: respondPermissionForSessionView,
+    respondPermissionForAppViewProps,
     respondPermissionAndRemember,
     activeQuestion,
     questionReplyBusy,

@@ -1,0 +1,164 @@
+[scenario]
+name = "feedback-modal-dismissal"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "exercise feedback modal dismissal"
+action = "eval"
+timeout_ms = 60000
+script = '''
+const completeSelector = '[data-testid="feedback-modal-dismissal-complete"]';
+const errorSelector = '[data-testid="feedback-modal-dismissal-error"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+
+const appendMarker = (selector, payload) => {
+  if (document.querySelector(completeSelector) || document.querySelector(errorSelector)) return;
+  const marker = document.createElement("pre");
+  marker.dataset.testid = selector === completeSelector
+    ? "feedback-modal-dismissal-complete"
+    : "feedback-modal-dismissal-error";
+  marker.textContent = JSON.stringify(payload, null, 2);
+  document.body.append(marker);
+};
+
+if (!window.__vesloFeedbackModalDismissalStarted) {
+  window.__vesloFeedbackModalDismissalStarted = true;
+  window.__vesloFeedbackModalDismissalPromise = (async () => {
+    let latestState = null;
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const bodyText = () => document.body.innerText.replace(/\s+/g, " ").trim();
+    const assert = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+    const visible = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+    };
+    const waitUntil = async (predicate, options = {}) => {
+      const timeout = options.timeout ?? 10000;
+      const interval = options.interval ?? 200;
+      const message = options.message ?? "Condition was not met";
+      const deadline = Date.now() + timeout;
+      let latest = null;
+      while (Date.now() < deadline) {
+        latest = await predicate();
+        if (latest) return latest;
+        await sleep(interval);
+      }
+      throw new Error(`${message}. Latest=${JSON.stringify(latest)} Body=${bodyText().slice(0, 3000)}`);
+    };
+    const setPhase = (phase, extra = {}) => {
+      latestState = { ...(latestState ?? {}), phase, ...extra };
+    };
+
+    try {
+      setPhase("prepare-app-state");
+      window.localStorage.setItem("veslo.onboardingComplete", "1");
+      window.localStorage.setItem("veslo.language", "en");
+      const oldUrl = window.location.href;
+      window.location.hash = "/dashboard";
+      window.dispatchEvent(new HashChangeEvent("hashchange", {
+        oldURL: oldUrl,
+        newURL: window.location.href,
+      }));
+
+      setPhase("wait-dashboard");
+      await waitUntil(() => window.location.hash.includes("/dashboard"), {
+        timeout: 10000,
+        message: "Dashboard route did not become active",
+      });
+
+      setPhase("open-feedback");
+      const findFeedbackButton = () => Array.from(document.querySelectorAll("button")).find((button) => {
+        if (!visible(button)) return false;
+        const label = (button.getAttribute("aria-label") || button.getAttribute("title") || button.textContent || "").trim();
+        return label === "Feedback";
+      });
+      const feedbackButton = await waitUntil(findFeedbackButton, {
+        timeout: 30000,
+        message: "Feedback button did not appear",
+      });
+      feedbackButton.click();
+
+      setPhase("wait-dialog");
+      const dialog = await waitUntil(() => {
+        const dialogs = Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]'));
+        return dialogs.find((element) => visible(element) && element.textContent.includes("Report a bug")) || false;
+      }, {
+        timeout: 10000,
+        message: "Feedback dialog did not open",
+      });
+      const shell = dialog.closest("[data-modal-shell-root]");
+      assert(shell instanceof HTMLElement, "Feedback dialog shell was not found.");
+
+      setPhase("backdrop-click");
+      shell.dispatchEvent(new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 1,
+        clientY: 1,
+      }));
+      await sleep(250);
+      assert(document.body.contains(dialog) && visible(dialog), "Feedback dialog closed after a backdrop click.");
+
+      setPhase("escape-close");
+      let appLevelEscapeSeen = 0;
+      const onAppLevelEscape = (event) => {
+        if (event.key === "Escape") appLevelEscapeSeen += 1;
+      };
+      window.addEventListener("keydown", onAppLevelEscape);
+      const escapeTarget = dialog.querySelector("input, textarea, button") || dialog;
+      escapeTarget.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      }));
+      window.removeEventListener("keydown", onAppLevelEscape);
+      assert(appLevelEscapeSeen === 0, `Escape reached an app-level keydown listener ${appLevelEscapeSeen} time(s).`);
+
+      setPhase("wait-dialog-closed");
+      await waitUntil(() => !document.body.contains(dialog), {
+        timeout: 10000,
+        message: "Feedback dialog did not close after Escape",
+      });
+
+      appendMarker(completeSelector, { latestState });
+    } catch (error) {
+      appendMarker(errorSelector, {
+        message: error instanceof Error ? error.message : String(error),
+        latestState,
+        body: bodyText().slice(0, 3000),
+      });
+    }
+  })();
+}
+
+true;
+'''
+
+[[step]]
+name = "feedback modal dismissal task finished"
+action = "wait"
+target = "[data-testid=\"feedback-modal-dismissal-complete\"], [data-testid=\"feedback-modal-dismissal-error\"]"
+timeout_ms = 90000
+
+[[step]]
+name = "feedback modal dismissal succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="feedback-modal-dismissal-error"]');
+if (error) {
+  throw new Error(`Feedback modal dismissal failed: ${(error.textContent || "").slice(0, 4000)}`);
+}
+true;
+'''

@@ -14,6 +14,7 @@ import type {
   ReloadReason,
   ReloadTrigger,
   SkillCard,
+  SkillFileEntry,
   SkillInstance,
   SkillInventoryItem,
   ManagedSkillSource,
@@ -41,6 +42,7 @@ import {
   listLocalSkillsScoped as listLocalSkillsScopedCommand,
   readLocalSkill,
   readLocalSkillAtPath,
+  readLocalSkillFilesAtPath,
   uninstallSkill as uninstallSkillCommand,
   uninstallSkillAtPath,
   writeLocalSkill,
@@ -58,6 +60,7 @@ import type {
   VesloServerClient,
   VesloDisabledSkillRecord,
   VesloSkillBatchRemoveResponse,
+  VesloSkillFilesContent,
   VesloSkillImportCandidate,
   VesloSkillImportResult,
   VesloSkillMaterializationRequestOptions,
@@ -443,6 +446,7 @@ export function createExtensionsStore(options: {
   type UserGlobalSkillStoreClient = VesloServerClient & {
     listUserGlobalSkillStore?: () => Promise<{ items: VesloUserGlobalSkillStoreItem[] }>;
     getUserGlobalSkillStoreSkill?: (name: string) => Promise<{ item: VesloUserGlobalSkillStoreItem; content: string }>;
+    getUserGlobalSkillStoreSkillFiles?: (name: string) => Promise<{ item: VesloUserGlobalSkillStoreItem; files: SkillFileEntry[] }>;
     upsertUserGlobalSkillStoreSkill?: (
       payload: { name: string; content: string; description?: string; enabled?: boolean },
     ) => Promise<unknown>;
@@ -2083,6 +2087,22 @@ export function createExtensionsStore(options: {
     return `${normalized}/SKILL.md`;
   };
 
+  const workspaceRootForSkillTarget = (target: SkillMutationTarget): string => {
+    const targetWorkspaceId = target.workspaceId?.trim();
+    if (!targetWorkspaceId || targetWorkspaceId === options.activeWorkspaceId().trim()) {
+      return options.activeWorkspaceRoot().trim();
+    }
+    const workspace = options.workspaces?.().find((item) => item.id === targetWorkspaceId);
+    return workspace?.path?.trim() || workspace?.directory?.trim() || "";
+  };
+
+  const skillFilesFromContent = (content: string): SkillFileEntry[] => [{
+    path: "SKILL.md",
+    sizeBytes: new TextEncoder().encode(content).byteLength,
+    mediaType: "text/markdown",
+    text: content,
+  }];
+
   const isManagedSkillMutationPath = (value: string | undefined) =>
     normalizeSkillMutationPath(value).includes("/.opencode/skills/veslo-managed/");
 
@@ -2129,6 +2149,106 @@ export function createExtensionsStore(options: {
       path: resolved.entryFilePath,
       content: result.content,
     };
+  }
+
+  async function readSkillInstanceFiles(target: SkillMutationTarget): Promise<{ files: SkillFileEntry[] } | null> {
+    const name = target.name.trim();
+    const entryFilePath = skillEntryFilePathForMutationPath(target.path);
+    if (!name || !entryFilePath) {
+      setSkillsStatus(translate("skills.failed_load_skill"));
+      return null;
+    }
+
+    if (isUserGlobalSkillStorePath(entryFilePath)) {
+      const storeClient = getUserGlobalSkillStoreClient();
+      if (typeof storeClient?.getUserGlobalSkillStoreSkillFiles === "function") {
+        try {
+          setSkillsStatus(null);
+          const result = await storeClient.getUserGlobalSkillStoreSkillFiles(name);
+          return { files: result.files };
+        } catch (e) {
+          setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+          return null;
+        }
+      }
+      if (typeof storeClient?.getUserGlobalSkillStoreSkill === "function") {
+        try {
+          setSkillsStatus(null);
+          const result = await storeClient.getUserGlobalSkillStoreSkill(name);
+          return { files: skillFilesFromContent(result.content) };
+        } catch (e) {
+          setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+          return null;
+        }
+      }
+      setSkillsStatus(translate("skills.failed_to_load"));
+      return null;
+    }
+
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const isLocalWorkspace = options.workspaceType() === "local";
+    const vesloClient = options.vesloServerClient();
+    const vesloWorkspaceId = options.vesloServerWorkspaceId();
+    const vesloCapabilities = options.vesloServerCapabilities();
+    const canUseVesloServer =
+      options.vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloCapabilities?.skills?.read;
+
+    if (canUseVesloServer) {
+      try {
+        setSkillsStatus(null);
+        if (target.scope === "user-global" && typeof (vesloClient as any).getGlobalSkillFiles === "function") {
+          const result = await (vesloClient as VesloServerClient & {
+            getGlobalSkillFiles: (skillName: string, options: { path: string; includeDisabled?: boolean }) => Promise<VesloSkillFilesContent>;
+          }).getGlobalSkillFiles(name, { path: entryFilePath, includeDisabled: true });
+          return { files: result.files };
+        }
+        if (vesloWorkspaceId && typeof (vesloClient as any).getSkillFiles === "function") {
+          const workspaceId = target.workspaceId?.trim() || vesloWorkspaceId;
+          const result = await (vesloClient as VesloServerClient & {
+            getSkillFiles: (
+              workspaceId: string,
+              skillName: string,
+              options?: { includeGlobal?: boolean; includeDisabled?: boolean; path?: string },
+            ) => Promise<VesloSkillFilesContent>;
+          }).getSkillFiles(workspaceId, name, {
+            includeGlobal: isLocalWorkspace,
+            includeDisabled: true,
+            path: entryFilePath,
+          });
+          return { files: result.files };
+        }
+      } catch (e) {
+        setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+        return null;
+      }
+    }
+
+    if (isRemoteWorkspace) {
+      setSkillsStatus(__vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_view_skill_1fomxi", __vesloIndirectLocale()));
+      return null;
+    }
+
+    if (!isTauriRuntime()) {
+      setSkillsStatus(translate("skills.desktop_required"));
+      return null;
+    }
+
+    const root = workspaceRootForSkillTarget(target);
+    if (!root) {
+      setSkillsStatus(__vesloIndirectT("ui.indirect.local_workers_are_required_to_view_skills_sfpklk", __vesloIndirectLocale()));
+      return null;
+    }
+
+    try {
+      setSkillsStatus(null);
+      const files = await readLocalSkillFilesAtPath(root, name, entryFilePath);
+      return { files };
+    } catch (e) {
+      setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+      return null;
+    }
   }
 
   async function saveSkillInstance(target: SkillMutationTarget, content: string): Promise<SkillSaveResult> {
@@ -3108,6 +3228,7 @@ export function createExtensionsStore(options: {
     uninstallSkill,
     readSkill,
     saveSkill,
+    readSkillInstanceFiles,
     readSkillInstance,
     saveSkillInstance,
     setSkillInstanceEnabled,

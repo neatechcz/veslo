@@ -19,8 +19,14 @@ test("modal shell captures Escape globally so the top modal closes before underl
   assert.match(source, /if \(event\.key !== "Escape"\) return/);
   assert.match(source, /document\.querySelectorAll\("\[data-modal-shell-root\]"\)/);
   assert.match(source, /event\.preventDefault\(\)/);
+  assert.match(source, /event\.stopPropagation\(\)/);
   assert.match(source, /props\.onClose\?\.\(\)/);
   assert.match(source, /window\.addEventListener\("keydown", closeFromEscape, true\)/);
   assert.match(source, /window\.removeEventListener\("keydown", closeFromEscape, true\)/);
   assert.match(source, /data-modal-shell-root/);
+});
+
+test("modal shell allows callers to disable backdrop-click closing", () => {
+  assert.match(source, /closeOnBackdrop\?: boolean;/);
+  assert.match(source, /if \(props\.closeOnBackdrop === false\) return;/);
 });

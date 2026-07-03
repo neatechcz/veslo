@@ -90,6 +90,25 @@ test("skills page wires remove and restore skill instance actions through app pr
   assert.match(appSource, /removeSkillInstance,\s*[\s\S]*restoreSkillInstance,/);
 });
 
+test("skills page loads and passes read-only skill files into the detail drawer", () => {
+  assert.match(typesSource, /export type SkillFileEntry = \{/);
+  assert.match(source, /readSkillInstanceFiles:\s*\(target: SkillMutationTarget\) => Promise<\{ files: SkillFileEntry\[\] \} \| null>/);
+  assert.match(dashboardSource, /readSkillInstanceFiles:\s*\(target: SkillMutationTarget\) => Promise<\{ files: SkillFileEntry\[\] \} \| null>/);
+  assert.match(appSource, /\breadSkillInstanceFiles,\s*[\s\S]*\breadSkillInstance,/);
+  assert.match(dashboardSource, /readSkillInstanceFiles=\{props\.readSkillInstanceFiles\}/);
+  assert.match(source, /const \[selectedDetailFiles, setSelectedDetailFiles\] = createSignal<SkillDetailFile\[\]>\(\[\]\)/);
+  assert.match(source, /const loadSelectedDetailFiles = async \(options\?: \{ force\?: boolean \}\) =>/);
+  assert.match(source, /props\.readSkillInstanceFiles\(skillMutationTargetFromInstance\(detail\.instance\)\)/);
+  assert.match(source, /const selectSkillDetailTab = \(tab: SkillDetailTab\) =>/);
+  assert.match(source, /if \(tab === "files"\) void loadSelectedDetailFiles\(\)/);
+  assert.match(source, /files=\{selectedDetailFiles\(\)\}/);
+  assert.match(source, /filesLoading=\{selectedDetailFilesLoading\(\)\}/);
+  assert.match(source, /filesError=\{selectedDetailFilesError\(\)\}/);
+  assert.match(source, /selectedFilePath=\{selectedDetailFilePath\(\)\}/);
+  assert.match(source, /onSelectFile=\{\(file\) => setSelectedDetailFilePath\(file\.path\)\}/);
+  assert.match(extensionsSource, /async function readSkillInstanceFiles\(target: SkillMutationTarget\): Promise<\{ files: SkillFileEntry\[\] \} \| null>/);
+});
+
 test("skills page uses inventory as primary installed source", () => {
   assert.match(source, /const inventoryItemsForDisplay = createMemo\(\(\) =>\s*mergeRemoteFallbackIntoInventory\(\s*props\.skillInventory,\s*activeRemoteInventoryItems\(\),\s*\)\s*\)/);
   assert.match(source, /filterSkillInventoryItems\(\s*inventoryItemsForDisplay\(\),\s*installedInventoryFilterState\(\),\s*\)\s*\.filter\(\(item\) => item\.status !== "hub-only"\)/);

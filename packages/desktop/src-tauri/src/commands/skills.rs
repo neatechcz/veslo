@@ -396,6 +396,118 @@ pub struct LocalSkillContent {
     pub content: String,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalSkillFile {
+    pub path: String,
+    pub size_bytes: u64,
+    pub media_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+fn media_type_for_skill_file(path: &str) -> &'static str {
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".md") {
+        "text/markdown"
+    } else if lower.ends_with(".txt") {
+        "text/plain"
+    } else if lower.ends_with(".sh") {
+        "text/x-shellscript"
+    } else if lower.ends_with(".js") || lower.ends_with(".mjs") || lower.ends_with(".cjs") {
+        "text/javascript"
+    } else if lower.ends_with(".ts") || lower.ends_with(".tsx") {
+        "text/typescript"
+    } else if lower.ends_with(".css") {
+        "text/css"
+    } else if lower.ends_with(".html") || lower.ends_with(".htm") {
+        "text/html"
+    } else if lower.ends_with(".json") {
+        "application/json"
+    } else if lower.ends_with(".yaml") || lower.ends_with(".yml") {
+        "application/yaml"
+    } else if lower.ends_with(".svg") {
+        "image/svg+xml"
+    } else {
+        "application/octet-stream"
+    }
+}
+
+fn should_embed_skill_file_text(media_type: &str) -> bool {
+    media_type.starts_with("text/")
+        || media_type == "application/json"
+        || media_type == "application/yaml"
+        || media_type == "image/svg+xml"
+}
+
+fn collect_skill_files_from_dir(
+    root: &Path,
+    dir: &Path,
+    out: &mut Vec<LocalSkillFile>,
+) -> Result<(), String> {
+    let mut entries = fs::read_dir(dir)
+        .map_err(|e| format!("Failed to read {}: {e}", dir.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in entries {
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if matches!(file_name.as_str(), ".DS_Store" | "Thumbs.db" | "desktop.ini") {
+            continue;
+        }
+        let file_type = entry.file_type().map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if file_type.is_dir() {
+            collect_skill_files_from_dir(root, &path, out)?;
+            continue;
+        }
+        if !file_type.is_file() {
+            continue;
+        }
+
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|e| format!("Failed to relativize {}: {e}", path.display()))?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let metadata = entry.metadata().map_err(|e| e.to_string())?;
+        let media_type = media_type_for_skill_file(&relative).to_string();
+        let text = if should_embed_skill_file_text(&media_type) {
+            fs::read_to_string(&path).ok()
+        } else {
+            None
+        };
+        let executable = {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if metadata.permissions().mode() & 0o111 != 0 {
+                    Some(true)
+                } else {
+                    None
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                None
+            }
+        };
+
+        out.push(LocalSkillFile {
+            path: relative,
+            size_bytes: metadata.len(),
+            media_type,
+            executable,
+            text,
+        });
+    }
+
+    Ok(())
+}
+
 fn extract_frontmatter_value(raw: &str, keys: &[&str]) -> Option<String> {
     let mut lines = raw.lines();
     let first = lines.next()?.trim();
@@ -874,6 +986,22 @@ pub fn read_local_skill_at_path(
         path: path.to_string_lossy().to_string(),
         content: raw,
     })
+}
+
+#[tauri::command]
+pub fn read_local_skill_files_at_path(
+    project_dir: String,
+    name: String,
+    path: String,
+) -> Result<Vec<LocalSkillFile>, String> {
+    let skill_path = resolve_skill_file_at_path(&project_dir, &name, &path, true)?;
+    let Some(skill_dir) = skill_path.parent() else {
+        return Err("Skill directory not found".to_string());
+    };
+    let mut files = Vec::new();
+    collect_skill_files_from_dir(skill_dir, skill_dir, &mut files)?;
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(files)
 }
 
 #[tauri::command]

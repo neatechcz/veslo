@@ -15,6 +15,7 @@ export type ModalShellProps = {
   size?: ModalSize;
   align?: ModalAlign;
   class?: string;
+  closeOnBackdrop?: boolean;
   role?: AriaRole;
   ariaLabelledBy?: string;
   ariaDescribedBy?: string;
@@ -52,6 +53,7 @@ export default function ModalShell(props: ModalShellProps) {
   const align = () => props.align ?? "center";
 
   const handleBackdropClick = (e: MouseEvent) => {
+    if (props.closeOnBackdrop === false) return;
     if (e.target === e.currentTarget) props.onClose?.();
   };
 
@@ -59,6 +61,7 @@ export default function ModalShell(props: ModalShellProps) {
     if (e.defaultPrevented) return;
     if (e.key === "Escape") {
       e.preventDefault();
+      e.stopPropagation();
       props.onClose?.();
     }
   };
@@ -71,6 +74,7 @@ export default function ModalShell(props: ModalShellProps) {
       const modalRoots = Array.from(document.querySelectorAll("[data-modal-shell-root]"));
       if (rootRef && modalRoots.at(-1) !== rootRef) return;
       event.preventDefault();
+      event.stopPropagation();
       props.onClose?.();
     };
     window.addEventListener("keydown", closeFromEscape, true);

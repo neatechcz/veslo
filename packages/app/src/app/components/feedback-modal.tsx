@@ -61,6 +61,7 @@ export default function FeedbackModal(props: FeedbackModalProps) {
       layer="top"
       backdrop="medium"
       size="lg"
+      closeOnBackdrop={false}
       ariaLabelledBy={titleId}
       ariaDescribedBy={`${descriptionId} ${noteId} ${successId}`}
     >

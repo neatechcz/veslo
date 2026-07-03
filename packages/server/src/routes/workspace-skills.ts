@@ -24,6 +24,7 @@ import {
   deleteSkillRecoverable,
   listSkills,
   readSkillAtPath,
+  readSkillFilesAtPath,
   updateSkillAtPath,
   upsertSkill,
 } from "../skills.js";
@@ -191,6 +192,35 @@ export function registerWorkspaceSkillRoutes(
     }
     const content = await readFile(item.path, "utf8");
     return jsonResponse({ item, content });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/skills/:name/files", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
+    const includeDisabled = ctx.url.searchParams.get("includeDisabled") === "true";
+    const name = String(ctx.params.name ?? "").trim();
+    if (!name) {
+      throw new ApiError(400, "invalid_skill_name", "Skill name is required");
+    }
+    const items = await listWorkspaceRuntimeSkills(workspace, { includeGlobal, includeDisabled });
+    const instancePath = ctx.url.searchParams.get("path")?.trim() ?? "";
+    if (instancePath) {
+      const allowedItem = items.find((skill) => skill.name === name && resolve(skill.path) === resolve(instancePath));
+      if (!allowedItem) {
+        throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
+      }
+      const result = await readSkillFilesAtPath(workspace.path, { name, path: instancePath });
+      return jsonResponse({
+        item: allowedItem,
+        files: result.files,
+      });
+    }
+    const item = items.find((skill) => skill.name === name);
+    if (!item) {
+      throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
+    }
+    const result = await readSkillFilesAtPath(workspace.path, { name, path: item.path });
+    return jsonResponse({ item, files: result.files });
   });
 
   addRoute(routes, "POST", "/workspace/:id/skills", "client", async (ctx) => {

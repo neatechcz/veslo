@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { Copy, MapPin, MoveRight, RotateCcw, Send, ShieldCheck, Trash2, X } from "lucide-solid";
+import { Copy, FileCode2, FileText, FolderTree, MapPin, MoveRight, RotateCcw, Send, ShieldCheck, Trash2, X } from "lucide-solid";
 
 import Button from "./button";
 import SkillVersionHistory, {
@@ -9,10 +9,11 @@ import SkillVersionHistory, {
 } from "./skill-version-history";
 import { currentLocale, t } from "../../i18n";
 
-export type SkillDetailTab = "overview" | "locations" | "versions" | "sharing" | "audit";
+export type SkillDetailTab = "overview" | "files" | "locations" | "versions" | "sharing" | "audit";
 
 export const SKILL_DETAIL_TABS = [
   { id: "overview", labelKey: "skills.detail_tab_overview" },
+  { id: "files", labelKey: "skills.detail_tab_files" },
   { id: "locations", labelKey: "skills.detail_tab_locations" },
   { id: "versions", labelKey: "skills.detail_tab_versions" },
   { id: "sharing", labelKey: "skills.detail_tab_sharing" },
@@ -34,6 +35,14 @@ export type SkillDetailMetadata = {
 };
 
 export type SkillDetailAction = "copy" | "move" | "publish" | "requestApproval" | "restore" | "delete";
+
+export type SkillDetailFile = {
+  path: string;
+  sizeBytes: number;
+  mediaType: string;
+  executable?: boolean;
+  text?: string;
+};
 
 export type SkillDetailLocation = {
   id: string;
@@ -69,12 +78,18 @@ export type SkillDetailDrawerProps = {
   versions?: SkillVersionRow[];
   versionTargets?: SkillVersionTargetMetadata[];
   auditEntries?: SkillAuditEntry[];
+  files?: SkillDetailFile[];
+  filesLoading?: boolean;
+  filesError?: string | null;
   selectedTab?: SkillDetailTab;
+  selectedFilePath?: string | null;
   selectedVersionId?: string | null;
   selectedVersionTargetId?: string | null;
   actionPending?: Partial<Record<SkillDetailAction, boolean>>;
   actionUnavailableReason?: Partial<Record<SkillDetailAction, string | null | undefined>>;
   onSelectTab?: (tab: SkillDetailTab) => void;
+  onSelectFile?: (file: SkillDetailFile) => void;
+  onRetryFiles?: () => void;
   onSelectVersion?: (version: SkillVersionRow) => void;
   onSelectVersionTarget?: (target: SkillVersionTargetMetadata) => void;
   onClose: () => void;
@@ -94,6 +109,24 @@ const titleId = "skill-detail-drawer-title";
 function fieldValue(value: string | null | undefined, fallback: string) {
   const normalized = value?.trim();
   return normalized || fallback;
+}
+
+function fileBaseName(path: string) {
+  return path.split("/").filter(Boolean).pop() || path;
+}
+
+function formatFileSize(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function isCodeLikeFile(file: SkillDetailFile) {
+  return file.mediaType.startsWith("text/") ||
+    file.mediaType === "application/json" ||
+    file.mediaType === "application/yaml" ||
+    file.mediaType === "image/svg+xml";
 }
 
 export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
@@ -118,6 +151,12 @@ export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
   const showOverviewRestoreAction = createMemo(() =>
     Boolean(props.onRestoreSkill && activeLocation()?.lifecycle === "removed" && activeLocation()?.restoreAvailable)
   );
+  const selectedFile = createMemo(() => {
+    const files = props.files ?? [];
+    if (files.length === 0) return null;
+    const selectedPath = props.selectedFilePath?.trim();
+    return files.find((file) => file.path === selectedPath) ?? files.find((file) => file.path === "SKILL.md") ?? files[0] ?? null;
+  });
 
   const scopeLabel = (scope: SkillDetailLocation["scope"]) => {
     switch (scope) {
@@ -321,6 +360,109 @@ export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
                         </Button>
                       </Show>
                     </div>
+                  </section>
+                </Match>
+
+                <Match when={activeTab() === "files"}>
+                  <section
+                    class="space-y-3"
+                    aria-label={translate("skills.detail_files")}
+                    data-testid="skill-detail-files-tab"
+                    data-extend-ui="file-system-block"
+                  >
+                    <Show when={props.filesLoading}>
+                      <div class="rounded-lg border border-dls-border bg-gray-2 px-3 py-2 type-ui-sm text-dls-secondary">
+                        {translate("skills.detail_files_loading")}
+                      </div>
+                    </Show>
+                    <Show when={!props.filesLoading && props.filesError}>
+                      {(error) => (
+                        <div class="rounded-lg border border-red-8/40 bg-red-3/20 px-3 py-2">
+                          <p class="type-ui-sm text-red-11">{error()}</p>
+                          <Show when={props.onRetryFiles}>
+                            <Button
+                              variant="outline"
+                              class="mt-2 h-8 px-2 type-ui-xs"
+                              onClick={() => props.onRetryFiles?.()}
+                            >
+                              <RotateCcw size={13} />
+                              {translate("skills.detail_files_retry")}
+                            </Button>
+                          </Show>
+                        </div>
+                      )}
+                    </Show>
+                    <Show
+                      when={!props.filesLoading && !props.filesError && (props.files?.length ?? 0) > 0}
+                      fallback={
+                        <Show when={!props.filesLoading && !props.filesError}>
+                          <div class="rounded-lg border border-dls-border bg-gray-2 px-3 py-2 type-ui-sm text-dls-secondary">
+                            {translate("skills.detail_files_empty")}
+                          </div>
+                        </Show>
+                      }
+                    >
+                      <div class="grid min-h-[360px] gap-3">
+                        <div class="min-h-0 rounded-lg border border-dls-border bg-gray-2" aria-label={translate("skills.detail_files")}>
+                          <div class="flex items-center gap-2 border-b border-dls-border px-3 py-2 type-ui-xs uppercase text-dls-muted">
+                            <FolderTree size={13} />
+                            {translate("skills.detail_files")}
+                          </div>
+                          <div class="max-h-[180px] overflow-y-auto p-1">
+                            <For each={props.files ?? []}>
+                              {(file) => {
+                                const selected = createMemo(() => selectedFile()?.path === file.path);
+                                return (
+                                  <button
+                                    type="button"
+                                    classList={{
+                                      "bg-dls-hover text-dls-text": selected(),
+                                      "text-dls-secondary hover:bg-dls-hover hover:text-dls-text": !selected(),
+                                    }}
+                                    class="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left type-ui-sm"
+                                    aria-current={selected() ? "true" : undefined}
+                                    title={file.path}
+                                    data-testid="skill-detail-file-row"
+                                    onClick={() => props.onSelectFile?.(file)}
+                                  >
+                                    <Show when={isCodeLikeFile(file)} fallback={<FileText size={14} class="shrink-0 text-dls-muted" />}>
+                                      <FileCode2 size={14} class="shrink-0 text-dls-muted" />
+                                    </Show>
+                                    <span class="min-w-0 flex-1 truncate">{fileBaseName(file.path)}</span>
+                                    <span class="shrink-0 type-ui-xs text-dls-muted">{formatFileSize(file.sizeBytes)}</span>
+                                  </button>
+                                );
+                              }}
+                            </For>
+                          </div>
+                        </div>
+                        <Show when={selectedFile()} keyed>
+                          {(file) => (
+                            <article class="min-w-0 overflow-hidden rounded-lg border border-dls-border bg-gray-2" data-testid="skill-detail-file-preview">
+                              <div class="border-b border-dls-border px-3 py-2">
+                                <h3 class="truncate type-ui-sm font-semibold text-dls-text" title={file.path}>{file.path}</h3>
+                                <p class="truncate type-ui-xs text-dls-muted">
+                                  {file.mediaType} / {formatFileSize(file.sizeBytes)}
+                                  <Show when={file.executable}> / {translate("skills.detail_files_executable")}</Show>
+                                </p>
+                              </div>
+                              <Show
+                                when={file.text !== undefined}
+                                fallback={
+                                  <div class="px-3 py-8 text-center type-ui-sm text-dls-secondary">
+                                    {translate("skills.detail_files_binary_unavailable")}
+                                  </div>
+                                }
+                              >
+                                <pre class="max-h-[520px] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-[12px] leading-5 text-dls-text">
+                                  <code>{file.text}</code>
+                                </pre>
+                              </Show>
+                            </article>
+                          )}
+                        </Show>
+                      </div>
+                    </Show>
                   </section>
                 </Match>
 

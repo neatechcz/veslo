@@ -62,8 +62,9 @@ use commands::scheduler::{scheduler_delete_job, scheduler_list_jobs};
 use commands::session_reader::{opencode_db_read_sessions, opencode_db_read_transcript};
 use commands::skills::{
     install_global_skill_template, install_skill_template, list_local_skills,
-    list_local_skills_scoped, read_local_skill, read_local_skill_at_path, uninstall_skill,
-    uninstall_skill_at_path, write_local_skill, write_local_skill_at_path,
+    list_local_skills_scoped, read_local_skill, read_local_skill_at_path,
+    read_local_skill_files_at_path, uninstall_skill, uninstall_skill_at_path, write_local_skill,
+    write_local_skill_at_path,
 };
 use commands::updater::{
     updater_environment, updater_prepare_install, updater_relaunch_after_install,
@@ -327,6 +328,7 @@ pub fn run() {
             list_local_skills_scoped,
             read_local_skill,
             read_local_skill_at_path,
+            read_local_skill_files_at_path,
             uninstall_skill,
             uninstall_skill_at_path,
             write_local_skill,

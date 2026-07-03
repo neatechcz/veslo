@@ -14,6 +14,7 @@ import {
   deleteGlobalSkillRecoverable,
   disabledRecordMatchesSkill,
   readGlobalSkillAtPath,
+  readGlobalSkillFilesAtPath,
 } from "../skills.js";
 import { listDisabledSkills } from "../skill-enabled-overrides.js";
 import type { Actor } from "../types.js";
@@ -52,6 +53,23 @@ export function registerUserGlobalSkillRoutes(
       throw new ApiError(400, "invalid_skill_name", "Skill name is required");
     }
     return jsonResponse(await readUserGlobalSkill(name, serverDataDir));
+  });
+
+  addRoute(routes, "GET", "/skills/user-global-store/:name/files", "client", async (ctx) => {
+    const name = String(ctx.params.name ?? "").trim();
+    if (!name) {
+      throw new ApiError(400, "invalid_skill_name", "Skill name is required");
+    }
+    const result = await readUserGlobalSkill(name, serverDataDir);
+    return jsonResponse({
+      item: result.item,
+      files: [{
+        path: "SKILL.md",
+        sizeBytes: Buffer.byteLength(result.content, "utf8"),
+        mediaType: "text/markdown",
+        text: result.content,
+      }],
+    });
   });
 
   addRoute(routes, "POST", "/skills/user-global-store", "client", async (ctx) => {
@@ -151,6 +169,37 @@ export function registerUserGlobalSkillRoutes(
     return jsonResponse({
       item: disabled ? { ...item, enabled: false, disabledReason: "user" } : item,
       content: result.content,
+    });
+  });
+
+  addRoute(routes, "GET", "/skills/user-global/:name/files", "none", async (ctx) => {
+    await resolveActor(ctx);
+    const name = String(ctx.params.name ?? "").trim();
+    if (!name) {
+      throw new ApiError(400, "invalid_skill_name", "Skill name is required");
+    }
+    const instancePath = trimmedSearchParam(ctx.url.searchParams, "path");
+    if (!instancePath) {
+      throw new ApiError(400, "invalid_skill_path", "User-global exact skill file read requires path");
+    }
+    const result = await readGlobalSkillFilesAtPath({ name, path: instancePath });
+    const item = {
+      name,
+      path: result.path,
+      description: "",
+      scope: "global" as const,
+    };
+    const disabledSkills = await listDisabledSkills({
+      dataDir: serverDataDir,
+      includeGlobal: true,
+    });
+    const disabled = disabledSkills.some((record) => disabledRecordMatchesSkill(record, item, undefined));
+    if (disabled && ctx.url.searchParams.get("includeDisabled") !== "true") {
+      throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
+    }
+    return jsonResponse({
+      item: disabled ? { ...item, enabled: false, disabledReason: "user" } : item,
+      files: result.files,
     });
   });
 

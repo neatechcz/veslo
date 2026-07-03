@@ -6,6 +6,7 @@ import type {
   VesloSkillBatchRemoveRequest,
   VesloSkillBatchRemoveResponse,
   VesloSkillContent,
+  VesloSkillFilesContent,
   VesloSkillEnabledStateResponse,
   VesloSkillEnabledTarget,
   VesloSkillImportCandidatesResponse,
@@ -540,6 +541,13 @@ export function createSkillsClient(context: SkillsClientContext) {
         { token, hostToken },
       ),
 
+    getUserGlobalStoreSkillFiles: (name: string) =>
+      requestJson<VesloSkillFilesContent>(
+        baseUrl,
+        `/skills/user-global-store/${encodeURIComponent(name)}/files`,
+        { token, hostToken },
+      ),
+
     upsertUserGlobalStoreSkill: (payload: {
       name: string;
       content: string;
@@ -606,6 +614,30 @@ export function createSkillsClient(context: SkillsClientContext) {
       return requestJson<VesloSkillContent>(
         baseUrl,
         `${workspacePath(workspaceId)}/skills/${encodeURIComponent(name)}${query ? `?${query}` : ""}`,
+        { token, hostToken },
+      );
+    },
+
+    getFiles: (workspaceId: string, name: string, options?: { includeGlobal?: boolean; includeDisabled?: boolean; path?: string }) => {
+      const queryParams = new URLSearchParams();
+      if (options?.includeGlobal) queryParams.set("includeGlobal", "true");
+      if (options?.includeDisabled) queryParams.set("includeDisabled", "true");
+      if (options?.path?.trim()) queryParams.set("path", options.path.trim());
+      const query = queryParams.toString();
+      return requestJson<VesloSkillFilesContent>(
+        baseUrl,
+        `${workspacePath(workspaceId)}/skills/${encodeURIComponent(name)}/files${query ? `?${query}` : ""}`,
+        { token, hostToken },
+      );
+    },
+
+    getGlobalFiles: (name: string, options: { path: string; includeDisabled?: boolean }) => {
+      const queryParams = new URLSearchParams();
+      queryParams.set("path", options.path.trim());
+      if (options.includeDisabled) queryParams.set("includeDisabled", "true");
+      return requestJson<VesloSkillFilesContent>(
+        baseUrl,
+        `/skills/user-global/${encodeURIComponent(name)}/files?${queryParams.toString()}`,
         { token, hostToken },
       );
     },

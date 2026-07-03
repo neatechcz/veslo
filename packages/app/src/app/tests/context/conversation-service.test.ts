@@ -154,6 +154,38 @@ function createService() {
     runId?: string | null;
   }> = [];
   const runIds = new Map<string, string>();
+  const lifecycleRunIds = new Map<string, string>();
+  const rememberRunId = (
+    map: Map<string, string>,
+    input: {
+      workspaceId: string;
+      conversationId?: string | null;
+      opencodeSessionId?: string | null;
+      uiSessionId?: string | null;
+      runId?: string | null;
+    },
+  ) => {
+    const runId = input.runId?.trim();
+    if (!runId) return;
+    for (const id of [input.conversationId, input.opencodeSessionId, input.uiSessionId]) {
+      if (id?.trim()) map.set(`${input.workspaceId}\0${id.trim()}`, runId);
+    }
+  };
+  const resolveRunId = (
+    map: Map<string, string>,
+    input: {
+      workspaceId: string;
+      conversationId?: string | null;
+      opencodeSessionId?: string | null;
+      uiSessionId?: string | null;
+    },
+  ) => {
+    for (const id of [input.conversationId, input.opencodeSessionId, input.uiSessionId]) {
+      const runId = id?.trim() ? map.get(`${input.workspaceId}\0${id.trim()}`) : "";
+      if (runId) return runId;
+    }
+    return "";
+  };
 
   const service = createConversationService({
     vesloServerClient: () => client,
@@ -200,19 +232,11 @@ function createService() {
     },
     rememberLatestConversationRunId: (input) => {
       rememberedRuns.push(input);
-      const runId = input.runId?.trim();
-      if (!runId) return;
-      for (const id of [input.conversationId, input.opencodeSessionId, input.uiSessionId]) {
-        if (id?.trim()) runIds.set(`${input.workspaceId}\0${id.trim()}`, runId);
-      }
+      rememberRunId(runIds, input);
     },
-    resolveLatestConversationRunId: (input) => {
-      for (const id of [input.conversationId, input.opencodeSessionId, input.uiSessionId]) {
-        const runId = id?.trim() ? runIds.get(`${input.workspaceId}\0${id.trim()}`) : "";
-        if (runId) return runId;
-      }
-      return "";
-    },
+    resolveLatestConversationRunId: (input) => resolveRunId(runIds, input),
+    rememberLatestConversationLifecycleRunId: (input) => rememberRunId(lifecycleRunIds, input),
+    resolveLatestConversationLifecycleRunId: (input) => resolveRunId(lifecycleRunIds, input),
     managedAiAccess: () => null,
     activeSendTraceId: () => null,
     recordSendTrace: () => undefined,

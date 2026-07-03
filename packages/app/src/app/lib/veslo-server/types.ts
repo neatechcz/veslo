@@ -140,6 +140,19 @@ export type VesloSkillContent = {
   content: string;
 };
 
+export type VesloSkillFileEntry = {
+  path: string;
+  sizeBytes: number;
+  mediaType: string;
+  executable?: boolean;
+  text?: string;
+};
+
+export type VesloSkillFilesContent = {
+  item: VesloSkillItem | VesloUserGlobalSkillStoreItem;
+  files: VesloSkillFileEntry[];
+};
+
 export type VesloUserGlobalSkillStoreItem = {
   name: string;
   path: string;

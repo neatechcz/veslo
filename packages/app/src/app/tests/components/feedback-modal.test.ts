@@ -18,11 +18,17 @@ test("feedback modal exposes accessible dialog semantics", () => {
 test("feedback modal closes on Escape and traps focus inside the dialog", () => {
   assert.match(source, /useFocusTrap\(/, "feedback modal should use the shared focus trap");
   assert.match(modalFocusSource, /event\.key === "Escape"/, "focus trap should listen for Escape");
+  assert.match(modalFocusSource, /event\.preventDefault\(\)/, "Escape should be marked handled before app-level shortcuts run");
+  assert.match(modalFocusSource, /event\.stopPropagation\(\)/, "Escape should stay scoped to the visible modal");
   assert.match(modalFocusSource, /event\.key !== "Tab"/, "focus trap should intercept Tab navigation");
   assert.match(modalFocusSource, /window\.addEventListener\("keydown", handleKeyDown, true\)/, "focus trap should register a capturing keydown handler while open");
   assert.match(modalFocusSource, /querySelectorAll<HTMLElement>\(FOCUSABLE_SELECTOR\)/, "focus trap should discover focusable elements inside the dialog");
   assert.match(modalFocusSource, /dialogRef\.contains\(activeElement\)/, "focus trap should keep focus within the dialog boundary");
   assert.match(modalFocusSource, /firstFocusable\.focus\(\)|lastFocusable\.focus\(\)/, "focus trap should wrap focus between the first and last tabbable controls");
+});
+
+test("feedback modal stays open for backdrop clicks so report text can be selected and copied", () => {
+  assert.match(source, /closeOnBackdrop=\{false\}/);
 });
 
 test("feedback modal cleans up scheduled initial focus when closing", () => {

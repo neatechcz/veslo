@@ -1,6 +1,7 @@
-import { readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir, rm, stat } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { TextDecoder } from "node:util";
 import { localUserResourceOwner, workspaceResourceOwner } from "./resource-owner.js";
 import type { DisabledSkillRecord, ResourceOwner, SkillItem } from "./types.js";
 import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
@@ -28,6 +29,16 @@ import {
 const MANAGED_MARKER_FILE = ".veslo-managed.json";
 const MANAGED_SKILL_SOURCES = new Set(["personal", "workspace", "organization", "platform"]);
 const SKILL_REMOVAL_POLICIES = new Set(["user_removable", "admin_removable", "locked"]);
+const IGNORED_SKILL_FILE_NAMES = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
+const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+
+export type SkillFileEntry = {
+  path: string;
+  sizeBytes: number;
+  mediaType: string;
+  executable?: boolean;
+  text?: string;
+};
 
 export interface SkillRemovalJournalContext {
   dataDir?: string;
@@ -95,6 +106,62 @@ function applyDisabledSkillRecords(
   });
 }
 
+const mediaTypeForSkillFilePath = (path: string): string => {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".md")) return "text/markdown";
+  if (lower.endsWith(".txt")) return "text/plain";
+  if (lower.endsWith(".sh")) return "text/x-shellscript";
+  if (lower.endsWith(".js") || lower.endsWith(".mjs") || lower.endsWith(".cjs")) return "text/javascript";
+  if (lower.endsWith(".ts") || lower.endsWith(".tsx")) return "text/typescript";
+  if (lower.endsWith(".css")) return "text/css";
+  if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
+  if (lower.endsWith(".json")) return "application/json";
+  if (lower.endsWith(".yaml") || lower.endsWith(".yml")) return "application/yaml";
+  if (lower.endsWith(".svg")) return "image/svg+xml";
+  return "application/octet-stream";
+};
+
+const shouldEmbedSkillFileText = (mediaType: string): boolean =>
+  mediaType.startsWith("text/") ||
+  mediaType === "application/json" ||
+  mediaType === "application/yaml" ||
+  mediaType === "image/svg+xml";
+
+const decodeUtf8SkillFile = (bytes: Buffer): string | undefined => {
+  try {
+    return UTF8_DECODER.decode(bytes);
+  } catch {
+    return undefined;
+  }
+};
+
+async function collectSkillFiles(skillRoot: string, dir: string = skillRoot, files: SkillFileEntry[] = []): Promise<SkillFileEntry[]> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (IGNORED_SKILL_FILE_NAMES.has(entry.name)) continue;
+    const absolutePath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await collectSkillFiles(skillRoot, absolutePath, files);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+
+    const rawRelativePath = relative(skillRoot, absolutePath);
+    if (!rawRelativePath || rawRelativePath.startsWith("..")) continue;
+    const packagePath = rawRelativePath.split(/[\\/]/).join("/");
+    const fileStat = await stat(absolutePath);
+    const mediaType = mediaTypeForSkillFilePath(packagePath);
+    const text = shouldEmbedSkillFileText(mediaType) ? decodeUtf8SkillFile(await readFile(absolutePath)) : undefined;
+    files.push({
+      path: packagePath,
+      sizeBytes: fileStat.size,
+      mediaType,
+      ...(fileStat.mode & 0o111 ? { executable: true } : {}),
+      ...(text !== undefined ? { text } : {}),
+    });
+  }
+  return files;
+}
 export const extractTriggerFromBody = extractTriggerFromSkillBody;
 
 const markerString = (value: unknown, key: string): string | undefined => {
@@ -404,6 +471,19 @@ export async function readSkillAtPath(
   };
 }
 
+export async function readSkillFilesAtPath(
+  workspaceRoot: string,
+  payload: { name: string; path: string },
+): Promise<{ path: string; files: SkillFileEntry[] }> {
+  const target = await resolveExistingWorkspaceSkillTarget(workspaceRoot, payload.name.trim(), payload.path, {
+    allowManaged: true,
+  });
+  return {
+    path: target.skillPath,
+    files: await collectSkillFiles(dirname(target.skillPath)),
+  };
+}
+
 export async function readGlobalSkillAtPath(
   payload: { name: string; path: string },
 ): Promise<{ path: string; content: string }> {
@@ -413,6 +493,18 @@ export async function readGlobalSkillAtPath(
   return {
     path: target.skillPath,
     content: await readFile(target.skillPath, "utf8"),
+  };
+}
+
+export async function readGlobalSkillFilesAtPath(
+  payload: { name: string; path: string },
+): Promise<{ path: string; files: SkillFileEntry[] }> {
+  const target = await resolveExistingUserGlobalSkillTarget(payload.name.trim(), payload.path, {
+    allowManaged: true,
+  });
+  return {
+    path: target.skillPath,
+    files: await collectSkillFiles(dirname(target.skillPath)),
   };
 }
 

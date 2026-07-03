@@ -12,6 +12,7 @@ import type {
   HubSkillCard,
   HubSkillInstallTarget,
   SkillCard,
+  SkillFileEntry,
   SkillInventoryItem,
   SkillSaveResult,
   StartupPreference,
@@ -252,6 +253,7 @@ export type DashboardViewProps = {
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
   saveSkill: (input: { name: string; path?: string; content: string; description?: string }) => Promise<SkillSaveResult>;
+  readSkillInstanceFiles: (target: SkillMutationTarget) => Promise<{ files: SkillFileEntry[] } | null>;
   readSkillInstance: (target: SkillMutationTarget) => Promise<{ name: string; path: string; content: string } | null>;
   saveSkillInstance: (target: SkillMutationTarget, content: string) => Promise<SkillSaveResult>;
   setSkillInstanceEnabled: (target: SkillMutationTarget, enabled: boolean) => Promise<SkillSaveResult>;
@@ -1134,6 +1136,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 uninstallSkill={props.uninstallSkill}
                 readSkill={props.readSkill}
                 saveSkill={props.saveSkill}
+                readSkillInstanceFiles={props.readSkillInstanceFiles}
                 readSkillInstance={props.readSkillInstance}
                 saveSkillInstance={props.saveSkillInstance}
                 setSkillInstanceEnabled={props.setSkillInstanceEnabled}

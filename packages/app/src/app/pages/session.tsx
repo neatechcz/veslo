@@ -181,6 +181,7 @@ import SessionLeftSidebar from "./session-left-sidebar";
 import SessionRightSidebar from "./session-right-sidebar";
 import SessionCenter from "./session-center";
 import { createWorkspaceShareController } from "./workspace-share-controller";
+import { formatRunElapsedDuration } from "./session-run-elapsed-label";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 import { readSessionStatus } from "../lib/scoped-session-status";
@@ -1931,7 +1932,7 @@ export default function SessionView(props: SessionViewProps) {
     return Math.max(0, runTick() - start);
   });
 
-  const runElapsedLabel = createMemo(() => `${Math.round(runElapsedMs()).toLocaleString()}ms`);
+  const runElapsedLabel = createMemo(() => formatRunElapsedDuration(runElapsedMs()));
 
   onMount(() => {
     setTimeout(() => setIsInitialLoad(false), 2000);
@@ -3556,9 +3557,7 @@ export default function SessionView(props: SessionViewProps) {
                         }`}
                       />
                       <span class="truncate">{(runPhase() === "error" && props.error) ? props.error : (thinkingStatus() || runLabel())}</span>
-                      <Show when={props.developerMode}>
-                        <span class="text-[10px] text-gray-8 ml-auto shrink-0">{runElapsedLabel()}</span>
-                      </Show>
+                      <span class="text-[10px] text-gray-8 ml-auto shrink-0">{runElapsedLabel()}</span>
                     </div>
                   </div>
                 </div>

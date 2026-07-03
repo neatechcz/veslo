@@ -1009,6 +1009,14 @@ export type LocalSkillContent = {
   content: string;
 };
 
+export type LocalSkillFile = {
+  path: string;
+  sizeBytes: number;
+  mediaType: string;
+  executable?: boolean;
+  text?: string;
+};
+
 export type LocalSkillListScope = "workspace" | "global" | "effective";
 
 export async function listLocalSkills(projectDir: string): Promise<LocalSkillCard[]> {
@@ -1028,6 +1036,10 @@ export async function readLocalSkill(projectDir: string, name: string): Promise<
 
 export async function readLocalSkillAtPath(projectDir: string, name: string, path: string): Promise<LocalSkillContent> {
   return invoke<LocalSkillContent>("read_local_skill_at_path", { projectDir, name, path });
+}
+
+export async function readLocalSkillFilesAtPath(projectDir: string, name: string, path: string): Promise<LocalSkillFile[]> {
+  return invoke<LocalSkillFile[]>("read_local_skill_files_at_path", { projectDir, name, path });
 }
 
 export async function writeLocalSkill(projectDir: string, name: string, content: string): Promise<ExecResult> {
