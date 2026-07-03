@@ -1,0 +1,535 @@
+[scenario]
+name = "vslo-270-stop-reload-reconnect"
+fail_fast = true
+global_timeout_ms = 300000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "run blocked retry stop and reconnect sequence"
+action = "eval"
+script = '''
+const completeSelector = '[data-testid="vslo-270-stop-reload-reconnect-complete"]';
+const errorSelector = '[data-testid="vslo-270-stop-reload-reconnect-error"]';
+const progressSelector = '[data-testid="vslo-270-stop-reload-reconnect-progress"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+document.querySelector(progressSelector)?.remove();
+
+const progressMarker = document.createElement("pre");
+progressMarker.dataset.testid = "vslo-270-stop-reload-reconnect-progress";
+progressMarker.style.display = "none";
+progressMarker.textContent = "starting";
+document.body.append(progressMarker);
+
+const setProgress = (stage, detail = null) => {
+  window.__veslo270StopReloadReconnect = {
+    stage,
+    detail,
+    at: new Date().toISOString(),
+  };
+  progressMarker.textContent = JSON.stringify(window.__veslo270StopReloadReconnect);
+};
+
+const appendFailureMarker = (payload) => {
+  if (document.querySelector(errorSelector) || document.querySelector(completeSelector)) return;
+  const marker = document.createElement("pre");
+  marker.dataset.testid = "vslo-270-stop-reload-reconnect-error";
+  marker.textContent = JSON.stringify(payload, null, 2);
+  document.body.append(marker);
+};
+
+if (!window.__veslo270StopReloadReconnectStarted) {
+  window.__veslo270StopReloadReconnectStarted = true;
+  window.__veslo270StopReloadReconnectPromise = (async () => {
+    const overallTimeout = setTimeout(() => {
+      appendFailureMarker({
+        message: "Timed out before the VSLO-270 stop/reload/reconnect task produced a result marker.",
+        progress: window.__veslo270StopReloadReconnect ?? null,
+        sendTrace: Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-80) : [],
+        body: document.body.innerText.replace(/\s+/g, " ").trim().slice(0, 3000),
+      });
+    }, 280000);
+
+    try {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const trimText = (value) => String(value ?? "").trim();
+      const normalize = (value) => trimText(value).replace(/\s+/g, " ");
+      const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+      const sendTrace = () => Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-160) : [];
+      const bodyText = () => document.body.innerText.replace(/\s+/g, " ").trim();
+      const assert = (condition, message) => {
+        if (!condition) throw new Error(message);
+      };
+      const waitUntil = async (predicate, options = {}) => {
+        const timeout = options.timeout ?? 10000;
+        const interval = options.interval ?? 250;
+        const deadline = Date.now() + timeout;
+        let latest;
+        while (Date.now() < deadline) {
+          latest = await predicate();
+          if (latest) return latest;
+          await sleep(interval);
+        }
+        throw new Error(`${options.message ?? "Condition was not met"}. Latest=${JSON.stringify(latest)}`);
+      };
+      const tauriInvoke = async (command, payload = {}) => {
+        const invoke = window.__TAURI_INTERNALS__?.invoke;
+        assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+        return await invoke(command, payload);
+      };
+      const serverJson = async (baseUrl, token, path, init = {}) => {
+        const response = await fetch(`${baseUrl}${path}`, {
+          ...init,
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            accept: "application/json",
+            ...(init.headers ?? {}),
+          },
+        });
+        const text = await response.text();
+        let body = null;
+        try {
+          body = text ? JSON.parse(text) : null;
+        } catch {
+          body = text;
+        }
+        return { ok: response.ok, status: response.status, body };
+      };
+      const buttonDetails = () => Array.from(document.querySelectorAll("button")).map((button) => {
+        const rect = button.getBoundingClientRect();
+        return {
+          text: normalize(button.textContent),
+          title: normalize(button.title),
+          label: normalize(button.getAttribute("aria-label")),
+          disabled: button.disabled,
+          visible: Boolean(button.offsetParent) && rect.width > 0 && rect.height > 0,
+        };
+      });
+      const buttonMatchesLabel = (button, labels) => {
+        if (button.disabled) return false;
+        const rect = button.getBoundingClientRect();
+        if (!button.offsetParent || rect.width <= 0 || rect.height <= 0) return false;
+        const values = [
+          normalize(button.textContent),
+          normalize(button.title),
+          normalize(button.getAttribute("aria-label")),
+        ];
+        return labels.some((label) => values.some((value) => value === label || value.includes(label)));
+      };
+      const findButton = (labels) =>
+        Array.from(document.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+      const reloadBannerDetails = () => {
+        const banner = document.querySelector('[data-testid="session-reload-banner"]');
+        if (!(banner instanceof HTMLElement)) return null;
+        const action = banner.querySelector('[data-testid="session-reload-action"]');
+        const rect = banner.getBoundingClientRect();
+        return {
+          text: normalize(banner.textContent),
+          blocked: banner.getAttribute("data-reload-blocked"),
+          visible: Boolean(banner.offsetParent) && rect.width > 0 && rect.height > 0,
+          actionDisabled: action instanceof HTMLButtonElement ? action.disabled : null,
+        };
+      };
+      const findBlockedReloadAction = () => {
+        const action = document.querySelector('[data-testid="session-reload-banner"][data-reload-blocked="true"] [data-testid="session-reload-action"]');
+        if (!(action instanceof HTMLButtonElement)) return null;
+        const rect = action.getBoundingClientRect();
+        if (action.disabled || !action.offsetParent || rect.width <= 0 || rect.height <= 0) return null;
+        return action;
+      };
+      const findStopButton = () => findButton([
+        "Stop",
+        "Zastavit",
+        "Press Esc again to stop",
+        "Dalsim Esc zastavite beh",
+      ]);
+      const findComposerSendButton = (textbox) => {
+        const labels = [
+          "Send now",
+          "Steer agent now",
+          "Queue message",
+          "Send",
+          "Poslat hned",
+          "Odeslat",
+        ];
+        let current = textbox;
+        const containers = [];
+        for (let depth = 0; depth < 10 && current instanceof HTMLElement; depth += 1) {
+          containers.push(current);
+          current = current.parentElement;
+        }
+        for (const container of containers) {
+          const match = Array.from(container.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+          if (match) return match;
+        }
+        return findButton(labels);
+      };
+      const waitForComposer = async () => {
+        setProgress("waiting-composer");
+        return await waitUntil(() => {
+          const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+          return candidate instanceof HTMLElement && candidate.offsetParent ? candidate : false;
+        }, {
+          timeout: 30000,
+          interval: 250,
+          message: `Composer did not appear. Body=${bodyText().slice(0, 2000)}`,
+        });
+      };
+      const waitForLocalVesloServerReady = async () => {
+        let latest = null;
+        setProgress("waiting-local-veslo-server");
+        return await waitUntil(async () => {
+          latest = await tauriInvoke("veslo_server_info").catch(() => null);
+          const baseUrl = trimBaseUrl(latest?.baseUrl);
+          const clientToken = normalize(latest?.clientToken);
+          const hostToken = normalize(latest?.hostToken);
+          if (!latest?.running || !baseUrl || !clientToken || !hostToken) return false;
+          const response = await fetch(`${baseUrl}/health`).catch(() => null);
+          if (!response?.ok) return false;
+          const payload = await response.json().catch(() => null);
+          return payload?.ok === true ? { baseUrl, clientToken, hostToken } : false;
+        }, {
+          timeout: 90000,
+          interval: 500,
+          message: `Local Veslo server did not become ready. Server info=${JSON.stringify(latest)}`,
+        });
+      };
+      const parseDenAuth = (raw) => {
+        if (!raw || typeof raw !== "string") return null;
+        try {
+          const parsed = JSON.parse(raw);
+          const token = normalize(parsed?.token);
+          if (!token) return null;
+          return {
+            token,
+            email: normalize(parsed?.user?.email),
+            userId: normalize(parsed?.user?.id),
+            orgId: normalize(parsed?.orgId || parsed?.org?.id),
+            denApiBase: trimBaseUrl(parsed?.denApiBase),
+          };
+        } catch {
+          return null;
+        }
+      };
+      const readDenAuthForAiAccess = async () => {
+        const storageAuth = parseDenAuth(
+          window.localStorage.getItem("veslo.den.auth") ||
+          window.sessionStorage.getItem("veslo.den.auth"),
+        );
+        if (storageAuth) return storageAuth;
+
+        const snapshot = await tauriInvoke("den_auth_snapshot_read", {}, 15000).catch(() => null);
+        return parseDenAuth(snapshot?.authJson);
+      };
+      const waitForAiAccessReady = async (connection) => {
+        let latest = null;
+        setProgress("waiting-ai-access");
+        await waitUntil(async () => {
+          const auth = await readDenAuthForAiAccess();
+          const userToken = auth?.token || "veslo-e2e-managed-ai-token";
+          const response = await fetch(`${connection.baseUrl}/ai-gateway/me/ai-access`, {
+            headers: {
+              authorization: `Bearer ${connection.clientToken}`,
+              "x-veslo-gateway-authorization": `Bearer ${userToken}`,
+              accept: "application/json",
+            },
+          }).catch((error) => {
+            latest = { error: error?.message || String(error) };
+            return null;
+          });
+          if (!response) return false;
+          const text = await response.text();
+          latest = {
+            status: response.status,
+            body: text.slice(0, 500),
+            auth: auth ? {
+              email: auth.email,
+              userId: auth.userId,
+              orgId: auth.orgId,
+              denApiBase: auth.denApiBase,
+              hasToken: true,
+            } : null,
+          };
+          if (!response.ok) return false;
+          const payload = text.trim() ? JSON.parse(text) : null;
+          return payload?.aiAccess?.enabled === true ? payload : false;
+        }, {
+          timeout: 90000,
+          interval: 500,
+          message: `AI access endpoint did not become ready. Latest=${JSON.stringify(latest)}`,
+        });
+        window.dispatchEvent(new Event("focus"));
+        document.dispatchEvent(new Event("visibilitychange"));
+        await sleep(1000);
+      };
+      const waitForWorkspaceEngineReady = async (workspace) => {
+        const workspacePath = normalize(workspace?.path || workspace?.directory);
+        assert(workspacePath, `Workspace path is missing from bootstrap payload: ${JSON.stringify(workspace)}`);
+        setProgress("starting-workspace-engine", { workspacePath });
+        await tauriInvoke("engine_start", {
+          projectDir: workspacePath,
+          preferSidecar: true,
+          opencodeBinPath: null,
+          runtime: "veslo-orchestrator",
+          workspacePaths: [workspacePath],
+        });
+        const activation = await tauriInvoke("orchestrator_workspace_activate", {
+          workspacePath,
+          name: normalize(workspace?.displayName || workspace?.name) || null,
+        });
+        await sleep(1000);
+        return activation ?? { ok: true };
+      };
+      const navigateToHash = (path) => {
+        const oldUrl = window.location.href;
+        window.location.hash = path.startsWith("/") ? path : `/${path}`;
+        window.dispatchEvent(new HashChangeEvent("hashchange", {
+          oldURL: oldUrl,
+          newURL: window.location.href,
+        }));
+      };
+      const visibleRunIndicator = () => {
+        const indicator = document.querySelector('[data-testid="session-run-indicator"]');
+        if (!(indicator instanceof HTMLElement)) return null;
+        const rect = indicator.getBoundingClientRect();
+        if (!indicator.offsetParent || rect.width <= 0 || rect.height <= 0) return null;
+        return {
+          text: normalize(indicator.textContent),
+          phase: indicator.getAttribute("data-run-phase") || "",
+        };
+      };
+      const extractLifecycleScope = () => {
+        const entries = sendTrace();
+        for (let index = entries.length - 1; index >= 0; index -= 1) {
+          const entry = entries[index];
+          if (!entry || typeof entry !== "object") continue;
+          const event = normalize(entry.event);
+          if (
+            event !== "server:conversation-run:lifecycle-register" &&
+            event !== "server:conversation-run:opencode-submit" &&
+            event !== "abortSession:conversation-abort-success"
+          ) {
+            continue;
+          }
+          const workspaceId = normalize(entry.workspaceId);
+          const conversationId = normalize(entry.conversationId);
+          const runId = normalize(entry.runId);
+          if (workspaceId && conversationId && runId) {
+            return { workspaceId, conversationId, runId, event };
+          }
+        }
+        return null;
+      };
+
+      await waitUntil(() => document.querySelector("#root")?.children.length > 0, {
+        timeout: 15000,
+        message: "Veslo root did not render child UI",
+      });
+
+      setProgress("waiting-workspace-bootstrap");
+      const workspaceList = await waitUntil(async () => {
+        const info = await tauriInvoke("workspace_bootstrap").catch(() => null);
+        return Array.isArray(info?.workspaces) && info.workspaces.length > 0 ? info : false;
+      }, {
+        timeout: 45000,
+        interval: 500,
+        message: "Workspace bootstrap did not expose a local workspace",
+      });
+      const activeWorkspace =
+        workspaceList.workspaces.find((workspace) => workspace.id === workspaceList.activeId) ??
+        workspaceList.workspaces[0];
+
+      let localServer = await waitForLocalVesloServerReady();
+      await waitForAiAccessReady(localServer);
+      await waitForWorkspaceEngineReady(activeWorkspace);
+
+      setProgress("navigating-session-route");
+      navigateToHash("/session");
+      await waitUntil(() => window.location.hash.includes("/session"), {
+        timeout: 10000,
+        message: "Session route did not become active",
+      });
+
+      const textbox = await waitForComposer();
+      const token = `vslo-270-stop-reload-${Date.now()}`;
+      const prompt = `Reply with exactly ${token}. No other words.`;
+
+      setProgress("filling-composer", { token });
+      textbox.focus();
+      textbox.replaceChildren(document.createTextNode(prompt));
+      textbox.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        data: prompt,
+        inputType: "insertText",
+      }));
+
+      await waitUntil(() => textbox.textContent === prompt, {
+        timeout: 10000,
+        message: "Composer text was not reflected in the editable node",
+      });
+
+      const sendButton = await waitUntil(() => findComposerSendButton(textbox), {
+        timeout: 15000,
+        interval: 250,
+        message: `Send button did not become enabled. Buttons=${JSON.stringify(buttonDetails())}. Body=${bodyText().slice(0, 2000)}`,
+      });
+      const traceBeforeClick = sendTrace().length;
+      setProgress("clicking-send-button", { token });
+      sendButton.click();
+
+      setProgress("waiting-send-handler", { token });
+      await waitUntil(() => sendTrace().length > traceBeforeClick, {
+        timeout: 5000,
+        interval: 250,
+        message: `Send click did not reach composer handler. Buttons=${JSON.stringify(buttonDetails())}. Body=${bodyText().slice(0, 2000)}`,
+      });
+
+      setProgress("waiting-visible-model-retry");
+      const retryIndicator = await waitUntil(() => {
+        const indicator = visibleRunIndicator();
+        if (!indicator) return false;
+        if (!/Retrying model\/API|Opakuji model\/API/i.test(indicator.text)) return false;
+        if (/tool|running tool|nastroj/i.test(indicator.text)) {
+          throw new Error(`Retry-only wait looked like local tool work: ${JSON.stringify(indicator)}`);
+        }
+        return indicator;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `Model/API retry status did not become visible. Indicator=${JSON.stringify(visibleRunIndicator())}. Body=${bodyText().slice(0, 2500)}`,
+      });
+      assert(retryIndicator.phase === "retrying", `Expected data-run-phase=retrying, got ${JSON.stringify(retryIndicator)}`);
+
+      setProgress("waiting-visible-model-retry-blocked", { retryIndicator });
+      const blockedIndicator = await waitUntil(() => {
+        const indicator = visibleRunIndicator();
+        if (!indicator) return false;
+        if (!/Model\/API retry blocked|Opakovani model\/API zablokovano/i.test(indicator.text)) return false;
+        return indicator;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `Model/API retry did not become blocked. Indicator=${JSON.stringify(visibleRunIndicator())}. Body=${bodyText().slice(0, 2500)}`,
+      });
+      assert(blockedIndicator.phase === "error", `Expected data-run-phase=error for blocked retry, got ${JSON.stringify(blockedIndicator)}`);
+
+      const lifecycleScope = await waitUntil(() => extractLifecycleScope(), {
+        timeout: 15000,
+        interval: 250,
+        message: `Lifecycle scope was not captured in send trace. Trace=${JSON.stringify(sendTrace())}`,
+      });
+
+      await waitUntil(() => findBlockedReloadAction(), {
+        timeout: 90000,
+        interval: 250,
+        message: `Blocked reload action was not visible for blocked backend run. Banner=${JSON.stringify(reloadBannerDetails())}. Buttons=${JSON.stringify(buttonDetails())}. Indicator=${JSON.stringify(visibleRunIndicator())}`,
+      });
+      const stopButton = await waitUntil(() => findStopButton(), {
+        timeout: 30000,
+        interval: 250,
+        message: `Stop button was not visible for blocked backend run. Banner=${JSON.stringify(reloadBannerDetails())}. Buttons=${JSON.stringify(buttonDetails())}. Indicator=${JSON.stringify(visibleRunIndicator())}`,
+      });
+      const traceBeforeStop = sendTrace().length;
+      setProgress("clicking-stop-button", { lifecycleScope, banner: reloadBannerDetails() });
+      stopButton.click();
+
+      const abortSuccess = await waitUntil(() => {
+        return sendTrace()
+          .slice(traceBeforeStop)
+          .reverse()
+          .find((entry) => entry?.event === "abortSession:conversation-abort-success") || false;
+      }, {
+        timeout: 30000,
+        interval: 250,
+        message: `Stop button did not reach Veslo conversation abort. Trace=${JSON.stringify(sendTrace())}`,
+      });
+      assert(normalize(abortSuccess.runId), `Abort success trace did not include runId: ${JSON.stringify(abortSuccess)}`);
+
+      setProgress("waiting-active-run-clear", { lifecycleScope, abortSuccess });
+      const activeCleared = await waitUntil(async () => {
+        const active = await serverJson(
+          localServer.baseUrl,
+          localServer.clientToken,
+          `/workspace/${encodeURIComponent(lifecycleScope.workspaceId)}/conversations/${encodeURIComponent(lifecycleScope.conversationId)}/runs/active`,
+        ).catch((error) => ({ ok: false, status: 0, body: { error: error?.message || String(error) } }));
+        if (active.status === 404) return { active };
+        if (active.ok && /^(aborted|failed|completed)$/.test(normalize(active.body?.status))) return { active };
+        return false;
+      }, {
+        timeout: 60000,
+        interval: 1000,
+        message: `Active lifecycle run did not clear after Stop. Scope=${JSON.stringify(lifecycleScope)} Trace=${JSON.stringify(sendTrace())}`,
+      });
+
+      setProgress("waiting-local-veslo-server-after-stop", { activeCleared });
+      localServer = await waitForLocalVesloServerReady();
+      const status = await serverJson(localServer.baseUrl, localServer.clientToken, "/status");
+      assert(status.ok, `GET /status failed after Stop: ${JSON.stringify(status)}`);
+
+      window.localStorage.setItem("veslo:e2e:vslo270:scope", JSON.stringify(lifecycleScope));
+      window.localStorage.setItem("veslo:e2e:vslo270:reload-complete", new Date().toISOString());
+
+      clearTimeout(overallTimeout);
+      const completeMarker = document.createElement("div");
+      completeMarker.dataset.testid = "vslo-270-stop-reload-reconnect-complete";
+      completeMarker.textContent = "complete";
+      document.body.append(completeMarker);
+    } catch (error) {
+      clearTimeout(overallTimeout);
+      appendFailureMarker({
+        message: error?.message || String(error),
+        stack: error?.stack || null,
+        progress: window.__veslo270StopReloadReconnect ?? null,
+        sendTrace: Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-100) : [],
+        indicator: (() => {
+          const node = document.querySelector('[data-testid="session-run-indicator"]');
+          return node instanceof HTMLElement
+            ? {
+                text: node.textContent,
+                phase: node.getAttribute("data-run-phase"),
+              }
+            : null;
+        })(),
+        buttons: Array.from(document.querySelectorAll("button")).map((button) => {
+          const rect = button.getBoundingClientRect();
+          return {
+            text: String(button.textContent ?? "").trim().replace(/\s+/g, " "),
+            title: String(button.title ?? "").trim().replace(/\s+/g, " "),
+            label: String(button.getAttribute("aria-label") ?? "").trim().replace(/\s+/g, " "),
+            disabled: button.disabled,
+            visible: Boolean(button.offsetParent) && rect.width > 0 && rect.height > 0,
+          };
+        }),
+        body: document.body.innerText.replace(/\s+/g, " ").trim().slice(0, 3000),
+      });
+    }
+  })();
+}
+
+true;
+'''
+
+[[step]]
+name = "VSLO-270 task finished"
+action = "wait"
+target = "[data-testid=\"vslo-270-stop-reload-reconnect-complete\"], [data-testid=\"vslo-270-stop-reload-reconnect-error\"]"
+timeout_ms = 290000
+
+[[step]]
+name = "VSLO-270 task succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="vslo-270-stop-reload-reconnect-error"]');
+if (error) {
+  const detail = (error.textContent || "VSLO-270 stop/reload/reconnect task failed")
+    .replace(/[\u0080-\uffff]/g, "?")
+    .slice(0, 4000);
+  throw new Error(`VSLO-270 stop/reload/reconnect task failed: ${detail}`);
+}
+true;
+'''
