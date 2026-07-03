@@ -1,0 +1,8 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Veslo Staging",
+  "identifier": "com.neatech.veslo.staging",
+  "bundle": {
+    "createUpdaterArtifacts": false
+  }
+}
