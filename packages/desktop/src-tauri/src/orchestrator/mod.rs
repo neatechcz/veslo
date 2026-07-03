@@ -11,7 +11,8 @@ use crate::paths::{prepended_path_env, sidecar_path_candidates};
 use crate::supervised_process::{self, CommandEvent, SupervisedCommandChild};
 use crate::types::{
     OrchestratorBinaryState, OrchestratorDaemonState, OrchestratorEngineSnapshot,
-    OrchestratorOpencodeState, OrchestratorSidecarInfo, OrchestratorStatus, OrchestratorWorkspace,
+    OrchestratorOpencodeState, OrchestratorSharedEngineSnapshot, OrchestratorSidecarInfo,
+    OrchestratorStatus, OrchestratorWorkspace,
 };
 
 pub mod manager;
@@ -47,6 +48,7 @@ pub struct OrchestratorHealth {
     pub ok: bool,
     pub daemon: Option<OrchestratorDaemonState>,
     pub opencode: Option<OrchestratorOpencodeState>,
+    pub engine_topology: Option<String>,
     pub cli_version: Option<String>,
     pub sidecar: Option<OrchestratorSidecarInfo>,
     pub binaries: Option<OrchestratorBinaryState>,
@@ -54,6 +56,8 @@ pub struct OrchestratorHealth {
     pub workspace_count: Option<usize>,
     #[serde(default)]
     pub engines: Vec<OrchestratorEngineSnapshot>,
+    #[serde(default)]
+    pub shared_engine: Option<OrchestratorSharedEngineSnapshot>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -664,6 +668,7 @@ pub fn orchestrator_status_from_state(
         data_dir: data_dir.to_string(),
         daemon: state.as_ref().and_then(|state| state.daemon.clone()),
         opencode: state.as_ref().and_then(|state| state.opencode.clone()),
+        engine_topology: None,
         cli_version: state.as_ref().and_then(|state| state.cli_version.clone()),
         sidecar: state.as_ref().and_then(|state| state.sidecar.clone()),
         binaries: state.as_ref().and_then(|state| state.binaries.clone()),
@@ -671,6 +676,7 @@ pub fn orchestrator_status_from_state(
         workspace_count,
         workspaces,
         engines: Vec::new(),
+        shared_engine: None,
         last_error,
     }
 }
@@ -710,6 +716,7 @@ pub fn resolve_orchestrator_status(
                 data_dir: data_dir.to_string(),
                 daemon: health.daemon,
                 opencode: health.opencode,
+                engine_topology: health.engine_topology,
                 cli_version: health.cli_version,
                 sidecar: health.sidecar,
                 binaries: health.binaries,
@@ -717,6 +724,7 @@ pub fn resolve_orchestrator_status(
                 workspace_count,
                 workspaces,
                 engines: health.engines,
+                shared_engine: health.shared_engine,
                 last_error: None,
             }
         }

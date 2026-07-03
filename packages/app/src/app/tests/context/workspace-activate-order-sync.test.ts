@@ -333,14 +333,19 @@ test("project-open workspace switches clear stale session routes before passive 
   );
 });
 
-test("bootstrap does not auto-connect or start the engine under lazy boot policy", () => {
-  // Lazy boot: bootstrap pre-loads the sidebar from SQLite and lets the user
-  // open the workspace explicitly. The bootstrap-specific connect/start
-  // helpers must not be invoked anywhere in this file.
+test("bootstrap does not synchronously connect under lazy boot policy", () => {
+  // Lazy boot may warm the engine in the background through the runtime
+  // controller, but the old bootstrap-specific connect/start helpers must not
+  // be invoked anywhere in this file.
   assert.doesNotMatch(
     source,
     /connectOrRecoverLocalBootstrap/,
     "bootstrap must not invoke connectOrRecoverLocalBootstrap; activate flow owns connect",
+  );
+  assert.match(
+    source,
+    /function warmActiveLocalWorkspaceEngineInBackground\([\s\S]*ensureEngineForWorkspace\(workspaceId, \{[\s\S]*reason: "boot-warmup",[\s\S]*loadSessions: false,/s,
+    "background warmup should reuse runtime ensure without session-list side effects",
   );
   assert.doesNotMatch(
     source,
@@ -362,16 +367,21 @@ test("workspace id is empty until workspace bootstrap hydrates the real active w
   );
 });
 
-test("bootstrap pre-loads the sidebar from SQLite without starting the engine", () => {
+test("bootstrap schedules sidebar hydration without blocking lazy boot completion", () => {
   assert.match(
     source,
-    /async function bootstrapOnboarding\(\)[\s\S]*?options\.populateSidebarFromDb\(/s,
-    "bootstrap must populate the sidebar from SQLite for instant browsability",
+    /function populateSidebarFromDbInBackground\([\s\S]*?void options\.populateSidebarFromDb\(workspaceId, workspacePath\)/s,
+    "bootstrap should keep sidebar SQLite hydration in a fire-and-forget helper",
   );
   assert.match(
     source,
-    /async function bootstrapOnboarding\(\)[\s\S]*?lazy boot — skip Veslo host activation[\s\S]*?options\.populateSidebarFromDb\(/s,
-    "bootstrap passive browse must skip Veslo host activation before reading DB conversation titles",
+    /async function bootstrapOnboarding\(\)[\s\S]*?lazy boot — skip Veslo host activation[\s\S]*?markOnboardingComplete\(\);[\s\S]*?options\.setOnboardingStep\(resolveWelcomeOnboardingStep\(\)\);[\s\S]*?populateSidebarFromDbInBackground\(/s,
+    "bootstrap passive browse must publish boot completion before background engine and DB work",
+  );
+  assert.doesNotMatch(
+    source,
+    /await options\.populateSidebarFromDb\(activeWorkspace\?\.id \?\? "", workspacePath\)/,
+    "bootstrap must not await sidebar DB hydration before first paint",
   );
   assert.match(
     source,
@@ -395,8 +405,8 @@ test("lazy browse stays title-only and does not auto-hydrate or auto-select the 
   );
   assert.match(
     source,
-    /async function bootstrapOnboarding\(\)[\s\S]*?lazy boot — skip latest transcript hydration[\s\S]*?markOnboardingComplete\(\);/s,
-    "bootstrap passive browse should stay title-only",
+    /function populateSidebarFromDbInBackground\([\s\S]*?lazy boot — skip latest transcript hydration/s,
+    "bootstrap background sidebar hydration should stay title-only",
   );
   assert.doesNotMatch(
     source,

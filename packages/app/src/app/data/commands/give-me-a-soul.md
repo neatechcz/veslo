@@ -151,7 +151,9 @@ You are Soul Mode for this workspace.
 Update `opencode.json` or `opencode.jsonc` in the workspace root:
 
 - Ensure `instructions` includes `.opencode/soul.md` (without breaking existing entries).
-- Ensure scheduler plugin is available (add `opencode-scheduler` only if missing).
+- Do not add `opencode-scheduler` automatically. Prefer Veslo server-backed
+  scheduled automations; only mention the scheduler plugin if the user
+  explicitly asks for raw OpenCode scheduler integration.
 
 ## F) Commands
 
@@ -238,7 +240,7 @@ Create FOUR workspace commands:
      - `.opencode/commands/take-my-soul-back.md`
    - Revert `opencode.json*` changes you made:
      - remove `.opencode/soul.md` from `instructions`
-     - remove `opencode-scheduler` only if added solely for Soul Mode
+     - leave user-owned plugins untouched
 
 ## G) Schedule the heartbeat
 
@@ -251,7 +253,9 @@ Create one scheduler job named `soul-heartbeat`.
 - Use stable title like `Soul heartbeat`.
 - Use timeout around 120s.
 
-Use scheduler tools if available (`schedule_job`, `run_job`, `delete_job`).
+Use Veslo scheduled automation tools/routes if available. Do not install or
+depend on `opencode-scheduler` unless the user explicitly chooses that raw
+OpenCode scheduler path.
 
 If scheduler tools are unavailable:
 - still create files + commands,

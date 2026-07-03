@@ -628,11 +628,10 @@ pub fn ensure_workspace_files(
         }
     }
 
-    let required_plugins: Vec<&str> = match preset {
-        "starter" => vec!["opencode-scheduler"],
-        "automation" => vec!["opencode-scheduler"],
-        _ => vec![],
-    };
+    // OpenCode 1.17.4 can stall session creation while loading the external
+    // scheduler plugin. Scheduled automations now run through Veslo server
+    // routes, so new workspaces should not auto-install that plugin.
+    let required_plugins: Vec<&str> = vec![];
 
     let should_seed_chrome_mcp = true;
 
@@ -773,6 +772,29 @@ mod tests {
         assert!(!skills_dir.join("skill-creator").exists());
         assert!(!skills_dir.join("plugin-creator").exists());
         assert!(!skills_dir.join("agent-creator").exists());
+    }
+
+    #[test]
+    fn starter_workspace_does_not_seed_scheduler_plugin() {
+        let root = temp_workspace_root("starter-no-scheduler-plugin");
+        let root_str = root.to_string_lossy().to_string();
+
+        ensure_workspace_files(&root_str, "starter", None, None, None)
+            .expect("seed workspace files");
+
+        let config_raw =
+            fs::read_to_string(root.join("opencode.jsonc")).expect("read generated config");
+        let config: serde_json::Value =
+            serde_json::from_str(&config_raw).expect("parse generated config");
+        let plugins = config
+            .get("plugin")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        assert!(!plugins.contains(&serde_json::Value::String("opencode-scheduler".to_string())));
+
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]
@@ -942,7 +964,7 @@ Use this guide for the team's custom process.
     }
 
     #[test]
-    fn ensure_workspace_files_seeds_chrome_for_non_starter_presets() {
+    fn ensure_workspace_files_seeds_chrome_without_scheduler_for_automation_presets() {
         let root = temp_workspace_root("automation");
         let root_str = root.to_string_lossy().to_string();
 
@@ -970,6 +992,12 @@ Use this guide for the team's custom process.
                 serde_json::Value::String("--isolated".to_string()),
             ]
         );
+        let plugins = config
+            .get("plugin")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(!plugins.contains(&serde_json::Value::String("opencode-scheduler".to_string())));
 
         fs::remove_dir_all(root).ok();
     }

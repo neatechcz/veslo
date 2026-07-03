@@ -39,7 +39,7 @@ import {
   type EngineInfo,
   type WorkspaceInfo,
 } from "../lib/tauri";
-import { waitForHealthy, createClient, type OpencodeAuth } from "../lib/opencode";
+import { waitForHealthy, createClient, unwrap, type OpencodeAuth } from "../lib/opencode";
 import type { WorkspaceRouting } from "./workspace-routing";
 import type { OpencodeConnectStatus, ProviderListItem } from "../types";
 import { t, currentLocale, isLanguage } from "../../i18n";
@@ -1120,6 +1120,137 @@ export function createWorkspaceStore(options: {
     try { fetch(sinkUrl, { method: "POST", body: line, mode: "no-cors" }).catch(() => {}); } catch { /* ignore */ }
   }
 
+  function publishLocalWorkspaceConfigFallback(workspacePath: string, loaded: boolean) {
+    setWorkspaceConfig(null);
+    setWorkspaceConfigLoaded(loaded);
+    setAuthorizedDirs(workspacePath ? [workspacePath] : []);
+  }
+
+  function hydrateLocalWorkspaceConfigInBackground(input: {
+    workspaceId: string;
+    workspacePath: string;
+    reason: string;
+  }) {
+    const workspaceId = input.workspaceId.trim();
+    const workspacePath = input.workspacePath.trim();
+    if (!workspacePath) return;
+
+    const stillCurrent = () => {
+      const active = activeWorkspaceInfo();
+      if (!active || active.workspaceType !== "local") return false;
+      if (workspaceId && active.id !== workspaceId) return false;
+      return (
+        normalizeWorkspaceScopePath(active.path, "local") ===
+        normalizeWorkspaceScopePath(workspacePath, "local")
+      );
+    };
+
+    bootTrace("workspaceVesloRead -> background", input.reason);
+    void withTimeout(
+      workspaceVesloRead({ workspacePath }),
+      10_000,
+      `workspaceVesloRead:${input.reason}`,
+    )
+      .then((cfg) => {
+        if (!stillCurrent()) return;
+        if (cfg) {
+          setWorkspaceConfig(cfg);
+          setWorkspaceConfigLoaded(true);
+          const roots = Array.isArray(cfg.authorizedRoots) ? cfg.authorizedRoots : [];
+          setAuthorizedDirs(roots.length ? roots : [workspacePath]);
+          bootTrace("workspaceVesloRead (bg) DONE", input.reason);
+          return;
+        }
+        publishLocalWorkspaceConfigFallback(workspacePath, true);
+        bootTrace("workspaceVesloRead (bg) empty/timeout", input.reason);
+      })
+      .catch((error) => {
+        if (!stillCurrent()) return;
+        publishLocalWorkspaceConfigFallback(workspacePath, true);
+        _wsLog("[workspace:bootstrap] workspaceVesloRead background failed", {
+          workspaceId,
+          workspacePath,
+          reason: input.reason,
+          error: error instanceof Error ? error.message : safeStringify(error),
+        });
+      });
+  }
+
+  function populateSidebarFromDbInBackground(input: {
+    workspaceId: string;
+    workspacePath: string;
+    reason: string;
+  }) {
+    if (!options.populateSidebarFromDb) return;
+    const workspaceId = input.workspaceId.trim();
+    const workspacePath = input.workspacePath.trim();
+    if (!workspacePath) return;
+
+    _wsLog("[workspace:bootstrap] lazy boot — sidebar from DB", { workspacePath });
+    bootTrace("lazy boot — populateSidebarFromDb background...", input.reason);
+    void options.populateSidebarFromDb(workspaceId, workspacePath)
+      .catch((e) => {
+        _wsLog("[workspace:bootstrap] populateSidebarFromDb failed", e);
+      })
+      .finally(() => {
+        _wsLog("[workspace:bootstrap] lazy boot — skip latest transcript hydration", {
+          workspaceId: workspaceId || null,
+        });
+      });
+  }
+
+  const scheduledEngineWarmupKeys = new Set<string>();
+
+  function warmActiveLocalWorkspaceEngineInBackground(input: {
+    workspaceId: string;
+    workspacePath: string;
+    reason: string;
+  }) {
+    if (!isTauriRuntime() || CLOUD_ONLY_MODE) return;
+    const workspaceId = input.workspaceId.trim();
+    const workspacePath = input.workspacePath.trim();
+    if (!workspaceId || !workspacePath) return;
+
+    const stillCurrent = () => {
+      const active = activeWorkspaceInfo();
+      if (!active || active.workspaceType !== "local") return false;
+      if (active.id !== workspaceId) return false;
+      return (
+        normalizeWorkspaceScopePath(active.path, "local") ===
+        normalizeWorkspaceScopePath(workspacePath, "local")
+      );
+    };
+
+    const warmupScopePath = normalizeWorkspaceScopePath(workspacePath, "local") || workspacePath;
+    const warmupKey = `${workspaceId}::${warmupScopePath}`;
+    if (scheduledEngineWarmupKeys.has(warmupKey)) return;
+    scheduledEngineWarmupKeys.add(warmupKey);
+
+    const startWarmup = () => {
+      bootTrace("ensureEngineForWorkspace background warmup...", input.reason);
+      void ensureEngineForWorkspace(workspaceId, {
+        reason: "boot-warmup",
+        loadSessions: false,
+      })
+        .then((ok) => {
+          if (!ok) scheduledEngineWarmupKeys.delete(warmupKey);
+          if (!stillCurrent()) return;
+          bootTrace("ensureEngineForWorkspace background warmup done", ok ? "ok" : "failed");
+        })
+        .catch((error) => {
+          scheduledEngineWarmupKeys.delete(warmupKey);
+          if (!stillCurrent()) return;
+          _wsLog("[workspace:bootstrap] engine warmup failed", {
+            workspaceId,
+            workspacePath,
+            reason: input.reason,
+            error: error instanceof Error ? error.message : safeStringify(error),
+          });
+        });
+    };
+    startWarmup();
+  }
+
   async function bootstrapConfiguredRemoteServer(input: {
     hostUrl: string;
     token?: string | null;
@@ -1233,23 +1364,12 @@ export function createWorkspaceStore(options: {
           }
         } else {
           setProjectDir(active.path);
-          try {
-            const cfg = await withTimeout(workspaceVesloRead({ workspacePath: active.path }), 10_000, "workspaceVesloRead");
-            if (cfg) {
-              setWorkspaceConfig(cfg);
-              setWorkspaceConfigLoaded(true);
-              const roots = Array.isArray(cfg.authorizedRoots) ? cfg.authorizedRoots : [];
-              setAuthorizedDirs(roots.length ? roots : [active.path]);
-            } else {
-              setWorkspaceConfig(null);
-              setWorkspaceConfigLoaded(true);
-              setAuthorizedDirs([active.path]);
-            }
-          } catch {
-            setWorkspaceConfig(null);
-            setWorkspaceConfigLoaded(true);
-            setAuthorizedDirs([active.path]);
-          }
+          publishLocalWorkspaceConfigFallback(active.path, false);
+          hydrateLocalWorkspaceConfigInBackground({
+            workspaceId: active.id,
+            workspacePath: active.path,
+            reason: "bootstrap",
+          });
 
         }
       }
@@ -1373,27 +1493,25 @@ export function createWorkspaceStore(options: {
       const workspacePath = activeWorkspacePath().trim();
       options.setStartupPreference("local");
 
-      // Lazy boot: do NOT connect to or start the engine here. Pre-load the
-      // sidebar from SQLite so the workspace is browsable immediately. The
-      // engine spins up on demand when the user clicks a workspace / sends
-      // a message (activateWorkspace → ensureEngineForWorkspace).
+      // Lazy boot: render the workspace shell immediately. Engine warmup and
+      // sidebar rows run in the background and share the send-time runtime path.
       if (isTauriRuntime() && options.populateSidebarFromDb) {
-        _wsLog("[workspace:bootstrap] lazy boot — sidebar from DB", { workspacePath });
-        bootTrace("lazy boot — populateSidebarFromDb...");
         options.setEngineReady?.(false);
         _wsLog("[workspace:bootstrap] lazy boot — skip Veslo host activation", {
           workspaceId: activeWorkspace?.id ?? null,
         });
-        try {
-          await options.populateSidebarFromDb(activeWorkspace?.id ?? "", workspacePath);
-        } catch (e) {
-          _wsLog("[workspace:bootstrap] populateSidebarFromDb failed", e);
-        }
-        _wsLog("[workspace:bootstrap] lazy boot — skip latest transcript hydration", {
-          workspaceId: activeWorkspace?.id ?? null,
-        });
         markOnboardingComplete();
         options.setOnboardingStep(resolveWelcomeOnboardingStep());
+        warmActiveLocalWorkspaceEngineInBackground({
+          workspaceId: activeWorkspace?.id ?? "",
+          workspacePath,
+          reason: "bootstrap",
+        });
+        populateSidebarFromDbInBackground({
+          workspaceId: activeWorkspace?.id ?? "",
+          workspacePath,
+          reason: "bootstrap",
+        });
         return;
       }
 
@@ -1574,6 +1692,22 @@ export function createWorkspaceStore(options: {
     clearWorkspaceBusyAllExcept,
     ensureLocalRuntimeReadyForWorkspaceStart: engineStore.ensureLocalRuntimeReadyForWorkspaceStart,
     syncWorkspaceSkillMaterializationBeforeRuntime,
+    probeWorkspaceApiReady: async ({ workspaceId, workspacePath, reason }) => {
+      const entry = options.routing.entry(workspaceId);
+      const client = entry?.client ?? options.routing.client(workspaceId);
+      if (!client) return false;
+      const directory = normalizeDirectoryQueryPath(entry?.directory || workspacePath) || undefined;
+      _wsLog("[workspace:ensureEngine] probing OpenCode workspace API", {
+        workspaceId,
+        directory: directory ?? null,
+        reason,
+      });
+      // Read-only and bounded by the runtime controller. Do not use
+      // session.create here: this probe only separates process health from
+      // workspace/session API readiness.
+      const list = unwrap(await client.session.list({ directory, limit: 1 }));
+      return Array.isArray(list);
+    },
     createClient,
     waitForHealthy,
     safeStringify,

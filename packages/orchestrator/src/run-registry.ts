@@ -82,6 +82,11 @@ const normalizeTimestamp = (value: number | null | undefined): number | null =>
     ? Math.floor(value)
     : null;
 
+const normalizeDurationMs = (value: number | null | undefined, fallback: number): number =>
+  typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : fallback;
+
 const normalizeActivityKind = (value: RunActivityKind | null | undefined): RunActivityKind =>
   value === "local_tool" ||
   value === "assistant_output" ||
@@ -127,9 +132,14 @@ function runMatchesEngineOwner(record: RunRecord, engine: RunEngineOwner): boole
 export function createRunRegistry(deps: {
   store: RunStore;
   probeRunActivity: (record: RunRecord) => Promise<RunProbeResult>;
+  modelRetryNoProgressHardMs?: number;
   now?: () => number;
 }): RunLifecycleOwner {
   const now = deps.now ?? (() => Date.now());
+  const modelRetryNoProgressHardMs = normalizeDurationMs(
+    deps.modelRetryNoProgressHardMs,
+    MODEL_RETRY_NO_PROGRESS_HARD_MS,
+  );
 
   const reconcile = async (record: RunRecord): Promise<ReconciledRun> => {
     const currentNoProgressSeconds = () => noProgressSecondsForRecord(record, now());
@@ -167,12 +177,18 @@ export function createRunRegistry(deps: {
       const timedOut =
         waitReason === "model_retry_no_output" &&
         retrySince !== null &&
-        timestamp - retrySince >= MODEL_RETRY_NO_PROGRESS_HARD_MS;
+        timestamp - retrySince >= modelRetryNoProgressHardMs;
+      const error =
+        timedOut
+          ? MODEL_RETRY_NO_PROGRESS_TIMEOUT
+          : record.error === MODEL_RETRY_NO_PROGRESS_TIMEOUT
+            ? null
+            : record.error;
       const next = deps.store.update(record.workspaceId, record.runId, {
         status: timedOut ? "blocked" : "running",
         startedAt,
         completedAt: null,
-        error: timedOut ? MODEL_RETRY_NO_PROGRESS_TIMEOUT : record.error,
+        error,
         activityKind,
         waitReason,
         lastUsefulProgressAt: hasUsefulProgress

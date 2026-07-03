@@ -204,7 +204,9 @@ For a three-message pass, use one fresh workspace, send three short prompts, and
 
 If a send fails before model streaming with errors such as `OpenCode base URL is missing`, `Conversation directory is outside this workspace`, or `OpenCode request timed out`, classify the result as workspace/server/OpenCode binding failure rather than model latency. Fix that binding path before moving down to lower-level function timing.
 
-See `docs/sandbox/tauri-pilot.md` for the fuller command reference and MCP setup.
+See `docs/testing/tauri-pilot/README.md` for the current Tauri Pilot workflow
+and AI gateway/E2E debugging notes. `docs/sandbox/tauri-pilot.md` is historical
+scenario material.
 
 ### Live feedback-to-YouTrack smoke
 

@@ -15,6 +15,7 @@ export type ProxyToEngineOptions = {
   stripIncomingHeaders?: string[];
   rewriteJsonBody?: (value: unknown) => unknown;
   rewriteJsonResponse?: (value: unknown) => unknown;
+  headersTimeoutMs?: number;
   onSuccess?: () => void;
   onError?: (error: Error) => void;
 };
@@ -42,6 +43,8 @@ const ALWAYS_STRIPPED_REQUEST_HEADERS = new Set([
   "upgrade",
 ]);
 
+export const OPENCODE_PROXY_TIMEOUT_ERROR = "opencode_proxy_timeout";
+
 function isJsonContentType(value: string | string[] | number | undefined): boolean {
   if (Array.isArray(value)) return value.some((item) => isJsonContentType(item));
   return typeof value === "string" && /\bjson\b/i.test(value);
@@ -58,15 +61,6 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   return Buffer.concat(chunks);
-}
-
-function stripContentLength(headers: Record<string, string | string[]>): Record<string, string | string[]> {
-  const next: Record<string, string | string[]> = {};
-  for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() === "content-length") continue;
-    next[key] = value;
-  }
-  return next;
 }
 
 function writeJsonResponse(
@@ -153,6 +147,33 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
     headers["accept-encoding"] = "identity";
   }
 
+  let upstreamErrorHandled = false;
+  let headersTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearHeadersTimer = (): void => {
+    if (!headersTimer) return;
+    clearTimeout(headersTimer);
+    headersTimer = null;
+  };
+
+  const respondWithUpstreamError = (
+    err: Error,
+    responseError = "upstream engine error",
+  ): void => {
+    clearHeadersTimer();
+    if (upstreamErrorHandled) return;
+    upstreamErrorHandled = true;
+    opts.onError?.(err);
+    if (!opts.clientRes.headersSent) {
+      opts.clientRes.statusCode = 502;
+      opts.clientRes.setHeader("content-type", "application/json");
+      opts.clientRes.end(
+        JSON.stringify({ error: responseError, detail: err.message }),
+      );
+    } else if (!opts.clientRes.writableEnded) {
+      opts.clientRes.destroy(err);
+    }
+  };
+
   const upstreamReq = httpRequest(
     {
       protocol: target.protocol,
@@ -163,6 +184,10 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
       headers,
     },
     (upstreamRes) => {
+      // This timer only protects the opaque "no response headers yet" phase.
+      // Once OpenCode starts a response, long-lived SSE/model streams must be
+      // allowed to run until the upstream or client closes them.
+      clearHeadersTimer();
       opts.clientRes.statusCode = upstreamRes.statusCode ?? 502;
       if (upstreamRes.statusMessage) {
         opts.clientRes.statusMessage = upstreamRes.statusMessage;
@@ -223,21 +248,24 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
     },
   );
 
-  upstreamReq.on("error", (err) => {
-    opts.onError?.(err);
-    if (!opts.clientRes.headersSent) {
-      opts.clientRes.statusCode = 502;
-      opts.clientRes.setHeader("content-type", "application/json");
-      opts.clientRes.end(
-        JSON.stringify({ error: "upstream engine error", detail: err.message }),
-      );
-    } else if (!opts.clientRes.writableEnded) {
-      opts.clientRes.destroy(err);
+  if (opts.headersTimeoutMs && opts.headersTimeoutMs > 0) {
+    headersTimer = setTimeout(() => {
+      const err = new Error("OpenCode proxy timed out waiting for upstream response");
+      if (!upstreamReq.destroyed) upstreamReq.destroy(err);
+      respondWithUpstreamError(err, OPENCODE_PROXY_TIMEOUT_ERROR);
+    }, opts.headersTimeoutMs);
+    if (typeof headersTimer === "object" && headersTimer && "unref" in headersTimer) {
+      headersTimer.unref?.();
     }
+  }
+
+  upstreamReq.on("error", (err) => {
+    respondWithUpstreamError(err);
   });
 
   const endWithBodyRewriteError = (err: unknown): void => {
     const error = err instanceof Error ? err : new Error(String(err));
+    clearHeadersTimer();
     opts.onError?.(error);
     if (!upstreamReq.destroyed) upstreamReq.destroy(error);
     if (!opts.clientRes.headersSent) {
@@ -260,7 +288,8 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
     if (!opts.clientRes.writableEnded) abortUpstream();
   });
 
-  if (opts.rewriteJsonBody && isJsonContentType(headers["content-type"])) {
+  const shouldRewriteJsonBody = Boolean(opts.rewriteJsonBody && isJsonContentType(headers["content-type"]));
+  if (shouldRewriteJsonBody) {
     void readBody(opts.clientReq)
       .then((body) => {
         if (body.length === 0) {
@@ -276,8 +305,7 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
       })
       .catch(endWithBodyRewriteError);
   } else {
-    const nextHeaders = opts.rewriteJsonBody ? stripContentLength(headers) : headers;
-    for (const [key, value] of Object.entries(nextHeaders)) {
+    for (const [key, value] of Object.entries(headers)) {
       upstreamReq.setHeader(key, value);
     }
     opts.clientReq.pipe(upstreamReq);

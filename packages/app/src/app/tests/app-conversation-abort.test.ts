@@ -34,13 +34,13 @@ test("abortSession routes scoped conversations through Veslo abort and scoped le
   const abortWrapperSource = conversationServiceSource.slice(abortWrapperStart, serviceReturnStart);
   assert.match(
     abortWrapperSource,
-    /const runId = deps\.resolveLatestConversationRunId\(\{[\s\S]*conversationId,[\s\S]*opencodeSessionId: scope\.opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*\}\);[\s\S]*if \(!runId\) \{[\s\S]*throw new Error\("Conversation run id is not available for abort\."\);[\s\S]*\}/,
-    "conversation abort should require an explicit run id from the scoped run map",
+    /const runId = deps\.resolveLatestConversationRunId\(\{[\s\S]*conversationId,[\s\S]*opencodeSessionId: scope\.opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*\}\);/,
+    "conversation abort should still prefer an explicit run id from the scoped run map",
   );
   assert.match(
     abortWrapperSource,
-    /serverClient\.abortConversation\(serverWorkspaceId, conversationId, \{[\s\S]*directory,[\s\S]*runId,[\s\S]*\}\)/,
-    "conversation abort should call the local Veslo abort endpoint",
+    /\.\.\.\(runId \? \{ runId \} : \{ mode: "active" as const \}\)/,
+    "conversation abort should fall back to server-resolved active abort when the local run id is missing",
   );
 
   const abortSessionStart = sendWorkflowSource.indexOf("async function abortSession(");
@@ -84,6 +84,21 @@ test("reload guards include background workspace busy runs", () => {
     source,
     /const forceStopActiveSessionsAndReload = async \(\) => \{[\s\S]*for \(const session of activeSessions\) \{[\s\S]*await abortSession\(session\.id, session\);/,
     "force-stop reload should pass the scoped session metadata into abortSession",
+  );
+  assert.match(
+    source,
+    /const waitForActiveReloadBlockingSessionsToClear = async \(\) => \{[\s\S]*activeReloadBlockingSessions\(\)\.length > 0[\s\S]*return false;[\s\S]*return true;[\s\S]*\};/,
+    "force-stop reload should wait for reload-blocking sessions to clear from the active status source",
+  );
+  assert.match(
+    source,
+    /const stopFailures: string\[\] = \[\];[\s\S]*catch \(error\) \{[\s\S]*stopFailures\.push[\s\S]*if \(stopFailures\.length > 0\) \{[\s\S]*setError\(/,
+    "force-stop reload should surface abort failures instead of silently reloading",
+  );
+  assert.match(
+    source,
+    /const cleared = await waitForActiveReloadBlockingSessionsToClear\(\);[\s\S]*if \(!cleared\) \{[\s\S]*setError\("Could not stop active run before reload\."\);[\s\S]*return;[\s\S]*\}[\s\S]*await reloadWorkspaceEngine\(\);/,
+    "force-stop reload should only reload after the blocking state clears",
   );
   assert.match(
     source,

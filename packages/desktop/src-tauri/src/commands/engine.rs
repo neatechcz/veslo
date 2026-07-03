@@ -14,7 +14,10 @@ use crate::opencode_router::spawn::resolve_opencode_router_health_port;
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{self, OrchestratorSpawnOptions};
 use crate::supervised_process::CommandEvent;
-use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult, OrchestratorStatus};
+use crate::types::{
+    EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult, OrchestratorStatus,
+    RuntimeEngineState,
+};
 use crate::utils::truncate_output;
 use crate::veslo_server::{
     manager::VesloServerManager, persisted_veslo_server_plugin_state_path, start_veslo_server,
@@ -26,6 +29,7 @@ use uuid::Uuid;
 
 const DEFAULT_OPENCODE_BIND_HOST: &str = "127.0.0.1";
 const VESLO_OPENCODE_BIND_HOST_ENV: &str = "VESLO_OPENCODE_BIND_HOST";
+const VESLO_DISABLE_DEV_AUTOSTART_ENV: &str = "VESLO_DISABLE_DEV_AUTOSTART";
 
 fn current_or_new_veslo_client_token(manager: &VesloServerManager) -> String {
     manager
@@ -61,6 +65,63 @@ fn resolve_opencode_bind_host_from_env(value: Option<&str>) -> String {
 
 fn resolve_opencode_bind_host() -> String {
     resolve_opencode_bind_host_from_env(std::env::var(VESLO_OPENCODE_BIND_HOST_ENV).ok().as_deref())
+}
+
+fn dev_autostart_disabled_from_env(value: Option<&str>) -> bool {
+    matches!(
+        value.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
+fn dev_autostart_disabled() -> bool {
+    dev_autostart_disabled_from_env(
+        std::env::var(VESLO_DISABLE_DEV_AUTOSTART_ENV)
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn runtime_engine_state_from_public(value: Option<&str>) -> RuntimeEngineState {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some("starting") => RuntimeEngineState::Starting,
+        Some("process_ready") => RuntimeEngineState::ProcessReady,
+        Some("workspace_api_waiting") => RuntimeEngineState::WorkspaceApiWaiting,
+        Some("ready") => RuntimeEngineState::Ready,
+        Some("stopped") => RuntimeEngineState::Stopped,
+        Some("failed") => RuntimeEngineState::Failed,
+        Some("absent") | None => RuntimeEngineState::Absent,
+        Some(_) => RuntimeEngineState::Failed,
+    }
+}
+
+fn runtime_engine_state_from_orchestrator_state(value: Option<&str>) -> RuntimeEngineState {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some("spawning") => RuntimeEngineState::Starting,
+        Some("ready") | Some("idle") => RuntimeEngineState::Ready,
+        Some("suspended") => RuntimeEngineState::Stopped,
+        Some("crashed") => RuntimeEngineState::Failed,
+        None => RuntimeEngineState::Absent,
+        Some(_) => RuntimeEngineState::Failed,
+    }
+}
+
+fn runtime_engine_state_from_shared_engine(status: &OrchestratorStatus) -> RuntimeEngineState {
+    let Some(shared) = status.shared_engine.as_ref() else {
+        return RuntimeEngineState::Absent;
+    };
+    if shared.pending || shared.state.as_deref() == Some("spawning") {
+        return RuntimeEngineState::Starting;
+    }
+    let mapped = runtime_engine_state_from_public(shared.engine_state.as_deref());
+    if mapped != RuntimeEngineState::Absent {
+        return mapped;
+    }
+    if shared.running {
+        RuntimeEngineState::Ready
+    } else {
+        RuntimeEngineState::Absent
+    }
 }
 
 fn is_opencode_reachable(base_url: &str) -> bool {
@@ -211,10 +272,15 @@ pub fn spawn_orchestrator_dev_autostart(app: AppHandle) {
     use std::time::Duration;
     use tauri::Manager;
 
+    if dev_autostart_disabled() {
+        eprintln!("[dev-autostart] disabled by VESLO_DISABLE_DEV_AUTOSTART");
+        return;
+    }
+
     thread::spawn(move || {
-        // Let UI mount and onboarding flow finish first; if the user picks a
-        // real workspace within this window, that engine_start wins and ours
-        // becomes a no-op (see check below).
+        // Give explicit runtime startup requests a short head start. If a real
+        // workspace engine is already running after this delay, this debug
+        // scratch autostart becomes a no-op (see check below).
         thread::sleep(Duration::from_millis(1500));
 
         let engine_manager = app.state::<EngineManager>();
@@ -372,6 +438,13 @@ pub fn engine_info(
             .engines
             .iter()
             .find(|e| e.workspace_id == resolved_ws_id);
+        let shared_engine = status.shared_engine.as_ref();
+        let uses_shared_engine = status.engine_topology.as_deref() == Some("shared-unsandboxed");
+        let engine_state = if uses_shared_engine {
+            runtime_engine_state_from_shared_engine(&status)
+        } else {
+            runtime_engine_state_from_orchestrator_state(engine.map(|e| e.state.as_str()))
+        };
         let workspace_path = resolved_ws
             .map(|ws| ws.path.clone())
             .or_else(|| engine.map(|e| e.workdir.clone()));
@@ -379,9 +452,7 @@ pub fn engine_info(
         // packages/orchestrator/src/cli.ts); they are URL-safe, no encoding needed.
         let proxy_base_url = daemon_port
             .map(|port| format!("http://127.0.0.1:{port}/workspace/{resolved_ws_id}/opencode"));
-        let running = engine
-            .map(|e| matches!(e.state.as_str(), "ready" | "idle"))
-            .unwrap_or(false);
+        let running = engine_state == RuntimeEngineState::Ready;
         // VSLO-171 — always return the orchestrator proxy URL when daemon is
         // up. Engines are lazy-spawned by the proxy on the first request, so
         // gating base_url on the engine being "ready" prevented connectToServer
@@ -390,14 +461,27 @@ pub fn engine_info(
         return EngineInfo {
             running,
             runtime: EngineRuntime::Orchestrator,
-            child_kind: engine.and_then(|e| e.child_kind.clone()),
+            engine_state: Some(engine_state),
+            child_kind: if uses_shared_engine {
+                shared_engine.and_then(|e| e.child_kind.clone())
+            } else {
+                engine.and_then(|e| e.child_kind.clone())
+            },
             base_url: proxy_base_url,
             project_dir: workspace_path,
             hostname: Some("127.0.0.1".to_string()),
-            port: engine.map(|e| e.port),
+            port: if uses_shared_engine {
+                shared_engine.and_then(|e| e.port)
+            } else {
+                engine.map(|e| e.port)
+            },
             opencode_username,
             opencode_password,
-            pid: engine.map(|e| e.pid),
+            pid: if uses_shared_engine {
+                shared_engine.and_then(|e| e.pid)
+            } else {
+                engine.map(|e| e.pid)
+            },
             last_stdout: orchestrator_stdout,
             last_stderr: orchestrator_stderr,
         };
@@ -446,6 +530,11 @@ pub fn engine_info(
     EngineInfo {
         running,
         runtime: EngineRuntime::Orchestrator,
+        engine_state: Some(if running {
+            RuntimeEngineState::Ready
+        } else {
+            RuntimeEngineState::Absent
+        }),
         child_kind: None,
         base_url: effective_base_url,
         project_dir,
@@ -1086,6 +1175,7 @@ pub fn engine_start(
         return Ok(EngineInfo {
             running: true,
             runtime: EngineRuntime::Orchestrator,
+            engine_state: Some(RuntimeEngineState::Ready),
             child_kind: None,
             base_url: Some(opencode_base_url),
             project_dir: Some(project_dir),
@@ -1294,11 +1384,14 @@ pub fn engine_start(
 #[cfg(test)]
 mod tests {
     use super::{
-        format_orchestrator_start_error, orchestrator_opencode_base_url,
-        resolve_opencode_bind_host_from_env, resolve_orchestrator_proxy_workspace_id,
-        should_retry_orchestrator_start,
+        dev_autostart_disabled_from_env, format_orchestrator_start_error,
+        orchestrator_opencode_base_url, resolve_opencode_bind_host_from_env,
+        resolve_orchestrator_proxy_workspace_id, should_retry_orchestrator_start,
     };
-    use crate::types::{OrchestratorStatus, OrchestratorWorkspace};
+    use crate::types::{
+        OrchestratorSharedEngineSnapshot, OrchestratorStatus, OrchestratorWorkspace,
+        RuntimeEngineState,
+    };
 
     fn orchestrator_workspace(id: &str, path: &str) -> OrchestratorWorkspace {
         OrchestratorWorkspace {
@@ -1322,6 +1415,7 @@ mod tests {
             data_dir: "/tmp/veslo-orchestrator".to_string(),
             daemon: None,
             opencode: None,
+            engine_topology: None,
             cli_version: None,
             sidecar: None,
             binaries: None,
@@ -1329,6 +1423,7 @@ mod tests {
             workspace_count: workspaces.len(),
             workspaces,
             engines: Vec::new(),
+            shared_engine: None,
             last_error: None,
         }
     }
@@ -1353,6 +1448,71 @@ mod tests {
         assert_eq!(
             resolve_opencode_bind_host_from_env(Some("0.0.0.0")),
             "0.0.0.0"
+        );
+    }
+
+    #[test]
+    fn dev_autostart_disable_env_accepts_truthy_values() {
+        assert!(!dev_autostart_disabled_from_env(None));
+        assert!(!dev_autostart_disabled_from_env(Some("")));
+        assert!(!dev_autostart_disabled_from_env(Some("0")));
+        assert!(!dev_autostart_disabled_from_env(Some("false")));
+        assert!(dev_autostart_disabled_from_env(Some("1")));
+        assert!(dev_autostart_disabled_from_env(Some(" TRUE ")));
+        assert!(dev_autostart_disabled_from_env(Some("yes")));
+        assert!(dev_autostart_disabled_from_env(Some("on")));
+    }
+
+    #[test]
+    fn engine_info_maps_pooled_orchestrator_states_to_runtime_engine_state() {
+        assert_eq!(
+            super::runtime_engine_state_from_orchestrator_state(Some("spawning")),
+            RuntimeEngineState::Starting,
+        );
+        assert_eq!(
+            super::runtime_engine_state_from_orchestrator_state(Some("ready")),
+            RuntimeEngineState::Ready,
+        );
+        assert_eq!(
+            super::runtime_engine_state_from_orchestrator_state(Some("idle")),
+            RuntimeEngineState::Ready,
+        );
+        assert_eq!(
+            super::runtime_engine_state_from_orchestrator_state(Some("suspended")),
+            RuntimeEngineState::Stopped,
+        );
+        assert_eq!(
+            super::runtime_engine_state_from_orchestrator_state(Some("crashed")),
+            RuntimeEngineState::Failed,
+        );
+        assert_eq!(
+            super::runtime_engine_state_from_orchestrator_state(None),
+            RuntimeEngineState::Absent,
+        );
+    }
+
+    #[test]
+    fn engine_info_maps_shared_pending_snapshot_to_starting() {
+        let mut status = orchestrator_status(None, Vec::new());
+        status.engine_topology = Some("shared-unsandboxed".to_string());
+        status.shared_engine = Some(OrchestratorSharedEngineSnapshot {
+            mode: "shared-unsandboxed".to_string(),
+            running: false,
+            pending: true,
+            engine_state: Some("starting".to_string()),
+            state: Some("spawning".to_string()),
+            base_url: Some("http://127.0.0.1:61234".to_string()),
+            pid: Some(1234),
+            port: Some(61234),
+            child_kind: Some("direct".to_string()),
+            started_at: Some("2026-07-04T00:00:00.000Z".to_string()),
+            runtime_directory: "/tmp/shared-runtime".to_string(),
+            config_directory: "/tmp/shared-config".to_string(),
+        });
+
+        assert_eq!(
+            super::runtime_engine_state_from_shared_engine(&status),
+            RuntimeEngineState::Starting,
         );
     }
 

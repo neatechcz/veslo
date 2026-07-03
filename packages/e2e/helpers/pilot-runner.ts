@@ -102,9 +102,46 @@ export function scenarioSelectionNeedsGoogleMcpCatalogFixture(scenarios: string[
 export function scenarioSelectionNeedsManagedAiGatewayFixture(scenarios: string[]): boolean {
   return scenarios.some((scenario) =>
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/message-send-registry-degraded.toml') ||
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/model-stream-retry-no-progress.toml') ||
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml') ||
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/runtime-cold-start-session-handoff.toml') ||
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/sidebar-session-retention.toml') ||
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/global-unpublished-draft.toml'),
   );
+}
+
+export function scenarioSelectionNeedsModelStreamRetryFixture(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/model-stream-retry-no-progress.toml') ||
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml'),
+  );
+}
+
+export function scenarioSelectionDisablesDevAutostart(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/runtime-cold-start-session-handoff.toml') ||
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml'),
+  );
+}
+
+export function scenarioSelectionNeedsSkillRegistryWorkspaceEventFixture(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml'),
+  );
+}
+
+export function scenarioSelectionNeedsRelaunchReconnectCheck(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml'),
+  );
+}
+
+export function assertPilotScenarioSelectionIsolated(scenarios: string[]): void {
+  if (scenarioSelectionNeedsModelStreamRetryFixture(scenarios) && scenarios.length > 1) {
+    throw new Error(
+      'model-stream-retry-no-progress must run as a focused pilot scenario because it enables a global orchestrator probe fixture.',
+    );
+  }
 }
 
 export function scenarioSelectionNeedsNoWorkspaceProfile(scenarios: string[]): boolean {
@@ -251,6 +288,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
       throw new Error(`tauri-pilot scenario not found: ${scenario}`);
     }
   }
+  assertPilotScenarioSelectionIsolated(scenarios);
 
   if (scenarioSelectionNeedsAutomationSecondaryWorkspace(scenarios)) {
     process.env.E2E_SEED_AUTOMATIONS_SECONDARY_WORKSPACE ||= '1';
@@ -266,6 +304,18 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   }
   if (scenarioSelectionNeedsManagedAiGatewayFixture(scenarios)) {
     process.env.E2E_MANAGED_AI_GATEWAY_FIXTURE ||= '1';
+  }
+  if (scenarioSelectionNeedsModelStreamRetryFixture(scenarios)) {
+    process.env.E2E_RUN_ACTIVITY_PROBE_MODE ||= 'model-retry-no-progress';
+    process.env.E2E_MANAGED_AI_RESPONSE_DELAY_MS ||= '30000';
+    process.env.VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS ||= '90000';
+    process.env.VESLO_MODEL_RETRY_NO_PROGRESS_HARD_MS ||= '10000';
+  }
+  if (scenarioSelectionNeedsSkillRegistryWorkspaceEventFixture(scenarios)) {
+    process.env.E2E_SKILL_REGISTRY_EVENTS_MODE ||= 'workspace-update-repeat';
+  }
+  if (scenarioSelectionDisablesDevAutostart(scenarios)) {
+    process.env.VESLO_DISABLE_DEV_AUTOSTART ||= '1';
   }
   if (scenarioSelectionNeedsNoWorkspaceProfile(scenarios)) {
     process.env.E2E_SKIP_DEFAULT_WORKSPACE_STATE ||= '1';
@@ -288,6 +338,24 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
         cwd: e2eRoot,
         inheritStdio: true,
       });
+      if (scenarioSelectionNeedsRelaunchReconnectCheck([scenario])) {
+        const reconnectScenario = join(e2eRoot, 'pilot-scenarios', 'vslo-270-relaunch-reconnect.toml');
+        if (!existsSync(reconnectScenario)) {
+          throw new Error(`tauri-pilot scenario not found: ${reconnectScenario}`);
+        }
+        console.log('[e2e] Restarting app for VSLO-270 relaunch reconnect check...');
+        await stopApp();
+        await startApp(undefined, { preserveIsolatedProfile: true });
+        await ensurePilotReady({ binary, socket, cwd: e2eRoot, timeoutMs });
+        console.log(`[e2e] Running tauri-pilot scenario: ${reconnectScenario}`);
+        await runPilotCommand({
+          binary,
+          socket,
+          args: ['run', reconnectScenario],
+          cwd: e2eRoot,
+          inheritStdio: true,
+        });
+      }
     }
   } finally {
     await stopApp();

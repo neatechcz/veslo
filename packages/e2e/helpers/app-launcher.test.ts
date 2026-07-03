@@ -153,6 +153,15 @@ test('startApp does not reuse legacy WebDriver servers in the tauri-pilot harnes
   assert.doesNotMatch(source, /hasReadyWebDriverServer/);
 });
 
+test('startApp can relaunch while preserving the isolated profile for reconnect checks', () => {
+  const source = readFileSync(new URL('./app-launcher.ts', import.meta.url), 'utf8');
+
+  assert.match(source, /type StartAppOptions = \{\s*preserveIsolatedProfile\?: boolean;\s*\}/);
+  assert.match(source, /startApp\(port\?: number, options: StartAppOptions = \{\}\)/);
+  assert.match(source, /options\.preserveIsolatedProfile === true/);
+  assert.match(source, /E2E_PRESERVE_ISOLATED_PROFILE/);
+});
+
 test('Windows managed child cleanup is scoped to the launched app PID and known Veslo sidecars', () => {
   const script = buildWindowsManagedChildCleanupScript(12345);
 

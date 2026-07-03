@@ -6,6 +6,8 @@ const sessionSource = readFileSync(new URL("./session.tsx", import.meta.url), "u
 const conversationFlowSource = readFileSync(new URL("./session-conversation-flow.ts", import.meta.url), "utf8");
 const source = `${sessionSource}\n${conversationFlowSource}`;
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const sessionSendWorkflowSource = readFileSync(new URL("./session-send-workflow.ts", import.meta.url), "utf8");
+const sessionCreationWorkflowSource = readFileSync(new URL("./session-creation-workflow.ts", import.meta.url), "utf8");
 const flowSendImmediateStart = conversationFlowSource.indexOf("sendPromptImmediate: async (");
 const flowSendImmediateEnd = conversationFlowSource.indexOf("export type RunBaseline", flowSendImmediateStart);
 const flowSendImmediateSource = conversationFlowSource.slice(flowSendImmediateStart, flowSendImmediateEnd);
@@ -277,12 +279,17 @@ test("pending sidebar selection does not materialize another pending draft into 
 
   assert.match(
     selectedEffectSource,
-    /if \(pendingKey && !isPendingSessionInstanceId\(sessionId\)\) \{\s*remapPendingQueueToSession\(pendingKey, sessionId\);\s*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);\s*\}/,
+    /sessionFlowFacade\.handleSelectedSessionChanged\(\{[\s\S]*sessionId,[\s\S]*previousSessionId,[\s\S]*pendingBaseKey,[\s\S]*pendingKey,[\s\S]*sessionStatusById: props\.sessionStatusById,[\s\S]*\}\);/s,
+    "selected-session effect should delegate materialization flow to the conversation-flow controller",
+  );
+  assert.match(
+    conversationFlowSource,
+    /if \(pendingKey && !isPendingSessionInstanceId\(selectedSessionId\)\) \{\s*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingKey, selectedSessionId\);\s*deps\.pendingHandoff\.clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);\s*\}/,
     "selecting a pending sidebar row must not remap a different pending send into that pending row",
   );
   assert.doesNotMatch(
-    selectedEffectSource,
-    /if \(pendingKey\) \{\s*remapPendingQueueToSession\(pendingKey, sessionId\);/,
+    conversationFlowSource,
+    /if \(pendingKey\) \{\s*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingKey, selectedSessionId\);/,
     "pending handoff remapping should only run after a real session id is selected",
   );
 });
@@ -533,19 +540,25 @@ test("clicking a pending sidebar row waits for workspace activation before openi
 });
 
 test("app sendPrompt wires scoped materialized handoff before selecting the created session", () => {
-  const sendPromptStart = appSource.indexOf("  async function sendPrompt(");
-  const sendPromptEnd = appSource.indexOf("  async function abortSession(", sendPromptStart);
-  assert.notEqual(sendPromptStart, -1, "app sendPrompt should exist");
-  assert.notEqual(sendPromptEnd, -1, "app sendPrompt should end before abortSession");
-  const sendPromptSource = appSource.slice(sendPromptStart, sendPromptEnd);
+  assert.match(
+    appSource,
+    /const sessionSendWorkflow = createSessionSendWorkflow\(\{[\s\S]*createSessionAndOpen: \(initialTitle, options\) => createSessionAndOpen\(initialTitle, options\),[\s\S]*\}\);[\s\S]*const sessionFlowFacade = createSessionFlowFacade\(\{[\s\S]*createSessionAndOpen,[\s\S]*sendWorkflow: sessionSendWorkflow,[\s\S]*\}\);[\s\S]*const sendPrompt = sessionFlowFacade\.sendPrompt;/s,
+    "app should expose sendPrompt through the session flow facade while preserving createSessionAndOpen wiring",
+  );
+
+  const sendPromptStart = sessionSendWorkflowSource.indexOf("  async function sendPrompt(");
+  const sendPromptEnd = sessionSendWorkflowSource.indexOf("  async function abortSession(", sendPromptStart);
+  assert.notEqual(sendPromptStart, -1, "session send workflow sendPrompt should exist");
+  assert.notEqual(sendPromptEnd, -1, "session send workflow sendPrompt should end before abortSession");
+  const sendPromptSource = sessionSendWorkflowSource.slice(sendPromptStart, sendPromptEnd);
 
   assert.match(
     sendPromptSource,
-    /options: AppSendPromptOptions,/,
+    /options: SessionSendWorkflowSendOptions,/,
     "app sendPrompt options should accept a per-send materialized session callback",
   );
 
-  const createNeededMatch = /if \(!sessionID\) \{\s*recordSendTrace\("sendPrompt:create-session-needed"/.exec(sendPromptSource);
+  const createNeededMatch = /if \(!sessionID\) \{\s*deps\.recordSendTrace\("sendPrompt:create-session-needed"/.exec(sendPromptSource);
   const createNeededStart = createNeededMatch?.index ?? -1;
   const createNeededEnd = sendPromptSource.indexOf("    if (!sessionID) {", createNeededStart + 1);
   assert.notEqual(createNeededStart, -1, "first-send create-session branch should exist");
@@ -554,12 +567,17 @@ test("app sendPrompt wires scoped materialized handoff before selecting the crea
 
   assert.match(
     createNeededSource,
-    /const createdSessionId = await sendTraceStep\([\s\S]*"sendPrompt:create-session-and-open",[\s\S]*\(\) => createSessionAndOpen\(initialSessionTitle, \{[\s\S]*blockAppDuringCreate: blockAppDuringPromptSend,[\s\S]*managedAiRuntimeAlreadyPrepared: true,[\s\S]*pendingSession: pendingSidebarSession,[\s\S]*clientMessageId: sendCorrelation\.clientMessageId,[\s\S]*onMaterializedSessionId: options\.onMaterializedSessionId,[\s\S]*\}\),/,
+    /const createdSessionId = await deps\.sendTraceStep\([\s\S]*"sendPrompt:create-session-and-open",[\s\S]*\(\) => deps\.createSessionAndOpen\(initialSessionTitle, \{[\s\S]*blockAppDuringCreate: blockAppDuringPromptSend,[\s\S]*pendingSession: pendingSidebarSession,[\s\S]*clientMessageId: sendCorrelation\.clientMessageId,[\s\S]*onMaterializedSessionId: options\.onMaterializedSessionId,[\s\S]*preflight: sendPreflight,[\s\S]*\}\),/,
     "first sends should pass the captured client id and scoped handoff callback into createSessionAndOpen",
+  );
+  assert.doesNotMatch(
+    createNeededSource,
+    /managedAiRuntimeAlreadyPrepared: true,/,
+    "first sends should rely on the prepared preflight instead of a parallel managed-AI readiness flag",
   );
   assert.match(
     createNeededSource,
-    /const materializedSessionId = createdSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{\s*sessionID = materializedSessionId;\s*pendingSidebarRowRegistered = false;\s*\} else \{\s*cleanupPendingSidebarSession\(\);[\s\S]*const selectedAfterCreate = selectedSessionId\(\);[\s\S]*sessionID = isPendingSessionInstanceId\(selectedAfterCreate\) \? null : selectedAfterCreate;\s*\}/,
+    /const materializedSessionId = createdSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{\s*sessionID = materializedSessionId;\s*pendingSidebarRowRegistered = false;\s*\} else \{\s*cleanupPendingSidebarSession\(\);[\s\S]*const selectedAfterCreate = deps\.selectedSessionId\(\);[\s\S]*sessionID = deps\.isPendingSessionInstanceId\(selectedAfterCreate\) \? null : selectedAfterCreate;\s*\}/,
     "sendPrompt should use the created id for routing, keep the materialized row, and clean up only failed pending placeholders",
   );
   assert.doesNotMatch(
@@ -568,14 +586,14 @@ test("app sendPrompt wires scoped materialized handoff before selecting the crea
     "the materialized callback should not be fed from current selected session state",
   );
 
-  const createSessionStart = appSource.indexOf("  async function createSessionAndOpen(");
-  const createSessionEnd = appSource.indexOf("  const chooseFolderForCurrentSession = async () =>", createSessionStart);
-  assert.notEqual(createSessionStart, -1, "createSessionAndOpen should exist");
-  assert.notEqual(createSessionEnd, -1, "createSessionAndOpen block should end before chooseFolderForCurrentSession");
-  const createSessionSource = appSource.slice(createSessionStart, createSessionEnd);
+  const createSessionStart = sessionCreationWorkflowSource.indexOf("  const createSessionAndOpen = async (");
+  const createSessionEnd = sessionCreationWorkflowSource.indexOf("  return {", createSessionStart);
+  assert.notEqual(createSessionStart, -1, "session creation workflow createSessionAndOpen should exist");
+  assert.notEqual(createSessionEnd, -1, "createSessionAndOpen block should end before return");
+  const createSessionSource = sessionCreationWorkflowSource.slice(createSessionStart, createSessionEnd);
   assert.match(
     createSessionSource,
-    /options\.onMaterializedSessionId\?\.\(\{[\s\S]*workspaceId:[\s\S]*pendingSessionKey: pendingSidebarSession\?\.id \?\? null,[\s\S]*sessionId: session\.id,[\s\S]*clientMessageId,[\s\S]*sendTraceId: sendTraceId \|\| null,[\s\S]*conversationId: session\.conversationId \?\? null,[\s\S]*opencodeSessionId: session\.opencodeSessionId \?\? session\.id,[\s\S]*\}\);[\s\S]*mark\("session:select:start"/,
+    /const handoff = \{[\s\S]*workspaceId:[\s\S]*pendingSessionKey: pendingSidebarSession\?\.id \?\? null,[\s\S]*sessionId: createdSession\.id,[\s\S]*clientMessageId,[\s\S]*sendTraceId: sendTraceId \|\| null,[\s\S]*conversationId: createdSession\.conversationId \?\? null,[\s\S]*opencodeSessionId: createdSession\.opencodeSessionId \?\? createdSession\.id,[\s\S]*\};[\s\S]*\(options\.onMaterializedSessionId \?\? deps\.onMaterializedSessionId\)\?\.\(handoff\);[\s\S]*mark\("session:select:start"/,
     "createSessionAndOpen should publish the scoped handoff before selecting/rendering the real session",
   );
 });
@@ -588,13 +606,13 @@ test("materializing an active pending first send does not immediately drain the 
 
   assert.match(
     effectSource,
-    /const materializedPendingSubmit =\s*pendingKey \? pendingSubmittedDraftBySessionKey\(\)\[pendingKey\]\?\.state === "sending" : false;/,
-    "selected-session materialization should detect an in-flight pending first send before remapping",
+    /sessionFlowFacade\.handleSelectedSessionChanged\(\{[\s\S]*sessionId,[\s\S]*previousSessionId,[\s\S]*pendingBaseKey,[\s\S]*pendingKey,[\s\S]*sessionStatusById: props\.sessionStatusById,[\s\S]*\}\);/s,
+    "selected-session effect should delegate pending materialization flow to the conversation-flow controller",
   );
   assert.match(
-    effectSource,
-    /if \(\s*!materializedPendingSubmit &&\s*statusForSessionId\(sessionId, props\.sessionStatusById\) === "idle" &&\s*!queuePausedForSessionKey\(sessionKey\)\s*\) \{\s*void drainNextQueuedDraft\("queue-drain", sessionKey\);/s,
-    "selected-session materialization should not drain a just-materialized sending first draft",
+    conversationFlowSource,
+    /const materializedPendingSubmit = pendingKey\s*\? pendingSubmittedDrafts\(\)\[pendingKey\]\?\.state === "sending"\s*: false;[\s\S]*if \(\s*!materializedPendingSubmit &&\s*statusForSessionId\(selectedSessionId, sessionStatusById\) === "idle" &&\s*!deps\.queue\.queuePausedForSessionKey\(sessionKey\)\s*\) \{\s*void controller\.drainNextQueuedDraft\("queue-drain", sessionKey\);/s,
+    "selected-session controller should not drain a just-materialized sending first draft",
   );
 });
 

@@ -24,7 +24,7 @@ test("veslo-automations platform skill is deterministic and personal-global", as
   });
 });
 
-test("veslo-automations platform archive teaches official Veslo automation tools only", async () => {
+test("veslo-automations platform archive is inert by default", async () => {
   const { skills, archivesByInstallationId } = await getPlatformManagedPersonalGlobalSkillSet();
   const archive = archivesByInstallationId.get(skills[0].installationId);
   expect(archive).toBeDefined();
@@ -33,14 +33,43 @@ test("veslo-automations platform archive teaches official Veslo automation tools
   expect(archive?.packageSha256).toBe(skills[0].packageSha256);
 
   const skillMarkdown = archive?.files.find((file) => file.path === "SKILL.md")?.text ?? "";
-  expect(skillMarkdown).toContain("veslo_create_automation");
-  expect(skillMarkdown).toContain("veslo_list_automations");
-  expect(skillMarkdown).toContain("veslo_run_automation");
-  expect(skillMarkdown).toContain("veslo_update_automation");
-  expect(skillMarkdown).toContain("veslo_delete_automation");
-  expect(skillMarkdown).toContain("cron");
-  expect(skillMarkdown).toContain("launchctl");
-  expect(skillMarkdown).toContain("systemctl");
-  expect(skillMarkdown).toContain("raw OpenCode scheduler jobs");
-  expect(skillMarkdown).toContain("nextRunAt");
+  expect(skillMarkdown).toContain("Veslo Automations Disabled");
+  expect(skillMarkdown).toContain("VESLO_ENABLE_AUTOMATIONS=1");
+  expect(skillMarkdown).not.toContain("veslo_create_automation");
+  expect(skillMarkdown).not.toContain("veslo_list_automations");
+  expect(skillMarkdown).not.toContain("veslo_run_automation");
+  expect(skillMarkdown).not.toContain("veslo_update_automation");
+  expect(skillMarkdown).not.toContain("veslo_delete_automation");
+});
+
+test("veslo-automations platform archive teaches official tools only when enabled", async () => {
+  const previousEnableFlag = process.env.VESLO_ENABLE_AUTOMATIONS;
+  try {
+    process.env.VESLO_ENABLE_AUTOMATIONS = "1";
+
+    const { skills, archivesByInstallationId } = await getPlatformManagedPersonalGlobalSkillSet();
+    const archive = archivesByInstallationId.get(skills[0].installationId);
+    expect(archive).toBeDefined();
+    expect(archive?.entrypoint).toBe("SKILL.md");
+    expect(archive?.metadata.name).toBe("veslo-automations");
+    expect(archive?.packageSha256).toBe(skills[0].packageSha256);
+
+    const skillMarkdown = archive?.files.find((file) => file.path === "SKILL.md")?.text ?? "";
+    expect(skillMarkdown).toContain("veslo_create_automation");
+    expect(skillMarkdown).toContain("veslo_list_automations");
+    expect(skillMarkdown).toContain("veslo_run_automation");
+    expect(skillMarkdown).toContain("veslo_update_automation");
+    expect(skillMarkdown).toContain("veslo_delete_automation");
+    expect(skillMarkdown).toContain("cron");
+    expect(skillMarkdown).toContain("launchctl");
+    expect(skillMarkdown).toContain("systemctl");
+    expect(skillMarkdown).toContain("raw OpenCode scheduler jobs");
+    expect(skillMarkdown).toContain("nextRunAt");
+  } finally {
+    if (previousEnableFlag === undefined) {
+      delete process.env.VESLO_ENABLE_AUTOMATIONS;
+    } else {
+      process.env.VESLO_ENABLE_AUTOMATIONS = previousEnableFlag;
+    }
+  }
 });

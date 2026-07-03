@@ -8,6 +8,7 @@ const LEGACY_INTERNAL_SOURCE: &str = "openwork-snapshot";
 
 const DELEGATE_PLUGIN_FILE: &str = "veslo-delegate.js";
 const AUTOMATIONS_PLUGIN_FILE: &str = "veslo-automations.js";
+const AUTOMATIONS_PLUGIN_DISABLED_FILE: &str = "veslo-automations.js.disabled";
 
 const ROUTING_BLOCK_START: &str = "<!-- VESLO_INTERNAL_ROUTING_START -->";
 const ROUTING_BLOCK_END: &str = "<!-- VESLO_INTERNAL_ROUTING_END -->";
@@ -190,7 +191,15 @@ fn ensure_veslo_agent_instructions(
     write_if_changed(&path, next.as_bytes(), stats)
 }
 
-fn automations_plugin_source() -> String {
+fn automations_plugin_enabled_from_env(_primary: Option<&str>, _plugin_alias: Option<&str>) -> bool {
+    false
+}
+
+fn automations_plugin_enabled() -> bool {
+    automations_plugin_enabled_from_env(None, None)
+}
+
+fn active_automations_plugin_source() -> String {
     r#"import { readFile } from "node:fs/promises";
 import { tool } from "@opencode-ai/plugin";
 
@@ -592,8 +601,57 @@ fn write_internal_plugins(workspace_root: &Path, stats: &mut WriteStats) -> Resu
     let plugins_root = workspace_root.join(".opencode").join("plugins");
     fs::create_dir_all(&plugins_root)
         .map_err(|e| format!("Failed to create {}: {e}", plugins_root.display()))?;
-    let plugin_path = plugins_root.join(AUTOMATIONS_PLUGIN_FILE);
-    write_if_changed(&plugin_path, automations_plugin_source().as_bytes(), stats)
+    if automations_plugin_enabled() {
+        let plugin_path = plugins_root.join(AUTOMATIONS_PLUGIN_FILE);
+        return write_if_changed(
+            &plugin_path,
+            active_automations_plugin_source().as_bytes(),
+            stats,
+        );
+    }
+    disable_automations_plugin(&plugins_root, stats)
+}
+
+fn unique_disabled_automations_plugin_path(plugins_root: &Path) -> PathBuf {
+    let quarantine_root = plugins_root
+        .parent()
+        .unwrap_or(plugins_root)
+        .join("veslo")
+        .join("disabled-plugins");
+    let _ = fs::create_dir_all(&quarantine_root);
+    let base = quarantine_root.join(AUTOMATIONS_PLUGIN_DISABLED_FILE);
+    if !path_exists_or_symlink(&base) {
+        return base;
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    quarantine_root.join(format!("{AUTOMATIONS_PLUGIN_FILE}.{stamp}.disabled"))
+}
+
+fn disable_automations_plugin(plugins_root: &Path, stats: &mut WriteStats) -> Result<(), String> {
+    let active_path = plugins_root.join(AUTOMATIONS_PLUGIN_FILE);
+    if path_exists_or_symlink(&active_path) {
+        let disabled_path = unique_disabled_automations_plugin_path(plugins_root);
+        fs::rename(&active_path, &disabled_path).map_err(|e| {
+            format!(
+                "Failed to disable {} by renaming to {}: {e}",
+                active_path.display(),
+                disabled_path.display()
+            )
+        })?;
+        stats.written += 1;
+        return Ok(());
+    }
+
+    let disabled_path = plugins_root.join(AUTOMATIONS_PLUGIN_DISABLED_FILE);
+    if path_exists_or_symlink(&disabled_path) {
+        remove_path(&disabled_path)?;
+        stats.written += 1;
+        return Ok(());
+    }
+    Ok(())
 }
 
 /// Compatibility wrapper for existing workspace creation callers.
@@ -916,6 +974,67 @@ mod tests {
         assert!(!opencode_path(&workspace_root, &["plugins", "veslo-delegate.js"]).exists());
 
         fs::remove_dir_all(workspace_root).unwrap();
+    }
+
+    #[test]
+    fn provision_does_not_write_automations_plugin_by_default() {
+        let workspace_root = temp_workspace_root("disabled-automations");
+
+        let result = provision_internal_workspace_assets(&workspace_root, None).unwrap();
+        assert_eq!(result.status, ProvisionStatus::Updated);
+
+        assert!(!opencode_path(&workspace_root, &["plugins", AUTOMATIONS_PLUGIN_FILE]).exists());
+        assert!(
+            !opencode_path(&workspace_root, &["plugins", AUTOMATIONS_PLUGIN_DISABLED_FILE])
+                .exists()
+        );
+
+        let second = provision_internal_workspace_assets(&workspace_root, None).unwrap();
+        assert_eq!(second.status, ProvisionStatus::Unchanged);
+
+        fs::remove_dir_all(workspace_root).unwrap();
+    }
+
+    #[test]
+    fn provision_renames_existing_automations_plugin_out_of_autoload() {
+        let workspace_root = temp_workspace_root("quarantine-automations");
+        let active_path = opencode_path(&workspace_root, &["plugins", AUTOMATIONS_PLUGIN_FILE]);
+        let disabled_path = workspace_root
+            .join(".opencode")
+            .join("veslo")
+            .join("disabled-plugins")
+            .join(AUTOMATIONS_PLUGIN_DISABLED_FILE);
+        let plugin_disabled_path = opencode_path(
+            &workspace_root,
+            &["plugins", AUTOMATIONS_PLUGIN_DISABLED_FILE],
+        );
+        let active_content = "/* Veslo Automations Plugin\n * Managed by Veslo internal system (v2026-06-06.1). Do not edit manually.\n */\nexport default async () => ({ tool: { veslo_create_automation: {} } });\n";
+        write_file(&active_path, active_content);
+
+        let result = provision_internal_workspace_assets(&workspace_root, None).unwrap();
+        assert_eq!(result.status, ProvisionStatus::Updated);
+
+        assert!(!active_path.exists());
+        assert!(!plugin_disabled_path.exists());
+        assert_eq!(fs::read_to_string(&disabled_path).unwrap(), active_content);
+
+        let second = provision_internal_workspace_assets(&workspace_root, None).unwrap();
+        assert_eq!(second.status, ProvisionStatus::Unchanged);
+
+        fs::remove_dir_all(workspace_root).unwrap();
+    }
+
+    #[test]
+    fn automations_plugin_enable_env_flags_stay_disabled() {
+        assert!(!automations_plugin_enabled_from_env(None, None));
+        assert!(!automations_plugin_enabled_from_env(Some(""), None));
+        assert!(!automations_plugin_enabled_from_env(Some("0"), None));
+        assert!(!automations_plugin_enabled_from_env(Some("false"), None));
+        assert!(!automations_plugin_enabled_from_env(Some("1"), None));
+        assert!(!automations_plugin_enabled_from_env(Some(" TRUE "), None));
+        assert!(!automations_plugin_enabled_from_env(Some("yes"), None));
+        assert!(!automations_plugin_enabled_from_env(Some("on"), None));
+        assert!(!automations_plugin_enabled_from_env(None, Some("1")));
     }
 
     #[test]

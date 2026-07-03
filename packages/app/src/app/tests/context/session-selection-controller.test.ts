@@ -232,6 +232,40 @@ test("loadSessions prefers conversation reader and avoids SDK list when reader h
   });
 });
 
+test("loadSessions skips live SDK list fallback while workspace runtime is not ready", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      let sdkListCalls = 0;
+      let readerCalls = 0;
+      const activeClient = {
+        session: {
+          list: async () => {
+            sdkListCalls += 1;
+            return ok([makeSession("sdk")]);
+          },
+        },
+      };
+      const { controller, store, workspaceSessionIds } = makeController({
+        activeClient,
+        isWorkspaceRuntimeReady: () => false,
+        conversationReader: () => {
+          readerCalls += 1;
+          return null;
+        },
+      });
+
+      await controller.loadSessions("/repo");
+
+      assert.equal(readerCalls, 1);
+      assert.equal(sdkListCalls, 0);
+      assert.deepEqual(store.sessions.map((session) => session.id), []);
+      assert.deepEqual(Array.from(workspaceSessionIds), []);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("loadSessions retains the selected session while a delayed list misses it", async () => {
   await createRoot(async (dispose) => {
     try {

@@ -32,12 +32,14 @@ import { SharedOpenCodeEngine } from "./shared-opencode-engine.js";
 import { resolveOpencodeProxyTarget } from "./opencode-proxy-target.js";
 import { probeOpenCodeProjectApi } from "./opencode-project-api.js";
 import { proxyToEngine } from "./router-proxy.js";
-import { createRunStore, type RunEngineOwner, type RunKind } from "./run-store.js";
+import { createRunStore, type RunEngineOwner, type RunKind, type RunRecord } from "./run-store.js";
 import {
   createRunRegistry,
   DEFAULT_RUN_ABORT_ERROR,
   DEFAULT_RUN_FAILURE_ERROR,
+  MODEL_RETRY_NO_PROGRESS_HARD_MS,
   RunAlreadyActiveError,
+  type RunProbeResult,
 } from "./run-registry.js";
 import { createRunActivityProbe } from "./run-activity-probe.js";
 import {
@@ -116,6 +118,7 @@ const DEFAULT_APPROVAL_TIMEOUT = 30000;
 const DEFAULT_OPENCODE_USERNAME = "opencode";
 const DEFAULT_OPENCODE_HOT_RELOAD_DEBOUNCE_MS = 700;
 const DEFAULT_OPENCODE_HOT_RELOAD_COOLDOWN_MS = 1500;
+const OPENCODE_PROXY_HEADERS_DEFAULT_TIMEOUT_MS = 75_000;
 const DEFAULT_MANAGED_AI_BASE_URL = "https://ai.veslo.work";
 const VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV = "VESLO_OPENCODE_SERVER_CLIENT_TOKEN";
 
@@ -379,6 +382,20 @@ function readNumber(
     }
   }
   return fallback;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function resolveOpencodeProxyHeadersTimeoutMs(flags: Map<string, string | boolean>): number {
+  const parsed = readNumber(
+    flags,
+    "opencode-proxy-headers-timeout-ms",
+    OPENCODE_PROXY_HEADERS_DEFAULT_TIMEOUT_MS,
+    "VESLO_OPENCODE_PROXY_HEADERS_TIMEOUT_MS",
+  );
+  return clampNumber(parsed ?? OPENCODE_PROXY_HEADERS_DEFAULT_TIMEOUT_MS, 100, 600_000);
 }
 
 function readOpencodeHotReload(
@@ -4425,14 +4442,33 @@ async function runRouterDaemon(args: ParsedArgs) {
       headers,
     };
   };
-  const probeRunActivity = createRunActivityProbe({
-    getEngine: (workspaceId) =>
-      engineTopology.mode === "shared-unsandboxed"
-        ? sharedOpenCodeEngine?.getRunning()
-        : pool.get(workspaceId),
-    buildEngineRequest,
+  const e2eRunActivityProbeMode = process.env.E2E_RUN_ACTIVITY_PROBE_MODE?.trim() ?? "";
+  const probeRunActivity = e2eRunActivityProbeMode === "model-retry-no-progress"
+    ? async (record: RunRecord): Promise<RunProbeResult> => ({
+        active: true,
+        activityKind: "model_retry",
+        waitReason: "model_retry_no_output",
+        progressSignature: `e2e:model-retry-no-progress:${record.engineSessionId}`,
+      })
+    : createRunActivityProbe({
+        getEngine: (workspaceId) =>
+          engineTopology.mode === "shared-unsandboxed"
+            ? sharedOpenCodeEngine?.getRunning()
+            : pool.get(workspaceId),
+        buildEngineRequest,
+      });
+  const modelRetryNoProgressHardMs = readNumber(
+    args.flags,
+    "model-retry-no-progress-hard-ms",
+    MODEL_RETRY_NO_PROGRESS_HARD_MS,
+    "VESLO_MODEL_RETRY_NO_PROGRESS_HARD_MS",
+  ) ?? MODEL_RETRY_NO_PROGRESS_HARD_MS;
+  const opencodeProxyHeadersTimeoutMs = resolveOpencodeProxyHeadersTimeoutMs(args.flags);
+  const runRegistry = createRunRegistry({
+    store: runStore,
+    probeRunActivity,
+    modelRetryNoProgressHardMs,
   });
-  const runRegistry = createRunRegistry({ store: runStore, probeRunActivity });
   runRegistryForEngineCleanup = runRegistry;
   if (legacyActiveRunSweepAgeMs > 0) {
     const createdBefore = Date.now() - legacyActiveRunSweepAgeMs;
@@ -4557,6 +4593,17 @@ async function runRouterDaemon(args: ParsedArgs) {
         return value;
       }
       return null;
+    };
+    const lifecycleRunPayload = (
+      record: RunRecord,
+      extra: { stale?: boolean; noProgressSeconds?: number | null } = {},
+    ) => {
+      const { lastProgressSignature: _lastProgressSignature, ...publicRecord } = record;
+      return {
+        ok: true,
+        ...publicRecord,
+        ...extra,
+      };
     };
 
     try {
@@ -4777,7 +4824,7 @@ async function runRouterDaemon(args: ParsedArgs) {
               kind,
               ...resolveLifecycleRunEngineOwner(workspace.id),
             });
-            send(200, { ok: true, ...record });
+            send(200, lifecycleRunPayload(record));
             return;
           } catch (error) {
             if (error instanceof RunAlreadyActiveError) {
@@ -4809,7 +4856,7 @@ async function runRouterDaemon(args: ParsedArgs) {
               send(404, { error: "run not found" });
               return;
             }
-            send(200, { ok: true, ...record });
+            send(200, lifecycleRunPayload(record));
             return;
           }
           if (parts[4] === "aborted") {
@@ -4823,7 +4870,7 @@ async function runRouterDaemon(args: ParsedArgs) {
               send(404, { error: "run not found" });
               return;
             }
-            send(200, { ok: true, ...record });
+            send(200, lifecycleRunPayload(record));
             return;
           }
           if (parts[4] === "abort-requested") {
@@ -4832,7 +4879,7 @@ async function runRouterDaemon(args: ParsedArgs) {
               send(404, { error: "run not found" });
               return;
             }
-            send(200, { ok: true, ...record });
+            send(200, lifecycleRunPayload(record));
             return;
           }
         }
@@ -4858,12 +4905,10 @@ async function runRouterDaemon(args: ParsedArgs) {
             send(404, { error: "run not found" });
             return;
           }
-          send(200, {
-            ok: true,
-            ...active.record,
+          send(200, lifecycleRunPayload(active.record, {
             stale: active.stale,
             noProgressSeconds: active.noProgressSeconds,
-          });
+          }));
           return;
         }
         const reconciled =
@@ -4874,12 +4919,10 @@ async function runRouterDaemon(args: ParsedArgs) {
           send(404, { error: "run not found" });
           return;
         }
-        send(200, {
-          ok: true,
-          ...reconciled.record,
+        send(200, lifecycleRunPayload(reconciled.record, {
           stale: reconciled.stale,
           noProgressSeconds: reconciled.noProgressSeconds,
-        });
+        }));
         return;
       }
 
@@ -4904,7 +4947,8 @@ async function runRouterDaemon(args: ParsedArgs) {
         // status polls (GET /mcp, /permission, /lsp, …) used to trigger pool.ensure
         // here and block up to 60s on engine cold start (waitForHealthy default),
         // making the app feel stuck before the user even sent anything. Reads now
-        // fail fast with 503 engine_not_running; the engine still spawns via
+        // fail fast with 503 (`engine_not_running` for absent/stopped,
+        // `engine_starting` for an in-flight start); the engine still spawns via
         // explicit activate and via non-GET requests (prompt_async, session create).
         const proxyMethod = (req.method ?? "GET").toUpperCase();
         const sendTraceHeader = req.headers["x-veslo-send-trace-id"];
@@ -4946,25 +4990,58 @@ async function runRouterDaemon(args: ParsedArgs) {
             sharedEngine: sharedOpenCodeEngine ?? undefined,
           });
           if (!proxyTarget.engine) {
-            traceRuntime("orchestrator:proxy-engine-not-running", {
+            const isEngineStarting = proxyTarget.unavailableReason === "starting";
+            const isEngineFailed = proxyTarget.unavailableReason === "failed";
+            const proxyUnavailableEvent = isEngineStarting
+              ? "orchestrator:proxy-engine-starting"
+              : isEngineFailed
+                ? "orchestrator:proxy-engine-failed"
+                : "orchestrator:proxy-engine-not-running";
+            const proxyUnavailablePayload = {
               traceId: sendTraceId || null,
               workspaceId: ws.id,
               workspacePath: ws.path,
               engineTopology: engineTopology.mode,
               engineKind: proxyTarget.engineKind,
+              engineState: proxyTarget.engineState,
+              unavailableReason: proxyTarget.unavailableReason ?? null,
               method: req.method,
               path: url.pathname,
               search: url.search,
               poolState: engineTopology.mode === "pooled-per-workspace" ? pool.get(ws.id)?.state ?? "absent" : undefined,
               sharedEngine: engineTopology.mode === "shared-unsandboxed" ? sharedOpenCodeEngine?.snapshot() : undefined,
-            });
-            writeSendWorkflowTrace("orchestrator:proxy-engine-not-running", {
+            };
+            traceRuntime(proxyUnavailableEvent, proxyUnavailablePayload);
+            writeSendWorkflowTrace(proxyUnavailableEvent, {
               ...workflowBase,
               engineKind: proxyTarget.engineKind,
+              engineState: proxyTarget.engineState,
+              unavailableReason: proxyTarget.unavailableReason ?? null,
               poolState: engineTopology.mode === "pooled-per-workspace" ? pool.get(ws.id)?.state ?? "absent" : undefined,
               sharedEngine: engineTopology.mode === "shared-unsandboxed" ? sharedOpenCodeEngine?.snapshot() : undefined,
             });
-            send(503, { error: "engine_not_running", workspaceId: ws.id });
+            if (isEngineStarting) {
+              send(503, {
+                error: "engine_starting",
+                engineState: "starting",
+                workspaceId: ws.id,
+                retryAfterMs: 250,
+              });
+              return;
+            }
+            if (isEngineFailed) {
+              send(502, {
+                error: "engine_failed",
+                engineState: "failed",
+                workspaceId: ws.id,
+              });
+              return;
+            }
+            send(503, {
+              error: "engine_not_running",
+              engineState: proxyTarget.engineState,
+              workspaceId: ws.id,
+            });
             return;
           }
           traceRuntime("orchestrator:proxy-ensure:done", {
@@ -5182,6 +5259,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           targetBaseUrl: engine.baseUrl,
           targetPath: restPath,
           targetSearch,
+          headersTimeoutMs: opencodeProxyHeadersTimeoutMs,
           injectHeaders,
           stripIncomingHeaders: [
             "authorization",
@@ -5192,9 +5270,10 @@ async function runRouterDaemon(args: ParsedArgs) {
             "x-veslo-workspace-id",
             VESLO_CONVERSATION_RUN_ID_HEADER,
           ],
-          rewriteJsonBody: rewriteEnginePaths
-            ? (value) => rewriteDirectoryFieldsForEngine(value, pathMapping)
-            : undefined,
+          // Request bodies may contain `directory`; canonicalize direct
+          // Windows paths too, while response rewriting is WSL-only because it
+          // converts engine `/workspace` paths back to host paths.
+          rewriteJsonBody: (value) => rewriteDirectoryFieldsForEngine(value, pathMapping),
           rewriteJsonResponse: rewriteEnginePaths
             ? (value) => rewriteDirectoryFieldsForHost(value, pathMapping)
             : undefined,

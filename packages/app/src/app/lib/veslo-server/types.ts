@@ -1212,6 +1212,21 @@ export type VesloConversationRunQueuedResult = {
 
 export type VesloConversationRunResult = VesloConversationRunSubmittedResult | VesloConversationRunQueuedResult;
 
+export type VesloConversationRunActivityKind =
+  | "local_tool"
+  | "assistant_output"
+  | "model_retry"
+  | "idle"
+  | "unknown";
+
+export type VesloConversationRunWaitReason =
+  | "running_tool"
+  | "model_retry_no_output"
+  | "assistant_message_open"
+  | "session_idle"
+  | "engine_unreachable"
+  | "none";
+
 export type VesloConversationRunStatusResult = {
   ok: boolean;
   workspaceId: string;
@@ -1219,6 +1234,17 @@ export type VesloConversationRunStatusResult = {
   runId: string;
   status: VesloConversationRunLifecycleStatus;
   stale: boolean;
+  activityKind?: VesloConversationRunActivityKind | null;
+  waitReason?: VesloConversationRunWaitReason | null;
+  lastUsefulProgressAt?: number | null;
+  retrySince?: number | null;
+  noProgressSeconds?: number | null;
+};
+
+export type VesloConversationAbortInput = {
+  directory?: string | null;
+  runId?: string | null;
+  mode?: "active" | "run" | null;
 };
 
 export type VesloConversationAbortResult = {

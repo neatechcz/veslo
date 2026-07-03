@@ -374,7 +374,7 @@ export function createVesloServerClient(options: {
     sessionArtifacts: 10_000,
     sessionTranscript: 10_000,
     conversationCreate: 70_000,
-    conversationRun: 45_000,
+    conversationRun: 90_000,
     conversationAbort: 10_000,
     status: 6_000,
     config: 10_000,

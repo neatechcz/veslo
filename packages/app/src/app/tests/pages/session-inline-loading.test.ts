@@ -4,6 +4,10 @@ import test from "node:test";
 
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 const sessionSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
+const conversationFlowSource = readFileSync(
+  new URL("../../pages/session-conversation-flow.ts", import.meta.url),
+  "utf8",
+);
 const transcriptViewportSource = readFileSync(new URL("../../pages/session-transcript-viewport.ts", import.meta.url), "utf8");
 const pendingDraftControllerSource = readFileSync(
   new URL("../../context/pending-session-draft-controller.ts", import.meta.url),
@@ -153,8 +157,21 @@ test("materializing a pending submitted draft preserves the visible run indicato
 
   assert.match(
     sessionSource,
-    /createEffect\(\(\) => \{[\s\S]*const status = props\.sessionStatus;[\s\S]*if \(status === "running" \|\| status === "retry"\) \{[\s\S]*const sessionKey = currentSessionQueueKey\(\);[\s\S]*startRun\(sessionKey\);[\s\S]*setRunHasBegunForSessionKey\(sessionKey, true\);[\s\S]*\}[\s\S]*\}\);/s,
-    "running or retry session status should continue the visible run on the current session key",
+    /createEffect\(\(\) => \{[\s\S]*const status = props\.sessionStatus;[\s\S]*const diagnostic = activeRunDiagnostic\(\);[\s\S]*if \(status === "running" \|\| status === "retry" \|\| diagnostic\?\.waitReason === "model_retry_no_output"\) \{[\s\S]*const sessionKey = currentSessionQueueKey\(\);[\s\S]*startRun\(sessionKey\);[\s\S]*setRunHasBegunForSessionKey\(sessionKey, true\);[\s\S]*\}[\s\S]*\}\);/s,
+    "running, retry, or no-output model retry diagnostics should continue the visible run on the current session key",
+  );
+});
+
+test("materializing a pending submitted draft does not hide the optimistic transcript for initial anchoring", () => {
+  assert.match(
+    conversationFlowSource,
+    /const materializedPendingSubmit = pendingKey\s*\? pendingSubmittedDrafts\(\)\[pendingKey\]\?\.state === "sending"\s*: false;[\s\S]*if \(pendingKey && !isPendingSessionInstanceId\(selectedSessionId\)\) \{[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingKey, selectedSessionId\);[\s\S]*\}[\s\S]*shouldMarkInitialAnchor: !materializedPendingSubmit,/s,
+    "pending-to-real session materialization should keep the optimistic message visible instead of arming the transcript invisible anchor state",
+  );
+  assert.match(
+    sessionSource,
+    /if \(flowResult\.shouldMarkInitialAnchor && flowResult\.selectedSessionId\) \{\s*transcriptViewport\.markSelectedSessionForInitialAnchor\(flowResult\.selectedSessionId\);\s*\}/,
+    "pending-to-real session materialization should keep the optimistic message visible instead of arming the transcript invisible anchor state",
   );
 });
 
@@ -211,5 +228,23 @@ test("optimistic responding state renders as the footer run indicator, not assis
     sessionSource,
     /const showFooterRunIndicator = createMemo\(\(\) => showRunIndicator\(\)\);[\s\S]*footer=\{\s*showFooterRunIndicator\(\) \?/s,
     "the standard dot run indicator should remain visible while waiting for backend assistant output",
+  );
+});
+
+test("model retry no-output diagnostics own the footer run label", () => {
+  assert.match(
+    sessionSource,
+    /const activeRunDiagnostic = createMemo\(\(\) => runDiagnosticForQueueKey\(currentSessionQueueKey\(\)\)\);/,
+    "session view should resolve lifecycle diagnostics for the active conversation",
+  );
+  assert.match(
+    sessionSource,
+    /const diagnostic = activeRunDiagnostic\(\);[\s\S]*if \(diagnostic\?\.waitReason === "model_retry_no_output"\) \{[\s\S]*return diagnostic\.status === "blocked" \? "error" : "retrying";[\s\S]*\}/,
+    "model/API retry with no output should use retrying until the lifecycle reports blocked",
+  );
+  assert.match(
+    sessionSource,
+    /runDiagnosticLabel\(\) \|\| thinkingStatus\(\) \|\| runLabel\(\)/,
+    "explicit lifecycle diagnostics should take precedence over generic thinking labels",
   );
 });

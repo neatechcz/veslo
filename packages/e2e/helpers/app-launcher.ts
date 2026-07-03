@@ -91,6 +91,10 @@ type ResolvePilotSocketPathOptions = ResolvePilotRuntimeDirOptions & {
   runtimeDir?: string;
 };
 
+type StartAppOptions = {
+  preserveIsolatedProfile?: boolean;
+};
+
 export function resolveWebDriverPort(env: Record<string, string | undefined> = process.env): number {
   const raw = env.E2E_WEBDRIVER_PORT?.trim();
   if (!raw) return DEFAULT_WEBDRIVER_PORT;
@@ -624,7 +628,7 @@ export async function ensureWebDriverReady(
   );
 }
 
-export async function startApp(port?: number): Promise<void> {
+export async function startApp(port?: number, options: StartAppOptions = {}): Promise<void> {
   const resolvedPort = resolveStartAppPort(port);
 
   const binaryPath = resolveBinaryPath();
@@ -696,8 +700,13 @@ export async function startApp(port?: number): Promise<void> {
     }
     console.log(`[e2e] Using custom OPENCODE_HOME: ${CUSTOM_OPENCODE_HOME}`);
   } else if (!REAL_PROFILE_ENV) {
-    rmSync(ISOLATED_PROFILE_ROOT, { recursive: true, force: true });
-    rmSync(tmpDir, { recursive: true, force: true });
+    const preserveIsolatedProfile =
+      options.preserveIsolatedProfile === true ||
+      process.env.E2E_PRESERVE_ISOLATED_PROFILE?.trim() === '1';
+    if (!preserveIsolatedProfile) {
+      rmSync(ISOLATED_PROFILE_ROOT, { recursive: true, force: true });
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
     const snapshotPath = prepareDesktopAuthSeed(tmpDir, seedEnv);
     env = createAppLaunchEnv(seedEnv, {
       vesloServerPort,
@@ -713,8 +722,8 @@ export async function startApp(port?: number): Promise<void> {
     if (!shouldSkipDefaultWorkspaceState(env)) {
       seedDefaultWorkspaceState(ISOLATED_PROFILE_ROOT, env);
     }
-    console.log(`[e2e] Using isolated app profile: ${ISOLATED_PROFILE_ROOT}`);
-    console.log(`[e2e] Using isolated OPENCODE_HOME: ${tmpDir}`);
+    console.log(`[e2e] Using isolated app profile: ${ISOLATED_PROFILE_ROOT}${preserveIsolatedProfile ? ' (preserved)' : ''}`);
+    console.log(`[e2e] Using isolated OPENCODE_HOME: ${tmpDir}${preserveIsolatedProfile ? ' (preserved)' : ''}`);
   } else {
     env = {
       ...process.env,

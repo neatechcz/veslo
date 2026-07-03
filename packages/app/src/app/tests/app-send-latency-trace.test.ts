@@ -287,7 +287,7 @@ test("sidebar bulk refresh is single-flight to avoid duplicate cold workspace se
 test("sidebar conversation read sync follows warm workspace readiness", () => {
   assert.match(
     sidebarWorkspaceSessionsSource,
-    /listConversationsFromVesloReadApi: \([\s\S]*workspaceId: string,[\s\S]*directory\?: string,[\s\S]*options\?: \{ sync\?: boolean \},[\s\S]*\) => Promise<ConversationReadResult>;/,
+    /listConversationsFromVesloReadApi: \([\s\S]*workspaceId: string,[\s\S]*directory\?: string,[\s\S]*options\?: \{ sync\?: boolean \},[\s\S]*\) => Promise<ConversationReadResult>;[\s\S]*shouldSyncConversationRead\?: \(workspaceId: string\) => boolean;[\s\S]*allowLiveWorkspaceSessionList\?: \(workspaceId: string\) => boolean;/,
     "sidebar read API dependency should accept an explicit sync option",
   );
   assert.match(
@@ -302,13 +302,13 @@ test("sidebar conversation read sync follows warm workspace readiness", () => {
   );
   assert.match(
     sidebarWorkspaceSessionsSource,
-    /const hostFirstResult = await refreshFromHostReadApi\("host-first"\);[\s\S]*if \(hostFirstResult\) return;[\s\S]*if \(!config\.baseUrl\)/,
-    "normal local sidebar refresh should prefer host conversation reads before live OpenCode session listing",
+    /const hostFirstResult = await refreshFromHostReadApi\("host-first"\);[\s\S]*if \(hostFirstResult\) return;[\s\S]*const activeWorkspaceId = options\.workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*if \(hostReadDirectory && options\.allowLiveWorkspaceSessionList\?\.\(id\) !== true\) \{[\s\S]*markSidebarRefreshUnavailable\(id, "live-session-list-not-allowed"\);[\s\S]*return;[\s\S]*\}[\s\S]*if \(activeWorkspaceId === id && !options\.activeWorkspaceRuntimeReady\(\)\) \{[\s\S]*markSidebarRefreshUnavailable\(id, "active-runtime-not-ready"\);[\s\S]*return;[\s\S]*\}[\s\S]*if \(!config\.baseUrl\)/,
+    "normal local sidebar refresh should prefer host conversation reads and skip live OpenCode session listing until send flow explicitly allows live reads",
   );
   assert.match(
     source,
-    /const runtimeOwner = createRuntimeOwner\(\{[\s\S]*activeWorkspaceId: \(\) => currentWorkspaceStoreRef\(\)\?\.activeWorkspaceId\(\)\.trim\(\) \?\? "",[\s\S]*activeLegacyEngineReady: \(\) => engineReady\(\),[\s\S]*readyEngineWorkspaceIds,[\s\S]*workspaceBusy: \(\) => currentWorkspaceStoreRef\(\)\?\.workspaceBusy\(\) \?\? \{\},[\s\S]*routing: workspaceRouting,[\s\S]*\}\);[\s\S]*const shouldSyncConversationReadForWorkspace =[\s\S]*runtimeOwner\.shouldSyncConversationReadForWorkspace;[\s\S]*shouldSyncConversationRead: shouldSyncConversationReadForWorkspace,/,
-    "app should allow sync for any warm or busy routed workspace, with the active ready workspace as a fallback",
+    /const runtimeOwner = createRuntimeOwner\(\{[\s\S]*activeWorkspaceId: \(\) => currentWorkspaceStoreRef\(\)\?\.activeWorkspaceId\(\)\.trim\(\) \?\? "",[\s\S]*activeLegacyEngineReady: \(\) => engineReady\(\),[\s\S]*readyEngineWorkspaceIds,[\s\S]*workspaceBusy: \(\) => currentWorkspaceStoreRef\(\)\?\.workspaceBusy\(\) \?\? \{\},[\s\S]*routing: workspaceRouting,[\s\S]*\}\);[\s\S]*const shouldSyncConversationReadForWorkspace =[\s\S]*runtimeOwner\.shouldSyncConversationReadForWorkspace;[\s\S]*shouldSyncConversationRead: shouldSyncConversationReadForWorkspace,[\s\S]*allowLiveWorkspaceSessionList: isLiveTranscriptReadAllowedForWorkspace,/,
+    "app should allow passive read sync from the runtime owner while gating local live sidebar lists through explicit send-flow live-read allowance",
   );
 });
 

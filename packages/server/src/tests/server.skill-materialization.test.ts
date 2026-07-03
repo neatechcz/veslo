@@ -249,8 +249,9 @@ test("POST /skills/materialization/sync-global materializes platform automations
     expect(payload.backupDirs).toEqual([]);
     const skillPath = join(homeRoot, ".config", "opencode", "skills", "veslo-managed", "veslo-automations", "SKILL.md");
     const skillMarkdown = await readFile(skillPath, "utf8");
-    expect(skillMarkdown).toContain("veslo_create_automation");
-    expect(skillMarkdown).toContain("nextRunAt");
+    expect(skillMarkdown).toContain("Veslo Automations Disabled");
+    expect(skillMarkdown).not.toContain("veslo_create_automation");
+    expect(skillMarkdown).not.toContain("nextRunAt");
 
     const readResponse = await fetch(
       `http://127.0.0.1:${server.port}/skills/user-global/veslo-automations?path=${encodeURIComponent(skillPath)}`,
@@ -264,7 +265,7 @@ test("POST /skills/materialization/sync-global materializes platform automations
       scope: "global",
       path: skillPath,
     });
-    expect(readPayload.content).toContain("veslo_create_automation");
+    expect(readPayload.content).toContain("Veslo Automations Disabled");
 
     const secondResponse = await fetch(`http://127.0.0.1:${server.port}/skills/materialization/sync-global`, {
       method: "POST",
@@ -441,7 +442,7 @@ test("exact delete and batch remove reject materialized platform automations ski
     expect(deleteResponse.status).toBe(409);
     const payload = await deleteResponse.json() as { code: string };
     expect(payload.code).toBe("managed_skill_read_only");
-    expect(await readFile(skillPath, "utf8")).toContain("veslo_create_automation");
+    expect(await readFile(skillPath, "utf8")).toContain("Veslo Automations Disabled");
 
     const batchResponse = await fetch(`http://127.0.0.1:${server.port}/skills/batch-remove`, {
       method: "POST",
@@ -525,7 +526,7 @@ test("exact user-global read and delete handle XDG_CONFIG_HOME managed skills", 
     expect(readResponse.status).toBe(200);
     const readPayload = await readResponse.json() as { item: { path: string }; content: string };
     expect(readPayload.item.path).toBe(skillPath);
-    expect(readPayload.content).toContain("veslo_create_automation");
+    expect(readPayload.content).toContain("Veslo Automations Disabled");
 
     const deleteResponse = await fetch(
       `http://127.0.0.1:${server.port}/skills/user-global/veslo-automations?path=${encodeURIComponent(skillPath)}`,
@@ -783,7 +784,7 @@ test("POST /skills/materialization/sync-global downloads personal global package
     ).toContain("# global-tool");
     expect(
       await readFile(join(homeRoot, ".config", "opencode", "skills", "veslo-managed", "veslo-automations", "SKILL.md"), "utf8"),
-    ).toContain("veslo_create_automation");
+    ).toContain("Veslo Automations Disabled");
     expect(registryCalls).toEqual([
       {
         pathname: "/v1/skill-installations",
@@ -1457,7 +1458,7 @@ test("POST workspace materialization sync preserves existing personal global reg
     ).toContain("# workspace-triggered-global-tool");
     expect(
       await readFile(join(homeRoot, ".config", "opencode", "skills", "veslo-managed", "veslo-automations", "SKILL.md"), "utf8"),
-    ).toContain("veslo_create_automation");
+    ).toContain("Veslo Automations Disabled");
   } finally {
     if (previousHome === undefined) {
       delete process.env.HOME;
@@ -1594,7 +1595,7 @@ test("POST workspace materialization sync removes personal global skill shadowed
     expect(await readFile(join(workspaceRoot, ".opencode", "skills", "veslo-managed", "retargeted-tool", "SKILL.md"), "utf8"))
       .toContain("# retargeted-tool");
     expect(await readFile(join(homeRoot, ".config", "opencode", "skills", "veslo-managed", "veslo-automations", "SKILL.md"), "utf8"))
-      .toContain("veslo_create_automation");
+      .toContain("Veslo Automations Disabled");
     await expect(stat(join(homeRoot, ".config", "opencode", "skills", "veslo-managed", "retargeted-tool"))).rejects.toThrow();
   } finally {
     if (previousHome === undefined) {
@@ -1701,7 +1702,7 @@ test("POST workspace materialization sync skips out-of-scope user rollout packag
       search: "",
     });
     expect(await readFile(join(homeRoot, ".config", "opencode", "skills", "veslo-managed", "veslo-automations", "SKILL.md"), "utf8"))
-      .toContain("veslo_create_automation");
+      .toContain("Veslo Automations Disabled");
   } finally {
     if (previousHome === undefined) {
       delete process.env.HOME;

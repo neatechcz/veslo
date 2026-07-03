@@ -64,6 +64,7 @@ type SidebarWorkspaceSessionsOptions = {
     options?: { sync?: boolean },
   ) => Promise<ConversationReadResult>;
   shouldSyncConversationRead?: (workspaceId: string) => boolean;
+  allowLiveWorkspaceSessionList?: (workspaceId: string) => boolean;
   backfillConversationsToVesloReadApi?: (
     workspaceId: string,
     directory: string,
@@ -624,6 +625,17 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
 
     const hostFirstResult = await refreshFromHostReadApi("host-first");
     if (hostFirstResult) return;
+
+    const activeWorkspaceId = options.workspaceStore.activeWorkspaceId().trim();
+    if (hostReadDirectory && options.allowLiveWorkspaceSessionList?.(id) !== true) {
+      markSidebarRefreshUnavailable(id, "live-session-list-not-allowed");
+      return;
+    }
+
+    if (activeWorkspaceId === id && !options.activeWorkspaceRuntimeReady()) {
+      markSidebarRefreshUnavailable(id, "active-runtime-not-ready");
+      return;
+    }
 
     if (!config.baseUrl) {
       markSidebarRefreshUnavailable(id, "no-engine-base-url");

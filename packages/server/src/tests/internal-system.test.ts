@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import {
   provisionWorkspaceInternalSystem,
   resolveVesloAppDataDir,
@@ -27,52 +26,6 @@ async function canCreateDirectorySymlink(): Promise<boolean> {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-}
-
-async function installFakeOpenCodePluginModule(pluginDir: string) {
-  const moduleRoot = join(pluginDir, "node_modules", "@opencode-ai", "plugin");
-  await mkdir(moduleRoot, { recursive: true });
-  await writeFile(join(moduleRoot, "package.json"), JSON.stringify({ type: "module" }), "utf8");
-  await writeFile(
-    join(moduleRoot, "index.js"),
-    `
-export function tool(definition) {
-  return definition;
-}
-
-function schema() {
-  return {
-    optional() { return this; },
-    describe() { return this; },
-  };
-}
-
-tool.schema = {
-  any: schema,
-  boolean: schema,
-  string: schema,
-  enum: () => schema(),
-};
-`,
-    "utf8",
-  );
-}
-
-async function loadGeneratedAutomationTools(workspaceRoot: string) {
-  await provisionWorkspaceInternalSystem(workspaceRoot);
-  const pluginDir = join(workspaceRoot, ".opencode", "plugins");
-  await writeFile(join(pluginDir, "package.json"), JSON.stringify({ type: "module" }), "utf8");
-  await installFakeOpenCodePluginModule(pluginDir);
-
-  const pluginUrl = pathToFileURL(join(pluginDir, "veslo-automations.js")).href;
-  const module = await import(`${pluginUrl}?test=${Date.now()}-${Math.random()}`);
-  return await module.default({
-    client: {
-      session: {
-        get: async () => ({ directory: workspaceRoot }),
-      },
-    },
-  });
 }
 
 const LEGACY_INTERNAL_AGENT_FILES = [
@@ -185,6 +138,55 @@ You are Veslo.
     }
   });
 
+  test("does not provision Veslo automations plugin by default", async () => {
+    const workspaceRoot = await createWorkspaceRoot("automation-plugin-disabled");
+
+    try {
+      const result = await provisionWorkspaceInternalSystem(workspaceRoot);
+      expect(result.status).toBe("updated");
+
+      await expectMissing(join(workspaceRoot, ".opencode", "plugins", "veslo-automations.js"));
+      await expectMissing(join(workspaceRoot, ".opencode", "plugins", "veslo-automations.js.disabled"));
+
+      const second = await provisionWorkspaceInternalSystem(workspaceRoot);
+      expect(second.status).toBe("unchanged");
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("disables an existing Veslo automations plugin by renaming it out of autoload", async () => {
+    const workspaceRoot = await createWorkspaceRoot("automation-plugin-quarantine");
+    const pluginsDir = join(workspaceRoot, ".opencode", "plugins");
+    const activePath = join(pluginsDir, "veslo-automations.js");
+    const activeContent = `/**
+ * Veslo Automations Plugin
+ *
+ * Managed by Veslo internal system (v2026-06-06.1). Do not edit manually.
+ */
+export default async () => ({ tool: { veslo_create_automation: {} } });
+`;
+
+    try {
+      await mkdir(pluginsDir, { recursive: true });
+      await writeFile(activePath, activeContent, "utf8");
+
+      const result = await provisionWorkspaceInternalSystem(workspaceRoot);
+      expect(result.status).toBe("updated");
+
+      await expectMissing(activePath);
+      await expect(readFile(
+        join(workspaceRoot, ".opencode", "veslo", "disabled-plugins", "veslo-automations.js.disabled"),
+        "utf8",
+      )).resolves.toBe(activeContent);
+
+      const second = await provisionWorkspaceInternalSystem(workspaceRoot);
+      expect(second.status).toBe("unchanged");
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   test("provisions the shared Soul runtime instruction contract into opencode config", async () => {
     const workspaceRoot = await createWorkspaceRoot("soul-instructions");
 
@@ -214,110 +216,22 @@ You are Veslo.
     }
   });
 
-  test("generated automation plugin creates through directory-matched workspace using sanitized state", async () => {
-    const workspaceRoot = await createWorkspaceRoot("automation-plugin-runtime");
-    const statePath = join(workspaceRoot, "veslo-server-plugin-state.json");
-    const previousStatePath = process.env.VESLO_SERVER_STATE_PATH;
-    const previousFetch = globalThis.fetch;
-    const calls: Array<{ path: string; method: string; body: unknown; authorization: string | null }> = [];
+  test("automations plugin env flag does not provision OpenCode plugin", async () => {
+    const workspaceRoot = await createWorkspaceRoot("automation-plugin-env-disabled");
+    const previousEnableFlag = process.env.VESLO_ENABLE_AUTOMATIONS_PLUGIN;
 
     try {
-      await writeFile(
-        statePath,
-        JSON.stringify({ baseUrl: "http://veslo.local", clientToken: "client-token" }, null, 2),
-        "utf8",
-      );
-      const statePayload = await readFile(statePath, "utf8");
-      expect(statePayload).not.toContain("hostToken");
-      expect(statePayload).not.toContain("host-token");
-      process.env.VESLO_SERVER_STATE_PATH = statePath;
+      process.env.VESLO_ENABLE_AUTOMATIONS_PLUGIN = "1";
+      await provisionWorkspaceInternalSystem(workspaceRoot);
 
-      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-        const url = new URL(typeof input === "string" || input instanceof URL ? input.toString() : input.url);
-        const headers = new Headers(init?.headers);
-        const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
-        calls.push({
-          path: url.pathname,
-          method: init?.method ?? "GET",
-          body,
-          authorization: headers.get("Authorization"),
-        });
-
-        if (url.pathname === "/workspaces") {
-          return Response.json({
-            activeId: "ws_other",
-            items: [
-              { id: "ws_other", path: join(workspaceRoot, "other"), opencode: { directory: join(workspaceRoot, "other") } },
-              { id: "ws_matched", path: workspaceRoot, opencode: { directory: workspaceRoot } },
-            ],
-          });
-        }
-        if (url.pathname === "/workspace/ws_matched/automations" && init?.method === "POST") {
-          return Response.json({
-            automation: { id: "auto_runtime", status: "active", nextRunAt: "2026-06-07T07:00:00.000Z" },
-          });
-        }
-        return Response.json({ error: "unexpected" }, { status: 404 });
-      }) as typeof fetch;
-
-      const plugin = await loadGeneratedAutomationTools(workspaceRoot);
-      const createTool = plugin.tool.veslo_create_automation;
-
-      const timezoneCapableSchedules = [
-        { name: "Daily review", schedule: { kind: "daily", hour: 9, minute: 0 } },
-        { name: "Weekly review", schedule: { kind: "weekly", weekday: 1, hour: 9, minute: 0 } },
-        { name: "Cron review", schedule: { kind: "cron", expression: "0 9 * * 1-5" } },
-        { name: "One-shot review", schedule: { kind: "oneShot", runAt: "2026-06-07T07:00:00.000Z" } },
-      ];
-
-      for (const item of timezoneCapableSchedules) {
-        calls.length = 0;
-        const result = await createTool.execute(
-          {
-            name: item.name,
-            prompt: "Review the queue",
-            schedule: item.schedule,
-            timezone: "Europe/Prague",
-          },
-          { sessionID: "ses_runtime", directory: workspaceRoot },
-        );
-        expect(result).toContain("auto_runtime");
-
-        const workspacesGet = calls.find((call) => call.path === "/workspaces" && call.method === "GET");
-        const post = calls.find((call) => call.path === "/workspace/ws_matched/automations" && call.method === "POST");
-        expect(workspacesGet?.authorization).toBe("Bearer client-token");
-        expect(post?.authorization).toBe("Bearer client-token");
-        expect(post?.body).toMatchObject({
-          name: item.name,
-          prompt: "Review the queue",
-          schedule: { ...item.schedule, timezone: "Europe/Prague" },
-          target: { preferredSessionId: "ses_runtime" },
-        });
-      }
-
-      calls.length = 0;
-      await createTool.execute(
-        {
-          name: "Interval review",
-          prompt: "Review periodically",
-          schedule: { kind: "interval", seconds: 3600 },
-          timezone: "Europe/Prague",
-        },
-        { sessionID: "ses_runtime", directory: workspaceRoot },
-      );
-
-      const intervalPost = calls.find((call) => call.path === "/workspace/ws_matched/automations" && call.method === "POST");
-      expect(intervalPost?.body).toMatchObject({
-        schedule: { kind: "interval", seconds: 3600 },
-      });
-      expect((intervalPost?.body as { schedule?: { timezone?: string } } | undefined)?.schedule?.timezone).toBeUndefined();
+      await expectMissing(join(workspaceRoot, ".opencode", "plugins", "veslo-automations.js"));
+      await expectMissing(join(workspaceRoot, ".opencode", "plugins", "veslo-automations.js.disabled"));
     } finally {
-      if (previousStatePath === undefined) {
-        delete process.env.VESLO_SERVER_STATE_PATH;
+      if (previousEnableFlag === undefined) {
+        delete process.env.VESLO_ENABLE_AUTOMATIONS_PLUGIN;
       } else {
-        process.env.VESLO_SERVER_STATE_PATH = previousStatePath;
+        process.env.VESLO_ENABLE_AUTOMATIONS_PLUGIN = previousEnableFlag;
       }
-      globalThis.fetch = previousFetch;
       await rm(workspaceRoot, { recursive: true, force: true });
     }
   });

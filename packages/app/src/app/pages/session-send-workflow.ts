@@ -24,6 +24,7 @@ import type {
   SendTargetWorkspaceScope,
 } from "../context/workspace-session-selection";
 import type {
+  SendRuntimePreparationResult,
   SendRuntimePreflightContext,
   SendRuntimePreflightTargetWorkspace,
 } from "../context/send-runtime-readiness";
@@ -129,7 +130,6 @@ export type SessionSendWorkflowOptions = {
     initialTitle?: string,
     options?: {
       blockAppDuringCreate?: boolean;
-      managedAiRuntimeAlreadyPrepared?: boolean;
       pendingSession?: PendingSidebarSessionMetadata | null;
       sendTraceId?: string | null;
       clientMessageId?: string | null;
@@ -162,6 +162,7 @@ export type SessionSendWorkflowOptions = {
   };
   isWorkspaceRuntimeReady: (workspaceId?: string | null) => boolean;
   listCommands: (scope?: { workspaceId?: string | null; directory?: string | null }) => Promise<SessionSendWorkflowCommand[]>;
+  markLiveTranscriptReadAllowedForWorkspace: (workspaceId?: string | null) => void;
   markPendingDraftConsumed: (draftId: string) => void;
   messageFromUnknownError: (error: unknown) => string;
   messages: () => Array<{ parts: unknown[] }>;
@@ -169,7 +170,7 @@ export type SessionSendWorkflowOptions = {
   modelVariant: () => string | null | undefined;
   pendingSessionDraftsDelete: (draftId: string) => Promise<boolean>;
   perfNow: () => number;
-  prepareSendRuntimeForSend: (event: "sendPrompt", preflight: SessionSendPreflightContext) => Promise<boolean>;
+  prepareSendRuntimeForSend: (event: "sendPrompt", preflight: SessionSendPreflightContext) => Promise<SendRuntimePreparationResult>;
   providers: () => ProviderListItem[];
   recordPerfLog: (
     enabled: boolean,
@@ -610,24 +611,18 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
 
     const sendRuntimeWorkspaceId = sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim();
     const sendRuntimeReady = deps.isWorkspaceRuntimeReady(sendRuntimeWorkspaceId);
-    if (sendRuntimeReady) {
-      sendPreflight.enginePrepared = true;
-      sendPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
-    }
-
     if (!sendRuntimeReady) {
       startSendPromptBusy("status.connecting");
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
-    if (!(await deps.prepareSendRuntimeForSend("sendPrompt", sendPreflight))) {
+    const sendRuntimePreparation = await deps.prepareSendRuntimeForSend("sendPrompt", sendPreflight);
+    if (!sendRuntimePreparation.ok) {
       cleanupPendingSidebarSession();
       stopSendPromptBusy();
       return false;
     }
-    sendPreflight.enginePrepared = true;
     sendPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
-    sendPreflight.managedAiReady = true;
 
     const c = deps.routedClientForSendTarget(sendTargetWorkspace);
     if (!c) {
@@ -670,7 +665,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         "sendPrompt:create-session-and-open",
         () => deps.createSessionAndOpen(initialSessionTitle, {
           blockAppDuringCreate: blockAppDuringPromptSend,
-          managedAiRuntimeAlreadyPrepared: true,
           pendingSession: pendingSidebarSession,
           sendTraceId,
           clientMessageId: sendCorrelation.clientMessageId,
@@ -881,6 +875,9 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
             traceId: sendTraceId,
             sessionID,
           });
+          deps.markLiveTranscriptReadAllowedForWorkspace(
+            sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim(),
+          );
           return true;
         }
 
@@ -961,6 +958,9 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         mode: resolvedDraft.mode,
         command: commandName,
       });
+      deps.markLiveTranscriptReadAllowedForWorkspace(
+        sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim(),
+      );
       deps.holdVisibleRuntimeActivity(sessionID, "sendPrompt:success");
       return true;
     } catch (e) {

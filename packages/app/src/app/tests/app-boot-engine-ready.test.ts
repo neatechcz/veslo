@@ -24,7 +24,25 @@ test("engineReady boots false so guards block engine API calls until a real conn
   assert.match(
     appSource,
     /const \[engineReady, setEngineReady\] = createSignal\(false\);/,
-    "engineReady must start false — connectToServer/onEngineStable flips it true after a successful connect",
+    "legacy engineReady must start false so cold boot guards do not probe engine APIs before runtime readiness",
+  );
+});
+
+test("boot warmup readiness is separate from live transcript read policy", () => {
+  assert.match(
+    appSource,
+    /const \[liveTranscriptReadWorkspaceIds, setLiveTranscriptReadWorkspaceIds\] =[\s\S]*createSignal<ReadonlySet<string>>\(new Set\(\)\);/s,
+    "live transcript read allowance should be tracked separately from runtime readiness",
+  );
+  assert.match(
+    appSource,
+    /return !isLiveTranscriptReadAllowedForWorkspace\(workspaceStore\.activeWorkspaceId\(\)\.trim\(\)\);/,
+    "ordinary history browsing should not become live SDK reading merely because the runtime is ready",
+  );
+  assert.doesNotMatch(
+    appSource,
+    /shouldBrowseSessionFromDb: \(sessionId\) => \{[\s\S]*return !isWorkspaceRuntimeReady\(workspaceStore\.activeWorkspaceId\(\)\.trim\(\)\);[\s\S]*\},/s,
+    "session browse policy must not be derived directly from runtime readiness",
   );
 });
 

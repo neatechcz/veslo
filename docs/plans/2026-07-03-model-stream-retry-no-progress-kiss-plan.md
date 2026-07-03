@@ -1,17 +1,18 @@
 ---
 title: Model Stream Retry No-Progress KISS Plan
 date: 2026-07-03
-status: planned-kiss-refined
-done: false
-msr00_repro_fixture_done: false
-msr01_orchestrator_diagnostics_done: false
-msr02_run_registry_threshold_done: false
-msr03_app_visible_status_done: false
-msr04_installed_runtime_regression_done: false
-source_issue: Installed app agent silently stalls in model-stream retry loop during Unity task
+status: implemented
+done: true
+issue: VSLO-269
+msr00_repro_fixture_done: true
+msr01_orchestrator_diagnostics_done: true
+msr02_run_registry_threshold_done: true
+msr03_app_visible_status_done: true
+msr04_installed_runtime_regression_done: true
+source_issue: VSLO-269 - Installed app agent silently stalls in model-stream retry loop during Unity task
 ---
 
-# Model Stream Retry No-Progress KISS Plan
+# VSLO-269 Model Stream Retry No-Progress KISS Plan
 
 ## Goal
 
@@ -115,7 +116,7 @@ The hard-threshold reason should be explicit, for example
 
 ## MSR00: Repro Fixture And Baseline Tests
 
-done: false
+done: true
 
 Create a deterministic fixture for an OpenCode session that is active but makes
 no useful progress.
@@ -147,7 +148,7 @@ Verification:
 
 ## MSR01: Orchestrator Activity Diagnostics
 
-done: false
+done: true
 
 Extend the run activity probe with additive diagnostics while keeping existing
 active/inactive behavior compatible.
@@ -182,7 +183,7 @@ Verification:
 
 ## MSR02: Run Registry Persistence And Threshold
 
-done: false
+done: true
 
 Persist no-progress model retry diagnostics in the orchestrator run registry
 and make the retry loop bounded.
@@ -253,7 +254,7 @@ Verification:
 
 ## MSR03: App Visible Status
 
-done: false
+done: true
 
 Show the retry/no-progress state in the installed app without a broad session UI
 rewrite.
@@ -288,7 +289,7 @@ Verification:
 
 ## MSR04: Installed Runtime Regression
 
-done: false
+done: true
 
 Prove the fix in a desktop/Tauri runtime path, not only in isolated unit tests.
 
@@ -336,3 +337,9 @@ Top-level `done: true` is allowed only after:
 Use this format when implementing:
 
 `2026-07-03 - MSRxx - changed: <paths> - verification: <commands/results> - done: false`
+
+- `2026-07-03 - MSR00 - changed: packages/orchestrator/src/tests/run-activity-probe.test.ts - verification: pnpm --filter veslo-orchestrator exec bun test src/tests/run-activity-probe.test.ts src/tests/run-registry.test.ts src/tests/run-store.test.ts; pnpm --filter veslo-orchestrator typecheck - done: true`
+- `2026-07-03 - MSR01 - changed: packages/orchestrator/src/tests/run-activity-probe.test.ts - verification: pnpm --filter veslo-orchestrator exec bun test src/tests/run-activity-probe.test.ts src/tests/run-registry.test.ts src/tests/run-store.test.ts; pnpm --filter veslo-orchestrator typecheck - done: true`
+- `2026-07-03 - MSR02 - changed: packages/orchestrator/src/cli.ts, packages/server/src/orchestrator-lifecycle-client.ts, packages/server/src/routes/conversations.ts - verification: pnpm --filter veslo-orchestrator exec bun test src/tests/run-activity-probe.test.ts src/tests/run-registry.test.ts src/tests/run-store.test.ts; pnpm --filter veslo-server exec bun test src/tests/orchestrator-lifecycle-client.test.ts src/tests/server-conversations.test.ts; pnpm --filter veslo-orchestrator typecheck; pnpm --filter veslo-server typecheck; pnpm --filter veslo-server build:bin - done: true`
+- `2026-07-03 - MSR03 - changed: packages/app/src/app/lib/veslo-server/types.ts, packages/app/src/app/context/session-lifecycle-recovery.ts, packages/app/src/app/context/session.ts, packages/app/src/app/app.tsx, packages/app/src/app/app-view-props.ts, packages/app/src/app/pages/session.tsx, packages/app/src/i18n/locales/en.ts, packages/app/src/i18n/locales/cs.ts - verification: pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/context/session-lifecycle-recovery.test.ts src/app/tests/pages/session-inline-loading.test.ts src/app/tests/app-view-props.test.ts; pnpm --filter @neatech/veslo-ui typecheck - done: true`
+- `2026-07-03 - MSR04 - changed: packages/e2e/helpers/pilot-runner.ts, packages/e2e/helpers/pilot-runner.test.ts, packages/e2e/pilot-scenarios/model-stream-retry-no-progress.toml, packages/orchestrator/src/cli.ts, packages/orchestrator/src/run-registry.ts - verification: pnpm --filter veslo-orchestrator exec bun test src/tests/run-registry.test.ts src/tests/run-activity-probe.test.ts; pnpm --filter @neatech/veslo-e2e exec node --test --import=tsx/esm helpers/pilot-runner.test.ts; pnpm --filter veslo-orchestrator typecheck; pnpm --filter @neatech/veslo-ui typecheck; pnpm --filter veslo-orchestrator build:bin; VESLO_SIDECAR_FORCE_BUILD=1 pnpm --filter @neatech/veslo run prepare:sidecar; pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e; pnpm test:pilot -- --scenario model-stream-retry-no-progress - done: true`

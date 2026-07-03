@@ -37,6 +37,8 @@ type FixtureSkill = {
   archive: PackageArchive;
 };
 
+type RegistryEventFixtureMode = 'none' | 'workspace-update-repeat';
+
 type SoulScope = 'organization' | 'user';
 
 type SoulVersion = {
@@ -522,6 +524,30 @@ function currentSkillSetRevision(): string {
   return useUpdatedRuntimeVersion
     ? E2E_SKILL_REGISTRY_FIXTURE.workspaceSkillSetUpdatedRevision
     : E2E_SKILL_REGISTRY_FIXTURE.workspaceSkillSetRevision;
+}
+
+function registryEventFixtureMode(): RegistryEventFixtureMode {
+  return process.env.E2E_SKILL_REGISTRY_EVENTS_MODE?.trim() === 'workspace-update-repeat'
+    ? 'workspace-update-repeat'
+    : 'none';
+}
+
+function workspaceUpdateRegistryEvents(workspaceId: string) {
+  const runtime = currentRuntimeSkill();
+  return [
+    {
+      id: `event_e2e_workspace_update_repeat_${workspaceId}`,
+      action: 'skill.version.created',
+      orgId: E2E_SKILL_REGISTRY_ORG_ID,
+      workspaceId,
+      skillId: runtime.skillId,
+      versionId: runtime.versionId,
+      installationId: runtime.installationId,
+      actorUserId: E2E_SKILL_REGISTRY_USER_ID,
+      payload: { source: 'e2e-workspace-update-repeat' },
+      createdAt: '2026-07-03T10:00:00.000Z',
+    },
+  ];
 }
 
 function soulVersion(input: {
@@ -1011,6 +1037,18 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
   }
 
   if (url.pathname === '/v1/skill-registry-events') {
+    if (registryEventFixtureMode() === 'workspace-update-repeat') {
+      const workspaceId =
+        url.searchParams.get('workspaceId')?.trim() ||
+        process.env.E2E_SKILL_REGISTRY_WORKSPACE_ID?.trim() ||
+        E2E_SKILL_REGISTRY_WORKSPACE_ID;
+      json(res, 200, {
+        events: workspaceUpdateRegistryEvents(workspaceId),
+        nextCursor: null,
+        revision: `rev_e2e_workspace_update_repeat_${workspaceId}`,
+      });
+      return;
+    }
     json(res, 200, { events: [], nextCursor: null });
     return;
   }

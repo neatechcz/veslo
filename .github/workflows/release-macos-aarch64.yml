@@ -244,6 +244,9 @@ jobs:
       - name: Release review (strict)
         run: node scripts/release/review.mjs --strict
 
+      - name: Verify document runtime packages
+        run: node scripts/release/verify-document-runtime-packages.mjs --profile local-docs-required --json
+
   publish-tauri:
     name: Build + Publish (${{ matrix.target }})
     needs: [resolve-release, verify-release]

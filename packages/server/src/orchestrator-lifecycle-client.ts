@@ -1,4 +1,12 @@
 export type LifecycleRunStatus = "submitted" | "running" | "blocked" | "completed" | "failed" | "aborted";
+export type LifecycleRunActivityKind = "local_tool" | "assistant_output" | "model_retry" | "idle" | "unknown";
+export type LifecycleRunWaitReason =
+  | "running_tool"
+  | "model_retry_no_output"
+  | "assistant_message_open"
+  | "session_idle"
+  | "engine_unreachable"
+  | "none";
 
 export const ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER = "X-Veslo-Orchestrator-Token";
 
@@ -6,9 +14,43 @@ export type LifecycleRunStatusResult = {
   runId: string;
   status: LifecycleRunStatus;
   stale: boolean;
+  activityKind?: LifecycleRunActivityKind | null;
+  waitReason?: LifecycleRunWaitReason | null;
+  lastUsefulProgressAt?: number | null;
+  retrySince?: number | null;
+  noProgressSeconds?: number | null;
 };
 
 export const ORCHESTRATOR_LIFECYCLE_REQUEST_TIMEOUT_MS = 5_000;
+
+const ACTIVITY_KINDS = new Set<LifecycleRunActivityKind>([
+  "local_tool",
+  "assistant_output",
+  "model_retry",
+  "idle",
+  "unknown",
+]);
+const WAIT_REASONS = new Set<LifecycleRunWaitReason>([
+  "running_tool",
+  "model_retry_no_output",
+  "assistant_message_open",
+  "session_idle",
+  "engine_unreachable",
+  "none",
+]);
+
+const optionalNumber = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const optionalActivityKind = (value: unknown) =>
+  typeof value === "string" && ACTIVITY_KINDS.has(value as LifecycleRunActivityKind)
+    ? value as LifecycleRunActivityKind
+    : null;
+
+const optionalWaitReason = (value: unknown) =>
+  typeof value === "string" && WAIT_REASONS.has(value as LifecycleRunWaitReason)
+    ? value as LifecycleRunWaitReason
+    : null;
 
 export class RunAlreadyActiveError extends Error {
   readonly activeRunId: string;
@@ -160,15 +202,31 @@ export function createOrchestratorLifecycleClient(options: {
       runId?: unknown;
       status?: unknown;
       stale?: unknown;
+      activityKind?: unknown;
+      waitReason?: unknown;
+      lastUsefulProgressAt?: unknown;
+      retrySince?: unknown;
+      noProgressSeconds?: unknown;
     };
     if (typeof payload.runId !== "string" || typeof payload.status !== "string") {
       throw new OrchestratorLifecycleRequestError(path, 502, payload);
     }
-    return {
+    const result: LifecycleRunStatusResult = {
       runId: payload.runId,
       status: payload.status as LifecycleRunStatus,
       stale: payload.stale === true,
     };
+    const activityKind = optionalActivityKind(payload.activityKind);
+    const waitReason = optionalWaitReason(payload.waitReason);
+    const lastUsefulProgressAt = optionalNumber(payload.lastUsefulProgressAt);
+    const retrySince = optionalNumber(payload.retrySince);
+    const noProgressSeconds = optionalNumber(payload.noProgressSeconds);
+    if (activityKind) result.activityKind = activityKind;
+    if (waitReason) result.waitReason = waitReason;
+    if (lastUsefulProgressAt !== null) result.lastUsefulProgressAt = lastUsefulProgressAt;
+    if (retrySince !== null) result.retrySince = retrySince;
+    if (noProgressSeconds !== null) result.noProgressSeconds = noProgressSeconds;
+    return result;
   };
 
   return {

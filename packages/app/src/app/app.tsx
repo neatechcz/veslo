@@ -70,6 +70,7 @@ import {
 import { createManagedAiRuntimeConfigSync } from "./context/managed-ai-runtime-config";
 import { createConversationService } from "./context/conversation-service";
 import { createPendingSessionDraftController } from "./context/pending-session-draft-controller";
+import { createSessionFlowFacade } from "./context/session-flow-facade";
 import { createComposerTargetController } from "./context/composer-target-controller";
 import { createAppShellEnvironment } from "./context/app-shell-environment";
 import { createFeedbackWorkflow } from "./context/feedback-workflow";
@@ -630,7 +631,9 @@ export default function App() {
   // running, and the old initial `true` opened a window where engineReady
   // guards (permission polls, MCP status, capabilities) passed and their GETs
   // cold-spawned the engine through the orchestrator proxy (up to 60s each).
-  // connectToServer/onEngineStable flips this true after a successful connect.
+  // This is now a legacy active-runtime signal. Transcript browse policy is
+  // owned separately by liveTranscriptReadWorkspaceIds so boot warmup does not
+  // turn ordinary history clicks into live SDK reads.
   const [engineReady, setEngineReady] = createSignal(false);
   const runtimeOwner = createRuntimeOwner({
     activeWorkspaceId: () => currentWorkspaceStoreRef()?.activeWorkspaceId().trim() ?? "",
@@ -647,6 +650,22 @@ export default function App() {
   const runtimeOwnedRouting = createRuntimeOwnedRouting(workspaceRouting, runtimeOwner);
   const routedClient = (workspaceId?: string) => runtimeOwner.client(workspaceId);
   const isWorkspaceRuntimeReady = runtimeOwner.isWorkspaceRuntimeReady;
+  const [liveTranscriptReadWorkspaceIds, setLiveTranscriptReadWorkspaceIds] =
+    createSignal<ReadonlySet<string>>(new Set());
+  const resolveLiveTranscriptReadWorkspaceId = (workspaceId?: string | null) =>
+    workspaceId?.trim() || currentWorkspaceStoreRef()?.activeWorkspaceId().trim() || "";
+  const markLiveTranscriptReadAllowedForWorkspace = (workspaceId?: string | null) => {
+    const id = resolveLiveTranscriptReadWorkspaceId(workspaceId);
+    if (!id) return;
+    setLiveTranscriptReadWorkspaceIds((current) => {
+      if (current.has(id)) return current;
+      return new Set([...current, id]);
+    });
+  };
+  const isLiveTranscriptReadAllowedForWorkspace = (workspaceId?: string | null) => {
+    const id = resolveLiveTranscriptReadWorkspaceId(workspaceId);
+    return Boolean(id && liveTranscriptReadWorkspaceIds().has(id));
+  };
 
   // VSLO-171 F3Ú8: cross-workspace takeover confirmation dialog removed.
   // See comment in sendPrompt about replacement strategy.
@@ -930,7 +949,7 @@ export default function App() {
     shouldBrowseSessionFromDb: (sessionId) => {
       const transcriptScope = resolveSelectedSessionBrowseScope(sessionId);
       if (transcriptScope) return true;
-      return !isWorkspaceRuntimeReady(workspaceStore.activeWorkspaceId().trim());
+      return !isLiveTranscriptReadAllowedForWorkspace(workspaceStore.activeWorkspaceId().trim());
     },
     onAssistantResponseObserved: (sessionId) => {
       setUnreadSessionIds((current) =>
@@ -1003,10 +1022,10 @@ export default function App() {
         deletedPartsByMessageId: input.deletedPartsByMessageId,
       });
     },
-    // VSLO-86 — selectSession uses this to decide between the offline DB
-    // transcript (browse mode) and a live SDK call that would cold-spawn the
-    // engine. engineReady() flips to true only after sendPrompt has driven
-    // the engine through ensureEngineForWorkspace.
+    // VSLO-86 — selectSession uses this for active-workspace
+    // runtime readiness and live recovery decisions. Ordinary browse/live
+    // transcript policy is gated by shouldBrowseSessionFromDb and
+    // liveTranscriptReadWorkspaceIds.
     engineReady: () => engineReady(),
     isWorkspaceRuntimeReady,
     onSessionBusyChange: (sessionId, busy, sourceWorkspaceId) => {
@@ -1020,6 +1039,7 @@ export default function App() {
   const {
     sessions,
     sessionStatusById,
+    conversationRunDiagnosticsBySessionKey,
     selectedSession,
     messages,
     todos,
@@ -1480,6 +1500,7 @@ export default function App() {
     isWorkspaceClientStaleError,
     isWorkspaceRuntimeReady,
     listCommands: (scope) => listCommands(scope),
+    markLiveTranscriptReadAllowedForWorkspace,
     markPendingDraftConsumed,
     messageFromUnknownError: (error) => messageFromUnknownError(error),
     messages,
@@ -1535,8 +1556,12 @@ export default function App() {
       workspaces: () => workspaceStore.workspaces() as WorkspaceDisplay[],
     },
   });
-  const sendPrompt = sessionSendWorkflow.sendPrompt;
-  const abortSession = sessionSendWorkflow.abortSession;
+  const sessionFlowFacade = createSessionFlowFacade({
+    createSessionAndOpen,
+    sendWorkflow: sessionSendWorkflow,
+  });
+  const sendPrompt = sessionFlowFacade.sendPrompt;
+  const abortSession = sessionFlowFacade.abortSession;
   const sessionMutationWorkflow = createSessionMutationWorkflow({
     lastPromptSent,
     sendPrompt,
@@ -2098,9 +2123,6 @@ export default function App() {
     setError,
     setEngineReady,
     setSseConnected,
-    setBusy,
-    setBusyLabel,
-    setBusyStartedAt,
     safeStringify,
   });
   const {
@@ -2525,6 +2547,7 @@ export default function App() {
     applyPendingInitialSessionTitle,
     listConversationsFromVesloReadApi,
     shouldSyncConversationRead: shouldSyncConversationReadForWorkspace,
+    allowLiveWorkspaceSessionList: isLiveTranscriptReadAllowedForWorkspace,
     backfillConversationsToVesloReadApi,
     reportError,
     wsDebug,
@@ -3479,14 +3502,33 @@ export default function App() {
     skillReloadGuard.hotReloadApplied();
   });
 
+  const waitForActiveReloadBlockingSessionsToClear = async () => {
+    const deadline = Date.now() + 15_000;
+    while (activeReloadBlockingSessions().length > 0) {
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+    }
+    return true;
+  };
+
   const forceStopActiveSessionsAndReload = async () => {
     const activeSessions = activeReloadBlockingSessions();
+    const stopFailures: string[] = [];
     for (const session of activeSessions) {
       try {
         await abortSession(session.id, session);
-      } catch {
-        // ignore and continue stopping the rest before reload
+      } catch (error) {
+        stopFailures.push(error instanceof Error ? error.message : String(error));
       }
+    }
+    if (stopFailures.length > 0) {
+      setError(stopFailures[0] || "Could not stop active run before reload.");
+      return;
+    }
+    const cleared = await waitForActiveReloadBlockingSessionsToClear();
+    if (!cleared) {
+      setError("Could not stop active run before reload.");
+      return;
     }
     await reloadWorkspaceEngine();
   };
@@ -4143,6 +4185,7 @@ export default function App() {
     subagentDecorationsBySessionId,
     archivedSessionIds,
     activeSessionStatusById,
+    conversationRunDiagnosticsBySessionKey,
     busySessionByWorkspaceId,
     archiveSidebarSessionAndClearActive,
     reportError,

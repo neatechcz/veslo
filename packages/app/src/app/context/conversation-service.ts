@@ -3,6 +3,7 @@ import type { Session } from "@opencode-ai/sdk/v2/client";
 import {
   parseVesloWorkspaceIdFromUrl,
   VesloServerError,
+  type VesloConversationAbortInput,
   type VesloConversationAbortResult,
   type VesloConversationCreateResult,
   type VesloConversationRunInput,
@@ -62,7 +63,7 @@ export type ConversationServiceClient = {
   abortConversation: (
     workspaceId: string,
     conversationId: string,
-    input: { directory?: string | null; runId: string },
+    input: VesloConversationAbortInput,
   ) => Promise<VesloConversationAbortResult>;
   getConversationRunStatus: (
     workspaceId: string,
@@ -695,14 +696,24 @@ export function createConversationService<Client extends ConversationServiceClie
       },
     );
     deps.recordExternalSendTraceEntries(result.debugTrace);
-    deps.rememberConversationScope({
-      sessionId: result.opencodeSessionId || normalizedSessionId,
-      workspaceId,
-      workspaceRoot: deps.resolveWorkspaceRootForConversationScope(workspaceId, directory),
-      directory,
-      conversationId: result.conversationId,
-      opencodeSessionId: result.opencodeSessionId,
-    });
+    const resolvedWorkspaceRoot = deps.resolveWorkspaceRootForConversationScope(workspaceId, directory);
+    const rememberRunConversationScope = (sessionId: string) => {
+      const id = sessionId.trim();
+      if (!id) return;
+      deps.rememberConversationScope({
+        sessionId: id,
+        workspaceId,
+        workspaceRoot: resolvedWorkspaceRoot,
+        directory,
+        conversationId: result.conversationId,
+        opencodeSessionId: result.opencodeSessionId,
+      });
+    };
+    const opencodeSessionId = result.opencodeSessionId?.trim() || "";
+    rememberRunConversationScope(opencodeSessionId || normalizedSessionId);
+    if (normalizedSessionId && normalizedSessionId !== opencodeSessionId) {
+      rememberRunConversationScope(normalizedSessionId);
+    }
     const latestRunId = result.status === "submitted"
       ? result.runId
       : result.activeRunId?.trim() || result.reservedRunId;
@@ -768,9 +779,6 @@ export function createConversationService<Client extends ConversationServiceClie
       opencodeSessionId: scope.opencodeSessionId,
       uiSessionId: normalizedSessionId,
     });
-    if (!runId) {
-      throw new Error("Conversation run id is not available for abort.");
-    }
 
     const serverClient = await resolvePassiveConversationReadClient();
     if (!serverClient) return null;
@@ -782,11 +790,12 @@ export function createConversationService<Client extends ConversationServiceClie
       serverWorkspaceId,
       conversationId,
       opencodeSessionId: scope?.opencodeSessionId ?? null,
-      runId,
+      runId: runId || null,
+      mode: runId ? "run" : "active",
     });
     const result = await serverClient.abortConversation(serverWorkspaceId, conversationId, {
       directory,
-      runId,
+      ...(runId ? { runId } : { mode: "active" as const }),
     });
     deps.recordSendTrace("abortConversation:success", {
       sessionID: normalizedSessionId,

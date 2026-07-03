@@ -144,14 +144,14 @@ test("session creation reuses send preflight readiness without rerunning runtime
   const preflight: SendRuntimePreflightContext = {
     traceId: "trace-send",
     targetWorkspace,
-    runtimeHealthOk: true,
+    enginePrepared: true,
+    runtimeHealthOk: false,
     managedAiReady: true,
   };
   const harness = createHarness();
   const workflow = createSessionCreationWorkflow(harness.options);
 
   const result = await workflow.createSessionAndOpen("hello", {
-    managedAiRuntimeAlreadyPrepared: true,
     preflight,
   });
 

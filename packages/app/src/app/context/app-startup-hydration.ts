@@ -501,22 +501,30 @@ async function hydrateTauriStartup(
     }
   }
 
-  try {
-    deps.setUpdateEnv(await updaterEnvironment());
-  } catch {
-    // ignore
-  }
-
-  if (!deps.launchUpdateCheckTriggered()) {
-    deps.setLaunchUpdateCheckTriggered(true);
-    deps.checkForUpdates({ quiet: true }).catch((e) => deps.reportError(e, "updates.check"));
-  }
+  scheduleUpdaterStartup(deps);
 
   try {
     mountCleanupFns.push(await mountDesktopDeepLinkWorkflow(deps));
   } catch {
     // ignore
   }
+}
+
+function scheduleUpdaterStartup(deps: AppStartupHydrationDeps) {
+  void updaterEnvironment()
+    .then((env) => {
+      deps.setUpdateEnv(env);
+    })
+    .catch(() => {
+      // ignore
+    })
+    .then(() => {
+      if (deps.launchUpdateCheckTriggered()) {
+        return;
+      }
+      deps.setLaunchUpdateCheckTriggered(true);
+      return deps.checkForUpdates({ quiet: true }).catch((e) => deps.reportError(e, "updates.check"));
+    });
 }
 
 async function mountDesktopDeepLinkWorkflow(deps: AppStartupHydrationDeps): Promise<StartupCleanup> {

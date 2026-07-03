@@ -946,13 +946,6 @@ export function createConversationRunLifecycleController(
       reason: "conversation-abort",
     }) ?? [];
 
-    const upstream = await options.abortOpenCode({
-      runTrace,
-      workspace: input.workspace,
-      target: input.target,
-      runId: input.runId,
-    });
-
     const lifecycleOwner = input.workspace.workspaceType === "remote" ? null : options.lifecycleClient ?? null;
     if (lifecycleOwner) {
       await lifecycleOwner.markAbortRequested(input.workspace.id, input.runId).catch((error) => {
@@ -971,6 +964,46 @@ export function createConversationRunLifecycleController(
         abortRequested: true,
         delayMs: 0,
       });
+    }
+
+    let upstream: unknown;
+    try {
+      upstream = await options.abortOpenCode({
+        runTrace,
+        workspace: input.workspace,
+        target: input.target,
+        runId: input.runId,
+      });
+      if (lifecycleOwner) {
+        await lifecycleOwner.markAborted(
+          input.workspace.id,
+          input.runId,
+          "user abort reconciled after OpenCode abort",
+        ).catch((error) => {
+          recordTrace("server:conversation-run:lifecycle-mark-aborted-error", {
+            workspaceId: input.workspace.id,
+            conversationId: input.target.conversationId,
+            runId: input.runId,
+            reason: "abort-requested",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
+        scheduleQueueDrain(input.workspace.id, input.target.conversationId, 0);
+      }
+    } catch (error) {
+      if (!lifecycleOwner) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      recordTrace("server:conversation-run:opencode-abort-error", {
+        workspaceId: input.workspace.id,
+        conversationId: input.target.conversationId,
+        runId: input.runId,
+        message,
+      });
+      upstream = {
+        ok: false,
+        error: "opencode_abort_failed",
+        message,
+      };
     }
 
     return {

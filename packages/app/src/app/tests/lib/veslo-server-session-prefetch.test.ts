@@ -95,7 +95,7 @@ test("veslo server client exposes transcript prefetch methods", async () => {
       abortConversation: (
         workspaceId: string,
         conversationId: string,
-        input: { directory?: string | null; runId: string },
+        input: { directory?: string | null; runId?: string | null; mode?: "active" | "run" | null },
       ) => Promise<unknown>;
     }).abortConversation("ws 1", "conv/a", {
       directory: "/tmp/work space",
@@ -183,6 +183,56 @@ test("veslo server client exposes transcript prefetch methods", async () => {
     assert.equal(typeof transcript, "object");
     assert.equal(typeof appendTranscript, "object");
     assert.equal(typeof latestArtifacts, "object");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("veslo server client can request active conversation abort", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; body: string | null }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      body: typeof init?.body === "string" ? init.body : null,
+    });
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        workspaceId: "ws 1",
+        conversationId: "conv/a",
+        opencodeSessionId: "open-a",
+        runId: "run-active",
+        status: "submitted",
+        kind: "abort",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "http://127.0.0.1:8787",
+      token: "token-123",
+    });
+
+    await client.abortConversation("ws 1", "conv/a", {
+      directory: "/tmp/work space",
+      mode: "active",
+    });
+
+    assert.equal(calls[0]?.url, "http://127.0.0.1:8787/workspace/ws%201/conversations/conv%2Fa/abort");
+    assert.equal(calls[0]?.method, "POST");
+    assert.deepEqual(JSON.parse(calls[0]?.body ?? "{}"), {
+      directory: "/tmp/work space",
+      mode: "active",
+    });
   } finally {
     globalThis.fetch = previousFetch;
   }

@@ -388,6 +388,16 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
       }
     }
 
+    if (!list && workspaceId && !workspaceRuntimeReady) {
+      list = [];
+      usedConversationRead = true;
+      deps.sessionDebug("sessions:load:runtime-not-ready-skip-sdk", {
+        workspaceId,
+        queryDirectory: queryDirectory ?? null,
+        ms: Date.now() - start,
+      });
+    }
+
     if (!list) {
       if (!c) return;
       const candidates: Array<string | undefined> = queryDirectories.length > 0 ? queryDirectories : [undefined];

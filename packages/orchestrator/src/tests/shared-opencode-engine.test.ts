@@ -11,6 +11,7 @@ function fakeChild(pid: number): ChildProcess {
 function harness(options: {
   failSpawn?: boolean;
   failHealth?: boolean;
+  waitForHealthy?: () => Promise<void>;
   onEngineChange?: (event: string, engine: { pid: number } | null) => void;
 } = {}) {
   let spawns = 0;
@@ -33,6 +34,7 @@ function harness(options: {
         return { child, baseUrl: `http://127.0.0.1:${port}` };
       },
       waitForHealthy: async () => {
+        if (options.waitForHealthy) return await options.waitForHealthy();
         if (options.failHealth) throw new Error("health failed");
       },
       stopChild: async (child) => {
@@ -113,8 +115,43 @@ describe("SharedOpenCodeEngine", () => {
     expect(h.manager.snapshot()).toEqual({
       mode: "shared-unsandboxed",
       running: false,
+      pending: false,
+      engineState: "absent",
       runtimeDirectory: "/tmp/veslo/shared-opencode-runtime",
       configDirectory: "/tmp/veslo/shared-opencode-config",
+    });
+  });
+
+  test("snapshot reports starting while shared health check is pending", async () => {
+    let releaseHealthy!: () => void;
+    const healthy = new Promise<void>((resolve) => {
+      releaseHealthy = resolve;
+    });
+    const h = harness({ waitForHealthy: () => healthy });
+
+    const pending = h.manager.ensureStarted("prompt");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(h.manager.getRunning()).toBeNull();
+    expect(h.manager.snapshot()).toMatchObject({
+      mode: "shared-unsandboxed",
+      running: false,
+      pending: true,
+      engineState: "starting",
+      state: "spawning",
+      pid: 1001,
+      port: 61000,
+      baseUrl: "http://127.0.0.1:61000",
+    });
+
+    releaseHealthy();
+    await pending;
+
+    expect(h.manager.snapshot()).toMatchObject({
+      running: true,
+      pending: false,
+      engineState: "ready",
+      state: "ready",
     });
   });
 

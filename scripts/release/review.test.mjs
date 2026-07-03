@@ -85,3 +85,33 @@ test("release review verifies GlitchTip release monitoring wiring", () => {
   assert.match(reviewSource, /hasGlitchTipReleaseEnv\(releaseWindowsTauriJob,\s*\{\s*requireStrict:\s*true\s*\}\)/);
   assert.match(reviewSource, /hasGlitchTipReleaseEnv\(prereleaseTauriJob,\s*\{\s*requireStrict:\s*true\s*\}\)/);
 });
+
+test("release review verifies the document runtime package gate", () => {
+  const scriptPath = resolve(import.meta.dirname, "./review.mjs");
+  const output = execFileSync("node", [scriptPath, "--json"], {
+    cwd: resolve(import.meta.dirname, "../.."),
+    encoding: "utf8",
+  });
+
+  const report = JSON.parse(output);
+  const check = report.checks.find(
+    (entry) => entry.label === "Release workflow gates local document runtime packages",
+  );
+
+  assert.ok(check, "expected release review to report the document runtime package gate check");
+  assert.equal(check.ok, true);
+
+  const workflow = readFileSync(
+    resolve(import.meta.dirname, "../../.github/workflows/release-macos-aarch64.yml"),
+    "utf8",
+  );
+  assert.match(workflow, /Verify document runtime packages/);
+  assert.match(
+    workflow,
+    /node scripts\/release\/verify-document-runtime-packages\.mjs --profile local-docs-required --json/,
+  );
+
+  const reviewSource = readFileSync(scriptPath, "utf8");
+  assert.match(reviewSource, /extractWorkflowJob\(releaseWorkflow,\s*"verify-release"\)/);
+  assert.match(reviewSource, /hasDocumentRuntimePackageGate\(releaseVerifyJob\)/);
+});

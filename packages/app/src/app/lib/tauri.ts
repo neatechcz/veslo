@@ -8,6 +8,7 @@ import type { ComposerAttachment, ComposerDraft, ComposerPart, ModelRef, SkillIn
 export type EngineInfo = {
   running: boolean;
   runtime: "direct" | "veslo-orchestrator";
+  engineState?: RuntimeEngineState | null;
   childKind?: "direct" | "wsl" | null;
   baseUrl: string | null;
   projectDir: string | null;
@@ -19,6 +20,15 @@ export type EngineInfo = {
   lastStdout: string | null;
   lastStderr: string | null;
 };
+
+export type RuntimeEngineState =
+  | "absent"
+  | "starting"
+  | "process_ready"
+  | "workspace_api_waiting"
+  | "ready"
+  | "stopped"
+  | "failed";
 
 export type VesloServerLifecycleStatus =
   | "stopped"

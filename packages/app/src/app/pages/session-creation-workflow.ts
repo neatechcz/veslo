@@ -16,7 +16,6 @@ import type { PendingSidebarSessionMetadata, SidebarSessionItem, View } from "..
 
 export type SessionCreationWorkflowCreateOptions = {
   blockAppDuringCreate?: boolean;
-  managedAiRuntimeAlreadyPrepared?: boolean;
   pendingSession?: PendingSidebarSessionMetadata | null;
   sendTraceId?: string | null;
   clientMessageId?: string | null;
@@ -202,6 +201,7 @@ export function createSessionCreationWorkflow(
     createPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(targetWorkspace);
     let createRuntimeReady = true;
     const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision({
+      preflightEnginePrepared: Boolean(createPreflight.enginePrepared),
       preflightRuntimeHealthOk: Boolean(createPreflight.runtimeHealthOk),
     });
     if (runtimeHealthPreflightDecision.type === "skip") {
@@ -235,7 +235,6 @@ export function createSessionCreationWorkflow(
     createPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(targetWorkspace);
     const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision({
       preflightManagedAiReady: Boolean(createPreflight.managedAiReady),
-      runtimeAlreadyPrepared: Boolean(options.managedAiRuntimeAlreadyPrepared),
     });
     if (managedAiPreflightDecision.type === "skip") {
       deps.recordSendTrace("createSessionAndOpen:managed-ai-bootstrap-skip", {

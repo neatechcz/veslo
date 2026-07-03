@@ -4,6 +4,7 @@ import test from "node:test";
 import { createRoot } from "solid-js";
 
 import {
+  createAppRouteHashChangeListener,
   createAppRouteSync,
   type AppRouteNavigateOptions,
   type AppStartupRouteSyncDeps,
@@ -89,6 +90,31 @@ test("desktop hash sync consumes absolute Tauri routes and mirrors dashboard tab
     windowTarget.location.hash = "#not-a-route";
     routeSync.syncExternalHashRoute(windowTarget);
     assert.equal(navigations.length, 1, "non-path hashes should stay untouched");
+
+    dispose();
+  });
+});
+
+test("desktop hash sync listener ignores hashchange event arguments", () => {
+  createRoot((dispose) => {
+    const navigations: Navigation[] = [];
+    const routeSync = createAppRouteSync({
+      pathname: () => "/session",
+      navigate: (to, options) => navigations.push({ to, options }),
+      isTauriRuntime: () => true,
+      creatingSession: () => false,
+    });
+    const windowTarget = {
+      location: { hash: "#/dashboard/settings" },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    };
+    const onHashChange = createAppRouteHashChangeListener(() => windowTarget, routeSync.syncExternalHashRoute);
+
+    assert.doesNotThrow(() => {
+      onHashChange({ type: "hashchange" });
+    });
+    assert.deepEqual(navigations, [{ to: "/dashboard/settings", options: { replace: true } }]);
 
     dispose();
   });

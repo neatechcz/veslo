@@ -1,4 +1,5 @@
 import type {
+  VesloConversationAbortInput,
   VesloConversationAbortResult,
   VesloConversationCreateResult,
   VesloConversationImportInput,
@@ -174,7 +175,7 @@ export function createConversationsClient(context: ConversationsClientContext) {
         },
       ),
 
-    abort: (workspaceId: string, conversationId: string, input: { directory?: string | null; runId: string }) =>
+    abort: (workspaceId: string, conversationId: string, input: VesloConversationAbortInput) =>
       requestJson<VesloConversationAbortResult>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/abort`,
@@ -183,7 +184,7 @@ export function createConversationsClient(context: ConversationsClientContext) {
           hostToken,
           method: "POST",
           body: {
-            runId: input.runId,
+            ...(input.runId?.trim() ? { runId: input.runId.trim() } : { mode: input.mode ?? "active" }),
             ...(input.directory?.trim() ? { directory: input.directory.trim() } : {}),
           },
           timeoutMs: timeouts.conversationAbort,

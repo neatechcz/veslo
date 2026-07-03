@@ -175,13 +175,28 @@ test("conversation flow controller owns prompt send orchestration behind grouped
   );
   assert.match(
     sessionSource,
-    /return conversationFlow\.handleSendPrompt\(draft, \{\s*sendNow: options\.sendNow,\s*sendTraceId: options\.sendTraceId,\s*\}\);/s,
-    "SessionView should delegate prompt send branching to the controller",
+    /const sessionFlowFacade = createSessionViewFlowFacade\(\{ conversationFlow \}\);[\s\S]*return sessionFlowFacade\.handleSendPrompt\(draft, \{\s*sendNow: options\.sendNow,\s*sendTraceId: options\.sendTraceId,\s*\}\);/s,
+    "SessionView should delegate prompt send branching through the session flow facade",
   );
   assert.match(
     sessionSource,
-    /const drainNextQueuedDraft = conversationFlow\.drainNextQueuedDraft;/,
-    "SessionView should call through the controller instead of owning queue draining inline",
+    /sessionFlowFacade\.handleSelectedSessionChanged\(\{[\s\S]*sessionStatusById: props\.sessionStatusById,[\s\S]*\}\);/s,
+    "SessionView should delegate selected-session queue flow to the controller",
+  );
+  assert.match(
+    sessionSource,
+    /sessionFlowFacade\.handleActiveSessionStatusChanged\(status, previousStatus\);/,
+    "SessionView should delegate active status queue flow to the controller",
+  );
+  assert.match(
+    sessionSource,
+    /sessionFlowFacade\.handleSessionStatusMapChanged\(statuses, previousStatuses\);/,
+    "SessionView should delegate background status queue flow to the controller",
+  );
+  assert.doesNotMatch(
+    sessionSource,
+    /drainNextQueuedDraft\(/,
+    "SessionView should not directly drive queue draining",
   );
   assert.doesNotMatch(
     sessionSource,

@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
+  assertPilotScenarioSelectionIsolated,
   buildPilotCommand,
   defaultPilotScenarios,
   pilotReadinessProbeCommands,
@@ -11,9 +13,13 @@ import {
   scenarioSelectionNeedsSkillEnableInventoryFixture,
   scenarioSelectionNeedsGoogleMcpCatalogFixture,
   scenarioSelectionNeedsManagedAiGatewayFixture,
+  scenarioSelectionNeedsModelStreamRetryFixture,
+  scenarioSelectionDisablesDevAutostart,
+  scenarioSelectionNeedsRelaunchReconnectCheck,
   scenarioSelectionNeedsNoWorkspaceProfile,
   scenarioSelectionNeedsPortContentionFixture,
   scenarioSelectionNeedsSkillRegistryAuthFixture,
+  scenarioSelectionNeedsSkillRegistryWorkspaceEventFixture,
   scenarioSelectionNeedsAutomationSecondaryWorkspace,
 } from './pilot-runner.js';
 
@@ -146,6 +152,74 @@ test('global unpublished draft pilot scenario requests the managed AI fixture', 
     ),
     true,
   );
+});
+
+test('model stream retry pilot scenario requests managed AI and retry fixtures', () => {
+  const e2eRoot = '/repo/packages/e2e';
+  const scenarios = resolvePilotScenarioSelection({ scenario: ['model-stream-retry-no-progress'] }, e2eRoot);
+
+  assert.equal(scenarioSelectionNeedsManagedAiGatewayFixture(scenarios), true);
+  assert.equal(scenarioSelectionNeedsModelStreamRetryFixture(scenarios), true);
+  assert.equal(
+    scenarioSelectionNeedsModelStreamRetryFixture(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
+    false,
+  );
+});
+
+test('VSLO-270 stop reload reconnect pilot scenario requests managed AI and retry fixtures', () => {
+  const e2eRoot = '/repo/packages/e2e';
+  const scenarios = resolvePilotScenarioSelection({ scenario: ['vslo-270-stop-reload-reconnect'] }, e2eRoot);
+
+  assert.equal(scenarioSelectionNeedsManagedAiGatewayFixture(scenarios), true);
+  assert.equal(scenarioSelectionNeedsModelStreamRetryFixture(scenarios), true);
+  assert.equal(scenarioSelectionDisablesDevAutostart(scenarios), true);
+  assert.equal(scenarioSelectionNeedsSkillRegistryWorkspaceEventFixture(scenarios), true);
+  assert.equal(scenarioSelectionNeedsRelaunchReconnectCheck(scenarios), true);
+});
+
+test('runtime cold-start handoff pilot scenario requests the managed AI fixture', () => {
+  const e2eRoot = '/repo/packages/e2e';
+
+  assert.equal(
+    scenarioSelectionNeedsManagedAiGatewayFixture(
+      resolvePilotScenarioSelection({ scenario: ['runtime-cold-start-session-handoff'] }, e2eRoot),
+    ),
+    true,
+  );
+});
+
+test('runtime cold-start handoff pilot scenario disables debug dev autostart', () => {
+  const e2eRoot = '/repo/packages/e2e';
+
+  assert.equal(
+    scenarioSelectionDisablesDevAutostart(
+      resolvePilotScenarioSelection({ scenario: ['runtime-cold-start-session-handoff'] }, e2eRoot),
+    ),
+    true,
+  );
+  assert.equal(
+    scenarioSelectionDisablesDevAutostart(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
+    false,
+  );
+});
+
+test('model stream retry pilot scenario is focused-only because it enables a global probe fixture', () => {
+  const e2eRoot = '/repo/packages/e2e';
+  const isolated = resolvePilotScenarioSelection({ scenario: ['model-stream-retry-no-progress'] }, e2eRoot);
+  const mixed = resolvePilotScenarioSelection({ scenario: ['smoke', 'model-stream-retry-no-progress'] }, e2eRoot);
+
+  assert.doesNotThrow(() => assertPilotScenarioSelectionIsolated(isolated));
+  assert.throws(
+    () => assertPilotScenarioSelectionIsolated(mixed),
+    /model-stream-retry-no-progress must run as a focused pilot scenario/,
+  );
+});
+
+test('model stream retry pilot fixture widens provider-start watchdog for debug desktop cold starts', () => {
+  const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
+
+  assert.match(source, /VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS/);
+  assert.match(source, /process\.env\.VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS\s*\|\|=\s*'90000'/);
 });
 
 test('VSLO-235 local host scenario requests a no-workspace desktop profile', () => {

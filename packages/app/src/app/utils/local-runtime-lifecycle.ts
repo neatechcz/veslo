@@ -81,6 +81,10 @@ export function resolveEngineAuth(
   return username && password ? { username, password } : undefined;
 }
 
+function isEngineStarting(info: Pick<EngineInfo, "runtime" | "engineState">): boolean {
+  return info.runtime === "veslo-orchestrator" && info.engineState === "starting";
+}
+
 export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
   const buildStartOptions = (runtime: EngineInfo["runtime"]): LocalRuntimeStartOptions => ({
     preferSidecar: deps.engineSource() === "sidecar",
@@ -153,6 +157,23 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
           auth = syncEngineSnapshot(activeInfo);
           break;
         }
+      }
+    }
+
+    if (options.workspaceId && isEngineStarting(activeInfo)) {
+      const pollStart = Date.now();
+      const timeoutMs = 10_000;
+      const pollIntervalMs = 250;
+      while (Date.now() - pollStart < timeoutMs) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        try {
+          activeInfo = await deps.readEngineInfo(options.workspaceId, options.workspacePath);
+        } catch {
+          continue;
+        }
+        baseUrl = activeInfo.baseUrl?.trim() ?? baseUrl;
+        auth = syncEngineSnapshot(activeInfo);
+        if (!isEngineStarting(activeInfo) || activeInfo.running) break;
       }
     }
 

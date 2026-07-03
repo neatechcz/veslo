@@ -344,10 +344,10 @@ export function createSystemState(options: {
       return false;
     }
 
-    // if (anyActiveRuns()) {
-    //   setReloadError("Waiting for active tasks to complete before reloading.");
-    //   return;
-    // }
+    if (anyActiveRuns()) {
+      setReloadError(t("reload.toast_blocked_runs", currentLocale()));
+      return false;
+    }
 
     setReloadBusy(true);
     setReloadError(null);

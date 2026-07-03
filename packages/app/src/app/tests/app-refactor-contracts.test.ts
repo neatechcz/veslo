@@ -176,10 +176,36 @@ test("desktop hash routing owns dashboard aliases and cleans up its hashchange l
     /syncDashboardHashTab\(pathname\);[\s\S]*?if \(shouldNavigateFromHash\(deps\.pathname\(\), pathname\)\) \{[\s\S]*?deps\.navigate\(hashPath, \{ replace: true \}\);/s,
     "desktop hash routing should sync both dashboard tab state and router location",
   );
+  assert.doesNotMatch(
+    hashRouting,
+    /addEventListener\("hashchange", syncExternalHashRoute\)/,
+    "desktop hash routing should not pass DOM hashchange events into the manual sync helper",
+  );
   assertInOrder(hashRouting, "desktop hash routing listener lifecycle", [
-    "mountedWindowTarget?.addEventListener(\"hashchange\", syncExternalHashRoute);",
-    "mountedWindowTarget.removeEventListener(\"hashchange\", syncExternalHashRoute);",
+    "let onHashChange: AppRouteHashChangeListener | null = null;",
+    "onHashChange = createAppRouteHashChangeListener(() => mountedWindowTarget, syncExternalHashRoute);",
+    "mountedWindowTarget.addEventListener(\"hashchange\", onHashChange);",
+    "mountedWindowTarget.removeEventListener(\"hashchange\", onHashChange);",
+    "onHashChange = null;",
   ]);
+});
+
+test("session first-send entrypoint is exposed through the session flow facade", () => {
+  assert.match(
+    source,
+    /import \{ createSessionFlowFacade \} from "\.\/context\/session-flow-facade";/,
+    "app.tsx should import the context session flow facade",
+  );
+  assert.match(
+    source,
+    /const sessionFlowFacade = createSessionFlowFacade\(\{[\s\S]*createSessionAndOpen,[\s\S]*sendWorkflow: sessionSendWorkflow,[\s\S]*\}\);[\s\S]*const sendPrompt = sessionFlowFacade\.sendPrompt;[\s\S]*const abortSession = sessionFlowFacade\.abortSession;/s,
+    "App should expose send and abort through the session flow facade boundary",
+  );
+  assert.doesNotMatch(
+    source,
+    /const sendPrompt = sessionSendWorkflow\.sendPrompt;/,
+    "App should not expose sendPrompt directly from the page-level send workflow",
+  );
 });
 
 test("baseUrl cache is read and written only for the web runtime", () => {

@@ -56,9 +56,10 @@ export type SessionMutationCommand = {
 type SendPreflightContextLike = {
   traceId: string;
   targetWorkspace: unknown | null;
-  enginePrepared: boolean;
-  effectiveSandbox: unknown | null;
-  managedAiReady: boolean;
+  enginePrepared?: boolean;
+  effectiveSandbox?: unknown | null;
+  managedAiReady?: boolean;
+  runtimeHealthOk?: boolean;
 };
 
 type SessionMutationClient = Client;
@@ -86,7 +87,7 @@ export type SessionMutationWorkflowDeps = {
     payload?: Record<string, unknown>,
   ) => Promise<boolean>;
   resolveSendTargetWorkspaceScope: (sessionId?: string | null) => unknown | null;
-  prepareSendRuntimeForSend: (event: string, preflight: SendPreflightContextLike) => Promise<boolean>;
+  prepareSendRuntimeForSend: (event: string, preflight: SendPreflightContextLike) => Promise<{ ok: boolean }>;
   resolveRuntimeSandboxStateForTarget: (target: unknown | null) => unknown | null;
   routedClientForSendTarget: (target: unknown | null) => SessionMutationClient | null;
   engineReady: () => boolean;
@@ -320,10 +321,9 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
     }
     const sendTargetWorkspace = deps.resolveSendTargetWorkspaceScope(sessionID);
     replacePreflight.targetWorkspace = sendTargetWorkspace;
-    if (!(await deps.prepareSendRuntimeForSend("replaceUserMessage", replacePreflight))) return false;
-    replacePreflight.enginePrepared = true;
+    const replaceRuntimePreparation = await deps.prepareSendRuntimeForSend("replaceUserMessage", replacePreflight);
+    if (!replaceRuntimePreparation.ok) return false;
     replacePreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
-    replacePreflight.managedAiReady = true;
     const c = deps.routedClientForSendTarget(sendTargetWorkspace);
     if (!c) {
       deps.recordSendTrace("replaceUserMessage:blocked-no-client", {

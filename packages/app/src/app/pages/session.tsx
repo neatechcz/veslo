@@ -137,6 +137,7 @@ import type { ArtifactFamily } from "../components/session/artifact-family-model
 import type { SessionCapabilitiesSnapshot } from "../lib/session-capabilities";
 import { openSessionWithWorkspaceActivation, type SessionBrowseScope } from "./session-navigation";
 import type { WorkspaceActivationOptions } from "../context/workspace-types";
+import { createSessionViewFlowFacade } from "../context/session-flow-facade";
 import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "./session-layout-width";
 import { resolveSessionTitlebarContext } from "./session-titlebar-context";
 import {
@@ -176,8 +177,9 @@ import SessionCenter from "./session-center";
 import { createWorkspaceShareController } from "./workspace-share-controller";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
-import { readSessionStatus } from "../lib/scoped-session-status";
+import { readSessionStatus, scopedSessionStatusKey } from "../lib/scoped-session-status";
 import type { WorkspaceBusyMap } from "../context/workspace-debug";
+import type { SessionRunDiagnostic } from "../context/session-lifecycle-recovery";
 
 function recordSendTrace(event: string, payload?: Record<string, unknown>) {
   if (typeof window === "undefined") return;
@@ -418,6 +420,7 @@ export type SessionViewProps = {
   setSessionAgent: (sessionId: string, agent: string | null) => void;
   saveSession: (sessionId: string) => Promise<string>;
   sessionStatusById: Record<string, string>;
+  conversationRunDiagnosticsBySessionKey: Record<string, SessionRunDiagnostic>;
   busySessionByWorkspaceId?: WorkspaceBusyMap;
   historyUnavailable: SessionHistoryUnavailableView | null;
   historyUnavailableRetrying: boolean;
@@ -868,6 +871,17 @@ export default function SessionView(props: SessionViewProps) {
   };
   const statusForSessionId = (sessionId: string, statuses: Record<string, string>) =>
     readSessionStatus(statuses, workspaceIdForSessionQueue(sessionId), sessionId);
+  const runDiagnosticForQueueKey = (sessionKey: string) => {
+    const sessionId = sessionIdForQueueKey(sessionKey);
+    if (!sessionId) return null;
+    const workspaceId = workspaceIdForQueueKey(sessionKey);
+    const scoped = scopedSessionStatusKey(workspaceId, sessionId);
+    return (
+      (scoped ? props.conversationRunDiagnosticsBySessionKey[scoped] : null) ??
+      props.conversationRunDiagnosticsBySessionKey[sessionId] ??
+      null
+    );
+  };
   const [pendingQueueKeyAwaitingSessionIdByBaseKey, setPendingQueueKeyAwaitingSessionIdByBaseKey] =
     createSignal<Record<string, string>>({});
   const currentSessionQueueKey = createMemo(() => {
@@ -1662,8 +1676,72 @@ export default function SessionView(props: SessionViewProps) {
     );
   };
 
+  const activeRunDiagnostic = createMemo(() => runDiagnosticForQueueKey(currentSessionQueueKey()));
+  const formatNoProgressDuration = (seconds: number | null | undefined) => {
+    const value = Math.max(0, Math.floor(seconds ?? 0));
+    if (value >= 60) return `${Math.floor(value / 60)}m`;
+    return `${value}s`;
+  };
+  const activeNoProgressSeconds = createMemo(() => {
+    const diagnostic = activeRunDiagnostic();
+    if (!diagnostic) return null;
+    if (typeof diagnostic.noProgressSeconds === "number" && Number.isFinite(diagnostic.noProgressSeconds)) {
+      return Math.max(0, Math.floor(diagnostic.noProgressSeconds));
+    }
+    if (typeof diagnostic.retrySince === "number" && Number.isFinite(diagnostic.retrySince)) {
+      const tick = runTick() || Date.now();
+      return Math.max(0, Math.floor((tick - diagnostic.retrySince) / 1000));
+    }
+    return null;
+  });
+  const formatLastProgressTime = (timestamp: number | null | undefined) => {
+    if (typeof timestamp !== "number" || !Number.isFinite(timestamp) || timestamp <= 0) return null;
+    const date = new Date(timestamp);
+    if (!Number.isFinite(date.getTime())) return null;
+    return new Intl.DateTimeFormat(currentLocale(), {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date);
+  };
+  const runDiagnosticLabel = createMemo(() => {
+    const diagnostic = activeRunDiagnostic();
+    if (diagnostic?.waitReason !== "model_retry_no_output") return null;
+    const time = formatNoProgressDuration(activeNoProgressSeconds());
+    const lastProgress = formatLastProgressTime(diagnostic.lastUsefulProgressAt);
+    if (lastProgress) {
+      return diagnostic.status === "blocked"
+        ? formatTr("session.run_model_retry_blocked_with_progress", { time, lastProgress })
+        : formatTr("session.run_model_retry_no_output_with_progress", { time, lastProgress });
+    }
+    return diagnostic.status === "blocked"
+      ? formatTr("session.run_model_retry_blocked", { time })
+      : formatTr("session.run_model_retry_no_output", { time });
+  });
+  const hasAbortableBackendRun = createMemo(() => {
+    const diagnostic = activeRunDiagnostic();
+    if (diagnostic?.stale !== true) {
+      if (
+        diagnostic?.status === "submitted" ||
+        diagnostic?.status === "running" ||
+        diagnostic?.status === "blocked"
+      ) {
+        return true;
+      }
+    }
+    return (
+      props.sessionStatus === "submitted" ||
+      props.sessionStatus === "running" ||
+      props.sessionStatus === "retry" ||
+      props.sessionStatus === "blocked"
+    );
+  });
+
   const runPhase = createMemo(() => {
     if (props.error && (runStartedAt() !== null || runHasBegun())) return "error";
+    const diagnostic = activeRunDiagnostic();
+    if (diagnostic?.waitReason === "model_retry_no_output") {
+      return diagnostic.status === "blocked" ? "error" : "retrying";
+    }
     const status = props.sessionStatus;
     const started = runStartedAt() !== null;
     if (status === "idle") {
@@ -1899,24 +1977,16 @@ export default function SessionView(props: SessionViewProps) {
         if (!pendingKey && previousSessionKey) {
           preserveRunStateOnSessionSwitch(previousSessionKey);
         }
-        conversationFlow.handleSessionSwitchEditState(previousSessionId);
-
-        if (!sessionId) return;
-        const materializedPendingSubmit =
-          pendingKey ? pendingSubmittedDraftBySessionKey()[pendingKey]?.state === "sending" : false;
-        if (pendingKey && !isPendingSessionInstanceId(sessionId)) {
-          remapPendingQueueToSession(pendingKey, sessionId);
-          clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingBaseKey, pendingKey);
+        const flowResult = sessionFlowFacade.handleSelectedSessionChanged({
+          sessionId,
+          previousSessionId,
+          pendingBaseKey,
+          pendingKey,
+          sessionStatusById: props.sessionStatusById,
+        });
+        if (flowResult.shouldMarkInitialAnchor && flowResult.selectedSessionId) {
+          transcriptViewport.markSelectedSessionForInitialAnchor(flowResult.selectedSessionId);
         }
-        const sessionKey = sessionQueueKeyForSessionId(sessionId);
-        if (
-          !materializedPendingSubmit &&
-          statusForSessionId(sessionId, props.sessionStatusById) === "idle" &&
-          !queuePausedForSessionKey(sessionKey)
-        ) {
-          void drainNextQueuedDraft("queue-drain", sessionKey);
-        }
-        transcriptViewport.markSelectedSessionForInitialAnchor(sessionId);
       },
     ),
   );
@@ -1994,7 +2064,8 @@ export default function SessionView(props: SessionViewProps) {
 
   createEffect(() => {
     const status = props.sessionStatus;
-    if (status === "running" || status === "retry") {
+    const diagnostic = activeRunDiagnostic();
+    if (status === "running" || status === "retry" || diagnostic?.waitReason === "model_retry_no_output") {
       const sessionKey = currentSessionQueueKey();
       startRun(sessionKey);
       setRunHasBegunForSessionKey(sessionKey, true);
@@ -2005,10 +2076,7 @@ export default function SessionView(props: SessionViewProps) {
     on(
       () => props.sessionStatus,
       (status, previousStatus) => {
-        if (previousStatus === undefined || previousStatus === "idle" || status !== "idle") return;
-        const sessionKey = currentSessionQueueKey();
-        if (queuePausedForSessionKey(sessionKey)) return;
-        void drainNextQueuedDraft("queue-drain", sessionKey);
+        sessionFlowFacade.handleActiveSessionStatusChanged(status, previousStatus);
       },
     ),
   );
@@ -2017,15 +2085,8 @@ export default function SessionView(props: SessionViewProps) {
     on(
       () => props.sessionStatusById,
       (statuses, previousStatuses) => {
+        sessionFlowFacade.handleSessionStatusMapChanged(statuses, previousStatuses);
         if (!previousStatuses) return;
-        for (const sessionKey of Object.keys(queuedDraftsBySessionKey())) {
-          const sessionId = sessionIdForQueueKey(sessionKey);
-          if (!sessionId) continue;
-          if (statusForQueueKey(sessionKey, previousStatuses) === "idle") continue;
-          if (statusForQueueKey(sessionKey, statuses) !== "idle") continue;
-          if (queuePausedForSessionKey(sessionKey)) continue;
-          void drainNextQueuedDraft("queue-drain", sessionKey);
-        }
         for (const [sessionKey, runState] of Object.entries(untrack(runStateBySessionKey))) {
           if (!runState.startedAt && !runState.hasBegun) continue;
           const sessionId = sessionIdForQueueKey(sessionKey);
@@ -2206,11 +2267,11 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const cancelRun = async () => {
-    await conversationFlow.cancelRun();
+    await sessionFlowFacade.cancelRun();
   };
 
   const retryRun = async () => {
-    await conversationFlow.retryRun();
+    await sessionFlowFacade.retryRun();
   };
 
   const focusSearchInput = () => {
@@ -2584,6 +2645,7 @@ export default function SessionView(props: SessionViewProps) {
       optimisticSubmittedDraft,
       setOptimisticSubmittedDraft,
       updatePendingSubmittedDrafts: setPendingSubmittedDraftBySessionKey,
+      pendingSubmittedDrafts: pendingSubmittedDraftBySessionKey,
     },
     queue: {
       appendDraftToCurrentQueue,
@@ -2614,6 +2676,7 @@ export default function SessionView(props: SessionViewProps) {
       lastPromptSent: () => props.lastPromptSent,
       retryLastPrompt: props.retryLastPrompt,
       runPhase,
+      hasAbortableBackendRun,
       setAbortBusy,
       setEscapeStopConfirmationPending,
     },
@@ -2621,6 +2684,10 @@ export default function SessionView(props: SessionViewProps) {
       resetRunState,
       showRunIndicator,
       startRun,
+    },
+    sessionStatus: {
+      statusForQueueKey,
+      statusForSessionId,
     },
     viewport: {
       scheduleScrollToLatest,
@@ -2644,22 +2711,22 @@ export default function SessionView(props: SessionViewProps) {
       batch,
     },
   });
-  const drainNextQueuedDraft = conversationFlow.drainNextQueuedDraft;
+  const sessionFlowFacade = createSessionViewFlowFacade({ conversationFlow });
 
   const handleEditQueuedDraft = (id: string) => {
-    conversationFlow.handleEditQueuedDraft(id);
+    sessionFlowFacade.handleEditQueuedDraft(id);
   };
 
   const handleCancelQueuedDraft = (id: string) => {
-    conversationFlow.handleCancelQueuedDraft(id);
+    sessionFlowFacade.handleCancelQueuedDraft(id);
   };
 
   const handleMoveQueuedDraft = (id: string, targetIndex: number) => {
-    conversationFlow.handleMoveQueuedDraft(id, targetIndex);
+    sessionFlowFacade.handleMoveQueuedDraft(id, targetIndex);
   };
 
   const handleEditUserMessage = (editable: EditableUserMessageDraft) => {
-    conversationFlow.handleEditUserMessage(editable);
+    sessionFlowFacade.handleEditUserMessage(editable);
   };
 
   const handleSendPrompt = async (draft: ComposerDraft, options: ComposerSendOptions = {}) => {
@@ -2674,7 +2741,7 @@ export default function SessionView(props: SessionViewProps) {
     if (showComposerEntryState() || showFooterComposerTargetContext()) {
       dismissComposerEntryForSessionKey();
     }
-    return conversationFlow.handleSendPrompt(draft, {
+    return sessionFlowFacade.handleSendPrompt(draft, {
       sendNow: options.sendNow,
       sendTraceId: options.sendTraceId,
     });
@@ -3239,7 +3306,11 @@ export default function SessionView(props: SessionViewProps) {
         )}
         reloadBanner={(
         <Show when={props.showSkillReloadBanner}>
-          <div class="border-b border-amber-6/50 bg-amber-2/70 px-6 py-3">
+          <div
+            class="border-b border-amber-6/50 bg-amber-2/70 px-6 py-3"
+            data-testid="session-reload-banner"
+            data-reload-blocked={props.reloadBannerBlocked ? "true" : "false"}
+          >
             <div class={`mx-auto flex w-full ${searchBannerWidthClass()} flex-col gap-3 rounded-2xl border border-amber-6/60 bg-amber-1/80 px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between`}>
               <div class="min-w-0">
                 <div class="text-sm font-medium text-amber-11">{props.reloadBannerTitle}</div>
@@ -3260,6 +3331,7 @@ export default function SessionView(props: SessionViewProps) {
               <div class="flex items-center gap-2 sm:shrink-0">
                 <button
                   type="button"
+                  data-testid="session-reload-action"
                   class="rounded-xl border border-amber-7 bg-amber-4 px-3 py-2 text-xs font-medium text-amber-12 transition-colors hover:bg-amber-5 disabled:cursor-not-allowed disabled:opacity-60"
                   disabled={!props.canReloadWorkspace || props.reloadBusy}
                   onClick={() =>
@@ -3491,7 +3563,7 @@ export default function SessionView(props: SessionViewProps) {
                           runPhase() === "error" ? "bg-red-9" : "bg-gray-8 animate-pulse"
                         }`}
                       />
-                      <span class="truncate">{(runPhase() === "error" && props.error) ? props.error : (thinkingStatus() || runLabel())}</span>
+                      <span class="truncate">{(runPhase() === "error" && props.error) ? props.error : (runDiagnosticLabel() || thinkingStatus() || runLabel())}</span>
                       <Show when={props.developerMode}>
                         <span class="text-[10px] text-gray-8 ml-auto shrink-0">{runElapsedLabel()}</span>
                       </Show>

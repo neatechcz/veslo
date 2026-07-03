@@ -2,13 +2,19 @@ import type { ChildProcess } from "node:child_process";
 
 import type {
   EngineProcess,
+  EngineState,
   EngineSpawnContext,
   EngineSpawnResult,
 } from "./engine-pool.js";
+import type { RuntimeEngineState } from "./runtime-engine-state.js";
+import { runtimeEngineStateFromEngineState } from "./runtime-engine-state.js";
 
 export type SharedOpenCodeEngineSnapshot = {
   mode: "shared-unsandboxed";
   running: boolean;
+  pending: boolean;
+  engineState: RuntimeEngineState;
+  state?: EngineState;
   baseUrl?: string;
   pid?: number;
   port?: number;
@@ -46,7 +52,9 @@ export class SharedOpenCodeEngine {
   private readonly deps: Required<Pick<SharedOpenCodeEngineDeps, "now">> &
     Omit<SharedOpenCodeEngineDeps, "now">;
   private engine: EngineProcess | null = null;
+  private startingEngine: EngineProcess | null = null;
   private pending: Promise<EngineProcess> | null = null;
+  private lastEngineState: RuntimeEngineState = "absent";
 
   constructor(input: SharedOpenCodeEngineInput) {
     this.runtimeDirectory = input.runtimeDirectory;
@@ -65,6 +73,7 @@ export class SharedOpenCodeEngine {
     if (!this.deps.isProcessAlive(engine.pid)) {
       this.engine = null;
       engine.state = "crashed";
+      this.lastEngineState = runtimeEngineStateFromEngineState(engine.state);
       this.emit("crashed", engine);
       return null;
     }
@@ -91,23 +100,25 @@ export class SharedOpenCodeEngine {
 
   snapshot(): SharedOpenCodeEngineSnapshot {
     const running = this.getRunning();
-    if (!running) {
-      return {
-        mode: "shared-unsandboxed",
-        running: false,
-        runtimeDirectory: this.runtimeDirectory,
-        configDirectory: this.configDirectory,
-      };
-    }
+    const pending = this.pending !== null;
+    const engine = running ?? this.startingEngine;
+    const engineState = running
+      ? runtimeEngineStateFromEngineState(running.state)
+      : pending
+        ? "starting"
+        : this.lastEngineState;
 
     return {
       mode: "shared-unsandboxed",
-      running: true,
-      baseUrl: running.baseUrl,
-      pid: running.pid,
-      port: running.port,
-      childKind: running.childKind,
-      startedAt: new Date(running.spawnedAt).toISOString(),
+      running: Boolean(running),
+      pending,
+      engineState,
+      ...(engine ? { state: engine.state } : {}),
+      ...(engine ? { baseUrl: engine.baseUrl } : {}),
+      ...(engine ? { pid: engine.pid } : {}),
+      ...(engine ? { port: engine.port } : {}),
+      ...(engine?.childKind ? { childKind: engine.childKind } : {}),
+      ...(engine ? { startedAt: new Date(engine.spawnedAt).toISOString() } : {}),
       runtimeDirectory: this.runtimeDirectory,
       configDirectory: this.configDirectory,
     };
@@ -125,8 +136,10 @@ export class SharedOpenCodeEngine {
 
     const engine = this.engine;
     this.engine = null;
+    this.startingEngine = null;
     if (!engine) return;
     engine.state = "suspended";
+    this.lastEngineState = runtimeEngineStateFromEngineState(engine.state);
     await this.deps.stopChild(engine.child);
     this.emit("suspended", engine);
   }
@@ -180,12 +193,16 @@ export class SharedOpenCodeEngine {
         restartCount: 0,
         lastSuccessfulRunStartedAt: 0,
       };
+      this.startingEngine = engine;
+      this.lastEngineState = runtimeEngineStateFromEngineState(engine.state);
 
       await this.deps.waitForHealthy(engine.baseUrl);
       engine.state = "ready";
       engine.lastSuccessfulRunStartedAt = this.deps.now();
       engine.lastActivityAt = engine.lastSuccessfulRunStartedAt;
       this.engine = engine;
+      this.startingEngine = null;
+      this.lastEngineState = runtimeEngineStateFromEngineState(engine.state);
       this.deps.log?.("shared opencode spawn ready", {
         workspaceId: this.workspaceId,
         pid,
@@ -205,6 +222,8 @@ export class SharedOpenCodeEngine {
         }
       }
       this.engine = null;
+      this.startingEngine = null;
+      this.lastEngineState = "failed";
       throw error;
     }
   }

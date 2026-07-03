@@ -84,13 +84,19 @@ function createMemoryRunStore(): RunStore {
   };
 }
 
-function createRegistry(probe: (record: RunRecord) => Promise<RunProbeResult> | RunProbeResult) {
+function createRegistry(
+  probe: (record: RunRecord) => Promise<RunProbeResult> | RunProbeResult,
+  options: { modelRetryNoProgressHardMs?: number } = {},
+) {
   const store = createMemoryRunStore();
   return {
     store,
     registry: createRunRegistry({
       store,
       probeRunActivity: async (record) => probe(record),
+      ...(options.modelRetryNoProgressHardMs !== undefined
+        ? { modelRetryNoProgressHardMs: options.modelRetryNoProgressHardMs }
+        : {}),
       now: (() => {
         let current = MODEL_RETRY_NO_PROGRESS_HARD_MS + 10_000;
         return () => current += 100;
@@ -359,6 +365,27 @@ describe("run registry", () => {
     await expect(registry.register({ ...input, runId: "run-b" })).rejects.toThrow(RunAlreadyActiveError);
   });
 
+  test("model retry no-output hard threshold can be shortened by registry configuration", async () => {
+    const { registry, store } = createRegistry(() => ({
+      active: true,
+      activityKind: "model_retry",
+      waitReason: "model_retry_no_output",
+      progressSignature: "assistant:empty",
+    }), { modelRetryNoProgressHardMs: 1_000 });
+    await registry.register(input);
+    const first = await registry.active("ws-a", "conv-a");
+    const retrySince = first?.record.retrySince;
+    if (typeof retrySince !== "number") throw new Error("retrySince was not recorded");
+    store.update("ws-a", "run-a", {
+      retrySince: retrySince - 1_001,
+    });
+
+    const blocked = await registry.active("ws-a", "conv-a");
+
+    expect(blocked?.record.status).toBe("blocked");
+    expect(blocked?.record.error).toBe(MODEL_RETRY_NO_PROGRESS_TIMEOUT);
+  });
+
   test("useful assistant progress clears retry diagnostics", async () => {
     let probe: RunProbeResult = {
       active: true,
@@ -383,6 +410,41 @@ describe("run registry", () => {
     expect(progressed?.record.activityKind).toBe("assistant_output");
     expect(progressed?.record.retrySince).toBeNull();
     expect(progressed?.record.lastProgressSignature).toBe("assistant:text:42");
+    expect(progressed?.noProgressSeconds).toBeNull();
+  });
+
+  test("useful assistant progress clears blocked model retry timeout error", async () => {
+    let probe: RunProbeResult = {
+      active: true,
+      activityKind: "model_retry",
+      waitReason: "model_retry_no_output",
+      progressSignature: "assistant:empty",
+    };
+    const { registry, store } = createRegistry(() => probe);
+    await registry.register(input);
+    const first = await registry.active("ws-a", "conv-a");
+    const retrySince = first?.record.retrySince;
+    if (typeof retrySince !== "number") throw new Error("retrySince was not recorded");
+    store.update("ws-a", "run-a", {
+      retrySince: retrySince - MODEL_RETRY_NO_PROGRESS_HARD_MS - 1_000,
+    });
+    const blocked = await registry.active("ws-a", "conv-a");
+    expect(blocked?.record.status).toBe("blocked");
+    expect(blocked?.record.error).toBe(MODEL_RETRY_NO_PROGRESS_TIMEOUT);
+
+    probe = {
+      active: true,
+      activityKind: "assistant_output",
+      waitReason: "assistant_message_open",
+      progressSignature: "assistant:text:after-blocked",
+    };
+    const progressed = await registry.active("ws-a", "conv-a");
+
+    expect(progressed?.record.status).toBe("running");
+    expect(progressed?.record.error).toBeNull();
+    expect(progressed?.record.activityKind).toBe("assistant_output");
+    expect(progressed?.record.retrySince).toBeNull();
+    expect(progressed?.record.lastProgressSignature).toBe("assistant:text:after-blocked");
     expect(progressed?.noProgressSeconds).toBeNull();
   });
 });

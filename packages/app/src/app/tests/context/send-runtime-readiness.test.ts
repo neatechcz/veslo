@@ -31,8 +31,6 @@ function createClient(id: string, health: () => Promise<unknown> = async () => (
 function createHarness(overrides: HarnessOverrides = {}) {
   const events: Array<{ event: string; payload?: Record<string, unknown> }> = [];
   const errors: string[] = [];
-  const busyValues: boolean[] = [];
-  const busyLabels: Array<string | null> = [];
   const engineReadyValues: boolean[] = [];
   const sseConnectedValues: boolean[] = [];
   const ensureEngineCalls: Array<string | undefined> = [];
@@ -103,9 +101,6 @@ function createHarness(overrides: HarnessOverrides = {}) {
     setError: (message) => errors.push(message),
     setEngineReady: (value) => engineReadyValues.push(value),
     setSseConnected: (value) => sseConnectedValues.push(value),
-    setBusy: (value) => busyValues.push(value),
-    setBusyLabel: (value) => busyLabels.push(value),
-    setBusyStartedAt: () => undefined,
     safeStringify: (value) => JSON.stringify(value),
     ...overrides,
   };
@@ -116,8 +111,6 @@ function createHarness(overrides: HarnessOverrides = {}) {
     clients,
     events,
     errors,
-    busyValues,
-    busyLabels,
     engineReadyValues,
     sseConnectedValues,
     ensureEngineCalls,
@@ -275,7 +268,18 @@ test("send runtime readiness owner prepares runtime before managed AI bootstrap"
     runtimeHealthOk: false,
   };
 
-  assert.equal(await readiness.prepareSendRuntimeForSend("sendPrompt", preflight), true);
+  assert.deepEqual(
+    await readiness.prepareSendRuntimeForSend("sendPrompt", preflight),
+    {
+      ok: true,
+      runtimeReady: true,
+      managedAiReady: true,
+      workspaceId: "target",
+      activeWorkspace: false,
+      recoveryAttempted: false,
+      reason: "runtime-health-ok",
+    },
+  );
   assert.equal(preflight.runtimeHealthOk, true);
   assert.equal(preflight.enginePrepared, true);
   assert.equal(preflight.managedAiReady, true);
@@ -311,7 +315,18 @@ test("send runtime readiness owner blocks managed AI bootstrap when runtime reco
     runtimeHealthOk: false,
   };
 
-  assert.equal(await readiness.prepareSendRuntimeForSend("sendPrompt", preflight), false);
+  assert.deepEqual(
+    await readiness.prepareSendRuntimeForSend("sendPrompt", preflight),
+    {
+      ok: false,
+      runtimeReady: false,
+      managedAiReady: false,
+      workspaceId: "target",
+      activeWorkspace: false,
+      recoveryAttempted: true,
+      reason: "runtime-recovery-not-started",
+    },
+  );
   assert.deepEqual(ensureEngineCalls, ["target"]);
   assert.deepEqual(managedConfigChecks, []);
   assert.equal(preflight.enginePrepared, undefined);
@@ -339,7 +354,18 @@ test("send runtime readiness owner blocks managed AI when runtime routing config
     runtimeHealthOk: false,
   };
 
-  assert.equal(await readiness.prepareSendRuntimeForSend("sendPrompt", preflight), false);
+  assert.deepEqual(
+    await readiness.prepareSendRuntimeForSend("sendPrompt", preflight),
+    {
+      ok: false,
+      runtimeReady: true,
+      managedAiReady: false,
+      workspaceId: "target",
+      activeWorkspace: false,
+      recoveryAttempted: false,
+      reason: "managed-ai-bootstrap-blocked",
+    },
+  );
   assert.deepEqual(healthCalls, ["target"]);
   assert.equal(preflight.runtimeHealthOk, true);
   assert.equal(preflight.enginePrepared, true);
@@ -403,7 +429,7 @@ test("local runtime readiness skips duplicate health probes when preflight is al
 });
 
 test("local runtime readiness restarts the target workspace engine for dead endpoints", async () => {
-  const { readiness, clients, events, ensureEngineCalls, routeReleaseCalls, engineReadyValues, sseConnectedValues, busyValues, busyLabels } =
+  const { readiness, clients, events, ensureEngineCalls, routeReleaseCalls, engineReadyValues, sseConnectedValues } =
     createHarness({
       ensureEngineForWorkspace: async (workspaceId?: string) => {
         ensureEngineCalls.push(workspaceId);
@@ -430,8 +456,6 @@ test("local runtime readiness restarts the target workspace engine for dead endp
   assert.equal(preflight.runtimeHealthOk, true);
   assert.deepEqual(engineReadyValues, []);
   assert.deepEqual(sseConnectedValues, []);
-  assert.deepEqual(busyValues, []);
-  assert.deepEqual(busyLabels, []);
   assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-start"));
   assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-ok"));
 });
@@ -597,8 +621,8 @@ test("local runtime readiness blocks when workspace-not-found recovery cannot re
   assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-not-started"));
 });
 
-test("local runtime readiness reflects recovery in active UI only for the active workspace", async () => {
-  const { readiness, clients, ensureEngineCalls, engineReadyValues, sseConnectedValues, busyValues, busyLabels } =
+test("local runtime readiness reflects route state only for the active workspace", async () => {
+  const { readiness, clients, ensureEngineCalls, engineReadyValues, sseConnectedValues } =
     createHarness({
       ensureEngineForWorkspace: async (workspaceId?: string) => {
         ensureEngineCalls.push(workspaceId);
@@ -623,12 +647,10 @@ test("local runtime readiness reflects recovery in active UI only for the active
   assert.equal(preflight.runtimeHealthOk, true);
   assert.deepEqual(engineReadyValues, [false]);
   assert.deepEqual(sseConnectedValues, [false]);
-  assert.deepEqual(busyValues, [true, false]);
-  assert.deepEqual(busyLabels, ["status.connecting", null]);
 });
 
-test("local runtime readiness clears active busy state after successful recovery", async () => {
-  const { readiness, clients, ensureEngineCalls, busyValues, busyLabels } =
+test("local runtime readiness returns a typed preparation result after successful recovery", async () => {
+  const { readiness, clients, ensureEngineCalls } =
     createHarness({
       ensureEngineForWorkspace: async (workspaceId?: string) => {
         ensureEngineCalls.push(workspaceId);
@@ -643,17 +665,23 @@ test("local runtime readiness clears active busy state after successful recovery
     }),
   );
 
-  assert.equal(
-    await readiness.ensureLocalRuntimeReachableForSend("replaceUserMessage", {
+  assert.deepEqual(
+    await readiness.ensureLocalRuntimeReachableForSendResult("replaceUserMessage", {
       traceId: "trace-active-recovery-cleanup",
       runtimeHealthOk: false,
     }),
-    true,
+    {
+      ok: true,
+      runtimeReady: true,
+      managedAiReady: false,
+      workspaceId: "active",
+      activeWorkspace: true,
+      recoveryAttempted: true,
+      reason: "runtime-recovery-ok",
+    },
   );
 
   assert.deepEqual(ensureEngineCalls, [undefined]);
-  assert.deepEqual(busyValues, [true, false]);
-  assert.deepEqual(busyLabels, ["status.connecting", null]);
 });
 
 test("local runtime readiness classifies circular non-Error endpoint failures through the injected serializer", async () => {
@@ -737,6 +765,7 @@ test("local runtime health error helpers classify dead endpoints and probe timeo
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("failed to fetch")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("ECONNREFUSED")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"engine_not_running"}')), true);
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"engine_starting","engineState":"starting"}')), true);
   assert.equal(
     shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"engine_not_running","workspaceId":"target"}')),
     true,

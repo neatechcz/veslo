@@ -8,6 +8,13 @@ const sendWorkflowSource = readFileSync(
 );
 const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
 
+function ensureLocalRuntimeReachableForSendResultSource(): string {
+  const start = readinessSource.indexOf("async function ensureLocalRuntimeReachableForSendResult(");
+  const end = readinessSource.indexOf("async function ensureLocalRuntimeReachableForSend(", start);
+  assert.ok(start >= 0 && end > start, "ensureLocalRuntimeReachableForSendResult source should be present");
+  return readinessSource.slice(start, end);
+}
+
 test("sendPrompt recovers a stale local runtime before reading the client", () => {
   const start = sendWorkflowSource.indexOf("async function sendPrompt(");
   const end = sendWorkflowSource.indexOf("async function abortSession", start);
@@ -25,11 +32,7 @@ test("sendPrompt recovers a stale local runtime before reading the client", () =
 });
 
 test("local runtime send health uses the routed active workspace client", () => {
-  const start = readinessSource.indexOf("async function ensureLocalRuntimeReachableForSend(");
-  const end = readinessSource.indexOf("async function connectLocalRuntimeClientFromEngineInfo", start);
-  assert.ok(start >= 0 && end > start, "ensureLocalRuntimeReachableForSend source should be present");
-
-  const recoverySource = readinessSource.slice(start, end);
+  const recoverySource = ensureLocalRuntimeReachableForSendResultSource();
   assert.match(
     recoverySource,
     /const currentClient = targetWorkspaceId \? deps\.routedClient\(targetWorkspaceId\) : deps\.routedClient\(\);/,
@@ -76,10 +79,7 @@ test("local runtime recovery restarts for dead endpoints and health timeouts", (
     /export const localRuntimeHealthTimeoutMessage = "Timed out waiting for local runtime health";[\s\S]*export function isLocalRuntimeHealthTimeoutError\([\s\S]*safeStringify\?: \(value: unknown\) => string,[\s\S]*\): boolean \{[\s\S]*localRuntimeHealthTimeoutMessage/s,
     "health timeouts should stay separately detectable so stale daemon probes can trigger runtime recovery",
   );
-  const start = readinessSource.indexOf("async function ensureLocalRuntimeReachableForSend(");
-  const end = readinessSource.indexOf("async function connectLocalRuntimeClientFromEngineInfo", start);
-  assert.ok(start >= 0 && end > start, "ensureLocalRuntimeReachableForSend source should be present");
-  const recoverySource = readinessSource.slice(start, end);
+  const recoverySource = ensureLocalRuntimeReachableForSendResultSource();
   assert.match(
     recoverySource,
     /const timedOut = isLocalRuntimeHealthTimeoutError\(error, deps\.safeStringify\);[\s\S]*const classifiedRecoverable = shouldRecoverLocalRuntimeFromHealthError\(error, deps\.safeStringify\);[\s\S]*recoverByDefault: !timedOut && !classifiedRecoverable,[\s\S]*willRecover: true,[\s\S]*deps\.recordSendTrace\(`\$\{reason\}:runtime-recovery-start`/s,
@@ -98,10 +98,7 @@ test("local runtime recovery restarts for dead endpoints and health timeouts", (
 });
 
 test("send runtime recovery uses the snapshotted target workspace", () => {
-  const start = readinessSource.indexOf("async function ensureLocalRuntimeReachableForSend(");
-  const end = readinessSource.indexOf("async function connectLocalRuntimeClientFromEngineInfo", start);
-  assert.ok(start >= 0 && end > start, "ensureLocalRuntimeReachableForSend source should be present");
-  const recoverySource = readinessSource.slice(start, end);
+  const recoverySource = ensureLocalRuntimeReachableForSendResultSource();
 
   assert.match(
     recoverySource,

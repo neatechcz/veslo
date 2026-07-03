@@ -259,6 +259,9 @@ describe("run activity probe HTTP behavior", () => {
   });
 
   test("retry session status fetches messages and reports no-output model retry", async () => {
+    // Incident fixture handles:
+    // ws-d8520858f77f / conv-a193a04c3c367d41c275 /
+    // f164e323-2196-4c37-98f8-bef1056c451b / ses_0d8eca46fffexqldAJbOl6gTLf.
     const urls: string[] = [];
     const probe = createRunActivityProbe({
       getEngine: () => ({ baseUrl: "http://engine" }),

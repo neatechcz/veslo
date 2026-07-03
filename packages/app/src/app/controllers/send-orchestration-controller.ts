@@ -10,17 +10,20 @@ export type CreateSessionPreflightDecision =
 
 export function resolveCreateSessionManagedAiPreflightDecision(input: {
   preflightManagedAiReady: boolean;
-  runtimeAlreadyPrepared: boolean;
 }): CreateSessionPreflightDecision {
-  if (input.preflightManagedAiReady || input.runtimeAlreadyPrepared) {
+  if (input.preflightManagedAiReady) {
     return { type: "skip", reason: "send-preflight-already-ready" };
   }
   return { type: "run" };
 }
 
 export function resolveCreateSessionRuntimeHealthPreflightDecision(input: {
+  preflightEnginePrepared: boolean;
   preflightRuntimeHealthOk: boolean;
 }): CreateSessionPreflightDecision {
+  if (input.preflightEnginePrepared) {
+    return { type: "skip", reason: "send-preflight-already-ready" };
+  }
   if (input.preflightRuntimeHealthOk) {
     return { type: "skip", reason: "send-preflight-already-healthy" };
   }
