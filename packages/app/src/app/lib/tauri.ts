@@ -20,8 +20,27 @@ export type EngineInfo = {
   lastStderr: string | null;
 };
 
+export type VesloServerLifecycleStatus =
+  | "stopped"
+  | "starting"
+  | "running"
+  | "exited"
+  | "blocked";
+
+export type VesloServerLifecycleReason =
+  | "none"
+  | "spawn_pending"
+  | "port_unavailable"
+  | "spawn_failed"
+  | "child_exited"
+  | "health_unreachable"
+  | "token_missing"
+  | "identity_mismatch";
+
 export type VesloServerInfo = {
   running: boolean;
+  lifecycleStatus?: VesloServerLifecycleStatus;
+  lifecycleReason?: VesloServerLifecycleReason;
   host: string | null;
   port: number | null;
   baseUrl: string | null;

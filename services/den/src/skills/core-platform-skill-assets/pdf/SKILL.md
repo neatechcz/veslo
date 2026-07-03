@@ -9,11 +9,21 @@ description: "Extract, create, merge, split, annotate, fill forms, and validate 
 
 This guide covers essential PDF processing operations using Python libraries and command-line tools. For advanced features, JavaScript libraries, and detailed examples, see REFERENCE.md. If you need to fill out a PDF form, read FORMS.md and follow its instructions.
 
+## Managed Runtime
+
+Run PDF tooling through the managed office runtime:
+
+```bash
+veslo-document-runtime exec -- <command>
+```
+
+Do not install host dependencies with `pip install`, `brew install`, `choco install`, `winget install`, or OS package managers during a task. If a runtime tool is missing, run `veslo-document-runtime doctor --json` and use Veslo package repair/update instead of changing the user's machine.
+
 ## Creating New PDF Documents
 
 When the user asks to **create a new PDF** (report, document, letter, etc.), use this workflow. It produces professionally formatted output with proper typography.
 
-**Requirements:** `pandoc` and `weasyprint` (both typically pre-installed on macOS via Homebrew).
+**Requirements:** `pandoc` and `weasyprint` from the managed runtime.
 
 ### Step 1: Write content as Markdown
 
@@ -22,7 +32,7 @@ Create a `.md` file with the document content.
 ### Step 2: Convert to HTML
 
 ```bash
-BODY=$(pandoc document.md -t html5)
+BODY=$(veslo-document-runtime exec -- pandoc document.md -t html5)
 ```
 
 ### Step 3: Wrap in styled HTML template
@@ -85,17 +95,16 @@ HTMLEOF
 ### Step 4: Convert HTML to PDF
 
 ```bash
-DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib weasyprint /tmp/veslo-pdf-temp.html output.pdf 2>/dev/null
+veslo-document-runtime exec -- weasyprint /tmp/veslo-pdf-temp.html output.pdf
 ```
 
 ### Notes
 - **CRITICAL: heredoc delimiter must NOT be quoted** — use `<< HTMLEOF`, NEVER `<< 'HTMLEOF'`. Single-quoted delimiters prevent `$BODY` variable expansion and produce literal `$BODY` text in the PDF.
 - **Always use inline CSS** — do not use external stylesheets or pandoc `--standalone`.
-- **DYLD_FALLBACK_LIBRARY_PATH** is required on macOS for weasyprint to find Homebrew libraries.
-- **Redirect stderr** — weasyprint outputs GLib warnings that do not affect the result.
+- The managed runtime supplies the library paths required by weasyprint on macOS and Windows.
 - **Page size** — default A4. Change `@page { size: A5; }` or `size: Letter;` as needed. Adjust margins proportionally for smaller sizes.
 - **Markdown validation** — ensure blank lines before lists (`- ` or `1. `) so pandoc renders them correctly.
-- **If pandoc or weasyprint are not installed**, install them: `brew install pandoc` and `pip install weasyprint`.
+- **If pandoc or weasyprint are unavailable**, run `veslo-document-runtime doctor --json` and repair/update the Veslo document runtime package; do not install host dependencies.
 
 ---
 
@@ -264,48 +273,48 @@ doc.build(story)
 ### pdftotext (poppler-utils)
 ```bash
 # Extract text
-pdftotext input.pdf output.txt
+veslo-document-runtime exec -- pdftotext input.pdf output.txt
 
 # Extract text preserving layout
-pdftotext -layout input.pdf output.txt
+veslo-document-runtime exec -- pdftotext -layout input.pdf output.txt
 
 # Extract specific pages
-pdftotext -f 1 -l 5 input.pdf output.txt  # Pages 1-5
+veslo-document-runtime exec -- pdftotext -f 1 -l 5 input.pdf output.txt  # Pages 1-5
 ```
 
 ### qpdf
 ```bash
 # Merge PDFs
-qpdf --empty --pages file1.pdf file2.pdf -- merged.pdf
+veslo-document-runtime exec -- qpdf --empty --pages file1.pdf file2.pdf -- merged.pdf
 
 # Split pages
-qpdf input.pdf --pages . 1-5 -- pages1-5.pdf
-qpdf input.pdf --pages . 6-10 -- pages6-10.pdf
+veslo-document-runtime exec -- qpdf input.pdf --pages . 1-5 -- pages1-5.pdf
+veslo-document-runtime exec -- qpdf input.pdf --pages . 6-10 -- pages6-10.pdf
 
 # Rotate pages
-qpdf input.pdf output.pdf --rotate=+90:1  # Rotate page 1 by 90 degrees
+veslo-document-runtime exec -- qpdf input.pdf output.pdf --rotate=+90:1  # Rotate page 1 by 90 degrees
 
 # Remove password
-qpdf --password=mypassword --decrypt encrypted.pdf decrypted.pdf
+veslo-document-runtime exec -- qpdf --password=mypassword --decrypt encrypted.pdf decrypted.pdf
 ```
 
 ### pdftk (if available)
 ```bash
 # Merge
-pdftk file1.pdf file2.pdf cat output merged.pdf
+veslo-document-runtime exec -- pdftk file1.pdf file2.pdf cat output merged.pdf
 
 # Split
-pdftk input.pdf burst
+veslo-document-runtime exec -- pdftk input.pdf burst
 
 # Rotate
-pdftk input.pdf rotate 1east output rotated.pdf
+veslo-document-runtime exec -- pdftk input.pdf rotate 1east output rotated.pdf
 ```
 
 ## Common Tasks
 
 ### Extract Text from Scanned PDFs
 ```python
-# Requires: pip install pytesseract pdf2image
+# Requires OCR extras in the managed runtime; do not pip install into the host environment
 import pytesseract
 from pdf2image import convert_from_path
 
@@ -344,7 +353,7 @@ with open("watermarked.pdf", "wb") as output:
 ### Extract Images
 ```bash
 # Using pdfimages (poppler-utils)
-pdfimages -j input.pdf output_prefix
+veslo-document-runtime exec -- pdfimages -j input.pdf output_prefix
 
 # This extracts all images as output_prefix-000.jpg, output_prefix-001.jpg, etc.
 ```
@@ -375,7 +384,7 @@ with open("encrypted.pdf", "wb") as output:
 | Extract text | pdfplumber | `page.extract_text()` |
 | Extract tables | pdfplumber | `page.extract_tables()` |
 | Create PDFs | reportlab | Canvas or Platypus |
-| Command line merge | qpdf | `qpdf --empty --pages ...` |
+| Command line merge | qpdf | `veslo-document-runtime exec -- qpdf --empty --pages ...` |
 | OCR scanned PDFs | pytesseract | Convert to image first |
 | Fill PDF forms | pdf-lib or pypdf (see FORMS.md) | See FORMS.md |
 

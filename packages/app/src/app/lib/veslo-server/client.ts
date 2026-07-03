@@ -9,6 +9,7 @@ import { createPluginsClient } from "../veslo-server-domains/plugins";
 import { createSkillsClient } from "../veslo-server-domains/skills";
 import { createSoulClient } from "../veslo-server-domains/soul";
 import { createWorkspaceClient } from "../veslo-server-domains/workspace";
+import type { DocumentRuntimeStatusPayload } from "../document-runtime";
 import {
   VesloServerError,
   buildGatewayCallerHeaders,
@@ -387,6 +388,7 @@ export function createVesloServerClient(options: {
     skillRegistryMutation: 30_000,
     skillMaterialization: 30_000,
     soulMemory: 30_000,
+    documentRuntime: 30_000,
   };
 
   const identities = createMessagingIdentitiesClient({
@@ -487,6 +489,19 @@ export function createVesloServerClient(options: {
     health: workspace.health,
     status: workspace.status,
     capabilities: workspace.capabilities,
+    getDocumentRuntimeStatus: () =>
+      requestJson<DocumentRuntimeStatusPayload>(baseUrl, "/document-runtime/status", {
+        token,
+        hostToken,
+        timeoutMs: timeouts.status,
+      }),
+    repairDocumentRuntime: () =>
+      requestJson<DocumentRuntimeStatusPayload>(baseUrl, "/document-runtime/repair", {
+        method: "POST",
+        token,
+        hostToken,
+        timeoutMs: timeouts.documentRuntime,
+      }),
     opencodeRouterHealth: identities.health,
     opencodeRouterBindings: identities.bindings,
     getMyAiAccess: (userToken: string) =>

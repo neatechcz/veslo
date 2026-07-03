@@ -23,6 +23,7 @@ const assistant = (input: {
   completed?: number | string;
   error?: unknown;
   finish?: string;
+  parts?: unknown[];
 }) => ({
   info: {
     id: input.id ?? "msg-assistant",
@@ -35,7 +36,7 @@ const assistant = (input: {
     ...(input.error === undefined ? {} : { error: input.error }),
     ...(input.finish === undefined ? {} : { finish: input.finish }),
   },
-  parts: [],
+  parts: input.parts ?? [],
 });
 
 const user = (id = "msg-user") => ({
@@ -117,14 +118,14 @@ function createMemoryRunStore(): RunStore {
 describe("run activity probe payload parsing", () => {
   test("session status reports busy and retry as active", () => {
     expect(deriveRunActivityFromSessionStatus({ "sess-a": { type: "busy" } }, "sess-a"))
-      .toEqual({ active: true });
+      .toMatchObject({ active: true, activityKind: "unknown", waitReason: "assistant_message_open" });
     expect(deriveRunActivityFromSessionStatus({ "sess-a": { type: "retry" } }, "sess-a"))
-      .toEqual({ active: true });
+      .toMatchObject({ active: true, activityKind: "model_retry", waitReason: "model_retry_no_output" });
   });
 
   test("session status reports idle as inactive", () => {
     expect(deriveRunActivityFromSessionStatus({ "sess-a": { type: "idle" } }, "sess-a"))
-      .toEqual({ active: false });
+      .toMatchObject({ active: false, activityKind: "idle", waitReason: "session_idle" });
   });
 
   test("unknown session status shape falls back to message probing", () => {
@@ -138,32 +139,61 @@ describe("run activity probe payload parsing", () => {
     expect(deriveRunActivityFromSessionMessages([
       user(),
       assistant({ completed: 2_000 }),
-    ])).toEqual({ active: false });
+    ])).toMatchObject({ active: false, activityKind: "idle", waitReason: "session_idle" });
   });
 
   test("assistant error or finish is terminal even when completed time is missing", () => {
     expect(deriveRunActivityFromSessionMessages([
       user(),
       assistant({ error: { name: "MessageAbortedError" } }),
-    ])).toEqual({ active: false });
+    ])).toMatchObject({ active: false, activityKind: "idle", waitReason: "session_idle" });
     expect(deriveRunActivityFromSessionMessages([
       user(),
       assistant({ finish: "stop" }),
-    ])).toEqual({ active: false });
+    ])).toMatchObject({ active: false, activityKind: "idle", waitReason: "session_idle" });
   });
 
   test("assistant without terminal fields remains active", () => {
     expect(deriveRunActivityFromSessionMessages([
       user(),
       assistant({}),
-    ])).toEqual({ active: true });
+    ])).toMatchObject({ active: true, activityKind: "unknown", waitReason: "assistant_message_open" });
   });
 
   test("newer user message after a completed assistant means the current run is active", () => {
     expect(deriveRunActivityFromSessionMessages([
       assistant({ id: "msg-old-assistant", completed: 2_000 }),
       user("msg-new-user"),
-    ])).toEqual({ active: true });
+    ])).toMatchObject({ active: true, activityKind: "unknown", waitReason: "assistant_message_open" });
+  });
+
+  test("open assistant tool part is active local tool progress", () => {
+    expect(deriveRunActivityFromSessionMessages([
+      user(),
+      assistant({
+        parts: [
+          {
+            type: "tool",
+            tool: "bash",
+            state: { status: "running" },
+          },
+        ],
+      }),
+    ])).toMatchObject({ active: true, activityKind: "local_tool", waitReason: "running_tool" });
+  });
+
+  test("assistant text part is assistant output progress", () => {
+    expect(deriveRunActivityFromSessionMessages([
+      user(),
+      assistant({
+        parts: [
+          {
+            type: "text",
+            text: "working through the result",
+          },
+        ],
+      }),
+    ])).toMatchObject({ active: true, activityKind: "assistant_output", waitReason: "assistant_message_open" });
   });
 
   test("message parser accepts OpenCode wrapper and raw SQLite message shapes", () => {
@@ -176,7 +206,7 @@ describe("run activity probe payload parsing", () => {
           time: { created: 1_000, completed: 2_000 },
         },
       ],
-    })).toEqual({ active: false });
+    })).toMatchObject({ active: false, activityKind: "idle", waitReason: "session_idle" });
   });
 });
 
@@ -206,7 +236,7 @@ describe("run activity probe HTTP behavior", () => {
       }) as typeof fetch,
     });
 
-    await expect(probe(record)).resolves.toEqual({ active: false });
+    await expect(probe(record)).resolves.toMatchObject({ active: false, activityKind: "idle" });
     expect(urls).toEqual(["http://engine/session/status"]);
   });
 
@@ -224,8 +254,67 @@ describe("run activity probe HTTP behavior", () => {
       }) as typeof fetch,
     });
 
-    await expect(probe(record)).resolves.toEqual({ active: true });
+    await expect(probe(record)).resolves.toMatchObject({ active: true, activityKind: "unknown" });
     expect(urls).toEqual(["http://engine/session/status"]);
+  });
+
+  test("retry session status fetches messages and reports no-output model retry", async () => {
+    const urls: string[] = [];
+    const probe = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine" }),
+      buildEngineRequest: (_engine, input) => ({
+        url: `http://engine${input.targetPath}`,
+        headers: {},
+      }),
+      fetchImpl: (async (input) => {
+        const url = String(input);
+        urls.push(url);
+        if (url.endsWith("/session/status")) return Response.json({ "sess-a": { type: "retry" } });
+        return Response.json([user(), assistant({})]);
+      }) as typeof fetch,
+    });
+
+    await expect(probe(record)).resolves.toMatchObject({
+      active: true,
+      activityKind: "model_retry",
+      waitReason: "model_retry_no_output",
+    });
+    expect(urls).toEqual([
+      "http://engine/session/status",
+      "http://engine/session/sess-a/message",
+    ]);
+  });
+
+  test("retry session with running tool is still classified as local tool work", async () => {
+    const probe = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine" }),
+      buildEngineRequest: (_engine, input) => ({
+        url: `http://engine${input.targetPath}`,
+        headers: {},
+      }),
+      fetchImpl: (async (input) => {
+        const url = String(input);
+        if (url.endsWith("/session/status")) return Response.json({ "sess-a": { type: "retry" } });
+        return Response.json([
+          user(),
+          assistant({
+            parts: [
+              {
+                type: "tool",
+                tool: "grep",
+                state: { status: "running" },
+              },
+            ],
+          }),
+        ]);
+      }) as typeof fetch,
+    });
+
+    await expect(probe(record)).resolves.toMatchObject({
+      active: true,
+      activityKind: "local_tool",
+      waitReason: "running_tool",
+    });
   });
 
   test("unknown status shape falls back to message transcript", async () => {
@@ -244,7 +333,7 @@ describe("run activity probe HTTP behavior", () => {
       }) as typeof fetch,
     });
 
-    await expect(probe(record)).resolves.toEqual({ active: false });
+    await expect(probe(record)).resolves.toMatchObject({ active: false, activityKind: "idle" });
     expect(urls).toEqual([
       "http://engine/session/status",
       "http://engine/session/sess-a/message",
@@ -315,6 +404,11 @@ describe("run activity probe with registry reconciliation", () => {
       startedAt: 1_000,
       completedAt: null,
       error: null,
+      activityKind: null,
+      waitReason: null,
+      lastUsefulProgressAt: 1_000,
+      retrySince: null,
+      lastProgressSignature: null,
       engineOwnerId: null,
       enginePid: null,
       engineStartedAt: null,

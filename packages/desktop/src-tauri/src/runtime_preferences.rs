@@ -27,7 +27,7 @@ impl Default for DesktopRuntimePreferences {
 }
 
 fn default_shared_unsandboxed_engine_enabled() -> bool {
-    cfg!(windows)
+    cfg!(any(windows, target_os = "macos"))
 }
 
 fn default_shared_unsandboxed_engine_override() -> Option<bool> {
@@ -150,23 +150,31 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn default_runtime_preference_uses_windows_non_sandbox_policy() {
+    fn default_runtime_preference_uses_desktop_shared_engine_policy() {
         assert_eq!(
             DesktopRuntimePreferences::default().shared_unsandboxed_engine,
-            cfg!(windows)
+            cfg!(any(windows, target_os = "macos"))
         );
         assert_eq!(
             default_shared_unsandboxed_engine_override(),
-            if cfg!(windows) { Some(true) } else { None }
+            if cfg!(any(windows, target_os = "macos")) {
+                Some(true)
+            } else {
+                None
+            }
         );
         assert_eq!(
             resolve_shared_unsandboxed_engine_override(None),
-            if cfg!(windows) { Some(true) } else { None }
+            if cfg!(any(windows, target_os = "macos")) {
+                Some(true)
+            } else {
+                None
+            }
         );
     }
 
     #[test]
-    fn explicit_runtime_preference_overrides_windows_non_sandbox_policy() {
+    fn explicit_runtime_preference_overrides_desktop_shared_engine_policy() {
         assert_eq!(
             resolve_shared_unsandboxed_engine_override(Some(true)),
             Some(true)

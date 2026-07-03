@@ -6,6 +6,13 @@ workspaces, not a sandbox replacement.
 
 ## Enable
 
+Fresh desktop profiles on Windows and macOS enable this mode by default through
+the desktop runtime preference. Turning the Settings switch off persists
+`sharedUnsandboxedEngine=false`, which emits `VESLO_DISABLE_SANDBOX=0` and
+`VESLO_SHARED_OPENCODE_ENGINE=0` for managed local processes.
+
+For bare orchestrator/server processes, enable it explicitly:
+
 PowerShell:
 
 ```powershell
@@ -23,7 +30,8 @@ The CLI flag still requires `VESLO_DISABLE_SANDBOX=1`.
 
 ## Safety Contract
 
-- Default mode remains `pooled-per-workspace`.
+- Bare orchestrator default mode remains `pooled-per-workspace`; desktop
+  Windows/macOS runtime config defaults to `shared-unsandboxed`.
 - `VESLO_SHARED_OPENCODE_ENGINE=1` without `VESLO_DISABLE_SANDBOX=1` is a
   configuration error.
 - WSL sandbox and other sandbox backends cannot use the shared engine.
@@ -80,8 +88,9 @@ Expected fields:
 }
 ```
 
-In default mode, `engineTopology` is `pooled-per-workspace` and workspace
-engines continue to appear in `engines`.
+In bare orchestrator default mode, `engineTopology` is `pooled-per-workspace`
+and workspace engines continue to appear in `engines`. In the desktop
+Windows/macOS default config, expect `shared-unsandboxed`.
 
 ## Disable
 

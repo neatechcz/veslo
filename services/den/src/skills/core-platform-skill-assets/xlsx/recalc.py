@@ -56,7 +56,10 @@ def ensure_xvfb_running():
             stderr=subprocess.DEVNULL,
         )
     except FileNotFoundError:
-        raise RuntimeError("Xvfb not found - install with: apt-get install xvfb")
+        raise RuntimeError(
+            "Xvfb not found in the Veslo document runtime. Run "
+            "`veslo-document-runtime doctor --json` and repair or update the runtime package."
+        )
 
     os.environ["DISPLAY"] = ":99"
 
@@ -226,7 +229,7 @@ def recalc(filename, timeout=30):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python recalc.py <excel_file> [timeout_seconds]")
+        print("Usage: veslo-document-runtime exec -- python recalc.py <excel_file> [timeout_seconds]")
         print("\nRecalculates all formulas in an Excel file using LibreOffice")
         print("\nReturns JSON with error details:")
         print("  - status: 'success' or 'errors_found'")

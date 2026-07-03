@@ -29,7 +29,7 @@ async function createTempDbPath() {
 }
 
 function record(overrides: Partial<RunRecord> = {}): RunRecord {
-  return {
+  const base: RunRecord = {
     workspaceId: "ws-a",
     conversationId: "conv-a",
     runId: "run-a",
@@ -42,12 +42,17 @@ function record(overrides: Partial<RunRecord> = {}): RunRecord {
     startedAt: 1_000,
     completedAt: null,
     error: null,
+    activityKind: null,
+    waitReason: null,
+    lastUsefulProgressAt: 1_000,
+    retrySince: null,
+    lastProgressSignature: null,
     engineOwnerId: null,
     enginePid: null,
     engineStartedAt: null,
     engineBaseUrl: null,
-    ...overrides,
   };
+  return { ...base, ...overrides };
 }
 
 describe("run store", () => {

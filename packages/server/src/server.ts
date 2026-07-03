@@ -152,6 +152,10 @@ import {
   resolveOutboxEnabled,
 } from "./routes/file-sessions.js";
 import { registerHealthStatusRoutes } from "./routes/health.js";
+import {
+  createDocumentRuntimeProviderDependencies,
+  registerDocumentRuntimeRoutes,
+} from "./routes/document-runtime.js";
 import { registerMcpRoutes } from "./routes/mcp.js";
 import { registerOpenCodeRouterRoutes } from "./routes/opencode-router.js";
 import { registerPluginRoutes } from "./routes/plugins.js";
@@ -3887,6 +3891,8 @@ function createRoutes(
     resolveToyUiEnabled,
     serializeWorkspaceForResponse,
   });
+
+registerDocumentRuntimeRoutes(routes, createDocumentRuntimeProviderDependencies());
 
   registerWorkspaceManagementRoutes(routes, {
     serverDataDir,

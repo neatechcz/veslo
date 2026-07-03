@@ -33,6 +33,19 @@ const readPositiveFiniteNumber = (value: unknown): number | null => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 };
 
+const terminalToolStatuses = new Set(["completed", "done", "success", "failed", "error", "cancelled", "canceled"]);
+
+const stableString = (value: unknown): string => {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value === null || value === undefined) return "";
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+
 export function deriveRunActivityFromSessionStatus(
   payload: unknown,
   engineSessionId: string,
@@ -42,8 +55,30 @@ export function deriveRunActivityFromSessionStatus(
   if (!isRecord(sessionStatus)) return null;
 
   const type = readString(sessionStatus.type);
-  if (type === "busy" || type === "retry") return { active: true };
-  if (type === "idle") return { active: false };
+  if (type === "busy") {
+    return {
+      active: true,
+      activityKind: "unknown",
+      waitReason: "assistant_message_open",
+      progressSignature: `status:${engineSessionId}:busy`,
+    };
+  }
+  if (type === "retry") {
+    return {
+      active: true,
+      activityKind: "model_retry",
+      waitReason: "model_retry_no_output",
+      progressSignature: `status:${engineSessionId}:retry`,
+    };
+  }
+  if (type === "idle") {
+    return {
+      active: false,
+      activityKind: "idle",
+      waitReason: "session_idle",
+      progressSignature: `status:${engineSessionId}:idle`,
+    };
+  }
   return null;
 }
 
@@ -68,17 +103,150 @@ function assistantMessageIsTerminal(info: RecordLike): boolean {
   return false;
 }
 
+function readParts(message: unknown): unknown[] {
+  if (!isRecord(message)) return [];
+  if (Array.isArray(message.parts)) return message.parts;
+  return [];
+}
+
+function toolPartStatus(part: RecordLike): string {
+  const state = isRecord(part.state) ? part.state : null;
+  return readString(state?.status) ?? readString(part.status) ?? "";
+}
+
+function toolPartName(part: RecordLike): string {
+  return readString(part.tool) ?? readString(part.name) ?? readString(part.type) ?? "tool";
+}
+
+function toolOutputSize(part: RecordLike): number {
+  const state = isRecord(part.state) ? part.state : null;
+  const output = state && "output" in state ? state.output : part.output;
+  if (typeof output === "string") return output.length;
+  if (Array.isArray(output)) return output.length;
+  if (output && typeof output === "object") return stableString(output).length;
+  return 0;
+}
+
+function textPartLength(part: RecordLike): number {
+  const text = typeof part.text === "string" ? part.text : "";
+  return text.trim() ? text.length : 0;
+}
+
+function messageProgressSignature(messages: unknown[], latestInfo: RecordLike, latestMessage: unknown): string {
+  const id = readString(latestInfo.id) ?? readString(latestInfo.messageID) ?? "unknown";
+  const role = readString(latestInfo.role) ?? "unknown";
+  const parts = readParts(latestMessage);
+  const descriptors = parts
+    .map((part) => {
+      if (!isRecord(part)) return "";
+      const type = readString(part.type) ?? "";
+      if (type === "tool") {
+        return `tool:${toolPartName(part)}:${toolPartStatus(part)}:${toolOutputSize(part)}`;
+      }
+      if (type === "text" || type === "reasoning") {
+        const text = typeof part.text === "string" ? part.text : "";
+        const length = textPartLength(part);
+        return length ? `${type}:${length}:${text.slice(-48)}` : "";
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("|");
+  const terminal = assistantMessageIsTerminal(latestInfo) ? "terminal" : "open";
+  return `messages:${messages.length}:latest:${id}:${role}:${terminal}:visible:${descriptors}`;
+}
+
 export function deriveRunActivityFromSessionMessages(payload: unknown): RunProbeResult {
   const messages = readMessages(payload);
-  if (!messages.length) return { active: true };
+  if (!messages.length) {
+    return {
+      active: true,
+      activityKind: "unknown",
+      waitReason: "assistant_message_open",
+      progressSignature: "messages:0",
+    };
+  }
 
-  const latestInfo = readMessageInfo(messages[messages.length - 1]);
-  if (!latestInfo) return { active: true };
+  const latestMessage = messages[messages.length - 1];
+  const latestInfo = readMessageInfo(latestMessage);
+  if (!latestInfo) {
+    return {
+      active: true,
+      activityKind: "unknown",
+      waitReason: "assistant_message_open",
+      progressSignature: `messages:${messages.length}:latest:unknown`,
+    };
+  }
 
   const latestRole = readString(latestInfo.role);
-  if (latestRole !== "assistant") return { active: true };
+  if (latestRole !== "assistant") {
+    return {
+      active: true,
+      activityKind: "unknown",
+      waitReason: "assistant_message_open",
+      progressSignature: messageProgressSignature(messages, latestInfo, latestMessage),
+    };
+  }
 
-  return { active: !assistantMessageIsTerminal(latestInfo) };
+  const progressSignature = messageProgressSignature(messages, latestInfo, latestMessage);
+  if (assistantMessageIsTerminal(latestInfo)) {
+    return {
+      active: false,
+      activityKind: "idle",
+      waitReason: "session_idle",
+      progressSignature,
+    };
+  }
+
+  const parts = readParts(latestMessage);
+  const activeTool = parts.find((part) => {
+    if (!isRecord(part)) return false;
+    if (readString(part.type) !== "tool") return false;
+    const status = toolPartStatus(part).toLowerCase();
+    return !status || !terminalToolStatuses.has(status);
+  });
+  if (activeTool) {
+    return {
+      active: true,
+      activityKind: "local_tool",
+      waitReason: "running_tool",
+      progressSignature,
+    };
+  }
+
+  const hasAssistantOutput = parts.some((part) =>
+    isRecord(part) &&
+    (readString(part.type) === "text" || readString(part.type) === "reasoning") &&
+    textPartLength(part) > 0
+  );
+  if (hasAssistantOutput) {
+    return {
+      active: true,
+      activityKind: "assistant_output",
+      waitReason: "assistant_message_open",
+      progressSignature,
+    };
+  }
+
+  return {
+    active: true,
+    activityKind: "unknown",
+    waitReason: "assistant_message_open",
+    progressSignature,
+  };
+}
+
+function mergeRetryStatusWithMessages(messages: RunProbeResult): RunProbeResult {
+  if ("unreachable" in messages) return messages;
+  if (!messages.active) return messages;
+  if (messages.activityKind === "local_tool" || messages.activityKind === "assistant_output") {
+    return messages;
+  }
+  return {
+    ...messages,
+    activityKind: "model_retry",
+    waitReason: "model_retry_no_output",
+  };
 }
 
 export function createRunActivityProbe<Engine>(deps: {
@@ -125,7 +293,17 @@ export function createRunActivityProbe<Engine>(deps: {
       const status = await fetchJson(engine, record, "/session/status");
       if (status.ok) {
         const activity = deriveRunActivityFromSessionStatus(status.payload, record.engineSessionId);
-        if (activity) return activity;
+        if (activity && !("unreachable" in activity)) {
+          if (activity.activityKind !== "model_retry") return activity;
+          const messages = await fetchJson(
+            engine,
+            record,
+            `/session/${encodeURIComponent(record.engineSessionId)}/message`,
+          );
+          if (messages.status === 404) return { active: false };
+          if (!messages.ok) return { unreachable: true };
+          return mergeRetryStatusWithMessages(deriveRunActivityFromSessionMessages(messages.payload));
+        }
       } else if (status.status !== 404) {
         return { unreachable: true };
       }

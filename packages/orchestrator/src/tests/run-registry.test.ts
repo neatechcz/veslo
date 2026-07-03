@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import {
   createRunRegistry,
+  MODEL_RETRY_NO_PROGRESS_HARD_MS,
+  MODEL_RETRY_NO_PROGRESS_TIMEOUT,
   RunAlreadyActiveError,
   type RunProbeResult,
 } from "../run-registry.js";
@@ -90,7 +92,7 @@ function createRegistry(probe: (record: RunRecord) => Promise<RunProbeResult> | 
       store,
       probeRunActivity: async (record) => probe(record),
       now: (() => {
-        let current = 1_000;
+        let current = MODEL_RETRY_NO_PROGRESS_HARD_MS + 10_000;
         return () => current += 100;
       })(),
     }),
@@ -311,5 +313,76 @@ describe("run registry", () => {
     expect(active?.record.runId).toBe("run-a");
     expect(active?.record.status).toBe("running");
     expect(active?.stale).toBe(true);
+  });
+
+  test("model retry no-output diagnostics persist without releasing the active lock", async () => {
+    const { registry, store } = createRegistry(() => ({
+      active: true,
+      activityKind: "model_retry",
+      waitReason: "model_retry_no_output",
+      progressSignature: "assistant:empty",
+    }));
+    await registry.register(input);
+
+    const active = await registry.active("ws-a", "conv-a");
+
+    expect(active?.record.status).toBe("running");
+    expect(active?.record.activityKind).toBe("model_retry");
+    expect(active?.record.waitReason).toBe("model_retry_no_output");
+    expect(typeof active?.record.retrySince).toBe("number");
+    expect(active?.noProgressSeconds).toBe(0);
+    await expect(registry.register({ ...input, runId: "run-b" })).rejects.toThrow(RunAlreadyActiveError);
+    expect(store.activeForConversation("ws-a", "conv-a")?.runId).toBe("run-a");
+  });
+
+  test("model retry no-output hard threshold marks the run blocked but keeps queue admission locked", async () => {
+    const { registry, store } = createRegistry(() => ({
+      active: true,
+      activityKind: "model_retry",
+      waitReason: "model_retry_no_output",
+      progressSignature: "assistant:empty",
+    }));
+    await registry.register(input);
+    const first = await registry.active("ws-a", "conv-a");
+    const retrySince = first?.record.retrySince;
+    if (typeof retrySince !== "number") throw new Error("retrySince was not recorded");
+    store.update("ws-a", "run-a", {
+      retrySince: retrySince - MODEL_RETRY_NO_PROGRESS_HARD_MS - 1_000,
+    });
+
+    const blocked = await registry.active("ws-a", "conv-a");
+
+    expect(blocked?.record.status).toBe("blocked");
+    expect(blocked?.record.error).toBe(MODEL_RETRY_NO_PROGRESS_TIMEOUT);
+    expect(blocked?.record.completedAt).toBeNull();
+    expect(blocked?.noProgressSeconds).toBeGreaterThanOrEqual(601);
+    await expect(registry.register({ ...input, runId: "run-b" })).rejects.toThrow(RunAlreadyActiveError);
+  });
+
+  test("useful assistant progress clears retry diagnostics", async () => {
+    let probe: RunProbeResult = {
+      active: true,
+      activityKind: "model_retry",
+      waitReason: "model_retry_no_output",
+      progressSignature: "assistant:empty",
+    };
+    const { registry } = createRegistry(() => probe);
+    await registry.register(input);
+    const retrying = await registry.active("ws-a", "conv-a");
+    expect(retrying?.record.retrySince).not.toBeNull();
+
+    probe = {
+      active: true,
+      activityKind: "assistant_output",
+      waitReason: "assistant_message_open",
+      progressSignature: "assistant:text:42",
+    };
+    const progressed = await registry.active("ws-a", "conv-a");
+
+    expect(progressed?.record.status).toBe("running");
+    expect(progressed?.record.activityKind).toBe("assistant_output");
+    expect(progressed?.record.retrySince).toBeNull();
+    expect(progressed?.record.lastProgressSignature).toBe("assistant:text:42");
+    expect(progressed?.noProgressSeconds).toBeNull();
   });
 });

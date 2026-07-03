@@ -100,6 +100,7 @@ import {
   createVesloServerConnection,
   isLoopbackVesloServerConnectionUrl,
 } from "./context/veslo-server-connection";
+import type { DocumentRuntimeStatusPayload } from "./lib/document-runtime";
 import { createSessionCapabilitiesStore } from "./context/session-capabilities-store";
 import ResetModal from "./components/reset-modal";
 import ConfirmModal from "./components/confirm-modal";
@@ -564,6 +565,8 @@ export default function App() {
   const [error, setError] = createSignal<string | null>(null);
   const [opencodeConnectStatus, setOpencodeConnectStatus] = createSignal<OpencodeConnectStatus | null>(null);
   const [booting, setBooting] = createSignal(true);
+  const [documentRuntimeStatus, setDocumentRuntimeStatus] = createSignal<DocumentRuntimeStatusPayload | null>(null);
+  const [documentRuntimeRepairBusy, setDocumentRuntimeRepairBusy] = createSignal(false);
   const openDesktopAuthUrl = async (url: string) => {
     if (isTauriRuntime()) {
       const { openUrl } = await import("@tauri-apps/plugin-opener");
@@ -1464,6 +1467,7 @@ export default function App() {
     createSendPreflightContext,
     createSessionAndOpen: (initialTitle, options) => createSessionAndOpen(initialTitle, options),
     developerMode,
+    documentRuntimeStatus,
     displayedConversationStillMatches,
     engineReady,
     ensureSelectedSessionWorkspaceActiveForSend: (sessionId, sendTraceId) =>
@@ -3291,6 +3295,64 @@ export default function App() {
     void refreshMcpServers();
   });
 
+  const DOCUMENT_RUNTIME_STATUS_POLL_MS = 30_000;
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!documentVisible()) return;
+
+    const client = vesloServerClient();
+    if (!client || vesloServerStatus() === "disconnected") {
+      setDocumentRuntimeStatus(null);
+      return;
+    }
+
+    let active = true;
+    let inFlight = false;
+
+    const run = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const result = await client.getDocumentRuntimeStatus();
+        if (active && vesloServerClient() === client) {
+          setDocumentRuntimeStatus(result);
+        }
+      } catch {
+        if (active) {
+          setDocumentRuntimeStatus(null);
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    run();
+    const interval = window.setInterval(run, DOCUMENT_RUNTIME_STATUS_POLL_MS);
+    onCleanup(() => {
+      active = false;
+      window.clearInterval(interval);
+    });
+  });
+
+  const repairDocumentRuntime = async () => {
+    if (documentRuntimeRepairBusy() || anyActiveRuns()) return;
+    const client = vesloServerClient();
+    if (!client || vesloServerStatus() === "disconnected") return;
+
+    setDocumentRuntimeRepairBusy(true);
+    try {
+      const result = await client.repairDocumentRuntime();
+      setDocumentRuntimeStatus(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      setError(message);
+      reportError(error, "document-runtime.repair");
+    } finally {
+      setDocumentRuntimeRepairBusy(false);
+    }
+  };
+
   const UPDATE_AUTO_CHECK_POLL_MS = 60_000;
 
   const resetAppConfigDefaults = async () => {
@@ -4160,6 +4222,9 @@ export default function App() {
     downloadUpdate,
     retryUpdateDownload,
     installUpdateAndRestart,
+    documentRuntimeStatus,
+    documentRuntimeRepairBusy,
+    repairDocumentRuntime,
     anyActiveRuns,
     engineSource,
     updateEngineSource,

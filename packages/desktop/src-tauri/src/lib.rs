@@ -68,6 +68,8 @@ use commands::skills::{
 use commands::updater::{
     updater_environment, updater_prepare_install, updater_relaunch_after_install,
 };
+#[cfg(all(debug_assertions, feature = "e2e"))]
+use commands::veslo_server::veslo_server_e2e_kill_child;
 use commands::veslo_server::{veslo_server_info, veslo_server_restart};
 #[cfg(all(debug_assertions, feature = "e2e"))]
 use commands::window::e2e_position_main_window;
@@ -296,6 +298,8 @@ pub fn run() {
             // sandbox_cleanup_veslo_containers IPC commands SMAZÁNY.
             veslo_server_info,
             veslo_server_restart,
+            #[cfg(all(debug_assertions, feature = "e2e"))]
+            veslo_server_e2e_kill_child,
             opencodeRouter_info,
             opencodeRouter_start,
             opencodeRouter_stop,

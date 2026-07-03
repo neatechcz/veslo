@@ -44,6 +44,10 @@ import { resolveVisibleSettingsTab } from "../lib/settings-tab-label";
 import { resolveEffectiveRuntimeSandboxState } from "../lib/runtime-sandbox-state";
 import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
+import {
+  documentRuntimeSettingsRow,
+  type DocumentRuntimeStatusPayload,
+} from "../lib/document-runtime";
 import { MODEL_VARIANT_OPTIONS } from "../lib/model-variant";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 import type { UpdateDownloadRetryInfo } from "../context/updater";
@@ -127,6 +131,9 @@ export type SettingsViewProps = {
   } | null;
   updateEnv: { supported?: boolean; reason?: string | null } | null;
   appVersion: string | null;
+  documentRuntimeStatus?: DocumentRuntimeStatusPayload | null;
+  documentRuntimeRepairBusy?: boolean;
+  repairDocumentRuntime?: () => void;
   checkForUpdates: () => void;
   downloadUpdate: () => void;
   retryUpdateDownload: () => void;
@@ -199,7 +206,39 @@ export default function SettingsView(props: SettingsViewProps) {
     if (retry?.kind !== "scheduled") return null;
     return formatUpdateRetryDelay(retry.nextRetryAt - Date.now());
   };
-
+  const documentRuntimeRow = createMemo(() => documentRuntimeSettingsRow(props.documentRuntimeStatus));
+  const documentRuntimeToneClass = createMemo(() => {
+    switch (documentRuntimeRow().tone) {
+      case "ready":
+        return "border-green-7/25 bg-green-3/20 text-green-11";
+      case "info":
+        return "border-blue-7/25 bg-blue-3/20 text-blue-11";
+      case "warning":
+        return "border-amber-7/35 bg-amber-3/20 text-amber-11";
+      case "danger":
+        return "border-red-7/35 bg-red-3/20 text-red-11";
+    }
+  });
+  const documentRuntimeActionLabel = createMemo(() => {
+    switch (documentRuntimeRow().action) {
+      case "repair":
+        return props.documentRuntimeRepairBusy ? "Repairing..." : "Repair";
+      case "update":
+        return "Check updates";
+      case "wait":
+        return "Waiting";
+      case "none":
+        return null;
+    }
+  });
+  const handleDocumentRuntimeAction = () => {
+    const action = documentRuntimeRow().action;
+    if (action === "repair") {
+      props.repairDocumentRuntime?.();
+      return;
+    }
+    if (action === "update") props.checkForUpdates();
+  };
   const updateDownloadPercent = createMemo<number | null>(() => {
     const total = updateTotalBytes();
     if (total == null || total <= 0) return null;
@@ -277,6 +316,13 @@ export default function SettingsView(props: SettingsViewProps) {
     if (updateState() === "downloading") return !props.updateAutoDownload;
     if (updateState() === "ready" && props.anyActiveRuns) return true;
     return props.busy;
+  });
+  const documentRuntimeActionDisabled = createMemo(() => {
+    const action = documentRuntimeRow().action;
+    if (action === "wait") return true;
+    if (action === "repair") return !props.repairDocumentRuntime || Boolean(props.documentRuntimeRepairBusy) || props.anyActiveRuns;
+    if (action === "update") return generalUpdateDisabled();
+    return true;
   });
 
   const generalUpdateTitle = createMemo(() => {
@@ -1036,6 +1082,31 @@ export default function SettingsView(props: SettingsViewProps) {
               <div>
                 <div class="text-sm font-medium text-gray-12">Local runtime</div>
                 <div class="text-xs text-gray-10">Engine isolation and pooling. Restart local server to apply.</div>
+              </div>
+
+              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2">
+                    <div class="text-sm text-gray-12">Document runtime</div>
+                    <span class={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${documentRuntimeToneClass()}`}>
+                      {documentRuntimeRow().status}
+                    </span>
+                  </div>
+                  <div class="text-xs text-gray-7">{documentRuntimeRow().detail}</div>
+                </div>
+                <Show when={documentRuntimeActionLabel()}>
+                  {(label) => (
+                    <Button
+                      variant="outline"
+                      class="text-xs h-8 py-0 px-3 shrink-0"
+                      onClick={handleDocumentRuntimeAction}
+                      disabled={documentRuntimeActionDisabled()}
+                      title={props.anyActiveRuns && documentRuntimeRow().action === "repair" ? translate("settings.stop_runs_to_update") : ""}
+                    >
+                      {label()}
+                    </Button>
+                  )}
+                </Show>
               </div>
 
               <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">

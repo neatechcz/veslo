@@ -4,9 +4,12 @@ import test from "node:test";
 
 import {
   createSessionSendWorkflow,
+  documentRuntimeBlockReasonForSkillCommand,
+  documentRuntimeFormatForSkillCommand,
   type SessionSendWorkflowOptions,
 } from "../../pages/session-send-workflow.js";
 import type { SendTargetWorkspaceScope } from "../../context/workspace-session-selection.js";
+import type { DocumentRuntimeStatusPayload } from "../../lib/document-runtime.js";
 import type { VesloConversationRunInput } from "../../lib/veslo-server.js";
 import type { Client, ComposerDraft, ModelRef } from "../../types.js";
 
@@ -23,14 +26,53 @@ const promptDraft = (text = "hello"): ComposerDraft => ({
 type Harness = {
   events: string[];
   actions: string[];
+  errors: string[];
   options: SessionSendWorkflowOptions;
   sendPromptInFlightCount: () => number;
   busyState: () => boolean;
 };
 
+function documentRuntimePayload(
+  status: DocumentRuntimeStatusPayload["status"],
+): DocumentRuntimeStatusPayload {
+  const ready = status === "ready";
+  return {
+    runtimeId: "veslo-document-runtime",
+    status,
+    ready,
+    updatedAt: "2026-07-02T12:00:00.000Z",
+    source: "server",
+    skills: [
+      { id: "veslo-docx", format: "docx", ready, reason: status },
+      { id: "veslo-xlsx", format: "xlsx", ready, reason: status },
+      { id: "veslo-pdf", format: "pdf", ready, reason: status },
+      { id: "veslo-pptx", format: "pptx", ready, reason: status },
+    ],
+    package: {
+      installedVersion: null,
+      activePackage: null,
+      updateAvailable: false,
+      installing: false,
+      rollback: false,
+      remoteOnly: status === "remote_only",
+    },
+    repair: {
+      available: status === "missing",
+      inProgress: status === "repairing",
+      blockedReason: null,
+      lastAttemptAt: null,
+      lastError: null,
+    },
+    policy: {
+      windowsWslRuntime: "not_applicable",
+    },
+  };
+}
+
 function createHarness(overrides: Partial<SessionSendWorkflowOptions> = {}): Harness {
   const events: string[] = [];
   const actions: string[] = [];
+  const errors: string[] = [];
   const { setBusy: overrideSetBusy, ...optionOverrides } = overrides;
   const targetWorkspace: SendTargetWorkspaceScope = {
     workspaceId: "ws-active",
@@ -159,7 +201,9 @@ function createHarness(overrides: Partial<SessionSendWorkflowOptions> = {}): Har
     setBusyLabel: () => undefined,
     setBusyStartedAt: () => undefined,
     setComposerDraftBySessionId: () => undefined,
-    setError: () => undefined,
+    setError: (message) => {
+      if (message) errors.push(message);
+    },
     setLastPromptSent: () => undefined,
     setPrompt: (value) => actions.push(`set-prompt:${value}`),
     setSelectedSessionId: (sessionId) => {
@@ -189,6 +233,7 @@ function createHarness(overrides: Partial<SessionSendWorkflowOptions> = {}): Har
   return {
     events,
     actions,
+    errors,
     options,
     sendPromptInFlightCount: () => sendPromptInFlightCount,
     busyState: () => busyState,
@@ -233,6 +278,42 @@ test("session send workflow blocks sends without a client message id", async () 
   assert.equal(sent, false);
   assert.deepEqual(harness.actions, []);
   assert.ok(harness.events.includes("sendPrompt:blocked-missing-client-message-id"));
+});
+
+test("document runtime helpers map only Veslo document skills", () => {
+  assert.equal(documentRuntimeFormatForSkillCommand("veslo-docx"), "docx");
+  assert.equal(documentRuntimeFormatForSkillCommand("veslo-xlsx"), "xlsx");
+  assert.equal(documentRuntimeFormatForSkillCommand("veslo-pdf"), "pdf");
+  assert.equal(documentRuntimeFormatForSkillCommand("veslo-pptx"), "pptx");
+  assert.equal(documentRuntimeFormatForSkillCommand("custom-docx"), null);
+  assert.match(
+    documentRuntimeBlockReasonForSkillCommand(documentRuntimePayload("missing"), "veslo-docx") ?? "",
+    /package is missing/,
+  );
+});
+
+test("session send workflow blocks document skill runs when document runtime is not ready", async () => {
+  const harness = createHarness({
+    documentRuntimeStatus: () => documentRuntimePayload("missing"),
+    listCommands: async () => [{ name: "veslo-docx", source: "skill" }],
+    vesloServerClient: () => ({
+      resolveSkill: async () => ({ match: { name: "veslo-docx" } }),
+    }),
+    vesloServerStatus: () => "connected",
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("Edit brief.docx"), {
+    clientMessageId: "client-doc-runtime-missing",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent, false);
+  assert.match(harness.errors.at(-1) ?? "", /package is missing/);
+  assert.equal(harness.actions.some((action) => action.startsWith("run:")), false);
+  assert.ok(harness.events.includes("maybeResolveSkillCommand:blocked-document-runtime"));
+  assert.ok(harness.events.includes("sendPrompt:blocked-document-runtime"));
 });
 
 test("session send workflow releases in-flight tracking when runtime preparation throws", async () => {

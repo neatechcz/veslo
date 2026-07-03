@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { createServer, type Server } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -41,6 +42,11 @@ type RunPilotScenariosOptions = ResolvePilotScenarioSelectionOptions & {
   binary?: string;
   socket?: string;
   timeoutMs?: number;
+};
+
+type PortContentionFixture = {
+  server: Server;
+  previousE2ePort: string | undefined;
 };
 
 export function resolvePilotBinary(env: Record<string, string | undefined> = process.env): string {
@@ -99,6 +105,68 @@ export function scenarioSelectionNeedsManagedAiGatewayFixture(scenarios: string[
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/sidebar-session-retention.toml') ||
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/global-unpublished-draft.toml'),
   );
+}
+
+export function scenarioSelectionNeedsNoWorkspaceProfile(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-235-local-host-no-workspace.toml'),
+  );
+}
+
+export function scenarioSelectionNeedsPortContentionFixture(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-235-local-host-port-contention.toml'),
+  );
+}
+
+async function startPortContentionFixture(): Promise<PortContentionFixture> {
+  const server = createServer();
+  await new Promise<void>((resolveListen, reject) => {
+    const onError = (error: Error) => {
+      server.off('listening', onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off('error', onError);
+      resolveListen();
+    };
+
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(0, '127.0.0.1');
+  });
+
+  const address = server.address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  if (!port) {
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    throw new Error('Port contention fixture did not bind a TCP port.');
+  }
+
+  const previousE2ePort = process.env.E2E_VESLO_SERVER_PORT;
+  process.env.E2E_VESLO_SERVER_PORT = String(port);
+  console.log(`[e2e] Port contention fixture holding 127.0.0.1:${port}`);
+  return { server, previousE2ePort };
+}
+
+async function stopPortContentionFixture(fixture: PortContentionFixture | null): Promise<void> {
+  if (!fixture) return;
+
+  if (fixture.previousE2ePort === undefined) {
+    delete process.env.E2E_VESLO_SERVER_PORT;
+  } else {
+    process.env.E2E_VESLO_SERVER_PORT = fixture.previousE2ePort;
+  }
+
+  await new Promise<void>((resolveClose, reject) => {
+    fixture.server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolveClose();
+    });
+  });
 }
 
 export async function runPilotCommand(options: RunPilotCommandOptions): Promise<void> {
@@ -199,9 +267,17 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   if (scenarioSelectionNeedsManagedAiGatewayFixture(scenarios)) {
     process.env.E2E_MANAGED_AI_GATEWAY_FIXTURE ||= '1';
   }
+  if (scenarioSelectionNeedsNoWorkspaceProfile(scenarios)) {
+    process.env.E2E_SKIP_DEFAULT_WORKSPACE_STATE ||= '1';
+  }
+  let portContentionFixture: PortContentionFixture | null = null;
 
-  await startApp();
   try {
+    if (scenarioSelectionNeedsPortContentionFixture(scenarios)) {
+      portContentionFixture = await startPortContentionFixture();
+    }
+
+    await startApp();
     await ensurePilotReady({ binary, socket, cwd: e2eRoot, timeoutMs });
     for (const scenario of scenarios) {
       console.log(`[e2e] Running tauri-pilot scenario: ${scenario}`);
@@ -215,6 +291,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     }
   } finally {
     await stopApp();
+    await stopPortContentionFixture(portContentionFixture);
   }
 }
 

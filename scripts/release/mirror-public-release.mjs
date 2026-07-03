@@ -5,7 +5,7 @@ import { mkdtempSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { publicDesktopReleaseAssetName } from "./public-release-assets.mjs";
+import { publicReleaseAssetName } from "./public-release-assets.mjs";
 
 function parseBool(value) {
   if (typeof value === "boolean") return value;
@@ -126,7 +126,7 @@ function main() {
     const publicAssets = sourceReleaseAssets(sourceRepo, tag, sourceToken)
       .map((asset) => ({
         sourceName: asset.name || "",
-        publicName: publicDesktopReleaseAssetName(asset),
+        publicName: publicReleaseAssetName(asset),
       }))
       .filter((asset) => asset.sourceName && asset.publicName);
 
@@ -157,7 +157,7 @@ function main() {
       .sort();
 
     if (!files.length) {
-      throw new Error(`No public desktop assets were downloaded from ${sourceRepo}@${tag}.`);
+      throw new Error(`No public release assets were downloaded from ${sourceRepo}@${tag}.`);
     }
 
     if (!releaseExists(targetRepo, tag, targetToken)) {
@@ -181,7 +181,7 @@ function main() {
     runGh(["release", "upload", tag, ...files, "--repo", targetRepo, "--clobber"], targetToken);
 
     console.log(
-      `Mirrored ${files.length} public desktop assets from ${sourceRepo}@${tag} to ${targetRepo}@${tag}.`,
+      `Mirrored ${files.length} public release assets from ${sourceRepo}@${tag} to ${targetRepo}@${tag}.`,
     );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

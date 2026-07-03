@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "packageId": "veslo-document-runtime",
+  "releaseTag": "v2026.7.0",
+  "channel": "stable",
+  "generatedAt": "2026-07-02T00:00:00Z",
+  "packages": [
+    {
+      "packageId": "veslo-document-runtime",
+      "packageVersion": "2026.7.0",
+      "platform": "windows-native-x64",
+      "channel": "stable",
+      "minimumAppVersion": "2026.7.0",
+      "artifactName": "veslo-document-runtime-windows-native-x64-2026.7.0.veslopkg",
+      "url": "https://github.com/neatechcz/veslo-updates/releases/download/v2026.7.0/veslo-document-runtime-windows-native-x64-2026.7.0.veslopkg",
+      "signature": "trusted-minisign-signature",
+      "contentSha256": "abababababababababababababababababababababababababababababababab",
+      "manifestSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "sizeBytes": 1
+    },
+    {
+      "packageId": "veslo-document-runtime",
+      "packageVersion": "2026.7.0",
+      "platform": "macos-arm64",
+      "channel": "stable",
+      "minimumAppVersion": "2026.7.0",
+      "artifactName": "veslo-document-runtime-macos-arm64-2026.7.0.veslopkg",
+      "url": "https://github.com/neatechcz/veslo-updates/releases/download/v2026.7.0/veslo-document-runtime-macos-arm64-2026.7.0.veslopkg",
+      "signature": "trusted-minisign-signature",
+      "contentSha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "manifestSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "sizeBytes": 1
+    },
+    {
+      "packageId": "veslo-document-runtime",
+      "packageVersion": "2026.7.0",
+      "platform": "macos-x64",
+      "channel": "stable",
+      "minimumAppVersion": "2026.7.0",
+      "artifactName": "veslo-document-runtime-macos-x64-2026.7.0.veslopkg",
+      "url": "https://github.com/neatechcz/veslo-updates/releases/download/v2026.7.0/veslo-document-runtime-macos-x64-2026.7.0.veslopkg",
+      "signature": "trusted-minisign-signature",
+      "contentSha256": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "manifestSha256": "9999999999999999999999999999999999999999999999999999999999999999",
+      "sizeBytes": 1
+    }
+  ]
+}

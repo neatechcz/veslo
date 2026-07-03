@@ -380,6 +380,10 @@ function shouldSeedSkillEnableInventory(env: NodeJS.ProcessEnv): boolean {
   return env.E2E_SEED_SKILL_ENABLE_INVENTORY?.trim() === '1';
 }
 
+function shouldSkipDefaultWorkspaceState(env: NodeJS.ProcessEnv): boolean {
+  return env.E2E_SKIP_DEFAULT_WORKSPACE_STATE?.trim() === '1';
+}
+
 function fixtureSkillMarkdown(name: string, description: string): string {
   return [
     '---',
@@ -687,7 +691,9 @@ export async function startApp(port?: number): Promise<void> {
       snapshotPath,
       denApiBase: googleMcpCatalogFixtureBaseUrl,
     });
-    seedDefaultWorkspaceState(CUSTOM_OPENCODE_HOME, env);
+    if (!shouldSkipDefaultWorkspaceState(env)) {
+      seedDefaultWorkspaceState(CUSTOM_OPENCODE_HOME, env);
+    }
     console.log(`[e2e] Using custom OPENCODE_HOME: ${CUSTOM_OPENCODE_HOME}`);
   } else if (!REAL_PROFILE_ENV) {
     rmSync(ISOLATED_PROFILE_ROOT, { recursive: true, force: true });
@@ -704,7 +710,9 @@ export async function startApp(port?: number): Promise<void> {
     env.XDG_DATA_HOME = join(ISOLATED_PROFILE_ROOT, '.local', 'share');
     env.XDG_CONFIG_HOME = join(ISOLATED_PROFILE_ROOT, '.config');
     env.XDG_CACHE_HOME = join(ISOLATED_PROFILE_ROOT, '.cache');
-    seedDefaultWorkspaceState(ISOLATED_PROFILE_ROOT, env);
+    if (!shouldSkipDefaultWorkspaceState(env)) {
+      seedDefaultWorkspaceState(ISOLATED_PROFILE_ROOT, env);
+    }
     console.log(`[e2e] Using isolated app profile: ${ISOLATED_PROFILE_ROOT}`);
     console.log(`[e2e] Using isolated OPENCODE_HOME: ${tmpDir}`);
   } else {

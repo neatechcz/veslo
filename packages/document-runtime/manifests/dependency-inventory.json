@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "packageId": "veslo-document-runtime",
+  "systemTools": [
+    { "id": "soffice", "name": "LibreOffice headless", "versionRequirement": "24.8.x", "requiredFor": ["docx", "xlsx", "pptx"] },
+    { "id": "poppler", "name": "Poppler utilities", "versionRequirement": "24.x", "requiredFor": ["pdf", "docx", "pptx"] },
+    { "id": "qpdf", "name": "QPDF", "versionRequirement": "11.x", "requiredFor": ["pdf"] },
+    { "id": "pandoc", "name": "Pandoc", "versionRequirement": "3.6.x", "requiredFor": ["docx", "pdf"] },
+    { "id": "python", "name": "Python runtime", "versionRequirement": "3.11.x", "requiredFor": ["docx", "xlsx", "pdf", "pptx"] },
+    { "id": "node", "name": "Node runtime", "versionRequirement": "22.x", "requiredFor": ["docx", "pdf", "pptx"] }
+  ],
+  "pythonPackages": [
+    "defusedxml",
+    "lxml",
+    "openpyxl",
+    "pandas",
+    "python-pptx",
+    "Pillow",
+    "six",
+    "markitdown[pptx]",
+    "pypdf",
+    "pdfplumber",
+    "reportlab",
+    "pdf2image",
+    "pypdfium2",
+    "weasyprint"
+  ],
+  "nodePackages": [
+    "docx",
+    "pptxgenjs",
+    "react",
+    "react-dom",
+    "react-icons",
+    "pdf-lib",
+    "pdfjs-dist"
+  ],
+  "fonts": [
+    "Liberation",
+    "DejaVu",
+    "Noto Core"
+  ],
+  "optionalPacks": [
+    {
+      "id": "ocr",
+      "tools": ["tesseract"],
+      "languageData": ["eng"]
+    }
+  ],
+  "platforms": [
+    "windows-native-x64",
+    "macos-arm64",
+    "macos-x64",
+    "linux-x64"
+  ]
+}

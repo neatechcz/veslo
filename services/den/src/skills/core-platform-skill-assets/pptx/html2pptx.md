@@ -640,10 +640,10 @@ const homeIconSvg = renderIconSvg(FaHome, "#4472c4", "48");
 
 **Important**: Extract the html2pptx library next to your script before using. See the **Prerequisites Check** section at the top of this document.
 
-**When running scripts, set NODE_PATH for global packages like pptxgenjs:**
+**When running scripts, use the managed runtime so bundled packages like pptxgenjs are available:**
 
 ```sh
-NODE_PATH="$(npm root -g)" node your-script.js 2>&1
+veslo-document-runtime exec -- node your-script.js 2>&1
 ```
 
 ### Dependencies
@@ -785,7 +785,7 @@ createPresentation().catch(console.error);
 **Run with:**
 
 ```sh
-NODE_PATH="$(npm root -g)" node create-presentation.js 2>&1
+veslo-document-runtime exec -- node create-presentation.js 2>&1
 ```
 
 ## Using PptxGenJS

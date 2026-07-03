@@ -1,0 +1,103 @@
+[scenario]
+name = "vslo-235-local-host-with-workspace"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "local host is ready with active workspace"
+action = "eval"
+timeout_ms = 90000
+script = '''
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const normalize = (value) => String(value ?? "").trim();
+const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+const assert = (condition, message) => {
+  if (!condition) throw new Error(message);
+};
+const tauriInvoke = async (command, payload = {}) => {
+  const invoke = window.__TAURI_INTERNALS__?.invoke;
+  assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+  return await invoke(command, payload);
+};
+const serverJson = async (baseUrl, token, path) => {
+  const response = await fetch(`${baseUrl}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  const text = await response.text();
+  let body = null;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = text;
+  }
+  return { ok: response.ok, status: response.status, body };
+};
+let latestProbe = null;
+const waitUntil = async (predicate, options = {}) => {
+  const timeout = options.timeout ?? 60000;
+  const interval = options.interval ?? 500;
+  const deadline = Date.now() + timeout;
+  let latest;
+  while (Date.now() < deadline) {
+    latest = await predicate();
+    if (latest) return latest;
+    await sleep(interval);
+  }
+  throw new Error(`${options.message ?? "Condition was not met"}. Latest=${JSON.stringify(latestProbe ?? latest)}`);
+};
+
+const ready = await waitUntil(async () => {
+  const info = await tauriInvoke("veslo_server_info").catch((error) => ({ error: String(error) }));
+  const baseUrl = trimBaseUrl(info?.baseUrl || info?.base_url || "");
+  const token = normalize(info?.clientToken || info?.client_token || "");
+  if (!info?.running || !baseUrl || !token) {
+    latestProbe = { info, ready: false };
+    return false;
+  }
+  const health = await serverJson(baseUrl, "", "/health").catch((error) => ({ error: String(error) }));
+  if (!health.ok || health.body?.ok !== true) {
+    latestProbe = { info, health, ready: false };
+    return false;
+  }
+  return { info, baseUrl, token, health, ready: true };
+}, {
+  timeout: 80000,
+  interval: 500,
+  message: "Local Veslo host did not become healthy with an active workspace",
+});
+
+assert(ready.info.lifecycleStatus === "running", `Expected lifecycleStatus=running, got ${JSON.stringify(ready.info)}`);
+assert(ready.info.lifecycleReason === "none", `Expected lifecycleReason=none, got ${JSON.stringify(ready.info)}`);
+
+const bootstrap = await tauriInvoke("workspace_bootstrap");
+assert(Array.isArray(bootstrap?.workspaces), `workspace_bootstrap workspaces missing: ${JSON.stringify(bootstrap)}`);
+assert(bootstrap.workspaces.length > 0, `Expected at least one desktop workspace, got ${JSON.stringify(bootstrap)}`);
+assert(normalize(bootstrap.activeId), `Expected bootstrap activeId, got ${JSON.stringify(bootstrap)}`);
+assert(
+  bootstrap.workspaces.some((workspace) => workspace?.id === bootstrap.activeId),
+  `Expected active workspace in bootstrap list, got ${JSON.stringify(bootstrap)}`,
+);
+
+const status = await serverJson(ready.baseUrl, ready.token, "/status");
+assert(status.ok, `GET /status failed: ${JSON.stringify(status)}`);
+assert(status.body?.workspaceCount > 0, `Expected workspaceCount>0, got ${JSON.stringify(status.body)}`);
+assert(status.body?.workspace !== null, `Expected workspace object, got ${JSON.stringify(status.body)}`);
+assert(normalize(status.body?.activeWorkspaceId), `Expected activeWorkspaceId, got ${JSON.stringify(status.body)}`);
+
+const workspaces = await serverJson(ready.baseUrl, ready.token, "/workspaces");
+assert(workspaces.ok, `GET /workspaces failed: ${JSON.stringify(workspaces)}`);
+assert(Array.isArray(workspaces.body?.items), `Expected workspaces.items array, got ${JSON.stringify(workspaces.body)}`);
+assert(workspaces.body.items.length > 0, `Expected at least one server workspace, got ${JSON.stringify(workspaces.body)}`);
+assert(normalize(workspaces.body.activeId), `Expected workspaces activeId, got ${JSON.stringify(workspaces.body)}`);
+assert(
+  workspaces.body.items.some((workspace) => workspace?.id === workspaces.body.activeId),
+  `Expected active workspace in server workspace list, got ${JSON.stringify(workspaces.body)}`,
+);
+true;
+'''

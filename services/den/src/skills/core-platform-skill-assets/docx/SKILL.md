@@ -9,36 +9,46 @@ description: "Create, edit, analyze, convert, and validate Word DOCX documents u
 
 A .docx file is a ZIP archive containing XML files.
 
+## Managed Runtime
+
+Run document tooling through the managed office runtime:
+
+```bash
+veslo-document-runtime exec -- <command>
+```
+
+Do not install host dependencies with `npm install -g`, `pip install`, `brew install`, `choco install`, `winget install`, or OS package managers during a task. If a runtime tool is missing, run `veslo-document-runtime doctor --json` and use Veslo package repair/update instead of changing the user's machine.
+
 ## Quick Reference
 
 | Task | Approach |
 |------|----------|
-| Read/analyze content | `pandoc` or unpack for raw XML |
-| Create new document | Use `docx-js` - see Creating New Documents below |
+| Read/analyze content | Managed `pandoc` or unpack for raw XML |
+| Create new document | Use bundled `docx` package - see Creating New Documents below |
 | Edit existing document | Unpack → edit XML → repack - see Editing Existing Documents below |
 
 ### Reading Content
 
 ```bash
 # Text extraction with tracked changes
-pandoc --track-changes=all document.docx -o output.md
+veslo-document-runtime exec -- pandoc --track-changes=all document.docx -o output.md
 
 # Raw XML access
-python scripts/unpack.py document.docx unpacked/
+veslo-document-runtime exec -- python scripts/unpack.py document.docx unpacked/
 ```
 
 ### Converting to Images
 
 ```bash
-soffice --headless --convert-to pdf document.docx
-pdftoppm -jpeg -r 150 document.pdf page
+veslo-document-runtime exec -- soffice --headless --convert-to pdf document.docx
+veslo-document-runtime exec -- pdftoppm -jpeg -r 150 document.pdf page
 ```
 
 ---
 
 ## Creating New Documents
 
-Generate .docx files with JavaScript. Install: `npm install -g docx`
+Generate .docx files with JavaScript. The `docx` package is bundled in the managed runtime. Run creation scripts with `veslo-document-runtime exec -- node your-script.js`.
 
 ### Setup
 ```javascript
@@ -261,7 +271,7 @@ sections: [{
 
 ### Step 1: Unpack
 ```bash
-python scripts/unpack.py document.docx unpacked/
+veslo-document-runtime exec -- python scripts/unpack.py document.docx unpacked/
 ```
 Extracts XML, pretty-prints, merges adjacent runs, and converts smart quotes to XML entities (`&#x201C;` etc.) so they survive editing. Use `--merge-runs false` to skip run merging.
 
@@ -287,14 +297,14 @@ Edit files in `unpacked/word/`. See XML Reference below for patterns.
 
 **Adding comments:** Use `comment.py` to handle boilerplate across multiple XML files (text must be pre-escaped XML):
 ```bash
-python scripts/comment.py unpacked/ 0 "Comment text with &amp; and &#x2019;"
-python scripts/comment.py unpacked/ 1 "Reply text" --parent 0  # reply to comment 0
+veslo-document-runtime exec -- python scripts/comment.py unpacked/ 0 "Comment text with &amp; and &#x2019;"
+veslo-document-runtime exec -- python scripts/comment.py unpacked/ 1 "Reply text" --parent 0  # reply to comment 0
 ```
 Then add markers to document.xml (see Comments in XML Reference).
 
 ### Step 3: Pack
 ```bash
-python scripts/pack.py unpacked/ output.docx --original document.docx
+veslo-document-runtime exec -- python scripts/pack.py unpacked/ output.docx --original document.docx
 ```
 Validates with auto-repair, condenses XML, and creates DOCX. Use `--validate false` to skip.
 
@@ -414,7 +424,7 @@ After running `comment.py` (see Step 2), add markers to document.xml. For replie
 
 ## Dependencies
 
-- **pandoc**: Text extraction
-- **docx**: `npm install -g docx` (new documents)
-- **LibreOffice**: PDF conversion
-- **Poppler**: `pdftoppm` for images
+- **pandoc**: Text extraction via `veslo-document-runtime exec -- pandoc`
+- **docx**: Bundled Node package for new documents
+- **LibreOffice**: PDF conversion via `veslo-document-runtime exec -- soffice`
+- **Poppler**: Image conversion via `veslo-document-runtime exec -- pdftoppm`

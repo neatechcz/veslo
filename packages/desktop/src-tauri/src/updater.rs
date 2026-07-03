@@ -259,22 +259,23 @@ mod tests {
             "/Applications/Veslo.app/Contents/MacOS/Veslo",
         ));
 
-        assert_eq!(bundle, Some(Path::new("/Applications/Veslo.app").to_path_buf()));
+        assert_eq!(
+            bundle,
+            Some(Path::new("/Applications/Veslo.app").to_path_buf())
+        );
     }
 
     #[test]
     fn rejects_non_bundle_executable_for_macos_relaunch() {
-        let bundle = macos_app_bundle_path_from_executable(Path::new(
-            "/Users/dev/Veslo/target/debug/veslo",
-        ));
+        let bundle =
+            macos_app_bundle_path_from_executable(Path::new("/Users/dev/Veslo/target/debug/veslo"));
 
         assert_eq!(bundle, None);
     }
 
     #[test]
     fn macos_relaunch_command_waits_for_old_pid_before_opening_bundle() {
-        let command =
-            macos_relaunch_after_exit_command(4242, Path::new("/Applications/Veslo.app"));
+        let command = macos_relaunch_after_exit_command(4242, Path::new("/Applications/Veslo.app"));
         let args = command
             .get_args()
             .map(|arg| arg.to_string_lossy().to_string())

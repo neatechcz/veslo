@@ -50,8 +50,9 @@ preference.
 Evidence:
 
 - `packages/desktop/src-tauri/src/runtime_preferences.rs`
-  - `DesktopRuntimePreferences::default()` currently returns
-    `shared_unsandboxed_engine: false`.
+  - At audit time, `DesktopRuntimePreferences::default()` returned
+    `shared_unsandboxed_engine: false`; current Windows/macOS desktop runtime
+    config defaults this preference to `true`.
   - `read_runtime_preferences()` resolves persisted override or env fallback.
   - `read_shared_unsandboxed_engine_override()` returns only the persisted
     override.

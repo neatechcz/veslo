@@ -92,10 +92,47 @@ pub struct EngineInfo {
     pub last_stderr: Option<String>,
 }
 
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VesloServerLifecycleStatus {
+    Stopped,
+    Starting,
+    Running,
+    Exited,
+    Blocked,
+}
+
+impl Default for VesloServerLifecycleStatus {
+    fn default() -> Self {
+        Self::Stopped
+    }
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VesloServerLifecycleReason {
+    None,
+    SpawnPending,
+    PortUnavailable,
+    SpawnFailed,
+    ChildExited,
+    HealthUnreachable,
+    TokenMissing,
+    IdentityMismatch,
+}
+
+impl Default for VesloServerLifecycleReason {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct VesloServerInfo {
     pub running: bool,
+    pub lifecycle_status: VesloServerLifecycleStatus,
+    pub lifecycle_reason: VesloServerLifecycleReason,
     pub host: Option<String>,
     pub port: Option<u16>,
     pub base_url: Option<String>,

@@ -18,7 +18,10 @@ use crate::debug_logs_forwarder::DebugLogsForwarder;
 #[cfg(windows)]
 use crate::platform::configure_hidden;
 use crate::process_supervisor::spawn_output_collector_with_forwarder;
-use crate::types::{VesloServerInfo, WorkspaceType};
+use crate::types::{
+    VesloServerInfo, VesloServerLifecycleReason, VesloServerLifecycleStatus, WorkspaceType,
+};
+use crate::utils::truncate_output;
 use crate::workspace::state::load_workspace_state;
 use std::sync::Arc;
 
@@ -516,6 +519,8 @@ fn persisted_state_to_info_with_health(
 
     Some(VesloServerInfo {
         running: true,
+        lifecycle_status: VesloServerLifecycleStatus::Running,
+        lifecycle_reason: VesloServerLifecycleReason::None,
         host: state.host.clone(),
         port: state.port,
         base_url: Some(base_url),
@@ -653,6 +658,8 @@ fn discover_external_veslo_server() -> Option<VesloServerInfo> {
         .or(identity.token);
     Some(VesloServerInfo {
         running: true,
+        lifecycle_status: VesloServerLifecycleStatus::Running,
+        lifecycle_reason: VesloServerLifecycleReason::None,
         host: Some(host),
         port,
         base_url: Some(trimmed.to_string()),
@@ -904,10 +911,15 @@ pub fn start_veslo_server(
     let previous_client_token = state.client_token.clone();
     let previous_host_token = state.host_token.clone();
     VesloServerManager::stop_locked(&mut state);
+    state.lifecycle_status = VesloServerLifecycleStatus::Starting;
+    state.lifecycle_reason = VesloServerLifecycleReason::SpawnPending;
 
     let port = match resolve_veslo_port_after_restart(&host) {
         Ok(port) => port,
         Err(error) => {
+            state.lifecycle_status = VesloServerLifecycleStatus::Blocked;
+            state.lifecycle_reason = VesloServerLifecycleReason::PortUnavailable;
+            state.last_stderr = Some(truncate_output(&error, 8000));
             append_veslo_server_launch_diagnostic(
                 app,
                 "veslo-server-launch:port-resolve-failed",
@@ -975,6 +987,9 @@ pub fn start_veslo_server(
             result
         }
         Err(error) => {
+            state.lifecycle_status = VesloServerLifecycleStatus::Blocked;
+            state.lifecycle_reason = VesloServerLifecycleReason::SpawnFailed;
+            state.last_stderr = Some(truncate_output(&error, 8000));
             append_veslo_server_launch_diagnostic(
                 app,
                 "veslo-server-launch:spawn-failed",
@@ -1018,6 +1033,8 @@ pub fn start_veslo_server(
     state.sandbox_backend = Some(sandbox_backend);
     state.last_stdout = None;
     state.last_stderr = None;
+    state.lifecycle_status = VesloServerLifecycleStatus::Running;
+    state.lifecycle_reason = VesloServerLifecycleReason::None;
 
     let forwarder = app
         .try_state::<Arc<DebugLogsForwarder>>()

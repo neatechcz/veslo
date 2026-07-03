@@ -11,6 +11,8 @@ import {
   scenarioSelectionNeedsSkillEnableInventoryFixture,
   scenarioSelectionNeedsGoogleMcpCatalogFixture,
   scenarioSelectionNeedsManagedAiGatewayFixture,
+  scenarioSelectionNeedsNoWorkspaceProfile,
+  scenarioSelectionNeedsPortContentionFixture,
   scenarioSelectionNeedsSkillRegistryAuthFixture,
   scenarioSelectionNeedsAutomationSecondaryWorkspace,
 } from './pilot-runner.js';
@@ -143,5 +145,35 @@ test('global unpublished draft pilot scenario requests the managed AI fixture', 
       resolvePilotScenarioSelection({ scenario: ['global-unpublished-draft'] }, e2eRoot),
     ),
     true,
+  );
+});
+
+test('VSLO-235 local host scenario requests a no-workspace desktop profile', () => {
+  const e2eRoot = '/repo/packages/e2e';
+
+  assert.equal(
+    scenarioSelectionNeedsNoWorkspaceProfile(
+      resolvePilotScenarioSelection({ scenario: ['vslo-235-local-host-no-workspace'] }, e2eRoot),
+    ),
+    true,
+  );
+  assert.equal(
+    scenarioSelectionNeedsNoWorkspaceProfile(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
+    false,
+  );
+});
+
+test('VSLO-235 port contention scenario requests a held local server port', () => {
+  const e2eRoot = '/repo/packages/e2e';
+
+  assert.equal(
+    scenarioSelectionNeedsPortContentionFixture(
+      resolvePilotScenarioSelection({ scenario: ['vslo-235-local-host-port-contention'] }, e2eRoot),
+    ),
+    true,
+  );
+  assert.equal(
+    scenarioSelectionNeedsPortContentionFixture(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
+    false,
   );
 });

@@ -4862,6 +4862,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             ok: true,
             ...active.record,
             stale: active.stale,
+            noProgressSeconds: active.noProgressSeconds,
           });
           return;
         }
@@ -4877,6 +4878,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           ok: true,
           ...reconciled.record,
           stale: reconciled.stale,
+          noProgressSeconds: reconciled.noProgressSeconds,
         });
         return;
       }

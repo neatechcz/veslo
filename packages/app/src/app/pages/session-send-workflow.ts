@@ -14,6 +14,11 @@ import type {
   VesloConversationRunInput,
   VesloServerClient,
 } from "../lib/veslo-server";
+import {
+  documentRuntimeTaskBlockReason,
+  type DocumentRuntimeFormat,
+  type DocumentRuntimeStatusPayload,
+} from "../lib/document-runtime";
 import type {
   DisplayedConversationGuard,
   SendTargetWorkspaceScope,
@@ -50,6 +55,33 @@ export type SessionSendWorkflowCommand = {
   name: string;
   description?: string;
   source?: "command" | "mcp" | "skill";
+};
+
+const DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME = {
+  "veslo-docx": "docx",
+  "veslo-xlsx": "xlsx",
+  "veslo-pdf": "pdf",
+  "veslo-pptx": "pptx",
+} satisfies Record<string, DocumentRuntimeFormat>;
+
+export function documentRuntimeFormatForSkillCommand(skillName: string): DocumentRuntimeFormat | null {
+  const key = skillName.trim();
+  return Object.prototype.hasOwnProperty.call(DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME, key)
+    ? DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME[key as keyof typeof DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME]
+    : null;
+}
+
+export function documentRuntimeBlockReasonForSkillCommand(
+  status: DocumentRuntimeStatusPayload | null | undefined,
+  skillName: string,
+): string | null {
+  const format = documentRuntimeFormatForSkillCommand(skillName);
+  return format ? documentRuntimeTaskBlockReason(status, format) : null;
+}
+
+type SkillCommandResolutionResult = {
+  draft: ComposerDraft;
+  blockedReason?: string | null;
 };
 
 export type SessionSendWorkflowWorkspace = {
@@ -106,6 +138,7 @@ export type SessionSendWorkflowOptions = {
     },
   ) => Promise<string | undefined>;
   developerMode: () => boolean;
+  documentRuntimeStatus?: () => DocumentRuntimeStatusPayload | null;
   displayedConversationStillMatches: (guard: DisplayedConversationGuard) => boolean;
   engineReady: () => boolean;
   ensureSelectedSessionWorkspaceActiveForSend: (
@@ -240,7 +273,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
     draft: ComposerDraft,
     traceId?: string | null,
     targetWorkspace?: SendTargetWorkspaceScope | null,
-  ): Promise<ComposerDraft> {
+  ): Promise<SkillCommandResolutionResult> {
     const tracePayload = traceId ? { traceId } : undefined;
     if (draft.mode !== "prompt" || draft.command) {
       deps.recordSendTrace("maybeResolveSkillCommand:skipped-mode-or-command", {
@@ -248,7 +281,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         mode: draft.mode,
         hasCommand: Boolean(draft.command),
       });
-      return draft;
+      return { draft };
     }
 
     const text = (draft.resolvedText ?? draft.text).trim();
@@ -258,7 +291,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         hasText: Boolean(text),
         startsWithSlash: text.startsWith("/"),
       });
-      return draft;
+      return { draft };
     }
 
     const vesloClient = deps.vesloServerClient();
@@ -277,7 +310,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         hasWorkspaceId: Boolean(workspaceId),
         targetWorkspaceId: targetWorkspaceId || null,
       });
-      return draft;
+      return { draft };
     }
 
     try {
@@ -314,7 +347,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       const matchedName = resolution?.match?.name?.trim();
       if (!matchedName) {
         deps.recordSendTrace("maybeResolveSkillCommand:no-match", tracePayload);
-        return draft;
+        return { draft };
       }
 
       const commandDirectory =
@@ -348,7 +381,19 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           matchedName,
           commandCount: commands.length,
         });
-        return draft;
+        return { draft };
+      }
+
+      const documentRuntimeBlockedReason = deps.documentRuntimeStatus
+        ? documentRuntimeBlockReasonForSkillCommand(deps.documentRuntimeStatus(), matchedName)
+        : null;
+      if (documentRuntimeBlockedReason) {
+        deps.recordSendTrace("maybeResolveSkillCommand:blocked-document-runtime", {
+          ...(tracePayload ?? {}),
+          matchedName,
+          reason: documentRuntimeBlockedReason,
+        });
+        return { draft, blockedReason: documentRuntimeBlockedReason };
       }
 
       deps.recordSendTrace("maybeResolveSkillCommand:matched", {
@@ -356,10 +401,12 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         matchedName,
       });
       return {
-        ...draft,
-        command: {
-          name: matchedName,
-          arguments: text,
+        draft: {
+          ...draft,
+          command: {
+            name: matchedName,
+            arguments: text,
+          },
         },
       };
     } catch (error) {
@@ -367,7 +414,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         ...(tracePayload ?? {}),
         message: deps.messageFromUnknownError(error),
       });
-      return draft;
+      return { draft };
     }
   }
 
@@ -528,7 +575,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       sendPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
     }
 
-    resolvedDraft = await deps.sendTraceStep(
+    const skillResolution = await deps.sendTraceStep(
       "sendPrompt:maybe-resolve-skill-command",
       () => maybeResolveSkillCommand(resolvedDraft, sendTraceId, sendTargetWorkspace),
       {
@@ -537,6 +584,15 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
       },
     );
+    if (skillResolution.blockedReason) {
+      deps.setError(skillResolution.blockedReason);
+      deps.recordSendTrace("sendPrompt:blocked-document-runtime", {
+        traceId: sendTraceId,
+        reason: skillResolution.blockedReason,
+      });
+      return false;
+    }
+    resolvedDraft = skillResolution.draft;
 
     const initialSessionTitle = resolvedDraft.text.trim();
     const initialContent = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
