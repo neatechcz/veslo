@@ -2,6 +2,8 @@ import { DefaultBindingSelector } from "../leases/binding-selector.js"
 import { LeaseBroker } from "../leases/lease-broker.js"
 import { MySqlLeaseRepository } from "../leases/mysql-repository.js"
 import type { LeaseRepository } from "../leases/repository.js"
+import type { OrganizationBillingRepository } from "../../billing/repository.js"
+import { findUserOrganization, resolveActiveUserOrganizations } from "../../http/org-auth.js"
 import {
   createAutoAssignedCodexCredentialRotationService,
   type AutoAssignedCodexCredentialRotationService,
@@ -44,12 +46,14 @@ export type RuntimeState = {
   leases: LeaseRepository
   usage: UsageRepository
   codexStatusProvider: CodexCredentialStatusProvider
+  organizationBilling: OrganizationBillingRepository
 }
 
 export type DefaultRuntimeOptions = {
   db?: any
   databaseUrl?: string
   secretKey?: string
+  organizationBilling?: OrganizationBillingRepository
 }
 
 export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): RuntimeState {
@@ -65,6 +69,9 @@ export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): 
   if (!secretKey) {
     throw new Error("managed_ai_secret_key_not_configured")
   }
+  if (!options.organizationBilling) {
+    throw new Error("organization_billing_repository_not_configured")
+  }
 
   const credentials = new MySqlCredentialRepository(db)
   const secrets = new MySqlSecretStore(db, secretKey)
@@ -77,6 +84,7 @@ export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): 
     secrets,
     leases: new MySqlLeaseRepository(db),
     usage: new MySqlUsageRepository(db),
+    organizationBilling: options.organizationBilling,
     codexStatusProvider: new CachedCodexCredentialStatusProvider({
       loadCredentialAuthJson: async (credentialId) => {
         const credential = await credentials.getCredentialRecordById(credentialId)
@@ -95,6 +103,11 @@ export type ProxyDependencies = {
   aiAccess: AiAccessRepository
   autoAssignedCodexCredentialRotation: AutoAssignedCodexCredentialRotationService
   gatewaySessions: DenGatewaySessionResolver
+  organizationAccess: {
+    listUserOrganizations: typeof resolveActiveUserOrganizations
+    findUserOrganization: typeof findUserOrganization
+  }
+  organizationBilling: OrganizationBillingRepository
   credentials: CredentialRepository
   secrets: SecretStore
   usageRepository: UsageRepository
@@ -128,6 +141,11 @@ export function createDefaultProxyDependencies(
       now: overrides.now,
     }),
     gatewaySessions: overrides.gatewaySessions ?? new DenGatewaySessionResolver(),
+    organizationAccess: {
+      listUserOrganizations: resolveActiveUserOrganizations,
+      findUserOrganization,
+    },
+    organizationBilling: runtime.organizationBilling,
     credentials: runtime.credentials,
     secrets: runtime.secrets,
     usageRepository: runtime.usage,

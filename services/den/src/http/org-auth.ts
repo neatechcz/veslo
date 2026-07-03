@@ -1,5 +1,5 @@
 import express from "express"
-import { eq } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import { db } from "../db/index.js"
 import { OrgMembershipTable, OrgRole, OrgTable, PlatformRoleTable } from "../db/schema.js"
 import { ensureDefaultOrg } from "../orgs.js"
@@ -51,6 +51,7 @@ export async function resolveUserOrganizations(userId: string): Promise<Organiza
       ownerUserId: OrgTable.owner_user_id,
       membershipId: OrgMembershipTable.id,
       role: OrgMembershipTable.role,
+      status: OrgMembershipTable.status,
     })
     .from(OrgMembershipTable)
     .innerJoin(OrgTable, eq(OrgMembershipTable.org_id, OrgTable.id))
@@ -63,7 +64,64 @@ export async function resolveUserOrganizations(userId: string): Promise<Organiza
     ownerUserId: row.ownerUserId,
     membershipId: row.membershipId,
     role: row.role,
+    status: row.status,
   }))
+}
+
+export async function resolveActiveUserOrganizations(userId: string): Promise<OrganizationSummary[]> {
+  const rows = await db
+    .select({
+      id: OrgTable.id,
+      name: OrgTable.name,
+      slug: OrgTable.slug,
+      ownerUserId: OrgTable.owner_user_id,
+      membershipId: OrgMembershipTable.id,
+      role: OrgMembershipTable.role,
+      status: OrgMembershipTable.status,
+    })
+    .from(OrgMembershipTable)
+    .innerJoin(OrgTable, eq(OrgMembershipTable.org_id, OrgTable.id))
+    .where(and(eq(OrgMembershipTable.user_id, userId), eq(OrgMembershipTable.status, "active")))
+
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    ownerUserId: row.ownerUserId,
+    membershipId: row.membershipId,
+    role: row.role,
+    status: row.status,
+  }))
+}
+
+export async function findUserOrganization(userId: string, orgId: string): Promise<OrganizationSummary | null> {
+  const rows = await db
+    .select({
+      id: OrgTable.id,
+      name: OrgTable.name,
+      slug: OrgTable.slug,
+      ownerUserId: OrgTable.owner_user_id,
+      membershipId: OrgMembershipTable.id,
+      role: OrgMembershipTable.role,
+      status: OrgMembershipTable.status,
+    })
+    .from(OrgMembershipTable)
+    .innerJoin(OrgTable, eq(OrgMembershipTable.org_id, OrgTable.id))
+    .where(and(eq(OrgMembershipTable.user_id, userId), eq(OrgMembershipTable.org_id, orgId)))
+    .limit(1)
+
+  const row = rows[0]
+  return row
+    ? {
+        id: row.id,
+        name: row.name,
+        slug: row.slug,
+        ownerUserId: row.ownerUserId,
+        membershipId: row.membershipId,
+        role: row.role,
+        status: row.status,
+      }
+    : null
 }
 
 export async function resolveMembershipOrganizations(session: SessionContext) {
@@ -135,7 +193,9 @@ export async function requireOrganizationAccess(
 
   const explicitOrgId = options.orgId ?? readRequestedOrganizationId(req)
   if (explicitOrgId) {
-    const membership = organizations.find((entry) => entry.id === explicitOrgId) ?? null
+    const membership = organizations.find((entry) =>
+      entry.id === explicitOrgId && (entry.status === undefined || entry.status === "active")
+    ) ?? null
     const organization = membership ? {
       id: membership.id,
       name: membership.name,
@@ -199,5 +259,6 @@ export function serializeOrganization(entry: OrganizationSummary) {
     slug: entry.slug,
     ownerUserId: entry.ownerUserId,
     role: toCurrentOrgRole(entry.role),
+    status: entry.status ?? "active",
   }
 }

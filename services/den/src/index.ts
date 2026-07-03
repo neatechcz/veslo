@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url"
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 import { sql } from "drizzle-orm"
 import { auth, createAuthNodeHandler, guardEmailSignupRequest } from "./auth.js"
+import { createDrizzleOrganizationBillingStore, createOrganizationBillingRepository } from "./billing/repository.js"
 import { db } from "./db/index.js"
 import { AdminUserStateTable, AuthUserTable, PlatformRoleTable } from "./db/schema.js"
 import { createDbDebugLogStore, createDebugLogService } from "./debug-logs/repository.js"
@@ -17,6 +18,7 @@ import { createDbFeedbackProjectorStore, createFeedbackProjector } from "./feedb
 import { createDebugLogsIngestRouter } from "./http/debug-logs.js"
 import { createDesktopDiagnosticsRouter } from "./http/desktop-diagnostics.js"
 import { createInternalPlatformAdminRecipientsRouter } from "./http/internal-platform-admin-recipients.js"
+import { createOrganizationBillingWebhookRouter } from "./http/organization-billing-webhook.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { requireSession } from "./http/session.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
@@ -81,7 +83,10 @@ const SKILL_REGISTRY_SCHEMA_MIGRATIONS = [
   "0013_skill_registry.sql",
   "0014_skill_rollout_policies.sql",
 ] as const
-const managedAiRuntime = env.managedAi.enabled ? createDefaultRuntimeState() : null
+const organizationBillingRepository = createOrganizationBillingRepository(createDrizzleOrganizationBillingStore(db))
+const managedAiRuntime = env.managedAi.enabled
+  ? createDefaultRuntimeState({ organizationBilling: organizationBillingRepository })
+  : null
 const managedAiProxyJsonParser = express.json({ limit: MANAGED_AI_PROXY_JSON_LIMIT })
 const currentFile = fileURLToPath(import.meta.url)
 const denRoot = path.resolve(path.dirname(currentFile), "..")
@@ -132,6 +137,10 @@ if (corsOrigins.length > 0) {
 // Better Auth reads the raw request body itself — mount BEFORE express.json()
 // so the body stream isn't consumed by Express's JSON parser first
 app.all("/api/auth/*", createAuthNodeHandler(toNodeHandler(auth), guardEmailSignupRequest))
+app.use(createOrganizationBillingWebhookRouter({
+  config: env.organizationBilling.stripe,
+  repository: organizationBillingRepository,
+}))
 app.use("/v1", feedbackRouter)
 app.use("/v1/internal", debugLogsIngestRouter)
 app.use("/v1", createDesktopDiagnosticsRouter({ service: debugLogService }))

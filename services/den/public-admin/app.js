@@ -36,6 +36,9 @@ const state = {
   userAiAccessAvailableCredentialsByUserId: {},
   billingView: initialRoute.billingView,
   selectedBillingOrgId: null,
+  billingByOrgId: {},
+  billingInterval: "monthly",
+  billingBusy: false,
 };
 
 const els = {
@@ -119,6 +122,7 @@ const els = {
   platformNavItems: Array.from(document.querySelectorAll(".platform-nav")),
   billingViewButtons: Array.from(document.querySelectorAll("[data-billing-view]")),
   billingPlatformOnly: Array.from(document.querySelectorAll(".billing-platform-only")),
+  billingPlatformScopeOnly: Array.from(document.querySelectorAll(".billing-platform-scope-only")),
   billingOrgOnly: Array.from(document.querySelectorAll(".billing-org-only")),
   billingOrgSearch: document.getElementById("billing-org-search"),
   billingStatusFilter: document.getElementById("billing-status-filter"),
@@ -140,6 +144,13 @@ const els = {
   billingManagedAi: document.getElementById("billing-managed-ai"),
   billingLicenseLimit: document.getElementById("billing-license-limit"),
   billingExtendedInput: document.getElementById("billing-extended-input"),
+  billingIntervalButtons: Array.from(document.querySelectorAll("[data-billing-interval]")),
+  billingBasicQuantity: document.getElementById("billing-basic-quantity"),
+  billingExtendedQuantity: document.getElementById("billing-extended-quantity"),
+  billingUpdateButton: document.getElementById("billing-update-button"),
+  billingPortalButton: document.getElementById("billing-portal-button"),
+  billingRefreshButton: document.getElementById("billing-refresh-button"),
+  billingActionStatus: document.getElementById("billing-action-status"),
   heroMetrics: Array.from(document.querySelectorAll(".hero-metrics .metric-card strong")),
 };
 
@@ -840,6 +851,7 @@ async function loadAllData() {
     loadAudit(),
     loadUsage(),
   ]);
+  await loadBillingForVisibleOrganizations();
   renderOverview();
   renderBilling();
 }
@@ -1049,7 +1061,47 @@ function renderOverview() {
   });
 }
 
-function collectBillingOrganizations() {
+function setBillingActionStatus(message = "", tone = "") {
+  if (!els.billingActionStatus) {
+    return;
+  }
+  els.billingActionStatus.textContent = message;
+  els.billingActionStatus.dataset.tone = tone;
+}
+
+function billingStatusTone(status) {
+  if (status === "active" || status === "trialing") return "success";
+  if (status === "past_due" || status === "incomplete") return "pending";
+  if (status === "unpaid" || status === "canceled") return "error";
+  return "info";
+}
+
+function billingForOrg(orgId) {
+  return orgId ? state.billingByOrgId[orgId] || null : null;
+}
+
+async function loadBillingForOrg(orgId) {
+  if (!orgId) {
+    return null;
+  }
+  const payload = await fetchJson(`/organizations/${encodeURIComponent(orgId)}/billing`);
+  const billing = payload?.billing || null;
+  state.billingByOrgId[orgId] = billing;
+  return billing;
+}
+
+async function loadBillingForVisibleOrganizations() {
+  const organizations = collectBillingBaseOrganizations();
+  await Promise.all(organizations.map(async (org) => {
+    try {
+      await loadBillingForOrg(org.id);
+    } catch (error) {
+      logLoadFailure(`loadBilling failed for ${org.id}`, error);
+    }
+  }));
+}
+
+function collectBillingBaseOrganizations() {
   const byId = new Map();
   const sessionOrganizations = Array.isArray(state.session?.organizations) ? state.session.organizations : [];
   for (const org of sessionOrganizations) {
@@ -1079,17 +1131,35 @@ function collectBillingOrganizations() {
     const activeUsers = state.users.filter((user) =>
       user.disabled !== true && (user.memberships || []).some((membership) => membership.orgId === org.id),
     ).length;
+    return { ...org, activeUsers };
+  });
+}
+
+function collectBillingOrganizations() {
+  return collectBillingBaseOrganizations().map((org) => {
+    const billing = billingForOrg(org.id);
+    const account = billing?.account || null;
+    const entitlement = billing?.entitlement || null;
+    const quantities = account?.quantities || {};
+    const activeUsers = Number(billing?.activeUserCount ?? entitlement?.activeUserCount ?? org.activeUsers ?? 0);
+    const licenseLimit = Number(billing?.licenseLimit ?? entitlement?.licenseLimit ?? 0);
+    const status = account?.status || entitlement?.status || "none";
+    const mode = account?.mode || entitlement?.effectiveMode || "none";
+    const paymentProblem = account?.paymentProblem?.code || entitlement?.managedAiBlockingReason || "";
+
     return {
       ...org,
       activeUsers,
-      status: "not_configured",
-      mode: "none",
-      source: "Not configured",
-      licenseLimit: 0,
-      basicQuantity: 0,
-      extendedQuantity: 0,
-      interval: "None",
-      renewal: "None",
+      status,
+      mode,
+      source: account?.source || "Not configured",
+      paymentProblem,
+      licenseLimit,
+      basicQuantity: Number(quantities.managedAiBasic || 0),
+      extendedQuantity: Number(quantities.managedAiExtended || 0),
+      interval: account?.billingInterval || "None",
+      renewal: account?.cancelAtPeriodEnd ? "Canceling" : status === "active" || status === "trialing" ? "Stripe managed" : "None",
+      billing,
     };
   });
 }
@@ -1120,40 +1190,49 @@ function renderBilling() {
     button.classList.toggle("active", view === state.billingView);
     button.disabled = view === "platform" && !platformAdmin;
   });
-  els.billingPlatformOnly.forEach((node) => node.classList.toggle("hidden", state.billingView !== "platform" || !platformAdmin));
-  els.billingOrgOnly.forEach((node) => node.classList.toggle("hidden", state.billingView === "platform" && platformAdmin));
+  els.billingPlatformOnly.forEach((node) => node.classList.toggle("hidden", !platformAdmin));
+  els.billingPlatformScopeOnly.forEach((node) => node.classList.toggle("hidden", state.billingView !== "platform" || !platformAdmin));
+  els.billingOrgOnly.forEach((node) => node.classList.toggle("hidden", false));
 
   if (state.page === "billing") {
-    els.pageEyebrow.textContent = platformAdmin && state.billingView === "platform" ? "Platform Admin" : "Organization Admin";
-    els.pageTitle.textContent = platformAdmin && state.billingView === "platform" ? "Organization billing" : "Billing";
-    els.pageDescription.textContent = platformAdmin && state.billingView === "platform"
-      ? "Review subscription state across organizations and operate on the selected organization without changing actor identity."
+    els.pageEyebrow.textContent = platformAdmin ? "Platform Admin" : "Organization Admin";
+    els.pageTitle.textContent = "Billing";
+    els.pageDescription.textContent = platformAdmin
+      ? "Manage the selected organization billing flow and use platform-only controls when operating across organizations."
       : "Manage licenses, billing interval, invoices, payment recovery, and Stripe portal access for your organization.";
   }
 
   const organizations = collectBillingOrganizations();
   const term = els.billingOrgSearch?.value?.trim().toLowerCase() || "";
+  const statusFilter = els.billingStatusFilter?.value || "all";
   const visibleOrganizations = organizations.filter((org) =>
-    !term || `${org.name} ${org.slug}`.toLowerCase().includes(term),
+    (!term || `${org.name} ${org.slug}`.toLowerCase().includes(term)) &&
+    (statusFilter === "all" || org.status === statusFilter),
   );
   els.billingOrganizationList.innerHTML = visibleOrganizations.map((org) => `
-    <article class="list-card ${org.id === state.selectedBillingOrgId ? "active" : ""}" data-billing-org-id="${escapeHtml(org.id)}">
+    <article class="billing-org-card ${org.id === state.selectedBillingOrgId ? "active" : ""}" data-billing-org-id="${escapeHtml(org.id)}">
       <div>
         <strong>${escapeHtml(org.name)}</strong>
         <p>${escapeHtml(`${org.activeUsers}/${org.licenseLimit} active users · ${org.source}`)}</p>
       </div>
-      <span class="status-chip info">Not configured</span>
+      <span class="status-chip ${billingStatusTone(org.status)}">${escapeHtml(org.status === "none" ? "Not configured" : org.status)}</span>
     </article>
-  `).join("") || `<article class="list-card active"><div><strong>No organizations</strong><p>No organization is available to this admin session.</p></div></article>`;
+  `).join("") || `<article class="billing-org-card active"><div><strong>No organizations</strong><p>No organization is available to this admin session.</p></div></article>`;
 
   const org = selectedBillingOrganization();
   const activeUsers = org?.activeUsers ?? 0;
   const licenseLimit = org?.licenseLimit ?? 0;
   const targetName = org?.name || "No organization selected";
+  const billing = org?.billing || null;
+  const account = billing?.account || null;
+  const entitlement = billing?.entitlement || null;
+  const canUseManagedAi = entitlement?.canUseManagedAi === true;
+  const isStripeConfigured = account?.stripe?.subscriptionConfigured === true;
+  const statusTone = billingStatusTone(org?.status || "none");
   els.billingTargetName.textContent = targetName;
   els.billingSource.textContent = org?.source || "Not configured";
-  els.billingLastSync.textContent = "No Stripe event";
-  els.billingPaymentState.textContent = licenseLimit > 0 ? "Active" : "No paid access";
+  els.billingLastSync.textContent = account?.updatedAt ? formatDate(account.updatedAt) : "Awaiting Stripe event";
+  els.billingPaymentState.textContent = org?.paymentProblem ? "Payment issue" : licenseLimit > 0 ? "Active" : "No paid access";
   els.billingAuditTarget.textContent = org?.id || "No organization selected";
   els.billingLicenseTotal.textContent = String(licenseLimit);
   els.billingLicenseDetail.textContent = `${org?.basicQuantity ?? 0} Basic, ${org?.extendedQuantity ?? 0} Extended`;
@@ -1161,15 +1240,147 @@ function renderBilling() {
   els.billingUserDetail.textContent = `${Math.max(licenseLimit - activeUsers, 0)} licenses available`;
   els.billingInterval.textContent = org?.interval || "None";
   els.billingRenewal.textContent = org?.renewal || "None";
-  els.billingStatusChip.textContent = licenseLimit > 0 ? "Active" : "Not configured";
-  els.billingStatusChip.className = `status-chip ${licenseLimit > 0 ? "success" : "info"}`;
-  els.billingNoticeTitle.textContent = licenseLimit > 0 ? "AI inference is enabled" : "Billing is not configured";
-  els.billingNoticeText.textContent = licenseLimit > 0
-    ? "The organization has paid Managed AI access and enough licenses for all active users."
-    : "History and settings remain readable. Managed AI inference requires paid or platform-granted access.";
-  els.billingManagedAi.textContent = licenseLimit > 0 ? "Allowed" : "Blocked";
+  els.billingStatusChip.textContent = org?.status && org.status !== "none" ? org.status : "Not configured";
+  els.billingStatusChip.className = `status-chip ${statusTone}`;
+  els.billingNoticeTitle.textContent = canUseManagedAi ? "AI inference is enabled" : "Managed AI is blocked";
+  els.billingNoticeText.textContent = canUseManagedAi
+    ? "The organization has Managed AI access and enough licenses for the current entitlement."
+    : entitlement?.managedAiBlockingReason === "requested_license_limit_below_active_users"
+      ? "Increase the license count before re-enabling Managed AI for all active users."
+      : "History and settings remain readable. Managed AI inference requires paid or platform-granted access.";
+  els.billingManagedAi.textContent = canUseManagedAi ? "Allowed" : "Blocked";
   els.billingLicenseLimit.textContent = `${licenseLimit} users`;
   els.billingExtendedInput.textContent = `${org?.extendedQuantity ?? 0} seats`;
+  if (els.billingBasicQuantity && document.activeElement !== els.billingBasicQuantity) {
+    els.billingBasicQuantity.value = String(org?.basicQuantity ?? 0);
+  }
+  if (els.billingExtendedQuantity && document.activeElement !== els.billingExtendedQuantity) {
+    els.billingExtendedQuantity.value = String(org?.extendedQuantity ?? 0);
+  }
+  const currentInterval = org?.interval === "annual" || org?.interval === "monthly" ? org.interval : state.billingInterval;
+  state.billingInterval = currentInterval;
+  els.billingIntervalButtons.forEach((button) => {
+    button.classList.toggle("active", (button.dataset.billingInterval || "monthly") === currentInterval);
+  });
+  if (els.billingUpdateButton) {
+    els.billingUpdateButton.textContent = isStripeConfigured ? "Update licenses" : "Start checkout";
+    els.billingUpdateButton.disabled = state.billingBusy || !org;
+  }
+  if (els.billingPortalButton) {
+    els.billingPortalButton.disabled = state.billingBusy || !account?.stripe?.customerConfigured;
+  }
+  if (els.billingRefreshButton) {
+    els.billingRefreshButton.disabled = state.billingBusy || !org;
+  }
+}
+
+function readBillingFormQuantities() {
+  const managedAiBasic = Number(els.billingBasicQuantity?.value ?? "0");
+  const managedAiExtended = Number(els.billingExtendedQuantity?.value ?? "0");
+  if (!Number.isInteger(managedAiBasic) || managedAiBasic < 0 || !Number.isInteger(managedAiExtended) || managedAiExtended < 0) {
+    return null;
+  }
+  return { managedAiBasic, managedAiExtended };
+}
+
+async function refreshSelectedBilling() {
+  const org = selectedBillingOrganization();
+  if (!org) {
+    return;
+  }
+  try {
+    state.billingBusy = true;
+    setBillingActionStatus("Refreshing billing state...");
+    renderBilling();
+    await loadBillingForOrg(org.id);
+    setBillingActionStatus("Billing state refreshed.", "success");
+  } catch (error) {
+    setBillingActionStatus(`Unable to refresh billing: ${error instanceof Error ? error.message : "unknown_error"}`, "error");
+  } finally {
+    state.billingBusy = false;
+    renderBilling();
+  }
+}
+
+async function submitBillingUpdate() {
+  const org = selectedBillingOrganization();
+  if (!org) {
+    setBillingActionStatus("Select an organization first.", "error");
+    return;
+  }
+  const quantities = readBillingFormQuantities();
+  if (!quantities) {
+    setBillingActionStatus("License quantities must be whole numbers.", "error");
+    return;
+  }
+  if (quantities.managedAiBasic <= 0 && quantities.managedAiExtended <= 0) {
+    setBillingActionStatus("Choose at least one Basic or Extended license.", "error");
+    return;
+  }
+
+  const orgId = org.id;
+  const account = billingForOrg(orgId)?.account || null;
+  const hasSubscription = account?.stripe?.subscriptionConfigured === true;
+
+  try {
+    state.billingBusy = true;
+    setBillingActionStatus(hasSubscription ? "Updating subscription..." : "Opening Stripe checkout...");
+    renderBilling();
+    if (hasSubscription) {
+      await fetchJson(`/organizations/${encodeURIComponent(orgId)}/billing/plan`, {
+        method: "PATCH",
+        body: JSON.stringify({ quantities }),
+      });
+      await loadBillingForOrg(orgId);
+      setBillingActionStatus("Subscription quantities updated.", "success");
+      return;
+    }
+
+    const payload = await fetchJson(`/organizations/${encodeURIComponent(orgId)}/billing/checkout`, {
+      method: "POST",
+      body: JSON.stringify({
+        interval: state.billingInterval,
+        quantities,
+      }),
+    });
+    const checkout = payload?.checkout || null;
+    if (!checkout?.url) {
+      throw new Error("checkout_url_missing");
+    }
+    window.location.assign(checkout.url);
+  } catch (error) {
+    setBillingActionStatus(`Unable to update billing: ${error instanceof Error ? error.message : "unknown_error"}`, "error");
+  } finally {
+    state.billingBusy = false;
+    renderBilling();
+  }
+}
+
+async function openBillingPortal() {
+  const org = selectedBillingOrganization();
+  if (!org) {
+    setBillingActionStatus("Select an organization first.", "error");
+    return;
+  }
+  const orgId = org.id;
+  try {
+    state.billingBusy = true;
+    setBillingActionStatus("Opening Stripe portal...");
+    renderBilling();
+    const payload = await fetchJson(`/organizations/${encodeURIComponent(orgId)}/billing/portal`, {
+      method: "POST",
+    });
+    const portal = payload?.portal || null;
+    if (!portal?.url) {
+      throw new Error("portal_url_missing");
+    }
+    window.location.assign(portal.url);
+  } catch (error) {
+    setBillingActionStatus(`Unable to open portal: ${error instanceof Error ? error.message : "unknown_error"}`, "error");
+  } finally {
+    state.billingBusy = false;
+    renderBilling();
+  }
 }
 
 function renderCredentials() {
@@ -2390,9 +2601,27 @@ function bindActions() {
     if (!card) return;
     state.selectedBillingOrgId = card.dataset.billingOrgId;
     renderBilling();
+    void loadBillingForOrg(state.selectedBillingOrgId).then(renderBilling).catch((error) => {
+      setBillingActionStatus(`Unable to load billing: ${error instanceof Error ? error.message : "unknown_error"}`, "error");
+    });
   });
   els.billingOrgSearch.addEventListener("input", renderBilling);
   els.billingStatusFilter.addEventListener("change", renderBilling);
+  els.billingIntervalButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.billingInterval = button.dataset.billingInterval || "monthly";
+      renderBilling();
+    });
+  });
+  els.billingUpdateButton?.addEventListener("click", () => {
+    void submitBillingUpdate();
+  });
+  els.billingPortalButton?.addEventListener("click", () => {
+    void openBillingPortal();
+  });
+  els.billingRefreshButton?.addEventListener("click", () => {
+    void refreshSelectedBilling();
+  });
   els.usageGroupBy.addEventListener("change", () => {
     state.usageFilters.groupBy = els.usageGroupBy.value;
     void loadUsage();

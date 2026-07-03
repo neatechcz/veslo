@@ -1,4 +1,4 @@
-import type { OrgRole } from "../db/schema.js"
+import type { OrgRole, OrganizationMembershipStatus } from "../db/schema.js"
 
 export type CurrentOrgRole = (typeof OrgRole)[number]
 export type LegacyOrgRole = "owner"
@@ -11,6 +11,7 @@ export type OrganizationAccessSummary = {
   ownerUserId: string
   membershipId: string
   role: CompatibleOrgRole
+  status?: (typeof OrganizationMembershipStatus)[number]
 }
 
 type ActiveOrganizationResult =
@@ -44,16 +45,10 @@ export function pickActiveOrganization(
   organizations: OrganizationAccessSummary[],
   requestedOrgId: string | null,
 ): ActiveOrganizationResult {
-  if (organizations.length === 0) {
-    return {
-      ok: false,
-      error: "organization_required",
-      status: 404,
-    }
-  }
+  const activeOrganizations = organizations.filter((entry) => entry.status === undefined || entry.status === "active")
 
   if (requestedOrgId) {
-    const organization = organizations.find((entry) => entry.id === requestedOrgId)
+    const organization = activeOrganizations.find((entry) => entry.id === requestedOrgId)
     if (!organization) {
       return {
         ok: false,
@@ -68,10 +63,18 @@ export function pickActiveOrganization(
     }
   }
 
-  if (organizations.length === 1) {
+  if (activeOrganizations.length === 0) {
+    return {
+      ok: false,
+      error: "organization_required",
+      status: 404,
+    }
+  }
+
+  if (activeOrganizations.length === 1) {
     return {
       ok: true,
-      organization: organizations[0],
+      organization: activeOrganizations[0],
     }
   }
 

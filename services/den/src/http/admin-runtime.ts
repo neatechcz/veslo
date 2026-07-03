@@ -14,6 +14,9 @@ import {
   DesktopAuthHandoffTable,
   DesktopAuthSessionTable,
   DesktopAuthTransactionTable,
+  OrganizationBillingMode,
+  OrganizationBillingSource,
+  OrganizationBillingStatus,
   OrgMembershipTable,
   OrgRole,
   OrgTable,
@@ -30,6 +33,8 @@ import {
   createAdminRouter,
   getDefaultAdminAllowedPages,
   getDefaultAdminCapabilities,
+  type AdminOrganizationBillingAccountRecord,
+  type AdminOrganizationBillingResponse,
   type AdminOrganizationDomainRecord,
   type AdminOrganizationInviteRecord,
   type AdminOrganizationMemberRecord,
@@ -39,6 +44,29 @@ import {
   type AdminUserMembership,
   type AdminUserRecord,
 } from "./admin.js"
+import type {
+  OrganizationBillingMode as OrganizationBillingModeValue,
+  OrganizationBillingQuantities,
+  OrganizationBillingStatus as OrganizationBillingStatusValue,
+} from "../billing/organization-billing.js"
+import {
+  createDrizzleOrganizationBillingStore,
+  createOrganizationBillingRepository,
+  OrganizationBillingRepositoryError,
+  type OrganizationBillingAccountRecord,
+  type OrganizationBillingRepository,
+  type OrganizationBillingSource as OrganizationBillingSourceValue,
+  type OrganizationBillingTierAllowlistInput,
+  type UpsertOrganizationBillingAccountInput,
+} from "../billing/repository.js"
+import type { OrganizationBillingInterval } from "../billing/stripe-config.js"
+import {
+  createOrganizationStripeBillingService,
+  OrganizationStripeBillingServiceError,
+  type ManagedAiBillingQuantities,
+  type OrganizationStripeBillingService,
+} from "../billing/stripe-service.js"
+import { createOrganizationStripeBillingClient } from "../billing/stripe.js"
 import { createManagedAiAdminRouteDeps } from "../managed-ai/http/admin.js"
 import type { RuntimeState } from "../managed-ai/runtime/default-runtime.js"
 import {
@@ -190,6 +218,269 @@ function readSeatLimit(value: unknown): number | null | "invalid" {
     return "invalid"
   }
   return parsed
+}
+
+const availableManagedAiBillingTiers = [
+  { tier: "managed_ai_basic", key: "basic", name: "Basic" },
+  { tier: "managed_ai_extended", key: "extended", name: "Extended" },
+] as const
+
+const allowedPlatformBillingTiers = new Set(["managed_ai_basic", "managed_ai_extended", "local_models", "manual_access"])
+
+function toIsoString(value: Date | string | null | undefined) {
+  if (!value) {
+    return null
+  }
+  if (value instanceof Date) {
+    return value.toISOString()
+  }
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString()
+}
+
+function serializePaymentProblemMessage(value: string | null) {
+  return typeof value === "string" && value.trim().length > 0 ? "Payment issue" : null
+}
+
+function serializeOrganizationBillingAccount(
+  account: OrganizationBillingAccountRecord | null,
+): AdminOrganizationBillingAccountRecord | null {
+  if (!account) {
+    return null
+  }
+
+  return {
+    id: account.id,
+    orgId: account.orgId,
+    mode: account.mode,
+    source: account.source,
+    status: account.status,
+    billingInterval: account.billingInterval,
+    quantities: {
+      managedAiBasic: account.managedAiBasicQuantity,
+      managedAiExtended: account.managedAiExtendedQuantity,
+      localModels: account.localModelsQuantity,
+    },
+    manualAccess: {
+      enabled: account.manualAccessEnabled,
+      expiresAt: toIsoString(account.manualAccessExpiresAt),
+    },
+    localModels: {
+      unitAmount: account.localModelsUnitAmount,
+      currency: account.localModelsCurrency,
+    },
+    stripe: {
+      customerConfigured: Boolean(account.stripeCustomerId),
+      subscriptionConfigured: Boolean(account.stripeSubscriptionId),
+    },
+    paymentProblem: {
+      code: account.paymentProblemCode,
+      message: serializePaymentProblemMessage(account.paymentProblemMessage),
+    },
+    graceUntil: toIsoString(account.graceUntil),
+    cancelAtPeriodEnd: account.cancelAtPeriodEnd,
+    createdAt: toIsoString(account.createdAt) ?? new Date(0).toISOString(),
+    updatedAt: toIsoString(account.updatedAt) ?? new Date(0).toISOString(),
+  }
+}
+
+async function getOrganizationBillingSummary(
+  repository: OrganizationBillingRepository,
+  orgId: string,
+): Promise<AdminOrganizationBillingResponse> {
+  const [account, entitlement, allowedTiers] = await Promise.all([
+    repository.getBillingAccount(orgId),
+    repository.deriveEntitlement(orgId),
+    repository.listAllowedTiers(orgId),
+  ])
+
+  return {
+    billing: {
+      account: serializeOrganizationBillingAccount(account),
+      entitlement,
+      allowedTiers: allowedTiers.map((entry) => ({
+        tier: entry.tier,
+        enabled: entry.enabled,
+      })),
+      activeUserCount: entitlement.activeUserCount,
+      licenseLimit: entitlement.licenseLimit,
+      availableManagedAiTiers: [...availableManagedAiBillingTiers],
+    },
+  }
+}
+
+function readNonNegativeInteger(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : Number.NaN
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return null
+  }
+  return parsed
+}
+
+function bodyContainsStripePriceSelection(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false
+  }
+  return [
+    "priceId",
+    "priceIds",
+    "stripePriceId",
+    "stripePriceIds",
+    "basicPriceId",
+    "extendedPriceId",
+  ].some((key) => hasOwnProperty(value, key))
+}
+
+function readManagedAiBillingQuantities(
+  body: unknown,
+  res: express.Response,
+  options: { requireAny: boolean },
+): ManagedAiBillingQuantities | null {
+  if (bodyContainsStripePriceSelection(body) || bodyContainsStripePriceSelection(isRecord(body) ? body.quantities : null)) {
+    res.status(400).json({ error: "stripe_price_id_not_allowed" })
+    return null
+  }
+
+  const source = isRecord(body) && isRecord(body.quantities) ? body.quantities : body
+  const managedAiBasic = readNonNegativeInteger(isRecord(source) ? source.managedAiBasic : undefined)
+  const managedAiExtended = readNonNegativeInteger(isRecord(source) ? source.managedAiExtended : undefined)
+  if (managedAiBasic === null || managedAiExtended === null) {
+    res.status(400).json({ error: "invalid_billing_quantities" })
+    return null
+  }
+  if (options.requireAny && managedAiBasic <= 0 && managedAiExtended <= 0) {
+    res.status(400).json({ error: "managed_ai_quantity_required" })
+    return null
+  }
+
+  return { managedAiBasic, managedAiExtended }
+}
+
+function readBillingInterval(value: unknown): OrganizationBillingInterval | null {
+  if (value === undefined || value === null || value === "") {
+    return "monthly"
+  }
+  return value === "monthly" || value === "annual" ? value : null
+}
+
+function readBillingMode(value: unknown): OrganizationBillingModeValue | null {
+  return typeof value === "string" && OrganizationBillingMode.includes(value as OrganizationBillingModeValue)
+    ? value as OrganizationBillingModeValue
+    : null
+}
+
+function readBillingStatus(value: unknown): OrganizationBillingStatusValue | null {
+  return typeof value === "string" && OrganizationBillingStatus.includes(value as OrganizationBillingStatusValue)
+    ? value as OrganizationBillingStatusValue
+    : null
+}
+
+function readBillingSource(value: unknown): OrganizationBillingSourceValue | null {
+  return typeof value === "string" && OrganizationBillingSource.includes(value as OrganizationBillingSourceValue)
+    ? value as OrganizationBillingSourceValue
+    : null
+}
+
+function readNullableBillingDate(value: unknown): Date | null | "invalid" {
+  if (value === undefined || value === null || value === "") {
+    return null
+  }
+  if (typeof value !== "string") {
+    return "invalid"
+  }
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? "invalid" : parsed
+}
+
+function readNullableCurrency(value: unknown): string | null | "invalid" {
+  if (value === undefined || value === null || value === "") {
+    return null
+  }
+  if (typeof value !== "string") {
+    return "invalid"
+  }
+  const normalized = value.trim().toUpperCase()
+  return /^[A-Z]{3}$/.test(normalized) ? normalized : "invalid"
+}
+
+function readOptionalNonNegativeInteger(value: unknown): number | null | "invalid" {
+  if (value === undefined || value === null || value === "") {
+    return null
+  }
+  return readNonNegativeInteger(value) ?? "invalid"
+}
+
+function readPlatformAllowlist(value: unknown): OrganizationBillingTierAllowlistInput[] | null | "invalid" {
+  if (value === undefined) {
+    return null
+  }
+  if (!Array.isArray(value)) {
+    return "invalid"
+  }
+
+  const tiers: OrganizationBillingTierAllowlistInput[] = []
+  for (const entry of value) {
+    const tier = typeof entry === "string" ? entry.trim() : isRecord(entry) && typeof entry.tier === "string" ? entry.tier.trim() : ""
+    const enabled = typeof entry === "string" ? true : isRecord(entry) && typeof entry.enabled === "boolean" ? entry.enabled : null
+    if (!tier || enabled === null || !allowedPlatformBillingTiers.has(tier)) {
+      return "invalid"
+    }
+    tiers.push({ tier, enabled })
+  }
+  return tiers
+}
+
+function billingErrorStatus(error: OrganizationBillingRepositoryError | OrganizationStripeBillingServiceError) {
+  if (error instanceof OrganizationBillingRepositoryError) {
+    return error.code === "requested_license_limit_below_active_users" ? 409 : 400
+  }
+
+  if (error.code === "stripe_billing_disabled") {
+    return 503
+  }
+  if (error.code === "stripe_customer_required" || error.code === "stripe_subscription_required") {
+    return 409
+  }
+  if (error.code === "tier_not_allowed" || error.code === "managed_ai_quantity_required") {
+    return 400
+  }
+  return 400
+}
+
+function sendBillingError(error: unknown, res: express.Response) {
+  if (error instanceof OrganizationBillingRepositoryError || error instanceof OrganizationStripeBillingServiceError) {
+    res.status(billingErrorStatus(error)).json({ error: error.code, details: error.details ?? undefined })
+    return true
+  }
+  return false
+}
+
+function readRequestOrigin(req: express.Request) {
+  const headerOrigin = normalizeHeaderOrigin(req.header("origin"))
+  if (headerOrigin) {
+    return headerOrigin
+  }
+
+  const referer = req.header("referer")
+  if (!referer) {
+    return null
+  }
+  try {
+    return new URL(referer).origin
+  } catch {
+    return null
+  }
+}
+
+function normalizeHeaderOrigin(value: string | undefined) {
+  if (!value) {
+    return null
+  }
+  try {
+    return new URL(value).origin
+  } catch {
+    return null
+  }
 }
 
 function normalizeOrganizationDomain(value: unknown) {
@@ -890,6 +1181,447 @@ async function updateAdminOrganization(req: express.Request, res: express.Respon
   }
 
   return { organization }
+}
+
+type OrganizationBillingAdminRouteDepsInput = {
+  repository: OrganizationBillingRepository
+  stripeService: OrganizationStripeBillingService | null
+  requireOrganizationAccess?: typeof requireAdminOrganizationAccess
+  requirePlatformAdmin?: typeof requirePlatformAdminSnapshot
+  recordOrganizationAudit?: typeof recordAdminOrganizationAudit
+}
+
+function readOptionalBillingInterval(value: unknown): string | null | "invalid" {
+  if (value === undefined || value === null || value === "") {
+    return null
+  }
+  return value === "monthly" || value === "annual" ? value : "invalid"
+}
+
+function readMergedPlatformQuantities(
+  body: Record<string, unknown>,
+  existing: OrganizationBillingAccountRecord | null,
+  res: express.Response,
+): OrganizationBillingQuantities | null {
+  const source = isRecord(body.quantities) ? body.quantities : {}
+  const current = {
+    managedAiBasic: existing?.managedAiBasicQuantity ?? 0,
+    managedAiExtended: existing?.managedAiExtendedQuantity ?? 0,
+    localModels: existing?.localModelsQuantity ?? 0,
+  }
+
+  const managedAiBasic = hasOwnProperty(source, "managedAiBasic")
+    ? readNonNegativeInteger(source.managedAiBasic)
+    : current.managedAiBasic
+  const managedAiExtended = hasOwnProperty(source, "managedAiExtended")
+    ? readNonNegativeInteger(source.managedAiExtended)
+    : current.managedAiExtended
+  const localModels = hasOwnProperty(source, "localModels")
+    ? readNonNegativeInteger(source.localModels)
+    : current.localModels
+
+  if (managedAiBasic === null || managedAiExtended === null || localModels === null) {
+    res.status(400).json({ error: "invalid_billing_quantities" })
+    return null
+  }
+
+  return { managedAiBasic, managedAiExtended, localModels }
+}
+
+function readPlatformBillingUpdate(
+  body: unknown,
+  existing: OrganizationBillingAccountRecord | null,
+  orgId: string,
+  res: express.Response,
+): {
+  account: UpsertOrganizationBillingAccountInput
+  allowedTiers: OrganizationBillingTierAllowlistInput[] | null
+  accountChanged: boolean
+  licenseAffectingChange: boolean
+  mode: OrganizationBillingModeValue
+  quantities: OrganizationBillingQuantities
+  manualAccess: { enabled: boolean; licenseLimit: number } | null
+} | null {
+  if (!isRecord(body)) {
+    res.status(400).json({ error: "invalid_billing_update" })
+    return null
+  }
+
+  if (bodyContainsStripePriceSelection(body) || bodyContainsStripePriceSelection(isRecord(body) ? body.quantities : null)) {
+    res.status(400).json({ error: "stripe_price_id_not_allowed" })
+    return null
+  }
+
+  const nextMode = hasOwnProperty(body, "mode")
+    ? readBillingMode(body.mode)
+    : existing?.mode ?? "none"
+  if (!nextMode) {
+    res.status(400).json({ error: "invalid_billing_mode" })
+    return null
+  }
+
+  const status = hasOwnProperty(body, "status") ? readBillingStatus(body.status) : null
+  if (hasOwnProperty(body, "status") && !status) {
+    res.status(400).json({ error: "invalid_billing_status" })
+    return null
+  }
+
+  const source = hasOwnProperty(body, "source")
+    ? body.source === null || body.source === ""
+      ? null
+      : readBillingSource(body.source)
+    : undefined
+  if (hasOwnProperty(body, "source") && source === null && body.source !== null && body.source !== "") {
+    res.status(400).json({ error: "invalid_billing_source" })
+    return null
+  }
+
+  const billingInterval = hasOwnProperty(body, "billingInterval")
+    ? readOptionalBillingInterval(body.billingInterval)
+    : undefined
+  if (billingInterval === "invalid") {
+    res.status(400).json({ error: "invalid_billing_interval" })
+    return null
+  }
+
+  const quantities = readMergedPlatformQuantities(body, existing, res)
+  if (!quantities) {
+    return null
+  }
+
+  let manualAccessEnabled = existing?.manualAccessEnabled ?? false
+  let manualAccessExpiresAt: Date | null | undefined = undefined
+  let manualAccessLicenseLimit = quantities.managedAiBasic + quantities.managedAiExtended + quantities.localModels
+  if (hasOwnProperty(body, "manualAccess")) {
+    if (!isRecord(body.manualAccess)) {
+      res.status(400).json({ error: "invalid_manual_access" })
+      return null
+    }
+    if (hasOwnProperty(body.manualAccess, "enabled")) {
+      const enabled = readBodyBoolean(body.manualAccess.enabled)
+      if (enabled === null) {
+        res.status(400).json({ error: "invalid_manual_access" })
+        return null
+      }
+      manualAccessEnabled = enabled
+    }
+    if (hasOwnProperty(body.manualAccess, "expiresAt")) {
+      const expiresAt = readNullableBillingDate(body.manualAccess.expiresAt)
+      if (expiresAt === "invalid") {
+        res.status(400).json({ error: "invalid_manual_access_expires_at" })
+        return null
+      }
+      manualAccessExpiresAt = expiresAt
+    }
+    if (hasOwnProperty(body.manualAccess, "licenseLimit")) {
+      const parsed = readNonNegativeInteger(body.manualAccess.licenseLimit)
+      if (parsed === null) {
+        res.status(400).json({ error: "invalid_manual_access_license_limit" })
+        return null
+      }
+      manualAccessLicenseLimit = parsed
+      quantities.managedAiBasic = parsed
+      quantities.managedAiExtended = 0
+      quantities.localModels = 0
+    }
+  }
+
+  const localModelsUnitAmount = hasOwnProperty(body, "localModelsUnitAmount")
+    ? readOptionalNonNegativeInteger(body.localModelsUnitAmount)
+    : undefined
+  if (localModelsUnitAmount === "invalid") {
+    res.status(400).json({ error: "invalid_local_models_unit_amount" })
+    return null
+  }
+
+  const localModelsCurrency = hasOwnProperty(body, "localModelsCurrency")
+    ? readNullableCurrency(body.localModelsCurrency)
+    : undefined
+  if (localModelsCurrency === "invalid") {
+    res.status(400).json({ error: "invalid_local_models_currency" })
+    return null
+  }
+
+  const graceUntil = hasOwnProperty(body, "graceUntil") ? readNullableBillingDate(body.graceUntil) : undefined
+  if (graceUntil === "invalid") {
+    res.status(400).json({ error: "invalid_grace_until" })
+    return null
+  }
+
+  const cancelAtPeriodEnd = hasOwnProperty(body, "cancelAtPeriodEnd") ? readBodyBoolean(body.cancelAtPeriodEnd) : null
+  if (hasOwnProperty(body, "cancelAtPeriodEnd") && cancelAtPeriodEnd === null) {
+    res.status(400).json({ error: "invalid_cancel_at_period_end" })
+    return null
+  }
+
+  const allowedTiers = readPlatformAllowlist(body.allowlist ?? body.allowedTiers)
+  if (allowedTiers === "invalid") {
+    res.status(400).json({ error: "invalid_tier_allowlist" })
+    return null
+  }
+
+  const accountChanged = [
+    "mode",
+    "status",
+    "source",
+    "billingInterval",
+    "quantities",
+    "manualAccess",
+    "localModelsUnitAmount",
+    "localModelsCurrency",
+    "paymentProblemCode",
+    "paymentProblemMessage",
+    "graceUntil",
+    "cancelAtPeriodEnd",
+  ].some((key) => hasOwnProperty(body, key))
+  const licenseAffectingChange = ["mode", "quantities", "manualAccess"].some((key) => hasOwnProperty(body, key))
+
+  return {
+    account: {
+      orgId,
+      ...(hasOwnProperty(body, "mode") ? { mode: nextMode } : {}),
+      ...(status ? { status } : {}),
+      ...(source !== undefined ? { source } : {}),
+      ...(billingInterval !== undefined ? { billingInterval } : {}),
+      ...(hasOwnProperty(body, "quantities") || hasOwnProperty(body, "manualAccess")
+        ? {
+          managedAiBasicQuantity: quantities.managedAiBasic,
+          managedAiExtendedQuantity: quantities.managedAiExtended,
+          localModelsQuantity: quantities.localModels,
+        }
+        : {}),
+      ...(hasOwnProperty(body, "manualAccess")
+        ? {
+          manualAccessEnabled,
+          manualAccessExpiresAt: manualAccessExpiresAt === undefined ? existing?.manualAccessExpiresAt ?? null : manualAccessExpiresAt,
+        }
+        : {}),
+      ...(localModelsUnitAmount !== undefined ? { localModelsUnitAmount } : {}),
+      ...(localModelsCurrency !== undefined ? { localModelsCurrency } : {}),
+      ...(hasOwnProperty(body, "paymentProblemCode") ? { paymentProblemCode: readBodyString(body.paymentProblemCode) } : {}),
+      ...(hasOwnProperty(body, "paymentProblemMessage") ? { paymentProblemMessage: readBodyString(body.paymentProblemMessage) } : {}),
+      ...(graceUntil !== undefined ? { graceUntil } : {}),
+      ...(cancelAtPeriodEnd !== null ? { cancelAtPeriodEnd } : {}),
+    },
+    allowedTiers,
+    accountChanged,
+    licenseAffectingChange,
+    mode: nextMode,
+    quantities,
+    manualAccess: {
+      enabled: manualAccessEnabled,
+      licenseLimit: manualAccessLicenseLimit,
+    },
+  }
+}
+
+export function createOrganizationBillingAdminRouteDeps(
+  input: OrganizationBillingAdminRouteDepsInput,
+): Pick<
+  AdminRouteDeps,
+  | "getOrganizationBilling"
+  | "createOrganizationBillingCheckout"
+  | "createOrganizationBillingPortalSession"
+  | "updateOrganizationBillingPlan"
+  | "cancelOrganizationBilling"
+  | "updatePlatformOrganizationBilling"
+> {
+  const { repository, stripeService } = input
+  const requireOrganizationAccess = input.requireOrganizationAccess ?? requireAdminOrganizationAccess
+  const requirePlatformAdmin = input.requirePlatformAdmin ?? requirePlatformAdminSnapshot
+  const recordOrganizationAudit = input.recordOrganizationAudit ?? recordAdminOrganizationAudit
+
+  return {
+    async getOrganizationBilling(req, res) {
+      const context = await requireOrganizationAccess(req, res, {
+        orgId: req.params.orgId,
+      })
+      if (!context) {
+        return null
+      }
+
+      return getOrganizationBillingSummary(repository, context.organization.id)
+    },
+
+    async createOrganizationBillingCheckout(req, res) {
+      const context = await requireOrganizationAccess(req, res, {
+        orgId: req.params.orgId,
+      })
+      if (!context) {
+        return null
+      }
+      if (!stripeService) {
+        res.status(503).json({ error: "stripe_billing_disabled" })
+        return null
+      }
+
+      const interval = readBillingInterval((req.body ?? {}).interval)
+      if (!interval) {
+        res.status(400).json({ error: "invalid_billing_interval" })
+        return null
+      }
+      const quantities = readManagedAiBillingQuantities(req.body ?? {}, res, { requireAny: true })
+      if (!quantities) {
+        return null
+      }
+
+      try {
+        const checkout = await stripeService.createManagedAiCheckoutSession({
+          orgId: context.organization.id,
+          actorUserId: context.snapshot.user.id,
+          interval,
+          quantities,
+          returnOrigin: readRequestOrigin(req),
+        })
+        await recordOrganizationAudit(context.snapshot, context.organization.id, "admin.billing.checkout.created", {
+          interval,
+          quantities,
+        })
+        return { checkout }
+      } catch (error) {
+        if (sendBillingError(error, res)) {
+          return null
+        }
+        throw error
+      }
+    },
+
+    async createOrganizationBillingPortalSession(req, res) {
+      const context = await requireOrganizationAccess(req, res, {
+        orgId: req.params.orgId,
+      })
+      if (!context) {
+        return null
+      }
+      if (!stripeService) {
+        res.status(503).json({ error: "stripe_billing_disabled" })
+        return null
+      }
+
+      try {
+        const portal = await stripeService.createBillingPortalSession({
+          orgId: context.organization.id,
+          actorUserId: context.snapshot.user.id,
+          returnOrigin: readRequestOrigin(req),
+        })
+        await recordOrganizationAudit(context.snapshot, context.organization.id, "admin.billing.portal.created", {})
+        return { portal }
+      } catch (error) {
+        if (sendBillingError(error, res)) {
+          return null
+        }
+        throw error
+      }
+    },
+
+    async updateOrganizationBillingPlan(req, res) {
+      const context = await requireOrganizationAccess(req, res, {
+        orgId: req.params.orgId,
+      })
+      if (!context) {
+        return null
+      }
+      if (!stripeService) {
+        res.status(503).json({ error: "stripe_billing_disabled" })
+        return null
+      }
+
+      const quantities = readManagedAiBillingQuantities(req.body ?? {}, res, { requireAny: false })
+      if (!quantities) {
+        return null
+      }
+
+      try {
+        await stripeService.updateManagedAiSubscriptionQuantities({
+          orgId: context.organization.id,
+          actorUserId: context.snapshot.user.id,
+          quantities,
+        })
+        await recordOrganizationAudit(context.snapshot, context.organization.id, "admin.billing.plan.updated", {
+          quantities,
+        })
+        return getOrganizationBillingSummary(repository, context.organization.id)
+      } catch (error) {
+        if (sendBillingError(error, res)) {
+          return null
+        }
+        throw error
+      }
+    },
+
+    async cancelOrganizationBilling(req, res) {
+      const context = await requireOrganizationAccess(req, res, {
+        orgId: req.params.orgId,
+      })
+      if (!context) {
+        return null
+      }
+      if (!stripeService) {
+        res.status(503).json({ error: "stripe_billing_disabled" })
+        return null
+      }
+
+      try {
+        await stripeService.cancelManagedAiSubscriptionAtPeriodEnd({
+          orgId: context.organization.id,
+          actorUserId: context.snapshot.user.id,
+        })
+        await recordOrganizationAudit(context.snapshot, context.organization.id, "admin.billing.cancel_at_period_end.set", {})
+        return { ok: true } as const
+      } catch (error) {
+        if (sendBillingError(error, res)) {
+          return null
+        }
+        throw error
+      }
+    },
+
+    async updatePlatformOrganizationBilling(req, res) {
+      const snapshot = await requirePlatformAdmin(req, res)
+      if (!snapshot) {
+        return null
+      }
+      const context = await requireOrganizationAccess(req, res, {
+        snapshot,
+        orgId: req.params.orgId,
+      })
+      if (!context) {
+        return null
+      }
+
+      const existing = await repository.getBillingAccount(context.organization.id)
+      const update = readPlatformBillingUpdate(req.body ?? {}, existing, context.organization.id, res)
+      if (!update) {
+        return null
+      }
+
+      try {
+        if (update.licenseAffectingChange) {
+          await repository.assertRequestedQuantitiesCanCoverActiveUsers({
+            orgId: context.organization.id,
+            mode: update.mode,
+            quantities: update.quantities,
+            manualAccess: update.mode === "manual_access" ? update.manualAccess : null,
+          })
+        }
+        if (update.accountChanged) {
+          await repository.upsertBillingAccount(update.account)
+        }
+        if (update.allowedTiers) {
+          await repository.setAllowedTiers(context.organization.id, update.allowedTiers)
+        }
+        await recordOrganizationAudit(snapshot, context.organization.id, "admin.billing.platform.updated", {
+          changedFields: Object.keys(req.body ?? {}),
+        })
+        return getOrganizationBillingSummary(repository, context.organization.id)
+      } catch (error) {
+        if (sendBillingError(error, res)) {
+          return null
+        }
+        throw error
+      }
+    },
+  }
 }
 
 async function listAdminOrganizationMembers(req: express.Request, res: express.Response) {
@@ -1988,6 +2720,23 @@ function createDebugLogAdminRouteDeps(debugLogs: DebugLogService | null | undefi
   }
 }
 
+function createOrganizationBillingRuntimeDeps() {
+  const repository = createOrganizationBillingRepository(createDrizzleOrganizationBillingStore(db))
+  const stripeConfig = env.organizationBilling.stripe
+  const stripeService = stripeConfig.enabled
+    ? createOrganizationStripeBillingService({
+      config: stripeConfig,
+      repository,
+      stripe: createOrganizationStripeBillingClient(stripeConfig),
+    })
+    : null
+
+  return createOrganizationBillingAdminRouteDeps({
+    repository,
+    stripeService,
+  })
+}
+
 export function createAdminRuntimeRouter(options: CreateAdminRuntimeRouterOptions = {}) {
   const deps: AdminRouteDeps = {
     getSessionSnapshot: requireAdminSessionSnapshot,
@@ -2027,6 +2776,7 @@ export function createAdminRuntimeRouter(options: CreateAdminRuntimeRouterOption
     disableUser: disableAdminUser,
     enableUser: enableAdminUser,
     deleteUser: deleteAdminUser,
+    ...createOrganizationBillingRuntimeDeps(),
     ...createDebugLogAdminRouteDeps(options.debugLogs),
   }
 

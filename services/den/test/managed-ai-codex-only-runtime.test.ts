@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import type { OrganizationBillingRepository } from "../src/billing/repository.js"
 
 Object.assign(process.env, {
   DATABASE_URL: "mysql://root:root@127.0.0.1:3306/veslo_den",
@@ -19,10 +20,42 @@ for (const key of [
 
 const { createDefaultProxyDependencies, createDefaultRuntimeState } = await import("../src/managed-ai/runtime/default-runtime.js")
 
+const organizationBilling = {
+  getBillingAccount: async () => null,
+  findBillingAccountByStripeSubscriptionId: async () => null,
+  findBillingAccountByStripeCustomerId: async () => null,
+  upsertBillingAccount: async () => {
+    throw new Error("not implemented")
+  },
+  listAllowedTiers: async () => [],
+  setAllowedTiers: async () => [],
+  countActiveUsers: async () => 0,
+  deriveEntitlement: async () => ({
+    mode: "manual_access",
+    effectiveMode: "manual_access",
+    status: "active",
+    canUseManagedAi: true,
+    canUseByokOrLocalProvider: true,
+    canReadHistory: true,
+    licenseLimit: 1,
+    activeUserCount: 0,
+    isInGracePeriod: false,
+    warning: null,
+    managedAiBlockingReason: null,
+    byokOrLocalProviderBlockingReason: null,
+  }),
+  assertRequestedQuantitiesCanCoverActiveUsers: async () => {},
+  recordBillingEvent: async () => {
+    throw new Error("not implemented")
+  },
+  updateBillingEvent: async () => null,
+} satisfies OrganizationBillingRepository
+
 test("default managed ai proxy dependencies allow codex-only runtime without OpenAI OAuth fallback config", () => {
   const runtime = createDefaultRuntimeState({
     db: {},
     secretKey: "abcdefghijklmnopqrstuvwxyz123456",
+    organizationBilling,
   })
 
   const deps = createDefaultProxyDependencies(runtime)
@@ -47,6 +80,7 @@ test("default openai-compatible transport uses fetch because credentials provide
     const runtime = createDefaultRuntimeState({
       db: {},
       secretKey: "abcdefghijklmnopqrstuvwxyz123456",
+      organizationBilling,
     })
     const deps = createDefaultProxyDependencies(runtime)
 

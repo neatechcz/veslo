@@ -1,5 +1,14 @@
 import { Router } from "express"
 
+import type { OrganizationBillingEntitlement } from "../../billing/organization-billing.js"
+import type { OrganizationBillingRepository } from "../../billing/repository.js"
+import { pickActiveOrganization } from "../../http/access.js"
+import {
+  findUserOrganization,
+  readRequestedOrganizationId,
+  resolveActiveUserOrganizations,
+  type OrganizationSummary,
+} from "../../http/org-auth.js"
 import type { AiAccessRepository } from "../access/repository.js"
 import type { AutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js"
 import { readBearerToken } from "../auth/user-session.js"
@@ -24,6 +33,11 @@ export type ProxyDependencies = {
   aiAccess?: AiAccessRepository
   autoAssignedCodexCredentialRotation?: AutoAssignedCodexCredentialRotationService
   gatewaySessions: GatewaySessionResolver
+  organizationAccess?: {
+    listUserOrganizations(userId: string): Promise<OrganizationSummary[]>
+    findUserOrganization?(userId: string, orgId: string): Promise<OrganizationSummary | null>
+  }
+  organizationBilling?: Pick<OrganizationBillingRepository, "deriveEntitlement">
   credentials: CredentialRepository
   secrets: SecretStore
   usageRepository: UsageRepository
@@ -33,6 +47,11 @@ export type ProxyDependencies = {
   anthropicTransport: AnthropicProviderTransport
   codexOAuthTransport: CodexOAuthProviderTransport
   openAiCompatibleTransport: OpenAiCompatibleProviderTransport
+}
+
+const defaultOrganizationAccess = {
+  listUserOrganizations: resolveActiveUserOrganizations,
+  findUserOrganization,
 }
 
 export function createProxyRouter(deps: ProxyDependencies) {
@@ -52,6 +71,39 @@ export function createProxyRouter(deps: ProxyDependencies) {
     }
 
     res.locals.gatewaySession = session
+
+    if (deps.organizationBilling) {
+      const organizationAccess = deps.organizationAccess ?? defaultOrganizationAccess
+      const requestedOrgId = readRequestedOrganizationId(req)
+      const listedOrganizations = await organizationAccess.listUserOrganizations(session.user.id)
+      if (requestedOrgId) {
+        const requestedOrganization = listedOrganizations.find((organization) => organization.id === requestedOrgId)
+          ?? await organizationAccess.findUserOrganization?.(session.user.id, requestedOrgId)
+          ?? null
+        if (requestedOrganization && requestedOrganization.status !== undefined && requestedOrganization.status !== "active") {
+          res.status(403).json({ error: "organization_forbidden" })
+          return
+        }
+      }
+      const activeOrganizations = listedOrganizations
+        .filter((organization) => organization.status === undefined || organization.status === "active")
+      const picked = pickActiveOrganization(activeOrganizations, requestedOrgId)
+
+      if (!picked.ok) {
+        res.status(picked.status).json({ error: picked.error })
+        return
+      }
+
+      const entitlement = await deps.organizationBilling.deriveEntitlement(picked.organization.id)
+      res.locals.gatewayOrganization = picked.organization
+      res.locals.gatewayBillingEntitlement = entitlement
+
+      if (!entitlement.canUseManagedAi) {
+        res.status(402).json(buildPaymentRequiredResponse(picked.organization.id, entitlement))
+        return
+      }
+    }
+
     if (deps.aiAccess) {
       const aiAccess = await deps.aiAccess.getUserAiAccess(session.user.id)
       if (!aiAccess?.enabled) {
@@ -69,4 +121,22 @@ export function createProxyRouter(deps: ProxyDependencies) {
   router.use("/providers/openai_compatible", createOpenAiCompatibleProxyRouter(deps))
 
   return router
+}
+
+function buildPaymentRequiredResponse(orgId: string, entitlement: OrganizationBillingEntitlement) {
+  return {
+    error: "payment_required",
+    message: "Managed AI billing access is required for this organization.",
+    reason: entitlement.managedAiBlockingReason ?? "payment_required",
+    orgId,
+    entitlement: {
+      effectiveMode: entitlement.effectiveMode,
+      status: entitlement.status,
+      canUseManagedAi: entitlement.canUseManagedAi,
+      canUseByokOrLocalProvider: entitlement.canUseByokOrLocalProvider,
+      canReadHistory: entitlement.canReadHistory,
+      managedAiBlockingReason: entitlement.managedAiBlockingReason,
+      byokOrLocalProviderBlockingReason: entitlement.byokOrLocalProviderBlockingReason,
+    },
+  }
 }

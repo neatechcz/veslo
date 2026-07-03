@@ -25,6 +25,18 @@ const timestamps = {
 export const OrgRole = ["member", "organization_admin"] as const
 export const OrganizationMembershipStatus = ["active", "disabled", "removed"] as const
 export const OrganizationInviteStatus = ["pending", "accepted", "expired", "revoked"] as const
+export const OrganizationBillingMode = ["none", "managed_ai", "local_models", "manual_access"] as const
+export const OrganizationBillingSource = [
+  "stripe_checkout",
+  "stripe_subscription",
+  "stripe_invoice",
+  "stripe_portal",
+  "manual_external",
+  "manual_trial",
+  "manual_local_models",
+] as const
+export const OrganizationBillingStatus = ["none", "active", "trialing", "past_due", "unpaid", "canceled", "incomplete"] as const
+export const OrganizationBillingEventStatus = ["applied", "ignored", "failed"] as const
 export const PlatformRole = ["platform_admin"] as const
 export const WorkerDestination = ["local", "cloud"] as const
 export const WorkerStatus = ["provisioning", "healthy", "failed", "stopped"] as const
@@ -194,6 +206,75 @@ export const OrganizationInviteTable = mysqlTable(
     index("organization_invite_email_status").on(table.email, table.status),
     index("organization_invite_invited_by").on(table.invited_by_user_id),
     index("organization_invite_accepted_by").on(table.accepted_by_user_id),
+  ],
+)
+
+export const OrganizationBillingAccountTable = mysqlTable(
+  "organization_billing_account",
+  {
+    id: id().primaryKey(),
+    org_id: varchar("org_id", { length: 64 }).notNull(),
+    mode: mysqlEnum("mode", OrganizationBillingMode).notNull().default("none"),
+    source: mysqlEnum("source", OrganizationBillingSource),
+    status: mysqlEnum("status", OrganizationBillingStatus).notNull().default("none"),
+    stripe_customer_id: varchar("stripe_customer_id", { length: 255 }),
+    stripe_subscription_id: varchar("stripe_subscription_id", { length: 255 }),
+    billing_interval: varchar("billing_interval", { length: 32 }),
+    managed_ai_basic_quantity: int("managed_ai_basic_quantity", { unsigned: true }).notNull().default(0),
+    managed_ai_extended_quantity: int("managed_ai_extended_quantity", { unsigned: true }).notNull().default(0),
+    local_models_quantity: int("local_models_quantity", { unsigned: true }).notNull().default(0),
+    manual_access_enabled: boolean("manual_access_enabled").notNull().default(false),
+    manual_access_expires_at: timestamp("manual_access_expires_at", { fsp: 3 }),
+    local_models_unit_amount: int("local_models_unit_amount", { unsigned: true }),
+    local_models_currency: varchar("local_models_currency", { length: 3 }),
+    payment_problem_code: varchar("payment_problem_code", { length: 255 }),
+    payment_problem_message: text("payment_problem_message"),
+    grace_until: timestamp("grace_until", { fsp: 3 }),
+    cancel_at_period_end: boolean("cancel_at_period_end").notNull().default(false),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("organization_billing_account_org_id").on(table.org_id),
+    index("organization_billing_account_stripe_customer_id").on(table.stripe_customer_id),
+    index("organization_billing_account_stripe_subscription_id").on(table.stripe_subscription_id),
+    index("organization_billing_account_org_status").on(table.org_id, table.status),
+  ],
+)
+
+export const OrganizationBillingTierAllowlistTable = mysqlTable(
+  "organization_billing_tier_allowlist",
+  {
+    id: id().primaryKey(),
+    org_id: varchar("org_id", { length: 64 }).notNull(),
+    tier: varchar("tier", { length: 64 }).notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("organization_billing_tier_allowlist_org_tier").on(table.org_id, table.tier),
+    index("organization_billing_tier_allowlist_org_id").on(table.org_id),
+    index("organization_billing_tier_allowlist_enabled").on(table.enabled),
+  ],
+)
+
+export const OrganizationBillingEventTable = mysqlTable(
+  "organization_billing_event",
+  {
+    id: id().primaryKey(),
+    org_id: varchar("org_id", { length: 64 }).notNull(),
+    stripe_event_id: varchar("stripe_event_id", { length: 255 }),
+    stripe_event_type: varchar("stripe_event_type", { length: 255 }),
+    status: mysqlEnum("status", OrganizationBillingEventStatus).notNull(),
+    payload: json("payload").notNull(),
+    error_message: text("error_message"),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    processed_at: timestamp("processed_at", { fsp: 3 }),
+  },
+  (table) => [
+    uniqueIndex("organization_billing_event_stripe_event_id").on(table.stripe_event_id),
+    index("organization_billing_event_org_id").on(table.org_id),
+    index("organization_billing_event_status").on(table.status),
+    index("organization_billing_event_created_at").on(table.created_at),
   ],
 )
 

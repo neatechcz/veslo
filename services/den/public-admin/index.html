@@ -99,23 +99,42 @@
           </div>
         </section>
 
-        <section class="page app-grid hidden" data-page="billing">
-          <div class="billing-topline">
-            <div class="segmented" role="group" aria-label="Billing view">
-              <button class="segment active" type="button" data-billing-view="organization">Organization admin</button>
-              <button class="segment" type="button" data-billing-view="platform">Platform admin</button>
-            </div>
-          </div>
-
-          <section class="billing-platform-grid billing-platform-only">
-            <div class="panel">
-              <div class="section-head">
-                <div>
-                  <p class="eyebrow">Subscriptions</p>
-                  <h2>Organizations</h2>
-                </div>
-                <span class="status-chip warning">Needs review</span>
+        <section class="page billing-page hidden" data-page="billing">
+          <section class="billing-hero panel">
+            <div class="billing-hero-main">
+              <p class="eyebrow">Billing</p>
+              <div class="billing-title-row">
+                <h2 id="billing-target-name">Selected organization</h2>
+                <span class="status-chip info" id="billing-status-chip">Not configured</span>
               </div>
+              <p class="page-description">Manage seats, Stripe checkout, portal recovery, and Managed AI entitlement for the selected organization.</p>
+              <div class="button-row">
+                <button class="button button-primary" id="billing-update-button" type="button">Update licenses</button>
+                <button class="button button-secondary" id="billing-portal-button" type="button">Open Stripe portal</button>
+                <button class="button button-secondary billing-platform-only" id="billing-refresh-button" type="button">Refresh billing state</button>
+              </div>
+              <p class="editor-note" id="billing-action-status"></p>
+            </div>
+            <div class="billing-hero-meta">
+              <div><span>Payment state</span><strong id="billing-payment-state">No paid access</strong></div>
+              <div><span>Billing source</span><strong id="billing-source">Not configured</strong></div>
+              <div><span>Last sync</span><strong id="billing-last-sync">No Stripe event</strong></div>
+              <div><span>Audit target</span><strong id="billing-audit-target">No organization selected</strong></div>
+            </div>
+          </section>
+
+          <section class="billing-scope-panel panel billing-platform-only">
+            <div class="billing-scope-head">
+              <div>
+                <p class="eyebrow">Platform scope</p>
+                <h2>Organization selection</h2>
+              </div>
+              <div class="segmented" role="group" aria-label="Billing scope">
+                <button class="segment active" type="button" data-billing-view="organization">My organization</button>
+                <button class="segment" type="button" data-billing-view="platform">All organizations</button>
+              </div>
+            </div>
+            <div class="billing-platform-scope-only">
               <div class="toolbar billing-toolbar">
                 <input class="input" id="billing-org-search" type="search" value="" placeholder="Search organizations" />
                 <select class="input" id="billing-status-filter">
@@ -125,25 +144,7 @@
                   <option value="manual">Manual</option>
                 </select>
               </div>
-              <div id="billing-organization-list" class="list-cards"></div>
-            </div>
-
-            <div class="panel">
-              <div class="billing-target-banner">
-                <span>Acting for organization</span>
-                <strong id="billing-target-name">Selected organization</strong>
-              </div>
-              <div class="billing-target-grid">
-                <div><span>Billing source</span><strong id="billing-source">Not configured</strong></div>
-                <div><span>Last sync</span><strong id="billing-last-sync">No Stripe event</strong></div>
-                <div><span>Payment state</span><strong id="billing-payment-state">No paid access</strong></div>
-              </div>
-              <div class="billing-audit-grid">
-                <div><span>Current period</span><strong>Not started</strong></div>
-                <div><span>Next-period change</span><strong>No scheduled change</strong></div>
-                <div><span>Last operator action</span><strong>No billing operation recorded</strong></div>
-                <div><span>Audit target</span><strong id="billing-audit-target">No organization selected</strong></div>
-              </div>
+              <div id="billing-organization-list" class="billing-org-cards"></div>
             </div>
           </section>
 
@@ -154,35 +155,29 @@
             <article class="metric-card"><span class="metric-label">Next renewal</span><strong id="billing-renewal">None</strong><p>Stripe owns final invoice details</p></article>
           </section>
 
-          <section class="billing-main-grid">
+          <section class="billing-workspace">
             <div class="panel">
               <div class="section-head">
                 <div>
                   <p class="eyebrow">Managed AI</p>
                   <h2>Plan configuration</h2>
                 </div>
-                <span class="status-chip info" id="billing-status-chip">Not configured</span>
               </div>
               <div class="billing-form">
                 <label>
                   <span>Billing interval</span>
                   <div class="segmented" role="group" aria-label="Billing interval">
-                    <button class="segment" type="button">Monthly</button>
-                    <button class="segment active" type="button">Annual</button>
+                    <button class="segment active" type="button" data-billing-interval="monthly">Monthly</button>
+                    <button class="segment" type="button" data-billing-interval="annual">Annual</button>
                   </div>
                 </label>
                 <div class="billing-quantity-grid">
-                  <label><span>Basic licenses</span><strong>2,000 CZK / 80 EUR</strong><input class="input" type="number" value="0" min="0" /></label>
-                  <label><span>Extended licenses</span><strong>5,000 CZK / 200 EUR</strong><input class="input" type="number" value="0" min="0" /></label>
+                  <label><span>Basic licenses</span><strong>2,000 CZK / 80 EUR</strong><input class="input" id="billing-basic-quantity" type="number" value="0" min="0" /></label>
+                  <label><span>Extended licenses</span><strong>5,000 CZK / 200 EUR</strong><input class="input" id="billing-extended-quantity" type="number" value="0" min="0" /></label>
                 </div>
                 <div class="billing-notice">
                   <strong id="billing-notice-title">Billing is not configured</strong>
                   <span id="billing-notice-text">History and settings remain readable. Managed AI inference requires paid or platform-granted access.</span>
-                </div>
-                <div class="button-row">
-                  <button class="button button-primary" type="button">Update licenses</button>
-                  <button class="button button-secondary" type="button">Open Stripe portal</button>
-                  <button class="button button-secondary billing-platform-only" type="button">Sync Stripe state</button>
                 </div>
               </div>
             </div>
@@ -199,7 +194,7 @@
             </aside>
           </section>
 
-          <section class="billing-platform-grid billing-platform-only">
+          <section class="billing-platform-ops billing-platform-scope-only">
             <div class="panel">
               <div class="section-head">
                 <div>
@@ -225,7 +220,7 @@
             </div>
           </section>
 
-          <section class="panel billing-org-only">
+          <section class="panel billing-history-panel">
             <div class="section-head">
               <div>
                 <p class="eyebrow">Invoices</p>
@@ -233,11 +228,11 @@
               </div>
               <button class="button button-secondary" type="button">Download invoices</button>
             </div>
-            <div class="table-shell">
-              <table>
-                <thead><tr><th>Invoice</th><th>Period</th><th>Amount</th><th>Status</th></tr></thead>
-                <tbody id="billing-invoices"><tr><td colspan="4">No invoices synced yet.</td></tr></tbody>
-              </table>
+            <div id="billing-invoices" class="billing-history-list">
+              <article class="billing-history-empty">
+                <strong>No invoices synced yet.</strong>
+                <span>Stripe remains the source of record for final invoice documents and tax handling.</span>
+              </article>
             </div>
           </section>
         </section>
