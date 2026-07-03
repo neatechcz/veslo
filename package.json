@@ -40,6 +40,7 @@
     "release:prepare:dry": "node scripts/release/prepare.mjs --dry-run",
     "release:ship": "node scripts/release/ship.mjs",
     "release:ship:watch": "node scripts/release/ship.mjs --watch",
+    "test:staging-app-build": "node scripts/release/staging-app-build.test.mjs",
     "tauri": "pnpm --filter @neatech/veslo exec tauri"
   },
   "pnpm": {
