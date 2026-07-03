@@ -102,7 +102,7 @@ services:
       ai-gateway-db:
         condition: service_healthy
     volumes:
-      - /srv/veslo/backups:/srv/veslo/backups
+      - ${BACKUP_HOST_ROOT:-/srv/veslo/backups}:/srv/veslo/backups
     environment:
       CI: "true"
       NODE_ENV: production
@@ -345,7 +345,7 @@ services:
     environment:
       ACME_EMAIL: ${ACME_EMAIL:-ops@veslo.work}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${VESLO_CADDYFILE:-./Caddyfile}:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
 
