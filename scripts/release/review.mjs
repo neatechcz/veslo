@@ -526,7 +526,7 @@ addCheck(
     tauriWindowsNsis.installerHooks === "windows/nsis-hooks.nsh" &&
     /NSIS_HOOK_POSTINSTALL/.test(nsisHook) &&
     /!ifdef VESLO_ENABLE_WSL_INSTALLER/.test(nsisHook) &&
-    /Skipping Veslo WSL runtime preparation; shared non-sandbox runtime is enabled by default\./.test(nsisHook) &&
+    /Skipping Veslo WSL runtime preparation during installation; sandbox setup is handled by the app\./.test(nsisHook) &&
     /nsExec::ExecToLog/.test(nsisHook) &&
     !/\bExecWait\b/.test(nsisHook) &&
     /wsl2-client-installer\.ps1/.test(nsisHook) &&
