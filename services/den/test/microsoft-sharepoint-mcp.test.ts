@@ -365,7 +365,7 @@ test("microsoft SharePoint MCP accepts notifications/initialized without a JSON-
       method: "notifications/initialized",
     })
 
-    assert.equal(response.status, 204)
+    assert.equal(response.status, 202)
     assert.equal(await response.text(), "")
   } finally {
     await server.close()

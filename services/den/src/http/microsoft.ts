@@ -344,7 +344,7 @@ export function createMicrosoftRouter(options: MicrosoftRouterOptions) {
       body: req.body,
     })
     if (!response) {
-      res.status(204).end()
+      res.status(202).end()
       return
     }
 
