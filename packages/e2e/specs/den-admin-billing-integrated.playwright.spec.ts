@@ -24,7 +24,7 @@ test.describe('Integrated Den admin billing UI', () => {
     await page.goto(`${ADMIN_BASE}/admin/billing/platform`, { waitUntil: 'domcontentloaded' });
     await signIn(page, PLATFORM_EMAIL, PLATFORM_PASSWORD);
 
-    await expect(page.getByRole('heading', { name: 'Organization billing' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Billing', exact: true })).toBeVisible();
     await expect(page.locator('#page-eyebrow')).toHaveText('Platform Admin');
     await expect(page.locator('#auth-user')).toContainText('platform admin');
     await expect(page.locator('[data-billing-view="platform"]')).toHaveClass(/active/);
@@ -63,7 +63,7 @@ test.describe('Integrated Den admin billing UI', () => {
     await expect(page.getByRole('heading', { name: 'Billing', exact: true })).toBeVisible();
     await expect(page.locator('#page-eyebrow')).toHaveText('Organization Admin');
     await expect(page.locator('#auth-user')).toContainText('organization admin');
-    await expect(page.locator('[data-billing-view="platform"]')).toBeDisabled();
+    await expect(page.locator('[data-billing-view="platform"]')).toBeHidden();
     await expect(page.locator('#billing-notice-title')).toContainText('Managed AI is blocked');
     await expect(page.locator('#billing-managed-ai')).toHaveText('Blocked');
     await expectVisibleNav(page, ['Overview', 'Organization', 'Users', 'Billing']);

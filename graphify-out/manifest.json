@@ -7290,8 +7290,8 @@
     "semantic_hash": ""
   },
   "services/den/public-admin/app.js": {
-    "mtime": 1783064363.6718364,
-    "ast_hash": "038ebc8603f59d32053f73d04c4d8b09",
+    "mtime": 1783075201.1768026,
+    "ast_hash": "d31a7a85fb146c0c6947a5d24b99f81e",
     "semantic_hash": ""
   },
   "services/den/src/google-workspace/connectors.ts": {
@@ -7410,8 +7410,8 @@
     "semantic_hash": ""
   },
   "packages/e2e/specs/den-admin-billing-integrated.playwright.spec.ts": {
-    "mtime": 1783071698.2506979,
-    "ast_hash": "eecd6377cf9e5ee7fb07806b8008bca8",
+    "mtime": 1783075278.2588878,
+    "ast_hash": "4ac698a9b140361d8f0aad6dd7408979",
     "semantic_hash": ""
   },
   "docs/sandbox/loopback-request-storm-10min-final.json": {
@@ -8520,13 +8520,8 @@
     "semantic_hash": ""
   },
   "packages/e2e/specs/den-admin-billing-lifecycle.playwright.spec.ts": {
-    "mtime": 1783062630.724498,
-    "ast_hash": "375c0b8ee4db9bacb71a1472ecb9a802",
-    "semantic_hash": ""
-  },
-  "packages/e2e/test-results/.last-run.json": {
-    "mtime": 1783073548.2178195,
-    "ast_hash": "f196824657d8858bc7fa44eecbba38b1",
+    "mtime": 1783075283.9911928,
+    "ast_hash": "ab739ba18a900b45293550f72a6158df",
     "semantic_hash": ""
   },
   "packages/e2e/specs/den-admin-billing-stripe-live.playwright.spec.ts": {

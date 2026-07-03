@@ -262,7 +262,7 @@ test.describe('Den admin billing subscription lifecycle UI', () => {
     await openBilling(page, 'platform');
     await expect(page.getByRole('heading', { name: 'Billing', exact: true })).toBeVisible();
     await expect(page.locator('#page-eyebrow')).toHaveText('Organization Admin');
-    await expect(page.locator('[data-billing-view="platform"]')).toBeDisabled();
+    await expect(page.locator('[data-billing-view="platform"]')).toBeHidden();
 
     await page.close();
 
@@ -287,7 +287,7 @@ test.describe('Den admin billing subscription lifecycle UI', () => {
     });
 
     await openBilling(platformPage, 'platform');
-    await expect(platformPage.getByRole('heading', { name: 'Organization billing' })).toBeVisible();
+    await expect(platformPage.getByRole('heading', { name: 'Billing', exact: true })).toBeVisible();
     await platformPage.locator('#billing-org-search').fill('past');
     await expect(platformPage.locator('#billing-organization-list')).toContainText('Past Due Co');
     await platformPage.locator('[data-billing-org-id="org_past_due"]').click();

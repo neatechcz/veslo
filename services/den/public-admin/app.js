@@ -122,6 +122,7 @@ const els = {
   platformNavItems: Array.from(document.querySelectorAll(".platform-nav")),
   billingViewButtons: Array.from(document.querySelectorAll("[data-billing-view]")),
   billingPlatformOnly: Array.from(document.querySelectorAll(".billing-platform-only")),
+  billingPlatformScopeOnly: Array.from(document.querySelectorAll(".billing-platform-scope-only")),
   billingOrgOnly: Array.from(document.querySelectorAll(".billing-org-only")),
   billingOrgSearch: document.getElementById("billing-org-search"),
   billingStatusFilter: document.getElementById("billing-status-filter"),
@@ -1189,14 +1190,15 @@ function renderBilling() {
     button.classList.toggle("active", view === state.billingView);
     button.disabled = view === "platform" && !platformAdmin;
   });
-  els.billingPlatformOnly.forEach((node) => node.classList.toggle("hidden", state.billingView !== "platform" || !platformAdmin));
-  els.billingOrgOnly.forEach((node) => node.classList.toggle("hidden", state.billingView === "platform" && platformAdmin));
+  els.billingPlatformOnly.forEach((node) => node.classList.toggle("hidden", !platformAdmin));
+  els.billingPlatformScopeOnly.forEach((node) => node.classList.toggle("hidden", state.billingView !== "platform" || !platformAdmin));
+  els.billingOrgOnly.forEach((node) => node.classList.toggle("hidden", false));
 
   if (state.page === "billing") {
-    els.pageEyebrow.textContent = platformAdmin && state.billingView === "platform" ? "Platform Admin" : "Organization Admin";
-    els.pageTitle.textContent = platformAdmin && state.billingView === "platform" ? "Organization billing" : "Billing";
-    els.pageDescription.textContent = platformAdmin && state.billingView === "platform"
-      ? "Review subscription state across organizations and operate on the selected organization without changing actor identity."
+    els.pageEyebrow.textContent = platformAdmin ? "Platform Admin" : "Organization Admin";
+    els.pageTitle.textContent = "Billing";
+    els.pageDescription.textContent = platformAdmin
+      ? "Manage the selected organization billing flow and use platform-only controls when operating across organizations."
       : "Manage licenses, billing interval, invoices, payment recovery, and Stripe portal access for your organization.";
   }
 
@@ -1208,14 +1210,14 @@ function renderBilling() {
     (statusFilter === "all" || org.status === statusFilter),
   );
   els.billingOrganizationList.innerHTML = visibleOrganizations.map((org) => `
-    <article class="list-card ${org.id === state.selectedBillingOrgId ? "active" : ""}" data-billing-org-id="${escapeHtml(org.id)}">
+    <article class="billing-org-card ${org.id === state.selectedBillingOrgId ? "active" : ""}" data-billing-org-id="${escapeHtml(org.id)}">
       <div>
         <strong>${escapeHtml(org.name)}</strong>
         <p>${escapeHtml(`${org.activeUsers}/${org.licenseLimit} active users · ${org.source}`)}</p>
       </div>
       <span class="status-chip ${billingStatusTone(org.status)}">${escapeHtml(org.status === "none" ? "Not configured" : org.status)}</span>
     </article>
-  `).join("") || `<article class="list-card active"><div><strong>No organizations</strong><p>No organization is available to this admin session.</p></div></article>`;
+  `).join("") || `<article class="billing-org-card active"><div><strong>No organizations</strong><p>No organization is available to this admin session.</p></div></article>`;
 
   const org = selectedBillingOrganization();
   const activeUsers = org?.activeUsers ?? 0;
