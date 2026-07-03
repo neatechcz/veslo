@@ -4,9 +4,11 @@ import test from 'node:test';
 import {
   createGoogleMcpCatalogDenAuthJson,
   buildE2EGoogleMcpConnectors,
+  buildE2ESharePointMcpConnectors,
   E2E_SKILL_REGISTRY_ORG_ID,
   E2E_SKILL_REGISTRY_TOKEN,
   shouldUseGoogleMcpCatalogFixture,
+  shouldUseSharePointMcpCatalogFixture,
   startSkillRegistryFixture,
   stopSkillRegistryFixture,
 } from './skill-registry-fixture.js';
@@ -15,6 +17,12 @@ test('shouldUseGoogleMcpCatalogFixture only enables the Google catalog when expl
   assert.equal(shouldUseGoogleMcpCatalogFixture({ E2E_GOOGLE_MCP_CATALOG_FIXTURE: '1' }), true);
   assert.equal(shouldUseGoogleMcpCatalogFixture({ E2E_GOOGLE_MCP_CATALOG_FIXTURE: 'true' }), false);
   assert.equal(shouldUseGoogleMcpCatalogFixture({}), false);
+});
+
+test('shouldUseSharePointMcpCatalogFixture only enables the SharePoint catalog when explicitly requested', () => {
+  assert.equal(shouldUseSharePointMcpCatalogFixture({ E2E_SHAREPOINT_MCP_CATALOG_FIXTURE: '1' }), true);
+  assert.equal(shouldUseSharePointMcpCatalogFixture({ E2E_SHAREPOINT_MCP_CATALOG_FIXTURE: 'true' }), false);
+  assert.equal(shouldUseSharePointMcpCatalogFixture({}), false);
 });
 
 test('createGoogleMcpCatalogDenAuthJson seeds desktop Den auth against the local fixture', () => {
@@ -37,7 +45,9 @@ test('createGoogleMcpCatalogDenAuthJson seeds desktop Den auth against the local
 
 test('skill registry fixture hides the Google MCP catalog unless the fixture flag is set', async () => {
   const previousFlag = process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE;
+  const previousSharePointFlag = process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE;
   delete process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE;
+  delete process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE;
 
   try {
     const baseUrl = await startSkillRegistryFixture();
@@ -54,13 +64,20 @@ test('skill registry fixture hides the Google MCP catalog unless the fixture fla
     } else {
       process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE = previousFlag;
     }
+    if (previousSharePointFlag === undefined) {
+      delete process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE;
+    } else {
+      process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE = previousSharePointFlag;
+    }
     await stopSkillRegistryFixture();
   }
 });
 
 test('skill registry fixture serves the Den-compatible Google MCP catalog when enabled', async () => {
   const previousFlag = process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE;
+  const previousSharePointFlag = process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE;
   process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE = '1';
+  delete process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE;
 
   try {
     const baseUrl = await startSkillRegistryFixture();
@@ -88,13 +105,80 @@ test('skill registry fixture serves the Den-compatible Google MCP catalog when e
     } else {
       process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE = previousFlag;
     }
+    if (previousSharePointFlag === undefined) {
+      delete process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE;
+    } else {
+      process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE = previousSharePointFlag;
+    }
+    await stopSkillRegistryFixture();
+  }
+});
+
+test('skill registry fixture serves the Den-compatible SharePoint MCP catalog when enabled', async () => {
+  const previousGoogleFlag = process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE;
+  const previousSharePointFlag = process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE;
+  delete process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE;
+  process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE = '1';
+
+  try {
+    const baseUrl = await startSkillRegistryFixture();
+    const response = await fetch(`${baseUrl}/v1/orgs/${E2E_SKILL_REGISTRY_ORG_ID}/mcp/catalog`, {
+      headers: {
+        Authorization: `Bearer ${E2E_SKILL_REGISTRY_TOKEN}`,
+      },
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { items?: ReturnType<typeof buildE2ESharePointMcpConnectors> };
+    assert.deepEqual(payload.items?.map((item) => item.id), ['microsoft-sharepoint']);
+
+    const item = payload.items?.[0];
+    assert.equal(item?.name, 'Microsoft SharePoint');
+    assert.equal(item?.provider?.id, 'microsoft');
+    assert.equal(item?.provider?.group, 'Microsoft');
+    assert.deepEqual(item?.source, { scope: 'platform' });
+    assert.match(item?.config.url ?? '', /\/v1\/orgs\/org_veslo_e2e_default\/integrations\/microsoft\/microsoft-sharepoint\/mcp$/);
+    assert.equal(item?.config.oauth, false);
+    assert.deepEqual(item?.config.headers, { 'X-Veslo-Connector': 'microsoft-sharepoint' });
+    assert.equal(item?.authorization?.type, 'veslo-server-oauth');
+    assert.equal(item?.authorization?.provider, 'microsoft');
+    assert.equal(item?.authorization?.connectorId, 'microsoft-sharepoint');
+    assert.deepEqual(item?.authorization?.scopes, [
+      'openid',
+      'profile',
+      'offline_access',
+      'https://graph.microsoft.com/Files.Read.All',
+      'https://graph.microsoft.com/Sites.Read.All',
+    ]);
+    assert.match(item?.authorization?.startPath ?? '', /\/v1\/orgs\/org_veslo_e2e_default\/integrations\/microsoft\/microsoft-sharepoint\/oauth\/start$/);
+    assert.match(item?.authorization?.runtimeTokenPath ?? '', /\/v1\/orgs\/org_veslo_e2e_default\/integrations\/microsoft\/microsoft-sharepoint\/runtime-token$/);
+    assert.match(item?.authorization?.statusPath ?? '', /\/v1\/orgs\/org_veslo_e2e_default\/integrations\/microsoft\/connections$/);
+    assert.match(item?.authorization?.disconnectPath ?? '', /\/v1\/orgs\/org_veslo_e2e_default\/integrations\/microsoft\/microsoft-sharepoint\/connection$/);
+
+    const serializedPayload = JSON.stringify(payload);
+    assert.doesNotMatch(serializedPayload, /MICROSOFT_CLIENT_SECRET/);
+    assert.doesNotMatch(serializedPayload, /clientSecret/);
+    assert.doesNotMatch(serializedPayload, /X-Veslo-Connector-Token/);
+  } finally {
+    if (previousGoogleFlag === undefined) {
+      delete process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE;
+    } else {
+      process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE = previousGoogleFlag;
+    }
+    if (previousSharePointFlag === undefined) {
+      delete process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE;
+    } else {
+      process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE = previousSharePointFlag;
+    }
     await stopSkillRegistryFixture();
   }
 });
 
 test('skill registry fixture serves Google MCP runtime token and OAuth start routes when enabled', async () => {
   const previousFlag = process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE;
+  const previousSharePointFlag = process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE;
   process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE = '1';
+  delete process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE;
 
   try {
     const baseUrl = await startSkillRegistryFixture();
@@ -125,6 +209,45 @@ test('skill registry fixture serves Google MCP runtime token and OAuth start rou
       delete process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE;
     } else {
       process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE = previousFlag;
+    }
+    if (previousSharePointFlag === undefined) {
+      delete process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE;
+    } else {
+      process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE = previousSharePointFlag;
+    }
+    await stopSkillRegistryFixture();
+  }
+});
+
+test('skill registry fixture serves SharePoint MCP runtime token route when enabled', async () => {
+  const previousGoogleFlag = process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE;
+  const previousSharePointFlag = process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE;
+  delete process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE;
+  process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE = '1';
+
+  try {
+    const baseUrl = await startSkillRegistryFixture();
+    const runtimeResponse = await fetch(`${baseUrl}/v1/orgs/${E2E_SKILL_REGISTRY_ORG_ID}/integrations/microsoft/microsoft-sharepoint/runtime-token`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${E2E_SKILL_REGISTRY_TOKEN}`,
+      },
+    });
+
+    assert.equal(runtimeResponse.status, 200);
+    const runtimePayload = await runtimeResponse.json() as { token?: string; connectorId?: string };
+    assert.equal(runtimePayload.token, 'e2e-runtime-token-microsoft-sharepoint');
+    assert.equal(runtimePayload.connectorId, 'microsoft-sharepoint');
+  } finally {
+    if (previousGoogleFlag === undefined) {
+      delete process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE;
+    } else {
+      process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE = previousGoogleFlag;
+    }
+    if (previousSharePointFlag === undefined) {
+      delete process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE;
+    } else {
+      process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE = previousSharePointFlag;
     }
     await stopSkillRegistryFixture();
   }

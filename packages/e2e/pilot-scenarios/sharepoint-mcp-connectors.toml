@@ -1,0 +1,145 @@
+[scenario]
+name = "sharepoint-mcp-connectors"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "mark onboarding complete"
+action = "eval"
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+true;
+'''
+
+[[step]]
+name = "navigate to mcp"
+action = "eval"
+script = '''
+const oldUrl = window.location.href;
+window.location.hash = "/dashboard/mcp";
+window.dispatchEvent(new HashChangeEvent("hashchange", {
+  oldURL: oldUrl,
+  newURL: window.location.href,
+}));
+true;
+'''
+
+[[step]]
+name = "mcp route active"
+action = "eval"
+timeout_ms = 15000
+script = '''
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const deadline = Date.now() + 15000;
+let rendered = false;
+while (Date.now() < deadline) {
+  if (document.querySelector('[data-testid="mcp-page"]')) {
+    rendered = true;
+    break;
+  }
+  window.localStorage.setItem("veslo.onboardingComplete", "1");
+  const oldUrl = window.location.href;
+  window.location.hash = "/dashboard/mcp";
+  window.dispatchEvent(new HashChangeEvent("hashchange", {
+    oldURL: oldUrl,
+    newURL: window.location.href,
+  }));
+  await sleep(250);
+}
+if (!rendered) {
+  throw new Error(`MCP page did not render, current URL=${window.location.href}`);
+}
+true;
+'''
+
+[[step]]
+name = "mcp url active"
+action = "assert-url"
+expected = "/dashboard/mcp"
+timeout_ms = 10000
+
+[[step]]
+name = "sharepoint catalog card appears"
+action = "wait"
+target = '[data-testid="mcp-available-app-card"][data-mcp-name="Microsoft SharePoint"]'
+timeout_ms = 45000
+
+[[step]]
+name = "sharepoint catalog card has microsoft context"
+action = "eval"
+script = '''
+const normalize = (value) => `${value ?? ""}`.replace(/\s+/g, " ").trim();
+const card = document.querySelector('[data-testid="mcp-available-app-card"][data-mcp-name="Microsoft SharePoint"]');
+if (!(card instanceof HTMLButtonElement)) {
+  throw new Error("Microsoft SharePoint card was not found");
+}
+if (card.disabled) {
+  throw new Error("Microsoft SharePoint card is disabled");
+}
+const text = normalize(card.textContent ?? card.innerText);
+if (!text.includes("Microsoft SharePoint") || !text.includes("Microsoft")) {
+  throw new Error(`SharePoint card is missing Microsoft context: ${text}`);
+}
+true;
+'''
+
+[[step]]
+name = "click sharepoint card"
+action = "eval"
+script = '''
+const card = document.querySelector('[data-testid="mcp-available-app-card"][data-mcp-name="Microsoft SharePoint"]');
+if (!(card instanceof HTMLButtonElement)) {
+  throw new Error("Microsoft SharePoint card was not found");
+}
+if (card.disabled) {
+  throw new Error("Microsoft SharePoint card is disabled");
+}
+card.click();
+true;
+'''
+
+[[step]]
+name = "sharepoint installed row appears"
+action = "wait"
+target = '[data-testid="mcp-installed-app-row"][data-mcp-name="microsoft-sharepoint"]'
+timeout_ms = 60000
+
+[[step]]
+name = "sharepoint install visible state is safe"
+action = "eval"
+script = '''
+const normalize = (value) => `${value ?? ""}`.replace(/\s+/g, " ").trim();
+const row = document.querySelector('[data-testid="mcp-installed-app-row"][data-mcp-name="microsoft-sharepoint"]');
+if (!(row instanceof HTMLButtonElement)) {
+  throw new Error("Microsoft SharePoint installed row was not found");
+}
+const rowText = normalize(row.textContent ?? row.innerText);
+if (!rowText.includes("microsoft-sharepoint")) {
+  throw new Error(`SharePoint installed row is missing connector id: ${rowText}`);
+}
+const acceptableStates = ["Ready", "Connected", "Offline", "Sign in needed", "Issue", "Paused"];
+if (!acceptableStates.some((state) => rowText.includes(state))) {
+  throw new Error(`SharePoint installed row has unexpected visible state: ${rowText}`);
+}
+
+const visibleText = normalize(document.body.innerText);
+for (const forbidden of [
+  "MICROSOFT_CLIENT_SECRET",
+  "access_token",
+  "refresh_token",
+  "clientSecret",
+  "X-Veslo-Connector-Token",
+  "e2e-runtime-token-microsoft-sharepoint",
+]) {
+  if (visibleText.includes(forbidden)) {
+    throw new Error(`Secret or token text is visible in the UI: ${forbidden}`);
+  }
+}
+true;
+'''
