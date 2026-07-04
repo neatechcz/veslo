@@ -8,9 +8,20 @@ function read(path: string): string {
   return readFileSync(new URL(path, repoRootUrl), "utf8")
 }
 
+function parseEnvTemplate(contents: string): Map<string, string> {
+  const values = new Map<string, string>()
+  for (const line of contents.split("\n")) {
+    if (!line || line.startsWith("#") || !line.includes("=")) continue
+    const separatorIndex = line.indexOf("=")
+    values.set(line.slice(0, separatorIndex), line.slice(separatorIndex + 1))
+  }
+  return values
+}
+
 test("owned-server has separate durable staging and local rehearsal env templates", () => {
   const stagingEnv = read("packaging/owned-server/env.staging.example")
   const rehearsalEnv = read("packaging/owned-server/env.rehearsal.example")
+  const stagingValues = parseEnvTemplate(stagingEnv)
 
   for (const requiredText of [
     "Copy to /srv/veslo/env/staging.env",
@@ -28,6 +39,7 @@ test("owned-server has separate durable staging and local rehearsal env template
     "GOOGLE_WORKSPACE_CONNECTOR_BASE_URL=https://api.staging.veslo.work",
     "MICROSOFT_REDIRECT_URI=https://api.staging.veslo.work/v1/integrations/microsoft/oauth/callback",
     "MICROSOFT_CONNECTOR_BASE_URL=https://api.staging.veslo.work",
+    "MANAGED_AI_SECRET_KEY=replace_with_staging_32_char_ai_gateway_secret",
     "MANAGED_AI_OPENAI_REDIRECT_BASE=",
     "AI_GATEWAY_OPENAI_REDIRECT_BASE=https://ai.staging.veslo.work/auth/openai",
     "AI_GATEWAY_DEN_API_BASE=https://api.staging.veslo.work",
@@ -37,6 +49,7 @@ test("owned-server has separate durable staging and local rehearsal env template
   ]) {
     assert.match(stagingEnv, new RegExp(requiredText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
   }
+  assert.equal(stagingValues.get("MANAGED_AI_DATABASE_URL"), stagingValues.get("AI_GATEWAY_DATABASE_URL"))
 
   for (const forbiddenText of [
     "BETTER_AUTH_URL=http://den:8788",
