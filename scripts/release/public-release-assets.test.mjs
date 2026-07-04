@@ -5,8 +5,14 @@ import test from "node:test";
 
 import {
   DEFAULT_PUBLIC_RELEASE_REPO,
+  DOCUMENT_RUNTIME_PACKAGE_FEED_NAME,
   isPublicDesktopReleaseAsset,
+  isPublicDocumentRuntimeReleaseAsset,
+  isPublicReleaseAsset,
+  publicDocumentRuntimePackageFeedEndpoint,
+  publicDocumentRuntimeReleaseAssetName,
   publicDesktopReleaseAssetName,
+  publicReleaseAssetName,
   publicUpdaterEndpoint,
 } from "./public-release-assets.mjs";
 
@@ -27,6 +33,25 @@ test("includes only macOS and Windows desktop release artifacts", () => {
   assert.equal(isPublicDesktopReleaseAsset("veslo-desktop-linux-x86_64.rpm"), false);
   assert.equal(isPublicDesktopReleaseAsset("veslo-desktop-linux-x86_64.AppImage"), false);
   assert.equal(isPublicDesktopReleaseAsset("veslo-orchestrator-sidecars.json"), false);
+});
+
+test("includes document runtime package release artifacts", () => {
+  assert.equal(DOCUMENT_RUNTIME_PACKAGE_FEED_NAME, "document-runtime-packages.json");
+  assert.equal(isPublicDocumentRuntimeReleaseAsset("document-runtime-packages.json"), true);
+  assert.equal(
+    isPublicDocumentRuntimeReleaseAsset("veslo-document-runtime-windows-native-x64-2026.7.0.veslopkg"),
+    true,
+  );
+  assert.equal(
+    isPublicDocumentRuntimeReleaseAsset("veslo-document-runtime-windows-native-x64-2026.7.0.veslopkg.sig"),
+    true,
+  );
+  assert.equal(isPublicDocumentRuntimeReleaseAsset("veslo-document-runtime-windows-native-x64.zip"), false);
+  assert.equal(isPublicDocumentRuntimeReleaseAsset("document-runtime-packages.json.sig"), false);
+
+  assert.equal(isPublicReleaseAsset("veslo-desktop-windows-x86_64.msi"), true);
+  assert.equal(isPublicReleaseAsset("veslo-document-runtime-macos-arm64-2026.7.0.veslopkg"), true);
+  assert.equal(isPublicReleaseAsset("veslo-orchestrator-sidecars.json"), false);
 });
 
 test("uses stable public labels when source release asset names are installer-native", () => {
@@ -55,10 +80,32 @@ test("uses stable public labels when source release asset names are installer-na
   );
 });
 
+test("uses stable public labels for document runtime package assets", () => {
+  assert.equal(
+    publicDocumentRuntimeReleaseAssetName({
+      name: "runtime-from-ci.zip",
+      label: "veslo-document-runtime-windows-native-x64-2026.7.0.veslopkg",
+    }),
+    "veslo-document-runtime-windows-native-x64-2026.7.0.veslopkg",
+  );
+  assert.equal(
+    publicReleaseAssetName({
+      name: "runtime-signature.txt",
+      label: "veslo-document-runtime-macos-arm64-2026.7.0.veslopkg.sig",
+    }),
+    "veslo-document-runtime-macos-arm64-2026.7.0.veslopkg.sig",
+  );
+  assert.equal(publicReleaseAssetName("document-runtime-packages.json"), "document-runtime-packages.json");
+});
+
 test("builds the updater endpoint from the public release repo", () => {
   assert.equal(
     publicUpdaterEndpoint(),
     "https://github.com/neatechcz/veslo-updates/releases/latest/download/latest.json",
+  );
+  assert.equal(
+    publicDocumentRuntimePackageFeedEndpoint(),
+    "https://github.com/neatechcz/veslo-updates/releases/latest/download/document-runtime-packages.json",
   );
 });
 
@@ -76,7 +123,7 @@ test("desktop updater config no longer uses the previous updater public key", ()
   assert.notEqual(tauriConfig.plugins.updater.pubkey, OLD_UPDATER_PUBKEY);
 });
 
-test("release workflow mirrors desktop artifacts to veslo-updates", () => {
+test("release workflow mirrors public release artifacts to veslo-updates", () => {
   const workflowPath = resolve(import.meta.dirname, "../../.github/workflows/release-macos-aarch64.yml");
   const workflow = readFileSync(workflowPath, "utf8");
   const mirrorScriptPath = resolve(import.meta.dirname, "./mirror-public-release.mjs");

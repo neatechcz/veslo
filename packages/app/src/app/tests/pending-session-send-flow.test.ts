@@ -20,10 +20,10 @@ function sendPromptSource(): string {
 }
 
 function createSessionAndOpenSource(): string {
-  const start = createWorkflowSource.indexOf("const createSessionAndOpen = async (");
-  const end = createWorkflowSource.indexOf("return {", start);
-  assert.notEqual(start, -1, "createSessionAndOpen should exist");
-  assert.notEqual(end, -1, "createSessionAndOpen block should end before workflow return");
+  const start = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
+  const end = createWorkflowSource.indexOf("\n  const createSession = (", start);
+  assert.notEqual(start, -1, "runCreateSessionFlow should exist");
+  assert.notEqual(end, -1, "runCreateSessionFlow block should end before createSession wrapper");
   return createWorkflowSource.slice(start, end);
 }
 
@@ -140,12 +140,22 @@ test("first pending draft send materializes workspace and session without global
   );
   assert.match(
     createSessionSource,
-    /if \(blockAppDuringCreate\) \{\s*deps\.setBusy\(true\);[\s\S]*deps\.setCreatingSession\(true\);[\s\S]*\}/s,
-    "global busy and navigation lock should only be used when the caller requests app-level blocking",
+    /if \(blockAppDuringCreate\) \{\s*deps\.emitFlowProgress\(\{ type: "session\.creating", owner: "create" \}\);[\s\S]*\}/s,
+    "global busy and navigation lock should only be requested through flow progress when the caller requests app-level blocking",
   );
   assert.match(
     createSessionSource,
-    /const shouldRouteCreatedSession = shouldRouteCreatedSessionAfterSelect\(\{[^}]*blockAppDuringCreate,[^}]*currentView: deps\.currentView\(\)[^}]*\}\);[\s\S]*if \(shouldRouteCreatedSession\) \{[\s\S]*deps\.goToSession\(createdSession\.id\);[\s\S]*\}/s,
-    "non-blocking first-send materialization should not force the user back to chat after they navigate elsewhere",
+    /transition:\s*\{[\s\S]*shouldRouteAfterSelect: shouldRouteCreatedSessionAfterSelect\(\{[\s\S]*blockAppDuringCreate,[\s\S]*currentView: deps\.currentView\(\),[\s\S]*\}\),[\s\S]*sessionId: createdSession\.id,[\s\S]*\}/s,
+    "non-blocking first-send materialization should compute a transition recommendation instead of navigating inline",
+  );
+  assert.match(
+    createSessionSource,
+    /if \(applyEffects\) \{[\s\S]*deps\.applyCreatedSessionState\(creationResult, options\);[\s\S]*deps\.sendTraceStep\(\s*"createSessionAndOpen:select-session"[\s\S]*deps\.applyCreatedSessionTransition\(creationResult\)/s,
+    "session creation should apply state and transition through adapters after the typed creation result exists",
+  );
+  assert.doesNotMatch(
+    createSessionSource,
+    /deps\.(goToSession|selectSession|materializePendingSessionInWorkspaceSidebar|setSessions)\b/,
+    "session creation workflow should not own route navigation or sidebar/session-list mutations directly",
   );
 });

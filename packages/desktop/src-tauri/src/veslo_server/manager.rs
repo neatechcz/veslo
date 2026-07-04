@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use crate::process_supervisor::{kill_running_child, resolve_running_pid, SupervisedChild};
 use crate::supervised_process::SupervisedCommandChild;
-use crate::types::VesloServerInfo;
+use crate::types::{VesloServerInfo, VesloServerLifecycleReason, VesloServerLifecycleStatus};
 
 #[derive(Default)]
 pub struct VesloServerManager {
@@ -32,6 +32,8 @@ pub struct VesloServerState {
     pub host_token: Option<String>,
     pub last_stdout: Option<String>,
     pub last_stderr: Option<String>,
+    pub lifecycle_status: VesloServerLifecycleStatus,
+    pub lifecycle_reason: VesloServerLifecycleReason,
     // Set of workspace paths the running child was spawned with. Used to:
     // (a) skip respawn when start_veslo_server is called with an equivalent
     //     set (idempotent — preserves the running child + tokens), and
@@ -74,9 +76,23 @@ impl SupervisedChild for VesloServerState {
 impl VesloServerManager {
     pub fn snapshot_locked(state: &mut VesloServerState) -> VesloServerInfo {
         let (running, pid) = resolve_running_pid(state);
+        if running {
+            state.lifecycle_status = VesloServerLifecycleStatus::Running;
+            state.lifecycle_reason = VesloServerLifecycleReason::None;
+        } else if state.child_exited
+            && matches!(
+                state.lifecycle_status,
+                VesloServerLifecycleStatus::Running | VesloServerLifecycleStatus::Starting
+            )
+        {
+            state.lifecycle_status = VesloServerLifecycleStatus::Exited;
+            state.lifecycle_reason = VesloServerLifecycleReason::ChildExited;
+        }
 
         VesloServerInfo {
             running,
+            lifecycle_status: state.lifecycle_status,
+            lifecycle_reason: state.lifecycle_reason,
             host: state.host.clone(),
             port: state.port,
             base_url: state.base_url.clone(),
@@ -105,6 +121,8 @@ impl VesloServerManager {
         state.engine_url_checked_at = None;
         state.engine_url_refresh_started_at = None;
         state.engine_url_refresh_generation = state.engine_url_refresh_generation.wrapping_add(1);
+        state.lifecycle_status = VesloServerLifecycleStatus::Stopped;
+        state.lifecycle_reason = VesloServerLifecycleReason::None;
         // Intentionally keep client_token / host_token / workspace_paths so a
         // subsequent start_veslo_server can decide whether to skip respawn or
         // reuse the existing tokens (avoids the 401 "Invalid bearer token"
@@ -113,5 +131,75 @@ impl VesloServerManager {
         state.orchestrator_daemon_url = None;
         state.orchestrator_lifecycle_token = None;
         state.sandbox_backend = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_marks_exited_child_as_lifecycle_exited() {
+        let mut state = VesloServerState {
+            child_exited: true,
+            lifecycle_status: VesloServerLifecycleStatus::Running,
+            lifecycle_reason: VesloServerLifecycleReason::None,
+            last_stderr: Some("Veslo server exited (code 1).".to_string()),
+            ..Default::default()
+        };
+
+        let info = VesloServerManager::snapshot_locked(&mut state);
+
+        assert!(!info.running);
+        assert_eq!(info.lifecycle_status, VesloServerLifecycleStatus::Exited);
+        assert_eq!(
+            info.lifecycle_reason,
+            VesloServerLifecycleReason::ChildExited
+        );
+        assert_eq!(
+            info.last_stderr.as_deref(),
+            Some("Veslo server exited (code 1).")
+        );
+    }
+
+    #[test]
+    fn stop_locked_reports_intentional_stop_not_child_exit() {
+        let mut state = VesloServerState {
+            child_exited: true,
+            lifecycle_status: VesloServerLifecycleStatus::Running,
+            lifecycle_reason: VesloServerLifecycleReason::None,
+            ..Default::default()
+        };
+
+        VesloServerManager::stop_locked(&mut state);
+        let info = VesloServerManager::snapshot_locked(&mut state);
+
+        assert!(!info.running);
+        assert_eq!(info.lifecycle_status, VesloServerLifecycleStatus::Stopped);
+        assert_eq!(info.lifecycle_reason, VesloServerLifecycleReason::None);
+    }
+
+    #[test]
+    fn snapshot_preserves_blocked_port_reason() {
+        let mut state = VesloServerState {
+            lifecycle_status: VesloServerLifecycleStatus::Blocked,
+            lifecycle_reason: VesloServerLifecycleReason::PortUnavailable,
+            last_stderr: Some("Veslo server port 8787 on 127.0.0.1 is unavailable".to_string()),
+            ..Default::default()
+        };
+
+        let info = VesloServerManager::snapshot_locked(&mut state);
+
+        assert!(!info.running);
+        assert_eq!(info.lifecycle_status, VesloServerLifecycleStatus::Blocked);
+        assert_eq!(
+            info.lifecycle_reason,
+            VesloServerLifecycleReason::PortUnavailable
+        );
+        assert!(info
+            .last_stderr
+            .as_deref()
+            .unwrap_or_default()
+            .contains("port 8787"));
     }
 }

@@ -12,7 +12,7 @@ import { AddressInfo } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { EnginePool } from "../engine-pool.js";
-import { proxyToEngine } from "../router-proxy.js";
+import { OPENCODE_PROXY_TIMEOUT_ERROR, proxyToEngine } from "../router-proxy.js";
 
 type EchoCapture = {
   method: string;
@@ -115,6 +115,7 @@ type WorkspaceRecord = { id: string; path: string; type: "local" | "remote" };
 async function makeOrchestrator(opts: {
   workspaces: WorkspaceRecord[];
   echoBaseUrl: string;
+  waitForHealthy?: () => Promise<void>;
 }): Promise<Orchestrator> {
   const counters = { spawns: 0, nextPort: 60000 };
   const childRegistry: ChildProcess[] = [];
@@ -137,7 +138,7 @@ async function makeOrchestrator(opts: {
         void port;
         return { child, baseUrl: opts.echoBaseUrl };
       },
-      waitForHealthy: async () => {},
+      waitForHealthy: opts.waitForHealthy ?? (async () => {}),
       stopChild,
       findFreePort: async () => counters.nextPort++,
       isProcessAlive,
@@ -177,6 +178,17 @@ async function makeOrchestrator(opts: {
       if (method === "GET" || method === "HEAD") {
         engine = pool.getRunning(ws.id);
         if (!engine) {
+          if (pool.get(ws.id)?.state === "spawning") {
+            res.statusCode = 503;
+            res.setHeader("content-type", "application/json");
+            res.end(JSON.stringify({
+              error: "engine_starting",
+              engineState: "starting",
+              workspaceId: ws.id,
+              retryAfterMs: 250,
+            }));
+            return;
+          }
           res.statusCode = 503;
           res.setHeader("content-type", "application/json");
           res.end(JSON.stringify({ error: "engine_not_running", workspaceId: ws.id }));
@@ -300,8 +312,19 @@ afterEach(async () => {
 });
 
 async function setup(workspaces: WorkspaceRecord[]): Promise<Resources> {
+  return setupWithOptions({ workspaces });
+}
+
+async function setupWithOptions(opts: {
+  workspaces: WorkspaceRecord[];
+  waitForHealthy?: () => Promise<void>;
+}): Promise<Resources> {
   const echo = await makeEchoServer();
-  const orch = await makeOrchestrator({ workspaces, echoBaseUrl: echo.baseUrl });
+  const orch = await makeOrchestrator({
+    workspaces: opts.workspaces,
+    echoBaseUrl: echo.baseUrl,
+    waitForHealthy: opts.waitForHealthy,
+  });
   const r = { echo, orch };
   resources.push(r);
   return r;
@@ -574,6 +597,36 @@ describe("router proxy + EnginePool integration", () => {
     expect(Date.now() - start).toBeLessThan(2_000);
   });
 
+  test("GET proxy during pooled spawn reports engine_starting without another spawn", async () => {
+    let releaseHealthy!: () => void;
+    const healthy = new Promise<void>((resolve) => {
+      releaseHealthy = resolve;
+    });
+    const { orch } = await setupWithOptions({
+      workspaces: [{ id: "ws-a", path: "/tmp/ws-a", type: "local" }],
+      waitForHealthy: () => healthy,
+    });
+
+    const post = fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/session`, {
+      method: "POST",
+    });
+    await delay(25);
+    expect(orch.pool.get("ws-a")?.state).toBe("spawning");
+
+    const getRes = await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/mcp`);
+    expect(getRes.status).toBe(503);
+    expect(getRes.body).toMatchObject({
+      error: "engine_starting",
+      engineState: "starting",
+      workspaceId: "ws-a",
+    });
+    expect(orch.pool.size()).toBe(1);
+
+    releaseHealthy();
+    expect((await post).status).toBe(200);
+    expect(orch.pool.get("ws-a")?.state).toBe("ready");
+  });
+
   test("POST proxy without running engine spawns lazily (send path keeps working)", async () => {
     const { echo, orch } = await setup([
       { id: "ws-a", path: "/tmp/ws-a", type: "local" },
@@ -702,6 +755,46 @@ describe("proxyToEngine — unit-level edge cases", () => {
 
     front.unref();
     try { front.close(); } catch { /* see EchoServer comment */ }
+  });
+
+  test("times out when upstream accepts but never sends response headers", async () => {
+    let onErrorMessage = "";
+    const target = createServer((_req, _res) => {
+      // Intentionally keep the request open without writing headers. This
+      // simulates a live OpenCode process whose workspace/session API is not
+      // producing a response yet.
+    });
+    await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
+    target.unref();
+    const port = (target.address() as AddressInfo).port;
+
+    const front = createServer((req, res) => {
+      proxyToEngine({
+        clientReq: req,
+        clientRes: res,
+        targetBaseUrl: `http://127.0.0.1:${port}`,
+        targetPath: "/session",
+        headersTimeoutMs: 50,
+        onError: (err) => {
+          onErrorMessage = err.message;
+        },
+      });
+    });
+    await new Promise<void>((resolve) => front.listen(0, "127.0.0.1", resolve));
+    front.unref();
+    const frontPort = (front.address() as AddressInfo).port;
+
+    const res = await fetch(`http://127.0.0.1:${frontPort}/session`);
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as { error: string; detail: string };
+    expect(body.error).toBe(OPENCODE_PROXY_TIMEOUT_ERROR);
+    expect(body.detail).toContain("timed out waiting for upstream response");
+    expect(onErrorMessage).toContain("timed out waiting for upstream response");
+
+    front.unref();
+    target.unref();
+    try { front.close(); } catch { /* see EchoServer comment */ }
+    try { target.close(); } catch { /* see EchoServer comment */ }
   });
 
   test("rewrites JSON request and response bodies", async () => {

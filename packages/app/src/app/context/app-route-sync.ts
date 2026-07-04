@@ -20,12 +20,14 @@ export type AppRouteNavigateOptions = {
 
 export type AppRouteNavigate = (to: string, options?: AppRouteNavigateOptions) => void;
 
+export type AppRouteHashChangeListener = (event?: unknown) => void;
+
 export type AppRouteHashWindowTarget = {
   location: {
     hash: string;
   };
-  addEventListener: (type: "hashchange", listener: () => void) => void;
-  removeEventListener: (type: "hashchange", listener: () => void) => void;
+  addEventListener: (type: "hashchange", listener: AppRouteHashChangeListener) => void;
+  removeEventListener: (type: "hashchange", listener: AppRouteHashChangeListener) => void;
 };
 
 export type AppRouteSyncDeps = {
@@ -94,6 +96,15 @@ function resolveHashWindowTarget(
   windowTarget: AppRouteHashWindowTarget | null | undefined,
 ): AppRouteHashWindowTarget | null {
   return windowTarget ?? resolveDefaultHashWindowTarget();
+}
+
+export function createAppRouteHashChangeListener(
+  getWindowTarget: () => AppRouteHashWindowTarget | null,
+  syncExternalHashRoute: (windowTarget?: AppRouteHashWindowTarget | null) => void,
+): AppRouteHashChangeListener {
+  return () => {
+    syncExternalHashRoute(getWindowTarget());
+  };
 }
 
 function isDashboardHashPath(pathname: string): boolean {
@@ -233,21 +244,26 @@ export function createAppRouteSync(deps: AppRouteSyncDeps): AppRouteSyncControll
 
   const startHashRouteSync = (windowTarget?: AppRouteHashWindowTarget | null) => {
     let mountedWindowTarget: AppRouteHashWindowTarget | null = null;
+    let onHashChange: AppRouteHashChangeListener | null = null;
 
     onMount(() => {
       if (!deps.isTauriRuntime()) {
         return;
       }
       mountedWindowTarget = resolveHashWindowTarget(windowTarget);
-      mountedWindowTarget?.addEventListener("hashchange", syncExternalHashRoute);
-    });
-
-    onCleanup(() => {
       if (!mountedWindowTarget) {
         return;
       }
-      mountedWindowTarget.removeEventListener("hashchange", syncExternalHashRoute);
+      onHashChange = createAppRouteHashChangeListener(() => mountedWindowTarget, syncExternalHashRoute);
+      mountedWindowTarget.addEventListener("hashchange", onHashChange);
+    });
+
+    onCleanup(() => {
+      if (mountedWindowTarget && onHashChange) {
+        mountedWindowTarget.removeEventListener("hashchange", onHashChange);
+      }
       mountedWindowTarget = null;
+      onHashChange = null;
     });
   };
 

@@ -11,7 +11,8 @@ use crate::paths::{prepended_path_env, sidecar_path_candidates};
 use crate::supervised_process::{self, CommandEvent, SupervisedCommandChild};
 use crate::types::{
     OrchestratorBinaryState, OrchestratorDaemonState, OrchestratorEngineSnapshot,
-    OrchestratorOpencodeState, OrchestratorSidecarInfo, OrchestratorStatus, OrchestratorWorkspace,
+    OrchestratorOpencodeState, OrchestratorSharedEngineSnapshot, OrchestratorSidecarInfo,
+    OrchestratorStatus, OrchestratorWorkspace,
 };
 
 pub mod manager;
@@ -47,6 +48,7 @@ pub struct OrchestratorHealth {
     pub ok: bool,
     pub daemon: Option<OrchestratorDaemonState>,
     pub opencode: Option<OrchestratorOpencodeState>,
+    pub engine_topology: Option<String>,
     pub cli_version: Option<String>,
     pub sidecar: Option<OrchestratorSidecarInfo>,
     pub binaries: Option<OrchestratorBinaryState>,
@@ -54,6 +56,8 @@ pub struct OrchestratorHealth {
     pub workspace_count: Option<usize>,
     #[serde(default)]
     pub engines: Vec<OrchestratorEngineSnapshot>,
+    #[serde(default)]
+    pub shared_engine: Option<OrchestratorSharedEngineSnapshot>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,7 +210,15 @@ fn managed_deps_manifest_has_expected_packages(path: &Path) -> bool {
         })
     };
 
-    has_package("@opencode-ai/plugin", "1.17.4") && has_package("zod", "4.1.8")
+    has_package("@opencode-ai/plugin", "1.17.4")
+        && has_package("zod", "4.1.8")
+        && has_package("@ai-sdk/openai-compatible", "3.0.5")
+        && has_package("@ai-sdk/provider", "4.0.2")
+        && has_package("@ai-sdk/provider-utils", "5.0.5")
+        && has_package("@standard-schema/spec", "1.1.0")
+        && has_package("@workflow/serde", "4.1.0")
+        && has_package("eventsource-parser", "3.1.0")
+        && has_package("json-schema", "0.4.0")
 }
 
 pub(crate) fn resolve_opencode_managed_deps_manifest(sidecar_paths: &[PathBuf]) -> Option<PathBuf> {
@@ -631,7 +643,14 @@ mod tests {
   "schemaVersion": 1,
   "packages": [
     { "name": "@opencode-ai/plugin", "version": "1.17.4", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
-    { "name": "zod", "version": "4.1.8", "files": [{ "path": "package.json", "contentBase64": "e30=" }] }
+    { "name": "zod", "version": "4.1.8", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "@ai-sdk/openai-compatible", "version": "3.0.5", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "@ai-sdk/provider", "version": "4.0.2", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "@ai-sdk/provider-utils", "version": "5.0.5", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "@standard-schema/spec", "version": "1.1.0", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "@workflow/serde", "version": "4.1.0", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "eventsource-parser", "version": "3.1.0", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "json-schema", "version": "0.4.0", "files": [{ "path": "package.json", "contentBase64": "e30=" }] }
   ]
 }"#,
         )
@@ -664,6 +683,7 @@ pub fn orchestrator_status_from_state(
         data_dir: data_dir.to_string(),
         daemon: state.as_ref().and_then(|state| state.daemon.clone()),
         opencode: state.as_ref().and_then(|state| state.opencode.clone()),
+        engine_topology: None,
         cli_version: state.as_ref().and_then(|state| state.cli_version.clone()),
         sidecar: state.as_ref().and_then(|state| state.sidecar.clone()),
         binaries: state.as_ref().and_then(|state| state.binaries.clone()),
@@ -671,6 +691,7 @@ pub fn orchestrator_status_from_state(
         workspace_count,
         workspaces,
         engines: Vec::new(),
+        shared_engine: None,
         last_error,
     }
 }
@@ -710,6 +731,7 @@ pub fn resolve_orchestrator_status(
                 data_dir: data_dir.to_string(),
                 daemon: health.daemon,
                 opencode: health.opencode,
+                engine_topology: health.engine_topology,
                 cli_version: health.cli_version,
                 sidecar: health.sidecar,
                 binaries: health.binaries,
@@ -717,6 +739,7 @@ pub fn resolve_orchestrator_status(
                 workspace_count,
                 workspaces,
                 engines: health.engines,
+                shared_engine: health.shared_engine,
                 last_error: None,
             }
         }

@@ -138,3 +138,69 @@ test("session lifecycle recovery keeps polling stale backend statuses", async ()
   assert.deepEqual(statusWrites, ["ses-a:idle", "conv-a:idle"]);
   assert.equal(controller.activeWatchCount(), 0);
 });
+
+test("session lifecycle recovery reports active no-progress diagnostics", async () => {
+  const timers: Timer[] = [];
+  const diagnostics: Array<{
+    scopeSessionId: string;
+    status: SessionLifecycleRecoveryStatus | null;
+  }> = [];
+
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({ "ws-a\0ses-a": "running" }),
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: (sessionId, workspaceIdHint) => ({
+      sessionId,
+      workspaceId: workspaceIdHint || "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "ses-a",
+      runId: "run-a",
+    }),
+    readConversationRunStatus: async () => ({
+      runId: "run-a",
+      status: "running",
+      stale: false,
+      activityKind: "model_retry",
+      waitReason: "model_retry_no_output",
+      lastUsefulProgressAt: 1_000,
+      retrySince: 2_000,
+      noProgressSeconds: 12,
+    }),
+    onConversationRunStatus: (scope, status) => {
+      diagnostics.push({ scopeSessionId: scope.sessionId, status });
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    scheduleTranscriptIngestion: () => {},
+    scheduleBackgroundTranscriptIngestion: () => {},
+    scheduleTimer: (callback, delayMs) => {
+      const timer = { callback, delayMs, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: (timer) => {
+      (timer as Timer).cleared = true;
+    },
+    initialDelayMs: 1,
+    pollMs: 1,
+  });
+
+  controller.reconcile();
+  timers.shift()?.callback();
+  await waitForAsyncPoll();
+
+  assert.equal(controller.activeWatchCount(), 1);
+  assert.deepEqual(diagnostics, [{
+    scopeSessionId: "ses-a",
+    status: {
+      runId: "run-a",
+      status: "running",
+      stale: false,
+      activityKind: "model_retry",
+      waitReason: "model_retry_no_output",
+      lastUsefulProgressAt: 1_000,
+      retrySince: 2_000,
+      noProgressSeconds: 12,
+    },
+  }]);
+});

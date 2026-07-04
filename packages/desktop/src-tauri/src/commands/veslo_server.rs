@@ -4,7 +4,10 @@ use tauri::{AppHandle, State};
 use crate::engine::manager::EngineManager;
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::orchestrator::{self, read_orchestrator_auth};
-use crate::types::{VesloServerInfo, WorkspaceState, WorkspaceType};
+use crate::types::{
+    VesloServerInfo, VesloServerLifecycleReason, VesloServerLifecycleStatus, WorkspaceState,
+    WorkspaceType,
+};
 use crate::utils::truncate_output;
 use crate::veslo_server::manager::{VesloServerManager, VesloServerState};
 use crate::veslo_server::{
@@ -118,6 +121,8 @@ fn sanitize_live_info_with_health(
     }
 
     info.running = false;
+    info.lifecycle_status = VesloServerLifecycleStatus::Blocked;
+    info.lifecycle_reason = VesloServerLifecycleReason::IdentityMismatch;
     info.base_url = None;
     info.connect_url = None;
     info.mdns_url = None;
@@ -265,6 +270,40 @@ pub fn veslo_server_info(app: AppHandle, manager: State<VesloServerManager>) -> 
     }
 }
 
+#[cfg(all(debug_assertions, feature = "e2e"))]
+#[tauri::command]
+pub fn veslo_server_e2e_kill_child(
+    manager: State<VesloServerManager>,
+) -> Result<VesloServerInfo, String> {
+    let mut state = manager
+        .inner
+        .lock()
+        .map_err(|_| "veslo server mutex poisoned".to_string())?;
+
+    if state.child_exited {
+        return Err("Veslo server child has already exited.".to_string());
+    }
+
+    let child = state
+        .child
+        .take()
+        .ok_or_else(|| "Veslo server child is not running.".to_string())?;
+    let pid = child.pid();
+    child
+        .kill()
+        .map_err(|error| format!("Failed to kill Veslo server child {pid}: {error}"))?;
+
+    state.child_exited = true;
+    state.lifecycle_status = VesloServerLifecycleStatus::Exited;
+    state.lifecycle_reason = VesloServerLifecycleReason::ChildExited;
+    state.last_stderr = Some(truncate_output(
+        &format!("Veslo server child killed for E2E (pid {pid})."),
+        8000,
+    ));
+
+    Ok(VesloServerManager::snapshot_locked(&mut state))
+}
+
 #[tauri::command]
 pub fn veslo_server_restart(
     app: AppHandle,
@@ -358,8 +397,8 @@ mod tests {
         EngineUrlRefreshLease, HealthIdentity,
     };
     use crate::types::{
-        RemoteType, VesloServerInfo, WorkspaceInfo, WorkspaceState, WorkspaceType,
-        WORKSPACE_STATE_VERSION,
+        RemoteType, VesloServerInfo, VesloServerLifecycleReason, VesloServerLifecycleStatus,
+        WorkspaceInfo, WorkspaceState, WorkspaceType, WORKSPACE_STATE_VERSION,
     };
     use crate::veslo_server::manager::VesloServerState;
     use std::time::{Duration, Instant};
@@ -468,6 +507,8 @@ mod tests {
             pid: Some(12345),
             last_stdout: None,
             last_stderr: None,
+            lifecycle_status: VesloServerLifecycleStatus::Running,
+            lifecycle_reason: VesloServerLifecycleReason::None,
         }
     }
 

@@ -27,6 +27,7 @@ import { perfNow, recordPerfLog } from "../lib/perf-log";
 import { detectChromeMcpCompletedError } from "../lib/chrome-mcp-error";
 import {
   readSessionStatus,
+  scopedSessionStatusKey,
   withSessionStatus,
 } from "../lib/scoped-session-status";
 import {
@@ -49,6 +50,7 @@ import {
   createSessionLifecycleRecoveryController,
   type SessionLifecycleRecoveryScope,
   type SessionLifecycleRecoveryStatus,
+  type SessionRunDiagnostic,
 } from "./session-lifecycle-recovery";
 import { createSessionWorkspaceCacheController } from "./session-workspace-cache";
 import type { ReconnectNotice } from "./session-reconnect";
@@ -97,6 +99,7 @@ function recordSessionStatusTrace(event: string, payload?: Record<string, unknow
 type StoreState = {
   sessions: Session[];
   sessionStatus: Record<string, string>;
+  conversationRunDiagnosticsBySessionKey: Record<string, SessionRunDiagnostic>;
   sessionErrorTurns: Record<string, SessionErrorTurn[]>;
   messages: Record<string, MessageInfo[]>;
   parts: Record<string, Part[]>;
@@ -159,12 +162,11 @@ export function createSessionStore(options: {
     ) => Promise<{ items: Session[]; source?: "sqlite" | "unavailable" }>;
   } | null;
   /**
-   * VSLO-86 — `engineReady()` reports whether the user has explicitly brought
-   * up the engine for the active workspace (sendPrompt has succeeded at least
-   * once). When false, selectSession prefers the offline transcript over an
-   * SDK `session.messages` call so that just clicking through session history
-   * never accidentally cold-spawns sandbox-exec + opencode serve.
-  */
+   * Legacy active-workspace runtime readiness fallback. Browse/live transcript
+   * policy is owned by `shouldBrowseSessionFromDb`, so background warmup can
+   * make the runtime ready without making ordinary history browsing use
+   * `session.messages`.
+   */
   engineReady?: () => boolean;
   isWorkspaceRuntimeReady?: (workspaceId: string) => boolean;
   shouldBrowseSessionFromDb?: (sessionID: string) => boolean;
@@ -282,6 +284,7 @@ export function createSessionStore(options: {
   const [store, setStore] = createStore<StoreState>({
     sessions: [],
     sessionStatus: {},
+    conversationRunDiagnosticsBySessionKey: {},
     sessionErrorTurns: {},
     messages: {},
     parts: {},
@@ -306,6 +309,52 @@ export function createSessionStore(options: {
     if (!id) return;
     setStore("sessionStatus", withSessionStatus(store.sessionStatus, statusWorkspaceId(workspaceId), id, status));
   };
+
+  const conversationRunDiagnosticKeys = (scope: SessionLifecycleRecoveryScope) => {
+    const workspaceId = statusWorkspaceId(scope.workspaceId);
+    const ids = [
+      scope.sessionId,
+      scope.opencodeSessionId,
+      scope.conversationId,
+    ]
+      .map((value) => value?.trim() ?? "")
+      .filter(Boolean);
+    return [...new Set(ids.flatMap((id) => {
+      const scoped = scopedSessionStatusKey(workspaceId, id);
+      return scoped ? [scoped, id] : [id];
+    }))];
+  };
+
+  function updateConversationRunDiagnosticsForScope(
+    scope: SessionLifecycleRecoveryScope,
+    status: SessionLifecycleRecoveryStatus | null,
+  ) {
+    const keys = conversationRunDiagnosticKeys(scope);
+    if (keys.length === 0) return;
+    if (!status) {
+      setStore(
+        "conversationRunDiagnosticsBySessionKey",
+        produce((draft: Record<string, SessionRunDiagnostic>) => {
+          for (const key of keys) delete draft[key];
+        }),
+      );
+      return;
+    }
+
+    const diagnostic: SessionRunDiagnostic = {
+      ...status,
+      sessionId: scope.sessionId,
+      workspaceId: statusWorkspaceId(scope.workspaceId),
+      conversationId: scope.conversationId,
+      opencodeSessionId: scope.opencodeSessionId ?? null,
+    };
+    setStore(
+      "conversationRunDiagnosticsBySessionKey",
+      produce((draft: Record<string, SessionRunDiagnostic>) => {
+        for (const key of keys) draft[key] = diagnostic;
+      }),
+    );
+  }
 
   const reloadDetectionSet = new Set<string>();
   const invalidToolDetectionSet = new Set<string>();
@@ -685,6 +734,7 @@ export function createSessionStore(options: {
           selectedSessionId: options.selectedSessionId,
           resolveConversationRunForSession: options.resolveConversationRunForSession,
           readConversationRunStatus: options.readConversationRunStatus,
+          onConversationRunStatus: updateConversationRunDiagnosticsForScope,
           setSessionStatusForWorkspace,
           notifySessionBusy,
           scheduleTranscriptIngestion,
@@ -786,6 +836,7 @@ export function createSessionStore(options: {
   } = selectionController;
 
   const sessionStatusById = () => store.sessionStatus;
+  const conversationRunDiagnosticsBySessionKey = () => store.conversationRunDiagnosticsBySessionKey;
   const events = () => store.events;
 
   const messages = createMemo<MessageWithParts[]>(() => {
@@ -900,6 +951,7 @@ export function createSessionStore(options: {
       return sessionID ? store.sessionErrorTurns[sessionID] ?? [] : [];
     }),
     sessionStatusById,
+    conversationRunDiagnosticsBySessionKey,
     selectedSession,
     selectedSessionStatus,
     messages,

@@ -5,9 +5,22 @@ import { validateMcpServerName } from "../mcp";
 import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
 import type { ComposerAttachment, ComposerDraft, ComposerPart, ModelRef, SkillInventoryRegistryMetadata } from "../types";
 
+export const RUNTIME_ENGINE_STATES = [
+  "absent",
+  "starting",
+  "process_ready",
+  "workspace_api_waiting",
+  "ready",
+  "stopped",
+  "failed",
+] as const;
+
+export type RuntimeEngineState = (typeof RUNTIME_ENGINE_STATES)[number];
+
 export type EngineInfo = {
   running: boolean;
   runtime: "direct" | "veslo-orchestrator";
+  engineState?: RuntimeEngineState | null;
   childKind?: "direct" | "wsl" | null;
   baseUrl: string | null;
   projectDir: string | null;
@@ -20,8 +33,27 @@ export type EngineInfo = {
   lastStderr: string | null;
 };
 
+export type VesloServerLifecycleStatus =
+  | "stopped"
+  | "starting"
+  | "running"
+  | "exited"
+  | "blocked";
+
+export type VesloServerLifecycleReason =
+  | "none"
+  | "spawn_pending"
+  | "port_unavailable"
+  | "spawn_failed"
+  | "child_exited"
+  | "health_unreachable"
+  | "token_missing"
+  | "identity_mismatch";
+
 export type VesloServerInfo = {
   running: boolean;
+  lifecycleStatus?: VesloServerLifecycleStatus;
+  lifecycleReason?: VesloServerLifecycleReason;
   host: string | null;
   port: number | null;
   baseUrl: string | null;

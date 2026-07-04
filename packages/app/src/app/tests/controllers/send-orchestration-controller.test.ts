@@ -28,7 +28,6 @@ test("created first-session sends skip managed AI bootstrap when the send prefli
   assert.deepEqual(
     resolveCreateSessionManagedAiPreflightDecision({
       preflightManagedAiReady: true,
-      runtimeAlreadyPrepared: false,
     }),
     { type: "skip", reason: "send-preflight-already-ready" },
   );
@@ -36,15 +35,6 @@ test("created first-session sends skip managed AI bootstrap when the send prefli
   assert.deepEqual(
     resolveCreateSessionManagedAiPreflightDecision({
       preflightManagedAiReady: false,
-      runtimeAlreadyPrepared: true,
-    }),
-    { type: "skip", reason: "send-preflight-already-ready" },
-  );
-
-  assert.deepEqual(
-    resolveCreateSessionManagedAiPreflightDecision({
-      preflightManagedAiReady: false,
-      runtimeAlreadyPrepared: false,
     }),
     { type: "run" },
   );
@@ -52,12 +42,26 @@ test("created first-session sends skip managed AI bootstrap when the send prefli
 
 test("created first-session sends skip duplicate runtime health after send preflight", () => {
   assert.deepEqual(
-    resolveCreateSessionRuntimeHealthPreflightDecision({ preflightRuntimeHealthOk: true }),
+    resolveCreateSessionRuntimeHealthPreflightDecision({
+      preflightEnginePrepared: true,
+      preflightRuntimeHealthOk: false,
+    }),
+    { type: "skip", reason: "send-preflight-already-ready" },
+  );
+
+  assert.deepEqual(
+    resolveCreateSessionRuntimeHealthPreflightDecision({
+      preflightEnginePrepared: false,
+      preflightRuntimeHealthOk: true,
+    }),
     { type: "skip", reason: "send-preflight-already-healthy" },
   );
 
   assert.deepEqual(
-    resolveCreateSessionRuntimeHealthPreflightDecision({ preflightRuntimeHealthOk: false }),
+    resolveCreateSessionRuntimeHealthPreflightDecision({
+      preflightEnginePrepared: false,
+      preflightRuntimeHealthOk: false,
+    }),
     { type: "run" },
   );
 });

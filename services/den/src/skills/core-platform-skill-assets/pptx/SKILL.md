@@ -9,6 +9,16 @@ description: "Create, edit, analyze, and visually validate PowerPoint PPTX prese
 
 Create, edit, or analyze the contents of .pptx files when requested. A .pptx file is essentially a ZIP archive containing XML files and other resources. Different tools and workflows are available for different tasks.
 
+## Managed Runtime
+
+Run presentation tooling through the managed office runtime:
+
+```bash
+veslo-document-runtime exec -- <command>
+```
+
+Do not install host dependencies with `npm install -g`, `pip install`, `brew install`, `choco install`, `winget install`, or OS package managers during a task. If a runtime tool is missing, run `veslo-document-runtime doctor --json` and use Veslo package repair/update instead of changing the user's machine.
+
 ## CRITICAL: Read All Documentation First
 
 **Before starting any presentation task**, read ALL relevant documentation files completely to understand the full workflow:
@@ -27,7 +37,7 @@ To read just the text content of a presentation, convert the document to markdow
 
 ```bash
 # Convert document to markdown
-python -m markitdown path-to-file.pptx
+veslo-document-runtime exec -- python -m markitdown path-to-file.pptx
 ```
 
 ### Raw XML access
@@ -36,7 +46,7 @@ Use raw XML access for: comments, speaker notes, slide layouts, animations, desi
 
 #### Unpacking a file
 
-`python ooxml/scripts/unpack.py <office_file> <output_dir>`
+`veslo-document-runtime exec -- python ooxml/scripts/unpack.py <office_file> <output_dir>`
 
 **Note**: The unpack.py script is located at `ooxml/scripts/unpack.py` relative to this skill package. If the script doesn't exist at this path, use `find . -name "unpack.py"` to locate it.
 
@@ -86,7 +96,7 @@ When creating a new PowerPoint presentation from scratch, use the **html2pptx** 
 
 6. Create and run a JavaScript file using the [`html2pptx`](./html2pptx) library to convert HTML slides to PowerPoint and save the presentation
 
-   - Run with: `NODE_PATH="$(npm root -g)" node your-script.js 2>&1`
+   - Run with: `veslo-document-runtime exec -- node your-script.js 2>&1`
    - Use the `html2pptx` function to process each HTML file
    - Add charts and tables to placeholder areas using PptxGenJS API
    - Save the presentation using `pptx.writeFile()`
@@ -113,8 +123,8 @@ When creating a new PowerPoint presentation from scratch, use the **html2pptx** 
    ```
 
 7. **Visual validation**: Convert to images and inspect for layout issues
-   - Convert PPTX to PDF first: `soffice --headless --convert-to pdf output.pptx`
-   - Then convert PDF to images: `pdftoppm -jpeg -r 150 output.pdf slide`
+   - Convert PPTX to PDF first: `veslo-document-runtime exec -- soffice --headless --convert-to pdf output.pptx`
+   - Then convert PDF to images: `veslo-document-runtime exec -- pdftoppm -jpeg -r 150 output.pdf slide`
      - This creates files like `slide-1.jpg`, `slide-2.jpg`, etc.
    - Read each generated image file and carefully examine for:
      - **Text cutoff**: Text being cut off by header bars, shapes, or slide edges
@@ -138,10 +148,10 @@ To edit slides in an existing PowerPoint presentation, work with the raw Office 
 ### Workflow
 
 1. **Read documentation**: Read [`ooxml.md`](ooxml.md) completely (see "CRITICAL: Read All Documentation First" section above)
-2. Unpack the presentation: `python ooxml/scripts/unpack.py <office_file> <output_dir>`
+2. Unpack the presentation: `veslo-document-runtime exec -- python ooxml/scripts/unpack.py <office_file> <output_dir>`
 3. Edit the XML files (primarily `ppt/slides/slide{N}.xml` and related files)
-4. **CRITICAL**: Validate immediately after each edit: `python ooxml/scripts/validate.py <dir> --original <file>`
-5. Pack the final presentation: `python ooxml/scripts/pack.py <input_directory> <office_file>`
+4. **CRITICAL**: Validate immediately after each edit: `veslo-document-runtime exec -- python ooxml/scripts/validate.py <dir> --original <file>`
+5. Pack the final presentation: `veslo-document-runtime exec -- python ooxml/scripts/pack.py <input_directory> <office_file>`
 
 ## Creating a new PowerPoint presentation **using a template**
 
@@ -151,9 +161,9 @@ To create a presentation that follows an existing template's design, duplicate a
 
 1. **Extract template text AND create visual thumbnail grid**:
 
-   - Extract text: `python -m markitdown template.pptx > template-content.md`
+   - Extract text: `veslo-document-runtime exec -- python -m markitdown template.pptx > template-content.md`
    - Read `template-content.md` completely to understand the template contents
-   - Create thumbnail grids: `python scripts/thumbnail.py template.pptx`
+   - Create thumbnail grids: `veslo-document-runtime exec -- python scripts/thumbnail.py template.pptx`
    - See [Creating Thumbnail Grids](#creating-thumbnail-grids) section for more details
 
 2. **Analyze template and save inventory to a file**:
@@ -218,7 +228,7 @@ To create a presentation that follows an existing template's design, duplicate a
 
    - Use the `scripts/rearrange.py` script to create a new presentation with slides in the desired order:
      ```bash
-     python scripts/rearrange.py template.pptx working.pptx 0,34,34,50,52
+     veslo-document-runtime exec -- python scripts/rearrange.py template.pptx working.pptx 0,34,34,50,52
      ```
    - The script handles duplicating repeated slides, deleting unused slides, and reordering automatically
    - Slide indices are 0-based (first slide is 0, second is 1, etc.)
@@ -228,7 +238,7 @@ To create a presentation that follows an existing template's design, duplicate a
 
    - **Run inventory extraction**:
      ```bash
-     python scripts/inventory.py working.pptx text-inventory.json
+     veslo-document-runtime exec -- python scripts/inventory.py working.pptx text-inventory.json
      ```
    - **Read text-inventory.json** completely to understand all shapes and their properties
 
@@ -361,7 +371,7 @@ To create a presentation that follows an existing template's design, duplicate a
 7. **Apply replacements using the `replace.py` script**
 
    ```bash
-   python scripts/replace.py working.pptx replacement-text.json output.pptx
+   veslo-document-runtime exec -- python scripts/replace.py working.pptx replacement-text.json output.pptx
    ```
 
    The script will:
@@ -392,14 +402,14 @@ To create a presentation that follows an existing template's design, duplicate a
 To create visual thumbnail grids of PowerPoint slides for quick analysis and reference:
 
 ```bash
-python scripts/thumbnail.py template.pptx [output_prefix]
+veslo-document-runtime exec -- python scripts/thumbnail.py template.pptx [output_prefix]
 ```
 
 **Features**:
 
 - Creates: `thumbnails.jpg` (or `thumbnails-1.jpg`, `thumbnails-2.jpg`, etc. for large decks)
 - Default: 5 columns, max 30 slides per grid (5×6)
-- Custom prefix: `python scripts/thumbnail.py template.pptx my-grid`
+- Custom prefix: `veslo-document-runtime exec -- python scripts/thumbnail.py template.pptx my-grid`
   - Note: The output prefix should include the path if you want output in a specific directory (e.g., `workspace/my-grid`)
 - Adjust columns: `--cols 4` (range: 3-6, affects slides per grid)
 - Grid limits: 3 cols = 12 slides/grid, 4 cols = 20, 5 cols = 30, 6 cols = 42
@@ -416,10 +426,10 @@ python scripts/thumbnail.py template.pptx [output_prefix]
 
 ```bash
 # Basic usage
-python scripts/thumbnail.py presentation.pptx
+veslo-document-runtime exec -- python scripts/thumbnail.py presentation.pptx
 
 # Combine options: custom name, columns
-python scripts/thumbnail.py template.pptx analysis --cols 4
+veslo-document-runtime exec -- python scripts/thumbnail.py template.pptx analysis --cols 4
 ```
 
 ## Converting Slides to Images
@@ -429,12 +439,12 @@ To visually analyze PowerPoint slides, convert them to images using a two-step p
 1. **Convert PPTX to PDF**:
 
    ```bash
-   soffice --headless --convert-to pdf template.pptx
+   veslo-document-runtime exec -- soffice --headless --convert-to pdf template.pptx
    ```
 
 2. **Convert PDF pages to JPEG images**:
    ```bash
-   pdftoppm -jpeg -r 150 template.pdf slide
+   veslo-document-runtime exec -- pdftoppm -jpeg -r 150 template.pdf slide
    ```
    This creates files like `slide-1.jpg`, `slide-2.jpg`, etc.
 
@@ -449,7 +459,7 @@ Options:
 Example for specific range:
 
 ```bash
-pdftoppm -jpeg -r 150 -f 2 -l 5 template.pdf slide  # Converts only pages 2-5
+veslo-document-runtime exec -- pdftoppm -jpeg -r 150 -f 2 -l 5 template.pdf slide  # Converts only pages 2-5
 ```
 
 ## Code Style Guidelines
@@ -462,14 +472,12 @@ pdftoppm -jpeg -r 150 -f 2 -l 5 template.pdf slide  # Converts only pages 2-5
 
 ## Dependencies
 
-Required dependencies (should already be installed):
+Required dependencies are bundled in the managed runtime:
 
-- **markitdown**: `pip install "markitdown[pptx]"` (for text extraction from presentations)
-- **pptxgenjs**: `npm install -g pptxgenjs` (for creating presentations via html2pptx)
-- **playwright**: `npm install -g playwright` (for HTML rendering in html2pptx)
-- **react-icons**: `npm install -g react-icons react react-dom` (for icons in SVG format)
+- **markitdown**: Text extraction from presentations
+- **pptxgenjs**: Creating presentations via html2pptx
+- **playwright**: HTML rendering in html2pptx
+- **react-icons**: Icons in SVG format
 - **LibreOffice**: For PDF conversion (required for visual validation step)
-  - macOS: `brew install --cask libreoffice`
-  - Linux: `sudo apt-get install libreoffice`
-- **Poppler**: `sudo apt-get install poppler-utils` (for pdftoppm to convert PDF to images)
-- **defusedxml**: `pip install defusedxml` (for secure XML parsing)
+- **Poppler**: For `pdftoppm` PDF-to-image conversion
+- **defusedxml**: Secure XML parsing

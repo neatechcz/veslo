@@ -1,0 +1,485 @@
+[scenario]
+name = "runtime-cold-start-session-handoff"
+fail_fast = true
+global_timeout_ms = 300000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "enable runtime handoff diagnostics"
+action = "eval"
+script = '''
+window.__vesloSendWorkflowTraceEnabled = true;
+window.__vesloRuntimePerfAuditEnabled = true;
+window.localStorage.setItem("veslo.sendWorkflowTrace", "1");
+window.localStorage.setItem("veslo:runtime-perf-audit", "1");
+true;
+'''
+
+[[step]]
+name = "start cold-start handoff task"
+action = "eval"
+script = '''
+const completeSelector = '[data-testid="runtime-cold-start-session-handoff-complete"]';
+const errorSelector = '[data-testid="runtime-cold-start-session-handoff-error"]';
+const progressSelector = '[data-testid="runtime-cold-start-session-handoff-progress"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+document.querySelector(progressSelector)?.remove();
+
+const progressMarker = document.createElement("pre");
+progressMarker.dataset.testid = "runtime-cold-start-session-handoff-progress";
+progressMarker.style.display = "none";
+progressMarker.textContent = "starting";
+document.body.append(progressMarker);
+
+const setProgress = (stage, detail = null) => {
+  window.__vesloRuntimeColdStartSessionHandoffProgress = {
+    stage,
+    detail,
+    at: new Date().toISOString(),
+  };
+  progressMarker.textContent = JSON.stringify(window.__vesloRuntimeColdStartSessionHandoffProgress);
+};
+
+const appendMarker = (selector, payload) => {
+  if (document.querySelector(completeSelector) || document.querySelector(errorSelector)) return;
+  const marker = document.createElement("pre");
+  marker.dataset.testid = selector === completeSelector
+    ? "runtime-cold-start-session-handoff-complete"
+    : "runtime-cold-start-session-handoff-error";
+  marker.textContent = JSON.stringify(payload, null, 2);
+  document.body.append(marker);
+};
+
+if (!window.__vesloRuntimeColdStartSessionHandoffStarted) {
+  window.__vesloRuntimeColdStartSessionHandoffStarted = true;
+  window.__vesloRuntimeColdStartSessionHandoffPromise = (async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const normalize = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
+    const normalizePath = (value) => String(value ?? "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
+    const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+    const assert = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+    const waitUntil = async (predicate, options = {}) => {
+      const timeout = options.timeout ?? 10000;
+      const interval = options.interval ?? 250;
+      const message = options.message ?? "Condition was not met";
+      const deadline = Date.now() + timeout;
+      let latest;
+      while (Date.now() < deadline) {
+        latest = await predicate();
+        if (latest) return latest;
+        await sleep(interval);
+      }
+      throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
+    };
+    const withTimeout = async (promise, timeout, message) => {
+      let timeoutId;
+      try {
+        return await Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error(message)), timeout);
+          }),
+        ]);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+    };
+    const tauriInvoke = async (command, payload = {}, timeout = 90000) => {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+      return await withTimeout(
+        invoke(command, payload),
+        timeout,
+        `Tauri command ${command} did not resolve within ${timeout}ms`,
+      );
+    };
+    const sendTrace = () => Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-120) : [];
+    const workflowTrace = () =>
+      Array.isArray(window.__vesloSendWorkflowTrace) ? window.__vesloSendWorkflowTrace.slice(-200) : [];
+    const perfLogs = () => Array.isArray(window.__vesloPerfLogs) ? window.__vesloPerfLogs.slice(-200) : [];
+    const visibleText = (element) => normalize(element?.innerText || element?.textContent || "");
+    const conversationPane = () =>
+      document.querySelector('[data-testid="session-conversation-pane"]') ??
+      document.querySelector("main") ??
+      document.body;
+    const visibleBodyText = () => visibleText(document.querySelector("main") ?? document.body);
+    const visibleTranscriptText = () => visibleText(conversationPane());
+    const isVisibleElement = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      return Boolean(element.offsetParent) && rect.width > 0 && rect.height > 0;
+    };
+    const buttonValues = (button) => [
+      normalize(button.textContent),
+      normalize(button.title),
+      normalize(button.getAttribute("aria-label")),
+    ].filter(Boolean);
+    const buttonMatchesLabel = (button, labels) => {
+      if (!isVisibleElement(button) || button.disabled) return false;
+      const values = buttonValues(button);
+      return labels.some((label) => values.some((value) => value === label || value.includes(label)));
+    };
+    const findButton = (labels, root = document) =>
+      Array.from(root.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+    const findComposerSendButton = (textbox) => {
+      const labels = [
+        "Send now",
+        "Steer agent now",
+        "Queue message",
+        "Send",
+        "Poslat hned",
+        "Odeslat",
+      ];
+      let current = textbox;
+      const containers = [];
+      for (let depth = 0; depth < 10 && current instanceof HTMLElement; depth += 1) {
+        containers.push(current);
+        current = current.parentElement;
+      }
+      for (const container of containers) {
+        const matching = Array.from(container.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+        if (matching) return matching;
+      }
+      return findButton(labels);
+    };
+    const dispatchClickSequence = (element) => {
+      element.focus?.();
+      const base = {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        view: window,
+        button: 0,
+      };
+      if (typeof PointerEvent === "function") {
+        element.dispatchEvent(new PointerEvent("pointerdown", {
+          ...base,
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          buttons: 1,
+        }));
+        element.dispatchEvent(new PointerEvent("pointerup", {
+          ...base,
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          buttons: 0,
+        }));
+      }
+      element.dispatchEvent(new MouseEvent("mousedown", { ...base, buttons: 1 }));
+      element.dispatchEvent(new MouseEvent("mouseup", { ...base, buttons: 0 }));
+      element.dispatchEvent(new MouseEvent("click", { ...base, buttons: 0 }));
+    };
+    const waitForComposer = async () => {
+      setProgress("waiting-composer");
+      return await waitUntil(() => {
+        const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+        return candidate instanceof HTMLElement && isVisibleElement(candidate) ? candidate : false;
+      }, {
+        timeout: 45000,
+        interval: 250,
+        message: `Composer did not appear. Body=${visibleBodyText().slice(0, 2500)}`,
+      });
+    };
+    const setComposerText = (textbox, text) => {
+      textbox.focus();
+      if (textbox.isContentEditable) {
+        textbox.replaceChildren(document.createTextNode(text));
+      } else {
+        textbox.value = text;
+      }
+      textbox.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        data: text,
+        inputType: "insertText",
+      }));
+    };
+    const waitForLocalVesloServerReady = async () => {
+      let latest = null;
+      setProgress("waiting-local-veslo-server");
+      return await waitUntil(async () => {
+        latest = await tauriInvoke("veslo_server_info").catch(() => null);
+        const baseUrl = trimBaseUrl(latest?.baseUrl);
+        const clientToken = normalize(latest?.clientToken);
+        const hostToken = normalize(latest?.hostToken);
+        if (!latest?.running || !baseUrl || !clientToken || !hostToken) return false;
+        const response = await fetch(`${baseUrl}/health`).catch(() => null);
+        if (!response?.ok) return false;
+        const payload = await response.json().catch(() => null);
+        return payload?.ok === true ? { baseUrl, clientToken, hostToken } : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `Local Veslo server did not become ready. Server info=${JSON.stringify(latest)}`,
+      });
+    };
+    const parseDenAuth = (raw) => {
+      if (!raw || typeof raw !== "string") return null;
+      try {
+        const parsed = JSON.parse(raw);
+        const token = normalize(parsed?.token);
+        if (!token) return null;
+        return {
+          token,
+          email: normalize(parsed?.user?.email),
+          userId: normalize(parsed?.user?.id),
+          orgId: normalize(parsed?.orgId || parsed?.org?.id),
+          denApiBase: trimBaseUrl(parsed?.denApiBase),
+        };
+      } catch {
+        return null;
+      }
+    };
+    const readDenAuthForAiAccess = async () => {
+      const storageAuth = parseDenAuth(
+        window.localStorage.getItem("veslo.den.auth") ||
+        window.sessionStorage.getItem("veslo.den.auth"),
+      );
+      if (storageAuth) return storageAuth;
+
+      const snapshot = await tauriInvoke("den_auth_snapshot_read", {}, 15000).catch(() => null);
+      return parseDenAuth(snapshot?.authJson);
+    };
+    const waitForAiAccessReady = async (connection) => {
+      let latest = null;
+      setProgress("waiting-ai-access");
+      await waitUntil(async () => {
+        const auth = await readDenAuthForAiAccess();
+        const userToken = auth?.token || "veslo-e2e-managed-ai-token";
+        const response = await fetch(`${connection.baseUrl}/ai-gateway/me/ai-access`, {
+          headers: {
+            authorization: `Bearer ${connection.clientToken}`,
+            "x-veslo-gateway-authorization": `Bearer ${userToken}`,
+            accept: "application/json",
+          },
+        }).catch((error) => {
+          latest = { error: error?.message || String(error) };
+          return null;
+        });
+        if (!response) return false;
+        const text = await response.text();
+        latest = {
+          status: response.status,
+          body: text.slice(0, 500),
+          auth: auth ? {
+            email: auth.email,
+            userId: auth.userId,
+            orgId: auth.orgId,
+            denApiBase: auth.denApiBase,
+            hasToken: true,
+          } : null,
+        };
+        if (!response.ok) return false;
+        const payload = text.trim() ? JSON.parse(text) : null;
+        return payload?.aiAccess?.enabled === true ? payload : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `AI access endpoint did not become ready. Latest=${JSON.stringify(latest)}`,
+      });
+    };
+    const waitForActiveLocalWorkspace = async () => {
+      setProgress("waiting-workspace-bootstrap");
+      const bootstrap = await waitUntil(async () => {
+        const info = await tauriInvoke("workspace_bootstrap").catch(() => null);
+        return Array.isArray(info?.workspaces) && info.workspaces.length > 0 ? info : false;
+      }, {
+        timeout: 45000,
+        interval: 500,
+        message: "Workspace bootstrap did not expose a local workspace",
+      });
+      const workspace = bootstrap.workspaces.find((entry) => entry.id === bootstrap.activeId) ?? bootstrap.workspaces[0];
+      const workspacePath = normalizePath(workspace?.path || workspace?.directory);
+      assert(workspace?.id && workspacePath, `Active local workspace is unavailable: ${JSON.stringify(bootstrap)}`);
+      return { workspace, workspacePath };
+    };
+    const waitForBootWarmup = async (workspace) => {
+      setProgress("waiting-boot-warmup", { workspaceId: workspace.id });
+      return await waitUntil(async () => {
+        const warmupStartTrace = workflowTrace().find((entry) =>
+          entry?.source === "workspace-runtime" &&
+          entry?.event === "ensure-engine:start" &&
+          entry?.reason === "boot-warmup" &&
+          (!entry?.workspaceId || entry.workspaceId === workspace.id));
+        const warmupSuccessTrace = workflowTrace().find((entry) =>
+          entry?.source === "workspace-runtime" &&
+          entry?.event === "ensure-engine:success" &&
+          entry?.reason === "boot-warmup" &&
+          (!entry?.workspaceId || entry.workspaceId === workspace.id));
+        if (warmupSuccessTrace) {
+          return {
+            kind: "trace",
+            warmupStartTrace: warmupStartTrace ?? null,
+            warmupSuccessTrace,
+          };
+        }
+        return false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `Boot warmup did not complete before send. Workflow=${JSON.stringify(workflowTrace())}`,
+      });
+    };
+    const waitForActiveManagedConfigReady = async (workspace) => {
+      setProgress("waiting-active-managed-ai-config", { workspaceId: workspace.id });
+      return await waitUntil(() =>
+        workflowTrace().find((entry) =>
+          entry?.source === "opencode-config" &&
+          entry?.event === "apply-gateway-provider-routing:done" &&
+          entry?.workspaceId === workspace.id),
+      {
+        timeout: 90000,
+        interval: 500,
+        message: `Managed AI routing config did not settle for ${workspace.id}. Workflow=${JSON.stringify(workflowTrace())}`,
+      });
+    };
+    const assertNoSendFailed = () => {
+      const body = visibleBodyText();
+      assert(!/Send failed/i.test(body), `Send failed appeared. Body=${body.slice(0, 2500)} SendTrace=${JSON.stringify(sendTrace())}`);
+    };
+    const messageRoleCount = (role) =>
+      Array.from(conversationPane().querySelectorAll(`[data-message-role="${role}"]`)).filter(isVisibleElement).length;
+
+    const watchdog = setTimeout(() => {
+      appendMarker(errorSelector, {
+        message: "Runtime cold-start handoff watchdog timed out before the task settled.",
+        progress: window.__vesloRuntimeColdStartSessionHandoffProgress ?? null,
+        sendTrace: sendTrace(),
+        workflowTrace: workflowTrace(),
+        perfLogs: perfLogs(),
+        body: visibleBodyText().slice(0, 4000),
+      });
+    }, 270000);
+
+    try {
+      await waitUntil(() => document.querySelector("#root")?.children.length > 0, {
+        timeout: 30000,
+        message: "Veslo root did not render child UI",
+      });
+      const connection = await waitForLocalVesloServerReady();
+      await waitForAiAccessReady(connection);
+      const { workspace } = await waitForActiveLocalWorkspace();
+      const composer = await waitForComposer();
+
+      setProgress("waiting-startup-overlay-close", { workspaceId: workspace.id });
+      const overlayClose = await waitUntil(() =>
+        perfLogs().find((entry) => entry.scope === "workspace.overlay" && entry.event === "close"),
+        {
+          timeout: 45000,
+          interval: 250,
+          message: `Startup overlay close was not recorded. Perf=${JSON.stringify(perfLogs())}`,
+        },
+      );
+      const overlayMs = Number(overlayClose.payload?.ms ?? 0);
+      assert(Number.isFinite(overlayMs) && overlayMs < 30000, `Startup overlay stayed open too long: ${overlayMs}ms`);
+
+      const warmup = await waitForBootWarmup(workspace);
+      const managedConfig = await waitForActiveManagedConfigReady(workspace);
+      const text = `runtime cold start handoff ${Date.now()}`;
+      setProgress("sending-first-prompt", { text, warmup, managedConfig });
+      setComposerText(composer, text);
+      await waitUntil(() => normalize(composer.textContent || composer.value).includes(text), {
+        timeout: 10000,
+        message: `Composer did not retain prompt text ${text}`,
+      });
+
+      const workflowTraceBeforeClick = workflowTrace().length;
+      const sendButton = await waitUntil(() => findComposerSendButton(composer), {
+        timeout: 20000,
+        interval: 250,
+        message: `Send button did not become enabled. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).map(buttonValues))}`,
+      });
+      dispatchClickSequence(sendButton);
+
+      let sawPromptVisible = false;
+      let sawMaterialized = false;
+      const materializeDeadline = Date.now() + 180000;
+      while (Date.now() < materializeDeadline) {
+        const transcript = visibleTranscriptText();
+        if (transcript.includes(text)) {
+          sawPromptVisible = true;
+        } else if (sawPromptVisible) {
+          throw new Error(`Optimistic prompt disappeared during pending-to-real handoff. Transcript=${transcript.slice(0, 2500)} SendTrace=${JSON.stringify(sendTrace())}`);
+        }
+        sawMaterialized = sendTrace().some((entry) =>
+          entry?.event === "sendPromptImmediate:pending-handoff-materialize" ||
+          entry?.event === "createSessionAndOpen:create-ok");
+        if (sawPromptVisible && sawMaterialized) break;
+        await sleep(250);
+      }
+      assert(sawPromptVisible, `Prompt never became visible. Body=${visibleBodyText().slice(0, 2500)} SendTrace=${JSON.stringify(sendTrace())}`);
+      assert(sawMaterialized, `Pending session did not materialize. SendTrace=${JSON.stringify(sendTrace())}`);
+
+      await waitUntil(() => !conversationPane().querySelector('[data-testid="session-run-indicator"]'), {
+        timeout: 180000,
+        interval: 1000,
+        message: `Run indicator did not settle. Body=${visibleBodyText().slice(0, 2500)} SendTrace=${JSON.stringify(sendTrace())}`,
+      });
+      assert(visibleTranscriptText().includes(text), `Prompt missing after run settled. Transcript=${visibleTranscriptText().slice(0, 2500)}`);
+      assert(messageRoleCount("user") >= 1, `No user message rendered after run settled. Transcript=${visibleTranscriptText().slice(0, 2500)}`);
+      assert(messageRoleCount("assistant") >= 1, `No assistant message rendered after run settled. Transcript=${visibleTranscriptText().slice(0, 2500)}`);
+      assertNoSendFailed();
+
+      const workflowAfterClick = workflowTrace().slice(workflowTraceBeforeClick);
+      const duplicateEnsureStarts = workflowAfterClick.filter((entry) =>
+        entry?.source === "workspace-runtime" &&
+        entry?.event === "ensure-engine:start" &&
+        entry?.reason !== "boot-warmup");
+      assert(
+        duplicateEnsureStarts.length === 0,
+        `First send started duplicate engine ensure work: ${JSON.stringify(duplicateEnsureStarts)}`,
+      );
+
+      appendMarker(completeSelector, {
+        ok: true,
+        text,
+        warmup,
+        overlayMs,
+        sendTrace: sendTrace(),
+        workflowTrace: workflowTrace().slice(-60),
+        perfLogs: perfLogs().slice(-60),
+      });
+    } catch (error) {
+      appendMarker(errorSelector, {
+        message: error?.message || String(error),
+        stack: error?.stack || null,
+        progress: window.__vesloRuntimeColdStartSessionHandoffProgress ?? null,
+        sendTrace: sendTrace(),
+        workflowTrace: workflowTrace(),
+        perfLogs: perfLogs(),
+        body: visibleBodyText().slice(0, 4000),
+      });
+    } finally {
+      clearTimeout(watchdog);
+    }
+  })();
+}
+
+true;
+'''
+
+[[step]]
+name = "runtime cold-start handoff task finished"
+action = "wait"
+target = "[data-testid=\"runtime-cold-start-session-handoff-complete\"], [data-testid=\"runtime-cold-start-session-handoff-error\"]"
+timeout_ms = 285000
+
+[[step]]
+name = "runtime cold-start handoff task succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="runtime-cold-start-session-handoff-error"]');
+if (error) {
+  throw new Error(`Runtime cold-start handoff failed: ${(error.textContent || "").slice(0, 20000)}`);
+}
+true;
+'''

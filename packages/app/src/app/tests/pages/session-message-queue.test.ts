@@ -7,7 +7,11 @@ const conversationFlowSource = readFileSync(
   new URL("../../pages/session-conversation-flow.ts", import.meta.url),
   "utf8",
 );
-const source = `${sessionSource}\n${conversationFlowSource}`;
+const queueDrainControllerSource = readFileSync(
+  new URL("../../context/session-queue-drain-controller.ts", import.meta.url),
+  "utf8",
+);
+const source = `${sessionSource}\n${conversationFlowSource}\n${queueDrainControllerSource}`;
 const appViewPropsSource = readFileSync(new URL("../../app-view-props.ts", import.meta.url), "utf8");
 const sendWorkflowSource = readFileSync(new URL("../../pages/session-send-workflow.ts", import.meta.url), "utf8");
 const flowSendImmediateStart = conversationFlowSource.indexOf("sendPromptImmediate: async (");
@@ -61,8 +65,8 @@ test("session page owns session-local queue state and handleSendPrompt accepts s
   );
   assert.match(
     sessionSource,
-    /return conversationFlow\.handleSendPrompt\(draft, \{\s*sendNow: options\.sendNow,\s*sendTraceId: options\.sendTraceId,\s*\}\);/s,
-    "session send handler should delegate queue/send branching to the conversation-flow controller",
+    /const sessionFlowFacade = createSessionViewFlowFacade\(\{ conversationFlow \}\);[\s\S]*return sessionFlowFacade\.handleSendPrompt\(draft, \{\s*sendNow: options\.sendNow,\s*sendTraceId: options\.sendTraceId,\s*\}\);/s,
+    "session send handler should delegate queue/send branching through the session flow facade",
   );
   assert.match(
     flowHandleSendSource,
@@ -130,14 +134,29 @@ test("paused send-now unpauses only after accepted immediate send", () => {
 
 test("idle transition drains only after a non-idle status and only when queue is not paused", () => {
   assert.match(
-    source,
-    /createEffect\(\s*on\(\s*\(\) => props\.sessionStatus,\s*\(status, previousStatus\) => \{\s*if \(previousStatus === undefined \|\| previousStatus === "idle" \|\| status !== "idle"\) return;\s*const sessionKey = currentSessionQueueKey\(\);\s*if \(queuePausedForSessionKey\(sessionKey\)\) return;\s*void drainNextQueuedDraft\("queue-drain", sessionKey\);/s,
-    "idle transitions should drain only after a previous non-idle status and while not paused",
+    queueDrainControllerSource,
+    /options\.handleActiveSessionStatusChanged\(status, previousStatus\);/,
+    "queue drain controller should report active status changes to the conversation-flow facade",
   );
   assert.match(
-    source,
-    /const sessionId = sessionIdForQueueKey\(sessionKey\);[\s\S]*if \(!sessionId\) continue;[\s\S]*statusForQueueKey\(sessionKey, previousStatuses\)[\s\S]*statusForQueueKey\(sessionKey, statuses\)/s,
-    "background queue status checks should resolve scoped UI keys back to raw session ids",
+    conversationFlowSource,
+    /handleActiveSessionStatusChanged: \(status, previousStatus\) => \{\s*if \(previousStatus === undefined \|\| previousStatus === "idle" \|\| status !== "idle"\) return;\s*const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*if \(deps\.queue\.queuePausedForSessionKey\(sessionKey\)\) return;\s*void controller\.drainNextQueuedDraft\("queue-drain", sessionKey\);/s,
+    "conversation-flow controller should drain only after a previous non-idle status and while not paused",
+  );
+  assert.match(
+    queueDrainControllerSource,
+    /options\.handleSessionStatusMapChanged\(statuses, previousStatuses\);/,
+    "queue drain controller should report status-map changes to the conversation-flow facade",
+  );
+  assert.match(
+    conversationFlowSource,
+    /const sessionId = deps\.sessionKeys\.sessionIdForQueueKey\(sessionKey\);[\s\S]*if \(!sessionId\) continue;[\s\S]*statusForQueueKey\(sessionKey, previousStatuses\)[\s\S]*statusForQueueKey\(sessionKey, statuses\)/s,
+    "background queue status checks should resolve scoped UI keys back to raw session ids in the owner",
+  );
+  assert.doesNotMatch(
+    sessionSource,
+    /drainNextQueuedDraft\(/,
+    "SessionView effects should not directly drive queued draft drains",
   );
 });
 
@@ -279,9 +298,14 @@ test("accepted first pending submit captures and remaps the pending queue key", 
   );
 
   assert.match(
-    source,
-    /createEffect\(\s*on\(\s*\(\) => props\.selectedSessionId,[\s\S]*const pendingBaseKey = pendingSessionQueueKey\(\);[\s\S]*const pendingKey = !previousSessionId[\s\S]*pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null[\s\S]*if \(pendingKey && !isPendingSessionInstanceId\(sessionId\)\) \{[\s\S]*remapPendingQueueToSession\(pendingKey, sessionId\);[\s\S]*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);[\s\S]*\}/s,
-    "session view should also remap pending queues when the selected session id arrives in a later reactive update",
+    queueDrainControllerSource,
+    /options\.handleSelectedSessionChanged\(\{[\s\S]*pendingBaseKey,[\s\S]*pendingKey,[\s\S]*sessionStatusById: options\.sessionStatusById\(\),[\s\S]*\}\);/s,
+    "queue drain controller should notify the owner when the selected session id arrives in a later reactive update",
+  );
+  assert.match(
+    conversationFlowSource,
+    /if \(pendingKey && !isPendingSessionInstanceId\(selectedSessionId\)\) \{[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingKey, selectedSessionId\);[\s\S]*deps\.pendingHandoff\.clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);[\s\S]*\}/s,
+    "conversation-flow controller should remap pending queues when the selected session id arrives in a later reactive update",
   );
 
   assert.doesNotMatch(
@@ -381,8 +405,8 @@ test("queued edit lifecycle restores editing items and drains idle saves", () =>
 
   assert.match(
     sessionSource,
-    /const handleEditQueuedDraft = \(id: string\) => \{\s*conversationFlow\.handleEditQueuedDraft\(id\);\s*\};[\s\S]*const handleCancelQueuedDraft = \(id: string\) => \{\s*conversationFlow\.handleCancelQueuedDraft\(id\);\s*\};[\s\S]*const handleMoveQueuedDraft = \(id: string, targetIndex: number\) => \{\s*conversationFlow\.handleMoveQueuedDraft\(id, targetIndex\);\s*\};/s,
-    "session view queue edit callbacks should delegate to the conversation-flow controller",
+    /const handleEditQueuedDraft = \(id: string\) => \{\s*sessionFlowFacade\.handleEditQueuedDraft\(id\);\s*\};[\s\S]*const handleCancelQueuedDraft = \(id: string\) => \{\s*sessionFlowFacade\.handleCancelQueuedDraft\(id\);\s*\};[\s\S]*const handleMoveQueuedDraft = \(id: string, targetIndex: number\) => \{\s*sessionFlowFacade\.handleMoveQueuedDraft\(id, targetIndex\);\s*\};/s,
+    "session view queue edit callbacks should delegate to the session flow facade",
   );
 
   assert.match(
@@ -391,9 +415,14 @@ test("queued edit lifecycle restores editing items and drains idle saves", () =>
     "switching sessions should restore the previous queued edit item and clear its composer draft in the controller",
   );
   assert.match(
-    sessionSource,
-    /conversationFlow\.handleSessionSwitchEditState\(previousSessionId\);/,
-    "session view selected-session effect should delegate edit-state cleanup to the controller",
+    queueDrainControllerSource,
+    /options\.handleSelectedSessionChanged\(\{[\s\S]*previousSessionId,[\s\S]*\}\);/s,
+    "queue drain controller selected-session effect should delegate edit-state cleanup through the controller facade",
+  );
+  assert.match(
+    conversationFlowSource,
+    /handleSelectedSessionChanged: \([\s\S]*\) => \{[\s\S]*controller\.handleSessionSwitchEditState\(previousSessionId\);/s,
+    "selected-session controller should run edit-state cleanup before queue handoff decisions",
   );
 
   assert.match(
@@ -429,8 +458,8 @@ test("cancelRun marks the current queue paused before aborting", () => {
   assert.ok(abortCall > pauseCall, "queue pause should happen before the abort request resolves");
   assert.match(
     sessionSource,
-    /const cancelRun = async \(\) => \{\s*await conversationFlow\.cancelRun\(\);\s*\};/,
-    "session view cancel callback should delegate to the conversation-flow controller",
+    /const cancelRun = async \(\) => \{\s*await sessionFlowFacade\.cancelRun\(\);\s*\};/,
+    "session view cancel callback should delegate to the session flow facade",
   );
 });
 

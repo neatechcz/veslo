@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "packageId": "veslo-document-runtime",
+  "runtimeId": "veslo-document-runtime",
+  "packageVersion": "2026.7.0",
+  "version": "2026.7.0",
+  "platform": "macos-x64",
+  "channel": "stable",
+  "minimumAppVersion": "2026.7.0",
+  "tools": {
+    "soffice": "24.8.x",
+    "pandoc": "3.6.x",
+    "poppler": "24.x",
+    "qpdf": "11.x",
+    "python": "3.11.x",
+    "node": "22.x"
+  },
+  "manifestSha256": "9999999999999999999999999999999999999999999999999999999999999999",
+  "pythonPackagesHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "nodePackagesHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "fontsHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+}

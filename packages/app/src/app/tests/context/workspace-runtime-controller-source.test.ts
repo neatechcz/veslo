@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createWorkspaceRuntimeController } from "../../context/workspace-runtime-controller.js";
 import { readContextSource, readWorkspaceFacadeSource } from "./workspace-source";
 
 test("lazy runtime ensure lives in workspace runtime controller", () => {
@@ -9,6 +10,16 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
 
   assert.match(runtimeSource, /export function createWorkspaceRuntimeController\(/);
   assert.match(runtimeSource, /async function ensureEngineForWorkspace/);
+  assert.match(
+    runtimeSource,
+    /export type EnsureEngineForWorkspaceOptions = \{[\s\S]*reason\?: string;[\s\S]*loadSessions\?: boolean;[\s\S]*\};/,
+    "runtime ensure should expose one narrow options object for boot warmup without adding another owner",
+  );
+  assert.match(
+    runtimeSource,
+    /async function ensureEngineForWorkspace\([\s\S]*workspaceId\?: string \| null,[\s\S]*options: EnsureEngineForWorkspaceOptions = \{\},[\s\S]*\): Promise<boolean>/,
+    "boot warmup and first-send recovery should share ensureEngineForWorkspace",
+  );
   assert.match(runtimeSource, /connectMode: "quiet"/);
   const ensureStart = runtimeSource.indexOf("async function ensureEngineForWorkspace");
   const ensureSource = runtimeSource.slice(ensureStart);
@@ -25,18 +36,28 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
     /async function connectToEngineQuiet[\s\S]*deps\.routing\.ensure\(workspaceId, baseUrl,[\s\S]*deps\.setClient\(nextClient\);/s,
     "quiet reconnect must bind a workspace-scoped routed client before send uses routedClient(workspaceId)",
   );
+  assert.match(
+    runtimeSource,
+    /function isEngineStartingRoutingError[\s\S]*engine_starting[\s\S]*"connect-quiet:engine-starting"/s,
+    "quiet reconnect should trace pending engine startup separately from generic routing failures",
+  );
   assert.match(runtimeSource, /reattachOrchestratorWorkspace\(/);
   assert.match(
     runtimeSource,
     /if \(!ok && runtime === "veslo-orchestrator"\) \{[\s\S]*ok = await reattachOrchestratorAfterColdStart\("browse-cold-start-reattach"\);[\s\S]*\}/,
     "orchestrator cold start should reattach the workspace when startHost starts the daemon but does not publish a route",
   );
-  assert.match(runtimeSource, /withTimeoutOrThrow\(deps\.loadSessions\(workspace\.path\)/);
+  assert.match(
+    runtimeSource,
+    /const shouldLoadSessions = options\.loadSessions !== false;[\s\S]*if \(shouldLoadSessions\) \{[\s\S]*withTimeoutOrThrow\(deps\.loadSessions\(workspace\.path\)/s,
+    "boot warmup should be able to start the engine without forcing session-list UI side effects",
+  );
+  assert.match(runtimeSource, /ensure-engine:load-sessions:skipped/);
   assert.match(runtimeSource, /loadSessions failed; continuing first prompt/);
   assert.match(runtimeSource, /clearWorkspaceBusyAllExcept\(workspace\.id\)/);
   assert.match(
     runtimeSource,
-    /const runtimeReady = workspace\.workspaceType === "local"[\s\S]*await deps\.ensureLocalRuntimeReadyForWorkspaceStart\?\.\(workspace\.path\)[\s\S]*if \(runtimeReady === false\) \{[\s\S]*ensure-engine:runtime-prerequisites-not-ready[\s\S]*return false;[\s\S]*\}[\s\S]*const skillsReady = await deps\.syncWorkspaceSkillMaterializationBeforeRuntime\(workspace,/s,
+    /const runtimeReady = workspace\.workspaceType === "local"[\s\S]*await deps\.ensureLocalRuntimeReadyForWorkspaceStart\?\.\(workspace\.path\)[\s\S]*if \(runtimeReady === false\) \{[\s\S]*ensure-engine:runtime-prerequisites-not-ready[\s\S]*return false;[\s\S]*\}[\s\S]*const skillSyncMaxAttempts = isBootWarmup \? 6 : 1;[\s\S]*deps\.syncWorkspaceSkillMaterializationBeforeRuntime\(workspace,/s,
     "first-prompt lazy runtime startup must ask the local runtime readiness guard before skill sync or engine spawn",
   );
   assert.match(
@@ -51,12 +72,12 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
   );
   assert.match(
     runtimeSource,
-    /deps\.dispatchLifecycle\?\.\(\{[\s\S]*type: "runtime-starting",[\s\S]*workspaceId: id,[\s\S]*runtime,[\s\S]*reason: "ensure-engine-for-workspace",[\s\S]*\}\);[\s\S]*recordSendWorkflowTrace\("workspace-runtime", "ensure-engine:start"/s,
+    /deps\.dispatchLifecycle\?\.\(\{[\s\S]*type: "runtime-starting",[\s\S]*workspaceId: id,[\s\S]*runtime,[\s\S]*reason: ensureReason,[\s\S]*\}\);[\s\S]*recordSendWorkflowTrace\("workspace-runtime", "ensure-engine:start"/s,
     "explicit runtime ensure should publish runtime-starting before it can spawn or attach the engine",
   );
   assert.match(
     runtimeSource,
-    /deps\.updateWorkspaceConnectionState\(id, \{ status: "connected", message: null \}\);[\s\S]*deps\.dispatchLifecycle\?\.\(\{[\s\S]*type: "connected",[\s\S]*workspaceId: id,[\s\S]*runtime,[\s\S]*reason: "ensure-engine-for-workspace",[\s\S]*\}\);/s,
+    /deps\.updateWorkspaceConnectionState\(id, \{ status: "connected", message: null \}\);[\s\S]*deps\.dispatchLifecycle\?\.\(\{[\s\S]*type: "connected",[\s\S]*workspaceId: id,[\s\S]*runtime,[\s\S]*reason: ensureReason,[\s\S]*\}\);/s,
     "runtime ensure success should publish a workspace-scoped connected event",
   );
   assert.match(
@@ -75,4 +96,64 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
     "workspace store should pass the same local runtime preflight used by startHost into lazy first-prompt runtime startup",
   );
   assert.doesNotMatch(facadeSource, /async function ensureEngineForWorkspace/);
+});
+
+test("quiet connect traces engine_starting routing failures distinctly", async () => {
+  const root = globalThis as unknown as {
+    window?: Record<string, unknown>;
+  };
+  const previousWindow = root.window;
+  const traceWindow: Record<string, unknown> = {
+    __vesloSendWorkflowTraceEnabled: true,
+  };
+  root.window = traceWindow;
+
+  try {
+    const controller = createWorkspaceRuntimeController({
+      activeWorkspaceId: () => "ws-a",
+      workspaces: () => [],
+      workspacesHydrated: () => true,
+      routing: {
+        release: () => {},
+        ensure: async () => null,
+        lastEnsureError: () => '{"error":"engine_starting","engineState":"starting"}',
+      },
+      resolveEngineRuntime: () => "veslo-orchestrator",
+      localRuntimeLifecycle: {} as never,
+      connectToServer: async () => true,
+      loadSessions: async () => {},
+      setClient: () => {},
+      setConnectedVersion: () => {},
+      setBaseUrl: () => {},
+      setClientDirectory: () => {},
+      setError: () => {},
+      updateWorkspaceConnectionState: () => {},
+      clearWorkspaceBusyAllExcept: () => {},
+      syncWorkspaceSkillMaterializationBeforeRuntime: async () => true,
+      createClient: () => {
+        throw new Error("createClient should not run for routing ensure failures");
+      },
+      waitForHealthy: async () => ({}),
+      safeStringify: String,
+      wsLog: () => {},
+    });
+
+    const ok = await controller.connectToEngineQuiet(
+      "http://127.0.0.1:7777/workspace/ws-a/opencode",
+      "/repo",
+      undefined,
+      { workspaceId: "ws-a", workspaceType: "local", reason: "test" },
+    );
+    assert.equal(ok, false);
+
+    const logs = traceWindow.__vesloSendWorkflowTrace as Array<Record<string, unknown>>;
+    assert.equal(logs.at(-1)?.event, "connect-quiet:engine-starting");
+    assert.equal(logs.at(-1)?.engineState, "starting");
+  } finally {
+    if (previousWindow === undefined) {
+      delete root.window;
+    } else {
+      root.window = previousWindow;
+    }
+  }
 });

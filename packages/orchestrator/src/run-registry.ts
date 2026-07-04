@@ -1,17 +1,31 @@
 import {
   isActiveRunStatus,
   isTerminalRunStatus,
+  type RunActivityKind,
   type RunEngineOwner,
   type RunKind,
   type RunRecord,
   type RunStore,
+  type RunWaitReason,
 } from "./run-store.js";
 
-export type RunProbeResult = { active: boolean } | { unreachable: true };
+export const MODEL_RETRY_NO_PROGRESS_SOFT_MS = 120_000;
+export const MODEL_RETRY_NO_PROGRESS_HARD_MS = 600_000;
+export const MODEL_RETRY_NO_PROGRESS_TIMEOUT = "model_retry_no_output_timeout";
+
+export type RunProbeActivityResult = {
+  active: boolean;
+  activityKind?: RunActivityKind | null;
+  waitReason?: RunWaitReason | null;
+  progressSignature?: string | null;
+};
+
+export type RunProbeResult = RunProbeActivityResult | { unreachable: true };
 
 export type ReconciledRun = {
   record: RunRecord;
   stale: boolean;
+  noProgressSeconds: number | null;
 };
 
 export type RunLifecycleOwner = {
@@ -63,6 +77,41 @@ const normalizePositiveNumber = (value: number | null | undefined): number | nul
     ? Math.floor(value)
     : null;
 
+const normalizeTimestamp = (value: number | null | undefined): number | null =>
+  typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : null;
+
+const normalizeDurationMs = (value: number | null | undefined, fallback: number): number =>
+  typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : fallback;
+
+const normalizeActivityKind = (value: RunActivityKind | null | undefined): RunActivityKind =>
+  value === "local_tool" ||
+  value === "assistant_output" ||
+  value === "model_retry" ||
+  value === "idle" ||
+  value === "unknown"
+    ? value
+    : "unknown";
+
+const normalizeWaitReason = (value: RunWaitReason | null | undefined): RunWaitReason =>
+  value === "running_tool" ||
+  value === "model_retry_no_output" ||
+  value === "assistant_message_open" ||
+  value === "session_idle" ||
+  value === "engine_unreachable" ||
+  value === "none"
+    ? value
+    : "none";
+
+const noProgressSecondsForRecord = (record: RunRecord, nowMs: number): number | null => {
+  const retrySince = normalizeTimestamp(record.retrySince);
+  if (!retrySince || record.waitReason !== "model_retry_no_output") return null;
+  return Math.max(0, Math.floor((nowMs - retrySince) / 1_000));
+};
+
 function normalizeEngineOwner(input: Partial<RunEngineOwner>): RunEngineOwner {
   return {
     engineOwnerId: normalizeNullableText(input.engineOwnerId),
@@ -83,38 +132,84 @@ function runMatchesEngineOwner(record: RunRecord, engine: RunEngineOwner): boole
 export function createRunRegistry(deps: {
   store: RunStore;
   probeRunActivity: (record: RunRecord) => Promise<RunProbeResult>;
+  modelRetryNoProgressHardMs?: number;
   now?: () => number;
 }): RunLifecycleOwner {
   const now = deps.now ?? (() => Date.now());
+  const modelRetryNoProgressHardMs = normalizeDurationMs(
+    deps.modelRetryNoProgressHardMs,
+    MODEL_RETRY_NO_PROGRESS_HARD_MS,
+  );
 
   const reconcile = async (record: RunRecord): Promise<ReconciledRun> => {
+    const currentNoProgressSeconds = () => noProgressSecondsForRecord(record, now());
+
     if (isTerminalRunStatus(record.status)) {
-      return { record, stale: false };
+      return { record, stale: false, noProgressSeconds: currentNoProgressSeconds() };
     }
 
     const probe = await deps.probeRunActivity(record);
     if ("unreachable" in probe) {
-      return { record, stale: true };
+      const next = deps.store.update(record.workspaceId, record.runId, {
+        activityKind: "unknown",
+        waitReason: "engine_unreachable",
+      }) ?? record;
+      return { record: next, stale: true, noProgressSeconds: noProgressSecondsForRecord(next, now()) };
     }
 
     if (probe.active) {
-      const startedAt = record.startedAt ?? now();
-      const next =
-        record.status === "running" && record.startedAt === startedAt
-          ? record
-          : deps.store.update(record.workspaceId, record.runId, {
-              status: "running",
-              startedAt,
-            }) ?? record;
-      return { record: next, stale: false };
+      const timestamp = now();
+      const startedAt = record.startedAt ?? timestamp;
+      const activityKind = normalizeActivityKind(probe.activityKind);
+      const waitReason = normalizeWaitReason(
+        probe.waitReason ?? (activityKind === "model_retry" ? "model_retry_no_output" : "assistant_message_open"),
+      );
+      const progressSignature = normalizeNullableText(probe.progressSignature);
+      const previousSignature = normalizeNullableText(record.lastProgressSignature);
+      const hasUsefulProgress =
+        waitReason !== "model_retry_no_output" &&
+        progressSignature !== null &&
+        progressSignature !== previousSignature;
+      const retrySince =
+        waitReason === "model_retry_no_output"
+          ? normalizeTimestamp(record.retrySince) ?? timestamp
+          : null;
+      const timedOut =
+        waitReason === "model_retry_no_output" &&
+        retrySince !== null &&
+        timestamp - retrySince >= modelRetryNoProgressHardMs;
+      const error =
+        timedOut
+          ? MODEL_RETRY_NO_PROGRESS_TIMEOUT
+          : record.error === MODEL_RETRY_NO_PROGRESS_TIMEOUT
+            ? null
+            : record.error;
+      const next = deps.store.update(record.workspaceId, record.runId, {
+        status: timedOut ? "blocked" : "running",
+        startedAt,
+        completedAt: null,
+        error,
+        activityKind,
+        waitReason,
+        lastUsefulProgressAt: hasUsefulProgress
+          ? timestamp
+          : record.lastUsefulProgressAt ?? record.startedAt ?? record.createdAt,
+        retrySince,
+        lastProgressSignature: progressSignature,
+      }) ?? record;
+      return { record: next, stale: false, noProgressSeconds: noProgressSecondsForRecord(next, timestamp) };
     }
 
+    const timestamp = now();
     const next =
       deps.store.update(record.workspaceId, record.runId, {
         status: "completed",
-        completedAt: now(),
+        completedAt: timestamp,
+        activityKind: "idle",
+        waitReason: "session_idle",
+        retrySince: null,
       }) ?? record;
-    return { record: next, stale: false };
+    return { record: next, stale: false, noProgressSeconds: null };
   };
 
   return {
@@ -155,6 +250,11 @@ export function createRunRegistry(deps: {
         startedAt: timestamp,
         completedAt: null,
         error: null,
+        activityKind: null,
+        waitReason: null,
+        lastUsefulProgressAt: timestamp,
+        retrySince: null,
+        lastProgressSignature: null,
         ...engineOwner,
       };
       try {
@@ -174,6 +274,9 @@ export function createRunRegistry(deps: {
         status: "failed",
         error: normalizeText(error) || DEFAULT_RUN_FAILURE_ERROR,
         completedAt: now(),
+        activityKind: "idle",
+        waitReason: "none",
+        retrySince: null,
       });
     },
 
@@ -183,6 +286,9 @@ export function createRunRegistry(deps: {
         abortRequested: true,
         error: normalizeText(error) || DEFAULT_RUN_ABORT_ERROR,
         completedAt: now(),
+        activityKind: "idle",
+        waitReason: "none",
+        retrySince: null,
       });
     },
 
@@ -217,11 +323,17 @@ export function createRunRegistry(deps: {
               abortRequested: true,
               error: `user abort reconciled after engine loss: ${error}`,
               completedAt: now(),
+              activityKind: "idle",
+              waitReason: "none",
+              retrySince: null,
             }
           : {
               status: "failed",
               error,
               completedAt: now(),
+              activityKind: "idle",
+              waitReason: "none",
+              retrySince: null,
             });
         if (next) terminalized.push(next);
       }
@@ -241,11 +353,17 @@ export function createRunRegistry(deps: {
               abortRequested: true,
               error: `user abort reconciled during startup sweep: ${error}`,
               completedAt: now(),
+              activityKind: "idle",
+              waitReason: "none",
+              retrySince: null,
             }
           : {
               status: "failed",
               error,
               completedAt: now(),
+              activityKind: "idle",
+              waitReason: "none",
+              retrySince: null,
             });
         if (next) terminalized.push(next);
       }

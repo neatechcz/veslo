@@ -15,17 +15,21 @@ export const VESLO_AUTOMATIONS_PLATFORM_SKILL = {
   removalPolicy: "locked" as const,
 };
 
+const VESLO_AUTOMATIONS_ENABLE_ENV = "VESLO_ENABLE_AUTOMATIONS";
+const VESLO_AUTOMATIONS_PLUGIN_ENABLE_ENV = "VESLO_ENABLE_AUTOMATIONS_PLUGIN";
+
 export type PlatformManagedPersonalGlobalSkillSet = {
   skills: WorkspaceSkillMaterialization[];
   archivesByInstallationId: Map<string, SkillPackageArchive>;
 };
 
-const VESLO_AUTOMATIONS_SKILL_DESCRIPTION =
+const VESLO_AUTOMATIONS_ACTIVE_SKILL_DESCRIPTION =
   "Use when a Veslo agent needs persistent automations, reminders, scheduled follow-ups, recurring work, or temporary delayed actions.";
+const VESLO_AUTOMATIONS_DISABLED_SKILL_DESCRIPTION = "Disabled Veslo automation platform skill marker.";
 
-const VESLO_AUTOMATIONS_SKILL_MARKDOWN = `---
+const VESLO_AUTOMATIONS_ACTIVE_SKILL_MARKDOWN = `---
 name: veslo-automations
-description: ${VESLO_AUTOMATIONS_SKILL_DESCRIPTION}
+description: ${VESLO_AUTOMATIONS_ACTIVE_SKILL_DESCRIPTION}
 ---
 
 # Veslo Automations
@@ -50,6 +54,18 @@ Schedules supported by Veslo:
 Default to the current workspace and current session when available. Ask one short clarification question when date, time, timezone, or recurrence is ambiguous. After creation, verify and report the automation id, status, and \`nextRunAt\`.
 `;
 
+const VESLO_AUTOMATIONS_DISABLED_SKILL_MARKDOWN = `---
+name: veslo-automations
+description: ${VESLO_AUTOMATIONS_DISABLED_SKILL_DESCRIPTION}
+---
+
+# Veslo Automations Disabled
+
+This platform-managed skill is intentionally inert. Veslo automation tools are disabled by default so OpenCode sessions do not load the automation integration unless it is explicitly enabled.
+
+Set ${VESLO_AUTOMATIONS_ENABLE_ENV}=1 before Veslo starts to opt back into the active platform automation skill and plugin.
+`;
+
 const sha256 = (value: Buffer | string) => createHash("sha256").update(value).digest("hex");
 
 const archiveFile = (path: string, content: string): SkillPackageFile & { contentBase64: string } => {
@@ -64,14 +80,26 @@ const archiveFile = (path: string, content: string): SkillPackageFile & { conten
   };
 };
 
-async function buildVesloAutomationsArchive(): Promise<SkillPackageArchive> {
+function envFlagEnabled(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+function vesloAutomationsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return envFlagEnabled(env[VESLO_AUTOMATIONS_ENABLE_ENV]) || envFlagEnabled(env[VESLO_AUTOMATIONS_PLUGIN_ENABLE_ENV]);
+}
+
+async function buildVesloAutomationsArchive(env: NodeJS.ProcessEnv = process.env): Promise<SkillPackageArchive> {
+  const enabled = vesloAutomationsEnabled(env);
+  const skillMarkdown = enabled ? VESLO_AUTOMATIONS_ACTIVE_SKILL_MARKDOWN : VESLO_AUTOMATIONS_DISABLED_SKILL_MARKDOWN;
+  const description = enabled ? VESLO_AUTOMATIONS_ACTIVE_SKILL_DESCRIPTION : VESLO_AUTOMATIONS_DISABLED_SKILL_DESCRIPTION;
   const pendingFiles = [
-    archiveFile("SKILL.md", VESLO_AUTOMATIONS_SKILL_MARKDOWN),
+    archiveFile("SKILL.md", skillMarkdown),
   ];
   const manifest = await buildSkillPackageManifest({
     metadata: {
       name: VESLO_AUTOMATIONS_PLATFORM_SKILL.name,
-      description: VESLO_AUTOMATIONS_SKILL_DESCRIPTION,
+      description,
       tags: ["veslo", "automations", "platform-managed"],
     },
     files: pendingFiles,

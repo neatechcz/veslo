@@ -5,6 +5,7 @@ import test from "node:test";
 const pagesDirUrl = new URL("../../pages/", import.meta.url);
 const sessionSourceUrl = new URL("../../pages/session.tsx", import.meta.url);
 const conversationFlowSourceUrl = new URL("../../pages/session-conversation-flow.ts", import.meta.url);
+const queueDrainControllerSourceUrl = new URL("../../context/session-queue-drain-controller.ts", import.meta.url);
 const leftSidebarSourceUrl = new URL("../../pages/session-left-sidebar.tsx", import.meta.url);
 const rightSidebarSourceUrl = new URL("../../pages/session-right-sidebar.tsx", import.meta.url);
 const centerSourceUrl = new URL("../../pages/session-center.tsx", import.meta.url);
@@ -120,6 +121,7 @@ test("planned extracted session modules are substantial and avoid importing the 
 test("conversation flow controller owns prompt send orchestration behind grouped dependencies", () => {
   const sessionSource = readFileSync(sessionSourceUrl, "utf8");
   const flowSource = readFileSync(conversationFlowSourceUrl, "utf8");
+  const queueDrainControllerSource = readFileSync(queueDrainControllerSourceUrl, "utf8");
 
   assert.match(
     flowSource,
@@ -175,13 +177,43 @@ test("conversation flow controller owns prompt send orchestration behind grouped
   );
   assert.match(
     sessionSource,
-    /return conversationFlow\.handleSendPrompt\(draft, \{\s*sendNow: options\.sendNow,\s*sendTraceId: options\.sendTraceId,\s*\}\);/s,
-    "SessionView should delegate prompt send branching to the controller",
+    /const sessionFlowFacade = createSessionViewFlowFacade\(\{ conversationFlow \}\);[\s\S]*return sessionFlowFacade\.handleSendPrompt\(draft, \{\s*sendNow: options\.sendNow,\s*sendTraceId: options\.sendTraceId,\s*\}\);/s,
+    "SessionView should delegate prompt send branching through the session flow facade",
   );
   assert.match(
     sessionSource,
-    /const drainNextQueuedDraft = conversationFlow\.drainNextQueuedDraft;/,
-    "SessionView should call through the controller instead of owning queue draining inline",
+    /createSessionQueueDrainController\(\{[\s\S]*handleSelectedSessionChanged: \(input\) => \{[\s\S]*const flowResult = sessionFlowFacade\.handleSelectedSessionChanged\(input\);[\s\S]*return flowResult;[\s\S]*\},/s,
+    "SessionView should wire selected-session queue flow into the queue drain controller",
+  );
+  assert.match(
+    sessionSource,
+    /handleActiveSessionStatusChanged: \(status, previousStatus\) =>\s*sessionFlowFacade\.handleActiveSessionStatusChanged\(status, previousStatus\),/,
+    "SessionView should wire active status queue flow into the queue drain controller",
+  );
+  assert.match(
+    sessionSource,
+    /handleSessionStatusMapChanged: \(statuses, previousStatuses\) =>\s*sessionFlowFacade\.handleSessionStatusMapChanged\(statuses, previousStatuses\),/,
+    "SessionView should wire background status queue flow into the queue drain controller",
+  );
+  assert.match(
+    queueDrainControllerSource,
+    /createEffect\(\s*on\(\s*options\.selectedSessionId,[\s\S]*options\.handleSelectedSessionChanged\(\{/s,
+    "queue drain controller should own selected-session reactive queue flow",
+  );
+  assert.match(
+    queueDrainControllerSource,
+    /createEffect\(\s*on\(\s*options\.sessionStatus,[\s\S]*options\.handleActiveSessionStatusChanged\(status, previousStatus\);/s,
+    "queue drain controller should own active status reactive queue flow",
+  );
+  assert.match(
+    queueDrainControllerSource,
+    /createEffect\(\s*on\(\s*options\.sessionStatusById,[\s\S]*options\.handleSessionStatusMapChanged\(statuses, previousStatuses\);/s,
+    "queue drain controller should own status-map reactive queue flow",
+  );
+  assert.doesNotMatch(
+    sessionSource,
+    /drainNextQueuedDraft\(/,
+    "SessionView should not directly drive queue draining",
   );
   assert.doesNotMatch(
     sessionSource,

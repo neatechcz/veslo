@@ -28,6 +28,27 @@ function normalizeHostPath(path: string): string {
   return value.replace(/\\+$/, "").toLowerCase();
 }
 
+/**
+ * OpenCode stores and compares Windows workspace directories as regular drive
+ * or UNC paths. Tauri can hand us extended-length paths even when the engine is
+ * a normal direct child process, so strip only that transport prefix here. This
+ * helper is deliberately platform-independent so CI can cover Windows path
+ * inputs from any host OS.
+ */
+export function canonicalizeDirectOpenCodeDirectory(directory: string | null | undefined): string | null | undefined {
+  const value = directory?.trim();
+  if (!value) return directory;
+  if (/^\\\\\?\\UNC\\/i.test(value)) {
+    return `\\\\${value.slice("\\\\?\\UNC\\".length)}`;
+  }
+  if (/^\/\/\?\/UNC\//i.test(value)) {
+    return `//${value.slice("//?/UNC/".length)}`;
+  }
+  if (value.startsWith("\\\\?\\")) return value.slice(4);
+  if (value.startsWith("//?/")) return value.slice(4);
+  return directory;
+}
+
 function wslMountPathToWindowsPath(path: string): string | null {
   const match = path.trim().replace(/\\/g, "/").match(/^\/mnt\/([a-zA-Z])(?:\/(.*))?$/);
   if (!match) return null;
@@ -51,7 +72,7 @@ export function hostDirectoryToEngineDirectory(
   directory: string | null | undefined,
   mapping: EnginePathMapping,
 ): string | null | undefined {
-  if (!isWsl2Mapping(mapping)) return directory;
+  if (!isWsl2Mapping(mapping)) return canonicalizeDirectOpenCodeDirectory(directory);
   const value = directory?.trim();
   if (!value) return directory;
 
@@ -108,14 +129,16 @@ export function rewriteDirectoryQueryForEngine(
     mapping: EnginePathMapping;
   },
 ): string {
-  if (!isWsl2Mapping(input.mapping) || !search) return search;
+  if (!search) return search;
   const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
   if (!params.has("directory")) return search;
 
-  if ((input.method ?? "GET").toUpperCase() === "GET" && input.targetPath === "/session") {
+  if (isWsl2Mapping(input.mapping) && (input.method ?? "GET").toUpperCase() === "GET" && input.targetPath === "/session") {
     params.delete("directory");
   } else {
-    const next = hostDirectoryToEngineDirectory(params.get("directory"), input.mapping);
+    const current = params.get("directory");
+    const next = hostDirectoryToEngineDirectory(current, input.mapping);
+    if (next === current) return search;
     if (typeof next === "string") params.set("directory", next);
   }
 
@@ -144,7 +167,6 @@ function rewriteDirectoryFields(
 }
 
 export function rewriteDirectoryFieldsForEngine(value: unknown, mapping: EnginePathMapping): unknown {
-  if (!isWsl2Mapping(mapping)) return value;
   return rewriteDirectoryFields(value, (directory) => hostDirectoryToEngineDirectory(directory, mapping));
 }
 

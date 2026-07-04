@@ -153,6 +153,10 @@ import {
   resolveOutboxEnabled,
 } from "./routes/file-sessions.js";
 import { registerHealthStatusRoutes } from "./routes/health.js";
+import {
+  createDocumentRuntimeProviderDependencies,
+  registerDocumentRuntimeRoutes,
+} from "./routes/document-runtime.js";
 import { registerMcpRoutes } from "./routes/mcp.js";
 import { registerOpenCodeRouterRoutes } from "./routes/opencode-router.js";
 import { registerPluginRoutes } from "./routes/plugins.js";
@@ -2525,7 +2529,6 @@ const CONVERSATION_RUN_BODY_FIELDS: Record<string, string[]> = {
     "system",
     "variant",
     "parts",
-    "reasoning_effort",
   ],
   command: [
     "messageID",
@@ -2535,7 +2538,6 @@ const CONVERSATION_RUN_BODY_FIELDS: Record<string, string[]> = {
     "command",
     "variant",
     "parts",
-    "reasoning_effort",
   ],
   shell: [
     "agent",
@@ -2593,7 +2595,6 @@ function summarizeConversationRunBodyForTrace(body: Record<string, unknown>) {
     textChars,
     hasSystem: typeof body.system === "string" && body.system.length > 0,
     hasTools: Boolean(body.tools && typeof body.tools === "object"),
-    hasReasoningEffort: typeof body.reasoning_effort === "string" && body.reasoning_effort.length > 0,
     noReply: body.noReply === true,
   };
 }
@@ -3880,6 +3881,8 @@ function createRoutes(
     resolveToyUiEnabled,
     serializeWorkspaceForResponse,
   });
+
+registerDocumentRuntimeRoutes(routes, createDocumentRuntimeProviderDependencies());
 
   registerWorkspaceManagementRoutes(routes, {
     serverDataDir,

@@ -6,6 +6,25 @@ import { fileURLToPath } from "node:url";
 
 export const VESLO_MANAGED_PLUGIN_VERSION = "1.17.4";
 export const VESLO_MANAGED_ZOD_VERSION = "4.1.8";
+export const VESLO_MANAGED_OPENAI_COMPATIBLE_VERSION = "3.0.5";
+export const VESLO_MANAGED_AI_SDK_PROVIDER_VERSION = "4.0.2";
+export const VESLO_MANAGED_AI_SDK_PROVIDER_UTILS_VERSION = "5.0.5";
+export const VESLO_MANAGED_STANDARD_SCHEMA_SPEC_VERSION = "1.1.0";
+export const VESLO_MANAGED_WORKFLOW_SERDE_VERSION = "4.1.0";
+export const VESLO_MANAGED_EVENTSOURCE_PARSER_VERSION = "3.1.0";
+export const VESLO_MANAGED_JSON_SCHEMA_VERSION = "0.4.0";
+
+const VESLO_MANAGED_RUNTIME_PACKAGES = [
+  { name: "@opencode-ai/plugin", version: VESLO_MANAGED_PLUGIN_VERSION },
+  { name: "zod", version: VESLO_MANAGED_ZOD_VERSION },
+  { name: "@ai-sdk/openai-compatible", version: VESLO_MANAGED_OPENAI_COMPATIBLE_VERSION },
+  { name: "@ai-sdk/provider", version: VESLO_MANAGED_AI_SDK_PROVIDER_VERSION },
+  { name: "@ai-sdk/provider-utils", version: VESLO_MANAGED_AI_SDK_PROVIDER_UTILS_VERSION },
+  { name: "@standard-schema/spec", version: VESLO_MANAGED_STANDARD_SCHEMA_SPEC_VERSION },
+  { name: "@workflow/serde", version: VESLO_MANAGED_WORKFLOW_SERDE_VERSION },
+  { name: "eventsource-parser", version: VESLO_MANAGED_EVENTSOURCE_PARSER_VERSION },
+  { name: "json-schema", version: VESLO_MANAGED_JSON_SCHEMA_VERSION },
+] as const;
 
 type ManagedDependencyEvent = {
   event: string;
@@ -27,6 +46,10 @@ export type ManagedDependencyStatus = {
   zodVersion: string | null;
   zodPackagePath: string;
   expectedZodVersion: string;
+  openAiCompatibleMode: "vendored" | "vendored-version-mismatch" | "missing";
+  openAiCompatibleVersion: string | null;
+  openAiCompatiblePackagePath: string;
+  expectedOpenAiCompatibleVersion: string;
 };
 
 export type EnsureOpencodeManagedToolsOptions = {
@@ -73,10 +96,12 @@ async function readPackageJsonVersion(packageDir: string): Promise<string | null
 }
 
 export async function inspectOpencodeManagedDependencyStatus(configDir: string): Promise<ManagedDependencyStatus> {
-  const pluginDir = join(configDir, "node_modules", "@opencode-ai", "plugin");
-  const zodDir = join(configDir, "node_modules", "zod");
+  const pluginDir = managedPackageDir(configDir, "@opencode-ai/plugin");
+  const zodDir = managedPackageDir(configDir, "zod");
+  const openAiCompatibleDir = managedPackageDir(configDir, "@ai-sdk/openai-compatible");
   const pluginVersion = await readPackageJsonVersion(pluginDir);
   const zodVersion = await readPackageJsonVersion(zodDir);
+  const openAiCompatibleVersion = await readPackageJsonVersion(openAiCompatibleDir);
   const pluginMode =
     pluginVersion === "0.0.0-veslo-managed"
       ? "fallback-zod-shim"
@@ -91,6 +116,12 @@ export async function inspectOpencodeManagedDependencyStatus(configDir: string):
         ? "vendored"
         : "vendored-version-mismatch"
       : "missing";
+  const openAiCompatibleMode =
+    openAiCompatibleVersion
+      ? openAiCompatibleVersion === VESLO_MANAGED_OPENAI_COMPATIBLE_VERSION
+        ? "vendored"
+        : "vendored-version-mismatch"
+      : "missing";
   return {
     configDir,
     pluginMode,
@@ -101,6 +132,10 @@ export async function inspectOpencodeManagedDependencyStatus(configDir: string):
     zodVersion,
     zodPackagePath: join(zodDir, "package.json"),
     expectedZodVersion: VESLO_MANAGED_ZOD_VERSION,
+    openAiCompatibleMode,
+    openAiCompatibleVersion,
+    openAiCompatiblePackagePath: join(openAiCompatibleDir, "package.json"),
+    expectedOpenAiCompatibleVersion: VESLO_MANAGED_OPENAI_COMPATIBLE_VERSION,
   };
 }
 
@@ -211,8 +246,8 @@ function parseManagedDepsManifestPackage(value: unknown): ManagedDepsManifestPac
   for (const file of value.files) {
     if (!isRecord(file)) return null;
     const path = typeof file.path === "string" ? file.path : "";
-    const contentBase64 = typeof file.contentBase64 === "string" ? file.contentBase64 : "";
-    if (!path || !contentBase64) return null;
+    const contentBase64 = typeof file.contentBase64 === "string" ? file.contentBase64 : null;
+    if (!path || contentBase64 === null) return null;
     files.push({ path, contentBase64 });
   }
   return { name, version, files };
@@ -285,7 +320,7 @@ async function vendorManifestPackage(
       continue;
     }
 
-    const destDir = join(destNodeModules, pkg);
+    const destDir = join(destNodeModules, ...packagePathParts(pkg));
     await rm(destDir, { recursive: true, force: true });
     for (const file of manifestPackage.files) {
       const parts = safeManifestRelativeParts(file.path);
@@ -346,7 +381,7 @@ async function vendorBunCachePackage(
     }
     cacheRoot = legacy;
   }
-  const destDir = join(destNodeModules, pkg);
+  const destDir = join(destNodeModules, ...packagePathParts(pkg));
   await rm(destDir, { recursive: true, force: true });
   await mkdir(destDir, { recursive: true });
   await copyDirRecursive(cacheRoot, destDir);
@@ -366,6 +401,10 @@ async function vendorBunCachePackage(
 
 function packagePathParts(name: string): string[] {
   return name.split("/").filter(Boolean);
+}
+
+function managedPackageDir(root: string, name: string): string {
+  return join(root, "node_modules", ...packagePathParts(name));
 }
 
 function defaultNodeModuleSearchRoots(): string[] {
@@ -422,7 +461,7 @@ async function vendorNodeModulePackage(
   const packageRoot = await resolveNodeModulePackageDir(pkg, version, options);
   if (!packageRoot) return false;
 
-  const destDir = join(destNodeModules, pkg);
+  const destDir = join(destNodeModules, ...packagePathParts(pkg));
   await rm(destDir, { recursive: true, force: true });
   await mkdir(destDir, { recursive: true });
   await copyDirRecursive(packageRoot, destDir);
@@ -445,7 +484,7 @@ async function ensureManagedPackage(
   nodeModulesDir: string,
   options?: EnsureOpencodeManagedToolsOptions,
 ): Promise<void> {
-  const packageDir = join(nodeModulesDir, pkg);
+  const packageDir = join(nodeModulesDir, ...packagePathParts(pkg));
   const currentVersion = await readPackageJsonVersion(packageDir);
   if (currentVersion === version) return;
 
@@ -464,6 +503,36 @@ async function ensureManagedPackage(
   throw new Error(
     `Unable to provision ${pkg}@${version} into ${nodeModulesDir}. ` +
       "Checked managed dependency manifest, Bun cache, and local node_modules; no shim fallback will be written.",
+  );
+}
+
+async function ensureConfigPackageJsonDependencies(configDir: string): Promise<void> {
+  const packageJsonPath = join(configDir, "package.json");
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(await readFile(packageJsonPath, "utf8")) as Record<string, unknown>;
+    if (!isRecord(parsed)) parsed = {};
+  } catch {
+    parsed = {};
+  }
+
+  const dependencies = isRecord(parsed.dependencies)
+    ? { ...parsed.dependencies }
+    : {};
+  let changed = !isRecord(parsed.dependencies);
+
+  for (const spec of VESLO_MANAGED_RUNTIME_PACKAGES) {
+    if (dependencies[spec.name] === spec.version) continue;
+    dependencies[spec.name] = spec.version;
+    changed = true;
+  }
+
+  if (!changed) return;
+
+  await writeFile(
+    packageJsonPath,
+    `${JSON.stringify({ ...parsed, dependencies }, null, 2)}\n`,
+    "utf8",
   );
 }
 
@@ -492,9 +561,11 @@ export async function ensureOpencodeManagedTools(
 
   const nodeModulesDir = join(configDir, "node_modules");
   await mkdir(nodeModulesDir, { recursive: true });
+  await ensureConfigPackageJsonDependencies(configDir);
 
-  await ensureManagedPackage("@opencode-ai/plugin", VESLO_MANAGED_PLUGIN_VERSION, nodeModulesDir, options);
-  await ensureManagedPackage("zod", VESLO_MANAGED_ZOD_VERSION, nodeModulesDir, options);
+  for (const spec of VESLO_MANAGED_RUNTIME_PACKAGES) {
+    await ensureManagedPackage(spec.name, spec.version, nodeModulesDir, options);
+  }
 
   const toolSources = options?.toolSources ?? {
     send: opencodeRouterSendToolSource(),

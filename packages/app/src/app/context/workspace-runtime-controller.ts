@@ -12,9 +12,20 @@ import type { WorkspaceLifecycleEvent } from "./workspace-lifecycle-state";
 
 const DEFAULT_CONNECT_HEALTH_TIMEOUT_MS = 12_000;
 const CONNECT_LOAD_SESSIONS_TIMEOUT_MS = 20_000;
+const WORKSPACE_API_READINESS_PROBE_TIMEOUT_MS = 4_000;
+const WORKSPACE_API_WAITING_MESSAGE = "Waiting for OpenCode workspace API";
 
 const messageFromUnknownError = (error: unknown, safeStringify: (value: unknown) => string) =>
   error instanceof Error ? error.message : safeStringify(error);
+
+function isEngineStartingRoutingError(detail: string | null): boolean {
+  const normalized = (detail ?? "").toLowerCase();
+  return (
+    normalized.includes("engine_starting") ||
+    normalized.includes('"enginestate":"starting"') ||
+    normalized.includes('"engine_state":"starting"')
+  );
+}
 
 export type WorkspaceRuntimeControllerDeps = {
   activeWorkspaceId: Accessor<string>;
@@ -58,6 +69,11 @@ export type WorkspaceRuntimeControllerDeps = {
     workspace: WorkspaceInfo,
     options: { reason: string },
   ) => Promise<boolean>;
+  probeWorkspaceApiReady?: (input: {
+    workspaceId: string;
+    workspacePath: string;
+    reason: string;
+  }) => Promise<boolean>;
   createClient: (baseUrl: string, directory: string, auth?: OpencodeAuth) => Client;
   waitForHealthy: (
     client: Client,
@@ -66,6 +82,11 @@ export type WorkspaceRuntimeControllerDeps = {
   safeStringify: (value: unknown) => string;
   wsLog: (event: string, detail?: unknown) => void;
   dispatchLifecycle?: (event: WorkspaceLifecycleEvent) => void;
+};
+
+export type EnsureEngineForWorkspaceOptions = {
+  reason?: string;
+  loadSessions?: boolean;
 };
 
 export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControllerDeps) {
@@ -109,6 +130,7 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
       : null;
     if (workspaceId && !entry) {
       const detail = deps.routing.lastEnsureError(workspaceId);
+      const engineStarting = isEngineStartingRoutingError(detail);
       // This is the "quiet" automated bring-up connect (lifecycle restart /
       // startHost / reattach). A failed health wait here is usually a cold-start
       // race — the engine is spawned but its OpenCode HTTP is not serving
@@ -118,13 +140,18 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
       // client" before recovery. Stay quiet: trace and return false. Terminal
       // failures are owned by ensureEngineForWorkspace's catch block and the
       // send-readiness gate, which surface precise, recoverable-aware errors.
-      recordSendWorkflowTrace("workspace-runtime", "connect-quiet:routing-error", {
-        workspaceId,
-        baseUrl,
-        directory,
-        reason: context?.reason ?? null,
-        error: detail ?? null,
-      });
+      recordSendWorkflowTrace(
+        "workspace-runtime",
+        engineStarting ? "connect-quiet:engine-starting" : "connect-quiet:routing-error",
+        {
+          workspaceId,
+          baseUrl,
+          directory,
+          reason: context?.reason ?? null,
+          error: detail ?? null,
+          ...(engineStarting ? { engineState: "starting" } : {}),
+        },
+      );
       return false;
     }
 
@@ -169,8 +196,74 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
     );
   }
 
-  async function ensureEngineForWorkspace(workspaceId?: string | null): Promise<boolean> {
+  function startWorkspaceApiReadinessProbe(input: {
+    workspaceId: string;
+    workspacePath: string;
+    reason: string;
+  }): void {
+    if (!deps.probeWorkspaceApiReady) return;
+    const workspaceId = input.workspaceId.trim();
+    const workspacePath = input.workspacePath.trim();
+    if (!workspaceId || !workspacePath) return;
+    const stillSameWorkspace = () =>
+      deps.workspaces().some((workspace) =>
+        workspace.id === workspaceId && workspace.path?.trim() === workspacePath
+      );
+    if (!stillSameWorkspace()) return;
+
+    // OpenCode process health only proves the HTTP server is alive. Keep this
+    // probe diagnostic and asynchronous: a slow session API should explain the
+    // UI state, not turn first paint or first send into a new hard gate.
+    deps.updateWorkspaceConnectionState(workspaceId, {
+      status: "connected",
+      message: WORKSPACE_API_WAITING_MESSAGE,
+    });
+    recordSendWorkflowTrace("workspace-runtime", "ensure-engine:workspace-api-probe:start", {
+      workspaceId,
+      reason: input.reason,
+    });
+    void withTimeoutOrThrow(deps.probeWorkspaceApiReady({
+      workspaceId,
+      workspacePath,
+      reason: input.reason,
+    }), {
+      timeoutMs: WORKSPACE_API_READINESS_PROBE_TIMEOUT_MS,
+      label: "OpenCode workspace API readiness",
+      })
+      .then((ready) => {
+        if (!stillSameWorkspace()) return;
+        recordSendWorkflowTrace("workspace-runtime", "ensure-engine:workspace-api-probe:done", {
+          workspaceId,
+          reason: input.reason,
+          ready,
+        });
+        deps.updateWorkspaceConnectionState(workspaceId, {
+          status: "connected",
+          message: ready ? null : WORKSPACE_API_WAITING_MESSAGE,
+        });
+      })
+      .catch((error) => {
+        if (!stillSameWorkspace()) return;
+        recordSendWorkflowTrace("workspace-runtime", "ensure-engine:workspace-api-probe:error", {
+          workspaceId,
+          reason: input.reason,
+          error: messageFromUnknownError(error, deps.safeStringify),
+        });
+        deps.updateWorkspaceConnectionState(workspaceId, {
+          status: "connected",
+          message: WORKSPACE_API_WAITING_MESSAGE,
+        });
+      });
+  }
+
+  async function ensureEngineForWorkspace(
+    workspaceId?: string | null,
+    options: EnsureEngineForWorkspaceOptions = {},
+  ): Promise<boolean> {
     let id = workspaceId?.trim() || deps.activeWorkspaceId().trim();
+    const ensureReason = options.reason?.trim() || "ensure-engine-for-workspace";
+    const shouldLoadSessions = options.loadSessions !== false;
+    const isBootWarmup = ensureReason === "boot-warmup";
     if (!deps.workspacesHydrated()) {
       const start = Date.now();
       while (!deps.workspacesHydrated() && Date.now() - start < 5_000) {
@@ -199,7 +292,7 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
         type: "runtime-starting",
         workspaceId: id,
         runtime,
-        reason: "ensure-engine-for-workspace",
+        reason: ensureReason,
       });
       deps.wsLog("[workspace:ensureEngine] starting engine for browsing mode", { id, path: workspace.path });
       recordSendWorkflowTrace("workspace-runtime", "ensure-engine:start", {
@@ -207,6 +300,8 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
         workspacePath: workspace.path,
         workspaceType: workspace.workspaceType,
         runtime,
+        reason: ensureReason,
+        loadSessions: shouldLoadSessions,
         workspacesHydrated: deps.workspacesHydrated(),
       });
 
@@ -234,13 +329,24 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           return false;
         }
 
-        const skillsReady = await deps.syncWorkspaceSkillMaterializationBeforeRuntime(workspace, {
-          reason: "browse-attach",
-        });
-        recordSendWorkflowTrace("workspace-runtime", "ensure-engine:skills-ready", {
-          workspaceId: id,
-          skillsReady,
-        });
+        const skillSyncMaxAttempts = isBootWarmup ? 6 : 1;
+        let skillsReady = false;
+        for (let attempt = 1; attempt <= skillSyncMaxAttempts; attempt += 1) {
+          skillsReady = await deps.syncWorkspaceSkillMaterializationBeforeRuntime(workspace, {
+            reason: isBootWarmup ? "boot-warmup" : "browse-attach",
+          });
+          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:skills-ready", {
+            workspaceId: id,
+            skillsReady,
+            reason: ensureReason,
+            attempt,
+            maxAttempts: skillSyncMaxAttempts,
+          });
+          if (skillsReady) break;
+          if (attempt < skillSyncMaxAttempts) {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+        }
         if (!skillsReady) {
           deps.dispatchLifecycle?.({
             type: "failed",
@@ -357,24 +463,31 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           return false;
         }
 
-        try {
-          const loadStartedAt = Date.now();
-          await withTimeoutOrThrow(deps.loadSessions(workspace.path), {
-            timeoutMs: CONNECT_LOAD_SESSIONS_TIMEOUT_MS,
-            label: "loadSessions",
-          });
-          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:load-sessions:done", {
+        if (shouldLoadSessions) {
+          try {
+            const loadStartedAt = Date.now();
+            await withTimeoutOrThrow(deps.loadSessions(workspace.path), {
+              timeoutMs: CONNECT_LOAD_SESSIONS_TIMEOUT_MS,
+              label: "loadSessions",
+            });
+            recordSendWorkflowTrace("workspace-runtime", "ensure-engine:load-sessions:done", {
+              workspaceId: id,
+              durationMs: Date.now() - loadStartedAt,
+            });
+          } catch (loadSessionsError) {
+            deps.wsLog("[workspace:ensureEngine] loadSessions failed; continuing first prompt", {
+              id,
+              error: messageFromUnknownError(loadSessionsError, deps.safeStringify),
+            });
+            recordSendWorkflowTrace("workspace-runtime", "ensure-engine:load-sessions:error", {
+              workspaceId: id,
+              error: messageFromUnknownError(loadSessionsError, deps.safeStringify),
+            });
+          }
+        } else {
+          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:load-sessions:skipped", {
             workspaceId: id,
-            durationMs: Date.now() - loadStartedAt,
-          });
-        } catch (loadSessionsError) {
-          deps.wsLog("[workspace:ensureEngine] loadSessions failed; continuing first prompt", {
-            id,
-            error: messageFromUnknownError(loadSessionsError, deps.safeStringify),
-          });
-          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:load-sessions:error", {
-            workspaceId: id,
-            error: messageFromUnknownError(loadSessionsError, deps.safeStringify),
+            reason: ensureReason,
           });
         }
         const isActiveWorkspace = workspace.id === deps.activeWorkspaceId().trim();
@@ -383,16 +496,22 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           deps.onEngineStable?.();
         }
         deps.updateWorkspaceConnectionState(id, { status: "connected", message: null });
+        startWorkspaceApiReadinessProbe({
+          workspaceId: id,
+          workspacePath: workspace.path,
+          reason: ensureReason,
+        });
         deps.dispatchLifecycle?.({
           type: "connected",
           workspaceId: id,
           runtime,
-          reason: "ensure-engine-for-workspace",
+          reason: ensureReason,
         });
         deps.wsLog("[workspace:ensureEngine] engine started successfully", { id });
         recordSendWorkflowTrace("workspace-runtime", "ensure-engine:success", {
           workspaceId: id,
           activeWorkspace: isActiveWorkspace,
+          reason: ensureReason,
         });
         return true;
       } catch (e) {

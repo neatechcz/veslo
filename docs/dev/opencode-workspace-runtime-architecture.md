@@ -169,9 +169,11 @@ mean security isolation.
 
 When Windows WSL2 sandbox launch fails because WSL, the managed `VesloSandbox`
 distro, bubblewrap, or workspace mountability is unavailable, Veslo falls back
-to a direct host engine. That fallback remains per-workspace by default. It does
-not enable the shared unsandboxed engine unless both `VESLO_DISABLE_SANDBOX=1`
-and `VESLO_SHARED_OPENCODE_ENGINE=1` are explicitly configured.
+to a direct host engine. Without an explicit runtime preference, that fallback
+remains per-workspace by default. It does not enable the shared unsandboxed
+engine unless both `VESLO_DISABLE_SANDBOX=1` and
+`VESLO_SHARED_OPENCODE_ENGINE=1` are explicitly configured. Fresh desktop
+profiles on Windows and macOS now set that preference by default.
 
 ### With Sandbox
 

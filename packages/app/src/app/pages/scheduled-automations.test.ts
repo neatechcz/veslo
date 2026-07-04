@@ -12,7 +12,10 @@ const scheduleHelperSource = () => readFileSync(join(__dirname, "scheduled-autom
 const automationStoreSource = () => readFileSync(join(__dirname, "scheduled-automation-store.ts"), "utf8");
 const workspaceMapSource = () => readFileSync(join(__dirname, "../lib/automation-workspace-map.ts"), "utf8");
 const appSource = () => readFileSync(join(__dirname, "../app.tsx"), "utf8");
+const appViewPropsSource = () => readFileSync(join(__dirname, "../app-view-props.ts"), "utf8");
 const dashboardSource = () => readFileSync(join(__dirname, "dashboard.tsx"), "utf8");
+const giveMeASoulCommandSource = () =>
+  readFileSync(join(__dirname, "../data/commands/give-me-a-soul.md"), "utf8");
 
 test("ScheduledTasksView keeps server automations on API handlers instead of prompt/session routing", () => {
   const source = scheduledSource();
@@ -106,6 +109,7 @@ test("App composes the scheduled automation store instead of owning automation r
 test("scheduled automation store recovers the local Veslo server before refreshing automations", () => {
   const source = automationStoreSource();
   const app = appSource();
+  const appViewProps = appViewPropsSource();
   const dashboard = dashboardSource();
   const recovery = source.match(/const ensureScheduledJobsSourceReady[\s\S]*?};/);
   const clientRecovery = source.match(/const ensureScheduledJobsClient[\s\S]*?};/);
@@ -125,13 +129,15 @@ test("scheduled automation store recovers the local Veslo server before refreshi
     "automations refresh should recover a concrete Veslo server client before checking server status",
   );
   assert.match(refresh, /resolveAutomationWorkspaceMap\(client\)/);
-  assert.match(app, /reloadScheduledAutomationsSource:\s*scheduledAutomationStore\.reloadScheduledJobsSource/);
+  assert.match(app, /scheduledAutomationStore,/);
+  assert.match(appViewProps, /reloadScheduledAutomationsSource:\s*scheduledAutomationStore\.reloadScheduledJobsSource/);
   assert.match(dashboard, /reloadWorkspaceEngine=\{props\.reloadScheduledAutomationsSource\}/);
 });
 
 test("ScheduledTasksView defaults new automations to the active ready workspace when available", () => {
   const source = scheduledSource();
   const app = appSource();
+  const appViewProps = appViewPropsSource();
   const store = automationStoreSource();
 
   assert.match(source, /defaultAutomationWorkspaceId:\s*string\s*\|\s*null/);
@@ -141,7 +147,7 @@ test("ScheduledTasksView defaults new automations to the active ready workspace 
   assert.match(store, /activeAutomationWorkspace/);
   assert.match(store, /activeWorkspaceId = deps\.activeWorkspaceId\(\)\.trim\(\)/);
   assert.match(store, /workspace\.appWorkspaceId === activeWorkspaceId/);
-  assert.match(app, /defaultAutomationWorkspaceId:\s*scheduledAutomationStore\.defaultAutomationWorkspaceId\(\)/);
+  assert.match(appViewProps, /defaultAutomationWorkspaceId:\s*scheduledAutomationStore\.defaultAutomationWorkspaceId\(\)/);
   assert.ok(
     app.indexOf("const workspaceStore = createWorkspaceStore") < app.indexOf("const scheduledAutomationStore = createScheduledAutomationStore"),
     "scheduledAutomationStore must be declared after workspaceStore is initialized",
@@ -213,6 +219,15 @@ test("ScheduledTasksView uses server readiness fallback instead of Scheduler fal
   assert.match(gate[0], /scheduled\.server_unavailable_title/);
   assert.match(gate[0], /scheduled\.server_unavailable_hint/);
   assert.doesNotMatch(gate[0], /scheduled\.install_scheduler|scheduler|opencode-scheduler/i);
+});
+
+test("Soul setup command does not auto-install the raw scheduler plugin", () => {
+  const source = giveMeASoulCommandSource();
+
+  assert.match(source, /Do not add `opencode-scheduler` automatically/);
+  assert.match(source, /Veslo server-backed\s+scheduled automations/);
+  assert.doesNotMatch(source, /add `opencode-scheduler` only if missing/);
+  assert.doesNotMatch(source, /remove `opencode-scheduler` only if added solely for Soul Mode/);
 });
 
 test("buildSchedule preserves local timezone for recurring wall-clock schedules", () => {

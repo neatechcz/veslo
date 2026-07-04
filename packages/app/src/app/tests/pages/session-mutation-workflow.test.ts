@@ -101,7 +101,7 @@ function createHarness(overrides: Record<string, unknown> = {}) {
     },
     sendTraceStep: async (_event: string, run: () => Promise<boolean>) => run(),
     resolveSendTargetWorkspaceScope: () => null,
-    prepareSendRuntimeForSend: async () => true,
+    prepareSendRuntimeForSend: async () => ({ ok: true }),
     resolveRuntimeSandboxStateForTarget: () => null,
     routedClientForSendTarget: () => ({}),
     engineReady: () => true,

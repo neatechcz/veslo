@@ -1,4 +1,3 @@
-import { resolveCodexReasoningEffort } from "../lib/model-variant";
 import {
   GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
 } from "../lib/pending-session-drafts";
@@ -14,18 +13,26 @@ import type {
   VesloConversationRunInput,
   VesloServerClient,
 } from "../lib/veslo-server";
+import {
+  documentRuntimeTaskBlockReason,
+  type DocumentRuntimeFormat,
+  type DocumentRuntimeStatusPayload,
+} from "../lib/document-runtime";
 import type {
   DisplayedConversationGuard,
   SendTargetWorkspaceScope,
 } from "../context/workspace-session-selection";
 import type {
+  SendRuntimePreparationResult,
   SendRuntimePreflightContext,
   SendRuntimePreflightTargetWorkspace,
 } from "../context/send-runtime-readiness";
+import type { SessionFlowProgressEvent } from "../context/session-flow-progress-presenter";
 import type {
   ConversationAbortTarget,
   ConversationSendPreflightContext,
 } from "../context/conversation-service";
+import type { LiveTranscriptReadPolicyEvent } from "../context/live-transcript-read-policy";
 import type { UiScopeToken } from "../lib/ui-conversation-scope";
 import { deleteSessionComposerDraft } from "./session-composer-drafts";
 import type {
@@ -50,6 +57,33 @@ export type SessionSendWorkflowCommand = {
   name: string;
   description?: string;
   source?: "command" | "mcp" | "skill";
+};
+
+const DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME = {
+  "veslo-docx": "docx",
+  "veslo-xlsx": "xlsx",
+  "veslo-pdf": "pdf",
+  "veslo-pptx": "pptx",
+} satisfies Record<string, DocumentRuntimeFormat>;
+
+export function documentRuntimeFormatForSkillCommand(skillName: string): DocumentRuntimeFormat | null {
+  const key = skillName.trim();
+  return Object.prototype.hasOwnProperty.call(DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME, key)
+    ? DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME[key as keyof typeof DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME]
+    : null;
+}
+
+export function documentRuntimeBlockReasonForSkillCommand(
+  status: DocumentRuntimeStatusPayload | null | undefined,
+  skillName: string,
+): string | null {
+  const format = documentRuntimeFormatForSkillCommand(skillName);
+  return format ? documentRuntimeTaskBlockReason(status, format) : null;
+}
+
+type SkillCommandResolutionResult = {
+  draft: ComposerDraft;
+  blockedReason?: string | null;
 };
 
 export type SessionSendWorkflowWorkspace = {
@@ -97,7 +131,6 @@ export type SessionSendWorkflowOptions = {
     initialTitle?: string,
     options?: {
       blockAppDuringCreate?: boolean;
-      managedAiRuntimeAlreadyPrepared?: boolean;
       pendingSession?: PendingSidebarSessionMetadata | null;
       sendTraceId?: string | null;
       clientMessageId?: string | null;
@@ -106,12 +139,14 @@ export type SessionSendWorkflowOptions = {
     },
   ) => Promise<string | undefined>;
   developerMode: () => boolean;
+  documentRuntimeStatus?: () => DocumentRuntimeStatusPayload | null;
   displayedConversationStillMatches: (guard: DisplayedConversationGuard) => boolean;
   engineReady: () => boolean;
   ensureSelectedSessionWorkspaceActiveForSend: (
     sessionId: string,
     sendTraceId?: string | null,
   ) => Promise<boolean>;
+  emitFlowProgress: (event: SessionFlowProgressEvent) => void;
   finishPerf: (
     enabled: boolean,
     scope: string,
@@ -129,6 +164,7 @@ export type SessionSendWorkflowOptions = {
   };
   isWorkspaceRuntimeReady: (workspaceId?: string | null) => boolean;
   listCommands: (scope?: { workspaceId?: string | null; directory?: string | null }) => Promise<SessionSendWorkflowCommand[]>;
+  emitLiveTranscriptPolicyEvent: (event: LiveTranscriptReadPolicyEvent) => void;
   markPendingDraftConsumed: (draftId: string) => void;
   messageFromUnknownError: (error: unknown) => string;
   messages: () => Array<{ parts: unknown[] }>;
@@ -136,7 +172,7 @@ export type SessionSendWorkflowOptions = {
   modelVariant: () => string | null | undefined;
   pendingSessionDraftsDelete: (draftId: string) => Promise<boolean>;
   perfNow: () => number;
-  prepareSendRuntimeForSend: (event: "sendPrompt", preflight: SessionSendPreflightContext) => Promise<boolean>;
+  prepareSendRuntimeForSend: (event: "sendPrompt", preflight: SessionSendPreflightContext) => Promise<SendRuntimePreparationResult>;
   providers: () => ProviderListItem[];
   recordPerfLog: (
     enabled: boolean,
@@ -208,9 +244,6 @@ export type SessionSendWorkflowOptions = {
   sessionStoreSetCommandDisplay: (messageId: string, command: string, args: string) => void;
   setActivePendingDraftKey: (key: string | null) => void;
   setActivePendingDraftMeta: (meta: unknown | null) => void;
-  setBusy: (value: boolean) => void;
-  setBusyLabel: (value: string | null) => void;
-  setBusyStartedAt: (value: number | null) => void;
   setComposerDraftBySessionId: (
     updater: (current: Record<string, ComposerDraft>) => Record<string, ComposerDraft>,
   ) => void;
@@ -240,7 +273,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
     draft: ComposerDraft,
     traceId?: string | null,
     targetWorkspace?: SendTargetWorkspaceScope | null,
-  ): Promise<ComposerDraft> {
+  ): Promise<SkillCommandResolutionResult> {
     const tracePayload = traceId ? { traceId } : undefined;
     if (draft.mode !== "prompt" || draft.command) {
       deps.recordSendTrace("maybeResolveSkillCommand:skipped-mode-or-command", {
@@ -248,7 +281,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         mode: draft.mode,
         hasCommand: Boolean(draft.command),
       });
-      return draft;
+      return { draft };
     }
 
     const text = (draft.resolvedText ?? draft.text).trim();
@@ -258,7 +291,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         hasText: Boolean(text),
         startsWithSlash: text.startsWith("/"),
       });
-      return draft;
+      return { draft };
     }
 
     const vesloClient = deps.vesloServerClient();
@@ -277,7 +310,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         hasWorkspaceId: Boolean(workspaceId),
         targetWorkspaceId: targetWorkspaceId || null,
       });
-      return draft;
+      return { draft };
     }
 
     try {
@@ -314,7 +347,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       const matchedName = resolution?.match?.name?.trim();
       if (!matchedName) {
         deps.recordSendTrace("maybeResolveSkillCommand:no-match", tracePayload);
-        return draft;
+        return { draft };
       }
 
       const commandDirectory =
@@ -348,7 +381,19 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           matchedName,
           commandCount: commands.length,
         });
-        return draft;
+        return { draft };
+      }
+
+      const documentRuntimeBlockedReason = deps.documentRuntimeStatus
+        ? documentRuntimeBlockReasonForSkillCommand(deps.documentRuntimeStatus(), matchedName)
+        : null;
+      if (documentRuntimeBlockedReason) {
+        deps.recordSendTrace("maybeResolveSkillCommand:blocked-document-runtime", {
+          ...(tracePayload ?? {}),
+          matchedName,
+          reason: documentRuntimeBlockedReason,
+        });
+        return { draft, blockedReason: documentRuntimeBlockedReason };
       }
 
       deps.recordSendTrace("maybeResolveSkillCommand:matched", {
@@ -356,10 +401,12 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         matchedName,
       });
       return {
-        ...draft,
-        command: {
-          name: matchedName,
-          arguments: text,
+        draft: {
+          ...draft,
+          command: {
+            name: matchedName,
+            arguments: text,
+          },
         },
       };
     } catch (error) {
@@ -367,7 +414,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         ...(tracePayload ?? {}),
         message: deps.messageFromUnknownError(error),
       });
-      return draft;
+      return { draft };
     }
   }
 
@@ -456,20 +503,18 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       deps.releaseSendPromptInFlight?.();
       releaseSendPromptInFlight = null;
     };
-    const startSendPromptBusy = (label: string) => {
+    const startSendPromptBusy = (
+      event: Extract<SessionFlowProgressEvent, { type: "runtime.connecting" | "conversation.running" }>,
+    ) => {
       if (!blockAppDuringPromptSend) return;
       ownsSendPromptBusy = true;
-      deps.setBusy(true);
-      deps.setBusyLabel(label);
-      deps.setBusyStartedAt(Date.now());
+      deps.emitFlowProgress({ ...event, owner: "send" });
     };
     const stopSendPromptBusy = () => {
       releasePromptSendInFlight();
       if (!ownsSendPromptBusy) return;
       ownsSendPromptBusy = false;
-      deps.setBusy(false);
-      deps.setBusyLabel(null);
-      deps.setBusyStartedAt(null);
+      deps.emitFlowProgress({ type: "flow.idle", owner: "send" });
     };
     try {
     let pendingSidebarRowRegistered = false;
@@ -528,7 +573,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       sendPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
     }
 
-    resolvedDraft = await deps.sendTraceStep(
+    const skillResolution = await deps.sendTraceStep(
       "sendPrompt:maybe-resolve-skill-command",
       () => maybeResolveSkillCommand(resolvedDraft, sendTraceId, sendTargetWorkspace),
       {
@@ -537,6 +582,15 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
       },
     );
+    if (skillResolution.blockedReason) {
+      deps.setError(skillResolution.blockedReason);
+      deps.recordSendTrace("sendPrompt:blocked-document-runtime", {
+        traceId: sendTraceId,
+        reason: skillResolution.blockedReason,
+      });
+      return false;
+    }
+    resolvedDraft = skillResolution.draft;
 
     const initialSessionTitle = resolvedDraft.text.trim();
     const initialContent = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
@@ -554,24 +608,18 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
 
     const sendRuntimeWorkspaceId = sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim();
     const sendRuntimeReady = deps.isWorkspaceRuntimeReady(sendRuntimeWorkspaceId);
-    if (sendRuntimeReady) {
-      sendPreflight.enginePrepared = true;
-      sendPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
-    }
-
     if (!sendRuntimeReady) {
-      startSendPromptBusy("status.connecting");
+      startSendPromptBusy({ type: "runtime.connecting" });
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
-    if (!(await deps.prepareSendRuntimeForSend("sendPrompt", sendPreflight))) {
+    const sendRuntimePreparation = await deps.prepareSendRuntimeForSend("sendPrompt", sendPreflight);
+    if (!sendRuntimePreparation.ok) {
       cleanupPendingSidebarSession();
       stopSendPromptBusy();
       return false;
     }
-    sendPreflight.enginePrepared = true;
     sendPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
-    sendPreflight.managedAiReady = true;
 
     const c = deps.routedClientForSendTarget(sendTargetWorkspace);
     if (!c) {
@@ -614,7 +662,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         "sendPrompt:create-session-and-open",
         () => deps.createSessionAndOpen(initialSessionTitle, {
           blockAppDuringCreate: blockAppDuringPromptSend,
-          managedAiRuntimeAlreadyPrepared: true,
           pendingSession: pendingSidebarSession,
           sendTraceId,
           clientMessageId: sendCorrelation.clientMessageId,
@@ -732,7 +779,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       return false;
     }
 
-    startSendPromptBusy("status.running");
+    startSendPromptBusy({ type: "conversation.running" });
     deps.setError(null);
 
     const perfEnabled = deps.developerMode();
@@ -761,10 +808,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       const agent = deps.agentForSession(sessionID);
       const parts = deps.buildPromptParts(resolvedDraft);
       const selectedVariant = deps.modelVariant() ?? undefined;
-      const reasoningEffort = resolveCodexReasoningEffort(model.modelID, selectedVariant ?? null);
-      const requestVariant = reasoningEffort ? undefined : selectedVariant;
       const promptOverrides = {
-        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
         ...(promptSystem ? { system: promptSystem } : {}),
       };
 
@@ -825,6 +869,13 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
             traceId: sendTraceId,
             sessionID,
           });
+          deps.emitLiveTranscriptPolicyEvent({
+            type: "conversation-compact.succeeded",
+            reason: "sendPrompt:compact-success",
+            workspaceId: sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim(),
+            sessionId: sessionID,
+            traceId: sendTraceId,
+          });
           return true;
         }
 
@@ -847,8 +898,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           arguments: command.arguments,
           agent: agent ?? undefined,
           model: modelString,
-          variant: requestVariant,
-          ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+          variant: selectedVariant,
           parts: files.length ? files : undefined,
           directory: sessionDirOverride,
         });
@@ -860,7 +910,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           directory: sessionDirOverride,
           model,
           agent: agent ?? undefined,
-          variant: requestVariant,
+          variant: selectedVariant,
           ...promptOverrides,
           parts,
         });
@@ -904,6 +954,13 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         origin: sendCorrelation.origin,
         mode: resolvedDraft.mode,
         command: commandName,
+      });
+      deps.emitLiveTranscriptPolicyEvent({
+        type: "conversation-run.succeeded",
+        reason: "sendPrompt:success",
+        workspaceId: sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim(),
+        sessionId: sessionID,
+        traceId: sendTraceId,
       });
       deps.holdVisibleRuntimeActivity(sessionID, "sendPrompt:success");
       return true;

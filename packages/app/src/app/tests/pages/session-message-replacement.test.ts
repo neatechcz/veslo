@@ -43,7 +43,7 @@ test("clicking a transcript edit action loads the draft and arms replacement sen
   );
   assert.match(
     sessionSource,
-    /const handleEditUserMessage = \(editable: EditableUserMessageDraft\) => \{\s*conversationFlow\.handleEditUserMessage\(editable\);\s*\};/,
+    /const handleEditUserMessage = \(editable: EditableUserMessageDraft\) => \{\s*sessionFlowFacade\.handleEditUserMessage\(editable\);\s*\};/,
     "session view edit callback should delegate to the conversation-flow controller",
   );
   assert.match(

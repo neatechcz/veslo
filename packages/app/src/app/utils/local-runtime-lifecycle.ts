@@ -81,6 +81,17 @@ export function resolveEngineAuth(
   return username && password ? { username, password } : undefined;
 }
 
+function isEngineStarting(info: Pick<EngineInfo, "runtime" | "engineState">): boolean {
+  return info.runtime === "veslo-orchestrator" && info.engineState === "starting";
+}
+
+function shouldSkipQuietConnectForOrchestratorState(
+  info: Pick<EngineInfo, "runtime" | "running" | "engineState">,
+): boolean {
+  if (info.runtime !== "veslo-orchestrator" || info.running) return false;
+  return info.engineState === "absent" || info.engineState === "stopped" || info.engineState === "failed";
+}
+
 export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
   const buildStartOptions = (runtime: EngineInfo["runtime"]): LocalRuntimeStartOptions => ({
     preferSidecar: deps.engineSource() === "sidecar",
@@ -155,6 +166,25 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
         }
       }
     }
+
+    if (options.workspaceId && isEngineStarting(activeInfo)) {
+      const pollStart = Date.now();
+      const timeoutMs = 10_000;
+      const pollIntervalMs = 250;
+      while (Date.now() - pollStart < timeoutMs) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        try {
+          activeInfo = await deps.readEngineInfo(options.workspaceId, options.workspacePath);
+        } catch {
+          continue;
+        }
+        baseUrl = activeInfo.baseUrl?.trim() ?? baseUrl;
+        auth = syncEngineSnapshot(activeInfo);
+        if (!isEngineStarting(activeInfo) || activeInfo.running) break;
+      }
+    }
+
+    if (shouldSkipQuietConnectForOrchestratorState(activeInfo)) return false;
 
     if (!baseUrl) return true;
 

@@ -1,4 +1,8 @@
-import type { VesloConversationRunLifecycleStatus } from "../lib/veslo-server";
+import type {
+  VesloConversationRunActivityKind,
+  VesloConversationRunLifecycleStatus,
+  VesloConversationRunWaitReason,
+} from "../lib/veslo-server";
 
 export type SessionLifecycleRecoveryScope = {
   sessionId: string;
@@ -13,6 +17,18 @@ export type SessionLifecycleRecoveryStatus = {
   runId?: string | null;
   status: VesloConversationRunLifecycleStatus;
   stale: boolean;
+  activityKind?: VesloConversationRunActivityKind | null;
+  waitReason?: VesloConversationRunWaitReason | null;
+  lastUsefulProgressAt?: number | null;
+  retrySince?: number | null;
+  noProgressSeconds?: number | null;
+};
+
+export type SessionRunDiagnostic = SessionLifecycleRecoveryStatus & {
+  sessionId: string;
+  workspaceId: string;
+  conversationId: string;
+  opencodeSessionId?: string | null;
 };
 
 export type SessionLifecycleRecoveryControllerOptions = {
@@ -25,6 +41,10 @@ export type SessionLifecycleRecoveryControllerOptions = {
   readConversationRunStatus: (
     scope: SessionLifecycleRecoveryScope,
   ) => Promise<SessionLifecycleRecoveryStatus | null>;
+  onConversationRunStatus?: (
+    scope: SessionLifecycleRecoveryScope,
+    status: SessionLifecycleRecoveryStatus | null,
+  ) => void;
   setSessionStatusForWorkspace: (
     sessionId: string | null | undefined,
     status: string,
@@ -126,6 +146,7 @@ export function createSessionLifecycleRecoveryController(
     const watch = watches.get(key);
     if (!watch) return;
     if (watch.timer) clearTimer(watch.timer);
+    options.onConversationRunStatus?.(watch.scope, null);
     watches.delete(key);
   };
 
@@ -194,8 +215,17 @@ export function createSessionLifecycleRecoveryController(
         runId: watch.scope.runId,
         status: status?.status ?? null,
         stale: status?.stale ?? null,
+        waitReason: status?.waitReason ?? null,
+        noProgressSeconds: status?.noProgressSeconds ?? null,
         attempt: watch.attempts,
       });
+      if (!status) {
+        options.onConversationRunStatus?.(watch.scope, null);
+      } else if (status.stale !== true && TERMINAL_LIFECYCLE_STATUSES.has(status.status)) {
+        options.onConversationRunStatus?.(watch.scope, null);
+      } else {
+        options.onConversationRunStatus?.(watch.scope, status);
+      }
       if (status && status.stale !== true && TERMINAL_LIFECYCLE_STATUSES.has(status.status)) {
         recoverTerminalRun(watch.scope, status.status);
         clearWatch(key);

@@ -268,8 +268,8 @@ test("app routes selected session browsing through DB scope", () => {
   );
   assert.match(
     appSource,
-    /shouldBrowseSessionFromDb: \(sessionId\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*if \(transcriptScope\) return true;[\s\S]*return !isWorkspaceRuntimeReady\(workspaceStore\.activeWorkspaceId\(\)\.trim\(\)\);[\s\S]*\},/s,
-    "session store should force DB browsing for scoped sidebar selections or non-ready active workspace runtime",
+    /shouldBrowseSessionFromDb: \(sessionId\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*if \(transcriptScope\) return true;[\s\S]*return !isLiveTranscriptReadAllowedForWorkspace\(workspaceStore\.activeWorkspaceId\(\)\.trim\(\)\);[\s\S]*\},/s,
+    "session store should force DB browsing for scoped sidebar selections or workspaces not explicitly live-read-enabled by send flow",
   );
   assert.match(
     appSource,
@@ -296,7 +296,7 @@ test("app activates selected session workspace at send time, not browse time", (
   );
   assert.match(
     sendPromptSource,
-    /const scopedSessionID = sessionID\?\.trim\(\) \|\| "";[\s\S]*if \([\s\S]*scopedSessionID &&[\s\S]*deps\.sendTraceStep\(\s*"sendPrompt:ensure-scoped-workspace-active",[\s\S]*deps\.ensureSelectedSessionWorkspaceActiveForSend\(scopedSessionID, sendTraceId\)[\s\S]*deps\.recordSendTrace\("sendPrompt:blocked-scoped-workspace",[\s\S]*?\);[\s\S]*return false;[\s\S]*\}[\s\S]*resolvedDraft = await deps\.sendTraceStep\(\s*"sendPrompt:maybe-resolve-skill-command"/s,
+    /const scopedSessionID = sessionID\?\.trim\(\) \|\| "";[\s\S]*if \([\s\S]*scopedSessionID &&[\s\S]*deps\.sendTraceStep\(\s*"sendPrompt:ensure-scoped-workspace-active",[\s\S]*deps\.ensureSelectedSessionWorkspaceActiveForSend\(scopedSessionID, sendTraceId\)[\s\S]*deps\.recordSendTrace\("sendPrompt:blocked-scoped-workspace",[\s\S]*?\);[\s\S]*return false;[\s\S]*\}[\s\S]*const skillResolution = await deps\.sendTraceStep\(\s*"sendPrompt:maybe-resolve-skill-command"/s,
     "scoped workspace activation should run during send before workspace-sensitive prompt routing",
   );
 });

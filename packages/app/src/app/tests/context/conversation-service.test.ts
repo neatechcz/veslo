@@ -6,6 +6,7 @@ import {
   type ConversationServiceClient,
 } from "../../context/conversation-service.js";
 import type {
+  VesloConversationAbortInput,
   VesloConversationRunInput,
   VesloSessionTranscriptSnapshot,
 } from "../../lib/veslo-server.js";
@@ -104,14 +105,15 @@ function createFakeClient() {
         kind: input.kind,
       };
     },
-    abortConversation: async (workspaceId: string, conversationId: string, input: { runId: string }) => {
-      calls.push(`abortConversation:${workspaceId}:${conversationId}:${input.runId}`);
+    abortConversation: async (workspaceId: string, conversationId: string, input: VesloConversationAbortInput) => {
+      const runId = input.runId?.trim() || "active";
+      calls.push(`abortConversation:${workspaceId}:${conversationId}:${runId}`);
       return {
         ok: true,
         workspaceId,
         conversationId,
         opencodeSessionId: "open-a",
-        runId: input.runId,
+        runId,
         status: "submitted" as const,
         kind: "abort" as const,
       };
@@ -143,8 +145,10 @@ function createFakeClient() {
   };
 }
 
-function createService() {
+function createService(options: { startDisconnected?: boolean } = {}) {
   const { client, calls, setRunConversationResult } = createFakeClient();
+  let serverClient: ConversationServiceClient | null = options.startDisconnected ? null : client;
+  const ensureCalls: string[] = [];
   const rememberedScopes: RememberedScope[] = [];
   const rememberedRuns: Array<{
     workspaceId: string;
@@ -188,11 +192,15 @@ function createService() {
   };
 
   const service = createConversationService({
-    vesloServerClient: () => client,
-    vesloServerStatus: () => "connected",
+    vesloServerClient: () => serverClient,
+    vesloServerStatus: () => serverClient ? "connected" : "disconnected",
     isTauriRuntime: () => true,
     startupPreference: () => "local",
-    ensureLocalVesloServerRunning: async () => true,
+    ensureLocalVesloServerRunning: async () => {
+      ensureCalls.push("ensure-local-server");
+      serverClient = client;
+      return true;
+    },
     workspaces: () => [
       {
         id: "app-ws",
@@ -251,7 +259,7 @@ function createService() {
     wsDebug: () => undefined,
   });
 
-  return { service, calls, rememberedScopes, rememberedRuns, setRunConversationResult };
+  return { service, calls, ensureCalls, rememberedScopes, rememberedRuns, setRunConversationResult };
 }
 
 test("conversation read workspace registration is cached per client and directory", async () => {
@@ -311,6 +319,30 @@ test("conversation transcript append forwards empty available snapshots", async 
   ]);
 });
 
+test("passive browse reads do not start the local conversation server", async () => {
+  const { service, ensureCalls } = createService({ startDisconnected: true });
+
+  const result = await service.listConversationsFromVesloReadApi("app-ws", "/repo");
+
+  assert.equal(result.source, "unavailable");
+  assert.deepEqual(result.items, []);
+  assert.deepEqual(ensureCalls, []);
+});
+
+test("status polls do not start the local conversation server", async () => {
+  const { service, ensureCalls } = createService({ startDisconnected: true });
+
+  const result = await service.readConversationRunStatus({
+    workspaceId: "app-ws",
+    directory: "/repo",
+    conversationId: "conv-a",
+    runId: "run-a",
+  });
+
+  assert.equal(result, null);
+  assert.deepEqual(ensureCalls, []);
+});
+
 test("conversation run remembers submitted run ids under Veslo and UI identities", async () => {
   const { service, rememberedRuns, rememberedScopes } = createService();
 
@@ -327,8 +359,9 @@ test("conversation run remembers submitted run ids under Veslo and UI identities
     uiSessionId: "sess-a",
     runId: "run-a",
   });
-  assert.equal(rememberedScopes[0]?.sessionId, "open-a");
+  assert.deepEqual(rememberedScopes.map((scope) => scope.sessionId), ["open-a", "sess-a"]);
   assert.equal(rememberedScopes[0]?.conversationId, "conv-a");
+  assert.equal(rememberedScopes[1]?.conversationId, "conv-a");
 });
 
 test("queued conversation runs keep the active run id as the current abort target", async () => {
@@ -361,19 +394,33 @@ test("queued conversation runs keep the active run id as the current abort targe
   });
 });
 
-test("conversation abort requires an explicit scoped run id before calling Veslo abort", async () => {
+test("conversation abort uses active server resolution when the local run id is missing", async () => {
   const { service, calls } = createService();
 
-  await assert.rejects(
-    () => service.abortConversationFromVesloWriteApi("missing-run", {
-      workspaceId: "app-ws",
-      workspaceRoot: "/repo",
-      directory: "/repo",
-      conversationId: "conv-missing",
-      opencodeSessionId: "open-missing",
-    }),
-    /Conversation run id is not available for abort\./,
-  );
+  const result = await service.abortConversationFromVesloWriteApi("missing-run", {
+    workspaceId: "app-ws",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    conversationId: "conv-missing",
+    opencodeSessionId: "open-missing",
+  });
 
-  assert.equal(calls.some((call) => call.startsWith("abortConversation")), false);
+  assert.equal(result?.runId, "active");
+  assert.equal(calls.some((call) => call === "abortConversation:server-ws:conv-missing:active"), true);
+});
+
+test("conversation abort write-control paths may start the local conversation server", async () => {
+  const { service, calls, ensureCalls } = createService({ startDisconnected: true });
+
+  const result = await service.abortConversationFromVesloWriteApi("missing-run", {
+    workspaceId: "app-ws",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    conversationId: "conv-missing",
+    opencodeSessionId: "open-missing",
+  });
+
+  assert.equal(result?.runId, "active");
+  assert.deepEqual(ensureCalls, ["ensure-local-server"]);
+  assert.equal(calls.some((call) => call === "abortConversation:server-ws:conv-missing:active"), true);
 });

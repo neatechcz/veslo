@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -14,6 +15,7 @@ import {
   resolvePendingSessionHandoffMaterialization,
   resolvePendingDraftWorkspaceId,
   resolvePendingSessionQueueKey,
+  resolveTranscriptDisplaySessionId,
   removePendingSubmittedDraftById,
   resetRunStateRecord,
   resolveSessionIdForQueueKey,
@@ -26,6 +28,7 @@ import {
   resolveWorkspaceIdForQueueKey,
   resolveWorkspaceIdForSessionQueue,
   resolveSendPromptAction,
+  shouldClearMaterializedSubmitDisplayHold,
   runUiStateEqual,
   updateRunStateRecord,
   type SessionQueueKeyContext,
@@ -38,6 +41,11 @@ import {
   createUiConversationKey,
   parseUiConversationKey,
 } from "../../lib/ui-conversation-scope.js";
+
+const sessionConversationFlowSource = readFileSync(
+  new URL("../../pages/session-conversation-flow.ts", import.meta.url),
+  "utf8",
+);
 
 const runState = (overrides: Partial<RunUiState> = {}): RunUiState => {
   const { baseline, ...stateOverrides } = overrides;
@@ -61,6 +69,29 @@ const queueContext = (overrides: Partial<SessionQueueKeyContext> = {}): SessionQ
   activePendingDraftKey: null,
   activePendingDraftMeta: null,
   ...overrides,
+});
+
+test("conversation flow trace sources use owner names instead of SessionView names", () => {
+  assert.doesNotMatch(
+    sessionConversationFlowSource,
+    /markTempRuntimeUiRenderSource\(\s*"SessionView\./,
+    "conversation flow should not report SessionView as the trace source owner",
+  );
+  assert.match(
+    sessionConversationFlowSource,
+    /"SessionConversationFlow\.sendPromptImmediate"/,
+    "sendPromptImmediate should report the conversation flow owner",
+  );
+  assert.match(
+    sessionConversationFlowSource,
+    /"SessionConversationFlow\.handleMaterializedSessionId"/,
+    "pending handoff materialization should report the conversation flow owner",
+  );
+  assert.match(
+    sessionConversationFlowSource,
+    /"SessionConversationFlow\.sendPromptImmediate:accepted"/,
+    "accepted sends should report the conversation flow owner",
+  );
 });
 
 const pendingSubmittedDraft = (
@@ -975,6 +1006,136 @@ test("conversation flow controller pauses queues before cancelling active runs",
   assert.deepEqual(toasts, ["session.stopping_run", "session.run_stopped"]);
 });
 
+test("conversation flow controller aborts backend-active error runs", async () => {
+  let abortBusy = false;
+  const events: string[] = [];
+  const toasts: string[] = [];
+
+  const controller = createSessionConversationFlow({
+    identity: {
+      createClientMessageId: () => "submit-cancel-blocked",
+      createPendingSessionInstanceId: () => "pending-session:unused",
+      now: () => 123,
+    },
+    sessionKeys: {
+      activeUiConversationWorkspaceId: () => "workspace-1",
+      activeWorkspaceId: () => "workspace-1",
+      currentSessionQueueKey: () => "session-a",
+      pendingSessionQueueKey: () => "pending:base",
+      selectedSessionId: () => "session-a",
+      sessionIdForQueueKey: (sessionKey) => (sessionKey.startsWith("pending") ? null : sessionKey),
+      sessionQueueKeyForSessionId: (sessionId) => sessionId ?? "pending:base",
+      workspaceIdForQueueKey: () => "workspace-1",
+    },
+    runtime: {
+      activePendingDraftKey: () => null,
+      aiAccessBlockedReason: () => null,
+      busyHint: () => null,
+      busyLabel: () => null,
+      error: () => null,
+    },
+    transcript: {
+      messageCount: () => 0,
+      messageIds: () => [],
+    },
+    pendingHandoff: {
+      clearPendingQueueKeyAwaitingSessionIdForBaseKey: () => undefined,
+      createPendingSidebarSessionWorkspaceId: () => "workspace-1",
+      createPendingSidebarSessionWorkspaceRoot: () => "/workspace",
+      remapPendingQueueToSession: () => undefined,
+      restoreMaterializedQueueToPending: () => undefined,
+      setPendingQueueKeyAwaitingSessionIdForBaseKey: () => undefined,
+    },
+    pendingSubmitted: {
+      optimisticSubmittedDraft: () => null,
+      setOptimisticSubmittedDraft: () => undefined,
+      updatePendingSubmittedDrafts: () => undefined,
+    },
+    queue: {
+      appendDraftToCurrentQueue: () => undefined,
+      editingQueuedDraftId: () => null,
+      queuePaused: () => false,
+      queuePausedForSessionKey: () => false,
+      queuedDrafts: () => [],
+      queuedDraftsBySessionKey: () => ({}),
+      resolveQueueKeyForQueuedDraft: (sessionKey) => sessionKey,
+      setEditingQueuedDraftId: () => undefined,
+      setQueuePausedForSessionKey: (sessionKey, paused) => {
+        events.push(`pause:${sessionKey}:${paused}`);
+      },
+      updateCurrentQueue: () => undefined,
+      updateQueueForSessionKey: () => undefined,
+    },
+    composer: {
+      clearComposerDraftForSession: () => undefined,
+      currentDraftMode: () => "prompt",
+      setComposerDraft: () => undefined,
+    },
+    transcriptEdit: {
+      editableUserMessage: () => null,
+      editingTranscriptMessageId: () => null,
+      setEditingTranscriptMessageId: () => undefined,
+    },
+    runControl: {
+      abortBusy: () => abortBusy,
+      abortSession: async (sessionId) => {
+        events.push(`abort:${sessionId ?? ""}`);
+      },
+      lastPromptSent: () => "",
+      retryLastPrompt: () => undefined,
+      runPhase: () => "error",
+      hasAbortableBackendRun: () => true,
+      setAbortBusy: (busy) => {
+        abortBusy = busy;
+        events.push(`busy:${busy}`);
+      },
+      setEscapeStopConfirmationPending: (pending) => {
+        events.push(`escape:${pending}`);
+      },
+    },
+    runState: {
+      resetRunState: (sessionKey) => {
+        events.push(`reset:${sessionKey}`);
+      },
+      showRunIndicator: () => true,
+      startRun: () => undefined,
+    },
+    viewport: {
+      scheduleScrollToLatest: () => undefined,
+      setStickToBottom: () => undefined,
+    },
+    transport: {
+      replaceUserMessageAsync: async () => true,
+      sendPromptAsync: async () => true,
+    },
+    feedback: {
+      setToastMessage: (message) => {
+        toasts.push(message);
+      },
+      tr: (key) => key,
+    },
+    trace: {
+      markTempRuntimeUiRenderSource: () => undefined,
+      recordSendTrace: () => undefined,
+      reportError: () => undefined,
+    },
+    effects: {
+      batch: (fn) => fn(),
+    },
+  });
+
+  await controller.cancelRun();
+
+  assert.deepEqual(events, [
+    "escape:false",
+    "pause:session-a:true",
+    "busy:true",
+    "abort:session-a",
+    "busy:false",
+  ]);
+  assert.deepEqual(toasts, ["session.stopping_run", "session.run_stopped"]);
+});
+
 test("conversation flow controller retries after best-effort abort failure", async () => {
   let abortBusy = false;
   const events: string[] = [];
@@ -1359,6 +1520,80 @@ test("current session queue key selects a captured pending handoff for its own b
       },
     }),
     resolveSessionQueueKeyForSessionId(context, "session-real"),
+  );
+});
+
+test("transcript display session id holds pending materialization until server transcript arrives", () => {
+  assert.equal(
+    resolveTranscriptDisplaySessionId({
+      selectedSessionId: "session-real",
+      heldMaterializedSessionId: "session-real",
+      hasSendingOptimisticSubmit: true,
+      transcriptMessageCount: 0,
+    }),
+    null,
+  );
+
+  assert.equal(
+    resolveTranscriptDisplaySessionId({
+      selectedSessionId: "session-real",
+      heldMaterializedSessionId: "session-real",
+      hasSendingOptimisticSubmit: true,
+      transcriptMessageCount: 1,
+    }),
+    "session-real",
+  );
+
+  assert.equal(
+    resolveTranscriptDisplaySessionId({
+      selectedSessionId: "session-real",
+      heldMaterializedSessionId: null,
+      hasSendingOptimisticSubmit: true,
+      transcriptMessageCount: 0,
+    }),
+    "session-real",
+  );
+});
+
+test("materialized submit display hold clears on real transcript, session change, or completed optimistic state", () => {
+  assert.equal(
+    shouldClearMaterializedSubmitDisplayHold({
+      selectedSessionId: "session-real",
+      heldMaterializedSessionId: "session-real",
+      hasSendingOptimisticSubmit: true,
+      transcriptMessageCount: 0,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldClearMaterializedSubmitDisplayHold({
+      selectedSessionId: "session-real",
+      heldMaterializedSessionId: "session-real",
+      hasSendingOptimisticSubmit: true,
+      transcriptMessageCount: 1,
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldClearMaterializedSubmitDisplayHold({
+      selectedSessionId: "session-other",
+      heldMaterializedSessionId: "session-real",
+      hasSendingOptimisticSubmit: true,
+      transcriptMessageCount: 0,
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldClearMaterializedSubmitDisplayHold({
+      selectedSessionId: "session-real",
+      heldMaterializedSessionId: "session-real",
+      hasSendingOptimisticSubmit: false,
+      transcriptMessageCount: 0,
+    }),
+    true,
   );
 });
 

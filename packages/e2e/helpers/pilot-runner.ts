@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { createServer, type Server } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -41,6 +42,11 @@ type RunPilotScenariosOptions = ResolvePilotScenarioSelectionOptions & {
   binary?: string;
   socket?: string;
   timeoutMs?: number;
+};
+
+type PortContentionFixture = {
+  server: Server;
+  previousE2ePort: string | undefined;
 };
 
 export function resolvePilotBinary(env: Record<string, string | undefined> = process.env): string {
@@ -127,32 +133,108 @@ export function scenarioSelectionNeedsSharePointMcpCatalogFixture(scenarios: str
 export function scenarioSelectionNeedsManagedAiGatewayFixture(scenarios: string[]): boolean {
   return scenarios.some((scenario) =>
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/message-send-registry-degraded.toml') ||
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/model-stream-retry-no-progress.toml') ||
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml') ||
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/runtime-cold-start-session-handoff.toml') ||
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/sidebar-session-retention.toml') ||
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/global-unpublished-draft.toml'),
   );
 }
 
-export function applyPilotScenarioFixtureEnv(scenarios: string[], env: NodeJS.ProcessEnv = process.env): void {
-  if (scenarioSelectionNeedsAutomationSecondaryWorkspace(scenarios)) {
-    env.E2E_SEED_AUTOMATIONS_SECONDARY_WORKSPACE ||= '1';
+export function scenarioSelectionNeedsModelStreamRetryFixture(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/model-stream-retry-no-progress.toml') ||
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml'),
+  );
+}
+
+export function scenarioSelectionDisablesDevAutostart(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/runtime-cold-start-session-handoff.toml') ||
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml'),
+  );
+}
+
+export function scenarioSelectionNeedsSkillRegistryWorkspaceEventFixture(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml'),
+  );
+}
+
+export function scenarioSelectionNeedsRelaunchReconnectCheck(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml'),
+  );
+}
+
+export function assertPilotScenarioSelectionIsolated(scenarios: string[]): void {
+  if (scenarioSelectionNeedsModelStreamRetryFixture(scenarios) && scenarios.length > 1) {
+    throw new Error(
+      'model-stream-retry-no-progress must run as a focused pilot scenario because it enables a global orchestrator probe fixture.',
+    );
   }
-  if (scenarioSelectionNeedsSkillRegistryAuthFixture(scenarios)) {
-    env.E2E_SKILL_REGISTRY_AUTH_BASE ||= 'fixture';
+}
+
+export function scenarioSelectionNeedsNoWorkspaceProfile(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-235-local-host-no-workspace.toml'),
+  );
+}
+
+export function scenarioSelectionNeedsPortContentionFixture(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-235-local-host-port-contention.toml'),
+  );
+}
+
+async function startPortContentionFixture(): Promise<PortContentionFixture> {
+  const server = createServer();
+  await new Promise<void>((resolveListen, reject) => {
+    const onError = (error: Error) => {
+      server.off('listening', onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off('error', onError);
+      resolveListen();
+    };
+
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(0, '127.0.0.1');
+  });
+
+  const address = server.address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  if (!port) {
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    throw new Error('Port contention fixture did not bind a TCP port.');
   }
-  if (scenarioSelectionNeedsSkillEnableInventoryFixture(scenarios)) {
-    env.E2E_SEED_SKILL_ENABLE_INVENTORY ||= '1';
+
+  const previousE2ePort = process.env.E2E_VESLO_SERVER_PORT;
+  process.env.E2E_VESLO_SERVER_PORT = String(port);
+  console.log(`[e2e] Port contention fixture holding 127.0.0.1:${port}`);
+  return { server, previousE2ePort };
+}
+
+async function stopPortContentionFixture(fixture: PortContentionFixture | null): Promise<void> {
+  if (!fixture) return;
+
+  if (fixture.previousE2ePort === undefined) {
+    delete process.env.E2E_VESLO_SERVER_PORT;
+  } else {
+    process.env.E2E_VESLO_SERVER_PORT = fixture.previousE2ePort;
   }
-  if (scenarioSelectionNeedsGoogleMcpCatalogFixture(scenarios)) {
-    env.E2E_GOOGLE_MCP_CATALOG_FIXTURE ||= '1';
-  }
-  if (scenarioSelectionNeedsSharePointMcpCatalogFixture(scenarios)) {
-    env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE ||= '1';
-    env.E2E_SKILL_REGISTRY_FIXTURE ||= '1';
-    env.E2E_SKILL_REGISTRY_AUTH_BASE ||= 'fixture';
-  }
-  if (scenarioSelectionNeedsManagedAiGatewayFixture(scenarios)) {
-    env.E2E_MANAGED_AI_GATEWAY_FIXTURE ||= '1';
-  }
+
+  await new Promise<void>((resolveClose, reject) => {
+    fixture.server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolveClose();
+    });
+  });
 }
 
 export async function runPilotCommand(options: RunPilotCommandOptions): Promise<void> {
@@ -251,11 +333,51 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
       throw new Error(`tauri-pilot scenario not found: ${scenario}`);
     }
   }
+  assertPilotScenarioSelectionIsolated(scenarios);
 
-  applyPilotScenarioFixtureEnv(scenarios);
+  if (scenarioSelectionNeedsAutomationSecondaryWorkspace(scenarios)) {
+    process.env.E2E_SEED_AUTOMATIONS_SECONDARY_WORKSPACE ||= '1';
+  }
+  if (scenarioSelectionNeedsSkillRegistryAuthFixture(scenarios)) {
+    process.env.E2E_SKILL_REGISTRY_AUTH_BASE ||= 'fixture';
+  }
+  if (scenarioSelectionNeedsSkillEnableInventoryFixture(scenarios)) {
+    process.env.E2E_SEED_SKILL_ENABLE_INVENTORY ||= '1';
+  }
+  if (scenarioSelectionNeedsGoogleMcpCatalogFixture(scenarios)) {
+    process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE ||= '1';
+  }
+  if (scenarioSelectionNeedsSharePointMcpCatalogFixture(scenarios)) {
+    process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE ||= '1';
+    process.env.E2E_SKILL_REGISTRY_FIXTURE ||= '1';
+    process.env.E2E_SKILL_REGISTRY_AUTH_BASE ||= 'fixture';
+  }
+  if (scenarioSelectionNeedsManagedAiGatewayFixture(scenarios)) {
+    process.env.E2E_MANAGED_AI_GATEWAY_FIXTURE ||= '1';
+  }
+  if (scenarioSelectionNeedsModelStreamRetryFixture(scenarios)) {
+    process.env.E2E_RUN_ACTIVITY_PROBE_MODE ||= 'model-retry-no-progress';
+    process.env.E2E_MANAGED_AI_RESPONSE_DELAY_MS ||= '30000';
+    process.env.VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS ||= '90000';
+    process.env.VESLO_MODEL_RETRY_NO_PROGRESS_HARD_MS ||= '10000';
+  }
+  if (scenarioSelectionNeedsSkillRegistryWorkspaceEventFixture(scenarios)) {
+    process.env.E2E_SKILL_REGISTRY_EVENTS_MODE ||= 'workspace-update-repeat';
+  }
+  if (scenarioSelectionDisablesDevAutostart(scenarios)) {
+    process.env.VESLO_DISABLE_DEV_AUTOSTART ||= '1';
+  }
+  if (scenarioSelectionNeedsNoWorkspaceProfile(scenarios)) {
+    process.env.E2E_SKIP_DEFAULT_WORKSPACE_STATE ||= '1';
+  }
+  let portContentionFixture: PortContentionFixture | null = null;
 
-  await startApp();
   try {
+    if (scenarioSelectionNeedsPortContentionFixture(scenarios)) {
+      portContentionFixture = await startPortContentionFixture();
+    }
+
+    await startApp();
     await ensurePilotReady({ binary, socket, cwd: e2eRoot, timeoutMs });
     await seedPilotDenAuthIfConfigured({ binary, socket, cwd: e2eRoot, timeoutMs });
     for (const scenario of scenarios) {
@@ -267,9 +389,28 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
         cwd: e2eRoot,
         inheritStdio: true,
       });
+      if (scenarioSelectionNeedsRelaunchReconnectCheck([scenario])) {
+        const reconnectScenario = join(e2eRoot, 'pilot-scenarios', 'vslo-270-relaunch-reconnect.toml');
+        if (!existsSync(reconnectScenario)) {
+          throw new Error(`tauri-pilot scenario not found: ${reconnectScenario}`);
+        }
+        console.log('[e2e] Restarting app for VSLO-270 relaunch reconnect check...');
+        await stopApp();
+        await startApp(undefined, { preserveIsolatedProfile: true });
+        await ensurePilotReady({ binary, socket, cwd: e2eRoot, timeoutMs });
+        console.log(`[e2e] Running tauri-pilot scenario: ${reconnectScenario}`);
+        await runPilotCommand({
+          binary,
+          socket,
+          args: ['run', reconnectScenario],
+          cwd: e2eRoot,
+          inheritStdio: true,
+        });
+      }
     }
   } finally {
     await stopApp();
+    await stopPortContentionFixture(portContentionFixture);
   }
 }
 

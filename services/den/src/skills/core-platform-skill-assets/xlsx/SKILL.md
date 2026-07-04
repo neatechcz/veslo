@@ -65,9 +65,19 @@ Unless otherwise stated by the user or existing template
 
 A user may ask you to create, edit, or analyze the contents of an .xlsx file. You have different tools and workflows available for different tasks.
 
+## Managed Runtime
+
+Run spreadsheet tooling through the managed office runtime:
+
+```bash
+veslo-document-runtime exec -- <command>
+```
+
+Do not install host dependencies with `pip install`, `brew install`, `choco install`, `winget install`, or OS package managers during a task. If a runtime tool is missing, run `veslo-document-runtime doctor --json` and use Veslo package repair/update instead of changing the user's machine.
+
 ## Important Requirements
 
-**LibreOffice Required for Formula Recalculation**: You can assume LibreOffice is installed for recalculating formula values using the `recalc.py` script. The script automatically configures LibreOffice on first run
+**LibreOffice Required for Formula Recalculation**: Use the managed runtime for recalculating formula values with the `recalc.py` script. The script automatically configures LibreOffice on first run inside the managed runtime.
 
 ## Reading and analyzing data
 
@@ -132,7 +142,7 @@ This applies to ALL calculations - totals, percentages, ratios, differences, etc
 4. **Save**: Write to file
 5. **Recalculate formulas (MANDATORY IF USING FORMULAS)**: Use the recalc.py script
    ```bash
-   python recalc.py output.xlsx
+   veslo-document-runtime exec -- python recalc.py output.xlsx
    ```
 6. **Verify and fix any errors**: 
    - The script returns JSON with error details
@@ -205,12 +215,12 @@ wb.save('modified.xlsx')
 Excel files created or modified by openpyxl contain formulas as strings but not calculated values. Use the provided `recalc.py` script to recalculate formulas:
 
 ```bash
-python recalc.py <excel_file> [timeout_seconds]
+veslo-document-runtime exec -- python recalc.py <excel_file> [timeout_seconds]
 ```
 
 Example:
 ```bash
-python recalc.py output.xlsx 30
+veslo-document-runtime exec -- python recalc.py output.xlsx 30
 ```
 
 The script:

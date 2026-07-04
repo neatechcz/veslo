@@ -158,6 +158,50 @@ export const resolveCurrentSessionQueueKey = ({
   return pendingQueueKeyAwaitingSessionIdByBaseKey[basePendingKey] ?? basePendingKey;
 };
 
+export type ResolveTranscriptDisplaySessionIdInput = {
+  selectedSessionId?: string | null;
+  heldMaterializedSessionId?: string | null;
+  hasSendingOptimisticSubmit: boolean;
+  transcriptMessageCount: number;
+};
+
+// First-send handoff can select the newly-created real session before OpenCode
+// has returned the user message in the transcript. Keep the viewport on the
+// pending/no-session surface during that gap so the optimistic row does not
+// flicker through an empty real-session loading state.
+export const resolveTranscriptDisplaySessionId = ({
+  selectedSessionId,
+  heldMaterializedSessionId,
+  hasSendingOptimisticSubmit,
+  transcriptMessageCount,
+}: ResolveTranscriptDisplaySessionIdInput) => {
+  const selected = selectedSessionId?.trim() || null;
+  const held = heldMaterializedSessionId?.trim() || null;
+  if (
+    selected &&
+    held === selected &&
+    hasSendingOptimisticSubmit &&
+    transcriptMessageCount === 0
+  ) {
+    return null;
+  }
+  return selected;
+};
+
+export const shouldClearMaterializedSubmitDisplayHold = ({
+  selectedSessionId,
+  heldMaterializedSessionId,
+  hasSendingOptimisticSubmit,
+  transcriptMessageCount,
+}: ResolveTranscriptDisplaySessionIdInput) => {
+  const held = heldMaterializedSessionId?.trim() || null;
+  if (!held) return false;
+  const selected = selectedSessionId?.trim() || null;
+  if (selected !== held) return true;
+  if (transcriptMessageCount > 0) return true;
+  return !hasSendingOptimisticSubmit;
+};
+
 export type PendingSessionHandoffScope = {
   pendingSessionBaseKeyBeforeHandoff: string | null;
   pendingInstanceKey: string | null;
@@ -461,6 +505,7 @@ export type SessionConversationFlowControllerDeps = {
     setPendingQueueKeyAwaitingSessionIdForBaseKey: (baseKey: string, pendingKey: string) => void;
   };
   pendingSubmitted: {
+    pendingSubmittedDrafts?: () => PendingSubmittedDraftBySessionKey;
     optimisticSubmittedDraft: () => PendingSubmittedDraft | null;
     setOptimisticSubmittedDraft: (sessionKey: string, draft: PendingSubmittedDraft) => void;
     updatePendingSubmittedDrafts: (
@@ -499,6 +544,7 @@ export type SessionConversationFlowControllerDeps = {
     lastPromptSent: () => string;
     retryLastPrompt: () => void;
     runPhase: () => string;
+    hasAbortableBackendRun?: () => boolean;
     setAbortBusy: (busy: boolean) => void;
     setEscapeStopConfirmationPending: (pending: boolean) => void;
   };
@@ -506,6 +552,10 @@ export type SessionConversationFlowControllerDeps = {
     resetRunState: (sessionKey: string) => void;
     showRunIndicator: () => boolean;
     startRun: (sessionKey: string) => void;
+  };
+  sessionStatus?: {
+    statusForQueueKey: (sessionKey: string, statuses: Record<string, string>) => string;
+    statusForSessionId: (sessionId: string, statuses: Record<string, string>) => string;
   };
   viewport: {
     scheduleScrollToLatest: (behavior: ScrollBehavior) => void;
@@ -555,7 +605,23 @@ export type SessionConversationFlowController = {
   handleEditUserMessage: (editable: EditableUserMessageDraft) => boolean;
   handleMoveQueuedDraft: (id: string, targetIndex: number) => void;
   handleSendPrompt: (draft: ComposerDraft, options?: HandleSendPromptOptions) => Promise<boolean>;
+  handleActiveSessionStatusChanged: (status: string, previousStatus: string | undefined) => void;
+  handleSelectedSessionChanged: (input: {
+    sessionId: string | null | undefined;
+    previousSessionId: string | null | undefined;
+    pendingBaseKey: string;
+    pendingKey: string | null;
+    sessionStatusById: Record<string, string>;
+  }) => {
+    selectedSessionId: string | null;
+    materializedPendingSubmit: boolean;
+    shouldMarkInitialAnchor: boolean;
+  };
   handleSessionSwitchEditState: (previousSessionId: string | null | undefined) => void;
+  handleSessionStatusMapChanged: (
+    statuses: Record<string, string>,
+    previousStatuses: Record<string, string> | undefined,
+  ) => void;
   retryRun: () => Promise<void>;
   restoreEditingQueuedDraft: (sessionKey: string, id: string | null) => void;
   sendPromptImmediate: (draft: ComposerDraft, options?: SendPromptImmediateOptions) => Promise<boolean>;
@@ -580,6 +646,11 @@ const createEmptyComposerDraft = (mode: ComposerDraft["mode"] = "prompt"): Compo
 
 export function createSessionConversationFlow(deps: SessionConversationFlowControllerDeps): SessionConversationFlowController {
   const queueDrainAttemptInFlightBySessionKey = new Set<string>();
+  const pendingSubmittedDrafts = () => deps.pendingSubmitted.pendingSubmittedDrafts?.() ?? {};
+  const statusForSessionId = (sessionId: string, statuses: Record<string, string>) =>
+    deps.sessionStatus?.statusForSessionId(sessionId, statuses) ?? statuses[sessionId]?.trim() ?? "idle";
+  const statusForQueueKey = (sessionKey: string, statuses: Record<string, string>) =>
+    deps.sessionStatus?.statusForQueueKey(sessionKey, statuses) ?? statuses[sessionKey]?.trim() ?? "idle";
   const controller: SessionConversationFlowController = {
     cancelRun: async () => {
       deps.runControl.setEscapeStopConfirmationPending(false);
@@ -588,7 +659,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
       const sessionKey = deps.sessionKeys.currentSessionQueueKey();
       deps.queue.setQueuePausedForSessionKey(sessionKey, true);
 
-      if (deps.runControl.runPhase() === "error") {
+      if (deps.runControl.runPhase() === "error" && deps.runControl.hasAbortableBackendRun?.() !== true) {
         deps.runState.resetRunState(sessionKey);
         return;
       }
@@ -635,6 +706,63 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
       }
 
       deps.runControl.retryLastPrompt();
+    },
+    handleSelectedSessionChanged: ({
+      sessionId,
+      previousSessionId,
+      pendingBaseKey,
+      pendingKey,
+      sessionStatusById,
+    }) => {
+      controller.handleSessionSwitchEditState(previousSessionId);
+      const selectedSessionId = sessionId?.trim() || null;
+      if (!selectedSessionId) {
+        return {
+          selectedSessionId: null,
+          materializedPendingSubmit: false,
+          shouldMarkInitialAnchor: false,
+        };
+      }
+
+      const materializedPendingSubmit = pendingKey
+        ? pendingSubmittedDrafts()[pendingKey]?.state === "sending"
+        : false;
+      if (pendingKey && !isPendingSessionInstanceId(selectedSessionId)) {
+        deps.pendingHandoff.remapPendingQueueToSession(pendingKey, selectedSessionId);
+        deps.pendingHandoff.clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingBaseKey, pendingKey);
+      }
+
+      const sessionKey = deps.sessionKeys.sessionQueueKeyForSessionId(selectedSessionId);
+      if (
+        !materializedPendingSubmit &&
+        statusForSessionId(selectedSessionId, sessionStatusById) === "idle" &&
+        !deps.queue.queuePausedForSessionKey(sessionKey)
+      ) {
+        void controller.drainNextQueuedDraft("queue-drain", sessionKey);
+      }
+
+      return {
+        selectedSessionId,
+        materializedPendingSubmit,
+        shouldMarkInitialAnchor: !materializedPendingSubmit,
+      };
+    },
+    handleActiveSessionStatusChanged: (status, previousStatus) => {
+      if (previousStatus === undefined || previousStatus === "idle" || status !== "idle") return;
+      const sessionKey = deps.sessionKeys.currentSessionQueueKey();
+      if (deps.queue.queuePausedForSessionKey(sessionKey)) return;
+      void controller.drainNextQueuedDraft("queue-drain", sessionKey);
+    },
+    handleSessionStatusMapChanged: (statuses, previousStatuses) => {
+      if (!previousStatuses) return;
+      for (const sessionKey of Object.keys(deps.queue.queuedDraftsBySessionKey())) {
+        const sessionId = deps.sessionKeys.sessionIdForQueueKey(sessionKey);
+        if (!sessionId) continue;
+        if (statusForQueueKey(sessionKey, previousStatuses) === "idle") continue;
+        if (statusForQueueKey(sessionKey, statuses) !== "idle") continue;
+        if (deps.queue.queuePausedForSessionKey(sessionKey)) continue;
+        void controller.drainNextQueuedDraft("queue-drain", sessionKey);
+      }
     },
     handleSessionSwitchEditState: (previousSessionId) => {
       const previousEditingQueuedDraftId = deps.queue.editingQueuedDraftId();
@@ -709,7 +837,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
       const expectedWorkspaceId =
         deps.sessionKeys.workspaceIdForQueueKey(baseSessionKey) || deps.sessionKeys.activeWorkspaceId();
       deps.trace.markTempRuntimeUiRenderSource(
-        "SessionView.sendPromptImmediate",
+        "SessionConversationFlow.sendPromptImmediate",
         options.reason ?? "normal",
         {
           clientMessageId,
@@ -839,7 +967,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
       };
       const handleMaterializedSessionId = (handoff: MaterializedSessionHandoff) => {
         deps.trace.markTempRuntimeUiRenderSource(
-          "SessionView.handleMaterializedSessionId",
+          "SessionConversationFlow.handleMaterializedSessionId",
           "pending-session-materialized",
           {
             clientMessageId,
@@ -998,7 +1126,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           return false;
         }
         deps.trace.markTempRuntimeUiRenderSource(
-          "SessionView.sendPromptImmediate:accepted",
+          "SessionConversationFlow.sendPromptImmediate:accepted",
           options.reason ?? "normal",
           {
             clientMessageId,

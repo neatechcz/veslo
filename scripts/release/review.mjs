@@ -101,6 +101,7 @@ const extractWorkflowJob = (text, jobName) => {
 
 const releaseMacosTauriJob = extractWorkflowJob(releaseWorkflow, "publish-tauri");
 const releaseWindowsTauriJob = extractWorkflowJob(releaseWorkflow, "publish-tauri-windows");
+const releaseVerifyJob = extractWorkflowJob(releaseWorkflow, "verify-release");
 const prereleaseTauriJob = extractWorkflowJob(prereleaseWorkflow, "publish-tauri");
 
 const hasGlitchTipReleaseEnv = (text, options = {}) => {
@@ -121,6 +122,10 @@ const hasGlitchTipReleaseEnv = (text, options = {}) => {
     (!requireStrict || /VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV:\s*["']?1["']?/.test(text))
   );
 };
+
+const hasDocumentRuntimePackageGate = (text) =>
+  /Verify document runtime packages/.test(text) &&
+  /verify-document-runtime-packages\.mjs\s+--profile\s+local-docs-required\s+--json/.test(text);
 
 const releaseDocsText = [releaseDoc, stateConfigDoc, applicationLogsDoc].join("\n");
 const releaseDocsDescribeGlitchTipDsn =
@@ -444,6 +449,11 @@ addCheck(
   "Release docs describe GlitchTip DSN as public and release-owned",
   releaseDocsDescribeGlitchTipDsn,
   "RELEASE.md + docs/dev",
+);
+addCheck(
+  "Release workflow gates local document runtime packages",
+  hasDocumentRuntimePackageGate(releaseVerifyJob),
+  ".github/workflows/release-macos-aarch64.yml#verify-release",
 );
 const wslInstallerFragmentPath = resolve(
   root,

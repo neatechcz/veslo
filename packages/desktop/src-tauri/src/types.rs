@@ -75,11 +75,24 @@ impl Default for EngineRuntime {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeEngineState {
+    Absent,
+    Starting,
+    ProcessReady,
+    WorkspaceApiWaiting,
+    Ready,
+    Stopped,
+    Failed,
+}
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineInfo {
     pub running: bool,
     pub runtime: EngineRuntime,
+    pub engine_state: Option<RuntimeEngineState>,
     pub child_kind: Option<String>,
     pub base_url: Option<String>,
     pub project_dir: Option<String>,
@@ -92,10 +105,47 @@ pub struct EngineInfo {
     pub last_stderr: Option<String>,
 }
 
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VesloServerLifecycleStatus {
+    Stopped,
+    Starting,
+    Running,
+    Exited,
+    Blocked,
+}
+
+impl Default for VesloServerLifecycleStatus {
+    fn default() -> Self {
+        Self::Stopped
+    }
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VesloServerLifecycleReason {
+    None,
+    SpawnPending,
+    PortUnavailable,
+    SpawnFailed,
+    ChildExited,
+    HealthUnreachable,
+    TokenMissing,
+    IdentityMismatch,
+}
+
+impl Default for VesloServerLifecycleReason {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct VesloServerInfo {
     pub running: bool,
+    pub lifecycle_status: VesloServerLifecycleStatus,
+    pub lifecycle_reason: VesloServerLifecycleReason,
     pub host: Option<String>,
     pub port: Option<u16>,
     pub base_url: Option<String>,
@@ -194,6 +244,31 @@ pub struct OrchestratorEngineSnapshot {
     pub last_activity_at: u64,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestratorSharedEngineSnapshot {
+    pub mode: String,
+    pub running: bool,
+    #[serde(default)]
+    pub pending: bool,
+    #[serde(default)]
+    pub engine_state: Option<String>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub pid: Option<u32>,
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub child_kind: Option<String>,
+    #[serde(default)]
+    pub started_at: Option<String>,
+    pub runtime_directory: String,
+    pub config_directory: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct OrchestratorStatus {
@@ -201,6 +276,8 @@ pub struct OrchestratorStatus {
     pub data_dir: String,
     pub daemon: Option<OrchestratorDaemonState>,
     pub opencode: Option<OrchestratorOpencodeState>,
+    #[serde(default)]
+    pub engine_topology: Option<String>,
     pub cli_version: Option<String>,
     pub sidecar: Option<OrchestratorSidecarInfo>,
     pub binaries: Option<OrchestratorBinaryState>,
@@ -209,6 +286,8 @@ pub struct OrchestratorStatus {
     pub workspaces: Vec<OrchestratorWorkspace>,
     #[serde(default)]
     pub engines: Vec<OrchestratorEngineSnapshot>,
+    #[serde(default)]
+    pub shared_engine: Option<OrchestratorSharedEngineSnapshot>,
     pub last_error: Option<String>,
 }
 

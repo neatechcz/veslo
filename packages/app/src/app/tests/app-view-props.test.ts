@@ -12,6 +12,7 @@ import {
 
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const viewPropsSource = readFileSync(new URL("../app-view-props.ts", import.meta.url), "utf8");
+const dashboardSource = readFileSync(new URL("../pages/dashboard.tsx", import.meta.url), "utf8");
 
 function extractBraceBody(source: string, openIndex: number): string {
   let depth = 0;
@@ -212,4 +213,24 @@ test("session view props carry unavailable history state and retry action", () =
   assert.match(appSource, /selectedSessionHistoryUnavailable,/);
   assert.match(appSource, /selectedSessionHistoryRetrying,/);
   assert.match(appSource, /retryUnavailableHistory,/);
+});
+
+test("document runtime status is wired from Veslo server client to settings", () => {
+  assert.match(appSource, /createSignal<DocumentRuntimeStatusPayload \| null>\(null\)/);
+  assert.match(appSource, /DOCUMENT_RUNTIME_STATUS_POLL_MS = 30_000/);
+  assert.match(appSource, /client\.getDocumentRuntimeStatus\(\)/);
+  assert.match(appSource, /client\.repairDocumentRuntime\(\)/);
+  assert.match(appSource, /documentRuntimeRepairBusy\(\) \|\| anyActiveRuns\(\)/);
+  assert.match(appSource, /documentRuntimeStatus,/);
+  assert.match(appSource, /documentRuntimeRepairBusy,/);
+  assert.match(appSource, /repairDocumentRuntime,/);
+
+  assert.match(viewPropsSource, /documentRuntimeStatus: documentRuntimeStatus\(\)/);
+  assert.match(viewPropsSource, /documentRuntimeRepairBusy: documentRuntimeRepairBusy\(\)/);
+  assert.match(viewPropsSource, /repairDocumentRuntime,/);
+
+  assert.match(dashboardSource, /documentRuntimeStatus: DocumentRuntimeStatusPayload \| null/);
+  assert.match(dashboardSource, /documentRuntimeStatus=\{props\.documentRuntimeStatus\}/);
+  assert.match(dashboardSource, /documentRuntimeRepairBusy=\{props\.documentRuntimeRepairBusy\}/);
+  assert.match(dashboardSource, /repairDocumentRuntime=\{props\.repairDocumentRuntime\}/);
 });

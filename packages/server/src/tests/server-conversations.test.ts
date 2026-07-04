@@ -1561,7 +1561,7 @@ describe("conversation routes", () => {
         }),
       },
     );
-    expect(missingRunIdAbortResponse.status).toBe(400);
+    expect(missingRunIdAbortResponse.status).toBe(503);
 
     const missingDirectoryAbortResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(payload.conversationId)}/abort`,
@@ -1745,6 +1745,7 @@ describe("conversation routes", () => {
     let registerShouldConflict = false;
     let runIdFromRegister = "";
     let conversationIdFromRegister = "";
+    let activeRunAvailable = false;
     const orchestratorRequests: Array<{
       method: string;
       pathname: string;
@@ -1834,18 +1835,33 @@ describe("conversation routes", () => {
           events.push("orchestrator-abort-requested");
           return Response.json({ ok: true, runId: runIdFromRegister, abortRequested: true });
         }
+        if (request.method === "POST" && url.pathname === `/workspace/ws_1/runs/${encodeURIComponent(runIdFromRegister)}/aborted`) {
+          events.push("orchestrator-mark-aborted");
+          return Response.json({ ok: true, runId: runIdFromRegister, status: "aborted", abortRequested: true });
+        }
         if (
           request.method === "GET" &&
-          url.pathname === `/workspace/ws_1/conversations/${encodeURIComponent(conversationIdFromRegister)}/runs/latest`
+          (
+            url.pathname === `/workspace/ws_1/conversations/${encodeURIComponent(conversationIdFromRegister)}/runs/latest` ||
+            url.pathname === `/workspace/ws_1/conversations/${encodeURIComponent(conversationIdFromRegister)}/runs/active`
+          )
         ) {
-          events.push("orchestrator-status");
+          events.push(url.pathname.endsWith("/runs/active") ? "orchestrator-active" : "orchestrator-status");
+          if (url.pathname.endsWith("/runs/active") && !activeRunAvailable) {
+            return Response.json({ error: "run not found" }, { status: 404 });
+          }
           return Response.json({
             ok: true,
             workspaceId: "ws_1",
             conversationId: conversationIdFromRegister,
             runId: runIdFromRegister,
-            status: "completed",
+            status: "running",
             stale: false,
+            activityKind: "model_retry",
+            waitReason: "model_retry_no_output",
+            lastUsefulProgressAt: 1_000,
+            retrySince: 2_000,
+            noProgressSeconds: 12,
           });
         }
         return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
@@ -1948,10 +1964,45 @@ describe("conversation routes", () => {
       { headers: { Authorization: "Bearer client-token" } },
     );
     expect(statusResponse.status).toBe(200);
-    const statusPayload = await statusResponse.json() as { runId: string; status: string; stale: boolean };
+    const statusPayload = await statusResponse.json() as {
+      runId: string;
+      status: string;
+      stale: boolean;
+      activityKind?: string | null;
+      waitReason?: string | null;
+      lastUsefulProgressAt?: number | null;
+      retrySince?: number | null;
+      noProgressSeconds?: number | null;
+    };
     expect(statusPayload.runId).toBe(runIdFromRegister);
-    expect(statusPayload.status).toBe("completed");
+    expect(statusPayload.status).toBe("running");
     expect(statusPayload.stale).toBe(false);
+    expect(statusPayload.activityKind).toBe("model_retry");
+    expect(statusPayload.waitReason).toBe("model_retry_no_output");
+    expect(statusPayload.lastUsefulProgressAt).toBe(1_000);
+    expect(statusPayload.retrySince).toBe(2_000);
+    expect(statusPayload.noProgressSeconds).toBe(12);
+
+    activeRunAvailable = true;
+    const activeAbortResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/abort`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          mode: "active",
+        }),
+      },
+    );
+    expect(activeAbortResponse.status).toBe(200);
+    const activeAbortPayload = await activeAbortResponse.json() as { runId: string };
+    expect(activeAbortPayload.runId).toBe(runIdFromRegister);
+    expect(events).toContain("orchestrator-active");
+    activeRunAvailable = false;
 
     const abortResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/abort`,
@@ -1968,7 +2019,8 @@ describe("conversation routes", () => {
       },
     );
     expect(abortResponse.status).toBe(200);
-    expect(events.indexOf("engine-abort")).toBeLessThan(events.indexOf("orchestrator-abort-requested"));
+    expect(events.indexOf("orchestrator-abort-requested")).toBeLessThan(events.indexOf("engine-abort"));
+    expect(events.indexOf("engine-abort")).toBeLessThan(events.indexOf("orchestrator-mark-aborted"));
 
     submitShouldFail = true;
     const failedRunResponse = await fetch(

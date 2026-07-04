@@ -308,14 +308,6 @@ function isVesloConversationId(input: string): boolean {
   return /^conv-[0-9a-f]{20}$/i.test(input.trim());
 }
 
-function requireConversationRunId(body: Record<string, unknown>): string {
-  const runId = optionalBodyString(body, "runId");
-  if (!runId) {
-    throw new ApiError(400, "invalid_payload", "runId is required");
-  }
-  return runId;
-}
-
 export function registerConversationSessionRoutes(
   routes: Route[],
   dependencies: ConversationSessionRouteDependencies,
@@ -530,13 +522,31 @@ export function registerConversationSessionRoutes(
       throw new ApiError(400, "invalid_payload", "conversationId is required");
     }
     const body = await readJsonBody(ctx.request);
-    const runId = requireConversationRunId(body);
     const target = await resolveConversationExecutionTarget({
       workspace,
       sessionOrConversationId,
       requestedDirectory: optionalBodyString(body, "directory"),
       missingDirectoryMessage: "Conversation abort directory is required",
     });
+    let runId = optionalBodyString(body, "runId");
+    if (!runId) {
+      if (!lifecycleClient) {
+        throw new ApiError(503, "lifecycle_unavailable", "Run lifecycle owner is not configured");
+      }
+      let activeRun;
+      try {
+        activeRun = await lifecycleClient.active(workspace.id, target.conversationId);
+      } catch (error) {
+        if (error instanceof OrchestratorLifecycleRequestError) {
+          throw lifecycleRequestApiError(error);
+        }
+        throw error;
+      }
+      if (!activeRun) {
+        throw new ApiError(404, "active_run_not_found", "No active run was found for this conversation");
+      }
+      runId = activeRun.runId;
+    }
     recordSendWorkflowTrace("server", "server:conversation-abort:start", {
       traceId: null,
       workspaceId: workspace.id,
@@ -601,6 +611,11 @@ export function registerConversationSessionRoutes(
       runId: status.runId,
       status: status.status,
       stale: status.stale,
+      activityKind: status.activityKind ?? null,
+      waitReason: status.waitReason ?? null,
+      lastUsefulProgressAt: status.lastUsefulProgressAt ?? null,
+      retrySince: status.retrySince ?? null,
+      noProgressSeconds: status.noProgressSeconds ?? null,
     });
   });
 

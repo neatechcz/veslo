@@ -4,16 +4,24 @@ import test from "node:test";
 
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 const sessionSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
+const conversationFlowSource = readFileSync(
+  new URL("../../pages/session-conversation-flow.ts", import.meta.url),
+  "utf8",
+);
 const transcriptViewportSource = readFileSync(new URL("../../pages/session-transcript-viewport.ts", import.meta.url), "utf8");
 const pendingDraftControllerSource = readFileSync(
   new URL("../../context/pending-session-draft-controller.ts", import.meta.url),
+  "utf8",
+);
+const sessionQueueDrainControllerSource = readFileSync(
+  new URL("../../context/session-queue-drain-controller.ts", import.meta.url),
   "utf8",
 );
 
 test("session loading stays route-owned without a pending preloader", () => {
   assert.match(
     sessionSource,
-    /const showSessionLoadingState = createMemo\(\(\) =>[\s\S]*shouldShowSessionLoadingState\(\{[\s\S]*selectedSessionId: props\.selectedSessionId,[\s\S]*messageCount: effectiveRenderedMessages\(\)\.length,[\s\S]*loadingEarlierMessages: props\.loadingEarlierMessages,[\s\S]*\}\)[\s\S]*\);/,
+    /const showSessionLoadingState = createMemo\(\(\) =>[\s\S]*shouldShowSessionLoadingState\(\{[\s\S]*selectedSessionId: transcriptDisplaySessionId\(\),[\s\S]*messageCount: effectiveRenderedMessages\(\)\.length,[\s\S]*loadingEarlierMessages: props\.loadingEarlierMessages,[\s\S]*\}\)[\s\S]*\);/,
     "session page should derive inline loading from the effectively rendered conversation, not raw backend messages only",
   );
 
@@ -140,8 +148,8 @@ test("first submit hides the no-session target picker in the footer composer pat
 
 test("materializing a pending submitted draft preserves the visible run indicator", () => {
   assert.match(
-    sessionSource,
-    /const pendingBaseKey = pendingSessionQueueKey\(\);[\s\S]*const pendingKey = !previousSessionId[\s\S]*pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null[\s\S]*const previousSessionKey = previousSessionId \? sessionQueueKeyForSessionId\(previousSessionId\) : null;[\s\S]*if \(!pendingKey && previousSessionKey\) \{\s*preserveRunStateOnSessionSwitch\(previousSessionKey\);[\s\S]*\}/s,
+    sessionQueueDrainControllerSource,
+    /const pendingBaseKey = options\.pendingSessionQueueKey\(\);[\s\S]*const pendingKey = !previousSessionId[\s\S]*options\.pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null[\s\S]*const previousSessionKey = previousSessionId[\s\S]*\? options\.sessionQueueKeyForSessionId\(previousSessionId\)[\s\S]*: null;[\s\S]*if \(!pendingKey && previousSessionKey\) \{\s*options\.preserveRunStateOnSessionSwitch\(previousSessionKey\);[\s\S]*\}/s,
     "selecting the real session created for a pending submit should remap the optimistic draft without resetting the active run indicator",
   );
 
@@ -153,8 +161,46 @@ test("materializing a pending submitted draft preserves the visible run indicato
 
   assert.match(
     sessionSource,
-    /createEffect\(\(\) => \{[\s\S]*const status = props\.sessionStatus;[\s\S]*if \(status === "running" \|\| status === "retry"\) \{[\s\S]*const sessionKey = currentSessionQueueKey\(\);[\s\S]*startRun\(sessionKey\);[\s\S]*setRunHasBegunForSessionKey\(sessionKey, true\);[\s\S]*\}[\s\S]*\}\);/s,
-    "running or retry session status should continue the visible run on the current session key",
+    /createEffect\(\(\) => \{[\s\S]*const status = props\.sessionStatus;[\s\S]*const diagnostic = activeRunDiagnostic\(\);[\s\S]*if \(status === "running" \|\| status === "retry" \|\| diagnostic\?\.waitReason === "model_retry_no_output"\) \{[\s\S]*const sessionKey = currentSessionQueueKey\(\);[\s\S]*startRun\(sessionKey\);[\s\S]*setRunHasBegunForSessionKey\(sessionKey, true\);[\s\S]*\}[\s\S]*\}\);/s,
+    "running, retry, or no-output model retry diagnostics should continue the visible run on the current session key",
+  );
+});
+
+test("materializing a pending submitted draft does not hide the optimistic transcript for initial anchoring", () => {
+  assert.match(
+    conversationFlowSource,
+    /const materializedPendingSubmit = pendingKey\s*\? pendingSubmittedDrafts\(\)\[pendingKey\]\?\.state === "sending"\s*: false;[\s\S]*if \(pendingKey && !isPendingSessionInstanceId\(selectedSessionId\)\) \{[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingKey, selectedSessionId\);[\s\S]*\}[\s\S]*shouldMarkInitialAnchor: !materializedPendingSubmit,/s,
+    "pending-to-real session materialization should keep the optimistic message visible instead of arming the transcript invisible anchor state",
+  );
+  assert.match(
+    sessionQueueDrainControllerSource,
+    /if \(flowResult\.shouldMarkInitialAnchor && flowResult\.selectedSessionId\) \{\s*options\.markSelectedSessionForInitialAnchor\(flowResult\.selectedSessionId\);\s*\}/,
+    "pending-to-real session materialization should keep the optimistic message visible instead of arming the transcript invisible anchor state",
+  );
+  assert.match(
+    sessionSource,
+    /markSelectedSessionForInitialAnchor: \(sessionId\) =>\s*transcriptViewport\.markSelectedSessionForInitialAnchor\(sessionId\),/,
+    "pending-to-real session materialization should keep the optimistic message visible instead of arming the transcript invisible anchor state",
+  );
+});
+
+test("materializing a pending submitted draft holds the transcript surface until server messages arrive", () => {
+  assert.match(
+    sessionSource,
+    /const transcriptDisplaySessionId = createMemo\(\(\) =>[\s\S]*resolveTranscriptDisplaySessionId\(\{[\s\S]*selectedSessionId: props\.selectedSessionId,[\s\S]*heldMaterializedSessionId: heldMaterializedSubmitSessionId\(\),[\s\S]*hasSendingOptimisticSubmit: hasSendingOptimisticSubmit\(\),[\s\S]*transcriptMessageCount: props\.messages\.length,[\s\S]*\}\)[\s\S]*\);/s,
+    "pending-to-real first-send materialization should not immediately switch the transcript viewport before server transcript messages arrive",
+  );
+
+  assert.match(
+    sessionSource,
+    /const transcriptViewport = createSessionTranscriptViewport\(\{[\s\S]*selectedSessionId: transcriptDisplaySessionId,[\s\S]*\}\);/s,
+    "the transcript viewport should use the display session id instead of the raw route-selected session id",
+  );
+
+  assert.match(
+    sessionSource,
+    /const composerResetKey = createMemo\(\(\) =>\s*`\$\{props\.activeComposerTargetId \?\? "__no-target"\}:\$\{transcriptDisplaySessionId\(\) \?\? "__no-session"\}`\s*\);/s,
+    "keyed composer entry boundaries should follow the display session id, not the raw route-selected session id",
   );
 });
 
@@ -211,5 +257,23 @@ test("optimistic responding state renders as the footer run indicator, not assis
     sessionSource,
     /const showFooterRunIndicator = createMemo\(\(\) => showRunIndicator\(\)\);[\s\S]*footer=\{\s*showFooterRunIndicator\(\) \?/s,
     "the standard dot run indicator should remain visible while waiting for backend assistant output",
+  );
+});
+
+test("model retry no-output diagnostics own the footer run label", () => {
+  assert.match(
+    sessionSource,
+    /const activeRunDiagnostic = createMemo\(\(\) => runDiagnosticForQueueKey\(currentSessionQueueKey\(\)\)\);/,
+    "session view should resolve lifecycle diagnostics for the active conversation",
+  );
+  assert.match(
+    sessionSource,
+    /const diagnostic = activeRunDiagnostic\(\);[\s\S]*if \(diagnostic\?\.waitReason === "model_retry_no_output"\) \{[\s\S]*return diagnostic\.status === "blocked" \? "error" : "retrying";[\s\S]*\}/,
+    "model/API retry with no output should use retrying until the lifecycle reports blocked",
+  );
+  assert.match(
+    sessionSource,
+    /runDiagnosticLabel\(\) \|\| thinkingStatus\(\) \|\| runLabel\(\)/,
+    "explicit lifecycle diagnostics should take precedence over generic thinking labels",
   );
 });

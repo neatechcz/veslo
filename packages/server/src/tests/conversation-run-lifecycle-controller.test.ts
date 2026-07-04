@@ -1032,6 +1032,9 @@ test("abortRun aborts gateway requests, calls OpenCode abort, marks requested, a
   }]);
   expect(abortCalls).toHaveLength(1);
   expect(lifecycle.calls).toContain("markAbortRequested:ws_1:run-abort");
+  expect(lifecycle.calls).toContain(
+    "markAborted:ws_1:run-abort:user abort reconciled after OpenCode abort",
+  );
   expect(reconcileCalls).toContainEqual({
     workspaceId: "ws_1",
     conversationId: "conv-a",
@@ -1041,7 +1044,7 @@ test("abortRun aborts gateway requests, calls OpenCode abort, marks requested, a
   });
 });
 
-test("abortRun preserves OpenCode abort failure behavior without lifecycle side effects", async () => {
+test("abortRun records lifecycle intent when OpenCode abort fails", async () => {
   const {
     controller,
     lifecycle,
@@ -1049,11 +1052,11 @@ test("abortRun preserves OpenCode abort failure behavior without lifecycle side 
     behavior,
     activeProxyAbortCalls,
     abortCalls,
-    timers,
+    reconcileCalls,
   } = controllerHarness();
   behavior.abortError = new Error("opencode abort failed");
 
-  await expect(controller.abortRun({
+  const result = await controller.abortRun({
     workspace: workspaces[0]!,
     target: {
       directory: "/repo",
@@ -1062,10 +1065,25 @@ test("abortRun preserves OpenCode abort failure behavior without lifecycle side 
       conversationId: "conv-a",
     },
     runId: "run-abort",
-  })).rejects.toThrow("opencode abort failed");
+  });
 
+  expect(result).toEqual({
+    upstream: {
+      ok: false,
+      error: "opencode_abort_failed",
+      message: "opencode abort failed",
+    },
+    abortedGatewayRequestCount: 1,
+  });
   expect(activeProxyAbortCalls).toHaveLength(1);
   expect(abortCalls).toHaveLength(1);
-  expect(lifecycle.calls.some((call) => call.startsWith("markAbortRequested"))).toBe(false);
-  expect(timers.activeTimers()).toEqual([]);
+  expect(lifecycle.calls).toContain("markAbortRequested:ws_1:run-abort");
+  expect(lifecycle.calls.some((call) => call.startsWith("markAborted:"))).toBe(false);
+  expect(reconcileCalls).toContainEqual({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-abort",
+    reason: "abort-requested",
+    delayMs: 0,
+  });
 });

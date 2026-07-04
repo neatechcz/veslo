@@ -369,7 +369,9 @@ test("non-archive requests do not include the account id header", async () => {
 
 test("runConversation includes the optional send trace id header", async () => {
   const previousFetch = globalThis.fetch;
+  const originalSetTimeout = globalThis.setTimeout;
   const calls: Array<{ url: string; method?: string; headers: Headers; body: string | null }> = [];
+  const timeoutDelays: number[] = [];
 
   globalThis.fetch = async (input, init) => {
     calls.push({
@@ -394,6 +396,10 @@ test("runConversation includes the optional send trace id header", async () => {
       },
     );
   };
+  globalThis.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+    timeoutDelays.push(Number(timeout));
+    return originalSetTimeout(handler, timeout, ...args);
+  }) as typeof setTimeout;
 
   try {
     const client = createVesloServerClient({
@@ -412,8 +418,10 @@ test("runConversation includes the optional send trace id header", async () => {
     assert.equal(calls[0]?.url, "https://veslo.example/workspace/ws_1/conversations/conv_1/runs");
     assert.equal(calls[0]?.method, "POST");
     assert.equal(calls[0]?.headers.get("x-veslo-send-trace-id"), "send-trace-123");
+    assert.equal(timeoutDelays[0], 90_000);
   } finally {
     globalThis.fetch = previousFetch;
+    globalThis.setTimeout = originalSetTimeout;
   }
 });
 

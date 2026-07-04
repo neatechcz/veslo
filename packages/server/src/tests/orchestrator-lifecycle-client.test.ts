@@ -140,6 +140,37 @@ describe("orchestrator lifecycle client", () => {
     expect(calls[0]?.url).toBe("http://127.0.0.1:1234/workspace/ws-a/conversations/conv-a/runs/active");
   });
 
+  test("status preserves no-progress model retry diagnostics", async () => {
+    const fetchImpl = mockFetch(async () =>
+      new Response(JSON.stringify({
+        ok: true,
+        runId: "run-a",
+        status: "running",
+        stale: false,
+        activityKind: "model_retry",
+        waitReason: "model_retry_no_output",
+        lastUsefulProgressAt: 1_234,
+        retrySince: 2_000,
+        noProgressSeconds: 42,
+      }), { status: 200 }));
+    const client = createOrchestratorLifecycleClient({
+      daemonUrl: "http://127.0.0.1:1234",
+      token: "secret-token",
+      fetchImpl,
+    });
+
+    await expect(client.status("ws-a", "conv-a", "run-a")).resolves.toEqual({
+      runId: "run-a",
+      status: "running",
+      stale: false,
+      activityKind: "model_retry",
+      waitReason: "model_retry_no_output",
+      lastUsefulProgressAt: 1_234,
+      retrySince: 2_000,
+      noProgressSeconds: 42,
+    });
+  });
+
   test("status rejects malformed successful payloads", async () => {
     const fetchImpl = mockFetch(async () =>
       new Response(JSON.stringify({ ok: true }), { status: 200 }));

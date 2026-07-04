@@ -9,6 +9,24 @@ const appStartupHydrationSource = readFileSync(
   new URL("../context/app-startup-hydration.ts", import.meta.url),
   "utf8",
 );
+const conversationServiceSource = readFileSync(
+  new URL("../context/conversation-service.ts", import.meta.url),
+  "utf8",
+);
+const queueDrainControllerSource = readFileSync(
+  new URL("../context/session-queue-drain-controller.ts", import.meta.url),
+  "utf8",
+);
+const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
+const sessionCreationWorkflowSource = readFileSync(
+  new URL("../pages/session-creation-workflow.ts", import.meta.url),
+  "utf8",
+);
+const sessionSource = readFileSync(new URL("../pages/session.tsx", import.meta.url), "utf8");
+const sessionSendWorkflowSource = readFileSync(
+  new URL("../pages/session-send-workflow.ts", import.meta.url),
+  "utf8",
+);
 
 function sectionBetween(
   startNeedle: string,
@@ -176,10 +194,148 @@ test("desktop hash routing owns dashboard aliases and cleans up its hashchange l
     /syncDashboardHashTab\(pathname\);[\s\S]*?if \(shouldNavigateFromHash\(deps\.pathname\(\), pathname\)\) \{[\s\S]*?deps\.navigate\(hashPath, \{ replace: true \}\);/s,
     "desktop hash routing should sync both dashboard tab state and router location",
   );
+  assert.doesNotMatch(
+    hashRouting,
+    /addEventListener\("hashchange", syncExternalHashRoute\)/,
+    "desktop hash routing should not pass DOM hashchange events into the manual sync helper",
+  );
   assertInOrder(hashRouting, "desktop hash routing listener lifecycle", [
-    "mountedWindowTarget?.addEventListener(\"hashchange\", syncExternalHashRoute);",
-    "mountedWindowTarget.removeEventListener(\"hashchange\", syncExternalHashRoute);",
+    "let onHashChange: AppRouteHashChangeListener | null = null;",
+    "onHashChange = createAppRouteHashChangeListener(() => mountedWindowTarget, syncExternalHashRoute);",
+    "mountedWindowTarget.addEventListener(\"hashchange\", onHashChange);",
+    "mountedWindowTarget.removeEventListener(\"hashchange\", onHashChange);",
+    "onHashChange = null;",
   ]);
+});
+
+test("session first-send entrypoint is exposed through the session flow facade", () => {
+  assert.match(
+    source,
+    /import \{ createSessionFlowFacade \} from "\.\/context\/session-flow-facade";/,
+    "app.tsx should import the context session flow facade",
+  );
+  assert.match(
+    source,
+    /const sessionFlowFacade = createSessionFlowFacade\(\{[\s\S]*createSessionAndOpen,[\s\S]*sendWorkflow: sessionSendWorkflow,[\s\S]*\}\);[\s\S]*const sendPrompt = sessionFlowFacade\.sendPrompt;[\s\S]*const abortSession = sessionFlowFacade\.abortSession;/s,
+    "App should expose send and abort through the session flow facade boundary",
+  );
+  assert.doesNotMatch(
+    source,
+    /const sendPrompt = sessionSendWorkflow\.sendPrompt;/,
+    "App should not expose sendPrompt directly from the page-level send workflow",
+  );
+});
+
+test("session flow owners keep UI progress state behind narrow app adapters", () => {
+  const sendOptions = sectionBetween(
+    "export type SessionSendWorkflowOptions = {",
+    "export type SessionSendWorkflow = {",
+    "send workflow options",
+    sessionSendWorkflowSource,
+  );
+  const createOptions = sectionBetween(
+    "export type SessionCreationWorkflowOptions = {",
+    "export type SessionCreationWorkflow = {",
+    "create workflow options",
+    sessionCreationWorkflowSource,
+  );
+
+  assert.match(
+    source,
+    /const sessionFlowProgressPresenter = createSessionFlowProgressPresenter\(\{[\s\S]*setBusy,[\s\S]*setBusyLabel,[\s\S]*setBusyStartedAt,[\s\S]*setCreatingSession,[\s\S]*\}\);/s,
+    "app.tsx should adapt UI busy signals through the session flow progress presenter",
+  );
+  assert.match(
+    source,
+    /createSessionSendWorkflow\(\{[\s\S]*emitFlowProgress: \(event\) => sessionFlowProgressPresenter\.emit\(event\),[\s\S]*prepareSendRuntimeForSend: \(event, preflight\) => prepareSendRuntimeForSend\(event, preflight\),[\s\S]*\}\);/s,
+    "send workflow should receive progress and runtime preparation adapters instead of UI setters",
+  );
+  assert.match(
+    source,
+    /createSessionCreationWorkflow\(\{[\s\S]*emitFlowProgress: \(event\) => sessionFlowProgressPresenter\.emit\(event\),[\s\S]*applyCreatedSessionState,[\s\S]*applyCreatedSessionTransition,[\s\S]*\}\);/s,
+    "create workflow should return typed results and let app adapters apply UI state and navigation",
+  );
+  assert.doesNotMatch(
+    `${sendOptions}\n${createOptions}`,
+    /\bsetBusy(?:Label|StartedAt)?\b/,
+    "send/create workflow dependency contracts must not receive direct busy setters",
+  );
+  assert.doesNotMatch(
+    readinessSource,
+    /\bsetBusy(?:Label|StartedAt)?\b|\bbusyLabel\b|\bbusyStartedAt\b/,
+    "runtime readiness service must not own UI busy labels or direct busy setters",
+  );
+});
+
+test("session queue controller and live-read boundaries stay behind extracted owners", () => {
+  assert.match(
+    sessionSource,
+    /createSessionQueueDrainController\(\{[\s\S]*selectedSessionId,[\s\S]*sessionStatus,[\s\S]*sessionStatusById,[\s\S]*handleSelectedSessionChanged: \(input\) => \{[\s\S]*const flowResult = sessionFlowFacade\.handleSelectedSessionChanged\(input\);[\s\S]*return flowResult;[\s\S]*\},[\s\S]*\}\)\.start\(\);/s,
+    "SessionView should wire reactive queue signals into the queue drain controller",
+  );
+  assert.match(
+    queueDrainControllerSource,
+    /createEffect\(\s*on\(\s*options\.selectedSessionId,[\s\S]*options\.handleSelectedSessionChanged\(\{/s,
+    "queue drain controller should own selected-session continuation effects",
+  );
+  assert.match(
+    queueDrainControllerSource,
+    /createEffect\(\s*on\(\s*options\.sessionStatus,[\s\S]*options\.handleActiveSessionStatusChanged\(status, previousStatus\);/s,
+    "queue drain controller should own active-status continuation effects",
+  );
+  assert.match(
+    queueDrainControllerSource,
+    /createEffect\(\s*on\(\s*options\.sessionStatusById,[\s\S]*options\.handleSessionStatusMapChanged\(statuses, previousStatuses\);/s,
+    "queue drain controller should own status-map continuation effects",
+  );
+  assert.doesNotMatch(
+    sessionSource,
+    /createEffect\([\s\S]{0,400}drainNextQueuedDraft\(/,
+    "SessionView effects must not directly drive queue drains",
+  );
+  assert.match(
+    source,
+    /const liveTranscriptReadPolicy = createLiveTranscriptReadPolicy\(\{[\s\S]*\}\);[\s\S]*const isLiveTranscriptReadAllowedForWorkspace = liveTranscriptReadPolicy\.isAllowedForWorkspace;[\s\S]*emitLiveTranscriptPolicyEvent: \(event\) => liveTranscriptReadPolicy\.emit\(event\),/s,
+    "app.tsx should keep live transcript read policy in the policy owner and pass send workflow only an event sink",
+  );
+  assert.doesNotMatch(
+    sessionSendWorkflowSource,
+    /markLiveTranscriptReadAllowedForWorkspace|isLiveTranscriptReadAllowedForWorkspace/,
+    "send workflow must not own browse/live transcript policy decisions",
+  );
+});
+
+test("passive conversation reads require explicit side-effect intent", () => {
+  const resolveHelperStart = conversationServiceSource.indexOf("const resolvePassiveConversationReadClient = async (");
+  const returnExportsStart = conversationServiceSource.indexOf("return {", resolveHelperStart);
+  assert.ok(resolveHelperStart >= 0 && returnExportsStart > resolveHelperStart, "passive read helper source should be present");
+
+  const helperSource = conversationServiceSource.slice(resolveHelperStart, returnExportsStart);
+  const callSites = conversationServiceSource
+    .slice(returnExportsStart)
+    .match(/resolvePassiveConversationReadClient\(([^)]*)\)/g) ?? [];
+
+  assert.match(
+    conversationServiceSource,
+    /export type ConversationReadIntent =\s*\|\s*"browse-only"\s*\|\s*"live-read"\s*\|\s*"status-poll"\s*\|\s*"write-follow-up"\s*\|\s*"write-control";[\s\S]*export type ConversationPassiveReadPolicy = \{[\s\S]*intent: ConversationReadIntent;/s,
+    "conversation service should model passive read side effects as explicit intents",
+  );
+  assert.match(
+    conversationServiceSource,
+    /policy\?\.intent === "write-follow-up" \|\| policy\?\.intent === "write-control"/,
+    "only write follow-up/control policies may start or resolve the local server",
+  );
+  assert.match(
+    helperSource,
+    /if \(!allowServerStart\) \{[\s\S]*recordPassiveServerStartDeclined\(policy\);[\s\S]*return null;[\s\S]*\}/s,
+    "passive read helper should decline server starts when the policy does not allow side effects",
+  );
+  assert.ok(callSites.length > 0, "conversation service should have passive read call sites");
+  assert.deepEqual(
+    callSites.filter((call) => /resolvePassiveConversationReadClient\(\s*\)/.test(call)),
+    [],
+    "passive read call sites should pass an explicit policy object",
+  );
 });
 
 test("baseUrl cache is read and written only for the web runtime", () => {

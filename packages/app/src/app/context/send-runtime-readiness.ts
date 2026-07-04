@@ -2,6 +2,7 @@ import {
   resolveManagedAiBootstrapCurrentConfigCheck,
   resolveManagedAiBootstrapWaitDecision,
 } from "../controllers/managed-ai-bootstrap-readiness-controller";
+import type { RuntimeEngineState } from "../lib/tauri";
 
 export const localRuntimeHealthTimeoutMessage = "Timed out waiting for local runtime health";
 export const managedAiRuntimeConfigNotReadyMessage =
@@ -33,6 +34,7 @@ export type SendRuntimeWorkspaceInfo = {
 
 export type SendRuntimeEngineInfo = {
   running?: boolean;
+  engineState?: RuntimeEngineState | null;
   baseUrl?: string | null;
   projectDir?: string | null;
   childKind?: "direct" | "wsl" | string | null;
@@ -64,6 +66,23 @@ export type SendRuntimeManagedAiBootstrapReadyOptions = {
   isBootstrapBusy: () => boolean;
   isReloadBusy: () => boolean;
   hasClient: () => boolean;
+};
+
+export type SendRuntimePreparationResult = {
+  ok: boolean;
+  runtimeReady: boolean;
+  managedAiReady: boolean;
+  workspaceId: string | null;
+  activeWorkspace: boolean;
+  recoveryAttempted: boolean;
+  reason:
+    | "runtime-health-skipped"
+    | "runtime-health-skip"
+    | "runtime-health-ok"
+    | "runtime-recovery-ok"
+    | "runtime-recovery-not-started"
+    | "runtime-recovery-error"
+    | "managed-ai-bootstrap-blocked";
 };
 
 export type SendRuntimeReadinessDeps<Client extends SendRuntimeClient = SendRuntimeClient> = {
@@ -105,9 +124,6 @@ export type SendRuntimeReadinessDeps<Client extends SendRuntimeClient = SendRunt
   setError: (message: string) => void;
   setEngineReady: (value: boolean) => void;
   setSseConnected: (value: boolean) => void;
-  setBusy: (value: boolean) => void;
-  setBusyLabel: (value: string | null) => void;
-  setBusyStartedAt: (value: number | null) => void;
   safeStringify: (value: unknown) => string;
 };
 
@@ -149,6 +165,9 @@ export function shouldRecoverLocalRuntimeFromHealthError(
   const normalized = message.toLowerCase();
   const localRuntimeUnavailable =
     normalized.includes("engine_not_running") ||
+    normalized.includes("engine_starting") ||
+    normalized.includes('"enginestate":"starting"') ||
+    normalized.includes('"engine_state":"starting"') ||
     normalized.includes("opencode_request_failed") ||
     normalized.includes("workspace not found") ||
     normalized.includes("workspace_not_found") ||
@@ -282,10 +301,10 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
     }
   };
 
-  async function ensureLocalRuntimeReachableForSend(
+  async function ensureLocalRuntimeReachableForSendResult(
     reason: string,
     preflightOrTraceId?: SendRuntimePreflightContext | string | null,
-  ): Promise<boolean> {
+  ): Promise<SendRuntimePreparationResult> {
     const preflight = typeof preflightOrTraceId === "object" ? preflightOrTraceId ?? undefined : undefined;
     const traceId = typeof preflightOrTraceId === "string"
       ? preflightOrTraceId
@@ -296,6 +315,8 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
       ? deps.workspaces().find((workspace) => workspace.id === targetWorkspaceId) ?? null
       : null;
     const targetWorkspaceType = targetWorkspace?.workspaceType ?? deps.activeWorkspaceDisplay().workspaceType;
+    const resultWorkspaceId = targetWorkspaceId || deps.activeWorkspaceId().trim() || null;
+    const targetIsActiveWorkspace = !targetWorkspaceId || targetWorkspaceId === deps.activeWorkspaceId().trim();
     if (!deps.isTauriRuntime() || targetWorkspaceType !== "local") {
       deps.recordSendTrace(`${reason}:runtime-health-skipped`, {
         ...(tracePayload ?? {}),
@@ -303,11 +324,18 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         workspaceType: targetWorkspaceType,
         targetWorkspaceId: targetWorkspaceId || null,
       });
-      return true;
+      return {
+        ok: true,
+        runtimeReady: true,
+        managedAiReady: false,
+        workspaceId: resultWorkspaceId,
+        activeWorkspace: targetIsActiveWorkspace,
+        recoveryAttempted: false,
+        reason: "runtime-health-skipped",
+      };
     }
 
     const currentClient = targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient();
-    const targetIsActiveWorkspace = !targetWorkspaceId || targetWorkspaceId === deps.activeWorkspaceId().trim();
     if (preflight?.runtimeHealthOk) {
       deps.recordSendTrace(`${reason}:runtime-health-skip`, {
         ...(tracePayload ?? {}),
@@ -315,7 +343,15 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         targetWorkspaceId: targetWorkspaceId || null,
       });
       if (targetIsActiveWorkspace) deps.setEngineReady(true);
-      return true;
+      return {
+        ok: true,
+        runtimeReady: true,
+        managedAiReady: false,
+        workspaceId: resultWorkspaceId,
+        activeWorkspace: targetIsActiveWorkspace,
+        recoveryAttempted: false,
+        reason: "runtime-health-skip",
+      };
     }
     if (currentClient) {
       try {
@@ -335,7 +371,15 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         deps.recordSendTrace(`${reason}:runtime-health-ok`, tracePayload);
         if (preflight) preflight.runtimeHealthOk = true;
         if (targetIsActiveWorkspace) deps.setEngineReady(true);
-        return true;
+        return {
+          ok: true,
+          runtimeReady: true,
+          managedAiReady: false,
+          workspaceId: resultWorkspaceId,
+          activeWorkspace: targetIsActiveWorkspace,
+          recoveryAttempted: false,
+          reason: "runtime-health-ok",
+        };
       } catch (error) {
         const message = errorMessage(error);
         const timedOut = isLocalRuntimeHealthTimeoutError(error, deps.safeStringify);
@@ -365,9 +409,6 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
     if (targetIsActiveWorkspace) {
       deps.setEngineReady(false);
       deps.setSseConnected(false);
-      deps.setBusy(true);
-      deps.setBusyLabel("status.connecting");
-      deps.setBusyStartedAt(Date.now());
     }
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -390,12 +431,15 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
           hasClient: Boolean(recoveredClient),
           targetWorkspaceId: targetWorkspaceId || null,
         });
-        if (targetIsActiveWorkspace) {
-          deps.setBusy(false);
-          deps.setBusyLabel(null);
-          deps.setBusyStartedAt(null);
-        }
-        return false;
+        return {
+          ok: false,
+          runtimeReady: false,
+          managedAiReady: false,
+          workspaceId: resultWorkspaceId,
+          activeWorkspace: targetIsActiveWorkspace,
+          recoveryAttempted: true,
+          reason: "runtime-recovery-not-started",
+        };
       }
       deps.recordSendTrace(`${reason}:runtime-recovery-ok`, {
         ...(tracePayload ?? {}),
@@ -403,30 +447,43 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         targetWorkspaceId: targetWorkspaceId || null,
       });
       if (preflight) preflight.runtimeHealthOk = true;
-      if (targetIsActiveWorkspace) {
-        deps.setBusy(false);
-        deps.setBusyLabel(null);
-        deps.setBusyStartedAt(null);
-      }
-      return true;
+      return {
+        ok: true,
+        runtimeReady: true,
+        managedAiReady: false,
+        workspaceId: resultWorkspaceId,
+        activeWorkspace: targetIsActiveWorkspace,
+        recoveryAttempted: true,
+        reason: "runtime-recovery-ok",
+      };
     } catch (error) {
       deps.recordSendTrace(`${reason}:runtime-recovery-error`, {
         ...(tracePayload ?? {}),
         message: errorMessage(error),
       });
-      if (targetIsActiveWorkspace) {
-        deps.setBusy(false);
-        deps.setBusyLabel(null);
-        deps.setBusyStartedAt(null);
-      }
-      return false;
+      return {
+        ok: false,
+        runtimeReady: false,
+        managedAiReady: false,
+        workspaceId: resultWorkspaceId,
+        activeWorkspace: targetIsActiveWorkspace,
+        recoveryAttempted: true,
+        reason: "runtime-recovery-error",
+      };
     }
+  }
+
+  async function ensureLocalRuntimeReachableForSend(
+    reason: string,
+    preflightOrTraceId?: SendRuntimePreflightContext | string | null,
+  ): Promise<boolean> {
+    return (await ensureLocalRuntimeReachableForSendResult(reason, preflightOrTraceId)).ok;
   }
 
   async function prepareSendRuntimeForSend(
     reason: string,
     preflight: SendRuntimePreflightContext,
-  ): Promise<boolean> {
+  ): Promise<SendRuntimePreparationResult> {
     const tracePayload = preflight.traceId ? { traceId: preflight.traceId } : undefined;
     const targetWorkspaceId = preflight.targetWorkspace?.workspaceId?.trim() ?? "";
     const targetWorkspace = targetWorkspaceId
@@ -434,9 +491,9 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
       : null;
     const workspaceType = targetWorkspace?.workspaceType ?? deps.activeWorkspaceDisplay().workspaceType;
 
-    const runtimeReady = await deps.sendTraceStep(
+    const runtimeResult = await deps.sendTraceStep(
       `${reason}:ensure-local-runtime-reachable`,
-      () => ensureLocalRuntimeReachableForSend(reason, preflight),
+      () => ensureLocalRuntimeReachableForSendResult(reason, preflight),
       {
         ...(tracePayload ?? {}),
         activeWorkspaceId: deps.activeWorkspaceId().trim(),
@@ -445,9 +502,14 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         hasClient: Boolean(targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient()),
       },
     );
-    if (!runtimeReady) {
-      deps.recordSendTrace(`${reason}:blocked-runtime-unreachable`, tracePayload);
-      return false;
+    if (!runtimeResult.ok) {
+      deps.recordSendTrace(`${reason}:blocked-runtime-unreachable`, {
+        ...(tracePayload ?? {}),
+        runtimeReason: runtimeResult.reason,
+        runtimeRecoveryAttempted: runtimeResult.recoveryAttempted,
+        targetWorkspaceId: runtimeResult.workspaceId,
+      });
+      return runtimeResult;
     }
     preflight.enginePrepared = true;
 
@@ -463,10 +525,21 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
     );
     if (!managedAiReady) {
       deps.recordSendTrace(`${reason}:blocked-managed-ai-bootstrap`, tracePayload);
-      return false;
+      return {
+        ...runtimeResult,
+        ok: false,
+        runtimeReady: true,
+        managedAiReady: false,
+        reason: "managed-ai-bootstrap-blocked",
+      };
     }
     preflight.managedAiReady = true;
-    return true;
+    return {
+      ...runtimeResult,
+      ok: true,
+      runtimeReady: true,
+      managedAiReady: true,
+    };
   }
 
   async function connectLocalRuntimeClientFromEngineInfo(reason: string): Promise<Client | null> {
@@ -484,6 +557,7 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
           activeWorkspaceId: activeWorkspaceId || null,
           activeWorkspaceRoot: activeWorkspaceRoot || null,
           running: Boolean(info.running),
+          engineState: info.engineState ?? null,
           hasBaseUrl: Boolean(nextBaseUrl),
         });
         return null;
@@ -533,6 +607,7 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
   return {
     ensureManagedAiBootstrapReady,
     ensureLocalRuntimeReachableForSend,
+    ensureLocalRuntimeReachableForSendResult,
     prepareSendRuntimeForSend,
     connectLocalRuntimeClientFromEngineInfo,
     messageFromUnknownError: errorMessage,

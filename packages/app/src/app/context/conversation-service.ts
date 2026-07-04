@@ -3,6 +3,7 @@ import type { Session } from "@opencode-ai/sdk/v2/client";
 import {
   parseVesloWorkspaceIdFromUrl,
   VesloServerError,
+  type VesloConversationAbortInput,
   type VesloConversationAbortResult,
   type VesloConversationCreateResult,
   type VesloConversationRunInput,
@@ -62,7 +63,7 @@ export type ConversationServiceClient = {
   abortConversation: (
     workspaceId: string,
     conversationId: string,
-    input: { directory?: string | null; runId: string },
+    input: VesloConversationAbortInput,
   ) => Promise<VesloConversationAbortResult>;
   getConversationRunStatus: (
     workspaceId: string,
@@ -133,6 +134,20 @@ export type ConversationServiceRunOptions<Client extends ConversationServiceClie
   sendTraceId?: string | null;
   preflight?: ConversationSendPreflightContext<Client>;
   targetWorkspace?: SendTargetWorkspaceScope | null;
+};
+
+export type ConversationReadIntent =
+  | "browse-only"
+  | "live-read"
+  | "status-poll"
+  | "write-follow-up"
+  | "write-control";
+
+export type ConversationPassiveReadPolicy = {
+  intent: ConversationReadIntent;
+  reason: string;
+  workspaceId?: string | null;
+  directory?: string | null;
 };
 
 type ConversationManagedProfile = {
@@ -274,8 +289,37 @@ export function createConversationService<Client extends ConversationServiceClie
     return workspace.vesloWorkspaceId?.trim() || workspaceId;
   };
 
-  const resolvePassiveConversationReadClient = async () => {
+  const passiveReadPolicyAllowsServerStart = (policy: ConversationPassiveReadPolicy | undefined) =>
+    policy?.intent === "write-follow-up" || policy?.intent === "write-control";
+
+  const recordPassiveServerStartDeclined = (policy: ConversationPassiveReadPolicy | undefined) => {
+    deps.recordSendTrace("conversation-read:server-start-declined", {
+      reason: policy?.reason ?? "unspecified",
+      intent: policy?.intent ?? "unspecified",
+      workspaceId: policy?.workspaceId ?? null,
+      directory: policy?.directory ?? null,
+      vesloServerStatus: deps.vesloServerStatus(),
+    });
+    deps.wsDebug("conversation-read:server-start:declined", {
+      reason: policy?.reason ?? "unspecified",
+      intent: policy?.intent ?? "unspecified",
+      workspaceId: policy?.workspaceId ?? null,
+      directory: policy?.directory ?? null,
+    });
+  };
+
+  const resolvePassiveConversationReadClient = async (
+    policy?: ConversationPassiveReadPolicy,
+  ) => {
     let serverClient = deps.vesloServerClient();
+    if (serverClient) return serverClient;
+
+    const allowServerStart = passiveReadPolicyAllowsServerStart(policy);
+    if (!allowServerStart) {
+      recordPassiveServerStartDeclined(policy);
+      return null;
+    }
+
     if (deps.isTauriRuntime() && deps.startupPreference() !== "server" && deps.vesloServerStatus() === "disconnected") {
       await deps.ensureLocalVesloServerRunning().catch((error) => {
         deps.wsDebug("conversation-read:server-start:failed", {
@@ -471,7 +515,12 @@ export function createConversationService<Client extends ConversationServiceClie
       async () => {
         const serverClient = await deps.sendTraceStep(
           `${reason}:resolve-passive-client`,
-          () => resolvePassiveConversationReadClient(),
+          () => resolvePassiveConversationReadClient({
+            intent: "write-follow-up",
+            reason,
+            workspaceId: normalizedWorkspaceId,
+            directory: normalizedDirectory,
+          }),
           {
             ...(tracePayload ?? {}),
             vesloServerStatus: deps.vesloServerStatus(),
@@ -534,7 +583,12 @@ export function createConversationService<Client extends ConversationServiceClie
     directory?: string,
     options?: { sync?: boolean },
   ) => {
-    const serverClient = await resolvePassiveConversationReadClient();
+    const serverClient = await resolvePassiveConversationReadClient({
+      intent: "browse-only",
+      reason: "listConversationsFromVesloReadApi",
+      workspaceId,
+      directory,
+    });
     if (!serverClient) {
       return { workspaceId, serverWorkspaceId: "", items: [], source: "unavailable" as const };
     }
@@ -555,7 +609,12 @@ export function createConversationService<Client extends ConversationServiceClie
     sessionsToImport: Session[],
   ) => {
     if (sessionsToImport.length === 0) return;
-    const serverClient = await resolvePassiveConversationReadClient();
+    const serverClient = await resolvePassiveConversationReadClient({
+      intent: "write-follow-up",
+      reason: "backfillConversationsToVesloReadApi",
+      workspaceId,
+      directory,
+    });
     if (!serverClient) return;
     const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
     if (!serverWorkspaceId) return;
@@ -572,7 +631,12 @@ export function createConversationService<Client extends ConversationServiceClie
     limit: number,
     directory?: string,
   ) => {
-    const serverClient = await resolvePassiveConversationReadClient();
+    const serverClient = await resolvePassiveConversationReadClient({
+      intent: "live-read",
+      reason: "getTranscriptFromVesloReadApi",
+      workspaceId,
+      directory,
+    });
     if (!serverClient) return null;
     const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
     if (!serverWorkspaceId) return null;
@@ -708,15 +772,25 @@ export function createConversationService<Client extends ConversationServiceClie
       },
     );
     deps.recordExternalSendTraceEntries(result.debugTrace);
-    deps.rememberConversationScope({
-      sessionId: result.opencodeSessionId || normalizedSessionId,
-      workspaceId,
-      workspaceRoot: deps.resolveWorkspaceRootForConversationScope(workspaceId, directory),
-      directory,
-      conversationId: result.conversationId,
-      opencodeSessionId: result.opencodeSessionId,
-    });
-    const abortRunId = result.status === "submitted"
+    const resolvedWorkspaceRoot = deps.resolveWorkspaceRootForConversationScope(workspaceId, directory);
+    const rememberRunConversationScope = (sessionId: string) => {
+      const id = sessionId.trim();
+      if (!id) return;
+      deps.rememberConversationScope({
+        sessionId: id,
+        workspaceId,
+        workspaceRoot: resolvedWorkspaceRoot,
+        directory,
+        conversationId: result.conversationId,
+        opencodeSessionId: result.opencodeSessionId,
+      });
+    };
+    const opencodeSessionId = result.opencodeSessionId?.trim() || "";
+    rememberRunConversationScope(opencodeSessionId || normalizedSessionId);
+    if (normalizedSessionId && normalizedSessionId !== opencodeSessionId) {
+      rememberRunConversationScope(normalizedSessionId);
+    }
+    const latestRunId = result.status === "submitted"
       ? result.runId
       : result.activeRunId?.trim() || result.reservedRunId;
     deps.rememberLatestConversationRunId({
@@ -724,7 +798,7 @@ export function createConversationService<Client extends ConversationServiceClie
       conversationId: result.conversationId,
       opencodeSessionId: result.opencodeSessionId,
       uiSessionId: normalizedSessionId,
-      runId: abortRunId,
+      runId: latestRunId,
     });
     const lifecycleRunId = result.status === "submitted"
       ? result.runId
@@ -791,11 +865,13 @@ export function createConversationService<Client extends ConversationServiceClie
       opencodeSessionId: scope.opencodeSessionId,
       uiSessionId: normalizedSessionId,
     });
-    if (!runId) {
-      throw new Error("Conversation run id is not available for abort.");
-    }
 
-    const serverClient = await resolvePassiveConversationReadClient();
+    const serverClient = await resolvePassiveConversationReadClient({
+      intent: "write-control",
+      reason: "abortConversationFromVesloWriteApi",
+      workspaceId,
+      directory,
+    });
     if (!serverClient) return null;
     const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
     if (!serverWorkspaceId) return null;
@@ -805,11 +881,12 @@ export function createConversationService<Client extends ConversationServiceClie
       serverWorkspaceId,
       conversationId,
       opencodeSessionId: scope?.opencodeSessionId ?? null,
-      runId,
+      runId: runId || null,
+      mode: runId ? "run" : "active",
     });
     const result = await serverClient.abortConversation(serverWorkspaceId, conversationId, {
       directory,
-      runId,
+      ...(runId ? { runId } : { mode: "active" as const }),
     });
     deps.recordSendTrace("abortConversation:success", {
       sessionID: normalizedSessionId,
@@ -878,7 +955,12 @@ export function createConversationService<Client extends ConversationServiceClie
     conversationId: string;
     runId: string;
   }) => {
-    const serverClient = await resolvePassiveConversationReadClient();
+    const serverClient = await resolvePassiveConversationReadClient({
+      intent: "status-poll",
+      reason: "readConversationRunStatus",
+      workspaceId: scope.workspaceId,
+      directory: scope.directory,
+    });
     if (!serverClient) return null;
     const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(
       serverClient,

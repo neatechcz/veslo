@@ -20,9 +20,9 @@ function sendPromptSource(): string {
 }
 
 function createSessionAndOpenSource(): string {
-  const start = createWorkflowSource.indexOf("const createSessionAndOpen = async (");
-  const end = createWorkflowSource.indexOf("return {", start);
-  assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
+  const start = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
+  const end = createWorkflowSource.indexOf("\n  const createSession = (", start);
+  assert.ok(start >= 0 && end > start, "runCreateSessionFlow source should be present");
   return createWorkflowSource.slice(start, end);
 }
 
@@ -37,7 +37,7 @@ function appSourceBetween(startNeedle: string, endNeedle: string, label: string)
 function sessionSendWorkflowWiringSource(): string {
   return appSourceBetween(
     "const sessionSendWorkflow = createSessionSendWorkflow({",
-    "  const sendPrompt = sessionSendWorkflow.sendPrompt;",
+    "  const sessionFlowFacade = createSessionFlowFacade({",
     "session send workflow wiring",
   );
 }
@@ -93,13 +93,13 @@ test("createSessionAndOpen uses the controller to skip duplicate send preflight 
 
   assert.match(
     createSource,
-    /const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision\(\{[\s\S]*preflightManagedAiReady: Boolean\(createPreflight\.managedAiReady\),[\s\S]*runtimeAlreadyPrepared: Boolean\(options\.managedAiRuntimeAlreadyPrepared\),[\s\S]*\}\);[\s\S]*if \(managedAiPreflightDecision\.type === "skip"\)/,
+    /const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision\(\{[\s\S]*preflightManagedAiReady: Boolean\(createPreflight\.managedAiReady\),[\s\S]*\}\);[\s\S]*if \(managedAiPreflightDecision\.type === "skip"\)/,
     "createSessionAndOpen managed AI preflight decision should be delegated",
   );
 
   assert.match(
     createSource,
-    /const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision\(\{[\s\S]*preflightRuntimeHealthOk: Boolean\(createPreflight\.runtimeHealthOk\),[\s\S]*\}\);[\s\S]*if \(runtimeHealthPreflightDecision\.type === "skip"\)/,
+    /const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision\(\{[\s\S]*preflightEnginePrepared: Boolean\(createPreflight\.enginePrepared\),[\s\S]*preflightRuntimeHealthOk: Boolean\(createPreflight\.runtimeHealthOk\),[\s\S]*\}\);[\s\S]*if \(runtimeHealthPreflightDecision\.type === "skip"\)/,
     "createSessionAndOpen runtime health preflight decision should be delegated",
   );
 });

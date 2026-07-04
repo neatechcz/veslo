@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use crate::supervised_process::SupervisedCommandChild;
-use crate::types::{EngineInfo, EngineRuntime};
+use crate::types::{EngineInfo, EngineRuntime, RuntimeEngineState};
 
 #[derive(Default)]
 pub struct EngineManager {
@@ -37,6 +37,11 @@ impl EngineManager {
         EngineInfo {
             running,
             runtime: state.runtime.clone(),
+            engine_state: Some(if running {
+                RuntimeEngineState::Ready
+            } else {
+                RuntimeEngineState::Stopped
+            }),
             child_kind: if running {
                 Some("direct".to_string())
             } else {

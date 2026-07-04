@@ -4,6 +4,14 @@ import { dirname } from "node:path";
 
 export type RunStatus = "submitted" | "running" | "blocked" | "completed" | "failed" | "aborted";
 export type RunKind = "prompt" | "command" | "shell" | "summarize";
+export type RunActivityKind = "local_tool" | "assistant_output" | "model_retry" | "idle" | "unknown";
+export type RunWaitReason =
+  | "running_tool"
+  | "model_retry_no_output"
+  | "assistant_message_open"
+  | "session_idle"
+  | "engine_unreachable"
+  | "none";
 
 export const ACTIVE_RUN_STATUSES = ["submitted", "running", "blocked"] as const satisfies readonly RunStatus[];
 
@@ -27,6 +35,11 @@ export type RunRecord = {
   startedAt: number | null;
   completedAt: number | null;
   error: string | null;
+  activityKind: RunActivityKind | null;
+  waitReason: RunWaitReason | null;
+  lastUsefulProgressAt: number | null;
+  retrySince: number | null;
+  lastProgressSignature: string | null;
 } & RunEngineOwner;
 
 export type RunStore = {
@@ -67,6 +80,11 @@ type RunRow = {
   engine_pid: number | null;
   engine_started_at: number | null;
   engine_base_url: string | null;
+  activity_kind: string | null;
+  wait_reason: string | null;
+  last_useful_progress_at: number | null;
+  retry_since: number | null;
+  last_progress_signature: string | null;
 };
 
 const ACTIVE_RUN_STATUS_SQL_LIST = ACTIVE_RUN_STATUSES.map((status) => `'${status}'`).join(", ");
@@ -96,6 +114,15 @@ function rowToRecord(row: RunRow): RunRecord {
       ? null
       : Number(row.engine_started_at),
     engineBaseUrl: row.engine_base_url ?? null,
+    activityKind: row.activity_kind as RunActivityKind | null,
+    waitReason: row.wait_reason as RunWaitReason | null,
+    lastUsefulProgressAt: row.last_useful_progress_at === null || row.last_useful_progress_at === undefined
+      ? null
+      : Number(row.last_useful_progress_at),
+    retrySince: row.retry_since === null || row.retry_since === undefined
+      ? null
+      : Number(row.retry_since),
+    lastProgressSignature: row.last_progress_signature ?? null,
   };
 }
 
@@ -128,6 +155,11 @@ function openDb(dbPath: string): Database {
       engine_pid INTEGER,
       engine_started_at INTEGER,
       engine_base_url TEXT,
+      activity_kind TEXT,
+      wait_reason TEXT,
+      last_useful_progress_at INTEGER,
+      retry_since INTEGER,
+      last_progress_signature TEXT,
       PRIMARY KEY (workspace_id, run_id)
     );
     CREATE INDEX IF NOT EXISTS conversation_run_conversation_idx
@@ -142,6 +174,11 @@ function openDb(dbPath: string): Database {
   ensureColumn(db, "conversation_run", "engine_pid", "engine_pid INTEGER");
   ensureColumn(db, "conversation_run", "engine_started_at", "engine_started_at INTEGER");
   ensureColumn(db, "conversation_run", "engine_base_url", "engine_base_url TEXT");
+  ensureColumn(db, "conversation_run", "activity_kind", "activity_kind TEXT");
+  ensureColumn(db, "conversation_run", "wait_reason", "wait_reason TEXT");
+  ensureColumn(db, "conversation_run", "last_useful_progress_at", "last_useful_progress_at INTEGER");
+  ensureColumn(db, "conversation_run", "retry_since", "retry_since INTEGER");
+  ensureColumn(db, "conversation_run", "last_progress_signature", "last_progress_signature TEXT");
   db.exec(`
     CREATE INDEX IF NOT EXISTS conversation_run_engine_owner_idx
       ON conversation_run (engine_owner_id, status, engine_started_at);
@@ -188,8 +225,13 @@ export function createRunStore(options: { dbPath: string }): RunStore {
             engine_owner_id,
             engine_pid,
             engine_started_at,
-            engine_base_url
-          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            engine_base_url,
+            activity_kind,
+            wait_reason,
+            last_useful_progress_at,
+            retry_since,
+            last_progress_signature
+          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
           `,
         ).run(
           record.workspaceId,
@@ -208,6 +250,11 @@ export function createRunStore(options: { dbPath: string }): RunStore {
           record.enginePid,
           record.engineStartedAt,
           record.engineBaseUrl,
+          record.activityKind,
+          record.waitReason,
+          record.lastUsefulProgressAt,
+          record.retrySince,
+          record.lastProgressSignature,
         );
       });
     },
@@ -232,7 +279,12 @@ export function createRunStore(options: { dbPath: string }): RunStore {
             engine_owner_id = ?13,
             engine_pid = ?14,
             engine_started_at = ?15,
-            engine_base_url = ?16
+            engine_base_url = ?16,
+            activity_kind = ?17,
+            wait_reason = ?18,
+            last_useful_progress_at = ?19,
+            retry_since = ?20,
+            last_progress_signature = ?21
            WHERE workspace_id = ?1 AND run_id = ?2`,
         ).run(
           workspaceId,
@@ -251,6 +303,11 @@ export function createRunStore(options: { dbPath: string }): RunStore {
           next.enginePid,
           next.engineStartedAt,
           next.engineBaseUrl,
+          next.activityKind,
+          next.waitReason,
+          next.lastUsefulProgressAt,
+          next.retrySince,
+          next.lastProgressSignature,
         );
         return next;
       });

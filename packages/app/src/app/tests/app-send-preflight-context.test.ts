@@ -28,9 +28,9 @@ function sendPromptSource(): string {
 }
 
 function createSessionAndOpenSource(): string {
-  const start = createWorkflowSource.indexOf("const createSessionAndOpen = async (");
+  const start = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
   const end = createWorkflowSource.indexOf("return {", start);
-  assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
+  assert.ok(start >= 0 && end > start, "runCreateSessionFlow source should be present");
   return createWorkflowSource.slice(start, end);
 }
 
@@ -44,13 +44,8 @@ test("sendPrompt carries a preflight context into first-session creation", () =>
   );
   assert.match(
     source,
-    /sendPreflight\.managedAiReady = true;/,
-    "sendPrompt should mark managed AI readiness after the gate passes",
-  );
-  assert.match(
-    source,
-    /deps\.prepareSendRuntimeForSend\("sendPrompt", sendPreflight\)/,
-    "sendPrompt should delegate runtime and managed AI readiness to the send readiness owner",
+    /const sendRuntimePreparation = await deps\.prepareSendRuntimeForSend\("sendPrompt", sendPreflight\);[\s\S]*if \(!sendRuntimePreparation\.ok\) \{/,
+    "sendPrompt should delegate runtime and managed AI readiness to the send readiness owner and consume its typed result",
   );
   const prepareStart = runtimeReadinessSource.indexOf("async function prepareSendRuntimeForSend(");
   const prepareEnd = runtimeReadinessSource.indexOf("async function connectLocalRuntimeClientFromEngineInfo", prepareStart);
@@ -66,6 +61,16 @@ test("sendPrompt carries a preflight context into first-session creation", () =>
     /sendPreflight\.runtimeHealthOk = true;/,
     "sendPrompt should not treat a completed workspace engine ensure as a health probe",
   );
+  assert.doesNotMatch(
+    source,
+    /sendPreflight\.(enginePrepared|managedAiReady) = true;/,
+    "sendPrompt should not manually mark readiness flags owned by the readiness service",
+  );
+  assert.doesNotMatch(
+    source,
+    /managedAiRuntimeAlreadyPrepared: true,/,
+    "sendPrompt should not pass a parallel managed-AI readiness flag beside the prepared preflight",
+  );
   assert.match(
     source,
     /deps\.createSessionAndOpen\(initialSessionTitle, \{[\s\S]*preflight: sendPreflight,[\s\S]*\}\)/,
@@ -78,13 +83,13 @@ test("createSessionAndOpen skips duplicate preflight gates when sendPrompt alrea
 
   assert.match(
     createSource,
-    /const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision\(\{[\s\S]*preflightManagedAiReady: Boolean\(createPreflight\.managedAiReady\),[\s\S]*runtimeAlreadyPrepared: Boolean\(options\.managedAiRuntimeAlreadyPrepared\),[\s\S]*\}\);[\s\S]*if \(managedAiPreflightDecision\.type === "skip"\) \{[\s\S]*deps\.recordSendTrace\("createSessionAndOpen:managed-ai-bootstrap-skip"/,
+    /const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision\(\{[\s\S]*preflightManagedAiReady: Boolean\(createPreflight\.managedAiReady\),[\s\S]*\}\);[\s\S]*if \(managedAiPreflightDecision\.type === "skip"\) \{[\s\S]*deps\.recordSendTrace\("createSessionAndOpen:managed-ai-bootstrap-skip"/,
     "createSessionAndOpen should log and skip the duplicate managed AI gate",
   );
   assert.match(
     createSource,
-    /const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision\(\{[\s\S]*preflightRuntimeHealthOk: Boolean\(createPreflight\.runtimeHealthOk\),[\s\S]*\}\);[\s\S]*if \(runtimeHealthPreflightDecision\.type === "skip"\) \{[\s\S]*deps\.recordSendTrace\("createSessionAndOpen:health-skip"/,
-    "createSessionAndOpen should log and skip the duplicate runtime health probe",
+    /const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision\(\{[\s\S]*preflightEnginePrepared: Boolean\(createPreflight\.enginePrepared\),[\s\S]*preflightRuntimeHealthOk: Boolean\(createPreflight\.runtimeHealthOk\),[\s\S]*\}\);[\s\S]*if \(runtimeHealthPreflightDecision\.type === "skip"\) \{[\s\S]*deps\.recordSendTrace\("createSessionAndOpen:health-skip"/,
+    "createSessionAndOpen should log and skip the duplicate runtime preparation step",
   );
   assert.ok(
     createSource.indexOf("const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision") <
@@ -94,15 +99,30 @@ test("createSessionAndOpen skips duplicate preflight gates when sendPrompt alrea
 });
 
 test("send runtime preflight skips duplicate health only for an explicitly healthy preflight", () => {
-  const start = runtimeReadinessSource.indexOf("async function ensureLocalRuntimeReachableForSend(");
-  const end = runtimeReadinessSource.indexOf("async function connectLocalRuntimeClientFromEngineInfo", start);
-  assert.ok(start >= 0 && end > start, "ensureLocalRuntimeReachableForSend source should be present");
-  const ensureSource = runtimeReadinessSource.slice(start, end);
+  const resultStart = runtimeReadinessSource.indexOf("async function ensureLocalRuntimeReachableForSendResult(");
+  const wrapperStart = runtimeReadinessSource.indexOf("async function ensureLocalRuntimeReachableForSend(", resultStart);
+  const prepareStart = runtimeReadinessSource.indexOf("async function prepareSendRuntimeForSend(", wrapperStart);
+  const connectStart = runtimeReadinessSource.indexOf("async function connectLocalRuntimeClientFromEngineInfo", prepareStart);
+  assert.ok(resultStart >= 0 && wrapperStart > resultStart, "typed runtime readiness result source should be present");
+  assert.ok(prepareStart > wrapperStart && connectStart > prepareStart, "runtime readiness wrapper and prepare source should be present");
+  const resultSource = runtimeReadinessSource.slice(resultStart, wrapperStart);
+  const wrapperSource = runtimeReadinessSource.slice(wrapperStart, prepareStart);
+  const prepareSource = runtimeReadinessSource.slice(prepareStart, connectStart);
 
   assert.match(
-    ensureSource,
-    /if \(preflight\?\.runtimeHealthOk\) \{[\s\S]*recordSendTrace\(`\$\{reason\}:runtime-health-skip`,[\s\S]*reason: "send-preflight-already-healthy"[\s\S]*return true;[\s\S]*\}[\s\S]*if \(currentClient\) \{/s,
+    resultSource,
+    /Promise<SendRuntimePreparationResult>[\s\S]*if \(preflight\?\.runtimeHealthOk\) \{[\s\S]*recordSendTrace\(`\$\{reason\}:runtime-health-skip`,[\s\S]*reason: "send-preflight-already-healthy"[\s\S]*return \{[\s\S]*ok: true,[\s\S]*runtimeReady: true,[\s\S]*reason: "runtime-health-skip",[\s\S]*\};[\s\S]*\}[\s\S]*if \(currentClient\) \{/s,
     "send runtime health should skip only when an earlier health probe marked the preflight healthy",
+  );
+  assert.match(
+    wrapperSource,
+    /return \(await ensureLocalRuntimeReachableForSendResult\(reason, preflightOrTraceId\)\)\.ok;/,
+    "the public boolean helper should delegate to the typed runtime readiness result",
+  );
+  assert.match(
+    prepareSource,
+    /const runtimeResult = await deps\.sendTraceStep\([\s\S]*ensureLocalRuntimeReachableForSendResult\(reason, preflight\)[\s\S]*if \(!runtimeResult\.ok\) \{[\s\S]*runtimeReason: runtimeResult\.reason,[\s\S]*runtimeRecoveryAttempted: runtimeResult\.recoveryAttempted,[\s\S]*targetWorkspaceId: runtimeResult\.workspaceId,/s,
+    "prepareSendRuntimeForSend should report typed runtime failure details",
   );
 });
 

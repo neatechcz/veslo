@@ -1,0 +1,66 @@
+[scenario]
+name = "vslo-235-local-host-port-contention"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "local host reports structured blocked state"
+action = "eval"
+timeout_ms = 90000
+script = '''
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const normalize = (value) => String(value ?? "").trim();
+const assert = (condition, message) => {
+  if (!condition) throw new Error(message);
+};
+const tauriInvoke = async (command, payload = {}) => {
+  const invoke = window.__TAURI_INTERNALS__?.invoke;
+  assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+  return await invoke(command, payload);
+};
+let latestProbe = null;
+const waitUntil = async (predicate, options = {}) => {
+  const timeout = options.timeout ?? 60000;
+  const interval = options.interval ?? 500;
+  const deadline = Date.now() + timeout;
+  let latest;
+  while (Date.now() < deadline) {
+    latest = await predicate();
+    if (latest) return latest;
+    await sleep(interval);
+  }
+  throw new Error(`${options.message ?? "Condition was not met"}. Latest=${JSON.stringify(latestProbe ?? latest)}`);
+};
+
+const blocked = await waitUntil(async () => {
+  const info = await tauriInvoke("veslo_server_info").catch((error) => ({ error: String(error) }));
+  latestProbe = { info };
+  if (info?.running === false && info.lifecycleStatus === "blocked" && info.lifecycleReason === "port_unavailable") {
+    return info;
+  }
+  return false;
+}, {
+  timeout: 80000,
+  interval: 500,
+  message: "Local Veslo host did not report blocked/port_unavailable",
+});
+
+const baseUrl = normalize(blocked.baseUrl || blocked.base_url || "");
+const connectUrl = normalize(blocked.connectUrl || blocked.connect_url || "");
+const stderr = normalize(blocked.lastStderr || blocked.last_stderr || "");
+assert(blocked.running === false, `Expected running=false, got ${JSON.stringify(blocked)}`);
+assert(blocked.pid === null || blocked.pid === undefined, `Expected no child pid, got ${JSON.stringify(blocked)}`);
+assert(!baseUrl, `Expected no baseUrl while port is blocked, got ${JSON.stringify(blocked)}`);
+assert(!connectUrl, `Expected no connectUrl while port is blocked, got ${JSON.stringify(blocked)}`);
+assert(
+  /port/i.test(stderr) && /unavailable/i.test(stderr),
+  `Expected stderr to name unavailable port, got ${JSON.stringify(blocked)}`,
+);
+true;
+'''

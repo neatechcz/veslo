@@ -414,8 +414,14 @@ export default function SessionSidebar(props: SidebarProps) {
                       </div>
                       <Show when={!collapsed()}>
                         <div class="space-y-1 pl-2 pb-2">
-                          <Show when={connectionStatus() === "error" && connectionMessage()}>
-                            <div class="font-product type-ui-xs mx-3 rounded-lg border border-red-7/30 bg-red-1/40 px-3 py-2 text-red-11">
+                          <Show when={connectionMessage()}>
+                            <div
+                              class={`font-product type-ui-xs mx-3 rounded-lg border px-3 py-2 ${
+                                connectionStatus() === "error"
+                                  ? "border-red-7/30 bg-red-1/40 text-red-11"
+                                  : "border-amber-7/30 bg-amber-1/40 text-amber-11"
+                              }`}
+                            >
                               {connectionMessage()}
                             </div>
                           </Show>

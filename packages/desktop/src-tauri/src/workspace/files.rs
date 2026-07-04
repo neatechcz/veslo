@@ -64,10 +64,10 @@ fn has_chrome_mcp_alias(mcp_obj: &serde_json::Map<String, serde_json::Value>) ->
     mcp_obj.contains_key("chrome-devtools") || mcp_obj.contains_key("control-chrome")
 }
 
-fn chrome_mcp_npx_config() -> serde_json::Value {
+fn chrome_mcp_installed_config() -> serde_json::Value {
     serde_json::json!({
       "type": "local",
-      "command": ["npx", "-y", "chrome-devtools-mcp@latest", "--isolated"]
+      "command": ["chrome-devtools-mcp", "--isolated"]
     })
 }
 
@@ -79,7 +79,9 @@ fn is_legacy_chrome_mcp_command(config: &serde_json::Value) -> bool {
         return false;
     };
     let parts: Vec<&str> = command.iter().filter_map(|value| value.as_str()).collect();
-    parts.len() == command.len() && parts.as_slice() == ["chrome-devtools-mcp", "--isolated"]
+    parts.len() == command.len()
+        && (parts.as_slice() == ["npx", "-y", "chrome-devtools-mcp@latest", "--isolated"]
+            || parts.as_slice() == ["npx", "--yes", "chrome-devtools-mcp@latest", "--isolated"])
 }
 
 fn migrate_legacy_chrome_mcp_commands(
@@ -91,7 +93,7 @@ fn migrate_legacy_chrome_mcp_commands(
             continue;
         };
         if is_legacy_chrome_mcp_command(config) {
-            *config = chrome_mcp_npx_config();
+            *config = chrome_mcp_installed_config();
             changed = true;
         }
     }
@@ -628,11 +630,10 @@ pub fn ensure_workspace_files(
         }
     }
 
-    let required_plugins: Vec<&str> = match preset {
-        "starter" => vec!["opencode-scheduler"],
-        "automation" => vec!["opencode-scheduler"],
-        _ => vec![],
-    };
+    // OpenCode 1.17.4 can stall session creation while loading the external
+    // scheduler plugin. Scheduled automations now run through Veslo server
+    // routes, so new workspaces should not auto-install that plugin.
+    let required_plugins: Vec<&str> = vec![];
 
     let should_seed_chrome_mcp = true;
 
@@ -665,8 +666,8 @@ pub fn ensure_workspace_files(
         }
     }
 
-    if should_seed_chrome_mcp {
-        if let Some(obj) = config.as_object_mut() {
+    if let Some(obj) = config.as_object_mut() {
+        if should_seed_chrome_mcp || obj.get("mcp").and_then(|value| value.as_object()).is_some() {
             let mcp_value = obj
                 .get("mcp")
                 .cloned()
@@ -679,8 +680,8 @@ pub fn ensure_workspace_files(
 
             if migrate_legacy_chrome_mcp_commands(&mut mcp_obj) {
                 config_changed = true;
-            } else if !has_chrome_mcp_alias(&mcp_obj) {
-                mcp_obj.insert("chrome-devtools".to_string(), chrome_mcp_npx_config());
+            } else if should_seed_chrome_mcp && !has_chrome_mcp_alias(&mcp_obj) {
+                mcp_obj.insert("chrome-devtools".to_string(), chrome_mcp_installed_config());
                 config_changed = true;
             }
 
@@ -773,6 +774,29 @@ mod tests {
         assert!(!skills_dir.join("skill-creator").exists());
         assert!(!skills_dir.join("plugin-creator").exists());
         assert!(!skills_dir.join("agent-creator").exists());
+    }
+
+    #[test]
+    fn starter_workspace_does_not_seed_scheduler_plugin() {
+        let root = temp_workspace_root("starter-no-scheduler-plugin");
+        let root_str = root.to_string_lossy().to_string();
+
+        ensure_workspace_files(&root_str, "starter", None, None, None)
+            .expect("seed workspace files");
+
+        let config_raw =
+            fs::read_to_string(root.join("opencode.jsonc")).expect("read generated config");
+        let config: serde_json::Value =
+            serde_json::from_str(&config_raw).expect("parse generated config");
+        let plugins = config
+            .get("plugin")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        assert!(!plugins.contains(&serde_json::Value::String("opencode-scheduler".to_string())));
+
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]
@@ -942,7 +966,7 @@ Use this guide for the team's custom process.
     }
 
     #[test]
-    fn ensure_workspace_files_seeds_chrome_for_non_starter_presets() {
+    fn ensure_workspace_files_seeds_chrome_without_scheduler_for_automation_presets() {
         let root = temp_workspace_root("automation");
         let root_str = root.to_string_lossy().to_string();
 
@@ -964,12 +988,16 @@ Use this guide for the team's custom process.
         assert_eq!(
             command,
             vec![
-                serde_json::Value::String("npx".to_string()),
-                serde_json::Value::String("-y".to_string()),
-                serde_json::Value::String("chrome-devtools-mcp@latest".to_string()),
+                serde_json::Value::String("chrome-devtools-mcp".to_string()),
                 serde_json::Value::String("--isolated".to_string()),
             ]
         );
+        let plugins = config
+            .get("plugin")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(!plugins.contains(&serde_json::Value::String("opencode-scheduler".to_string())));
 
         fs::remove_dir_all(root).ok();
     }
@@ -1018,7 +1046,7 @@ Use this guide for the team's custom process.
     }
 
     #[test]
-    fn ensure_workspace_files_migrates_legacy_control_chrome_command() {
+    fn ensure_workspace_files_migrates_legacy_control_chrome_npx_command() {
         let root = temp_workspace_root("legacy-control-chrome");
         let config_path = root.join("opencode.jsonc");
         fs::write(
@@ -1027,7 +1055,7 @@ Use this guide for the team's custom process.
   "mcp": {
     "control-chrome": {
       "type": "local",
-      "command": ["chrome-devtools-mcp", "--isolated"]
+      "command": ["npx", "-y", "chrome-devtools-mcp@latest", "--isolated"]
     }
   }
 }"#,
@@ -1056,9 +1084,7 @@ Use this guide for the team's custom process.
         assert_eq!(
             command,
             vec![
-                serde_json::Value::String("npx".to_string()),
-                serde_json::Value::String("-y".to_string()),
-                serde_json::Value::String("chrome-devtools-mcp@latest".to_string()),
+                serde_json::Value::String("chrome-devtools-mcp".to_string()),
                 serde_json::Value::String("--isolated".to_string()),
             ]
         );

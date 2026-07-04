@@ -1,7 +1,4 @@
-import type { Session } from "@opencode-ai/sdk/v2/client";
-
 import {
-  buildCreatedSidebarSessionItem,
   resolveCreatedSessionWorkspaceId,
   shouldRouteCreatedSessionAfterSelect,
   type CreatedSession,
@@ -10,13 +7,13 @@ import {
   resolveCreateSessionManagedAiPreflightDecision,
   resolveCreateSessionRuntimeHealthPreflightDecision,
 } from "../controllers/send-orchestration-controller";
+import type { SessionFlowProgressEvent } from "../context/session-flow-progress-presenter";
 import type { SendRuntimePreflightContext, SendRuntimePreflightTargetWorkspace } from "../context/send-runtime-readiness";
 import type { MaterializedSessionHandoff } from "../lib/session-send-contract";
-import type { PendingSidebarSessionMetadata, SidebarSessionItem, View } from "../types";
+import type { PendingSidebarSessionMetadata, View } from "../types";
 
 export type SessionCreationWorkflowCreateOptions = {
   blockAppDuringCreate?: boolean;
-  managedAiRuntimeAlreadyPrepared?: boolean;
   pendingSession?: PendingSidebarSessionMetadata | null;
   sendTraceId?: string | null;
   clientMessageId?: string | null;
@@ -31,15 +28,32 @@ type SessionCreationWorkspaceAccess = {
   connectingWorkspaceId: () => string | null | undefined;
 };
 
-type SessionRouteSyncAccess = {
-  markOwnNavigationSession: (sessionId: string) => void;
-  clearOwnNavigationSessionIf: (sessionId: string) => void;
+export type SessionCreationWorkspaceScope = {
+  workspaceId: string;
+  workspaceRoot: string;
+  directory: string;
+  targetWorkspaceId: string | null;
+  targetWorkspaceRoot: string | null;
+};
+
+export type SessionCreationTransitionRecommendation = {
+  shouldRouteAfterSelect: boolean;
+  sessionId: string;
+};
+
+export type SessionCreationResult = {
+  session: CreatedSession;
+  sessionId: string;
+  initialTitle: string;
+  pendingSession: PendingSidebarSessionMetadata | null;
+  handoff: MaterializedSessionHandoff | null;
+  workspaceScope: SessionCreationWorkspaceScope;
+  transition: SessionCreationTransitionRecommendation;
 };
 
 export type SessionCreationWorkflowOptions = {
   activeSendTraceId: () => string | null | undefined;
   addOpencodeCacheHint: (message: string) => string;
-  applyPendingInitialSessionTitle: (session: CreatedSession) => Session;
   baseUrl: () => string;
   currentView: () => View;
   developerMode: () => boolean;
@@ -48,17 +62,11 @@ export type SessionCreationWorkflowOptions = {
     preflight: SendRuntimePreflightContext,
   ) => Promise<boolean>;
   ensureManagedAiBootstrapReady: (preflight: SendRuntimePreflightContext) => Promise<boolean>;
-  goToSession: (sessionId: string) => void;
   isWorkspaceClientStaleError: (error: unknown) => error is {
     entryWorkspaceId?: string | null;
     currentWorkspaceId?: string | null;
   };
   managedAiBootstrapBusy: () => boolean;
-  materializePendingSessionInWorkspaceSidebar: (input: {
-    workspaceId: string;
-    pendingSessionInstanceId: string | null;
-    item: SidebarSessionItem;
-  }) => void;
   perfNow: () => number;
   recordPerfLog: (
     enabled: boolean,
@@ -73,17 +81,14 @@ export type SessionCreationWorkflowOptions = {
     startedAt: number,
     payload?: Record<string, unknown>,
   ) => void;
+  emitFlowProgress: (event: SessionFlowProgressEvent) => void;
+  applyCreatedSessionState: (
+    result: SessionCreationResult,
+    options: SessionCreationWorkflowCreateOptions,
+  ) => void;
+  applyCreatedSessionTransition: (result: SessionCreationResult) => Promise<void>;
   recordSendTrace: (event: string, payload?: Record<string, unknown>) => void;
-  registerPendingInitialSessionTitle: (sessionId: string, title: string) => void;
   reloadBusy: () => boolean;
-  rememberConversationScope: (input: {
-    sessionId: string;
-    workspaceId: string;
-    workspaceRoot: string;
-    directory: string;
-    conversationId?: string | null;
-    opencodeSessionId?: string | null;
-  }) => void;
   resolveRuntimeSandboxStateForTarget: (
     targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
   ) => unknown;
@@ -94,23 +99,14 @@ export type SessionCreationWorkflowOptions = {
   routedClient: (workspaceId?: string | null) => unknown;
   routedClientForSendTarget: (targetWorkspace?: SendRuntimePreflightTargetWorkspace | null) => unknown;
   safeStringify: (value: unknown) => string;
-  selectSession: (sessionId: string) => Promise<void>;
   sendTraceStep: <T>(
     event: string,
     run: () => Promise<T>,
     payload?: Record<string, unknown>,
   ) => Promise<T>;
-  sessionRouteSync: SessionRouteSyncAccess;
-  sessions: () => Session[];
-  setBusy: (value: boolean) => void;
-  setBusyLabel: (value: string) => void;
-  setBusyStartedAt: (value: number) => void;
-  setCreatingSession: (value: boolean) => void;
   setError: (message: string | null) => void;
-  setSessions: (sessions: Session[]) => void;
   unknownErrorMessage: () => string;
   workspace: SessionCreationWorkspaceAccess;
-  wsDebug: (event: string, payload?: Record<string, unknown>) => void;
   abortRefreshes: () => void;
   createConversationFromVesloWriteApi: (
     workspaceId: string,
@@ -118,11 +114,14 @@ export type SessionCreationWorkflowOptions = {
     title?: string,
     preflight?: SendRuntimePreflightContext,
   ) => Promise<CreatedSession | null | undefined>;
-  onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
   warn?: (message: string, payload?: Record<string, unknown>) => void;
 };
 
 export type SessionCreationWorkflow = {
+  createSession: (
+    initialTitle?: string,
+    options?: SessionCreationWorkflowCreateOptions,
+  ) => Promise<SessionCreationResult | undefined>;
   createSessionAndOpen: (
     initialTitle?: string,
     options?: SessionCreationWorkflowCreateOptions,
@@ -142,10 +141,11 @@ export function createSessionCreationWorkflow(
     console.warn(message, payload);
   };
 
-  const createSessionAndOpen = async (
+  const runCreateSessionFlow = async (
     initialTitle = "",
     options: SessionCreationWorkflowCreateOptions = {},
-  ): Promise<string | undefined> => {
+    applyEffects: boolean,
+  ): Promise<SessionCreationResult | undefined> => {
     const blockAppDuringCreate = options.blockAppDuringCreate ?? true;
     const pendingSidebarSession = options.pendingSession ?? null;
     const preflight = options.preflight;
@@ -202,6 +202,7 @@ export function createSessionCreationWorkflow(
     createPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(targetWorkspace);
     let createRuntimeReady = true;
     const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision({
+      preflightEnginePrepared: Boolean(createPreflight.enginePrepared),
       preflightRuntimeHealthOk: Boolean(createPreflight.runtimeHealthOk),
     });
     if (runtimeHealthPreflightDecision.type === "skip") {
@@ -235,7 +236,6 @@ export function createSessionCreationWorkflow(
     createPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(targetWorkspace);
     const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision({
       preflightManagedAiReady: Boolean(createPreflight.managedAiReady),
-      runtimeAlreadyPrepared: Boolean(options.managedAiRuntimeAlreadyPrepared),
     });
     if (managedAiPreflightDecision.type === "skip") {
       deps.recordSendTrace("createSessionAndOpen:managed-ai-bootstrap-skip", {
@@ -308,10 +308,7 @@ export function createSessionCreationWorkflow(
 
     deps.setError(null);
     if (blockAppDuringCreate) {
-      deps.setBusy(true);
-      deps.setBusyLabel("status.creating_task");
-      deps.setBusyStartedAt(Date.now());
-      deps.setCreatingSession(true);
+      deps.emitFlowProgress({ type: "session.creating", owner: "create" });
     }
 
     try {
@@ -364,97 +361,65 @@ export function createSessionCreationWorkflow(
         throw createErr;
       }
 
-      if (initialSessionTitle) {
-        deps.registerPendingInitialSessionTitle(createdSession.id, initialSessionTitle);
-      }
       const createdWorkspaceId = resolveCreatedSessionWorkspaceId({
         pendingSidebarSession,
         targetWorkspaceId: targetWorkspace?.workspaceId,
         connectingWorkspaceId: deps.workspace.connectingWorkspaceId(),
         activeWorkspaceId: deps.workspace.activeWorkspaceId(),
       });
-      if (createdWorkspaceId) {
-        deps.rememberConversationScope({
-          sessionId: createdSession.id,
-          workspaceId: createdWorkspaceId,
-          workspaceRoot: deps.resolveWorkspaceRootForConversationScope(createdWorkspaceId, sessionDirectory),
-          directory: sessionDirectory,
-          conversationId: createdSession.conversationId,
-          opencodeSessionId: createdSession.opencodeSessionId ?? createdSession.id,
-        });
-      }
-      const displaySession = deps.applyPendingInitialSessionTitle(createdSession);
-      const newItem = buildCreatedSidebarSessionItem({
-        session: createdSession,
-        displaySession,
-        pendingSidebarSession,
-      });
-      const wsId = createdWorkspaceId;
+      const createdWorkspaceRoot = createdWorkspaceId
+        ? deps.resolveWorkspaceRootForConversationScope(createdWorkspaceId, sessionDirectory)
+        : sessionDirectory;
       const clientMessageId = options.clientMessageId?.trim() ?? "";
-      if (clientMessageId) {
-        const handoff = {
-          workspaceId: wsId || targetWorkspace?.workspaceId || deps.workspace.activeWorkspaceId().trim(),
+      const handoff: MaterializedSessionHandoff | null = clientMessageId
+        ? {
+          workspaceId: createdWorkspaceId || targetWorkspace?.workspaceId || deps.workspace.activeWorkspaceId().trim(),
           pendingSessionKey: pendingSidebarSession?.id ?? null,
           sessionId: createdSession.id,
           clientMessageId,
           sendTraceId: sendTraceId || null,
           conversationId: createdSession.conversationId ?? null,
           opencodeSessionId: createdSession.opencodeSessionId ?? createdSession.id,
-        };
-        (options.onMaterializedSessionId ?? deps.onMaterializedSessionId)?.(handoff);
-      }
+        }
+        : null;
+      const creationResult: SessionCreationResult = {
+        session: createdSession,
+        sessionId: createdSession.id,
+        initialTitle: initialSessionTitle,
+        pendingSession: pendingSidebarSession,
+        handoff,
+        workspaceScope: {
+          workspaceId: createdWorkspaceId,
+          workspaceRoot: createdWorkspaceRoot,
+          directory: sessionDirectory,
+          targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
+          targetWorkspaceRoot: targetWorkspace?.workspaceRoot ?? null,
+        },
+        transition: {
+          shouldRouteAfterSelect: shouldRouteCreatedSessionAfterSelect({
+            blockAppDuringCreate,
+            currentView: deps.currentView(),
+          }),
+          sessionId: createdSession.id,
+        },
+      };
 
       if (blockAppDuringCreate) {
-        deps.setBusyLabel("status.loading_session");
+        deps.emitFlowProgress({ type: "session.loading", owner: "create" });
       }
-      const currentStoreSessions = deps.sessions();
-      if (!currentStoreSessions.some((entry) => entry.id === createdSession.id)) {
-        deps.setSessions([createdSession, ...currentStoreSessions]);
-      }
+      if (applyEffects) {
+        deps.applyCreatedSessionState(creationResult, options);
 
-      if (wsId) {
-        deps.materializePendingSessionInWorkspaceSidebar({
-          workspaceId: wsId,
-          pendingSessionInstanceId: pendingSidebarSession?.id ?? null,
-          item: newItem,
-        });
-      } else {
-        deps.wsDebug("session:create:sidebar-materialize-skipped-empty-workspace", {
-          sessionId: createdSession.id,
-          pendingSessionInstanceId: pendingSidebarSession?.id ?? null,
-          targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
-          activeWorkspaceId: deps.workspace.activeWorkspaceId().trim() || null,
-          connectingWorkspaceId: deps.workspace.connectingWorkspaceId()?.trim() || null,
-        });
-      }
-
-      const shouldRouteCreatedSession = shouldRouteCreatedSessionAfterSelect({
-        blockAppDuringCreate,
-        currentView: deps.currentView(),
-      });
-      if (shouldRouteCreatedSession) {
-        deps.sessionRouteSync.markOwnNavigationSession(createdSession.id);
-      }
-
-      mark("session:select:start", { sessionID: createdSession.id });
-      try {
+        mark("session:select:start", { sessionID: createdSession.id });
         await deps.sendTraceStep(
           "createSessionAndOpen:select-session",
-          () => deps.selectSession(createdSession.id),
+          () => deps.applyCreatedSessionTransition(creationResult),
           {
             ...(tracePayload ?? {}),
             sessionID: createdSession.id,
           },
         );
-      } catch (selectError) {
-        deps.sessionRouteSync.clearOwnNavigationSessionIf(createdSession.id);
-        throw selectError;
-      }
-      mark("session:select:ok", { sessionID: createdSession.id });
-
-      if (shouldRouteCreatedSession) {
-        deps.sessionRouteSync.markOwnNavigationSession(createdSession.id);
-        deps.goToSession(createdSession.id);
+        mark("session:select:ok", { sessionID: createdSession.id });
       }
 
       deps.finishPerf(perfEnabled, "session.create", "done", startedAt, {
@@ -465,7 +430,7 @@ export function createSessionCreationWorkflow(
         ...(tracePayload ?? {}),
         sessionID: createdSession.id,
       });
-      return createdSession.id;
+      return creationResult;
     } catch (error) {
       deps.finishPerf(perfEnabled, "session.create", "error", startedAt, {
         runId,
@@ -488,13 +453,26 @@ export function createSessionCreationWorkflow(
       return undefined;
     } finally {
       if (blockAppDuringCreate) {
-        deps.setCreatingSession(false);
-        deps.setBusy(false);
+        deps.emitFlowProgress({ type: "flow.idle", owner: "create" });
       }
     }
   };
 
+  const createSession = (
+    initialTitle = "",
+    options: SessionCreationWorkflowCreateOptions = {},
+  ) => runCreateSessionFlow(initialTitle, options, false);
+
+  const createSessionAndOpen = async (
+    initialTitle = "",
+    options: SessionCreationWorkflowCreateOptions = {},
+  ): Promise<string | undefined> => {
+    const result = await runCreateSessionFlow(initialTitle, options, true);
+    return result?.sessionId;
+  };
+
   return {
+    createSession,
     createSessionAndOpen,
   };
 }

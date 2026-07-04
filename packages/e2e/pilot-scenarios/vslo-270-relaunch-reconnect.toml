@@ -1,0 +1,219 @@
+[scenario]
+name = "vslo-270-relaunch-reconnect"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists after relaunch"
+action = "wait"
+target = "#root"
+timeout_ms = 30000
+
+[[step]]
+name = "verify local host reconnect after relaunch"
+action = "eval"
+script = '''
+const completeSelector = '[data-testid="vslo-270-relaunch-reconnect-complete"]';
+const errorSelector = '[data-testid="vslo-270-relaunch-reconnect-error"]';
+const progressSelector = '[data-testid="vslo-270-relaunch-reconnect-progress"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+document.querySelector(progressSelector)?.remove();
+
+const progressMarker = document.createElement("pre");
+progressMarker.dataset.testid = "vslo-270-relaunch-reconnect-progress";
+progressMarker.style.display = "none";
+progressMarker.textContent = "starting";
+document.body.append(progressMarker);
+
+const setProgress = (stage, detail = null) => {
+  window.__veslo270RelaunchReconnect = {
+    stage,
+    detail,
+    at: new Date().toISOString(),
+  };
+  progressMarker.textContent = JSON.stringify(window.__veslo270RelaunchReconnect);
+};
+
+const appendFailureMarker = (payload) => {
+  if (document.querySelector(errorSelector) || document.querySelector(completeSelector)) return;
+  const marker = document.createElement("pre");
+  marker.dataset.testid = "vslo-270-relaunch-reconnect-error";
+  marker.textContent = JSON.stringify(payload, null, 2);
+  document.body.append(marker);
+};
+
+(async () => {
+  try {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const normalize = (value) => String(value ?? "").trim();
+    const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+    const bodyText = () => document.body.innerText.replace(/\s+/g, " ").trim();
+    const assert = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+    const waitUntil = async (predicate, options = {}) => {
+      const timeout = options.timeout ?? 10000;
+      const interval = options.interval ?? 250;
+      const deadline = Date.now() + timeout;
+      let latest;
+      while (Date.now() < deadline) {
+        latest = await predicate();
+        if (latest) return latest;
+        await sleep(interval);
+      }
+      throw new Error(`${options.message ?? "Condition was not met"}. Latest=${JSON.stringify(latest)}`);
+    };
+    const tauriInvoke = async (command, payload = {}) => {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      assert(typeof invoke === "function", "Tauri invoke bridge is unavailable after relaunch.");
+      return await invoke(command, payload);
+    };
+    const serverJson = async (baseUrl, token, path, init = {}) => {
+      const response = await fetch(`${baseUrl}${path}`, {
+        ...init,
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          accept: "application/json",
+          ...(init.headers ?? {}),
+        },
+      });
+      const text = await response.text();
+      let body = null;
+      try {
+        body = text ? JSON.parse(text) : null;
+      } catch {
+        body = text;
+      }
+      return { ok: response.ok, status: response.status, body };
+    };
+    const waitForLocalVesloServerReady = async () => {
+      let latestInfo = null;
+      setProgress("waiting-local-veslo-server");
+      return await waitUntil(async () => {
+        latestInfo = await tauriInvoke("veslo_server_info").catch((error) => ({ error: error?.message || String(error) }));
+        const baseUrl = trimBaseUrl(latestInfo?.baseUrl);
+        const clientToken = normalize(latestInfo?.clientToken);
+        const hostToken = normalize(latestInfo?.hostToken);
+        if (!latestInfo?.running || !baseUrl || !clientToken || !hostToken) return false;
+        const health = await fetch(`${baseUrl}/health`).catch(() => null);
+        if (!health?.ok) return false;
+        const payload = await health.json().catch(() => null);
+        return payload?.ok === true ? { baseUrl, clientToken, hostToken } : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `Local Veslo server did not reconnect after relaunch. Server info=${JSON.stringify(latestInfo)}`,
+      });
+    };
+    const waitForWorkspaceEngineReady = async (workspace) => {
+      const workspacePath = normalize(workspace?.path || workspace?.directory);
+      assert(workspacePath, `Workspace path is missing from bootstrap payload: ${JSON.stringify(workspace)}`);
+      setProgress("starting-workspace-engine", { workspaceId: workspace?.id ?? null, workspacePath });
+      await tauriInvoke("engine_start", {
+        projectDir: workspacePath,
+        preferSidecar: true,
+        opencodeBinPath: null,
+        runtime: "veslo-orchestrator",
+        workspacePaths: [workspacePath],
+      });
+      const activation = await tauriInvoke("orchestrator_workspace_activate", {
+        workspacePath,
+        name: normalize(workspace?.displayName || workspace?.name) || null,
+      });
+      await sleep(1000);
+      return activation ?? { ok: true };
+    };
+    const waitForOriginalActiveRunCleared = async (connection, scope) => {
+      let latestActive = null;
+      setProgress("waiting-original-active-run-clear", scope);
+      return await waitUntil(async () => {
+        latestActive = await serverJson(
+          connection.baseUrl,
+          connection.clientToken,
+          `/workspace/${encodeURIComponent(scope.workspaceId)}/conversations/${encodeURIComponent(scope.conversationId)}/runs/active`,
+        ).catch((error) => ({ ok: false, status: 0, body: { error: error?.message || String(error) } }));
+        if (latestActive.status === 503 && latestActive.body?.code === "lifecycle_unavailable") return false;
+        if (latestActive.status === 404) return { active: latestActive };
+        const activeStatus = normalize(latestActive.body?.status || latestActive.body?.run?.status);
+        if (/^(aborted|failed|completed)$/.test(activeStatus)) return { active: latestActive };
+        return false;
+      }, {
+        timeout: 90000,
+        interval: 1000,
+        message: `Original conversation active run did not clear after relaunch. Latest=${JSON.stringify(latestActive)}`,
+      });
+    };
+
+    setProgress("waiting-root");
+    await waitUntil(() => document.querySelector("#root")?.children.length > 0, {
+      timeout: 30000,
+      message: "Veslo root did not render child UI after relaunch",
+    });
+
+    let localServer = await waitForLocalVesloServerReady();
+
+    const status = await serverJson(localServer.baseUrl, localServer.clientToken, "/status");
+    assert(status.ok, `GET /status failed after relaunch: ${JSON.stringify(status)}`);
+
+    const scopeRaw = window.localStorage.getItem("veslo:e2e:vslo270:scope");
+    if (scopeRaw) {
+      const scope = JSON.parse(scopeRaw);
+      const workspaceId = normalize(scope?.workspaceId);
+      const conversationId = normalize(scope?.conversationId);
+      if (workspaceId && conversationId) {
+        setProgress("waiting-workspace-bootstrap", { workspaceId });
+        const workspaceList = await waitUntil(async () => {
+          const info = await tauriInvoke("workspace_bootstrap").catch(() => null);
+          return Array.isArray(info?.workspaces) && info.workspaces.length > 0 ? info : false;
+        }, {
+          timeout: 60000,
+          interval: 500,
+          message: `Workspace bootstrap did not expose a local workspace after relaunch. Body=${bodyText().slice(0, 2000)}`,
+        });
+        const activeWorkspace =
+          workspaceList.workspaces.find((workspace) => workspace.id === workspaceId) ??
+          workspaceList.workspaces.find((workspace) => workspace.id === workspaceList.activeId) ??
+          workspaceList.workspaces[0];
+        await waitForWorkspaceEngineReady(activeWorkspace);
+        localServer = await waitForLocalVesloServerReady();
+        await waitForOriginalActiveRunCleared(localServer, { workspaceId, conversationId });
+      }
+    }
+
+    const completeMarker = document.createElement("div");
+    completeMarker.dataset.testid = "vslo-270-relaunch-reconnect-complete";
+    completeMarker.textContent = "complete";
+    document.body.append(completeMarker);
+  } catch (error) {
+    appendFailureMarker({
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+      progress: window.__veslo270RelaunchReconnect ?? null,
+      body: document.body.innerText.replace(/\s+/g, " ").trim().slice(0, 3000),
+    });
+  }
+})();
+
+true;
+'''
+
+[[step]]
+name = "VSLO-270 relaunch reconnect finished"
+action = "wait"
+target = "[data-testid=\"vslo-270-relaunch-reconnect-complete\"], [data-testid=\"vslo-270-relaunch-reconnect-error\"]"
+timeout_ms = 110000
+
+[[step]]
+name = "VSLO-270 relaunch reconnect succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="vslo-270-relaunch-reconnect-error"]');
+if (error) {
+  const detail = (error.textContent || "VSLO-270 relaunch reconnect task failed")
+    .replace(/[\u0080-\uffff]/g, "?")
+    .slice(0, 4000);
+  throw new Error(`VSLO-270 relaunch reconnect task failed: ${detail}`);
+}
+true;
+'''

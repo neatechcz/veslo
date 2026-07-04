@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path
 
 # Get command line arguments
-assert len(sys.argv) == 3, "Usage: python unpack.py <office_file> <output_dir>"
+assert len(sys.argv) == 3, "Usage: veslo-document-runtime exec -- python unpack.py <office_file> <output_dir>"
 input_file, output_dir = sys.argv[1], sys.argv[2]
 
 # Extract and format

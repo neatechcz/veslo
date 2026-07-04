@@ -1,4 +1,4 @@
-import { lstat, readdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, readdir, readFile, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { SOUL_INSTRUCTIONS } from "./soul-runtime.js";
@@ -9,6 +9,7 @@ const INTERNAL_SYSTEM_SOURCE = "openwork-snapshot";
 
 const DELEGATE_PLUGIN_FILE = "veslo-delegate.js";
 const AUTOMATIONS_PLUGIN_FILE = "veslo-automations.js";
+const AUTOMATIONS_PLUGIN_DISABLED_FILE = `${AUTOMATIONS_PLUGIN_FILE}.disabled`;
 
 const ROUTING_BLOCK_START = "<!-- VESLO_INTERNAL_ROUTING_START -->";
 const ROUTING_BLOCK_END = "<!-- VESLO_INTERNAL_ROUTING_END -->";
@@ -507,7 +508,11 @@ async function ensureVesloAgentInstructions(workspaceRoot: string, stats: Provis
   await writeIfChanged(path, next, stats);
 }
 
-function automationsPluginSource(): string {
+function automationsPluginEnabled(): boolean {
+  return false;
+}
+
+function activeAutomationsPluginSource(): string {
   return `import { readFile } from "node:fs/promises";
 import { tool } from "@opencode-ai/plugin";
 
@@ -988,7 +993,35 @@ async function ensureSoulInstructions(workspaceRoot: string, stats: ProvisionSta
 async function writeInternalPlugins(workspaceRoot: string, stats: ProvisionStats) {
   const pluginsDir = join(workspaceRoot, ".opencode", "plugins");
   await ensureDir(pluginsDir);
-  await writeIfChanged(join(pluginsDir, AUTOMATIONS_PLUGIN_FILE), automationsPluginSource(), stats);
+  if (automationsPluginEnabled()) {
+    await writeIfChanged(join(pluginsDir, AUTOMATIONS_PLUGIN_FILE), activeAutomationsPluginSource(), stats);
+    return;
+  }
+  await disableAutomationsPlugin(pluginsDir, stats);
+}
+
+async function uniqueDisabledAutomationsPluginPath(pluginsDir: string): Promise<string> {
+  const quarantineDir = join(dirname(pluginsDir), "veslo", "disabled-plugins");
+  await ensureDir(quarantineDir);
+  const base = join(quarantineDir, AUTOMATIONS_PLUGIN_DISABLED_FILE);
+  if (!(await exists(base))) return base;
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return join(quarantineDir, `${AUTOMATIONS_PLUGIN_FILE}.${stamp}.disabled`);
+}
+
+async function disableAutomationsPlugin(pluginsDir: string, stats: ProvisionStats) {
+  const activePath = join(pluginsDir, AUTOMATIONS_PLUGIN_FILE);
+  if (await exists(activePath)) {
+    await rename(activePath, await uniqueDisabledAutomationsPluginPath(pluginsDir));
+    stats.written += 1;
+    return;
+  }
+  const disabledPath = join(pluginsDir, AUTOMATIONS_PLUGIN_DISABLED_FILE);
+  if (await exists(disabledPath)) {
+    await rm(disabledPath, { force: true });
+    stats.written += 1;
+    return;
+  }
 }
 
 /**

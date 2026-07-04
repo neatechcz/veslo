@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "packageId": "veslo-document-runtime",
+  "entries": [
+    { "name": "LibreOffice", "kind": "system-tool", "licenseExpression": "MPL-2.0", "source": "https://www.libreoffice.org/about-us/licenses/", "reviewRequired": true },
+    { "name": "Poppler", "kind": "system-tool", "licenseExpression": "GPL-2.0-or-later", "source": "https://poppler.freedesktop.org/", "reviewRequired": true },
+    { "name": "QPDF", "kind": "system-tool", "licenseExpression": "Apache-2.0", "source": "https://github.com/qpdf/qpdf", "reviewRequired": true },
+    { "name": "Pandoc", "kind": "system-tool", "licenseExpression": "GPL-2.0-or-later", "source": "https://pandoc.org/", "reviewRequired": true },
+    { "name": "Python", "kind": "runtime", "licenseExpression": "Python-2.0", "source": "https://docs.python.org/3/license.html", "reviewRequired": true },
+    { "name": "Node.js", "kind": "runtime", "licenseExpression": "MIT", "source": "https://github.com/nodejs/node", "reviewRequired": true },
+    { "name": "Liberation fonts", "kind": "font", "licenseExpression": "OFL-1.1", "source": "https://github.com/liberationfonts/liberation-fonts", "reviewRequired": true },
+    { "name": "DejaVu fonts", "kind": "font", "licenseExpression": "Bitstream-Vera AND custom", "source": "https://dejavu-fonts.github.io/", "reviewRequired": true },
+    { "name": "Noto fonts", "kind": "font", "licenseExpression": "OFL-1.1", "source": "https://github.com/notofonts", "reviewRequired": true },
+    { "name": "Python wheels", "kind": "python-packages", "licenseExpression": "SEE-PYTHON-WHEEL-METADATA", "source": "runtime package build manifest", "reviewRequired": true },
+    { "name": "Node packages", "kind": "node-packages", "licenseExpression": "SEE-NPM-PACKAGE-METADATA", "source": "runtime package build manifest", "reviewRequired": true }
+  ]
+}
