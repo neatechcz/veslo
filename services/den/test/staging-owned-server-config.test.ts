@@ -28,6 +28,7 @@ test("owned-server has separate durable staging and local rehearsal env template
     "GOOGLE_WORKSPACE_CONNECTOR_BASE_URL=https://api.staging.veslo.work",
     "MICROSOFT_REDIRECT_URI=https://api.staging.veslo.work/v1/integrations/microsoft/oauth/callback",
     "MICROSOFT_CONNECTOR_BASE_URL=https://api.staging.veslo.work",
+    "MANAGED_AI_OPENAI_REDIRECT_BASE=",
     "AI_GATEWAY_OPENAI_REDIRECT_BASE=https://ai.staging.veslo.work/auth/openai",
     "AI_GATEWAY_DEN_API_BASE=https://api.staging.veslo.work",
     "DEN_API_BASE=https://api.staging.veslo.work",
@@ -42,6 +43,7 @@ test("owned-server has separate durable staging and local rehearsal env template
     "NEXT_PUBLIC_VESLO_AUTH_CALLBACK_URL=http://localhost:3005",
     "PROVISIONER_MODE=stub",
     "workers.veslo.work",
+    "MANAGED_AI_OPENAI_REDIRECT_BASE=https://ai.staging.veslo.work/auth/openai",
   ]) {
     assert.equal(stagingEnv.includes(forbiddenText), false, `durable staging env must not include ${forbiddenText}`)
   }
