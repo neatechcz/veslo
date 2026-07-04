@@ -1,7 +1,7 @@
 ---
 title: Session Flow Background Ownership And Measurability Plan
 date: 2026-07-04
-status: planned
+status: partial
 done: false
 issue: unlinked
 source_audit: session-flow-background-ui-dependency-audit-2026-07-04
@@ -9,14 +9,14 @@ depends_on:
   - docs/plans/2026-07-03-runtime-cold-start-background-flow-ownership-plan.md
   - docs/plans/2026-07-03-runtime-cold-start-session-handoff-kiss-plan.md
 sfb00_baseline_and_test_drift_done: true
-sfb01_trace_and_measurement_contract_done: false
+sfb01_trace_and_measurement_contract_done: true
 sfb02_runtime_preparation_single_source_done: true
-sfb03_flow_progress_presenter_boundary_done: false
-sfb04_session_creation_navigation_split_done: false
+sfb03_flow_progress_presenter_boundary_done: true
+sfb04_session_creation_navigation_split_done: true
 sfb05_queue_drain_background_controller_done: false
-sfb06_passive_read_side_effect_policy_done: false
-sfb07_live_transcript_policy_owner_done: false
-sfb08_app_wiring_and_boundary_contract_tests_done: false
+sfb06_passive_read_side_effect_policy_done: true
+sfb07_live_transcript_policy_owner_done: true
+sfb08_app_wiring_and_boundary_contract_tests_done: true
 sfb09_regression_bundle_done: false
 ---
 
@@ -316,7 +316,7 @@ corepack pnpm@10.27.0 --filter @neatech/veslo-ui exec node --test --import=tsx/e
 
 ## SFB01: Trace And Measurement Contract
 
-done: false
+done: true
 
 Goal:
 
@@ -367,6 +367,24 @@ Acceptance:
 
 ```powershell
 corepack pnpm@10.27.0 --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-conversation-flow.test.ts src/app/tests/context/session-flow-facade.test.ts
+```
+
+2026-07-04 completion note:
+
+- Later slices completed the measurement contract without introducing a
+  coordinator:
+  - `SessionFlowProgressEvent` is the typed flow event model for send/create
+    progress.
+  - send/create workflows emit typed progress events through the presenter
+    boundary.
+  - queue continuation trace sources use
+    `SessionConversationFlow.*`/`SessionQueueDrainController.*` owner names.
+  - live transcript read policy emits typed policy events from send/compact
+    success paths.
+- Verification passed:
+
+```powershell
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-conversation-flow.test.ts src/app/tests/context/session-flow-facade.test.ts src/app/tests/context/session-flow-progress-presenter.test.ts
 ```
 
 ## SFB02: Runtime Preparation Single Source
@@ -430,7 +448,7 @@ git diff --check -- packages/app/src/app/context/send-runtime-readiness.ts packa
 
 ## SFB03: Flow Progress Presenter Boundary
 
-done: false
+done: true
 
 Goal:
 
@@ -475,9 +493,33 @@ Acceptance:
   finishes.
 - Existing visible busy/loading behavior remains equivalent.
 
+2026-07-04 implementation note:
+
+- Added `session-flow-progress-presenter.ts` as the session send/create
+  progress adapter. It maps typed flow events to the existing app busy,
+  busy-label, busy-started-at, and creating-session signals.
+- The presenter supports owner-scoped events so overlapping send/create cleanup
+  is idempotent and create-session cleanup does not clear an active send owner.
+- `session-send-workflow.ts` now emits `runtime.connecting`,
+  `conversation.running`, and owner-scoped `flow.idle` instead of receiving
+  `setBusy`, `setBusyLabel`, or `setBusyStartedAt`.
+- `session-creation-workflow.ts` now emits `session.creating`,
+  `session.loading`, and owner-scoped `flow.idle` instead of receiving busy or
+  creating-session setters.
+- `app.tsx` wires the presenter to the existing UI signals. Workspace
+  activation, workspace connection, local workspace creation, extension, and
+  runtime-readiness busy owners were left out of this slice.
+- Verification passed:
+
+```powershell
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/session-flow-progress-presenter.test.ts src/app/tests/pages/session-send-workflow.test.ts src/app/tests/pages/session-creation-workflow.test.ts src/app/tests/app-send-latency-trace.test.ts src/app/tests/pending-session-send-flow.test.ts src/app/tests/app-send-orchestration-controller-contract.test.ts
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui typecheck
+git diff --check -- packages/app/src/app/context/session-flow-progress-presenter.ts packages/app/src/app/pages/session-send-workflow.ts packages/app/src/app/pages/session-creation-workflow.ts packages/app/src/app/app.tsx packages/app/src/app/tests/context/session-flow-progress-presenter.test.ts packages/app/src/app/tests/pages/session-send-workflow.test.ts packages/app/src/app/tests/pages/session-creation-workflow.test.ts packages/app/src/app/tests/pending-session-send-flow.test.ts docs/plans/2026-07-04-session-flow-background-measurability-plan.md
+```
+
 ## SFB04: Session Creation And Navigation Split
 
-done: false
+done: true
 
 Goal:
 
@@ -510,6 +552,26 @@ Acceptance:
 - UI navigation is a transition effect applied after a typed creation result.
 - Pending-session materialization still works for first send.
 - No duplicate select/navigation occurs during create-then-send.
+
+2026-07-04 implementation note:
+
+- `session-creation-workflow.ts` now builds a typed
+  `SessionCreationResult` containing the created session id, conversation ids,
+  workspace scope, pending handoff metadata, and transition recommendation.
+- Added `createSession()` for backend creation callers/tests that need the
+  typed result without applying route/sidebar effects.
+- Kept `createSessionAndOpen()` as the compatible wrapper that applies the
+  caller-owned state and transition adapters and returns the created session id.
+- Moved session list/sidebar/handoff work behind `applyCreatedSessionState` and
+  select/route work behind `applyCreatedSessionTransition` in `app.tsx`.
+- Preserved the old effect order for `createSessionAndOpen`: backend create,
+  state/sidebar/handoff, then select/route transition.
+- Verification passed:
+
+```powershell
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-creation-workflow.test.ts src/app/tests/pages/session-send-workflow.test.ts src/app/tests/pages/session-pending-instance.test.ts src/app/tests/pending-session-send-flow.test.ts src/app/tests/app-send-latency-trace.test.ts
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui typecheck
+```
 
 ## SFB05: Queue Drain Background Controller
 
@@ -547,9 +609,34 @@ Acceptance:
 - Status-map changes no longer require UI component-local effects to continue
   the program.
 
+2026-07-04 implementation note:
+
+- Added `session-queue-drain-controller.ts` under `context/` to own the
+  selected-session, active-status, and status-map reactive effects that trigger
+  queue flow continuation.
+- `SessionView` now wires the controller with accessors and flow-facade
+  handlers, but no longer calls `handleSelectedSessionChanged`,
+  `handleActiveSessionStatusChanged`, or `handleSessionStatusMapChanged` from
+  component-local `createEffect` bodies.
+- Queue storage and `session-conversation-flow.ts` drain logic stayed in place
+  for this slice; only the reactive trigger ownership moved.
+- Existing run-state reset logic that is not queue-drain ownership remains in
+  `SessionView`.
+- This is a partial extraction, not full background ownership. The controller
+  is still started from mounted `SessionView` because queue/run/search/viewport
+  state still lives in the page component. Keep this task open until that state
+  is lifted to an app/context owner and queue continuation can run without
+  `SessionView` being mounted.
+- Verification passed:
+
+```powershell
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-conversation-flow.test.ts src/app/tests/pages/session-message-queue.test.ts src/app/tests/pages/session-view-modularization.test.ts
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui typecheck
+```
+
 ## SFB06: Passive Read Side-Effect Policy
 
-done: false
+done: true
 
 Goal:
 
@@ -585,9 +672,32 @@ Acceptance:
   policy.
 - Telemetry identifies skipped passive starts.
 
+2026-07-04 implementation note:
+
+- Added explicit `ConversationPassiveReadPolicy` intents:
+  `browse-only`, `live-read`, `status-poll`, `write-follow-up`, and
+  `write-control`.
+- `resolvePassiveConversationReadClient()` now returns an already available
+  client immediately, but declines to start a local server unless the intent is
+  `write-follow-up` or `write-control`.
+- Passive conversation list reads use `browse-only`, transcript reads use
+  `live-read`, and run status polling uses `status-poll`.
+- Send/create/run workspace resolution and conversation backfill use
+  `write-follow-up`.
+- `abortConversationFromVesloWriteApi()` uses `write-control`, preserving Stop
+  and abort paths that must be able to start or resolve the local server.
+- Declined passive starts are recorded through send trace and workspace debug
+  telemetry.
+- Verification passed:
+
+```powershell
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/conversation-service.test.ts src/app/tests/app-conversation-abort.test.ts
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui typecheck
+```
+
 ## SFB07: Live Transcript Policy Owner
 
-done: false
+done: true
 
 Goal:
 
@@ -618,9 +728,26 @@ Acceptance:
 - The policy owner records why live read became allowed.
 - Background warmup still cannot flip browse policy by itself.
 
+2026-07-04 implementation note:
+
+- Added `live-transcript-read-policy.ts` as the live transcript read allowance
+  owner.
+- `session-send-workflow.ts` now emits typed conversation run/compact success
+  policy events instead of accepting a direct browse-policy setter.
+- `app.tsx` wires the policy owner and still gates ordinary history browsing
+  through `isLiveTranscriptReadAllowedForWorkspace`.
+- Added tests for no allowance before send, recorded allowance reason,
+  compact-success allowance, and workspace-scoped behavior across active
+  workspace switches.
+- Verification passed:
+
+```powershell
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/live-transcript-read-policy.test.ts src/app/tests/pages/session-send-workflow.test.ts src/app/tests/app-boot-engine-ready.test.ts src/app/tests/app-send-latency-trace.test.ts
+```
+
 ## SFB08: App Wiring And Boundary-Contract Tests
 
-done: false
+done: true
 
 Goal:
 
@@ -654,6 +781,25 @@ Acceptance:
 - Boundary regressions fail quickly in focused tests.
 - `app.tsx` wires owners and adapters but does not grow new flow decisions.
 - Facade names and tests reflect that the facade is a facade.
+
+2026-07-04 implementation note:
+
+- Added boundary-contract coverage for:
+  - progress presenter and runtime preparation adapters,
+  - send/create workflows not receiving direct busy setters,
+  - readiness service not owning busy labels,
+  - queue-drain continuation effects living in
+    `session-queue-drain-controller.ts`,
+  - live transcript policy living behind a policy owner,
+  - passive conversation reads requiring explicit side-effect intent,
+  - `session-flow-facade.ts` staying reactive-free and thin.
+- Updated the existing queue-drain source contract to allow the current
+  selected-session wrapper while requiring delegation through the facade.
+- Verification passed:
+
+```powershell
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/app-refactor-contracts.test.ts src/app/tests/context/session-flow-facade.test.ts src/app/tests/pages/session-view-modularization.test.ts
+```
 
 ## SFB09: Regression Bundle
 
@@ -690,6 +836,46 @@ Acceptance:
 - Queue drain still works after send completion.
 - Passive reads do not start services without policy approval.
 - Top-level `done` can be changed to `true` only after all SFB tasks are true.
+- Final SFB09 remains open while SFB05 is open; the current bundle validates the
+  implemented slices, not the strict mounted-view-independent queue drain goal.
+
+2026-07-04 implementation note:
+
+- Regression bundle passed with the expanded SFB coverage for the implemented
+  slices:
+
+```powershell
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/app-send-preflight-context.test.ts src/app/tests/context/send-runtime-readiness.test.ts src/app/tests/context/conversation-service.test.ts src/app/tests/context/session-flow-facade.test.ts src/app/tests/context/session-flow-progress-presenter.test.ts src/app/tests/context/live-transcript-read-policy.test.ts src/app/tests/app-refactor-contracts.test.ts src/app/tests/app-boot-engine-ready.test.ts src/app/tests/app-send-latency-trace.test.ts src/app/tests/app-conversation-abort.test.ts src/app/tests/app-send-orchestration-controller-contract.test.ts src/app/tests/pages/session-send-workflow.test.ts src/app/tests/pages/session-creation-workflow.test.ts src/app/tests/pages/session-conversation-flow.test.ts src/app/tests/pages/session-message-queue.test.ts src/app/tests/pages/session-pending-instance.test.ts src/app/tests/pages/session-view-modularization.test.ts src/app/tests/pending-session-send-flow.test.ts
+```
+
+Result: `185` passed, `0` failed.
+
+- Typecheck passed:
+
+```powershell
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui typecheck
+```
+
+- Diff hygiene passed with LF/CRLF warnings only:
+
+```powershell
+git diff --check
+```
+
+- E2E debug assets were rebuilt before attempting pilot validation:
+
+```powershell
+pnpm --filter veslo-server build:bin
+$env:VESLO_SIDECAR_FORCE_BUILD = "1"; pnpm --filter @neatech/veslo run prepare:sidecar; Remove-Item Env:\VESLO_SIDECAR_FORCE_BUILD
+Push-Location packages\desktop; pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e; Pop-Location
+```
+
+- Tauri pilot verification was then intentionally skipped on user instruction
+  because the current E2E/debug setup is suspect. The attempted run failed
+  before a useful session-flow validation with:
+  `Invalid package entry 5 in managed dependencies manifest at ...\opencode-managed-deps.json.exe`.
+  Treat that as a separate E2E/debug packaging configuration issue, not as a
+  regression in this session-flow ownership slice.
 
 ## Suggested Agent Slices
 
