@@ -13,11 +13,15 @@ const pendingDraftControllerSource = readFileSync(
   new URL("../../context/pending-session-draft-controller.ts", import.meta.url),
   "utf8",
 );
+const sessionQueueDrainControllerSource = readFileSync(
+  new URL("../../context/session-queue-drain-controller.ts", import.meta.url),
+  "utf8",
+);
 
 test("session loading stays route-owned without a pending preloader", () => {
   assert.match(
     sessionSource,
-    /const showSessionLoadingState = createMemo\(\(\) =>[\s\S]*shouldShowSessionLoadingState\(\{[\s\S]*selectedSessionId: props\.selectedSessionId,[\s\S]*messageCount: effectiveRenderedMessages\(\)\.length,[\s\S]*loadingEarlierMessages: props\.loadingEarlierMessages,[\s\S]*\}\)[\s\S]*\);/,
+    /const showSessionLoadingState = createMemo\(\(\) =>[\s\S]*shouldShowSessionLoadingState\(\{[\s\S]*selectedSessionId: transcriptDisplaySessionId\(\),[\s\S]*messageCount: effectiveRenderedMessages\(\)\.length,[\s\S]*loadingEarlierMessages: props\.loadingEarlierMessages,[\s\S]*\}\)[\s\S]*\);/,
     "session page should derive inline loading from the effectively rendered conversation, not raw backend messages only",
   );
 
@@ -144,8 +148,8 @@ test("first submit hides the no-session target picker in the footer composer pat
 
 test("materializing a pending submitted draft preserves the visible run indicator", () => {
   assert.match(
-    sessionSource,
-    /const pendingBaseKey = pendingSessionQueueKey\(\);[\s\S]*const pendingKey = !previousSessionId[\s\S]*pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null[\s\S]*const previousSessionKey = previousSessionId \? sessionQueueKeyForSessionId\(previousSessionId\) : null;[\s\S]*if \(!pendingKey && previousSessionKey\) \{\s*preserveRunStateOnSessionSwitch\(previousSessionKey\);[\s\S]*\}/s,
+    sessionQueueDrainControllerSource,
+    /const pendingBaseKey = options\.pendingSessionQueueKey\(\);[\s\S]*const pendingKey = !previousSessionId[\s\S]*options\.pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null[\s\S]*const previousSessionKey = previousSessionId[\s\S]*\? options\.sessionQueueKeyForSessionId\(previousSessionId\)[\s\S]*: null;[\s\S]*if \(!pendingKey && previousSessionKey\) \{\s*options\.preserveRunStateOnSessionSwitch\(previousSessionKey\);[\s\S]*\}/s,
     "selecting the real session created for a pending submit should remap the optimistic draft without resetting the active run indicator",
   );
 
@@ -169,9 +173,34 @@ test("materializing a pending submitted draft does not hide the optimistic trans
     "pending-to-real session materialization should keep the optimistic message visible instead of arming the transcript invisible anchor state",
   );
   assert.match(
-    sessionSource,
-    /if \(flowResult\.shouldMarkInitialAnchor && flowResult\.selectedSessionId\) \{\s*transcriptViewport\.markSelectedSessionForInitialAnchor\(flowResult\.selectedSessionId\);\s*\}/,
+    sessionQueueDrainControllerSource,
+    /if \(flowResult\.shouldMarkInitialAnchor && flowResult\.selectedSessionId\) \{\s*options\.markSelectedSessionForInitialAnchor\(flowResult\.selectedSessionId\);\s*\}/,
     "pending-to-real session materialization should keep the optimistic message visible instead of arming the transcript invisible anchor state",
+  );
+  assert.match(
+    sessionSource,
+    /markSelectedSessionForInitialAnchor: \(sessionId\) =>\s*transcriptViewport\.markSelectedSessionForInitialAnchor\(sessionId\),/,
+    "pending-to-real session materialization should keep the optimistic message visible instead of arming the transcript invisible anchor state",
+  );
+});
+
+test("materializing a pending submitted draft holds the transcript surface until server messages arrive", () => {
+  assert.match(
+    sessionSource,
+    /const transcriptDisplaySessionId = createMemo\(\(\) =>[\s\S]*resolveTranscriptDisplaySessionId\(\{[\s\S]*selectedSessionId: props\.selectedSessionId,[\s\S]*heldMaterializedSessionId: heldMaterializedSubmitSessionId\(\),[\s\S]*hasSendingOptimisticSubmit: hasSendingOptimisticSubmit\(\),[\s\S]*transcriptMessageCount: props\.messages\.length,[\s\S]*\}\)[\s\S]*\);/s,
+    "pending-to-real first-send materialization should not immediately switch the transcript viewport before server transcript messages arrive",
+  );
+
+  assert.match(
+    sessionSource,
+    /const transcriptViewport = createSessionTranscriptViewport\(\{[\s\S]*selectedSessionId: transcriptDisplaySessionId,[\s\S]*\}\);/s,
+    "the transcript viewport should use the display session id instead of the raw route-selected session id",
+  );
+
+  assert.match(
+    sessionSource,
+    /const composerResetKey = createMemo\(\(\) =>\s*`\$\{props\.activeComposerTargetId \?\? "__no-target"\}:\$\{transcriptDisplaySessionId\(\) \?\? "__no-session"\}`\s*\);/s,
+    "keyed composer entry boundaries should follow the display session id, not the raw route-selected session id",
   );
 });
 

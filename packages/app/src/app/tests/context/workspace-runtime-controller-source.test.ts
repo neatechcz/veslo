@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createWorkspaceRuntimeController } from "../../context/workspace-runtime-controller.js";
 import { readContextSource, readWorkspaceFacadeSource } from "./workspace-source";
 
 test("lazy runtime ensure lives in workspace runtime controller", () => {
@@ -34,6 +35,11 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
     runtimeSource,
     /async function connectToEngineQuiet[\s\S]*deps\.routing\.ensure\(workspaceId, baseUrl,[\s\S]*deps\.setClient\(nextClient\);/s,
     "quiet reconnect must bind a workspace-scoped routed client before send uses routedClient(workspaceId)",
+  );
+  assert.match(
+    runtimeSource,
+    /function isEngineStartingRoutingError[\s\S]*engine_starting[\s\S]*"connect-quiet:engine-starting"/s,
+    "quiet reconnect should trace pending engine startup separately from generic routing failures",
   );
   assert.match(runtimeSource, /reattachOrchestratorWorkspace\(/);
   assert.match(
@@ -90,4 +96,64 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
     "workspace store should pass the same local runtime preflight used by startHost into lazy first-prompt runtime startup",
   );
   assert.doesNotMatch(facadeSource, /async function ensureEngineForWorkspace/);
+});
+
+test("quiet connect traces engine_starting routing failures distinctly", async () => {
+  const root = globalThis as unknown as {
+    window?: Record<string, unknown>;
+  };
+  const previousWindow = root.window;
+  const traceWindow: Record<string, unknown> = {
+    __vesloSendWorkflowTraceEnabled: true,
+  };
+  root.window = traceWindow;
+
+  try {
+    const controller = createWorkspaceRuntimeController({
+      activeWorkspaceId: () => "ws-a",
+      workspaces: () => [],
+      workspacesHydrated: () => true,
+      routing: {
+        release: () => {},
+        ensure: async () => null,
+        lastEnsureError: () => '{"error":"engine_starting","engineState":"starting"}',
+      },
+      resolveEngineRuntime: () => "veslo-orchestrator",
+      localRuntimeLifecycle: {} as never,
+      connectToServer: async () => true,
+      loadSessions: async () => {},
+      setClient: () => {},
+      setConnectedVersion: () => {},
+      setBaseUrl: () => {},
+      setClientDirectory: () => {},
+      setError: () => {},
+      updateWorkspaceConnectionState: () => {},
+      clearWorkspaceBusyAllExcept: () => {},
+      syncWorkspaceSkillMaterializationBeforeRuntime: async () => true,
+      createClient: () => {
+        throw new Error("createClient should not run for routing ensure failures");
+      },
+      waitForHealthy: async () => ({}),
+      safeStringify: String,
+      wsLog: () => {},
+    });
+
+    const ok = await controller.connectToEngineQuiet(
+      "http://127.0.0.1:7777/workspace/ws-a/opencode",
+      "/repo",
+      undefined,
+      { workspaceId: "ws-a", workspaceType: "local", reason: "test" },
+    );
+    assert.equal(ok, false);
+
+    const logs = traceWindow.__vesloSendWorkflowTrace as Array<Record<string, unknown>>;
+    assert.equal(logs.at(-1)?.event, "connect-quiet:engine-starting");
+    assert.equal(logs.at(-1)?.engineState, "starting");
+  } finally {
+    if (previousWindow === undefined) {
+      delete root.window;
+    } else {
+      root.window = previousWindow;
+    }
+  }
 });

@@ -45,7 +45,7 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     description: "Drive Chrome tabs with browser automation.",
     descriptionKey: "mcp.quick_control_chrome_description",
     type: "local",
-    command: ["npx", "-y", "chrome-devtools-mcp@latest", "--isolated"],
+    command: ["chrome-devtools-mcp", "--isolated"],
     oauth: false,
   },
 ];

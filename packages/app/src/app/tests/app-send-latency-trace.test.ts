@@ -196,9 +196,9 @@ test("conversation read workspace registration dedupes per Veslo client", () => 
 });
 
 test("create session preflight records duration for duplicate gates and server creation", () => {
-  const start = createWorkflowSource.indexOf("const createSessionAndOpen = async (");
-  const end = createWorkflowSource.indexOf("return {", start);
-  assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
+  const start = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
+  const end = createWorkflowSource.indexOf("\n  const createSession = (", start);
+  assert.ok(start >= 0 && end > start, "runCreateSessionFlow source should be present");
   const createSource = createWorkflowSource.slice(start, end);
 
   for (const event of [
@@ -221,12 +221,12 @@ test("create run and compact do not fall back to legacy OpenCode SDK writes", ()
   const sendEnd = sendWorkflowSource.indexOf("async function abortSession(", sendStart);
   const compactStart = mutationWorkflowSource.indexOf("  async function compactCurrentSession(");
   const compactEnd = mutationWorkflowSource.indexOf("  async function replaceUserMessage(", compactStart);
-  const createStart = createWorkflowSource.indexOf("const createSessionAndOpen = async (");
-  const createEnd = createWorkflowSource.indexOf("return {", createStart);
+  const createStart = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
+  const createEnd = createWorkflowSource.indexOf("\n  const createSession = (", createStart);
 
   assert.ok(sendStart >= 0 && sendEnd > sendStart, "sendPrompt source should be present");
   assert.ok(compactStart >= 0 && compactEnd > compactStart, "compactCurrentSession source should be present");
-  assert.ok(createStart >= 0 && createEnd > createStart, "createSessionAndOpen source should be present");
+  assert.ok(createStart >= 0 && createEnd > createStart, "runCreateSessionFlow source should be present");
 
   const sendSource = sendWorkflowSource.slice(sendStart, sendEnd);
   const compactSource = mutationWorkflowSource.slice(compactStart, compactEnd);
@@ -240,9 +240,9 @@ test("create run and compact do not fall back to legacy OpenCode SDK writes", ()
 });
 
 test("create session preflight does not add a fixed abort-refresh settle delay", () => {
-  const start = createWorkflowSource.indexOf("const createSessionAndOpen = async (");
-  const end = createWorkflowSource.indexOf("return {", start);
-  assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
+  const start = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
+  const end = createWorkflowSource.indexOf("\n  const createSession = (", start);
+  assert.ok(start >= 0 && end > start, "runCreateSessionFlow source should be present");
   const createSource = createWorkflowSource.slice(start, end);
   const settleStart = createSource.indexOf('"createSessionAndOpen:abort-refresh-settle"');
   const settleEnd = createSource.indexOf("deps.setError(null);", settleStart);

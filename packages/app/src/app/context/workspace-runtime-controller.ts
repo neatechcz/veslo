@@ -18,6 +18,15 @@ const WORKSPACE_API_WAITING_MESSAGE = "Waiting for OpenCode workspace API";
 const messageFromUnknownError = (error: unknown, safeStringify: (value: unknown) => string) =>
   error instanceof Error ? error.message : safeStringify(error);
 
+function isEngineStartingRoutingError(detail: string | null): boolean {
+  const normalized = (detail ?? "").toLowerCase();
+  return (
+    normalized.includes("engine_starting") ||
+    normalized.includes('"enginestate":"starting"') ||
+    normalized.includes('"engine_state":"starting"')
+  );
+}
+
 export type WorkspaceRuntimeControllerDeps = {
   activeWorkspaceId: Accessor<string>;
   workspaces: Accessor<WorkspaceInfo[]>;
@@ -121,6 +130,7 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
       : null;
     if (workspaceId && !entry) {
       const detail = deps.routing.lastEnsureError(workspaceId);
+      const engineStarting = isEngineStartingRoutingError(detail);
       // This is the "quiet" automated bring-up connect (lifecycle restart /
       // startHost / reattach). A failed health wait here is usually a cold-start
       // race — the engine is spawned but its OpenCode HTTP is not serving
@@ -130,13 +140,18 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
       // client" before recovery. Stay quiet: trace and return false. Terminal
       // failures are owned by ensureEngineForWorkspace's catch block and the
       // send-readiness gate, which surface precise, recoverable-aware errors.
-      recordSendWorkflowTrace("workspace-runtime", "connect-quiet:routing-error", {
-        workspaceId,
-        baseUrl,
-        directory,
-        reason: context?.reason ?? null,
-        error: detail ?? null,
-      });
+      recordSendWorkflowTrace(
+        "workspace-runtime",
+        engineStarting ? "connect-quiet:engine-starting" : "connect-quiet:routing-error",
+        {
+          workspaceId,
+          baseUrl,
+          directory,
+          reason: context?.reason ?? null,
+          error: detail ?? null,
+          ...(engineStarting ? { engineState: "starting" } : {}),
+        },
+      );
       return false;
     }
 

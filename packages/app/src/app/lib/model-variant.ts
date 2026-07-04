@@ -49,11 +49,3 @@ export const resolveStartupModelVariant = ({
     persistMigrationVersion: null,
   };
 };
-
-export const resolveCodexReasoningEffort = (modelID: string, variant: string | null | undefined) => {
-  if (!modelID.trim().toLowerCase().includes("codex")) return undefined;
-  const normalized = normalizeModelVariant(variant);
-  if (!normalized || normalized === "none") return undefined;
-  if (normalized === "xhigh") return "high";
-  return normalized;
-};

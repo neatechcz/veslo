@@ -1,13 +1,16 @@
 import type { EngineState } from "./engine-pool.js";
 
-export type RuntimeEngineState =
-  | "absent"
-  | "starting"
-  | "process_ready"
-  | "workspace_api_waiting"
-  | "ready"
-  | "stopped"
-  | "failed";
+export const RUNTIME_ENGINE_STATES = [
+  "absent",
+  "starting",
+  "process_ready",
+  "workspace_api_waiting",
+  "ready",
+  "stopped",
+  "failed",
+] as const;
+
+export type RuntimeEngineState = (typeof RUNTIME_ENGINE_STATES)[number];
 
 export function runtimeEngineStateFromEngineState(
   state: EngineState | null | undefined,

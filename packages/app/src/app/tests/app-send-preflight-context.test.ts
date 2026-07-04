@@ -28,9 +28,9 @@ function sendPromptSource(): string {
 }
 
 function createSessionAndOpenSource(): string {
-  const start = createWorkflowSource.indexOf("const createSessionAndOpen = async (");
+  const start = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
   const end = createWorkflowSource.indexOf("return {", start);
-  assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
+  assert.ok(start >= 0 && end > start, "runCreateSessionFlow source should be present");
   return createWorkflowSource.slice(start, end);
 }
 

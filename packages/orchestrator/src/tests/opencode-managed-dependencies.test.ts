@@ -3,11 +3,72 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { ensureOpencodeManagedTools } from "../opencode-managed-dependencies.js";
+import {
+  ensureOpencodeManagedTools,
+  VESLO_MANAGED_AI_SDK_PROVIDER_UTILS_VERSION,
+  VESLO_MANAGED_AI_SDK_PROVIDER_VERSION,
+  VESLO_MANAGED_EVENTSOURCE_PARSER_VERSION,
+  VESLO_MANAGED_JSON_SCHEMA_VERSION,
+  VESLO_MANAGED_OPENAI_COMPATIBLE_VERSION,
+  VESLO_MANAGED_PLUGIN_VERSION,
+  VESLO_MANAGED_STANDARD_SCHEMA_SPEC_VERSION,
+  VESLO_MANAGED_WORKFLOW_SERDE_VERSION,
+  VESLO_MANAGED_ZOD_VERSION,
+} from "../opencode-managed-dependencies.js";
+
+const managedPackageSpecs = [
+  { name: "@opencode-ai/plugin", version: VESLO_MANAGED_PLUGIN_VERSION },
+  { name: "zod", version: VESLO_MANAGED_ZOD_VERSION },
+  { name: "@ai-sdk/openai-compatible", version: VESLO_MANAGED_OPENAI_COMPATIBLE_VERSION },
+  { name: "@ai-sdk/provider", version: VESLO_MANAGED_AI_SDK_PROVIDER_VERSION },
+  { name: "@ai-sdk/provider-utils", version: VESLO_MANAGED_AI_SDK_PROVIDER_UTILS_VERSION },
+  { name: "@standard-schema/spec", version: VESLO_MANAGED_STANDARD_SCHEMA_SPEC_VERSION },
+  { name: "@workflow/serde", version: VESLO_MANAGED_WORKFLOW_SERDE_VERSION },
+  { name: "eventsource-parser", version: VESLO_MANAGED_EVENTSOURCE_PARSER_VERSION },
+  { name: "json-schema", version: VESLO_MANAGED_JSON_SCHEMA_VERSION },
+] as const;
+
+function packagePathParts(name: string): string[] {
+  return name.split("/").filter(Boolean);
+}
+
+function nodeModulePackageDir(root: string, name: string): string {
+  return join(root, "node_modules", ...packagePathParts(name));
+}
 
 async function writePackageJson(dir: string, pkg: Record<string, unknown>) {
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
+}
+
+async function writeManagedPackage(root: string, name: string, version: string) {
+  await writePackageJson(nodeModulePackageDir(root, name), {
+    name,
+    version,
+    type: "module",
+  });
+}
+
+async function seedManagedPackages(root: string, omit: string[] = []) {
+  const omitted = new Set(omit);
+  for (const spec of managedPackageSpecs) {
+    if (omitted.has(spec.name)) continue;
+    await writeManagedPackage(root, spec.name, spec.version);
+  }
+}
+
+function simpleManagedManifestPackage(name: string, version: string, includeEmptyFile = false) {
+  return {
+    name,
+    version,
+    files: [
+      {
+        path: "package.json",
+        content: `${JSON.stringify({ name, version, type: "module" })}\n`,
+      },
+      ...(includeEmptyFile ? [{ path: "dist/index.js", content: "" }] : []),
+    ],
+  };
 }
 
 async function writeManagedDepsManifest(
@@ -47,14 +108,7 @@ describe("ensureOpencodeManagedTools", () => {
     const configDir = join(root, "config");
     const events: Array<{ event: string; payload: Record<string, unknown> }> = [];
 
-    await writePackageJson(
-      join(configDir, "node_modules", "@opencode-ai", "plugin"),
-      {
-        name: "@opencode-ai/plugin",
-        version: "1.17.4",
-        type: "module",
-      },
-    );
+    await seedManagedPackages(configDir, ["zod"]);
     await writePackageJson(
       join(home, ".bun", "install", "cache", "zod@4.1.8@@@1"),
       {
@@ -73,6 +127,10 @@ describe("ensureOpencodeManagedTools", () => {
       await readFile(join(configDir, "node_modules", "zod", "package.json"), "utf8"),
     ) as { version?: string };
     expect(zodPackageJson.version).toBe("4.1.8");
+    const configPackageJson = JSON.parse(await readFile(join(configDir, "package.json"), "utf8")) as {
+      dependencies?: Record<string, string>;
+    };
+    expect(configPackageJson.dependencies?.["@ai-sdk/openai-compatible"]).toBe("3.0.5");
 
     const status = events.find((entry) => entry.event === "opencode-managed-dependencies:status");
     expect(status?.payload).toMatchObject({
@@ -80,6 +138,8 @@ describe("ensureOpencodeManagedTools", () => {
       pluginMode: "vendored",
       zodMode: "vendored",
       zodVersion: "4.1.8",
+      openAiCompatibleMode: "vendored",
+      openAiCompatibleVersion: "3.0.5",
     });
   });
 
@@ -93,14 +153,7 @@ describe("ensureOpencodeManagedTools", () => {
     const originalHomeDrive = process.env.HOMEDRIVE;
     const originalHomePath = process.env.HOMEPATH;
 
-    await writePackageJson(
-      join(configDir, "node_modules", "@opencode-ai", "plugin"),
-      {
-        name: "@opencode-ai/plugin",
-        version: "1.17.4",
-        type: "module",
-      },
-    );
+    await seedManagedPackages(configDir, ["zod"]);
     await writePackageJson(
       join(userProfile, ".bun", "install", "cache", "zod@4.1.8@@@1"),
       {
@@ -199,6 +252,15 @@ describe("ensureOpencodeManagedTools", () => {
           { path: "index.js", content: "export const z = {};\n" },
         ],
       },
+      ...managedPackageSpecs
+        .filter((spec) => spec.name !== "@opencode-ai/plugin" && spec.name !== "zod")
+        .map((spec) =>
+          simpleManagedManifestPackage(
+            spec.name,
+            spec.version,
+            spec.name === "@standard-schema/spec",
+          )
+        ),
     ]);
 
     await ensureOpencodeManagedTools(configDir, {
@@ -213,8 +275,15 @@ describe("ensureOpencodeManagedTools", () => {
     const zodPackageJson = JSON.parse(
       await readFile(join(configDir, "node_modules", "zod", "package.json"), "utf8"),
     ) as { version?: string };
+    const openAiCompatiblePackageJson = JSON.parse(
+      await readFile(
+        join(configDir, "node_modules", "@ai-sdk", "openai-compatible", "package.json"),
+        "utf8",
+      ),
+    ) as { version?: string };
     expect(pluginPackageJson.version).toBe("1.17.4");
     expect(zodPackageJson.version).toBe("4.1.8");
+    expect(openAiCompatiblePackageJson.version).toBe("3.0.5");
 
     const status = events.find((entry) => entry.event === "opencode-managed-dependencies:status");
     expect(status?.payload).toMatchObject({
@@ -223,6 +292,8 @@ describe("ensureOpencodeManagedTools", () => {
       pluginVersion: "1.17.4",
       zodMode: "vendored",
       zodVersion: "4.1.8",
+      openAiCompatibleMode: "vendored",
+      openAiCompatibleVersion: "3.0.5",
     });
     expect(events.some((entry) => entry.event === "opencode-managed-dependencies:plugin-fallback-written")).toBe(false);
   });
@@ -234,22 +305,7 @@ describe("ensureOpencodeManagedTools", () => {
     const repoRoot = join(root, "repo");
     const events: Array<{ event: string; payload: Record<string, unknown> }> = [];
 
-    await writePackageJson(
-      join(repoRoot, "node_modules", "@opencode-ai", "plugin"),
-      {
-        name: "@opencode-ai/plugin",
-        version: "1.17.4",
-        type: "module",
-      },
-    );
-    await writePackageJson(
-      join(repoRoot, "node_modules", "zod"),
-      {
-        name: "zod",
-        version: "4.1.8",
-        type: "module",
-      },
-    );
+    await seedManagedPackages(repoRoot);
 
     await ensureOpencodeManagedTools(configDir, {
       home,
@@ -263,12 +319,19 @@ describe("ensureOpencodeManagedTools", () => {
     const zodPackageJson = JSON.parse(
       await readFile(join(configDir, "node_modules", "zod", "package.json"), "utf8"),
     ) as { version?: string };
+    const openAiCompatiblePackageJson = JSON.parse(
+      await readFile(
+        join(configDir, "node_modules", "@ai-sdk", "openai-compatible", "package.json"),
+        "utf8",
+      ),
+    ) as { version?: string };
     expect(pluginPackageJson.version).toBe("1.17.4");
     expect(zodPackageJson.version).toBe("4.1.8");
+    expect(openAiCompatiblePackageJson.version).toBe("3.0.5");
 
     const vendoredSources = events
       .filter((entry) => entry.event === "opencode-managed-dependencies:vendored")
       .map((entry) => entry.payload.source);
-    expect(vendoredSources).toEqual(["node-modules", "node-modules"]);
+    expect(vendoredSources).toEqual(managedPackageSpecs.map(() => "node-modules"));
   });
 });

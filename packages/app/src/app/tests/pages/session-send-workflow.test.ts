@@ -9,6 +9,8 @@ import {
   type SessionSendWorkflowOptions,
 } from "../../pages/session-send-workflow.js";
 import type { SendTargetWorkspaceScope } from "../../context/workspace-session-selection.js";
+import type { SessionFlowProgressEvent } from "../../context/session-flow-progress-presenter.js";
+import type { LiveTranscriptReadPolicyEvent } from "../../context/live-transcript-read-policy.js";
 import type { DocumentRuntimeStatusPayload } from "../../lib/document-runtime.js";
 import type { VesloConversationRunInput } from "../../lib/veslo-server.js";
 import type { Client, ComposerDraft, ModelRef } from "../../types.js";
@@ -25,12 +27,14 @@ const promptDraft = (text = "hello"): ComposerDraft => ({
 
 type Harness = {
   events: string[];
+  progressEvents: SessionFlowProgressEvent["type"][];
   actions: string[];
   errors: string[];
   options: SessionSendWorkflowOptions;
   sendPromptInFlightCount: () => number;
   busyState: () => boolean;
   liveReadAllowedWorkspaceIds: string[];
+  liveTranscriptPolicyEvents: LiveTranscriptReadPolicyEvent[];
 };
 
 function documentRuntimePayload(
@@ -72,9 +76,10 @@ function documentRuntimePayload(
 
 function createHarness(overrides: Partial<SessionSendWorkflowOptions> = {}): Harness {
   const events: string[] = [];
+  const progressEvents: SessionFlowProgressEvent["type"][] = [];
   const actions: string[] = [];
   const errors: string[] = [];
-  const { setBusy: overrideSetBusy, ...optionOverrides } = overrides;
+  const { emitFlowProgress: overrideEmitFlowProgress, ...optionOverrides } = overrides;
   const targetWorkspace: SendTargetWorkspaceScope = {
     workspaceId: "ws-active",
     workspaceRoot: "/active",
@@ -89,6 +94,7 @@ function createHarness(overrides: Partial<SessionSendWorkflowOptions> = {}): Har
   let sendPromptInFlightCount = 0;
   let busyState = false;
   const liveReadAllowedWorkspaceIds: string[] = [];
+  const liveTranscriptPolicyEvents: LiveTranscriptReadPolicyEvent[] = [];
 
   const options: SessionSendWorkflowOptions = {
     abortConversationFromVesloWriteApi: async () => null,
@@ -134,6 +140,11 @@ function createHarness(overrides: Partial<SessionSendWorkflowOptions> = {}): Har
     developerMode: () => false,
     displayedConversationStillMatches: () => true,
     engineReady: () => true,
+    emitFlowProgress: (event) => {
+      progressEvents.push(event.type);
+      busyState = event.type !== "flow.idle";
+      overrideEmitFlowProgress?.(event);
+    },
     finishPerf: () => undefined,
     holdVisibleRuntimeActivity: (sessionId, reason) => actions.push(`hold:${sessionId}:${reason}`),
     isPendingSessionInstanceId: (sessionId) => Boolean(sessionId?.startsWith("pending-session:")),
@@ -143,8 +154,9 @@ function createHarness(overrides: Partial<SessionSendWorkflowOptions> = {}): Har
       false,
     isWorkspaceRuntimeReady: () => true,
     listCommands: async () => [],
-    markLiveTranscriptReadAllowedForWorkspace: (workspaceId) => {
-      liveReadAllowedWorkspaceIds.push(workspaceId?.trim() || "ws-active");
+    emitLiveTranscriptPolicyEvent: (event) => {
+      liveTranscriptPolicyEvents.push(event);
+      liveReadAllowedWorkspaceIds.push(event.workspaceId?.trim() || "ws-active");
     },
     markPendingDraftConsumed: (id) => actions.push(`mark-consumed:${id}`),
     messageFromUnknownError: (error) => error instanceof Error ? error.message : String(error),
@@ -207,12 +219,6 @@ function createHarness(overrides: Partial<SessionSendWorkflowOptions> = {}): Har
     sessionStoreSetCommandDisplay: () => undefined,
     setActivePendingDraftKey: () => undefined,
     setActivePendingDraftMeta: () => undefined,
-    setBusy: (value) => {
-      busyState = value;
-      overrideSetBusy?.(value);
-    },
-    setBusyLabel: () => undefined,
-    setBusyStartedAt: () => undefined,
     setComposerDraftBySessionId: () => undefined,
     setError: (message) => {
       if (message) errors.push(message);
@@ -245,12 +251,14 @@ function createHarness(overrides: Partial<SessionSendWorkflowOptions> = {}): Har
 
   return {
     events,
+    progressEvents,
     actions,
     errors,
     options,
     sendPromptInFlightCount: () => sendPromptInFlightCount,
     busyState: () => busyState,
     liveReadAllowedWorkspaceIds,
+    liveTranscriptPolicyEvents,
   };
 }
 
@@ -342,8 +350,8 @@ test("session send workflow releases in-flight tracking when runtime preparation
       throw new Error("runtime preparation failed");
     },
     resolveSendPromptBusyOwnership: () => ({ ownsBusy: true }),
-    setBusy: (value) => {
-      busyValues.push(value);
+    emitFlowProgress: (event) => {
+      busyValues.push(event.type !== "flow.idle");
     },
   });
   const workflow = createSessionSendWorkflow(harness.options);
@@ -382,8 +390,8 @@ test("session send workflow releases in-flight tracking when conversation run th
       });
       throw new Error("conversation run failed");
     },
-    setBusy: (value) => {
-      busyValues.push(value);
+    emitFlowProgress: (event) => {
+      busyValues.push(event.type !== "flow.idle");
     },
   });
   const workflow = createSessionSendWorkflow(harness.options);
@@ -438,7 +446,7 @@ test("session send workflow ignores a selected session from another workspace wh
   assert.ok(!harness.actions.includes("run:sess-selected"));
 });
 
-test("session send workflow marks live transcript reads after successful user send", async () => {
+test("session send workflow emits live transcript policy event after successful user send", async () => {
   const harness = createHarness({
     resolveSendTargetWorkspaceScope: () => ({
       workspaceId: "ws-send-target",
@@ -456,6 +464,7 @@ test("session send workflow marks live transcript reads after successful user se
 
   assert.equal(sent, true);
   assert.deepEqual(harness.liveReadAllowedWorkspaceIds, ["ws-send-target"]);
+  assert.deepEqual(harness.liveTranscriptPolicyEvents.map((event) => event.reason), ["sendPrompt:success"]);
 });
 
 test("session send workflow selects the model from the materialized session id", async () => {
@@ -499,6 +508,37 @@ test("session send workflow selects the model from the materialized session id",
   }]);
   assert.ok(harness.actions.includes("create-session"));
   assert.ok(harness.actions.includes("run:sess-created"));
+});
+
+test("session send workflow uses OpenCode variant instead of raw reasoning effort for codex oauth", async () => {
+  const runInputs: Array<{ sessionId: string; input: VesloConversationRunInput }> = [];
+  const harness = createHarness({
+    modelForSession: () => ({
+      providerID: "codex_oauth",
+      modelID: "gpt-5.5",
+    }),
+    modelVariant: () => "xhigh",
+    runConversationFromVesloWriteApi: async (sessionId, input) => {
+      harness.actions.push(`run:${sessionId}`);
+      runInputs.push({ sessionId, input });
+      return true;
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("codex oauth send"), {
+    clientMessageId: "client-codex-oauth",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent, true);
+  assert.equal(runInputs.length, 1);
+  const input = runInputs[0]?.input;
+  assert.equal(input?.kind, "prompt_async");
+  assert.deepEqual(input?.model, { providerID: "codex_oauth", modelID: "gpt-5.5" });
+  assert.equal(input?.variant, "xhigh");
+  assert.equal("reasoning_effort" in (input ?? {}), false);
 });
 
 test("session send workflow sends to an explicit target session without creating a new one", async () => {

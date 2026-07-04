@@ -1,4 +1,3 @@
-import { resolveCodexReasoningEffort } from "../lib/model-variant";
 import {
   GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
 } from "../lib/pending-session-drafts";
@@ -28,10 +27,12 @@ import type {
   SendRuntimePreflightContext,
   SendRuntimePreflightTargetWorkspace,
 } from "../context/send-runtime-readiness";
+import type { SessionFlowProgressEvent } from "../context/session-flow-progress-presenter";
 import type {
   ConversationAbortTarget,
   ConversationSendPreflightContext,
 } from "../context/conversation-service";
+import type { LiveTranscriptReadPolicyEvent } from "../context/live-transcript-read-policy";
 import type { UiScopeToken } from "../lib/ui-conversation-scope";
 import { deleteSessionComposerDraft } from "./session-composer-drafts";
 import type {
@@ -145,6 +146,7 @@ export type SessionSendWorkflowOptions = {
     sessionId: string,
     sendTraceId?: string | null,
   ) => Promise<boolean>;
+  emitFlowProgress: (event: SessionFlowProgressEvent) => void;
   finishPerf: (
     enabled: boolean,
     scope: string,
@@ -162,7 +164,7 @@ export type SessionSendWorkflowOptions = {
   };
   isWorkspaceRuntimeReady: (workspaceId?: string | null) => boolean;
   listCommands: (scope?: { workspaceId?: string | null; directory?: string | null }) => Promise<SessionSendWorkflowCommand[]>;
-  markLiveTranscriptReadAllowedForWorkspace: (workspaceId?: string | null) => void;
+  emitLiveTranscriptPolicyEvent: (event: LiveTranscriptReadPolicyEvent) => void;
   markPendingDraftConsumed: (draftId: string) => void;
   messageFromUnknownError: (error: unknown) => string;
   messages: () => Array<{ parts: unknown[] }>;
@@ -242,9 +244,6 @@ export type SessionSendWorkflowOptions = {
   sessionStoreSetCommandDisplay: (messageId: string, command: string, args: string) => void;
   setActivePendingDraftKey: (key: string | null) => void;
   setActivePendingDraftMeta: (meta: unknown | null) => void;
-  setBusy: (value: boolean) => void;
-  setBusyLabel: (value: string | null) => void;
-  setBusyStartedAt: (value: number | null) => void;
   setComposerDraftBySessionId: (
     updater: (current: Record<string, ComposerDraft>) => Record<string, ComposerDraft>,
   ) => void;
@@ -504,20 +503,18 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       deps.releaseSendPromptInFlight?.();
       releaseSendPromptInFlight = null;
     };
-    const startSendPromptBusy = (label: string) => {
+    const startSendPromptBusy = (
+      event: Extract<SessionFlowProgressEvent, { type: "runtime.connecting" | "conversation.running" }>,
+    ) => {
       if (!blockAppDuringPromptSend) return;
       ownsSendPromptBusy = true;
-      deps.setBusy(true);
-      deps.setBusyLabel(label);
-      deps.setBusyStartedAt(Date.now());
+      deps.emitFlowProgress({ ...event, owner: "send" });
     };
     const stopSendPromptBusy = () => {
       releasePromptSendInFlight();
       if (!ownsSendPromptBusy) return;
       ownsSendPromptBusy = false;
-      deps.setBusy(false);
-      deps.setBusyLabel(null);
-      deps.setBusyStartedAt(null);
+      deps.emitFlowProgress({ type: "flow.idle", owner: "send" });
     };
     try {
     let pendingSidebarRowRegistered = false;
@@ -612,7 +609,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
     const sendRuntimeWorkspaceId = sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim();
     const sendRuntimeReady = deps.isWorkspaceRuntimeReady(sendRuntimeWorkspaceId);
     if (!sendRuntimeReady) {
-      startSendPromptBusy("status.connecting");
+      startSendPromptBusy({ type: "runtime.connecting" });
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
@@ -782,7 +779,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       return false;
     }
 
-    startSendPromptBusy("status.running");
+    startSendPromptBusy({ type: "conversation.running" });
     deps.setError(null);
 
     const perfEnabled = deps.developerMode();
@@ -811,10 +808,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       const agent = deps.agentForSession(sessionID);
       const parts = deps.buildPromptParts(resolvedDraft);
       const selectedVariant = deps.modelVariant() ?? undefined;
-      const reasoningEffort = resolveCodexReasoningEffort(model.modelID, selectedVariant ?? null);
-      const requestVariant = reasoningEffort ? undefined : selectedVariant;
       const promptOverrides = {
-        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
         ...(promptSystem ? { system: promptSystem } : {}),
       };
 
@@ -875,9 +869,13 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
             traceId: sendTraceId,
             sessionID,
           });
-          deps.markLiveTranscriptReadAllowedForWorkspace(
-            sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim(),
-          );
+          deps.emitLiveTranscriptPolicyEvent({
+            type: "conversation-compact.succeeded",
+            reason: "sendPrompt:compact-success",
+            workspaceId: sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim(),
+            sessionId: sessionID,
+            traceId: sendTraceId,
+          });
           return true;
         }
 
@@ -900,8 +898,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           arguments: command.arguments,
           agent: agent ?? undefined,
           model: modelString,
-          variant: requestVariant,
-          ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+          variant: selectedVariant,
           parts: files.length ? files : undefined,
           directory: sessionDirOverride,
         });
@@ -913,7 +910,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           directory: sessionDirOverride,
           model,
           agent: agent ?? undefined,
-          variant: requestVariant,
+          variant: selectedVariant,
           ...promptOverrides,
           parts,
         });
@@ -958,9 +955,13 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         mode: resolvedDraft.mode,
         command: commandName,
       });
-      deps.markLiveTranscriptReadAllowedForWorkspace(
-        sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim(),
-      );
+      deps.emitLiveTranscriptPolicyEvent({
+        type: "conversation-run.succeeded",
+        reason: "sendPrompt:success",
+        workspaceId: sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim(),
+        sessionId: sessionID,
+        traceId: sendTraceId,
+      });
       deps.holdVisibleRuntimeActivity(sessionID, "sendPrompt:success");
       return true;
     } catch (e) {

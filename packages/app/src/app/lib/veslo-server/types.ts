@@ -1163,7 +1163,6 @@ export type VesloConversationRunInput = {
   system?: string;
   command?: string;
   arguments?: string;
-  reasoning_effort?: string;
   noReply?: boolean;
   tools?: unknown;
   providerID?: string;

@@ -50,6 +50,33 @@ export const VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV = "VESLO_OPENCODE_SERVER_CLI
 export const VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE = `{env:${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV}}`;
 const VESLO_SESSION_ID_HEADER = "x-veslo-session-id";
 export const VESLO_WORKSPACE_ID_HEADER = "x-veslo-workspace-id";
+const CODEX_OAUTH_MODEL_OPTIONS: Record<string, unknown> = {
+  reasoningEffort: "high",
+  textVerbosity: "low",
+  reasoningSummary: "auto",
+};
+const CODEX_OAUTH_MODEL_VARIANTS: Record<string, Record<string, unknown>> = {
+  low: {
+    reasoningEffort: "low",
+    textVerbosity: "low",
+    reasoningSummary: "auto",
+  },
+  medium: {
+    reasoningEffort: "medium",
+    textVerbosity: "low",
+    reasoningSummary: "auto",
+  },
+  high: {
+    reasoningEffort: "high",
+    textVerbosity: "low",
+    reasoningSummary: "auto",
+  },
+  xhigh: {
+    reasoningEffort: "high",
+    textVerbosity: "low",
+    reasoningSummary: "auto",
+  },
+};
 const auditedTauriFetch = wrapStartupRequestAuditFetch(
   tauriFetch as unknown as typeof globalThis.fetch,
   "tauri.opencode",
@@ -398,7 +425,7 @@ export function applyGatewayProviderRouting(
   });
   const routedModels = assignedModels.reduce<Record<string, unknown>>((models, modelId) => {
     const existingModel = sanitizeGatewayProviderModel(existingModels[modelId]);
-    models[modelId] = {
+    const modelConfig: Record<string, unknown> = {
       ...(isOpenAiCompatibleGatewayProvider
         ? {
             name: modelId,
@@ -415,6 +442,17 @@ export function applyGatewayProviderRouting(
         [VESLO_SESSION_ID_HEADER]: OPENCODE_SESSION_ID_TEMPLATE,
       },
     };
+    if (providerId === "codex_oauth") {
+      modelConfig.options = {
+        ...CODEX_OAUTH_MODEL_OPTIONS,
+        ...readConfigObject(existingModel.config.options),
+      };
+      modelConfig.variants = {
+        ...CODEX_OAUTH_MODEL_VARIANTS,
+        ...readConfigObject(existingModel.config.variants),
+      };
+    }
+    models[modelId] = modelConfig;
     return models;
   }, {});
 

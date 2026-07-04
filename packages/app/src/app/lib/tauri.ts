@@ -5,6 +5,18 @@ import { validateMcpServerName } from "../mcp";
 import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
 import type { ComposerAttachment, ComposerDraft, ComposerPart, ModelRef, SkillInventoryRegistryMetadata } from "../types";
 
+export const RUNTIME_ENGINE_STATES = [
+  "absent",
+  "starting",
+  "process_ready",
+  "workspace_api_waiting",
+  "ready",
+  "stopped",
+  "failed",
+] as const;
+
+export type RuntimeEngineState = (typeof RUNTIME_ENGINE_STATES)[number];
+
 export type EngineInfo = {
   running: boolean;
   runtime: "direct" | "veslo-orchestrator";
@@ -20,15 +32,6 @@ export type EngineInfo = {
   lastStdout: string | null;
   lastStderr: string | null;
 };
-
-export type RuntimeEngineState =
-  | "absent"
-  | "starting"
-  | "process_ready"
-  | "workspace_api_waiting"
-  | "ready"
-  | "stopped"
-  | "failed";
 
 export type VesloServerLifecycleStatus =
   | "stopped"

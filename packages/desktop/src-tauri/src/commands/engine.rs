@@ -1071,6 +1071,22 @@ pub fn engine_start(
         let opencode_pid = health.opencode.as_ref().map(|o| o.pid);
         let opencode_base_url =
             orchestrator_opencode_base_url(daemon_port, active_ws_id.as_deref());
+        let active_engine = active_ws_id
+            .as_ref()
+            .and_then(|workspace_id| {
+                reconciled_status
+                    .engines
+                    .iter()
+                    .find(|engine| &engine.workspace_id == workspace_id)
+            });
+        let return_engine_state = if health.opencode.is_some() {
+            RuntimeEngineState::Ready
+        } else if reconciled_status.engine_topology.as_deref() == Some("shared-unsandboxed") {
+            runtime_engine_state_from_shared_engine(&reconciled_status)
+        } else {
+            runtime_engine_state_from_orchestrator_state(active_engine.map(|engine| engine.state.as_str()))
+        };
+        let return_running = return_engine_state == RuntimeEngineState::Ready;
         if let Ok(mut state) = manager.inner.lock() {
             state.runtime = EngineRuntime::Orchestrator;
             state.child = None;
@@ -1173,17 +1189,17 @@ pub fn engine_start(
         );
 
         return Ok(EngineInfo {
-            running: true,
+            running: return_running,
             runtime: EngineRuntime::Orchestrator,
-            engine_state: Some(RuntimeEngineState::Ready),
-            child_kind: None,
+            engine_state: Some(return_engine_state),
+            child_kind: active_engine.and_then(|engine| engine.child_kind.clone()),
             base_url: Some(opencode_base_url),
             project_dir: Some(project_dir),
             hostname: Some("127.0.0.1".to_string()),
-            port: Some(opencode_port),
+            port: active_engine.map(|engine| engine.port).or(Some(opencode_port)),
             opencode_username,
             opencode_password,
-            pid: opencode_pid,
+            pid: active_engine.map(|engine| engine.pid).or(opencode_pid),
             last_stdout: None,
             last_stderr: None,
         });

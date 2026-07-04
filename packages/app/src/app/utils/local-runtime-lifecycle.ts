@@ -85,6 +85,13 @@ function isEngineStarting(info: Pick<EngineInfo, "runtime" | "engineState">): bo
   return info.runtime === "veslo-orchestrator" && info.engineState === "starting";
 }
 
+function shouldSkipQuietConnectForOrchestratorState(
+  info: Pick<EngineInfo, "runtime" | "running" | "engineState">,
+): boolean {
+  if (info.runtime !== "veslo-orchestrator" || info.running) return false;
+  return info.engineState === "absent" || info.engineState === "stopped" || info.engineState === "failed";
+}
+
 export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
   const buildStartOptions = (runtime: EngineInfo["runtime"]): LocalRuntimeStartOptions => ({
     preferSidecar: deps.engineSource() === "sidecar",
@@ -176,6 +183,8 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
         if (!isEngineStarting(activeInfo) || activeInfo.running) break;
       }
     }
+
+    if (shouldSkipQuietConnectForOrchestratorState(activeInfo)) return false;
 
     if (!baseUrl) return true;
 

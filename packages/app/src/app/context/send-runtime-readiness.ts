@@ -2,6 +2,7 @@ import {
   resolveManagedAiBootstrapCurrentConfigCheck,
   resolveManagedAiBootstrapWaitDecision,
 } from "../controllers/managed-ai-bootstrap-readiness-controller";
+import type { RuntimeEngineState } from "../lib/tauri";
 
 export const localRuntimeHealthTimeoutMessage = "Timed out waiting for local runtime health";
 export const managedAiRuntimeConfigNotReadyMessage =
@@ -40,15 +41,6 @@ export type SendRuntimeEngineInfo = {
   opencodeUsername?: string | null;
   opencodePassword?: string | null;
 };
-
-export type RuntimeEngineState =
-  | "absent"
-  | "starting"
-  | "process_ready"
-  | "workspace_api_waiting"
-  | "ready"
-  | "stopped"
-  | "failed";
 
 export type SendRuntimeClient = {
   global: {

@@ -1,8 +1,8 @@
 ---
 title: OpenCode Engine Starting State And MCP Cold Path KISS Plan
 date: 2026-07-04
-status: in_progress
-done: false
+status: completed
+done: true
 issue: unlinked
 source_audit: opencode-cold-start-codebase-verification-2026-07-04
 depends_on:
@@ -16,7 +16,7 @@ ocr04_tauri_engine_info_engine_state_done: true
 ocr05_app_quiet_connect_starting_handling_done: true
 ocr06_mcp_cold_path_boundary_done: true
 ocr07_sandbox_topology_regression_done: true
-ocr08_installed_runtime_regression_done: false
+ocr08_installed_runtime_regression_done: true
 ---
 
 # OpenCode Engine Starting State And MCP Cold Path KISS Plan
@@ -604,11 +604,14 @@ Implementation note 2026-07-04:
 - Orchestrator quiet reconnect polls scoped `engine_info` for a bounded window
   while `engineState` is `starting`, then proceeds through the existing connect
   path.
+- Quiet reconnect routing failures now emit `connect-quiet:engine-starting`
+  with `engineState: "starting"` when the routed health body identifies a
+  pending engine start.
 - Verified with:
 
 ```powershell
 pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/utils/local-runtime-lifecycle.test.ts src/app/tests/context/send-runtime-readiness.test.ts
-pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/workspace-engine-warmup.test.ts src/app/tests/app-send-latency-trace.test.ts
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/workspace-runtime-controller-source.test.ts src/app/tests/context/workspace-engine-warmup.test.ts src/app/tests/app-send-latency-trace.test.ts
 pnpm --filter @neatech/veslo-ui typecheck
 ```
 
@@ -665,14 +668,20 @@ pnpm --filter veslo-server exec bun test src/tests/server.mcp-routes.test.ts src
 
 Implementation note 2026-07-04:
 
-- No additional runtime code was needed in this slice: Control Chrome remains an
-  explicit `MCP_QUICK_CONNECT` entry, not generated/default OpenCode config.
+- Control Chrome remains an explicit `MCP_QUICK_CONNECT` entry, not
+  generated/default OpenCode config.
+- The explicit quick-connect command now uses the installed/bundled
+  `chrome-devtools-mcp --isolated` command instead of
+  `npx -y chrome-devtools-mcp@latest --isolated`.
+- Workspace file migration now rewrites legacy `npx ... @latest` Control
+  Chrome commands to the installed command.
 - Existing app gates keep automatic MCP status refresh behind runtime readiness
   and active-send checks; server MCP tests verify hub/workspace route config.
 - Verified with:
 
 ```powershell
-pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/mcp-connection-workflow.test.ts src/app/tests/app-send-latency-trace.test.ts
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/constants.test.ts src/app/tests/context/mcp-connection-workflow.test.ts src/app/tests/app-send-latency-trace.test.ts
+cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml workspace::files
 pnpm --filter veslo-server exec bun test src/tests/server.mcp-routes.test.ts src/tests/server.hub-mcp.test.ts
 ```
 
@@ -735,7 +744,7 @@ cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml runtime_prefere
 
 ## OCR08: Installed Runtime Regression Verification
 
-done: false
+done: true
 
 Goal:
 
@@ -773,6 +782,51 @@ Done when:
 - This section has a dated verification note with exact command results.
 - The OCR08 installed-runtime regression flag is marked complete.
 - Top-level `done` is marked complete only after OCR00 through OCR08 are true.
+
+Implementation note 2026-07-04:
+
+- Rebuilt the E2E desktop path before pilot validation so the runner used fresh
+  sidecars, bundled UI, and the `tauri.e2e.conf.json` debug binary:
+
+```powershell
+pnpm --filter veslo-server build:bin
+$env:VESLO_SIDECAR_FORCE_BUILD = "1"; pnpm --filter @neatech/veslo run prepare:sidecar; Remove-Item Env:\VESLO_SIDECAR_FORCE_BUILD
+Push-Location packages\desktop; pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e; Pop-Location
+```
+
+- Ran the installed-runtime pilot with the live desktop Den auth snapshot
+  instead of the managed-AI fixture:
+
+```powershell
+$env:E2E_TAURI_PILOT_BIN = "C:\Users\jajse\.cargo\bin\tauri-pilot.exe"
+$env:VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE = "C:\Users\jajse\.veslo\den-auth.json"
+$env:E2E_MANAGED_AI_GATEWAY_FIXTURE = "0"
+$env:E2E_SKILL_REGISTRY_FIXTURE = "0"
+$env:VESLO_ENABLE_AUTOMATIONS = "0"
+$env:VESLO_ENABLE_AUTOMATIONS_PLUGIN = "0"
+pnpm --filter @neatech/veslo-e2e test:pilot -- --scenario runtime-cold-start-session-handoff
+```
+
+- Pilot result: exit `0`, `5 passed`, `0 failed`, `0 skipped`.
+- Evidence path:
+  `dev-specific/tauri-pilot/runtime-cold-start-session-handoff-20260704-live-auth/`.
+- Engine-state acceptance evidence from the trace files:
+  - `connect-quiet:routing-error`: `0`
+  - `engine_not_running`: `0`
+  - `orchestrator:proxy-engine-starting`: `14`
+  - `engineState:"starting"`: `14`
+  - `shared-opencode-spawn-ready`: `1`
+  - `connect-quiet:done`: `3`
+- The trace still contains benign pre-start read-only
+  `orchestrator:proxy-engine-not-running` entries with `engineState:"absent"`;
+  those are allowed by this plan because `engine_not_running` remains reserved
+  for absent/stopped, not in-flight start.
+- The same live-auth pilot still logged
+  `AI gateway provider request did not start within 30000ms.` That is not the
+  `engine_not_running` cold-start failure fixed here. Treat it as a separate
+  live gateway/OpenCode provider-start follow-up if the next goal is "first
+  send must produce a model response" rather than "engine start state is
+  propagated correctly".
 
 ## Final Fix Note
 

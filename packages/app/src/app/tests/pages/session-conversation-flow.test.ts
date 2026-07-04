@@ -15,6 +15,7 @@ import {
   resolvePendingSessionHandoffMaterialization,
   resolvePendingDraftWorkspaceId,
   resolvePendingSessionQueueKey,
+  resolveTranscriptDisplaySessionId,
   removePendingSubmittedDraftById,
   resetRunStateRecord,
   resolveSessionIdForQueueKey,
@@ -27,6 +28,7 @@ import {
   resolveWorkspaceIdForQueueKey,
   resolveWorkspaceIdForSessionQueue,
   resolveSendPromptAction,
+  shouldClearMaterializedSubmitDisplayHold,
   runUiStateEqual,
   updateRunStateRecord,
   type SessionQueueKeyContext,
@@ -1518,6 +1520,80 @@ test("current session queue key selects a captured pending handoff for its own b
       },
     }),
     resolveSessionQueueKeyForSessionId(context, "session-real"),
+  );
+});
+
+test("transcript display session id holds pending materialization until server transcript arrives", () => {
+  assert.equal(
+    resolveTranscriptDisplaySessionId({
+      selectedSessionId: "session-real",
+      heldMaterializedSessionId: "session-real",
+      hasSendingOptimisticSubmit: true,
+      transcriptMessageCount: 0,
+    }),
+    null,
+  );
+
+  assert.equal(
+    resolveTranscriptDisplaySessionId({
+      selectedSessionId: "session-real",
+      heldMaterializedSessionId: "session-real",
+      hasSendingOptimisticSubmit: true,
+      transcriptMessageCount: 1,
+    }),
+    "session-real",
+  );
+
+  assert.equal(
+    resolveTranscriptDisplaySessionId({
+      selectedSessionId: "session-real",
+      heldMaterializedSessionId: null,
+      hasSendingOptimisticSubmit: true,
+      transcriptMessageCount: 0,
+    }),
+    "session-real",
+  );
+});
+
+test("materialized submit display hold clears on real transcript, session change, or completed optimistic state", () => {
+  assert.equal(
+    shouldClearMaterializedSubmitDisplayHold({
+      selectedSessionId: "session-real",
+      heldMaterializedSessionId: "session-real",
+      hasSendingOptimisticSubmit: true,
+      transcriptMessageCount: 0,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldClearMaterializedSubmitDisplayHold({
+      selectedSessionId: "session-real",
+      heldMaterializedSessionId: "session-real",
+      hasSendingOptimisticSubmit: true,
+      transcriptMessageCount: 1,
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldClearMaterializedSubmitDisplayHold({
+      selectedSessionId: "session-other",
+      heldMaterializedSessionId: "session-real",
+      hasSendingOptimisticSubmit: true,
+      transcriptMessageCount: 0,
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldClearMaterializedSubmitDisplayHold({
+      selectedSessionId: "session-real",
+      heldMaterializedSessionId: "session-real",
+      hasSendingOptimisticSubmit: false,
+      transcriptMessageCount: 0,
+    }),
+    true,
   );
 });
 

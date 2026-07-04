@@ -7,12 +7,14 @@ import {
   createSessionCreationWorkflow,
   type SessionCreationWorkflowOptions,
 } from "../../pages/session-creation-workflow.js";
+import type { SessionFlowProgressEvent } from "../../context/session-flow-progress-presenter.js";
 import type { SendRuntimePreflightContext } from "../../context/send-runtime-readiness.js";
 import type { MaterializedSessionHandoff } from "../../lib/session-send-contract.js";
 import type { PendingSidebarSessionMetadata } from "../../types.js";
 
 type Harness = {
   actions: string[];
+  progressEvents: SessionFlowProgressEvent["type"][];
   errors: Array<string | null>;
   events: string[];
   handoffs: MaterializedSessionHandoff[];
@@ -39,6 +41,7 @@ function session(overrides: Partial<Session> = {}): Session {
 
 function createHarness(overrides: Partial<SessionCreationWorkflowOptions> = {}): Harness {
   const actions: string[] = [];
+  const progressEvents: SessionFlowProgressEvent["type"][] = [];
   const events: string[] = [];
   const errors: Array<string | null> = [];
   const handoffs: MaterializedSessionHandoff[] = [];
@@ -47,7 +50,6 @@ function createHarness(overrides: Partial<SessionCreationWorkflowOptions> = {}):
   const options: SessionCreationWorkflowOptions = {
     activeSendTraceId: () => "trace-active",
     addOpencodeCacheHint: (message) => message,
-    applyPendingInitialSessionTitle: (created) => created,
     baseUrl: () => "http://127.0.0.1:4096",
     currentView: () => "session",
     developerMode: () => false,
@@ -59,44 +61,53 @@ function createHarness(overrides: Partial<SessionCreationWorkflowOptions> = {}):
       actions.push("ensure-managed-ai");
       return true;
     },
-    goToSession: (sessionId) => actions.push(`go:${sessionId}`),
     isWorkspaceClientStaleError: (_error): _error is {
       entryWorkspaceId?: string | null;
       currentWorkspaceId?: string | null;
     } => false,
     managedAiBootstrapBusy: () => false,
-    materializePendingSessionInWorkspaceSidebar: () => actions.push("materialize-sidebar"),
     perfNow: () => 100,
     recordPerfLog: () => undefined,
     finishPerf: () => undefined,
+    emitFlowProgress: (event) => {
+      progressEvents.push(event.type);
+    },
+    applyCreatedSessionState: (result, options) => {
+      if (result.workspaceScope.workspaceId) {
+        actions.push("remember-scope");
+      }
+      if (!sessions.some((entry) => entry.id === result.sessionId)) {
+        actions.push("set-sessions");
+        sessions = [result.session, ...sessions];
+      }
+      if (result.workspaceScope.workspaceId) {
+        actions.push("materialize-sidebar");
+      }
+      if (result.handoff) {
+        options.onMaterializedSessionId?.(result.handoff);
+      }
+    },
+    applyCreatedSessionTransition: async (result) => {
+      const sessionId = result.transition.sessionId;
+      if (result.transition.shouldRouteAfterSelect) {
+        actions.push(`own:${sessionId}`);
+      }
+      actions.push(`select:${sessionId}`);
+      if (result.transition.shouldRouteAfterSelect) {
+        actions.push(`own:${sessionId}`);
+        actions.push(`go:${sessionId}`);
+      }
+    },
     recordSendTrace: (event) => events.push(event),
-    registerPendingInitialSessionTitle: () => undefined,
     reloadBusy: () => false,
-    rememberConversationScope: () => actions.push("remember-scope"),
     resolveRuntimeSandboxStateForTarget: () => ({}) as never,
     resolveSendTargetWorkspaceScope: () => targetWorkspace,
     resolveWorkspaceRootForConversationScope: (_workspaceId, directory) => directory,
     routedClient: () => ({}),
     routedClientForSendTarget: () => ({}),
     safeStringify: (value) => JSON.stringify(value),
-    selectSession: async (sessionId) => {
-      actions.push(`select:${sessionId}`);
-    },
     sendTraceStep: async (_event, run) => run(),
-    sessionRouteSync: {
-      markOwnNavigationSession: (sessionId) => actions.push(`own:${sessionId}`),
-      clearOwnNavigationSessionIf: (sessionId) => actions.push(`clear-own:${sessionId}`),
-    },
-    sessions: () => sessions,
-    setBusy: (value) => actions.push(`busy:${String(value)}`),
-    setBusyLabel: (value) => actions.push(`busy-label:${value}`),
-    setBusyStartedAt: () => undefined,
-    setCreatingSession: (value) => actions.push(`creating:${String(value)}`),
     setError: (message) => errors.push(message),
-    setSessions: (next) => {
-      actions.push("set-sessions");
-      sessions = next;
-    },
     unknownErrorMessage: () => "app.unknown_error",
     workspace: {
       activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
@@ -104,7 +115,6 @@ function createHarness(overrides: Partial<SessionCreationWorkflowOptions> = {}):
       activeWorkspaceRoot: () => "/repo",
       connectingWorkspaceId: () => "",
     },
-    wsDebug: () => undefined,
     abortRefreshes: () => actions.push("abort-refreshes"),
     createConversationFromVesloWriteApi: async () => {
       actions.push("create-conversation");
@@ -114,11 +124,10 @@ function createHarness(overrides: Partial<SessionCreationWorkflowOptions> = {}):
         opencodeSessionId: "open-created",
       };
     },
-    onMaterializedSessionId: (handoff) => handoffs.push(handoff),
     ...overrides,
   };
 
-  return { actions, errors, events, handoffs, options };
+  return { actions, progressEvents, errors, events, handoffs, options };
 }
 
 test("session creation blocks while the target workspace is still connecting", async () => {
@@ -136,6 +145,7 @@ test("session creation blocks while the target workspace is still connecting", a
 
   assert.equal(result, undefined);
   assert.deepEqual(harness.errors, ["Please wait for the workspace switch to complete."]);
+  assert.deepEqual(harness.progressEvents, []);
   assert.ok(harness.events.includes("createSessionAndOpen:blocked-connecting"));
   assert.doesNotMatch(harness.actions.join("\n"), /create-conversation|select:/);
 });
@@ -197,6 +207,22 @@ test("session creation passes the prepared create preflight to conversation crea
   assert.deepEqual(observedPreflight?.effectiveSandbox, { mode: "test" });
 });
 
+test("session creation can return a backend result without route or sidebar effects", async () => {
+  const harness = createHarness();
+  const workflow = createSessionCreationWorkflow(harness.options);
+
+  const result = await workflow.createSession("hello", {
+    blockAppDuringCreate: false,
+  });
+
+  assert.equal(result?.sessionId, "sess-created");
+  assert.equal(result?.workspaceScope.workspaceId, "ws-main");
+  assert.equal(result?.workspaceScope.directory, "/repo");
+  assert.equal(result?.handoff, null);
+  assert.deepEqual(harness.actions, ["ensure-runtime", "ensure-managed-ai", "abort-refreshes", "create-conversation"]);
+  assert.doesNotMatch(harness.actions.join("\n"), /set-sessions|materialize-sidebar|select:|go:/);
+});
+
 test("session creation materializes sidebar state and own-navigation guard before selecting", async () => {
   const pendingSession: PendingSidebarSessionMetadata = {
     id: "pending-1",
@@ -212,6 +238,7 @@ test("session creation materializes sidebar state and own-navigation guard befor
     pendingSession,
     clientMessageId: "client-1",
     sendTraceId: "trace-1",
+    onMaterializedSessionId: (handoff) => harness.handoffs.push(handoff),
   });
 
   assert.equal(result, "sess-created");
@@ -223,4 +250,5 @@ test("session creation materializes sidebar state and own-navigation guard befor
     order,
     /create-conversation[\s\S]*remember-scope[\s\S]*set-sessions[\s\S]*materialize-sidebar[\s\S]*own:sess-created[\s\S]*select:sess-created[\s\S]*own:sess-created[\s\S]*go:sess-created/,
   );
+  assert.deepEqual(harness.progressEvents, ["session.creating", "session.loading", "flow.idle"]);
 });

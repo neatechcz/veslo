@@ -7,7 +7,11 @@ test("Control Chrome quick connect enables isolated profile mode", () => {
   const controlChrome = MCP_QUICK_CONNECT.find((entry) => entry.id === "chrome-devtools");
   assert.ok(controlChrome, "Control Chrome entry should exist");
   assert.equal(controlChrome.type, "local");
-  assert.ok(controlChrome.command?.includes("--isolated"));
+  assert.deepEqual(controlChrome.command, ["chrome-devtools-mcp", "--isolated"]);
+  assert.equal(
+    controlChrome.command?.some((part) => part === "npx" || part.includes("@latest")),
+    false,
+  );
 });
 
 test("built-in MCP quick connect list contains only Control Chrome", () => {

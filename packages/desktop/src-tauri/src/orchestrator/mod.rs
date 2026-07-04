@@ -210,7 +210,15 @@ fn managed_deps_manifest_has_expected_packages(path: &Path) -> bool {
         })
     };
 
-    has_package("@opencode-ai/plugin", "1.17.4") && has_package("zod", "4.1.8")
+    has_package("@opencode-ai/plugin", "1.17.4")
+        && has_package("zod", "4.1.8")
+        && has_package("@ai-sdk/openai-compatible", "3.0.5")
+        && has_package("@ai-sdk/provider", "4.0.2")
+        && has_package("@ai-sdk/provider-utils", "5.0.5")
+        && has_package("@standard-schema/spec", "1.1.0")
+        && has_package("@workflow/serde", "4.1.0")
+        && has_package("eventsource-parser", "3.1.0")
+        && has_package("json-schema", "0.4.0")
 }
 
 pub(crate) fn resolve_opencode_managed_deps_manifest(sidecar_paths: &[PathBuf]) -> Option<PathBuf> {
@@ -635,7 +643,14 @@ mod tests {
   "schemaVersion": 1,
   "packages": [
     { "name": "@opencode-ai/plugin", "version": "1.17.4", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
-    { "name": "zod", "version": "4.1.8", "files": [{ "path": "package.json", "contentBase64": "e30=" }] }
+    { "name": "zod", "version": "4.1.8", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "@ai-sdk/openai-compatible", "version": "3.0.5", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "@ai-sdk/provider", "version": "4.0.2", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "@ai-sdk/provider-utils", "version": "5.0.5", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "@standard-schema/spec", "version": "1.1.0", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "@workflow/serde", "version": "4.1.0", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "eventsource-parser", "version": "3.1.0", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "json-schema", "version": "0.4.0", "files": [{ "path": "package.json", "contentBase64": "e30=" }] }
   ]
 }"#,
         )

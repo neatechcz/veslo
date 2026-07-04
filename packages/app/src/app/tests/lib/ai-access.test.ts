@@ -24,6 +24,27 @@ import {
   VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE,
 } from "../../lib/opencode.js";
 
+const EXPECTED_CODEX_MODEL_OPTIONS = {
+  reasoningEffort: "high",
+  textVerbosity: "low",
+  reasoningSummary: "auto",
+};
+
+const EXPECTED_CODEX_MODEL_VARIANTS = {
+  low: {
+    reasoningEffort: "low",
+    textVerbosity: "low",
+    reasoningSummary: "auto",
+  },
+  medium: {
+    reasoningEffort: "medium",
+    textVerbosity: "low",
+    reasoningSummary: "auto",
+  },
+  high: EXPECTED_CODEX_MODEL_OPTIONS,
+  xhigh: EXPECTED_CODEX_MODEL_OPTIONS,
+};
+
 const managedCodexProfile: ManagedAiAccessProfile = {
   userId: "user_123",
   providerId: "codex_oauth",
@@ -672,6 +693,8 @@ test("formatManagedAiAccessConfig routes codex_oauth through the gateway", () =>
           name?: string;
           tool_call?: boolean;
           reasoning?: boolean;
+          options?: Record<string, unknown>;
+          variants?: Record<string, unknown>;
           headers?: Record<string, string>;
         }>;
         options?: {
@@ -690,6 +713,8 @@ test("formatManagedAiAccessConfig routes codex_oauth through the gateway", () =>
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.name, "gpt-5.4");
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.tool_call, true);
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.reasoning, true);
+  assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.options, EXPECTED_CODEX_MODEL_OPTIONS);
+  assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.variants, EXPECTED_CODEX_MODEL_VARIANTS);
   assert.equal(
     parsed.provider?.codex_oauth?.options?.baseURL,
     "https://veslo.example.test/ai-gateway/providers/codex_oauth/v1",
@@ -733,6 +758,8 @@ test("formatManagedAiAccessConfig routes openai_compatible through the gateway",
           name?: string;
           tool_call?: boolean;
           reasoning?: boolean;
+          options?: Record<string, unknown>;
+          variants?: Record<string, unknown>;
           headers?: Record<string, string>;
         }>;
         options?: {
@@ -785,6 +812,8 @@ test("formatManagedAiAccessConfig supports assigned gpt-5.5 without making it th
           name?: string;
           tool_call?: boolean;
           reasoning?: boolean;
+          options?: Record<string, unknown>;
+          variants?: Record<string, unknown>;
           headers?: Record<string, string>;
         }>;
       };
@@ -795,6 +824,8 @@ test("formatManagedAiAccessConfig supports assigned gpt-5.5 without making it th
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.name, "gpt-5.5");
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.tool_call, true);
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.reasoning, true);
+  assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.options, EXPECTED_CODEX_MODEL_OPTIONS);
+  assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.variants, EXPECTED_CODEX_MODEL_VARIANTS);
   assert.doesNotMatch(content, /den_token_123/);
   assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.headers, {
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,

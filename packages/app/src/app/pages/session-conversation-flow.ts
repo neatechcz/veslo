@@ -158,6 +158,50 @@ export const resolveCurrentSessionQueueKey = ({
   return pendingQueueKeyAwaitingSessionIdByBaseKey[basePendingKey] ?? basePendingKey;
 };
 
+export type ResolveTranscriptDisplaySessionIdInput = {
+  selectedSessionId?: string | null;
+  heldMaterializedSessionId?: string | null;
+  hasSendingOptimisticSubmit: boolean;
+  transcriptMessageCount: number;
+};
+
+// First-send handoff can select the newly-created real session before OpenCode
+// has returned the user message in the transcript. Keep the viewport on the
+// pending/no-session surface during that gap so the optimistic row does not
+// flicker through an empty real-session loading state.
+export const resolveTranscriptDisplaySessionId = ({
+  selectedSessionId,
+  heldMaterializedSessionId,
+  hasSendingOptimisticSubmit,
+  transcriptMessageCount,
+}: ResolveTranscriptDisplaySessionIdInput) => {
+  const selected = selectedSessionId?.trim() || null;
+  const held = heldMaterializedSessionId?.trim() || null;
+  if (
+    selected &&
+    held === selected &&
+    hasSendingOptimisticSubmit &&
+    transcriptMessageCount === 0
+  ) {
+    return null;
+  }
+  return selected;
+};
+
+export const shouldClearMaterializedSubmitDisplayHold = ({
+  selectedSessionId,
+  heldMaterializedSessionId,
+  hasSendingOptimisticSubmit,
+  transcriptMessageCount,
+}: ResolveTranscriptDisplaySessionIdInput) => {
+  const held = heldMaterializedSessionId?.trim() || null;
+  if (!held) return false;
+  const selected = selectedSessionId?.trim() || null;
+  if (selected !== held) return true;
+  if (transcriptMessageCount > 0) return true;
+  return !hasSendingOptimisticSubmit;
+};
+
 export type PendingSessionHandoffScope = {
   pendingSessionBaseKeyBeforeHandoff: string | null;
   pendingInstanceKey: string | null;

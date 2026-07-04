@@ -424,6 +424,34 @@ const buildManagedDepsManifest = (normalizedOpencodeVersion) => {
       name: "zod",
       version: String(orchestratorPkg.dependencies?.zod ?? "").trim(),
     },
+    {
+      name: "@ai-sdk/openai-compatible",
+      version: String(orchestratorPkg.dependencies?.["@ai-sdk/openai-compatible"] ?? "").trim(),
+    },
+    {
+      name: "@ai-sdk/provider",
+      version: String(orchestratorPkg.dependencies?.["@ai-sdk/provider"] ?? "").trim(),
+    },
+    {
+      name: "@ai-sdk/provider-utils",
+      version: String(orchestratorPkg.dependencies?.["@ai-sdk/provider-utils"] ?? "").trim(),
+    },
+    {
+      name: "@standard-schema/spec",
+      version: String(orchestratorPkg.dependencies?.["@standard-schema/spec"] ?? "").trim(),
+    },
+    {
+      name: "@workflow/serde",
+      version: String(orchestratorPkg.dependencies?.["@workflow/serde"] ?? "").trim(),
+    },
+    {
+      name: "eventsource-parser",
+      version: String(orchestratorPkg.dependencies?.["eventsource-parser"] ?? "").trim(),
+    },
+    {
+      name: "json-schema",
+      version: String(orchestratorPkg.dependencies?.["json-schema"] ?? "").trim(),
+    },
   ];
 
   for (const spec of specs) {

@@ -31,8 +31,18 @@ test("engineReady boots false so guards block engine API calls until a real conn
 test("boot warmup readiness is separate from live transcript read policy", () => {
   assert.match(
     appSource,
-    /const \[liveTranscriptReadWorkspaceIds, setLiveTranscriptReadWorkspaceIds\] =[\s\S]*createSignal<ReadonlySet<string>>\(new Set\(\)\);/s,
-    "live transcript read allowance should be tracked separately from runtime readiness",
+    /const liveTranscriptReadPolicy = createLiveTranscriptReadPolicy\(\{[\s\S]*activeWorkspaceId: \(\) => currentWorkspaceStoreRef\(\)\?\.activeWorkspaceId\(\)\.trim\(\) \?\? "",[\s\S]*record: \(event, payload\) =>[\s\S]*recordSendWorkflowTrace\("live-transcript-policy", event, payload,[\s\S]*\}\);/s,
+    "live transcript read allowance should be tracked by a dedicated policy owner",
+  );
+  assert.match(
+    appSource,
+    /const isLiveTranscriptReadAllowedForWorkspace = liveTranscriptReadPolicy\.isAllowedForWorkspace;/,
+    "ordinary history browsing should consult the live transcript policy owner",
+  );
+  assert.match(
+    appSource,
+    /emitLiveTranscriptPolicyEvent: \(event\) => liveTranscriptReadPolicy\.emit\(event\),/,
+    "send workflow should only emit typed policy events instead of mutating browse policy directly",
   );
   assert.match(
     appSource,

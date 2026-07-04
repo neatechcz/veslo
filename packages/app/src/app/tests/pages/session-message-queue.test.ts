@@ -7,7 +7,11 @@ const conversationFlowSource = readFileSync(
   new URL("../../pages/session-conversation-flow.ts", import.meta.url),
   "utf8",
 );
-const source = `${sessionSource}\n${conversationFlowSource}`;
+const queueDrainControllerSource = readFileSync(
+  new URL("../../context/session-queue-drain-controller.ts", import.meta.url),
+  "utf8",
+);
+const source = `${sessionSource}\n${conversationFlowSource}\n${queueDrainControllerSource}`;
 const appViewPropsSource = readFileSync(new URL("../../app-view-props.ts", import.meta.url), "utf8");
 const sendWorkflowSource = readFileSync(new URL("../../pages/session-send-workflow.ts", import.meta.url), "utf8");
 const flowSendImmediateStart = conversationFlowSource.indexOf("sendPromptImmediate: async (");
@@ -130,9 +134,9 @@ test("paused send-now unpauses only after accepted immediate send", () => {
 
 test("idle transition drains only after a non-idle status and only when queue is not paused", () => {
   assert.match(
-    sessionSource,
-    /sessionFlowFacade\.handleActiveSessionStatusChanged\(status, previousStatus\);/,
-    "SessionView should report active status changes to the conversation-flow facade",
+    queueDrainControllerSource,
+    /options\.handleActiveSessionStatusChanged\(status, previousStatus\);/,
+    "queue drain controller should report active status changes to the conversation-flow facade",
   );
   assert.match(
     conversationFlowSource,
@@ -140,9 +144,9 @@ test("idle transition drains only after a non-idle status and only when queue is
     "conversation-flow controller should drain only after a previous non-idle status and while not paused",
   );
   assert.match(
-    sessionSource,
-    /sessionFlowFacade\.handleSessionStatusMapChanged\(statuses, previousStatuses\);/,
-    "SessionView should report status-map changes to the conversation-flow facade",
+    queueDrainControllerSource,
+    /options\.handleSessionStatusMapChanged\(statuses, previousStatuses\);/,
+    "queue drain controller should report status-map changes to the conversation-flow facade",
   );
   assert.match(
     conversationFlowSource,
@@ -294,9 +298,9 @@ test("accepted first pending submit captures and remaps the pending queue key", 
   );
 
   assert.match(
-    sessionSource,
-    /sessionFlowFacade\.handleSelectedSessionChanged\(\{[\s\S]*pendingBaseKey,[\s\S]*pendingKey,[\s\S]*sessionStatusById: props\.sessionStatusById,[\s\S]*\}\);/s,
-    "session view should notify the owner when the selected session id arrives in a later reactive update",
+    queueDrainControllerSource,
+    /options\.handleSelectedSessionChanged\(\{[\s\S]*pendingBaseKey,[\s\S]*pendingKey,[\s\S]*sessionStatusById: options\.sessionStatusById\(\),[\s\S]*\}\);/s,
+    "queue drain controller should notify the owner when the selected session id arrives in a later reactive update",
   );
   assert.match(
     conversationFlowSource,
@@ -411,9 +415,9 @@ test("queued edit lifecycle restores editing items and drains idle saves", () =>
     "switching sessions should restore the previous queued edit item and clear its composer draft in the controller",
   );
   assert.match(
-    sessionSource,
-    /sessionFlowFacade\.handleSelectedSessionChanged\(\{[\s\S]*previousSessionId,[\s\S]*\}\);/s,
-    "session view selected-session effect should delegate edit-state cleanup through the controller facade",
+    queueDrainControllerSource,
+    /options\.handleSelectedSessionChanged\(\{[\s\S]*previousSessionId,[\s\S]*\}\);/s,
+    "queue drain controller selected-session effect should delegate edit-state cleanup through the controller facade",
   );
   assert.match(
     conversationFlowSource,

@@ -206,6 +206,30 @@ test("orchestrator quiet reconnect waits through starting engine info state", as
   );
 });
 
+test("orchestrator quiet reconnect skips absent engine proxy health check", async () => {
+  const harness = createHarness({
+    runtime: "veslo-orchestrator",
+    infoSnapshot: makeEngineInfo({
+      running: false,
+      runtime: "veslo-orchestrator",
+      engineState: "absent",
+      baseUrl: "http://127.0.0.1:7777/workspace/ws-a/opencode",
+      projectDir: "/tmp/demo",
+    }),
+  });
+
+  const ok = await harness.lifecycle.restartWorkspaceRuntime({
+    workspacePath: "/tmp/demo",
+    workspaceId: "ws-a",
+    reason: "test-absent",
+    connectMode: "quiet",
+  });
+
+  assert.equal(ok, false);
+  assert.equal(harness.readInfoRequests.length, 1);
+  assert.equal(harness.quietConnections.length, 0);
+});
+
 test("startHost can reconnect quietly without routing through the shared server connector", async () => {
   const harness = createHarness();
 

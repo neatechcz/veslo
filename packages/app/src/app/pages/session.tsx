@@ -138,6 +138,7 @@ import type { SessionCapabilitiesSnapshot } from "../lib/session-capabilities";
 import { openSessionWithWorkspaceActivation, type SessionBrowseScope } from "./session-navigation";
 import type { WorkspaceActivationOptions } from "../context/workspace-types";
 import { createSessionViewFlowFacade } from "../context/session-flow-facade";
+import { createSessionQueueDrainController } from "../context/session-queue-drain-controller";
 import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "./session-layout-width";
 import { resolveSessionTitlebarContext } from "./session-titlebar-context";
 import {
@@ -150,9 +151,11 @@ import {
   resolveCurrentSessionQueueKey,
   resolvePendingDraftWorkspaceId,
   resolvePendingSessionQueueKey,
+  resolveTranscriptDisplaySessionId,
   resetRunStateRecord,
   resolveSessionIdForQueueKey,
   resolveSessionQueueKeyForSessionId,
+  shouldClearMaterializedSubmitDisplayHold,
   restoreMaterializedQueueToPending as restoreMaterializedQueueToPendingRecord,
   restoreQueuePausedToPending,
   resolveWorkspaceIdForQueueKey,
@@ -767,9 +770,6 @@ export default function SessionView(props: SessionViewProps) {
     if (target?.kind === "chat") return tr("session.target_heading_chat");
     return formatTr("session.target_heading_workspace", { name: composerEntryTargetName() });
   });
-  const composerResetKey = createMemo(() =>
-    `${props.activeComposerTargetId ?? "__no-target"}:${props.selectedSessionId ?? "__no-session"}`
-  );
   const todoList = createMemo(() => props.todos.filter((todo) => todo.content.trim()));
   const todoCount = createMemo(() => todoList().length);
   const todoCompletedCount = createMemo(() =>
@@ -1016,6 +1016,53 @@ export default function SessionView(props: SessionViewProps) {
   const optimisticSubmittedDraft = createMemo(() =>
     selectPendingSubmittedDraft(pendingSubmittedDraftBySessionKey(), currentSessionQueueKey()),
   );
+  const [materializedSubmitDisplayHoldSessionId, setMaterializedSubmitDisplayHoldSessionId] =
+    createSignal<string | null>(null);
+  const hasSendingOptimisticSubmit = createMemo(() => optimisticSubmittedDraft()?.state === "sending");
+  // The route-selected session can become real before its transcript does.
+  // Detect the pending handoff synchronously from the pending-key map, then let
+  // the controller-owned hold survive the map cleanup for the next render ticks.
+  const selectedMaterializedPendingSubmitSessionId = createMemo(() => {
+    const selectedSessionId = props.selectedSessionId?.trim() || null;
+    if (!selectedSessionId) return null;
+    const pendingBaseKey = pendingSessionQueueKey();
+    const materializedPendingKey =
+      pendingQueueKeyAwaitingSessionIdByBaseKey()[pendingBaseKey]?.trim() || null;
+    if (!materializedPendingKey) return null;
+    const selectedSessionKey = sessionQueueKeyForSessionId(selectedSessionId);
+    if (materializedPendingKey !== selectedSessionKey) return null;
+    return pendingSubmittedDraftBySessionKey()[materializedPendingKey]?.state === "sending"
+      ? selectedSessionId
+      : null;
+  });
+  const heldMaterializedSubmitSessionId = createMemo(
+    () => selectedMaterializedPendingSubmitSessionId() ?? materializedSubmitDisplayHoldSessionId(),
+  );
+  const transcriptDisplaySessionId = createMemo(() =>
+    resolveTranscriptDisplaySessionId({
+      selectedSessionId: props.selectedSessionId,
+      heldMaterializedSessionId: heldMaterializedSubmitSessionId(),
+      hasSendingOptimisticSubmit: hasSendingOptimisticSubmit(),
+      transcriptMessageCount: props.messages.length,
+    })
+  );
+  const composerResetKey = createMemo(() =>
+    `${props.activeComposerTargetId ?? "__no-target"}:${transcriptDisplaySessionId() ?? "__no-session"}`
+  );
+  createEffect(() => {
+    const heldMaterializedSessionId = materializedSubmitDisplayHoldSessionId();
+    if (!heldMaterializedSessionId) return;
+    if (
+      shouldClearMaterializedSubmitDisplayHold({
+        selectedSessionId: props.selectedSessionId,
+        heldMaterializedSessionId,
+        hasSendingOptimisticSubmit: hasSendingOptimisticSubmit(),
+        transcriptMessageCount: props.messages.length,
+      })
+    ) {
+      setMaterializedSubmitDisplayHoldSessionId(null);
+    }
+  });
   const messagePartMessageIds = (message: MessageWithParts) =>
     message.parts
       .map((part) => {
@@ -1205,7 +1252,7 @@ export default function SessionView(props: SessionViewProps) {
     searchActive,
     sessionStatus: () => props.sessionStatus,
     developerMode: () => props.developerMode,
-    selectedSessionId: () => props.selectedSessionId,
+    selectedSessionId: transcriptDisplaySessionId,
     hasEarlierMessages: () => props.hasEarlierMessages,
     isChatContainerReady,
     totalPartCount,
@@ -1234,7 +1281,7 @@ export default function SessionView(props: SessionViewProps) {
   const showSessionLoadingState = createMemo(() =>
     shouldShowSessionLoadingState({
       hasWorkspaceSetupEmptyState: showWorkspaceSetupEmptyState(),
-      selectedSessionId: props.selectedSessionId,
+      selectedSessionId: transcriptDisplaySessionId(),
       messageCount: effectiveRenderedMessages().length,
       loadingEarlierMessages: props.loadingEarlierMessages,
     })
@@ -1951,46 +1998,6 @@ export default function SessionView(props: SessionViewProps) {
     setTimeout(() => setIsInitialLoad(false), 2000);
   });
 
-  createEffect(
-    on(
-      () => props.selectedSessionId,
-      (sessionId, previousSessionId) => {
-        if (sessionId === previousSessionId) {
-          return;
-        }
-        markTempRuntimeUiRenderSource(
-          "SessionView.selectedSessionIdEffect",
-          sessionId ? "selected-session-changed" : "selected-session-cleared",
-          { detail: `previous=${previousSessionId ?? "none"}` },
-        );
-        setSearchQuery("");
-        closeSearch();
-
-        const pendingBaseKey = pendingSessionQueueKey();
-        const pendingKey = !previousSessionId
-          ? pendingQueueKeyAwaitingSessionIdByBaseKey()[pendingBaseKey] ?? null
-          : null;
-        const previousSessionKey = previousSessionId ? sessionQueueKeyForSessionId(previousSessionId) : null;
-        // Switching sessions is navigation, not a runtime lifecycle operation:
-        // preserve the previous keyed run UI state and let scoped runtime
-        // status clear it when that conversation actually becomes idle.
-        if (!pendingKey && previousSessionKey) {
-          preserveRunStateOnSessionSwitch(previousSessionKey);
-        }
-        const flowResult = sessionFlowFacade.handleSelectedSessionChanged({
-          sessionId,
-          previousSessionId,
-          pendingBaseKey,
-          pendingKey,
-          sessionStatusById: props.sessionStatusById,
-        });
-        if (flowResult.shouldMarkInitialAnchor && flowResult.selectedSessionId) {
-          transcriptViewport.markSelectedSessionForInitialAnchor(flowResult.selectedSessionId);
-        }
-      },
-    ),
-  );
-
   createEffect(() => {
     const active = activeSearchHit();
     if (!active) return;
@@ -2074,18 +2081,8 @@ export default function SessionView(props: SessionViewProps) {
 
   createEffect(
     on(
-      () => props.sessionStatus,
-      (status, previousStatus) => {
-        sessionFlowFacade.handleActiveSessionStatusChanged(status, previousStatus);
-      },
-    ),
-  );
-
-  createEffect(
-    on(
       () => props.sessionStatusById,
       (statuses, previousStatuses) => {
-        sessionFlowFacade.handleSessionStatusMapChanged(statuses, previousStatuses);
         if (!previousStatuses) return;
         for (const [sessionKey, runState] of Object.entries(untrack(runStateBySessionKey))) {
           if (!runState.startedAt && !runState.hasBegun) continue;
@@ -2712,6 +2709,39 @@ export default function SessionView(props: SessionViewProps) {
     },
   });
   const sessionFlowFacade = createSessionViewFlowFacade({ conversationFlow });
+  createSessionQueueDrainController({
+    selectedSessionId: () => props.selectedSessionId,
+    sessionStatus: () => props.sessionStatus,
+    sessionStatusById: () => props.sessionStatusById,
+    pendingSessionQueueKey,
+    pendingQueueKeyAwaitingSessionIdByBaseKey,
+    sessionQueueKeyForSessionId,
+    preserveRunStateOnSessionSwitch,
+    setSearchQuery,
+    closeSearch,
+    markSelectedSessionForInitialAnchor: (sessionId) =>
+      transcriptViewport.markSelectedSessionForInitialAnchor(sessionId),
+    markTempRuntimeUiRenderSource,
+    handleSelectedSessionChanged: (input) => {
+      const selectedSessionId = input.sessionId?.trim() || null;
+      if (
+        selectedSessionId &&
+        input.pendingKey &&
+        pendingSubmittedDraftBySessionKey()[input.pendingKey]?.state === "sending"
+      ) {
+        setMaterializedSubmitDisplayHoldSessionId(selectedSessionId);
+      }
+      const flowResult = sessionFlowFacade.handleSelectedSessionChanged(input);
+      if (flowResult.materializedPendingSubmit && flowResult.selectedSessionId) {
+        setMaterializedSubmitDisplayHoldSessionId(flowResult.selectedSessionId);
+      }
+      return flowResult;
+    },
+    handleActiveSessionStatusChanged: (status, previousStatus) =>
+      sessionFlowFacade.handleActiveSessionStatusChanged(status, previousStatus),
+    handleSessionStatusMapChanged: (statuses, previousStatuses) =>
+      sessionFlowFacade.handleSessionStatusMapChanged(statuses, previousStatuses),
+  }).start();
 
   const handleEditQueuedDraft = (id: string) => {
     sessionFlowFacade.handleEditQueuedDraft(id);
