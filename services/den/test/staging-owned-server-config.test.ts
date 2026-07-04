@@ -138,3 +138,20 @@ test("staging deploy workflow runs only on the staging self-hosted runner", () =
     )
   }
 })
+
+test("owned-server deploy workflows wait for database health before migrations", () => {
+  for (const workflowPath of [
+    ".github/workflows/deploy-owned-server.yml",
+    ".github/workflows/deploy-staging-server.yml",
+  ]) {
+    const workflow = read(workflowPath)
+    assert.match(workflow, /wait_for_compose_health\(\)/)
+    assert.match(workflow, /wait_for_compose_health den-db/)
+    assert.match(workflow, /wait_for_compose_health ai-gateway-db/)
+    assert.match(
+      workflow,
+      /wait_for_compose_health den-db[\s\S]+wait_for_compose_health ai-gateway-db[\s\S]+pnpm --filter @neatech\/den db:migrate/,
+      `${workflowPath} must wait for both databases before Den migrations`,
+    )
+  }
+})

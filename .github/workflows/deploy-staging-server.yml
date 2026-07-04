@@ -105,9 +105,33 @@ jobs:
                 "$@"
           }
 
+          wait_for_compose_health() {
+            service="$1"
+
+            for attempt in $(seq 1 60); do
+              container_id="$(compose ps -q "$service" | tail -n 1)"
+              if [ -n "$container_id" ]; then
+                status="$(sudo -n docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+                if [ "$status" = "healthy" ]; then
+                  echo "$service is healthy"
+                  return 0
+                fi
+              fi
+
+              echo "Waiting for $service to become healthy (${attempt}/60)..."
+              sleep 5
+            done
+
+            compose ps
+            echo "::error::$service did not become healthy"
+            return 1
+          }
+
           compose config --quiet
           compose build worker-runtime-image worker-manager backup den ai-gateway web
           compose up -d den-db ai-gateway-db worker-manager
+          wait_for_compose_health den-db
+          wait_for_compose_health ai-gateway-db
           compose run --rm --no-deps den pnpm --filter @neatech/den db:migrate
           compose run --rm --no-deps ai-gateway pnpm --filter @neatech/ai-gateway db:migrate
           compose up -d
