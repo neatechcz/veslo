@@ -664,8 +664,8 @@ test("Windows NSIS builds a current-user client installer with dormant WSL runti
   );
   assert.match(
     hook,
-    /Skipping Veslo WSL runtime preparation during installation; sandbox setup is handled by the app\./,
-    "NSIS installer should leave default sandbox setup to the installed app",
+    /Skipping Veslo WSL runtime preparation; shared non-sandbox runtime is enabled by default\./,
+    "NSIS installer should skip WSL preparation by default",
   );
   assert.match(
     hook,

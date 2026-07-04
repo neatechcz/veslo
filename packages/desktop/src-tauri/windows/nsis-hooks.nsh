@@ -25,9 +25,9 @@
   DetailPrint "Veslo Windows runtime is ready."
   veslo_runtime_done:
 !else
-  ; WSL runtime setup is handled by the installed app by default. Do not run WSL
-  ; preparation from the installer unless VESLO_ENABLE_WSL_INSTALLER is defined
-  ; for an explicit installer-driven sandbox setup build.
-  DetailPrint "Skipping Veslo WSL runtime preparation during installation; sandbox setup is handled by the app."
+  ; WSL runtime setup is kept as a dormant rollback path. Installer builds now
+  ; use the shared non-sandbox runtime by default, so do not run WSL preparation
+  ; unless VESLO_ENABLE_WSL_INSTALLER is defined for a sandboxed installer build.
+  DetailPrint "Skipping Veslo WSL runtime preparation; shared non-sandbox runtime is enabled by default."
 !endif
 !macroend
