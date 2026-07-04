@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "windows": {
+      "wix": {
+        "upgradeCode": "1002906e-3f3a-40e4-89ba-a23b6f3164cb"
+      }
+    }
+  }
+}
