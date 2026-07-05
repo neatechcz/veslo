@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 export function opencodeConfigPath(workspaceRoot: string): string {
@@ -7,6 +8,23 @@ export function opencodeConfigPath(workspaceRoot: string): string {
   if (existsSync(jsoncPath)) return jsoncPath;
   if (existsSync(jsonPath)) return jsonPath;
   return jsoncPath;
+}
+
+export function opencodeConfigPathInDir(configDir: string): string {
+  const jsoncPath = join(configDir, "opencode.jsonc");
+  const jsonPath = join(configDir, "opencode.json");
+  if (existsSync(jsoncPath)) return jsoncPath;
+  if (existsSync(jsonPath)) return jsonPath;
+  return jsoncPath;
+}
+
+export function userOpencodeConfigDir(configDir?: string): string {
+  const trimmed = configDir?.trim();
+  return trimmed ? trimmed : join(homedir(), ".config", "opencode");
+}
+
+export function userOpencodeConfigPath(configDir?: string): string {
+  return opencodeConfigPathInDir(userOpencodeConfigDir(configDir));
 }
 
 export function vesloConfigPath(workspaceRoot: string): string {
@@ -27,4 +45,24 @@ export function projectCommandsDir(workspaceRoot: string): string {
 
 export function projectPluginsDir(workspaceRoot: string): string {
   return join(workspaceRoot, ".opencode", "plugins");
+}
+
+export function projectManagedPluginsDir(workspaceRoot: string): string {
+  return join(projectPluginsDir(workspaceRoot), "veslo-managed");
+}
+
+export function userPluginsDir(configDir?: string): string {
+  return join(userOpencodeConfigDir(configDir), "plugins");
+}
+
+export function userManagedPluginsDir(configDir?: string): string {
+  return join(userPluginsDir(configDir), "veslo-managed");
+}
+
+export function projectManagedPluginSpecManifestPath(workspaceRoot: string): string {
+  return join(workspaceRoot, ".opencode", "veslo", "plugins", "managed-plugin-specs.json");
+}
+
+export function userManagedPluginSpecManifestPath(dataDir: string): string {
+  return join(dataDir, "plugins", "managed-plugin-specs.json");
 }

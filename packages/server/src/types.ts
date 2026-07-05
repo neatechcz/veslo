@@ -193,6 +193,12 @@ export interface PluginItem {
   scope: "project" | "global";
   owner?: ResourceOwner;
   path?: string;
+  managed?: boolean;
+  policyId?: string;
+  displayName?: string;
+  target?: "user" | "project";
+  lifecycle?: "active" | "disabled" | "removed" | "conflict";
+  conflict?: string;
 }
 
 export interface McpItem {
