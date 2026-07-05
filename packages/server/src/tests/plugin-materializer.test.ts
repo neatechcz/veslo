@@ -109,6 +109,98 @@ describe("plugin materializer", () => {
     });
   });
 
+  test("rejects dangling project managed spec manifest symlinks without writing the target", async () => {
+    const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
+    const dataDir = await tempDir("veslo-plugin-materializer-data-");
+    const outsideDir = await tempDir("veslo-plugin-materializer-outside-");
+    await writeFile(
+      join(workspaceRoot, "opencode.jsonc"),
+      JSON.stringify({ plugin: ["unmanaged-before"] }, null, 2),
+      "utf8",
+    );
+    const manifestDir = join(workspaceRoot, ".opencode", "veslo", "plugins");
+    const manifestPath = join(manifestDir, "managed-plugin-specs.json");
+    const outsideTarget = join(outsideDir, "managed-plugin-specs.json");
+    await mkdir(manifestDir, { recursive: true });
+    await symlink(outsideTarget, manifestPath);
+
+    const policy = policyFor({
+      id: "platform.project-spec-dangling-symlink",
+      spec: "project-spec-dangling-symlink",
+      target: "project",
+    });
+
+    await expect(materializePluginPolicies({ workspaceRoot, dataDir, policies: [policy] }))
+      .rejects.toThrow(/managed plugin spec manifest.*symlink/i);
+    await expect(readFile(outsideTarget, "utf8")).rejects.toThrow();
+    const { data: config } = await readJsoncFile<Record<string, unknown>>(join(workspaceRoot, "opencode.jsonc"), {});
+    expect(config.plugin).toEqual(["unmanaged-before"]);
+  });
+
+  test("rejects existing project managed spec manifest symlinks without overwriting the target", async () => {
+    const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
+    const dataDir = await tempDir("veslo-plugin-materializer-data-");
+    const outsideDir = await tempDir("veslo-plugin-materializer-outside-");
+    await writeFile(
+      join(workspaceRoot, "opencode.jsonc"),
+      JSON.stringify({ plugin: ["unmanaged-before"] }, null, 2),
+      "utf8",
+    );
+    const outsideManifest = `${JSON.stringify({
+      schemaVersion: 1,
+      managedBy: "veslo-plugin-materializer",
+      target: "project",
+      generatedAt: "2026-07-05T00:00:00.000Z",
+      entries: [],
+    }, null, 2)}\n`;
+    const outsideTarget = join(outsideDir, "managed-plugin-specs.json");
+    await writeFile(outsideTarget, outsideManifest, "utf8");
+    const manifestDir = join(workspaceRoot, ".opencode", "veslo", "plugins");
+    await mkdir(manifestDir, { recursive: true });
+    await symlink(outsideTarget, join(manifestDir, "managed-plugin-specs.json"));
+
+    const policy = policyFor({
+      id: "platform.project-spec-existing-symlink",
+      spec: "project-spec-existing-symlink",
+      target: "project",
+    });
+
+    await expect(materializePluginPolicies({ workspaceRoot, dataDir, policies: [policy] }))
+      .rejects.toThrow(/managed plugin spec manifest.*symlink/i);
+    expect(await readFile(outsideTarget, "utf8")).toBe(outsideManifest);
+    const { data: config } = await readJsoncFile<Record<string, unknown>>(join(workspaceRoot, "opencode.jsonc"), {});
+    expect(config.plugin).toEqual(["unmanaged-before"]);
+  });
+
+  test("rejects dangling user managed spec manifest symlinks without writing the target", async () => {
+    const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
+    const dataDir = await tempDir("veslo-plugin-materializer-data-");
+    const userOpencodeConfigDir = await tempDir("veslo-plugin-materializer-user-config-");
+    const outsideDir = await tempDir("veslo-plugin-materializer-outside-");
+    await writeFile(
+      join(userOpencodeConfigDir, "opencode.jsonc"),
+      JSON.stringify({ plugin: ["unmanaged-global-before"] }, null, 2),
+      "utf8",
+    );
+    const manifestDir = join(dataDir, "plugins");
+    const manifestPath = join(manifestDir, "managed-plugin-specs.json");
+    const outsideTarget = join(outsideDir, "managed-plugin-specs.json");
+    await mkdir(manifestDir, { recursive: true });
+    await symlink(outsideTarget, manifestPath);
+
+    const policy = policyFor({
+      id: "platform.user-spec-dangling-symlink",
+      spec: "user-spec-dangling-symlink",
+      target: "user",
+    });
+
+    await expect(materializePluginPolicies({ workspaceRoot, dataDir, userOpencodeConfigDir, policies: [policy] }))
+      .rejects.toThrow(/managed plugin spec manifest.*symlink/i);
+    await expect(readFile(outsideTarget, "utf8")).rejects.toThrow();
+    const { data: config } = await readJsoncFile<Record<string, unknown>>(join(userOpencodeConfigDir, "opencode.jsonc"), {});
+    expect(config.plugin).toEqual(["unmanaged-global-before"]);
+  });
+
   test("writes managed file plugin roots with a root manifest and per-plugin marker", async () => {
     const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
     const dataDir = await tempDir("veslo-plugin-materializer-data-");

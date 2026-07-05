@@ -13,7 +13,7 @@ import {
   userManagedPluginsDir,
   userOpencodeConfigPath,
 } from "./workspace-files.js";
-import { ensureDir, exists } from "./utils.js";
+import { ensureDir } from "./utils.js";
 
 export type PluginMaterializationTarget = "project" | "user";
 
@@ -128,6 +128,7 @@ type ConfigTargetContext = {
   target: PluginMaterializationTarget;
   configPath: string;
   manifestPath: string;
+  manifestRootDir: string;
   pluginSpecs: string[];
   previousManifest: ManagedPluginSpecManifest | null;
   desiredEntries: ManagedPluginSpecManifestEntry[];
@@ -163,8 +164,19 @@ export function managedPluginFileMarkerPath(pluginDir: string): string {
   return join(pluginDir, FILE_PLUGIN_MARKER_FILE);
 }
 
-export async function readManagedPluginSpecManifest(path: string): Promise<ManagedPluginSpecManifest | null> {
-  if (!(await exists(path))) return null;
+export async function readManagedPluginSpecManifest(
+  path: string,
+  rootDir?: string,
+): Promise<ManagedPluginSpecManifest | null> {
+  await assertManagedSpecManifestParentSafe(path, rootDir);
+  const stats = await lstatOrNull(path);
+  if (!stats) return null;
+  if (stats.isSymbolicLink()) {
+    throw new Error("Managed plugin spec manifest must not be a symlink");
+  }
+  if (!stats.isFile()) {
+    throw new Error("Managed plugin spec manifest must be a file");
+  }
   return validateManagedPluginSpecManifest(JSON.parse(await readFile(path, "utf8")));
 }
 
@@ -198,12 +210,14 @@ export async function materializePluginPolicies(
     target: "project",
     configPath: opencodeConfigPath(input.workspaceRoot),
     manifestPath: projectManagedPluginSpecManifestPath(input.workspaceRoot),
+    manifestRootDir: input.workspaceRoot,
     policies: configPolicies.filter((policy) => policy.target === "project"),
   });
   const userConfig = await prepareConfigTarget({
     target: "user",
     configPath: userOpencodeConfigPath(input.userOpencodeConfigDir),
     manifestPath: userManagedPluginSpecManifestPath(dataDir),
+    manifestRootDir: dataDir,
     policies: configPolicies.filter((policy) => policy.target === "user"),
   });
   const projectFiles = await prepareFileTarget({
@@ -255,11 +269,12 @@ async function prepareConfigTarget(input: {
   target: PluginMaterializationTarget;
   configPath: string;
   manifestPath: string;
+  manifestRootDir: string;
   policies: MaterializablePluginPolicy[];
 }): Promise<ConfigTargetContext> {
   const { data: config } = await readJsoncFile<Record<string, unknown>>(input.configPath, {});
   const pluginSpecs = pluginListFromConfig(config);
-  const previousManifest = await readManagedPluginSpecManifest(input.manifestPath);
+  const previousManifest = await readManagedPluginSpecManifest(input.manifestPath, input.manifestRootDir);
   const desiredEntries = input.policies.map((policy) => specManifestEntryForPolicy(policy, input.target));
   const previousManagedSpecs = new Set((previousManifest?.entries ?? []).map(managedSpecOwnershipKey));
   const conflicts: PluginMaterializationConflict[] = [];
@@ -287,6 +302,7 @@ async function prepareConfigTarget(input: {
     target: input.target,
     configPath: input.configPath,
     manifestPath: input.manifestPath,
+    manifestRootDir: input.manifestRootDir,
     pluginSpecs,
     previousManifest,
     desiredEntries,
@@ -320,7 +336,12 @@ async function applyConfigTarget(
     await updateJsoncTopLevel(context.configPath, { plugin: nextSpecs });
   }
   if (context.desiredEntries.length > 0 || context.previousManifest) {
-    await writeManagedPluginSpecManifest(context.manifestPath, context.target, context.desiredEntries);
+    await writeManagedPluginSpecManifest(
+      context.manifestPath,
+      context.target,
+      context.desiredEntries,
+      context.manifestRootDir,
+    );
   }
 
   return {
@@ -471,6 +492,7 @@ async function writeManagedPluginSpecManifest(
   path: string,
   target: PluginMaterializationTarget,
   entries: ManagedPluginSpecManifestEntry[],
+  rootDir?: string,
 ): Promise<void> {
   const manifest: ManagedPluginSpecManifest = {
     schemaVersion: 1,
@@ -479,7 +501,10 @@ async function writeManagedPluginSpecManifest(
     generatedAt: new Date().toISOString(),
     entries: [...entries].sort(compareSpecEntries),
   };
+  await assertManagedSpecManifestParentSafe(path, rootDir);
   await ensureDir(dirname(path));
+  await assertManagedSpecManifestParentSafe(path, rootDir);
+  await assertPathIsNotSymlink(path, "Managed plugin spec manifest must not be a symlink");
   await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
@@ -691,6 +716,32 @@ async function rmdirIfEmpty(path: string): Promise<void> {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ENOTEMPTY" || code === "EEXIST") return;
     throw error;
+  }
+}
+
+async function assertManagedSpecManifestParentSafe(path: string, rootDir?: string): Promise<void> {
+  if (!rootDir) return;
+  const root = resolve(rootDir);
+  const parent = resolve(dirname(path));
+  if (parent !== root && !pathIsInside(root, parent)) {
+    throw new Error("Managed plugin spec manifest parent must be inside the managed root");
+  }
+
+  const relativePath = relative(root, parent);
+  if (!relativePath) return;
+
+  const parts = relativePath.split(/[\\/]+/).filter(Boolean);
+  let current = root;
+  for (const part of parts) {
+    current = join(current, part);
+    const stats = await lstatOrNull(current);
+    if (!stats) return;
+    if (stats.isSymbolicLink()) {
+      throw new Error("Managed plugin spec manifest parent directory must not be a symlink");
+    }
+    if (!stats.isDirectory()) {
+      throw new Error("Managed plugin spec manifest parent path must be a directory");
+    }
   }
 }
 
