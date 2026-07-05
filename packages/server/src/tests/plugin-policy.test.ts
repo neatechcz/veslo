@@ -41,6 +41,7 @@ describe("plugin policy model", () => {
 
   test("normal inventory hides hidden platform policies", () => {
     const policies = resolveEffectivePluginPolicies({
+      scope: "user",
       platform: [OPENCODE_SCHEDULER_PLATFORM_PLUGIN, SUPERPOWERS_PLATFORM_PLUGIN],
       organization: [],
       user: [],
@@ -57,6 +58,7 @@ describe("plugin policy model", () => {
 
   test("applies plugin policy overrides to lifecycle and effective enabled state", () => {
     const policies = resolveEffectivePluginPolicies({
+      scope: "user",
       platform: [SUPERPOWERS_PLATFORM_PLUGIN],
       organization: [],
       user: [],
@@ -81,6 +83,7 @@ describe("plugin policy model", () => {
 
   test("removed plugin policy overrides win over disabled overrides", () => {
     const policies = resolveEffectivePluginPolicies({
+      scope: "user",
       platform: [SUPERPOWERS_PLATFORM_PLUGIN],
       organization: [],
       user: [],
@@ -107,6 +110,60 @@ describe("plugin policy model", () => {
       id: SUPERPOWERS_PLATFORM_PLUGIN.id,
       lifecycle: "removed",
       effectiveEnabled: false,
+    });
+  });
+
+  test("ignores project plugin policy overrides for other workspaces", () => {
+    const policies = resolveEffectivePluginPolicies({
+      scope: "project",
+      workspaceId: "ws_current",
+      platform: [SUPERPOWERS_PLATFORM_PLUGIN],
+      organization: [],
+      user: [],
+      project: [],
+      overrides: [
+        {
+          id: "override_other_workspace",
+          pluginId: SUPERPOWERS_PLATFORM_PLUGIN.id,
+          action: "removed",
+          scope: "project",
+          workspaceId: "ws_other",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    expect(policies[0]).toMatchObject({
+      id: SUPERPOWERS_PLATFORM_PLUGIN.id,
+      lifecycle: "active",
+      effectiveEnabled: true,
+    });
+  });
+
+  test("ignores organization plugin policy overrides for other organizations", () => {
+    const policies = resolveEffectivePluginPolicies({
+      scope: "organization",
+      orgId: "org_current",
+      platform: [SUPERPOWERS_PLATFORM_PLUGIN],
+      organization: [],
+      user: [],
+      project: [],
+      overrides: [
+        {
+          id: "override_other_org",
+          pluginId: SUPERPOWERS_PLATFORM_PLUGIN.id,
+          action: "disabled",
+          scope: "organization",
+          orgId: "org_other",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    expect(policies[0]).toMatchObject({
+      id: SUPERPOWERS_PLATFORM_PLUGIN.id,
+      lifecycle: "active",
+      effectiveEnabled: true,
     });
   });
 });

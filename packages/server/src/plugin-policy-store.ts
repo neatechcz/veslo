@@ -79,7 +79,7 @@ export async function listPluginPolicyOverrides(input: {
       return Boolean(workspaceId) && record.workspaceId === workspaceId;
     }
     if (record.scope === "organization") {
-      return includeGlobal && (!orgId || record.orgId === orgId);
+      return includeGlobal && Boolean(orgId) && record.orgId === orgId;
     }
     return includeGlobal;
   });

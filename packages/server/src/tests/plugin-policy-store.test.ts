@@ -194,6 +194,25 @@ describe("plugin policy override store", () => {
     ]);
   });
 
+  test("listPluginPolicyOverrides does not leak organization records without a matching organization id", async () => {
+    const dataDir = await tempDir();
+
+    await setPluginRemovedState({
+      dataDir,
+      policy: SUPERPOWERS_PLATFORM_PLUGIN,
+      scope: "organization",
+      orgId: "org_1",
+      removed: true,
+      actor: { type: "host" },
+    });
+
+    expect(await listPluginPolicyOverrides({ dataDir })).toEqual([]);
+    expect(await listPluginPolicyOverrides({ dataDir, orgId: "org_2" })).toEqual([]);
+    expect(await listPluginPolicyOverrides({ dataDir, orgId: "org_1" })).toMatchObject([
+      { pluginId: "platform.superpowers", action: "removed", scope: "organization", orgId: "org_1" },
+    ]);
+  });
+
   test("pluginPolicyOverrideMatches normalizes ids and scope targets", () => {
     expect(pluginPolicyOverrideMatches(
       {

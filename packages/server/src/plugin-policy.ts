@@ -1,4 +1,4 @@
-import type { PluginPolicyOverride } from "./types.js";
+import type { PluginPolicyOverride, PluginPolicyOverrideScope } from "./types.js";
 
 export type PluginOwnerKind = "platform" | "organization" | "user" | "project";
 export type PluginVisibility = "visible" | "hidden-debug-only";
@@ -26,6 +26,9 @@ export type PluginPolicy = {
 };
 
 export type PluginPolicyResolutionInput = {
+  scope: PluginPolicyOverrideScope;
+  workspaceId?: string;
+  orgId?: string;
   platform: PluginPolicy[];
   organization: PluginPolicy[];
   user: PluginPolicy[];
@@ -45,7 +48,7 @@ export type VisiblePluginPolicyOptions = {
 export function resolveEffectivePluginPolicies(input: PluginPolicyResolutionInput): EffectivePluginPolicy[] {
   const overrides = input.overrides.filter(isSupportedOverride);
   return [...input.platform, ...input.organization, ...input.user, ...input.project].map((policy) => {
-    const matchingOverrides = overrides.filter((override) => override.pluginId.trim() === policy.id);
+    const matchingOverrides = overrides.filter((override) => overrideMatchesResolutionTarget(override, policy.id, input));
     const lifecycle: PluginLifecycle = matchingOverrides.some((override) => override.action === "removed")
       ? "removed"
       : matchingOverrides.some((override) => override.action === "disabled")
@@ -69,4 +72,25 @@ export function visiblePluginPolicies(
 
 function isSupportedOverride(value: PluginPolicyOverride): boolean {
   return typeof value.pluginId === "string" && (value.action === "disabled" || value.action === "removed");
+}
+
+function overrideMatchesResolutionTarget(
+  override: PluginPolicyOverride,
+  policyId: string,
+  target: Pick<PluginPolicyResolutionInput, "scope" | "workspaceId" | "orgId">,
+): boolean {
+  if (override.pluginId.trim() !== policyId) return false;
+  if (override.scope !== target.scope) return false;
+
+  if (target.scope === "project") {
+    const workspaceId = target.workspaceId?.trim();
+    return Boolean(workspaceId) && override.workspaceId?.trim() === workspaceId;
+  }
+
+  if (target.scope === "organization") {
+    const orgId = target.orgId?.trim();
+    return Boolean(orgId) && override.orgId?.trim() === orgId;
+  }
+
+  return true;
 }
