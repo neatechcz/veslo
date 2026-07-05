@@ -63,9 +63,16 @@ export function createPluginsClient(context: PluginsClientContext) {
       ),
 
     remove: (workspaceId: string, name: string) =>
-      requestJson<VesloPluginListResponse | VesloPluginMutationResponse>(
+      requestJson<VesloPluginListResponse>(
         baseUrl,
         `${workspacePluginsPath(workspaceId)}/${encodeURIComponent(name)}`,
+        { token, hostToken, method: "DELETE" },
+      ),
+
+    removeManaged: (workspaceId: string, pluginId: string) =>
+      requestJson<VesloPluginMutationResponse>(
+        baseUrl,
+        `${workspacePluginsPath(workspaceId)}/${encodeURIComponent(pluginId)}`,
         { token, hostToken, method: "DELETE" },
       ),
 

@@ -2853,7 +2853,11 @@ test("plugins domain facade exposes plugin policy endpoints", async () => {
       );
     }
 
-    if (url.endsWith("/enabled") || url.endsWith("/restore") || init?.method === "DELETE") {
+    if (
+      url.endsWith("/platform.superpowers/enabled") ||
+      url.endsWith("/platform.superpowers/restore") ||
+      (init?.method === "DELETE" && url.endsWith("/platform.superpowers"))
+    ) {
       return new Response(
         JSON.stringify({
           item: {
@@ -2881,7 +2885,7 @@ test("plugins domain facade exposes plugin policy endpoints", async () => {
 
     return new Response(
       JSON.stringify({
-        items: [],
+        items: [{ spec: "veslo/example-plugin", source: "config", scope: "project" }],
         inventory: [
           {
             id: "platform.superpowers",
@@ -2918,15 +2922,16 @@ test("plugins domain facade exposes plugin policy endpoints", async () => {
     const list = await client.plugins.list("ws 1", { includeGlobal: true, debug: true });
     const sync = await client.plugins.syncMaterialization("ws 1");
     const enabled = await client.plugins.setEnabled("ws 1", "platform.superpowers", false);
-    const removed = await client.plugins.remove("ws 1", "platform.superpowers");
+    const removedLegacy = await client.plugins.remove("ws 1", "veslo/example-plugin");
+    const removedManaged = await client.plugins.removeManaged("ws 1", "platform.superpowers");
     const restored = await client.plugins.restore("ws 1", "platform.superpowers");
     await client.plugins.add("ws 1", "veslo/example-plugin");
 
     assert.equal(list.inventory?.[0]?.id, "platform.superpowers");
     assert.equal(sync.reloadRequired, true);
     assert.equal(enabled.item.lifecycle, "active");
-    assert.ok("item" in removed);
-    assert.equal(removed.item.managed, true);
+    assert.deepEqual(removedLegacy.items.map((item) => item.spec), ["veslo/example-plugin"]);
+    assert.equal(removedManaged.item.managed, true);
     assert.equal(restored.item.removalPolicy, "user-removable");
 
     assert.deepEqual(
@@ -2935,13 +2940,14 @@ test("plugins domain facade exposes plugin policy endpoints", async () => {
         { url: "https://veslo.example/workspace/ws%201/plugins?includeGlobal=true&debug=true", method: "GET" },
         { url: "https://veslo.example/workspace/ws%201/plugins/materialization/sync", method: "POST" },
         { url: "https://veslo.example/workspace/ws%201/plugins/platform.superpowers/enabled", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/plugins/veslo%2Fexample-plugin", method: "DELETE" },
         { url: "https://veslo.example/workspace/ws%201/plugins/platform.superpowers", method: "DELETE" },
         { url: "https://veslo.example/workspace/ws%201/plugins/platform.superpowers/restore", method: "POST" },
         { url: "https://veslo.example/workspace/ws%201/plugins", method: "POST" },
       ],
     );
     assert.deepEqual(calls[2]?.body, { enabled: false });
-    assert.deepEqual(calls[5]?.body, { spec: "veslo/example-plugin" });
+    assert.deepEqual(calls[6]?.body, { spec: "veslo/example-plugin" });
     for (const call of calls) {
       assert.equal(call.headers.get("authorization"), "Bearer token-123");
       assert.equal(call.headers.get("x-veslo-host-token"), "host-token-123");
