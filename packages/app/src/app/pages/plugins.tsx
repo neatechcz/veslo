@@ -70,15 +70,15 @@ const canTogglePluginInventoryCard = (item: PluginInventoryCard) =>
   item.managed &&
   item.lifecycle !== "removed" &&
   item.lifecycle !== "conflict" &&
-  item.enabledPolicy !== "locked-on";
+  item.enabledPolicy === "user-toggleable";
 
 const canRemovePluginInventoryCard = (item: PluginInventoryCard) =>
   item.lifecycle !== "removed" &&
-  item.removalPolicy !== "locked" &&
+  item.removalPolicy === "user-removable" &&
   (item.managed || item.scope === "user" || item.scope === "project");
 
 const canRestorePluginInventoryCard = (item: PluginInventoryCard) =>
-  item.managed && item.lifecycle === "removed" && item.removalPolicy !== "locked";
+  item.managed && item.lifecycle === "removed" && item.removalPolicy === "user-removable";
 
 const pluginLifecycleLabel = (item: PluginInventoryCard) => {
   if (item.lifecycle === "removed") return "Removed";

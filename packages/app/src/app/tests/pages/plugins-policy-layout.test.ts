@@ -42,11 +42,13 @@ test("Superpowers is sourced from platform inventory instead of suggested manual
   assert.match(pluginsSource, /item\.scope === group\.key/);
 });
 
-test("locked policy rows do not render enable or remove controls", () => {
+test("locked and admin-only policy rows do not render user action controls", () => {
   assert.match(pluginsSource, /const\s+canTogglePluginInventoryCard\s*=/);
-  assert.match(pluginsSource, /item\.enabledPolicy !== "locked-on"/);
+  assert.match(pluginsSource, /item\.enabledPolicy === "user-toggleable"/);
   assert.match(pluginsSource, /const\s+canRemovePluginInventoryCard\s*=/);
-  assert.match(pluginsSource, /item\.removalPolicy !== "locked"/);
+  assert.match(pluginsSource, /item\.removalPolicy === "user-removable"/);
+  assert.match(pluginsSource, /const\s+canRestorePluginInventoryCard\s*=/);
+  assert.match(pluginsSource, /item\.removalPolicy === "user-removable"/);
   assert.match(pluginsSource, /data-testid="plugin-inventory-toggle"/);
   assert.match(pluginsSource, /data-testid="plugin-inventory-remove"/);
 });
