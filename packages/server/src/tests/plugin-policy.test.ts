@@ -55,15 +55,58 @@ describe("plugin policy model", () => {
     );
   });
 
-  test("rejects plugin policy overrides until override resolution is implemented", () => {
-    expect(() =>
-      resolveEffectivePluginPolicies({
-        platform: [SUPERPOWERS_PLATFORM_PLUGIN],
-        organization: [],
-        user: [],
-        project: [],
-        overrides: [{ pluginId: SUPERPOWERS_PLATFORM_PLUGIN.id, action: "disabled" }],
-      }),
-    ).toThrow(/plugin policy overrides are not implemented yet/i);
+  test("applies plugin policy overrides to lifecycle and effective enabled state", () => {
+    const policies = resolveEffectivePluginPolicies({
+      platform: [SUPERPOWERS_PLATFORM_PLUGIN],
+      organization: [],
+      user: [],
+      project: [],
+      overrides: [
+        {
+          id: "override_1",
+          pluginId: SUPERPOWERS_PLATFORM_PLUGIN.id,
+          action: "disabled",
+          scope: "user",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    expect(policies[0]).toMatchObject({
+      id: SUPERPOWERS_PLATFORM_PLUGIN.id,
+      lifecycle: "disabled",
+      effectiveEnabled: false,
+    });
+  });
+
+  test("removed plugin policy overrides win over disabled overrides", () => {
+    const policies = resolveEffectivePluginPolicies({
+      platform: [SUPERPOWERS_PLATFORM_PLUGIN],
+      organization: [],
+      user: [],
+      project: [],
+      overrides: [
+        {
+          id: "override_1",
+          pluginId: SUPERPOWERS_PLATFORM_PLUGIN.id,
+          action: "disabled",
+          scope: "user",
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: "override_2",
+          pluginId: SUPERPOWERS_PLATFORM_PLUGIN.id,
+          action: "removed",
+          scope: "user",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    expect(policies[0]).toMatchObject({
+      id: SUPERPOWERS_PLATFORM_PLUGIN.id,
+      lifecycle: "removed",
+      effectiveEnabled: false,
+    });
   });
 });
