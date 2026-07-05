@@ -124,8 +124,8 @@ Rules:
 
 - Replace the hand-rolled workspace menu inside `workspace-session-list.tsx` with the new
   primitive; the "⋯" workspace button opens the same project-header menu anchored to the button.
-- Convert the top-bar "more actions" flyout (Archived items, Search sessions) to the same
-  primitive.
+- The top-bar "more actions" flyout stays as-is: its view-mode entries use
+  `menuitemradio`/`aria-checked` semantics the primitive intentionally does not model.
 - The legacy `components/session/sidebar.tsx` menu is not migrated: the component is dead code
   (only its `SidebarSectionState` type is imported by `pages/session.tsx`). Move the type and
   delete the file as part of cleanup. Two source-reading tests load the file via
