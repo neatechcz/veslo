@@ -1,3 +1,11 @@
+import type {
+  PluginEnabledPolicy,
+  PluginLifecycle,
+  PluginPolicy,
+  PluginRemovalPolicy,
+  PluginVisibility,
+} from "./plugin-policy.js";
+
 export type WorkspaceType = "local" | "remote";
 
 export type ApprovalMode = "manual" | "auto";
@@ -200,6 +208,24 @@ export interface PluginItem {
   lifecycle?: "active" | "disabled" | "removed" | "conflict";
   conflict?: string;
 }
+
+export type PluginInventoryItem = {
+  id: string;
+  spec: string;
+  displayName: string;
+  owner: ResourceOwner;
+  scope: "platform" | "organization" | "user" | "project";
+  target: "user" | "project";
+  source: PluginPolicy["source"];
+  visibility: PluginVisibility;
+  enabled: boolean;
+  lifecycle: PluginLifecycle;
+  removalPolicy: PluginRemovalPolicy;
+  enabledPolicy: PluginEnabledPolicy;
+  managed: boolean;
+  debugOnly?: boolean;
+  conflict?: string;
+};
 
 export interface McpItem {
   name: string;
