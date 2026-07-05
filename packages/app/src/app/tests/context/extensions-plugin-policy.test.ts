@@ -60,8 +60,8 @@ function clonePlugin(plugin: PluginInventoryCard): PluginInventoryCard {
   return { ...plugin };
 }
 
-function makePluginClient(calls: PluginCalls) {
-  let inventory = [clonePlugin(SCHEDULER_PLUGIN), clonePlugin(SUPERPOWERS_PLUGIN), clonePlugin(PROJECT_PLUGIN)];
+function makePluginClient(calls: PluginCalls, initialInventory?: PluginInventoryCard[]) {
+  let inventory = (initialInventory ?? [SCHEDULER_PLUGIN, SUPERPOWERS_PLUGIN, PROJECT_PLUGIN]).map(clonePlugin);
 
   const listResponse = (options?: { includeGlobal?: boolean; debug?: boolean }) => {
     const visibleInventory = inventory.filter(
@@ -135,6 +135,7 @@ function makePluginClient(calls: PluginCalls) {
 
 async function withPluginStore(
   run: (input: { store: ReturnType<typeof createExtensionsStore>; calls: PluginCalls }) => Promise<void>,
+  options: { initialInventory?: PluginInventoryCard[] } = {},
 ) {
   const calls: PluginCalls = {
     list: [],
@@ -144,7 +145,7 @@ async function withPluginStore(
     add: [],
     remove: [],
   };
-  const vesloServerClient = makePluginClient(calls);
+  const vesloServerClient = makePluginClient(calls, options.initialInventory);
 
   await createRoot(async (dispose) => {
     const store = createExtensionsStore({
@@ -188,7 +189,34 @@ test("debug refresh includes hidden platform scheduler", async () => {
     await store.refreshPlugins("project", { debug: true });
 
     assert.ok(store.pluginInventory().some((item) => item.id === "platform.opencode-scheduler"));
+    assert.deepEqual(store.pluginList(), [
+      "superpowers@git+https://github.com/obra/superpowers.git",
+      "opencode-wakatime",
+    ]);
+    assert.deepEqual(store.sidebarPluginList(), [
+      "superpowers@git+https://github.com/obra/superpowers.git",
+      "opencode-wakatime",
+    ]);
+    assert.equal(store.isPluginInstalledByName("opencode-scheduler"), false);
     assert.equal(calls.list[0]?.options?.debug, true);
+  });
+});
+
+test("normal refresh after debug clears hidden scheduler from normal active surfaces", async () => {
+  await withPluginStore(async ({ store }) => {
+    await store.refreshPlugins("project", { debug: true });
+    await store.refreshPlugins("project");
+
+    assert.equal(store.pluginInventory().some((item) => item.id === "platform.opencode-scheduler"), false);
+    assert.deepEqual(store.pluginList(), [
+      "superpowers@git+https://github.com/obra/superpowers.git",
+      "opencode-wakatime",
+    ]);
+    assert.deepEqual(store.sidebarPluginList(), [
+      "superpowers@git+https://github.com/obra/superpowers.git",
+      "opencode-wakatime",
+    ]);
+    assert.equal(store.isPluginInstalledByName("opencode-scheduler"), false);
   });
 });
 
@@ -242,4 +270,23 @@ test("isPluginInstalledByName treats policy-managed active plugins as installed"
 
     assert.equal(store.isPluginInstalledByName("superpowers"), true);
   });
+});
+
+test("isPluginInstalledByName ignores disabled removed and conflict inventory rows", async () => {
+  await withPluginStore(
+    async ({ store }) => {
+      await store.refreshPlugins("project");
+
+      assert.equal(store.isPluginInstalledByName("disabled-plugin"), false);
+      assert.equal(store.isPluginInstalledByName("removed-plugin"), false);
+      assert.equal(store.isPluginInstalledByName("conflict-plugin"), false);
+    },
+    {
+      initialInventory: [
+        { ...PROJECT_PLUGIN, id: "config.project.disabled-plugin", spec: "disabled-plugin", enabled: false, lifecycle: "disabled" },
+        { ...PROJECT_PLUGIN, id: "config.project.removed-plugin", spec: "removed-plugin", enabled: false, lifecycle: "removed" },
+        { ...PROJECT_PLUGIN, id: "config.project.conflict-plugin", spec: "conflict-plugin", lifecycle: "conflict" },
+      ],
+    },
+  );
 });

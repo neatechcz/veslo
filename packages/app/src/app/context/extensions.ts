@@ -309,10 +309,14 @@ export function createExtensionsStore(options: {
       target: scope === "global" ? "user" : "project",
     }));
 
+  const isNormalVisiblePluginInventoryCard = (item: PluginInventoryCard) =>
+    item.visibility !== "hidden-debug-only" && item.debugOnly !== true;
+
   const activePluginSpecsFromInventory = (inventory: PluginInventoryCard[]) => {
     const specs = new Set<string>();
     for (const item of inventory) {
       if (item.lifecycle !== "active" || item.enabled === false) continue;
+      if (!isNormalVisiblePluginInventoryCard(item)) continue;
       const spec = item.spec.trim();
       if (spec) specs.add(spec);
     }
@@ -1475,6 +1479,7 @@ export function createExtensionsStore(options: {
 
     return pluginInventory().some((item) => {
       if (item.lifecycle !== "active" || item.enabled === false) return false;
+      if (!isNormalVisiblePluginInventoryCard(item)) return false;
       const terms = pluginInventorySearchTerms(item);
       return Array.from(candidates).some((candidate) => terms.has(candidate));
     });
