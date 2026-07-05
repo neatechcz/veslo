@@ -6,5 +6,8 @@ const extensionsSource = readFileSync(new URL("../../context/extensions.ts", imp
 
 test("extensions plugin requests use the plugins domain facade", () => {
   assert.match(extensionsSource, /vesloClient\.plugins\./);
+  assert.match(extensionsSource, /vesloClient\.plugins\.list\(/);
+  assert.match(extensionsSource, /vesloClient\.plugins\.add\(/);
+  assert.match(extensionsSource, /vesloClient\.plugins\.remove\(/);
   assert.doesNotMatch(extensionsSource, /vesloClient\.(?:listPlugins|addPlugin|removePlugin)\(/);
 });
