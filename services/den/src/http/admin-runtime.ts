@@ -1288,6 +1288,8 @@ function readPlatformBillingUpdate(
   if (!quantities) {
     return null
   }
+  const effectiveSource = source !== undefined ? source : existing?.source ?? null
+  const isManualTrialUpdate = nextMode === "manual_access" && effectiveSource === "manual_trial"
 
   let manualAccessEnabled = existing?.manualAccessEnabled ?? false
   let manualAccessExpiresAt: Date | null | undefined = undefined
@@ -1320,9 +1322,24 @@ function readPlatformBillingUpdate(
         return null
       }
       manualAccessLicenseLimit = parsed
-      quantities.managedAiBasic = parsed
-      quantities.managedAiExtended = 0
-      quantities.localModels = 0
+      if (!isManualTrialUpdate) {
+        quantities.managedAiBasic = parsed
+        quantities.managedAiExtended = 0
+        quantities.localModels = 0
+      }
+    }
+  }
+
+  const effectiveManualAccessExpiresAt =
+    manualAccessExpiresAt === undefined ? existing?.manualAccessExpiresAt ?? null : manualAccessExpiresAt
+  if (isManualTrialUpdate) {
+    if (existing?.stripeSubscriptionId) {
+      res.status(409).json({ error: "stripe_subscription_exists" })
+      return null
+    }
+    if (!(effectiveManualAccessExpiresAt instanceof Date) || effectiveManualAccessExpiresAt <= new Date()) {
+      res.status(400).json({ error: "invalid_manual_access_expires_at" })
+      return null
     }
   }
 
@@ -1374,7 +1391,8 @@ function readPlatformBillingUpdate(
     "graceUntil",
     "cancelAtPeriodEnd",
   ].some((key) => hasOwnProperty(body, key))
-  const licenseAffectingChange = ["mode", "quantities", "manualAccess"].some((key) => hasOwnProperty(body, key))
+  const licenseAffectingChange =
+    nextMode !== "none" && ["mode", "quantities", "manualAccess"].some((key) => hasOwnProperty(body, key))
 
   return {
     account: {
