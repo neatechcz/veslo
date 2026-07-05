@@ -55,6 +55,39 @@ Drag behavior is reserved for explicit interaction surfaces:
 When adding a menu, list, or repeated row control, apply the same rule to every
 interactive child unless that child is an explicit content field.
 
+## Left Sidebar Context Menus
+
+Every part of the left sidebar shares one context-menu behavior, backed by a
+single menu primitive and a declarative per-target item model.
+
+Right-click targets and their actions:
+
+- **Session rows** (project view): Rename, Archive/Unarchive, then a "Project"
+  group (Share, Soul settings, Reveal in Finder/Explorer, and for remote
+  workspaces Recover / Test connection / Edit connection), then Delete. No
+  "Open" item — opening a session stays the row's left-click action.
+- **Chat rows**: Rename, Archive/Unarchive, Delete.
+- **Recent rows**: session actions plus "Show in project", which switches to
+  the by-project view, expands the project, and scrolls it into view. No
+  project action group.
+- **Project headers** and the workspace "…" button: New session, Rename,
+  Share, Soul settings, Reveal (local), remote connection actions, and Remove
+  workspace. "Remove workspace" appears only here, never on session rows.
+- **Empty list area**: Add directory/project (same action as the toolbar
+  button), Search sessions, Archived items.
+
+Behavioral rules:
+
+- Unavailable actions render disabled rather than hidden, so the menu shape
+  stays stable while a workspace is connecting or switching.
+- If text is selected inside the target when right-clicking, a Copy item is
+  prepended; the menu always prevents the default context menu so the global
+  desktop copy handler never fires alongside it.
+- Escape, outside clicks, scrolling, window resize, and window blur close the
+  menu. Arrow keys move focus between items; Enter/Space activates.
+- The dashboard navigation and the bottom status controls intentionally have
+  no context menu — they own dedicated controls.
+
 ## Active Run Timing
 
 The session footer run indicator should show elapsed time for the active agent
