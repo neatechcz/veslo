@@ -10,10 +10,10 @@ const constantsSource = readFileSync(new URL("../../constants.ts", import.meta.u
 test("plugins page renders policy inventory grouped by ownership scope", () => {
   assert.match(pluginsSource, /PluginInventoryCard/);
   assert.match(pluginsSource, /const\s+PLUGIN_INVENTORY_GROUPS\s*=/);
-  assert.match(pluginsSource, /key:\s*"platform"[\s\S]*label:\s*"Platform"/);
-  assert.match(pluginsSource, /key:\s*"organization"[\s\S]*label:\s*"Organization"/);
-  assert.match(pluginsSource, /key:\s*"user"[\s\S]*label:\s*"User"/);
-  assert.match(pluginsSource, /key:\s*"project"[\s\S]*label:\s*"Project"/);
+  assert.match(pluginsSource, /key:\s*"platform"[\s\S]*labelKey:\s*"plugins\.inventory_group_platform"/);
+  assert.match(pluginsSource, /key:\s*"organization"[\s\S]*labelKey:\s*"plugins\.inventory_group_organization"/);
+  assert.match(pluginsSource, /key:\s*"user"[\s\S]*labelKey:\s*"plugins\.inventory_group_user"/);
+  assert.match(pluginsSource, /key:\s*"project"[\s\S]*labelKey:\s*"plugins\.inventory_group_project"/);
   assert.match(pluginsSource, /props\.pluginInventory/);
   assert.match(pluginsSource, /groupedPluginInventoryRows/);
 });

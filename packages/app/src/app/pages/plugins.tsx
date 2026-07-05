@@ -27,11 +27,11 @@ type SuggestedPluginCard = {
 type PluginInventoryScope = PluginInventoryCard["scope"];
 
 const PLUGIN_INVENTORY_GROUPS = [
-  { key: "platform", label: "Platform" },
-  { key: "organization", label: "Organization" },
-  { key: "user", label: "User" },
-  { key: "project", label: "Project" },
-] satisfies Array<{ key: PluginInventoryScope; label: string }>;
+  { key: "platform", labelKey: "plugins.inventory_group_platform" },
+  { key: "organization", labelKey: "plugins.inventory_group_organization" },
+  { key: "user", labelKey: "plugins.inventory_group_user" },
+  { key: "project", labelKey: "plugins.inventory_group_project" },
+] satisfies Array<{ key: PluginInventoryScope; labelKey: string }>;
 
 const POLICY_MANAGED_SUGGESTION_BLOCKLIST = new Set([
   "opencode-scheduler",
@@ -80,17 +80,19 @@ const canRemovePluginInventoryCard = (item: PluginInventoryCard) =>
 const canRestorePluginInventoryCard = (item: PluginInventoryCard) =>
   item.managed && item.lifecycle === "removed" && item.removalPolicy === "user-removable";
 
-const pluginLifecycleLabel = (item: PluginInventoryCard) => {
-  if (item.lifecycle === "removed") return "Removed";
-  if (item.lifecycle === "conflict") return "Conflict";
-  if (item.enabled === false || item.lifecycle === "disabled") return "Disabled";
-  return "Enabled";
+const pluginLifecycleLabelKey = (item: PluginInventoryCard) => {
+  if (item.lifecycle === "removed") return "plugins.lifecycle_removed";
+  if (item.lifecycle === "conflict") return "plugins.lifecycle_conflict";
+  if (item.enabled === false || item.lifecycle === "disabled") return "plugins.lifecycle_disabled";
+  return "plugins.lifecycle_enabled";
 };
 
 const pluginOwnerLabel = (item: PluginInventoryCard) => {
   if (item.owner?.label) return item.owner.label;
-  if (item.source === "config.unmanaged") return "OpenCode config";
-  return item.managed ? "Managed policy" : "Manual plugin";
+  if (item.source === "config.unmanaged") return __vesloT("plugins.owner_opencode_config", __vesloCurrentLocale());
+  return item.managed
+    ? __vesloT("plugins.owner_managed_policy", __vesloCurrentLocale())
+    : __vesloT("plugins.owner_manual_plugin", __vesloCurrentLocale());
 };
 
 export type PluginsViewProps = {
@@ -211,9 +213,9 @@ export default function PluginsView(props: PluginsViewProps) {
                 refreshPluginsForMode("global");
               }}
             >
-              {__vesloT("session.capabilities_scope_global", __vesloCurrentLocale())}</button>
+              {__vesloT("plugins.scope_global", __vesloCurrentLocale())}</button>
             <Button variant="ghost" onClick={() => refreshPluginsForMode()}>
-              {__vesloT("skills.refresh", __vesloCurrentLocale())}</Button>
+              {__vesloT("plugins.refresh", __vesloCurrentLocale())}</Button>
           </div>
         </div>
 
@@ -328,7 +330,9 @@ export default function PluginsView(props: PluginsViewProps) {
             <For each={groupedPluginInventoryRows()}>
               {(group) => (
                 <div class="space-y-2" data-testid={`plugin-inventory-group-${group.key}`}>
-                  <div class="text-xs font-medium text-gray-11 uppercase tracking-wider">{group.label}</div>
+                  <div class="text-xs font-medium text-gray-11 uppercase tracking-wider">
+                    {__vesloT(group.labelKey, __vesloCurrentLocale())}
+                  </div>
                   <div class="grid gap-2">
                     <For each={group.rows}>
                       {(item) => {
@@ -348,11 +352,11 @@ export default function PluginsView(props: PluginsViewProps) {
                                 <div class="flex flex-wrap items-center gap-2">
                                   <div class="text-sm text-gray-12 font-medium truncate">{item.displayName}</div>
                                   <span class="rounded-full bg-gray-3/70 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-10">
-                                    {pluginLifecycleLabel(item)}
+                                    {__vesloT(pluginLifecycleLabelKey(item), __vesloCurrentLocale())}
                                   </span>
                                   <Show when={item.visibility === "hidden-debug-only"}>
                                     <span class="rounded-full bg-amber-3 px-2 py-0.5 text-[10px] uppercase tracking-wide text-amber-11">
-                                      Debug
+                                      {__vesloT("plugins.visibility_debug", __vesloCurrentLocale())}
                                     </span>
                                   </Show>
                                 </div>
@@ -372,7 +376,9 @@ export default function PluginsView(props: PluginsViewProps) {
                                   onClick={() => togglePluginInventoryCard(item)}
                                   disabled={props.busy || !props.canEditPlugins}
                                 >
-                                  {item.enabled ? "Disable" : "Enable"}
+                                  {item.enabled
+                                    ? __vesloT("plugins.action_disable", __vesloCurrentLocale())
+                                    : __vesloT("plugins.action_enable", __vesloCurrentLocale())}
                                 </Button>
                               </Show>
                               <Show when={restoreVisible()}>
@@ -382,7 +388,7 @@ export default function PluginsView(props: PluginsViewProps) {
                                   onClick={() => restorePluginInventoryCard(item)}
                                   disabled={props.busy || !props.canEditPlugins}
                                 >
-                                  Restore
+                                  {__vesloT("plugins.action_restore", __vesloCurrentLocale())}
                                 </Button>
                               </Show>
                               <Show when={removeVisible()}>
@@ -393,7 +399,7 @@ export default function PluginsView(props: PluginsViewProps) {
                                   onClick={() => removePluginInventoryCard(item)}
                                   disabled={props.busy || !props.canEditPlugins}
                                 >
-                                  {__vesloT("mcp.remove_app", __vesloCurrentLocale())}</Button>
+                                  {__vesloT("plugins.action_remove", __vesloCurrentLocale())}</Button>
                               </Show>
                             </div>
                           </div>

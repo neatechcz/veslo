@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import vm from "node:vm";
 
@@ -39,6 +40,24 @@ assert.match(indexSource, /export const LANGUAGES: Language\[] = \["en", "zh", "
 
 const optionMatches = [...indexSource.matchAll(/value:\s*"([^"]+)"/g)].map((match) => match[1]);
 assert.deepEqual(optionMatches, ["en", "cs"], `Expected visible language options [en, cs], got [${optionMatches.join(", ")}]`);
+
+const appRoot = new URL("..", import.meta.url);
+const focusedI18nTests = [
+  "src/app/tests/reload-banner-i18n.test.ts",
+  "src/app/tests/plugins-policy-i18n.test.ts",
+].filter((path) => existsSync(new URL(path, appRoot)));
+
+if (focusedI18nTests.length > 0) {
+  const result = spawnSync(
+    process.execPath,
+    ["--test", "--import=tsx/esm", ...focusedI18nTests],
+    {
+      cwd: appRoot,
+      stdio: "inherit",
+    },
+  );
+  assert.equal(result.status, 0, `Focused i18n tests failed with exit code ${result.status ?? "unknown"}`);
+}
 
 console.log(
   JSON.stringify({
