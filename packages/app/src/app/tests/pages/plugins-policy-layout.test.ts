@@ -27,6 +27,18 @@ test("hidden platform plugin rows are gated by developer mode", () => {
   assert.match(pluginsSource, /data-testid=\{`plugin-inventory-group-\$\{group\.key\}`\}/);
 });
 
+test("plugin inventory rows expose stable policy metadata for desktop e2e", () => {
+  assert.match(pluginsSource, /data-testid="plugin-inventory-refresh"/);
+  assert.match(pluginsSource, /data-testid="plugin-inventory-row"/);
+  assert.match(pluginsSource, /data-plugin-id=\{item\.id\}/);
+  assert.match(pluginsSource, /data-plugin-scope=\{item\.scope\}/);
+  assert.match(pluginsSource, /data-plugin-source=\{item\.source\}/);
+  assert.match(pluginsSource, /data-plugin-lifecycle=\{item\.lifecycle\}/);
+  assert.match(pluginsSource, /data-plugin-enabled-policy=\{item\.enabledPolicy\}/);
+  assert.match(pluginsSource, /data-plugin-removal-policy=\{item\.removalPolicy\}/);
+  assert.match(pluginsSource, /data-plugin-visibility=\{item\.visibility\}/);
+});
+
 test("scheduler stays out of suggested plugins", () => {
   const suggestedStart = constantsSource.indexOf("SUGGESTED_PLUGINS");
   assert.ok(suggestedStart >= 0, "SUGGESTED_PLUGINS export should exist");
@@ -66,4 +78,13 @@ test("plugin policy inventory and actions are wired through dashboard and app", 
   assert.match(appSource, /setPluginEnabled=\{setPluginEnabled\}/);
   assert.match(appSource, /removeManagedPlugin=\{removeManagedPlugin\}/);
   assert.match(appSource, /restoreManagedPlugin=\{restoreManagedPlugin\}/);
+});
+
+test("plugins tab refreshes policy inventory after local Veslo server connects", () => {
+  assert.match(appSource, /lastPluginsConnectedRefreshKey/);
+  assert.match(appSource, /tab\(\) !== "plugins"/);
+  assert.match(appSource, /vesloServerStatus\(\) !== "connected"/);
+  assert.match(appSource, /vesloServerWorkspaceId\(\)\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\)/);
+  assert.match(appSource, /refreshPlugins\(pluginScope\(\), \{ debug: developerMode\(\) \}\)/);
+  assert.match(appSource, /plugins\.refresh\.connected/);
 });

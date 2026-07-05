@@ -383,6 +383,13 @@ export function createExtensionsStore(options: {
   let refreshSkillInventoryPromise: Promise<SkillInventoryRefreshResult> | null = null;
   let refreshSkillInventoryInFlightContextKey = "";
   let refreshPluginsInFlight = false;
+  let refreshPluginsQueuedRequest: {
+    scopeOverride?: PluginScope;
+    optionsOverride?: { debug?: boolean };
+    promise: Promise<void>;
+    resolve: () => void;
+    reject: (error: unknown) => void;
+  } | null = null;
   let refreshHubSkillsInFlight = false;
   let refreshSkillImportCandidatesInFlight = false;
   let refreshHubSkillsPromise: Promise<void> | null = null;
@@ -1693,39 +1700,114 @@ export function createExtensionsStore(options: {
   }
 
   async function refreshPlugins(scopeOverride?: PluginScope, optionsOverride?: { debug?: boolean }) {
-    const isRemoteWorkspace = options.workspaceType() === "remote";
-    const isLocalWorkspace = options.workspaceType() === "local";
-    const vesloClient = options.vesloServerClient();
-    const vesloWorkspaceId = options.vesloServerWorkspaceId();
-    const vesloCapabilities = options.vesloServerCapabilities();
-    const canUseVesloServer =
-      options.vesloServerStatus() === "connected" &&
-      vesloClient &&
-      vesloWorkspaceId &&
-      vesloCapabilities?.plugins?.read;
-
-    // Skip if already in flight
     if (refreshPluginsInFlight) {
-      return;
+      if (!refreshPluginsQueuedRequest) {
+        let resolveQueued: () => void = () => undefined;
+        let rejectQueued: (error: unknown) => void = () => undefined;
+        const promise = new Promise<void>((resolve, reject) => {
+          resolveQueued = resolve;
+          rejectQueued = reject;
+        });
+        refreshPluginsQueuedRequest = {
+          scopeOverride,
+          optionsOverride,
+          promise,
+          resolve: resolveQueued,
+          reject: rejectQueued,
+        };
+      } else {
+        refreshPluginsQueuedRequest.scopeOverride = scopeOverride;
+        refreshPluginsQueuedRequest.optionsOverride = optionsOverride;
+      }
+      return refreshPluginsQueuedRequest.promise;
     }
 
     refreshPluginsInFlight = true;
     refreshPluginsAborted = false;
 
-    const scope = scopeOverride ?? pluginScope();
-    const targetDir = options.projectDir().trim();
+    try {
+      const isRemoteWorkspace = options.workspaceType() === "remote";
+      const isLocalWorkspace = options.workspaceType() === "local";
+      const vesloClient = options.vesloServerClient();
+      const vesloWorkspaceId = options.vesloServerWorkspaceId()?.trim() || options.activeWorkspaceId().trim();
+      const vesloCapabilities = options.vesloServerCapabilities();
+      const canUseVesloServer =
+        options.vesloServerStatus() === "connected" &&
+        vesloClient &&
+        vesloWorkspaceId &&
+        vesloCapabilities?.plugins?.read;
 
-    if (scope !== "project" && !isLocalWorkspace) {
-      setPluginStatus(__vesloIndirectT("ui.indirect.global_plugins_are_only_available_for_local_wo_1cc1zl", __vesloIndirectLocale()));
-      clearPluginState();
-      setSidebarPluginStatus(__vesloIndirectT("ui.indirect.global_plugins_require_a_local_worker_1pmhql", __vesloIndirectLocale()));
-      refreshPluginsInFlight = false;
-      return;
-    }
+      const scope = scopeOverride ?? pluginScope();
+      const targetDir = options.projectDir().trim();
 
-    if (scope === "project" && canUseVesloServer) {
-      setPluginConfig(null);
-      setPluginConfigPath(`opencode.json (${isRemoteWorkspace ? "remote" : "veslo"} server)`);
+      if (scope !== "project" && !isLocalWorkspace) {
+        setPluginStatus(__vesloIndirectT("ui.indirect.global_plugins_are_only_available_for_local_wo_1cc1zl", __vesloIndirectLocale()));
+        clearPluginState();
+        setSidebarPluginStatus(__vesloIndirectT("ui.indirect.global_plugins_require_a_local_worker_1pmhql", __vesloIndirectLocale()));
+        return;
+      }
+
+      if (scope === "project" && canUseVesloServer) {
+        setPluginConfig(null);
+        setPluginConfigPath(`opencode.json (${isRemoteWorkspace ? "remote" : "veslo"} server)`);
+
+        try {
+          setPluginStatus(null);
+          setSidebarPluginStatus(null);
+
+          if (refreshPluginsAborted) return;
+
+          const listOptions = {
+            includeGlobal: false,
+            ...(optionsOverride?.debug ? { debug: true } : {}),
+          };
+          const result = await vesloClient.plugins.list(vesloWorkspaceId, listOptions);
+          if (refreshPluginsAborted) return;
+
+          const hasServerInventory = Array.isArray(result.inventory);
+          const inventory = hasServerInventory
+            ? filteredPluginInventoryForDebug(normalizePluginInventoryCards(result.inventory), optionsOverride?.debug)
+            : unmanagedPluginInventoryFromSpecs(
+                result.items
+                  .filter((item) => item.source === "config" && item.scope === "project")
+                  .map((item) => item.spec),
+                "project",
+              );
+          publishPluginInventory(inventory);
+
+          if (!inventory.length) {
+            setPluginStatus(__vesloIndirectT("plugins.no_plugins_yet", __vesloIndirectLocale()));
+          }
+        } catch (e) {
+          if (refreshPluginsAborted) return;
+          clearPluginState();
+          setSidebarPluginStatus(__vesloIndirectT("ui.indirect.failed_to_load_plugins_i1skhr", __vesloIndirectLocale()));
+          setPluginStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_load_plugins_i1skhr", __vesloIndirectLocale()));
+        }
+
+        return;
+      }
+
+      if (!isTauriRuntime()) {
+        setPluginStatus(translate("skills.plugin_management_host_only"));
+        clearPluginState();
+        setSidebarPluginStatus(translate("skills.plugins_host_only"));
+        return;
+      }
+
+      if (!isLocalWorkspace && !canUseVesloServer) {
+        setPluginStatus(__vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_manage_plu_1vx4p1", __vesloIndirectLocale()));
+        clearPluginState();
+        setSidebarPluginStatus(__vesloIndirectT("ui.indirect.connect_an_veslo_server_to_load_plugins_g3md41", __vesloIndirectLocale()));
+        return;
+      }
+
+      if (scope === "project" && !targetDir) {
+        setPluginStatus(translate("skills.pick_project_for_plugins"));
+        clearPluginState();
+        setSidebarPluginStatus(translate("skills.pick_project_for_active"));
+        return;
+      }
 
       try {
         setPluginStatus(null);
@@ -1733,103 +1815,55 @@ export function createExtensionsStore(options: {
 
         if (refreshPluginsAborted) return;
 
-        const listOptions = {
-          includeGlobal: false,
-          ...(optionsOverride?.debug ? { debug: true } : {}),
-        };
-        const result = await vesloClient.plugins.list(vesloWorkspaceId, listOptions);
+        const config = await readOpencodeConfig(scope, targetDir);
+
         if (refreshPluginsAborted) return;
 
-        const hasServerInventory = Array.isArray(result.inventory);
-        const inventory = hasServerInventory
-          ? filteredPluginInventoryForDebug(normalizePluginInventoryCards(result.inventory), optionsOverride?.debug)
-          : unmanagedPluginInventoryFromSpecs(
-              result.items
-                .filter((item) => item.source === "config" && item.scope === "project")
-                .map((item) => item.spec),
-              "project",
-            );
-        publishPluginInventory(inventory);
+        setPluginConfig(config);
+        setPluginConfigPath(config.path ?? null);
 
-        if (!inventory.length) {
-          setPluginStatus(__vesloIndirectT("plugins.no_plugins_yet", __vesloIndirectLocale()));
+        if (!config.exists) {
+          setPluginInventory([]);
+          setPluginList([]);
+          setPluginStatus(translate("skills.no_opencode_found"));
+          setSidebarPluginList([]);
+          setSidebarPluginStatus(translate("skills.no_opencode_workspace"));
+          return;
         }
+
+        try {
+          const next = parsePluginListFromContent(config.content ?? "");
+          setSidebarPluginList(next);
+        } catch {
+          setSidebarPluginList([]);
+          setSidebarPluginStatus(translate("skills.failed_parse_opencode"));
+        }
+
+        loadPluginsFromConfig(config);
       } catch (e) {
         if (refreshPluginsAborted) return;
+        setPluginConfig(null);
+        setPluginConfigPath(null);
         clearPluginState();
-        setSidebarPluginStatus(__vesloIndirectT("ui.indirect.failed_to_load_plugins_i1skhr", __vesloIndirectLocale()));
-        setPluginStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_load_plugins_i1skhr", __vesloIndirectLocale()));
-      } finally {
-        refreshPluginsInFlight = false;
+        setPluginStatus(e instanceof Error ? e.message : translate("skills.failed_load_opencode"));
+        setSidebarPluginStatus(translate("skills.failed_load_active"));
       }
-
-      return;
-    }
-
-    if (!isTauriRuntime()) {
-      setPluginStatus(translate("skills.plugin_management_host_only"));
-      clearPluginState();
-      setSidebarPluginStatus(translate("skills.plugins_host_only"));
-      refreshPluginsInFlight = false;
-      return;
-    }
-
-    if (!isLocalWorkspace && !canUseVesloServer) {
-      setPluginStatus(__vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_manage_plu_1vx4p1", __vesloIndirectLocale()));
-      clearPluginState();
-      setSidebarPluginStatus(__vesloIndirectT("ui.indirect.connect_an_veslo_server_to_load_plugins_g3md41", __vesloIndirectLocale()));
-      refreshPluginsInFlight = false;
-      return;
-    }
-
-    if (scope === "project" && !targetDir) {
-      setPluginStatus(translate("skills.pick_project_for_plugins"));
-      clearPluginState();
-      setSidebarPluginStatus(translate("skills.pick_project_for_active"));
-      refreshPluginsInFlight = false;
-      return;
-    }
-
-    try {
-      setPluginStatus(null);
-      setSidebarPluginStatus(null);
-
-      if (refreshPluginsAborted) return;
-
-      const config = await readOpencodeConfig(scope, targetDir);
-
-      if (refreshPluginsAborted) return;
-
-      setPluginConfig(config);
-      setPluginConfigPath(config.path ?? null);
-
-      if (!config.exists) {
-        setPluginInventory([]);
-        setPluginList([]);
-        setPluginStatus(translate("skills.no_opencode_found"));
-        setSidebarPluginList([]);
-        setSidebarPluginStatus(translate("skills.no_opencode_workspace"));
-        return;
-      }
-
-      try {
-        const next = parsePluginListFromContent(config.content ?? "");
-        setSidebarPluginList(next);
-      } catch {
-        setSidebarPluginList([]);
-        setSidebarPluginStatus(translate("skills.failed_parse_opencode"));
-      }
-
-      loadPluginsFromConfig(config);
-    } catch (e) {
-      if (refreshPluginsAborted) return;
-      setPluginConfig(null);
-      setPluginConfigPath(null);
-      clearPluginState();
-      setPluginStatus(e instanceof Error ? e.message : translate("skills.failed_load_opencode"));
-      setSidebarPluginStatus(translate("skills.failed_load_active"));
     } finally {
       refreshPluginsInFlight = false;
+      const queuedRequest = refreshPluginsQueuedRequest;
+      refreshPluginsQueuedRequest = null;
+      if (queuedRequest) {
+        if (refreshPluginsAborted) {
+          queuedRequest.resolve();
+        } else {
+          try {
+            await refreshPlugins(queuedRequest.scopeOverride, queuedRequest.optionsOverride);
+            queuedRequest.resolve();
+          } catch (error) {
+            queuedRequest.reject(error);
+          }
+        }
+      }
     }
   }
 

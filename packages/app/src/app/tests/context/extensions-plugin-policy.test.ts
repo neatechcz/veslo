@@ -60,12 +60,16 @@ function clonePlugin(plugin: PluginInventoryCard): PluginInventoryCard {
   return { ...plugin };
 }
 
-function makePluginClient(calls: PluginCalls, initialInventory?: PluginInventoryCard[]) {
-  let inventory = (initialInventory ?? [SCHEDULER_PLUGIN, SUPERPOWERS_PLUGIN, PROJECT_PLUGIN]).map(clonePlugin);
+function makePluginClient(
+  calls: PluginCalls,
+  options: { initialInventory?: PluginInventoryCard[]; beforeList?: (callIndex: number) => Promise<void> } = {},
+) {
+  let inventory = (options.initialInventory ?? [SCHEDULER_PLUGIN, SUPERPOWERS_PLUGIN, PROJECT_PLUGIN]).map(clonePlugin);
 
-  const listResponse = (options?: { includeGlobal?: boolean; debug?: boolean }) => {
+  const beforeList = options.beforeList;
+  const listResponse = (listOptions?: { includeGlobal?: boolean; debug?: boolean }) => {
     const visibleInventory = inventory.filter(
-      (item) => options?.debug || item.visibility !== "hidden-debug-only",
+      (item) => listOptions?.debug || item.visibility !== "hidden-debug-only",
     );
     return {
       items: inventory
@@ -78,9 +82,10 @@ function makePluginClient(calls: PluginCalls, initialInventory?: PluginInventory
 
   return {
     plugins: {
-      async list(workspaceId: string, options?: { includeGlobal?: boolean; debug?: boolean }) {
-        calls.list.push({ workspaceId, options });
-        return listResponse(options);
+      async list(workspaceId: string, listOptions?: { includeGlobal?: boolean; debug?: boolean }) {
+        calls.list.push({ workspaceId, options: listOptions });
+        await beforeList?.(calls.list.length);
+        return listResponse(listOptions);
       },
       async setEnabled(workspaceId: string, pluginId: string, enabled: boolean) {
         calls.setEnabled.push({ workspaceId, pluginId, enabled });
@@ -135,7 +140,11 @@ function makePluginClient(calls: PluginCalls, initialInventory?: PluginInventory
 
 async function withPluginStore(
   run: (input: { store: ReturnType<typeof createExtensionsStore>; calls: PluginCalls }) => Promise<void>,
-  options: { initialInventory?: PluginInventoryCard[] } = {},
+  options: {
+    initialInventory?: PluginInventoryCard[];
+    vesloServerWorkspaceId?: string | null;
+    beforeList?: (callIndex: number) => Promise<void>;
+  } = {},
 ) {
   const calls: PluginCalls = {
     list: [],
@@ -145,7 +154,10 @@ async function withPluginStore(
     add: [],
     remove: [],
   };
-  const vesloServerClient = makePluginClient(calls, options.initialInventory);
+  const vesloServerClient = makePluginClient(calls, {
+    initialInventory: options.initialInventory,
+    beforeList: options.beforeList,
+  });
 
   await createRoot(async (dispose) => {
     const store = createExtensionsStore({
@@ -157,7 +169,7 @@ async function withPluginStore(
       vesloServerClient: () => vesloServerClient as never,
       vesloServerStatus: () => "connected",
       vesloServerCapabilities: () => ({ plugins: { read: true, write: true } }) as never,
-      vesloServerWorkspaceId: () => "ws-alpha",
+      vesloServerWorkspaceId: () => options.vesloServerWorkspaceId ?? "ws-alpha",
       setBusy: () => undefined,
       setBusyLabel: () => undefined,
       setBusyStartedAt: () => undefined,
@@ -200,6 +212,60 @@ test("debug refresh includes hidden platform scheduler", async () => {
     assert.equal(store.isPluginInstalledByName("opencode-scheduler"), false);
     assert.equal(calls.list[0]?.options?.debug, true);
   });
+});
+
+test("plugin refresh queues latest request while another plugin refresh is in flight", async () => {
+  let firstListStarted!: () => void;
+  let releaseFirstList!: () => void;
+  const firstListStartedPromise = new Promise<void>((resolve) => {
+    firstListStarted = resolve;
+  });
+  const releaseFirstListPromise = new Promise<void>((resolve) => {
+    releaseFirstList = resolve;
+  });
+
+  await withPluginStore(
+    async ({ store, calls }) => {
+      const firstRefresh = store.refreshPlugins("project");
+      await firstListStartedPromise;
+
+      let queuedRefreshResolved = false;
+      const queuedDebugRefresh = store.refreshPlugins("project", { debug: true }).then(() => {
+        queuedRefreshResolved = true;
+      });
+
+      await Promise.resolve();
+      assert.equal(queuedRefreshResolved, false);
+
+      releaseFirstList();
+      await queuedDebugRefresh;
+      await firstRefresh;
+
+      assert.equal(calls.list.length, 2);
+      assert.equal(calls.list[0]?.options?.debug, undefined);
+      assert.equal(calls.list[1]?.options?.debug, true);
+      assert.ok(store.pluginInventory().some((item) => item.id === "platform.opencode-scheduler"));
+    },
+    {
+      beforeList: async (callIndex) => {
+        if (callIndex !== 1) return;
+        firstListStarted();
+        await releaseFirstListPromise;
+      },
+    },
+  );
+});
+
+test("plugin refresh falls back to active workspace id while server workspace id is resolving", async () => {
+  await withPluginStore(
+    async ({ store, calls }) => {
+      await store.refreshPlugins("project");
+
+      assert.equal(calls.list[0]?.workspaceId, "ws-alpha");
+      assert.ok(store.pluginInventory().some((item) => item.id === "platform.superpowers"));
+    },
+    { vesloServerWorkspaceId: null },
+  );
 });
 
 test("normal refresh after debug clears hidden scheduler from normal active surfaces", async () => {

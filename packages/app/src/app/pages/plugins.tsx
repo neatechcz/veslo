@@ -214,7 +214,7 @@ export default function PluginsView(props: PluginsViewProps) {
               }}
             >
               {__vesloT("plugins.scope_global", __vesloCurrentLocale())}</button>
-            <Button variant="ghost" onClick={() => refreshPluginsForMode()}>
+            <Button data-testid="plugin-inventory-refresh" variant="ghost" onClick={() => refreshPluginsForMode()}>
               {__vesloT("plugins.refresh", __vesloCurrentLocale())}</Button>
           </div>
         </div>
@@ -343,7 +343,18 @@ export default function PluginsView(props: PluginsViewProps) {
                         const restoreVisible = () => canRestorePluginInventoryCard(item) && Boolean(props.restoreManagedPlugin);
 
                         return (
-                          <div class="flex items-center justify-between gap-4 rounded-xl border border-gray-6/60 bg-gray-1/40 px-4 py-3">
+                          <div
+                            class="flex items-center justify-between gap-4 rounded-xl border border-gray-6/60 bg-gray-1/40 px-4 py-3"
+                            data-testid="plugin-inventory-row"
+                            data-plugin-id={item.id}
+                            data-plugin-display-name={item.displayName}
+                            data-plugin-scope={item.scope}
+                            data-plugin-source={item.source}
+                            data-plugin-lifecycle={item.lifecycle}
+                            data-plugin-enabled-policy={item.enabledPolicy}
+                            data-plugin-removal-policy={item.removalPolicy}
+                            data-plugin-visibility={item.visibility}
+                          >
                             <div class="min-w-0 flex items-start gap-3">
                               <div class="mt-0.5 rounded-lg border border-gray-6/70 bg-gray-2/60 p-1.5 text-gray-10">
                                 <Cpu size={14} />

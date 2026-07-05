@@ -2140,6 +2140,32 @@ export default function App() {
     abortRefreshes,
   } = extensionsStore;
 
+  let lastPluginsConnectedRefreshKey = "";
+  createEffect(() => {
+    if (tab() !== "plugins") {
+      lastPluginsConnectedRefreshKey = "";
+      return;
+    }
+    if (vesloServerStatus() !== "connected") {
+      return;
+    }
+
+    const workspaceId = vesloServerWorkspaceId()?.trim() || workspaceStore.activeWorkspaceId().trim();
+    if (!workspaceId) return;
+
+    const key = [
+      workspaceId,
+      pluginScope(),
+      developerMode() ? "debug" : "normal",
+    ].join("::");
+    if (key === lastPluginsConnectedRefreshKey) return;
+    lastPluginsConnectedRefreshKey = key;
+
+    void refreshPlugins(pluginScope(), { debug: developerMode() }).catch((error: unknown) =>
+      reportError(error, "plugins.refresh.connected"),
+    );
+  });
+
   const globalSync = useGlobalSync();
   const providers = createMemo(() => globalSync.data.provider.all ?? []);
   const setProviders = (value: ProviderListItem[]) => {
