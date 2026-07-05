@@ -36,6 +36,7 @@ jobs:
       DEPLOY_BRANCH: ${{ github.event.inputs.branch || github.ref_name }}
       INSTALL_BACKUP_TIMER: ${{ inputs.install_backup_timer }}
       RUN_BACKUP_NOW: ${{ inputs.run_backup_now }}
+      VESLO_DEPLOYMENT_DOMAIN: ${{ vars.VESLO_DEPLOYMENT_DOMAIN || 'veslo.work' }}
       REPO_URL: https://github.com/${{ github.repository }}.git
       GITHUB_TOKEN: ${{ github.token }}
     steps:
@@ -101,11 +102,24 @@ jobs:
         run: |
           set -euo pipefail
 
-          curl -fsS https://api.veslo.work/health
-          curl -fsS https://ai.veslo.work/health
-          curl -fsSI https://app.veslo.work >/dev/null
+          deployment_domain="${VESLO_DEPLOYMENT_DOMAIN#http://}"
+          deployment_domain="${deployment_domain#https://}"
+          deployment_domain="${deployment_domain%%/*}"
+          deployment_domain="${deployment_domain#api.}"
+          deployment_domain="${deployment_domain#ai.}"
+          deployment_domain="${deployment_domain#app.}"
+          deployment_domain="${deployment_domain#admin.}"
+          deployment_domain="${deployment_domain#workers.}"
 
-          root_response="$(curl -fsS https://api.veslo.work/)"
+          api_url="https://api.${deployment_domain}"
+          ai_url="https://ai.${deployment_domain}"
+          app_url="https://app.${deployment_domain}"
+
+          curl -fsS "$api_url/health"
+          curl -fsS "$ai_url/health"
+          curl -fsSI "$app_url" >/dev/null
+
+          root_response="$(curl -fsS "$api_url/")"
           printf '%s\n' "$root_response" | grep -F '"service":"veslo-den"' >/dev/null
 
           for forbidden in \
@@ -115,7 +129,7 @@ jobs:
             "GET /v1/me" \
             "TestPass123!"; do
             if printf '%s\n' "$root_response" | grep -F "$forbidden" >/dev/null; then
-              echo "::error::api.veslo.work root still contains forbidden text: $forbidden"
+              echo "::error::$api_url root still contains forbidden text: $forbidden"
               exit 1
             fi
           done

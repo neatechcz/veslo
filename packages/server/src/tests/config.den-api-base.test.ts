@@ -5,7 +5,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { parseCliArgs, resolveServerConfig } from "../config.js";
 
-const ENV_KEYS = ["VESLO_DEN_API_BASE", "VESLO_SKILL_REGISTRY_BASE_URL", "VESLO_SKILL_REGISTRY_TOKEN"] as const;
+const ENV_KEYS = [
+  "VESLO_DEPLOYMENT_DOMAIN",
+  "VESLO_DEN_API_BASE",
+  "VESLO_SKILL_REGISTRY_BASE_URL",
+  "VESLO_SKILL_REGISTRY_TOKEN",
+] as const;
 const snapshot = new Map<string, string | undefined>();
 const tempDirs: string[] = [];
 
@@ -45,6 +50,19 @@ describe("den api base config", () => {
 
     expect(config.denApiBase).toBe("https://api.veslo.work");
     expect(config.skillRegistryBaseUrl).toBe("https://api.veslo.work");
+  });
+
+  test("resolveServerConfig derives Den and skill registry bases from deployment domain", async () => {
+    for (const key of ENV_KEYS) snapshot.set(key, process.env[key]);
+
+    process.env.VESLO_DEPLOYMENT_DOMAIN = "staging.veslo.work";
+    delete process.env.VESLO_DEN_API_BASE;
+    delete process.env.VESLO_SKILL_REGISTRY_BASE_URL;
+
+    const config = await resolveServerConfig(parseCliArgs([]));
+
+    expect(config.denApiBase).toBe("https://api.staging.veslo.work");
+    expect(config.skillRegistryBaseUrl).toBe("https://api.staging.veslo.work");
   });
 
   test("resolveServerConfig prefers env den api base over config file", async () => {

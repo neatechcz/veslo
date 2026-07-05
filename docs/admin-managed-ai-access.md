@@ -4,7 +4,7 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 
 ## Source of truth
 
-- The canonical managed-AI admin UI is AI Gateway admin at `https://ai.veslo.work/admin`.
+- The canonical managed-AI admin UI is AI Gateway admin at `/admin` on the derived AI Gateway origin: `https://ai.veslo.work/admin` in production, or `https://ai.staging.veslo.work/admin` when `VESLO_DEPLOYMENT_DOMAIN=staging.veslo.work`.
 - When documentation, YouTrack tasks, or implementation notes say "admin" for VSLO-201 managed-AI operations, they mean the AI Gateway admin and its `/admin` subpages.
 - There is no separate DEN admin UI for managed-AI operations. DEN can still own backend APIs and storage for auth, users, organizations, domains, invites, memberships, platform roles, and seat limits.
 - DEN owns the effective AI access policy for each signed-in Den user.
@@ -20,7 +20,7 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 
 1. The user signs into the Veslo app with the existing browser-based Den flow.
 2. The app calls `GET /ai-gateway/me/ai-access` on `packages/server`.
-3. `packages/server` proxies that to the configured managed-AI service's `GET /api/me/ai-access` endpoint using the caller's Den bearer token. Production defaults use the standalone AI Gateway at `https://ai.veslo.work`.
+3. `packages/server` proxies that to the configured managed-AI service's `GET /api/me/ai-access` endpoint using the caller's Den bearer token. Defaults derive the standalone AI Gateway from `VESLO_DEPLOYMENT_DOMAIN`, using `https://ai.veslo.work` for production and `https://ai.staging.veslo.work` for staging unless a full URL override is set.
 4. The app treats the returned provider/model as read-only admin-managed state.
 5. Prompt traffic still goes through the local Veslo server compatibility path.
 6. The local Veslo server forwards managed prompt traffic to the configured managed-AI service.
@@ -135,16 +135,18 @@ Use these commands when verifying the admin-managed flow locally or against the 
 - Validate a local Codex `auth.json` without uploading:
 
   ```bash
-  node scripts/admin/codex-auth-upload.mjs --upload-url https://ai.veslo.work/admin/api/credentials/codex-auth-upload/<token> --credential-id <credential-id> --credential-name "<credential name>" --auth-json-path ~/.veslo/codex-auth/<credential>/auth.json --dry-run --yes
+  VESLO_AI_ADMIN_BASE="${VESLO_AI_ADMIN_BASE:-https://ai.veslo.work/admin}"
+  node scripts/admin/codex-auth-upload.mjs --upload-url "$VESLO_AI_ADMIN_BASE/api/credentials/codex-auth-upload/<token>" --credential-id <credential-id> --credential-name "<credential name>" --auth-json-path ~/.veslo/codex-auth/<credential>/auth.json --dry-run --yes
   ```
 
 - Validate a new Codex account upload command without creating the server credential:
 
   ```bash
-  node scripts/admin/codex-auth-upload.mjs --upload-url https://ai.veslo.work/admin/api/credentials/codex-auth-upload/<token> --credential-name "New Codex account" --auth-json-path ~/.veslo/codex-auth/new-codex-account/auth.json --dry-run --yes
+  VESLO_AI_ADMIN_BASE="${VESLO_AI_ADMIN_BASE:-https://ai.veslo.work/admin}"
+  node scripts/admin/codex-auth-upload.mjs --upload-url "$VESLO_AI_ADMIN_BASE/api/credentials/codex-auth-upload/<token>" --credential-name "New Codex account" --auth-json-path ~/.veslo/codex-auth/new-codex-account/auth.json --dry-run --yes
   ```
 
-- Run the guarded live Playwright check that opens the production admin, selects the Václav Codex credential, prepares the upload session, and runs the local helper. By default it validates locally and skips the upload; add `E2E_LIVE_ADMIN_CODEX_AUTH_UPLOAD_COMMIT=1` only when the test should replace the production credential secret.
+- Run the guarded live Playwright check that opens the selected admin environment, selects the Václav Codex credential, prepares the upload session, and runs the local helper. By default it validates locally and skips the upload; add `E2E_LIVE_ADMIN_CODEX_AUTH_UPLOAD_COMMIT=1` only when the test should replace the selected environment's credential secret.
 
   ```bash
   cd packages/e2e

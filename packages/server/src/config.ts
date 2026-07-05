@@ -9,6 +9,7 @@ import type {
   LogFormat,
 } from "./types.js";
 import { normalizeDenApiBaseUrl } from "./den-api-base.js";
+import { deploymentServiceUrl } from "./deployment-endpoints.js";
 import { buildWorkspaceInfos } from "./workspaces.js";
 import { parseList, readJsonFile, shortId } from "./utils.js";
 
@@ -409,7 +410,7 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
   const denApiBase =
     normalizeDenApiBaseUrl(process.env.VESLO_DEN_API_BASE) ??
     normalizeDenApiBaseUrl(fileConfig.denApiBase) ??
-    undefined;
+    deploymentServiceUrl("api", process.env.VESLO_DEPLOYMENT_DOMAIN);
   const skillRegistryBaseUrl =
     normalizeDenApiBaseUrl(process.env.VESLO_SKILL_REGISTRY_BASE_URL) ??
     normalizeDenApiBaseUrl(fileConfig.skillRegistryBaseUrl) ??

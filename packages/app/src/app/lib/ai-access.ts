@@ -3,6 +3,7 @@ import { parse } from "jsonc-parser";
 import type { ModelRef } from "../types";
 import type { VesloGatewayProvider, VesloUserAiAccess } from "./veslo-server";
 import { formatConfigWithDefaultModel } from "./model-persistence";
+import { deploymentServiceUrl, readViteDeploymentDomain } from "./deployment-endpoints";
 import {
   OPENCODE_SESSION_ID_TEMPLATE,
   VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE,
@@ -23,7 +24,7 @@ export const AI_ACCESS_LOADING_MESSAGE_KEY = "ai_access.loading";
 export const AI_ACCESS_NOT_CONFIGURED_MESSAGE_KEY = "ai_access.not_configured";
 export const AI_ACCESS_INVALID_MESSAGE_KEY = "ai_access.invalid";
 export const AI_ACCESS_LOAD_FAILED_MESSAGE_KEY = "ai_access.load_failed";
-export const DEFAULT_MANAGED_AI_GATEWAY_BASE_URL = "https://ai.veslo.work";
+export const DEFAULT_MANAGED_AI_GATEWAY_BASE_URL = deploymentServiceUrl("ai", readViteDeploymentDomain());
 const REDACTED_SECRET_VALUE = "[REDACTED]";
 
 const AI_ACCESS_MESSAGE_KEY_BY_TEXT = new Map<string, string>([

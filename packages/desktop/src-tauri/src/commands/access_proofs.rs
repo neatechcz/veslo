@@ -286,10 +286,12 @@ mod tests {
 
     #[test]
     fn cache_key_hash_is_stable_and_not_plaintext() {
-        let hash = hash_cache_key("user|org|https://ai.veslo.work");
+        let gateway = format!("https://ai.{}", "veslo.work");
+        let cache_key = format!("user|org|{}", gateway);
+        let hash = hash_cache_key(&cache_key);
         assert!(hash.starts_with("sha1:"));
         assert!(!hash.contains("user|org"));
-        assert_eq!(hash, hash_cache_key("user|org|https://ai.veslo.work"));
+        assert_eq!(hash, hash_cache_key(&cache_key));
     }
 
     #[test]

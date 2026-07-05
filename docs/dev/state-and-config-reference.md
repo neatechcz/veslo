@@ -103,7 +103,7 @@ Meaning:
 - `veslo.den.desktopAuthPending`
   Temporary desktop auth handoff state during browser sign-in.
 
-Legacy Den bases on `*.onrender.com` are treated as stale migration state. The app and local server normalize those values to `https://api.veslo.work` before using or forwarding Den requests, and stale browser sign-in endpoint overrides are cleared instead of preserved.
+Legacy Den bases on `*.onrender.com` are treated as stale migration state. The app and local server normalize those values to the configured deployment-domain Den base before using or forwarding Den requests, and stale browser sign-in endpoint overrides are cleared instead of preserved. Production defaults derive this as `https://api.veslo.work`; staging derives it from `VESLO_DEPLOYMENT_DOMAIN` or `VITE_VESLO_DEPLOYMENT_DOMAIN`, for example `https://api.staging.veslo.work`.
 
 In Tauri startup flows, the desktop auth snapshot is allowed to repair stale browser auth state. A snapshot is explicitly signed out only when it carries no auth and disables `keepSignedIn`; a signed-in snapshot may still disable `keepSignedIn` to request session-only auth. If the snapshot explicitly represents a signed-out state, or if the snapshot user identity conflicts with the browser-stored user identity, the snapshot wins before the rest of app bootstrap continues. Matching or identity-ambiguous browser auth stays in place and re-syncs the desktop snapshot instead, while still honoring the snapshot's `keepSignedIn` preference. E2E snapshots marked with `source: "e2e-env"` are the exception: they replace matching browser auth too, because the fixture loopback base changes on each run while the test user identity can remain the same.
 
@@ -276,7 +276,7 @@ Scheduling is owned by the `backup` service in `packaging/owned-server/compose.y
 
 ## Managed-AI Routing and Accounting
 
-Managed-AI inference routing is configured separately from signed-in app identity. Desktop and orchestrator defaults use the owned standalone AI Gateway at `https://ai.veslo.work`; `VESLO_MANAGED_AI_BASE_URL` overrides it, with `VESLO_AI_GATEWAY_BASE_URL` retained as the legacy fallback. The previous Render AI Gateway remains a transition and rollback surface, not the default for new builds.
+Managed-AI inference routing is configured separately from signed-in app identity. Desktop and orchestrator defaults derive the owned standalone AI Gateway from `VESLO_DEPLOYMENT_DOMAIN` or the build-time `VITE_VESLO_DEPLOYMENT_DOMAIN`; production resolves to `https://ai.veslo.work` and staging resolves to `https://ai.staging.veslo.work`. `VESLO_MANAGED_AI_BASE_URL` overrides the derived URL, with `VESLO_AI_GATEWAY_BASE_URL` retained as the legacy fallback. The previous Render AI Gateway remains a transition and rollback surface, not the default for new builds.
 
 AI Gateway `/health` is process liveness only. Use `/readiness` when the product, admin UI, or monitors need to show AI inference availability: it checks upstream provider reachability, at least one healthy credential, and at least one enabled AI-access policy. The local server exposes the same frontend-visible readiness through `/ai-gateway/readiness`; send-time provider proxy failures remain authoritative and continue returning normalized upstream failure diagnostics.
 

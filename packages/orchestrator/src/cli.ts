@@ -30,6 +30,7 @@ import { atomicWriteJson, cleanupStaleTmpFiles, createDebouncedPersister } from 
 import { EnginePool, type EngineProcess } from "./engine-pool.js";
 import { SharedOpenCodeEngine } from "./shared-opencode-engine.js";
 import { resolveOpencodeProxyTarget } from "./opencode-proxy-target.js";
+import { deploymentServiceUrl } from "./deployment-endpoints.js";
 import { probeOpenCodeProjectApi } from "./opencode-project-api.js";
 import { proxyToEngine } from "./router-proxy.js";
 import { createRunStore, type RunEngineOwner, type RunKind, type RunRecord } from "./run-store.js";
@@ -120,7 +121,7 @@ const DEFAULT_OPENCODE_USERNAME = "opencode";
 const DEFAULT_OPENCODE_HOT_RELOAD_DEBOUNCE_MS = 700;
 const DEFAULT_OPENCODE_HOT_RELOAD_COOLDOWN_MS = 1500;
 const OPENCODE_PROXY_HEADERS_DEFAULT_TIMEOUT_MS = 75_000;
-const DEFAULT_MANAGED_AI_BASE_URL = "https://ai.veslo.work";
+const DEFAULT_MANAGED_AI_BASE_URL = deploymentServiceUrl("ai");
 const VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV = "VESLO_OPENCODE_SERVER_CLIENT_TOKEN";
 
 type ParsedArgs = {
@@ -2869,6 +2870,9 @@ async function startVesloServer(options: {
   const managedAiBaseUrl = (
     process.env.VESLO_MANAGED_AI_BASE_URL?.trim() ||
     process.env.VESLO_AI_GATEWAY_BASE_URL?.trim() ||
+    (process.env.VESLO_DEPLOYMENT_DOMAIN?.trim()
+      ? deploymentServiceUrl("ai", process.env.VESLO_DEPLOYMENT_DOMAIN)
+      : "") ||
     DEFAULT_MANAGED_AI_BASE_URL
   ).replace(/\/+$/, "");
 

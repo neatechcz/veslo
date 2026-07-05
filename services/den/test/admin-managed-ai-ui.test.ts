@@ -93,6 +93,22 @@ test("GET /admin redirects to the canonical AI Gateway admin", async () => {
   })
 })
 
+test("GET /admin derives the canonical AI Gateway admin from deployment domain", async () => {
+  const previous = process.env.VESLO_DEPLOYMENT_DOMAIN
+  process.env.VESLO_DEPLOYMENT_DOMAIN = "staging.veslo.work"
+  try {
+    await withServer(createUiApp(), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/admin`, { redirect: "manual" })
+
+      assert.equal(response.status, 302)
+      assert.equal(response.headers.get("location"), "https://ai.staging.veslo.work/admin")
+    })
+  } finally {
+    if (previous === undefined) delete process.env.VESLO_DEPLOYMENT_DOMAIN
+    else process.env.VESLO_DEPLOYMENT_DOMAIN = previous
+  }
+})
+
 test("mounted DEN app leaves /admin page traffic to the canonical managed-AI router", () => {
   assert.doesNotMatch(denIndexSource, /publicAdminDir/)
   assert.doesNotMatch(denIndexSource, /public-admin/)

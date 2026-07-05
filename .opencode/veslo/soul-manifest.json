@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-05T08:19:38.195Z",
+  "managedBy": "veslo-soul-materializer",
+  "composition": {
+    "order": [
+      "organization",
+      "user",
+      "workspace"
+    ],
+    "currentVersionIds": {
+      "organization": "soul_v_56f34225-f5e0-4cce-bb3b-9a3203162613",
+      "user": null,
+      "workspace": null
+    },
+    "effectiveSha256": "eaa4c8c874eda25cf736513d2f943343963af7bbf928aeafbece1c94390b4722"
+  },
+  "files": [
+    {
+      "path": ".opencode/soul-company.md",
+      "scope": "organization",
+      "ownerId": "2f2ee014-85ba-4815-bc52-7fad8fdc48a9",
+      "documentId": "soul_organization_212421de-159e-449e-8e86-272611f917f0",
+      "currentVersionId": "soul_v_56f34225-f5e0-4cce-bb3b-9a3203162613",
+      "sourceVersionId": "soul_v_56f34225-f5e0-4cce-bb3b-9a3203162613",
+      "contentSha256": "10e7f7855d301b2dbf4da21c485dbbbe6e2076979d9d031411c259291c36fc92",
+      "managedBy": "veslo-soul-materializer",
+      "materializedAt": "2026-07-05T08:19:38.195Z"
+    },
+    {
+      "path": ".opencode/soul-user.md",
+      "scope": "user",
+      "ownerId": "U3UjDNnUnN7HlhFMQYuWtBlq6GJsngFN",
+      "documentId": "soul_user_c07ef445-4137-461c-aca6-3758cdd5e497",
+      "currentVersionId": null,
+      "sourceVersionId": null,
+      "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "managedBy": "veslo-soul-materializer",
+      "materializedAt": "2026-07-05T08:19:38.195Z"
+    },
+    {
+      "path": ".opencode/soul-workspace.md",
+      "scope": "workspace",
+      "ownerId": null,
+      "documentId": null,
+      "currentVersionId": null,
+      "sourceVersionId": null,
+      "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "managedBy": "veslo-soul-materializer",
+      "materializedAt": "2026-07-05T08:19:38.195Z"
+    }
+  ]
+}

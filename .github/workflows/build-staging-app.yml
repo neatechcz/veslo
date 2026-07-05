@@ -32,10 +32,8 @@ jobs:
       VESLO_WINDOWS_SIGNING_DESCRIPTION: Veslo Staging
       VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS: 900
       VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS: 2
-      VITE_DEN_API_BASE: https://api.staging.veslo.work
-      VITE_MANAGED_AI_GATEWAY_BASE_URL: https://ai.staging.veslo.work
-      VESLO_MANAGED_AI_BASE_URL: https://ai.staging.veslo.work
-      VITE_VESLO_CONNECT_APP_URL: https://app.staging.veslo.work
+      VESLO_DEPLOYMENT_DOMAIN: ${{ vars.VESLO_STAGING_DEPLOYMENT_DOMAIN || 'staging.veslo.work' }}
+      VITE_VESLO_DEPLOYMENT_DOMAIN: ${{ vars.VESLO_STAGING_DEPLOYMENT_DOMAIN || 'staging.veslo.work' }}
       VITE_VESLO_UPDATER_ENABLED: false
       VESLO_GLITCHTIP_DSN: ${{ vars.VESLO_GLITCHTIP_DSN }}
       VITE_VESLO_GLITCHTIP_DSN: ${{ vars.VESLO_GLITCHTIP_DSN }}

@@ -2,6 +2,7 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { LANGUAGE_PREF_KEY, ONBOARDING_COMPLETE_STORAGE_KEY } from "../constants";
 import { isTauriRuntime } from "../utils";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
+import { deploymentServiceUrl, readViteDeploymentDomain } from "./deployment-endpoints";
 import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
 
 const DEN_AUTH_STORAGE_KEY = "veslo.den.auth";
@@ -10,7 +11,7 @@ const DEN_API_BASE_OVERRIDE_STORAGE_KEY = "veslo.den.apiBaseOverride";
 const DEN_DESKTOP_AUTH_PENDING_STORAGE_KEY = "veslo.den.desktopAuthPending";
 const DEN_AUTH_SNAPSHOT_READ_COMMAND = "den_auth_snapshot_read";
 const DEN_AUTH_SNAPSHOT_WRITE_COMMAND = "den_auth_snapshot_write";
-const DEFAULT_DEN_API_BASE = "https://api.veslo.work";
+const DEFAULT_DEN_API_BASE = deploymentServiceUrl("api");
 const ONRENDER_HOST_SUFFIX = ".onrender.com";
 const DEN_START_TIMEOUT_MS = 12_000;
 const DEN_STATUS_TIMEOUT_MS = 8_000;
@@ -229,7 +230,7 @@ function envDenApiBase(): string | null {
 }
 
 export function getDefaultDenApiBase(): string {
-  return envDenApiBase() ?? DEFAULT_DEN_API_BASE;
+  return envDenApiBase() ?? deploymentServiceUrl("api", readViteDeploymentDomain());
 }
 
 export function readDenApiBaseOverride(): string | null {

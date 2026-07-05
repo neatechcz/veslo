@@ -10,7 +10,8 @@ use crate::supervised_process::{self, CommandEvent, SupervisedCommandChild};
 
 const DEFAULT_VESLO_PORT: u16 = 8787;
 const DEFAULT_VESLO_HOST: &str = "127.0.0.1";
-const DEFAULT_MANAGED_AI_BASE_URL: &str = "https://ai.veslo.work";
+const DEFAULT_VESLO_DEPLOYMENT_DOMAIN: &str = "veslo.work";
+const VESLO_DEPLOYMENT_DOMAIN_ENV: &str = "VESLO_DEPLOYMENT_DOMAIN";
 const VESLO_SERVER_DEV_WATCH_ENV: &str = "VESLO_SERVER_DEV_WATCH";
 const VESLO_SERVER_DEV_DIR_ENV: &str = "VESLO_SERVER_DEV_DIR";
 const VESLO_DESKTOP_SERVER_HOST_ENV: &str = "VESLO_DESKTOP_SERVER_HOST";
@@ -256,6 +257,7 @@ pub fn build_veslo_args(
 fn resolve_managed_ai_base_url_from_env(
     managed_ai_base_url: Option<&str>,
     legacy_ai_gateway_base_url: Option<&str>,
+    deployment_domain: Option<&str>,
 ) -> String {
     managed_ai_base_url
         .map(str::trim)
@@ -265,15 +267,61 @@ fn resolve_managed_ai_base_url_from_env(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
         })
-        .unwrap_or(DEFAULT_MANAGED_AI_BASE_URL)
+        .map(str::to_string)
+        .unwrap_or_else(|| deployment_service_url("ai", deployment_domain))
         .trim_end_matches('/')
         .to_string()
 }
 
+fn normalize_deployment_domain(raw: Option<&str>) -> String {
+    let value = raw.map(str::trim).unwrap_or("");
+    if value.is_empty() {
+        return DEFAULT_VESLO_DEPLOYMENT_DOMAIN.to_string();
+    }
+
+    let without_scheme = value
+        .strip_prefix("https://")
+        .or_else(|| value.strip_prefix("http://"))
+        .unwrap_or(value);
+    let host = without_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    let labels = ["api.", "ai.", "app.", "admin.", "workers."];
+    for label in labels {
+        if let Some(rest) = host.strip_prefix(label) {
+            if !rest.is_empty() {
+                return rest.to_string();
+            }
+        }
+    }
+
+    if host.is_empty() {
+        DEFAULT_VESLO_DEPLOYMENT_DOMAIN.to_string()
+    } else {
+        host
+    }
+}
+
+fn deployment_service_url(service: &str, deployment_domain: Option<&str>) -> String {
+    format!(
+        "https://{}.{}",
+        service,
+        normalize_deployment_domain(deployment_domain)
+    )
+}
+
 fn resolve_managed_ai_base_url() -> String {
+    let deployment_domain = env::var(VESLO_DEPLOYMENT_DOMAIN_ENV)
+        .ok()
+        .or_else(|| option_env!("VESLO_DEPLOYMENT_DOMAIN").map(str::to_string));
     resolve_managed_ai_base_url_from_env(
         std::env::var("VESLO_MANAGED_AI_BASE_URL").ok().as_deref(),
         std::env::var("VESLO_AI_GATEWAY_BASE_URL").ok().as_deref(),
+        deployment_domain.as_deref(),
     )
 }
 
@@ -679,6 +727,7 @@ mod tests {
         let resolved = resolve_managed_ai_base_url_from_env(
             Some(" https://managed.example.test/ "),
             Some("https://legacy.example.test/"),
+            Some("staging.veslo.work"),
         );
 
         assert_eq!(resolved, "https://managed.example.test");
@@ -687,16 +736,28 @@ mod tests {
     #[test]
     fn managed_ai_base_url_falls_back_to_legacy_env() {
         let resolved =
-            resolve_managed_ai_base_url_from_env(None, Some("https://legacy.example.test/"));
+            resolve_managed_ai_base_url_from_env(None, Some("https://legacy.example.test/"), None);
 
         assert_eq!(resolved, "https://legacy.example.test");
     }
 
     #[test]
     fn managed_ai_base_url_defaults_to_owned_gateway() {
-        let resolved = resolve_managed_ai_base_url_from_env(None, None);
+        let resolved = resolve_managed_ai_base_url_from_env(None, None, None);
 
-        assert_eq!(resolved, "https://ai.veslo.work");
+        assert_eq!(
+            resolved,
+            format!("https://ai.{}", DEFAULT_VESLO_DEPLOYMENT_DOMAIN)
+        );
+    }
+
+    #[test]
+    fn managed_ai_base_url_derives_from_deployment_domain() {
+        let staging_domain = "staging.veslo.work";
+        let resolved =
+            resolve_managed_ai_base_url_from_env(None, None, Some(staging_domain));
+
+        assert_eq!(resolved, format!("https://ai.{}", staging_domain));
     }
 
     #[test]

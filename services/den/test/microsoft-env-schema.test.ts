@@ -98,17 +98,17 @@ test("owned-server compose and env example pass Microsoft OAuth env into Den", (
   assert.match(compose, /MICROSOFT_CLIENT_SECRET: \$\{MICROSOFT_CLIENT_SECRET:-\}/)
   assert.match(
     compose,
-    /MICROSOFT_REDIRECT_URI: \$\{MICROSOFT_REDIRECT_URI:-https:\/\/api\.veslo\.work\/v1\/integrations\/microsoft\/oauth\/callback\}/,
+    /MICROSOFT_REDIRECT_URI: \$\{MICROSOFT_REDIRECT_URI:-\}/,
   )
   assert.match(compose, /MICROSOFT_TOKEN_SECRET_KEY: \$\{MICROSOFT_TOKEN_SECRET_KEY:-\}/)
   assert.match(
     compose,
-    /MICROSOFT_CONNECTOR_BASE_URL: \$\{MICROSOFT_CONNECTOR_BASE_URL:-https:\/\/api\.veslo\.work\}/,
+    /MICROSOFT_CONNECTOR_BASE_URL: \$\{MICROSOFT_CONNECTOR_BASE_URL:-\}/,
   )
 
   assert.match(envExample, /^MICROSOFT_CLIENT_ID=/m)
   assert.match(envExample, /^MICROSOFT_CLIENT_SECRET=/m)
-  assert.match(envExample, /^MICROSOFT_REDIRECT_URI=https:\/\/api\.veslo\.work\/v1\/integrations\/microsoft\/oauth\/callback$/m)
+  assert.match(envExample, /^MICROSOFT_REDIRECT_URI=$/m)
   assert.match(envExample, /^MICROSOFT_TOKEN_SECRET_KEY=/m)
-  assert.match(envExample, /^MICROSOFT_CONNECTOR_BASE_URL=https:\/\/api\.veslo\.work$/m)
+  assert.match(envExample, /^MICROSOFT_CONNECTOR_BASE_URL=$/m)
 })

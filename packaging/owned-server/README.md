@@ -18,12 +18,16 @@ Only the proxy publishes host ports. MySQL and app containers stay on the Compos
 
 ## Domains
 
-- `https://api.veslo.work` routes to Den.
-- `https://ai.veslo.work` routes to AI Gateway.
-- `https://app.veslo.work` routes to the web app.
-- `https://<worker-id>.workers.veslo.work` routes to owned-server cloud workers through the worker manager.
+Set `VESLO_DEPLOYMENT_DOMAIN` to the root deployment domain. Production uses
+`veslo.work`; staging uses `staging.veslo.work`. The stack derives service
+origins from that single value:
 
-DNS for these names must point at the owned server before public TLS issuance can succeed. Worker routing additionally requires a wildcard DNS record for `*.workers.veslo.work`. Production live traffic must not be redirected until the Phase 5 cutover gate in the migration plan.
+- `https://api.<deployment-domain>` routes to Den.
+- `https://ai.<deployment-domain>` routes to AI Gateway.
+- `https://app.<deployment-domain>` routes to the web app.
+- `https://<worker-id>.workers.<deployment-domain>` routes to owned-server cloud workers through the worker manager.
+
+DNS for these names must point at the owned server before public TLS issuance can succeed. Worker routing additionally requires a wildcard DNS record for `*.workers.<deployment-domain>`. Production live traffic must not be redirected until the Phase 5 cutover gate in the migration plan.
 
 ## Environment
 
@@ -35,7 +39,7 @@ sudo cp packaging/owned-server/env.example /srv/veslo/env/production.env
 sudo chmod 600 /srv/veslo/env/production.env
 ```
 
-Fill `/srv/veslo/env/production.env` with production values. The template covers Den, AI Gateway, web, Lettr, owned-server worker provisioning, temporary Render worker provisioning, Vercel worker-domain integration, Polar, YouTrack, debug-log ingest, and managed-AI settings.
+Fill `/srv/veslo/env/production.env` with production values. The template covers Den, AI Gateway, web, Lettr, owned-server worker provisioning, temporary Render worker provisioning, Vercel worker-domain integration, Polar, YouTrack, debug-log ingest, and managed-AI settings. Keep full public URL variables blank unless intentionally overriding the derived `api`, `ai`, `app`, `admin`, or `workers` origins for this deployment.
 
 The GitHub Actions deployment can point at a different server-side env file with `OWNED_SERVER_ENV_FILE`. The current production workflow default uses the existing production env path on the owned server until the host layout is normalized.
 
@@ -110,9 +114,10 @@ Keep production secrets in the server-side env file and GitHub secrets. Do not c
 After startup:
 
 ```bash
-curl -fsS https://api.veslo.work/health
-curl -fsS https://ai.veslo.work/health
-curl -I https://app.veslo.work
+deployment_domain="${VESLO_DEPLOYMENT_DOMAIN:-veslo.work}"
+curl -fsS "https://api.${deployment_domain}/health"
+curl -fsS "https://ai.${deployment_domain}/health"
+curl -I "https://app.${deployment_domain}"
 sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env ps
 sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env exec -T worker-manager node -e "fetch('http://127.0.0.1:8790/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 ```
@@ -120,7 +125,7 @@ sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/
 For AI inference readiness after credentials and AI-access policies are expected to be configured, use:
 
 ```bash
-curl -i https://ai.veslo.work/readiness
+curl -i "https://ai.${deployment_domain}/readiness"
 ```
 
 Compose also defines container health checks for Den `/health`, AI Gateway `/health`, worker manager `/health`, and the web app `/`. These intentionally remain liveness checks, not inference-readiness checks.

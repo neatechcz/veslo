@@ -1122,8 +1122,10 @@ export default {
   "sidebar.chats": "聊天",
   "sidebar.new_chat": "聊天",
   "sidebar.open_chat_failed": "Chat could not be opened.",
+  "sidebar.project_group": "项目",
   "sidebar.recent": "最近",
   "sidebar.reorder_project": "拖动以重新排序项目",
+  "sidebar.show_in_project": "在项目中显示",
   "sidebar.show_less": "显示更少",
 
   // ==================== Scheduled / Automations ====================

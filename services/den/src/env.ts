@@ -1,11 +1,13 @@
 import { z } from "zod"
 import { parseStripeOrganizationBillingConfig } from "./billing/stripe-config.js"
+import { resolveVesloDeploymentEndpoints } from "./deployment-endpoints.js"
 import { parseManagedAiEnv } from "./managed-ai/env.js"
 
 const schema = z.object({
   DATABASE_URL: z.string().min(1),
   BETTER_AUTH_SECRET: z.string().min(32),
-  BETTER_AUTH_URL: z.string().min(1),
+  BETTER_AUTH_URL: z.string().optional(),
+  VESLO_DEPLOYMENT_DOMAIN: z.string().optional(),
   WORKER_TOKEN_ENCRYPTION_KEY: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
@@ -136,9 +138,18 @@ function normalizedSecret(raw: string | undefined, label: string, minimumLength 
 
 export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
   const parsed = schema.parse(input)
-  const corsOrigins = parsed.CORS_ORIGINS?.split(",").map((origin) => normalizeOrigin(origin)).filter(Boolean)
   const polarFeatureGateEnabled = (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true"
   const nodeEnv = (input.NODE_ENV ?? "development").toLowerCase()
+  const endpoints = resolveVesloDeploymentEndpoints(parsed.VESLO_DEPLOYMENT_DOMAIN)
+  const betterAuthUrl = parsed.BETTER_AUTH_URL?.trim().replace(/\/+$/, "") || endpoints.apiBaseUrl
+  const defaultCorsOrigins =
+    nodeEnv === "production" || Boolean(parsed.VESLO_DEPLOYMENT_DOMAIN?.trim())
+      ? [endpoints.appBaseUrl, endpoints.aiBaseUrl]
+      : []
+  const configuredCorsOrigins = parsed.CORS_ORIGINS?.split(",").map((origin) => normalizeOrigin(origin)).filter(Boolean)
+  const corsOrigins = configuredCorsOrigins && configuredCorsOrigins.length > 0
+    ? configuredCorsOrigins
+    : defaultCorsOrigins
   const googleOauthClientId = parsed.GOOGLE_WORKSPACE_OAUTH_CLIENT_ID?.trim() || null
   const googleOauthClientSecret = parsed.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET?.trim() || null
   const googleTokenSecretKey = normalizedSecret(
@@ -177,7 +188,7 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
   return {
     databaseUrl: parsed.DATABASE_URL,
     betterAuthSecret: parsed.BETTER_AUTH_SECRET,
-    betterAuthUrl: parsed.BETTER_AUTH_URL,
+    betterAuthUrl,
     workerTokenEncryptionKey: parsed.WORKER_TOKEN_ENCRYPTION_KEY?.trim() || null,
     github: {
       clientId: parsed.GITHUB_CLIENT_ID?.trim() || undefined,
@@ -197,7 +208,7 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
     ownedWorkerManager: {
       url: parsed.OWNED_WORKER_MANAGER_URL?.trim().replace(/\/+$/, "") || undefined,
       token: parsed.OWNED_WORKER_MANAGER_TOKEN?.trim() || undefined,
-      publicDomainSuffix: parsed.OWNED_WORKER_PUBLIC_DOMAIN_SUFFIX?.trim() || undefined,
+      publicDomainSuffix: parsed.OWNED_WORKER_PUBLIC_DOMAIN_SUFFIX?.trim() || endpoints.workersDomainSuffix,
     },
     render: {
       apiBase: parsed.RENDER_API_BASE ?? "https://api.render.com/v1",
@@ -252,25 +263,29 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
     googleWorkspace: {
       oauthClientId: googleOauthClientId,
       oauthClientSecret: googleOauthClientSecret,
-      oauthRedirectUri: parsed.GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI?.trim() || null,
+      oauthRedirectUri:
+        parsed.GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI?.trim() ||
+        `${endpoints.apiBaseUrl}/v1/integrations/google/oauth/callback`,
       oauthStateSecret:
         parsed.GOOGLE_WORKSPACE_OAUTH_STATE_SECRET?.trim() || parsed.BETTER_AUTH_SECRET.trim(),
       oauthSuccessRedirectUrl:
         parsed.GOOGLE_WORKSPACE_OAUTH_SUCCESS_REDIRECT_URL?.trim() ||
-        "https://app.veslo.work/settings/integrations/google",
+        `${endpoints.appBaseUrl}/settings/integrations/google`,
       tokenSecretKey: googleTokenSecretKey,
       connectorBaseUrl: parsed.GOOGLE_WORKSPACE_CONNECTOR_BASE_URL?.trim().replace(/\/+$/, "") ||
-        parsed.BETTER_AUTH_URL.trim().replace(/\/+$/, ""),
+        betterAuthUrl,
     },
     microsoft: {
       clientId: microsoftClientId,
       clientSecret: microsoftClientSecret,
-      redirectUri: parsed.MICROSOFT_REDIRECT_URI?.trim() || null,
+      redirectUri:
+        parsed.MICROSOFT_REDIRECT_URI?.trim() ||
+        `${endpoints.apiBaseUrl}/v1/integrations/microsoft/oauth/callback`,
       stateSecret: parsed.BETTER_AUTH_SECRET.trim(),
-      successRedirectUrl: "https://app.veslo.work/settings/integrations/microsoft",
+      successRedirectUrl: `${endpoints.appBaseUrl}/settings/integrations/microsoft`,
       tokenSecretKey: microsoftTokenSecretKey,
       connectorBaseUrl: parsed.MICROSOFT_CONNECTOR_BASE_URL?.trim().replace(/\/+$/, "") ||
-        parsed.BETTER_AUTH_URL.trim().replace(/\/+$/, ""),
+        betterAuthUrl,
     },
   }
 }

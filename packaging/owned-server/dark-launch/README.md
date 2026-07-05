@@ -124,8 +124,8 @@ sudo docker compose -f packaging/owned-server/compose.yml --env-file "$VESLO_ENV
 
 Expected:
 
-- Caddy obtains TLS certificates for `api.veslo.work`, `ai.veslo.work`, and
-  `app.veslo.work`.
+- Caddy obtains TLS certificates for the derived Den, AI Gateway, and web app
+  origins under `VESLO_DEPLOYMENT_DOMAIN`.
 - No live production DNS cutover has been performed in this phase.
 
 ## Phase 4 Checks
@@ -133,12 +133,13 @@ Expected:
 Run the checks from the migration plan:
 
 ```bash
-curl -fsS https://api.veslo.work/health
-curl -fsS https://ai.veslo.work/health
-curl -I https://app.veslo.work
+deployment_domain="${VESLO_DEPLOYMENT_DOMAIN:-veslo.work}"
+curl -fsS "https://api.${deployment_domain}/health"
+curl -fsS "https://ai.${deployment_domain}/health"
+curl -I "https://app.${deployment_domain}"
 ```
 
-Use `https://ai.veslo.work/readiness` separately when checking AI inference availability; `/health` confirms only that the gateway process is live.
+Use `https://ai.${deployment_domain}/readiness` separately when checking AI inference availability; `/health` confirms only that the gateway process is live.
 
 Then verify:
 

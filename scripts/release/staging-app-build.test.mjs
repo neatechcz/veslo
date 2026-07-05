@@ -29,10 +29,8 @@ test("staging app workflow bakes staging endpoints and never publishes public up
   for (const requiredText of [
     "name: Build Staging App",
     "workflow_dispatch",
-    "VITE_DEN_API_BASE: https://api.staging.veslo.work",
-    "VITE_MANAGED_AI_GATEWAY_BASE_URL: https://ai.staging.veslo.work",
-    "VESLO_MANAGED_AI_BASE_URL: https://ai.staging.veslo.work",
-    "VITE_VESLO_CONNECT_APP_URL: https://app.staging.veslo.work",
+    "VESLO_DEPLOYMENT_DOMAIN: ${{ vars.VESLO_STAGING_DEPLOYMENT_DOMAIN || 'staging.veslo.work' }}",
+    "VITE_VESLO_DEPLOYMENT_DOMAIN: ${{ vars.VESLO_STAGING_DEPLOYMENT_DOMAIN || 'staging.veslo.work' }}",
     "VITE_VESLO_UPDATER_ENABLED: false",
     "VESLO_GLITCHTIP_ENVIRONMENT: staging",
     "VITE_VESLO_GLITCHTIP_ENVIRONMENT: staging",
@@ -41,6 +39,15 @@ test("staging app workflow bakes staging endpoints and never publishes public up
     "actions/upload-artifact",
   ]) {
     assert.match(workflow, new RegExp(requiredText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  for (const forbiddenText of [
+    "VITE_DEN_API_BASE: https://api.staging.veslo.work",
+    "VITE_MANAGED_AI_GATEWAY_BASE_URL: https://ai.staging.veslo.work",
+    "VESLO_MANAGED_AI_BASE_URL: https://ai.staging.veslo.work",
+    "VITE_VESLO_CONNECT_APP_URL: https://app.staging.veslo.work",
+  ]) {
+    assert.equal(workflow.includes(forbiddenText), false, `staging app workflow must derive ${forbiddenText}`);
   }
 
   for (const forbiddenText of [

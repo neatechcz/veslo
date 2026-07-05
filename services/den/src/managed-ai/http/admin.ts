@@ -1,6 +1,7 @@
 import crypto from "node:crypto"
 import express from "express"
 
+import { deploymentServiceUrl } from "../../deployment-endpoints.js"
 import { asyncRoute } from "../../http/errors.js"
 import type {
   AdminAlertRecord,
@@ -43,7 +44,10 @@ import {
 import type { UsageAggregateResponse, UsageCredentialAggregate, UsageRepository } from "../usage/repository.js"
 
 const DEFAULT_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS = 2500
-const CANONICAL_AI_GATEWAY_ADMIN_URL = "https://ai.veslo.work/admin"
+
+function canonicalAiGatewayAdminUrl() {
+  return `${deploymentServiceUrl("ai", process.env.VESLO_DEPLOYMENT_DOMAIN)}/admin`
+}
 
 class HttpError extends Error {
   constructor(
@@ -1131,7 +1135,7 @@ export function createManagedAiAdminUiRouter(deps: ManagedAiAdminUiOptions) {
     const suffix = req.path === "/admin" ? "" : req.path.slice("/admin".length)
     const queryIndex = req.originalUrl.indexOf("?")
     const query = queryIndex >= 0 ? req.originalUrl.slice(queryIndex) : ""
-    res.redirect(302, `${CANONICAL_AI_GATEWAY_ADMIN_URL}${suffix}${query}`)
+    res.redirect(302, `${canonicalAiGatewayAdminUrl()}${suffix}${query}`)
   }
 
   router.get("/admin", redirectToCanonicalAdmin)

@@ -1,4 +1,5 @@
 import { mergeVesloServerSettingsWithEnv } from "../cloud-policy";
+import { deploymentServiceUrl, readViteDeploymentDomain } from "../deployment-endpoints";
 import type { VesloServerSettings } from "./types";
 
 export const DEFAULT_VESLO_SERVER_PORT = 8787;
@@ -163,7 +164,7 @@ export function buildVesloWorkspaceBaseUrl(hostUrl: string, workspaceId?: string
   }
 }
 
-export const DEFAULT_VESLO_CONNECT_APP_URL = "https://app.veslo.work";
+export const DEFAULT_VESLO_CONNECT_APP_URL = deploymentServiceUrl("app", readViteDeploymentDomain());
 
 const VESLO_INVITE_PARAM_URL = "veslo_url";
 const VESLO_INVITE_PARAM_TOKEN = "veslo_token";

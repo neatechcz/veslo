@@ -39,6 +39,31 @@ type FixtureSkill = {
 
 type RegistryEventFixtureMode = 'none' | 'workspace-update-repeat';
 
+const DEFAULT_E2E_DEPLOYMENT_DOMAIN = 'veslo.work';
+
+function normalizeE2EDeploymentDomain(value: string | undefined): string {
+  const raw = value?.trim();
+  if (!raw) return DEFAULT_E2E_DEPLOYMENT_DOMAIN;
+  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    const host = new URL(withProtocol).hostname.trim().toLowerCase().replace(/\.+$/, '');
+    return host.replace(/^(api|ai|app|admin|workers)\./, '') || DEFAULT_E2E_DEPLOYMENT_DOMAIN;
+  } catch {
+    return raw
+      .split(/[/?#]/, 1)[0]
+      .trim()
+      .toLowerCase()
+      .replace(/^(api|ai|app|admin|workers)\./, '')
+      .replace(/\.+$/, '') || DEFAULT_E2E_DEPLOYMENT_DOMAIN;
+  }
+}
+
+function defaultE2EDenApiBase(env: Record<string, string | undefined> = process.env): string {
+  const explicit = env.E2E_DEN_API_BASE?.trim() || env.VITE_DEN_API_BASE?.trim();
+  if (explicit) return explicit.replace(/\/+$/, '');
+  return `https://api.${normalizeE2EDeploymentDomain(env.VESLO_DEPLOYMENT_DOMAIN ?? env.VITE_VESLO_DEPLOYMENT_DOMAIN)}`;
+}
+
 type SoulScope = 'organization' | 'user';
 
 type SoulVersion = {
@@ -174,7 +199,7 @@ export function buildE2ESharePointMcpConnectors(baseUrl: string, orgId = E2E_SKI
   ];
 }
 
-export const E2E_GOOGLE_MCP_CONNECTORS = buildE2EGoogleMcpConnectors('https://api.veslo.work');
+export const E2E_GOOGLE_MCP_CONNECTORS = buildE2EGoogleMcpConnectors(defaultE2EDenApiBase());
 
 export function shouldUseGoogleMcpCatalogFixture(
   env: Record<string, string | undefined> = process.env,

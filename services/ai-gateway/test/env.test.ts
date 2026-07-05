@@ -82,3 +82,13 @@ test("parseEnv production fallback uses the owned Den API base", () => {
 
   assert.equal(parsed.denApiBase, "https://api.veslo.work");
 });
+
+test("parseEnv production fallback derives backend URLs from deployment domain", () => {
+  const parsed = parseEnv({
+    NODE_ENV: "production",
+    VESLO_DEPLOYMENT_DOMAIN: "staging.veslo.work",
+  });
+
+  assert.equal(parsed.openAiOAuth.redirectBase, "https://ai.staging.veslo.work/auth/openai");
+  assert.equal(parsed.denApiBase, "https://api.staging.veslo.work");
+});

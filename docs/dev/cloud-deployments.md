@@ -8,12 +8,21 @@ Veslo is local-first. Cloud services are data, sync, auth, and provisioning infr
 
 Veslo production cloud services run on the owned server through the repo-owned Docker Compose stack. Deployments must be defined from repo-owned deployment artifacts, not hand-edited containers.
 
-The current production entry points are:
+The production deployment domain is `veslo.work`. Services derive their public
+origins from that domain instead of storing unrelated full URLs in multiple
+places:
 
 - `https://api.veslo.work` for Den.
 - `https://ai.veslo.work` for the standalone AI Gateway.
 - `https://app.veslo.work` for the web app.
 - `https://*.workers.veslo.work` for owned-server cloud workers.
+
+Staging uses the same rule with `VESLO_DEPLOYMENT_DOMAIN=staging.veslo.work`,
+which derives `api.staging.veslo.work`, `ai.staging.veslo.work`,
+`app.staging.veslo.work`, `admin.staging.veslo.work`, and
+`workers.staging.veslo.work`. Full URL environment variables such as
+`DEN_API_BASE`, `VESLO_MANAGED_AI_BASE_URL`, `AI_GATEWAY_DEN_API_BASE`,
+`BETTER_AUTH_URL`, and OAuth redirect URLs are operator overrides only.
 
 The minimum supported host profile is:
 
@@ -54,6 +63,7 @@ Required GitHub Actions configuration:
 - A self-hosted runner assigned to this repository with labels `self-hosted`, `linux`, `x64`, and `veslo-owned-server`.
 - `OWNED_SERVER_APP_DIR` variable. Defaults to the stable production checkout path.
 - `OWNED_SERVER_ENV_FILE` variable. Defaults to the current production env file path on the owned server.
+- `VESLO_DEPLOYMENT_DOMAIN` variable when deploying a non-production owned-server environment. Production defaults to `veslo.work`; staging should set `staging.veslo.work`.
 
 Do not store production secrets in the repository. Keep production environment values in the server-side env file and GitHub secrets only.
 
@@ -69,9 +79,9 @@ connect through externally reachable database URLs.
 
 ## Managed-AI routing and admin visibility
 
-Signed-in app identity and desktop handoff can come from DEN, but managed-AI assignment and admin truth follow the service that receives the routed managed-AI request. The inference base URL is separate from DEN auth: desktop and orchestrator defaults route managed-AI requests to the owned standalone AI Gateway at `https://ai.veslo.work`. The previous Render AI Gateway is a rollback target only.
+Signed-in app identity and desktop handoff can come from DEN, but managed-AI assignment and admin truth follow the service that receives the routed managed-AI request. The inference base URL is separate from DEN auth: desktop and orchestrator defaults route managed-AI requests to the owned standalone AI Gateway derived from `VESLO_DEPLOYMENT_DOMAIN`. Production derives `https://ai.veslo.work`; staging derives `https://ai.staging.veslo.work`. The previous Render AI Gateway is a rollback target only.
 
-For the standalone gateway, the canonical admin is AI Gateway admin at `https://ai.veslo.work/admin`. When Veslo work items or implementation notes say "admin" for managed-AI operations, they mean this AI Gateway admin and its `/admin` subpages. There is no separate DEN admin UI for VSLO-201 managed-AI operations.
+For the standalone gateway, the canonical admin is AI Gateway admin at `/admin` on the derived AI Gateway origin, for example `https://ai.veslo.work/admin` in production and `https://ai.staging.veslo.work/admin` in staging. When Veslo work items or implementation notes say "admin" for managed-AI operations, they mean this AI Gateway admin and its `/admin` subpages. There is no separate DEN admin UI for VSLO-201 managed-AI operations.
 
 AI Gateway admin is where operators inspect organizations, users, routed usage, rotated credentials, exhausted Codex credentials, OpenAI-compatible custom provider credentials, cached tokens, credential eligibility, alerts, and audit events. DEN remains the backend owner for auth, users, organizations, domains, invites, memberships, platform roles, and seat limits; AI Gateway admin calls the DEN-backed admin APIs for that data instead of exposing a second DEN admin shell.
 

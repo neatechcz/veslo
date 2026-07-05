@@ -30,7 +30,8 @@ cp .env.development .env
 
 - `DATABASE_URL` MySQL connection URL
 - `BETTER_AUTH_SECRET` 32+ char secret
-- `BETTER_AUTH_URL` base URL for auth callbacks
+- `VESLO_DEPLOYMENT_DOMAIN` root hosted deployment domain used to derive public `api`, `ai`, `app`, `admin`, and `workers` origins. Production defaults to `veslo.work`; staging should set `staging.veslo.work`.
+- `BETTER_AUTH_URL` base URL for auth callbacks. Hosted environments can leave it blank to derive `https://api.<VESLO_DEPLOYMENT_DOMAIN>`.
 - `WORKER_TOKEN_ENCRYPTION_KEY` optional key material for encrypting worker host/client tokens at rest (falls back to `BETTER_AUTH_SECRET` when unset)
 - `GITHUB_CLIENT_ID` optional OAuth app client ID for GitHub sign-in
 - `GITHUB_CLIENT_SECRET` optional OAuth app client secret for GitHub sign-in
@@ -38,12 +39,12 @@ cp .env.development .env
 - `AUTH_EMAIL_ADDRESS` optional sender address for auth emails, for example `noreply@mail.veslo.work`. Blank or unset values disable email verification and password reset delivery.
 - `AUTH_EMAIL_FROM_NAME` optional sender display name for auth emails, for example `Veslo`.
 - `PORT` server port
-- `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS). In production, wildcard `*` is rejected. Desktop CORS origins (`tauri://localhost`, `http://localhost:1420`, `http://localhost:1421`) are appended server-side to the Express CORS allowlist.
+- `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS). Hosted environments can leave it blank to derive the app and AI Gateway origins from `VESLO_DEPLOYMENT_DOMAIN`. In production, wildcard `*` is rejected. Desktop CORS origins (`tauri://localhost`, `http://localhost:1420`, `http://localhost:1421`) are appended server-side to the Express CORS allowlist.
 - `PROVISIONER_MODE` `stub`, `render`, or `owned-server`
 - `WORKER_URL_TEMPLATE` template string with `{workerId}`
 - `OWNED_WORKER_MANAGER_URL` internal worker-manager base URL when `PROVISIONER_MODE=owned-server`
 - `OWNED_WORKER_MANAGER_TOKEN` bearer token shared with the owned-server worker manager
-- `OWNED_WORKER_PUBLIC_DOMAIN_SUFFIX` public worker domain suffix for owned-server workers (e.g. `workers.veslo.work` -> `<worker-id>.workers.veslo.work`)
+- `OWNED_WORKER_PUBLIC_DOMAIN_SUFFIX` public worker domain suffix for owned-server workers. Hosted environments can leave it blank to derive `workers.<VESLO_DEPLOYMENT_DOMAIN>`.
 - `RENDER_API_BASE` Render API base URL (default `https://api.render.com/v1`)
 - `RENDER_API_KEY` Render API key (required for `PROVISIONER_MODE=render`)
 - `RENDER_OWNER_ID` Render workspace owner id (required for `PROVISIONER_MODE=render`)
@@ -87,9 +88,9 @@ cp .env.development .env
 - `DEN_LOG_RETENTION_DAYS` retention window for debug log events and accepted batch ids (default `30`)
 - `MICROSOFT_CLIENT_ID` optional OAuth app client ID for the Microsoft connector
 - `MICROSOFT_CLIENT_SECRET` optional OAuth app client secret for the Microsoft connector
-- `MICROSOFT_REDIRECT_URI` optional OAuth callback URL override for the Microsoft connector
+- `MICROSOFT_REDIRECT_URI` optional OAuth callback URL override for the Microsoft connector. Hosted environments can leave it blank to derive the callback from `VESLO_DEPLOYMENT_DOMAIN`.
 - `MICROSOFT_TOKEN_SECRET_KEY` 32+ char secret used to encrypt Microsoft OAuth tokens server-side
-- `MICROSOFT_CONNECTOR_BASE_URL` optional Den public base URL used for Microsoft connector callbacks (defaults to `BETTER_AUTH_URL`)
+- `MICROSOFT_CONNECTOR_BASE_URL` optional Den public base URL used for Microsoft connector callbacks (defaults to the derived or configured `BETTER_AUTH_URL`)
 
 Microsoft connector OAuth tokens are encrypted server-side before storage. Configure `MICROSOFT_TOKEN_SECRET_KEY` in production whenever Microsoft OAuth is enabled, and use key material distinct from other providers.
 
@@ -222,7 +223,7 @@ Optional GitHub Actions variable:
 - `DEN_RENDER_WORKER_REPO` (defaults to `https://github.com/<github.repository>` in workflow, or `https://github.com/neatechcz/veslo` fallback)
 - `DEN_RENDER_WORKER_PLAN` (defaults to `standard`)
 - `DEN_RENDER_WORKER_VESLO_VERSION` (defaults to `0.11.113` and is used for `veslo-orchestrator`)
-- `DEN_CORS_ORIGINS` (defaults to `https://app.veslo.work,https://api.veslo.work,<render-service-url>`)
+- `DEN_CORS_ORIGINS` (hosted owned-server deployments derive app and AI Gateway origins from `VESLO_DEPLOYMENT_DOMAIN`; legacy Render deploys may still include the Render service URL)
 - `DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` (defaults to `veslo.studio`)
 - `DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` (defaults to `240000`)
 - `DEN_VERCEL_API_BASE` (defaults to `https://api.vercel.com`)

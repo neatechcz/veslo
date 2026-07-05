@@ -1,5 +1,6 @@
 import { config as loadEnv } from "dotenv";
 import { z } from "zod";
+import { deploymentServiceUrl } from "./deployment-endpoints.js";
 
 loadEnv();
 
@@ -14,8 +15,12 @@ const envSchema = z.object({
   AI_GATEWAY_SECRET_KEY: z.string().min(32).default("dev_only_ai_gateway_secret_key_32b__"),
   AI_GATEWAY_OPENAI_CLIENT_ID: z.string().min(1).default("veslo-dev-openai-client"),
   AI_GATEWAY_OPENAI_CLIENT_SECRET: z.string().min(1).default("veslo-dev-openai-secret"),
-  AI_GATEWAY_OPENAI_REDIRECT_BASE: z.string().url().default("http://127.0.0.1:4034/auth/openai"),
+  AI_GATEWAY_OPENAI_REDIRECT_BASE: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.string().url().optional(),
+  ),
   AI_GATEWAY_DEN_API_BASE: z.string().optional(),
+  VESLO_DEPLOYMENT_DOMAIN: z.string().optional(),
   AI_GATEWAY_ALERT_EMAIL_RECIPIENTS: z.string().optional(),
   AI_GATEWAY_CODEX_CAPACITY_ALERT_EMAIL_INTERVAL_MS: z.coerce.number().int().positive().optional(),
   AI_GATEWAY_DEN_INTERNAL_TOKEN: z.string().optional(),
@@ -28,6 +33,13 @@ const DEFAULT_CREDENTIAL_ALERT_EMAIL_INTERVAL_MS = 60 * 1000;
 
 export function parseEnv(source: NodeJS.ProcessEnv) {
   const parsed = envSchema.parse(source);
+  const hostedDefaultsEnabled = parsed.NODE_ENV === "production" || Boolean(parsed.VESLO_DEPLOYMENT_DOMAIN?.trim());
+  const defaultOpenAiRedirectBase = hostedDefaultsEnabled
+    ? `${deploymentServiceUrl("ai", parsed.VESLO_DEPLOYMENT_DOMAIN)}/auth/openai`
+    : "http://127.0.0.1:4034/auth/openai";
+  const defaultDenApiBase = hostedDefaultsEnabled
+    ? deploymentServiceUrl("api", parsed.VESLO_DEPLOYMENT_DOMAIN)
+    : "http://127.0.0.1:8788";
 
   return {
     host: parsed.AI_GATEWAY_HOST,
@@ -37,7 +49,7 @@ export function parseEnv(source: NodeJS.ProcessEnv) {
     openAiOAuth: {
       clientId: parsed.AI_GATEWAY_OPENAI_CLIENT_ID,
       clientSecret: parsed.AI_GATEWAY_OPENAI_CLIENT_SECRET,
-      redirectBase: parsed.AI_GATEWAY_OPENAI_REDIRECT_BASE.replace(/\/+$/, ""),
+      redirectBase: (parsed.AI_GATEWAY_OPENAI_REDIRECT_BASE?.trim() || defaultOpenAiRedirectBase).replace(/\/+$/, ""),
     },
     email: {
       lettrApiKey: parsed.LETTR_API_KEY?.trim() || undefined,
@@ -54,7 +66,7 @@ export function parseEnv(source: NodeJS.ProcessEnv) {
         DEFAULT_CREDENTIAL_ALERT_EMAIL_INTERVAL_MS,
     },
     denInternalToken: parsed.AI_GATEWAY_DEN_INTERNAL_TOKEN?.trim() || null,
-    denApiBase: (parsed.AI_GATEWAY_DEN_API_BASE ?? (parsed.NODE_ENV === "production" ? "https://api.veslo.work" : "http://127.0.0.1:8788")).replace(/\/+$/, ""),
+    denApiBase: (parsed.AI_GATEWAY_DEN_API_BASE?.trim() || defaultDenApiBase).replace(/\/+$/, ""),
   };
 }
 

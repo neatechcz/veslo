@@ -1,9 +1,29 @@
-const VESLO_SITE_URL = "https://app.veslo.work";
+const DEFAULT_VESLO_DEPLOYMENT_DOMAIN = "veslo.work";
+
+function deploymentDomainFromEnv() {
+  const raw = String(process.env.VESLO_DEPLOYMENT_DOMAIN ?? "").trim();
+  if (!raw) return DEFAULT_VESLO_DEPLOYMENT_DOMAIN;
+  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    const parsed = new URL(withProtocol);
+    const host = parsed.hostname.trim().toLowerCase().replace(/\.+$/, "");
+    return host.replace(/^(api|ai|app|admin|workers)\./, "") || DEFAULT_VESLO_DEPLOYMENT_DOMAIN;
+  } catch {
+    return raw
+      .split(/[/?#]/, 1)[0]
+      .trim()
+      .toLowerCase()
+      .replace(/^(api|ai|app|admin|workers)\./, "")
+      .replace(/\.+$/, "") || DEFAULT_VESLO_DEPLOYMENT_DOMAIN;
+  }
+}
+
+const VESLO_SITE_URL = `https://app.${deploymentDomainFromEnv()}`;
 const VESLO_DOWNLOAD_URL = "https://github.com/neatechcz/veslo/releases/latest";
 const VESLO_APP_URL =
   typeof process.env.PUBLIC_VESLO_APP_URL === "string" && process.env.PUBLIC_VESLO_APP_URL.trim()
     ? process.env.PUBLIC_VESLO_APP_URL.trim()
-    : "https://app.veslo.work";
+    : VESLO_SITE_URL;
 
 function escapeHtml(value) {
   return String(value)
@@ -67,7 +87,7 @@ function buildOpenInAppUrls(shareUrl, options = {}) {
 
   const openInAppDeepLink = `veslo://import-bundle?${query.toString()}`;
 
-  const appUrl = normalizeAppUrl(VESLO_APP_URL) || "https://app.veslo.work";
+  const appUrl = normalizeAppUrl(VESLO_APP_URL) || VESLO_SITE_URL;
   try {
     const url = new URL(appUrl);
     for (const [key, value] of query.entries()) {
@@ -80,7 +100,7 @@ function buildOpenInAppUrls(shareUrl, options = {}) {
   } catch {
     return {
       openInAppDeepLink,
-      openInWebAppUrl: `${"https://app.veslo.work"}?${query.toString()}`,
+      openInWebAppUrl: `${VESLO_SITE_URL}?${query.toString()}`,
     };
   }
 }

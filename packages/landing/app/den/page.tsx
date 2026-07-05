@@ -9,6 +9,30 @@ export const metadata = {
     "Hosted sandboxed workers for your team, available in desktop, Slack, and Telegram.",
 };
 
+function normalizeDeploymentDomain(value: string | undefined): string {
+  const raw = value?.trim();
+  if (!raw) return "veslo.work";
+  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    const host = new URL(withProtocol).hostname.trim().toLowerCase().replace(/\.+$/, "");
+    return host.replace(/^(api|ai|app|admin|workers)\./, "") || "veslo.work";
+  } catch {
+    return (
+      raw
+        .split(/[/?#]/, 1)[0]
+        .trim()
+        .toLowerCase()
+        .replace(/^(api|ai|app|admin|workers)\./, "")
+        .replace(/\.+$/, "") || "veslo.work"
+    );
+  }
+}
+
+const deploymentDomain = normalizeDeploymentDomain(
+  process.env.NEXT_PUBLIC_VESLO_DEPLOYMENT_DOMAIN || process.env.VESLO_DEPLOYMENT_DOMAIN,
+);
+const vesloAppUrl = `https://app.${deploymentDomain}`;
+
 export default async function Den() {
   const github = await getGithubData();
 
@@ -35,7 +59,7 @@ export default async function Den() {
 
           <div className="mb-12 mt-10 flex flex-wrap items-center gap-3">
             <a
-              href="https://app.veslo.work"
+              href={vesloAppUrl}
               className="doc-button"
               rel="noreferrer"
               target="_blank"

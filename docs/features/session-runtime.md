@@ -230,7 +230,7 @@ Important behaviors:
 
 ## Managed AI Runtime
 
-When managed AI is enabled, signed-in app identity and desktop handoff can come from DEN. Provider/model/Codex assignment is resolved by the service that receives the routed managed-AI request. New desktop and orchestrator builds default to the owned standalone AI Gateway at `https://ai.veslo.work`; if the configured managed-AI base URL points at any standalone AI Gateway, that gateway's AI-access repository and admin UI are the runtime authority. DEN and standalone AI Gateway show the same assignment and credential state only when they share the same managed-AI backing database and config.
+When managed AI is enabled, signed-in app identity and desktop handoff can come from DEN. Provider/model/Codex assignment is resolved by the service that receives the routed managed-AI request. New desktop and orchestrator builds default to the owned standalone AI Gateway derived from the deployment domain: `https://ai.veslo.work` for production or `https://ai.staging.veslo.work` for staging. If the configured managed-AI base URL points at any standalone AI Gateway, that gateway's AI-access repository and admin UI are the runtime authority. DEN and standalone AI Gateway show the same assignment and credential state only when they share the same managed-AI backing database and config.
 
 New DEN sign-ups automatically receive a healthy eligible Codex credential with default model `gpt-5.5` when one is available. The assignment is applied during the auth sign-up hook, marked `auto_assigned`, and skipped without blocking account creation when no eligible credential exists.
 

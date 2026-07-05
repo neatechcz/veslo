@@ -48,7 +48,7 @@ It is designed to be deployed on Vercel and backed by Vercel Blob.
   - Hard upload limit.
 
 - `PUBLIC_VESLO_APP_URL`
-  - Default: `https://app.veslo.work`
+  - Default: `https://app.<deployment-domain>`, with `VESLO_DEPLOYMENT_DOMAIN` defaulting to `veslo.work`.
   - Target app URL for the Open in app action on bundle pages.
 
 ## Local development

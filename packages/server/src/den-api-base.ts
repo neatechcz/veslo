@@ -1,4 +1,6 @@
-export const DEFAULT_DEN_API_BASE = "https://api.veslo.work";
+import { deploymentServiceUrl } from "./deployment-endpoints.js";
+
+export const DEFAULT_DEN_API_BASE = deploymentServiceUrl("api");
 
 const ONRENDER_HOST_SUFFIX = ".onrender.com";
 

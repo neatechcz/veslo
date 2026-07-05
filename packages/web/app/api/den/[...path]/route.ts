@@ -1,7 +1,9 @@
 import { NextRequest } from "next/server";
+import { deploymentServiceUrl } from "../../../../lib/deployment-endpoints";
 
-const DEFAULT_API_BASE = "https://api.veslo.work";
-const DEFAULT_AUTH_ORIGIN = "https://api.veslo.work";
+const deploymentDomain = process.env.NEXT_PUBLIC_VESLO_DEPLOYMENT_DOMAIN ?? process.env.VESLO_DEPLOYMENT_DOMAIN;
+const DEFAULT_API_BASE = deploymentServiceUrl("api", deploymentDomain);
+const DEFAULT_AUTH_ORIGIN = deploymentServiceUrl("api", deploymentDomain);
 const apiBase = (process.env.DEN_API_BASE ?? DEFAULT_API_BASE).replace(/\/+$/, "");
 const authOrigin = (process.env.DEN_AUTH_ORIGIN ?? DEFAULT_AUTH_ORIGIN).replace(/\/+$/, "");
 

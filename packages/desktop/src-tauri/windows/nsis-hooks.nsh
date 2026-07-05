@@ -28,6 +28,6 @@
   ; WSL runtime setup is handled by the installed app by default. Do not run WSL
   ; preparation from the installer unless VESLO_ENABLE_WSL_INSTALLER is defined
   ; for an explicit installer-driven sandbox setup build.
-  DetailPrint "Skipping Veslo WSL runtime preparation during installation; sandbox setup is handled by the app."
+  DetailPrint "Skipping Veslo WSL runtime preparation; shared non-sandbox runtime is enabled by default."
 !endif
 !macroend
