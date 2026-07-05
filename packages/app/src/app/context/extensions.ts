@@ -10,6 +10,7 @@ import type {
   HubMcpItem,
   HubSkillCard,
   HubSkillInstallTarget,
+  PluginInventoryCard,
   PluginScope,
   ReloadReason,
   ReloadTrigger,
@@ -67,6 +68,7 @@ import type {
   VesloSkillRemovalItem,
   VesloSkillRemovalScope,
   VesloServerStatus,
+  VesloPluginInventoryItem,
   VesloUserGlobalSkillStoreItem,
 } from "../lib/veslo-server";
 import { readDenAuth } from "../lib/den-auth";
@@ -160,6 +162,7 @@ export function createExtensionsStore(options: {
   const [pluginScope, setPluginScope] = createSignal<PluginScope>("project");
   const [pluginConfig, setPluginConfig] = createSignal<OpencodeConfigFile | null>(null);
   const [pluginConfigPath, setPluginConfigPath] = createSignal<string | null>(null);
+  const [pluginInventory, setPluginInventory] = createSignal<PluginInventoryCard[]>([]);
   const [pluginList, setPluginList] = createSignal<string[]>([]);
   const [pluginInput, setPluginInput] = createSignal("");
   const [pluginStatus, setPluginStatus] = createSignal<string | null>(null);
@@ -167,6 +170,208 @@ export function createExtensionsStore(options: {
 
   const [sidebarPluginList, setSidebarPluginList] = createSignal<string[]>([]);
   const [sidebarPluginStatus, setSidebarPluginStatus] = createSignal<string | null>(null);
+
+  type PluginInventoryEntryLike = Partial<VesloPluginInventoryItem> & Record<string, unknown>;
+
+  const validPluginInventoryScopes = new Set<PluginInventoryCard["scope"]>([
+    "platform",
+    "organization",
+    "user",
+    "project",
+  ]);
+  const validPluginLifecycles = new Set<PluginInventoryCard["lifecycle"]>([
+    "active",
+    "disabled",
+    "removed",
+    "conflict",
+  ]);
+  const validPluginVisibilities = new Set<PluginInventoryCard["visibility"]>([
+    "visible",
+    "hidden-debug-only",
+  ]);
+  const validPluginRemovalPolicies = new Set<PluginInventoryCard["removalPolicy"]>([
+    "locked",
+    "admin-removable",
+    "user-removable",
+  ]);
+  const validPluginEnabledPolicies = new Set<PluginInventoryCard["enabledPolicy"]>([
+    "locked-on",
+    "user-toggleable",
+    "admin-toggleable",
+  ]);
+
+  const normalizePluginInventoryScope = (
+    value: unknown,
+    fallback: PluginInventoryCard["scope"] = "project",
+  ): PluginInventoryCard["scope"] =>
+    typeof value === "string" && validPluginInventoryScopes.has(value as PluginInventoryCard["scope"])
+      ? (value as PluginInventoryCard["scope"])
+      : fallback;
+
+  const normalizePluginLifecycle = (value: unknown): PluginInventoryCard["lifecycle"] =>
+    typeof value === "string" && validPluginLifecycles.has(value as PluginInventoryCard["lifecycle"])
+      ? (value as PluginInventoryCard["lifecycle"])
+      : "active";
+
+  const normalizePluginVisibility = (value: unknown): PluginInventoryCard["visibility"] =>
+    typeof value === "string" && validPluginVisibilities.has(value as PluginInventoryCard["visibility"])
+      ? (value as PluginInventoryCard["visibility"])
+      : "visible";
+
+  const normalizePluginRemovalPolicy = (value: unknown): PluginInventoryCard["removalPolicy"] =>
+    typeof value === "string" && validPluginRemovalPolicies.has(value as PluginInventoryCard["removalPolicy"])
+      ? (value as PluginInventoryCard["removalPolicy"])
+      : "user-removable";
+
+  const normalizePluginEnabledPolicy = (value: unknown): PluginInventoryCard["enabledPolicy"] =>
+    typeof value === "string" && validPluginEnabledPolicies.has(value as PluginInventoryCard["enabledPolicy"])
+      ? (value as PluginInventoryCard["enabledPolicy"])
+      : "user-toggleable";
+
+  const pluginInventoryScopeFromPluginScope = (scope: PluginScope): PluginInventoryCard["scope"] =>
+    scope === "global" ? "user" : "project";
+
+  const normalizePluginOwner = (owner: unknown): PluginInventoryCard["owner"] | undefined => {
+    if (!owner || typeof owner !== "object") return undefined;
+    const record = owner as Record<string, unknown>;
+    const kind = typeof record.kind === "string" ? record.kind : "";
+    if (!["workspace", "user", "organization", "platform"].includes(kind)) return undefined;
+    const id = typeof record.id === "string" ? record.id.trim() : "";
+    if (!id) return undefined;
+    return {
+      kind: kind as NonNullable<PluginInventoryCard["owner"]>["kind"],
+      id,
+      ...(typeof record.label === "string" && record.label.trim() ? { label: record.label.trim() } : {}),
+      ...(typeof record.root === "string" && record.root.trim() ? { root: record.root.trim() } : {}),
+    };
+  };
+
+  const pluginInventoryCardFromServer = (entry: PluginInventoryEntryLike): PluginInventoryCard | null => {
+    const spec = typeof entry.spec === "string" ? entry.spec.trim() : "";
+    const id = typeof entry.id === "string" && entry.id.trim() ? entry.id.trim() : spec;
+    if (!id || !spec) return null;
+
+    const lifecycle = normalizePluginLifecycle(entry.lifecycle);
+    const visibility = normalizePluginVisibility(entry.visibility);
+    const displayName =
+      typeof entry.displayName === "string" && entry.displayName.trim()
+        ? entry.displayName.trim()
+        : spec;
+    const target = entry.target === "user" || entry.target === "project" ? entry.target : undefined;
+    const source = typeof entry.source === "string" && entry.source.trim() ? entry.source.trim() : undefined;
+
+    return {
+      id,
+      spec,
+      displayName,
+      scope: normalizePluginInventoryScope(entry.scope),
+      enabled: typeof entry.enabled === "boolean" ? entry.enabled : lifecycle === "active",
+      lifecycle,
+      managed: entry.managed === true,
+      visibility,
+      removalPolicy: normalizePluginRemovalPolicy(entry.removalPolicy),
+      enabledPolicy: normalizePluginEnabledPolicy(entry.enabledPolicy),
+      ...(entry.debugOnly === true || visibility === "hidden-debug-only" ? { debugOnly: true } : {}),
+      ...(target ? { target } : {}),
+      ...(source ? { source } : {}),
+      ...(normalizePluginOwner(entry.owner) ? { owner: normalizePluginOwner(entry.owner) } : {}),
+      ...(typeof entry.conflict === "string" && entry.conflict.trim() ? { conflict: entry.conflict.trim() } : {}),
+    };
+  };
+
+  const normalizePluginInventoryCards = (items: unknown): PluginInventoryCard[] => {
+    if (!Array.isArray(items)) return [];
+    const byId = new Map<string, PluginInventoryCard>();
+    for (const item of items) {
+      if (!item || typeof item !== "object") continue;
+      const card = pluginInventoryCardFromServer(item as PluginInventoryEntryLike);
+      if (card) byId.set(card.id, card);
+    }
+    return Array.from(byId.values());
+  };
+
+  const unmanagedPluginInventoryFromSpecs = (
+    specs: string[],
+    scope: PluginScope,
+  ): PluginInventoryCard[] =>
+    specs.map((spec) => ({
+      id: `config.${pluginInventoryScopeFromPluginScope(scope)}.${spec}`,
+      spec,
+      displayName: spec,
+      scope: pluginInventoryScopeFromPluginScope(scope),
+      enabled: true,
+      lifecycle: "active",
+      managed: false,
+      visibility: "visible",
+      removalPolicy: "user-removable",
+      enabledPolicy: "user-toggleable",
+      source: "config.unmanaged",
+      target: scope === "global" ? "user" : "project",
+    }));
+
+  const activePluginSpecsFromInventory = (inventory: PluginInventoryCard[]) => {
+    const specs = new Set<string>();
+    for (const item of inventory) {
+      if (item.lifecycle !== "active" || item.enabled === false) continue;
+      const spec = item.spec.trim();
+      if (spec) specs.add(spec);
+    }
+    return Array.from(specs);
+  };
+
+  const publishPluginInventory = (inventory: PluginInventoryCard[]) => {
+    setPluginInventory(inventory);
+    const activeSpecs = activePluginSpecsFromInventory(inventory);
+    setPluginList(activeSpecs);
+    setSidebarPluginList(activeSpecs);
+  };
+
+  const clearPluginState = () => {
+    setPluginInventory([]);
+    setPluginList([]);
+    setSidebarPluginList([]);
+  };
+
+  const filteredPluginInventoryForDebug = (inventory: PluginInventoryCard[], debug: boolean | undefined) =>
+    debug ? inventory : inventory.filter((item) => item.visibility !== "hidden-debug-only");
+
+  const pluginInventorySearchTerms = (item: PluginInventoryCard) => {
+    const terms = new Set<string>();
+    const add = (value: string | undefined) => {
+      const normalized = value?.trim().toLowerCase();
+      if (normalized) terms.add(normalized);
+    };
+    add(item.id);
+    add(item.id.split(".").filter(Boolean).at(-1));
+    add(item.spec);
+    add(stripPluginVersion(item.spec));
+    if (!item.spec.startsWith("@")) {
+      const atIndex = item.spec.indexOf("@");
+      if (atIndex > 0) add(item.spec.slice(0, atIndex));
+    }
+    add(item.displayName);
+    return terms;
+  };
+
+  const resolvePluginInventoryCard = (value: string) => {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return null;
+    return (
+      pluginInventory().find((item) => pluginInventorySearchTerms(item).has(normalized)) ??
+      null
+    );
+  };
+
+  const publishPluginMutationResult = (entry: unknown) => {
+    if (!entry || typeof entry !== "object") return;
+    const card = pluginInventoryCardFromServer(entry as PluginInventoryEntryLike);
+    if (!card) return;
+    const current = pluginInventory();
+    const next = current.some((item) => item.id === card.id)
+      ? current.map((item) => (item.id === card.id ? card : item))
+      : [...current, card];
+    publishPluginInventory(next);
+  };
 
   // Track in-flight requests to prevent duplicate calls
   let refreshSkillsInFlight = false;
@@ -1258,11 +1463,32 @@ export function createExtensionsStore(options: {
     }
   }
 
-  const isPluginInstalledByName = (pluginName: string, aliases: string[] = []) =>
-    isPluginInstalled(pluginList(), pluginName, aliases);
+  const isPluginInstalledByName = (pluginName: string, aliases: string[] = []) => {
+    if (isPluginInstalled(pluginList(), pluginName, aliases)) return true;
+
+    const candidates = new Set(
+      [pluginName, ...aliases]
+        .map((entry) => entry.trim().toLowerCase())
+        .filter((entry) => entry.length > 0),
+    );
+    if (!candidates.size) return false;
+
+    return pluginInventory().some((item) => {
+      if (item.lifecycle !== "active" || item.enabled === false) return false;
+      const terms = pluginInventorySearchTerms(item);
+      return Array.from(candidates).some((candidate) => terms.has(candidate));
+    });
+  };
 
   const loadPluginsFromConfig = (config: OpencodeConfigFile | null) => {
-    loadPluginsFromConfigHelpers(config, setPluginList, (message) => setPluginStatus(message));
+    loadPluginsFromConfigHelpers(
+      config,
+      (next) => {
+        setPluginList(next);
+        setPluginInventory(unmanagedPluginInventoryFromSpecs(next, pluginScope()));
+      },
+      (message) => setPluginStatus(message),
+    );
   };
 
   async function refreshSkills(optionsOverride?: { force?: boolean }) {
@@ -1461,7 +1687,7 @@ export function createExtensionsStore(options: {
     }
   }
 
-  async function refreshPlugins(scopeOverride?: PluginScope) {
+  async function refreshPlugins(scopeOverride?: PluginScope, optionsOverride?: { debug?: boolean }) {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
     const vesloClient = options.vesloServerClient();
@@ -1486,9 +1712,8 @@ export function createExtensionsStore(options: {
 
     if (scope !== "project" && !isLocalWorkspace) {
       setPluginStatus(__vesloIndirectT("ui.indirect.global_plugins_are_only_available_for_local_wo_1cc1zl", __vesloIndirectLocale()));
-      setPluginList([]);
+      clearPluginState();
       setSidebarPluginStatus(__vesloIndirectT("ui.indirect.global_plugins_require_a_local_worker_1pmhql", __vesloIndirectLocale()));
-      setSidebarPluginList([]);
       refreshPluginsInFlight = false;
       return;
     }
@@ -1503,22 +1728,31 @@ export function createExtensionsStore(options: {
 
         if (refreshPluginsAborted) return;
 
-        const result = await vesloClient.plugins.list(vesloWorkspaceId, { includeGlobal: false });
+        const listOptions = {
+          includeGlobal: false,
+          ...(optionsOverride?.debug ? { debug: true } : {}),
+        };
+        const result = await vesloClient.plugins.list(vesloWorkspaceId, listOptions);
         if (refreshPluginsAborted) return;
 
-        const configItems = result.items.filter((item) => item.source === "config" && item.scope === "project");
-        const list = configItems.map((item) => item.spec);
-        setPluginList(list);
-        setSidebarPluginList(list);
+        const hasServerInventory = Array.isArray(result.inventory);
+        const inventory = hasServerInventory
+          ? filteredPluginInventoryForDebug(normalizePluginInventoryCards(result.inventory), optionsOverride?.debug)
+          : unmanagedPluginInventoryFromSpecs(
+              result.items
+                .filter((item) => item.source === "config" && item.scope === "project")
+                .map((item) => item.spec),
+              "project",
+            );
+        publishPluginInventory(inventory);
 
-        if (!list.length) {
+        if (!inventory.length) {
           setPluginStatus(__vesloIndirectT("plugins.no_plugins_yet", __vesloIndirectLocale()));
         }
       } catch (e) {
         if (refreshPluginsAborted) return;
-        setPluginList([]);
+        clearPluginState();
         setSidebarPluginStatus(__vesloIndirectT("ui.indirect.failed_to_load_plugins_i1skhr", __vesloIndirectLocale()));
-        setSidebarPluginList([]);
         setPluginStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_load_plugins_i1skhr", __vesloIndirectLocale()));
       } finally {
         refreshPluginsInFlight = false;
@@ -1529,27 +1763,24 @@ export function createExtensionsStore(options: {
 
     if (!isTauriRuntime()) {
       setPluginStatus(translate("skills.plugin_management_host_only"));
-      setPluginList([]);
+      clearPluginState();
       setSidebarPluginStatus(translate("skills.plugins_host_only"));
-      setSidebarPluginList([]);
       refreshPluginsInFlight = false;
       return;
     }
 
     if (!isLocalWorkspace && !canUseVesloServer) {
       setPluginStatus(__vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_manage_plu_1vx4p1", __vesloIndirectLocale()));
-      setPluginList([]);
+      clearPluginState();
       setSidebarPluginStatus(__vesloIndirectT("ui.indirect.connect_an_veslo_server_to_load_plugins_g3md41", __vesloIndirectLocale()));
-      setSidebarPluginList([]);
       refreshPluginsInFlight = false;
       return;
     }
 
     if (scope === "project" && !targetDir) {
       setPluginStatus(translate("skills.pick_project_for_plugins"));
-      setPluginList([]);
+      clearPluginState();
       setSidebarPluginStatus(translate("skills.pick_project_for_active"));
-      setSidebarPluginList([]);
       refreshPluginsInFlight = false;
       return;
     }
@@ -1568,6 +1799,7 @@ export function createExtensionsStore(options: {
       setPluginConfigPath(config.path ?? null);
 
       if (!config.exists) {
+        setPluginInventory([]);
         setPluginList([]);
         setPluginStatus(translate("skills.no_opencode_found"));
         setSidebarPluginList([]);
@@ -1588,10 +1820,9 @@ export function createExtensionsStore(options: {
       if (refreshPluginsAborted) return;
       setPluginConfig(null);
       setPluginConfigPath(null);
-      setPluginList([]);
+      clearPluginState();
       setPluginStatus(e instanceof Error ? e.message : translate("skills.failed_load_opencode"));
       setSidebarPluginStatus(translate("skills.failed_load_active"));
-      setSidebarPluginList([]);
     } finally {
       refreshPluginsInFlight = false;
     }
@@ -1701,10 +1932,127 @@ export function createExtensionsStore(options: {
     }
   }
 
+  const resolvePluginMutationClient = () => {
+    const vesloClient = options.vesloServerClient();
+    const vesloWorkspaceId = options.vesloServerWorkspaceId();
+    const vesloCapabilities = options.vesloServerCapabilities();
+    if (
+      options.vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.plugins?.write
+    ) {
+      return { vesloClient, vesloWorkspaceId };
+    }
+    return null;
+  };
+
+  const resolveManagedPluginId = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    const card = resolvePluginInventoryCard(trimmed);
+    if (card && !card.managed) return "";
+    return card?.id ?? trimmed;
+  };
+
+  async function setPluginEnabled(pluginId: string, enabled: boolean) {
+    const resolvedPluginId = resolveManagedPluginId(pluginId);
+    if (!resolvedPluginId) {
+      setPluginStatus(__vesloIndirectT("ui.indirect.plugin_not_found_1yk6mg", __vesloIndirectLocale()));
+      return;
+    }
+
+    const context = resolvePluginMutationClient();
+    if (!context) {
+      setPluginStatus(__vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_manage_plu_1vx4p1", __vesloIndirectLocale()));
+      return;
+    }
+
+    try {
+      setPluginStatus(null);
+      const result = await context.vesloClient.plugins.setEnabled(context.vesloWorkspaceId, resolvedPluginId, enabled);
+      publishPluginMutationResult(result.item);
+      options.markReloadRequired?.("plugins", {
+        type: "plugin",
+        name: resolvedPluginId,
+        action: "updated",
+      });
+    } catch (e) {
+      setPluginStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_add_plugin_p52vxh", __vesloIndirectLocale()));
+    }
+  }
+
+  async function enableManagedPlugin(pluginId: string) {
+    await setPluginEnabled(pluginId, true);
+  }
+
+  async function disableManagedPlugin(pluginId: string) {
+    await setPluginEnabled(pluginId, false);
+  }
+
+  async function removeManagedPlugin(pluginId: string) {
+    const resolvedPluginId = resolveManagedPluginId(pluginId);
+    if (!resolvedPluginId) {
+      setPluginStatus(__vesloIndirectT("ui.indirect.plugin_not_found_1yk6mg", __vesloIndirectLocale()));
+      return;
+    }
+
+    const context = resolvePluginMutationClient();
+    if (!context) {
+      setPluginStatus(__vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_manage_plu_1vx4p1", __vesloIndirectLocale()));
+      return;
+    }
+
+    try {
+      setPluginStatus(null);
+      const result = await context.vesloClient.plugins.removeManaged(context.vesloWorkspaceId, resolvedPluginId);
+      publishPluginMutationResult(result.item);
+      options.markReloadRequired?.("plugins", {
+        type: "plugin",
+        name: resolvedPluginId,
+        action: "removed",
+      });
+    } catch (e) {
+      setPluginStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_remove_plugin_1fuges", __vesloIndirectLocale()));
+    }
+  }
+
+  async function restoreManagedPlugin(pluginId: string) {
+    const resolvedPluginId = resolveManagedPluginId(pluginId);
+    if (!resolvedPluginId) {
+      setPluginStatus(__vesloIndirectT("ui.indirect.plugin_not_found_1yk6mg", __vesloIndirectLocale()));
+      return;
+    }
+
+    const context = resolvePluginMutationClient();
+    if (!context) {
+      setPluginStatus(__vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_manage_plu_1vx4p1", __vesloIndirectLocale()));
+      return;
+    }
+
+    try {
+      setPluginStatus(null);
+      const result = await context.vesloClient.plugins.restore(context.vesloWorkspaceId, resolvedPluginId);
+      publishPluginMutationResult(result.item);
+      options.markReloadRequired?.("plugins", {
+        type: "plugin",
+        name: resolvedPluginId,
+        action: "updated",
+      });
+    } catch (e) {
+      setPluginStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_add_plugin_p52vxh", __vesloIndirectLocale()));
+    }
+  }
+
   async function removePlugin(pluginName: string) {
     const name = pluginName.trim();
     if (!name) return;
     const triggerName = stripPluginVersion(name);
+    const inventoryCard = resolvePluginInventoryCard(name);
+    if (inventoryCard?.managed) {
+      await removeManagedPlugin(inventoryCard.id);
+      return;
+    }
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
@@ -3202,6 +3550,7 @@ export function createExtensionsStore(options: {
     setPluginScope,
     pluginConfig,
     pluginConfigPath,
+    pluginInventory,
     pluginList,
     pluginInput,
     setPluginInput,
@@ -3219,6 +3568,11 @@ export function createExtensionsStore(options: {
     refreshHubMcp,
     refreshPlugins,
     addPlugin,
+    setPluginEnabled,
+    enableManagedPlugin,
+    disableManagedPlugin,
+    removeManagedPlugin,
+    restoreManagedPlugin,
     removePlugin,
     importLocalSkill,
     importSkillCandidates,

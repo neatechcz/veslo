@@ -661,6 +661,29 @@ export type SuggestedPlugin = {
 
 export type PluginScope = "project" | "global";
 
+export type PluginInventoryCard = {
+  id: string;
+  spec: string;
+  displayName: string;
+  scope: "platform" | "organization" | "user" | "project";
+  enabled: boolean;
+  lifecycle: "active" | "disabled" | "removed" | "conflict";
+  managed: boolean;
+  visibility: "visible" | "hidden-debug-only";
+  removalPolicy: "locked" | "admin-removable" | "user-removable";
+  enabledPolicy: "locked-on" | "user-toggleable" | "admin-toggleable";
+  debugOnly?: boolean;
+  target?: "user" | "project";
+  source?: string;
+  owner?: {
+    kind: "workspace" | "user" | "organization" | "platform";
+    id: string;
+    label?: string;
+    root?: string;
+  };
+  conflict?: string;
+};
+
 export type McpServerConfig = {
   type: "remote" | "local";
   url?: string;
@@ -766,6 +789,7 @@ export type PluginState = {
   scope: PluginScope;
   config: OpencodeConfigFile | null;
   list: string[];
+  inventory: PluginInventoryCard[];
 };
 
 export type WorkspaceDisplay = WorkspaceInfo & {
