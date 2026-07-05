@@ -184,6 +184,8 @@ function planCheckoutSessionCompleted(
         managedAiBasicQuantity: quantities.managedAiBasic,
         managedAiExtendedQuantity: quantities.managedAiExtended,
         localModelsQuantity: 0,
+        manualAccessEnabled: false,
+        manualAccessExpiresAt: null,
         paymentProblemCode: null,
         paymentProblemMessage: null,
       }).then(() => undefined),
@@ -201,15 +203,37 @@ async function planSubscriptionUpdated(
 
   const metadata = readMetadata(subscription)
   const quantities = quantitiesFromSubscriptionItems(input.config, subscription)
+  const status = mapStripeSubscriptionStatus(readString(subscription.status))
   const billingInterval = normalizeBillingInterval(metadata.interval) ??
     inferBillingIntervalFromSubscriptionItems(input.config, subscription) ??
     resolved.account?.billingInterval ??
     null
+  const shouldActivateStripeSubscription = isActiveStripeSubscriptionStatus(status)
+  const isExistingManualTrial =
+    resolved.account?.mode === "manual_access" &&
+    resolved.account.source === "manual_trial" &&
+    resolved.account.manualAccessEnabled
+
+  if (isExistingManualTrial && !shouldActivateStripeSubscription) {
+    const update: UpsertOrganizationBillingAccountInput = {
+      orgId: resolved.orgId,
+      stripeCustomerId: readStripeId(subscription.customer) ?? resolved.account?.stripeCustomerId ?? null,
+      stripeSubscriptionId: readStripeId(subscription.id) ?? resolved.account?.stripeSubscriptionId ?? null,
+      cancelAtPeriodEnd: readBoolean(subscription.cancel_at_period_end),
+    }
+
+    return {
+      orgId: resolved.orgId,
+      status: "applied",
+      apply: () => input.repository.upsertBillingAccount(update).then(() => undefined),
+    }
+  }
+
   const update: UpsertOrganizationBillingAccountInput = {
     orgId: resolved.orgId,
     mode: "managed_ai",
     source: "stripe_subscription",
-    status: mapStripeSubscriptionStatus(readString(subscription.status)),
+    status,
     stripeCustomerId: readStripeId(subscription.customer) ?? resolved.account?.stripeCustomerId ?? null,
     stripeSubscriptionId: readStripeId(subscription.id) ?? resolved.account?.stripeSubscriptionId ?? null,
     billingInterval,
@@ -217,6 +241,10 @@ async function planSubscriptionUpdated(
     managedAiExtendedQuantity: quantities.managedAiExtended,
     localModelsQuantity: 0,
     cancelAtPeriodEnd: readBoolean(subscription.cancel_at_period_end),
+  }
+  if (shouldActivateStripeSubscription) {
+    update.manualAccessEnabled = false
+    update.manualAccessExpiresAt = null
   }
 
   return {
@@ -235,11 +263,30 @@ async function planInvoicePaymentFailed(
     return failedPlan(resolveOrgIdFromObject(invoice), "invoice.payment_failed could not resolve an organization")
   }
 
-  const subscription = readObject(invoice.subscription)
+  const subscription = readInvoiceSubscriptionObject(invoice)
   const subscriptionStatus = subscription ? mapStripeSubscriptionStatus(readString(subscription.status)) : "past_due"
   const status = subscriptionStatus === "active" || subscriptionStatus === "trialing" ? "past_due" : subscriptionStatus
   const invoiceId = readString(invoice.id) ?? "unknown_invoice"
   const stripeSubscriptionId = readStripeId(invoice.subscription) ?? readInvoiceParentSubscriptionId(invoice)
+  const isExistingManualTrial =
+    resolved.account?.mode === "manual_access" &&
+    resolved.account.source === "manual_trial" &&
+    resolved.account.manualAccessEnabled
+  if (isExistingManualTrial && !isActiveStripeSubscriptionStatus(subscriptionStatus)) {
+    return {
+      orgId: resolved.orgId,
+      status: "applied",
+      apply: () =>
+        input.repository.upsertBillingAccount({
+          orgId: resolved.orgId,
+          stripeCustomerId: readStripeId(invoice.customer) ?? resolved.account?.stripeCustomerId ?? null,
+          stripeSubscriptionId: stripeSubscriptionId ?? resolved.account?.stripeSubscriptionId ?? null,
+          paymentProblemCode: "invoice_payment_failed",
+          paymentProblemMessage: `Stripe invoice ${invoiceId} payment failed`,
+        }).then(() => undefined),
+    }
+  }
+
   return {
     orgId: resolved.orgId,
     status: "applied",
@@ -251,6 +298,8 @@ async function planInvoicePaymentFailed(
         status,
         stripeCustomerId: readStripeId(invoice.customer) ?? resolved.account?.stripeCustomerId ?? null,
         stripeSubscriptionId: stripeSubscriptionId ?? resolved.account?.stripeSubscriptionId ?? null,
+        manualAccessEnabled: false,
+        manualAccessExpiresAt: null,
         paymentProblemCode: "invoice_payment_failed",
         paymentProblemMessage: `Stripe invoice ${invoiceId} payment failed`,
       }).then(() => undefined),
@@ -392,6 +441,10 @@ function mapStripeSubscriptionStatus(status: string | null | undefined): Organiz
   }
 }
 
+function isActiveStripeSubscriptionStatus(status: OrganizationBillingStatus) {
+  return status === "active" || status === "trialing"
+}
+
 function quantitiesFromMetadata(metadata: Record<string, string>) {
   return {
     managedAiBasic: normalizeCount(metadata.managedAiBasicQuantity),
@@ -497,6 +550,11 @@ function readInvoiceParentSubscriptionId(invoice: StripeObject) {
   const parent = readObject(invoice.parent)
   const subscriptionDetails = parent ? readObject(parent.subscription_details) : null
   return subscriptionDetails ? readStripeId(subscriptionDetails.subscription) : null
+}
+
+function readInvoiceSubscriptionObject(invoice: StripeObject) {
+  return readObject(invoice.subscription) ??
+    readObject(readObject(readObject(invoice.parent)?.subscription_details)?.subscription)
 }
 
 function isStripeSubscriptionId(value: string | null) {

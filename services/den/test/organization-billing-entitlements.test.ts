@@ -177,6 +177,35 @@ test("disabled or absent manual access blocks even with active raw status and ze
   }
 })
 
+test("revoked platform trial behaves like unpaid access without grace", () => {
+  const entitlement = deriveOrganizationBillingEntitlement({
+    mode: "none",
+    status: "none",
+    grace: false,
+    manualAccess: {
+      enabled: false,
+      allowManagedAi: true,
+      licenseLimit: 0,
+    },
+    quantities: { managedAiBasic: 0, managedAiExtended: 0, localModels: 0 },
+    activeUserCount: 2,
+    policy: {
+      allowByokWithoutPaidAccess: false,
+      organizationAccessEnabled: true,
+      tierAllowed: true,
+    },
+  })
+
+  assert.equal(entitlement.effectiveMode, "none")
+  assert.equal(entitlement.canUseManagedAi, false)
+  assert.equal(entitlement.canUseByokOrLocalProvider, false)
+  assert.equal(entitlement.licenseLimit, 0)
+  assert.equal(entitlement.isInGracePeriod, false)
+  assert.equal(entitlement.warning, null)
+  assert.equal(entitlement.managedAiBlockingReason, "payment_required")
+  assert.equal(entitlement.byokOrLocalProviderBlockingReason, "payment_required")
+})
+
 test("local models enforces seat count but does not grant Veslo-managed AI usage", () => {
   const entitlement = deriveOrganizationBillingEntitlement({
     mode: "local_models",

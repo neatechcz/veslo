@@ -64,6 +64,10 @@ function createBillingAccount(input: Partial<OrganizationBillingAccountRecord> =
   }
 }
 
+function futureTrialExpiry(days = 14) {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000)
+}
+
 function createBillingEvent(input: Partial<OrganizationBillingEventRecord> = {}): OrganizationBillingEventRecord {
   const now = new Date("2026-06-23T12:00:00.000Z")
   return {
@@ -407,6 +411,39 @@ test("checkout.session.completed links customer and subscription to org and stor
   })
 })
 
+test("checkout.session.completed clears active platform trial manual access and stores checkout quantities", async () => {
+  const event = checkoutCompletedEvent("evt_checkout_clears_manual_trial")
+  event.data.object.metadata.managedAiBasicQuantity = "4"
+  event.data.object.metadata.managedAiExtendedQuantity = "2"
+  const harness = createMemoryBillingHarness({
+    accounts: [
+      createBillingAccount({
+        mode: "manual_access",
+        source: "manual_trial",
+        status: "active",
+        stripeCustomerId: null,
+        stripeSubscriptionId: null,
+        billingInterval: null,
+        manualAccessEnabled: true,
+        manualAccessExpiresAt: futureTrialExpiry(),
+        managedAiBasicQuantity: 2,
+        managedAiExtendedQuantity: 1,
+      }),
+    ],
+  })
+
+  const result = await createProcessor(harness).processEvent(event)
+  const account = harness.accounts[0]
+
+  assert.equal(result.ok, true)
+  assert.equal(account?.mode, "managed_ai")
+  assert.equal(account?.source, "stripe_checkout")
+  assert.equal(account?.manualAccessEnabled, false)
+  assert.equal(account?.manualAccessExpiresAt, null)
+  assert.equal(account?.managedAiBasicQuantity, 4)
+  assert.equal(account?.managedAiExtendedQuantity, 2)
+})
+
 test("customer.subscription.updated updates status, quantities, interval, and cancel-at-period-end", async () => {
   const existing = createBillingAccount({ billingInterval: "monthly", managedAiBasicQuantity: 1 })
   const harness = createMemoryBillingHarness({ accounts: [existing] })
@@ -422,6 +459,73 @@ test("customer.subscription.updated updates status, quantities, interval, and ca
   assert.equal(harness.accounts[0]?.cancelAtPeriodEnd, true)
 })
 
+test("customer.subscription.updated clears active platform trial manual access once Stripe subscription is active", async () => {
+  const event = subscriptionUpdatedEvent("evt_subscription_clears_manual_trial")
+  event.data.object.status = "active"
+  const harness = createMemoryBillingHarness({
+    accounts: [
+      createBillingAccount({
+        mode: "manual_access",
+        source: "manual_trial",
+        status: "active",
+        stripeCustomerId: "cus_123",
+        stripeSubscriptionId: "sub_123",
+        billingInterval: null,
+        manualAccessEnabled: true,
+        manualAccessExpiresAt: futureTrialExpiry(),
+        managedAiBasicQuantity: 2,
+        managedAiExtendedQuantity: 1,
+      }),
+    ],
+  })
+
+  const result = await createProcessor(harness).processEvent(event)
+  const account = harness.accounts[0]
+
+  assert.equal(result.ok, true)
+  assert.equal(account?.mode, "managed_ai")
+  assert.equal(account?.source, "stripe_subscription")
+  assert.equal(account?.status, "active")
+  assert.equal(account?.manualAccessEnabled, false)
+  assert.equal(account?.manualAccessExpiresAt, null)
+  assert.equal(account?.managedAiBasicQuantity, 3)
+  assert.equal(account?.managedAiExtendedQuantity, 2)
+})
+
+test("customer.subscription.updated preserves platform trial access until Stripe subscription is active", async () => {
+  const trialExpiresAt = futureTrialExpiry()
+  const harness = createMemoryBillingHarness({
+    accounts: [
+      createBillingAccount({
+        mode: "manual_access",
+        source: "manual_trial",
+        status: "active",
+        stripeCustomerId: "cus_123",
+        stripeSubscriptionId: "sub_123",
+        billingInterval: null,
+        manualAccessEnabled: true,
+        manualAccessExpiresAt: trialExpiresAt,
+        managedAiBasicQuantity: 2,
+        managedAiExtendedQuantity: 1,
+      }),
+    ],
+  })
+
+  const result = await createProcessor(harness).processEvent(subscriptionUpdatedEvent("evt_subscription_keeps_manual_trial"))
+  const account = harness.accounts[0]
+
+  assert.equal(result.ok, true)
+  assert.equal(account?.mode, "manual_access")
+  assert.equal(account?.source, "manual_trial")
+  assert.equal(account?.status, "active")
+  assert.equal(account?.stripeCustomerId, "cus_123")
+  assert.equal(account?.stripeSubscriptionId, "sub_123")
+  assert.equal(account?.manualAccessEnabled, true)
+  assert.equal(account?.manualAccessExpiresAt, trialExpiresAt)
+  assert.equal(account?.managedAiBasicQuantity, 2)
+  assert.equal(account?.managedAiExtendedQuantity, 1)
+})
+
 test("invoice.payment_failed stores payment problem state", async () => {
   const harness = createMemoryBillingHarness({ accounts: [createBillingAccount()] })
   const result = await createProcessor(harness).processEvent(invoicePaymentFailedEvent())
@@ -432,6 +536,79 @@ test("invoice.payment_failed stores payment problem state", async () => {
   assert.equal(harness.accounts[0]?.source, "stripe_invoice")
   assert.equal(harness.accounts[0]?.paymentProblemCode, "invoice_payment_failed")
   assert.match(harness.accounts[0]?.paymentProblemMessage ?? "", /in_failed_1/)
+})
+
+test("invoice.payment_failed preserves platform trial access until Stripe subscription is active", async () => {
+  const trialExpiresAt = futureTrialExpiry()
+  const harness = createMemoryBillingHarness({
+    accounts: [
+      createBillingAccount({
+        mode: "manual_access",
+        source: "manual_trial",
+        status: "active",
+        stripeCustomerId: "cus_123",
+        stripeSubscriptionId: "sub_123",
+        billingInterval: null,
+        manualAccessEnabled: true,
+        manualAccessExpiresAt: trialExpiresAt,
+        managedAiBasicQuantity: 2,
+        managedAiExtendedQuantity: 1,
+      }),
+    ],
+  })
+
+  const result = await createProcessor(harness).processEvent(invoicePaymentFailedEvent("evt_invoice_keeps_manual_trial"))
+  const account = harness.accounts[0]
+
+  assert.equal(result.ok, true)
+  assert.equal(account?.mode, "manual_access")
+  assert.equal(account?.source, "manual_trial")
+  assert.equal(account?.status, "active")
+  assert.equal(account?.stripeCustomerId, "cus_123")
+  assert.equal(account?.stripeSubscriptionId, "sub_123")
+  assert.equal(account?.manualAccessEnabled, true)
+  assert.equal(account?.manualAccessExpiresAt, trialExpiresAt)
+  assert.equal(account?.managedAiBasicQuantity, 2)
+  assert.equal(account?.managedAiExtendedQuantity, 1)
+  assert.equal(account?.paymentProblemCode, "invoice_payment_failed")
+  assert.match(account?.paymentProblemMessage ?? "", /in_failed_1/)
+})
+
+test("invoice.payment_failed clears platform trial when parent subscription evidence is active", async () => {
+  const event = invoicePaymentFailedEvent("evt_invoice_parent_active_clears_manual_trial")
+  event.data.object.parent.subscription_details.subscription = {
+    id: "sub_123",
+    customer: "cus_123",
+    status: "active",
+  }
+  const harness = createMemoryBillingHarness({
+    accounts: [
+      createBillingAccount({
+        mode: "manual_access",
+        source: "manual_trial",
+        status: "active",
+        stripeCustomerId: "cus_123",
+        stripeSubscriptionId: "sub_123",
+        billingInterval: null,
+        manualAccessEnabled: true,
+        manualAccessExpiresAt: futureTrialExpiry(),
+        managedAiBasicQuantity: 2,
+        managedAiExtendedQuantity: 1,
+      }),
+    ],
+  })
+
+  const result = await createProcessor(harness).processEvent(event)
+  const account = harness.accounts[0]
+
+  assert.equal(result.ok, true)
+  assert.equal(account?.mode, "managed_ai")
+  assert.equal(account?.source, "stripe_invoice")
+  assert.equal(account?.status, "past_due")
+  assert.equal(account?.manualAccessEnabled, false)
+  assert.equal(account?.manualAccessExpiresAt, null)
+  assert.equal(account?.paymentProblemCode, "invoice_payment_failed")
+  assert.match(account?.paymentProblemMessage ?? "", /in_failed_1/)
 })
 
 test("invoice.payment_succeeded clears payment problem state", async () => {

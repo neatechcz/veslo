@@ -331,6 +331,83 @@ test.describe('Den admin billing subscription lifecycle UI', () => {
     await expect(page.locator('#billing-organization-list')).not.toContainText('Unpaid Co');
   });
 
+  test('lets platform admins create and revoke platform trial access from the billing workspace', async ({ page }) => {
+    const trialDate = futureDateInput(14);
+    const harness = await installBillingHarness(page, {
+      platformAdmin: true,
+      organizations: [organization(ORG_ID, 'Acme Billing')],
+      billingByOrgId: {
+        [ORG_ID]: billingNone({ activeUserCount: 2 }),
+      },
+    });
+
+    await openBilling(page, 'platform');
+    await page.locator('#billing-basic-quantity').fill('2');
+    await page.locator('#billing-extended-quantity').fill('1');
+    await expect(page.locator('#billing-create-trial-button')).toBeDisabled();
+    await page.locator('#billing-trial-end-date').fill(trialDate);
+    await expect(page.locator('#billing-create-trial-button')).toBeEnabled();
+    await page.locator('#billing-create-trial-button').click();
+
+    await expect(page.locator('#billing-action-status')).toHaveText('Trial access created.');
+    await expect(page.locator('#billing-notice-title')).toHaveText('Trial access is active');
+    await expect(page.locator('#billing-license-total')).toHaveText('3');
+    await expect(page.locator('#billing-license-detail')).toHaveText('2 Basic, 1 Extended');
+    expect(harness.platformRequests[0]).toEqual({
+      mode: 'manual_access',
+      source: 'manual_trial',
+      status: 'active',
+      quantities: { managedAiBasic: 2, managedAiExtended: 1, localModels: 0 },
+      manualAccess: { enabled: true, expiresAt: trialEndDateIso(trialDate), licenseLimit: 3 },
+    });
+
+    await expect(page.locator('#billing-revoke-trial-button')).toBeEnabled();
+    await page.locator('#billing-revoke-trial-button').click();
+    await expect(page.locator('#billing-action-status')).toHaveText('Trial access revoked.');
+    await expect(page.locator('#billing-notice-title')).toHaveText('Managed AI is blocked');
+    await expect(page.locator('#billing-license-total')).toHaveText('0');
+    expect(harness.platformRequests[1]).toEqual({
+      mode: 'none',
+      source: null,
+      status: 'none',
+      quantities: { managedAiBasic: 0, managedAiExtended: 0, localModels: 0 },
+      manualAccess: { enabled: false, expiresAt: null },
+    });
+
+    harness.setBilling(
+      ORG_ID,
+      billingAccount({
+        activeUserCount: 2,
+        basic: 2,
+        status: 'active',
+        customerConfigured: true,
+        subscriptionConfigured: true,
+        canUseManagedAi: true,
+      }),
+    );
+    await page.goto(`${adminServer.origin}/admin/billing/platform`);
+    await expectReady(page);
+    await expect(page.locator('#billing-create-trial-button')).toBeDisabled();
+    await expect(page.locator('#billing-trial-helper')).toHaveText(
+      'Trial creation is disabled because this organization already has a Stripe subscription.',
+    );
+
+    harness.setBilling(
+      ORG_ID,
+      billingTrialAccount({
+        activeUserCount: 2,
+        basic: 2,
+        extended: 1,
+        expiresAt: '2026-06-01T23:59:59.999Z',
+        canUseManagedAi: false,
+      }),
+    );
+    await page.goto(`${adminServer.origin}/admin/billing/platform`);
+    await expectReady(page);
+    await expect(page.locator('#billing-notice-title')).toHaveText('Managed AI is blocked');
+    await expect(page.locator('#billing-managed-ai')).toHaveText('Blocked');
+  });
+
   test('shows checkout, portal, and quantity validation errors without changing visible state', async ({ page }) => {
     const harness = await installBillingHarness(page, {
       organizations: [organization(ORG_ID, 'Acme Billing')],
@@ -394,6 +471,7 @@ async function installBillingHarness(page: Page, input: {
     checkoutRequests: [] as unknown[],
     portalRequests: [] as unknown[],
     planRequests: [] as unknown[],
+    platformRequests: [] as unknown[],
   };
 
   await page.addInitScript(([storageKey, token]) => {
@@ -428,6 +506,9 @@ async function installBillingHarness(page: Page, input: {
     get planRequests() {
       return state.planRequests;
     },
+    get platformRequests() {
+      return state.platformRequests;
+    },
     set checkoutMode(value: typeof state.checkoutMode) {
       state.checkoutMode = value;
     },
@@ -451,6 +532,7 @@ async function handleAdminApi(
     checkoutRequests: unknown[];
     portalRequests: unknown[];
     planRequests: unknown[];
+    platformRequests: unknown[];
   },
 ) {
   const request = route.request();
@@ -559,6 +641,42 @@ async function handleAdminApi(
       await fulfillJson(route, 200, { billing: state.billingByOrgId[orgId] });
       return;
     }
+
+    if (request.method() === 'PATCH' && action === 'platform') {
+      const body = request.postDataJSON() as {
+        mode?: string;
+        source?: string | null;
+        status?: string;
+        quantities?: BillingQuantities & { localModels?: number };
+        manualAccess?: { enabled?: boolean; expiresAt?: string | null; licenseLimit?: number };
+      };
+      const quantities = body.quantities ?? { managedAiBasic: 0, managedAiExtended: 0, localModels: 0 };
+      state.platformRequests.push(body);
+
+      if (body.mode === 'manual_access' && body.source === 'manual_trial') {
+        if (billing.account?.stripe.subscriptionConfigured) {
+          await fulfillJson(route, 409, { error: 'stripe_subscription_exists' });
+          return;
+        }
+        state.billingByOrgId[orgId] = billingTrialAccount({
+          activeUserCount: billing.activeUserCount,
+          basic: quantities.managedAiBasic,
+          extended: quantities.managedAiExtended,
+          expiresAt: body.manualAccess?.expiresAt ?? null,
+        });
+        await fulfillJson(route, 200, { billing: state.billingByOrgId[orgId] });
+        return;
+      }
+
+      if (body.mode === 'none' && body.source === null) {
+        state.billingByOrgId[orgId] = billingNone({ activeUserCount: billing.activeUserCount });
+        await fulfillJson(route, 200, { billing: state.billingByOrgId[orgId] });
+        return;
+      }
+
+      await fulfillJson(route, 400, { error: 'invalid_billing_update' });
+      return;
+    }
   }
 
   await fulfillJson(route, 404, { error: 'not_found' });
@@ -645,12 +763,79 @@ function billingAccount(input: {
   };
 }
 
+function billingTrialAccount(input: {
+  activeUserCount: number;
+  basic: number;
+  extended: number;
+  expiresAt: string | null;
+  canUseManagedAi?: boolean;
+}): BillingPayload {
+  const licenseLimit = input.basic + input.extended;
+  const canUseManagedAi = input.canUseManagedAi ?? true;
+  const blockingReason = canUseManagedAi ? null : 'payment_required';
+
+  return {
+    account: {
+      mode: 'manual_access',
+      source: 'manual_trial',
+      status: 'active',
+      billingInterval: null,
+      quantities: {
+        managedAiBasic: input.basic,
+        managedAiExtended: input.extended,
+        localModels: 0,
+      },
+      manualAccess: {
+        enabled: true,
+        expiresAt: input.expiresAt,
+      },
+      stripe: {
+        customerConfigured: false,
+        subscriptionConfigured: false,
+      },
+      paymentProblem: null,
+      cancelAtPeriodEnd: false,
+      updatedAt: '2026-07-03T08:00:00.000Z',
+    },
+    entitlement: {
+      mode: 'manual_access',
+      effectiveMode: 'manual_access',
+      status: 'active',
+      canUseManagedAi,
+      canUseByokOrLocalProvider: canUseManagedAi,
+      canReadHistory: true,
+      licenseLimit,
+      activeUserCount: input.activeUserCount,
+      isInGracePeriod: false,
+      warning: null,
+      managedAiBlockingReason: blockingReason,
+      byokOrLocalProviderBlockingReason: blockingReason,
+    },
+    activeUserCount: input.activeUserCount,
+    licenseLimit,
+  };
+}
+
 function organization(id: string, name: string): TestOrganization {
   return {
     id,
     name,
     slug: id.replace(/^org_/, ''),
   };
+}
+
+function futureDateInput(daysFromNow: number) {
+  const date = new Date(Date.now() + daysFromNow * 24 * 60 * 60 * 1000);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-');
+}
+
+function trialEndDateIso(dateInput: string) {
+  const [year, month, day] = dateInput.split('-').map((part) => Number(part));
+  return new Date(year, month - 1, day, 23, 59, 59, 999).toISOString();
 }
 
 function usersForOrganizations(organizations: TestOrganization[], platformAdmin: boolean) {
@@ -762,8 +947,12 @@ type BillingPayload = {
     mode: string;
     source: string;
     status: string;
-    billingInterval: string;
+    billingInterval: string | null;
     quantities: BillingQuantities & { localModels: number };
+    manualAccess?: {
+      enabled: boolean;
+      expiresAt: string | null;
+    };
     stripe: {
       customerConfigured: boolean;
       subscriptionConfigured: boolean;

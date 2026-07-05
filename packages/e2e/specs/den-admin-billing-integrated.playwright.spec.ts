@@ -31,6 +31,9 @@ test.describe('Integrated Den admin billing UI', () => {
     await expect(page.locator('#billing-organization-list')).toContainText(/Vaclav|Organization|No organizations/);
     await expect(page.getByRole('button', { name: 'Stop renewal' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Revoke access now' })).toBeVisible();
+    await expect(page.locator('#billing-trial-end-date')).toBeVisible();
+    await expect(page.locator('#billing-create-trial-button')).toBeVisible();
+    await expect(page.locator('#billing-revoke-trial-button')).toBeVisible();
     await expectVisibleNav(page, [
       'Overview',
       'Organization',
@@ -66,6 +69,9 @@ test.describe('Integrated Den admin billing UI', () => {
     await expect(page.locator('[data-billing-view="platform"]')).toBeHidden();
     await expect(page.locator('#billing-notice-title')).toContainText('Managed AI is blocked');
     await expect(page.locator('#billing-managed-ai')).toHaveText('Blocked');
+    await expect(page.locator('#billing-trial-end-date')).toBeHidden();
+    await expect(page.locator('#billing-create-trial-button')).toBeHidden();
+    await expect(page.locator('#billing-revoke-trial-button')).toBeHidden();
     await expectVisibleNav(page, ['Overview', 'Organization', 'Users', 'Billing']);
     await expect(page.getByRole('link', { name: 'Credentials' })).toBeHidden();
     await screenshot(page, testInfo, 'org-admin-billing');

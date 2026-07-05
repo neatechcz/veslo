@@ -38,6 +38,7 @@ const state = {
   selectedBillingOrgId: null,
   billingByOrgId: {},
   billingInterval: "monthly",
+  billingTrialEndDateOrgId: null,
   billingBusy: false,
 };
 
@@ -147,9 +148,13 @@ const els = {
   billingIntervalButtons: Array.from(document.querySelectorAll("[data-billing-interval]")),
   billingBasicQuantity: document.getElementById("billing-basic-quantity"),
   billingExtendedQuantity: document.getElementById("billing-extended-quantity"),
+  billingTrialEndDate: document.getElementById("billing-trial-end-date"),
   billingUpdateButton: document.getElementById("billing-update-button"),
   billingPortalButton: document.getElementById("billing-portal-button"),
   billingRefreshButton: document.getElementById("billing-refresh-button"),
+  billingCreateTrialButton: document.getElementById("billing-create-trial-button"),
+  billingRevokeTrialButton: document.getElementById("billing-revoke-trial-button"),
+  billingTrialHelper: document.getElementById("billing-trial-helper"),
   billingActionStatus: document.getElementById("billing-action-status"),
   heroMetrics: Array.from(document.querySelectorAll(".hero-metrics .metric-card strong")),
 };
@@ -1080,6 +1085,17 @@ function billingForOrg(orgId) {
   return orgId ? state.billingByOrgId[orgId] || null : null;
 }
 
+function billingHasActiveTrial(account) {
+  if (account?.mode !== "manual_access" || account?.source !== "manual_trial" || account?.manualAccess?.enabled !== true) {
+    return false;
+  }
+  if (!account.manualAccess.expiresAt) {
+    return false;
+  }
+  const expiresAt = new Date(account.manualAccess.expiresAt);
+  return Number.isFinite(expiresAt.getTime()) && expiresAt > new Date();
+}
+
 async function loadBillingForOrg(orgId) {
   if (!orgId) {
     return null;
@@ -1228,6 +1244,7 @@ function renderBilling() {
   const entitlement = billing?.entitlement || null;
   const canUseManagedAi = entitlement?.canUseManagedAi === true;
   const isStripeConfigured = account?.stripe?.subscriptionConfigured === true;
+  const hasActiveTrial = billingHasActiveTrial(account);
   const statusTone = billingStatusTone(org?.status || "none");
   els.billingTargetName.textContent = targetName;
   els.billingSource.textContent = org?.source || "Not configured";
@@ -1242,8 +1259,10 @@ function renderBilling() {
   els.billingRenewal.textContent = org?.renewal || "None";
   els.billingStatusChip.textContent = org?.status && org.status !== "none" ? org.status : "Not configured";
   els.billingStatusChip.className = `status-chip ${statusTone}`;
-  els.billingNoticeTitle.textContent = canUseManagedAi ? "AI inference is enabled" : "Managed AI is blocked";
-  els.billingNoticeText.textContent = canUseManagedAi
+  els.billingNoticeTitle.textContent = hasActiveTrial ? "Trial access is active" : canUseManagedAi ? "AI inference is enabled" : "Managed AI is blocked";
+  els.billingNoticeText.textContent = hasActiveTrial
+    ? `Manual trial access ends ${account?.manualAccess?.expiresAt ? formatDate(account.manualAccess.expiresAt) : "on the selected trial date"}.`
+    : canUseManagedAi
     ? "The organization has Managed AI access and enough licenses for the current entitlement."
     : entitlement?.managedAiBlockingReason === "requested_license_limit_below_active_users"
       ? "Increase the license count before re-enabling Managed AI for all active users."
@@ -1251,11 +1270,24 @@ function renderBilling() {
   els.billingManagedAi.textContent = canUseManagedAi ? "Allowed" : "Blocked";
   els.billingLicenseLimit.textContent = `${licenseLimit} users`;
   els.billingExtendedInput.textContent = `${org?.extendedQuantity ?? 0} seats`;
-  if (els.billingBasicQuantity && document.activeElement !== els.billingBasicQuantity) {
+  const billingFormHasFocus = [
+    els.billingBasicQuantity,
+    els.billingExtendedQuantity,
+    els.billingTrialEndDate,
+  ].includes(document.activeElement);
+  if (els.billingBasicQuantity && !billingFormHasFocus) {
     els.billingBasicQuantity.value = String(org?.basicQuantity ?? 0);
   }
-  if (els.billingExtendedQuantity && document.activeElement !== els.billingExtendedQuantity) {
+  if (els.billingExtendedQuantity && !billingFormHasFocus) {
     els.billingExtendedQuantity.value = String(org?.extendedQuantity ?? 0);
+  }
+  if (els.billingTrialEndDate && document.activeElement !== els.billingTrialEndDate) {
+    if (state.billingTrialEndDateOrgId !== org?.id) {
+      els.billingTrialEndDate.value = account?.manualAccess?.expiresAt ? account.manualAccess.expiresAt.slice(0, 10) : "";
+      state.billingTrialEndDateOrgId = org?.id || null;
+    } else if (hasActiveTrial && account?.manualAccess?.expiresAt) {
+      els.billingTrialEndDate.value = account.manualAccess.expiresAt.slice(0, 10);
+    }
   }
   const currentInterval = org?.interval === "annual" || org?.interval === "monthly" ? org.interval : state.billingInterval;
   state.billingInterval = currentInterval;
@@ -1271,6 +1303,20 @@ function renderBilling() {
   }
   if (els.billingRefreshButton) {
     els.billingRefreshButton.disabled = state.billingBusy || !org;
+  }
+  if (els.billingCreateTrialButton) {
+    els.billingCreateTrialButton.disabled = state.billingBusy || !org || isStripeConfigured || !els.billingTrialEndDate?.value;
+    els.billingCreateTrialButton.title = isStripeConfigured
+      ? "Trial creation is disabled because this organization already has a Stripe subscription."
+      : "";
+  }
+  if (els.billingRevokeTrialButton) {
+    els.billingRevokeTrialButton.disabled = state.billingBusy || !org || !hasActiveTrial;
+  }
+  if (els.billingTrialHelper) {
+    els.billingTrialHelper.textContent = state.billingView === "platform" && platformAdmin && isStripeConfigured
+      ? "Trial creation is disabled because this organization already has a Stripe subscription."
+      : "";
   }
 }
 
@@ -1300,6 +1346,98 @@ async function refreshSelectedBilling() {
     state.billingBusy = false;
     renderBilling();
   }
+}
+
+function readTrialEndDateIso() {
+  const value = els.billingTrialEndDate?.value || "";
+  if (!value) {
+    return null;
+  }
+  const [year, month, day] = value.split("-").map((part) => Number(part));
+  if (!year || !month || !day) {
+    return null;
+  }
+  return new Date(year, month - 1, day, 23, 59, 59, 999).toISOString();
+}
+
+async function submitPlatformBillingUpdate(orgId, body, workingMessage, successMessage) {
+  try {
+    state.billingBusy = true;
+    setBillingActionStatus(workingMessage);
+    renderBilling();
+    await fetchJson(`/organizations/${encodeURIComponent(orgId)}/billing/platform`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+    await loadBillingForOrg(orgId);
+    setBillingActionStatus(successMessage, "success");
+  } catch (error) {
+    setBillingActionStatus(`Unable to update platform billing: ${error instanceof Error ? error.message : "unknown_error"}`, "error");
+  } finally {
+    state.billingBusy = false;
+    renderBilling();
+  }
+}
+
+async function createBillingTrial() {
+  const org = selectedBillingOrganization();
+  if (!org) {
+    setBillingActionStatus("Select an organization first.", "error");
+    return;
+  }
+  const account = billingForOrg(org.id)?.account || null;
+  if (account?.stripe?.subscriptionConfigured === true) {
+    setBillingActionStatus("Trial creation is disabled because this organization already has a Stripe subscription.", "error");
+    return;
+  }
+  const quantities = readBillingFormQuantities();
+  if (!quantities) {
+    setBillingActionStatus("License quantities must be whole numbers.", "error");
+    return;
+  }
+  if (quantities.managedAiBasic <= 0 && quantities.managedAiExtended <= 0) {
+    setBillingActionStatus("Choose at least one Basic or Extended license.", "error");
+    return;
+  }
+  const expiresAt = readTrialEndDateIso();
+  if (!expiresAt) {
+    setBillingActionStatus("Choose a trial end date.", "error");
+    return;
+  }
+  const licenseLimit = quantities.managedAiBasic + quantities.managedAiExtended;
+  const trialQuantities = { ...quantities, localModels: 0 };
+  await submitPlatformBillingUpdate(
+    org.id,
+    {
+      mode: "manual_access",
+      source: "manual_trial",
+      status: "active",
+      quantities: trialQuantities,
+      manualAccess: { enabled: true, expiresAt, licenseLimit },
+    },
+    "Creating trial access...",
+    "Trial access created.",
+  );
+}
+
+async function revokeBillingTrial() {
+  const org = selectedBillingOrganization();
+  if (!org) {
+    setBillingActionStatus("Select an organization first.", "error");
+    return;
+  }
+  await submitPlatformBillingUpdate(
+    org.id,
+    {
+      mode: "none",
+      source: null,
+      status: "none",
+      quantities: { managedAiBasic: 0, managedAiExtended: 0, localModels: 0 },
+      manualAccess: { enabled: false, expiresAt: null },
+    },
+    "Revoking trial access...",
+    "Trial access revoked.",
+  );
 }
 
 async function submitBillingUpdate() {
@@ -2621,6 +2759,13 @@ function bindActions() {
   });
   els.billingRefreshButton?.addEventListener("click", () => {
     void refreshSelectedBilling();
+  });
+  els.billingTrialEndDate?.addEventListener("input", renderBilling);
+  els.billingCreateTrialButton?.addEventListener("click", () => {
+    void createBillingTrial();
+  });
+  els.billingRevokeTrialButton?.addEventListener("click", () => {
+    void revokeBillingTrial();
   });
   els.usageGroupBy.addEventListener("change", () => {
     state.usageFilters.groupBy = els.usageGroupBy.value;

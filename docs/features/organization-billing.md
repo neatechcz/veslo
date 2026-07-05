@@ -14,6 +14,21 @@ Organization admins can use Den Admin Billing to:
 
 Platform admins can also set manual access, local-model billing metadata, billing status, and per-organization tier allowlists.
 
+## Platform Trials
+
+Platform trials are temporary platform-admin grants for organizations that need free Managed AI access before or outside Stripe billing. In Den Admin Billing, platform admins use the same Basic and Extended license quantity controls as checkout, choose a trial end date, and click `Create trial`.
+
+Trial rules:
+
+- platform trials are stored as manual access with source `manual_trial`
+- only platform admins can create or revoke them
+- a trial requires a future end date and a Basic/Extended seat count
+- a trial cannot be granted while the organization already has a Stripe subscription configured
+- an organization can still start Stripe Checkout while the trial is active
+- once Stripe reports an active or trialing subscription, Stripe-owned billing clears the platform trial immediately
+- revoking a trial disables access immediately and behaves like unpaid access with no grace period
+- after a trial expires, entitlement derivation treats the organization as unpaid unless another active billing source exists
+
 ## Stripe Sandbox and Live Switch
 
 Stripe billing is disabled by default. Enable it only with environment configuration:
@@ -49,6 +64,8 @@ It is mounted before the global JSON parser so Stripe signature verification use
 - `customer.subscription.deleted`
 
 Den records Stripe event ids for idempotency. Duplicate applied or ignored events do not apply mutations twice. Failed application attempts stay retryable for Stripe redelivery.
+
+Stripe webhook application also owns the handoff from platform trial to paid subscription. Checkout completion clears active trial fields, and subscription or invoice events clear them only when the event carries active or trialing subscription evidence. Non-active Stripe events preserve an active platform trial until Stripe becomes active or the trial is revoked or expires.
 
 ## Entitlements
 
