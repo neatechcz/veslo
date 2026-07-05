@@ -1,14 +1,103 @@
-import { For, Show } from "solid-js";
+import { For, Show, createMemo } from "solid-js";
 
-import type { PluginScope } from "../types";
+import type { PluginInventoryCard, PluginScope } from "../types";
 
 import Button from "../components/button";
 import TextInput from "../components/text-input";
 import { Cpu } from "lucide-solid";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 
+type SuggestedPluginCard = {
+  name: string;
+  packageName: string;
+  description: string;
+  tags: string[];
+  aliases?: string[];
+  installMode?: "simple" | "guided";
+  steps?: Array<{
+    title: string;
+    description: string;
+    command?: string;
+    url?: string;
+    path?: string;
+    note?: string;
+  }>;
+};
+
+type PluginInventoryScope = PluginInventoryCard["scope"];
+
+const PLUGIN_INVENTORY_GROUPS = [
+  { key: "platform", labelKey: "plugins.inventory_group_platform" },
+  { key: "organization", labelKey: "plugins.inventory_group_organization" },
+  { key: "user", labelKey: "plugins.inventory_group_user" },
+  { key: "project", labelKey: "plugins.inventory_group_project" },
+] satisfies Array<{ key: PluginInventoryScope; labelKey: string }>;
+
+const POLICY_MANAGED_SUGGESTION_BLOCKLIST = new Set([
+  "opencode-scheduler",
+  "superpowers",
+  "superpowers@git+https://github.com/obra/superpowers.git",
+]);
+
+const normalizeSuggestionIdentifier = (value: string) => value.trim().toLowerCase();
+
+const suggestedPluginIsPolicyManaged = (plugin: SuggestedPluginCard) => {
+  const identifiers = [plugin.name, plugin.packageName, ...(plugin.aliases ?? [])]
+    .map(normalizeSuggestionIdentifier)
+    .filter(Boolean);
+  return identifiers.some((identifier) => POLICY_MANAGED_SUGGESTION_BLOCKLIST.has(identifier));
+};
+
+const legacyPluginInventoryScope = (scope: PluginScope): Extract<PluginInventoryScope, "user" | "project"> =>
+  scope === "global" ? "user" : "project";
+
+const legacyPluginInventoryCard = (spec: string, scope: PluginScope): PluginInventoryCard => ({
+  id: `config.${legacyPluginInventoryScope(scope)}.${spec}`,
+  spec,
+  displayName: spec,
+  scope: legacyPluginInventoryScope(scope),
+  enabled: true,
+  lifecycle: "active",
+  managed: false,
+  visibility: "visible",
+  removalPolicy: "user-removable",
+  enabledPolicy: "user-toggleable",
+  source: "config.unmanaged",
+  target: scope === "global" ? "user" : "project",
+});
+
+const canTogglePluginInventoryCard = (item: PluginInventoryCard) =>
+  item.managed &&
+  item.lifecycle !== "removed" &&
+  item.lifecycle !== "conflict" &&
+  item.enabledPolicy === "user-toggleable";
+
+const canRemovePluginInventoryCard = (item: PluginInventoryCard) =>
+  item.lifecycle !== "removed" &&
+  item.removalPolicy === "user-removable" &&
+  (item.managed || item.scope === "user" || item.scope === "project");
+
+const canRestorePluginInventoryCard = (item: PluginInventoryCard) =>
+  item.managed && item.lifecycle === "removed" && item.removalPolicy === "user-removable";
+
+const pluginLifecycleLabelKey = (item: PluginInventoryCard) => {
+  if (item.lifecycle === "removed") return "plugins.lifecycle_removed";
+  if (item.lifecycle === "conflict") return "plugins.lifecycle_conflict";
+  if (item.enabled === false || item.lifecycle === "disabled") return "plugins.lifecycle_disabled";
+  return "plugins.lifecycle_enabled";
+};
+
+const pluginOwnerLabel = (item: PluginInventoryCard) => {
+  if (item.owner?.label) return item.owner.label;
+  if (item.source === "config.unmanaged") return __vesloT("plugins.owner_opencode_config", __vesloCurrentLocale());
+  return item.managed
+    ? __vesloT("plugins.owner_managed_policy", __vesloCurrentLocale())
+    : __vesloT("plugins.owner_manual_plugin", __vesloCurrentLocale());
+};
+
 export type PluginsViewProps = {
   busy: boolean;
+  developerMode: boolean;
   activeWorkspaceRoot: string;
   canEditPlugins: boolean;
   canUseGlobalScope: boolean;
@@ -16,6 +105,7 @@ export type PluginsViewProps = {
   pluginScope: PluginScope;
   setPluginScope: (scope: PluginScope) => void;
   pluginConfigPath: string | null;
+  pluginInventory: PluginInventoryCard[];
   pluginList: string[];
   pluginInput: string;
   setPluginInput: (value: string) => void;
@@ -23,28 +113,72 @@ export type PluginsViewProps = {
   activePluginGuide: string | null;
   setActivePluginGuide: (value: string | null) => void;
   isPluginInstalled: (name: string, aliases?: string[]) => boolean;
-  suggestedPlugins: Array<{
-    name: string;
-    packageName: string;
-    description: string;
-    tags: string[];
-    aliases?: string[];
-    installMode?: "simple" | "guided";
-    steps?: Array<{
-      title: string;
-      description: string;
-      command?: string;
-      url?: string;
-      path?: string;
-      note?: string;
-    }>;
-  }>;
-  refreshPlugins: (scopeOverride?: PluginScope) => void;
+  suggestedPlugins: SuggestedPluginCard[];
+  refreshPlugins: (scopeOverride?: PluginScope, optionsOverride?: { debug?: boolean }) => void;
   addPlugin: (pluginNameOverride?: string) => void;
   removePlugin: (pluginName: string) => void;
+  setPluginEnabled?: (pluginId: string, enabled: boolean) => Promise<void>;
+  removeManagedPlugin?: (pluginId: string) => Promise<void>;
+  restoreManagedPlugin?: (pluginId: string) => Promise<void>;
 };
 
 export default function PluginsView(props: PluginsViewProps) {
+  const refreshPluginsForMode = (scopeOverride?: PluginScope) => {
+    props.refreshPlugins(scopeOverride, { debug: props.developerMode });
+  };
+
+  const pluginInventoryRows = createMemo(() =>
+    props.pluginInventory.length
+      ? props.pluginInventory
+      : props.pluginList.map((pluginName) => legacyPluginInventoryCard(pluginName, props.pluginScope)),
+  );
+
+  const visiblePluginInventoryRows = createMemo(() =>
+    pluginInventoryRows().filter((item) => {
+      if (item.visibility !== "hidden-debug-only") return true;
+      return props.developerMode;
+    }),
+  );
+
+  const groupedPluginInventoryRows = createMemo(() =>
+    PLUGIN_INVENTORY_GROUPS
+      .map((group) => ({
+        ...group,
+        rows: visiblePluginInventoryRows().filter((item) => item.scope === group.key),
+      }))
+      .filter((group) => group.rows.length > 0),
+  );
+
+  const suggestedPluginsForDisplay = createMemo(() =>
+    props.suggestedPlugins.filter((plugin) => !suggestedPluginIsPolicyManaged(plugin)),
+  );
+
+  const manualAddDisabled = () =>
+    props.busy ||
+    !props.pluginInput.trim() ||
+    !props.canEditPlugins ||
+    (props.pluginScope === "project" && !props.activeWorkspaceRoot.trim());
+
+  const togglePluginInventoryCard = (item: PluginInventoryCard) => {
+    if (!props.setPluginEnabled || !canTogglePluginInventoryCard(item)) return;
+    void props.setPluginEnabled(item.id, !item.enabled);
+  };
+
+  const removePluginInventoryCard = (item: PluginInventoryCard) => {
+    if (!canRemovePluginInventoryCard(item)) return;
+    if (item.managed) {
+      if (!props.removeManagedPlugin) return;
+      void props.removeManagedPlugin(item.id);
+      return;
+    }
+    props.removePlugin(item.spec);
+  };
+
+  const restorePluginInventoryCard = (item: PluginInventoryCard) => {
+    if (!props.restoreManagedPlugin || !canRestorePluginInventoryCard(item)) return;
+    void props.restoreManagedPlugin(item.id);
+  };
+
   return (
     <section class="space-y-6">
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
@@ -62,7 +196,7 @@ export default function PluginsView(props: PluginsViewProps) {
               }`}
               onClick={() => {
                 props.setPluginScope("project");
-                props.refreshPlugins("project");
+                refreshPluginsForMode("project");
               }}
             >
               {__vesloT("plugins.scope_project", __vesloCurrentLocale())}</button>
@@ -76,12 +210,12 @@ export default function PluginsView(props: PluginsViewProps) {
               onClick={() => {
                 if (!props.canUseGlobalScope) return;
                 props.setPluginScope("global");
-                props.refreshPlugins("global");
+                refreshPluginsForMode("global");
               }}
             >
-              {__vesloT("session.capabilities_scope_global", __vesloCurrentLocale())}</button>
-            <Button variant="ghost" onClick={() => props.refreshPlugins()}>
-              {__vesloT("skills.refresh", __vesloCurrentLocale())}</Button>
+              {__vesloT("plugins.scope_global", __vesloCurrentLocale())}</button>
+            <Button data-testid="plugin-inventory-refresh" variant="ghost" onClick={() => refreshPluginsForMode()}>
+              {__vesloT("plugins.refresh", __vesloCurrentLocale())}</Button>
           </div>
         </div>
 
@@ -93,117 +227,196 @@ export default function PluginsView(props: PluginsViewProps) {
           </Show>
         </div>
 
-        <div class="space-y-3">
-          <div class="text-xs font-medium text-gray-11 uppercase tracking-wider">{__vesloT("plugins.suggested_label", __vesloCurrentLocale())}</div>
-          <div class="grid gap-3">
-            <For each={props.suggestedPlugins}>
-              {(plugin) => {
-                const isGuided = () => plugin.installMode === "guided";
-                const isInstalled = () => props.isPluginInstalled(plugin.packageName, plugin.aliases ?? []);
-                const isGuideOpen = () => props.activePluginGuide === plugin.packageName;
+        <Show when={suggestedPluginsForDisplay().length > 0}>
+          <div class="space-y-3">
+            <div class="text-xs font-medium text-gray-11 uppercase tracking-wider">{__vesloT("plugins.suggested_label", __vesloCurrentLocale())}</div>
+            <div class="grid gap-3">
+              <For each={suggestedPluginsForDisplay()}>
+                {(plugin) => {
+                  const isGuided = () => plugin.installMode === "guided";
+                  const isInstalled = () => props.isPluginInstalled(plugin.packageName, plugin.aliases ?? []);
+                  const isGuideOpen = () => props.activePluginGuide === plugin.packageName;
 
-                return (
-                  <div class="rounded-2xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
-                    <div class="flex items-start justify-between gap-4">
-                      <div>
-                        <div class="text-sm font-medium text-gray-12 font-mono">{plugin.name}</div>
-                        <div class="text-xs text-gray-10 mt-1">{plugin.description}</div>
-                        <Show when={plugin.packageName !== plugin.name}>
-                          <div class="text-xs text-gray-7 font-mono mt-1">{plugin.packageName}</div>
-                        </Show>
-                      </div>
-                      <div class="flex items-center gap-2">
-                        <Show when={isGuided()}>
+                  return (
+                    <div class="rounded-2xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
+                      <div class="flex items-start justify-between gap-4">
+                        <div>
+                          <div class="text-sm font-medium text-gray-12 font-mono">{plugin.name}</div>
+                          <div class="text-xs text-gray-10 mt-1">{plugin.description}</div>
+                          <Show when={plugin.packageName !== plugin.name}>
+                            <div class="text-xs text-gray-7 font-mono mt-1">{plugin.packageName}</div>
+                          </Show>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <Show when={isGuided()}>
+                            <Button
+                              variant="ghost"
+                              onClick={() => props.setActivePluginGuide(isGuideOpen() ? null : plugin.packageName)}
+                            >
+                              {isGuideOpen() ? __vesloT("plugins.hide_setup", __vesloCurrentLocale()) : __vesloT("plugins.setup", __vesloCurrentLocale())}
+                            </Button>
+                          </Show>
                           <Button
-                            variant="ghost"
-                            onClick={() => props.setActivePluginGuide(isGuideOpen() ? null : plugin.packageName)}
+                            variant={isInstalled() ? "outline" : "secondary"}
+                            onClick={() => props.addPlugin(plugin.packageName)}
+                            disabled={
+                              props.busy ||
+                              isInstalled() ||
+                              !props.canEditPlugins ||
+                              (props.pluginScope === "project" && !props.activeWorkspaceRoot.trim())
+                            }
                           >
-                            {isGuideOpen() ? __vesloT("plugins.hide_setup", __vesloCurrentLocale()) : __vesloT("plugins.setup", __vesloCurrentLocale())}
+                            {isInstalled() ? __vesloT("plugins.added", __vesloCurrentLocale()) : __vesloT("plugins.add", __vesloCurrentLocale())}
                           </Button>
-                        </Show>
-                        <Button
-                          variant={isInstalled() ? "outline" : "secondary"}
-                          onClick={() => props.addPlugin(plugin.packageName)}
-                          disabled={
-                            props.busy ||
-                            isInstalled() ||
-                            !props.canEditPlugins ||
-                            (props.pluginScope === "project" && !props.activeWorkspaceRoot.trim())
-                          }
-                        >
-                          {isInstalled() ? __vesloT("plugins.added", __vesloCurrentLocale()) : __vesloT("plugins.add", __vesloCurrentLocale())}
-                        </Button>
+                        </div>
                       </div>
-                    </div>
-                    <div class="flex flex-wrap gap-2">
-                      <For each={plugin.tags}>
-                        {(tag) => (
-                          <span class="text-[10px] uppercase tracking-wide bg-gray-4/70 text-gray-11 px-2 py-0.5 rounded-full">
-                            {tag}
-                          </span>
-                        )}
-                      </For>
-                    </div>
-                    <Show when={isGuided() && isGuideOpen()}>
-                      <div class="rounded-xl border border-gray-6/70 bg-gray-1/60 p-4 space-y-3">
-                        <For each={plugin.steps ?? []}>
-                          {(step, idx) => (
-                            <div class="space-y-1">
-                              <div class="text-xs font-medium text-gray-11">
-                                {idx() + 1}. {step.title}
-                              </div>
-                              <div class="text-xs text-gray-10">{step.description}</div>
-                              <Show when={step.command}>
-                                <div class="text-xs font-mono text-gray-12 bg-gray-2/60 border border-gray-6/70 rounded-lg px-3 py-2">
-                                  {step.command}
-                                </div>
-                              </Show>
-                              <Show when={step.note}>
-                                <div class="text-xs text-gray-10">{step.note}</div>
-                              </Show>
-                              <Show when={step.url}>
-                                <div class="text-xs text-gray-10">
-                                  {__vesloT("ui.literal.open_o47uw9", __vesloCurrentLocale())}{" "}<span class="font-mono text-gray-11">{step.url}</span>
-                                </div>
-                              </Show>
-                              <Show when={step.path}>
-                                <div class="text-xs text-gray-10">
-                                  {__vesloT("ui.literal.path_1yqvg9", __vesloCurrentLocale())}{" "}<span class="font-mono text-gray-11">{step.path}</span>
-                                </div>
-                              </Show>
-                            </div>
+                      <div class="flex flex-wrap gap-2">
+                        <For each={plugin.tags}>
+                          {(tag) => (
+                            <span class="text-[10px] uppercase tracking-wide bg-gray-4/70 text-gray-11 px-2 py-0.5 rounded-full">
+                              {tag}
+                            </span>
                           )}
                         </For>
                       </div>
-                    </Show>
-                  </div>
-                );
-              }}
-            </For>
+                      <Show when={isGuided() && isGuideOpen()}>
+                        <div class="rounded-xl border border-gray-6/70 bg-gray-1/60 p-4 space-y-3">
+                          <For each={plugin.steps ?? []}>
+                            {(step, idx) => (
+                              <div class="space-y-1">
+                                <div class="text-xs font-medium text-gray-11">
+                                  {idx() + 1}. {step.title}
+                                </div>
+                                <div class="text-xs text-gray-10">{step.description}</div>
+                                <Show when={step.command}>
+                                  <div class="text-xs font-mono text-gray-12 bg-gray-2/60 border border-gray-6/70 rounded-lg px-3 py-2">
+                                    {step.command}
+                                  </div>
+                                </Show>
+                                <Show when={step.note}>
+                                  <div class="text-xs text-gray-10">{step.note}</div>
+                                </Show>
+                                <Show when={step.url}>
+                                  <div class="text-xs text-gray-10">
+                                    {__vesloT("ui.literal.open_o47uw9", __vesloCurrentLocale())}{" "}<span class="font-mono text-gray-11">{step.url}</span>
+                                  </div>
+                                </Show>
+                                <Show when={step.path}>
+                                  <div class="text-xs text-gray-10">
+                                    {__vesloT("ui.literal.path_1yqvg9", __vesloCurrentLocale())}{" "}<span class="font-mono text-gray-11">{step.path}</span>
+                                  </div>
+                                </Show>
+                              </div>
+                            )}
+                          </For>
+                        </div>
+                      </Show>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
           </div>
-        </div>
+        </Show>
 
         <Show
-          when={props.pluginList.length}
+          when={groupedPluginInventoryRows().length}
           fallback={
             <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 text-sm text-gray-10">
               {__vesloT("plugins.no_plugins_yet", __vesloCurrentLocale())}</div>
           }
         >
-          <div class="grid gap-2">
-            <For each={props.pluginList}>
-              {(pluginName) => (
-                <div class="flex items-center justify-between rounded-xl border border-gray-6/60 bg-gray-1/40 px-4 py-2.5">
-                  <div class="text-sm text-gray-12 font-mono">{pluginName}</div>
-                  <div class="flex items-center gap-2">
-                    <div class="text-[10px] uppercase tracking-wide text-gray-10">{__vesloT("plugins.enabled_label", __vesloCurrentLocale())}</div>
-                    <Button
-                      variant="ghost"
-                      class="h-7 px-2 text-[11px] text-red-11 hover:text-red-12"
-                      onClick={() => props.removePlugin(pluginName)}
-                      disabled={props.busy || !props.canEditPlugins}
-                    >
-                      {__vesloT("mcp.remove_app", __vesloCurrentLocale())}</Button>
+          <div class="space-y-4">
+            <For each={groupedPluginInventoryRows()}>
+              {(group) => (
+                <div class="space-y-2" data-testid={`plugin-inventory-group-${group.key}`}>
+                  <div class="text-xs font-medium text-gray-11 uppercase tracking-wider">
+                    {__vesloT(group.labelKey, __vesloCurrentLocale())}
+                  </div>
+                  <div class="grid gap-2">
+                    <For each={group.rows}>
+                      {(item) => {
+                        const toggleVisible = () => canTogglePluginInventoryCard(item) && Boolean(props.setPluginEnabled);
+                        const removeVisible = () =>
+                          canRemovePluginInventoryCard(item) &&
+                          (item.managed ? Boolean(props.removeManagedPlugin) : props.canEditPlugins);
+                        const restoreVisible = () => canRestorePluginInventoryCard(item) && Boolean(props.restoreManagedPlugin);
+
+                        return (
+                          <div
+                            class="flex items-center justify-between gap-4 rounded-xl border border-gray-6/60 bg-gray-1/40 px-4 py-3"
+                            data-testid="plugin-inventory-row"
+                            data-plugin-id={item.id}
+                            data-plugin-display-name={item.displayName}
+                            data-plugin-scope={item.scope}
+                            data-plugin-source={item.source}
+                            data-plugin-lifecycle={item.lifecycle}
+                            data-plugin-enabled-policy={item.enabledPolicy}
+                            data-plugin-removal-policy={item.removalPolicy}
+                            data-plugin-visibility={item.visibility}
+                          >
+                            <div class="min-w-0 flex items-start gap-3">
+                              <div class="mt-0.5 rounded-lg border border-gray-6/70 bg-gray-2/60 p-1.5 text-gray-10">
+                                <Cpu size={14} />
+                              </div>
+                              <div class="min-w-0 space-y-1">
+                                <div class="flex flex-wrap items-center gap-2">
+                                  <div class="text-sm text-gray-12 font-medium truncate">{item.displayName}</div>
+                                  <span class="rounded-full bg-gray-3/70 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-10">
+                                    {__vesloT(pluginLifecycleLabelKey(item), __vesloCurrentLocale())}
+                                  </span>
+                                  <Show when={item.visibility === "hidden-debug-only"}>
+                                    <span class="rounded-full bg-amber-3 px-2 py-0.5 text-[10px] uppercase tracking-wide text-amber-11">
+                                      {__vesloT("plugins.visibility_debug", __vesloCurrentLocale())}
+                                    </span>
+                                  </Show>
+                                </div>
+                                <div class="text-xs text-gray-7 font-mono truncate">{item.spec}</div>
+                                <div class="text-xs text-gray-10 truncate">{pluginOwnerLabel(item)}</div>
+                                <Show when={item.conflict}>
+                                  <div class="text-xs text-red-11">{item.conflict}</div>
+                                </Show>
+                              </div>
+                            </div>
+                            <div class="flex shrink-0 items-center gap-2">
+                              <Show when={toggleVisible()}>
+                                <Button
+                                  variant="ghost"
+                                  class="h-7 px-2 text-[11px]"
+                                  data-testid="plugin-inventory-toggle"
+                                  onClick={() => togglePluginInventoryCard(item)}
+                                  disabled={props.busy || !props.canEditPlugins}
+                                >
+                                  {item.enabled
+                                    ? __vesloT("plugins.action_disable", __vesloCurrentLocale())
+                                    : __vesloT("plugins.action_enable", __vesloCurrentLocale())}
+                                </Button>
+                              </Show>
+                              <Show when={restoreVisible()}>
+                                <Button
+                                  variant="outline"
+                                  class="h-7 px-2 text-[11px]"
+                                  onClick={() => restorePluginInventoryCard(item)}
+                                  disabled={props.busy || !props.canEditPlugins}
+                                >
+                                  {__vesloT("plugins.action_restore", __vesloCurrentLocale())}
+                                </Button>
+                              </Show>
+                              <Show when={removeVisible()}>
+                                <Button
+                                  variant="ghost"
+                                  class="h-7 px-2 text-[11px] text-red-11 hover:text-red-12"
+                                  data-testid="plugin-inventory-remove"
+                                  onClick={() => removePluginInventoryCard(item)}
+                                  disabled={props.busy || !props.canEditPlugins}
+                                >
+                                  {__vesloT("plugins.action_remove", __vesloCurrentLocale())}</Button>
+                              </Show>
+                            </div>
+                          </div>
+                        );
+                      }}
+                    </For>
                   </div>
                 </div>
               )}
@@ -225,7 +438,7 @@ export default function PluginsView(props: PluginsViewProps) {
             <Button
               variant="secondary"
               onClick={() => props.addPlugin()}
-              disabled={props.busy || !props.pluginInput.trim() || !props.canEditPlugins}
+              disabled={manualAddDisabled()}
               class="md:mt-6"
             >
               {__vesloT("plugins.add", __vesloCurrentLocale())}</Button>

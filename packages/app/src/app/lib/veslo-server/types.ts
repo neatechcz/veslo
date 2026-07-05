@@ -112,13 +112,110 @@ export type VesloResourceOwner = {
   root?: string;
 };
 
+export type VesloPluginTarget = "user" | "project";
+export type VesloPluginLifecycle = "active" | "disabled" | "removed" | "conflict";
+export type VesloPluginInventoryScope = "platform" | "organization" | "user" | "project";
+export type VesloPluginVisibility = "visible" | "hidden-debug-only";
+export type VesloPluginEnabledPolicy = "locked-on" | "user-toggleable" | "admin-toggleable";
+export type VesloPluginRemovalPolicy = "locked" | "admin-removable" | "user-removable";
+export type VesloPluginPolicySource =
+  | "policy.platform"
+  | "policy.organization"
+  | "policy.user"
+  | "policy.project"
+  | "config.unmanaged";
+
 export type VesloPluginItem = {
   spec: string;
   source: "config" | "dir.project" | "dir.global";
   scope: "project" | "global";
   owner?: VesloResourceOwner;
   path?: string;
+  managed?: boolean;
+  policyId?: string;
+  displayName?: string;
+  target?: VesloPluginTarget;
+  lifecycle?: VesloPluginLifecycle;
+  conflict?: string;
 };
+
+export type VesloPluginInventoryItem = {
+  id: string;
+  spec: string;
+  displayName: string;
+  owner: VesloResourceOwner;
+  scope: VesloPluginInventoryScope;
+  target: VesloPluginTarget;
+  source: VesloPluginPolicySource;
+  visibility: VesloPluginVisibility;
+  enabled: boolean;
+  lifecycle: VesloPluginLifecycle;
+  removalPolicy: VesloPluginRemovalPolicy;
+  enabledPolicy: VesloPluginEnabledPolicy;
+  managed: boolean;
+  debugOnly?: boolean;
+  conflict?: string;
+};
+
+export type VesloPluginListWarning = {
+  code: "managed_plugin_manifest_invalid";
+  path: string;
+  source: "config.project" | "config.global" | "dir.project" | "dir.global";
+  message: string;
+};
+
+export type VesloPluginListResponse = {
+  items: VesloPluginItem[];
+  inventory?: VesloPluginInventoryItem[];
+  loadOrder: string[];
+  warnings?: VesloPluginListWarning[];
+};
+
+export type VesloPluginMutationResponse = {
+  item: VesloPluginInventoryItem;
+};
+
+export type VesloPluginMaterializationTargetResult = {
+  config: {
+    manifestPath: string;
+    addedSpecs: string[];
+    removedSpecs: string[];
+    desiredSpecs: string[];
+  };
+  files: {
+    rootDir: string;
+    materializedPolicyIds: string[];
+    removedPolicyIds: string[];
+  };
+};
+
+export type VesloPluginMaterializationConflict = {
+  code:
+    | "unmanaged_config_spec_conflict"
+    | "unmanaged_file_plugin_conflict"
+    | "stale_file_plugin_unmarked";
+  policyId: string;
+  spec: string;
+  target: VesloPluginTarget;
+  message: string;
+  path?: string;
+};
+
+export type VesloPluginMaterializationSyncResult =
+  | {
+    ok: true;
+    conflicts: [];
+    project: VesloPluginMaterializationTargetResult;
+    user: VesloPluginMaterializationTargetResult;
+    reloadRequired: boolean;
+  }
+  | {
+    ok: false;
+    conflicts: VesloPluginMaterializationConflict[];
+    project: VesloPluginMaterializationTargetResult;
+    user: VesloPluginMaterializationTargetResult;
+    reloadRequired: false;
+  };
 
 export type VesloSkillItem = {
   name: string;

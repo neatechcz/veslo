@@ -86,6 +86,15 @@ Use these for shipped feature semantics and non-obvious runtime behavior.
 - `docs/features/ui-interaction-contract.md`
 - `docs/features/soul-and-automations.md`
 
+For plugin policy work, use `docs/features/extensions-and-integrations.md` for
+the product boundary between Plugins, Skills, and MCP/Napojení,
+`docs/dev/state-and-config-reference.md` for PluginPolicy source-of-truth and
+materialization state, and `docs/dev/veslo-server-app-contract.md` for the
+app/server route contract. PluginPolicy is canonical for Plugins only in this
+phase; it is prepared for future Skills/MCP convergence, but Skills and MCP
+still use their own settings, stores, routes, and materialization/runtime
+systems. Pluginy is the Czech localization label for Plugins.
+
 ## Specialized Deep Dives
 
 - `docs/desktop-updater.md`

@@ -13,7 +13,7 @@ Current visible tabs:
 - `soul` link tab
 - `skills` link tab
 - `mcp` link tab for Napojení
-- `plugins` link tab for Pluginy
+- `plugins` link tab for Plugins
 
 The `soul`, `skills`, `mcp`, and `plugins` entries are navigation links,
 not Settings-owned content. They route to the same dashboard destinations as
@@ -88,19 +88,20 @@ These are primarily debugging and support surfaces. If behavior changes, update 
 
 ## Dashboard Link Tabs
 
-Settings includes link tabs for Soul, Skills, Napojení, and Pluginy.
+Settings includes link tabs for Soul, Skills, Napojení, and Plugins.
+Pluginy is the Czech localization label for Plugins.
 Those entries are aliases to the existing dashboard pages, so their page content,
 state, and source-of-truth behavior remain owned by the same destinations that
 they route to. Skills are also reachable from the left menu; Soul, Napojení,
-and Pluginy remain reachable from Settings link tabs and direct dashboard
+and Plugins remain reachable from Settings link tabs and direct dashboard
 routes.
 The same tab rail is also shown on those destination pages so users can move
 between Settings-owned tabs and dashboard destinations without returning to the
 left menu.
 
-Do not add a separate Settings-owned Skills, MCP, Napojení, or Pluginy overview.
+Do not add a separate Settings-owned Skills, MCP, Napojení, or Plugins overview.
 The Skills page remains the canonical app-wide skills inventory, Napojení routes
-to the MCP/external-app dashboard page, and Pluginy routes to OpenCode plugin
+to the MCP/external-app dashboard page, and Plugins routes to OpenCode plugin
 management.
 
 ## Workspace Config Entry Point

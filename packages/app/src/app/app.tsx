@@ -2099,6 +2099,7 @@ export default function App() {
     setPluginScope,
     pluginConfig,
     pluginConfigPath,
+    pluginInventory,
     pluginList,
     pluginInput,
     setPluginInput,
@@ -2115,6 +2116,9 @@ export default function App() {
     refreshHubMcp,
     refreshPlugins,
     addPlugin,
+    setPluginEnabled,
+    removeManagedPlugin,
+    restoreManagedPlugin,
     removePlugin,
     installSkillCreator,
     installHubSkill,
@@ -2135,6 +2139,32 @@ export default function App() {
     importSkillCandidates,
     abortRefreshes,
   } = extensionsStore;
+
+  let lastPluginsConnectedRefreshKey = "";
+  createEffect(() => {
+    if (tab() !== "plugins") {
+      lastPluginsConnectedRefreshKey = "";
+      return;
+    }
+    if (vesloServerStatus() !== "connected") {
+      return;
+    }
+
+    const workspaceId = vesloServerWorkspaceId()?.trim() || workspaceStore.activeWorkspaceId().trim();
+    if (!workspaceId) return;
+
+    const key = [
+      workspaceId,
+      pluginScope(),
+      developerMode() ? "debug" : "normal",
+    ].join("::");
+    if (key === lastPluginsConnectedRefreshKey) return;
+    lastPluginsConnectedRefreshKey = key;
+
+    void refreshPlugins(pluginScope(), { debug: developerMode() }).catch((error: unknown) =>
+      reportError(error, "plugins.refresh.connected"),
+    );
+  });
 
   const globalSync = useGlobalSync();
   const providers = createMemo(() => globalSync.data.provider.all ?? []);
@@ -3560,7 +3590,7 @@ export default function App() {
     }
 
     void refreshSkills({ force: true });
-    void refreshPlugins(pluginScope());
+    void refreshPlugins(pluginScope(), { debug: developerMode() });
     void refreshMcpServers();
   });
 
@@ -4567,6 +4597,7 @@ export default function App() {
     setPluginScope,
     pluginConfigPath,
     pluginConfig,
+    pluginInventory,
     pluginList,
     pluginInput,
     setPluginInput,
@@ -4576,6 +4607,9 @@ export default function App() {
     isPluginInstalledByName,
     localizedSuggestedPlugins,
     addPlugin,
+    setPluginEnabled,
+    removeManagedPlugin,
+    restoreManagedPlugin,
     removePlugin,
     createSessionAndOpen,
     setPrompt,
@@ -4771,7 +4805,17 @@ export default function App() {
           <SessionView {...appViewProps.sessionProps()} onOpenFeedback={feedbackWorkflow.openFeedbackModal} />
         </Match>
         <Match when={true}>
-          <DashboardView {...appViewProps.dashboardProps()} onOpenFeedback={feedbackWorkflow.openFeedbackModal} />
+          <DashboardView
+            {...appViewProps.dashboardProps()}
+            onOpenFeedback={feedbackWorkflow.openFeedbackModal}
+            pluginInventory={pluginInventory()}
+            refreshPlugins={(scopeOverride, optionsOverride) =>
+              refreshPlugins(scopeOverride, optionsOverride).catch((e: unknown) => reportError(e, "plugins.refresh"))
+            }
+            setPluginEnabled={setPluginEnabled}
+            removeManagedPlugin={removeManagedPlugin}
+            restoreManagedPlugin={restoreManagedPlugin}
+          />
         </Match>
       </Switch>
 

@@ -8,6 +8,8 @@ This document describes the main persistence and config surfaces used by Veslo.
 - Workspace-scoped config: `.opencode/veslo.json`.
 - Workspace automation state: `.opencode/veslo/automations.json`.
 - OpenCode config: `opencode.json` or `opencode.jsonc`.
+- Plugin policy override state:
+  `<server data dir>/plugin-policy-overrides.json`.
 - Server connection state: browser storage keys managed by `packages/app/src/app/lib/veslo-server/connection.ts` and re-exported through `packages/app/src/app/lib/veslo-server.ts`.
 - Den auth state: browser storage keys managed by `den-auth.ts`.
 - Desktop local proof cache: app-data JSON managed by Tauri commands.
@@ -406,15 +408,48 @@ OpenCode config lives in one of:
 
 Use this surface for:
 
-- plugins
+- unmanaged OpenCode plugins
+- runtime materialization output for policy-managed Plugins
 - MCP server config
 - agent overrides
 - command-related OpenCode settings
 
 Veslo pages that mutate plugins or MCP are usually editing this config, not `.opencode/veslo.json`.
-The UI separates these concerns: Pluginy owns OpenCode plugin management, while
-Napojení owns MCP servers and external-app connections. They are separate
+The UI separates these concerns: the Plugins surface owns OpenCode plugin
+management, while Napojení owns MCP servers and external-app connections.
+Pluginy is the Czech localization label for Plugins. These are separate
 dashboard tabs even though both can persist changes into OpenCode config.
+
+## Plugin Policy State
+
+PluginPolicy is plugin-only in this phase. It manages OpenCode Plugins, not
+Skills and not MCP/Napojení. The structure is intentionally prepared for future
+Skills/MCP convergence, but those domains still use their own settings, stores,
+routes, materialization, registry, and runtime-status flows today.
+
+Plugin policy and override state are the durable source of truth for
+policy-managed Plugins. OpenCode config entries and plugin files are generated
+runtime materialization output for Veslo-managed policy plugins. Materialization
+must carry ownership markers or manifests so future sync can update or remove
+only Veslo-owned entries. Existing unmanaged OpenCode plugin config entries are
+preserved and are edited through the legacy unmanaged plugin paths only.
+
+Current platform policy definitions are code-defined in the Veslo server.
+Durable user, project, and organization override state is stored under the
+Veslo server data directory:
+
+- `<server data dir>/plugin-policy-overrides.json`
+
+Current platform policies:
+
+- `opencode-scheduler`
+  Hidden-debug-only, locked on, not disableable, not removable, and absent from
+  normal suggested/installed plugin lists. Debug surfaces may show it as a
+  system/locked row.
+- `Superpowers`
+  Visible, enabled by default, and user-disableable/user-removable for the user
+  materialization. Removing it records policy override state; it does not erase
+  the platform default.
 
 Platform MCP installs write normal remote MCP entries into OpenCode config.
 The entries point at Veslo-owned connector endpoints and may include

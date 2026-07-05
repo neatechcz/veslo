@@ -2796,6 +2796,167 @@ test("plugins domain facade exposes workspace plugin endpoints", async () => {
   }
 });
 
+test("plugins domain facade exposes plugin policy endpoints", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; headers: Headers; body: unknown }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    let body: unknown = null;
+    if (typeof init?.body === "string") {
+      body = JSON.parse(init.body);
+    }
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body,
+    });
+
+    const url = String(input);
+    if (url.endsWith("/materialization/sync")) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          conflicts: [],
+          project: {
+            config: {
+              manifestPath: "/workspace/.opencode/.veslo-plugin-specs.json",
+              addedSpecs: [],
+              removedSpecs: [],
+              desiredSpecs: ["superpowers@git+https://github.com/obra/superpowers.git"],
+            },
+            files: {
+              rootDir: "/workspace/.opencode/plugins",
+              materializedPolicyIds: [],
+              removedPolicyIds: [],
+            },
+          },
+          user: {
+            config: {
+              manifestPath: "/data/plugins/.veslo-plugin-specs.json",
+              addedSpecs: [],
+              removedSpecs: [],
+              desiredSpecs: [],
+            },
+            files: {
+              rootDir: "/data/plugins",
+              materializedPolicyIds: ["platform.superpowers"],
+              removedPolicyIds: [],
+            },
+          },
+          reloadRequired: true,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    if (
+      url.endsWith("/platform.superpowers/enabled") ||
+      url.endsWith("/platform.superpowers/restore") ||
+      (init?.method === "DELETE" && url.endsWith("/platform.superpowers"))
+    ) {
+      return new Response(
+        JSON.stringify({
+          item: {
+            id: "platform.superpowers",
+            spec: "superpowers@git+https://github.com/obra/superpowers.git",
+            displayName: "Superpowers",
+            owner: { kind: "platform", id: "veslo-platform", label: "Veslo" },
+            scope: "platform",
+            target: "user",
+            source: "policy.platform",
+            visibility: "visible",
+            enabled: true,
+            lifecycle: "active",
+            removalPolicy: "user-removable",
+            enabledPolicy: "user-toggleable",
+            managed: true,
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        items: [{ spec: "veslo/example-plugin", source: "config", scope: "project" }],
+        inventory: [
+          {
+            id: "platform.superpowers",
+            spec: "superpowers@git+https://github.com/obra/superpowers.git",
+            displayName: "Superpowers",
+            owner: { kind: "platform", id: "veslo-platform", label: "Veslo" },
+            scope: "platform",
+            target: "user",
+            source: "policy.platform",
+            visibility: "visible",
+            enabled: true,
+            lifecycle: "active",
+            removalPolicy: "user-removable",
+            enabledPolicy: "user-toggleable",
+            managed: true,
+          },
+        ],
+        loadOrder: [],
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    const list = await client.plugins.list("ws 1", { includeGlobal: true, debug: true });
+    const sync = await client.plugins.syncMaterialization("ws 1");
+    const enabled = await client.plugins.setEnabled("ws 1", "platform.superpowers", false);
+    const removedLegacy = await client.plugins.remove("ws 1", "veslo/example-plugin");
+    const removedManaged = await client.plugins.removeManaged("ws 1", "platform.superpowers");
+    const restored = await client.plugins.restore("ws 1", "platform.superpowers");
+    await client.plugins.add("ws 1", "veslo/example-plugin");
+
+    assert.equal(list.inventory?.[0]?.id, "platform.superpowers");
+    assert.equal(sync.reloadRequired, true);
+    assert.equal(enabled.item.lifecycle, "active");
+    assert.deepEqual(removedLegacy.items.map((item) => item.spec), ["veslo/example-plugin"]);
+    assert.equal(removedManaged.item.managed, true);
+    assert.equal(restored.item.removalPolicy, "user-removable");
+
+    assert.deepEqual(
+      calls.map((call) => ({ url: call.url, method: call.method })),
+      [
+        { url: "https://veslo.example/workspace/ws%201/plugins?includeGlobal=true&debug=true", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/plugins/materialization/sync", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/plugins/platform.superpowers/enabled", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/plugins/veslo%2Fexample-plugin", method: "DELETE" },
+        { url: "https://veslo.example/workspace/ws%201/plugins/platform.superpowers", method: "DELETE" },
+        { url: "https://veslo.example/workspace/ws%201/plugins/platform.superpowers/restore", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/plugins", method: "POST" },
+      ],
+    );
+    assert.deepEqual(calls[2]?.body, { enabled: false });
+    assert.deepEqual(calls[6]?.body, { spec: "veslo/example-plugin" });
+    for (const call of calls) {
+      assert.equal(call.headers.get("authorization"), "Bearer token-123");
+      assert.equal(call.headers.get("x-veslo-host-token"), "host-token-123");
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("commands domain facade exposes workspace command endpoints", async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string; headers: Headers; body: unknown }> = [];

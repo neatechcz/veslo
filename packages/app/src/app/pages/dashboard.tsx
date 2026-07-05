@@ -4,6 +4,7 @@ import type {
   McpServerEntry,
   McpStatusMap,
   OpencodeConnectStatus,
+  PluginInventoryCard,
   PluginScope,
   SettingsTab,
   SessionArchiveItem,
@@ -224,7 +225,7 @@ export type DashboardViewProps = {
   refreshSkillInventory: (options?: { force?: boolean }) => void;
   refreshSkillImportCandidates: (options?: { force?: boolean }) => void;
   refreshHubSkills: (options?: { force?: boolean }) => void;
-  refreshPlugins: (scopeOverride?: PluginScope) => void;
+  refreshPlugins: (scopeOverride?: PluginScope, optionsOverride?: { debug?: boolean }) => void;
   refreshMcpServers: () => void;
   skills: SkillCard[];
   skillsStatus: string | null;
@@ -263,6 +264,7 @@ export type DashboardViewProps = {
   pluginScope: PluginScope;
   setPluginScope: (scope: PluginScope) => void;
   pluginConfigPath: string | null;
+  pluginInventory?: PluginInventoryCard[];
   pluginList: string[];
   pluginInput: string;
   setPluginInput: (value: string) => void;
@@ -287,6 +289,9 @@ export type DashboardViewProps = {
     }>;
   }>;
   addPlugin: (pluginNameOverride?: string) => void;
+  setPluginEnabled?: (pluginId: string, enabled: boolean) => Promise<void>;
+  removeManagedPlugin?: (pluginId: string) => Promise<void>;
+  restoreManagedPlugin?: (pluginId: string) => Promise<void>;
   removePlugin: (pluginName: string) => void;
   mcpServers: McpServerEntry[];
   mcpStatus: string | null;
@@ -597,7 +602,7 @@ export default function DashboardView(props: DashboardViewProps) {
           ]);
         }
         if ((currentTab === "plugins" || currentTab === "mcp") && !cancelled) {
-          await Promise.all([props.refreshPlugins(), props.refreshMcpServers()]);
+          await Promise.all([props.refreshPlugins(undefined, { debug: props.developerMode }), props.refreshMcpServers()]);
         }
         if (currentTab === "scheduled" && !cancelled) {
           await props.refreshScheduledJobs();
@@ -1138,6 +1143,7 @@ export default function DashboardView(props: DashboardViewProps) {
             <Match when={props.tab === "plugins"}>
               <PluginsView
                 busy={props.busy}
+                developerMode={props.developerMode}
                 activeWorkspaceRoot={props.activeWorkspaceRoot}
                 canEditPlugins={props.canEditPlugins}
                 canUseGlobalScope={props.canUseGlobalPluginScope}
@@ -1145,6 +1151,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 pluginScope={props.pluginScope}
                 setPluginScope={props.setPluginScope}
                 pluginConfigPath={props.pluginConfigPath}
+                pluginInventory={props.pluginInventory ?? []}
                 pluginList={props.pluginList}
                 pluginInput={props.pluginInput}
                 setPluginInput={props.setPluginInput}
@@ -1155,6 +1162,9 @@ export default function DashboardView(props: DashboardViewProps) {
                 suggestedPlugins={props.suggestedPlugins}
                 refreshPlugins={props.refreshPlugins}
                 addPlugin={props.addPlugin}
+                setPluginEnabled={props.setPluginEnabled}
+                removeManagedPlugin={props.removeManagedPlugin}
+                restoreManagedPlugin={props.restoreManagedPlugin}
                 removePlugin={props.removePlugin}
               />
             </Match>

@@ -3928,7 +3928,7 @@ registerDocumentRuntimeRoutes(routes, createDocumentRuntimeProviderDependencies(
 
   registerFileSessionRoutes(routes, { fileSessions, recordWorkspaceFileEvent });
 
-  registerPluginRoutes(routes);
+  registerPluginRoutes(routes, { serverDataDir });
 
   registerSkillRegistryRoutes(routes);
 

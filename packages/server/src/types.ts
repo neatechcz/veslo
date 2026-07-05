@@ -1,3 +1,11 @@
+import type {
+  PluginEnabledPolicy,
+  PluginLifecycle,
+  PluginPolicy,
+  PluginRemovalPolicy,
+  PluginVisibility,
+} from "./plugin-policy.js";
+
 export type WorkspaceType = "local" | "remote";
 
 export type ApprovalMode = "manual" | "auto";
@@ -193,7 +201,31 @@ export interface PluginItem {
   scope: "project" | "global";
   owner?: ResourceOwner;
   path?: string;
+  managed?: boolean;
+  policyId?: string;
+  displayName?: string;
+  target?: "user" | "project";
+  lifecycle?: "active" | "disabled" | "removed" | "conflict";
+  conflict?: string;
 }
+
+export type PluginInventoryItem = {
+  id: string;
+  spec: string;
+  displayName: string;
+  owner: ResourceOwner;
+  scope: "platform" | "organization" | "user" | "project";
+  target: "user" | "project";
+  source: PluginPolicy["source"];
+  visibility: PluginVisibility;
+  enabled: boolean;
+  lifecycle: PluginLifecycle;
+  removalPolicy: PluginRemovalPolicy;
+  enabledPolicy: PluginEnabledPolicy;
+  managed: boolean;
+  debugOnly?: boolean;
+  conflict?: string;
+};
 
 export interface McpItem {
   name: string;
@@ -457,6 +489,26 @@ export type DisabledSkillRecord = DisabledSkillTarget & {
 export type SkillEnabledOverridesDocument = {
   schemaVersion: 1;
   disabled: DisabledSkillRecord[];
+};
+
+export type PluginPolicyOverrideAction = "disabled" | "removed";
+
+export type PluginPolicyOverrideScope = "user" | "project" | "organization";
+
+export type PluginPolicyOverride = {
+  id: string;
+  pluginId: string;
+  action: PluginPolicyOverrideAction;
+  scope: PluginPolicyOverrideScope;
+  workspaceId?: string;
+  orgId?: string;
+  actor?: string;
+  createdAt: string;
+};
+
+export type PluginPolicyOverridesDocument = {
+  schemaVersion: 1;
+  overrides: PluginPolicyOverride[];
 };
 
 export interface ApprovalRequest {
