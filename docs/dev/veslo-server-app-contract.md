@@ -104,8 +104,10 @@ The Plugins domain facade and server routes must preserve these behaviors:
 
 - `GET /workspace/:id/plugins`
   Returns legacy plugin items plus policy-aware inventory. Normal calls exclude
-  hidden-debug-only platform plugins; `debug=true` may include debug/system
-  rows.
+  hidden-debug-only platform plugins from the policy-aware inventory and UI
+  rows; `debug=true` may include debug/system policy rows. The legacy `items`
+  compatibility payload still reflects OpenCode config and plugin-file
+  discovery, so it can contain managed materialization entries after sync.
 - `POST /workspace/:id/plugins`
   Adds unmanaged OpenCode plugin specs through the legacy unmanaged path.
 - `DELETE /workspace/:id/plugins/:pluginId`

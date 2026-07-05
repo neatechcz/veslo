@@ -56,8 +56,8 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
 - `skills.tsx`
   Installed skills inventory, location filters, bulk selection, detail drawer, hub skills, sharing a single skill, and skill editing flows.
 - `plugins.tsx`
-  Pluginy dashboard tab for `opencode.json` plugin management and suggested
-  plugin flows.
+  Plugins dashboard tab for `opencode.json` plugin management and suggested
+  plugin flows. Pluginy is the Czech localization label for Plugins.
 - `mcp.tsx`
   MCP server list, connection/auth state, quick connect, and reload banner
   behavior used by Napojení.
@@ -243,7 +243,7 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
 - Settings or persistence issue: start at `settings.tsx`, `constants.ts`, `theme.ts`, and `context/app-startup-hydration.ts`; use `app.tsx` only for final shell wiring.
 - Dashboard/session update prompt issue: start at `dashboard-update-pill-model.ts`, then the
   consuming page or sidebar surface.
-- Skills/Pluginy/Napojení/MCP issue: start at `extensions.ts`, then the
+- Skills/Plugins/Napojení/MCP issue: start at `extensions.ts`, then the
   corresponding page component.
 - Workspace config, reload, import/export, or conversation-directory authorization issue: start at
   `config.tsx`, `config-store.ts`, and `packages/server/src/workspace-config-owner.ts`.

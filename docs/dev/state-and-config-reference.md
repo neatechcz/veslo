@@ -434,7 +434,9 @@ must carry ownership markers or manifests so future sync can update or remove
 only Veslo-owned entries. Existing unmanaged OpenCode plugin config entries are
 preserved and are edited through the legacy unmanaged plugin paths only.
 
-Plugin policy overrides are stored under the Veslo server data directory:
+Current platform policy definitions are code-defined in the Veslo server.
+Durable user, project, and organization override state is stored under the
+Veslo server data directory:
 
 - `<server data dir>/plugin-policy-overrides.json`
 
