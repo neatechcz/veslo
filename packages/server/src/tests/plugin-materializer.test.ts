@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -410,6 +410,97 @@ describe("plugin materializer", () => {
     await expect(materializePluginPolicies({ workspaceRoot, dataDir, policies: [next] }))
       .rejects.toThrow(/pluginDir/i);
     expect(await readFile(join(outsideDir, "plugin.js"), "utf8")).toBe("keep outside plugin\n");
+  });
+
+  test("rejects symlinked managed plugin directories before stale cleanup can delete outside files", async () => {
+    const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
+    const dataDir = await tempDir("veslo-plugin-materializer-data-");
+    const outsideDir = await tempDir("veslo-plugin-materializer-outside-");
+    const stale = policyFor({
+      id: "platform.symlink-stale-file",
+      spec: "symlink-stale-file",
+      target: "project",
+      files: [{ path: "plugin.js", content: "export const name = 'stale';\n" }],
+    });
+    await materializePluginPolicies({ workspaceRoot, dataDir, policies: [stale] });
+
+    const rootDir = join(workspaceRoot, ".opencode", "plugins", "veslo-managed");
+    const manifestPath = join(rootDir, ".veslo-plugin-materialization.json");
+    const manifest = await readJson(manifestPath) as {
+      entries: Array<Record<string, unknown> & { pluginDir: string }>;
+    };
+    const staleDir = manifest.entries[0]?.pluginDir ?? "";
+    await writeFile(join(outsideDir, "plugin.js"), "keep outside symlink target\n", "utf8");
+    await writeFile(
+      join(outsideDir, ".veslo-managed-plugin.json"),
+      `${JSON.stringify({ schemaVersion: 1, managedBy: "veslo-plugin-materializer", ...manifest.entries[0] }, null, 2)}\n`,
+      "utf8",
+    );
+    await rm(staleDir, { recursive: true, force: true });
+    await symlink(outsideDir, staleDir, "dir");
+
+    const next = policyFor({
+      id: "platform.next-file",
+      spec: "next-file",
+      target: "project",
+      files: [{ path: "plugin.js", content: "export const name = 'next';\n" }],
+    });
+
+    await expect(materializePluginPolicies({ workspaceRoot, dataDir, policies: [next] }))
+      .rejects.toThrow(/symlink|managed plugin directory/i);
+    expect(await readFile(join(outsideDir, "plugin.js"), "utf8")).toBe("keep outside symlink target\n");
+    expect(await readFile(join(outsideDir, ".veslo-managed-plugin.json"), "utf8")).toContain(stale.id);
+  });
+
+  test("rejects same-policy cleanup when the previous manifest points to an unaligned plugin directory", async () => {
+    const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
+    const dataDir = await tempDir("veslo-plugin-materializer-data-");
+    const first = policyFor({
+      id: "platform.same-policy-unaligned",
+      spec: "same-policy-unaligned",
+      target: "project",
+      files: [{ path: "plugin.js", content: "export const name = 'first';\n" }],
+    });
+    await materializePluginPolicies({ workspaceRoot, dataDir, policies: [first] });
+
+    const rootDir = join(workspaceRoot, ".opencode", "plugins", "veslo-managed");
+    const manifestPath = join(rootDir, ".veslo-plugin-materialization.json");
+    const manifest = await readJson(manifestPath) as {
+      entries: Array<Record<string, unknown>>;
+    };
+    const unalignedDir = join(rootDir, "manual-in-root");
+    await mkdir(unalignedDir, { recursive: true });
+    await writeFile(join(unalignedDir, "old-only.js"), "keep unaligned file\n", "utf8");
+    manifest.entries[0] = {
+      ...manifest.entries[0],
+      pluginDir: unalignedDir,
+      files: [
+        {
+          path: "old-only.js",
+          sha256: "0".repeat(64),
+          sizeBytes: 20,
+          executable: false,
+        },
+      ],
+    };
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+    const updated = policyFor({
+      id: first.id,
+      spec: first.spec,
+      target: "project",
+      files: [{ path: "plugin.js", content: "export const name = 'updated';\n" }],
+    });
+    const result = await materializePluginPolicies({ workspaceRoot, dataDir, policies: [updated] });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected materialization conflict");
+    expect(result.conflicts).toContainEqual(expect.objectContaining({
+      policyId: first.id,
+      target: "project",
+      path: unalignedDir,
+    }));
+    expect(await readFile(join(unalignedDir, "old-only.js"), "utf8")).toBe("keep unaligned file\n");
   });
 
   test("rejects invalid file policy paths before mutating config specs or manifests", async () => {

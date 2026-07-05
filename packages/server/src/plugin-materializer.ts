@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { resolveVesloDataDir } from "./audit.js";
@@ -169,9 +169,20 @@ export async function readManagedPluginSpecManifest(path: string): Promise<Manag
 }
 
 export async function readManagedPluginFileManifest(rootDir: string): Promise<ManagedPluginFileManifest | null> {
+  const rootRealPath = await managedRootRealPathIfPresent(rootDir);
+  if (!rootRealPath) return null;
   const path = managedPluginFileManifestPath(rootDir);
-  if (!(await exists(path))) return null;
-  return validateManagedPluginFileManifest(JSON.parse(await readFile(path, "utf8")), rootDir);
+  const manifestStats = await lstatOrNull(path);
+  if (!manifestStats) return null;
+  if (manifestStats.isSymbolicLink()) {
+    throw new Error("Managed plugin file manifest must not be a symlink");
+  }
+  if (!manifestStats.isFile()) {
+    throw new Error("Managed plugin file manifest must be a file");
+  }
+  const manifest = validateManagedPluginFileManifest(JSON.parse(await readFile(path, "utf8")), rootDir);
+  await assertManagedPluginManifestEntriesSafe(manifest, rootDir, rootRealPath);
+  return manifest;
 }
 
 export async function materializePluginPolicies(
@@ -330,7 +341,7 @@ async function prepareFileTarget(input: {
 
   for (const policy of input.policies) {
     const pluginDir = pluginDirForPolicy(input.rootDir, policy);
-    if (!(await exists(pluginDir))) continue;
+    if (!(await pathExistsNoFollow(pluginDir))) continue;
     const marker = await readManagedPluginFileMarker(pluginDir, input.rootDir).catch(() => null);
     if (marker?.policyId === policy.id && marker.managedBy === MANAGED_BY) continue;
     conflicts.push({
@@ -345,17 +356,19 @@ async function prepareFileTarget(input: {
 
   const desiredPolicyIds = new Set(input.policies.map((policy) => policy.id));
   for (const entry of previousManifest?.entries ?? []) {
-    if (desiredPolicyIds.has(entry.policyId)) continue;
-    if (!(await exists(entry.pluginDir))) continue;
+    if (!(await pathExistsNoFollow(entry.pluginDir))) continue;
     const marker = await readAlignedManagedPluginFileMarker(entry, input.rootDir).catch(() => null);
     if (marker) continue;
+    const desiredPolicy = desiredPolicyIds.has(entry.policyId);
     conflicts.push({
       code: "stale_file_plugin_unmarked",
       policyId: entry.policyId,
       spec: entry.spec,
       target: input.target,
       path: entry.pluginDir,
-      message: `Refusing to remove stale file plugin without Veslo marker ${entry.pluginDir}`,
+      message: desiredPolicy
+        ? `Refusing to update file plugin without aligned Veslo marker ${entry.pluginDir}`
+        : `Refusing to remove stale file plugin without Veslo marker ${entry.pluginDir}`,
     });
   }
 
@@ -374,10 +387,10 @@ async function applyFileTarget(context: FileTargetContext): Promise<PluginMateri
 
   for (const entry of context.previousManifest?.entries ?? []) {
     if (desiredPolicyIds.has(entry.policyId)) continue;
-    if (!(await exists(entry.pluginDir))) continue;
+    if (!(await pathExistsNoFollow(entry.pluginDir))) continue;
     const marker = await readAlignedManagedPluginFileMarker(entry, context.rootDir).catch(() => null);
     if (!marker) continue;
-    await removeManagedPluginFiles(entry, { removeMarker: true });
+    await removeManagedPluginFiles(entry, context.rootDir, { removeMarker: true });
     removedPolicyIds.push(entry.policyId);
   }
 
@@ -411,16 +424,25 @@ async function writeFilePluginPolicy(
 ): Promise<ManagedPluginFileManifestEntry> {
   const files = normalizePluginFiles(policy.files ?? []);
   const pluginDir = pluginDirForPolicy(rootDir, policy);
-  if (previousEntry && await exists(previousEntry.pluginDir)) {
+  if (previousEntry && await pathExistsNoFollow(previousEntry.pluginDir)) {
+    const marker = await readAlignedManagedPluginFileMarker(previousEntry, rootDir);
+    if (!marker) {
+      throw new Error(`Refusing to update file plugin without aligned Veslo marker ${previousEntry.pluginDir}`);
+    }
     const desiredPaths = new Set(files.map((file) => file.path));
-    await removeManagedPluginFiles(previousEntry, { exceptPaths: desiredPaths, removeMarker: false });
+    await removeManagedPluginFiles(previousEntry, rootDir, { exceptPaths: desiredPaths, removeMarker: false });
   }
+  await ensureManagedRootDir(rootDir);
   await mkdir(pluginDir, { recursive: true });
+  await assertManagedPluginDirSafe(rootDir, pluginDir, { mustExist: true });
 
   const manifestFiles: ManagedPluginFileManifestFile[] = [];
   for (const file of files) {
     const filePath = resolveContainedFilePath(pluginDir, file.path);
+    await assertManagedPluginPathHasNoSymlinks(pluginDir, dirname(filePath), { includeLeaf: true });
     await ensureDir(dirname(filePath));
+    await assertManagedPluginPathHasNoSymlinks(pluginDir, dirname(filePath), { includeLeaf: true });
+    await assertPathIsNotSymlink(filePath, "Managed plugin file path must not be a symlink");
     await writeFile(filePath, file.content, "utf8");
     manifestFiles.push({
       path: file.path,
@@ -441,7 +463,7 @@ async function writeFilePluginPolicy(
     files: manifestFiles,
     materializedAt,
   };
-  await writeManagedPluginFileMarker(pluginDir, entry);
+  await writeManagedPluginFileMarker(rootDir, pluginDir, entry);
   return entry;
 }
 
@@ -473,27 +495,36 @@ async function writeManagedPluginFileManifest(
     generatedAt: new Date().toISOString(),
     entries: [...entries].sort(compareFileEntries),
   };
-  await mkdir(rootDir, { recursive: true });
-  await writeFile(managedPluginFileManifestPath(rootDir), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  await ensureManagedRootDir(rootDir);
+  const path = managedPluginFileManifestPath(rootDir);
+  await assertPathIsNotSymlink(path, "Managed plugin file manifest must not be a symlink");
+  await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
 async function readManagedPluginFileMarker(
   pluginDir: string,
   rootDir: string,
 ): Promise<ManagedPluginFileManifestEntry & { schemaVersion: 1; managedBy: typeof MANAGED_BY }> {
+  await assertManagedPluginDirSafe(rootDir, pluginDir, { mustExist: true });
+  const markerPath = managedPluginFileMarkerPath(pluginDir);
+  await assertPathIsNotSymlink(markerPath, "Managed plugin marker must not be a symlink");
   return validateManagedPluginFileMarker(
-    JSON.parse(await readFile(managedPluginFileMarkerPath(pluginDir), "utf8")),
+    JSON.parse(await readFile(markerPath, "utf8")),
     pluginDir,
     rootDir,
   );
 }
 
 async function writeManagedPluginFileMarker(
+  rootDir: string,
   pluginDir: string,
   entry: ManagedPluginFileManifestEntry,
 ): Promise<void> {
+  await assertManagedPluginDirSafe(rootDir, pluginDir, { mustExist: true });
+  const markerPath = managedPluginFileMarkerPath(pluginDir);
+  await assertPathIsNotSymlink(markerPath, "Managed plugin marker must not be a symlink");
   await writeFile(
-    managedPluginFileMarkerPath(pluginDir),
+    markerPath,
     `${JSON.stringify({ schemaVersion: 1, managedBy: MANAGED_BY, ...entry }, null, 2)}\n`,
     "utf8",
   );
@@ -593,23 +624,38 @@ function normalizePluginSpec(spec: string): string {
 
 async function removeManagedPluginFiles(
   entry: ManagedPluginFileManifestEntry,
+  rootDir: string,
   options: { exceptPaths?: Set<string>; removeMarker: boolean },
 ): Promise<void> {
+  await assertManagedPluginDirSafe(rootDir, entry.pluginDir, { mustExist: true });
   const directories = new Set<string>();
   for (const file of entry.files) {
     if (options.exceptPaths?.has(file.path)) continue;
     const path = resolveContainedFilePath(entry.pluginDir, file.path);
+    await assertManagedPluginPathHasNoSymlinks(entry.pluginDir, path, { includeLeaf: true });
+    const fileStats = await lstatOrNull(path);
+    if (!fileStats) continue;
+    if (fileStats.isDirectory()) {
+      throw new Error("Managed plugin file path must not be a directory");
+    }
+    const realFilePath = await realpath(path);
+    const realPluginDir = await realpath(entry.pluginDir);
+    if (!pathIsInside(realPluginDir, realFilePath)) {
+      throw new Error("Managed plugin file path escapes the managed plugin directory");
+    }
     await rm(path, { force: true });
     collectParentDirs(entry.pluginDir, dirname(path), directories);
   }
 
   if (options.removeMarker) {
+    await assertPathIsNotSymlink(managedPluginFileMarkerPath(entry.pluginDir), "Managed plugin marker must not be a symlink");
     await rm(managedPluginFileMarkerPath(entry.pluginDir), { force: true });
   }
 
   for (const dir of [...directories].sort((left, right) => right.length - left.length)) {
     await rmdirIfEmpty(dir);
   }
+  await assertManagedPluginDirSafe(rootDir, entry.pluginDir, { mustExist: true });
   await rmdirIfEmpty(entry.pluginDir);
 }
 
@@ -644,6 +690,119 @@ async function rmdirIfEmpty(path: string): Promise<void> {
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ENOTEMPTY" || code === "EEXIST") return;
+    throw error;
+  }
+}
+
+async function assertManagedPluginManifestEntriesSafe(
+  manifest: ManagedPluginFileManifest,
+  rootDir: string,
+  rootRealPath: string,
+): Promise<void> {
+  for (const entry of manifest.entries) {
+    await assertManagedPluginDirSafe(rootDir, entry.pluginDir, { rootRealPath, mustExist: false });
+  }
+}
+
+async function ensureManagedRootDir(rootDir: string): Promise<string> {
+  await mkdir(rootDir, { recursive: true });
+  const rootRealPath = await managedRootRealPathIfPresent(rootDir);
+  if (!rootRealPath) {
+    throw new Error("Managed plugin root directory does not exist");
+  }
+  return rootRealPath;
+}
+
+async function managedRootRealPathIfPresent(rootDir: string): Promise<string | null> {
+  const rootStats = await lstatOrNull(rootDir);
+  if (!rootStats) return null;
+  if (rootStats.isSymbolicLink()) {
+    throw new Error("Managed plugin root directory must not be a symlink");
+  }
+  if (!rootStats.isDirectory()) {
+    throw new Error("Managed plugin root path must be a directory");
+  }
+  return realpath(rootDir);
+}
+
+async function assertManagedPluginDirSafe(
+  rootDir: string,
+  pluginDir: string,
+  options: { rootRealPath?: string; mustExist: boolean },
+): Promise<string | null> {
+  const normalizedPluginDir = resolveContainedPluginDir(rootDir, pluginDir);
+  const rootRealPath = options.rootRealPath ?? await managedRootRealPathIfPresent(rootDir);
+  if (!rootRealPath) {
+    if (options.mustExist) {
+      throw new Error("Managed plugin root directory does not exist");
+    }
+    return null;
+  }
+
+  const pluginStats = await lstatOrNull(normalizedPluginDir);
+  if (!pluginStats) {
+    if (options.mustExist) {
+      throw new Error("Managed plugin directory does not exist");
+    }
+    return null;
+  }
+  if (pluginStats.isSymbolicLink()) {
+    throw new Error("Managed plugin directory must not be a symlink");
+  }
+  if (!pluginStats.isDirectory()) {
+    throw new Error("Managed plugin path must be a directory");
+  }
+
+  const pluginRealPath = await realpath(normalizedPluginDir);
+  if (!pathIsInside(rootRealPath, pluginRealPath)) {
+    throw new Error("Managed plugin directory must stay inside the managed root");
+  }
+  return pluginRealPath;
+}
+
+async function assertManagedPluginPathHasNoSymlinks(
+  pluginDir: string,
+  targetPath: string,
+  options: { includeLeaf: boolean },
+): Promise<void> {
+  const root = resolve(pluginDir);
+  const target = resolve(targetPath);
+  if (target !== root && !pathIsInside(root, target)) {
+    throw new Error("Managed plugin file path escapes the managed plugin directory");
+  }
+
+  const relativePath = relative(root, target);
+  if (!relativePath) return;
+
+  const parts = relativePath.split(/[\\/]+/).filter(Boolean);
+  const checkedParts = options.includeLeaf ? parts : parts.slice(0, -1);
+  let current = root;
+  for (const part of checkedParts) {
+    current = join(current, part);
+    const stats = await lstatOrNull(current);
+    if (!stats) return;
+    if (stats.isSymbolicLink()) {
+      throw new Error("Managed plugin path must not contain symlinks");
+    }
+  }
+}
+
+async function assertPathIsNotSymlink(path: string, message: string): Promise<void> {
+  const stats = await lstatOrNull(path);
+  if (stats?.isSymbolicLink()) {
+    throw new Error(message);
+  }
+}
+
+async function pathExistsNoFollow(path: string): Promise<boolean> {
+  return Boolean(await lstatOrNull(path));
+}
+
+async function lstatOrNull(path: string): Promise<Awaited<ReturnType<typeof lstat>> | null> {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
 }
