@@ -15,6 +15,7 @@ import type {
   PendingSidebarSessionMetadata,
   SettingsTab,
   SkillCard,
+  SidebarSectionState,
   TodoItem,
   View,
   WorkspaceConnectionState,
@@ -120,7 +121,6 @@ import {
   type QueuedDraft,
 } from "../components/session/session-queue-model.js";
 import { shouldShowSessionLoadingState } from "../components/session/session-loading-state-model";
-import type { SidebarSectionState } from "../components/session/sidebar";
 import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
 import {
   clampLeftSidebarWidth,
