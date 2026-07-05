@@ -467,6 +467,7 @@ export default function SessionView(props: SessionViewProps) {
   const [toastMessage, setToastMessage] = createSignal<string | null>(null);
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal("");
+  const [renameTargetSessionId, setRenameTargetSessionId] = createSignal<string | null>(null);
   const [renameBusy, setRenameBusy] = createSignal(false);
   const [newSessionBusy, setNewSessionBusy] = createSignal(false);
   const [newSessionError, setNewSessionError] = createSignal<string | null>(null);
@@ -2497,6 +2498,15 @@ export default function SessionView(props: SessionViewProps) {
     return "";
   };
 
+  const sessionTitleByWorkspaceAndId = (workspaceId: string | null | undefined, sessionId: string | null | undefined) => {
+    const targetWorkspaceId = (workspaceId ?? "").trim();
+    const id = (sessionId ?? "").trim();
+    if (!id) return "";
+    const group = props.workspaceSessionGroups.find((candidate) => candidate.workspace.id === targetWorkspaceId);
+    const match = group?.sessions.find((session) => session.id === id);
+    return match?.title ?? sessionTitleById(id);
+  };
+
   const deleteSessionTargetId = createMemo(() => deleteSessionTarget()?.sessionId ?? props.selectedSessionId ?? null);
   const deleteSessionTargetTitle = createMemo(() => sessionTitleById(deleteSessionTargetId()));
 
@@ -2504,11 +2514,13 @@ export default function SessionView(props: SessionViewProps) {
     if (renameBusy()) return false;
     const next = renameTitle().trim();
     if (!next) return false;
+    if (renameTargetSessionId()) return true;
     return next !== selectedSessionTitle().trim();
   });
 
   const openRenameModal = () => {
     setSessionMenuOpen(false);
+    setRenameTargetSessionId(null);
     if (!props.selectedSessionId) {
       setToastMessage(tr("session.no_session_selected_toast"));
       return;
@@ -2517,13 +2529,26 @@ export default function SessionView(props: SessionViewProps) {
     setRenameModalOpen(true);
   };
 
+  const openRenameModalFor = (workspaceId: string, sessionId: string) => {
+    const id = sessionId.trim();
+    if (!id) {
+      setToastMessage(tr("session.no_session_selected_toast"));
+      return;
+    }
+    setSessionMenuOpen(false);
+    setRenameTitle(sessionTitleByWorkspaceAndId(workspaceId, id));
+    setRenameTargetSessionId(id);
+    setRenameModalOpen(true);
+  };
+
   const closeRenameModal = () => {
     if (renameBusy()) return;
     setRenameModalOpen(false);
+    setRenameTargetSessionId(null);
   };
 
   const submitRename = async () => {
-    const sessionId = props.selectedSessionId;
+    const sessionId = renameTargetSessionId() ?? props.selectedSessionId;
     if (!sessionId) return;
     const next = renameTitle().trim();
     if (!next || !renameCanSave()) return;
@@ -2531,6 +2556,7 @@ export default function SessionView(props: SessionViewProps) {
     try {
       await props.renameSession(sessionId, next);
       setRenameModalOpen(false);
+      setRenameTargetSessionId(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : props.safeStringify(error);
       setToastMessage(message);
@@ -3299,6 +3325,7 @@ export default function SessionView(props: SessionViewProps) {
           onActivateWorkspace: props.activateWorkspace,
           onOpenSession: openSessionFromList,
           onDeleteSession: openDeleteSessionModalForSession,
+          onRenameSession: openRenameModalFor,
           onOpenPendingDirectoryDraftInWorkspace: openPendingDirectoryDraftFromList,
           onOpenRenameWorkspace: props.openRenameWorkspace,
           onShareWorkspace: (workspaceId) => setShareWorkspaceId(workspaceId),

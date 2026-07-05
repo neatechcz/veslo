@@ -556,29 +556,47 @@ test("collapsed sidebar sections keep real drawer state while exposing selected 
   );
 });
 
-test("session rows use archive action and open submenu on right-click", () => {
+test("session rows use archive action and open shared sidebar context menu on right-click", () => {
   assert.match(
     source,
-    /const handleSessionRowContextMenu = \(\s*event: MouseEvent,\s*workspaceId: string,\s*anchorKey: string,\s*\) => \{/,
+    /onRenameSession\?: \(workspaceId: string, sessionId: string\) => void;/,
+    "session list should accept a session rename callback for context-menu rows",
+  );
+
+  assert.match(
+    source,
+    /const handleSessionRowContextMenu = \(\s*event: MouseEvent,\s*row: FlatSessionRow,\s*targetKind: MenuTargetKind,\s*\) => \{/,
     "session list should define a dedicated right-click handler for session rows",
   );
 
   assert.match(
     source,
-    /setWorkspaceMenuTarget\(\{\s*workspaceId,\s*anchorKey,\s*source: ["']session["'],\s*x: event\.clientX,\s*y: event\.clientY,?\s*\}\);/,
-    "right-clicking a session row should mark the workspace menu as session-originated",
+    /setSidebarMenuState\(\{\s*targetKind,\s*workspaceId: row\.workspace\.id,\s*sessionId: row\.session\.id,\s*placement: \{ x: event\.clientX, y: event\.clientY \},\s*selectedText: selectedTextForMenuEvent\(event\),\s*\}\);/,
+    "right-clicking a session row should open the shared menu at pointer coordinates for that exact row",
   );
 
   assert.match(
     source,
-    /onContextMenu=\{\(event\) => handleSessionRowContextMenu\(event, workspace\(\)\.id, anchorKey\)\}/,
-    "recent session rows should open submenu from right-click",
+    /onContextMenu=\{\(event\) => handleSessionRowContextMenu\(event, row, "recent"\)\}/,
+    "recent session rows should open the recent-row menu from right-click",
   );
 
   assert.match(
     source,
-    /onContextMenu=\{\(event\) => \{\s*if \(!showWorkspaceMenu\) return;\s*handleSessionRowContextMenu\(event, row\.workspace\.id, options\.anchorKey\);\s*\}\}/s,
-    "by-project session rows should open submenu from right-click through the shared row renderer",
+    /const targetKind: MenuTargetKind = options\.showWorkspaceMenu === false \? "chat" : "session";[\s\S]*onContextMenu=\{\(event\) => handleSessionRowContextMenu\(event, row, targetKind\)\}/,
+    "by-project session rows and Chaty rows should open target-specific menus through the shared row renderer",
+  );
+
+  assert.match(
+    source,
+    /onRename: \(\) => props\.onRenameSession\?\.\(workspaceId, sessionId\),[\s\S]*onArchiveToggle: \(\) => toggleSessionArchiveFromMenu\(workspaceId, sessionId\),[\s\S]*onDelete: props\.onDeleteSession \? \(\) => props\.onDeleteSession\?\.\(workspaceId, sessionId\) : undefined,/,
+    "session-row menu entries should delegate rename, archive, and delete to row-scoped callbacks",
+  );
+
+  assert.match(
+    source,
+    /return buildSessionRowMenuItems\(\{/,
+    "session row menus should be built through the shared menu model",
   );
 
   assert.match(
@@ -597,12 +615,6 @@ test("session rows use archive action and open submenu on right-click", () => {
     source,
     /onUnarchiveSession\?: \(workspaceId: string, sessionId: string\) => Promise<void> \| void;/,
     "session list should accept an unarchive callback from callers",
-  );
-
-  assert.match(
-    source,
-    /<Show when=\{target\(\)\.source !== ["']session["']\}>[\s\S]*tr\(["']sidebar\.remove_workspace["']\)[\s\S]*<\/Show>/,
-    "session-originated menus should not render the destructive remove-workspace action",
   );
 
   assert.match(
@@ -687,26 +699,32 @@ test("session rows use archive action and open submenu on right-click", () => {
 test("workspace context menu is fixed and viewport clamped so scroll containers cannot clip it", () => {
   assert.match(
     source,
-    /type WorkspaceMenuTarget = \{[\s\S]*x: number;[\s\S]*y: number;[\s\S]*\};/,
-    "workspace menu state should store viewport click coordinates instead of relying on row-relative placement",
+    /import SidebarContextMenu from "\.\/sidebar-context-menu";/,
+    "workspace menu should render through the shared sidebar context-menu primitive",
   );
 
   assert.match(
     source,
-    /setWorkspaceMenuTarget\(\{\s*workspaceId,\s*anchorKey,\s*source: ["']session["'],\s*x: event\.clientX,\s*y: event\.clientY,?\s*\}\);/,
-    "right-clicked session rows should open the menu at the pointer coordinates",
+    /type MenuState = \{[\s\S]*targetKind: "session" \| "chat" \| "project" \| "recent" \| "background";[\s\S]*placement: SidebarMenuPlacement;[\s\S]*\} \| null;/,
+    "sidebar menu state should store the target kind plus a shared primitive placement",
   );
 
   assert.match(
     source,
-    /const workspaceMenuStyle = createMemo\(\(\) => \{[\s\S]*Math\.min\(Math\.max\(VIEWPORT_PADDING, target\.x\), maxX\)[\s\S]*Math\.min\(Math\.max\(VIEWPORT_PADDING, target\.y\), maxY\)/,
-    "workspace menu should clamp both axes inside the viewport",
+    /placement: \{ x: event\.clientX, y: event\.clientY \}/,
+    "right-clicked rows should open the menu at pointer coordinates",
   );
 
   assert.match(
     source,
-    /data-testid=["']session-workspace-context-menu["'][\s\S]*class=["']fixed z-\[100\]/,
-    "workspace menu should render as a fixed top-priority layer",
+    /placement: \{ anchorEl: currentTarget \}/,
+    "workspace options button should open the project menu anchored to the button",
+  );
+
+  assert.match(
+    source,
+    /<SidebarContextMenu[\s\S]*testId=\{sidebarMenuState\(\)\?\.targetKind === "project" \? "session-workspace-context-menu" : "sidebar-context-menu"\}/,
+    "project menus should preserve the legacy workspace context-menu test id while other menus use the shared id",
   );
 
   assert.doesNotMatch(
