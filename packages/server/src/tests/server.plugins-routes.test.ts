@@ -66,7 +66,8 @@ describe("Plugin workspace routes", () => {
     const body = await invokeJson(fixture, "GET", "/workspace/ws_1/plugins?includeGlobal=true&debug=false");
 
     const items = inventoryItems(body);
-    expect(items).toContainEqual(expect.objectContaining({
+    const inventory = policyInventoryItems(body);
+    expect(inventory).toContainEqual(expect.objectContaining({
       id: SUPERPOWERS_PLATFORM_PLUGIN.id,
       spec: SUPERPOWERS_PLATFORM_PLUGIN.spec,
       displayName: "Superpowers",
@@ -81,23 +82,36 @@ describe("Plugin workspace routes", () => {
       enabledPolicy: "user-toggleable",
       managed: true,
     }));
-    expect(items.map((item) => item.id)).not.toContain(OPENCODE_SCHEDULER_PLATFORM_PLUGIN.id);
+    expect(inventory.map((item) => item.id)).not.toContain(OPENCODE_SCHEDULER_PLATFORM_PLUGIN.id);
     expect(items).toContainEqual(expect.objectContaining({
       spec: "project-only@1.0.0",
       scope: "project",
-      target: "project",
-      source: "config.unmanaged",
-      enabled: true,
-      lifecycle: "active",
+      source: "config",
       managed: false,
     }));
     expect(items).toContainEqual(expect.objectContaining({
       spec: "global-only@2.0.0",
-      scope: "user",
-      target: "user",
+      scope: "global",
+      source: "config",
+      managed: false,
+    }));
+  });
+
+  test("legacy items keep unmanaged project config plugins visible for current app callers", async () => {
+    const fixture = await createFixture({ projectPlugins: ["legacy-visible@1.0.0"] });
+
+    const body = await invokeJson(fixture, "GET", "/workspace/ws_1/plugins?includeGlobal=false");
+
+    expect(inventoryItems(body)).toContainEqual(expect.objectContaining({
+      spec: "legacy-visible@1.0.0",
+      source: "config",
+      scope: "project",
+      managed: false,
+    }));
+    expect(policyInventoryItems(body)).toContainEqual(expect.objectContaining({
+      spec: "legacy-visible@1.0.0",
       source: "config.unmanaged",
-      enabled: true,
-      lifecycle: "active",
+      scope: "project",
       managed: false,
     }));
   });
@@ -107,7 +121,7 @@ describe("Plugin workspace routes", () => {
 
     const body = await invokeJson(fixture, "GET", "/workspace/ws_1/plugins?debug=true");
 
-    expect(inventoryItems(body)).toContainEqual(expect.objectContaining({
+    expect(policyInventoryItems(body)).toContainEqual(expect.objectContaining({
       id: OPENCODE_SCHEDULER_PLATFORM_PLUGIN.id,
       spec: OPENCODE_SCHEDULER_PLATFORM_PLUGIN.spec,
       displayName: "OpenCode Scheduler",
@@ -228,6 +242,20 @@ describe("Plugin workspace routes", () => {
     expect(inventoryItems(body).map((item) => item.spec)).not.toContain("legacy-plugin@1.0.0");
   });
 
+  test("delete rejects ambiguous managed-policy id and unmanaged project plugin collisions", async () => {
+    const fixture = await createFixture({ projectPlugins: ["platform.superpowers@1.0.0"] });
+
+    await expect(invokeJson(fixture, "DELETE", "/workspace/ws_1/plugins/platform.superpowers"))
+      .rejects.toMatchObject({
+        status: 409,
+        code: "plugin_delete_ambiguous",
+      });
+
+    const projectConfig = JSON.parse(await readFile(join(fixture.workspaceRoot, "opencode.json"), "utf8"));
+    expect(projectConfig.plugin).toEqual(["platform.superpowers@1.0.0"]);
+    expect(await listPluginPolicyOverrides({ dataDir: fixture.dataDir })).toEqual([]);
+  });
+
   test("locked scheduler disable and remove reject without mutating override state", async () => {
     const fixture = await createFixture();
 
@@ -244,6 +272,44 @@ describe("Plugin workspace routes", () => {
       fixture,
       "DELETE",
       "/workspace/ws_1/plugins/platform.opencode-scheduler",
+    )).rejects.toMatchObject({
+      status: 409,
+      code: "plugin_policy_locked",
+    });
+
+    expect(await listPluginPolicyOverrides({ dataDir: fixture.dataDir })).toEqual([]);
+  });
+
+  test("enabled route rejects unknown managed ids and invalid payloads", async () => {
+    const fixture = await createFixture();
+
+    await expect(invokeJson(
+      fixture,
+      "POST",
+      "/workspace/ws_1/plugins/platform.unknown/enabled",
+      { enabled: false },
+    )).rejects.toMatchObject({
+      status: 404,
+      code: "plugin_policy_not_found",
+    });
+    await expect(invokeJson(
+      fixture,
+      "POST",
+      "/workspace/ws_1/plugins/platform.superpowers/enabled",
+      { enabled: "false" },
+    )).rejects.toMatchObject({
+      status: 400,
+      code: "invalid_payload",
+    });
+  });
+
+  test("locked scheduler restore rejects without mutating override state", async () => {
+    const fixture = await createFixture();
+
+    await expect(invokeJson(
+      fixture,
+      "POST",
+      "/workspace/ws_1/plugins/platform.opencode-scheduler/restore",
     )).rejects.toMatchObject({
       status: 409,
       code: "plugin_policy_locked",
@@ -356,6 +422,11 @@ async function invokeJson(
 function inventoryItems(body: Record<string, unknown>): Array<Record<string, unknown>> {
   expect(Array.isArray(body.items)).toBe(true);
   return body.items as Array<Record<string, unknown>>;
+}
+
+function policyInventoryItems(body: Record<string, unknown>): Array<Record<string, unknown>> {
+  expect(Array.isArray(body.inventory)).toBe(true);
+  return body.inventory as Array<Record<string, unknown>>;
 }
 
 async function tempDir(prefix: string): Promise<string> {

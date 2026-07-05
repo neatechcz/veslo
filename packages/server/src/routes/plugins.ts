@@ -190,6 +190,14 @@ export function registerPluginRoutes(routes: Route[], dependencies: PluginRouteD
     const pluginId = ctx.params.pluginId ?? "";
     const managedPolicy = findManagedPluginPolicy(pluginId);
     if (managedPolicy) {
+      if (await unmanagedProjectConfigPluginMatches(workspace, pluginId, { serverDataDir, userOpencodeConfigDir })) {
+        throw new ApiError(
+          409,
+          "plugin_delete_ambiguous",
+          "Plugin id matches both a managed policy and an unmanaged project plugin",
+          { pluginId },
+        );
+      }
       await requireApproval(ctx, {
         workspaceId: workspace.id,
         action: "plugins.remove",
@@ -256,6 +264,9 @@ export function registerPluginRoutes(routes: Route[], dependencies: PluginRouteD
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const policy = requireManagedPluginPolicy(ctx.params.pluginId);
+    if (policy.removalPolicy === "locked") {
+      throw new ApiError(409, "plugin_policy_locked", "Plugin policy is locked and cannot be restored");
+    }
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "plugins.restore",
@@ -308,10 +319,30 @@ async function buildPluginInventory(
     .filter((item) => !item.managed && !item.policyId)
     .map((item) => unmanagedPluginInventoryItem(item, workspace));
   return {
-    items: [...policyItems, ...unmanagedItems],
+    items: pluginList.items,
+    inventory: [...policyItems, ...unmanagedItems],
     loadOrder: pluginList.loadOrder,
     warnings: pluginList.warnings,
   };
+}
+
+async function unmanagedProjectConfigPluginMatches(
+  workspace: WorkspaceInfo,
+  pluginId: string,
+  options: { serverDataDir?: string; userOpencodeConfigDir?: string },
+): Promise<boolean> {
+  const result = await listPlugins(workspace.path, false, {
+    workspaceOwner: ownerForWorkspace(workspace),
+    dataDir: options.serverDataDir,
+    userOpencodeConfigDir: options.userOpencodeConfigDir,
+  });
+  const normalized = normalizePluginSpec(pluginId);
+  return result.items.some((item) =>
+    item.source === "config" &&
+    item.scope === "project" &&
+    !item.managed &&
+    normalizePluginSpec(item.spec) === normalized
+  );
 }
 
 async function resolveManagedPluginPolicies(
