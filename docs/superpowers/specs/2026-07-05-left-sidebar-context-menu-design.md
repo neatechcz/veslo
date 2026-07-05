@@ -89,6 +89,9 @@ type MenuState = {
 } | null;
 ```
 
+When `anchorEl` is set it takes precedence over `x`/`y`: the menu is positioned relative to
+the anchor rect (below, right-aligned), and `x`/`y` are ignored.
+
 `onContextMenu` handlers on rows/headers/background only `preventDefault()` and set this
 signal. Menu items are computed with a memo from the matching builder. Selecting an item
 invokes the existing prop callback and closes the menu.
@@ -100,7 +103,7 @@ invokes the existing prop callback and closes the menu.
 | Session row | Open · Rename · Archive/Unarchive · — · group "Project": Share, Soul, Reveal in Finder/Explorer, (remote: Recover, Test connection, Edit connection) · — · Delete (danger) |
 | Chat row | Open · Rename · Archive/Unarchive · Delete (danger) |
 | Project header | New session · Rename · Share · Soul settings/Enable Soul · Reveal (local) · (remote: Recover, Test connection, Edit connection) · — · Remove workspace (danger) |
-| Recent row | Session actions + "Show in project" |
+| Recent row | Open · Rename · Archive/Unarchive · Show in project · — · Delete (danger). No "Project" group — workspace actions are reachable via "Show in project" |
 | Empty list area | New session · Add workspace (local / remote / import) · Search sessions · Archived items |
 
 Rules:
@@ -121,7 +124,10 @@ Rules:
   primitive.
 - The legacy `components/session/sidebar.tsx` menu is not migrated: the component is dead code
   (only its `SidebarSectionState` type is imported by `pages/session.tsx`). Move the type and
-  delete the file as part of cleanup.
+  delete the file as part of cleanup. Two source-reading tests load the file via
+  `readFileSync` and must be updated or removed together with it:
+  `packages/app/src/app/tests/components/session/sidebar-connection-message.test.ts` and
+  `packages/app/src/app/tests/pages/app-shell-typography.test.ts`.
 
 ### 6. Error handling
 
