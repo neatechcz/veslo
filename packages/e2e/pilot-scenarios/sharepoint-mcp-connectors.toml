@@ -76,11 +76,15 @@ action = "eval"
 script = '''
 const normalize = (value) => `${value ?? ""}`.replace(/\s+/g, " ").trim();
 const card = document.querySelector('[data-testid="mcp-available-app-card"][data-mcp-name="Microsoft SharePoint"]');
-if (!(card instanceof HTMLButtonElement)) {
+if (!(card instanceof HTMLElement)) {
   throw new Error("Microsoft SharePoint card was not found");
 }
-if (card.disabled) {
-  throw new Error("Microsoft SharePoint card is disabled");
+const install = card.querySelector('[data-testid="mcp-install-hub-button"]');
+if (!(install instanceof HTMLButtonElement)) {
+  throw new Error("Microsoft SharePoint install button was not found");
+}
+if (install.disabled) {
+  throw new Error("Microsoft SharePoint install button is disabled");
 }
 const text = normalize(card.textContent ?? card.innerText);
 if (!text.includes("Microsoft SharePoint") || !text.includes("Microsoft")) {
@@ -103,17 +107,33 @@ true;
 '''
 
 [[step]]
-name = "click sharepoint card"
+name = "clicking sharepoint card does not install"
 action = "eval"
 script = '''
 const card = document.querySelector('[data-testid="mcp-available-app-card"][data-mcp-name="Microsoft SharePoint"]');
-if (!(card instanceof HTMLButtonElement)) {
+if (!(card instanceof HTMLElement)) {
   throw new Error("Microsoft SharePoint card was not found");
 }
-if (card.disabled) {
-  throw new Error("Microsoft SharePoint card is disabled");
-}
 card.click();
+const installed = document.querySelector('[data-testid="mcp-installed-app-row"][data-mcp-name="microsoft-sharepoint"]');
+if (installed) {
+  throw new Error("Clicking the Microsoft SharePoint card installed the MCP without the Install button");
+}
+true;
+'''
+
+[[step]]
+name = "click sharepoint install button"
+action = "eval"
+script = '''
+const install = document.querySelector('[data-testid="mcp-install-hub-button"][data-mcp-name="Microsoft SharePoint"]');
+if (!(install instanceof HTMLButtonElement)) {
+  throw new Error("Microsoft SharePoint install button was not found");
+}
+if (install.disabled) {
+  throw new Error("Microsoft SharePoint install button is disabled");
+}
+install.click();
 true;
 '''
 
@@ -153,6 +173,63 @@ for (const forbidden of [
   if (visibleText.includes(forbidden)) {
     throw new Error(`Secret or token text is visible in the UI: ${forbidden}`);
   }
+}
+true;
+'''
+
+[[step]]
+name = "expand sharepoint installed row"
+action = "eval"
+script = '''
+const row = document.querySelector('[data-testid="mcp-installed-app-row"][data-mcp-name="microsoft-sharepoint"]');
+if (!(row instanceof HTMLButtonElement)) {
+  throw new Error("Microsoft SharePoint installed row was not found");
+}
+row.click();
+true;
+'''
+
+[[step]]
+name = "sharepoint installed row exposes sign in"
+action = "wait"
+target = '[data-testid="mcp-login-button"][data-mcp-name="microsoft-sharepoint"]'
+timeout_ms = 15000
+
+[[step]]
+name = "click sharepoint sign in"
+action = "eval"
+script = '''
+const signIn = document.querySelector('[data-testid="mcp-login-button"][data-mcp-name="microsoft-sharepoint"]');
+if (!(signIn instanceof HTMLButtonElement)) {
+  throw new Error("Microsoft SharePoint Sign in button was not found");
+}
+if (signIn.disabled) {
+  throw new Error("Microsoft SharePoint Sign in button is disabled");
+}
+signIn.click();
+true;
+'''
+
+[[step]]
+name = "sharepoint oauth start is visible"
+action = "eval"
+timeout_ms = 15000
+script = '''
+const normalize = (value) => `${value ?? ""}`.replace(/\s+/g, " ").trim();
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const deadline = Date.now() + 15000;
+let found = false;
+let text = "";
+while (Date.now() < deadline) {
+  text = normalize(document.body.innerText);
+  if (text.includes("Follow the authorization steps in the browser.")) {
+    found = true;
+    break;
+  }
+  await sleep(250);
+}
+if (!found) {
+  throw new Error(`SharePoint OAuth start message did not appear. Body=${text.slice(0, 2000)}`);
 }
 true;
 '''

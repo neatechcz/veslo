@@ -121,6 +121,7 @@ function createHarness(overrides: Record<string, unknown> = {}) {
       selectedMcp = value;
     },
     setMcpStatus: (value: string | null) => {
+      calls.push({ name: "setMcpStatus", args: [value] });
       mcpStatus = value;
     },
     setMcpConnectingName: (value: string | null) => {
@@ -319,6 +320,54 @@ test("hub MCP install starts Veslo-managed OAuth in the browser without local ru
   assert.deepEqual(harness.calls.find((call) => call.name === "fetch")?.args[0], "https://den.example/v1/connectors/linear/oauth/start");
   assert.deepEqual(harness.calls.find((call) => call.name === "openDesktopAuthUrl")?.args, ["https://auth.example/start"]);
   assert.equal(harness.mcpStatus, "mcp.auth.follow_browser_steps");
+});
+
+test("installed hub MCP row can start Veslo-managed OAuth from catalog metadata", async () => {
+  const harness = createHarness();
+  harness.hubEntries.push(remoteEntry({
+    id: "microsoft-sharepoint",
+    name: "Microsoft SharePoint",
+    oauth: false,
+    authorization: {
+      type: "veslo-server-oauth",
+      provider: "microsoft",
+      connectorId: "microsoft-sharepoint",
+      scopes: ["Sites.Read.All", "Files.Read.All"],
+      startPath: "/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/oauth/start",
+      runtimeTokenPath: "/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/runtime-token",
+      statusPath: "/v1/orgs/org_1/integrations/microsoft/connections",
+      disconnectPath: "/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/connection",
+    },
+  }));
+  const installedEntry: McpServerEntry = {
+    name: "microsoft-sharepoint",
+    source: "config.project",
+    config: {
+      type: "remote",
+      url: "https://api.veslo.work/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/mcp",
+      oauth: false,
+      headers: {
+        "X-Veslo-Connector": "microsoft-sharepoint",
+        "X-Veslo-Connector-Token": "runtime-token",
+      },
+    },
+  };
+  harness.mcpServersValue = [installedEntry];
+
+  await harness.workflow.authorizeMcp(installedEntry);
+
+  assert.deepEqual(
+    harness.calls.find((call) => call.name === "fetch")?.args[0],
+    "https://den.example/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/oauth/start",
+  );
+  assert.deepEqual(harness.calls.find((call) => call.name === "openDesktopAuthUrl")?.args, ["https://auth.example/start"]);
+  assert.equal(harness.authModalOpen, false);
+  assert.equal(harness.mcpStatus, "mcp.auth.follow_browser_steps");
+  assert.equal(
+    harness.calls.findIndex((call) => call.name === "setMcpStatus" && call.args[0] === "mcp.auth.follow_browser_steps") <
+      harness.calls.findIndex((call) => call.name === "openDesktopAuthUrl"),
+    true,
+  );
 });
 
 test("removing an MCP refreshes the list and clears the selected server", async () => {

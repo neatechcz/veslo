@@ -89,10 +89,10 @@ script = '''
 const normalize = (value) => `${value ?? ""}`.replace(/\s+/g, " ").trim();
 const readAvailable = () => {
   return Array.from(document.querySelectorAll('[data-testid="mcp-available-app-card"]'))
-    .map((button) => ({
-      name: button.getAttribute("data-mcp-name") ?? "",
-      text: normalize(button.textContent ?? button.innerText),
-      disabled: button.disabled === true,
+    .map((card) => ({
+      name: card.getAttribute("data-mcp-name") ?? "",
+      text: normalize(card.textContent ?? card.innerText),
+      installDisabled: card.querySelector('[data-testid="mcp-install-hub-button"]')?.disabled === true,
     }))
     .filter((card) => card.name.startsWith("Google"));
 };
@@ -109,17 +109,35 @@ true;
 '''
 
 [[step]]
-name = "click gmail card"
+name = "clicking gmail card does not install"
 action = "eval"
 script = '''
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const gmail = document.querySelector('[data-testid="mcp-available-app-card"][data-mcp-name="Google Gmail"]');
-if (!(gmail instanceof HTMLButtonElement)) {
+if (!(gmail instanceof HTMLElement)) {
   throw new Error("Google Gmail card was not found");
 }
-if (gmail.disabled) {
-  throw new Error("Google Gmail card is disabled");
-}
 gmail.click();
+await sleep(500);
+const installed = document.querySelector('[data-testid="mcp-installed-app-row"][data-mcp-name="google-gmail"]');
+if (installed) {
+  throw new Error("Clicking the Google Gmail card installed the MCP without the Install button");
+}
+true;
+'''
+
+[[step]]
+name = "click gmail install button"
+action = "eval"
+script = '''
+const install = document.querySelector('[data-testid="mcp-install-hub-button"][data-mcp-name="Google Gmail"]');
+if (!(install instanceof HTMLButtonElement)) {
+  throw new Error("Google Gmail install button was not found");
+}
+if (install.disabled) {
+  throw new Error("Google Gmail install button is disabled");
+}
+install.click();
 true;
 '''
 

@@ -120,7 +120,8 @@ shown as connected apps in the dashboard.
 Current MCP behavior includes:
 
 - listing configured MCP servers
-- quick connect flows
+- catalog browsing with explicit install actions
+- quick connect flows for built-in entries through an explicit install button
 - remote auth state
 - remove/logout actions
 - reload banner when config changes require engine reload
@@ -160,6 +161,7 @@ Google grants server-side.
 Keep these states distinct in product behavior and docs:
 
 - catalog-visible: the connector is available from Veslo/Den catalog metadata
+- install-requested: the user explicitly clicked the connector's install action
 - installed/configured: OpenCode config contains the remote MCP entry
 - server-authorized: the user completed Veslo-managed Google OAuth for that entry
 - runtime-connected: the live runtime reports the MCP server as usable

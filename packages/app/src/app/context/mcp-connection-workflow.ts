@@ -351,6 +351,34 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
     };
   }
 
+  function directoryInfoFromHubMcpCard(entry: NonNullable<McpInstallResult["entry"]>): McpDirectoryInfo {
+    return {
+      id: entry.id,
+      name: entry.name,
+      description: entry.description ?? "",
+      type: entry.type,
+      ...(entry.url ? { url: entry.url } : {}),
+      ...(entry.command ? { command: entry.command } : {}),
+      oauth: entry.oauth,
+      ...(entry.headers ? { headers: entry.headers } : {}),
+      ...(entry.authorization ? { authorization: entry.authorization } : {}),
+      provider: entry.provider,
+      source: entry.source,
+    };
+  }
+
+  function findHubMcpForInstalledEntry(entry: McpServerEntry) {
+    return deps.hubMcpCards().find((candidate) => {
+      const candidateId = candidate.id?.trim() ?? "";
+      const candidateName = candidate.name.trim();
+      return (
+        candidateId === entry.name ||
+        candidateName === entry.name ||
+        deps.quickConnectEntryKey({ id: candidate.id, name: candidate.name }) === entry.name
+      );
+    }) ?? null;
+  }
+
   async function startServerManagedMcpOAuth(entry: McpDirectoryInfo): Promise<boolean> {
     if (entry.authorization?.type !== "veslo-server-oauth") {
       return false;
@@ -385,8 +413,8 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
       throw new Error("Provider authorization did not return a browser URL.");
     }
 
-    await deps.openDesktopAuthUrl(payload.authorizeUrl);
     deps.setMcpStatus(tr("mcp.auth.follow_browser_steps"));
+    await deps.openDesktopAuthUrl(payload.authorizeUrl);
     return true;
   }
 
@@ -544,7 +572,24 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
     }
   }
 
-  function authorizeMcp(entry: McpServerEntry) {
+  async function authorizeMcp(entry: McpServerEntry) {
+    const matchingHubMcp = findHubMcpForInstalledEntry(entry);
+    if (matchingHubMcp?.authorization?.type === "veslo-server-oauth") {
+      try {
+        deps.setMcpStatus(null);
+        deps.setMcpConnectingName(matchingHubMcp.name);
+        await startServerManagedMcpOAuth(directoryInfoFromHubMcpCard(matchingHubMcp));
+        deps.setMcpAuthEntry(null);
+        deps.setMcpAuthNeedsReload(false);
+        deps.setMcpAuthModalOpen(false);
+      } catch (error) {
+        deps.setMcpStatus(error instanceof Error ? error.message : deps.safeStringify(error));
+      } finally {
+        deps.setMcpConnectingName(null);
+      }
+      return;
+    }
+
     if (entry.config.type !== "remote" || entry.config.oauth === false) {
       deps.setMcpStatus(tr("mcp.login_unavailable"));
       return;
@@ -580,19 +625,7 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
       return result;
     }
 
-    const entry: McpDirectoryInfo = {
-      id: selectedEntry.id,
-      name: selectedEntry.name,
-      description: selectedEntry.description ?? "",
-      type: selectedEntry.type,
-      ...(selectedEntry.url ? { url: selectedEntry.url } : {}),
-      ...(selectedEntry.command ? { command: selectedEntry.command } : {}),
-      oauth: selectedEntry.oauth,
-      ...(selectedEntry.headers ? { headers: selectedEntry.headers } : {}),
-      ...(selectedEntry.authorization ? { authorization: selectedEntry.authorization } : {}),
-      provider: selectedEntry.provider,
-      source: selectedEntry.source,
-    };
+    const entry = directoryInfoFromHubMcpCard(selectedEntry);
 
     try {
       deps.setMcpStatus(null);

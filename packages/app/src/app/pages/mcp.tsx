@@ -175,8 +175,20 @@ export default function McpView(props: McpViewProps) {
 
   const canConnect = () => !props.busy;
 
+  const hubMcpCardForInstalledEntry = (entry: McpServerEntry) =>
+    props.hubMcpCards.find((candidate) => {
+      const candidateId = candidate.id?.trim() ?? "";
+      const candidateName = candidate.name.trim();
+      return (
+        candidateId === entry.name ||
+        candidateName === entry.name ||
+        quickConnectEntryKey({ id: candidate.id, name: candidate.name }) === entry.name
+      );
+    }) ?? null;
+
   const supportsOauth = (entry: McpServerEntry) =>
-    entry.config.type === "remote" && entry.config.oauth !== false;
+    hubMcpCardForInstalledEntry(entry)?.authorization?.type === "veslo-server-oauth" ||
+    (entry.config.type === "remote" && entry.config.oauth !== false);
 
   const resolveStatus = (entry: McpServerEntry): McpStatus => {
     if (entry.config.enabled === false) return "disabled";
@@ -267,7 +279,7 @@ export default function McpView(props: McpViewProps) {
           <h3 class="font-product type-ui-xs font-bold text-dls-secondary uppercase tracking-widest">
             {tr("mcp.available_apps")}
           </h3>
-          <span class="font-product type-ui-xs text-dls-secondary">{tr("mcp.one_click_connect")}</span>
+          <span class="font-product type-ui-xs text-dls-secondary">{tr("mcp.install_from_catalog")}</span>
         </div>
 
         <div class="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
@@ -278,12 +290,9 @@ export default function McpView(props: McpViewProps) {
               const Icon = serviceIcon(entry.name);
 
               return (
-                <button
-                  type="button"
+                <div
                   data-testid="mcp-available-app-card"
                   data-mcp-name={entry.name}
-                  disabled={connected() || !canConnect() || connecting()}
-                  onClick={() => { if (!connected()) props.connectMcp(entry); }}
                   class={`group text-left rounded-xl border p-4 transition-all ${
                     connected()
                       ? "border-green-6 bg-green-2"
@@ -329,13 +338,33 @@ export default function McpView(props: McpViewProps) {
                         {entry.description}
                       </p>
                       <Show when={!connected() && !connecting()}>
-                        <div class="font-product type-ui-xs mt-2 font-medium text-blue-11 group-hover:text-blue-12 transition-colors">
-                          {tr("mcp.tap_to_connect")}
-                        </div>
+                        <Button
+                          variant="primary"
+                          class="mt-3 !px-3 !py-1.5 !text-xs"
+                          data-testid="mcp-install-quick-connect-button"
+                          data-mcp-name={entry.name}
+                          disabled={!canConnect()}
+                          onClick={() => props.connectMcp(entry)}
+                        >
+                          <Plus size={14} />
+                          {tr("mcp.install_button")}
+                        </Button>
+                      </Show>
+                      <Show when={!connected() && connecting()}>
+                        <Button
+                          variant="primary"
+                          class="mt-3 !px-3 !py-1.5 !text-xs"
+                          data-testid="mcp-install-quick-connect-button"
+                          data-mcp-name={entry.name}
+                          disabled
+                        >
+                          <Loader2 size={14} class="animate-spin" />
+                          {tr("mcp.installing_button")}
+                        </Button>
                       </Show>
                     </div>
                   </div>
-                </button>
+                </div>
               );
             }}
           </For>
@@ -346,19 +375,9 @@ export default function McpView(props: McpViewProps) {
               const Icon = serviceIcon(entry.name);
 
               return (
-                <button
-                  type="button"
+                <div
                   data-testid="mcp-available-app-card"
                   data-mcp-name={entry.name}
-                  disabled={connected() || !canConnect() || connecting()}
-                  onClick={() => {
-                    if (connected()) return;
-                    void props.installHubMcp(entry.id || entry.name).then((result) => {
-                      if (result.ok) {
-                        props.refreshMcpServers();
-                      }
-                    });
-                  }}
                   class={`group text-left rounded-xl border p-4 transition-all ${
                     connected()
                       ? "border-green-6 bg-green-2"
@@ -401,9 +420,33 @@ export default function McpView(props: McpViewProps) {
                       <p class="font-reading type-ui-sm text-dls-secondary mt-1 line-clamp-2">
                         {entry.description}
                       </p>
+                      <Show when={!connected()}>
+                        <Button
+                          variant="primary"
+                          class="mt-3 !px-3 !py-1.5 !text-xs"
+                          data-testid="mcp-install-hub-button"
+                          data-mcp-name={entry.name}
+                          disabled={!canConnect() || connecting()}
+                          onClick={() => {
+                            void props.installHubMcp(entry.id || entry.name).then((result) => {
+                              if (result.ok) {
+                                props.refreshMcpServers();
+                              }
+                            });
+                          }}
+                        >
+                          <Show
+                            when={!connecting()}
+                            fallback={<Loader2 size={14} class="animate-spin" />}
+                          >
+                            <Plus size={14} />
+                          </Show>
+                          {connecting() ? tr("mcp.installing_button") : tr("mcp.install_button")}
+                        </Button>
+                      </Show>
                     </div>
                   </div>
-                </button>
+                </div>
               );
             }}
           </For>
@@ -523,6 +566,8 @@ export default function McpView(props: McpViewProps) {
                             <Button
                               variant="secondary"
                               class="px-3 py-1.5 text-xs"
+                              data-testid="mcp-login-button"
+                              data-mcp-name={entry.name}
                               disabled={props.busy}
                               onClick={() => props.authorizeMcp(entry)}
                             >

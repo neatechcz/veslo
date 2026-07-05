@@ -103,8 +103,12 @@ test("hub mcp cards preserve provider metadata and install by catalog identity",
   const pageConversionSource =
     mcpSource.match(/const orgCatalogQuickConnect[\s\S]*?\}\)\),\s*\);/)?.[0] ?? "";
   const installClickSource = mcpSource.match(/props\.installHubMcp[\s\S]*?props\.refreshMcpServers\(\);/)?.[0] ?? "";
-  const activationEntrySource =
-    workflowSource.match(/const entry: McpDirectoryInfo = \{[\s\S]*?\};\s*try \{/)?.[0] ?? "";
+  const hubCatalogButtonSource =
+    mcpSource.match(/data-testid="mcp-install-hub-button"[\s\S]*?props\.installHubMcp[\s\S]*?props\.refreshMcpServers\(\);/)?.[0] ?? "";
+  const hubCatalogCardSource =
+    mcpSource.match(/data-testid="mcp-available-app-card"[\s\S]*?data-testid="mcp-install-hub-button"/)?.[0] ?? "";
+  const directoryHelperSource =
+    workflowSource.match(/function directoryInfoFromHubMcpCard[\s\S]*?function findHubMcpForInstalledEntry/)?.[0] ?? "";
 
   assert.match(constantsSource, /provider\?:\s*\{[\s\S]*id:\s*string;[\s\S]*group\?:\s*string;[\s\S]*\};/);
   assert.match(constantsSource, /source\?:\s*HubMcpItem\["source"\];/);
@@ -112,19 +116,21 @@ test("hub mcp cards preserve provider metadata and install by catalog identity",
   assert.match(pageConversionSource, /source:\s*entry\.source,/);
   assert.match(pageConversionSource, /headers:\s*entry\.headers,/);
   assert.match(pageConversionSource, /authorization:\s*entry\.authorization,/);
-  assert.match(activationEntrySource, /provider:\s*selectedEntry\.provider,/);
-  assert.match(activationEntrySource, /source:\s*selectedEntry\.source,/);
-  assert.match(activationEntrySource, /headers:\s*selectedEntry\.headers/);
-  assert.match(activationEntrySource, /authorization:\s*selectedEntry\.authorization/);
+  assert.match(directoryHelperSource, /provider:\s*entry\.provider,/);
+  assert.match(directoryHelperSource, /source:\s*entry\.source,/);
+  assert.match(directoryHelperSource, /headers:\s*entry\.headers/);
+  assert.match(directoryHelperSource, /authorization:\s*entry\.authorization/);
+  assert.match(hubCatalogButtonSource, /data-mcp-name=\{entry\.name\}/);
   assert.match(installClickSource, /props\.installHubMcp\(entry\.id \|\| entry\.name\)/);
+  assert.equal(/<button[\s\S]*data-testid="mcp-available-app-card"/.test(hubCatalogCardSource), false);
 });
 
 test("Microsoft SharePoint catalog metadata stays provider-generic through app normalization", () => {
   const refreshHubMcpSource = extensionsSource.match(/async function refreshHubMcp[\s\S]*?createEffect/)?.[0] ?? "";
   const pageConversionSource =
     mcpSource.match(/const orgCatalogQuickConnect[\s\S]*?\}\)\),\s*\);/)?.[0] ?? "";
-  const selectedEntrySource =
-    workflowSource.match(/const entry: McpDirectoryInfo = \{[\s\S]*?\};\s*try \{/)?.[0] ?? "";
+  const directoryHelperSource =
+    workflowSource.match(/function directoryInfoFromHubMcpCard[\s\S]*?function findHubMcpForInstalledEntry/)?.[0] ?? "";
   const serverOAuthSource =
     workflowSource.match(/async function startServerManagedMcpOAuth[\s\S]*?async function activateInstalledMcp/)?.[0] ?? "";
   const hubActivationSource =
@@ -144,14 +150,30 @@ test("Microsoft SharePoint catalog metadata stays provider-generic through app n
   assert.match(pageConversionSource, /name:\s*entry\.name,/);
   assert.match(pageConversionSource, /provider:\s*entry\.provider,/);
   assert.match(pageConversionSource, /authorization:\s*entry\.authorization,/);
-  assert.match(selectedEntrySource, /id:\s*selectedEntry\.id,/);
-  assert.match(selectedEntrySource, /name:\s*selectedEntry\.name,/);
-  assert.match(selectedEntrySource, /provider:\s*selectedEntry\.provider,/);
-  assert.match(selectedEntrySource, /authorization:\s*selectedEntry\.authorization/);
+  assert.match(directoryHelperSource, /id:\s*entry\.id,/);
+  assert.match(directoryHelperSource, /name:\s*entry\.name,/);
+  assert.match(directoryHelperSource, /provider:\s*entry\.provider,/);
+  assert.match(directoryHelperSource, /authorization:\s*entry\.authorization/);
   assert.match(serverOAuthSource, /const startPath = entry\.authorization\.startPath\.trim\(\)/);
   assert.match(serverOAuthSource, /\$\{denApiBase\}\$\{startPath\}/);
   assert.doesNotMatch(serverOAuthSource, /google|Google/);
   assert.doesNotMatch(hubActivationSource, /google|Google/);
+});
+
+test("mcp page exposes sign-in for installed server-managed hub connectors", () => {
+  const hubLookupSource =
+    mcpSource.match(/const hubMcpCardForInstalledEntry = \(entry: McpServerEntry\) =>[\s\S]*?const supportsOauth/)?.[0] ?? "";
+  const supportsOauthSource =
+    mcpSource.match(/const supportsOauth = \(entry: McpServerEntry\) =>[\s\S]*?const resolveStatus/)?.[0] ?? "";
+
+  assert.equal(hubLookupSource.length > 0, true);
+  assert.match(hubLookupSource, /const candidateId = candidate\.id\?\.trim\(\) \?\? ""/);
+  assert.match(hubLookupSource, /candidateId === entry\.name/);
+  assert.match(hubLookupSource, /quickConnectEntryKey\(\{ id: candidate\.id, name: candidate\.name \}\) === entry\.name/);
+  assert.match(supportsOauthSource, /hubMcpCardForInstalledEntry\(entry\)\?\.authorization\?\.type === "veslo-server-oauth"/);
+  assert.match(mcpSource, /supportsOauth\(entry\) && status\(\) !== "connected"/);
+  assert.equal(microsoftSharePointCatalogItem.oauth, false);
+  assert.equal(microsoftSharePointCatalogItem.authorization.type, "veslo-server-oauth");
 });
 
 test("hub mcp cards label shared provider context without merging card installs", () => {
