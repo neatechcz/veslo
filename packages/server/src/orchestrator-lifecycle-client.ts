@@ -14,6 +14,8 @@ export type LifecycleRunStatusResult = {
   runId: string;
   status: LifecycleRunStatus;
   stale: boolean;
+  clientMessageId?: string | null;
+  origin?: string | null;
   activityKind?: LifecycleRunActivityKind | null;
   waitReason?: LifecycleRunWaitReason | null;
   lastUsefulProgressAt?: number | null;
@@ -92,9 +94,11 @@ export type OrchestratorLifecycleClient = {
     conversationId: string;
     runId: string;
     engineSessionId: string;
+    clientMessageId?: string | null;
+    origin?: string | null;
     directory: string;
     kind: string;
-  }): Promise<void>;
+  }): Promise<LifecycleRunStatusResult | null>;
   markFailed(workspaceId: string, runId: string, error: string): Promise<void>;
   markAborted(workspaceId: string, runId: string, error?: string): Promise<void>;
   markAbortRequested(workspaceId: string, runId: string): Promise<void>;
@@ -170,7 +174,7 @@ export function createOrchestratorLifecycleClient(options: {
     }
   };
 
-  const post = async (path: string, body: unknown): Promise<void> => {
+  const post = async (path: string, body: unknown): Promise<unknown> => {
     const response = await request(path, {
       method: "POST",
       headers,
@@ -185,6 +189,35 @@ export function createOrchestratorLifecycleClient(options: {
     if (!response.ok) {
       throw new OrchestratorLifecycleRequestError(path, response.status, await readJsonSafely(response));
     }
+    return await readJsonSafely(response);
+  };
+
+  const parseLifecycleRunPayload = (path: string, payload: unknown): LifecycleRunStatusResult | null => {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+    const record = payload as Record<string, unknown>;
+    if (typeof record.runId !== "string" || typeof record.status !== "string") {
+      throw new OrchestratorLifecycleRequestError(path, 502, payload);
+    }
+    const result: LifecycleRunStatusResult = {
+      runId: record.runId,
+      status: record.status as LifecycleRunStatus,
+      stale: record.stale === true,
+    };
+    if (typeof record.clientMessageId === "string") result.clientMessageId = record.clientMessageId;
+    else if (record.clientMessageId === null) result.clientMessageId = null;
+    if (typeof record.origin === "string") result.origin = record.origin;
+    else if (record.origin === null) result.origin = null;
+    const activityKind = optionalActivityKind(record.activityKind);
+    const waitReason = optionalWaitReason(record.waitReason);
+    const lastUsefulProgressAt = optionalNumber(record.lastUsefulProgressAt);
+    const retrySince = optionalNumber(record.retrySince);
+    const noProgressSeconds = optionalNumber(record.noProgressSeconds);
+    if (activityKind) result.activityKind = activityKind;
+    if (waitReason) result.waitReason = waitReason;
+    if (lastUsefulProgressAt !== null) result.lastUsefulProgressAt = lastUsefulProgressAt;
+    if (retrySince !== null) result.retrySince = retrySince;
+    if (noProgressSeconds !== null) result.noProgressSeconds = noProgressSeconds;
+    return result;
   };
 
   const getStatus = async (
@@ -198,46 +231,21 @@ export function createOrchestratorLifecycleClient(options: {
     if (!response.ok) {
       throw new OrchestratorLifecycleRequestError(path, response.status, await readJsonSafely(response));
     }
-    const payload = await response.json() as {
-      runId?: unknown;
-      status?: unknown;
-      stale?: unknown;
-      activityKind?: unknown;
-      waitReason?: unknown;
-      lastUsefulProgressAt?: unknown;
-      retrySince?: unknown;
-      noProgressSeconds?: unknown;
-    };
-    if (typeof payload.runId !== "string" || typeof payload.status !== "string") {
-      throw new OrchestratorLifecycleRequestError(path, 502, payload);
-    }
-    const result: LifecycleRunStatusResult = {
-      runId: payload.runId,
-      status: payload.status as LifecycleRunStatus,
-      stale: payload.stale === true,
-    };
-    const activityKind = optionalActivityKind(payload.activityKind);
-    const waitReason = optionalWaitReason(payload.waitReason);
-    const lastUsefulProgressAt = optionalNumber(payload.lastUsefulProgressAt);
-    const retrySince = optionalNumber(payload.retrySince);
-    const noProgressSeconds = optionalNumber(payload.noProgressSeconds);
-    if (activityKind) result.activityKind = activityKind;
-    if (waitReason) result.waitReason = waitReason;
-    if (lastUsefulProgressAt !== null) result.lastUsefulProgressAt = lastUsefulProgressAt;
-    if (retrySince !== null) result.retrySince = retrySince;
-    if (noProgressSeconds !== null) result.noProgressSeconds = noProgressSeconds;
-    return result;
+    return parseLifecycleRunPayload(path, await response.json());
   };
 
   return {
     async register(input) {
-      await post(`/workspace/${encodeURIComponent(input.workspaceId)}/runs/register`, {
+      const path = `/workspace/${encodeURIComponent(input.workspaceId)}/runs/register`;
+      return parseLifecycleRunPayload(path, await post(path, {
         conversationId: input.conversationId,
         runId: input.runId,
         engineSessionId: input.engineSessionId,
+        ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
+        ...(input.origin ? { origin: input.origin } : {}),
         directory: input.directory,
         kind: input.kind,
-      });
+      }));
     },
 
     async markFailed(workspaceId, runId, error) {

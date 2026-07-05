@@ -11,6 +11,7 @@ function fakeChild(pid: number): ChildProcess {
 function harness(options: {
   failSpawn?: boolean;
   failHealth?: boolean;
+  failHealthCheck?: boolean;
   waitForHealthy?: () => Promise<void>;
   onEngineChange?: (event: string, engine: { pid: number } | null) => void;
 } = {}) {
@@ -36,6 +37,9 @@ function harness(options: {
       waitForHealthy: async () => {
         if (options.waitForHealthy) return await options.waitForHealthy();
         if (options.failHealth) throw new Error("health failed");
+      },
+      healthCheck: async () => {
+        if (options.failHealthCheck) throw new Error("health probe failed");
       },
       stopChild: async (child) => {
         stops++;
@@ -169,5 +173,39 @@ describe("SharedOpenCodeEngine", () => {
     expect(h.manager.getRunning()).toBeNull();
     expect(events).toContainEqual({ event: "crashed", pid: engine.pid });
     expect(h.manager.snapshot().running).toBe(false);
+  });
+
+  test("health probe failures mark the shared engine crashed", async () => {
+    const events: Array<{ event: string; pid: number | null }> = [];
+    const h = harness({
+      failHealthCheck: true,
+      onEngineChange: (event, engine) => {
+        events.push({ event, pid: engine?.pid ?? null });
+      },
+    });
+    const engine = await h.manager.ensureStarted("prompt");
+
+    await h.manager.checkHealth("test");
+    expect(h.manager.getRunning()).toBe(engine);
+
+    await h.manager.checkHealth("test");
+
+    expect(h.manager.getRunning()).toBeNull();
+    expect(h.counts().stoppedPids).toEqual([engine.pid]);
+    expect(events).toContainEqual({ event: "crashed", pid: engine.pid });
+  });
+
+  test("proxy upstream failure can mark the shared engine unhealthy immediately", async () => {
+    const h = harness();
+    const engine = await h.manager.ensureStarted("prompt");
+
+    await h.manager.markUnhealthy("proxy-upstream-error", new Error("socket closed"));
+
+    expect(h.manager.getRunning()).toBeNull();
+    expect(h.counts().stoppedPids).toEqual([engine.pid]);
+    expect(h.manager.snapshot()).toMatchObject({
+      running: false,
+      engineState: "failed",
+    });
   });
 });

@@ -9,6 +9,7 @@ use crate::engine::manager::EngineManager;
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::orchestrator;
 use crate::orchestrator::manager::OrchestratorManager;
+use crate::orchestrator::OrchestratorShutdownAttribution;
 use crate::paths::home_dir;
 use crate::platform::command_for_program;
 use crate::types::ExecResult;
@@ -90,7 +91,10 @@ fn stop_host_services(
         EngineManager::stop_locked(&mut engine);
     }
     if let Ok(mut orchestrator_state) = orchestrator_manager.inner.lock() {
-        OrchestratorManager::stop_locked(&mut orchestrator_state);
+        OrchestratorManager::stop_locked(
+            &mut orchestrator_state,
+            OrchestratorShutdownAttribution::new("host_stop", "stop_host_services"),
+        );
     }
     if let Ok(mut veslo_state) = veslo_manager.inner.lock() {
         VesloServerManager::stop_locked(&mut veslo_state);

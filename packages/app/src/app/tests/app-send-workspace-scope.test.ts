@@ -40,8 +40,8 @@ test("send preflight snapshots the target workspace before cold-start awaits", (
 });
 
 test("createSessionAndOpen uses preflight target only when send preflight provides one", () => {
-  const start = createWorkflowSource.indexOf("const createSessionAndOpen = async (");
-  const end = createWorkflowSource.indexOf("return {", start);
+  const start = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
+  const end = createWorkflowSource.indexOf("const createSession = (", start);
   assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
   const createSource = createWorkflowSource.slice(start, end);
 
@@ -67,7 +67,7 @@ test("createSessionAndOpen uses preflight target only when send preflight provid
   );
   assert.match(
     createSource,
-    /const createdWorkspaceId = resolveCreatedSessionWorkspaceId\(\{[\s\S]*pendingSidebarSession,[\s\S]*targetWorkspaceId: targetWorkspace\?\.workspaceId,[\s\S]*connectingWorkspaceId: deps\.workspace\.connectingWorkspaceId\(\),[\s\S]*activeWorkspaceId: deps\.workspace\.activeWorkspaceId\(\),[\s\S]*\}\);[\s\S]*const wsId = createdWorkspaceId;/,
+    /const createdWorkspaceId = resolveCreatedSessionWorkspaceId\(\{[\s\S]*pendingSidebarSession,[\s\S]*targetWorkspaceId: targetWorkspace\?\.workspaceId,[\s\S]*connectingWorkspaceId: deps\.workspace\.connectingWorkspaceId\(\),[\s\S]*activeWorkspaceId: deps\.workspace\.activeWorkspaceId\(\),[\s\S]*\}\);[\s\S]*workspaceScope: \{[\s\S]*workspaceId: createdWorkspaceId,/,
     "sidebar injection should attach the new session to the target workspace",
   );
 });
@@ -85,7 +85,7 @@ test("send engine startup uses the snapshotted target workspace", () => {
   );
   assert.match(
     readinessSource,
-    /deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined\)/,
+    /deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined, \{[\s\S]*reason: `\$\{reason\}-runtime-recovery`,[\s\S]*loadSessions: false/s,
     "send runtime readiness owner should start the snapshotted target workspace engine instead of whichever workspace is currently active",
   );
 });

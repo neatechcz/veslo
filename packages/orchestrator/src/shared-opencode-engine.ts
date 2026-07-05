@@ -30,6 +30,7 @@ export type SharedOpenCodeEngineDeps = {
   prepareRuntime?: () => Promise<void>;
   spawnEngine: (ctx: EngineSpawnContext) => Promise<EngineSpawnResult>;
   waitForHealthy: (baseUrl: string) => Promise<void>;
+  healthCheck?: (baseUrl: string) => Promise<void>;
   stopChild: (child: ChildProcess) => Promise<void>;
   findFreePort: () => Promise<number>;
   isProcessAlive: (pid: number) => boolean;
@@ -55,6 +56,7 @@ export class SharedOpenCodeEngine {
   private startingEngine: EngineProcess | null = null;
   private pending: Promise<EngineProcess> | null = null;
   private lastEngineState: RuntimeEngineState = "absent";
+  private readonly healthFailureThreshold = 2;
 
   constructor(input: SharedOpenCodeEngineInput) {
     this.runtimeDirectory = input.runtimeDirectory;
@@ -226,5 +228,62 @@ export class SharedOpenCodeEngine {
       this.lastEngineState = "failed";
       throw error;
     }
+  }
+
+  async checkHealth(reason = "health-check"): Promise<void> {
+    const engine = this.getRunning();
+    if (!engine || !this.deps.healthCheck) return;
+    try {
+      await this.deps.healthCheck(engine.baseUrl);
+      if (engine.healthStrikes > 0) {
+        engine.healthStrikes = 0;
+        this.deps.log?.("shared opencode health recovered", {
+          reason,
+          workspaceId: this.workspaceId,
+          pid: engine.pid,
+          baseUrl: engine.baseUrl,
+        });
+      }
+    } catch (error) {
+      engine.healthStrikes += 1;
+      this.deps.log?.("shared opencode health probe failed", {
+        reason,
+        workspaceId: this.workspaceId,
+        pid: engine.pid,
+        baseUrl: engine.baseUrl,
+        strike: engine.healthStrikes,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (engine.healthStrikes >= this.healthFailureThreshold) {
+        await this.markUnhealthy(reason, error);
+      }
+    }
+  }
+
+  async markUnhealthy(reason: string, error: unknown): Promise<void> {
+    const engine = this.engine;
+    if (!engine) return;
+    this.engine = null;
+    this.startingEngine = null;
+    engine.state = "crashed";
+    this.lastEngineState = runtimeEngineStateFromEngineState(engine.state);
+    this.deps.log?.("shared opencode marked unhealthy", {
+      reason,
+      workspaceId: this.workspaceId,
+      pid: engine.pid,
+      baseUrl: engine.baseUrl,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    try {
+      if (this.deps.isProcessAlive(engine.pid)) {
+        await this.deps.stopChild(engine.child);
+      }
+    } catch (stopError) {
+      this.deps.log?.("shared opencode unhealthy cleanup failed", {
+        reason,
+        error: stopError instanceof Error ? stopError.message : String(stopError),
+      });
+    }
+    this.emit("crashed", engine);
   }
 }

@@ -87,7 +87,7 @@ function createHarness(overrides: HarnessOverrides = {}) {
     },
     engineInfo: async (workspaceId?: string, workspaceRoot?: string) => {
       engineInfoCalls.push({ workspaceId, workspaceRoot });
-      return { running: false, baseUrl: null };
+      return { running: true, engineState: "ready", baseUrl: "http://127.0.0.1:53553" };
     },
     managedAiAccess: () => null,
     managedAiAccessBusy: () => false,
@@ -410,6 +410,43 @@ test("local runtime readiness marks the active workspace engine ready after a su
   assert.deepEqual(engineReadyValues, [true]);
 });
 
+test("local runtime readiness recovers when global health passes but engine info is not ready", async () => {
+  const healthCalls: string[] = [];
+  const {
+    readiness,
+    clients,
+    engineInfoCalls,
+    ensureEngineCalls,
+    routeReleaseCalls,
+    events,
+  } = createHarness({
+    engineInfo: async (workspaceId?: string, workspaceRoot?: string) => {
+      engineInfoCalls.push({ workspaceId, workspaceRoot });
+      return { running: false, engineState: "failed", baseUrl: "http://127.0.0.1:53553" };
+    },
+    ensureEngineForWorkspace: async (workspaceId?: string) => {
+      ensureEngineCalls.push(workspaceId);
+      clients.set("target", createClient("target-recovered"));
+      return true;
+    },
+  });
+  clients.set("target", createClient("target", async () => healthCalls.push("target")));
+
+  const preflight = {
+    traceId: "trace-chain-not-ready",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight), true);
+  assert.deepEqual(healthCalls, ["target"]);
+  assert.deepEqual(engineInfoCalls, [{ workspaceId: "target", workspaceRoot: "/repo/target" }]);
+  assert.deepEqual(routeReleaseCalls, ["target"]);
+  assert.deepEqual(ensureEngineCalls, ["target"]);
+  assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-health-error"));
+  assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-ok"));
+});
+
 test("local runtime readiness skips duplicate health probes when preflight is already healthy", async () => {
   const healthCalls: string[] = [];
   const { readiness, clients, events, ensureEngineCalls, engineReadyValues } = createHarness();
@@ -495,6 +532,36 @@ test("local runtime readiness recovers when health throws engine_not_running", a
   assert.equal(preflight.runtimeHealthOk, true);
   assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-start"));
   assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-ok"));
+});
+
+test("local runtime readiness does not continue when ensure fails even if a route appears", async () => {
+  const { readiness, clients, events, ensureEngineCalls, routeReleaseCalls } = createHarness({
+    ensureEngineForWorkspace: async (workspaceId?: string) => {
+      ensureEngineCalls.push(workspaceId);
+      clients.set("target", createClient("target-racy-route"));
+      return false;
+    },
+  });
+  clients.set(
+    "target",
+    createClient("target-stale", async () => {
+      throw new Error('{"error":"orchestrator daemon is not running"}');
+    }),
+  );
+
+  const preflight = {
+    traceId: "trace-racy-route",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight), false);
+  assert.deepEqual(routeReleaseCalls, ["target"]);
+  assert.deepEqual(ensureEngineCalls, ["target"]);
+  assert.equal(preflight.runtimeHealthOk, false);
+  const notStarted = events.find((entry) => entry.event === "sendPrompt:runtime-recovery-not-started");
+  assert.equal(notStarted?.payload?.started, false);
+  assert.equal(notStarted?.payload?.hasClient, true);
 });
 
 test("local runtime readiness recovers when health resolves an SDK engine_not_running error result", async () => {

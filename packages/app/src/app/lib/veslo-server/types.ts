@@ -57,6 +57,37 @@ export type VesloServerCapabilities = {
 
 export type VesloServerStatus = "connected" | "disconnected" | "limited";
 
+export type VesloRuntimeChainStatus =
+  | "server_running"
+  | "runtime_chain_ready"
+  | "orchestrator_unavailable"
+  | "shared_engine_unhealthy"
+  | "proxy_unreachable";
+
+export type VesloRuntimeChainPayload = {
+  status: VesloRuntimeChainStatus;
+  checkedAt: number;
+  orchestrator: {
+    configured: boolean;
+    daemonUrl: string | null;
+    ok: boolean | null;
+    engineTopology: string | null;
+    error: string | null;
+  };
+  sharedEngine: {
+    running: boolean | null;
+    pending: boolean | null;
+    engineState: string | null;
+    baseUrl: string | null;
+  };
+  proxy: {
+    workspaceId: string | null;
+    ok: boolean | null;
+    status: number | null;
+    error: string | null;
+  };
+};
+
 export type VesloServerDiagnostics = {
   ok: boolean;
   version: string;
@@ -70,6 +101,7 @@ export type VesloServerDiagnostics = {
   authorizedRoots: string[];
   server: { host: string; port: number; configPath?: string | null };
   tokenSource: { client: string; host: string };
+  runtimeChain?: VesloRuntimeChainPayload;
 };
 
 export type VesloServerSettings = {

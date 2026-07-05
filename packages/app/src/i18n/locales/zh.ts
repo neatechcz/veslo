@@ -224,6 +224,7 @@ export default {
   "session.edit_message_title": "编辑消息",
   "session.pending_submit_sending": "正在发送...",
   "session.pending_submit_failed": "发送失败",
+  "session.pending_submit_local_runtime_failed": "Local runtime failed",
   "session.permission_required": "需要权限",
   "session.permission_description": "OpenCode 正在请求权限以继续。",
   "session.permission_label": "权限",

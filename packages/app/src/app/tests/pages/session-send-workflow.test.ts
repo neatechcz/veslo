@@ -426,6 +426,53 @@ test("session send workflow releases in-flight tracking when conversation run th
   assert.ok(harness.events.includes("sendPrompt:error"));
 });
 
+test("session send workflow retries recoverable runtime run failure once with same client message id", async () => {
+  const runCalls: Array<{ clientMessageId?: string | null; forceRecovery?: boolean }> = [];
+  const prepareForceRecoveryValues: Array<boolean | undefined> = [];
+  const harness = createHarness({
+    prepareSendRuntimeForSend: async (_event, preflight) => {
+      const forceRecovery = preflight.forceRecovery === true;
+      prepareForceRecoveryValues.push(preflight.forceRecovery);
+      if (forceRecovery) preflight.forceRecovery = false;
+      return {
+        ok: true,
+        runtimeReady: true,
+        managedAiReady: true,
+        workspaceId: "ws-active",
+        activeWorkspace: true,
+        recoveryAttempted: forceRecovery,
+        reason: forceRecovery ? "runtime-recovery-ok" : "runtime-health-ok",
+      };
+    },
+    runConversationFromVesloWriteApi: async (_sessionId, input, options) => {
+      runCalls.push({
+        clientMessageId: input.clientMessageId,
+        forceRecovery: options?.preflight?.forceRecovery,
+      });
+      if (runCalls.length === 1) {
+        throw new Error("opencode_proxy_failed: socket closed");
+      }
+      return true;
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("recoverable runtime failure"), {
+    clientMessageId: "client-runtime-retry",
+    origin: "session:normal",
+  });
+
+  assert.equal(sent, true);
+  assert.deepEqual(runCalls.map((call) => call.clientMessageId), [
+    "client-runtime-retry",
+    "client-runtime-retry",
+  ]);
+  assert.deepEqual(prepareForceRecoveryValues, [undefined, true]);
+  assert.equal(runCalls[1]?.forceRecovery, false);
+  assert.ok(harness.events.includes("sendPrompt:conversation-run-runtime-recovery-start"));
+  assert.ok(harness.events.includes("sendPrompt:conversation-run-runtime-recovery-result"));
+});
+
 test("session send workflow ignores a selected session from another workspace when no explicit target is provided", async () => {
   const harness = createHarness({
     createSessionAndOpen: async () => {

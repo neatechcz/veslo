@@ -41,6 +41,14 @@ type SsePayload =
       reason: string;
     };
 
+type EngineSseInvoke = <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+type EngineSseListen = <T>(event: string, handler: (event: { payload: T }) => void) => Promise<UnlistenFn>;
+type EngineSseRuntime = {
+  isTauriRuntime: () => boolean;
+  invoke: EngineSseInvoke;
+  listen: EngineSseListen;
+};
+
 export type EngineSseSubscribeOptions = {
   workspaceId: string;
   /** Base URL of the orchestrator proxy or engine (without trailing `/event`). */
@@ -70,7 +78,22 @@ export function isEngineSseAvailable(): boolean {
 export async function engineSseSubscribe(
   options: EngineSseSubscribeOptions,
 ): Promise<EngineSseSubscription> {
-  if (!isTauriRuntime()) {
+  return engineSseSubscribeWithRuntime(options, {
+    isTauriRuntime,
+    invoke: invoke as EngineSseInvoke,
+    listen: listen as EngineSseListen,
+  });
+}
+
+export function createEngineSseSubscribeForTests(runtime: EngineSseRuntime) {
+  return (options: EngineSseSubscribeOptions) => engineSseSubscribeWithRuntime(options, runtime);
+}
+
+async function engineSseSubscribeWithRuntime(
+  options: EngineSseSubscribeOptions,
+  runtime: EngineSseRuntime,
+): Promise<EngineSseSubscription> {
+  if (!runtime.isTauriRuntime()) {
     throw new Error("engine SSE proxy is desktop-only");
   }
 
@@ -78,9 +101,13 @@ export async function engineSseSubscribe(
 
   // Queue of pending events buffered between Rust emit and JS consumer.
   const queue: unknown[] = [];
-  const resolvers: Array<(value: IteratorResult<unknown>) => void> = [];
+  const resolvers: Array<{
+    resolve: (value: IteratorResult<unknown>) => void;
+    reject: (reason: Error) => void;
+  }> = [];
   let closed = false;
   let closeReason: string | null = null;
+  let streamErrorMessage: string | null = null;
   let opened = false;
   let settleReady: (() => void) | null = null;
   let rejectReady: ((reason: Error) => void) | null = null;
@@ -109,7 +136,7 @@ export async function engineSseSubscribe(
     if (closed) return;
     const resolver = resolvers.shift();
     if (resolver) {
-      resolver({ value: event, done: false });
+      resolver.resolve({ value: event, done: false });
     } else {
       queue.push(event);
     }
@@ -121,13 +148,17 @@ export async function engineSseSubscribe(
     closeReason = reason;
     while (resolvers.length > 0) {
       const resolver = resolvers.shift()!;
-      resolver({ value: undefined, done: true });
+      if (reason === "stream-error") {
+        resolver.reject(new Error(streamErrorMessage ?? "engine SSE stream error"));
+      } else {
+        resolver.resolve({ value: undefined, done: true });
+      }
     }
   };
 
   let unlisten: UnlistenFn | null = null;
   try {
-    unlisten = await listen<SsePayload>(SSE_EVENT_NAME, (event) => {
+    unlisten = await runtime.listen<SsePayload>(SSE_EVENT_NAME, (event) => {
       const payload = event.payload;
       if (!payload || payload.subscriptionId !== subscriptionId) return;
 
@@ -156,6 +187,7 @@ export async function engineSseSubscribe(
           if (!opened) {
             failReady(payload.message);
           } else {
+            streamErrorMessage = payload.message;
             console.warn("[engine-sse] stream error", { message: payload.message, workspaceId: payload.workspaceId });
           }
           break;
@@ -168,7 +200,7 @@ export async function engineSseSubscribe(
       }
     });
 
-    await invoke<{ subscriptionId: string }>("engine_sse_subscribe", {
+    await runtime.invoke<{ subscriptionId: string }>("engine_sse_subscribe", {
       options: {
         subscriptionId,
         workspaceId: options.workspaceId,
@@ -187,7 +219,7 @@ export async function engineSseSubscribe(
         unlisten();
         unlisten = null;
       }
-      await invoke("engine_sse_unsubscribe", { subscriptionId });
+      await runtime.invoke("engine_sse_unsubscribe", { subscriptionId });
     } catch {
       // ignore
     }
@@ -205,7 +237,7 @@ export async function engineSseSubscribe(
       unlisten = null;
     }
     try {
-      await invoke("engine_sse_unsubscribe", { subscriptionId });
+      await runtime.invoke("engine_sse_unsubscribe", { subscriptionId });
     } catch {
       // ignore — Rust side may already be torn down
     }
@@ -229,10 +261,13 @@ export async function engineSseSubscribe(
             return Promise.resolve({ value: queue.shift()!, done: false });
           }
           if (closed) {
+            if (closeReason === "stream-error") {
+              return Promise.reject(new Error(streamErrorMessage ?? "engine SSE stream error"));
+            }
             return Promise.resolve({ value: undefined, done: true });
           }
-          return new Promise<IteratorResult<unknown>>((resolve) => {
-            resolvers.push(resolve);
+          return new Promise<IteratorResult<unknown>>((resolve, reject) => {
+            resolvers.push({ resolve, reject });
           });
         },
         return(): Promise<IteratorResult<unknown>> {

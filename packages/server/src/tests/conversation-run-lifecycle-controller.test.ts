@@ -93,15 +93,18 @@ class TimerHarness {
 
 class LifecycleHarness implements OrchestratorLifecycleClient {
   activeResult: LifecycleRunStatusResult | null = null;
+  activeResults: Array<LifecycleRunStatusResult | null> = [];
   activeError: unknown = null;
   statusResult: LifecycleRunStatusResult | null = null;
   statusError: unknown = null;
   registerError: unknown = null;
+  registerResult: LifecycleRunStatusResult | null = null;
   readonly calls: string[] = [];
 
   async active(workspaceId: string, conversationId: string): Promise<LifecycleRunStatusResult | null> {
     this.calls.push(`active:${workspaceId}:${conversationId}`);
     if (this.activeError) throw this.activeError;
+    if (this.activeResults.length > 0) return this.activeResults.shift() ?? null;
     return this.activeResult;
   }
 
@@ -110,13 +113,22 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
     conversationId: string;
     runId: string;
     engineSessionId: string;
+    clientMessageId?: string | null;
+    origin?: string | null;
     directory: string;
     kind: string;
-  }): Promise<void> {
+  }): Promise<LifecycleRunStatusResult | null> {
     this.calls.push(
       `register:${input.workspaceId}:${input.conversationId}:${input.runId}:${input.engineSessionId}:${input.kind}`,
     );
     if (this.registerError) throw this.registerError;
+    return this.registerResult ?? {
+      runId: input.runId,
+      status: "running",
+      stale: false,
+      clientMessageId: input.clientMessageId ?? null,
+      origin: input.origin ?? null,
+    };
   }
 
   async markFailed(workspaceId: string, runId: string, reason: string): Promise<void> {
@@ -634,6 +646,26 @@ test("submitRun queues when active peek finds an active run", async () => {
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500]);
 });
 
+test("submitRun reuses active direct run when clientMessageId matches", async () => {
+  const { controller, lifecycle, queue, submitCalls } = controllerHarness();
+  lifecycle.activeResult = {
+    runId: "run-active",
+    status: "running",
+    stale: false,
+    clientMessageId: "msg-a",
+    origin: "composer",
+  };
+
+  const result = await controller.submitRun(submitInput({ runId: "run-retry" }));
+
+  expect(result.httpStatus).toBe(200);
+  expect(result.payload.status).toBe("submitted");
+  expect(result.payload.runId).toBe("run-active");
+  expect(result.payload.reusedActiveRun).toBe(true);
+  expect(queue.items).toEqual([]);
+  expect(submitCalls).toEqual([]);
+});
+
 test("submitRun queues when lifecycle register reports an active run", async () => {
   const { controller, lifecycle, queue, submitCalls } = controllerHarness();
   lifecycle.registerError = new RunAlreadyActiveError("run-active-register");
@@ -646,8 +678,38 @@ test("submitRun queues when lifecycle register reports an active run", async () 
   expect(lifecycle.calls).toEqual([
     "active:ws_1:conv-a",
     "register:ws_1:conv-a:run-reserved:sess-a:prompt",
+    "active:ws_1:conv-a",
   ]);
   expect(queue.items).toHaveLength(1);
+  expect(submitCalls).toEqual([]);
+});
+
+test("submitRun reuses active run after register conflict when clientMessageId matches", async () => {
+  const { controller, lifecycle, queue, submitCalls } = controllerHarness();
+  lifecycle.activeResults = [
+    null,
+    {
+      runId: "run-active-register",
+      status: "running",
+      stale: false,
+      clientMessageId: "msg-a",
+      origin: "composer",
+    },
+  ];
+  lifecycle.registerError = new RunAlreadyActiveError("run-active-register");
+
+  const result = await controller.submitRun(submitInput({ runId: "run-retry" }));
+
+  expect(result.httpStatus).toBe(200);
+  expect(result.payload.status).toBe("submitted");
+  expect(result.payload.runId).toBe("run-active-register");
+  expect(result.payload.reusedActiveRun).toBe(true);
+  expect(lifecycle.calls).toEqual([
+    "active:ws_1:conv-a",
+    "register:ws_1:conv-a:run-retry:sess-a:prompt",
+    "active:ws_1:conv-a",
+  ]);
+  expect(queue.items).toEqual([]);
   expect(submitCalls).toEqual([]);
 });
 

@@ -37,8 +37,13 @@ test("message list exposes a latest-user-message edit action next to copy", () =
   );
   assert.match(
     source,
-    /<Show when=\{block\.isUser && pendingMessageState\(\)\?\.state === "error"\}>[\s\S]*session\.pending_submit_failed/s,
+    /<Show when=\{block\.isUser && pendingMessageState\(\)\?\.state === "error"\}>[\s\S]*pendingSubmitFailureLabel\(pendingMessageState\(\)\?\.error\)/s,
     "pending user messages should render only failed handoff status, not a sending/responding footnote",
+  );
+  assert.match(
+    source,
+    /pendingSubmitFailureLabel[\s\S]*opencode_proxy_failed[\s\S]*session\.pending_submit_local_runtime_failed/s,
+    "local runtime submit failures should add a visible runtime-specific diagnostic",
   );
   assert.doesNotMatch(
     source,

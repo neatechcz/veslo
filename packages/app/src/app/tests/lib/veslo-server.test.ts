@@ -3641,6 +3641,8 @@ test("workspace domain facade exposes management and status endpoints", async ()
     });
 
     await client.workspace.health();
+    await client.workspace.status();
+    await client.workspace.statusForWorkspace("ws 1");
     await client.workspace.list();
     await client.workspace.activate("ws 1");
     await client.workspace.addLocal({ path: "C:/work", name: "Work" });
@@ -3653,6 +3655,8 @@ test("workspace domain facade exposes management and status endpoints", async ()
       calls.map((call) => ({ url: call.url, method: call.method })),
       [
         { url: "https://veslo.example/health", method: "GET" },
+        { url: "https://veslo.example/status", method: "GET" },
+        { url: "https://veslo.example/w/ws%201/status", method: "GET" },
         { url: "https://veslo.example/workspaces", method: "GET" },
         { url: "https://veslo.example/workspaces/ws%201/activate", method: "POST" },
         { url: "https://veslo.example/workspaces/local", method: "POST" },
@@ -3662,7 +3666,7 @@ test("workspace domain facade exposes management and status endpoints", async ()
         { url: "https://veslo.example/workspace/ws%201/scheduler/jobs/daily%2Fjob", method: "DELETE" },
       ],
     );
-    assert.deepEqual(calls[3]?.body, { path: "C:/work", name: "Work" });
+    assert.deepEqual(calls[5]?.body, { path: "C:/work", name: "Work" });
   } finally {
     globalThis.fetch = previousFetch;
   }

@@ -132,6 +132,35 @@ function defaultCreateClient(input: VesloServerConnectionClientFactoryInput) {
   return createVesloServerClient(input) as VesloServerConnectionClient & VesloServerClient;
 }
 
+function requiresLocalRuntimeChainReadiness(input: {
+  isTauriRuntime: boolean;
+  startupPreference: StartupPreference | null;
+  activeWorkspaceType?: string | null;
+  url: string;
+}): boolean {
+  return Boolean(
+    input.isTauriRuntime &&
+      input.startupPreference !== "server" &&
+      input.activeWorkspaceType === "local" &&
+      isLoopbackVesloServerConnectionUrl(input.url),
+  );
+}
+
+function hasReadyRuntimeChain(status: VesloServerDiagnostics | null | undefined): boolean {
+  return status?.runtimeChain?.status === "runtime_chain_ready";
+}
+
+function activeWorkspaceRuntimeStatus(
+  client: VesloServerConnectionClient & Partial<VesloServerClient>,
+  workspaceId: string | null | undefined,
+) {
+  const normalizedWorkspaceId = workspaceId?.trim() ?? "";
+  if (normalizedWorkspaceId && client.workspace?.statusForWorkspace) {
+    return client.workspace.statusForWorkspace(normalizedWorkspaceId);
+  }
+  return client.status?.() ?? Promise.resolve(null);
+}
+
 export function isLoopbackVesloServerConnectionUrl(value: string): boolean {
   const trimmed = value.trim();
   if (!trimmed) return false;
@@ -364,6 +393,12 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
 
   const checkVesloServer = async (url: string, token?: string, hostToken?: string) => {
     const client = createClient({ baseUrl: url, token, hostToken });
+    const requireRuntimeChainReady = requiresLocalRuntimeChainReadiness({
+      isTauriRuntime: deps.isTauriRuntime(),
+      startupPreference: deps.startupPreference(),
+      activeWorkspaceType: deps.workspace?.activeWorkspaceDisplay().workspaceType,
+      url,
+    });
     try {
       await client.health();
     } catch (error) {
@@ -382,6 +417,14 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
 
     try {
       const caps = await client.capabilities();
+      if (requireRuntimeChainReady) {
+        const diagnostics = await activeWorkspaceRuntimeStatus(client, deps.workspace?.activeWorkspaceId());
+        if (!hasReadyRuntimeChain(diagnostics)) {
+          setVesloServerDiagnostics(diagnostics ?? null);
+          return { status: "disconnected" as VesloServerStatus, capabilities: null };
+        }
+        setVesloServerDiagnostics(diagnostics ?? null);
+      }
       const result = { status: "connected" as VesloServerStatus, capabilities: caps };
       markVesloServerReachable(result.status);
       return result;
@@ -685,7 +728,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       if (busy) return;
       busy = true;
       try {
-        const status = await client.status();
+        const status = await activeWorkspaceRuntimeStatus(client, deps.workspace?.activeWorkspaceId());
         if (active) setVesloServerDiagnostics(status);
       } catch {
         if (active) setVesloServerDiagnostics(null);

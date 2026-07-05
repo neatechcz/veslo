@@ -1030,6 +1030,11 @@ export default function App() {
     // liveTranscriptReadPolicy.
     engineReady: () => engineReady(),
     isWorkspaceRuntimeReady,
+    recoverWorkspaceRuntimeForEventStream: (workspaceId) =>
+      workspaceStore.ensureEngineForWorkspace(workspaceId, {
+        reason: "event-stream-runtime-recovery",
+        loadSessions: false,
+      }),
     onSessionBusyChange: (sessionId, busy, sourceWorkspaceId) => {
       const wsId = sourceWorkspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
       if (!wsId) return;
@@ -2106,7 +2111,7 @@ export default function App() {
     workspaces: () => workspaceStore.workspaces(),
     routedClient,
     releaseWorkspaceRoute: (workspaceId) => workspaceRouting.release(workspaceId),
-    ensureEngineForWorkspace: (workspaceId) => workspaceStore.ensureEngineForWorkspace(workspaceId),
+    ensureEngineForWorkspace: (workspaceId, options) => workspaceStore.ensureEngineForWorkspace(workspaceId, options),
     connectToServer: (nextBaseUrl, directory, context, auth, connectOptions) =>
       workspaceStore.connectToServer(nextBaseUrl, directory, context, auth, connectOptions),
     engineInfo,

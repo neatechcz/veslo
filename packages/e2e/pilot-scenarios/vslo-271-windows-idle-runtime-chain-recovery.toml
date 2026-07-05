@@ -1,0 +1,516 @@
+[scenario]
+name = "vslo-271-windows-idle-runtime-chain-recovery"
+fail_fast = true
+global_timeout_ms = 340000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 30000
+
+[[step]]
+name = "runtime chain recovers from injected daemon and shared proxy faults"
+action = "eval"
+timeout_ms = 280000
+script = '''
+const completeSelector = '[data-testid="vslo-271-runtime-chain-complete"]';
+const errorSelector = '[data-testid="vslo-271-runtime-chain-error"]';
+const progressSelector = '[data-testid="vslo-271-runtime-chain-progress"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+document.querySelector(progressSelector)?.remove();
+
+const progressMarker = document.createElement("pre");
+progressMarker.dataset.testid = "vslo-271-runtime-chain-progress";
+progressMarker.style.display = "none";
+progressMarker.textContent = "starting";
+document.body.append(progressMarker);
+
+const appendMarker = (selector, payload) => {
+  if (document.querySelector(completeSelector) || document.querySelector(errorSelector)) return;
+  const marker = document.createElement("pre");
+  marker.dataset.testid = selector.slice('[data-testid="'.length, -2);
+  marker.textContent = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
+  document.body.append(marker);
+};
+
+const setProgress = (stage, detail = null) => {
+  window.__vslo271RuntimeChain = {
+    stage,
+    detail,
+    at: new Date().toISOString(),
+  };
+  progressMarker.textContent = JSON.stringify(window.__vslo271RuntimeChain);
+  try {
+    console.log("[vslo-271-runtime-chain]", stage, detail);
+    const invoke = window.__TAURI_INTERNALS__?.invoke;
+    if (typeof invoke === "function") {
+      void invoke("record_bootstrap_diagnostic", {
+        eventType: "vslo-271:progress",
+        payload: { stage, detail, at: window.__vslo271RuntimeChain.at },
+      }).catch(() => null);
+    }
+  } catch {
+    // best-effort diagnostic only
+  }
+};
+
+(async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const normalize = (value) => String(value ?? "").trim();
+  const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+  const assert = (condition, message) => {
+    if (!condition) throw new Error(message);
+  };
+  const withTimeout = async (promise, ms, label) => {
+    let timer = null;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label} after ${ms}ms`)), ms);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+  const tauriInvoke = async (command, payload = {}, timeoutMs = 90000) => {
+    const invoke = window.__TAURI_INTERNALS__?.invoke;
+    assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+    return await withTimeout(invoke(command, payload), timeoutMs, `tauri:${command}`);
+  };
+  const fetchWithTimeout = async (url, init = {}, timeoutMs = 15000) =>
+    await withTimeout(fetch(url, init), timeoutMs, `fetch:${url}`);
+  const waitUntil = async (predicate, options = {}) => {
+    const timeout = options.timeout ?? 30000;
+    const interval = options.interval ?? 500;
+    const deadline = Date.now() + timeout;
+    let latest = null;
+    while (Date.now() < deadline) {
+      latest = await predicate();
+      if (latest) return latest;
+      await sleep(interval);
+    }
+    throw new Error(`${options.message ?? "Condition was not met"}. Latest=${JSON.stringify(latest)}`);
+  };
+  const serverJson = async (connection, path, init = {}) => {
+    const timeoutMs = init.timeoutMs ?? 15000;
+    const { timeoutMs: _timeoutMs, ...fetchInit } = init;
+    const response = await fetchWithTimeout(`${connection.baseUrl}${path}`, {
+      ...fetchInit,
+      headers: {
+        accept: "application/json",
+        ...(connection.clientToken ? { authorization: `Bearer ${connection.clientToken}` } : {}),
+        ...(fetchInit.headers ?? {}),
+      },
+    }, timeoutMs);
+    const text = await response.text();
+    let body = null;
+    try {
+      body = text.trim() ? JSON.parse(text) : null;
+    } catch {
+      body = text;
+    }
+    return { ok: response.ok, status: response.status, body };
+  };
+  const localServer = async () => {
+    let latest = null;
+    return await waitUntil(async () => {
+      latest = await tauriInvoke("veslo_server_info").catch((error) => ({ error: error?.message || String(error) }));
+      const baseUrl = trimBaseUrl(latest?.baseUrl);
+      const clientToken = normalize(latest?.clientToken);
+      if (!latest?.running || !baseUrl) return false;
+      const health = await fetchWithTimeout(`${baseUrl}/health`, {}, 10000).catch(() => null);
+      if (!health?.ok) return false;
+      const payload = await health.json().catch(() => null);
+      return payload?.ok === true ? { baseUrl, clientToken, info: latest } : false;
+    }, {
+      timeout: 90000,
+      interval: 500,
+      message: `Local Veslo server did not become ready. Latest=${JSON.stringify(latest)}`,
+    });
+  };
+  const activeWorkspace = async () => {
+    const boot = await waitUntil(async () => {
+      const info = await tauriInvoke("workspace_bootstrap").catch(() => null);
+      return Array.isArray(info?.workspaces) && info.workspaces.length > 0 ? info : false;
+    }, {
+      timeout: 90000,
+      interval: 500,
+      message: "workspace_bootstrap did not expose a workspace",
+    });
+    return boot.workspaces.find((workspace) => workspace.id === boot.activeId) ?? boot.workspaces[0];
+  };
+  const ensureEngine = async (workspace) => {
+    const workspacePath = normalize(workspace?.path || workspace?.directory);
+    const workspaceId = normalize(workspace?.id);
+    assert(workspacePath, `Workspace path is missing: ${JSON.stringify(workspace)}`);
+    await tauriInvoke("engine_start", {
+      projectDir: workspacePath,
+      preferSidecar: true,
+      opencodeBinPath: null,
+      runtime: "veslo-orchestrator",
+      workspacePaths: [workspacePath],
+    });
+    await tauriInvoke("orchestrator_workspace_activate", {
+      workspacePath,
+      workspaceId: workspaceId || null,
+      name: normalize(workspace?.displayName || workspace?.name) || null,
+    });
+    return await waitUntil(async () => {
+      const info = await tauriInvoke("engine_info", {
+        workspaceId: workspaceId || null,
+        workspacePath,
+      }).catch(() => null);
+      return trimBaseUrl(info?.baseUrl) ? info : false;
+    }, {
+      timeout: 90000,
+      interval: 500,
+      message: `engine_info did not expose a baseUrl for ${workspacePath}`,
+    });
+  };
+  const waitRuntimeChainStatus = async (connection, workspace, allowed) => {
+    const workspaceId = normalize(workspace?.id);
+    const statusPath = workspaceId ? `/w/${encodeURIComponent(workspaceId)}/status` : "/status";
+    let latest = null;
+    return await waitUntil(async () => {
+      latest = await serverJson(connection, statusPath).catch((error) => ({
+        ok: false,
+        status: 0,
+        body: { error: error?.message || String(error) },
+      }));
+      const status = latest.body?.runtimeChain?.status;
+      return allowed.includes(status) ? latest.body.runtimeChain : false;
+    }, {
+      timeout: 90000,
+      interval: 750,
+      message: `runtimeChain did not reach one of ${allowed.join(",")}`,
+    });
+  };
+  const visibleText = (element) => normalize(element?.innerText || element?.textContent || "").replace(/\s+/g, " ");
+  const conversationPane = () =>
+    document.querySelector('[data-testid="session-conversation-pane"]') ??
+    document.querySelector("main") ??
+    document.body;
+  const visibleBodyText = () => visibleText(document.querySelector("main") ?? document.body);
+  const visibleTranscriptText = () => visibleText(conversationPane());
+  const sendTrace = () => Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-200) : [];
+  const isVisibleElement = (element) => {
+    if (!(element instanceof HTMLElement)) return false;
+    const rect = element.getBoundingClientRect();
+    return Boolean(element.offsetParent) && rect.width > 0 && rect.height > 0;
+  };
+  const parseDenAuth = (raw) => {
+    if (!raw || typeof raw !== "string") return null;
+    try {
+      const parsed = JSON.parse(raw);
+      const token = normalize(parsed?.token);
+      if (!token) return null;
+      return {
+        token,
+        email: normalize(parsed?.user?.email),
+        userId: normalize(parsed?.user?.id),
+        orgId: normalize(parsed?.orgId || parsed?.org?.id),
+        denApiBase: trimBaseUrl(parsed?.denApiBase),
+      };
+    } catch {
+      return null;
+    }
+  };
+  const readDenAuthForAiAccess = async () => {
+    const storageAuth = parseDenAuth(
+      window.localStorage.getItem("veslo.den.auth") ||
+      window.sessionStorage.getItem("veslo.den.auth"),
+    );
+    if (storageAuth) return storageAuth;
+
+    const snapshot = await tauriInvoke("den_auth_snapshot_read", {}, 15000).catch(() => null);
+    return parseDenAuth(snapshot?.authJson);
+  };
+  const waitForLiveAiAccessReady = async (connection) => {
+    let latest = null;
+    return await waitUntil(async () => {
+      const auth = await readDenAuthForAiAccess();
+      if (!auth?.token || !auth.email || auth.email.endsWith("@example.test")) {
+        latest = { auth: auth ? { email: auth.email, userId: auth.userId, orgId: auth.orgId, hasToken: Boolean(auth.token) } : null };
+        return false;
+      }
+      const response = await fetchWithTimeout(`${connection.baseUrl}/ai-gateway/me/ai-access`, {
+        headers: {
+          authorization: `Bearer ${connection.clientToken}`,
+          "x-veslo-gateway-authorization": `Bearer ${auth.token}`,
+          accept: "application/json",
+        },
+      }, 20000).catch((error) => {
+        latest = { error: error?.message || String(error), auth: { email: auth.email, userId: auth.userId, orgId: auth.orgId } };
+        return null;
+      });
+      if (!response) return false;
+      const text = await response.text();
+      latest = {
+        status: response.status,
+        body: text.slice(0, 500),
+        auth: { email: auth.email, userId: auth.userId, orgId: auth.orgId, denApiBase: auth.denApiBase },
+      };
+      if (!response.ok) return false;
+      const payload = text.trim() ? JSON.parse(text) : null;
+      return payload?.aiAccess?.enabled === true
+        ? { auth: latest.auth, provider: payload?.aiAccess?.provider ?? null }
+        : false;
+    }, {
+      timeout: 90000,
+      interval: 500,
+      message: `Live AI access did not become ready. Latest=${JSON.stringify(latest)}`,
+    });
+  };
+  const waitForComposer = async () =>
+    await waitUntil(() => {
+      const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+      return candidate instanceof HTMLElement && isVisibleElement(candidate) ? candidate : false;
+    }, {
+      timeout: 45000,
+      interval: 250,
+      message: `Composer did not appear. Body=${visibleBodyText().slice(0, 2500)}`,
+    });
+  const setComposerText = (textbox, text) => {
+    textbox.focus();
+    if (textbox.isContentEditable) {
+      textbox.replaceChildren(document.createTextNode(text));
+    } else {
+      textbox.value = text;
+    }
+    textbox.dispatchEvent(new InputEvent("input", {
+      bubbles: true,
+      data: text,
+      inputType: "insertText",
+    }));
+  };
+  const buttonValues = (button) => [
+    normalize(button.textContent),
+    normalize(button.title),
+    normalize(button.getAttribute("aria-label")),
+  ].filter(Boolean);
+  const buttonMatchesLabel = (button, labels) => {
+    if (!isVisibleElement(button) || button.disabled) return false;
+    const values = buttonValues(button);
+    return labels.some((label) => values.some((value) => value === label || value.includes(label)));
+  };
+  const findComposerSendButton = (textbox) => {
+    const labels = [
+      "Send now",
+      "Steer agent now",
+      "Queue message",
+      "Send",
+      "Poslat hned",
+      "Nasm\u011brovat agenta te\u010f",
+      "Za\u0159adit zpr\u00e1vu",
+      "Odeslat",
+    ];
+    let current = textbox;
+    const containers = [];
+    for (let depth = 0; depth < 10 && current instanceof HTMLElement; depth += 1) {
+      containers.push(current);
+      current = current.parentElement;
+    }
+    for (const container of containers) {
+      const matching = Array.from(container.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+      if (matching) return matching;
+    }
+    return Array.from(document.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+  };
+  const dispatchClickSequence = (element) => {
+    element.focus?.();
+    const base = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view: window,
+      button: 0,
+    };
+    if (typeof PointerEvent === "function") {
+      element.dispatchEvent(new PointerEvent("pointerdown", { ...base, pointerId: 1, pointerType: "mouse", isPrimary: true, buttons: 1 }));
+      element.dispatchEvent(new PointerEvent("pointerup", { ...base, pointerId: 1, pointerType: "mouse", isPrimary: true, buttons: 0 }));
+    }
+    element.dispatchEvent(new MouseEvent("mousedown", { ...base, buttons: 1 }));
+    element.dispatchEvent(new MouseEvent("mouseup", { ...base, buttons: 0 }));
+    element.dispatchEvent(new MouseEvent("click", { ...base, buttons: 0 }));
+  };
+  const messageRoleCount = (role) =>
+    Array.from(conversationPane().querySelectorAll(`[data-message-role="${role}"]`)).filter(isVisibleElement).length;
+  const sendTraceErrors = (entries) => entries.filter((entry) => {
+    const event = String(entry?.event ?? "");
+    const message = String(entry?.message ?? "");
+    const outcome = String(entry?.outcome ?? "");
+    const recoverableRuntimeError =
+      entry?.recoverable === true &&
+      /runtime-health-error|conversation-run-error/i.test(event);
+    if (recoverableRuntimeError) return false;
+    return /(^|:)error$|failed|blocked/i.test(event) ||
+      outcome === "error" ||
+      /AI gateway provider request did not start|Send failed|Odesl\u00e1n\u00ed selhalo/i.test(message);
+  });
+  const assertNoSendFailed = (entries = sendTrace()) => {
+    const body = visibleBodyText();
+    const errors = sendTraceErrors(entries);
+    assert(
+      !/Send failed|Odesl\u00e1n\u00ed selhalo|AI gateway provider request did not start/i.test(body) && errors.length === 0,
+      `Send failed appeared. Body=${body.slice(0, 2500)} Trace=${JSON.stringify(entries)}`,
+    );
+  };
+  const sendPromptThroughComposer = async (options = {}) => {
+    const token = normalize(options.token) || "VSLO_271_OK";
+    const label = normalize(options.label) || "live runtime recovery";
+    const requireRecoveryTrace = options.requireRecoveryTrace === true;
+    const composer = await waitForComposer();
+    const userBefore = messageRoleCount("user");
+    const assistantBefore = messageRoleCount("assistant");
+    const traceLengthBeforeClick = sendTrace().length;
+    const text = `VSLO-271 ${label} ${Date.now()}. Reply with exactly ${token}.`;
+    setComposerText(composer, text);
+    await waitUntil(() => normalize(composer.textContent || composer.value).includes(text), {
+      timeout: 10000,
+      message: `Composer did not retain prompt text ${text}`,
+    });
+    const sendButton = await waitUntil(() => findComposerSendButton(composer), {
+      timeout: 20000,
+      interval: 250,
+      message: `Send button did not become enabled. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).map(buttonValues))}`,
+    });
+    dispatchClickSequence(sendButton);
+    await waitUntil(() => visibleTranscriptText().includes(text), {
+      timeout: 90000,
+      interval: 500,
+      message: `Prompt never became visible. Transcript=${visibleTranscriptText().slice(0, 2500)}`,
+    });
+    await waitUntil(() => !conversationPane().querySelector('[data-testid="session-run-indicator"]'), {
+      timeout: 240000,
+      interval: 1000,
+      message: `Run indicator did not settle. Body=${visibleBodyText().slice(0, 2500)}`,
+    });
+    const traceAfterClick = sendTrace().slice(traceLengthBeforeClick);
+    assertNoSendFailed(traceAfterClick);
+    const userAfter = messageRoleCount("user");
+    const assistantAfter = messageRoleCount("assistant");
+    assert(userAfter > userBefore, `No new user message rendered. Before=${userBefore} After=${userAfter}`);
+    assert(assistantAfter > assistantBefore, `No new assistant message rendered. Before=${assistantBefore} After=${assistantAfter}`);
+    assert(
+      traceAfterClick.some((entry) => entry?.event === "sendPrompt:success"),
+      `Send trace did not record success. Trace=${JSON.stringify(traceAfterClick)}`,
+    );
+    if (requireRecoveryTrace) {
+      const recoveryEvents = traceAfterClick.filter((entry) =>
+        /runtime-recovery-start|conversation-run-runtime-recovery-start|runtime-route-released/i.test(String(entry?.event ?? "")),
+      );
+      assert(
+        recoveryEvents.length > 0,
+        `Send trace did not record automatic runtime recovery. Trace=${JSON.stringify(traceAfterClick)}`,
+      );
+    }
+    assert(
+      visibleTranscriptText().includes(token),
+      `Assistant response token ${token} missing. Transcript=${visibleTranscriptText().slice(0, 2500)} Trace=${JSON.stringify(traceAfterClick)}`,
+    );
+    return { text, userBefore, userAfter, assistantBefore, assistantAfter, traceAfterClick };
+  };
+
+  let watchdog = null;
+  try {
+    watchdog = setTimeout(() => {
+      appendMarker(errorSelector, {
+        message: "VSLO-271 runtime-chain watchdog timed out before the task settled.",
+        progress: window.__vslo271RuntimeChain ?? null,
+        body: visibleBodyText().slice(0, 4000),
+      });
+    }, 260000);
+
+    setProgress("waiting-root");
+    await waitUntil(() => document.querySelector("#root")?.children.length > 0, {
+      timeout: 30000,
+      message: "Veslo root did not render child UI",
+    });
+    setProgress("writing-runtime-preferences");
+    await tauriInvoke("desktop_runtime_preferences_write", {
+      preferences: { sharedUnsandboxedEngine: true },
+    });
+
+    setProgress("waiting-local-server-initial");
+    let connection = await localServer();
+    setProgress("waiting-live-ai-access");
+    const liveAiAccess = await waitForLiveAiAccessReady(connection);
+    setProgress("resolving-active-workspace");
+    const workspace = await activeWorkspace();
+    setProgress("ensuring-engine-initial", { workspaceId: workspace?.id ?? null, path: workspace?.path ?? null });
+    await ensureEngine(workspace);
+    setProgress("waiting-local-server-after-engine");
+    connection = await localServer();
+    setProgress("waiting-runtime-chain-ready-initial");
+    await waitRuntimeChainStatus(connection, workspace, ["runtime_chain_ready"]);
+
+    setProgress("killing-orchestrator-daemon");
+    const killed = await tauriInvoke("veslo_orchestrator_e2e_kill_daemon");
+    assert(killed?.running === false, `Expected killed daemon status to be not running, got ${JSON.stringify(killed)}`);
+    setProgress("waiting-runtime-chain-degraded");
+    await waitRuntimeChainStatus(connection, workspace, ["orchestrator_unavailable", "server_running"]);
+
+    setProgress("sending-live-prompt-after-daemon-kill", liveAiAccess);
+    const daemonSendResult = await sendPromptThroughComposer({
+      token: "VSLO_271_DAEMON_OK",
+      label: "automatic daemon recovery",
+      requireRecoveryTrace: true,
+    });
+    setProgress("waiting-local-server-after-daemon-send-recovery");
+    connection = await localServer();
+    setProgress("waiting-runtime-chain-ready-after-daemon-recovery");
+    await waitRuntimeChainStatus(connection, workspace, ["runtime_chain_ready"]);
+
+    setProgress("arming-shared-proxy-fault");
+    await tauriInvoke("shared_engine_e2e_fail_next_proxy");
+    setProgress("sending-live-prompt-through-armed-shared-proxy-fault", liveAiAccess);
+    const proxySendResult = await sendPromptThroughComposer({
+      token: "VSLO_271_PROXY_OK",
+      label: "automatic shared proxy recovery",
+      requireRecoveryTrace: true,
+    });
+    setProgress("waiting-local-server-after-shared-send-recovery");
+    connection = await localServer();
+    setProgress("waiting-runtime-chain-ready-final");
+    await waitRuntimeChainStatus(connection, workspace, ["runtime_chain_ready"]);
+
+    setProgress("complete");
+    appendMarker(completeSelector, { ok: true, liveAiAccess, daemonSendResult, proxySendResult });
+  } catch (error) {
+    appendMarker(errorSelector, {
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+      progress: window.__vslo271RuntimeChain ?? null,
+      body: document.body.innerText.replace(/\s+/g, " ").trim().slice(0, 3000),
+    });
+  } finally {
+    if (watchdog) clearTimeout(watchdog);
+  }
+})();
+
+true;
+'''
+
+[[step]]
+name = "VSLO-271 runtime-chain scenario finished"
+action = "wait"
+target = "[data-testid=\"vslo-271-runtime-chain-complete\"], [data-testid=\"vslo-271-runtime-chain-error\"]"
+timeout_ms = 290000
+
+[[step]]
+name = "VSLO-271 runtime-chain scenario succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="vslo-271-runtime-chain-error"]');
+if (error) {
+  const detail = (error.textContent || "VSLO-271 runtime-chain scenario failed")
+    .replace(/[\u0080-\uffff]/g, "?")
+    .slice(0, 4000);
+  throw new Error(`VSLO-271 runtime-chain scenario failed: ${detail}`);
+}
+true;
+'''

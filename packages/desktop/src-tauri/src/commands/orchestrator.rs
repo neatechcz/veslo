@@ -66,9 +66,23 @@ fn resolve_data_dir(manager: &OrchestratorManager) -> String {
 fn resolve_base_url(manager: &OrchestratorManager) -> Result<String, String> {
     let data_dir = resolve_data_dir(manager);
     let status = resolve_orchestrator_status(&data_dir, None);
+    resolve_live_base_url_from_status(&status)
+}
+
+fn resolve_live_base_url_from_status(status: &OrchestratorStatus) -> Result<String, String> {
+    if !status.running {
+        let detail = status
+            .daemon
+            .as_ref()
+            .map(|daemon| format!("; staleBaseUrl={}", daemon.base_url))
+            .unwrap_or_default();
+        return Err(format!("orchestrator daemon is not running{detail}"));
+    }
     status
         .daemon
-        .map(|daemon| daemon.base_url)
+        .as_ref()
+        .map(|daemon| daemon.base_url.clone())
+        .filter(|url| !url.trim().is_empty())
         .ok_or_else(|| "orchestrator daemon is not running".to_string())
 }
 
@@ -88,6 +102,66 @@ fn workspace_id_for_registered_path(app: &AppHandle, workspace_path: &str) -> Op
         .map(|workspace| workspace.id)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::resolve_live_base_url_from_status;
+    use crate::types::{OrchestratorDaemonState, OrchestratorStatus};
+
+    fn status(running: bool, base_url: Option<&str>) -> OrchestratorStatus {
+        OrchestratorStatus {
+            running,
+            data_dir: "/tmp/veslo-orchestrator".to_string(),
+            daemon: base_url.map(|base_url| OrchestratorDaemonState {
+                pid: 123,
+                port: 52008,
+                base_url: base_url.to_string(),
+                started_at: 1,
+            }),
+            opencode: None,
+            engine_topology: None,
+            cli_version: None,
+            sidecar: None,
+            binaries: None,
+            active_id: None,
+            workspace_count: 0,
+            workspaces: Vec::new(),
+            engines: Vec::new(),
+            shared_engine: None,
+            last_error: None,
+        }
+    }
+
+    #[test]
+    fn stale_daemon_base_url_is_not_actionable() {
+        let result =
+            resolve_live_base_url_from_status(&status(false, Some("http://127.0.0.1:52008")));
+
+        let error = result.expect_err("stale daemon should not be usable");
+        assert!(error.contains("orchestrator daemon is not running"));
+        assert!(error.contains("staleBaseUrl=http://127.0.0.1:52008"));
+    }
+
+    #[test]
+    fn running_daemon_base_url_is_returned() {
+        let result =
+            resolve_live_base_url_from_status(&status(true, Some("http://127.0.0.1:52008")));
+
+        assert_eq!(result.as_deref(), Ok("http://127.0.0.1:52008"));
+    }
+}
+
+#[cfg(all(debug_assertions, feature = "e2e"))]
+fn post_orchestrator_e2e(base_url: &str, path: &str) -> Result<serde_json::Value, String> {
+    let url = format!("{}{}", base_url.trim_end_matches('/'), path);
+    let response = ureq::post(&url)
+        .set("Content-Type", "application/json")
+        .send_string("")
+        .map_err(|error| format!("Failed to invoke orchestrator e2e endpoint {path}: {error}"))?;
+    response
+        .into_json()
+        .map_err(|error| format!("Failed to parse orchestrator e2e response {path}: {error}"))
+}
+
 #[tauri::command]
 pub fn orchestrator_status(manager: State<OrchestratorManager>) -> OrchestratorStatus {
     let data_dir = resolve_data_dir(&manager);
@@ -97,6 +171,51 @@ pub fn orchestrator_status(manager: State<OrchestratorManager>) -> OrchestratorS
         .ok()
         .and_then(|state| state.last_stderr.clone());
     resolve_orchestrator_status(&data_dir, last_error)
+}
+
+#[cfg(all(debug_assertions, feature = "e2e"))]
+#[tauri::command]
+pub fn veslo_orchestrator_e2e_kill_daemon(
+    manager: State<OrchestratorManager>,
+) -> Result<OrchestratorStatus, String> {
+    let data_dir = resolve_data_dir(&manager);
+    let message = {
+        let mut state = manager
+            .inner
+            .lock()
+            .map_err(|_| "orchestrator mutex poisoned".to_string())?;
+        let child = state
+            .child
+            .take()
+            .ok_or_else(|| "orchestrator daemon child is not running".to_string())?;
+        let pid = child.pid();
+        child
+            .kill()
+            .map_err(|error| format!("Failed to kill orchestrator daemon child {pid}: {error}"))?;
+        state.child_exited = true;
+        let message = format!("orchestrator daemon child killed for E2E (pid {pid})");
+        state.last_stderr = Some(message.clone());
+        message
+    };
+    Ok(resolve_orchestrator_status(&data_dir, Some(message)))
+}
+
+#[cfg(all(debug_assertions, feature = "e2e"))]
+#[tauri::command]
+pub fn shared_engine_e2e_kill_child(
+    manager: State<OrchestratorManager>,
+) -> Result<serde_json::Value, String> {
+    let base_url = resolve_base_url(&manager)?;
+    post_orchestrator_e2e(&base_url, "/e2e/shared-engine/kill-child")
+}
+
+#[cfg(all(debug_assertions, feature = "e2e"))]
+#[tauri::command]
+pub fn shared_engine_e2e_fail_next_proxy(
+    manager: State<OrchestratorManager>,
+) -> Result<serde_json::Value, String> {
+    let base_url = resolve_base_url(&manager)?;
+    post_orchestrator_e2e(&base_url, "/e2e/shared-engine/fail-next-proxy")
 }
 
 #[tauri::command]

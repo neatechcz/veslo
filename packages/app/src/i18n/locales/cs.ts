@@ -1183,6 +1183,7 @@ export default {
   "session.edit_message_title": "Upravit zprávu",
   "session.pending_submit_sending": "Odesílám...",
   "session.pending_submit_failed": "Odeslání selhalo",
+  "session.pending_submit_local_runtime_failed": "Selhal místní runtime",
   "session.delete_session_action": "Smazat relaci",
   "session.delete_session_title": "Smazat relaci?",
   "session.delete_session_unnamed": "Tím trvale smažete vybranou relaci a její zprávy.",

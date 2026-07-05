@@ -280,6 +280,24 @@ export default function MessageList(props: MessageListProps) {
   const plural = (count: number, oneKey: string, otherKey: string) =>
     tr(count === 1 ? oneKey : otherKey, { count: String(count) });
 
+  const pendingSubmitFailureLabel = (error: string | undefined) => {
+    const normalized = (error ?? "").toLowerCase();
+    const localRuntimeFailure =
+      normalized.includes("opencode_proxy_failed") ||
+      normalized.includes("opencode_request_failed") ||
+      normalized.includes("engine_not_running") ||
+      normalized.includes("engine_starting") ||
+      normalized.includes("orchestrator daemon is not running") ||
+      normalized.includes("local runtime chain is not ready") ||
+      normalized.includes("socket closed") ||
+      normalized.includes("socket connection was closed") ||
+      normalized.includes("connection refused") ||
+      normalized.includes("fetch failed");
+    return localRuntimeFailure
+      ? `${tr("session.pending_submit_failed")}: ${tr("session.pending_submit_local_runtime_failed")}`
+      : tr("session.pending_submit_failed");
+  };
+
   const timelineStatusLabel = (status?: TimelineRowModel["status"]) => {
     switch (status) {
       case "done":
@@ -1580,7 +1598,7 @@ export default function MessageList(props: MessageListProps) {
                     role="status"
                   >
                     <CircleAlert size={12} />
-                    <span>{tr("session.pending_submit_failed")}</span>
+                    <span>{pendingSubmitFailureLabel(pendingMessageState()?.error)}</span>
                   </div>
                 </Show>
                 <div class="absolute bottom-2 right-2 flex justify-end gap-1 opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">

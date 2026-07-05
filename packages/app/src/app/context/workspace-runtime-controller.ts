@@ -117,16 +117,17 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
     },
   ): Promise<boolean> {
     const workspaceId = context?.workspaceId?.trim() ?? "";
+    const ensureOptions = {
+      directory,
+      auth,
+      context: {
+        workspaceType: context?.workspaceType,
+        targetRoot: context?.targetRoot ?? directory,
+        reason: context?.reason,
+      },
+    };
     const entry = workspaceId
-      ? await deps.routing.ensure(workspaceId, baseUrl, {
-          directory,
-          auth,
-          context: {
-            workspaceType: context?.workspaceType,
-            targetRoot: context?.targetRoot ?? directory,
-            reason: context?.reason,
-          },
-        })
+      ? await deps.routing.ensure(workspaceId, baseUrl, ensureOptions)
       : null;
     if (workspaceId && !entry) {
       const detail = deps.routing.lastEnsureError(workspaceId);

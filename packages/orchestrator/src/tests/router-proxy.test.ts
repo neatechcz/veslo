@@ -916,6 +916,103 @@ describe("proxyToEngine — unit-level edge cases", () => {
     try { front.close(); } catch { /* see EchoServer comment */ }
     try { target.close(); } catch { /* see EchoServer comment */ }
   });
+
+  // VSLO-271 regression: locally destroying an in-flight upstream request
+  // (client walked away from an SSE stream) emits `error: aborted` on the
+  // upstream response. That must surface as onClientAbort, not onError —
+  // onError marks the shared engine unhealthy and would cold-restart it on
+  // every routine stream teardown. The disconnect is simulated by emitting
+  // 'aborted' on the incoming request (Node's native signal) because Bun's
+  // node:http server does not surface client disconnects on streaming
+  // responses at all — no 'aborted', no res 'close', no socket 'close'.
+  test("client disconnect mid-stream reports onClientAbort, not onError", async () => {
+    let onErrorCalls = 0;
+    let onClientAbortCalls = 0;
+    const target = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      const timer = setInterval(() => res.write(`data: tick\n\n`), 10);
+      res.on("close", () => clearInterval(timer));
+    });
+    await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
+    target.unref();
+    const port = (target.address() as AddressInfo).port;
+
+    const front = createServer((req, res) => {
+      proxyToEngine({
+        clientReq: req,
+        clientRes: res,
+        targetBaseUrl: `http://127.0.0.1:${port}`,
+        targetPath: "/event",
+        onError: () => {
+          onErrorCalls++;
+        },
+        onClientAbort: () => {
+          onClientAbortCalls++;
+        },
+      });
+      // Simulate the client dropping the connection once the stream flows.
+      setTimeout(() => req.emit("aborted"), 50);
+    });
+    await new Promise<void>((resolve) => front.listen(0, "127.0.0.1", resolve));
+    front.unref();
+    const frontPort = (front.address() as AddressInfo).port;
+
+    const clientReq = httpRequest({
+      host: "127.0.0.1",
+      port: frontPort,
+      path: "/event",
+      method: "GET",
+    });
+    const clientRes = await new Promise<IncomingMessage>((resolve, reject) => {
+      clientReq.on("response", resolve);
+      clientReq.on("error", reject);
+      clientReq.end();
+    });
+    clientRes.on("error", () => { /* teardown noise after upstream abort */ });
+    clientRes.on("data", () => { /* keep the stream flowing */ });
+    await delay(200);
+    clientReq.destroy();
+
+    expect(onErrorCalls).toBe(0);
+    expect(onClientAbortCalls).toBe(1);
+
+    front.unref();
+    target.unref();
+    try { front.close(); } catch { /* see EchoServer comment */ }
+    try { target.close(); } catch { /* see EchoServer comment */ }
+  });
+
+  test("upstream connection failure reports onError, not onClientAbort", async () => {
+    let onErrorCalls = 0;
+    let onClientAbortCalls = 0;
+    const front = createServer((req, res) => {
+      proxyToEngine({
+        clientReq: req,
+        clientRes: res,
+        targetBaseUrl: `http://127.0.0.1:1`, // unbound
+        targetPath: "/session",
+        onError: () => {
+          onErrorCalls++;
+        },
+        onClientAbort: () => {
+          onClientAbortCalls++;
+        },
+      });
+    });
+    await new Promise<void>((resolve) => front.listen(0, "127.0.0.1", resolve));
+    front.unref();
+    const frontPort = (front.address() as AddressInfo).port;
+
+    const res = await fetch(`http://127.0.0.1:${frontPort}/session`);
+    expect(res.status).toBe(502);
+    await delay(20);
+
+    expect(onErrorCalls).toBe(1);
+    expect(onClientAbortCalls).toBe(0);
+
+    front.unref();
+    try { front.close(); } catch { /* see EchoServer comment */ }
+  });
 });
 
 // Suppress unused import warning if httpRequest end up unreferenced in tests

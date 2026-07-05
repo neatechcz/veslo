@@ -399,6 +399,8 @@ describe("run activity probe with registry reconciliation", () => {
       conversationId: "conv-a",
       runId: "run-stale",
       engineSessionId: "sess-a",
+      clientMessageId: null,
+      origin: null,
       directory: "/tmp/workspace-a",
       kind: "prompt",
       status: "running",

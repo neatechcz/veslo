@@ -4,6 +4,7 @@ import {
   OrchestratorLifecycleRequestError,
   RunAlreadyActiveError,
   type LifecycleRunStatus,
+  type LifecycleRunStatusResult,
   type OrchestratorLifecycleClient,
 } from "./orchestrator-lifecycle-client.js";
 import type { WorkspaceInfo } from "./types.js";
@@ -398,6 +399,38 @@ export function createConversationRunLifecycleController(
       },
     };
   };
+
+  const activeRunMatchesClientMessage = (
+    active: LifecycleRunStatusResult | null,
+    input: ConversationRunLifecycleSubmitInput,
+  ): boolean => {
+    return Boolean(
+      active &&
+        input.clientMessageId &&
+        active.clientMessageId &&
+        active.clientMessageId === input.clientMessageId,
+    );
+  };
+
+  const existingActiveRunPayload = (
+    input: ConversationRunLifecycleSubmitInput,
+    active: LifecycleRunStatusResult,
+  ) => ({
+    httpStatus: 200,
+    payload: {
+      ok: true,
+      workspaceId: input.workspace.id,
+      conversationId: input.target.conversationId,
+      opencodeSessionId: input.target.opencodeSessionId,
+      runId: active.runId,
+      clientMessageId: active.clientMessageId ?? input.clientMessageId,
+      origin: active.origin ?? input.origin,
+      status: "submitted",
+      kind: input.kind,
+      reusedActiveRun: true,
+      debugTrace: input.runTrace.entries,
+    },
+  });
 
   const registerActiveAiGatewayRun = (input: ConversationRunLifecycleSubmitInput) => {
     if (input.kind !== "prompt_async" || input.expectAiGatewayStart !== true || !options.aiGatewayActiveRun) {
@@ -858,6 +891,8 @@ export function createConversationRunLifecycleController(
               conversationId: item!.conversationId,
               runId: item!.reservedRunId,
               engineSessionId: item!.opencodeSessionId,
+              clientMessageId: item!.clientMessageId,
+              origin: item!.origin,
               directory: item!.directory,
               kind: lifecycleRunKind(kind),
             }),
@@ -1055,6 +1090,16 @@ export function createConversationRunLifecycleController(
             },
           );
           if (active && isActiveLifecycleStatus(active.status)) {
+            if (activeRunMatchesClientMessage(active, input)) {
+              input.runTrace.record("server:conversation-run:lifecycle-active-reused", {
+                workspaceId: input.workspace.id,
+                conversationId: input.target.conversationId,
+                runId: active.runId,
+                clientMessageId: input.clientMessageId,
+                origin: input.origin,
+              });
+              return existingActiveRunPayload(input, active);
+            }
             return queueRun(input, active.runId);
           }
         } catch (error) {
@@ -1065,13 +1110,15 @@ export function createConversationRunLifecycleController(
           });
         }
         try {
-          await input.runTrace.step(
+          const registered = await input.runTrace.step(
             "server:conversation-run:lifecycle-register",
             () => lifecycleOwner.register({
               workspaceId: input.workspace.id,
               conversationId: input.target.conversationId,
               runId: input.runId,
               engineSessionId: input.target.opencodeSessionId,
+              clientMessageId: input.clientMessageId,
+              origin: input.origin,
               directory: input.target.directory,
               kind: lifecycleRunKind(input.kind),
             }),
@@ -1083,8 +1130,46 @@ export function createConversationRunLifecycleController(
               kind: lifecycleRunKind(input.kind),
             },
           );
+          if (registered && registered.runId !== input.runId && activeRunMatchesClientMessage(registered, input)) {
+            input.runTrace.record("server:conversation-run:lifecycle-register-reused", {
+              workspaceId: input.workspace.id,
+              conversationId: input.target.conversationId,
+              runId: registered.runId,
+              clientMessageId: input.clientMessageId,
+              origin: input.origin,
+            });
+            return existingActiveRunPayload(input, registered);
+          }
         } catch (error) {
           if (error instanceof RunAlreadyActiveError) {
+            try {
+              const active = await input.runTrace.step(
+                "server:conversation-run:lifecycle-active-after-register-conflict",
+                () => lifecycleOwner.active(input.workspace.id, input.target.conversationId),
+                {
+                  workspaceId: input.workspace.id,
+                  conversationId: input.target.conversationId,
+                  activeRunId: error.activeRunId || null,
+                },
+              );
+              if (active && isActiveLifecycleStatus(active.status) && activeRunMatchesClientMessage(active, input)) {
+                input.runTrace.record("server:conversation-run:lifecycle-register-conflict-reused", {
+                  workspaceId: input.workspace.id,
+                  conversationId: input.target.conversationId,
+                  runId: active.runId,
+                  clientMessageId: input.clientMessageId,
+                  origin: input.origin,
+                });
+                return existingActiveRunPayload(input, active);
+              }
+            } catch (activeError) {
+              input.runTrace.record("server:conversation-run:lifecycle-register-conflict-active-skipped", {
+                workspaceId: input.workspace.id,
+                conversationId: input.target.conversationId,
+                activeRunId: error.activeRunId || null,
+                message: activeError instanceof Error ? activeError.message : String(activeError),
+              });
+            }
             return queueRun(input, error.activeRunId || null);
           }
           if (error instanceof OrchestratorLifecycleRequestError) {

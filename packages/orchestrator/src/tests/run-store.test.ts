@@ -34,6 +34,8 @@ function record(overrides: Partial<RunRecord> = {}): RunRecord {
     conversationId: "conv-a",
     runId: "run-a",
     engineSessionId: "sess-a",
+    clientMessageId: null,
+    origin: null,
     directory: "/tmp/workspace-a",
     kind: "prompt",
     status: "running",
@@ -80,6 +82,30 @@ describe("run store", () => {
       createdAt: 1_100,
       startedAt: 1_100,
     }))).toThrow();
+  });
+
+  test("persists client message id and origin across updates", async () => {
+    const store = await createTempStore();
+    store.insert(record({
+      clientMessageId: "msg-a",
+      origin: "composer",
+    }));
+
+    expect(store.get("ws-a", "run-a")).toMatchObject({
+      clientMessageId: "msg-a",
+      origin: "composer",
+    });
+
+    store.update("ws-a", "run-a", {
+      status: "blocked",
+      waitReason: "running_tool",
+    });
+
+    expect(store.get("ws-a", "run-a")).toMatchObject({
+      clientMessageId: "msg-a",
+      origin: "composer",
+      status: "blocked",
+    });
   });
 
   test("hasActiveForWorkspace finds only recent active workspace runs", async () => {

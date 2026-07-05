@@ -54,6 +54,11 @@ use commands::orchestrator::{
     orchestrator_engines_list, orchestrator_instance_dispose, orchestrator_start_detached,
     orchestrator_status, orchestrator_workspace_activate, spawn_engine_event_poller,
 };
+#[cfg(all(debug_assertions, feature = "e2e"))]
+use commands::orchestrator::{
+    shared_engine_e2e_fail_next_proxy, shared_engine_e2e_kill_child,
+    veslo_orchestrator_e2e_kill_daemon,
+};
 use commands::pending_session_drafts::{
     pending_session_drafts_delete, pending_session_drafts_get, pending_session_drafts_list,
     pending_session_drafts_put,
@@ -129,7 +134,13 @@ pub(crate) fn stop_managed_services(app_handle: &tauri::AppHandle) -> Vec<u32> {
                 pids.push(child.pid());
             }
         }
-        OrchestratorManager::stop_locked(&mut orchestrator);
+        OrchestratorManager::stop_locked(
+            &mut orchestrator,
+            crate::orchestrator::OrchestratorShutdownAttribution::new(
+                "app_exit",
+                "stop_managed_services",
+            ),
+        );
     }
     if let Ok(mut veslo_server) = app_handle.state::<VesloServerManager>().inner.lock() {
         if !veslo_server.child_exited {
@@ -294,6 +305,12 @@ pub fn run() {
             orchestrator_workspace_activate,
             orchestrator_instance_dispose,
             orchestrator_start_detached,
+            #[cfg(all(debug_assertions, feature = "e2e"))]
+            veslo_orchestrator_e2e_kill_daemon,
+            #[cfg(all(debug_assertions, feature = "e2e"))]
+            shared_engine_e2e_kill_child,
+            #[cfg(all(debug_assertions, feature = "e2e"))]
+            shared_engine_e2e_fail_next_proxy,
             // F4Ú8b — sandbox_doctor, sandbox_debug_probe, sandbox_stop,
             // sandbox_cleanup_veslo_containers IPC commands SMAZÁNY.
             veslo_server_info,

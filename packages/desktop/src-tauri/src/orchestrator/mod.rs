@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tauri::{AppHandle, Manager};
 
 use crate::paths::home_dir;
@@ -87,6 +88,22 @@ pub struct OrchestratorSpawnOptions {
     /// VSLO-171 F3Ú9: idle suspend threshold in ms. None = orchestrator default.
     pub idle_suspend_ms: Option<u64>,
     pub shared_unsandboxed_engine: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestratorShutdownAttribution {
+    pub reason: String,
+    pub caller: String,
+}
+
+impl OrchestratorShutdownAttribution {
+    pub fn new(reason: impl Into<String>, caller: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            caller: caller.into(),
+        }
+    }
 }
 
 pub fn resolve_orchestrator_data_dir() -> String {
@@ -336,7 +353,10 @@ pub fn fetch_orchestrator_workspaces(base_url: &str) -> Result<OrchestratorWorks
     fetch_json(&url)
 }
 
-pub fn request_orchestrator_shutdown(data_dir: &str) -> Result<bool, String> {
+pub fn request_orchestrator_shutdown(
+    data_dir: &str,
+    attribution: &OrchestratorShutdownAttribution,
+) -> Result<bool, String> {
     let base_url = read_orchestrator_state(data_dir)
         .and_then(|state| state.daemon.map(|daemon| daemon.base_url))
         .map(|url| url.trim().to_string())
@@ -355,7 +375,10 @@ pub fn request_orchestrator_shutdown(data_dir: &str) -> Result<bool, String> {
         .post(&url)
         .set("Accept", "application/json")
         .set("Content-Type", "application/json")
-        .send_string("")
+        .send_json(json!({
+            "reason": attribution.reason.as_str(),
+            "caller": attribution.caller.as_str(),
+        }))
         .map_err(|e| format!("Failed to request orchestrator shutdown at {url}: {e}"))?;
 
     Ok(true)
@@ -495,6 +518,11 @@ pub fn spawn_orchestrator_daemon(
         command = command.env(key, value);
     }
 
+    #[cfg(all(debug_assertions, feature = "e2e"))]
+    {
+        command = command.env("VESLO_E2E_FAULT_INJECTION", "1");
+    }
+
     if env::var_os("OPENCODE_VERSION").is_none() {
         if let Some(version) = resolve_manifest_opencode_version(&sidecar_paths) {
             command = command.env("OPENCODE_VERSION", version);
@@ -520,6 +548,7 @@ mod tests {
     use super::{
         build_orchestrator_env_overrides, request_orchestrator_shutdown,
         resolve_manifest_opencode_version, resolve_opencode_managed_deps_manifest,
+        OrchestratorShutdownAttribution,
     };
     use std::fs;
     use std::io::{Read, Write};
@@ -560,7 +589,9 @@ mod tests {
         ));
         fs::create_dir_all(&dir).expect("create test dir");
 
-        let stopped = request_orchestrator_shutdown(&dir.to_string_lossy()).expect("request");
+        let attribution = OrchestratorShutdownAttribution::new("test_missing", "unit_test");
+        let stopped =
+            request_orchestrator_shutdown(&dir.to_string_lossy(), &attribution).expect("request");
         assert!(!stopped);
 
         let _ = fs::remove_dir_all(dir);
@@ -573,10 +604,37 @@ mod tests {
 
         let handle = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept shutdown request");
-            let mut buffer = [0u8; 2048];
-            let bytes = stream.read(&mut buffer).expect("read request");
-            let request = String::from_utf8_lossy(&buffer[..bytes]);
+            let mut request_bytes: Vec<u8> = Vec::new();
+            let mut buffer = [0u8; 512];
+            loop {
+                let bytes = stream.read(&mut buffer).expect("read request");
+                if bytes == 0 {
+                    break;
+                }
+                request_bytes.extend_from_slice(&buffer[..bytes]);
+                let request = String::from_utf8_lossy(&request_bytes);
+                let Some(header_end) = request.find("\r\n\r\n") else {
+                    continue;
+                };
+                let content_length = request[..header_end]
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        if name.eq_ignore_ascii_case("content-length") {
+                            value.trim().parse::<usize>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0);
+                if request_bytes.len() >= header_end + 4 + content_length {
+                    break;
+                }
+            }
+            let request = String::from_utf8_lossy(&request_bytes);
             assert!(request.starts_with("POST /shutdown "));
+            assert!(request.contains("\"reason\":\"test_shutdown\""));
+            assert!(request.contains("\"caller\":\"unit_test\""));
             stream
                 .write_all(
                     b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}",
@@ -598,7 +656,9 @@ mod tests {
         )
         .expect("write state file");
 
-        let stopped = request_orchestrator_shutdown(&dir.to_string_lossy()).expect("request");
+        let attribution = OrchestratorShutdownAttribution::new("test_shutdown", "unit_test");
+        let stopped =
+            request_orchestrator_shutdown(&dir.to_string_lossy(), &attribution).expect("request");
         assert!(stopped);
 
         handle.join().expect("server thread");
