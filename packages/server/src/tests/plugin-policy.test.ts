@@ -10,19 +10,33 @@ import {
 
 describe("plugin policy model", () => {
   test("scheduler is hidden locked platform policy", () => {
-    expect(OPENCODE_SCHEDULER_PLATFORM_PLUGIN.owner.kind).toBe("platform");
-    expect(OPENCODE_SCHEDULER_PLATFORM_PLUGIN.visibility).toBe("hidden-debug-only");
-    expect(OPENCODE_SCHEDULER_PLATFORM_PLUGIN.enabledPolicy).toBe("locked-on");
-    expect(OPENCODE_SCHEDULER_PLATFORM_PLUGIN.removalPolicy).toBe("locked");
-    expect(OPENCODE_SCHEDULER_PLATFORM_PLUGIN.autoInstall).toBe(true);
+    expect(OPENCODE_SCHEDULER_PLATFORM_PLUGIN).toEqual({
+      id: "platform.opencode-scheduler",
+      spec: "opencode-scheduler",
+      displayName: "OpenCode Scheduler",
+      owner: { kind: "platform", id: "veslo-platform", label: "Veslo" },
+      target: "user",
+      visibility: "hidden-debug-only",
+      autoInstall: true,
+      enabledPolicy: "locked-on",
+      removalPolicy: "locked",
+      source: "policy.platform",
+    });
   });
 
   test("superpowers is visible user-removable platform policy", () => {
-    expect(SUPERPOWERS_PLATFORM_PLUGIN.owner.kind).toBe("platform");
-    expect(SUPERPOWERS_PLATFORM_PLUGIN.visibility).toBe("visible");
-    expect(SUPERPOWERS_PLATFORM_PLUGIN.enabledPolicy).toBe("user-toggleable");
-    expect(SUPERPOWERS_PLATFORM_PLUGIN.removalPolicy).toBe("user-removable");
-    expect(SUPERPOWERS_PLATFORM_PLUGIN.autoInstall).toBe(true);
+    expect(SUPERPOWERS_PLATFORM_PLUGIN).toEqual({
+      id: "platform.superpowers",
+      spec: "superpowers@git+https://github.com/obra/superpowers.git",
+      displayName: "Superpowers",
+      owner: { kind: "platform", id: "veslo-platform", label: "Veslo" },
+      target: "user",
+      visibility: "visible",
+      autoInstall: true,
+      enabledPolicy: "user-toggleable",
+      removalPolicy: "user-removable",
+      source: "policy.platform",
+    });
   });
 
   test("normal inventory hides hidden platform policies", () => {
