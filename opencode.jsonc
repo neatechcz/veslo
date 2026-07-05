@@ -9,9 +9,7 @@
   "mcp": {
     "control-chrome": {
       "command": [
-        "npx",
-        "-y",
-        "chrome-devtools-mcp@latest",
+        "chrome-devtools-mcp",
         "--isolated"
       ],
       "type": "local"
@@ -31,15 +29,10 @@
           "reasoning": true,
           "options": {
             "reasoningEffort": "high",
-            "reasoningSummary": "auto",
-            "textVerbosity": "low"
+            "textVerbosity": "low",
+            "reasoningSummary": "auto"
           },
           "variants": {
-            "high": {
-              "reasoningEffort": "high",
-              "reasoningSummary": "auto",
-              "textVerbosity": "low"
-            },
             "low": {
               "reasoningEffort": "low",
               "reasoningSummary": "auto",
@@ -47,6 +40,11 @@
             },
             "medium": {
               "reasoningEffort": "medium",
+              "reasoningSummary": "auto",
+              "textVerbosity": "low"
+            },
+            "high": {
+              "reasoningEffort": "high",
               "reasoningSummary": "auto",
               "textVerbosity": "low"
             },
