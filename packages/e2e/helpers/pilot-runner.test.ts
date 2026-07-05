@@ -22,6 +22,7 @@ import {
   scenarioSelectionNeedsNoWorkspaceProfile,
   scenarioSelectionNeedsPortContentionFixture,
   scenarioSelectionNeedsSkillRegistryAuthFixture,
+  scenarioSelectionNeedsLegacySoulRuntime,
   scenarioSelectionNeedsSkillRegistryWorkspaceEventFixture,
   scenarioSelectionNeedsAutomationSecondaryWorkspace,
 } from './pilot-runner.js';
@@ -100,7 +101,7 @@ test('automation pilot scenario requests the secondary workspace fixture', () =>
   );
 });
 
-test('soul dashboard pilot scenario requests skill registry Den auth fixture', () => {
+test('soul pilot scenarios request skill registry Den auth fixture', () => {
   const e2eRoot = '/repo/packages/e2e';
 
   assert.equal(
@@ -108,7 +109,24 @@ test('soul dashboard pilot scenario requests skill registry Den auth fixture', (
     true,
   );
   assert.equal(
+    scenarioSelectionNeedsSkillRegistryAuthFixture(resolvePilotScenarioSelection({ scenario: ['soul-den-local'] }, e2eRoot)),
+    true,
+  );
+  assert.equal(
     scenarioSelectionNeedsSkillRegistryAuthFixture(resolvePilotScenarioSelection({ scenario: ['navigation'] }, e2eRoot)),
+    false,
+  );
+});
+
+test('soul-den-local pilot scenario requests legacy manifestless Soul runtime fixture', () => {
+  const e2eRoot = '/repo/packages/e2e';
+
+  assert.equal(
+    scenarioSelectionNeedsLegacySoulRuntime(resolvePilotScenarioSelection({ scenario: ['soul-den-local'] }, e2eRoot)),
+    true,
+  );
+  assert.equal(
+    scenarioSelectionNeedsLegacySoulRuntime(resolvePilotScenarioSelection({ scenario: ['navigation'] }, e2eRoot)),
     false,
   );
 });

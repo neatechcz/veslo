@@ -304,6 +304,7 @@ async function targetConflicts(
       continue;
     }
     if (!targetExists) continue;
+    if (await existingFileMatchesSnapshot(snapshot)) continue;
     conflicts.push({
       path: snapshot.absolutePath,
       relativePath: snapshot.relativePath,
@@ -350,6 +351,22 @@ async function existingFileMatchesManifest(path: string, entry: SoulMaterializat
   const content = await readFile(path, "utf8");
   if (sha256(content) === entry.contentSha256) return true;
   return sha256(normalizeExistingManagedContent(content)) === entry.contentSha256;
+}
+
+async function existingFileMatchesSnapshot(snapshot: SourceSnapshot): Promise<boolean> {
+  const content = await readFile(snapshot.absolutePath, "utf8");
+  const knownHashes = snapshotKnownManagedContentHashes(snapshot);
+  if (knownHashes.has(sha256(content))) return true;
+  return knownHashes.has(sha256(normalizeExistingManagedContent(content)));
+}
+
+function snapshotKnownManagedContentHashes(snapshot: SourceSnapshot): Set<string> {
+  const hashes = new Set<string>();
+  hashes.add(sha256(normalizeManagedFileContent(snapshot.content)));
+  for (const version of snapshot.document?.versions ?? []) {
+    hashes.add(sha256(normalizeManagedFileContent(version.content)));
+  }
+  return hashes;
 }
 
 async function ensureSoulInstructions(configPath: string): Promise<void> {

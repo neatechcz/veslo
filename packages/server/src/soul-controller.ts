@@ -21,6 +21,7 @@ import {
   clearPendingSoulEdits,
   listPendingSoulEdits,
   readCachedSoulDocument,
+  readSingleCachedSoulDocument,
   type SoulPendingEdit,
 } from "./soul-cache.js";
 import {
@@ -292,7 +293,9 @@ export function createSoulController() {
     ownerId: string | undefined,
     workspaceRoot?: string,
   ): Promise<SoulDocument | null> {
-    const cached = ownerId ? await readCachedSoulDocument({ dataDir, scope, ownerId }) : null;
+    const cached = ownerId
+      ? await readCachedSoulDocument({ dataDir, scope, ownerId })
+      : await readSingleCachedSoulDocument({ dataDir, scope });
     if (cached) return cached;
     const existing = workspaceRoot
       ? await readMaterializedSoulDocumentForScope(workspaceRoot, scope)

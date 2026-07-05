@@ -184,6 +184,68 @@ test("existing unmanaged Soul target files are not overwritten and return action
   expect(await readFile(join(workspaceRoot, ".opencode", "soul-user.md"), "utf8")).toBe("User-authored memory\n");
 });
 
+test("manifestless Soul runtime files that already match source documents are adopted", async () => {
+  const workspaceRoot = await tempDir("veslo-soul-materializer-adopt-");
+  await mkdir(join(workspaceRoot, ".opencode"), { recursive: true });
+  await writeFile(join(workspaceRoot, ".opencode", "soul-company.md"), "Organization memory\n", "utf8");
+  await writeFile(join(workspaceRoot, ".opencode", "soul-user.md"), "User memory\n", "utf8");
+  await writeFile(join(workspaceRoot, ".opencode", "soul-workspace.md"), "Workspace memory\n", "utf8");
+
+  const result = await materializeEffectiveSoul({ workspaceRoot, ...soulDocs() });
+
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error(result.message);
+  const manifest = JSON.parse(await readFile(soulMaterializationManifestPath(workspaceRoot), "utf8")) as SoulMaterializationManifest;
+  expect(manifest.files).toContainEqual(expect.objectContaining({
+    path: ".opencode/soul-company.md",
+    scope: "organization",
+    currentVersionId: "org_v1",
+  }));
+  expect(await readFile(join(workspaceRoot, ".opencode", "soul-company.md"), "utf8")).toBe("Organization memory\n");
+  expect(await readFile(join(workspaceRoot, ".opencode", "soul-user.md"), "utf8")).toBe("User memory\n");
+  expect(await readFile(join(workspaceRoot, ".opencode", "soul-workspace.md"), "utf8")).toBe("Workspace memory\n");
+});
+
+test("manifestless Soul runtime files matching previous source versions are adopted and updated", async () => {
+  const workspaceRoot = await tempDir("veslo-soul-materializer-adopt-version-");
+  await mkdir(join(workspaceRoot, ".opencode"), { recursive: true });
+  await writeFile(join(workspaceRoot, ".opencode", "soul-company.md"), "Organization memory\n", "utf8");
+  await writeFile(join(workspaceRoot, ".opencode", "soul-user.md"), "User memory\n", "utf8");
+  await writeFile(join(workspaceRoot, ".opencode", "soul-workspace.md"), "Workspace memory\n", "utf8");
+  const initial = soulDocs();
+  const updatedOrganization: SoulDocument = {
+    ...initial.organization,
+    currentVersionId: "org_v2",
+    versions: [
+      ...initial.organization.versions,
+      {
+        id: "org_v2",
+        content: "Updated organization memory",
+        changeSummary: "Update organization",
+        createdAt: "2026-06-05T11:00:00.000Z",
+        createdBy: "user_1",
+        source: "api",
+        baseVersionId: "org_v1",
+        restoreSourceVersionId: null,
+      },
+    ],
+  };
+
+  const result = await materializeEffectiveSoul({
+    workspaceRoot,
+    ...initial,
+    organization: updatedOrganization,
+  });
+
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error(result.message);
+  const manifest = JSON.parse(await readFile(soulMaterializationManifestPath(workspaceRoot), "utf8")) as SoulMaterializationManifest;
+  expect(manifest.composition.currentVersionIds.organization).toBe("org_v2");
+  expect(await readFile(join(workspaceRoot, ".opencode", "soul-company.md"), "utf8")).toBe("Updated organization memory\n");
+  expect(await readFile(join(workspaceRoot, ".opencode", "soul-user.md"), "utf8")).toBe("User memory\n");
+  expect(await readFile(join(workspaceRoot, ".opencode", "soul-workspace.md"), "utf8")).toBe("Workspace memory\n");
+});
+
 test("manifest-owned files with local edits are not overwritten", async () => {
   const workspaceRoot = await tempDir("veslo-soul-materializer-drift-");
   const initial = soulDocs();

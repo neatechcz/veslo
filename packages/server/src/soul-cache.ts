@@ -20,6 +20,10 @@ export type ReadCachedSoulDocumentInput = SoulCacheInput & {
   ownerId: string;
 };
 
+export type ReadSingleCachedSoulDocumentInput = SoulCacheInput & {
+  scope: SoulScope;
+};
+
 export type SoulPendingEditDraft = {
   scope: SoulScope;
   ownerId: string;
@@ -204,6 +208,30 @@ export async function readCachedSoulDocument(input: ReadCachedSoulDocumentInput)
   } catch {
     return null;
   }
+}
+
+export async function readSingleCachedSoulDocument(input: ReadSingleCachedSoulDocumentInput): Promise<SoulDocument | null> {
+  const dir = join(soulCacheRoot(input.dataDir), input.scope);
+  if (!(await exists(dir))) return null;
+
+  const documentsByOwnerId = new Map<string, SoulDocument>();
+  const entries = (await readdir(dir, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => entry.name)
+    .sort();
+
+  for (const entry of entries) {
+    try {
+      const parsed = JSON.parse(await readFile(join(dir, entry), "utf8")) as SoulDocument;
+      const document = validateSoulDocumentForCache(parsed);
+      if (document.scope !== input.scope) continue;
+      documentsByOwnerId.set(document.ownerId, document);
+    } catch {
+      continue;
+    }
+  }
+
+  return documentsByOwnerId.size === 1 ? [...documentsByOwnerId.values()][0] ?? null : null;
 }
 
 export async function writePendingSoulEdit(input: WritePendingSoulEditInput): Promise<SoulPendingEdit> {

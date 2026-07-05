@@ -215,6 +215,32 @@ test('seedDefaultWorkspaceState skips network-backed enterprise creators for det
   }
 });
 
+test('seedDefaultWorkspaceState can seed legacy manifestless Soul runtime files', () => {
+  const root = mkdtempSync(join(tmpdir(), 'veslo-e2e-home-'));
+  try {
+    seedDefaultWorkspaceState(root, {
+      E2E_SEED_LEGACY_SOUL_RUNTIME: '1',
+    });
+
+    const workspacePath = join(root, 'workspaces', 'visual-workspace');
+    assert.equal(
+      readFileSync(join(workspacePath, '.opencode', 'soul-company.md'), 'utf8'),
+      '# Organization Soul\n\n- Existing organization memory\n',
+    );
+    assert.equal(
+      readFileSync(join(workspacePath, '.opencode', 'soul-user.md'), 'utf8'),
+      '# User Soul\n',
+    );
+    assert.equal(
+      readFileSync(join(workspacePath, '.opencode', 'soul-workspace.md'), 'utf8'),
+      '',
+    );
+    assert.equal(existsSync(join(workspacePath, '.opencode', 'veslo', 'soul-manifest.json')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('seedDefaultWorkspaceState can seed all skill enable inventory scopes', () => {
   const root = mkdtempSync(join(tmpdir(), 'veslo-e2e-home-'));
   const configRoot = join(root, '.config');

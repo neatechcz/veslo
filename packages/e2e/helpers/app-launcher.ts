@@ -385,6 +385,10 @@ function shouldSeedSkillEnableInventory(env: NodeJS.ProcessEnv): boolean {
   return env.E2E_SEED_SKILL_ENABLE_INVENTORY?.trim() === '1';
 }
 
+function shouldSeedLegacySoulRuntime(env: NodeJS.ProcessEnv): boolean {
+  return env.E2E_SEED_LEGACY_SOUL_RUNTIME?.trim() === '1';
+}
+
 function shouldSkipDefaultWorkspaceState(env: NodeJS.ProcessEnv): boolean {
   return env.E2E_SKIP_DEFAULT_WORKSPACE_STATE?.trim() === '1';
 }
@@ -527,6 +531,11 @@ export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv):
     join(opencodePath, ENTERPRISE_CREATOR_SEED_MARKER),
     'skipped for deterministic e2e fixture\n',
   );
+  if (shouldSeedLegacySoulRuntime(env)) {
+    writeFileSync(join(opencodePath, 'soul-company.md'), '# Organization Soul\n\n- Existing organization memory\n');
+    writeFileSync(join(opencodePath, 'soul-user.md'), '# User Soul\n');
+    writeFileSync(join(opencodePath, 'soul-workspace.md'), '');
+  }
   if (shouldSeedSkillEnableInventory(env)) {
     seedSkillEnableInventoryFixture({ root, workspacePath, env });
   }

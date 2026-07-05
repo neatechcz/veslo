@@ -1,4 +1,4 @@
-﻿import { mkdtemp, readFile, rm } from "node:fs/promises";
+﻿import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "bun:test";
@@ -503,6 +503,101 @@ test("PATCH /soul/organization uses request Den base header when server Den base
   });
 });
 
+test("PATCH /soul/organization materializes cached User Soul when the mutation omits user identity", async () => {
+  const initialOrganization = document({
+    scope: "organization",
+    ownerId: "org_1",
+    versionId: "org_v1",
+    content: "# Organization Soul\n\n- Existing organization memory",
+    createdBy: "admin_1",
+  });
+  const user = document({
+    scope: "user",
+    ownerId: "user_1",
+    versionId: "user_v1",
+    content: "# User Soul\n\n- Existing user memory",
+  });
+  const updatedOrganization = document({
+    scope: "organization",
+    ownerId: "org_1",
+    versionId: "org_v2",
+    content: "# Organization Soul\n\n- Updated organization memory",
+    createdBy: "admin_1",
+  });
+  updatedOrganization.versions.push(...initialOrganization.versions);
+  const den = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request) => {
+      const url = new URL(request.url);
+      if (request.method === "GET" && url.pathname === "/v1/soul/organization") {
+        return Response.json(initialOrganization);
+      }
+      if (request.method === "GET" && url.pathname === "/v1/soul/user") {
+        return Response.json(user);
+      }
+      if (request.method === "PATCH" && url.pathname === "/v1/soul/organization") {
+        return Response.json(updatedOrganization);
+      }
+      return Response.json({ code: "not_found" }, { status: 404 });
+    },
+  });
+  runningServers.push(den as { stop?: (closeActiveConnections?: boolean) => void });
+  const server = await startFixture({ denApiBase: `http://127.0.0.1:${den.port}` });
+  const workspaceRoot = tempDirs[tempDirs.length - 2]!;
+  const inactiveWorkspaceRoot = tempDirs[tempDirs.length - 1]!;
+
+  const overview = await fetch(`http://127.0.0.1:${server.port}/soul`, { headers: denHeaders });
+  expect(overview.status).toBe(200);
+
+  for (const root of [workspaceRoot, inactiveWorkspaceRoot]) {
+    const opencodeDir = join(root, ".opencode");
+    await mkdir(opencodeDir, { recursive: true });
+    await writeFile(join(opencodeDir, "soul-company.md"), `${initialOrganization.versions[0].content}\n`, "utf8");
+    await writeFile(join(opencodeDir, "soul-user.md"), `${user.versions[0].content}\n`, "utf8");
+    await writeFile(join(opencodeDir, "soul-workspace.md"), "", "utf8");
+  }
+
+  const organizationOnlyHeaders = {
+    ...clientHeaders,
+    "x-veslo-den-token": "den-token",
+    "x-veslo-den-org-id": "org_1",
+    "content-type": "application/json",
+  };
+  const response = await fetch(`http://127.0.0.1:${server.port}/soul/organization`, {
+    method: "PATCH",
+    headers: organizationOnlyHeaders,
+    body: JSON.stringify({
+      content: updatedOrganization.versions[0].content,
+      changeSummary: "Update organization only",
+      baseVersionId: "org_v1",
+    }),
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as {
+    materialization?: {
+      ok: boolean;
+      workspaces: Array<{ workspaceId: string; result: { ok: boolean; status: string; pending: boolean } }>;
+    };
+  };
+  expect(payload.materialization?.ok).toBe(true);
+  expect(payload.materialization?.workspaces).toEqual([
+    expect.objectContaining({
+      workspaceId: "ws_active",
+      result: expect.objectContaining({ ok: true, status: "current", pending: false }),
+    }),
+    expect.objectContaining({
+      workspaceId: "ws_inactive",
+      result: expect.objectContaining({ ok: true, status: "current", pending: false }),
+    }),
+  ]);
+  expect(await readFile(join(workspaceRoot, ".opencode", "soul-company.md"), "utf8")).toBe(`${updatedOrganization.versions[0].content}\n`);
+  expect(await readFile(join(workspaceRoot, ".opencode", "soul-user.md"), "utf8")).toBe(`${user.versions[0].content}\n`);
+  expect(await readFile(join(inactiveWorkspaceRoot, ".opencode", "soul-company.md"), "utf8")).toBe(`${updatedOrganization.versions[0].content}\n`);
+  expect(await readFile(join(inactiveWorkspaceRoot, ".opencode", "soul-user.md"), "utf8")).toBe(`${user.versions[0].content}\n`);
+});
+
 test("PATCH /soul/user creates a local version when Den is unavailable", async () => {
   const server = await startFixture();
   const dataDir = tempDirs[tempDirs.length - 3]!;
@@ -624,17 +719,32 @@ test("successful Den user read clears stale offline pending edits", async () => 
   });
   runningServers.push(den as { stop?: (closeActiveConnections?: boolean) => void });
   const server = await startFixture();
+  const dataDir = tempDirs[tempDirs.length - 3]!;
 
-  const offlinePatch = await fetch(`http://127.0.0.1:${server.port}/soul/user`, {
-    method: "PATCH",
-    headers: { ...denHeaders, "content-type": "application/json" },
-    body: JSON.stringify({
+  await writePendingSoulEdit({
+    dataDir,
+    edit: {
+      scope: "user",
+      ownerId: "user_1",
       content: "Offline user memory",
       changeSummary: "Queue offline user memory",
       baseVersionId: null,
-    }),
+      createdAt: "2026-06-05T09:00:00.000Z",
+      createdBy: "user_1",
+    },
   });
-  expect(offlinePatch.status).toBe(202);
+
+  const offlineRead = await fetch(`http://127.0.0.1:${server.port}/soul/user`, { headers: denHeaders });
+  expect(offlineRead.status).toBe(200);
+  const pendingPayload = await offlineRead.json() as {
+    summary: { status: string; currentVersionId: string | null };
+    pendingEdits?: unknown[];
+    denSynced?: boolean;
+  };
+  expect(pendingPayload.summary.status).toBe("pending");
+  expect(pendingPayload.summary.currentVersionId).toBeNull();
+  expect(pendingPayload.pendingEdits).toHaveLength(1);
+  expect(pendingPayload.denSynced).toBe(false);
 
   const onlineRead = await fetch(`http://127.0.0.1:${server.port}/soul/user`, {
     headers: {

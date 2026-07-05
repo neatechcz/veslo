@@ -141,6 +141,9 @@ context is available and must preserve already materialized files when a later
 provision call lacks Den context. If materialization reports a conflict or
 status that needs action, the UI should show actionable diagnostics rather than
 exposing a manual sync choice.
+Manifestless `.opencode/soul-*.md` runtime files are adopted as legacy Veslo
+output only when their content matches a current or historical Soul source
+version; unrelated unmanaged files remain protected from overwrite.
 
 ## Heartbeat Triggering
 

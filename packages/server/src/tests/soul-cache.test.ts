@@ -9,6 +9,7 @@ import {
   clearPendingSoulEdits,
   listPendingSoulEdits,
   readCachedSoulDocument,
+  readSingleCachedSoulDocument,
   soulCachePath,
   writePendingSoulEdit,
 } from "../soul-cache.js";
@@ -93,6 +94,24 @@ describe("soul cache", () => {
 
     await expect(readCachedSoulDocument({ dataDir, scope: "organization", ownerId: "org_123" })).resolves.toEqual(orgSoul);
     await expect(readCachedSoulDocument({ dataDir, scope: "workspace", ownerId: "workspace_123" })).resolves.toEqual(workspaceSoul);
+  });
+
+  test("reads a single cached document for materialization when owner identity is unavailable", async () => {
+    const dataDir = await tempDataDir();
+    const userSoul = document("user", "user_123");
+
+    await cacheSoulDocument({ dataDir, document: userSoul });
+
+    await expect(readSingleCachedSoulDocument({ dataDir, scope: "user" })).resolves.toEqual(userSoul);
+  });
+
+  test("does not infer a cached document when multiple owners exist for a scope", async () => {
+    const dataDir = await tempDataDir();
+
+    await cacheSoulDocument({ dataDir, document: document("user", "user_123") });
+    await cacheSoulDocument({ dataDir, document: document("user", "user_456") });
+
+    await expect(readSingleCachedSoulDocument({ dataDir, scope: "user" })).resolves.toBeNull();
   });
 
   test("serves no cached document when the cache file is missing or invalid", async () => {

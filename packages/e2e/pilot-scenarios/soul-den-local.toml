@@ -43,24 +43,11 @@ expected = "/dashboard/soul"
 timeout_ms = 10000
 
 [[step]]
-name = "soul page is ready"
+name = "start soul page ready watcher"
 action = "eval"
-timeout_ms = 40000
 script = '''
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const waitUntil = async (predicate, options = {}) => {
-  const timeout = options.timeout ?? 30000;
-  const interval = options.interval ?? 250;
-  const message = options.message ?? "Condition was not met";
-  const deadline = Date.now() + timeout;
-  let latest = null;
-  while (Date.now() < deadline) {
-    latest = await predicate();
-    if (latest) return latest;
-    await sleep(interval);
-  }
-  throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
-};
+document.body.removeAttribute("data-soul-page-ready");
+document.body.removeAttribute("data-soul-page-error");
 const pageState = () => {
   const text = document.body.textContent ?? "";
   const orgText = document.querySelector('[data-testid="soul-organization-source"]')?.textContent ?? "";
@@ -81,14 +68,26 @@ const pageState = () => {
     error: text.includes("Soul Den") || text.includes("Failed to fetch"),
   };
 };
-await waitUntil(() => {
+const checkReady = () => {
   const state = pageState();
-  return state.hasOrg && state.hasUser && state.orgEditable && state.userEditable && !state.loading && !state.error ? state : false;
-}, {
-  message: "Soul page did not become ready with editable User and Organization sources",
-});
+  if (state.hasOrg && state.hasUser && state.orgEditable && state.userEditable && !state.loading && !state.error) {
+    document.body.setAttribute("data-soul-page-ready", "1");
+    return;
+  }
+  if (state.error) {
+    document.body.setAttribute("data-soul-page-error", JSON.stringify(state).slice(0, 500));
+  }
+  window.setTimeout(checkReady, 250);
+};
+checkReady();
 true;
 '''
+
+[[step]]
+name = "soul page is ready"
+action = "wait"
+target = "body[data-soul-page-ready=\"1\"]"
+timeout_ms = 40000
 
 [[step]]
 name = "open organization soul"
@@ -161,6 +160,7 @@ await waitUntil(() => !save.disabled, { message: "Organization Soul save did not
 save.click();
 document.body.removeAttribute("data-soul-organization-saved");
 document.body.removeAttribute("data-soul-save-error");
+const normalize = (value) => value.endsWith("\n") ? value.slice(0, -1) : value;
 const checkSaved = () => {
   const modal = document.querySelector('[data-testid="soul-source-modal"]');
   const content = document.querySelector('[data-testid="soul-editor-content"]');
@@ -169,9 +169,11 @@ const checkSaved = () => {
     document.body.setAttribute("data-soul-save-error", text.slice(0, 1000));
     return;
   }
+  const stillSaving = save.textContent?.includes("Saving") || save.textContent?.includes("Uklád");
   if (content instanceof HTMLTextAreaElement &&
-    content.value === data.orgContent &&
-    text.includes(data.orgSummary)) {
+    normalize(content.value) === normalize(data.orgContent) &&
+    save.disabled &&
+    !stillSaving) {
     document.body.setAttribute("data-soul-organization-saved", "1");
     return;
   }
@@ -186,6 +188,22 @@ name = "organization save visible"
 action = "wait"
 target = "body[data-soul-organization-saved=\"1\"]"
 timeout_ms = 40000
+
+[[step]]
+name = "organization save has no workspace write conflict"
+action = "eval"
+script = '''
+const diagnostics = document.querySelector('[data-testid="soul-materialization-diagnostics"]');
+const text = diagnostics?.textContent ?? "";
+if (
+  diagnostics ||
+  text.includes("unmanaged_target_exists") ||
+  text.includes("Refusing to overwrite Soul runtime files")
+) {
+  throw new Error(`Unexpected Soul materialization diagnostic after organization save: ${text}`);
+}
+true;
+'''
 
 [[step]]
 name = "open user soul"
@@ -258,6 +276,7 @@ await waitUntil(() => !save.disabled, { message: "User Soul save did not become 
 save.click();
 document.body.removeAttribute("data-soul-user-saved");
 document.body.removeAttribute("data-soul-save-error");
+const normalize = (value) => value.endsWith("\n") ? value.slice(0, -1) : value;
 const checkSaved = () => {
   const modal = document.querySelector('[data-testid="soul-source-modal"]');
   const content = document.querySelector('[data-testid="soul-editor-content"]');
@@ -266,9 +285,11 @@ const checkSaved = () => {
     document.body.setAttribute("data-soul-save-error", text.slice(0, 1000));
     return;
   }
+  const stillSaving = save.textContent?.includes("Saving") || save.textContent?.includes("Uklád");
   if (content instanceof HTMLTextAreaElement &&
-    content.value === data.userContent &&
-    text.includes(data.userSummary)) {
+    normalize(content.value) === normalize(data.userContent) &&
+    save.disabled &&
+    !stillSaving) {
     document.body.setAttribute("data-soul-user-saved", "1");
     return;
   }
@@ -283,6 +304,22 @@ name = "user save visible"
 action = "wait"
 target = "body[data-soul-user-saved=\"1\"]"
 timeout_ms = 40000
+
+[[step]]
+name = "user save has no workspace write conflict"
+action = "eval"
+script = '''
+const diagnostics = document.querySelector('[data-testid="soul-materialization-diagnostics"]');
+const text = diagnostics?.textContent ?? "";
+if (
+  diagnostics ||
+  text.includes("unmanaged_target_exists") ||
+  text.includes("Refusing to overwrite Soul runtime files")
+) {
+  throw new Error(`Unexpected Soul materialization diagnostic after user save: ${text}`);
+}
+true;
+'''
 
 [[step]]
 name = "close soul modal"

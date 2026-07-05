@@ -115,7 +115,14 @@ export function scenarioSelectionNeedsAutomationSecondaryWorkspace(scenarios: st
 }
 
 export function scenarioSelectionNeedsSkillRegistryAuthFixture(scenarios: string[]): boolean {
-  return scenarios.some((scenario) => scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/soul-dashboard.toml'));
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/soul-dashboard.toml') ||
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/soul-den-local.toml'),
+  );
+}
+
+export function scenarioSelectionNeedsLegacySoulRuntime(scenarios: string[]): boolean {
+  return scenarios.some((scenario) => scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/soul-den-local.toml'));
 }
 
 export function scenarioSelectionNeedsSkillEnableInventoryFixture(scenarios: string[]): boolean {
@@ -340,6 +347,9 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   }
   if (scenarioSelectionNeedsSkillRegistryAuthFixture(scenarios)) {
     process.env.E2E_SKILL_REGISTRY_AUTH_BASE ||= 'fixture';
+  }
+  if (scenarioSelectionNeedsLegacySoulRuntime(scenarios)) {
+    process.env.E2E_SEED_LEGACY_SOUL_RUNTIME ||= '1';
   }
   if (scenarioSelectionNeedsSkillEnableInventoryFixture(scenarios)) {
     process.env.E2E_SEED_SKILL_ENABLE_INVENTORY ||= '1';
