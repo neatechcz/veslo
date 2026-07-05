@@ -382,6 +382,12 @@ export default function SoulView(props: SoulViewProps) {
   const saveSelectedSoul = controller.saveSelectedSoul;
   const restoreSelectedVersion = controller.restoreSelectedVersion;
   const toggleWorkspaceHeartbeat = controller.toggleWorkspaceHeartbeat;
+  const modalReady = createMemo(() =>
+    !detailLoading() &&
+    !historyLoading() &&
+    !detailError() &&
+    !historyError(),
+  );
 
   const editabilityLabel = (summary?: VesloSoulSummary | null) =>
     (summary?.canEdit ?? selectedCanEdit()) ? translate("soul.editable") : translate("soul.read_only");
@@ -606,6 +612,7 @@ export default function SoulView(props: SoulViewProps) {
           <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
             <div
               data-testid="soul-source-modal"
+              data-soul-modal-ready={modalReady() ? "true" : "false"}
               role="dialog"
               aria-modal="true"
               aria-labelledby="soul-source-modal-title"

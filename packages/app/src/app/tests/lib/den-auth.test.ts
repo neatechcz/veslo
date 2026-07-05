@@ -842,6 +842,57 @@ test("hydrateDenAuthFromDesktopSnapshot preserves browser auth when snapshot mat
   }
 });
 
+test("hydrateDenAuthFromDesktopSnapshot replaces same-user browser auth from explicit E2E seed", async () => {
+  const currentAuth = {
+    denApiBase: "http://127.0.0.1:57362",
+    token: "token_stale_fixture",
+    orgId: "org_veslo_e2e_default",
+    user: { id: "user_veslo_e2e_default_fixture", email: "veslo-registry-e2e@example.test" },
+    org: { id: "org_veslo_e2e_default", slug: "veslo-e2e" },
+  };
+  const snapshotAuth = {
+    denApiBase: "http://127.0.0.1:56357",
+    token: "veslo-e2e-default-token",
+    orgId: "org_veslo_e2e_default",
+    user: { id: "user_veslo_e2e_default_fixture", email: "veslo-registry-e2e@example.test" },
+    org: { id: "org_veslo_e2e_default", slug: "veslo-e2e" },
+  };
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  const storage = installDomStorage({
+    tauriInvoke: async (command, args) => {
+      calls.push({ command, args });
+      if (command === "den_auth_snapshot_read") {
+        return {
+          authJson: JSON.stringify(snapshotAuth),
+          keepSignedIn: true,
+          source: "e2e-env",
+        };
+      }
+      if (command === "den_auth_snapshot_write") {
+        return null;
+      }
+      throw new Error(`Unexpected invoke command: ${command}`);
+    },
+  });
+
+  try {
+    writeDenAuth(currentAuth);
+    await flushPendingDesktopSnapshotWrite();
+    calls.length = 0;
+
+    const imported = await hydrateDenAuthFromDesktopSnapshot();
+    await flushPendingDesktopSnapshotWrite();
+
+    assert.equal(imported, true);
+    assert.deepEqual(readDenAuth(), snapshotAuth);
+    const snapshotWrite = calls.filter((entry) => entry.command === "den_auth_snapshot_write").at(-1);
+    assert.ok(snapshotWrite);
+    assert.match(String(snapshotWrite.args?.authJson ?? ""), /veslo-e2e-default-token/);
+  } finally {
+    storage.restore();
+  }
+});
+
 test("hydrateDenAuthFromDesktopSnapshot preserves an existing browser language preference", async () => {
   const currentAuth = {
     denApiBase: "https://api.veslo.work",

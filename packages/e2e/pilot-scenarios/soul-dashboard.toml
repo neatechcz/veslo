@@ -56,7 +56,9 @@ const waitUntil = async (predicate, options = {}) => {
 };
 const pageIsIdle = () => {
   const text = document.body.textContent ?? "";
-  return ![
+  const orgText = document.querySelector('[data-testid="soul-organization-source"]')?.textContent ?? "";
+  const userText = document.querySelector('[data-testid="soul-user-source"]')?.textContent ?? "";
+  const loading = [
     "Refreshing Soul sources",
     "Obnovuji Soul zdroje",
     "Loading Soul details",
@@ -64,9 +66,14 @@ const pageIsIdle = () => {
     "Loading version history",
     "Načítám historii verzí",
   ].some((message) => text.includes(message));
+  return !loading &&
+    orgText.includes("Editable") &&
+    userText.includes("Editable") &&
+    !orgText.includes("Connect to Veslo server") &&
+    !userText.includes("Connect to Veslo server");
 };
 await waitUntil(pageIsIdle, {
-  message: "Soul page did not finish loading before opening modal",
+  message: "Soul page did not finish loading editable source summaries before opening modal",
 });
 true;
 '''
@@ -90,38 +97,9 @@ timeout_ms = 10000
 
 [[step]]
 name = "organization soul modal is idle"
-action = "eval"
-script = '''
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const waitUntil = async (predicate, options = {}) => {
-  const timeout = options.timeout ?? 8000;
-  const interval = options.interval ?? 250;
-  const message = options.message ?? "Condition was not met";
-  const deadline = Date.now() + timeout;
-  let latest = null;
-  while (Date.now() < deadline) {
-    latest = await predicate();
-    if (latest) return latest;
-    await sleep(interval);
-  }
-  throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
-};
-const pageIsIdle = () => {
-  const text = document.body.textContent ?? "";
-  return ![
-    "Refreshing Soul sources",
-    "Obnovuji Soul zdroje",
-    "Loading Soul details",
-    "Načítám detaily Soul",
-    "Loading version history",
-    "Načítám historii verzí",
-  ].some((message) => text.includes(message));
-};
-await waitUntil(pageIsIdle, {
-  message: "Soul modal did not finish loading",
-});
-true;
-'''
+action = "wait"
+target = "[data-testid=\"soul-source-modal\"][data-soul-modal-ready=\"true\"]"
+timeout_ms = 30000
 
 [[step]]
 name = "organization editor is editable"

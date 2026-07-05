@@ -357,6 +357,58 @@ test("GET /soul/organization uses request Den base header when server Den base i
   ]);
 });
 
+test("GET /soul/organization prefers request Den base header over configured server Den base", async () => {
+  const organization = document({
+    scope: "organization",
+    ownerId: "org_1",
+    versionId: "org_request_base_v1",
+    content: "Org memory from request Den",
+  });
+  const configuredDen = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => Response.json({ code: "wrong_den" }, { status: 401 }),
+  });
+  const requestDenCalls: Array<{ method: string; pathname: string; auth: string | null; org: string | null }> = [];
+  const requestDen = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request) => {
+      const url = new URL(request.url);
+      requestDenCalls.push({
+        method: request.method,
+        pathname: url.pathname,
+        auth: request.headers.get("authorization"),
+        org: request.headers.get("x-veslo-den-org-id"),
+      });
+      return Response.json(organization);
+    },
+  });
+  runningServers.push(configuredDen as { stop?: (closeActiveConnections?: boolean) => void });
+  runningServers.push(requestDen as { stop?: (closeActiveConnections?: boolean) => void });
+  const server = await startFixture({ denApiBase: `http://127.0.0.1:${configuredDen.port}` });
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/soul/organization`, {
+    headers: {
+      ...denHeaders,
+      "x-veslo-den-api-base": `http://127.0.0.1:${requestDen.port}`,
+    },
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as { document: SoulDocument; summary: { currentVersionId: string | null } };
+  expect(payload.document).toEqual(organization);
+  expect(payload.summary.currentVersionId).toBe("org_request_base_v1");
+  expect(requestDenCalls).toEqual([
+    {
+      method: "GET",
+      pathname: "/v1/soul/organization",
+      auth: "Bearer den-token",
+      org: "org_1",
+    },
+  ]);
+});
+
 test("PATCH /soul/organization requires Den auth and propagates Den 403", async () => {
   const denCalls: string[] = [];
   const den = Bun.serve({

@@ -158,9 +158,10 @@ export function createSoulController() {
       ctx.request.headers.get("x-veslo-user-id")?.trim() ||
       ctx.request.headers.get("x-veslo-account-id")?.trim() ||
       undefined;
+    const requestBaseUrl = normalizeHttpBaseUrl(ctx.request.headers.get("x-veslo-den-api-base"));
     const configuredBaseUrl = normalizeHttpBaseUrl(ctx.config.denApiBase);
     return {
-      baseUrl: configuredBaseUrl || normalizeHttpBaseUrl(ctx.request.headers.get("x-veslo-den-api-base")),
+      baseUrl: requestBaseUrl || configuredBaseUrl,
       denToken: ctx.request.headers.get("x-veslo-den-token")?.trim() || undefined,
       orgId: ctx.request.headers.get("x-veslo-den-org-id")?.trim() || undefined,
       userId,

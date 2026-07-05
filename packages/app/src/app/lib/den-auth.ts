@@ -518,6 +518,10 @@ function compareDenAuthIdentity(
   return "unknown";
 }
 
+function shouldPreserveSameIdentityBrowserAuth(snapshot: DenDesktopSnapshot | null): boolean {
+  return snapshot?.source?.trim() !== "e2e-env";
+}
+
 function restoreDesktopSnapshotUiState(
   localStore: Storage | null,
   snapshot: DenDesktopSnapshot | null,
@@ -587,7 +591,7 @@ export async function hydrateDenAuthFromDesktopSnapshot(): Promise<boolean> {
 
   if (currentAuth) {
     const identityComparison = compareDenAuthIdentity(currentAuth, state);
-    if (identityComparison !== "different") {
+    if (identityComparison !== "different" && shouldPreserveSameIdentityBrowserAuth(snapshot)) {
       const currentKeepSignedIn = readDenKeepSignedIn();
       syncDesktopSnapshotFromCurrentState();
       restoreDesktopSnapshotUiState(localStore, snapshot);

@@ -101,6 +101,10 @@ restore, reject stale `baseVersionId` writes, resolve User Soul to the
 authenticated Den user, and require organization admin access for Organization
 Soul writes. Version history lists return the newest versions first so the
 current saved version remains visible even when older history is paginated.
+When the desktop app calls the local Veslo server with Den context headers, the
+request `x-veslo-den-api-base` value takes precedence over the server's
+configured Den base for Soul requests. This keeps staging and E2E fixture tokens
+bound to the Den deployment that issued them.
 
 Soul updates may change the cached source document while an agent run is active,
 but runtime materialization must not write `.opencode` Soul files or instructions

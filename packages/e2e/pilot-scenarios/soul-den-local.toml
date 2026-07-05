@@ -63,9 +63,13 @@ const waitUntil = async (predicate, options = {}) => {
 };
 const pageState = () => {
   const text = document.body.textContent ?? "";
+  const orgText = document.querySelector('[data-testid="soul-organization-source"]')?.textContent ?? "";
+  const userText = document.querySelector('[data-testid="soul-user-source"]')?.textContent ?? "";
   return {
     hasOrg: Boolean(document.querySelector('[data-testid="soul-organization-source-open"]')),
     hasUser: Boolean(document.querySelector('[data-testid="soul-user-source-open"]')),
+    orgEditable: orgText.includes("Editable") && !orgText.includes("Connect to Veslo server"),
+    userEditable: userText.includes("Editable") && !userText.includes("Connect to Veslo server"),
     loading: [
       "Refreshing Soul sources",
       "Obnovuji Soul zdroje",
@@ -79,9 +83,9 @@ const pageState = () => {
 };
 await waitUntil(() => {
   const state = pageState();
-  return state.hasOrg && state.hasUser && !state.loading && !state.error ? state : false;
+  return state.hasOrg && state.hasUser && state.orgEditable && state.userEditable && !state.loading && !state.error ? state : false;
 }, {
-  message: "Soul page did not become ready with User and Organization sources",
+  message: "Soul page did not become ready with editable User and Organization sources",
 });
 true;
 '''
@@ -105,42 +109,9 @@ timeout_ms = 10000
 
 [[step]]
 name = "organization editor is ready"
-action = "eval"
+action = "wait"
+target = "[data-testid=\"soul-source-modal\"][data-soul-modal-ready=\"true\"] [data-testid=\"soul-editor-content\"]:not([readonly])"
 timeout_ms = 30000
-script = '''
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const waitUntil = async (predicate, options = {}) => {
-  const timeout = options.timeout ?? 20000;
-  const interval = options.interval ?? 250;
-  const message = options.message ?? "Condition was not met";
-  const deadline = Date.now() + timeout;
-  let latest = null;
-  while (Date.now() < deadline) {
-    latest = await predicate();
-    if (latest) return latest;
-    await sleep(interval);
-  }
-  throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
-};
-await waitUntil(() => {
-  const modalText = document.querySelector('[data-testid="soul-source-modal"]')?.textContent ?? "";
-  const content = document.querySelector('[data-testid="soul-editor-content"]');
-  const summary = document.querySelector('[data-testid="soul-change-summary"]');
-  const save = document.querySelector('[data-testid="soul-save-button"]');
-  const loading = modalText.includes("Loading Soul details") || modalText.includes("Loading version history");
-  return content instanceof HTMLTextAreaElement &&
-    summary instanceof HTMLInputElement &&
-    save instanceof HTMLButtonElement &&
-    !content.readOnly &&
-    !summary.disabled &&
-    !loading
-      ? { content: content.value, summary: summary.value }
-      : false;
-}, {
-  message: "Organization Soul editor did not become editable",
-});
-true;
-'''
 
 [[step]]
 name = "edit organization soul"
@@ -235,42 +206,9 @@ timeout_ms = 10000
 
 [[step]]
 name = "user editor is ready"
-action = "eval"
+action = "wait"
+target = "[data-testid=\"soul-source-modal\"][data-soul-modal-ready=\"true\"] [data-testid=\"soul-editor-content\"]:not([readonly])"
 timeout_ms = 30000
-script = '''
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const waitUntil = async (predicate, options = {}) => {
-  const timeout = options.timeout ?? 20000;
-  const interval = options.interval ?? 250;
-  const message = options.message ?? "Condition was not met";
-  const deadline = Date.now() + timeout;
-  let latest = null;
-  while (Date.now() < deadline) {
-    latest = await predicate();
-    if (latest) return latest;
-    await sleep(interval);
-  }
-  throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
-};
-await waitUntil(() => {
-  const modalText = document.querySelector('[data-testid="soul-source-modal"]')?.textContent ?? "";
-  const content = document.querySelector('[data-testid="soul-editor-content"]');
-  const summary = document.querySelector('[data-testid="soul-change-summary"]');
-  const save = document.querySelector('[data-testid="soul-save-button"]');
-  const loading = modalText.includes("Loading Soul details") || modalText.includes("Loading version history");
-  return content instanceof HTMLTextAreaElement &&
-    summary instanceof HTMLInputElement &&
-    save instanceof HTMLButtonElement &&
-    !content.readOnly &&
-    !summary.disabled &&
-    !loading
-      ? { content: content.value, summary: summary.value }
-      : false;
-}, {
-  message: "User Soul editor did not become editable",
-});
-true;
-'''
 
 [[step]]
 name = "edit user soul"
