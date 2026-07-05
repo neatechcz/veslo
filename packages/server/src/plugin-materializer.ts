@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { resolveVesloDataDir } from "./audit.js";
 import { readJsoncFile, updateJsoncTopLevel } from "./jsonc.js";
@@ -171,7 +171,7 @@ export async function readManagedPluginSpecManifest(path: string): Promise<Manag
 export async function readManagedPluginFileManifest(rootDir: string): Promise<ManagedPluginFileManifest | null> {
   const path = managedPluginFileManifestPath(rootDir);
   if (!(await exists(path))) return null;
-  return validateManagedPluginFileManifest(JSON.parse(await readFile(path, "utf8")));
+  return validateManagedPluginFileManifest(JSON.parse(await readFile(path, "utf8")), rootDir);
 }
 
 export async function materializePluginPolicies(
@@ -181,6 +181,7 @@ export async function materializePluginPolicies(
   const desiredPolicies = input.policies.filter(shouldMaterializePolicy);
   const configPolicies = desiredPolicies.filter((policy) => !isFilePolicy(policy));
   const filePolicies = desiredPolicies.filter(isFilePolicy);
+  validateDesiredFilePolicies(filePolicies);
 
   const projectConfig = await prepareConfigTarget({
     target: "project",
@@ -330,7 +331,7 @@ async function prepareFileTarget(input: {
   for (const policy of input.policies) {
     const pluginDir = pluginDirForPolicy(input.rootDir, policy);
     if (!(await exists(pluginDir))) continue;
-    const marker = await readManagedPluginFileMarker(pluginDir).catch(() => null);
+    const marker = await readManagedPluginFileMarker(pluginDir, input.rootDir).catch(() => null);
     if (marker?.policyId === policy.id && marker.managedBy === MANAGED_BY) continue;
     conflicts.push({
       code: "unmanaged_file_plugin_conflict",
@@ -346,8 +347,8 @@ async function prepareFileTarget(input: {
   for (const entry of previousManifest?.entries ?? []) {
     if (desiredPolicyIds.has(entry.policyId)) continue;
     if (!(await exists(entry.pluginDir))) continue;
-    const marker = await readManagedPluginFileMarker(entry.pluginDir).catch(() => null);
-    if (marker?.policyId === entry.policyId && marker.managedBy === MANAGED_BY) continue;
+    const marker = await readAlignedManagedPluginFileMarker(entry, input.rootDir).catch(() => null);
+    if (marker) continue;
     conflicts.push({
       code: "stale_file_plugin_unmarked",
       policyId: entry.policyId,
@@ -374,8 +375,8 @@ async function applyFileTarget(context: FileTargetContext): Promise<PluginMateri
   for (const entry of context.previousManifest?.entries ?? []) {
     if (desiredPolicyIds.has(entry.policyId)) continue;
     if (!(await exists(entry.pluginDir))) continue;
-    const marker = await readManagedPluginFileMarker(entry.pluginDir).catch(() => null);
-    if (marker?.policyId !== entry.policyId || marker.managedBy !== MANAGED_BY) continue;
+    const marker = await readAlignedManagedPluginFileMarker(entry, context.rootDir).catch(() => null);
+    if (!marker) continue;
     await removeManagedPluginFiles(entry, { removeMarker: true });
     removedPolicyIds.push(entry.policyId);
   }
@@ -418,7 +419,7 @@ async function writeFilePluginPolicy(
 
   const manifestFiles: ManagedPluginFileManifestFile[] = [];
   for (const file of files) {
-    const filePath = join(pluginDir, file.path);
+    const filePath = resolveContainedFilePath(pluginDir, file.path);
     await ensureDir(dirname(filePath));
     await writeFile(filePath, file.content, "utf8");
     manifestFiles.push({
@@ -476,8 +477,15 @@ async function writeManagedPluginFileManifest(
   await writeFile(managedPluginFileManifestPath(rootDir), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
-async function readManagedPluginFileMarker(pluginDir: string): Promise<ManagedPluginFileManifestEntry & { schemaVersion: 1; managedBy: typeof MANAGED_BY }> {
-  return validateManagedPluginFileMarker(JSON.parse(await readFile(managedPluginFileMarkerPath(pluginDir), "utf8")));
+async function readManagedPluginFileMarker(
+  pluginDir: string,
+  rootDir: string,
+): Promise<ManagedPluginFileManifestEntry & { schemaVersion: 1; managedBy: typeof MANAGED_BY }> {
+  return validateManagedPluginFileMarker(
+    JSON.parse(await readFile(managedPluginFileMarkerPath(pluginDir), "utf8")),
+    pluginDir,
+    rootDir,
+  );
 }
 
 async function writeManagedPluginFileMarker(
@@ -500,6 +508,12 @@ function shouldMaterializePolicy(policy: MaterializablePluginPolicy): boolean {
 
 function isFilePolicy(policy: MaterializablePluginPolicy): policy is MaterializablePluginPolicy & { files: MaterializablePluginFile[] } {
   return Array.isArray(policy.files) && policy.files.length > 0;
+}
+
+function validateDesiredFilePolicies(policies: Array<MaterializablePluginPolicy & { files: MaterializablePluginFile[] }>): void {
+  for (const policy of policies) {
+    normalizePluginFiles(policy.files);
+  }
 }
 
 function specManifestEntryForPolicy(
@@ -537,10 +551,7 @@ function normalizePluginFiles(files: MaterializablePluginFile[]): Materializable
     if (!isRecord(file) || typeof file.path !== "string" || typeof file.content !== "string") {
       throw new Error("Managed plugin file entries must include path and content");
     }
-    const path = file.path.trim();
-    if (!path || path.includes("\0") || isAbsolute(path) || path.split(/[\\/]+/).includes("..")) {
-      throw new Error("Managed plugin file path is invalid");
-    }
+    const path = normalizeManagedPluginFilePath(file.path);
     if (seen.has(path)) {
       throw new Error(`Managed plugin file path is duplicated: ${path}`);
     }
@@ -587,7 +598,7 @@ async function removeManagedPluginFiles(
   const directories = new Set<string>();
   for (const file of entry.files) {
     if (options.exceptPaths?.has(file.path)) continue;
-    const path = join(entry.pluginDir, file.path);
+    const path = resolveContainedFilePath(entry.pluginDir, file.path);
     await rm(path, { force: true });
     collectParentDirs(entry.pluginDir, dirname(path), directories);
   }
@@ -600,6 +611,21 @@ async function removeManagedPluginFiles(
     await rmdirIfEmpty(dir);
   }
   await rmdirIfEmpty(entry.pluginDir);
+}
+
+async function readAlignedManagedPluginFileMarker(
+  entry: ManagedPluginFileManifestEntry,
+  rootDir: string,
+): Promise<ManagedPluginFileManifestEntry & { schemaVersion: 1; managedBy: typeof MANAGED_BY } | null> {
+  const marker = await readManagedPluginFileMarker(entry.pluginDir, rootDir);
+  if (marker.policyId !== entry.policyId || marker.spec !== entry.spec || marker.target !== entry.target) return null;
+  if (resolve(marker.pluginDir) !== resolve(entry.pluginDir)) return null;
+  if (manifestFilePathsKey(marker.files) !== manifestFilePathsKey(entry.files)) return null;
+  return marker;
+}
+
+function manifestFilePathsKey(files: ManagedPluginFileManifestFile[]): string {
+  return files.map((file) => file.path).sort().join("\0");
 }
 
 function collectParentDirs(rootDir: string, dir: string, output: Set<string>): void {
@@ -699,7 +725,7 @@ function validateManagedPluginSpecManifestEntry(
   };
 }
 
-function validateManagedPluginFileManifest(value: unknown): ManagedPluginFileManifest {
+function validateManagedPluginFileManifest(value: unknown, rootDir: string): ManagedPluginFileManifest {
   if (!isRecord(value) || value.schemaVersion !== 1 || value.managedBy !== MANAGED_BY) {
     throw new Error("Managed plugin file manifest is invalid");
   }
@@ -713,12 +739,14 @@ function validateManagedPluginFileManifest(value: unknown): ManagedPluginFileMan
     managedBy: MANAGED_BY,
     target,
     generatedAt,
-    entries: value.entries.map((entry) => validateManagedPluginFileManifestEntry(entry, target)).sort(compareFileEntries),
+    entries: value.entries.map((entry) => validateManagedPluginFileManifestEntry(entry, target, { rootDir })).sort(compareFileEntries),
   };
 }
 
 function validateManagedPluginFileMarker(
   value: unknown,
+  expectedPluginDir: string,
+  rootDir: string,
 ): ManagedPluginFileManifestEntry & { schemaVersion: 1; managedBy: typeof MANAGED_BY } {
   if (!isRecord(value) || value.schemaVersion !== 1 || value.managedBy !== MANAGED_BY) {
     throw new Error("Managed plugin file marker is invalid");
@@ -726,13 +754,14 @@ function validateManagedPluginFileMarker(
   return {
     schemaVersion: 1,
     managedBy: MANAGED_BY,
-    ...validateManagedPluginFileManifestEntry(value, validateTarget(value.target)),
+    ...validateManagedPluginFileManifestEntry(value, validateTarget(value.target), { rootDir, expectedPluginDir }),
   };
 }
 
 function validateManagedPluginFileManifestEntry(
   value: unknown,
   target: PluginMaterializationTarget,
+  options: { rootDir?: string; expectedPluginDir?: string } = {},
 ): ManagedPluginFileManifestEntry {
   if (!isRecord(value)) throw new Error("Managed plugin file manifest entry is invalid");
   const policyId = stringValue(value.policyId);
@@ -744,6 +773,12 @@ function validateManagedPluginFileManifestEntry(
   if (!policyId || !spec || !displayName || !pluginDir || !materializedAt || !owner || !Array.isArray(value.files)) {
     throw new Error("Managed plugin file manifest entry is incomplete");
   }
+  const normalizedPluginDir = options.rootDir
+    ? resolveContainedPluginDir(options.rootDir, pluginDir)
+    : resolve(pluginDir);
+  if (options.expectedPluginDir && normalizedPluginDir !== resolve(options.expectedPluginDir)) {
+    throw new Error("Managed plugin file manifest pluginDir does not match marker location");
+  }
   return {
     policyId,
     spec,
@@ -751,13 +786,13 @@ function validateManagedPluginFileManifestEntry(
     target: validateTarget(value.target ?? target),
     source: validatePolicySource(value.source),
     owner,
-    pluginDir,
-    files: value.files.map(validateManagedPluginFile),
+    pluginDir: normalizedPluginDir,
+    files: value.files.map((file) => validateManagedPluginFile(file, normalizedPluginDir)),
     materializedAt,
   };
 }
 
-function validateManagedPluginFile(value: unknown): ManagedPluginFileManifestFile {
+function validateManagedPluginFile(value: unknown, pluginDir: string): ManagedPluginFileManifestFile {
   if (!isRecord(value)) throw new Error("Managed plugin file entry is invalid");
   const path = stringValue(value.path);
   const sha = stringValue(value.sha256);
@@ -765,12 +800,57 @@ function validateManagedPluginFile(value: unknown): ManagedPluginFileManifestFil
   if (!path || !sha || sizeBytes < 0) {
     throw new Error("Managed plugin file entry is incomplete");
   }
+  const normalizedPath = normalizeManagedPluginFilePath(path);
+  resolveContainedFilePath(pluginDir, normalizedPath);
   return {
-    path,
+    path: normalizedPath,
     sha256: sha,
     sizeBytes,
     executable: value.executable === true,
   };
+}
+
+function normalizeManagedPluginFilePath(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new Error("Managed plugin file path is invalid");
+  }
+  const path = value.trim();
+  const parts = path.split("/");
+  if (
+    !path ||
+    path === "." ||
+    path.includes("\0") ||
+    path.includes("\\") ||
+    /^[A-Za-z]:/.test(path) ||
+    isAbsolute(path) ||
+    parts.some((part) => !part || part === "." || part === "..")
+  ) {
+    throw new Error("Managed plugin file path is invalid");
+  }
+  return path;
+}
+
+function resolveContainedPluginDir(rootDir: string, pluginDir: string): string {
+  const root = resolve(rootDir);
+  const candidate = resolve(pluginDir);
+  if (!pathIsInside(root, candidate)) {
+    throw new Error("Managed plugin file manifest pluginDir must be inside the managed root");
+  }
+  return candidate;
+}
+
+function resolveContainedFilePath(pluginDir: string, filePath: string): string {
+  const root = resolve(pluginDir);
+  const candidate = resolve(root, filePath);
+  if (!pathIsInside(root, candidate)) {
+    throw new Error("Managed plugin file path escapes the managed plugin directory");
+  }
+  return candidate;
+}
+
+function pathIsInside(parent: string, child: string): boolean {
+  const relativePath = relative(parent, child);
+  return Boolean(relativePath) && !relativePath.startsWith("..") && !isAbsolute(relativePath);
 }
 
 function validateTarget(value: unknown): PluginMaterializationTarget {

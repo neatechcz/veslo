@@ -17,6 +17,7 @@ import {
 import { exists } from "./utils.js";
 import { validatePluginSpec } from "./validators.js";
 import {
+  managedPluginFileManifestPath,
   readManagedPluginFileManifest,
   readManagedPluginSpecManifest,
   type ManagedPluginFileManifestEntry,
@@ -28,6 +29,19 @@ export type ListPluginsOptions = {
   globalOwner?: ResourceOwner;
   dataDir?: string;
   userOpencodeConfigDir?: string;
+};
+
+export type PluginListWarning = {
+  code: "managed_plugin_manifest_invalid";
+  path: string;
+  source: "config.project" | "config.global" | "dir.project" | "dir.global";
+  message: string;
+};
+
+export type ListPluginsResult = {
+  items: PluginItem[];
+  loadOrder: string[];
+  warnings: PluginListWarning[];
 };
 
 export function normalizePluginSpec(spec: string): string {
@@ -83,9 +97,14 @@ async function listManagedPluginFiles(
   rootDir: string,
   scope: "project" | "global",
   fallbackOwner: ResourceOwner,
+  warnings: PluginListWarning[],
   workspaceRoot?: string,
 ): Promise<PluginItem[]> {
-  const manifest = await readManagedPluginFileManifest(rootDir).catch(() => null);
+  const manifest = await readManagedPluginFileManifestForList(
+    rootDir,
+    scope === "project" ? "dir.project" : "dir.global",
+    warnings,
+  );
   if (!manifest) return [];
 
   const items: PluginItem[] = [];
@@ -114,21 +133,33 @@ export async function listPlugins(
   workspaceRoot: string,
   includeGlobal: boolean,
   options: ListPluginsOptions = {},
-): Promise<{ items: PluginItem[]; loadOrder: string[] }> {
+): Promise<ListPluginsResult> {
   const { data: config } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
   const pluginSpecs = pluginListFromConfig(config);
   const workspaceOwner = options.workspaceOwner ?? workspaceResourceOwner({ root: workspaceRoot });
   const globalOwner = options.globalOwner ?? localUserResourceOwner();
-  const projectSpecManifest = await readManagedPluginSpecManifest(projectManagedPluginSpecManifestPath(workspaceRoot))
-    .catch(() => null);
+  const warnings: PluginListWarning[] = [];
+  const projectSpecManifestPath = projectManagedPluginSpecManifestPath(workspaceRoot);
+  const projectSpecManifest = await readManagedPluginSpecManifestForList(
+    projectSpecManifestPath,
+    "config.project",
+    warnings,
+  );
+  const projectSpecManifestWarning = latestManifestWarning(warnings, projectSpecManifestPath);
   const projectManagedSpecs = managedSpecEntryMap(projectSpecManifest?.entries ?? []);
   const items: PluginItem[] = pluginSpecs.map((spec) =>
-    configPluginItem(spec, "project", workspaceOwner, projectManagedSpecs)
+    configPluginItem(spec, "project", workspaceOwner, projectManagedSpecs, projectSpecManifestWarning)
   );
 
   const projectDir = projectPluginsDir(workspaceRoot);
   items.push(...(await listPluginFiles(projectDir, "project", workspaceOwner, workspaceRoot)));
-  items.push(...(await listManagedPluginFiles(projectManagedPluginsDir(workspaceRoot), "project", workspaceOwner, workspaceRoot)));
+  items.push(...(await listManagedPluginFiles(
+    projectManagedPluginsDir(workspaceRoot),
+    "project",
+    workspaceOwner,
+    warnings,
+    workspaceRoot,
+  )));
 
   if (includeGlobal) {
     const dataDir = options.dataDir?.trim() || resolveVesloDataDir();
@@ -136,21 +167,34 @@ export async function listPlugins(
       userOpencodeConfigPath(options.userOpencodeConfigDir),
       {} as Record<string, unknown>,
     );
-    const globalSpecManifest = await readManagedPluginSpecManifest(userManagedPluginSpecManifestPath(dataDir))
-      .catch(() => null);
+    const globalSpecManifestPath = userManagedPluginSpecManifestPath(dataDir);
+    const globalSpecManifest = await readManagedPluginSpecManifestForList(
+      globalSpecManifestPath,
+      "config.global",
+      warnings,
+    );
+    const globalSpecManifestWarning = latestManifestWarning(warnings, globalSpecManifestPath);
     const globalManagedSpecs = managedSpecEntryMap(globalSpecManifest?.entries ?? []);
     items.push(
-      ...pluginListFromConfig(globalConfig).map((spec) => configPluginItem(spec, "global", globalOwner, globalManagedSpecs)),
+      ...pluginListFromConfig(globalConfig).map((spec) =>
+        configPluginItem(spec, "global", globalOwner, globalManagedSpecs, globalSpecManifestWarning)
+      ),
     );
 
     const globalDir = userPluginsDir(options.userOpencodeConfigDir);
     items.push(...(await listPluginFiles(globalDir, "global", globalOwner)));
-    items.push(...(await listManagedPluginFiles(userManagedPluginsDir(options.userOpencodeConfigDir), "global", globalOwner)));
+    items.push(...(await listManagedPluginFiles(
+      userManagedPluginsDir(options.userOpencodeConfigDir),
+      "global",
+      globalOwner,
+      warnings,
+    )));
   }
 
   return {
     items,
     loadOrder: ["config.global", "config.project", "dir.global", "dir.project"],
+    warnings,
   };
 }
 
@@ -167,6 +211,7 @@ function configPluginItem(
   scope: "project" | "global",
   fallbackOwner: ResourceOwner,
   managedSpecs: Map<string, ManagedPluginSpecManifestEntry>,
+  manifestWarning?: PluginListWarning,
 ): PluginItem {
   const managedEntry = managedSpecs.get(spec);
   return {
@@ -181,8 +226,65 @@ function configPluginItem(
         displayName: managedEntry.displayName,
         target: managedEntry.target,
       }
-      : {}),
+      : manifestWarning
+        ? {
+          lifecycle: "conflict" as const,
+          conflict: manifestWarning.message,
+        }
+        : {}),
   };
+}
+
+async function readManagedPluginSpecManifestForList(
+  path: string,
+  source: PluginListWarning["source"],
+  warnings: PluginListWarning[],
+): Promise<Awaited<ReturnType<typeof readManagedPluginSpecManifest>>> {
+  try {
+    return await readManagedPluginSpecManifest(path);
+  } catch (error) {
+    warnings.push(managedManifestWarning(path, source, error, "Managed plugin spec manifest is invalid"));
+    return null;
+  }
+}
+
+async function readManagedPluginFileManifestForList(
+  rootDir: string,
+  source: PluginListWarning["source"],
+  warnings: PluginListWarning[],
+): Promise<Awaited<ReturnType<typeof readManagedPluginFileManifest>>> {
+  try {
+    return await readManagedPluginFileManifest(rootDir);
+  } catch (error) {
+    warnings.push(managedManifestWarning(
+      managedPluginFileManifestPath(rootDir),
+      source,
+      error,
+      "Managed plugin file manifest is invalid",
+    ));
+    return null;
+  }
+}
+
+function managedManifestWarning(
+  path: string,
+  source: PluginListWarning["source"],
+  error: unknown,
+  fallbackMessage: string,
+): PluginListWarning {
+  return {
+    code: "managed_plugin_manifest_invalid",
+    path,
+    source,
+    message: error instanceof Error ? error.message : fallbackMessage,
+  };
+}
+
+function latestManifestWarning(warnings: PluginListWarning[], path: string): PluginListWarning | undefined {
+  for (let index = warnings.length - 1; index >= 0; index -= 1) {
+    if (warnings[index]?.path === path) return warnings[index];
+  }
+  return undefined;
 }
 
 function ownerFromManagedEntry(

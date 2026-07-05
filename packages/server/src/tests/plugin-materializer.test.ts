@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -315,6 +315,166 @@ describe("plugin materializer", () => {
     await expect(readFile(join(staleDir, "plugin.js"), "utf8")).rejects.toThrow();
     await expect(readFile(join(staleDir, "nested", "helper.js"), "utf8")).rejects.toThrow();
     expect(await readdir(staleDir)).toEqual(["local-note.txt"]);
+  });
+
+  test("rejects stale manifest file path traversal before deleting outside the plugin directory", async () => {
+    const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
+    const dataDir = await tempDir("veslo-plugin-materializer-data-");
+    const stale = policyFor({
+      id: "platform.traversal-file",
+      spec: "traversal-file",
+      target: "project",
+      files: [{ path: "plugin.js", content: "export const name = 'stale';\n" }],
+    });
+    await materializePluginPolicies({ workspaceRoot, dataDir, policies: [stale] });
+
+    const rootDir = join(workspaceRoot, ".opencode", "plugins", "veslo-managed");
+    const manifestPath = join(rootDir, ".veslo-plugin-materialization.json");
+    const manifest = await readJson(manifestPath) as {
+      entries: Array<{ pluginDir: string; files: Array<Record<string, unknown>> }>;
+    };
+    const staleDir = manifest.entries[0]?.pluginDir ?? "";
+    await writeFile(join(rootDir, "outside-owned-file.js"), "keep outside\n", "utf8");
+    manifest.entries[0] = {
+      ...manifest.entries[0],
+      files: [
+        {
+          path: "../outside-owned-file.js",
+          sha256: "0".repeat(64),
+          sizeBytes: 13,
+          executable: false,
+        },
+      ],
+    };
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+    const next = policyFor({
+      id: "platform.next-file",
+      spec: "next-file",
+      target: "project",
+      files: [{ path: "plugin.js", content: "export const name = 'next';\n" }],
+    });
+
+    await expect(materializePluginPolicies({ workspaceRoot, dataDir, policies: [next] }))
+      .rejects.toThrow(/managed plugin file path/i);
+    expect(await readFile(join(rootDir, "outside-owned-file.js"), "utf8")).toBe("keep outside\n");
+    expect(await readFile(join(staleDir, ".veslo-managed-plugin.json"), "utf8")).toContain("platform.traversal-file");
+  });
+
+  test("rejects stale manifest pluginDir outside the managed root before deletion", async () => {
+    const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
+    const dataDir = await tempDir("veslo-plugin-materializer-data-");
+    const stale = policyFor({
+      id: "platform.root-mismatch",
+      spec: "root-mismatch",
+      target: "project",
+      files: [{ path: "plugin.js", content: "export const name = 'stale';\n" }],
+    });
+    await materializePluginPolicies({ workspaceRoot, dataDir, policies: [stale] });
+
+    const rootDir = join(workspaceRoot, ".opencode", "plugins", "veslo-managed");
+    const manifestPath = join(rootDir, ".veslo-plugin-materialization.json");
+    const manifest = await readJson(manifestPath) as {
+      entries: Array<Record<string, unknown>>;
+    };
+    const outsideDir = join(workspaceRoot, ".opencode", "plugins", "outside-managed");
+    await mkdir(outsideDir, { recursive: true });
+    await writeFile(join(outsideDir, "plugin.js"), "keep outside plugin\n", "utf8");
+    const outsideEntry = {
+      ...manifest.entries[0],
+      pluginDir: outsideDir,
+      files: [
+        {
+          path: "plugin.js",
+          sha256: "0".repeat(64),
+          sizeBytes: 20,
+          executable: false,
+        },
+      ],
+    };
+    await writeFile(
+      join(outsideDir, ".veslo-managed-plugin.json"),
+      `${JSON.stringify({ schemaVersion: 1, managedBy: "veslo-plugin-materializer", ...outsideEntry }, null, 2)}\n`,
+      "utf8",
+    );
+    manifest.entries[0] = outsideEntry;
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+    const next = policyFor({
+      id: "platform.next-file",
+      spec: "next-file",
+      target: "project",
+      files: [{ path: "plugin.js", content: "export const name = 'next';\n" }],
+    });
+
+    await expect(materializePluginPolicies({ workspaceRoot, dataDir, policies: [next] }))
+      .rejects.toThrow(/pluginDir/i);
+    expect(await readFile(join(outsideDir, "plugin.js"), "utf8")).toBe("keep outside plugin\n");
+  });
+
+  test("rejects invalid file policy paths before mutating config specs or manifests", async () => {
+    const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
+    const dataDir = await tempDir("veslo-plugin-materializer-data-");
+    await writeFile(
+      join(workspaceRoot, "opencode.jsonc"),
+      JSON.stringify({ plugin: ["unmanaged-before"] }, null, 2),
+      "utf8",
+    );
+    const configPolicy = policyFor({
+      id: "platform.valid-config-before-invalid-file",
+      spec: "valid-config-before-invalid-file",
+      target: "project",
+    });
+    const invalidFilePolicy = policyFor({
+      id: "platform.invalid-file-path",
+      spec: "invalid-file-path",
+      target: "project",
+      files: [{ path: "../escape.js", content: "export const bad = true;\n" }],
+    });
+
+    await expect(materializePluginPolicies({ workspaceRoot, dataDir, policies: [configPolicy, invalidFilePolicy] }))
+      .rejects.toThrow(/managed plugin file path/i);
+
+    const { data: config } = await readJsoncFile<Record<string, unknown>>(join(workspaceRoot, "opencode.jsonc"), {});
+    expect(config.plugin).toEqual(["unmanaged-before"]);
+    await expect(readFile(join(workspaceRoot, ".opencode", "veslo", "plugins", "managed-plugin-specs.json"), "utf8"))
+      .rejects.toThrow();
+    await expect(readFile(join(workspaceRoot, ".opencode", "plugins", "veslo-managed", ".veslo-plugin-materialization.json"), "utf8"))
+      .rejects.toThrow();
+  });
+
+  test("listPlugins exposes malformed managed manifest ownership as a conflict instead of hiding it", async () => {
+    const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
+    await writeFile(
+      join(workspaceRoot, "opencode.jsonc"),
+      JSON.stringify({ plugin: ["managed-but-manifest-broken"] }, null, 2),
+      "utf8",
+    );
+    const manifestPath = join(workspaceRoot, ".opencode", "veslo", "plugins", "managed-plugin-specs.json");
+    await mkdir(join(workspaceRoot, ".opencode", "veslo", "plugins"), { recursive: true });
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        managedBy: "veslo-plugin-materializer",
+        target: "project",
+        generatedAt: new Date().toISOString(),
+        entries: [{ policyId: "platform.broken", spec: "managed-but-manifest-broken" }],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const plugins = await listPlugins(workspaceRoot, false);
+
+    expect(plugins.warnings).toContainEqual(expect.objectContaining({
+      code: "managed_plugin_manifest_invalid",
+      path: manifestPath,
+    }));
+    expect(plugins.items).toContainEqual(expect.objectContaining({
+      spec: "managed-but-manifest-broken",
+      lifecycle: "conflict",
+      conflict: expect.stringContaining("Managed plugin spec manifest"),
+    }));
   });
 
   test("reports a conflict when a matching unmanaged config plugin already exists", async () => {
