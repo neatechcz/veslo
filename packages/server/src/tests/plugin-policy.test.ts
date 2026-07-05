@@ -54,4 +54,16 @@ describe("plugin policy model", () => {
       OPENCODE_SCHEDULER_PLATFORM_PLUGIN.id,
     );
   });
+
+  test("rejects plugin policy overrides until override resolution is implemented", () => {
+    expect(() =>
+      resolveEffectivePluginPolicies({
+        platform: [SUPERPOWERS_PLATFORM_PLUGIN],
+        organization: [],
+        user: [],
+        project: [],
+        overrides: [{ pluginId: SUPERPOWERS_PLATFORM_PLUGIN.id, action: "disabled" }],
+      }),
+    ).toThrow(/plugin policy overrides are not implemented yet/i);
+  });
 });

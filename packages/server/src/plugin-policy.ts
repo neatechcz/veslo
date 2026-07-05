@@ -36,6 +36,9 @@ export type VisiblePluginPolicyOptions = {
 };
 
 export function resolveEffectivePluginPolicies(input: PluginPolicyResolutionInput): PluginPolicy[] {
+  if (input.overrides.length > 0) {
+    throw new Error("Plugin policy overrides are not implemented yet");
+  }
   return [...input.platform, ...input.organization, ...input.user, ...input.project];
 }
 
