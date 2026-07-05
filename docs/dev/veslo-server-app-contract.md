@@ -82,6 +82,51 @@ during migration.
   connection state, OAuth grant ownership, and runtime refresh ownership remain
   separate concerns and must not be inferred from this field.
 
+## Plugin Policy Contract
+
+Plugins are OpenCode plugins. Pluginy is the Czech localization label for the
+same product surface; English docs, product naming, and code should use
+Plugins.
+
+PluginPolicy is plugin-only in this phase. It is the prepared target structure
+for future Skills and MCP/Napojení convergence, but those domains have not
+moved to PluginPolicy. Skills still use their own settings, stores,
+materialization, registry, routes, and UI contracts. MCP/Napojení still uses
+its own MCP catalog/config, auth, runtime-status, and connected-app behavior.
+
+For policy-managed Plugins, plugin policy and override state are the durable
+source of truth. OpenCode config entries and plugin files are runtime
+materialization output. Existing unmanaged OpenCode plugin entries are
+preserved and remain editable through legacy unmanaged plugin add/remove paths
+only.
+
+The Plugins domain facade and server routes must preserve these behaviors:
+
+- `GET /workspace/:id/plugins`
+  Returns legacy plugin items plus policy-aware inventory. Normal calls exclude
+  hidden-debug-only platform plugins; `debug=true` may include debug/system
+  rows.
+- `POST /workspace/:id/plugins`
+  Adds unmanaged OpenCode plugin specs through the legacy unmanaged path.
+- `DELETE /workspace/:id/plugins/:pluginId`
+  Removes managed policy plugins by writing override state when `pluginId`
+  matches a managed policy. Unmanaged plugin ids/specs continue to use legacy
+  unmanaged removal. Ambiguous managed/unmanaged matches must return a conflict
+  rather than deleting user-owned config.
+- `POST /workspace/:id/plugins/:pluginId/enabled`
+  Writes managed plugin enable/disable override state when policy allows it.
+- `POST /workspace/:id/plugins/:pluginId/restore`
+  Clears managed plugin removal override state when policy allows restore.
+- `POST /workspace/:id/plugins/materialization/sync`
+  Materializes enabled managed Plugins into OpenCode-compatible runtime state,
+  using ownership markers/manifests and preserving unmanaged config/files.
+
+Hidden locked platform plugins are debug-only, locked on, and rejected by API
+disable/remove mutations. `opencode-scheduler` is hidden, locked, not
+disableable/removable, and must not appear as a normal suggested or installed
+plugin. `Superpowers` is a visible platform OpenCode plugin, enabled by
+default, and user-disableable/user-removable for the user materialization.
+
 ## Auth Model
 
 There are two important auth classes:

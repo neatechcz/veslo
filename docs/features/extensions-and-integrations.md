@@ -1,7 +1,8 @@
 # Connections and Integrations
 
-This document clarifies the difference between Providers, Skills, Pluginy,
-Napojení, MCP, and Messaging surfaces.
+This document clarifies the difference between Providers, Skills, Plugins,
+Napojení, MCP, and Messaging surfaces. Pluginy is the Czech localization label
+for Plugins; English product, architecture, docs, and code should use Plugins.
 
 ## Terms
 
@@ -11,7 +12,8 @@ Napojení, MCP, and Messaging surfaces.
   Reusable prompt/workflow bundles, typically living under `.opencode/skills/`.
 - Plugins
   OpenCode plugins configured through `opencode.json` or `opencode.jsonc` and
-  managed from the Pluginy dashboard tab.
+  managed from the Plugins dashboard tab. Pluginy is the Czech localization
+  label for this same surface.
 - Napojení
   The user-facing Connections page for MCP servers and external apps.
 - MCP
@@ -107,9 +109,29 @@ Plugins are OpenCode-native extensions configured through:
 - global OpenCode config for global plugin scope
 
 Use plugins when the capability should be loaded by OpenCode startup/config behavior.
-Veslo surfaces this as the separate Pluginy dashboard tab. It intentionally
-stays separate from Napojení even though both surfaces can read or write
-OpenCode config.
+Veslo surfaces this as the separate Plugins dashboard tab. The Czech
+localization label for that tab is Pluginy.
+
+PluginPolicy is plugin-only in this phase. It is the prepared target structure
+for a future convergence of Plugins, Skills, and MCP/Napojení, but Skills and
+MCP/Napojení are not migrated by this work. Skills still use their existing
+inventory, stores, routes, materialization, and settings. MCP/Napojení still
+uses its existing connected-app catalog, runtime status, auth, and OpenCode MCP
+config flows.
+
+For policy-managed Plugins, plugin policy and override state are the durable
+source of truth. OpenCode config entries and plugin files are runtime
+materialization output for Veslo-managed policy plugins. Existing unmanaged
+OpenCode plugin entries are preserved and are edited only through the legacy
+unmanaged plugin add/remove paths.
+
+Platform plugins can be visible or hidden-debug-only, removable or locked, and
+toggleable or locked-on. Hidden locked platform plugins exist for runtime/system
+needs; they are visible only in debug surfaces and cannot be disabled or
+removed. `opencode-scheduler` is hidden, locked, not disableable/removable, and
+must not appear as a normal suggested or installed plugin. `Superpowers` is a
+visible platform OpenCode plugin that is enabled by default and remains
+user-disableable and user-removable for the user materialization.
 
 ## MCP
 
@@ -128,7 +150,7 @@ Current MCP behavior includes:
 MCP config is still OpenCode config, not `.opencode/veslo.json`.
 
 The dashboard exposes Napojení as the MCP/external-app page. The MCP page
-remains the owner of connected-app behavior, while Pluginy remains the owner of
+remains the owner of connected-app behavior, while Plugins remains the owner of
 OpenCode plugin management.
 
 ### Platform Google Workspace MCP Connectors
@@ -216,7 +238,7 @@ Some integrations surface lightweight persisted status for UI continuity, but th
 - providers: `packages/app/src/app/pages/settings.tsx`
 - skills and plugins and MCP wiring: `packages/app/src/app/context/extensions.ts`
 - skills UI: `packages/app/src/app/pages/skills.tsx`
-- Pluginy UI: `packages/app/src/app/pages/plugins.tsx`
+- Plugins UI: `packages/app/src/app/pages/plugins.tsx`
 - Napojení shell: `packages/app/src/app/pages/extensions.tsx`
 - MCP UI: `packages/app/src/app/pages/mcp.tsx`
 - messaging identities UI: `packages/app/src/app/pages/identities.tsx`
