@@ -1142,6 +1142,53 @@ export default function App() {
   const [e2eFolderAccessPermissionIds, setE2eFolderAccessPermissionIds] = createSignal<Set<string>>(
     new Set(),
   );
+  const [localFolderAccessPermissionIds, setLocalFolderAccessPermissionIds] = createSignal<Set<string>>(
+    new Set(),
+  );
+
+  function requestWorkspaceFolderAccess(input: {
+    workspaceId: string;
+    workspacePath: string;
+    requestedPath: string;
+    reason: string;
+  }) {
+    const workspaceId = input.workspaceId.trim();
+    const workspacePath = input.workspacePath.trim();
+    const requestedPath = input.requestedPath.trim();
+    if (!workspaceId || !workspacePath || !requestedPath) return;
+
+    const permissionIdSuffix = `${workspaceId}-${requestedPath}`
+      .replace(/[^a-zA-Z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 96);
+    const permissionId = `workspace-folder-access-${permissionIdSuffix || Date.now()}`;
+    const permission = {
+      id: permissionId,
+      sessionID: selectedSessionId()?.trim() || `workspace-access-${workspaceId}`,
+      permission: "folder_access",
+      always: [],
+      patterns: [requestedPath],
+      metadata: {
+        requestedPath,
+        workspacePath,
+        reason: input.reason.trim() || "Workspace folder access is required.",
+        source: "workspace-runtime-access-denied",
+      },
+      workspaceId,
+      receivedAt: Date.now(),
+    } as PendingPermission;
+
+    setLocalFolderAccessPermissionIds((current) => {
+      if (current.has(permissionId)) return current;
+      const next = new Set(current);
+      next.add(permissionId);
+      return next;
+    });
+    setPendingPermissions([
+      permission,
+      ...pendingPermissions().filter((item) => item.id !== permissionId),
+    ]);
+  }
 
   const [visibleRuntimeActivityHold, setVisibleRuntimeActivityHold] = createSignal<{
     sessionId: string;
@@ -1944,6 +1991,17 @@ export default function App() {
     reply: "once" | "always" | "reject",
   ) {
     const requestId = requestID.trim();
+    if (requestId && localFolderAccessPermissionIds().has(requestId)) {
+      setLocalFolderAccessPermissionIds((current) => {
+        if (!current.has(requestId)) return current;
+        const next = new Set(current);
+        next.delete(requestId);
+        return next;
+      });
+      setPendingPermissions(pendingPermissions().filter((permission) => permission.id !== requestId));
+      return;
+    }
+
     if (requestId && e2eFolderAccessPermissionIds().has(requestId)) {
       setE2eFolderAccessPermissionIds((current) => {
         if (!current.has(requestId)) return current;
@@ -2325,6 +2383,7 @@ export default function App() {
     activeSendTraceId,
     setEngineReady,
     isWorkspaceRuntimeReady,
+    requestWorkspaceFolderAccess,
     populateSidebarFromDb: async (workspaceId: string, directory: string) => {
       // Set status to "loading" SYNCHRONOUSLY before any await, so the idle-loader
       // effect (line ~2964) doesn't fire and try to contact the engine API.

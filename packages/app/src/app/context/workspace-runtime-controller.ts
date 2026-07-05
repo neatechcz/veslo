@@ -18,6 +18,12 @@ const WORKSPACE_API_WAITING_MESSAGE = "Waiting for OpenCode workspace API";
 const messageFromUnknownError = (error: unknown, safeStringify: (value: unknown) => string) =>
   error instanceof Error ? error.message : safeStringify(error);
 
+export function isWorkspaceFolderAccessDeniedError(message: string): boolean {
+  const normalized = message.trim();
+  if (!normalized) return false;
+  return /Operation not permitted|Permission denied|\bEACCES\b|\bEPERM\b|os error 1/i.test(normalized);
+}
+
 function isEngineStartingRoutingError(detail: string | null): boolean {
   const normalized = (detail ?? "").toLowerCase();
   return (
@@ -82,6 +88,12 @@ export type WorkspaceRuntimeControllerDeps = {
   safeStringify: (value: unknown) => string;
   wsLog: (event: string, detail?: unknown) => void;
   dispatchLifecycle?: (event: WorkspaceLifecycleEvent) => void;
+  requestWorkspaceFolderAccess?: (input: {
+    workspaceId: string;
+    workspacePath: string;
+    requestedPath: string;
+    reason: string;
+  }) => void;
 };
 
 export type EnsureEngineForWorkspaceOptions = {
@@ -521,6 +533,28 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           workspaceId: id,
           error: message,
         });
+        if (
+          workspace.workspaceType === "local" &&
+          isWorkspaceFolderAccessDeniedError(message) &&
+          deps.requestWorkspaceFolderAccess
+        ) {
+          deps.requestWorkspaceFolderAccess({
+            workspaceId: id,
+            workspacePath: workspace.path,
+            requestedPath: workspace.path,
+            reason: message,
+          });
+          deps.updateWorkspaceConnectionState(id, {
+            status: "error",
+            message: "Workspace folder access is required.",
+          });
+          deps.dispatchLifecycle?.({
+            type: "failed",
+            workspaceId: id,
+            message,
+          });
+          return false;
+        }
         setErrorForActiveWorkspace(id, message);
         deps.dispatchLifecycle?.({
           type: "failed",

@@ -225,6 +225,32 @@ test("refresh releases stale non-active runtime routes and keeps active failures
   });
 });
 
+test("workspace-level permission can become active without a selected session", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const prompts = makeController({
+        activeWorkspaceId: "ws-a",
+        selectedSessionId: null,
+        clients: {},
+      });
+      const workspacePermission = {
+        ...permission("workspace-perm", "workspace-access", "ws-a"),
+        permission: "folder_access",
+        metadata: {
+          requestedPath: "/Users/example/Documents/Project",
+          source: "workspace-runtime-access-denied",
+        },
+      };
+
+      prompts.setPendingPermissions([workspacePermission]);
+
+      assert.equal(prompts.activePermission()?.id, "workspace-perm");
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("active prompts do not surface background prompts without a real selected session", async () => {
   await createRoot(async (dispose) => {
     try {

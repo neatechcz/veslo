@@ -234,6 +234,10 @@ part of the persisted conversation/run state.
   operations that have not created irreversible work.
 - Workspace unavailable: keep the prepared message and show workspace attach
   progress or failure.
+- Workspace folder access denied by the OS: create a folder-access permission
+  request for the denied workspace path at the point of failure. The user grants
+  access through the native folder picker, then Veslo refreshes the workspace
+  config and retries or reattaches the runtime.
 - OpenCode session creation failure: mark the conversation/run as failed for
   that workspace.
 - Submit failure after run creation: mark the run failed; do not blindly create

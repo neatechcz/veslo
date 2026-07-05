@@ -33,6 +33,14 @@ export function shouldReleaseStaleWorkspaceRoute(wsId: string, activeWs: string,
   );
 }
 
+function isWorkspaceFolderAccessPermission(permission: PendingPermission): boolean {
+  if ((permission.permission ?? "").trim() !== "folder_access") return false;
+  const metadata = permission.metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false;
+  const requestedPath = (metadata as { requestedPath?: unknown }).requestedPath;
+  return typeof requestedPath === "string" && requestedPath.trim().length > 0;
+}
+
 export function createSessionRuntimePrompts(deps: SessionRuntimePromptsDeps) {
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
   const [questionReplyBusy, setQuestionReplyBusy] = createSignal(false);
@@ -327,7 +335,16 @@ export function createSessionRuntimePrompts(deps: SessionRuntimePromptsDeps) {
       const scopedFromAnyWorkspace = allPendingPermissions().find((perm) => perm.sessionID === id) ?? null;
       if (scopedFromAnyWorkspace) return scopedFromAnyWorkspace;
     } else {
-      return null;
+      const activeWsId = deps.routing.activeWorkspaceId();
+      const seen = new Set<string>();
+      const candidates = [...allPendingPermissions(), ...deps.store.pendingPermissions].filter((perm) => {
+        if (seen.has(perm.id)) return false;
+        seen.add(perm.id);
+        return true;
+      });
+      return candidates.find((perm) =>
+        perm.workspaceId === activeWsId && isWorkspaceFolderAccessPermission(perm)
+      ) ?? null;
     }
 
     const all = allPendingPermissions();

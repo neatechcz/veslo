@@ -185,6 +185,12 @@ export function createWorkspaceStore(options: {
   isWorkspaceRuntimeReady?: (workspaceId: string) => boolean;
   populateSidebarFromDb?: (workspaceId: string, directory: string) => Promise<void>;
   hydrateLatestSessionFromDb?: (workspaceId: string, directory: string) => Promise<void>;
+  requestWorkspaceFolderAccess?: (input: {
+    workspaceId: string;
+    workspacePath: string;
+    requestedPath: string;
+    reason: string;
+  }) => void;
 }) {
   const cloudOnlyMessage = (code: string, detail: string) => `${code}: ${detail}`;
   const blockLocalAction = (code: string, detail: string) => {
@@ -1713,6 +1719,7 @@ export function createWorkspaceStore(options: {
     safeStringify,
     wsLog: _wsLog,
     dispatchLifecycle: dispatchWorkspaceLifecycle,
+    requestWorkspaceFolderAccess: options.requestWorkspaceFolderAccess,
   });
   runtimeControllerRef = runtimeController;
 
