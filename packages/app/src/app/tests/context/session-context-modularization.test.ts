@@ -22,6 +22,11 @@ const allowedSessionContextModules = new Set([
   "session-lifecycle-recovery.ts",
   "session-route-sync.ts",
   "session-sidebar-decorations.ts",
+  // Planned by the session-flow background ownership plan, not the earlier
+  // session-store modularization plan.
+  "session-flow-facade.ts",
+  "session-flow-progress-presenter.ts",
+  "session-queue-drain-controller.ts",
 ]);
 
 const plannedExtractedModules = [
@@ -36,6 +41,8 @@ const plannedExtractedModules = [
   "session-lifecycle-recovery.ts",
   "session-route-sync.ts",
   "session-sidebar-decorations.ts",
+  "session-flow-progress-presenter.ts",
+  "session-queue-drain-controller.ts",
 ];
 
 const expectedContextSessionSourceReaders = [
