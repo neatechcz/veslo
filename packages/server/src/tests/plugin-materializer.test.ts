@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -193,6 +193,59 @@ describe("plugin materializer", () => {
     ]);
   });
 
+  test("updates managed config specs by removing the exact old spec and adding the desired spec", async () => {
+    const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
+    const dataDir = await tempDir("veslo-plugin-materializer-data-");
+    const first = policyFor({ id: "platform.versioned-config", spec: "foo@1.0.0", target: "project" });
+    await materializePluginPolicies({ workspaceRoot, dataDir, policies: [first] });
+
+    const next = policyFor({ id: first.id, spec: "foo@2.0.0", target: "project" });
+    const result = await materializePluginPolicies({ workspaceRoot, dataDir, policies: [next] });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("Expected materialization success");
+    expect(result.project.config.removedSpecs).toEqual(["foo@1.0.0"]);
+    expect(result.project.config.addedSpecs).toEqual(["foo@2.0.0"]);
+
+    const { data: config } = await readJsoncFile<Record<string, unknown>>(join(workspaceRoot, "opencode.jsonc"), {});
+    expect(config.plugin).toEqual(["foo@2.0.0"]);
+
+    const manifest = await readJson(join(workspaceRoot, ".opencode", "veslo", "plugins", "managed-plugin-specs.json"));
+    expect(manifest.entries).toMatchObject([
+      {
+        policyId: next.id,
+        spec: "foo@2.0.0",
+      },
+    ]);
+  });
+
+  test("reports conflict when a normalized matching config spec lacks exact Veslo ownership proof", async () => {
+    const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
+    const dataDir = await tempDir("veslo-plugin-materializer-data-");
+    const first = policyFor({ id: "platform.versioned-config", spec: "foo@1.0.0", target: "project" });
+    await materializePluginPolicies({ workspaceRoot, dataDir, policies: [first] });
+    await writeFile(
+      join(workspaceRoot, "opencode.jsonc"),
+      JSON.stringify({ plugin: ["foo@9.9.9"] }, null, 2),
+      "utf8",
+    );
+
+    const next = policyFor({ id: first.id, spec: "foo@2.0.0", target: "project" });
+    const result = await materializePluginPolicies({ workspaceRoot, dataDir, policies: [next] });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected materialization conflict");
+    expect(result.conflicts).toContainEqual(expect.objectContaining({
+      code: "unmanaged_config_spec_conflict",
+      policyId: next.id,
+      spec: "foo@2.0.0",
+      target: "project",
+    }));
+
+    const { data: config } = await readJsoncFile<Record<string, unknown>>(join(workspaceRoot, "opencode.jsonc"), {});
+    expect(config.plugin).toEqual(["foo@9.9.9"]);
+  });
+
   test("removes stale managed file plugins only when the previous entry still carries Veslo markers", async () => {
     const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
     const dataDir = await tempDir("veslo-plugin-materializer-data-");
@@ -224,6 +277,44 @@ describe("plugin materializer", () => {
     expect(result.project.files.removedPolicyIds).toEqual(["platform.stale-file"]);
     await expect(stat(staleDir)).rejects.toThrow();
     expect(await readFile(join(rootDir, "manual.js"), "utf8")).toContain("manual");
+  });
+
+  test("removes only stale manifest-listed plugin files and preserves unlisted files in the managed directory", async () => {
+    const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
+    const dataDir = await tempDir("veslo-plugin-materializer-data-");
+    const stale = policyFor({
+      id: "platform.stale-file-with-extra",
+      spec: "stale-file-with-extra",
+      target: "project",
+      files: [
+        { path: "plugin.js", content: "export const name = 'stale';\n" },
+        { path: "nested/helper.js", content: "export const helper = true;\n" },
+      ],
+    });
+    await materializePluginPolicies({ workspaceRoot, dataDir, policies: [stale] });
+
+    const rootDir = join(workspaceRoot, ".opencode", "plugins", "veslo-managed");
+    const firstManifest = await readJson(join(rootDir, ".veslo-plugin-materialization.json")) as {
+      entries: Array<{ pluginDir: string }>;
+    };
+    const staleDir = firstManifest.entries[0]?.pluginDir ?? "";
+    await writeFile(join(staleDir, "local-note.txt"), "keep me\n", "utf8");
+
+    const next = policyFor({
+      id: "platform.next-file",
+      spec: "next-file",
+      target: "project",
+      files: [{ path: "plugin.js", content: "export const name = 'next';\n" }],
+    });
+    const result = await materializePluginPolicies({ workspaceRoot, dataDir, policies: [next] });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("Expected materialization success");
+    expect(result.project.files.removedPolicyIds).toEqual(["platform.stale-file-with-extra"]);
+    expect(await readFile(join(staleDir, "local-note.txt"), "utf8")).toBe("keep me\n");
+    await expect(readFile(join(staleDir, "plugin.js"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(staleDir, "nested", "helper.js"), "utf8")).rejects.toThrow();
+    expect(await readdir(staleDir)).toEqual(["local-note.txt"]);
   });
 
   test("reports a conflict when a matching unmanaged config plugin already exists", async () => {

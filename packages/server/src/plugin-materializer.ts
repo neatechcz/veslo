@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 
 import { resolveVesloDataDir } from "./audit.js";
@@ -249,27 +249,26 @@ async function prepareConfigTarget(input: {
   const pluginSpecs = pluginListFromConfig(config);
   const previousManifest = await readManagedPluginSpecManifest(input.manifestPath);
   const desiredEntries = input.policies.map((policy) => specManifestEntryForPolicy(policy, input.target));
-  const previousManagedSpecs = new Set(
-    (previousManifest?.entries ?? []).map((entry) => managedSpecOwnershipKey(entry)),
-  );
+  const previousManagedSpecs = new Set((previousManifest?.entries ?? []).map(managedSpecOwnershipKey));
   const conflicts: PluginMaterializationConflict[] = [];
 
   for (const entry of desiredEntries) {
-    const existing = pluginSpecs.find((spec) => normalizePluginSpec(spec) === entry.normalizedSpec);
-    if (!existing) continue;
-    const previousKey = managedSpecOwnershipKey({
-      policyId: entry.policyId,
-      normalizedSpec: normalizePluginSpec(existing),
-    });
-    if (previousManagedSpecs.has(previousKey)) continue;
-    conflicts.push({
-      code: "unmanaged_config_spec_conflict",
-      policyId: entry.policyId,
-      spec: entry.spec,
-      target: input.target,
-      path: input.configPath,
-      message: `Refusing to claim unmanaged OpenCode plugin spec ${entry.spec}`,
-    });
+    const matchingSpecs = pluginSpecs.filter((spec) => normalizePluginSpec(spec) === entry.normalizedSpec);
+    for (const existing of matchingSpecs) {
+      const previousKey = managedSpecOwnershipKey({
+        policyId: entry.policyId,
+        spec: existing,
+      });
+      if (previousManagedSpecs.has(previousKey)) continue;
+      conflicts.push({
+        code: "unmanaged_config_spec_conflict",
+        policyId: entry.policyId,
+        spec: entry.spec,
+        target: input.target,
+        path: input.configPath,
+        message: `Refusing to claim unmanaged OpenCode plugin spec ${existing}`,
+      });
+    }
   }
 
   return {
@@ -286,13 +285,13 @@ async function prepareConfigTarget(input: {
 async function applyConfigTarget(
   context: ConfigTargetContext,
 ): Promise<PluginMaterializationTargetResult["config"]> {
-  const desiredNormalizedSpecs = new Set(context.desiredEntries.map((entry) => entry.normalizedSpec));
+  const desiredManagedSpecs = new Set(context.desiredEntries.map(managedSpecOwnershipKey));
   const desiredSpecs = context.desiredEntries.map((entry) => entry.spec);
   const removedSpecs: string[] = [];
   let nextSpecs = [...context.pluginSpecs];
 
   for (const previous of context.previousManifest?.entries ?? []) {
-    if (desiredNormalizedSpecs.has(previous.normalizedSpec)) continue;
+    if (desiredManagedSpecs.has(managedSpecOwnershipKey(previous))) continue;
     const before = nextSpecs.length;
     nextSpecs = nextSpecs.filter((spec) => spec !== previous.spec);
     if (nextSpecs.length !== before) removedSpecs.push(previous.spec);
@@ -300,7 +299,7 @@ async function applyConfigTarget(
 
   const addedSpecs: string[] = [];
   for (const entry of context.desiredEntries) {
-    if (nextSpecs.some((spec) => normalizePluginSpec(spec) === entry.normalizedSpec)) continue;
+    if (nextSpecs.includes(entry.spec)) continue;
     nextSpecs.push(entry.spec);
     addedSpecs.push(entry.spec);
   }
@@ -377,7 +376,7 @@ async function applyFileTarget(context: FileTargetContext): Promise<PluginMateri
     if (!(await exists(entry.pluginDir))) continue;
     const marker = await readManagedPluginFileMarker(entry.pluginDir).catch(() => null);
     if (marker?.policyId !== entry.policyId || marker.managedBy !== MANAGED_BY) continue;
-    await rm(entry.pluginDir, { recursive: true, force: true });
+    await removeManagedPluginFiles(entry, { removeMarker: true });
     removedPolicyIds.push(entry.policyId);
   }
 
@@ -385,7 +384,8 @@ async function applyFileTarget(context: FileTargetContext): Promise<PluginMateri
   const entries: ManagedPluginFileManifestEntry[] = [];
   const materializedPolicyIds: string[] = [];
   for (const policy of context.policies) {
-    const entry = await writeFilePluginPolicy(context.rootDir, context.target, policy, materializedAt);
+    const previous = context.previousManifest?.entries.find((entry) => entry.policyId === policy.id);
+    const entry = await writeFilePluginPolicy(context.rootDir, context.target, policy, materializedAt, previous);
     entries.push(entry);
     materializedPolicyIds.push(policy.id);
   }
@@ -406,11 +406,13 @@ async function writeFilePluginPolicy(
   target: PluginMaterializationTarget,
   policy: MaterializablePluginPolicy,
   materializedAt: string,
+  previousEntry?: ManagedPluginFileManifestEntry,
 ): Promise<ManagedPluginFileManifestEntry> {
   const files = normalizePluginFiles(policy.files ?? []);
   const pluginDir = pluginDirForPolicy(rootDir, policy);
-  if (await exists(pluginDir)) {
-    await rm(pluginDir, { recursive: true, force: true });
+  if (previousEntry && await exists(previousEntry.pluginDir)) {
+    const desiredPaths = new Set(files.map((file) => file.path));
+    await removeManagedPluginFiles(previousEntry, { exceptPaths: desiredPaths, removeMarker: false });
   }
   await mkdir(pluginDir, { recursive: true });
 
@@ -578,8 +580,50 @@ function normalizePluginSpec(spec: string): string {
   return atIndex > 0 ? trimmed.slice(0, atIndex) : trimmed;
 }
 
-function managedSpecOwnershipKey(entry: Pick<ManagedPluginSpecManifestEntry, "policyId" | "normalizedSpec">): string {
-  return `${entry.policyId}\0${entry.normalizedSpec}`;
+async function removeManagedPluginFiles(
+  entry: ManagedPluginFileManifestEntry,
+  options: { exceptPaths?: Set<string>; removeMarker: boolean },
+): Promise<void> {
+  const directories = new Set<string>();
+  for (const file of entry.files) {
+    if (options.exceptPaths?.has(file.path)) continue;
+    const path = join(entry.pluginDir, file.path);
+    await rm(path, { force: true });
+    collectParentDirs(entry.pluginDir, dirname(path), directories);
+  }
+
+  if (options.removeMarker) {
+    await rm(managedPluginFileMarkerPath(entry.pluginDir), { force: true });
+  }
+
+  for (const dir of [...directories].sort((left, right) => right.length - left.length)) {
+    await rmdirIfEmpty(dir);
+  }
+  await rmdirIfEmpty(entry.pluginDir);
+}
+
+function collectParentDirs(rootDir: string, dir: string, output: Set<string>): void {
+  let current = dir;
+  while (current.startsWith(rootDir) && current !== rootDir) {
+    output.add(current);
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+}
+
+async function rmdirIfEmpty(path: string): Promise<void> {
+  try {
+    await rmdir(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTEMPTY" || code === "EEXIST") return;
+    throw error;
+  }
+}
+
+function managedSpecOwnershipKey(entry: Pick<ManagedPluginSpecManifestEntry, "policyId" | "spec">): string {
+  return `${entry.policyId}\0${entry.spec}`;
 }
 
 function emptyTargetResult(manifestPath: string, rootDir: string): PluginMaterializationTargetResult {

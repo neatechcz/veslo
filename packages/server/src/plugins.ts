@@ -157,7 +157,7 @@ export async function listPlugins(
 function managedSpecEntryMap(entries: ManagedPluginSpecManifestEntry[]): Map<string, ManagedPluginSpecManifestEntry> {
   const map = new Map<string, ManagedPluginSpecManifestEntry>();
   for (const entry of entries) {
-    map.set(entry.normalizedSpec, entry);
+    map.set(entry.spec, entry);
   }
   return map;
 }
@@ -168,7 +168,7 @@ function configPluginItem(
   fallbackOwner: ResourceOwner,
   managedSpecs: Map<string, ManagedPluginSpecManifestEntry>,
 ): PluginItem {
-  const managedEntry = managedSpecs.get(normalizePluginSpec(spec));
+  const managedEntry = managedSpecs.get(spec);
   return {
     spec,
     source: "config",
