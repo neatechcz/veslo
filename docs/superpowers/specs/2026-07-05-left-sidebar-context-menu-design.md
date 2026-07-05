@@ -100,11 +100,13 @@ invokes the existing prop callback and closes the menu.
 
 | Target | Items |
 | --- | --- |
-| Session row | Open · Rename · Archive/Unarchive · — · group "Project": Share, Soul, Reveal in Finder/Explorer, (remote: Recover, Test connection, Edit connection) · — · Delete (danger) |
-| Chat row | Open · Rename · Archive/Unarchive · Delete (danger) |
+| Session row | Rename · Archive/Unarchive · — · group "Project": Share, Soul, Reveal in Finder/Explorer, (remote: Recover, Test connection, Edit connection) · — · Delete (danger) |
+| Chat row | Rename · Archive/Unarchive · Delete (danger) |
 | Project header | New session · Rename · Share · Soul settings/Enable Soul · Reveal (local) · (remote: Recover, Test connection, Edit connection) · — · Remove workspace (danger) |
-| Recent row | Open · Rename · Archive/Unarchive · Show in project · — · Delete (danger). No "Project" group — workspace actions are reachable via "Show in project" |
-| Empty list area | New session · Add workspace (local / remote / import) · Search sessions · Archived items |
+| Recent row | Rename · Archive/Unarchive · Show in project · — · Delete (danger). No "Project" group — workspace actions are reachable via "Show in project" |
+| Empty list area | Add directory/project (delegates to the same `onAddDirectorySession` callback as the toolbar button) · Search sessions · Archived items |
+
+No "Open" item on any row menu — opening is the row's left-click action.
 
 Rules:
 
