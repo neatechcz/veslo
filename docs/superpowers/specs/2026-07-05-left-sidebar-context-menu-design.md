@@ -70,8 +70,10 @@ One pure builder function per target kind:
 - `buildSidebarBackgroundMenuItems(ctx)` — empty area of the list
 
 `ctx` carries plain data and callbacks already available as `WorkspaceSessionList` props:
-workspace type (local/remote), archive state, Soul status, connection/busy state, selected
-text (if any), and the existing action callbacks. Builders render nothing — they are unit
+workspace type (local/remote), archive state, connection/busy state, selected
+text (if any), and the existing action callbacks. The Soul item always uses the
+"Soul settings" label (matches current sidebar behavior; there is no per-workspace Soul
+status available in the list component). Builders render nothing — they are unit
 testable in isolation.
 
 ### 3. State and data flow
@@ -102,7 +104,7 @@ invokes the existing prop callback and closes the menu.
 | --- | --- |
 | Session row | Rename · Archive/Unarchive · — · group "Project": Share, Soul, Reveal in Finder/Explorer, (remote: Recover, Test connection, Edit connection) · — · Delete (danger) |
 | Chat row | Rename · Archive/Unarchive · Delete (danger) |
-| Project header | New session · Rename · Share · Soul settings/Enable Soul · Reveal (local) · (remote: Recover, Test connection, Edit connection) · — · Remove workspace (danger) |
+| Project header | New session · Rename · Share · Soul settings · Reveal (local) · (remote: Recover, Test connection, Edit connection) · — · Remove workspace (danger) |
 | Recent row | Rename · Archive/Unarchive · Show in project · — · Delete (danger). No "Project" group — workspace actions are reachable via "Show in project" |
 | Empty list area | Add directory/project (delegates to the same `onAddDirectorySession` callback as the toolbar button) · Search sessions · Archived items |
 
