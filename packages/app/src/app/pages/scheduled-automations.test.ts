@@ -14,8 +14,6 @@ const workspaceMapSource = () => readFileSync(join(__dirname, "../lib/automation
 const appSource = () => readFileSync(join(__dirname, "../app.tsx"), "utf8");
 const appViewPropsSource = () => readFileSync(join(__dirname, "../app-view-props.ts"), "utf8");
 const dashboardSource = () => readFileSync(join(__dirname, "dashboard.tsx"), "utf8");
-const giveMeASoulCommandSource = () =>
-  readFileSync(join(__dirname, "../data/commands/give-me-a-soul.md"), "utf8");
 
 test("ScheduledTasksView keeps server automations on API handlers instead of prompt/session routing", () => {
   const source = scheduledSource();
@@ -219,15 +217,6 @@ test("ScheduledTasksView uses server readiness fallback instead of Scheduler fal
   assert.match(gate[0], /scheduled\.server_unavailable_title/);
   assert.match(gate[0], /scheduled\.server_unavailable_hint/);
   assert.doesNotMatch(gate[0], /scheduled\.install_scheduler|scheduler|opencode-scheduler/i);
-});
-
-test("Soul setup command does not auto-install the raw scheduler plugin", () => {
-  const source = giveMeASoulCommandSource();
-
-  assert.match(source, /Do not add `opencode-scheduler` automatically/);
-  assert.match(source, /Veslo server-backed\s+scheduled automations/);
-  assert.doesNotMatch(source, /add `opencode-scheduler` only if missing/);
-  assert.doesNotMatch(source, /remove `opencode-scheduler` only if added solely for Soul Mode/);
 });
 
 test("buildSchedule preserves local timezone for recurring wall-clock schedules", () => {

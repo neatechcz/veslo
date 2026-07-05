@@ -107,7 +107,7 @@ test("bare new-session screen centers the composer entry without quickstart temp
 
   assert.doesNotMatch(
     sessionSource,
-    /session\.quickstart_title|session\.quickstart_description|session\.quickstart_browser_title|session\.quickstart_soul_title|showQuickstartEmptyState/,
+    /session\.quickstart_[a-z_]+|showQuickstartEmptyState/,
     "bare new sessions should not render the old quickstart heading or starter action cards",
   );
 });

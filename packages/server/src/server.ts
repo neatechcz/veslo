@@ -42,13 +42,12 @@ import {
 } from "./skill-enabled-overrides.js";
 import { fetchOrgSkillsCatalog } from "./den-catalog.js";
 import { normalizeDenApiBaseUrl } from "./den-api-base.js";
+import { deploymentServiceUrl } from "./deployment-endpoints.js";
 import type { SoulPendingEdit } from "./soul-cache.js";
 import type { SoulDocument, SoulScope, SoulVersion } from "./soul-memory.js";
 import { createSoulController, type SoulMaterializationTestHookInput } from "./soul-controller.js";
 import type { SoulMaterializationResult } from "./soul-materializer.js";
 import {
-  getSoulStatus,
-  listSoulHeartbeats,
   readOpencodeConfig,
   soulMaterializationApprovalPaths as soulRuntimeMaterializationApprovalPaths,
 } from "./soul-runtime.js";
@@ -1426,6 +1425,9 @@ function resolveAiGatewayBaseUrl(): string {
     process.env.VESLO_AI_GATEWAY_BASE_URL?.trim();
   if (override) {
     return override.replace(/\/+$/, "");
+  }
+  if (process.env.VESLO_DEPLOYMENT_DOMAIN?.trim()) {
+    return deploymentServiceUrl("ai", process.env.VESLO_DEPLOYMENT_DOMAIN);
   }
   const port = parseInteger(process.env.AI_GATEWAY_PORT) ?? AI_GATEWAY_DEFAULT_PORT;
   return `http://127.0.0.1:${port}`;
@@ -3985,8 +3987,6 @@ registerDocumentRuntimeRoutes(routes, createDocumentRuntimeProviderDependencies(
     soulActorId,
     soulVersionId,
     parseInteger,
-    getSoulStatus,
-    listSoulHeartbeats,
   });
   return { routes, conversationRunLifecycleController };
 }

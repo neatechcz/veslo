@@ -1,12 +1,10 @@
 import type {
   VesloSoulAuthContext,
-  VesloSoulHeartbeatEntry,
   VesloSoulMaterializationResult,
   VesloSoulOverviewResponse,
   VesloSoulReadResponse,
   VesloSoulRestoreInput,
   VesloSoulScope,
-  VesloSoulStatus,
   VesloSoulUpdateInput,
   VesloSoulVersionGetOptions,
   VesloSoulVersionListOptions,
@@ -268,19 +266,6 @@ export function createSoulClient(context: SoulClientContext) {
           extraHeaders: buildDenContextHeaders(options),
           timeoutMs,
         },
-      ),
-
-    getStatus: (workspaceId: string) =>
-      requestJson<VesloSoulStatus>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/soul/status`, {
-        token,
-        hostToken,
-      }),
-
-    listHeartbeats: (workspaceId: string, limit = 20) =>
-      requestJson<{ items: VesloSoulHeartbeatEntry[]; total: number; path: string }>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/soul/heartbeats?limit=${encodeURIComponent(String(limit))}`,
-        { token, hostToken },
       ),
   };
 }

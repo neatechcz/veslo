@@ -96,11 +96,6 @@ export type SoulRouteDependencies = {
   soulActorId: (ctx: RequestContext) => string;
   soulVersionId: (prefix?: string) => string;
   parseInteger: (value: string | undefined) => number | null;
-  getSoulStatus: (workspaceRoot: string) => Promise<unknown>;
-  listSoulHeartbeats: (
-    workspaceRoot: string,
-    limit: number,
-  ) => Promise<{ items: unknown[]; total: number; path: string }>;
 };
 
 export function registerSoulRoutes(
@@ -136,8 +131,6 @@ export function registerSoulRoutes(
     soulActorId,
     soulVersionId,
     parseInteger,
-    getSoulStatus,
-    listSoulHeartbeats,
   } = dependencies;
 
   addRoute(routes, "GET", "/soul", "client", async (ctx) => {
@@ -689,20 +682,6 @@ export function registerSoulRoutes(
     }));
   });
 
-  addRoute(routes, "GET", "/workspace/:id/soul/status", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
-    const status = await getSoulStatus(workspace.path);
-    return jsonResponse(status);
-  });
-
-  addRoute(routes, "GET", "/workspace/:id/soul/heartbeats", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
-    const limitParam = ctx.url.searchParams.get("limit");
-    const parsedLimit = limitParam ? Number(limitParam) : NaN;
-    const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 200) : 20;
-    const { items, total, path } = await listSoulHeartbeats(workspace.path, limit);
-    return jsonResponse({ items, total, path });
-  });
 }
 
 async function recordConfiguredSoulAudit(

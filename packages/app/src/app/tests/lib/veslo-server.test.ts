@@ -3596,7 +3596,6 @@ test("soul domain facade exposes soul read and mutation endpoints", async () => 
       activeWorkspaceIds: ["ws 1", "ws 1"],
     });
     await client.soul.restoreWorkspaceVersion("ws 1", "version/1", { activeRun: true });
-    await client.soul.listHeartbeats("ws 1", 5);
 
     assert.deepEqual(
       calls.map((call) => ({ url: call.url, method: call.method })),
@@ -3605,7 +3604,6 @@ test("soul domain facade exposes soul read and mutation endpoints", async () => 
         { url: "https://veslo.example/workspace/ws%201/soul", method: "GET" },
         { url: "https://veslo.example/workspace/ws%201/soul", method: "PATCH" },
         { url: "https://veslo.example/workspace/ws%201/soul/versions/version%2F1/restore", method: "POST" },
-        { url: "https://veslo.example/workspace/ws%201/soul/heartbeats?limit=5", method: "GET" },
       ],
     );
     assert.equal(calls[0]?.headers.get("x-veslo-den-token"), "den-token");

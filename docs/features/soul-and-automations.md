@@ -85,7 +85,7 @@ Current Soul behavior includes:
 - modal close through the close button or Escape
 - textarea editing for sources the current account can edit
 - server-synced version history, version preview, restore, and saved change summaries in the modal history
-- workspace heartbeat status and on/off toggle
+- workspace source heartbeat setting and on/off toggle
 - actionable materialization diagnostics when the server reports a runtime conflict or write/config problem
 
 Soul documents stay keyed by `scope + ownerId` internally. API read models also
@@ -124,16 +124,12 @@ configured workspace affected by the materialization sync. The audit action
 identifies the Soul scope, and Settings displays the same workspace audit trail
 used by other server-side mutations.
 
-## Soul Setup Expectations
+## Soul Runtime Expectations
 
-Soul setup relies on a combination of:
-
-- memory/config presence
-- instructions being available
-- heartbeat command existing
-- heartbeat job existing
-- heartbeat log existing
-- at least one successful heartbeat as proof
+Soul setup is driven by the Organization, User, and Workspace Soul source
+documents plus Veslo-owned runtime materialization. The UI must not infer
+whether Soul is enabled from old local artifacts, old prompt templates, command
+presence, scheduled jobs, or local heartbeat logs.
 
 The source editor treats runtime materialization as automatic. Remote Veslo
 workspace provisioning also materializes Soul runtime files when Den identity
@@ -141,29 +137,35 @@ context is available and must preserve already materialized files when a later
 provision call lacks Den context. If materialization reports a conflict or
 status that needs action, the UI should show actionable diagnostics rather than
 exposing a manual sync choice.
-Manifestless `.opencode/soul-*.md` runtime files are adopted as legacy Veslo
-output only when their content matches a current or historical Soul source
-version; unrelated unmanaged files remain protected from overwrite.
+Manifestless `.opencode/soul-*.md` runtime files are adopted as Veslo output
+only when their content matches a current or historical Soul source version;
+unrelated unmanaged files remain protected from overwrite.
 
 ## Heartbeat Triggering
 
-Workspace Soul heartbeat can be toggled from the selected workspace source. There is no organization heartbeat endpoint; organization-level heartbeat suggestions, if surfaced, must be review-oriented rather than auto-applied by the UI.
+Workspace Soul heartbeat can be toggled from the selected workspace source.
+There is no organization heartbeat endpoint; organization-level heartbeat
+suggestions, if surfaced, must be review-oriented rather than auto-applied by
+the UI.
 
-If heartbeat runtime semantics change, keep this doc aligned with the actual page behavior and any scheduler dependency changes.
+If heartbeat runtime semantics change, keep this doc aligned with the actual
+page behavior.
 
-## Relationship Between Soul and Scheduler
+## Relationship Between Soul and Automations
 
-Soul is not just a static status page. It depends on scheduler-backed recurring work or equivalent command-driven behavior.
+Soul source management is independent from Veslo Automations. The Automations
+page can still manage normal server-backed recurring work, but it is not the
+source of truth for whether Soul is configured or visible in the app.
 
 When debugging Soul issues, check both:
 
-- Soul page behavior
-- scheduled jobs and command existence
+- Soul page behavior and source summaries
+- Den or local cached Soul documents
+- materialization audit and conflict diagnostics
 
 ## Source of Truth
 
 - Soul page: `packages/app/src/app/pages/soul.tsx`
 - Soul app data store: `packages/app/src/app/pages/soul-data-store.ts`
 - Soul server owner: `packages/server/src/soul-controller.ts`
-- scheduled jobs page: `packages/app/src/app/pages/scheduled.tsx`
-- Soul setup command template: `packages/app/src/app/data/commands/give-me-a-soul.md`
+- Soul runtime materializer: `packages/server/src/soul-materializer.ts`

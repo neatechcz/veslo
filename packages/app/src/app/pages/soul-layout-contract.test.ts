@@ -5,6 +5,8 @@ import test from "node:test";
 const soulSource = readFileSync(new URL("./soul.tsx", import.meta.url), "utf8");
 const soulControllerSource = readFileSync(new URL("./soul-controller.ts", import.meta.url), "utf8");
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
+const sessionSource = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
+const workspaceSessionListSource = readFileSync(new URL("../components/session/workspace-session-list.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const appViewPropsSource = readFileSync(new URL("../app-view-props.ts", import.meta.url), "utf8");
 const vesloServerSource = readFileSync(new URL("../lib/veslo-server/types.ts", import.meta.url), "utf8");
@@ -51,6 +53,21 @@ test("Dashboard passes Soul overview state and busy flag to SoulView", () => {
   assert.match(dashboardSource, /<SoulView[\s\S]*busySessionByWorkspaceId=\{props\.busySessionByWorkspaceId\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*reloadWorkspaceEngine=\{props\.reloadWorkspaceEngine\}/);
   assert.doesNotMatch(dashboardSource, /<SoulView[\s\S]{0,500}runSoulPrompt=\{props\.runSoulPrompt\}/);
+});
+
+test("legacy Soul runtime status is not surfaced in app chrome or client types", () => {
+  const legacyAppSurface =
+    /VesloSoulStatus|VesloSoulHeartbeatEntry|soulStatusByWorkspaceId|activeSoulStatus|activeSoulHeartbeats|soulStatusBusy|soulHeartbeatsBusy|runSoulPrompt|getSoulStatus|listSoulHeartbeats/;
+
+  assert.doesNotMatch(appViewPropsSource, legacyAppSurface);
+  assert.doesNotMatch(dashboardSource, legacyAppSurface);
+  assert.doesNotMatch(sessionSource, legacyAppSurface);
+  assert.doesNotMatch(workspaceSessionListSource, legacyAppSurface);
+  assert.doesNotMatch(workspaceSessionListSource, /sidebar\.soul_badge|soulEnabled|HeartPulse/);
+  assert.doesNotMatch(vesloServerSource, /VesloSoulStatus|VesloSoulHeartbeatEntry|heartbeatLogExists|heartbeatCommandExists/);
+  assert.doesNotMatch(enSource, /sidebar\.soul_badge|soul\.status_on|soul\.status_off/);
+  assert.doesNotMatch(csSource, /sidebar\.soul_badge|soul\.status_on|soul\.status_off/);
+  assert.doesNotMatch(zhSource, /sidebar\.soul_badge|soul\.status_on|soul\.status_off/);
 });
 
 test("Soul source overview order is organization, user, then workspace table", () => {

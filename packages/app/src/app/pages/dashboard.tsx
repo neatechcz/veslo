@@ -39,9 +39,7 @@ import { reportError } from "../lib/error-reporter";
 import type {
   VesloAuditEntry,
   VesloSoulAuthContext,
-  VesloSoulHeartbeatEntry,
   VesloSoulOverviewResponse,
-  VesloSoulStatus,
   VesloServerClient,
   VesloServerCapabilities,
   VesloServerDiagnostics,
@@ -217,15 +215,9 @@ export type DashboardViewProps = {
   soulClient: VesloServerClient | null;
   soulServerConnected: boolean;
   soulAuthContext: VesloSoulAuthContext;
-  soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
   soulWorkspaceMap: Record<string, string>;
-  activeSoulStatus: VesloSoulStatus | null;
-  activeSoulHeartbeats: VesloSoulHeartbeatEntry[];
-  soulStatusBusy: boolean;
-  soulHeartbeatsBusy: boolean;
   soulError: string | null;
   refreshSoulData: (options?: { force?: boolean }) => void;
-  runSoulPrompt: (prompt: string) => void;
   activeWorkspaceRoot: string;
   isRemoteWorkspace: boolean;
   refreshSkills: (options?: { force?: boolean }) => void;
@@ -630,19 +622,12 @@ export default function DashboardView(props: DashboardViewProps) {
     });
   });
 
-  const soulModeEnabled = createMemo(() => {
-    const status = props.soulStatusByWorkspaceId[props.activeWorkspaceId];
-    return Boolean(status?.enabled ?? props.activeSoulStatus?.enabled);
-  });
-
   const runtimeAvailableWithoutClient = createMemo(() => {
     void props.clientConnected;
     void props.vesloServerStatus;
     void props.activeWorkspaceDisplay;
     return false;
   });
-
-  const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
 
   const handleDashboardTabSelection = (nextTab: DashboardTab, nextSettingsTab?: SettingsTab) => {
     const action = resolveDashboardTabSelectionAction({
@@ -939,7 +924,6 @@ export default function DashboardView(props: DashboardViewProps) {
                 readyEngineWorkspaceIds={props.readyEngineWorkspaceIds}
                 newTaskDisabled={props.newTaskDisabled}
                 importingWorkspaceConfig={props.importingWorkspaceConfig}
-                soulStatusByWorkspaceId={props.soulStatusByWorkspaceId}
                 isPrivateWorkspacePath={props.isPrivateWorkspacePath}
                 onActivateWorkspace={props.activateWorkspace}
                 onOpenSession={openSessionFromList}
@@ -1022,11 +1006,6 @@ export default function DashboardView(props: DashboardViewProps) {
             <div class="font-product type-ui-sm px-3 py-1.5 rounded-xl bg-dls-hover text-dls-secondary font-medium">
               {props.activeWorkspaceDisplay.name}
             </div>
-            <Show when={props.activeSoulStatus?.enabled}>
-              <div class="font-product type-ui-xs inline-flex items-center gap-1 rounded-full border border-rose-7/40 bg-rose-3/40 px-2 py-1 text-rose-11">
-                <HeartPulse size={11} />
-                {__vesloT("soul.status_on", __vesloCurrentLocale())}</div>
-            </Show>
             <Show when={props.tab !== "settings"}>
               <h1 class="font-product type-title-sm">{title()}</h1>
             </Show>
@@ -1409,7 +1388,7 @@ export default function DashboardView(props: DashboardViewProps) {
               }`}
               onClick={() => handleDashboardTabSelection("soul")}
             >
-              <HeartPulse size={18} class={soulNavIconClass()} />
+              <HeartPulse size={18} />
               <span class="max-w-full text-center leading-tight [overflow-wrap:anywhere]">
                 {t("nav.soul", currentLocale())}
               </span>

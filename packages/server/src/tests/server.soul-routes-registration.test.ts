@@ -25,8 +25,6 @@ describe("Soul routes", () => {
       ["PATCH", "/workspace/ws_1/soul", "client"],
       ["POST", "/workspace/ws_1/soul/versions/version-1/restore", "client"],
       ["POST", "/workspace/ws_1/soul/heartbeat-toggle", "client"],
-      ["GET", "/workspace/ws_1/soul/status", "client"],
-      ["GET", "/workspace/ws_1/soul/heartbeats", "client"],
     ];
 
     expect(routes).toHaveLength(expectedRoutes.length);

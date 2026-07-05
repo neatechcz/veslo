@@ -1,15 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   configIncludesSoulInstruction,
-  getSoulStatus,
-  LEGACY_SOUL_MEMORY_PATH,
-  listSoulHeartbeats,
-  parseSoulHeartbeatEntries,
-  SOUL_HEARTBEAT_PATH,
+  readOpencodeConfig,
   SOUL_INSTRUCTIONS,
   SOUL_MANIFEST_PATH,
   soulMaterializationApprovalPaths,
@@ -31,113 +27,36 @@ describe("soul runtime owner", () => {
         join(workspaceRoot, SOUL_MANIFEST_PATH),
       ]);
       expect(new Set(paths).size).toBe(paths.length);
-      expect(paths).not.toContain(join(workspaceRoot, LEGACY_SOUL_MEMORY_PATH));
+      expect(paths).not.toContain(join(workspaceRoot, ".opencode/soul.md"));
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
   });
 
-  test("detects current and legacy Soul instruction config without matching unrelated paths", () => {
+  test("detects current Soul instruction config without matching legacy or unrelated paths", () => {
     for (const relativePath of SOUL_INSTRUCTIONS) {
       expect(configIncludesSoulInstruction({ instructions: [relativePath] })).toBe(true);
       expect(configIncludesSoulInstruction({ instructions: `Load ${relativePath} before answering.` })).toBe(true);
     }
 
-    expect(configIncludesSoulInstruction({ instructions: [LEGACY_SOUL_MEMORY_PATH] })).toBe(true);
+    expect(configIncludesSoulInstruction({ instructions: [".opencode/soul.md"] })).toBe(false);
     expect(configIncludesSoulInstruction({ instructions: [".opencode/not-soul.md"] })).toBe(false);
     expect(configIncludesSoulInstruction({ instructions: 123 })).toBe(false);
   });
 
-  test("parses heartbeat logs newest first and ignores malformed lines", () => {
-    const heartbeats = parseSoulHeartbeatEntries([
-      JSON.stringify({
-        ts: "2026-07-01T10:00:00.000Z",
-        workspace: "ws_1",
-        loose_ends: ["Review deployment", "Update docs"],
-      }),
-      "not json",
-      JSON.stringify({
-        ts: 1_782_901_800_000,
-        workspace: "ws_1",
-        summary: "Deployment done",
-        next_action: "Watch metrics",
-      }),
-    ].join("\n"));
-
-    expect(heartbeats).toHaveLength(2);
-    expect(heartbeats[0]).toMatchObject({
-      ts: "2026-07-01T10:30:00.000Z",
-      workspace: "ws_1",
-      summary: "Deployment done",
-      nextAction: "Watch metrics",
-    });
-    expect(heartbeats[1]).toMatchObject({
-      ts: "2026-07-01T10:00:00.000Z",
-      summary: "Loose ends: Review deployment; Update docs",
-      looseEnds: ["Review deployment", "Update docs"],
-    });
-  });
-
-  test("reports status from current Soul runtime files while preserving legacy memory fallback", async () => {
-    const workspaceRoot = await tempWorkspace("status");
+  test("reads OpenCode config for current Soul materialization checks", async () => {
+    const workspaceRoot = await tempWorkspace("config");
     try {
-      await mkdir(join(workspaceRoot, ".opencode", "soul"), { recursive: true });
       await writeFile(
         join(workspaceRoot, "opencode.jsonc"),
-        JSON.stringify({ instructions: [SOUL_INSTRUCTIONS[1]] }, null, 2),
-        "utf8",
-      );
-      await writeFile(join(workspaceRoot, SOUL_INSTRUCTIONS[1]), "User runtime memory\n", "utf8");
-      await writeFile(
-        join(workspaceRoot, SOUL_HEARTBEAT_PATH),
-        `${JSON.stringify({ ts: "2026-07-01T12:00:00.000Z", summary: "Ready" })}\n`,
+        JSON.stringify({ instructions: [SOUL_INSTRUCTIONS[2]], model: "test-model" }, null, 2),
         "utf8",
       );
 
-      const status = await getSoulStatus(workspaceRoot);
+      const config = await readOpencodeConfig(workspaceRoot);
 
-      expect(status.enabled).toBe(true);
-      expect(status.state).toBe("healthy");
-      expect(status.memoryEnabled).toBe(true);
-      expect(status.instructionsEnabled).toBe(true);
-      expect(status.heartbeatLogExists).toBe(true);
-      expect(status.heartbeatCount).toBe(1);
-      expect(status.lastHeartbeatAt).toBe("2026-07-01T12:00:00.000Z");
-      expect(status.lastHeartbeatSummary).toBe("Ready");
-      expect(status.memoryPath).toBe(SOUL_INSTRUCTIONS[0]);
-      expect(status.memoryPaths).toEqual([...SOUL_INSTRUCTIONS]);
-      expect(status.heartbeatPath).toBe(SOUL_HEARTBEAT_PATH);
-    } finally {
-      await rm(workspaceRoot, { recursive: true, force: true });
-    }
-  });
-
-  test("legacy Soul memory keeps status enabled without changing the current runtime contract", async () => {
-    const workspaceRoot = await tempWorkspace("legacy");
-    try {
-      await mkdir(join(workspaceRoot, ".opencode"), { recursive: true });
-      await writeFile(join(workspaceRoot, LEGACY_SOUL_MEMORY_PATH), "Legacy memory\n", "utf8");
-
-      const status = await getSoulStatus(workspaceRoot);
-
-      expect(status.enabled).toBe(true);
-      expect(status.memoryEnabled).toBe(true);
-      expect(status.instructionsEnabled).toBe(false);
-      expect(status.memoryPath).toBe(SOUL_INSTRUCTIONS[0]);
-      expect(status.memoryPaths).toEqual([...SOUL_INSTRUCTIONS]);
-    } finally {
-      await rm(workspaceRoot, { recursive: true, force: true });
-    }
-  });
-
-  test("listSoulHeartbeats returns a stable empty payload when the log is missing", async () => {
-    const workspaceRoot = await tempWorkspace("missing-heartbeats");
-    try {
-      await expect(listSoulHeartbeats(workspaceRoot, 10)).resolves.toEqual({
-        items: [],
-        total: 0,
-        path: SOUL_HEARTBEAT_PATH,
-      });
+      expect(configIncludesSoulInstruction(config)).toBe(true);
+      expect(config).toMatchObject({ model: "test-model" });
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

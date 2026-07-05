@@ -346,26 +346,13 @@ function resolveSoulKinds(
   workspaceRoot?: string,
 ): Set<SessionArtifactKind> {
   const kinds = new Set<SessionArtifactKind>();
-  const titles = [
-    part.title,
-    state.title,
-    readString(state.input, "title"),
-    readString(state.input, "name"),
-    readString(state.input, "job"),
-    readString(state.input, "command"),
-  ]
-    .filter((value): value is string => Boolean(value))
-    .join(" ")
-    .toLowerCase();
-
   if (toolName === "soul.memory") kinds.add("soul_memory_used");
-  if (toolName === "soul.heartbeat" || titles.includes("soul-heartbeat")) kinds.add("heartbeat_used");
+  if (toolName === "soul.heartbeat") kinds.add("heartbeat_used");
 
   for (const rawPath of collectPathCandidates(part, state)) {
     const path = normalizeArtifactPath(rawPath, { workspaceRoot });
     if (!path) continue;
-    if (path === ".opencode/soul.md") kinds.add("soul_memory_used");
-    if (path === ".opencode/soul/heartbeat.jsonl") kinds.add("heartbeat_used");
+    if (isSemanticSoulPath(path)) kinds.add("soul_memory_used");
   }
 
   return kinds;
@@ -555,7 +542,9 @@ function shouldDropGenericFileArtifact(path: string): boolean {
 }
 
 function isSemanticSoulPath(path: string): boolean {
-  return path === ".opencode/soul.md" || path === ".opencode/soul/heartbeat.jsonl";
+  return path === ".opencode/soul-company.md" ||
+    path === ".opencode/soul-user.md" ||
+    path === ".opencode/soul-workspace.md";
 }
 
 function sanitizeRelativeArtifactPath(value: string): string | null {

@@ -68,7 +68,6 @@ import type {
   VesloServerClient,
   VesloServerSettings,
   VesloServerStatus,
-  VesloSoulStatus,
 } from "../lib/veslo-server";
 import { DEFAULT_VESLO_PUBLISHER_BASE_URL } from "../lib/publisher";
 import { join } from "@tauri-apps/api/path";
@@ -279,7 +278,6 @@ export type SessionViewProps = {
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
-  soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
   openCreateWorkspace: () => void;
   openCreateRemoteWorkspace: () => void;
   openNewSessionWithDirectory: () => Promise<boolean | void> | boolean | void;
@@ -3297,7 +3295,6 @@ export default function SessionView(props: SessionViewProps) {
           newTaskDisabled: props.newTaskDisabled,
           importingWorkspaceConfig: props.importingWorkspaceConfig,
           showRemoteActions: props.showRemoteActions,
-          soulStatusByWorkspaceId: props.soulStatusByWorkspaceId,
           isPrivateWorkspacePath: props.isPrivateWorkspacePath,
           onActivateWorkspace: props.activateWorkspace,
           onOpenSession: openSessionFromList,

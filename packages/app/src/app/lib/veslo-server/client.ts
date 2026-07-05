@@ -155,8 +155,6 @@ import type {
   VesloInboxItem,
   VesloInboxList,
   VesloInboxUploadResult,
-  VesloSoulHeartbeatEntry,
-  VesloSoulStatus,
   VesloSoulScope,
   VesloSoulVersionSource,
   VesloSoulVersion,
@@ -633,8 +631,6 @@ export function createVesloServerClient(options: {
     restoreWorkspaceSoulVersion: soul.restoreWorkspaceVersion,
     syncWorkspaceSoulMaterialization: soul.syncWorkspaceMaterialization,
     setWorkspaceSoulHeartbeat: soul.setWorkspaceHeartbeat,
-    getSoulStatus: soul.getStatus,
-    listSoulHeartbeats: soul.listHeartbeats,
 
     uploadInbox: files.uploadInbox,
     listInbox: files.listInbox,

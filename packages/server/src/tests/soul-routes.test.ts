@@ -131,6 +131,20 @@ const denHeaders = {
   "x-veslo-den-user-id": "user_1",
 };
 
+test("legacy Soul runtime status endpoints are not exposed", async () => {
+  const server = await startFixture();
+
+  const status = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_active/soul/status`, {
+    headers: clientHeaders,
+  });
+  const heartbeats = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_active/soul/heartbeats`, {
+    headers: clientHeaders,
+  });
+
+  expect(status.status).toBe(404);
+  expect(heartbeats.status).toBe(404);
+});
+
 async function issueToken(server: { port: number }, scope: "owner" | "collaborator" | "viewer"): Promise<string> {
   const response = await fetch(`http://127.0.0.1:${server.port}/tokens`, {
     method: "POST",
@@ -938,27 +952,6 @@ test("workspace soul routes work for configured workspaces that are not active",
   const read = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_inactive/soul`, { headers: clientHeaders });
   expect(read.status).toBe(200);
   expect(await read.json()).toEqual(updatePayload);
-
-  const status = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_inactive/soul/status`, { headers: clientHeaders });
-  expect(status.status).toBe(200);
-  const statusPayload = await status.json() as {
-    enabled: boolean;
-    state: string;
-    memoryEnabled: boolean;
-    instructionsEnabled: boolean;
-    memoryPath: string;
-    memoryPaths?: string[];
-  };
-  expect(statusPayload.enabled).toBe(true);
-  expect(statusPayload.state).toBe("healthy");
-  expect(statusPayload.memoryEnabled).toBe(true);
-  expect(statusPayload.instructionsEnabled).toBe(true);
-  expect(statusPayload.memoryPath).toBe(".opencode/soul-company.md");
-  expect(statusPayload.memoryPaths).toEqual([
-    ".opencode/soul-company.md",
-    ".opencode/soul-user.md",
-    ".opencode/soul-workspace.md",
-  ]);
 });
 
 test("workspace Soul materialization stays pending during active runs and syncs after idle", async () => {

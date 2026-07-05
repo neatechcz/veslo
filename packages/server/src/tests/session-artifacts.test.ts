@@ -373,8 +373,8 @@ describe("deriveLatestRunArtifacts", () => {
         userMessage("msg_1", "Review Soul state."),
         assistantMessage(
           "msg_2",
-          toolPart("read", { path: ".opencode/soul.md" }),
-          toolPart("write", { path: ".opencode/soul/heartbeat.jsonl" }),
+          toolPart("read", { path: ".opencode/soul-workspace.md" }),
+          toolPart("soul.heartbeat", {}),
         ),
       ),
     );
@@ -397,8 +397,8 @@ describe("deriveLatestRunArtifacts", () => {
         userMessage("msg_1", "Refresh Soul."),
         assistantMessage(
           "msg_2",
-          toolPart("read", { path: ".opencode/soul.md" }),
-          toolPart("write", { path: ".opencode/soul/heartbeat.jsonl" }),
+          toolPart("read", { path: ".opencode/soul-workspace.md" }),
+          toolPart("soul.heartbeat", {}),
         ),
       ),
     );
@@ -408,20 +408,19 @@ describe("deriveLatestRunArtifacts", () => {
     expect(files(artifacts)).toEqual([]);
   });
 
-  test("maps WSL Soul paths before classifying semantic Soul artifacts", () => {
+  test("maps WSL Soul paths before classifying current semantic Soul artifacts", () => {
     const artifacts = deriveLatestRunArtifacts(
       session(
         userMessage("msg_1", "Refresh Soul."),
         assistantMessage(
           "msg_2",
-          toolPart("read", { path: "/workspace/.opencode/soul.md" }),
-          toolPart("write", { path: "/workspace/.opencode/soul/heartbeat.jsonl" }),
+          toolPart("read", { path: "/workspace/.opencode/soul-workspace.md" }),
         ),
       ),
       { workspaceRoot: "C:\\Users\\alice\\AppData\\Local\\Veslo\\fixtures\\artifact-workspace" },
     );
 
-    expect(kinds(artifacts)).toEqual(["soul_memory_used", "heartbeat_used"]);
+    expect(kinds(artifacts)).toEqual(["soul_memory_used"]);
     expect(files(artifacts)).toEqual([]);
   });
 
@@ -532,7 +531,7 @@ describe("latest-run artifact route", () => {
           "msg-004-assistant": [
             { id: "part-004", type: "tool", tool: "read", state: { input: { path: "src/app.ts" } } },
             { id: "part-005", type: "tool", tool: "chrome-devtools.evaluate", server: "chrome-devtools", title: "Chrome DevTools" },
-            { id: "part-006", type: "tool", tool: "read", state: { input: { path: ".opencode/soul.md" } } },
+            { id: "part-006", type: "tool", tool: "read", state: { input: { path: ".opencode/soul-workspace.md" } } },
           ],
         },
       });

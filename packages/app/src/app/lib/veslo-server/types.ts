@@ -1336,41 +1336,6 @@ export type VesloInboxUploadResult = {
   bytes: number;
 };
 
-export type VesloSoulHeartbeatEntry = {
-  id: string;
-  ts: string | null;
-  workspace: string | null;
-  summary: string;
-  looseEnds: string[];
-  nextAction: string | null;
-};
-
-export type VesloSoulStatus = {
-  enabled: boolean;
-  state: "off" | "healthy" | "stale" | "error";
-  memoryEnabled: boolean;
-  instructionsEnabled: boolean;
-  heartbeatLogExists: boolean;
-  heartbeatCommandExists: boolean;
-  heartbeatJob: {
-    name: string;
-    slug: string;
-    schedule: string;
-    lastRunAt: string | null;
-    lastRunStatus: string | null;
-    lastRunError: string | null;
-  } | null;
-  heartbeatCount: number;
-  lastHeartbeatAt: string | null;
-  lastHeartbeatSummary: string | null;
-  staleAfterMs: number | null;
-  overdue: boolean;
-  summary: string;
-  memoryPath: string;
-  memoryPaths?: string[];
-  heartbeatPath: string;
-};
-
 export type VesloSoulScope = "organization" | "user" | "workspace";
 export type VesloSoulVersionSource = "manual" | "api" | "heartbeat" | "restore" | "system";
 

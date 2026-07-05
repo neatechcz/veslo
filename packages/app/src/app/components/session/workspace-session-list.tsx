@@ -7,7 +7,6 @@ import {
   ChevronUp,
   Folder,
   FolderPlus,
-  HeartPulse,
   List,
   Loader2,
   MoreHorizontal,
@@ -15,7 +14,6 @@ import {
   Search,
 } from "lucide-solid";
 
-import type { VesloSoulStatus } from "../../lib/veslo-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
 import { recordPerfLog } from "../../lib/perf-log";
 import { buildArchivedSidebarSessionKey } from "../../lib/session-archive-model";
@@ -117,7 +115,6 @@ type Props = {
   readyEngineWorkspaceIds?: Set<string>;
   importingWorkspaceConfig: boolean;
   showRemoteActions?: boolean;
-  soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
   isPrivateWorkspacePath?: (folder: string | null | undefined) => boolean;
   onActivateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
@@ -185,7 +182,6 @@ type SessionRowRenderOptions = {
   anchorPrefix: string;
   label?: (row: FlatSessionRow) => string;
   showWorkspaceMenu?: boolean;
-  soulEnabled?: () => boolean;
   canRecover?: () => boolean;
   isConnectionActionBusy?: () => boolean;
   variant?: "project" | "recent";
@@ -1757,7 +1753,6 @@ export default function WorkspaceSessionList(props: Props) {
     return {
       target,
       workspace,
-      soulEnabled: Boolean(props.soulStatusByWorkspaceId[workspace.id]?.enabled),
       canRecover: canRecoverWorkspace(workspace),
       isConnectionActionBusy: isConnectionActionBusyFor(workspace.id),
     };
@@ -1803,7 +1798,6 @@ export default function WorkspaceSessionList(props: Props) {
         {(context) => {
           const target = () => context().target;
           const workspace = () => context().workspace;
-          const soulEnabled = () => context().soulEnabled;
           const canRecover = () => context().canRecover;
           const isConnectionActionBusy = () => context().isConnectionActionBusy;
 
@@ -1851,7 +1845,7 @@ export default function WorkspaceSessionList(props: Props) {
                   setWorkspaceMenuTarget(null);
                 }}
               >
-                {soulEnabled() ? tr("sidebar.soul_settings") : tr("sidebar.enable_soul")}
+                {tr("sidebar.soul_settings")}
               </button>
               <Show when={workspace().workspaceType === "local"}>
                 <button
@@ -1933,7 +1927,6 @@ export default function WorkspaceSessionList(props: Props) {
       anchorKey: string;
       label?: () => string;
       showWorkspaceMenu?: boolean;
-      soulEnabled?: () => boolean;
       canRecover?: () => boolean;
       isConnectionActionBusy?: () => boolean;
     },
@@ -2066,8 +2059,6 @@ export default function WorkspaceSessionList(props: Props) {
       isBusyRowSession(row);
     const isUnread = () => isSessionUnread(session().id);
     const isConnecting = () => isConnectingWorkspace(workspace().id);
-    const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
-    const soulEnabled = () => Boolean(soulStatus()?.enabled);
     const taskLoadError = () => taskLoadErrorFor(workspace(), row.error);
     const label = () => sessionLabelParts(row);
     const labelColor = () => sessionLabelColor(row);
@@ -2122,12 +2113,6 @@ export default function WorkspaceSessionList(props: Props) {
               </Show>
               <Show when={workspace().workspaceType === "remote"}>
                 <span>{workspaceKindLabel(workspace())}</span>
-              </Show>
-              <Show when={soulEnabled()}>
-                <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
-                  <HeartPulse size={10} />
-                  {tr("sidebar.soul_badge")}
-                </span>
               </Show>
               <Show when={isConnecting()}>
                 <Loader2 size={11} class="animate-spin text-gray-10" />
@@ -2213,7 +2198,6 @@ export default function WorkspaceSessionList(props: Props) {
       anchorKey: `${options.anchorPrefix}:${row.rowKey}`,
       label: options.label ? () => options.label?.(row) ?? "" : undefined,
       showWorkspaceMenu: options.showWorkspaceMenu,
-      soulEnabled: options.soulEnabled,
       canRecover: options.canRecover,
       isConnectionActionBusy: options.isConnectionActionBusy,
     });
@@ -2454,8 +2438,6 @@ export default function WorkspaceSessionList(props: Props) {
                         const isActiveWorkspace = () => props.activeWorkspaceId === workspace().id;
                         const isConnecting = () => isConnectingWorkspace(workspace().id);
                         const canRecover = () => canRecoverWorkspace(workspace());
-                        const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
-                        const soulEnabled = () => Boolean(soulStatus()?.enabled);
                         const taskLoadError = () => taskLoadErrorFor(workspace(), project.error);
                         const isConnectionActionBusy = () => isConnectionActionBusyFor(workspace().id);
                         const anchorKey = `recent-project:${workspace().id}`;
@@ -2484,12 +2466,6 @@ export default function WorkspaceSessionList(props: Props) {
                                   <Show when={workspace().workspaceType === "remote"}>
                                     <span class="shrink-0 text-[10px] text-gray-8 uppercase tracking-[0.12em]">
                                       {workspaceKindLabel(workspace())}
-                                    </span>
-                                  </Show>
-                                  <Show when={soulEnabled()}>
-                                    <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
-                                      <HeartPulse size={10} />
-                                      {tr("sidebar.soul_badge")}
                                     </span>
                                   </Show>
                                   <Show when={isConnecting()}>
@@ -2575,8 +2551,6 @@ export default function WorkspaceSessionList(props: Props) {
                 const isActiveWorkspace = () => props.activeWorkspaceId === workspace().id;
                 const isConnecting = () => isConnectingWorkspace(workspace().id);
                 const canRecover = () => canRecoverWorkspace(workspace());
-                const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
-                const soulEnabled = () => Boolean(soulStatus()?.enabled);
                 const taskLoadError = () => taskLoadErrorFor(workspace(), project.error);
                 const isConnectionActionBusy = () => isConnectionActionBusyFor(workspace().id);
                 const anchorKey = `project:${workspace().id}`;
@@ -2697,12 +2671,6 @@ export default function WorkspaceSessionList(props: Props) {
                                     {workspaceKindLabel(workspace())}
                                   </span>
                                 </Show>
-                                <Show when={soulEnabled()}>
-                                  <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
-                                    <HeartPulse size={10} />
-                                    {tr("sidebar.soul_badge")}
-                                  </span>
-                                </Show>
                                 <Show when={isConnecting()}>
                                   <Loader2 size={11} class="animate-spin text-gray-10" />
                                 </Show>
@@ -2757,7 +2725,6 @@ export default function WorkspaceSessionList(props: Props) {
                       <>
                         {renderSessionTreeRows(() => visibleRows(), hasChildren, {
                           anchorPrefix: "project-session",
-                          soulEnabled,
                           canRecover,
                           isConnectionActionBusy,
                         })}
@@ -2793,7 +2760,6 @@ export default function WorkspaceSessionList(props: Props) {
                       <div class="pl-5 pt-0.5 space-y-0">
                         {renderSessionTreeRows(() => forcedVisibleRows(), hasChildren, {
                           anchorPrefix: "project-session-forced",
-                          soulEnabled,
                           canRecover,
                           isConnectionActionBusy,
                         })}

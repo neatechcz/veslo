@@ -3860,10 +3860,6 @@ export default function App() {
     activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
     soulAuthContext: skillRegistryMaterializationAuthContext,
     authRevision: denAuthRevision,
-    createSessionAndOpen,
-    sendPrompt,
-    setPrompt,
-    createClientMessageId: createSessionClientMessageId,
     reportError,
   });
 

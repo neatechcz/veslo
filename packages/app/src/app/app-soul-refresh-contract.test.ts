@@ -29,58 +29,44 @@ function extractFunctionBody(source: string, name: string): string {
   assert.fail(`${name} body should be balanced`);
 }
 
-test("Soul overview refresh is started without blocking legacy status and heartbeat refresh", () => {
+test("Soul overview refresh is started before workspace source mapping", () => {
   const refreshBody = extractFunctionBody(soulDataStoreSource, "refreshSoulData");
 
   assert.equal(
     refreshBody.includes("await client.getSoulOverview"),
     false,
-    "refreshSoulData must not await Den-backed overview before legacy status work",
+    "refreshSoulData should keep the Den-backed overview refresh non-blocking",
   );
 
   const overviewKickoff = refreshBody.indexOf("void refreshSoulOverview(client);");
-  const statusWork = refreshBody.indexOf("const workspaceMap = await resolveSoulWorkspaceMap();");
+  const workspaceMapWork = refreshBody.indexOf("const workspaceMap = await resolveSoulWorkspaceMap();");
 
   assert.ok(overviewKickoff >= 0, "refreshSoulData should kick off Soul overview refresh");
-  assert.ok(statusWork >= 0, "refreshSoulData should retain legacy workspace status refresh");
+  assert.ok(workspaceMapWork >= 0, "refreshSoulData should still map app workspaces to Soul source owners");
   assert.ok(
-    overviewKickoff < statusWork,
-    "overview refresh should be launched before status work, but without awaiting it",
+    overviewKickoff < workspaceMapWork,
+    "overview refresh should be launched before workspace mapping, but without awaiting it",
   );
+  assert.doesNotMatch(refreshBody, /getSoulStatus|listSoulHeartbeats|soulStatusBusy|soulHeartbeatsBusy/);
 });
 
-test("Soul overview refresh is not skipped by the legacy status busy guard", () => {
+test("Soul refresh clears source state when the server is disconnected", () => {
   const refreshBody = extractFunctionBody(soulDataStoreSource, "refreshSoulData");
 
   const clientRead = refreshBody.indexOf("const client = deps.vesloServerClient();");
   const disconnectedGuard = refreshBody.indexOf('if (!client || deps.vesloServerStatus() !== "connected")');
   const overviewKickoff = refreshBody.indexOf("void refreshSoulOverview(client);");
-  const legacyBusyGuard = refreshBody.indexOf("if (soulStatusBusy() && !options?.force) return;");
-  const legacyStatusBusySet = refreshBody.indexOf("setSoulStatusBusy(true);");
 
   assert.ok(clientRead >= 0, "refreshSoulData should read the current Veslo client");
   assert.ok(disconnectedGuard >= 0, "refreshSoulData should still clear Soul state when disconnected");
   assert.ok(overviewKickoff >= 0, "refreshSoulData should kick off the overview refresh");
-  assert.ok(legacyBusyGuard >= 0, "refreshSoulData should keep the legacy status busy guard");
-  assert.ok(legacyStatusBusySet >= 0, "refreshSoulData should still mark legacy status work busy");
   assert.ok(clientRead < disconnectedGuard, "client state should be checked before any refresh work");
   assert.ok(disconnectedGuard < overviewKickoff, "overview should only start for a connected client");
-  assert.ok(
-    overviewKickoff < legacyBusyGuard,
-    "Den-backed overview refresh must not be skipped when legacy status work is busy",
-  );
-  assert.ok(
-    legacyBusyGuard < legacyStatusBusySet,
-    "legacy status/heartbeat work should remain single-flight after the overview kickoff",
-  );
+  assert.doesNotMatch(refreshBody, /setSoulStatusBusy|setSoulHeartbeatsBusy|setActiveSoulHeartbeats/);
 });
 
-test("Dashboard props explicitly type retained Soul overview state", () => {
-  assert.match(
-    dashboardSource,
-    /VesloSoulOverviewResponse,\s*VesloSoulStatus,/,
-    "dashboard should import the Soul overview response type",
-  );
+test("Dashboard props explicitly type current Soul overview state", () => {
+  assert.doesNotMatch(dashboardSource, /VesloSoulStatus|VesloSoulHeartbeatEntry/);
   assert.match(
     dashboardSource,
     /soulOverview:\s*VesloSoulOverviewResponse\s*\|\s*null;/,

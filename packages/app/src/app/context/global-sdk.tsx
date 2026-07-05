@@ -132,7 +132,7 @@ export function GlobalSDKProvider(props: ParentProps) {
     // VSLO-86 — keep the SSE stream entirely on the Rust side when running in
     // Tauri. JS-side `eventClient.event.subscribe()` holds the Tauri http
     // plugin's IPC channel open for as long as the stream lives, which
-    // blocks every other veslo-server call (health, soul/status, config
+    // blocks every other veslo-server call (health, Soul overview, config
     // patches) until 8-12s timeouts fire and the UI looks frozen for ~60s
     // after boot. The Rust proxy now accepts Bearer auth so the previous
     // 401 reconnect loop (which forced us back onto the SDK path) is gone.

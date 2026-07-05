@@ -8,48 +8,14 @@ import {
   type SoulDataStoreWorkspace,
 } from "../../pages/soul-data-store.js";
 import type {
+  VesloServerStatus,
   VesloSoulAuthContext,
-  VesloSoulHeartbeatEntry,
   VesloSoulOverviewResponse,
-  VesloSoulStatus,
 } from "../../lib/veslo-server.js";
 
 type SoulClientCall =
   | { kind: "list-workspaces" }
-  | { kind: "overview"; auth: VesloSoulAuthContext }
-  | { kind: "status"; workspaceId: string }
-  | { kind: "heartbeats"; workspaceId: string; limit: number };
-
-function soulStatus(input: Partial<VesloSoulStatus> = {}): VesloSoulStatus {
-  return {
-    enabled: input.enabled ?? true,
-    state: input.state ?? "healthy",
-    memoryEnabled: input.memoryEnabled ?? true,
-    instructionsEnabled: input.instructionsEnabled ?? true,
-    heartbeatLogExists: input.heartbeatLogExists ?? true,
-    heartbeatCommandExists: input.heartbeatCommandExists ?? true,
-    heartbeatJob: input.heartbeatJob ?? null,
-    heartbeatCount: input.heartbeatCount ?? 1,
-    lastHeartbeatAt: input.lastHeartbeatAt ?? "2026-07-01T12:00:00.000Z",
-    lastHeartbeatSummary: input.lastHeartbeatSummary ?? "Ready",
-    staleAfterMs: input.staleAfterMs ?? 86_400_000,
-    overdue: input.overdue ?? false,
-    summary: input.summary ?? "Soul is healthy",
-    memoryPath: input.memoryPath ?? ".opencode/soul.md",
-    heartbeatPath: input.heartbeatPath ?? ".opencode/soul/heartbeat.jsonl",
-  };
-}
-
-function heartbeat(id: string): VesloSoulHeartbeatEntry {
-  return {
-    id,
-    ts: "2026-07-01T12:00:00.000Z",
-    workspace: "veslo-remote",
-    summary: `Heartbeat ${id}`,
-    looseEnds: [],
-    nextAction: null,
-  };
-}
+  | { kind: "overview"; auth: VesloSoulAuthContext };
 
 function overview(): VesloSoulOverviewResponse {
   const summary = {
@@ -88,15 +54,17 @@ function overview(): VesloSoulOverviewResponse {
 
 function createClient(options: {
   calls: SoulClientCall[];
-  statuses: Record<string, VesloSoulStatus>;
-  heartbeats?: Record<string, VesloSoulHeartbeatEntry[]>;
-  failStatusIds?: Set<string>;
+  failListWorkspaces?: boolean;
+  failOverview?: boolean;
 }) {
   return {
     baseUrl: "http://127.0.0.1:8787",
     token: "server-token",
     listWorkspaces: async () => {
       options.calls.push({ kind: "list-workspaces" });
+      if (options.failListWorkspaces) {
+        throw new Error("workspace list failed");
+      }
       return {
         items: [
           { id: "veslo-local", path: "/repo/local" },
@@ -106,18 +74,10 @@ function createClient(options: {
     },
     getSoulOverview: async (auth: VesloSoulAuthContext) => {
       options.calls.push({ kind: "overview", auth });
-      return overview();
-    },
-    getSoulStatus: async (workspaceId: string) => {
-      options.calls.push({ kind: "status", workspaceId });
-      if (options.failStatusIds?.has(workspaceId)) {
-        throw new Error(`status failed for ${workspaceId}`);
+      if (options.failOverview) {
+        throw new Error("overview failed");
       }
-      return options.statuses[workspaceId] ?? soulStatus({ summary: workspaceId });
-    },
-    listSoulHeartbeats: async (workspaceId: string, limit: number) => {
-      options.calls.push({ kind: "heartbeats", workspaceId, limit });
-      return { items: options.heartbeats?.[workspaceId] ?? [] };
+      return overview();
     },
   };
 }
@@ -135,11 +95,10 @@ async function flushAsyncWork() {
   await new Promise((resolveTick) => setTimeout(resolveTick, 0));
 }
 
-test("Soul data store maps local and explicit remote workspaces before refreshing status and heartbeats", async () => {
+test("Soul data store maps app workspaces to current Soul source owners", async () => {
   await createRoot(async (dispose) => {
     try {
       const calls: SoulClientCall[] = [];
-      const remoteStatus = soulStatus({ summary: "Remote healthy" });
       const workspaces: SoulDataStoreWorkspace[] = [
         { id: "local-app", workspaceType: "local", path: "/repo/local" },
         {
@@ -150,161 +109,120 @@ test("Soul data store maps local and explicit remote workspaces before refreshin
           path: "/ignored",
         },
       ];
-      const client = createClient({
-        calls,
-        statuses: {
-          "veslo-local": soulStatus({ summary: "Local healthy" }),
-          "veslo-remote": remoteStatus,
-        },
-        heartbeats: { "veslo-remote": [heartbeat("hb-1")] },
-      });
+      const client = createClient({ calls });
       const store = createSoulDataStore({
         vesloServerClient: () => client as any,
         vesloServerStatus: () => "connected",
         workspaces: () => workspaces,
         activeWorkspaceId: () => "remote-app",
         soulAuthContext: () => authContext,
-        createSessionAndOpen: async () => null,
-        sendPrompt: async () => {},
-        setPrompt: () => {},
-        createClientMessageId: () => "client-message",
         effect: () => undefined,
       });
 
       await store.refreshSoulData({ force: true });
       await flushAsyncWork();
 
-      assert.deepEqual(
-        calls.filter((call) => call.kind === "status"),
-        [
-          { kind: "status", workspaceId: "veslo-local" },
-          { kind: "status", workspaceId: "veslo-remote" },
-        ],
-      );
-      assert.deepEqual(
-        calls.find((call) => call.kind === "heartbeats"),
-        { kind: "heartbeats", workspaceId: "veslo-remote", limit: 30 },
-      );
-      assert.deepEqual(
-        calls.find((call) => call.kind === "overview"),
-        { kind: "overview", auth: authContext },
-      );
-      assert.equal(store.soulStatusByWorkspaceId()["remote-app"], remoteStatus);
       assert.deepEqual(store.soulWorkspaceMap(), {
         "local-app": "veslo-local",
         "remote-app": "veslo-remote",
       });
-      assert.equal(store.activeSoulStatus(), remoteStatus);
-      assert.deepEqual(store.activeSoulHeartbeats(), [heartbeat("hb-1")]);
-      assert.equal(store.soulError(), null);
       assert.equal(store.soulOverview()?.user.ownerId, "user-1");
+      assert.equal(store.soulError(), null);
+      assert.deepEqual(calls, [
+        { kind: "overview", auth: authContext },
+        { kind: "list-workspaces" },
+      ]);
     } finally {
       dispose();
     }
   });
 });
 
-test("Soul data store falls back to remote directory matching and reports partial status failures", async () => {
+test("Soul data store falls back to remote directory matching without legacy status calls", async () => {
   await createRoot(async (dispose) => {
     try {
       const calls: SoulClientCall[] = [];
       const workspaces: SoulDataStoreWorkspace[] = [
         { id: "directory-app", workspaceType: "remote", remoteType: "veslo", directory: "/remote/directory" },
-        { id: "missing-app", workspaceType: "remote", remoteType: "veslo", vesloWorkspaceId: "veslo-missing" },
       ];
-      const client = createClient({
-        calls,
-        statuses: { "veslo-directory": soulStatus({ summary: "Directory healthy" }) },
-        heartbeats: { "veslo-directory": [heartbeat("hb-directory")] },
-        failStatusIds: new Set(["veslo-missing"]),
-      });
+      const client = createClient({ calls });
       const store = createSoulDataStore({
         vesloServerClient: () => client as any,
         vesloServerStatus: () => "connected",
         workspaces: () => workspaces,
         activeWorkspaceId: () => "directory-app",
         soulAuthContext: () => authContext,
-        createSessionAndOpen: async () => null,
-        sendPrompt: async () => {},
-        setPrompt: () => {},
-        createClientMessageId: () => "client-message",
         effect: () => undefined,
       });
 
       await store.refreshSoulData({ force: true });
       await flushAsyncWork();
 
-      assert.deepEqual(store.soulStatusByWorkspaceId()["missing-app"], null);
-      assert.equal(store.soulStatusByWorkspaceId()["directory-app"]?.summary, "Directory healthy");
       assert.deepEqual(store.soulWorkspaceMap(), {
         "directory-app": "veslo-directory",
-        "missing-app": "veslo-missing",
       });
-      assert.deepEqual(store.activeSoulHeartbeats(), [heartbeat("hb-directory")]);
-      assert.equal(store.soulError(), "Soul status is partially unavailable.");
-      assert.deepEqual(
-        calls.filter((call) => call.kind === "status"),
-        [
-          { kind: "status", workspaceId: "veslo-directory" },
-          { kind: "status", workspaceId: "veslo-missing" },
-        ],
-      );
+      assert.deepEqual(calls.map((call) => call.kind), ["overview", "list-workspaces"]);
+      assert.equal(store.soulError(), null);
     } finally {
       dispose();
     }
   });
 });
 
-test("Soul prompt runner dispatches through a created session and stores fallback text when creation fails", async () => {
+test("Soul workspace mapping failures do not block overview refresh", async () => {
   await createRoot(async (dispose) => {
     try {
-      const sent: unknown[] = [];
-      const fallbackPrompts: string[] = [];
-      const [nextSessionId, setNextSessionId] = createSignal<string | null>("session-1");
+      const calls: SoulClientCall[] = [];
+      const client = createClient({ calls, failListWorkspaces: true });
       const store = createSoulDataStore({
-        vesloServerClient: () => null,
-        vesloServerStatus: () => "disconnected",
-        workspaces: () => [],
-        activeWorkspaceId: () => "",
+        vesloServerClient: () => client as any,
+        vesloServerStatus: () => "connected",
+        workspaces: () => [{ id: "local-app", workspaceType: "local", path: "/repo/local" }],
+        activeWorkspaceId: () => "local-app",
         soulAuthContext: () => authContext,
-        createSessionAndOpen: async () => nextSessionId(),
-        sendPrompt: async (payload, options) => {
-          sent.push({ payload, options });
-        },
-        setPrompt: (value) => {
-          fallbackPrompts.push(value);
-        },
-        createClientMessageId: () => "client-message-1",
         effect: () => undefined,
       });
 
-      store.runSoulPrompt("  remember the deployment checklist  ");
+      await store.refreshSoulData({ force: true });
       await flushAsyncWork();
 
-      assert.deepEqual(sent, [
-        {
-          payload: {
-            mode: "prompt",
-            text: "remember the deployment checklist",
-            resolvedText: "remember the deployment checklist",
-            parts: [{ type: "text", text: "remember the deployment checklist" }],
-            attachments: [],
-          },
-          options: {
-            targetSessionId: "session-1",
-            clientMessageId: "client-message-1",
-            origin: "app:soul-prompt",
-          },
-        },
-      ]);
+      assert.equal(store.soulOverview()?.organization.ownerId, "org-1");
+      assert.deepEqual(store.soulWorkspaceMap(), {});
+      assert.equal(store.soulError(), "workspace list failed");
+      assert.deepEqual(calls.map((call) => call.kind), ["overview", "list-workspaces"]);
+    } finally {
+      dispose();
+    }
+  });
+});
 
-      setNextSessionId(null);
-      store.runSoulPrompt(" fallback text ");
-      store.runSoulPrompt("   ");
+test("Soul data store clears source state while disconnected", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const calls: SoulClientCall[] = [];
+      const client = createClient({ calls });
+      const [status, setStatus] = createSignal<VesloServerStatus>("connected");
+      const store = createSoulDataStore({
+        vesloServerClient: () => client as any,
+        vesloServerStatus: status,
+        workspaces: () => [{ id: "local-app", workspaceType: "local", path: "/repo/local" }],
+        activeWorkspaceId: () => "local-app",
+        soulAuthContext: () => authContext,
+        effect: () => undefined,
+      });
+
+      await store.refreshSoulData({ force: true });
       await flushAsyncWork();
+      assert.equal(store.soulOverview()?.user.ownerId, "user-1");
 
-      assert.deepEqual(fallbackPrompts, ["fallback text"]);
-      assert.equal(sent.length, 1);
+      setStatus("disconnected");
+      await store.refreshSoulData({ force: true });
+
+      assert.equal(store.soulOverview(), null);
+      assert.equal(store.soulOverviewError(), null);
+      assert.equal(store.soulOverviewBusy(), false);
+      assert.deepEqual(store.soulWorkspaceMap(), {});
+      assert.equal(store.soulError(), null);
     } finally {
       dispose();
     }

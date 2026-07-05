@@ -42,7 +42,7 @@ Current domain facades:
 - `conversations.ts` for conversations, runs, transcript reads/prefetch/append, session archives, and session deletion.
 - `files.ts` for inbox, file sessions, batch file ops, workspace file reads/writes, and artifacts.
 - `skills.ts` for workspace skills, hub skills, user-global skill store, removals, enabled state, materialization, and registry operations.
-- `soul.ts` for Soul overview, organization/user/workspace reads and writes, version restore, materialization sync, heartbeat status, and heartbeat list.
+- `soul.ts` for Soul overview, organization/user/workspace reads and writes, version restore, materialization sync, and workspace heartbeat toggle.
 - `mcp.ts`, `plugins.ts`, `commands.ts`, `automations.ts`, and `messaging-identities.ts` for their matching server namespaces.
 - `extensions-inventory.ts` as a read-only client aggregate over MCP, plugins, skills, and commands. It must not own mutations.
 

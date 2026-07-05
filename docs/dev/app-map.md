@@ -68,9 +68,9 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
 - `scheduled-automation-store.ts`
   Scheduled automation loading, mutation, run-now orchestration, templates, and scheduler status.
 - `soul.tsx`
-  Soul health, heartbeat status, setup audit, and heartbeat trigger flow.
+  Soul source overview, source detail, version history, materialization diagnostics, and workspace heartbeat toggle.
 - `soul-data-store.ts`
-  Soul health/setup/heartbeat loading and refresh behavior for the dashboard tab.
+  Soul overview and workspace-source mapping refresh behavior for the dashboard tab.
 - `identities.tsx`
   Messaging channels and OpenCode Router identities management for workspace-scoped messaging.
 
