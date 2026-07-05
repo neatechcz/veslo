@@ -2099,6 +2099,7 @@ export default function App() {
     setPluginScope,
     pluginConfig,
     pluginConfigPath,
+    pluginInventory,
     pluginList,
     pluginInput,
     setPluginInput,
@@ -2115,6 +2116,9 @@ export default function App() {
     refreshHubMcp,
     refreshPlugins,
     addPlugin,
+    setPluginEnabled,
+    removeManagedPlugin,
+    restoreManagedPlugin,
     removePlugin,
     installSkillCreator,
     installHubSkill,
@@ -3560,7 +3564,7 @@ export default function App() {
     }
 
     void refreshSkills({ force: true });
-    void refreshPlugins(pluginScope());
+    void refreshPlugins(pluginScope(), { debug: developerMode() });
     void refreshMcpServers();
   });
 
@@ -4571,6 +4575,7 @@ export default function App() {
     setPluginScope,
     pluginConfigPath,
     pluginConfig,
+    pluginInventory,
     pluginList,
     pluginInput,
     setPluginInput,
@@ -4580,6 +4585,9 @@ export default function App() {
     isPluginInstalledByName,
     localizedSuggestedPlugins,
     addPlugin,
+    setPluginEnabled,
+    removeManagedPlugin,
+    restoreManagedPlugin,
     removePlugin,
     createSessionAndOpen,
     setPrompt,
@@ -4775,7 +4783,17 @@ export default function App() {
           <SessionView {...appViewProps.sessionProps()} onOpenFeedback={feedbackWorkflow.openFeedbackModal} />
         </Match>
         <Match when={true}>
-          <DashboardView {...appViewProps.dashboardProps()} onOpenFeedback={feedbackWorkflow.openFeedbackModal} />
+          <DashboardView
+            {...appViewProps.dashboardProps()}
+            onOpenFeedback={feedbackWorkflow.openFeedbackModal}
+            pluginInventory={pluginInventory()}
+            refreshPlugins={(scopeOverride, optionsOverride) =>
+              refreshPlugins(scopeOverride, optionsOverride).catch((e: unknown) => reportError(e, "plugins.refresh"))
+            }
+            setPluginEnabled={setPluginEnabled}
+            removeManagedPlugin={removeManagedPlugin}
+            restoreManagedPlugin={restoreManagedPlugin}
+          />
         </Match>
       </Switch>
 
