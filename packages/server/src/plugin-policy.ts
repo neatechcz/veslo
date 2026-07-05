@@ -48,7 +48,9 @@ export type VisiblePluginPolicyOptions = {
 export function resolveEffectivePluginPolicies(input: PluginPolicyResolutionInput): EffectivePluginPolicy[] {
   const overrides = input.overrides.filter(isSupportedOverride);
   return [...input.platform, ...input.organization, ...input.user, ...input.project].map((policy) => {
-    const matchingOverrides = overrides.filter((override) => overrideMatchesResolutionTarget(override, policy.id, input));
+    const matchingOverrides = overrides.filter((override) =>
+      overrideMatchesResolutionTarget(override, policy.id, input) && overrideActionAllowedByPolicy(override, policy)
+    );
     const lifecycle: PluginLifecycle = matchingOverrides.some((override) => override.action === "removed")
       ? "removed"
       : matchingOverrides.some((override) => override.action === "disabled")
@@ -80,17 +82,27 @@ function overrideMatchesResolutionTarget(
   target: Pick<PluginPolicyResolutionInput, "scope" | "workspaceId" | "orgId">,
 ): boolean {
   if (override.pluginId.trim() !== policyId) return false;
-  if (override.scope !== target.scope) return false;
 
-  if (target.scope === "project") {
+  if (override.scope === "user") return true;
+
+  if (override.scope === "project") {
     const workspaceId = target.workspaceId?.trim();
     return Boolean(workspaceId) && override.workspaceId?.trim() === workspaceId;
   }
 
-  if (target.scope === "organization") {
+  if (override.scope === "organization") {
     const orgId = target.orgId?.trim();
     return Boolean(orgId) && override.orgId?.trim() === orgId;
   }
 
-  return true;
+  return false;
+}
+
+function overrideActionAllowedByPolicy(
+  override: PluginPolicyOverride,
+  policy: PluginPolicy,
+): boolean {
+  if (override.action === "disabled") return policy.enabledPolicy !== "locked-on";
+  if (override.action === "removed") return policy.removalPolicy !== "locked";
+  return false;
 }

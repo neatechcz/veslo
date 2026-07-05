@@ -113,6 +113,106 @@ describe("plugin policy model", () => {
     });
   });
 
+  test("ignores stale disabled and removed overrides for locked policies", () => {
+    const policies = resolveEffectivePluginPolicies({
+      scope: "user",
+      platform: [OPENCODE_SCHEDULER_PLATFORM_PLUGIN],
+      organization: [],
+      user: [],
+      project: [],
+      overrides: [
+        {
+          id: "override_disabled_locked",
+          pluginId: OPENCODE_SCHEDULER_PLATFORM_PLUGIN.id,
+          action: "disabled",
+          scope: "user",
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: "override_removed_locked",
+          pluginId: OPENCODE_SCHEDULER_PLATFORM_PLUGIN.id,
+          action: "removed",
+          scope: "user",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    expect(policies[0]).toMatchObject({
+      id: OPENCODE_SCHEDULER_PLATFORM_PLUGIN.id,
+      lifecycle: "active",
+      effectiveEnabled: true,
+    });
+  });
+
+  test("project resolution combines user-global and matching project overrides", () => {
+    const policies = resolveEffectivePluginPolicies({
+      scope: "project",
+      workspaceId: "ws_current",
+      platform: [SUPERPOWERS_PLATFORM_PLUGIN],
+      organization: [],
+      user: [],
+      project: [],
+      overrides: [
+        {
+          id: "override_user_disabled",
+          pluginId: SUPERPOWERS_PLATFORM_PLUGIN.id,
+          action: "disabled",
+          scope: "user",
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: "override_project_removed",
+          pluginId: SUPERPOWERS_PLATFORM_PLUGIN.id,
+          action: "removed",
+          scope: "project",
+          workspaceId: "ws_current",
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: "override_other_org_removed",
+          pluginId: SUPERPOWERS_PLATFORM_PLUGIN.id,
+          action: "removed",
+          scope: "organization",
+          orgId: "org_other",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    expect(policies[0]).toMatchObject({
+      id: SUPERPOWERS_PLATFORM_PLUGIN.id,
+      lifecycle: "removed",
+      effectiveEnabled: false,
+    });
+  });
+
+  test("project resolution applies user-global overrides without a project override", () => {
+    const policies = resolveEffectivePluginPolicies({
+      scope: "project",
+      workspaceId: "ws_current",
+      platform: [SUPERPOWERS_PLATFORM_PLUGIN],
+      organization: [],
+      user: [],
+      project: [],
+      overrides: [
+        {
+          id: "override_user_disabled",
+          pluginId: SUPERPOWERS_PLATFORM_PLUGIN.id,
+          action: "disabled",
+          scope: "user",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    expect(policies[0]).toMatchObject({
+      id: SUPERPOWERS_PLATFORM_PLUGIN.id,
+      lifecycle: "disabled",
+      effectiveEnabled: false,
+    });
+  });
+
   test("ignores project plugin policy overrides for other workspaces", () => {
     const policies = resolveEffectivePluginPolicies({
       scope: "project",
