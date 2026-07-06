@@ -88,13 +88,16 @@ test("server connection resolves local and server endpoints without derived loca
   );
 });
 
-test("server health checks preserve limited auth semantics and connected capabilities", async () => {
+test("server health checks distinguish no-token limited mode from auth desync", async () => {
   const factory: VesloServerConnectionClientFactory = ({ token }) => ({
     baseUrl: "http://worker.test",
     health: async () => ({ ok: true, version: "test", uptimeMs: 1 }),
     capabilities: async () => {
       if (!token) {
         throw new VesloServerError(403, "forbidden", "Forbidden");
+      }
+      if (token === "bad-token") {
+        throw new VesloServerError(401, "invalid_bearer_token", "Invalid bearer token");
       }
       return capabilities();
     },
@@ -115,6 +118,10 @@ test("server health checks preserve limited auth semantics and connected capabil
 
       assert.deepEqual(await connection.checkVesloServer("http://worker.test"), {
         status: "limited",
+        capabilities: null,
+      });
+      assert.deepEqual(await connection.checkVesloServer("http://worker.test", "bad-token"), {
+        status: "auth_desync",
         capabilities: null,
       });
       assert.deepEqual(await connection.checkVesloServer("http://worker.test", "token"), {
@@ -218,6 +225,51 @@ test("local Tauri server check requires runtimeChain readiness", async () => {
       assert.equal(rootStatusCalls, 0);
       assert.deepEqual(workspaceStatusCalls, ["ws-a"]);
       assert.equal(connection.vesloServerDiagnostics()?.runtimeChain?.status, "orchestrator_unavailable");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("local ensure does not restart the server on auth desync", async () => {
+  let restartCalls = 0;
+  const factory: VesloServerConnectionClientFactory = () => ({
+    baseUrl: "http://127.0.0.1:8787",
+    health: async () => ({ ok: true, version: "test", uptimeMs: 1 }),
+    capabilities: async () => {
+      throw new VesloServerError(401, "invalid_bearer_token", "Invalid bearer token");
+    },
+  });
+
+  await createRoot(async (dispose) => {
+    try {
+      const connection = createVesloServerConnection({
+        startupPreference: () => "local",
+        opencodeBaseUrl: () => "",
+        authenticatedAccountId: () => null,
+        cloudEnvironment: {},
+        documentVisible: () => false,
+        developerMode: () => false,
+        isTauriRuntime: () => true,
+        workspace: {
+          workspacesHydrated: () => true,
+          activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
+          activeWorkspaceId: () => "ws-a",
+          activeWorkspaceRoot: () => "/tmp/ws-a",
+        },
+        vesloServerInfo: async () => runningHostInfo(),
+        vesloServerRestart: async () => {
+          restartCalls += 1;
+          return runningHostInfo();
+        },
+        createClient: factory,
+      });
+
+      const ok = await connection.ensureLocalVesloServerRunning({ ignoreStartupPreference: true });
+
+      assert.equal(ok, false);
+      assert.equal(restartCalls, 0);
+      assert.equal(connection.vesloServerStatus(), "auth_desync");
     } finally {
       dispose();
     }

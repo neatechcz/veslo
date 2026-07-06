@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -8,6 +9,23 @@ import {
   workspaceIdForPath,
 } from "../workspaces.js";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
+
+type WorkspaceIdFixture = {
+  vectors: Array<{
+    name: string;
+    configDir?: string;
+    relativePath?: string;
+    resolvedPath?: string;
+    inputs: { serverPath: string };
+    expected: { server: string };
+  }>;
+};
+
+function loadWorkspaceIdFixture(): WorkspaceIdFixture {
+  return JSON.parse(
+    readFileSync(new URL("../../../../docs/fixtures/workspace-id-golden-vectors.json", import.meta.url), "utf8"),
+  ) as WorkspaceIdFixture;
+}
 
 function makeConfig(overrides: Partial<ServerConfig>): ServerConfig {
   return {
@@ -62,6 +80,12 @@ describe("workspaceIdForPath", () => {
     const id = workspaceIdForPath("/tmp/foo");
     expect(id.startsWith("ws-")).toBe(true);
     expect(id.length).toBe(3 + 12);
+  });
+
+  test("matches shared golden vectors", () => {
+    for (const vector of loadWorkspaceIdFixture().vectors) {
+      expect(workspaceIdForPath(vector.inputs.serverPath), vector.name).toBe(vector.expected.server);
+    }
   });
 });
 

@@ -17,7 +17,7 @@ import {
   resolveSessionArchiveClientOptions,
   writeVesloServerSettings,
   clearVesloServerSettings,
-  VesloServerError,
+  resolveVesloServerAuthFailureStatus,
   type VesloAuditEntry,
   type VesloServerCapabilities,
   type VesloServerClient,
@@ -41,6 +41,10 @@ import {
 } from "../lib/tauri";
 import { safeStringify } from "../utils";
 import type { StartupPreference } from "../types";
+
+function isUsableVesloServerStatus(status: VesloServerStatus) {
+  return status === "connected" || status === "limited";
+}
 
 export type VesloServerConnectionHostInfo = {
   baseUrl?: string | null;
@@ -236,7 +240,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
   let lastLocalVesloEnsureKey = "";
 
   const markVesloServerReachable = (status: VesloServerStatus, at = now()) => {
-    if (status === "connected" || status === "limited") {
+    if (isUsableVesloServerStatus(status)) {
       vesloServerLastReachableAt = at;
     }
   };
@@ -387,8 +391,9 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     try {
       await client.health();
     } catch (error) {
-      if (error instanceof VesloServerError && (error.status === 401 || error.status === 403)) {
-        const result = { status: "limited" as VesloServerStatus, capabilities: null };
+      const authStatus = resolveVesloServerAuthFailureStatus(error, { token, hostToken });
+      if (authStatus) {
+        const result = { status: authStatus, capabilities: null };
         markVesloServerReachable(result.status);
         return result;
       }
@@ -414,8 +419,9 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       markVesloServerReachable(result.status);
       return result;
     } catch (error) {
-      if (error instanceof VesloServerError && (error.status === 401 || error.status === 403)) {
-        const result = { status: "limited" as VesloServerStatus, capabilities: null };
+      const authStatus = resolveVesloServerAuthFailureStatus(error, { token, hostToken });
+      if (authStatus) {
+        const result = { status: authStatus, capabilities: null };
         markVesloServerReachable(result.status);
         return result;
       }
@@ -440,7 +446,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     }
     const result = await checkVesloServer(derived, next.token, vesloServerAuth().hostToken);
     applyVesloServerProbeResult(result);
-    const ok = result.status === "connected" || result.status === "limited";
+    const ok = isUsableVesloServerStatus(result.status);
     if (ok && !deps.isTauriRuntime()) {
       const active = deps.workspace?.activeWorkspaceDisplay();
       const shouldAttach =
@@ -499,7 +505,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
 
       const result = await checkVesloServer(url, auth.token, auth.hostToken);
       applyVesloServerProbeResult(result);
-      return result.status === "connected" || result.status === "limited";
+      return isUsableVesloServerStatus(result.status);
     } finally {
       setVesloReconnectBusy(false);
     }
@@ -530,9 +536,10 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
           liveInfo.hostToken?.trim() || undefined,
         );
         applyVesloServerProbeResult(result);
-        if (result.status !== "disconnected") {
+        if (isUsableVesloServerStatus(result.status)) {
           return true;
         }
+        if (result.status === "auth_desync") return false;
       }
 
       const restarted = await restartVesloServer();
@@ -550,7 +557,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
         restartedInfo?.hostToken?.trim() || undefined,
       );
       applyVesloServerProbeResult(result);
-      return result.status !== "disconnected";
+      return isUsableVesloServerStatus(result.status);
     })().finally(() => {
       ensureLocalVesloServerRunningInFlight = null;
     });
@@ -699,7 +706,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     }
 
     const client = vesloServerClient();
-    if (!client || vesloServerStatus() === "disconnected") {
+    if (!client || !isUsableVesloServerStatus(vesloServerStatus())) {
       setVesloServerDiagnostics(null);
       return;
     }

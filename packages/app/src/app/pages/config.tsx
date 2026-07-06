@@ -66,6 +66,8 @@ export default function ConfigView(props: ConfigViewProps) {
         return tr("status.connected");
       case "limited":
         return tr("status.limited");
+      case "auth_desync":
+        return tr("errors.authentication_failed");
       default:
         return tr("dashboard.not_connected");
     }
@@ -77,6 +79,8 @@ export default function ConfigView(props: ConfigViewProps) {
         return "bg-green-7/10 text-green-11 border-green-7/20";
       case "limited":
         return "bg-amber-7/10 text-amber-11 border-amber-7/20";
+      case "auth_desync":
+        return "bg-red-7/10 text-red-11 border-red-7/20";
       default:
         return "bg-gray-4/60 text-gray-11 border-gray-7/50";
     }

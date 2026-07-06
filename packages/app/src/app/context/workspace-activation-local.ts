@@ -251,11 +251,15 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
             await deps.activateVesloHostWorkspace(next.path);
             deps.wsDebug("activate:local:veslo-host-active:done", { id, path: next.path });
           } catch (e) {
+            const error = e instanceof Error ? e.message : deps.safeStringify(e);
             deps.wsDebug("activate:local:veslo-host-active:failed", {
               id,
               path: next.path,
-              error: e instanceof Error ? e.message : deps.safeStringify(e),
+              error,
             });
+            if (error.startsWith("workspace_registry_unsynced:")) {
+              deps.setError(deps.addOpencodeCacheHint(error));
+            }
           }
         }
         deps.wsLog("[workspace:activate] STEP 3 — workspaceSetActive DONE");

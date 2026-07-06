@@ -1,0 +1,154 @@
+{
+  "schema": 1,
+  "purpose": "Golden vectors for current local workspace path-to-id derivations. VSA10A records current compatibility and drift; it does not change persisted workspace ids.",
+  "vectors": [
+    {
+      "name": "absolute_posix",
+      "description": "Already absolute POSIX path.",
+      "inputs": {
+        "desktopPath": "/tmp/veslo/workspaces/alpha",
+        "serverPath": "/tmp/veslo/workspaces/alpha",
+        "orchestratorPath": "/tmp/veslo/workspaces/alpha"
+      },
+      "expected": {
+        "desktop": "ws-beb6d797b045",
+        "server": "ws-beb6d797b045",
+        "orchestrator": {
+          "win32": "ws-347f08337d89",
+          "posix": "ws-beb6d797b045"
+        }
+      },
+      "compatibleOnPosix": true
+    },
+    {
+      "name": "relative_resolved_from_config_dir",
+      "description": "Relative server config path after resolution against a config directory.",
+      "configDir": "/tmp/veslo/config",
+      "relativePath": "../workspaces/beta",
+      "resolvedPath": "/tmp/veslo/workspaces/beta",
+      "inputs": {
+        "desktopPath": "/tmp/veslo/workspaces/beta",
+        "serverPath": "/tmp/veslo/workspaces/beta",
+        "orchestratorPath": "/tmp/veslo/workspaces/beta"
+      },
+      "expected": {
+        "desktop": "ws-f20d7a2d6304",
+        "server": "ws-f20d7a2d6304",
+        "orchestrator": {
+          "win32": "ws-8486eea317e8",
+          "posix": "ws-f20d7a2d6304"
+        }
+      },
+      "compatibleOnPosix": true
+    },
+    {
+      "name": "trailing_separator",
+      "description": "Desktop raw path keeps the trailing separator; server/orchestrator canonical paths do not.",
+      "inputs": {
+        "desktopPath": "/tmp/veslo/workspaces/gamma/",
+        "serverPath": "/tmp/veslo/workspaces/gamma",
+        "orchestratorPath": "/tmp/veslo/workspaces/gamma/"
+      },
+      "expected": {
+        "desktop": "ws-cc691e8cf03c",
+        "server": "ws-be90aba38d86",
+        "orchestrator": {
+          "win32": "ws-e4cebd1767b3",
+          "posix": "ws-be90aba38d86"
+        }
+      },
+      "compatibleOnPosix": false
+    },
+    {
+      "name": "windows_drive_letter_case",
+      "description": "Lower-case Windows drive letter is preserved by current direct hashing and win32 resolution.",
+      "inputs": {
+        "desktopPath": "c:\\Users\\Alice\\Project",
+        "serverPath": "c:\\Users\\Alice\\Project",
+        "orchestratorPath": "c:\\Users\\Alice\\Project"
+      },
+      "expected": {
+        "desktop": "ws-f12d6f39892a",
+        "server": "ws-f12d6f39892a",
+        "orchestrator": {
+          "win32": "ws-f12d6f39892a",
+          "posix": "ws-f12d6f39892a"
+        }
+      },
+      "compatibleOnPosix": true
+    },
+    {
+      "name": "windows_separator_normalization",
+      "description": "Forward slashes in a Windows path hash differently before orchestrator win32 normalization.",
+      "inputs": {
+        "desktopPath": "C:/Users/Alice/Project",
+        "serverPath": "C:/Users/Alice/Project",
+        "orchestratorPath": "C:/Users/Alice/Project"
+      },
+      "expected": {
+        "desktop": "ws-4bd1fb6740ef",
+        "server": "ws-4bd1fb6740ef",
+        "orchestrator": {
+          "win32": "ws-907b21114683",
+          "posix": "ws-907b21114683"
+        }
+      },
+      "compatibleOnPosix": false
+    },
+    {
+      "name": "windows_extended_path_prefix",
+      "description": "Extended Windows path prefix is stripped by orchestrator, but not by direct desktop/server hashing.",
+      "inputs": {
+        "desktopPath": "\\\\?\\C:\\Users\\Alice\\Project",
+        "serverPath": "\\\\?\\C:\\Users\\Alice\\Project",
+        "orchestratorPath": "\\\\?\\C:\\Users\\Alice\\Project"
+      },
+      "expected": {
+        "desktop": "ws-5d4fcdcf6ca4",
+        "server": "ws-5d4fcdcf6ca4",
+        "orchestrator": {
+          "win32": "ws-907b21114683",
+          "posix": "ws-907b21114683"
+        }
+      },
+      "compatibleOnPosix": false
+    },
+    {
+      "name": "symlink_equivalent_target",
+      "description": "Synthetic target side of a possible symlink pair; current ids are path-string based.",
+      "inputs": {
+        "desktopPath": "/tmp/veslo/workspaces/real-project",
+        "serverPath": "/tmp/veslo/workspaces/real-project",
+        "orchestratorPath": "/tmp/veslo/workspaces/real-project"
+      },
+      "expected": {
+        "desktop": "ws-36d82030044a",
+        "server": "ws-36d82030044a",
+        "orchestrator": {
+          "win32": "ws-811434d5f787",
+          "posix": "ws-36d82030044a"
+        }
+      },
+      "compatibleOnPosix": true
+    },
+    {
+      "name": "symlink_equivalent_alias",
+      "description": "Synthetic alias side of a possible symlink pair; current ids remain distinct from the target path.",
+      "equivalentTo": "symlink_equivalent_target",
+      "inputs": {
+        "desktopPath": "/tmp/veslo/workspaces/link-project",
+        "serverPath": "/tmp/veslo/workspaces/link-project",
+        "orchestratorPath": "/tmp/veslo/workspaces/link-project"
+      },
+      "expected": {
+        "desktop": "ws-43ea5f761a8f",
+        "server": "ws-43ea5f761a8f",
+        "orchestrator": {
+          "win32": "ws-e12b7c7b8eb7",
+          "posix": "ws-43ea5f761a8f"
+        }
+      },
+      "compatibleOnPosix": true
+    }
+  ]
+}

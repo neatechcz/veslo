@@ -9,7 +9,7 @@ export type VesloServerStatusProbeResult = {
 };
 
 export type VesloServerStatusStabilityState = {
-  lastStableStatus: Exclude<VesloServerStatus, "disconnected"> | null;
+  lastStableStatus: Extract<VesloServerStatus, "connected" | "limited"> | null;
   lastStableCapabilities: VesloServerCapabilities | null;
   lastStableAt: number | null;
   transientFailureCount: number;
@@ -74,6 +74,19 @@ export function applyVesloServerStatusProbe(
       state,
       visibleStatus: result.status,
       visibleCapabilities: result.capabilities,
+      transientFailure: false,
+      nextDelayMs: successDelayMs,
+    };
+  }
+
+  if (result.status === "auth_desync") {
+    return {
+      state: {
+        ...previous,
+        transientFailureCount: 0,
+      },
+      visibleStatus: "auth_desync",
+      visibleCapabilities: null,
       transientFailure: false,
       nextDelayMs: successDelayMs,
     };

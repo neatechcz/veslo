@@ -12,7 +12,7 @@ import {
   hydrateVesloServerSettingsFromEnv,
   normalizeVesloServerUrl,
   readVesloServerSettings,
-  VesloServerError,
+  resolveVesloServerAuthFailureStatus,
   type VesloAuditEntry,
   type VesloServerCapabilities,
   type VesloServerClient,
@@ -158,10 +158,9 @@ export function createVesloServerStore(options: {
         if (!active) return;
         setStatus(result.status);
         setCapabilities(result.capabilities);
-        delayMs =
-          result.status === "connected" || result.status === "limited"
-            ? 10_000
-            : Math.min(delayMs * 2, 60_000);
+        delayMs = result.status === "connected" || result.status === "limited"
+          ? 10_000
+          : Math.min(delayMs * 2, 60_000);
       } catch {
         delayMs = Math.min(delayMs * 2, 60_000);
       } finally {
@@ -386,8 +385,9 @@ async function checkServer(
   try {
     await c.health();
   } catch (error) {
-    if (error instanceof VesloServerError && (error.status === 401 || error.status === 403)) {
-      return { status: "limited", capabilities: null };
+    const authStatus = resolveVesloServerAuthFailureStatus(error, { token, hostToken });
+    if (authStatus) {
+      return { status: authStatus, capabilities: null };
     }
     return { status: "disconnected", capabilities: null };
   }
@@ -400,8 +400,9 @@ async function checkServer(
     const caps = await c.capabilities();
     return { status: "connected", capabilities: caps };
   } catch (error) {
-    if (error instanceof VesloServerError && (error.status === 401 || error.status === 403)) {
-      return { status: "limited", capabilities: null };
+    const authStatus = resolveVesloServerAuthFailureStatus(error, { token, hostToken });
+    if (authStatus) {
+      return { status: authStatus, capabilities: null };
     }
     return { status: "disconnected", capabilities: null };
   }

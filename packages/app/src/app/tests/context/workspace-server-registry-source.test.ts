@@ -16,6 +16,19 @@ test("veslo server registry sync lives outside workspace facade", () => {
     /reconcileManagedAiApiKeys:skip"[\s\S]*managed-config-owned-by-app-sync/,
     "registry sync should leave managed config writes to the app-level managed config sync owner",
   );
+  const reconcileStart = registrySource.indexOf("const reconcileVesloServerWorkspaces = async () => {");
+  const reconcileEnd = registrySource.indexOf("  return {", reconcileStart);
+  const reconcileSource = registrySource.slice(reconcileStart, reconcileEnd);
+  assert.match(
+    reconcileSource,
+    /reconcileVesloServerWorkspaces:workspace_registry_unsynced/,
+    "boot reconcile should report missing server registry entries",
+  );
+  assert.doesNotMatch(
+    reconcileSource,
+    /addLocalWorkspaceOnServer\(/,
+    "boot reconcile should stay read-only; explicit activation owns local workspace registration",
+  );
   assert.doesNotMatch(
     registrySource,
     /patchConfig\(/,

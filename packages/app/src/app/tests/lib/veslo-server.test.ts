@@ -10,6 +10,7 @@ import {
   clearVesloServerSettings,
   requestManagedAiAccessBundle,
   readVesloServerSettings,
+  resolveOpencodeProxyAuthHeaders,
   resolveSessionArchiveClientOptions,
   VesloServerError,
   writeVesloServerSettings,
@@ -144,6 +145,33 @@ test("Veslo server settings read write and clear canonicalize storage keys", () 
         token: undefined,
       });
     },
+  );
+});
+
+test("opencode proxy auth uses settings token only for non-local proxy URLs", () => {
+  assert.deepEqual(
+    resolveOpencodeProxyAuthHeaders({
+      baseUrl: "https://remote.example/w/ws-123/opencode",
+      settingsToken: " remote-token ",
+      isTauriRuntime: false,
+    }),
+    { Authorization: "Bearer remote-token" },
+  );
+  assert.equal(
+    resolveOpencodeProxyAuthHeaders({
+      baseUrl: "http://127.0.0.1:8787/opencode",
+      settingsToken: "remote-token",
+      isTauriRuntime: true,
+    }),
+    undefined,
+  );
+  assert.equal(
+    resolveOpencodeProxyAuthHeaders({
+      baseUrl: "http://127.0.0.1:8787",
+      settingsToken: "remote-token",
+      isTauriRuntime: false,
+    }),
+    undefined,
   );
 });
 

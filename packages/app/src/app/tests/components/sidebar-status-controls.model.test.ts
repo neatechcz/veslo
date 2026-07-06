@@ -18,6 +18,10 @@ test("unified status is ready when the user is logged in and the server is conne
   const limited = getUnifiedStatusMeta(true, "limited", false, true);
   assert.equal(limited.label, "Unavailable");
   assert.equal(limited.dot, "bg-red-9");
+
+  const authDesync = getUnifiedStatusMeta(true, "auth_desync", false, true);
+  assert.equal(authDesync.label, "Authentication failed");
+  assert.equal(authDesync.dot, "bg-red-9");
 });
 
 test("unified status is unavailable when the user is not logged in", () => {
@@ -26,9 +30,10 @@ test("unified status is unavailable when the user is not logged in", () => {
   assert.equal(loggedOut.dot, "bg-red-9");
 });
 
-test("veslo status label maps connected, limited and unavailable", () => {
+test("veslo status label maps connected, limited, auth desync and unavailable", () => {
   assert.equal(getVesloStatusMeta("connected").label, "Connected");
   assert.equal(getVesloStatusMeta("limited").label, "Limited");
+  assert.equal(getVesloStatusMeta("auth_desync").label, "Authentication failed");
   assert.equal(getVesloStatusMeta("disconnected").label, "Unavailable");
 });
 

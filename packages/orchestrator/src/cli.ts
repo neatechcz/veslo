@@ -8,7 +8,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
 import { homedir, hostname, networkInterfaces, tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -53,6 +53,7 @@ import {
   type EnginePathMapping,
 } from "./engine-paths.js";
 import { ensureOpencodeManagedTools as ensureOpencodeManagedToolsRuntime } from "./opencode-managed-dependencies.js";
+import { normalizeWorkspacePath, workspaceIdForLocal, workspaceIdForRemote } from "./workspace-id.js";
 
 type ApprovalMode = "manual" | "auto";
 
@@ -1687,32 +1688,6 @@ function persistDebounced(path: string, state: RouterState): void {
 
 async function flushPersist(): Promise<void> {
   await routerStatePersister.flush();
-}
-
-function stripExtendedWindowsPathPrefix(input: string): string {
-  if (/^\\\\\?\\UNC\\/i.test(input)) return `\\\\${input.slice("\\\\?\\UNC\\".length)}`;
-  if (/^\/\/\?\/UNC\//i.test(input)) return `//${input.slice("//?/UNC/".length)}`;
-  if (/^\\\\\?\\/i.test(input)) return input.slice("\\\\?\\".length);
-  if (/^\/\/\?\//i.test(input)) return input.slice("//?/".length);
-  return input;
-}
-
-function normalizeWorkspacePath(input: string): string {
-  const stripped = stripExtendedWindowsPathPrefix(input.trim());
-  const resolved =
-    process.platform === "win32" || /^[A-Za-z]:[\\/]/.test(stripped)
-      ? win32.resolve(stripped)
-      : resolve(stripped);
-  return resolved.replace(/[\\/]+$/, "");
-}
-
-function workspaceIdForLocal(path: string): string {
-  return `ws-${createHash("sha1").update(normalizeWorkspacePath(path)).digest("hex").slice(0, 12)}`;
-}
-
-function workspaceIdForRemote(baseUrl: string, directory?: string | null): string {
-  const key = directory ? `${baseUrl}::${directory}` : baseUrl;
-  return `ws-${createHash("sha1").update(key).digest("hex").slice(0, 12)}`;
 }
 
 function opencodeRouterSendToolSource(): string {

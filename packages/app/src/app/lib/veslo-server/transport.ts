@@ -3,7 +3,7 @@ import { isTauriRuntime } from "../../utils";
 import { fetchWithTimeout } from "../http";
 import { wrapStartupRequestAuditFetch } from "../startup-request-audit";
 import { runVesloJsonRequestWithBroker } from "./request-broker";
-import type { VesloSkillRegistryAuthContext } from "./types";
+import type { VesloServerStatus, VesloSkillRegistryAuthContext } from "./types";
 
 type RawJsonResponse<T> = {
   ok: boolean;
@@ -22,6 +22,17 @@ export class VesloServerError extends Error {
     this.code = code;
     this.details = details;
   }
+}
+
+export function resolveVesloServerAuthFailureStatus(
+  error: unknown,
+  credentials: { token?: string | null; hostToken?: string | null },
+): VesloServerStatus | null {
+  if (!(error instanceof VesloServerError) || (error.status !== 401 && error.status !== 403)) {
+    return null;
+  }
+  const hasCredential = Boolean(credentials.token?.trim() || credentials.hostToken?.trim());
+  return hasCredential ? "auth_desync" : "limited";
 }
 
 function buildHeaders(

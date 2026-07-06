@@ -135,8 +135,10 @@ export function registerWorkspaceManagementRoutes(
           entry.id === id ? nextWorkspace : entry,
         );
         const persisted = await persistServerWorkspaceState(ctx.config);
+        const updatedWorkspace = ctx.config.workspaces.find((entry) => entry.id === id) ?? nextWorkspace;
         return jsonResponse({
           activeId: ctx.config.workspaces[0]?.id ?? null,
+          workspace: serializeWorkspaceForResponse(updatedWorkspace),
           items: ctx.config.workspaces.map(serializeWorkspaceForResponse),
           persisted,
         });
@@ -144,6 +146,7 @@ export function registerWorkspaceManagementRoutes(
       if (hasOpencodeMetadata) {
         return jsonResponse({
           activeId: ctx.config.workspaces[0]?.id ?? null,
+          workspace: serializeWorkspaceForResponse(existing),
           items: ctx.config.workspaces.map(serializeWorkspaceForResponse),
           persisted: false,
         });
@@ -175,6 +178,7 @@ export function registerWorkspaceManagementRoutes(
     return jsonResponse(
       {
         activeId: workspace.id,
+        workspace: serializeWorkspaceForResponse(workspace),
         items: ctx.config.workspaces.map(serializeWorkspaceForResponse),
         persisted,
       },

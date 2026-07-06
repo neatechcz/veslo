@@ -71,3 +71,21 @@ test("Veslo status stability keeps cold-start retry cadence before any success",
   assert.equal(failure.visibleStatus, "disconnected");
   assert.equal(failure.nextDelayMs, 5000);
 });
+
+test("Veslo status stability surfaces auth desync without transient grace", () => {
+  const initial = createInitialVesloServerStatusStabilityState();
+  const connected = applyVesloServerStatusProbe(
+    initial,
+    { status: "connected", capabilities: { mcp: { read: true, write: true } } as any },
+    { nowMs: 1000, previousDelayMs: 1000 },
+  );
+  const authFailure = applyVesloServerStatusProbe(
+    connected.state,
+    { status: "auth_desync", capabilities: null },
+    { nowMs: 2000, previousDelayMs: connected.nextDelayMs },
+  );
+
+  assert.equal(authFailure.visibleStatus, "auth_desync");
+  assert.equal(authFailure.transientFailure, false);
+  assert.equal(authFailure.nextDelayMs, 10_000);
+});

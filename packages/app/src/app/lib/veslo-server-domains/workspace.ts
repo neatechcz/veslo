@@ -111,6 +111,7 @@ export function createWorkspaceClient(context: WorkspaceClientContext) {
     }) =>
       requestJson<{
         activeId: string;
+        workspace: VesloWorkspaceInfo;
         items: VesloWorkspaceInfo[];
         persisted: boolean;
       }>(baseUrl, "/workspaces/local", {

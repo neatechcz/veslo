@@ -55,7 +55,7 @@ export type VesloServerCapabilities = {
   };
 };
 
-export type VesloServerStatus = "connected" | "disconnected" | "limited";
+export type VesloServerStatus = "connected" | "disconnected" | "limited" | "auth_desync";
 
 export type VesloRuntimeChainStatus =
   | "server_running"

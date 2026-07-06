@@ -109,8 +109,8 @@ export interface ServerConfig {
   authorizedRoots: string[];
   readOnly: boolean;
   startedAt: number;
-  tokenSource: "cli" | "env" | "file" | "generated";
-  hostTokenSource: "cli" | "env" | "file" | "generated";
+  tokenSource: "cli" | "secrets-file" | "env" | "file" | "generated";
+  hostTokenSource: "cli" | "secrets-file" | "env" | "file" | "generated";
   logFormat: LogFormat;
   logRequests: boolean;
   debugLogs: DebugLogConfig;

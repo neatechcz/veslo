@@ -33,6 +33,11 @@ test("local workspace activation lives in a scoped activation module", () => {
     "local workspace activation should sync the Veslo server active workspace after local workspaceSetActive succeeds",
   );
   assert.match(
+    localSource,
+    /const error = e instanceof Error \? e\.message : deps\.safeStringify\(e\);[\s\S]*if \(error\.startsWith\("workspace_registry_unsynced:"\)\) \{[\s\S]*deps\.setError\(deps\.addOpencodeCacheHint\(error\)\);/s,
+    "local workspace activation should surface Veslo registry sync failures to the UI",
+  );
+  assert.match(
     facadeSource,
     /createWorkspaceLocalActivation\(\{[\s\S]*activateVesloHostWorkspace,[\s\S]*setError: options\.setError,/s,
     "workspace facade should wire Veslo server active-workspace sync into local activation",

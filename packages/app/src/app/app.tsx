@@ -3092,7 +3092,12 @@ export default function App() {
     }
 
     if (active.workspaceType === "local") {
-      setVesloServerWorkspaceId(active.id?.trim() || workspaceStore.activeWorkspaceId().trim() || null);
+      setVesloServerWorkspaceId(
+        active.vesloWorkspaceId?.trim() ||
+        active.id?.trim() ||
+        workspaceStore.activeWorkspaceId().trim() ||
+        null,
+      );
       return;
     }
 

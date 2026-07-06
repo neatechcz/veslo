@@ -13,6 +13,10 @@ import {
 import { extractSessionId } from "../utils";
 import { reportError } from "../lib/error-reporter";
 import { engineSseSubscribe, isEngineSseAvailable } from "../lib/engine-sse";
+import {
+  readVesloServerSettingsToken,
+  resolveOpencodeProxyAuthHeaders,
+} from "../lib/veslo-server";
 import { usePlatform } from "./platform";
 import { useServer } from "./server";
 
@@ -41,15 +45,13 @@ export function GlobalSDKProvider(props: ParentProps) {
     const baseUrl = server.url;
     const isHealthy = server.healthy() === true;
 
-    const token = (() => {
-      if (typeof window === "undefined") return "";
-      try {
-        return (window.localStorage.getItem("veslo.server.token") ?? "").trim();
-      } catch {
-        return "";
-      }
-    })();
-    const headers = token && baseUrl.includes("/opencode") ? { Authorization: `Bearer ${token}` } : undefined;
+    const settingsToken = readVesloServerSettingsToken();
+    const headers = resolveOpencodeProxyAuthHeaders({
+      baseUrl,
+      settingsToken,
+      isTauriRuntime: platform.platform === "desktop",
+    });
+    const bearerToken = headers ? settingsToken : "";
     setUrl(baseUrl);
 
     // Always keep the request client in sync with the active URL.
@@ -170,7 +172,7 @@ export function GlobalSDKProvider(props: ParentProps) {
         rustSubscription = await engineSseSubscribe({
           workspaceId: "__global__",
           baseUrl,
-          bearerToken: token || null,
+          bearerToken: bearerToken || null,
           signal: abort.signal,
         });
         await consumeEvents(rustSubscription.stream);

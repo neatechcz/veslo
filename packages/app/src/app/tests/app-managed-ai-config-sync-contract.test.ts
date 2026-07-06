@@ -116,8 +116,8 @@ test("local Veslo workspace id resolves without listing server workspaces", () =
 
   assert.match(
     localBranchSource,
-    /setVesloServerWorkspaceId\(active\.id\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\) \|\| null\);/,
-    "local workspace id should come from the local workspace state contract",
+    /setVesloServerWorkspaceId\(\s*active\.vesloWorkspaceId\?\.trim\(\) \|\|\s*active\.id\?\.trim\(\) \|\|\s*workspaceStore\.activeWorkspaceId\(\)\.trim\(\) \|\|\s*null,\s*\);/,
+    "local Veslo workspace id should prefer the server-owned mapping and fall back to the app-local workspace state contract",
   );
   assert.doesNotMatch(
     localBranchSource,

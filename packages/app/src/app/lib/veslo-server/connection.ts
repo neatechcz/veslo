@@ -417,6 +417,22 @@ export function readVesloServerSettings(): VesloServerSettings {
   }
 }
 
+export function readVesloServerSettingsToken(): string {
+  return readVesloServerSettings().token?.trim() ?? "";
+}
+
+export function resolveOpencodeProxyAuthHeaders(input: {
+  baseUrl: string;
+  settingsToken?: string | null;
+  isTauriRuntime?: boolean;
+}): { Authorization: string } | undefined {
+  const baseUrl = input.baseUrl.trim();
+  const token = input.settingsToken?.trim() ?? "";
+  if (!token || !baseUrl.includes("/opencode")) return undefined;
+  if (input.isTauriRuntime && isLoopbackVesloServerUrl(baseUrl)) return undefined;
+  return { Authorization: `Bearer ${token}` };
+}
+
 export function writeVesloServerSettings(next: VesloServerSettings): VesloServerSettings {
   if (typeof window === "undefined") return next;
   try {

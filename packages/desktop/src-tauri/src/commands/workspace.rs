@@ -11,6 +11,7 @@ use crate::types::{
 };
 use crate::workspace::files::{ensure_workspace_files, seed_soul_templates};
 use crate::workspace::reserved::is_reserved_internal_workspace_dir_name;
+use crate::workspace::server_client::WorkspaceServerSyncResult;
 use crate::workspace::state::{
     load_workspace_state, private_workspace_root_from_data_dir, save_workspace_state,
     stable_workspace_id, stable_workspace_id_for_remote, stable_workspace_id_for_veslo,
@@ -31,6 +32,39 @@ fn resolve_workspace_managed_deps_manifest(app: &tauri::AppHandle) -> Option<Pat
     let sidecar_paths =
         sidecar_path_candidates(resource_dir.as_deref(), current_bin_dir.as_deref());
     crate::orchestrator::resolve_opencode_managed_deps_manifest(&sidecar_paths)
+}
+
+fn log_workspace_registry_sync(context: &str, result: &WorkspaceServerSyncResult) {
+    let status = if result.is_accepted() {
+        "accepted"
+    } else if result.is_skipped() {
+        "skipped"
+    } else {
+        "failed"
+    };
+    let message = format!(
+        "[workspace] registry sync {status}: context={context} operation={} outcome={:?} status={:?} workspace_id={:?} path={:?} message={:?}",
+        result.operation,
+        result.outcome,
+        result.status_code,
+        result.workspace_id,
+        result.path,
+        result.message
+    );
+    if result.is_accepted() {
+        println!("{message}");
+    } else {
+        eprintln!("{message}");
+    }
+}
+
+fn server_workspace_id_for_mutation(workspace: &WorkspaceInfo) -> &str {
+    workspace
+        .veslo_workspace_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| workspace.id.trim())
 }
 
 // ---------------------------------------------------------------------------
@@ -349,8 +383,12 @@ pub fn workspace_forget(
     let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
     update_workspace_watch(&app, watch_state, active_workspace)?;
 
-    // Mirror the deletion into the server registry (best-effort).
-    crate::workspace::server_client::delete_workspace(&app, id);
+    let server_workspace_id = forgotten_workspace
+        .as_ref()
+        .map(server_workspace_id_for_mutation)
+        .unwrap_or(id);
+    let sync_result = crate::workspace::server_client::delete_workspace(&app, server_workspace_id);
+    log_workspace_registry_sync("forget", &sync_result);
 
     // Cleanup OpenCode sessions and local files only for explicit destructive forget mode.
     if let Some(ref ws) = forgotten_workspace {
@@ -438,7 +476,13 @@ pub fn workspace_update_display_name(
     // sees what the user sees in the sidebar.
     if let Some(ws) = state.workspaces.iter().find(|w| w.id == id) {
         let effective_name = ws.display_name.as_deref().unwrap_or(&ws.name);
-        crate::workspace::server_client::patch_workspace(&app, &ws.id, effective_name);
+        let server_workspace_id = server_workspace_id_for_mutation(ws);
+        let sync_result = crate::workspace::server_client::patch_workspace(
+            &app,
+            server_workspace_id,
+            effective_name,
+        );
+        log_workspace_registry_sync("rename", &sync_result);
     }
 
     println!("[workspace] update display name complete: {id}");
@@ -575,7 +619,12 @@ pub fn workspace_create(
     // Mirror the new workspace into the server registry (hybrid C —
     // server is the future single-source-of-truth, ignored if not running).
     if let Some(ws) = state.workspaces.iter().find(|w| w.id == id) {
-        crate::workspace::server_client::post_local_workspace(&app, &ws.path, &ws.name);
+        let sync_result =
+            crate::workspace::server_client::post_local_workspace(&app, &ws.path, &ws.name);
+        log_workspace_registry_sync("create-local", &sync_result);
+        if sync_result.is_accepted() {
+            state = load_workspace_state(&app)?;
+        }
     }
 
     println!("[workspace] create local complete: {id}");
@@ -1441,6 +1490,16 @@ mod tests {
         }
     }
 
+    fn local_workspace_with_server_id(
+        id: &str,
+        path: &str,
+        server_id: Option<&str>,
+    ) -> WorkspaceInfo {
+        let mut workspace = local_workspace(id, path);
+        workspace.veslo_workspace_id = server_id.map(str::to_string);
+        workspace
+    }
+
     fn remote_workspace_with_path(id: &str, path: &str) -> WorkspaceInfo {
         WorkspaceInfo {
             id: id.to_string(),
@@ -1469,6 +1528,19 @@ mod tests {
         fs::create_dir_all(root.join(".opencode")).expect("create .opencode");
         fs::write(root.join("opencode.jsonc"), "{}").expect("create opencode.jsonc");
         root
+    }
+
+    #[test]
+    fn server_workspace_id_for_mutation_prefers_mapped_veslo_workspace_id() {
+        let workspace =
+            local_workspace_with_server_id("app-ws-id", "/tmp/project", Some(" server-ws-id "));
+        assert_eq!(server_workspace_id_for_mutation(&workspace), "server-ws-id");
+    }
+
+    #[test]
+    fn server_workspace_id_for_mutation_falls_back_to_app_workspace_id() {
+        let workspace = local_workspace_with_server_id(" app-ws-id ", "/tmp/project", Some(" "));
+        assert_eq!(server_workspace_id_for_mutation(&workspace), "app-ws-id");
     }
 
     #[test]

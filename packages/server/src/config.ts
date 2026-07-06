@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import type {
@@ -60,6 +61,13 @@ interface FileConfig {
   skillRegistryBaseUrl?: string;
   logFormat?: LogFormat;
   logRequests?: boolean;
+}
+
+interface SecretsFileConfig {
+  clientToken?: unknown;
+  token?: unknown;
+  hostToken?: unknown;
+  orchestratorLifecycleToken?: unknown;
 }
 
 const DEFAULT_PORT = 8787;
@@ -248,8 +256,8 @@ export function printHelp(): void {
     "  --host <host>            Hostname (default 127.0.0.1)",
     "  --bridge-host <host>     Extra bind address served with the same auth (e.g. WSL adapter IP)",
     "  --port <port>            Port (default 8787)",
-    "  --token <token>          Client bearer token",
-    "  --host-token <token>     Host approval token",
+    "  --token <token>          Client bearer token (manual CLI compatibility; desktop uses VESLO_SECRETS_FILE)",
+    "  --host-token <token>     Host approval token (manual CLI compatibility; desktop uses VESLO_SECRETS_FILE)",
     "  --approval <mode>        manual | auto",
     "  --approval-timeout <ms>  Approval timeout",
     "  --opencode-base-url <url> OpenCode base URL to share",
@@ -257,7 +265,7 @@ export function printHelp(): void {
     "  --opencode-username <user> OpenCode server username",
     "  --opencode-password <pass> OpenCode server password",
     "  --orchestrator-url <url> Orchestrator daemon URL for run lifecycle",
-    "  --orchestrator-lifecycle-token <token> Orchestrator lifecycle token",
+    "  --orchestrator-lifecycle-token <token> Orchestrator lifecycle token (manual CLI compatibility)",
     "  --workspace <path>       Workspace root (repeatable)",
     "  --workspace-id <id>      Workspace id for the matching --workspace entry",
     "  --cors <origins>          Comma-separated origins or *",
@@ -276,10 +284,63 @@ async function loadFileConfig(configPath: string): Promise<FileConfig> {
   return parsed ?? {};
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function readTrimmedString(value: unknown): string | undefined {
+  return typeof value === "string" ? value.trim() || undefined : undefined;
+}
+
+async function loadSecretsFileConfig(path: string): Promise<{
+  clientToken: string;
+  hostToken: string;
+  orchestratorLifecycleToken?: string;
+}> {
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    throw new Error(`Failed to read VESLO_SECRETS_FILE ${path}: ${errorMessage(error)}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Failed to parse VESLO_SECRETS_FILE ${path}: ${errorMessage(error)}`);
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`VESLO_SECRETS_FILE ${path} must contain a JSON object`);
+  }
+
+  const secrets = parsed as SecretsFileConfig;
+  const clientToken = readTrimmedString(secrets.clientToken) ?? readTrimmedString(secrets.token);
+  const hostToken = readTrimmedString(secrets.hostToken);
+  if (!clientToken || !hostToken) {
+    const missing: string[] = [];
+    if (!clientToken) missing.push("clientToken");
+    if (!hostToken) missing.push("hostToken");
+    throw new Error(`VESLO_SECRETS_FILE ${path} is missing required ${missing.join(", ")}`);
+  }
+
+  return {
+    clientToken,
+    hostToken,
+    orchestratorLifecycleToken: readTrimmedString(secrets.orchestratorLifecycleToken),
+  };
+}
+
 export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
   const envConfigPath = process.env.VESLO_SERVER_CONFIG;
   const configPath = cli.configPath ?? envConfigPath ?? resolve(homedir(), ".config", "veslo", "server.json");
   const fileConfig = await loadFileConfig(configPath);
+  const secretsFilePath = process.env.VESLO_SECRETS_FILE?.trim() || undefined;
+  const secretsFileConfig = secretsFilePath ? await loadSecretsFileConfig(secretsFilePath) : null;
+  const secretsClientToken = secretsFileConfig?.clientToken;
+  const secretsHostToken = secretsFileConfig?.hostToken;
+  const secretsOrchestratorLifecycleToken = secretsFileConfig?.orchestratorLifecycleToken;
   const configDir = dirname(configPath);
 
   const envWorkspaces = parseList(process.env.VESLO_WORKSPACES);
@@ -310,6 +371,7 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     normalizeOptionalUrl(fileConfig.orchestratorDaemonUrl);
   const orchestratorLifecycleToken =
     cli.orchestratorLifecycleToken?.trim() ||
+    secretsOrchestratorLifecycleToken ||
     process.env.VESLO_ORCHESTRATOR_LIFECYCLE_TOKEN?.trim() ||
     fileConfig.orchestratorLifecycleToken?.trim() ||
     undefined;
@@ -335,26 +397,33 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
   const hostTokenFromEnv = process.env.VESLO_HOST_TOKEN;
   const instanceId = process.env.VESLO_INSTANCE_ID?.trim() || fileConfig.instanceId?.trim() || shortId();
   const runtimeDescriptorPath =
-    process.env.VESLO_RUNTIME_DESCRIPTOR_PATH?.trim() || fileConfig.runtimeDescriptorPath?.trim() || undefined;
+    process.env.VESLO_RUNTIME_FILE?.trim() ||
+    process.env.VESLO_RUNTIME_DESCRIPTOR_PATH?.trim() ||
+    fileConfig.runtimeDescriptorPath?.trim() ||
+    undefined;
 
-  const token = cli.token ?? tokenFromEnv ?? fileConfig.token ?? shortId();
-  const hostToken = cli.hostToken ?? hostTokenFromEnv ?? fileConfig.hostToken ?? shortId();
+  const token = cli.token ?? secretsClientToken ?? tokenFromEnv ?? fileConfig.token ?? shortId();
+  const hostToken = cli.hostToken ?? secretsHostToken ?? hostTokenFromEnv ?? fileConfig.hostToken ?? shortId();
 
   const tokenSource: ServerConfig["tokenSource"] = cli.token
     ? "cli"
-    : tokenFromEnv
-      ? "env"
-      : fileConfig.token
-        ? "file"
-        : "generated";
+    : secretsClientToken
+      ? "secrets-file"
+      : tokenFromEnv
+        ? "env"
+        : fileConfig.token
+          ? "file"
+          : "generated";
 
   const hostTokenSource: ServerConfig["hostTokenSource"] = cli.hostToken
     ? "cli"
-    : hostTokenFromEnv
-      ? "env"
-      : fileConfig.hostToken
-        ? "file"
-        : "generated";
+    : secretsHostToken
+      ? "secrets-file"
+      : hostTokenFromEnv
+        ? "env"
+        : fileConfig.hostToken
+          ? "file"
+          : "generated";
 
   const approvalMode =
     cli.approvalMode ??

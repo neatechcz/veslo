@@ -15,6 +15,8 @@ export function getVesloStatusMeta(vesloServerStatus: VesloServerStatus) {
       return { text: "text-green-11", label: tr("status.connected") };
     case "limited":
       return { text: "text-amber-11", label: tr("status.limited") };
+    case "auth_desync":
+      return { text: "text-red-11", label: tr("errors.authentication_failed") };
     default:
       return { text: "text-gray-10", label: tr("status.unavailable") };
   }
@@ -33,9 +35,13 @@ export function getUnifiedStatusMeta(
   void clientConnected;
   void runtimeAvailableWithoutClient;
 
-  return isLoggedIn && vesloServerStatus === "connected"
-    ? { dot: "bg-green-9", text: "text-green-11", label: tr("status.ready") }
-    : { dot: "bg-red-9", text: "text-red-11", label: tr("status.unavailable") };
+  if (isLoggedIn && vesloServerStatus === "connected") {
+    return { dot: "bg-green-9", text: "text-green-11", label: tr("status.ready") };
+  }
+  if (vesloServerStatus === "auth_desync") {
+    return { dot: "bg-red-9", text: "text-red-11", label: tr("errors.authentication_failed") };
+  }
+  return { dot: "bg-red-9", text: "text-red-11", label: tr("status.unavailable") };
 }
 
 export function formatConnectedUserLabel(value?: string | null) {

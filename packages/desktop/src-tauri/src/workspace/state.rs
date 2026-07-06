@@ -10,17 +10,9 @@ use crate::types::{
 };
 use crate::workspace::reserved::is_reserved_internal_workspace_dir_name;
 
-// Match orchestrator's workspaceIdForLocal in packages/orchestrator/src/cli.ts.
-// SHA1(path) truncated to 12 hex chars produces a deterministic ID that stays
-// stable across process restarts AND matches whatever the orchestrator
-// synthesizes for the same path, so the frontend / Tauri local state /
-// orchestrator state all agree on workspace identity. The previous
-// DefaultHasher implementation reseeded SipHash on every process boot,
-// producing fresh IDs that never matched the orchestrator's IDs — workspace
-// switches issued POST /workspaces/:id/activate against orchestrator-unknown
-// IDs, the activate handler returned 404 silently, the frontend's
-// connectingWorkspaceId never cleared, and createSessionAndOpen stayed
-// permanently blocked for every workspace after the first.
+// Current desktop derivation hashes the path string it receives. VSA10A golden
+// vectors document where this agrees with or drifts from server/orchestrator
+// normalization; VSA10B/C move authority to server-owned workspace IDs.
 pub fn stable_workspace_id(path: &str) -> String {
     let mut hasher = Sha1::new();
     hasher.update(path.as_bytes());
@@ -173,6 +165,44 @@ fn normalized_local_path_key(path: &str) -> String {
         normalized.pop();
     }
     normalized.to_ascii_lowercase()
+}
+
+pub fn apply_veslo_workspace_id_mapping(
+    state: &mut WorkspaceState,
+    local_path: &str,
+    server_workspace_id: Option<&str>,
+) -> bool {
+    let Some(server_workspace_id) = server_workspace_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+    let path_key = normalized_local_path_key(local_path);
+    if path_key.is_empty() {
+        return false;
+    }
+
+    let mut changed = false;
+    for workspace in state.workspaces.iter_mut() {
+        if workspace.workspace_type != WorkspaceType::Local {
+            continue;
+        }
+        if normalized_local_path_key(&workspace.path) != path_key {
+            continue;
+        }
+        let existing = workspace
+            .veslo_workspace_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if existing == Some(server_workspace_id) {
+            continue;
+        }
+        workspace.veslo_workspace_id = Some(server_workspace_id.to_string());
+        changed = true;
+    }
+    changed
 }
 
 fn reserved_internal_child_parent_key(path: &str) -> Option<String> {
@@ -427,17 +457,64 @@ pub fn stable_workspace_id_for_veslo(host_url: &str, workspace_id: Option<&str>)
 #[cfg(test)]
 mod tests {
     use super::{
-        legacy_state_candidates, load_workspace_state_from_paths,
+        apply_veslo_workspace_id_mapping, legacy_state_candidates, load_workspace_state_from_paths,
         private_workspace_root_from_data_dir, stable_workspace_id, try_load_legacy_workspace_state,
         workspace_state_for_persistence,
     };
     use crate::types::{RemoteType, WorkspaceInfo, WorkspaceState, WorkspaceType};
+    use serde::Deserialize;
     use std::fs;
     use std::path::PathBuf;
     use uuid::Uuid;
 
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct WorkspaceIdFixture {
+        vectors: Vec<WorkspaceIdVector>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct WorkspaceIdVector {
+        name: String,
+        inputs: WorkspaceIdInputs,
+        expected: WorkspaceIdExpected,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct WorkspaceIdInputs {
+        desktop_path: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct WorkspaceIdExpected {
+        desktop: String,
+    }
+
+    fn workspace_id_fixture() -> WorkspaceIdFixture {
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../docs/fixtures/workspace-id-golden-vectors.json"
+        )))
+        .expect("workspace id golden vector fixture should parse")
+    }
+
     fn temp_root(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!("veslo-workspace-state-{label}-{}", Uuid::new_v4()))
+    }
+
+    #[test]
+    fn stable_workspace_id_matches_golden_vectors() {
+        for vector in workspace_id_fixture().vectors {
+            assert_eq!(
+                stable_workspace_id(&vector.inputs.desktop_path),
+                vector.expected.desktop,
+                "{} desktop workspace id drifted",
+                vector.name
+            );
+        }
     }
 
     #[test]
@@ -559,6 +636,59 @@ mod tests {
 
         assert_eq!(state.workspaces[0].missing, Some(true));
         assert_eq!(persisted.workspaces[0].missing, None);
+    }
+
+    #[test]
+    fn apply_veslo_workspace_id_mapping_updates_matching_local_workspace_only() {
+        let mut remote = local_workspace("ws-remote-shaped", "Remote shaped", "/tmp/project");
+        remote.workspace_type = WorkspaceType::Remote;
+        remote.remote_type = Some(RemoteType::Veslo);
+
+        let mut state = WorkspaceState {
+            version: 4,
+            active_id: "ws-local".to_string(),
+            workspaces: vec![
+                local_workspace("ws-local", "Local", "/tmp/project/"),
+                local_workspace("ws-other", "Other", "/tmp/other"),
+                remote,
+            ],
+        };
+
+        assert!(apply_veslo_workspace_id_mapping(
+            &mut state,
+            "/tmp/project",
+            Some(" server-ws-1 ")
+        ));
+
+        assert_eq!(state.workspaces[0].id, "ws-local");
+        assert_eq!(
+            state.workspaces[0].veslo_workspace_id.as_deref(),
+            Some("server-ws-1")
+        );
+        assert_eq!(state.workspaces[1].veslo_workspace_id, None);
+        assert_eq!(state.workspaces[2].veslo_workspace_id, None);
+    }
+
+    #[test]
+    fn apply_veslo_workspace_id_mapping_is_noop_without_path_or_server_id() {
+        let mut state = WorkspaceState {
+            version: 4,
+            active_id: "ws-local".to_string(),
+            workspaces: vec![local_workspace("ws-local", "Local", "/tmp/project")],
+        };
+
+        assert!(!apply_veslo_workspace_id_mapping(
+            &mut state,
+            "/tmp/project",
+            Some("  ")
+        ));
+        assert!(!apply_veslo_workspace_id_mapping(
+            &mut state,
+            "  ",
+            Some("server-ws-1")
+        ));
+
+        assert_eq!(state.workspaces[0].veslo_workspace_id, None);
     }
 
     #[test]

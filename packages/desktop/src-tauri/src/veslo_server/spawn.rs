@@ -1,5 +1,7 @@
 use std::env;
+use std::fmt;
 use std::fs;
+use std::io::Write;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
@@ -18,8 +20,63 @@ const VESLO_DESKTOP_SERVER_HOST_ENV: &str = "VESLO_DESKTOP_SERVER_HOST";
 const VESLO_DESKTOP_SERVER_PORT_ENV: &str = "VESLO_DESKTOP_SERVER_PORT";
 const VESLO_SANDBOX_BACKEND_ENV: &str = "VESLO_SANDBOX_BACKEND";
 const VESLO_DISABLE_SANDBOX_ENV: &str = "VESLO_DISABLE_SANDBOX";
+const VESLO_RUNTIME_FILE_ENV: &str = "VESLO_RUNTIME_FILE";
+const VESLO_RUNTIME_DESCRIPTOR_PATH_ENV: &str = "VESLO_RUNTIME_DESCRIPTOR_PATH";
+const VESLO_SECRETS_FILE_ENV: &str = "VESLO_SECRETS_FILE";
 const PORT_RESTART_RETRY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 const PORT_RESTART_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VesloPortConflict {
+    pub host: String,
+    pub port: u16,
+    pub source: String,
+}
+
+impl VesloPortConflict {
+    pub fn is_default_port(&self) -> bool {
+        self.port == DEFAULT_VESLO_PORT
+    }
+
+    pub fn fallback_policy(&self) -> &'static str {
+        "disabled"
+    }
+
+    pub fn message(&self) -> String {
+        format!(
+            "port_conflict: Veslo server port {} on {} is unavailable: {}; ephemeral fallback is disabled, so local mode is blocked until the occupant exits or the port is changed.",
+            self.port, self.host, self.source
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VesloPortResolveError {
+    InvalidConfig(String),
+    Conflict(VesloPortConflict),
+}
+
+impl VesloPortResolveError {
+    pub fn message(&self) -> String {
+        match self {
+            Self::InvalidConfig(message) => message.clone(),
+            Self::Conflict(conflict) => conflict.message(),
+        }
+    }
+
+    pub fn conflict(&self) -> Option<&VesloPortConflict> {
+        match self {
+            Self::Conflict(conflict) => Some(conflict),
+            Self::InvalidConfig(_) => None,
+        }
+    }
+}
+
+impl fmt::Display for VesloPortResolveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message())
+    }
+}
 
 fn parse_env_flag(value: Option<&str>) -> bool {
     matches!(
@@ -109,17 +166,21 @@ fn validate_managed_opencode_base_url(opencode_base_url: Option<&str>) -> Result
 pub fn resolve_veslo_port() -> Result<u16, String> {
     let host = resolve_veslo_host();
     let port = configured_veslo_port()?;
-    bind_veslo_port(&host, port)
+    bind_veslo_port(&host, port).map_err(|error| error.message())
 }
 
-fn bind_veslo_port(host: &str, port: u16) -> Result<u16, String> {
+fn bind_veslo_port(host: &str, port: u16) -> Result<u16, VesloPortConflict> {
     TcpListener::bind((host, port))
         .map(|_| port)
-        .map_err(|error| format!("Veslo server port {port} on {host} is unavailable: {error}"))
+        .map_err(|error| VesloPortConflict {
+            host: host.to_string(),
+            port,
+            source: error.to_string(),
+        })
 }
 
-pub fn resolve_veslo_port_after_restart(host: &str) -> Result<u16, String> {
-    let port = configured_veslo_port()?;
+pub fn resolve_veslo_port_after_restart_detailed(host: &str) -> Result<u16, VesloPortResolveError> {
+    let port = configured_veslo_port().map_err(VesloPortResolveError::InvalidConfig)?;
     let deadline = std::time::Instant::now() + PORT_RESTART_RETRY_TIMEOUT;
     loop {
         match bind_veslo_port(host, port) {
@@ -127,12 +188,17 @@ pub fn resolve_veslo_port_after_restart(host: &str) -> Result<u16, String> {
             Err(error) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(PORT_RESTART_RETRY_INTERVAL);
                 if std::time::Instant::now() >= deadline {
-                    return Err(error);
+                    return Err(VesloPortResolveError::Conflict(error));
                 }
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(VesloPortResolveError::Conflict(error)),
         }
     }
+}
+
+#[cfg(test)]
+pub fn resolve_veslo_port_after_restart(host: &str) -> Result<u16, String> {
+    resolve_veslo_port_after_restart_detailed(host).map_err(|error| error.message())
 }
 
 fn resolve_veslo_host_from_env(value: Option<&str>) -> String {
@@ -172,12 +238,9 @@ pub fn build_veslo_args(
     port: u16,
     workspace_paths: &[String],
     workspace_ids: &[Option<String>],
-    token: &str,
-    host_token: &str,
     opencode_base_url: Option<&str>,
     opencode_directory: Option<&str>,
     orchestrator_daemon_url: Option<&str>,
-    orchestrator_lifecycle_token: Option<&str>,
     bridge_host: Option<&str>,
 ) -> Vec<String> {
     let mut args = vec![
@@ -185,10 +248,6 @@ pub fn build_veslo_args(
         host.to_string(),
         "--port".to_string(),
         port.to_string(),
-        "--token".to_string(),
-        token.to_string(),
-        "--host-token".to_string(),
-        host_token.to_string(),
         // Always allow all origins since the Veslo server is designed to accept
         // remote connections from client devices (phones, laptops) which may use
         // different origins (localhost dev servers, tauri apps, web browsers).
@@ -244,14 +303,115 @@ pub fn build_veslo_args(
         }
     }
 
-    if let Some(token) = orchestrator_lifecycle_token {
-        if !token.trim().is_empty() {
-            args.push("--orchestrator-lifecycle-token".to_string());
-            args.push(token.to_string());
-        }
+    args
+}
+
+fn build_veslo_secrets_json(
+    token: &str,
+    host_token: &str,
+    orchestrator_lifecycle_token: Option<&str>,
+) -> Result<String, String> {
+    let mut secrets = serde_json::json!({
+        "clientToken": token,
+        "hostToken": host_token,
+    });
+
+    if let Some(token) = orchestrator_lifecycle_token
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+    {
+        secrets["orchestratorLifecycleToken"] = serde_json::Value::String(token.to_string());
     }
 
-    args
+    serde_json::to_string_pretty(&secrets)
+        .map(|contents| format!("{contents}\n"))
+        .map_err(|error| format!("failed to serialize Veslo server secrets: {error}"))
+}
+
+#[cfg(unix)]
+fn write_private_file(path: &Path, contents: &str) -> Result<(), String> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|error| format!("failed to create private file {}: {error}", path.display()))?;
+    file.write_all(contents.as_bytes())
+        .map_err(|error| format!("failed to write private file {}: {error}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn write_private_file(path: &Path, contents: &str) -> Result<(), String> {
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .map_err(|error| format!("failed to create private file {}: {error}", path.display()))?;
+    file.write_all(contents.as_bytes())
+        .map_err(|error| format!("failed to write private file {}: {error}", path.display()))
+}
+
+fn write_veslo_secrets_file(
+    path: &Path,
+    token: &str,
+    host_token: &str,
+    orchestrator_lifecycle_token: Option<&str>,
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create Veslo server secrets directory {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    let contents = build_veslo_secrets_json(token, host_token, orchestrator_lifecycle_token)?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("veslo-server.secrets.json");
+    let temp_path = path.with_file_name(format!("{file_name}.{}.tmp", std::process::id()));
+
+    let _ = fs::remove_file(&temp_path);
+    if let Err(error) = write_private_file(&temp_path, &contents) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error);
+    }
+
+    let _ = fs::remove_file(path);
+    fs::rename(&temp_path, path).map_err(|error| {
+        let _ = fs::remove_file(&temp_path);
+        format!(
+            "failed to publish Veslo server secrets file {}: {error}",
+            path.display()
+        )
+    })
+}
+
+struct SpawnSecretsFileGuard<'a> {
+    path: &'a Path,
+    armed: bool,
+}
+
+impl<'a> SpawnSecretsFileGuard<'a> {
+    fn new(path: &'a Path) -> Self {
+        Self { path, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for SpawnSecretsFileGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = fs::remove_file(self.path);
+        }
+    }
 }
 
 fn resolve_managed_ai_base_url_from_env(
@@ -401,6 +561,7 @@ pub fn spawn_veslo_server(
     port: u16,
     instance_id: &str,
     runtime_descriptor_path: &Path,
+    secrets_file_path: &Path,
     workspace_paths: &[String],
     workspace_ids: &[Option<String>],
     token: &str,
@@ -417,18 +578,22 @@ pub fn spawn_veslo_server(
     shared_unsandboxed_engine: Option<bool>,
 ) -> Result<(Receiver<CommandEvent>, SupervisedCommandChild), String> {
     validate_managed_opencode_base_url(opencode_base_url)?;
+    write_veslo_secrets_file(
+        secrets_file_path,
+        token,
+        host_token,
+        orchestrator_lifecycle_token,
+    )?;
+    let mut secrets_file_guard = SpawnSecretsFileGuard::new(secrets_file_path);
 
     let server_args = build_veslo_args(
         host,
         port,
         workspace_paths,
         workspace_ids,
-        token,
-        host_token,
         opencode_base_url,
         opencode_directory,
         orchestrator_daemon_url,
-        orchestrator_lifecycle_token,
         bridge_host,
     );
     let use_dev_watch = should_use_dev_watch_mode()?;
@@ -454,8 +619,16 @@ pub fn spawn_veslo_server(
     .env("VESLO_MANAGED_AI_BASE_URL", resolve_managed_ai_base_url());
     command = command.env("VESLO_INSTANCE_ID", instance_id);
     command = command.env(
-        "VESLO_RUNTIME_DESCRIPTOR_PATH",
+        VESLO_RUNTIME_FILE_ENV,
         runtime_descriptor_path.to_string_lossy().to_string(),
+    );
+    command = command.env(
+        VESLO_RUNTIME_DESCRIPTOR_PATH_ENV,
+        runtime_descriptor_path.to_string_lossy().to_string(),
+    );
+    command = command.env(
+        VESLO_SECRETS_FILE_ENV,
+        secrets_file_path.to_string_lossy().to_string(),
     );
     command = command.env(VESLO_SANDBOX_BACKEND_ENV, sandbox_backend);
     for (key, value) in crate::runtime_preferences::shared_unsandboxed_engine_env_overrides(
@@ -484,13 +657,15 @@ pub fn spawn_veslo_server(
         command = command.env(key, value);
     }
 
-    command.spawn().map_err(|e| {
+    let child = command.spawn().map_err(|e| {
         if use_dev_watch {
             format!("Failed to start Veslo server in dev watch mode: {e}")
         } else {
             format!("Failed to start Veslo server: {e}")
         }
-    })
+    })?;
+    secrets_file_guard.disarm();
+    Ok(child)
 }
 
 #[cfg(test)]
@@ -607,6 +782,36 @@ mod tests {
             error.contains(&DEFAULT_VESLO_PORT.to_string()),
             "fixed-port contention errors should name the configured Veslo server port: {error}"
         );
+        assert!(
+            error.contains("port_conflict"),
+            "fixed-port contention errors should expose a stable diagnostic code: {error}"
+        );
+        assert!(
+            error.contains("ephemeral fallback is disabled"),
+            "fixed-port contention should make the current fallback policy explicit: {error}"
+        );
+    }
+
+    #[test]
+    fn port_conflict_carries_structured_policy_details() {
+        let _lock = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let host = resolve_veslo_host();
+        let _guard = EnvGuard::unset(VESLO_DESKTOP_SERVER_PORT_ENV);
+        let fixed_port_guard = TcpListener::bind((host.as_str(), DEFAULT_VESLO_PORT)).ok();
+
+        let conflict = bind_veslo_port(&host, DEFAULT_VESLO_PORT)
+            .expect_err("reserved fixed port should report structured conflict");
+
+        drop(fixed_port_guard);
+
+        assert_eq!(conflict.host, host);
+        assert_eq!(conflict.port, DEFAULT_VESLO_PORT);
+        assert!(conflict.is_default_port());
+        assert_eq!(conflict.fallback_policy(), "disabled");
+        assert!(conflict.message().contains("port_conflict"));
     }
 
     #[test]
@@ -653,9 +858,6 @@ mod tests {
             8787,
             &["/tmp/workspace-a".to_string()],
             &[Some("app-workspace-a".to_string())],
-            "client-token",
-            "host-token",
-            None,
             None,
             None,
             None,
@@ -677,9 +879,6 @@ mod tests {
             8787,
             &["/tmp/workspace-a".to_string()],
             &[None],
-            "client-token",
-            "host-token",
-            None,
             None,
             None,
             None,
@@ -698,9 +897,6 @@ mod tests {
             8787,
             &["/tmp/workspace-a".to_string()],
             &[None],
-            "client-token",
-            "host-token",
-            None,
             None,
             None,
             None,
@@ -711,27 +907,66 @@ mod tests {
     }
 
     #[test]
-    fn build_args_includes_orchestrator_lifecycle_config() {
+    fn build_args_includes_orchestrator_url_without_secrets() {
         let args = build_veslo_args(
             "0.0.0.0",
             8787,
             &["/tmp/workspace-a".to_string()],
             &[Some("app-workspace-a".to_string())],
-            "client-token",
-            "host-token",
             Some("http://127.0.0.1:12345/workspace/ws-a/opencode"),
             Some("/tmp/workspace-a"),
             Some("http://127.0.0.1:12345"),
-            Some("lifecycle-token"),
             None,
         );
 
         assert!(args
             .windows(2)
             .any(|pair| pair == ["--orchestrator-url", "http://127.0.0.1:12345"]));
-        assert!(args
-            .windows(2)
-            .any(|pair| pair == ["--orchestrator-lifecycle-token", "lifecycle-token"]));
+        let forbidden_args =
+            ["token", "host-token", "orchestrator-lifecycle-token"].map(|name| format!("--{name}"));
+        assert!(!args.iter().any(|arg| forbidden_args.contains(arg)));
+    }
+
+    #[test]
+    fn secrets_json_contains_tokens_without_argv_flags() {
+        let contents =
+            build_veslo_secrets_json("client-token", "host-token", Some(" lifecycle-token "))
+                .expect("serialize secrets");
+        let parsed: serde_json::Value = serde_json::from_str(&contents).expect("parse secrets");
+
+        assert_eq!(parsed["clientToken"], "client-token");
+        assert_eq!(parsed["hostToken"], "host-token");
+        assert_eq!(parsed["orchestratorLifecycleToken"], "lifecycle-token");
+    }
+
+    #[test]
+    fn spawn_secrets_guard_removes_file_unless_disarmed() {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "veslo-spawn-secrets-guard-{}-{suffix}.json",
+            std::process::id()
+        ));
+        let kept_path = std::env::temp_dir().join(format!(
+            "veslo-spawn-secrets-guard-{}-{suffix}.kept.json",
+            std::process::id()
+        ));
+        fs::write(&path, "secret").expect("write guarded file");
+        fs::write(&kept_path, "secret").expect("write kept file");
+
+        {
+            let _guard = SpawnSecretsFileGuard::new(&path);
+        }
+        {
+            let mut guard = SpawnSecretsFileGuard::new(&kept_path);
+            guard.disarm();
+        }
+
+        assert!(!path.exists());
+        assert!(kept_path.exists());
+        let _ = fs::remove_file(kept_path);
     }
 
     #[test]

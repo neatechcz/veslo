@@ -493,6 +493,8 @@ export default function SettingsView(props: SettingsViewProps) {
         return translate("status.connected");
       case "limited":
         return translate("status.limited");
+      case "auth_desync":
+        return translate("errors.authentication_failed");
       default:
         return translate("dashboard.not_connected");
     }
@@ -504,6 +506,8 @@ export default function SettingsView(props: SettingsViewProps) {
         return "bg-green-7/10 text-green-11 border-green-7/20";
       case "limited":
         return "bg-amber-7/10 text-amber-11 border-amber-7/20";
+      case "auth_desync":
+        return "bg-red-7/10 text-red-11 border-red-7/20";
       default:
         return "bg-gray-4/60 text-gray-11 border-gray-7/50";
     }

@@ -8,15 +8,15 @@ source_audit: docs/plans/2026-07-04-veslo-server-access-root-causes-and-architec
 vsa00_baseline_and_tracking_done: false
 vsa01_persist_host_token_and_descriptor_done: true
 vsa02_instance_identity_adoption_done: true
-vsa03_cross_platform_orphan_cleanup_done: false
-vsa04_secrets_files_not_argv_done: false
+vsa03_cross_platform_orphan_cleanup_done: true
+vsa04_secrets_files_not_argv_done: true
 vsa05_ready_handshake_and_mutex_split_done: true
 vsa06_serialized_desktop_state_machine_done: false
 vsa07_frontend_single_descriptor_done: false
-vsa08_single_auth_recovery_done: false
-vsa09_acknowledged_workspace_registration_done: false
+vsa08_single_auth_recovery_done: true
+vsa09_acknowledged_workspace_registration_done: true
 vsa10_server_owned_workspace_ids_done: false
-vsa10a_workspace_id_golden_vectors_done: false
+vsa10a_workspace_id_golden_vectors_done: true
 vsa10b_dual_id_mapping_migration_done: false
 vsa10c_workspace_id_cutover_cleanup_done: false
 vsa11_engine_config_hot_swap_done: false
@@ -204,6 +204,13 @@ changes from VSA02.
 
 done: false
 
+Coordination note 2026-07-06: VSA00 was not completed before the first
+implementation slice, so it intentionally remains `done: false` instead of
+being retroactively claimed. Current branch when this note was added:
+`local/sandbox-merge`, HEAD `5ef026f1`; this plan is tracked in git. Later
+agents should treat this as baseline debt, not as a blocker for the already
+verified VSA01-VSA05/VSA09 slice.
+
 Goal:
 
 Freeze the current behavior, known failing scenarios, and task ownership before
@@ -240,6 +247,7 @@ Verification:
 ```powershell
 git status --short
 cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml veslo_server::tests --quiet
+cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml veslo_server::spawn::tests --quiet
 cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml commands::veslo_server::tests --quiet
 pnpm --filter veslo-server exec bun test src/tests/workspaces.test.ts
 pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/veslo-server-connection.test.ts
@@ -372,7 +380,21 @@ Mark done when:
 
 ## VSA03: Cross-Platform Orphan Cleanup
 
-done: false
+done: true
+
+Implementation note 2026-07-06: Unix stale PID cleanup now reads process
+metadata, accepts only Veslo server binaries or verified Bun dev-watch server
+wrappers, rejects unrelated PIDs with `stale_process_owner`, and sends
+`kill -TERM` only after predicate acceptance. Windows `taskkill` args remain
+constrained to `IMAGENAME eq veslo-server.exe`. Safety predicates and command
+construction are covered by cfg-free unit tests, so Windows CI exercises the
+Unix ownership logic with synthetic metadata. Follow-up hardening accepts
+real Tauri target-suffixed sidecar names such as
+`veslo-server-aarch64-apple-darwin` and records stale cleanup failures through
+bootstrap launch diagnostics instead of only printing to stderr. Bun dev-watch
+ownership can resolve relative `src/cli.ts` wrappers on Linux through
+`/proc/<pid>/cwd` and on macOS through `lsof -a -p <pid> -d cwd -Fn`, keeping
+the cwd-based safety predicate instead of accepting arbitrary Bun watchers.
 
 Goal:
 
@@ -422,7 +444,20 @@ Mark done when:
 
 ## VSA04: Secrets Files, Not Argv
 
-done: false
+done: true
+
+Implementation note 2026-07-06: desktop spawn now writes a local
+`veslo-server-secrets.json` with `clientToken`, `hostToken`, and optional
+`orchestratorLifecycleToken`, passes only `VESLO_SECRETS_FILE` and runtime
+descriptor path env vars to the server, and removes token-bearing desktop argv
+flags. The server resolves config with precedence CLI > secrets-file > env >
+config file > generated, keeps manual CLI `--token` compatibility, accepts the
+new `VESLO_RUNTIME_FILE` alias, and records `secrets-file` as the token source.
+Configured secrets files are fail-closed: unreadable, invalid, or incomplete
+`VESLO_SECRETS_FILE` input fails server boot instead of falling back to env,
+file, or generated tokens. Secrets files are removed on stale-state cleanup,
+explicit persisted-state clear, and every desktop spawn failure after the
+secrets file is written.
 
 Goal:
 
@@ -621,6 +656,14 @@ managed-AI provider routing now uses only `activeVesloServerRoutingInfo()` for
 local server base URL and tokens. The broader event-fed single descriptor store
 is still open, so this task remains `done: false`.
 
+Partial implementation note 2026-07-06: `global-sdk.tsx` and `server.tsx` no
+longer read `veslo.server.token` directly from localStorage. Remote OpenCode
+proxy auth now goes through `resolveOpencodeProxyAuthHeaders`, which allows the
+stored remote settings token for non-local `/opencode` proxy URLs but refuses
+to apply that settings token to Tauri loopback `/opencode` URLs. The remote
+settings token remains in localStorage for explicit remote-server mode; no
+host token is stored there.
+
 Goal:
 
 Make the frontend consume the desktop-pushed local descriptor and stop guessing
@@ -676,7 +719,21 @@ Mark done when:
 
 ## VSA08: Single Auth Recovery
 
-done: false
+done: true
+
+Implementation note 2026-07-06: app-side Veslo server probes now classify
+401/403 through one helper, `resolveVesloServerAuthFailureStatus`. A probe with
+no credential still reports `limited`, preserving explicit remote/no-token
+semantics, but a probe with a client or host credential reports
+`auth_desync`. Status stability surfaces `auth_desync` immediately instead of
+holding a recent connected/limited status through transient-failure grace. The
+local `ensureLocalVesloServerRunning` path treats `auth_desync` as non-usable
+and returns false without calling `vesloServerRestart`, so a wrong bearer token
+does not independently restart the local server. UI status labels now show the
+existing authentication-failed text for `auth_desync`. Remaining `401`/restart
+grep hits after this slice are remote DEN/remote-server handling, session-error
+classification, explicit user restart controls, or tests; they are not local
+server 401 recovery paths.
 
 Goal:
 
@@ -714,8 +771,9 @@ Verification:
 
 ```powershell
 pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/veslo-server-connection.test.ts
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/lib/veslo-server-status-stability.test.ts
 pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/lib/veslo-server.test.ts
-rg -n "401|auth_desync|Invalid bearer token|veslo.server.token|writeVesloServerSettings|reconnectVesloServer" packages/app/src/app packages/desktop/src-tauri/src
+rg -n "401|auth_desync|Invalid bearer token|veslo.server.token|writeVesloServerSettings|reconnectVesloServer|resolveVesloServerAuthFailureStatus" packages/app/src/app packages/desktop/src-tauri/src
 ```
 
 Mark done when:
@@ -725,7 +783,27 @@ Mark done when:
 
 ## VSA09: Acknowledged Workspace Registration
 
-done: false
+done: true
+
+Implementation note 2026-07-06: desktop workspace server-client mutations now
+return `WorkspaceServerSyncResult` instead of `void`, classify accepted,
+duplicate, skipped, HTTP error, and transport outcomes, and write
+`workspace_registry_unsynced` into the server manager's visible diagnostics
+stream (`last_stderr`) when sync is skipped or fails. Reconcile now returns
+attempted/accepted/skipped/failed counts. Workspace create, rename, and forget
+calls log the structured sync result instead of dropping it. `POST
+/workspaces/local` responses include the acknowledged `workspace` object with
+server workspace id/path/name data while preserving the existing `activeId`,
+`items`, and `persisted` fields. Duplicate local registration is accepted only
+for an explicit `workspace_exists` conflict with returned id/path evidence.
+Frontend host-workspace activation now rejects quickly with
+`workspace_registry_unsynced:*` when server registration fails or remains
+invisible after refresh, so callers do not need to wait for the outer 30s
+activation timeout to learn that the server registry is out of sync. Local
+activation surfaces that reason through the UI error path. The old frontend
+boot reconcile path is now read-only: it lists server workspaces and logs
+`reconcileVesloServerWorkspaces:workspace_registry_unsynced` for missing local
+entries, but does not call `POST /workspaces/local`.
 
 Goal:
 
@@ -763,6 +841,7 @@ Verification:
 cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml workspace::server_client --quiet
 cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml commands::workspace::tests --quiet
 pnpm --filter veslo-server exec bun test src/tests/workspaces.test.ts src/tests/server.workspaces-crud.test.ts src/tests/server.workspace-management-routes.test.ts
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/workspace-server-registry.test.ts src/app/tests/context/workspace-server-registry-source.test.ts src/app/tests/context/workspace-activation-local-source.test.ts
 rg -n "fire-and-forget|post_local_workspace|reconcile_server_workspaces|workspace_registry_unsynced|workspaces/local" packages/desktop/src-tauri/src packages/server/src packages/app/src/app
 ```
 
@@ -773,7 +852,16 @@ Mark done when:
 
 ## VSA10A: Workspace ID Golden-Vector Canonicalization
 
-done: false
+done: true
+
+Implementation note 2026-07-06: added the shared fixture
+`docs/fixtures/workspace-id-golden-vectors.json` and wired it into desktop
+`stable_workspace_id`, server `workspaceIdForPath`, and orchestrator
+`workspaceIdForLocal` tests. Orchestrator workspace-id logic now lives in
+`packages/orchestrator/src/workspace-id.ts` so tests call the runtime helper
+without importing the full CLI. The fixture intentionally records current
+platform-specific and normalization drift; VSA10A does not change persisted
+ids or make server-owned id authority changes.
 
 Goal:
 
@@ -829,6 +917,19 @@ Mark done when:
 
 done: false
 
+Partial implementation note 2026-07-06: acknowledged local workspace
+registration now persists the server-confirmed workspace id into the desktop
+workspace row's `vesloWorkspaceId` field when the server response includes a
+matching path. Desktop rename/delete server calls prefer this mapped id with a
+fallback to the existing app-local id, and create-local reloads state after an
+accepted registration so the returned workspace list includes the mapping.
+The app's active local `vesloServerWorkspaceId` signal now also prefers
+`vesloWorkspaceId` with the existing app-local id as fallback, so server-bound
+callers that consume that signal move to the mapping without changing UI
+identity. This is only the first dual-id mapping step: the remaining app route
+builders, orchestrator runtime identity, compatibility migration coverage, and
+cutover safety remain open, so VSA10B stays `done: false`.
+
 Goal:
 
 Introduce a durable mapping between the app's local workspace identity and the
@@ -873,7 +974,9 @@ Verification:
 
 ```powershell
 cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml workspace::state::tests --quiet
+cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml workspace::server_client::tests --quiet
 cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml commands::workspace::tests --quiet
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/app-managed-ai-config-sync-contract.test.ts src/app/tests/app-veslo-server-state-stability.test.ts
 pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/send-runtime-readiness.test.ts src/app/tests/lib/veslo-server.test.ts
 pnpm --filter veslo-server exec bun test src/tests/workspaces.test.ts
 pnpm --filter veslo-orchestrator exec bun test src/tests/workspace-id-golden.test.ts src/tests/workspace-id-mapping.test.ts
@@ -1012,6 +1115,15 @@ Mark done when:
 ## VSA12: Port Conflict Policy
 
 done: false
+
+Partial implementation note 2026-07-06: desktop port resolution now returns a
+typed `VesloPortConflict` for listener contention and preserves the existing
+`Blocked(PortUnavailable)` behavior with a stable `port_conflict` message,
+host, port, default-port flag, and `fallbackPolicy: "disabled"` in launch
+diagnostics. This makes the current policy explicit and testable without
+claiming the later ephemeral-port fallback. VSA12 remains `done: false` until
+the desktop stops pre-building URLs from the requested port and publishes only
+the READY/runtime-descriptor bound port.
 
 Goal:
 

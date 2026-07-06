@@ -82,8 +82,15 @@ test("POST /workspaces/local creates a new workspace and persists", async () => 
   });
 
   expect(response.status).toBe(201);
-  const payload = (await response.json()) as { activeId: string; items: Array<{ id: string; name: string }>; persisted: boolean };
+  const payload = (await response.json()) as {
+    activeId: string;
+    workspace: { id: string; name: string; path: string };
+    items: Array<{ id: string; name: string }>;
+    persisted: boolean;
+  };
   expect(payload.activeId).toBeTruthy();
+  expect(payload.workspace.id).toBe(payload.activeId);
+  expect(payload.workspace.path).toBe(newDir);
   expect(payload.items).toHaveLength(1);
   expect(payload.items[0]!.name).toBe("MyProj");
   expect(payload.persisted).toBe(true);
@@ -178,9 +185,12 @@ test("POST /workspaces/local updates existing workspace opencode metadata", asyn
 
   expect(response.status).toBe(200);
   const payload = (await response.json()) as {
+    workspace: { id: string; path: string };
     items: Array<{ id: string; baseUrl?: string; opencode?: { baseUrl?: string; username?: string } }>;
     persisted: boolean;
   };
+  expect(payload.workspace.id).toBe(seed.id);
+  expect(payload.workspace.path).toBe(seedDir);
   const updated = payload.items.find((item) => item.id === seed.id);
   expect(updated?.baseUrl).toBe(`http://127.0.0.1:62930/workspace/${workspaceId}/opencode`);
   expect(updated?.opencode?.baseUrl).toBe(`http://127.0.0.1:62930/workspace/${workspaceId}/opencode`);
@@ -233,9 +243,12 @@ test("POST /workspaces/local treats repeated opencode metadata registration as i
 
   expect(response.status).toBe(200);
   const payload = (await response.json()) as {
+    workspace: { id: string; path: string };
     items: Array<{ id: string; baseUrl?: string; opencode?: { baseUrl?: string; username?: string } }>;
     persisted: boolean;
   };
+  expect(payload.workspace.id).toBe(seed.id);
+  expect(payload.workspace.path).toBe(seedDir);
   const registered = payload.items.find((item) => item.id === seed.id);
   expect(registered?.baseUrl).toBe(baseUrl);
   expect(registered?.opencode?.baseUrl).toBe(baseUrl);

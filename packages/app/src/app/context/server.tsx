@@ -5,6 +5,10 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 import { reportError } from "../lib/error-reporter";
 import { wrapStartupRequestAuditFetch } from "../lib/startup-request-audit";
+import {
+  readVesloServerSettingsToken,
+  resolveOpencodeProxyAuthHeaders,
+} from "../lib/veslo-server";
 import { isWorkspaceOpencodeProxyUrl, normalizeServerUrl, serverDisplayName } from "./server-url";
 
 export { isWorkspaceOpencodeProxyUrl, normalizeServerUrl, serverDisplayName } from "./server-url";
@@ -92,21 +96,16 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
 
   const activeUrl = createMemo(() => active());
 
-  const readVesloToken = () => {
-    try {
-      return (window.localStorage.getItem("veslo.server.token") ?? "").trim();
-    } catch {
-      return "";
-    }
-  };
-
   const checkHealth = async (url: string) => {
     if (!url) return false;
     if (isWorkspaceOpencodeProxyUrl(url)) {
       return false;
     }
-    const token = readVesloToken();
-    const headers = token && url.includes("/opencode") ? { Authorization: `Bearer ${token}` } : undefined;
+    const headers = resolveOpencodeProxyAuthHeaders({
+      baseUrl: url,
+      settingsToken: readVesloServerSettingsToken(),
+      isTauriRuntime: isTauriRuntime(),
+    });
     const client = createOpencodeClient({
       baseUrl: url,
       headers,

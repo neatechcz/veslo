@@ -1172,8 +1172,20 @@ pub fn engine_start(
         // reconcile branch — sidebar clicks on workspaces added after the
         // initial boot would otherwise stay unknown to veslo-server.
         let server_reconciled = reconcile_server_workspaces(&app);
-        if server_reconciled > 0 {
-            eprintln!("[veslo-server] reconciled {server_reconciled} workspace(s)");
+        if server_reconciled.accepted > 0 {
+            eprintln!(
+                "[veslo-server] reconciled {} workspace(s)",
+                server_reconciled.accepted
+            );
+        }
+        if server_reconciled.total_unsynced() > 0 {
+            eprintln!(
+                "[veslo-server] workspace_registry_unsynced: attempted={} accepted={} skipped={} failed={}",
+                server_reconciled.attempted,
+                server_reconciled.accepted,
+                server_reconciled.skipped,
+                server_reconciled.failed
+            );
         }
 
         if let Err(error) = opencodeRouter_start(
@@ -1193,7 +1205,7 @@ pub fn engine_start(
 
         crate::flow_log!(
             "[veslo:flow] RECONCILE done {{ server: {}, daemon: {} }}",
-            server_reconciled,
+            server_reconciled.accepted,
             match &daemon_reconciled {
                 Ok(c) => format!("{c}"),
                 Err(e) => format!("ERR({e:?})"),

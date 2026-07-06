@@ -31,12 +31,14 @@ pub mod spawn;
 
 use manager::VesloServerManager;
 use spawn::{
-    host_from_http_url, resolve_veslo_host, resolve_veslo_port_after_restart, spawn_veslo_server,
+    host_from_http_url, resolve_veslo_host, resolve_veslo_port_after_restart_detailed,
+    spawn_veslo_server,
 };
 
 const PERSISTED_STATE_FILE_NAME: &str = "veslo-server-state.json";
 const PERSISTED_PLUGIN_STATE_FILE_NAME: &str = "veslo-server-plugin-state.json";
 const RUNTIME_DESCRIPTOR_FILE_NAME: &str = "veslo-server-runtime.json";
+const SERVER_SECRETS_FILE_NAME: &str = "veslo-server-secrets.json";
 const VESLO_SERVER_READY_MARKER: &str = "VESLO_SERVER_READY ";
 const VESLO_SERVER_READINESS_TIMEOUT: Duration = Duration::from_secs(12);
 
@@ -425,6 +427,10 @@ fn runtime_descriptor_path(dir: &Path) -> PathBuf {
     dir.join(RUNTIME_DESCRIPTOR_FILE_NAME)
 }
 
+fn server_secrets_path(dir: &Path) -> PathBuf {
+    dir.join(SERVER_SECRETS_FILE_NAME)
+}
+
 fn persisted_state_dir_override() -> Option<PathBuf> {
     crate::paths::app_local_data_dir_override()
 }
@@ -632,6 +638,7 @@ fn read_persisted_veslo_server_info_with_cleanup(
     dir: &Path,
     health_check: impl Fn(&str) -> Option<HealthIdentity>,
     mut cleanup_stale_pid: impl FnMut(u32) -> Result<(), String>,
+    mut report_cleanup_error: impl FnMut(u32, &str),
 ) -> Result<Option<VesloServerInfo>, String> {
     let path = persisted_state_path(dir);
     if !path.exists() {
@@ -648,24 +655,148 @@ fn read_persisted_veslo_server_info_with_cleanup(
         if let Some(pid) = state.pid.filter(|pid| *pid > 0) {
             if let Err(error) = cleanup_stale_pid(pid) {
                 eprintln!("[veslo-server] Failed to terminate stale persisted PID {pid}: {error}");
+                report_cleanup_error(pid, &error);
             }
         }
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(persisted_plugin_state_path(dir));
         let _ = fs::remove_file(runtime_descriptor_path(dir));
+        let _ = fs::remove_file(server_secrets_path(dir));
     }
     Ok(info)
 }
 
 pub fn read_persisted_veslo_server_info(dir: &Path) -> Result<Option<VesloServerInfo>, String> {
-    read_persisted_veslo_server_info_with_cleanup(dir, server_health_identity, |pid| {
-        kill_stale_veslo_server_process(pid)
-    })
+    read_persisted_veslo_server_info_with_cleanup(
+        dir,
+        server_health_identity,
+        |pid| kill_stale_veslo_server_process(pid),
+        |_, _| {},
+    )
 }
 
 fn kill_stale_veslo_server_process(pid: u32) -> Result<(), String> {
     terminate_stale_veslo_server_process(pid)
         .map_err(|error| format!("Failed to terminate stale persisted PID {pid}: {error}"))
+}
+
+#[cfg(any(not(windows), test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StaleProcessMetadata {
+    executable: String,
+    command_line: String,
+    current_dir: Option<String>,
+}
+
+#[cfg(any(not(windows), test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StaleProcessOwner {
+    VesloServerBinary,
+    BunDevWatchServer,
+}
+
+#[cfg(any(not(windows), test))]
+fn normalize_process_text(value: &str) -> String {
+    value.trim().replace('\\', "/").to_ascii_lowercase()
+}
+
+#[cfg(any(not(windows), test))]
+fn process_basename(value: &str) -> String {
+    normalize_process_text(value)
+        .trim_matches(|character| character == '"' || character == '\'')
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[cfg(any(not(windows), test))]
+fn is_known_target_triple_suffix(value: &str) -> bool {
+    let suffix = value.strip_suffix(".exe").unwrap_or(value);
+    suffix.contains("-unknown-linux-")
+        || suffix.ends_with("-apple-darwin")
+        || suffix.ends_with("-pc-windows-msvc")
+        || suffix.ends_with("-linux-gnu")
+        || suffix.ends_with("-linux-musl")
+}
+
+#[cfg(any(not(windows), test))]
+fn is_veslo_server_binary_name(value: &str) -> bool {
+    let name = value.strip_suffix(".exe").unwrap_or(value);
+    if name == "veslo-server" {
+        return true;
+    }
+    name.strip_prefix("veslo-server-")
+        .is_some_and(is_known_target_triple_suffix)
+}
+
+#[cfg(any(not(windows), test))]
+fn text_mentions_veslo_server_binary(value: &str) -> bool {
+    normalize_process_text(value)
+        .split_whitespace()
+        .any(|part| is_veslo_server_binary_name(&process_basename(part)))
+}
+
+#[cfg(any(not(windows), test))]
+fn path_mentions_server_cli(value: &str) -> bool {
+    let normalized = normalize_process_text(value);
+    normalized.contains("packages/server/src/cli.ts")
+        || normalized.contains("packages/server\\src\\cli.ts")
+}
+
+#[cfg(any(not(windows), test))]
+fn path_is_server_package_dir(value: &str) -> bool {
+    let normalized = normalize_process_text(value)
+        .trim_end_matches('/')
+        .to_string();
+    normalized.ends_with("/packages/server") || normalized.ends_with("/packages/server/.")
+}
+
+#[cfg(any(not(windows), test))]
+fn classify_stale_veslo_server_process(
+    metadata: &StaleProcessMetadata,
+) -> Option<StaleProcessOwner> {
+    let executable = normalize_process_text(&metadata.executable);
+    let executable_name = process_basename(&metadata.executable);
+    let command_line = normalize_process_text(&metadata.command_line);
+    if is_veslo_server_binary_name(&executable_name)
+        || executable.ends_with("/dist/bin/veslo-server")
+        || executable.ends_with("/dist/bin/veslo-server.exe")
+        || command_line.contains("/dist/bin/veslo-server")
+        || text_mentions_veslo_server_binary(&metadata.command_line)
+    {
+        return Some(StaleProcessOwner::VesloServerBinary);
+    }
+
+    let looks_like_bun = executable_name == "bun" || executable_name == "bun.exe";
+    let command_mentions_dev_cli = path_mentions_server_cli(&command_line)
+        || (command_line.contains("src/cli.ts")
+            && metadata
+                .current_dir
+                .as_deref()
+                .is_some_and(path_is_server_package_dir));
+    if looks_like_bun && command_line.contains("--watch") && command_mentions_dev_cli {
+        return Some(StaleProcessOwner::BunDevWatchServer);
+    }
+
+    None
+}
+
+#[cfg(any(windows, test))]
+fn windows_taskkill_args(pid: u32) -> Vec<String> {
+    vec![
+        "/PID".to_string(),
+        pid.to_string(),
+        "/T".to_string(),
+        "/F".to_string(),
+        "/FI".to_string(),
+        "IMAGENAME eq veslo-server.exe".to_string(),
+    ]
+}
+
+#[cfg(any(not(windows), test))]
+fn unix_kill_term_args(pid: u32) -> Vec<String> {
+    vec!["-TERM".to_string(), pid.to_string()]
 }
 
 #[cfg(windows)]
@@ -674,17 +805,9 @@ fn terminate_stale_veslo_server_process(pid: u32) -> Result<(), String> {
 
     use crate::platform::configure_hidden;
 
-    let pid_arg = pid.to_string();
     let mut command = std::process::Command::new("taskkill");
     command
-        .args([
-            "/PID",
-            pid_arg.as_str(),
-            "/T",
-            "/F",
-            "/FI",
-            "IMAGENAME eq veslo-server.exe",
-        ])
+        .args(windows_taskkill_args(pid))
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     configure_hidden(&mut command);
@@ -701,15 +824,126 @@ fn terminate_stale_veslo_server_process(pid: u32) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-fn terminate_stale_veslo_server_process(_pid: u32) -> Result<(), String> {
-    Ok(())
+fn terminate_stale_veslo_server_process(pid: u32) -> Result<(), String> {
+    use std::process::Stdio;
+
+    let metadata = read_unix_process_metadata(pid)?;
+    let Some(owner) = classify_stale_veslo_server_process(&metadata) else {
+        return Err(format!(
+            "stale_process_owner rejected pid {pid}: executable={:?} command_line={:?} current_dir={:?}",
+            metadata.executable, metadata.command_line, metadata.current_dir
+        ));
+    };
+
+    let status = std::process::Command::new("kill")
+        .args(unix_kill_term_args(pid))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|error| format!("failed to launch kill -TERM for {owner:?}: {error}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "kill -TERM exited with status {status} for {owner:?}"
+        ))
+    }
+}
+
+#[cfg(not(windows))]
+fn read_unix_process_metadata(pid: u32) -> Result<StaleProcessMetadata, String> {
+    let pid_arg = pid.to_string();
+    let output = std::process::Command::new("ps")
+        .args(["-p", pid_arg.as_str(), "-o", "comm=", "-o", "args="])
+        .output()
+        .map_err(|error| format!("failed to launch ps for pid {pid}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "ps exited with status {} for pid {pid}",
+            output.status
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .ok_or_else(|| format!("ps returned no process metadata for pid {pid}"))?;
+    let split_at = line.find(char::is_whitespace);
+    let (executable, command_line) = split_at
+        .map(|index| {
+            (
+                line[..index].trim().to_string(),
+                line[index..].trim().to_string(),
+            )
+        })
+        .unwrap_or_else(|| (line.to_string(), line.to_string()));
+
+    Ok(StaleProcessMetadata {
+        executable,
+        command_line,
+        current_dir: read_process_current_dir(pid),
+    })
+}
+
+#[cfg(all(not(windows), target_os = "linux"))]
+fn read_process_current_dir(pid: u32) -> Option<String> {
+    std::fs::read_link(format!("/proc/{pid}/cwd"))
+        .ok()
+        .map(|path| path.to_string_lossy().to_string())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_macos_lsof_current_dir(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix('n')
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_string)
+    })
+}
+
+#[cfg(all(not(windows), target_os = "macos"))]
+fn read_process_current_dir(pid: u32) -> Option<String> {
+    let pid_arg = pid.to_string();
+    let output = std::process::Command::new("lsof")
+        .args(["-a", "-p", pid_arg.as_str(), "-d", "cwd", "-Fn"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_macos_lsof_current_dir(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
+fn read_process_current_dir(_pid: u32) -> Option<String> {
+    None
 }
 
 pub fn recover_persisted_veslo_server_info(
     app: &AppHandle,
 ) -> Result<Option<VesloServerInfo>, String> {
     let dir = persisted_state_dir(app)?;
-    let from_disk = read_persisted_veslo_server_info(&dir)?;
+    let from_disk = read_persisted_veslo_server_info_with_cleanup(
+        &dir,
+        server_health_identity,
+        |pid| kill_stale_veslo_server_process(pid),
+        |pid, error| {
+            append_veslo_server_launch_diagnostic(
+                app,
+                "veslo_server_stale_cleanup_skipped",
+                serde_json::json!({
+                    "pid": pid,
+                    "reason": "stale_process_cleanup_failed",
+                    "message": error,
+                }),
+            );
+        },
+    )?;
     if from_disk.is_some() {
         return Ok(from_disk);
     }
@@ -781,6 +1015,7 @@ pub fn clear_persisted_veslo_server_info(app: &AppHandle) -> Result<(), String> 
     let path = persisted_state_path(&dir);
     let plugin_path = persisted_plugin_state_path(&dir);
     let runtime_path = runtime_descriptor_path(&dir);
+    let secrets_path = server_secrets_path(&dir);
     match fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -800,6 +1035,14 @@ pub fn clear_persisted_veslo_server_info(app: &AppHandle) -> Result<(), String> 
         Err(error) => Err(format!(
             "Failed to remove {}: {error}",
             runtime_path.display()
+        )),
+    }?;
+    match fs::remove_file(&secrets_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "Failed to remove {}: {error}",
+            secrets_path.display()
         )),
     }
 }
@@ -1052,18 +1295,31 @@ pub fn start_veslo_server(
     state.lifecycle_status = VesloServerLifecycleStatus::Starting;
     state.lifecycle_reason = VesloServerLifecycleReason::SpawnPending;
 
-    let port = match resolve_veslo_port_after_restart(&host) {
+    let port = match resolve_veslo_port_after_restart_detailed(&host) {
         Ok(port) => port,
         Err(error) => {
+            let message = error.message();
             state.lifecycle_status = VesloServerLifecycleStatus::Blocked;
             state.lifecycle_reason = VesloServerLifecycleReason::PortUnavailable;
-            state.last_stderr = Some(truncate_output(&error, 8000));
+            state.last_stderr = Some(truncate_output(&message, 8000));
+            let mut payload = serde_json::json!({
+                "reason": "port_conflict",
+                "error": message,
+            });
+            if let Some(conflict) = error.conflict() {
+                payload["host"] = serde_json::Value::String(conflict.host.clone());
+                payload["port"] =
+                    serde_json::Value::Number(serde_json::Number::from(conflict.port));
+                payload["defaultPort"] = serde_json::Value::Bool(conflict.is_default_port());
+                payload["fallbackPolicy"] =
+                    serde_json::Value::String(conflict.fallback_policy().to_string());
+            }
             append_veslo_server_launch_diagnostic(
                 app,
                 "veslo-server-launch:port-resolve-failed",
-                serde_json::json!({ "error": error }),
+                payload,
             );
-            return Err(error);
+            return Err(message);
         }
     };
     let client_token = requested_client_token
@@ -1071,7 +1327,9 @@ pub fn start_veslo_server(
         .unwrap_or_else(generate_token);
     let host_token = previous_host_token.unwrap_or_else(generate_token);
     let instance_id = Uuid::new_v4().to_string();
-    let runtime_descriptor_path = runtime_descriptor_path(&persisted_state_dir(app)?);
+    let state_dir = persisted_state_dir(app)?;
+    let runtime_descriptor_path = runtime_descriptor_path(&state_dir);
+    let secrets_file_path = server_secrets_path(&state_dir);
     let active_workspace = workspace_paths
         .first()
         .map(|path| path.as_str())
@@ -1098,6 +1356,7 @@ pub fn start_veslo_server(
         port,
         &instance_id,
         &runtime_descriptor_path,
+        &secrets_file_path,
         workspace_paths,
         &workspace_ids,
         &client_token,
@@ -1246,12 +1505,13 @@ pub fn start_veslo_server(
 mod tests {
     use super::manager::VesloServerState;
     use super::{
-        build_urls_for_host_with_engine_resolver, discover_external_host_token,
-        launch_config_matches, normalize_launch_token, normalize_launch_url,
-        publishes_external_urls, read_persisted_veslo_server_info,
-        read_persisted_veslo_server_info_with_cleanup, ready_signal_instance_id,
-        resolve_engine_url_for_bind_host, should_bind_wsl_bridge, HealthIdentity,
-        PersistedVesloServerState,
+        build_urls_for_host_with_engine_resolver, classify_stale_veslo_server_process,
+        discover_external_host_token, launch_config_matches, normalize_launch_token,
+        normalize_launch_url, parse_macos_lsof_current_dir, publishes_external_urls,
+        read_persisted_veslo_server_info, read_persisted_veslo_server_info_with_cleanup,
+        ready_signal_instance_id, resolve_engine_url_for_bind_host, should_bind_wsl_bridge,
+        unix_kill_term_args, windows_taskkill_args, HealthIdentity, PersistedVesloServerState,
+        StaleProcessMetadata, StaleProcessOwner,
     };
     #[cfg(windows)]
     use super::{
@@ -1383,6 +1643,101 @@ mod tests {
         // Sandbox disabled (shared unsandboxed engine) -> direct engine, loopback.
         assert!(!should_bind_wsl_bridge("127.0.0.1", "none"));
         assert!(!should_bind_wsl_bridge("127.0.0.1", "windows-job-object"));
+    }
+
+    #[test]
+    fn stale_process_owner_accepts_veslo_server_binary() {
+        let metadata = StaleProcessMetadata {
+            executable: "/opt/Veslo/veslo-server".to_string(),
+            command_line: "/opt/Veslo/veslo-server --port 8787".to_string(),
+            current_dir: None,
+        };
+
+        assert_eq!(
+            classify_stale_veslo_server_process(&metadata),
+            Some(StaleProcessOwner::VesloServerBinary)
+        );
+    }
+
+    #[test]
+    fn stale_process_owner_accepts_target_suffixed_veslo_server_sidecar() {
+        let metadata = StaleProcessMetadata {
+            executable: "/Applications/Veslo.app/Contents/MacOS/veslo-server-aarch64-apple-darwin"
+                .to_string(),
+            command_line:
+                "\"/Applications/Veslo.app/Contents/MacOS/veslo-server-aarch64-apple-darwin\" --port 8787"
+                    .to_string(),
+            current_dir: None,
+        };
+
+        assert_eq!(
+            classify_stale_veslo_server_process(&metadata),
+            Some(StaleProcessOwner::VesloServerBinary)
+        );
+    }
+
+    #[test]
+    fn stale_process_owner_accepts_bun_watch_server_only_with_server_context() {
+        let metadata = StaleProcessMetadata {
+            executable: "/usr/local/bin/bun".to_string(),
+            command_line: "bun --watch src/cli.ts --port 8787".to_string(),
+            current_dir: Some("/repo/packages/server".to_string()),
+        };
+        let unrelated = StaleProcessMetadata {
+            executable: "/usr/local/bin/bun".to_string(),
+            command_line: "bun --watch src/cli.ts".to_string(),
+            current_dir: Some("/repo/other-package".to_string()),
+        };
+
+        assert_eq!(
+            classify_stale_veslo_server_process(&metadata),
+            Some(StaleProcessOwner::BunDevWatchServer)
+        );
+        assert_eq!(classify_stale_veslo_server_process(&unrelated), None);
+    }
+
+    #[test]
+    fn macos_lsof_current_dir_parser_extracts_cwd() {
+        let output = "p4242\nfcwd\nn/Users/example/repo/packages/server\n";
+
+        assert_eq!(
+            parse_macos_lsof_current_dir(output).as_deref(),
+            Some("/Users/example/repo/packages/server")
+        );
+    }
+
+    #[test]
+    fn stale_process_owner_rejects_unrelated_processes() {
+        for metadata in [
+            StaleProcessMetadata {
+                executable: "/usr/bin/node".to_string(),
+                command_line: "node server.js".to_string(),
+                current_dir: None,
+            },
+            StaleProcessMetadata {
+                executable: "/usr/local/bin/bun".to_string(),
+                command_line: "bun --watch app.ts".to_string(),
+                current_dir: Some("/repo/packages/server".to_string()),
+            },
+        ] {
+            assert_eq!(classify_stale_veslo_server_process(&metadata), None);
+        }
+    }
+
+    #[test]
+    fn stale_process_cleanup_commands_are_targeted() {
+        assert_eq!(
+            windows_taskkill_args(4242),
+            vec![
+                "/PID",
+                "4242",
+                "/T",
+                "/F",
+                "/FI",
+                "IMAGENAME eq veslo-server.exe"
+            ]
+        );
+        assert_eq!(unix_kill_term_args(4242), vec!["-TERM", "4242"]);
     }
 
     #[test]
@@ -1636,6 +1991,7 @@ mod tests {
                 recycled_pids.push(pid);
                 Ok(())
             },
+            |_, _| {},
         )
         .expect("read persisted state");
 
@@ -1675,14 +2031,17 @@ mod tests {
         )
         .expect("write plugin state file");
 
+        let mut cleanup_errors = Vec::new();
         let recovered = read_persisted_veslo_server_info_with_cleanup(
             &dir,
             |_| None,
             |_| Err("taskkill failed".to_string()),
+            |pid, error| cleanup_errors.push((pid, error.to_string())),
         )
         .expect("cleanup failure should not stop stale state recovery");
 
         assert!(recovered.is_none());
+        assert_eq!(cleanup_errors, vec![(4242, "taskkill failed".to_string())]);
         assert!(!dir.join("veslo-server-state.json").exists());
         assert!(!dir.join("veslo-server-plugin-state.json").exists());
 
@@ -1728,6 +2087,7 @@ mod tests {
                 })
             },
             |_| Ok(()),
+            |_, _| {},
         )
         .expect("read persisted state");
 
@@ -1759,6 +2119,7 @@ mod tests {
                 })
             },
             |_| Ok(()),
+            |_, _| {},
         )
         .expect("read persisted state")
         .expect("matching token must recover persisted state");
@@ -1788,6 +2149,7 @@ mod tests {
                 })
             },
             |_| Ok(()),
+            |_, _| {},
         )
         .expect("read persisted state");
 
@@ -1819,6 +2181,7 @@ mod tests {
                 })
             },
             |_| Ok(()),
+            |_, _| {},
         )
         .expect("read persisted state");
 
@@ -1841,6 +2204,7 @@ mod tests {
             &dir,
             |_| Some(HealthIdentity::default()),
             |_| Ok(()),
+            |_, _| {},
         )
         .expect("read persisted state");
 
