@@ -153,8 +153,10 @@ test("POST /workspaces/local rejects duplicate with 409", async () => {
     body: JSON.stringify({ path: newDir }),
   });
   expect(second.status).toBe(409);
-  const payload = (await second.json()) as { code: string };
+  const payload = (await second.json()) as { code: string; details?: { id?: string; path?: string } };
   expect(payload.code).toBe("workspace_exists");
+  expect(payload.details?.id).toBe(workspaceIdForPath(newDir));
+  expect(payload.details?.path).toBe(newDir);
 });
 
 test("POST /workspaces/local updates existing workspace opencode metadata", async () => {

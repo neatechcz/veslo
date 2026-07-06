@@ -376,3 +376,27 @@ test("server state events do not carry host token when a new instance reuses the
   assert.equal(merged?.hostToken, null);
   assert.equal(merged?.lastStdout, null);
 });
+
+test("server state events without identity do not inherit owner fields by base URL", () => {
+  const current = {
+    ...runningHostInfo(),
+    hostToken: "old-host-token",
+    lastStdout: "old stdout",
+    lastStderr: "old stderr",
+  };
+  const eventPayload = {
+    ...runningHostInfo(),
+    instanceId: null,
+    hostToken: null,
+    lastStdout: null,
+    lastStderr: null,
+  };
+
+  const merged = mergeVesloServerDescriptorEvent(current, eventPayload);
+
+  assert.equal(merged?.baseUrl, current.baseUrl);
+  assert.equal(merged?.instanceId, null);
+  assert.equal(merged?.hostToken, null);
+  assert.equal(merged?.lastStdout, null);
+  assert.equal(merged?.lastStderr, null);
+});

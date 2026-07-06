@@ -23,7 +23,8 @@ vsa11_engine_config_hot_swap_done: false
 vsa11_engine_config_hot_swap_deferred: true
 vsa11a_respawn_and_blackbox_diagnostics_done: true
 vsa12_port_conflict_policy_done: true
-vsa13_e2e_docs_and_release_gate_done: true
+vsa13_e2e_docs_and_release_gate_done: false
+vsa13_e2e_docs_and_release_gate_skipped: true
 vsa13a_unit_contract_docs_gate_done: true
 vsa13b_installed_runtime_smoke_done: false
 vsa13b_installed_runtime_smoke_skipped: true
@@ -1648,7 +1649,9 @@ Mark done when:
 - `vsa13b_installed_runtime_smoke_skipped: true`, unless E2E acceptance is
   re-enabled.
 - `vsa13c_full_release_gate_done: true`.
-- `vsa13_e2e_docs_and_release_gate_done: true`.
+- `vsa13_codebase_release_gate_done: true`.
+- `vsa13_e2e_docs_and_release_gate_skipped: true`, unless E2E acceptance is
+  re-enabled and `vsa13_e2e_docs_and_release_gate_done: true`.
 - Top-level `status: completed`.
 - Top-level `done: true`.
 - This task's `done: true`.

@@ -92,21 +92,29 @@ Follow-up test hardening added after the codebase checkpoint:
 - Frontend descriptor events now have a regression test proving a new
   `instanceId` cannot inherit the previous host token even when the server
   reuses the same local `baseUrl`.
+- Frontend descriptor events without an `instanceId` also cannot inherit owner
+  fields by matching only the local `baseUrl`.
 - Frontend workspace registration now rejects `workspace_exists` conflicts
   whose returned path does not match the requested local workspace path.
+- Server workspace CRUD tests now assert duplicate `workspace_exists` responses
+  include the `details.id` and `details.path` evidence required by the app
+  registration contract.
 - Server secrets-file config now tests the legacy `token` alias and verifies it
   still takes precedence over environment tokens.
+- The plan frontmatter now keeps the E2E-done flag false and records the E2E
+  decision through `vsa13_e2e_docs_and_release_gate_skipped: true`, so
+  codebase completion cannot be mistaken for installed-runtime E2E validation.
 
 Validation:
 
 ```powershell
 cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml commands::veslo_server::tests --quiet
-pnpm --filter veslo-server exec bun test src/tests/config.runtime-files.test.ts
+pnpm --filter veslo-server exec bun test src/tests/config.runtime-files.test.ts src/tests/server.workspaces-crud.test.ts
 pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/veslo-server-connection.test.ts src/app/tests/context/workspace-server-registry.test.ts
 ```
 
 Results:
 
 - desktop server command tests: `19` passed,
-- server runtime/secrets config tests: `6` passed,
-- app descriptor and workspace registry tests: `15` passed.
+- server runtime/secrets config and workspace CRUD tests: `19` passed,
+- app descriptor and workspace registry tests: `16` passed.
