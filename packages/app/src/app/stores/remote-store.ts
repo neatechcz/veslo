@@ -218,9 +218,9 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
       ? (items.find((item) => item?.id && selectByHint(item as any)) as VesloWorkspaceInfo | undefined)
       : undefined;
 
-    const workspace = (workspaceById ?? workspaceByHint ?? items[0]) as VesloWorkspaceInfo | undefined;
+    const workspace = (workspaceById ?? workspaceByHint) as VesloWorkspaceInfo | undefined;
     if (!workspace?.id) {
-      throw new Error("Veslo server did not return a worker.");
+      throw new Error("Select a Veslo worker from that host.");
     }
     const opencodeUpstreamBaseUrl = workspace.opencode?.baseUrl?.trim() ?? workspace.baseUrl?.trim() ?? "";
     if (!opencodeUpstreamBaseUrl) {
@@ -250,6 +250,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
   async function createRemoteWorkspaceFlow(input: {
     vesloHostUrl?: string | null;
     vesloToken?: string | null;
+    vesloWorkspaceId?: string | null;
     directory?: string | null;
     displayName?: string | null;
     manageBusy?: boolean;
@@ -300,6 +301,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
       const resolved = await resolveVesloHost({
         hostUrl,
         token,
+        workspaceId: input.vesloWorkspaceId ?? null,
         directoryHint: directory || null,
       });
 

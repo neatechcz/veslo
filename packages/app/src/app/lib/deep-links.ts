@@ -13,6 +13,7 @@ export type SharedBundleDeepLink = {
 type RemoteWorkspaceDefaults = {
   vesloHostUrl?: string | null;
   vesloToken?: string | null;
+  vesloWorkspaceId?: string | null;
   directory?: string | null;
   displayName?: string | null;
 };
@@ -161,6 +162,7 @@ export function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefau
   return {
     vesloHostUrl: normalizedHostUrl,
     vesloToken: token,
+    vesloWorkspaceId: workerId || null,
     directory: null,
     displayName: displayName || null,
   };

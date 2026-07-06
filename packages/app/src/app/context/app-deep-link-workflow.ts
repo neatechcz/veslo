@@ -35,6 +35,7 @@ import type { VesloServerInfo } from "../lib/tauri";
 export type RemoteWorkspaceDefaults = {
   vesloHostUrl?: string | null;
   vesloToken?: string | null;
+  vesloWorkspaceId?: string | null;
   directory?: string | null;
   displayName?: string | null;
 };
@@ -69,6 +70,7 @@ export type AppDeepLinkWorkflowDeps = {
     createRemoteWorkspaceFlow: (input: {
       vesloHostUrl: string;
       vesloToken: string;
+      vesloWorkspaceId?: string | null;
       directory: string | null;
       displayName: string | null;
       manageBusy?: boolean;
@@ -411,6 +413,7 @@ export function createAppDeepLinkWorkflow(deps: AppDeepLinkWorkflowDeps) {
     const defaults: RemoteWorkspaceDefaults = {
       vesloHostUrl: hostUrl || null,
       vesloToken: token || null,
+      vesloWorkspaceId: null,
       directory: null,
       displayName: null,
     };

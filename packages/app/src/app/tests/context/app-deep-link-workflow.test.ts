@@ -147,13 +147,14 @@ test("desktop deep-link fan-in dedupes URLs and stops after the first consumed h
     const workflow = createAppDeepLinkWorkflow(harness.deps);
     const authUrl = "veslo://auth-complete?code=code-1";
     const remoteUrl =
-      "veslo://connect-remote?vesloHostUrl=https%3A%2F%2Fworker.example&vesloToken=worker-token&workerName=Alpha";
+      "veslo://connect-remote?vesloHostUrl=https%3A%2F%2Fworker.example&vesloToken=worker-token&workerId=worker-alpha&workerName=Alpha";
 
     workflow.consumeDesktopDeepLinkUrls([authUrl, remoteUrl]);
     assert.equal(workflow.pendingRemoteConnectDeepLink(), null);
 
     workflow.consumeDesktopDeepLinkUrls([authUrl, remoteUrl]);
     assert.equal(workflow.pendingRemoteConnectDeepLink()?.displayName, "Alpha");
+    assert.equal(workflow.pendingRemoteConnectDeepLink()?.vesloWorkspaceId, "worker-alpha");
     assert.deepEqual(
       harness.calls.filter((call) => call.startsWith("auth:")),
       [`auth:${authUrl}`, `auth:${remoteUrl}`],
@@ -194,7 +195,7 @@ test("remote-connect pending link opens the create-worker modal after boot", asy
 
     assert.equal(
       workflow.queueRemoteConnectDeepLink(
-        "veslo://connect-remote?vesloHostUrl=https%3A%2F%2Fworker.example&vesloToken=worker-token&workerName=Alpha",
+        "veslo://connect-remote?vesloHostUrl=https%3A%2F%2Fworker.example&vesloToken=worker-token&workerId=worker-alpha&workerName=Alpha",
       ),
       true,
     );
@@ -205,6 +206,7 @@ test("remote-connect pending link opens the create-worker modal after boot", asy
     workflow.flushPendingRemoteConnectDeepLink();
 
     assert.equal(workflow.deepLinkRemoteWorkspaceDefaults()?.displayName, "Alpha");
+    assert.equal(workflow.deepLinkRemoteWorkspaceDefaults()?.vesloWorkspaceId, "worker-alpha");
     assert.deepEqual(harness.calls.slice(-3), ["view:dashboard", "tab:scheduled", "remote-modal:true"]);
 
     dispose();

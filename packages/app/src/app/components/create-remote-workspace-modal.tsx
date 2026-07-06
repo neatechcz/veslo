@@ -12,12 +12,14 @@ export default function CreateRemoteWorkspaceModal(props: {
   onConfirm: (input: {
     vesloHostUrl?: string | null;
     vesloToken?: string | null;
+    vesloWorkspaceId?: string | null;
     directory?: string | null;
     displayName?: string | null;
   }) => void;
   initialValues?: {
     vesloHostUrl?: string | null;
     vesloToken?: string | null;
+    vesloWorkspaceId?: string | null;
     directory?: string | null;
     displayName?: string | null;
   };
@@ -34,6 +36,7 @@ export default function CreateRemoteWorkspaceModal(props: {
 
   const [vesloHostUrl, setVesloHostUrl] = createSignal("");
   const [vesloToken, setVesloToken] = createSignal("");
+  const [vesloWorkspaceId, setVesloWorkspaceId] = createSignal("");
   const [vesloTokenVisible, setVesloTokenVisible] = createSignal(false);
   const [directory, setDirectory] = createSignal("");
   const [displayName, setDisplayName] = createSignal("");
@@ -61,6 +64,7 @@ export default function CreateRemoteWorkspaceModal(props: {
     const defaults = props.initialValues ?? {};
     setVesloHostUrl(defaults.vesloHostUrl?.trim() ?? "");
     setVesloToken(defaults.vesloToken?.trim() ?? "");
+    setVesloWorkspaceId(defaults.vesloWorkspaceId?.trim() ?? "");
     setVesloTokenVisible(false);
     setDirectory(defaults.directory?.trim() ?? "");
     setDisplayName(defaults.displayName?.trim() ?? "");
@@ -164,6 +168,7 @@ export default function CreateRemoteWorkspaceModal(props: {
               props.onConfirm({
                 vesloHostUrl: vesloHostUrl().trim(),
                 vesloToken: vesloToken().trim(),
+                vesloWorkspaceId: vesloWorkspaceId().trim() || null,
                 directory: directory().trim() ? directory().trim() : null,
                 displayName: displayName().trim() ? displayName().trim() : null,
               })

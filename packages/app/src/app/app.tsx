@@ -342,6 +342,7 @@ import { isRemoteUiEnabled } from "./lib/runtime-policy";
 type RemoteWorkspaceDefaults = {
   vesloHostUrl?: string | null;
   vesloToken?: string | null;
+  vesloWorkspaceId?: string | null;
   directory?: string | null;
   displayName?: string | null;
 };
@@ -2299,6 +2300,7 @@ export default function App() {
     resolveRuntimeSandboxStateForTarget,
     hasUsableManagedAiRuntimeConfigForSend,
     ensureManagedAiRuntimeAuthorizationForSend,
+    syncManagedAiRuntimeConfigForSend,
   } = managedAiRuntimeConfig;
 
   const sendRuntimeReadiness = createSendRuntimeReadiness<Client>({
@@ -2321,6 +2323,7 @@ export default function App() {
     reloadBusy: () => reloadBusy(),
     hasUsableManagedAiRuntimeConfigForSend,
     ensureManagedAiRuntimeAuthorizationForSend,
+    syncManagedAiRuntimeConfigForSend,
     waitForManagedAiBootstrapReady,
     sendTraceStep,
     recordSendTrace,
