@@ -169,6 +169,7 @@ export function createSessionStore(options: {
    */
   engineReady?: () => boolean;
   isWorkspaceRuntimeReady?: (workspaceId: string) => boolean;
+  recoverWorkspaceRuntimeForEventStream?: (workspaceId: string) => Promise<boolean> | boolean;
   shouldBrowseSessionFromDb?: (sessionID: string) => boolean;
   onSessionBusyChange?: (sessionId: string, busy: boolean, workspaceId?: string) => void;
   onAssistantResponseObserved?: (sessionId: string) => void;
@@ -919,6 +920,7 @@ export function createSessionStore(options: {
     withTimeout,
     isWorkspaceRuntimeReady,
     isActiveWorkspaceRuntimeReady,
+    recoverWorkspaceRuntimeForEventStream: options.recoverWorkspaceRuntimeForEventStream,
   });
   eventStreamController.startEventStreams();
 

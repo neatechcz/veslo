@@ -40,6 +40,7 @@ import {
   shouldShowReconnected,
   shouldShowReconnecting,
 } from "./session-reconnect";
+import { shouldRecoverLocalRuntimeFromHealthError } from "./send-runtime-readiness";
 import { shouldReleaseStaleWorkspaceRoute } from "./session-runtime-prompts";
 import { INITIAL_SESSION_MESSAGE_LIMIT } from "./session-transcript-controller";
 import type { RoutingClient, WorkspaceRouting } from "./workspace-routing";
@@ -123,6 +124,7 @@ export type SessionEventStreamControllerDeps = {
   withTimeout: <T>(promise: Promise<T>, ms: number, label: string) => Promise<T>;
   isWorkspaceRuntimeReady: (workspaceId?: string | null) => boolean;
   isActiveWorkspaceRuntimeReady: () => boolean;
+  recoverWorkspaceRuntimeForEventStream?: (workspaceId: string) => Promise<boolean> | boolean;
 };
 
 function engineSseAuthOptions(auth?: OpencodeAuth | null) {
@@ -908,6 +910,37 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
 
         const message = e instanceof Error ? e.message : String(e);
         const activeWs = deps.routing.activeWorkspaceId();
+        const shouldRecoverRoute = Boolean(
+          sourceWsId &&
+            deps.recoverWorkspaceRuntimeForEventStream &&
+            shouldRecoverLocalRuntimeFromHealthError(e, String),
+        );
+        if (shouldRecoverRoute) {
+          setStreamSseConnected(streamConnectionKey, false);
+          deps.routing.release(sourceWsId);
+          deps.sessionWarn("sse:recovering-runtime-route", {
+            workspaceId: sourceWsId,
+            error: truncateErrorField(message),
+          });
+          recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "recovering-runtime-route", {
+            workspaceId: sourceWsId,
+            error: truncateErrorField(message),
+          });
+          try {
+            const recovered = await deps.recoverWorkspaceRuntimeForEventStream?.(sourceWsId);
+            recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "runtime-route-recovery-result", {
+              workspaceId: sourceWsId,
+              recovered: Boolean(recovered),
+            });
+          } catch (recoveryError) {
+            deps.sessionWarn("sse:runtime-route-recovery-failed", {
+              workspaceId: sourceWsId,
+              error: truncateErrorField(recoveryError instanceof Error ? recoveryError.message : String(recoveryError)),
+            });
+          }
+          return;
+        }
+
         if (shouldReleaseStaleWorkspaceRoute(sourceWsId, activeWs, message)) {
           setStreamSseConnected(streamConnectionKey, false);
           deps.routing.release(sourceWsId);

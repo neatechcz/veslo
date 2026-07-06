@@ -34,6 +34,8 @@ export type RunLifecycleOwner = {
     conversationId: string;
     runId: string;
     engineSessionId: string;
+    clientMessageId?: string | null;
+    origin?: string | null;
     directory: string;
     kind: RunKind;
   } & Partial<RunEngineOwner>): Promise<RunRecord>;
@@ -218,6 +220,8 @@ export function createRunRegistry(deps: {
       const conversationId = normalizeText(input.conversationId);
       const runId = normalizeText(input.runId);
       const engineSessionId = normalizeText(input.engineSessionId);
+      const clientMessageId = normalizeNullableText(input.clientMessageId);
+      const origin = normalizeNullableText(input.origin);
       const directory = normalizeText(input.directory);
       if (!workspaceId || !conversationId || !runId || !engineSessionId || !directory) {
         throw new Error("workspaceId, conversationId, runId, engineSessionId and directory are required");
@@ -231,6 +235,12 @@ export function createRunRegistry(deps: {
       if (active) {
         const reconciled = await reconcile(active);
         if (!isTerminalRunStatus(reconciled.record.status)) {
+          if (
+            clientMessageId &&
+            normalizeNullableText(reconciled.record.clientMessageId) === clientMessageId
+          ) {
+            return reconciled.record;
+          }
           throw new RunAlreadyActiveError(active.runId);
         }
       }
@@ -242,6 +252,8 @@ export function createRunRegistry(deps: {
         conversationId,
         runId,
         engineSessionId,
+        clientMessageId,
+        origin,
         directory,
         kind: input.kind,
         status: "running",

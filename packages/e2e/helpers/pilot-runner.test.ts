@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  assertLiveManagedAiAuthForScenarioSelection,
   assertPilotScenarioSelectionIsolated,
   buildPilotCommand,
   buildPilotDenAuthSeedScript,
@@ -21,6 +23,7 @@ import {
   scenarioSelectionNeedsRelaunchReconnectCheck,
   scenarioSelectionNeedsNoWorkspaceProfile,
   scenarioSelectionNeedsPortContentionFixture,
+  scenarioSelectionRequiresLiveManagedAiAuth,
   scenarioSelectionNeedsSkillRegistryAuthFixture,
   scenarioSelectionNeedsLegacySoulRuntime,
   scenarioSelectionNeedsSkillRegistryWorkspaceEventFixture,
@@ -318,4 +321,60 @@ test('VSLO-235 port contention scenario requests a held local server port', () =
     scenarioSelectionNeedsPortContentionFixture(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
     false,
   );
+});
+
+test('VSLO-271 pilot scenario requires live managed-AI auth and not the fixture', () => {
+  const e2eRoot = '/repo/packages/e2e';
+  const scenarios = resolvePilotScenarioSelection({ scenario: ['vslo-271-windows-idle-runtime-chain-recovery'] }, e2eRoot);
+  const tempDir = mkdtempSync(join(tmpdir(), 'veslo-pilot-live-auth-'));
+  const snapshotPath = join(tempDir, 'den-auth.json');
+  const writeSnapshot = (email: string) => {
+    writeFileSync(snapshotPath, JSON.stringify({
+      version: 1,
+      authJson: JSON.stringify({
+        denApiBase: 'https://api.veslo.work',
+        token: 'live-token',
+        orgId: 'org-live',
+        user: { id: 'user-live', email },
+        org: { id: 'org-live' },
+      }),
+      keepSignedIn: true,
+      onboardingComplete: true,
+    }));
+  };
+
+  try {
+    assert.equal(scenarioSelectionRequiresLiveManagedAiAuth(scenarios), true);
+    assert.equal(scenarioSelectionNeedsManagedAiGatewayFixture(scenarios), false);
+    assert.throws(
+      () => assertLiveManagedAiAuthForScenarioSelection(scenarios, { E2E_MANAGED_AI_GATEWAY_FIXTURE: '0' }),
+      /VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE/,
+    );
+
+    writeSnapshot('veslo-e2e@example.test');
+    assert.throws(
+      () => assertLiveManagedAiAuthForScenarioSelection(scenarios, {
+        VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: snapshotPath,
+        E2E_MANAGED_AI_GATEWAY_FIXTURE: '0',
+      }),
+      /real Den user auth snapshot/,
+    );
+
+    writeSnapshot('david.kral@neatech.cz');
+    assert.throws(
+      () => assertLiveManagedAiAuthForScenarioSelection(scenarios, {
+        VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: snapshotPath,
+        E2E_MANAGED_AI_GATEWAY_FIXTURE: '1',
+      }),
+      /E2E_MANAGED_AI_GATEWAY_FIXTURE=0/,
+    );
+    assert.doesNotThrow(() => assertLiveManagedAiAuthForScenarioSelection(scenarios, {
+      VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: snapshotPath,
+      E2E_MANAGED_AI_GATEWAY_FIXTURE: '0',
+    }));
+    const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
+    assert.match(source, /scenarioSelectionRequiresLiveManagedAiAuth\(scenarios\)[\s\S]*VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS\s*\|\|=\s*'90000'/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });

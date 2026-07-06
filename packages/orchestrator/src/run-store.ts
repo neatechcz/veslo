@@ -27,6 +27,8 @@ export type RunRecord = {
   conversationId: string;
   runId: string;
   engineSessionId: string;
+  clientMessageId: string | null;
+  origin: string | null;
   directory: string;
   kind: RunKind;
   status: RunStatus;
@@ -68,6 +70,8 @@ type RunRow = {
   conversation_id: string;
   run_id: string;
   engine_session_id: string;
+  client_message_id: string | null;
+  origin: string | null;
   directory: string;
   kind: string;
   status: string;
@@ -100,6 +104,8 @@ function rowToRecord(row: RunRow): RunRecord {
     conversationId: row.conversation_id,
     runId: row.run_id,
     engineSessionId: row.engine_session_id,
+    clientMessageId: row.client_message_id ?? null,
+    origin: row.origin ?? null,
     directory: row.directory,
     kind: row.kind as RunKind,
     status: row.status as RunStatus,
@@ -143,6 +149,8 @@ function openDb(dbPath: string): Database {
       conversation_id TEXT NOT NULL,
       run_id TEXT NOT NULL,
       engine_session_id TEXT NOT NULL,
+      client_message_id TEXT,
+      origin TEXT,
       directory TEXT NOT NULL,
       kind TEXT NOT NULL,
       status TEXT NOT NULL,
@@ -170,6 +178,8 @@ function openDb(dbPath: string): Database {
       ON conversation_run (workspace_id, conversation_id)
       WHERE status IN (${ACTIVE_RUN_STATUS_SQL_LIST});
   `);
+  ensureColumn(db, "conversation_run", "client_message_id", "client_message_id TEXT");
+  ensureColumn(db, "conversation_run", "origin", "origin TEXT");
   ensureColumn(db, "conversation_run", "engine_owner_id", "engine_owner_id TEXT");
   ensureColumn(db, "conversation_run", "engine_pid", "engine_pid INTEGER");
   ensureColumn(db, "conversation_run", "engine_started_at", "engine_started_at INTEGER");
@@ -214,6 +224,8 @@ export function createRunStore(options: { dbPath: string }): RunStore {
             conversation_id,
             run_id,
             engine_session_id,
+            client_message_id,
+            origin,
             directory,
             kind,
             status,
@@ -231,13 +243,15 @@ export function createRunStore(options: { dbPath: string }): RunStore {
             last_useful_progress_at,
             retry_since,
             last_progress_signature
-          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
           `,
         ).run(
           record.workspaceId,
           record.conversationId,
           record.runId,
           record.engineSessionId,
+          record.clientMessageId,
+          record.origin,
           record.directory,
           record.kind,
           record.status,
@@ -268,29 +282,33 @@ export function createRunStore(options: { dbPath: string }): RunStore {
           `UPDATE conversation_run SET
             conversation_id = ?3,
             engine_session_id = ?4,
-            directory = ?5,
-            kind = ?6,
-            status = ?7,
-            abort_requested = ?8,
-            created_at = ?9,
-            started_at = ?10,
-            completed_at = ?11,
-            error = ?12,
-            engine_owner_id = ?13,
-            engine_pid = ?14,
-            engine_started_at = ?15,
-            engine_base_url = ?16,
-            activity_kind = ?17,
-            wait_reason = ?18,
-            last_useful_progress_at = ?19,
-            retry_since = ?20,
-            last_progress_signature = ?21
+            client_message_id = ?5,
+            origin = ?6,
+            directory = ?7,
+            kind = ?8,
+            status = ?9,
+            abort_requested = ?10,
+            created_at = ?11,
+            started_at = ?12,
+            completed_at = ?13,
+            error = ?14,
+            engine_owner_id = ?15,
+            engine_pid = ?16,
+            engine_started_at = ?17,
+            engine_base_url = ?18,
+            activity_kind = ?19,
+            wait_reason = ?20,
+            last_useful_progress_at = ?21,
+            retry_since = ?22,
+            last_progress_signature = ?23
            WHERE workspace_id = ?1 AND run_id = ?2`,
         ).run(
           workspaceId,
           runId,
           next.conversationId,
           next.engineSessionId,
+          next.clientMessageId,
+          next.origin,
           next.directory,
           next.kind,
           next.status,

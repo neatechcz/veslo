@@ -1220,6 +1220,7 @@ export default {
   "session.edit_message_title": "Edit message",
   "session.pending_submit_sending": "Sending...",
   "session.pending_submit_failed": "Send failed",
+  "session.pending_submit_local_runtime_failed": "Local runtime failed",
   "session.delete_session_action": "Delete session",
   "session.delete_session_title": "Delete session?",
   "session.delete_session_unnamed": "This will permanently delete the selected session and its messages.",

@@ -41,7 +41,7 @@ test("local runtime send health uses the routed active workspace client", () => 
   assert.match(
     recoverySource,
     /const recoveredClient = targetWorkspaceId \? deps\.routedClient\(targetWorkspaceId\) : deps\.routedClient\(\);[\s\S]*if \(!started \|\| !recoveredClient\) \{/,
-    "runtime recovery should require a route for the active workspace before send continues",
+    "runtime recovery should require a successful ensure and restored route before send continues",
   );
   assert.doesNotMatch(
     recoverySource,
@@ -92,8 +92,8 @@ test("local runtime recovery restarts for dead endpoints and health timeouts", (
   );
   assert.match(
     recoverySource,
-    /if \(targetIsActiveWorkspace\) \{[\s\S]*deps\.setEngineReady\(false\);[\s\S]*deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined\)/s,
-    "runtime recovery should restart before send but reflect readiness changes only when the target is still the active workspace",
+    /if \(targetIsActiveWorkspace\) \{[\s\S]*deps\.setEngineReady\(false\);[\s\S]*deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined, \{[\s\S]*loadSessions: false/s,
+    "runtime recovery should restart before send without forcing session-list UI side effects and reflect readiness only when the target is still active",
   );
 });
 
@@ -112,12 +112,17 @@ test("send runtime recovery uses the snapshotted target workspace", () => {
   );
   assert.match(
     recoverySource,
-    /deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined\)/,
-    "runtime recovery should restart the target workspace engine, not the current active workspace",
+    /deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined, \{[\s\S]*reason: `\$\{reason\}-runtime-recovery`,[\s\S]*loadSessions: false/s,
+    "runtime recovery should restart the target workspace engine without blocking on session load",
   );
   assert.match(
     recoverySource,
     /const recoveredClient = targetWorkspaceId \? deps\.routedClient\(targetWorkspaceId\) : deps\.routedClient\(\);/,
     "runtime recovery should verify that the target workspace client was restored",
+  );
+  assert.match(
+    recoverySource,
+    /if \(!started \|\| !recoveredClient\) \{/,
+    "runtime recovery must not continue unless ensure succeeded and the target workspace route was restored",
   );
 });

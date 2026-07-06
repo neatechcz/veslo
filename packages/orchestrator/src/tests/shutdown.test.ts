@@ -54,7 +54,7 @@ describe("orchestrator shutdown", () => {
     expect(events.indexOf("kill-all")).toBeGreaterThan(
       events.indexOf("server-close-start"),
     );
-    expect(events).not.toContain("persist");
+    expect(events.indexOf("persist")).toBeLessThan(events.indexOf("kill-all"));
 
     closeServer?.();
     await shutdownPromise;
@@ -63,6 +63,7 @@ describe("orchestrator shutdown", () => {
       "log-start",
       "server-close-start",
       "clear-liveness-timer",
+      "persist",
       "kill-all",
       "dispose-shared-engine",
       "server-close-done",
@@ -105,11 +106,11 @@ describe("orchestrator shutdown", () => {
 
     expect(first).toBe(second);
     await tick();
-    expect(events).toEqual(["server-close-start", "kill-all"]);
+    expect(events).toEqual(["server-close-start", "persist", "kill-all"]);
 
     finishKillAll?.();
     await first;
 
-    expect(events).toEqual(["server-close-start", "kill-all", "persist", "exit:0"]);
+    expect(events).toEqual(["server-close-start", "persist", "kill-all", "persist", "exit:0"]);
   });
 });

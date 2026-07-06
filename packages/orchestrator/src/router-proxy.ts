@@ -18,6 +18,7 @@ export type ProxyToEngineOptions = {
   headersTimeoutMs?: number;
   onSuccess?: () => void;
   onError?: (error: Error) => void;
+  onClientAbort?: () => void;
 };
 
 const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
@@ -148,6 +149,25 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
   }
 
   let upstreamErrorHandled = false;
+  // Locally destroying an in-flight upstream request (client walked away)
+  // makes the upstream response emit `error: aborted` (ECONNRESET) in both
+  // Node and Bun. Those post-abort errors say nothing about engine health,
+  // so they are reported via onClientAbort instead of onError — onError
+  // consumers treat upstream failures as an engine-unhealthy signal.
+  let clientAborted = false;
+  let clientAbortReported = false;
+  const reportClientAbort = (): void => {
+    if (clientAbortReported) return;
+    clientAbortReported = true;
+    opts.onClientAbort?.();
+  };
+  const reportUpstreamError = (err: Error): void => {
+    if (clientAborted) {
+      reportClientAbort();
+      return;
+    }
+    opts.onError?.(err);
+  };
   let headersTimer: ReturnType<typeof setTimeout> | null = null;
   const clearHeadersTimer = (): void => {
     if (!headersTimer) return;
@@ -162,7 +182,7 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
     clearHeadersTimer();
     if (upstreamErrorHandled) return;
     upstreamErrorHandled = true;
-    opts.onError?.(err);
+    reportUpstreamError(err);
     if (!opts.clientRes.headersSent) {
       opts.clientRes.statusCode = 502;
       opts.clientRes.setHeader("content-type", "application/json");
@@ -213,7 +233,7 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
           writeJsonResponse(opts, upstreamRes, Buffer.concat(chunks));
         });
         upstreamRes.on("error", (err) => {
-          opts.onError?.(err);
+          reportUpstreamError(err);
           if (!opts.clientRes.writableEnded) {
             opts.clientRes.destroy(err);
           }
@@ -228,7 +248,7 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
           opts.onSuccess?.();
         });
         upstreamRes.on("error", (err) => {
-          opts.onError?.(err);
+          reportUpstreamError(err);
           if (!opts.clientRes.writableEnded) {
             opts.clientRes.destroy(err);
           }
@@ -240,7 +260,7 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
         opts.onSuccess?.();
       });
       upstreamRes.on("error", (err) => {
-        opts.onError?.(err);
+        reportUpstreamError(err);
         if (!opts.clientRes.writableEnded) {
           opts.clientRes.destroy(err);
         }
@@ -276,7 +296,11 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
   };
 
   const abortUpstream = (): void => {
-    if (!upstreamReq.destroyed) upstreamReq.destroy();
+    clientAborted = true;
+    if (!upstreamReq.destroyed) {
+      upstreamReq.destroy();
+      reportClientAbort();
+    }
   };
   // Premature client disconnect: 'aborted' fires when the incoming request is
   // closed before completing. Do NOT listen on clientReq 'close' — in modern

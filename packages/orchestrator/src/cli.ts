@@ -4369,6 +4369,13 @@ async function runRouterDaemon(args: ParsedArgs) {
                 throw error;
               }
             },
+            healthCheck: async (baseUrl) => {
+              await fetchOpencodeHealthRaw(baseUrl, authHeaders, 1_500, {
+                baseUrl,
+                topology: "shared-unsandboxed",
+                source: "shared-engine-liveness",
+              });
+            },
             stopChild,
             findFreePort: () => findFreePort(opencodeHost),
             isProcessAlive,
@@ -4402,7 +4409,13 @@ async function runRouterDaemon(args: ParsedArgs) {
       : null;
   const sharedEngineLivenessTimer = sharedOpenCodeEngine
     ? setInterval(() => {
-        sharedOpenCodeEngine.getRunning();
+        void sharedOpenCodeEngine.checkHealth("liveness-timer").catch((error) => {
+          logger.warn(
+            "shared engine liveness tick failed",
+            { error: error instanceof Error ? error.message : String(error) },
+            "shared-opencode-engine",
+          );
+        });
       }, 5_000)
     : null;
   if (sharedEngineLivenessTimer && typeof sharedEngineLivenessTimer === "object" && "unref" in sharedEngineLivenessTimer) {
@@ -4520,6 +4533,22 @@ async function runRouterDaemon(args: ParsedArgs) {
 
   const persistEnginesSnapshot = persistEngines;
 
+  let e2eFailNextSharedProxy = false;
+  const e2eFaultInjectionEnabled = process.env.VESLO_E2E_FAULT_INJECTION === "1";
+
+  const normalizeShutdownAttribution = (
+    body: Record<string, unknown>,
+    fallback: { reason: string; caller: string },
+  ) => {
+    const reason = typeof body.reason === "string" && body.reason.trim()
+      ? body.reason.trim()
+      : fallback.reason;
+    const caller = typeof body.caller === "string" && body.caller.trim()
+      ? body.caller.trim()
+      : fallback.caller;
+    return { reason, caller };
+  };
+
   const server = createHttpServer(async (req, res) => {
     const startedAt = Date.now();
     const method = req.method ?? "GET";
@@ -4630,6 +4659,37 @@ async function runRouterDaemon(args: ParsedArgs) {
           });
           return;
         }
+
+      if (url.pathname.startsWith("/e2e/")) {
+        if (!e2eFaultInjectionEnabled) {
+          send(404, { error: "not found" });
+          return;
+        }
+        if (req.method === "POST" && url.pathname === "/e2e/shared-engine/kill-child") {
+          const before = sharedOpenCodeEngine?.snapshot() ?? null;
+          await sharedOpenCodeEngine?.markUnhealthy(
+            "e2e-kill-child",
+            new Error("e2e shared engine child kill requested"),
+          );
+          persistEnginesSnapshot();
+          send(200, {
+            ok: true,
+            before,
+            after: sharedOpenCodeEngine?.snapshot() ?? null,
+          });
+          return;
+        }
+        if (req.method === "POST" && url.pathname === "/e2e/shared-engine/fail-next-proxy") {
+          e2eFailNextSharedProxy = true;
+          send(200, {
+            ok: true,
+            sharedEngine: sharedOpenCodeEngine?.snapshot() ?? null,
+          });
+          return;
+        }
+        send(404, { error: "not found" });
+        return;
+      }
 
       if (req.method === "GET" && url.pathname === "/workspaces") {
         send(200, { activeId: state.activeId, workspaces: state.workspaces });
@@ -4825,6 +4885,8 @@ async function runRouterDaemon(args: ParsedArgs) {
               conversationId: bodyString(body, "conversationId"),
               runId: bodyString(body, "runId"),
               engineSessionId: bodyString(body, "engineSessionId"),
+              clientMessageId: bodyString(body, "clientMessageId") || null,
+              origin: bodyString(body, "origin") || null,
               directory: bodyString(body, "directory"),
               kind,
               ...resolveLifecycleRunEngineOwner(workspace.id),
@@ -5258,6 +5320,23 @@ async function runRouterDaemon(args: ParsedArgs) {
           engineDirectory,
         });
 
+        if (engineTopology.mode === "shared-unsandboxed" && e2eFailNextSharedProxy) {
+          e2eFailNextSharedProxy = false;
+          const error = new Error("The socket connection was closed unexpectedly (e2e)");
+          finishUpstreamTrace("orchestrator:proxy-upstream:error", {
+            statusCode: 502,
+            error: error.message,
+            e2e: true,
+          });
+          void sharedOpenCodeEngine?.markUnhealthy("e2e-proxy-upstream-error", error);
+          send(502, {
+            error: "opencode_proxy_failed",
+            detail: error.message,
+            workspaceId: ws.id,
+          });
+          return;
+        }
+
         proxyToEngine({
           clientReq: req,
           clientRes: res,
@@ -5298,19 +5377,37 @@ async function runRouterDaemon(args: ParsedArgs) {
               statusCode: res.statusCode,
               error: err.message,
             });
+            if (engineTopology.mode === "shared-unsandboxed") {
+              void sharedOpenCodeEngine?.markUnhealthy("proxy-upstream-error", err);
+            }
             logger.warn(
               "engine proxy error",
               { workspaceId: ws.id, error: err.message },
               "engine-pool",
             );
           },
+          // Routine client disconnects (SSE teardown on workspace switch,
+          // app reload) must not count as upstream failures — marking the
+          // shared engine unhealthy here would cold-restart it on every
+          // stream teardown.
+          onClientAbort: () => {
+            finishUpstreamTrace("orchestrator:proxy-upstream:done", {
+              statusCode: res.statusCode,
+              clientAborted: true,
+            });
+          },
         });
         return;
       }
 
       if (req.method === "POST" && url.pathname === "/shutdown") {
+        const body = await readObjectBody();
+        const attribution = normalizeShutdownAttribution(body, {
+          reason: "shutdown_request",
+          caller: "http",
+        });
         send(200, { ok: true });
-        await shutdown();
+        void shutdown(attribution);
         return;
       }
 
@@ -5357,8 +5454,8 @@ async function runRouterDaemon(args: ParsedArgs) {
     }
   });
 
-  process.on("SIGINT", () => shutdown());
-  process.on("SIGTERM", () => shutdown());
+  process.on("SIGINT", () => void shutdown({ reason: "signal:SIGINT", caller: "process" }));
+  process.on("SIGTERM", () => void shutdown({ reason: "signal:SIGTERM", caller: "process" }));
   await new Promise(() => undefined);
 }
 

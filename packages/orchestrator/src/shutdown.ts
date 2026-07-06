@@ -28,6 +28,11 @@ type ShutdownSharedEngine = {
   dispose: () => Promise<void> | void;
 };
 
+export type ShutdownAttribution = {
+  reason: string;
+  caller: string;
+};
+
 export type OrchestratorShutdownOptions = {
   server: CloseableServer;
   pool: ShutdownEnginePool;
@@ -117,12 +122,12 @@ async function waitForServerClose(
 
 export function createOrchestratorShutdown(
   options: OrchestratorShutdownOptions,
-): () => Promise<void> {
+): (attribution?: ShutdownAttribution) => Promise<void> {
   let shutdownPromise: Promise<void> | null = null;
 
-  return () => {
+  return (attribution?: ShutdownAttribution) => {
     if (!shutdownPromise) {
-      shutdownPromise = runOrchestratorShutdown(options);
+      shutdownPromise = runOrchestratorShutdown(options, attribution);
     }
     return shutdownPromise;
   };
@@ -130,23 +135,48 @@ export function createOrchestratorShutdown(
 
 async function runOrchestratorShutdown(
   options: OrchestratorShutdownOptions,
+  attribution?: ShutdownAttribution,
 ): Promise<void> {
+  const context = {
+    ...(options.context ?? {}),
+    ...(attribution ?? {}),
+  };
+  const cleanupErrors: string[] = [];
+  const persistShutdownState = async (stage: string): Promise<void> => {
+    try {
+      await options.persistShutdownState();
+    } catch (error) {
+      cleanupErrors.push(
+        `${stage}:persistShutdownState:${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
+
   options.logger?.info?.(
     "Daemon shutting down",
-    options.context ?? {},
+    context,
     "veslo-orchestrator-router",
   );
 
   const serverClosed = beginServerClose(options.server, options.logger);
   options.clearSharedEngineLivenessTimer?.();
+  await persistShutdownState("pre-cleanup");
 
   options.logger?.debug?.(
     "Daemon shutdown stopping engines",
     {},
     "veslo-orchestrator-router",
   );
-  await options.pool.killAll();
-  await options.sharedOpenCodeEngine?.dispose();
+  try {
+    await options.pool.killAll();
+  } catch (error) {
+    cleanupErrors.push(`pool.killAll:${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    await options.sharedOpenCodeEngine?.dispose();
+  } catch (error) {
+    cleanupErrors.push(`sharedOpenCodeEngine.dispose:${error instanceof Error ? error.message : String(error)}`);
+  }
   options.logger?.debug?.(
     "Daemon shutdown engines stopped",
     {},
@@ -164,7 +194,14 @@ async function runOrchestratorShutdown(
     {},
     "veslo-orchestrator-router",
   );
-  await options.persistShutdownState();
+  await persistShutdownState("post-cleanup");
+  if (cleanupErrors.length > 0) {
+    options.logger?.warn?.(
+      "Daemon shutdown cleanup had errors",
+      { ...context, errors: cleanupErrors },
+      "veslo-orchestrator-router",
+    );
+  }
   options.logger?.debug?.(
     "Daemon shutdown exiting",
     {},

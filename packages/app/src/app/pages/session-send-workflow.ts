@@ -27,6 +27,7 @@ import type {
   SendRuntimePreflightContext,
   SendRuntimePreflightTargetWorkspace,
 } from "../context/send-runtime-readiness";
+import { shouldRecoverLocalRuntimeFromHealthError } from "../context/send-runtime-readiness";
 import type { SessionFlowProgressEvent } from "../context/session-flow-progress-presenter";
 import type {
   ConversationAbortTarget,
@@ -813,6 +814,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       };
 
       const sessionDirOverride = deps.sessionDirectoryOverrideById()[materializedSessionID] ?? undefined;
+      let localRuntimeRetryUsed = false;
       const runConversationOrFail = async (input: VesloConversationRunInput) => {
         const scope = deps.resolveSelectedSessionBrowseScope(materializedSessionID);
         const inputWithCorrelation: VesloConversationRunInput = {
@@ -820,11 +822,16 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           clientMessageId: sendCorrelation.clientMessageId,
           origin: sendCorrelation.origin,
         };
-        try {
-          const result = await deps.runConversationFromVesloWriteApi(materializedSessionID, inputWithCorrelation, {
+        const submitConversationRun = async () => deps.runConversationFromVesloWriteApi(
+          materializedSessionID,
+          inputWithCorrelation,
+          {
             preflight: sendPreflight,
             targetWorkspace: sendTargetWorkspace,
-          });
+          },
+        );
+        try {
+          const result = await submitConversationRun();
           if (result) return;
           deps.recordSendTrace("sendPrompt:conversation-run-unavailable", {
             traceId: sendTraceId,
@@ -836,6 +843,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           });
           throw new Error("Conversation service is unavailable for this session.");
         } catch (error) {
+          const recoverable = shouldRecoverLocalRuntimeFromHealthError(error, deps.safeStringify);
           deps.recordSendTrace("sendPrompt:conversation-run-error", {
             traceId: sendTraceId,
             sessionID,
@@ -844,7 +852,37 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
             origin: sendCorrelation.origin,
             hasConversationScope: Boolean(scope?.conversationId),
             message: deps.messageFromUnknownError(error),
+            recoverable,
+            retryUsed: localRuntimeRetryUsed,
           });
+          if (recoverable && !localRuntimeRetryUsed && sendTargetStillDisplayed()) {
+            localRuntimeRetryUsed = true;
+            sendPreflight.forceRecovery = true;
+            sendPreflight.runtimeHealthOk = false;
+            sendPreflight.enginePrepared = false;
+            deps.recordSendTrace("sendPrompt:conversation-run-runtime-recovery-start", {
+              traceId: sendTraceId,
+              sessionID,
+              kind: input.kind,
+              clientMessageId: sendCorrelation.clientMessageId,
+              origin: sendCorrelation.origin,
+            });
+            const recovery = await deps.prepareSendRuntimeForSend("sendPrompt", sendPreflight);
+            deps.recordSendTrace("sendPrompt:conversation-run-runtime-recovery-result", {
+              traceId: sendTraceId,
+              sessionID,
+              kind: input.kind,
+              ok: recovery.ok,
+              reason: recovery.reason,
+              recoveryAttempted: recovery.recoveryAttempted,
+              clientMessageId: sendCorrelation.clientMessageId,
+              origin: sendCorrelation.origin,
+            });
+            if (recovery.ok && sendTargetStillDisplayed()) {
+              const retryResult = await submitConversationRun();
+              if (retryResult) return;
+            }
+          }
           throw error;
         }
       };

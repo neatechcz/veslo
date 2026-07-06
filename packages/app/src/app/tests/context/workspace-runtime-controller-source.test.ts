@@ -13,7 +13,7 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
   assert.match(
     runtimeSource,
     /export type EnsureEngineForWorkspaceOptions = \{[\s\S]*reason\?: string;[\s\S]*loadSessions\?: boolean;[\s\S]*\};/,
-    "runtime ensure should expose one narrow options object for boot warmup without adding another owner",
+    "runtime ensure should expose one narrow options object for boot warmup and send recovery without adding another owner",
   );
   assert.match(
     runtimeSource,
@@ -36,6 +36,7 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
     /async function connectToEngineQuiet[\s\S]*deps\.routing\.ensure\(workspaceId, baseUrl,[\s\S]*deps\.setClient\(nextClient\);/s,
     "quiet reconnect must bind a workspace-scoped routed client before send uses routedClient(workspaceId)",
   );
+  assert.doesNotMatch(runtimeSource, /connect-quiet:routing-skip-health|skipHealth: true/);
   assert.match(
     runtimeSource,
     /function isEngineStartingRoutingError[\s\S]*engine_starting[\s\S]*"connect-quiet:engine-starting"/s,

@@ -73,6 +73,13 @@ export function createWorkspaceClient(context: WorkspaceClientContext) {
         timeoutMs: timeouts.status,
       }),
 
+    statusForWorkspace: (workspaceId: string) =>
+      requestJson<VesloServerDiagnostics>(baseUrl, `/w/${encodeURIComponent(workspaceId)}/status`, {
+        token,
+        hostToken,
+        timeoutMs: timeouts.status,
+      }),
+
     capabilities: () =>
       requestJson<VesloServerCapabilities>(baseUrl, "/capabilities", {
         token,

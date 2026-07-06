@@ -82,7 +82,7 @@ test("runtime ensure preserves single-flight startup and can skip loadSessions f
   assert.match(
     runtimeSource,
     /export type EnsureEngineForWorkspaceOptions = \{[\s\S]*reason\?: string;[\s\S]*loadSessions\?: boolean;[\s\S]*\};/,
-    "runtime ensure should expose only the options boot warmup needs",
+    "runtime ensure should expose only the options boot warmup and send recovery need",
   );
   assert.match(
     runtimeSource,

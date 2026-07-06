@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -194,6 +194,63 @@ export function scenarioSelectionNeedsPortContentionFixture(scenarios: string[])
   );
 }
 
+export function scenarioSelectionRequiresLiveManagedAiAuth(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-271-windows-idle-runtime-chain-recovery.toml'),
+  );
+}
+
+function normalizeOptionalText(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function resolveLiveDenAuthSnapshotPath(env: Record<string, string | undefined>): string | null {
+  const snapshotPath = normalizeOptionalText(env.VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE)
+    ?? normalizeOptionalText(env.E2E_DEN_AUTH_SNAPSHOT_FILE);
+  return snapshotPath ? resolve(snapshotPath) : null;
+}
+
+function readDenAuthSummaryFromSnapshot(snapshotPath: string): { email: string | null; hasToken: boolean } {
+  const raw = readFileSync(snapshotPath, 'utf8').replace(/^\uFEFF/, '');
+  const snapshot = JSON.parse(raw) as { authJson?: unknown };
+  const authRaw = typeof snapshot.authJson === 'string' ? snapshot.authJson : raw;
+  const auth = JSON.parse(authRaw) as { token?: unknown; user?: { email?: unknown } };
+  return {
+    email: normalizeOptionalText(auth.user?.email),
+    hasToken: Boolean(normalizeOptionalText(auth.token)),
+  };
+}
+
+export function assertLiveManagedAiAuthForScenarioSelection(
+  scenarios: string[],
+  env: Record<string, string | undefined> = process.env,
+): void {
+  if (!scenarioSelectionRequiresLiveManagedAiAuth(scenarios)) return;
+
+  if (env.E2E_MANAGED_AI_GATEWAY_FIXTURE?.trim() !== '0') {
+    throw new Error(
+      'VSLO-271 pilot must run the live managed-AI path. Set E2E_MANAGED_AI_GATEWAY_FIXTURE=0 before running it.',
+    );
+  }
+
+  const snapshotPath = resolveLiveDenAuthSnapshotPath(env);
+  if (!snapshotPath) {
+    throw new Error(
+      'VSLO-271 pilot requires live Den auth. Set VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE to a real user snapshot, for example C:\\Users\\jajse\\.veslo\\den-auth.json.',
+    );
+  }
+  if (!existsSync(snapshotPath)) {
+    throw new Error(`VSLO-271 live Den auth snapshot does not exist: ${snapshotPath}`);
+  }
+
+  const summary = readDenAuthSummaryFromSnapshot(snapshotPath);
+  if (!summary.hasToken || !summary.email || summary.email.endsWith('@example.test')) {
+    throw new Error(
+      `VSLO-271 pilot requires a real Den user auth snapshot, got email=${summary.email ?? 'missing'} token=${summary.hasToken ? 'present' : 'missing'}.`,
+    );
+  }
+}
+
 async function startPortContentionFixture(): Promise<PortContentionFixture> {
   const server = createServer();
   await new Promise<void>((resolveListen, reject) => {
@@ -341,6 +398,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     }
   }
   assertPilotScenarioSelectionIsolated(scenarios);
+  assertLiveManagedAiAuthForScenarioSelection(scenarios);
 
   if (scenarioSelectionNeedsAutomationSecondaryWorkspace(scenarios)) {
     process.env.E2E_SEED_AUTOMATIONS_SECONDARY_WORKSPACE ||= '1';
@@ -370,6 +428,9 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     process.env.E2E_MANAGED_AI_RESPONSE_DELAY_MS ||= '30000';
     process.env.VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS ||= '90000';
     process.env.VESLO_MODEL_RETRY_NO_PROGRESS_HARD_MS ||= '10000';
+  }
+  if (scenarioSelectionRequiresLiveManagedAiAuth(scenarios)) {
+    process.env.VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS ||= '90000';
   }
   if (scenarioSelectionNeedsSkillRegistryWorkspaceEventFixture(scenarios)) {
     process.env.E2E_SKILL_REGISTRY_EVENTS_MODE ||= 'workspace-update-repeat';

@@ -113,6 +113,103 @@ test("server health checks preserve limited auth semantics and connected capabil
   });
 });
 
+test("local Tauri server check requires runtimeChain readiness", async () => {
+  let rootStatusCalls = 0;
+  const workspaceStatusCalls: string[] = [];
+  const factory: VesloServerConnectionClientFactory = () => ({
+    baseUrl: "http://127.0.0.1:8787",
+    health: async () => ({ ok: true, version: "test", uptimeMs: 1 }),
+    capabilities: async () => capabilities(),
+    status: async () => {
+      rootStatusCalls += 1;
+      return {
+        ok: true,
+        version: "test",
+        uptimeMs: 1,
+        readOnly: false,
+        approval: { mode: "manual", timeoutMs: 1 },
+        corsOrigins: [],
+        workspaceCount: 2,
+        activeWorkspaceId: "ws-root",
+        workspace: null,
+        authorizedRoots: [],
+        server: { host: "127.0.0.1", port: 8787, configPath: null },
+        tokenSource: { client: "generated", host: "generated" },
+        runtimeChain: {
+          status: "runtime_chain_ready",
+          checkedAt: Date.now(),
+          orchestrator: { configured: true, daemonUrl: "http://127.0.0.1:52008", ok: true, engineTopology: "shared-unsandboxed", error: null },
+          sharedEngine: { running: true, pending: false, engineState: "ready", baseUrl: "http://127.0.0.1:53553" },
+          proxy: { workspaceId: "ws-root", ok: true, status: 200, error: null },
+        },
+      };
+    },
+    workspace: {
+      statusForWorkspace: async (workspaceId: string) => {
+        workspaceStatusCalls.push(workspaceId);
+        return {
+      ok: true,
+      version: "test",
+      uptimeMs: 1,
+      readOnly: false,
+      approval: { mode: "manual", timeoutMs: 1 },
+      corsOrigins: [],
+      workspaceCount: 1,
+      activeWorkspaceId: "ws-a",
+      workspace: null,
+      authorizedRoots: [],
+      server: { host: "127.0.0.1", port: 8787, configPath: null },
+      tokenSource: { client: "generated", host: "generated" },
+      runtimeChain: {
+        status: "orchestrator_unavailable",
+        checkedAt: Date.now(),
+        orchestrator: {
+          configured: true,
+          daemonUrl: "http://127.0.0.1:52008",
+          ok: false,
+          engineTopology: null,
+          error: "connect ECONNREFUSED",
+        },
+        sharedEngine: { running: null, pending: null, engineState: null, baseUrl: null },
+        proxy: { workspaceId: "ws-a", ok: null, status: null, error: null },
+      },
+        };
+      },
+    } as any,
+  });
+
+  await createRoot(async (dispose) => {
+    try {
+      const connection = createVesloServerConnection({
+        startupPreference: () => "local",
+        opencodeBaseUrl: () => "",
+        authenticatedAccountId: () => null,
+        cloudEnvironment: {},
+        documentVisible: () => false,
+        developerMode: () => false,
+        isTauriRuntime: () => true,
+        workspace: {
+          workspacesHydrated: () => true,
+          activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
+          activeWorkspaceId: () => "ws-a",
+          activeWorkspaceRoot: () => "/tmp/ws-a",
+        },
+        createClient: factory,
+      });
+
+      assert.deepEqual(await connection.checkVesloServer("http://127.0.0.1:8787", "token"), {
+        status: "disconnected",
+        capabilities: null,
+      });
+      assert.equal(rootStatusCalls, 0);
+      assert.deepEqual(workspaceStatusCalls, ["ws-a"]);
+      assert.equal(connection.vesloServerDiagnostics()?.runtimeChain?.status, "orchestrator_unavailable");
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("stable setters keep polled host and capability references when content is unchanged", () => {
   createRoot((dispose) => {
     const connection = createVesloServerConnection({

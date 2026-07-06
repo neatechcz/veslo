@@ -12,7 +12,7 @@ use crate::env_guard::EnvVarGuard;
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::opencode_router::spawn::resolve_opencode_router_health_port;
 use crate::orchestrator::manager::OrchestratorManager;
-use crate::orchestrator::{self, OrchestratorSpawnOptions};
+use crate::orchestrator::{self, OrchestratorShutdownAttribution, OrchestratorSpawnOptions};
 use crate::supervised_process::CommandEvent;
 use crate::types::{
     EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult, OrchestratorStatus,
@@ -558,7 +558,10 @@ pub fn engine_stop(
 ) -> EngineInfo {
     let mut state = manager.inner.lock().expect("engine mutex poisoned");
     if let Ok(mut orchestrator_state) = orchestrator_manager.inner.lock() {
-        OrchestratorManager::stop_locked(&mut orchestrator_state);
+        OrchestratorManager::stop_locked(
+            &mut orchestrator_state,
+            OrchestratorShutdownAttribution::new("engine_stop", "engine_stop"),
+        );
     }
     EngineManager::stop_locked(&mut state);
     if let Ok(mut veslo_state) = veslo_manager.inner.lock() {
@@ -782,7 +785,10 @@ pub fn engine_start(
     let mut state = manager.inner.lock().expect("engine mutex poisoned");
     EngineManager::stop_locked(&mut state);
     if let Ok(mut orchestrator_state) = orchestrator_manager.inner.lock() {
-        OrchestratorManager::stop_locked(&mut orchestrator_state);
+        OrchestratorManager::stop_locked(
+            &mut orchestrator_state,
+            OrchestratorShutdownAttribution::new("engine_start_replace", "engine_start"),
+        );
     }
     state.runtime = runtime.clone();
 
@@ -1019,7 +1025,13 @@ pub fn engine_start(
 
                     if should_retry_orchestrator_start(attempt, max_start_attempts, child_exited) {
                         if let Ok(mut orchestrator_state) = orchestrator_manager.inner.lock() {
-                            OrchestratorManager::stop_locked(&mut orchestrator_state);
+                            OrchestratorManager::stop_locked(
+                                &mut orchestrator_state,
+                                OrchestratorShutdownAttribution::new(
+                                    "engine_start_retry",
+                                    "engine_start",
+                                ),
+                            );
                         }
                         continue;
                     }
@@ -1071,20 +1083,20 @@ pub fn engine_start(
         let opencode_pid = health.opencode.as_ref().map(|o| o.pid);
         let opencode_base_url =
             orchestrator_opencode_base_url(daemon_port, active_ws_id.as_deref());
-        let active_engine = active_ws_id
-            .as_ref()
-            .and_then(|workspace_id| {
-                reconciled_status
-                    .engines
-                    .iter()
-                    .find(|engine| &engine.workspace_id == workspace_id)
-            });
+        let active_engine = active_ws_id.as_ref().and_then(|workspace_id| {
+            reconciled_status
+                .engines
+                .iter()
+                .find(|engine| &engine.workspace_id == workspace_id)
+        });
         let return_engine_state = if health.opencode.is_some() {
             RuntimeEngineState::Ready
         } else if reconciled_status.engine_topology.as_deref() == Some("shared-unsandboxed") {
             runtime_engine_state_from_shared_engine(&reconciled_status)
         } else {
-            runtime_engine_state_from_orchestrator_state(active_engine.map(|engine| engine.state.as_str()))
+            runtime_engine_state_from_orchestrator_state(
+                active_engine.map(|engine| engine.state.as_str()),
+            )
         };
         let return_running = return_engine_state == RuntimeEngineState::Ready;
         if let Ok(mut state) = manager.inner.lock() {
@@ -1196,7 +1208,9 @@ pub fn engine_start(
             base_url: Some(opencode_base_url),
             project_dir: Some(project_dir),
             hostname: Some("127.0.0.1".to_string()),
-            port: active_engine.map(|engine| engine.port).or(Some(opencode_port)),
+            port: active_engine
+                .map(|engine| engine.port)
+                .or(Some(opencode_port)),
             opencode_username,
             opencode_password,
             pid: active_engine.map(|engine| engine.pid).or(opencode_pid),

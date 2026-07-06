@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use crate::orchestrator;
+use crate::orchestrator::OrchestratorShutdownAttribution;
 use crate::supervised_process::SupervisedCommandChild;
 
 #[derive(Default)]
@@ -18,19 +19,23 @@ pub struct OrchestratorState {
 }
 
 impl OrchestratorManager {
-    pub fn stop_locked(state: &mut OrchestratorState) {
+    pub fn stop_locked(
+        state: &mut OrchestratorState,
+        attribution: OrchestratorShutdownAttribution,
+    ) {
         let data_dir = state
             .data_dir
             .clone()
             .unwrap_or_else(orchestrator::resolve_orchestrator_data_dir);
 
-        let shutdown_requested = match orchestrator::request_orchestrator_shutdown(&data_dir) {
-            Ok(requested) => requested,
-            Err(error) => {
-                eprintln!("[orchestrator] Failed to request shutdown: {error}");
-                false
-            }
-        };
+        let shutdown_requested =
+            match orchestrator::request_orchestrator_shutdown(&data_dir, &attribution) {
+                Ok(requested) => requested,
+                Err(error) => {
+                    eprintln!("[orchestrator] Failed to request shutdown: {error}");
+                    false
+                }
+            };
 
         if let Some(child) = state.child.take() {
             // Prefer daemon-owned graceful shutdown so veslo-orchestrator can

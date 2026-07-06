@@ -50,6 +50,9 @@ function makeController(options: {
   questionRefreshes?: string[];
   setSseConnected?: (connected: boolean) => void;
   setMessagesForSession?: (sessionID: string, list: Array<{ info: MessageInfo; parts: any[] }>) => void;
+  routing?: any;
+  client?: () => any;
+  recoverWorkspaceRuntimeForEventStream?: (workspaceId: string) => Promise<boolean> | boolean;
 } = {}) {
   const [store, setStore] = makeStore();
   const workspaceSessionIds = options.workspaceSessionIds ?? new Set<string>();
@@ -61,7 +64,7 @@ function makeController(options: {
   const controller = createSessionEventStreamController({
     store,
     setStore: setStore as any,
-    routing: {
+    routing: options.routing ?? {
       activeWorkspaceId: () => options.activeWorkspaceId ?? "ws-a",
       active: () => null,
       client: () => null,
@@ -69,7 +72,7 @@ function makeController(options: {
       entryIds: () => [],
       release: () => {},
     } as any,
-    client: () => null,
+    client: options.client ?? (() => null),
     activeWorkspaceRoot: () => "/repo",
     selectedSessionId: () => options.selectedSessionId ?? "sess-a",
     developerMode: () => options.developerMode ?? false,
@@ -118,6 +121,7 @@ function makeController(options: {
     withTimeout: async (promise) => promise,
     isWorkspaceRuntimeReady: () => true,
     isActiveWorkspaceRuntimeReady: () => true,
+    recoverWorkspaceRuntimeForEventStream: options.recoverWorkspaceRuntimeForEventStream,
   });
 
   return {
@@ -237,6 +241,44 @@ test("active message updates report assistant responses only after accepting the
 
       assert.deepEqual(store.messages["sess-a"].map((message) => message.id), ["msg-a"]);
       assert.deepEqual(observed, ["sess-a"]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("event stream runtime errors release the route and recover workspace runtime", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const released: string[] = [];
+      const recovered: string[] = [];
+      const streamClient = makeEventClient(async () => {
+        throw new Error("opencode_proxy_failed: socket connection was closed unexpectedly");
+      });
+      const routing = {
+        activeWorkspaceId: () => "ws-a",
+        active: () => null,
+        client: (workspaceId?: string) => (workspaceId === "ws-a" ? streamClient : null),
+        entry: () => null,
+        entryIds: () => ["ws-a"],
+        release: (workspaceId: string) => {
+          released.push(workspaceId);
+        },
+      };
+      const { controller } = makeController({
+        activeWorkspaceId: "ws-a",
+        routing,
+        recoverWorkspaceRuntimeForEventStream: async (workspaceId) => {
+          recovered.push(workspaceId);
+          return true;
+        },
+      });
+
+      controller.setupSseStream("ws-a", streamClient);
+      await tick(8);
+
+      assert.deepEqual(released, ["ws-a"]);
+      assert.deepEqual(recovered, ["ws-a"]);
     } finally {
       dispose();
     }

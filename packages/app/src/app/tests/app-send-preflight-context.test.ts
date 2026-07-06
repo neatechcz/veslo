@@ -111,7 +111,7 @@ test("send runtime preflight skips duplicate health only for an explicitly healt
 
   assert.match(
     resultSource,
-    /Promise<SendRuntimePreparationResult>[\s\S]*if \(preflight\?\.runtimeHealthOk\) \{[\s\S]*recordSendTrace\(`\$\{reason\}:runtime-health-skip`,[\s\S]*reason: "send-preflight-already-healthy"[\s\S]*return \{[\s\S]*ok: true,[\s\S]*runtimeReady: true,[\s\S]*reason: "runtime-health-skip",[\s\S]*\};[\s\S]*\}[\s\S]*if \(currentClient\) \{/s,
+    /Promise<SendRuntimePreparationResult>[\s\S]*const forceRecovery = preflight\?\.forceRecovery === true;[\s\S]*if \(preflight\?\.runtimeHealthOk && !forceRecovery\) \{[\s\S]*recordSendTrace\(`\$\{reason\}:runtime-health-skip`,[\s\S]*reason: "send-preflight-already-healthy"[\s\S]*return \{[\s\S]*ok: true,[\s\S]*runtimeReady: true,[\s\S]*reason: "runtime-health-skip",[\s\S]*\};[\s\S]*\}[\s\S]*if \(forceRecovery\) \{/s,
     "send runtime health should skip only when an earlier health probe marked the preflight healthy",
   );
   assert.match(
@@ -123,6 +123,19 @@ test("send runtime preflight skips duplicate health only for an explicitly healt
     prepareSource,
     /const runtimeResult = await deps\.sendTraceStep\([\s\S]*ensureLocalRuntimeReachableForSendResult\(reason, preflight\)[\s\S]*if \(!runtimeResult\.ok\) \{[\s\S]*runtimeReason: runtimeResult\.reason,[\s\S]*runtimeRecoveryAttempted: runtimeResult\.recoveryAttempted,[\s\S]*targetWorkspaceId: runtimeResult\.workspaceId,/s,
     "prepareSendRuntimeForSend should report typed runtime failure details",
+  );
+});
+
+test("app wires runtime recovery options through the workspace runtime owner", () => {
+  assert.match(
+    appSource,
+    /ensureEngineForWorkspace: \(workspaceId, options\) => workspaceStore\.ensureEngineForWorkspace\(workspaceId, options\)/,
+    "send runtime readiness must not drop reason/loadSessions options at the app boundary",
+  );
+  assert.match(
+    appSource,
+    /recoverWorkspaceRuntimeForEventStream: \(workspaceId\) =>[\s\S]*workspaceStore\.ensureEngineForWorkspace\(workspaceId, \{[\s\S]*reason: "event-stream-runtime-recovery",[\s\S]*loadSessions: false,/,
+    "event stream recovery should reuse the same runtime owner without forcing session-list UI side effects",
   );
 });
 
