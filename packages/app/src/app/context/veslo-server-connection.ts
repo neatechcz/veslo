@@ -5,6 +5,7 @@ import {
   onCleanup,
   type Accessor,
 } from "solid-js";
+import { listen, type Event as TauriEvent, type UnlistenFn } from "@tauri-apps/api/event";
 
 import {
   createInitialVesloServerStatusStabilityState,
@@ -34,6 +35,7 @@ import {
   opencodeRouterInfo as defaultOpenCodeRouterInfo,
   orchestratorEnginesList as defaultOrchestratorEnginesList,
   orchestratorStatus as defaultOrchestratorStatus,
+  VESLO_SERVER_STATE_EVENT,
   type OpenCodeRouterInfo,
   type OrchestratorEngineSnapshot,
   type OrchestratorStatus,
@@ -100,6 +102,7 @@ export type VesloServerConnectionDeps = {
   createClient?: VesloServerConnectionClientFactory;
   vesloServerInfo?: () => Promise<VesloServerInfo | null>;
   vesloServerRestart?: () => Promise<VesloServerInfo | null>;
+  vesloServerStateListen?: (handler: (info: VesloServerInfo) => void) => Promise<UnlistenFn>;
   opencodeRouterInfo?: () => Promise<OpenCodeRouterInfo | null>;
   orchestratorStatus?: () => Promise<OrchestratorStatus | null>;
   orchestratorEnginesList?: () => Promise<OrchestratorEngineSnapshot[]>;
@@ -131,6 +134,37 @@ function stateKey(value: unknown): string {
 
 function defaultCreateClient(input: VesloServerConnectionClientFactoryInput) {
   return createVesloServerClient(input) as VesloServerConnectionClient & VesloServerClient;
+}
+
+function defaultListenVesloServerState(handler: (info: VesloServerInfo) => void) {
+  return listen<VesloServerInfo>(VESLO_SERVER_STATE_EVENT, (event: TauriEvent<VesloServerInfo>) => {
+    handler(event.payload);
+  });
+}
+
+export function mergeVesloServerDescriptorEvent(
+  current: VesloServerInfo | null,
+  next: VesloServerInfo | null,
+): VesloServerInfo | null {
+  if (!next) return null;
+  if (!current) return next;
+
+  const sameInstance =
+    Boolean(current.instanceId?.trim()) &&
+    Boolean(next.instanceId?.trim()) &&
+    current.instanceId?.trim() === next.instanceId?.trim();
+  const sameBaseUrl =
+    Boolean(current.baseUrl?.trim()) &&
+    Boolean(next.baseUrl?.trim()) &&
+    current.baseUrl?.trim() === next.baseUrl?.trim();
+  if (!sameInstance && !sameBaseUrl) return next;
+
+  return {
+    ...next,
+    hostToken: next.hostToken?.trim() ? next.hostToken : current.hostToken,
+    lastStdout: next.lastStdout ?? current.lastStdout,
+    lastStderr: next.lastStderr ?? current.lastStderr,
+  };
 }
 
 function requiresLocalRuntimeChainReadiness(input: {
@@ -209,6 +243,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
   const createClient = deps.createClient ?? defaultCreateClient;
   const loadVesloServerInfo = deps.vesloServerInfo ?? defaultVesloServerInfo;
   const restartVesloServer = deps.vesloServerRestart ?? defaultVesloServerRestart;
+  const listenVesloServerState = deps.vesloServerStateListen ?? defaultListenVesloServerState;
   const loadOpenCodeRouterInfo = deps.opencodeRouterInfo ?? defaultOpenCodeRouterInfo;
   const loadOrchestratorStatus = deps.orchestratorStatus ?? defaultOrchestratorStatus;
   const loadOrchestratorEngines = deps.orchestratorEnginesList ?? defaultOrchestratorEnginesList;
@@ -256,6 +291,10 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
   const setVesloServerHostInfoStable = (next: VesloServerInfo | null) => {
     const nextKey = stateKey(next);
     setVesloServerHostInfo((current) => (stateKey(current) === nextKey ? current : next));
+  };
+
+  const setVesloServerHostInfoFromEvent = (next: VesloServerInfo | null) => {
+    setVesloServerHostInfoStable(mergeVesloServerDescriptorEvent(vesloServerHostInfo(), next));
   };
 
   const activeVesloServerHostInfo = createMemo(() =>
@@ -670,30 +709,46 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     if (!deps.isTauriRuntime()) return;
     if (!deps.documentVisible()) return;
     let active = true;
+    let unlisten: UnlistenFn | null = null;
     let timeoutId: number | undefined;
+    const timerApi = typeof window !== "undefined" ? window : null;
 
-    const schedule = (delayMs: number) => {
-      if (!active) return;
-      timeoutId = window.setTimeout(run, delayMs);
+    const scheduleSnapshotWatchdog = () => {
+      if (!active || !timerApi) return;
+      timeoutId = timerApi.setTimeout(refreshSnapshot, 30_000);
     };
 
-    const run = async () => {
+    const refreshSnapshot = async () => {
       try {
         const info = await loadVesloServerInfo();
         if (!active) return;
         setVesloServerHostInfoStable(info);
-        schedule(info?.running ? 10_000 : 1_000);
       } catch {
         if (!active) return;
         setVesloServerHostInfoStable(null);
-        schedule(1_000);
+      } finally {
+        scheduleSnapshotWatchdog();
       }
     };
 
-    run();
+    void refreshSnapshot();
+    void listenVesloServerState((info) => {
+      if (!active) return;
+      setVesloServerHostInfoFromEvent(info);
+    })
+      .then((cleanup) => {
+        if (active) {
+          unlisten = cleanup;
+        } else {
+          cleanup();
+        }
+      })
+      .catch((error) => deps.reportError?.(error, "vesloServer.stateEventListen"));
+
     onCleanup(() => {
       active = false;
-      if (timeoutId) window.clearTimeout(timeoutId);
+      unlisten?.();
+      if (timeoutId && timerApi) timerApi.clearTimeout(timeoutId);
     });
   });
 

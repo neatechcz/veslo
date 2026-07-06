@@ -135,8 +135,8 @@ test("local Veslo workspace readiness uses the stable local workspace id", () =>
 
   assert.match(
     localBranch,
-    /setVesloServerWorkspaceId\(active\.id\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\) \|\| null\);/,
-    "local workspace readiness should use the shared stable workspace id contract",
+    /setVesloServerWorkspaceId\(\s*active\.vesloWorkspaceId\?\.trim\(\) \|\|\s*active\.id\?\.trim\(\) \|\|\s*workspaceStore\.activeWorkspaceId\(\)\.trim\(\) \|\|\s*null,\s*\);/,
+    "local workspace readiness should prefer the server-owned id before the legacy stable id",
   );
   assert.doesNotMatch(
     localBranch,

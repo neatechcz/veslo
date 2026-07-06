@@ -12,7 +12,7 @@ vsa03_cross_platform_orphan_cleanup_done: true
 vsa04_secrets_files_not_argv_done: true
 vsa05_ready_handshake_and_mutex_split_done: true
 vsa06_serialized_desktop_state_machine_done: true
-vsa07_frontend_single_descriptor_done: false
+vsa07_frontend_single_descriptor_done: true
 vsa08_single_auth_recovery_done: true
 vsa09_acknowledged_workspace_registration_done: true
 vsa10_server_owned_workspace_ids_done: true
@@ -20,8 +20,12 @@ vsa10a_workspace_id_golden_vectors_done: true
 vsa10b_dual_id_mapping_migration_done: true
 vsa10c_workspace_id_cutover_cleanup_done: true
 vsa11_engine_config_hot_swap_done: false
+vsa11a_respawn_and_blackbox_diagnostics_done: false
 vsa12_port_conflict_policy_done: true
 vsa13_e2e_docs_and_release_gate_done: false
+vsa13a_unit_contract_docs_gate_done: false
+vsa13b_installed_runtime_smoke_done: false
+vsa13c_full_release_gate_done: false
 ---
 
 # Veslo Server Access Architecture Implementation Plan
@@ -78,7 +82,8 @@ Every task starts as `done: false`.
 Only mark a task `done: true` after code, focused tests, listed verification,
 and any required docs updates for that task are complete in the original
 worktree. Do not mark top-level `done: true` until VSA00 through VSA09, VSA10A
-through VSA10C, and VSA11 through VSA13 are complete and verified.
+through VSA10C, VSA11A, VSA11 or its recorded deferral, VSA12, and VSA13A
+through VSA13C are complete and verified.
 
 If a task is partially implemented, append a dated note under that task and
 leave its `done: false` line unchanged.
@@ -165,32 +170,34 @@ enough to verify and revert independently.
 
 **Deferred architecture slices:**
 
-- VSA06/VSA08 state machine and centralized auth recovery.
+- VSA06/VSA07 are intentionally satisfied through the existing
+  `VesloServerInfo`/lifecycle snapshot plus the `veslo://server-state` event
+  bridge. Do not introduce a second parallel frontend state-machine model.
 - VSA10B/VSA10C workspace identity migration.
-- VSA11 runtime config hot-swap.
+- VSA11A respawn and blackbox diagnostics before any full VSA11 runtime-config
+  API. The hot-swap API is conditional, not the default next refactor.
 - VSA12 full port policy and ephemeral fallback.
 
-VSA13 applies per slice, with the full final gate only after the roadmap is
-complete.
+VSA13 is split into per-slice gates: unit/contract/docs first, installed-runtime
+smoke second, and the full release gate only after the roadmap is complete.
 
 ## Implementation Order
 
 Use this order inside the rollout slices. Do not treat VSA00 through VSA13 as
 one implementation batch.
 
-1. VSA00 baseline and tracking.
-2. VSA02 plus gated VSA01.
-3. Minimal VSA05, then minimal VSA07.
-4. VSA09 if registry drift is in scope.
-5. VSA04 and VSA03 as security/process follow-ups.
-6. VSA10A before any workspace-id migration.
-7. VSA06/VSA08 only after the snapshot-based fixes prove insufficient or too
-   noisy.
-8. VSA10B/VSA10C after VSA09 and VSA10A.
-9. VSA11 after workspace registration/identity is stable.
-10. VSA12 after VSA02 and enough lifecycle state exists to report port-policy
-   reasons.
-11. VSA13 for each slice and once for the full roadmap.
+1. VSA00 post-hoc ledger for the already-landed slice.
+2. Keep VSA06/VSA07 closed around the existing descriptor event bridge unless a
+   concrete bug proves the bridge insufficient.
+3. Add VSA11A respawn and blackbox diagnostics using existing send/run trace
+   infrastructure.
+4. Decide whether full VSA11 hot-swap is still required from VSA11A evidence.
+5. If required, implement the smallest runtime-config owner/API that updates the
+   stale server dependencies proven by diagnostics.
+6. Run VSA13A unit/contract/docs gate after each completed slice.
+7. Run VSA13B installed-runtime smoke for the current implemented behavior.
+8. Run VSA13C full release gate only after VSA11 is completed or explicitly
+   deferred with evidence.
 
 VSA01 is not independently safe under the old token/PID adoption heuristic. It
 may land in the same slice as VSA02, or it may persist `hostToken` earlier only
@@ -213,34 +220,36 @@ verified VSA01-VSA05/VSA09 slice.
 
 Goal:
 
-Freeze the current behavior, known failing scenarios, and task ownership before
-changing lifecycle code.
+Create a post-hoc verification ledger for the server-access work that already
+landed before VSA00 was completed. This is baseline debt, not a reason to
+reopen completed slices or invent new architecture.
 
 Implementation:
 
 - Link the real issue in front matter if one exists.
-- Add a short dated note under this task with:
+- Add a short dated note under this task with the current live checkout facts:
   - current branch and commit,
   - whether this plan is tracked,
+  - dirty/untracked files relevant to this roadmap,
   - known current failing scenario names,
-  - current local server tests that pass before the migration.
-- Capture current process and auth behavior from:
+  - tests that passed for the already-landed VSA01-VSA10/VSA12 slices.
+- Capture current process, auth, descriptor, and workspace-id behavior from:
   - `veslo_server::tests`,
   - `commands::veslo_server::tests`,
   - `packages/server/src/tests/workspaces.test.ts`,
   - `packages/app/src/app/tests/context/veslo-server-connection.test.ts`,
   - at least one pilot scenario that exercises local server startup if the
     pilot environment is healthy.
-- Add missing regression tests only where they make later behavior measurable.
-  Do not implement the migration in VSA00.
+- Record any skipped pilot validation with the exact environment reason.
+- Do not add new runtime behavior in VSA00. Missing coverage can be listed as
+  follow-up test debt unless the absence blocks a later slice.
 
 Acceptance:
 
-- This plan identifies the issue and baseline commands used by later agents.
-- There is a clear note for any skipped pilot validation, including the exact
-  environment reason.
-- No runtime behavior is changed except additive failing tests or harmless test
-  scaffolding.
+- The plan contains a dated current-state ledger that later agents can trust.
+- The ledger separates verified behavior, unverified/pilot-skipped behavior,
+  and known dirty worktree state.
+- No runtime behavior is changed by VSA00.
 
 Verification:
 
@@ -656,7 +665,7 @@ Mark done when:
 
 ## VSA07: Frontend Single Descriptor
 
-done: false
+done: true
 
 Partial implementation note 2026-07-06: the frontend connection flow no longer
 derives a local Veslo URL from the OpenCode URL and no longer creates a
@@ -673,6 +682,14 @@ stored remote settings token for non-local `/opencode` proxy URLs but refuses
 to apply that settings token to Tauri loopback `/opencode` URLs. The remote
 settings token remains in localStorage for explicit remote-server mode; no
 host token is stored there.
+
+Implementation note 2026-07-06: `createVesloServerConnection` now seeds the
+local descriptor from one `veslo_server_info` snapshot, then consumes
+`veslo://server-state` Tauri events as the primary local descriptor feed. A
+slow snapshot watchdog remains for lost events and child-exit detection. Event
+payloads are merged with the existing in-memory descriptor so redacted events
+do not erase the trusted `hostToken` or captured logs for the same
+instance/baseUrl, but a new instance never inherits the previous host token.
 
 Goal:
 
@@ -1113,6 +1130,75 @@ Mark done when:
 - `vsa10_server_owned_workspace_ids_done: true`.
 - This task's `done: true`.
 
+## VSA11A: Respawn And Blackbox Diagnostics Gate
+
+done: false
+
+Goal:
+
+Measure the remaining user-visible delay and respawn causes before building a
+full runtime-config hot-swap API. This is the KISS guardrail for VSA11.
+
+Implementation:
+
+- Extend existing tracing instead of adding a new diagnostics subsystem:
+  - `sendTraceStep` / `recordSendTrace` in app send flows,
+  - `recordSendWorkflowTrace` in server OpenCode/run paths,
+  - desktop launch diagnostics for `start_veslo_server`.
+- Record why each local server start intent was accepted, coalesced, reused, or
+  respawned:
+  - caller/source,
+  - previous PID and instance id,
+  - lifecycle status/reason,
+  - config field that forced respawn, if any.
+- Add one high-signal desktop log/event when the app falls back to SDK SSE in
+  Tauri instead of Rust `engineSseSubscribe`.
+- Split the send critical path timing into existing trace events for:
+  - workspace-active,
+  - skill-resolution,
+  - runtime-health and engine-info,
+  - managed-ai-bootstrap,
+  - conversation-create,
+  - workspace attach/registry,
+  - conversation-run.
+- Split server `/runs` timing through existing run trace events for:
+  - target resolution,
+  - lifecycle active peek,
+  - lifecycle register,
+  - OpenCode submit,
+  - provider-start watch,
+  - response serialization.
+- Make `withLocalRuntimeHealthTimeout` either abort the losing health request or
+  emit enough trace to prove the underlying request continues after the visible
+  timeout.
+- Do not implement `POST /runtime/engine-config` in this slice.
+
+Acceptance:
+
+- A slow first send can be attributed to a named gate without reading raw
+  stdout/stderr.
+- A veslo-server respawn can be attributed to one config/status reason, or to an
+  explicit user restart.
+- Desktop SDK SSE fallback is visible as degraded transport, not silent normal
+  behavior.
+- VSA11 full hot-swap is either justified by captured evidence or explicitly
+  deferred with the observed remaining respawn reasons.
+
+Verification:
+
+```powershell
+cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml veslo_server::tests --quiet
+cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml commands::engine::tests --quiet
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/send-runtime-readiness.test.ts src/app/tests/context/veslo-server-connection.test.ts
+pnpm --filter veslo-server exec bun test src/tests/server-conversations.test.ts
+rg -n "sendTraceStep|recordSendWorkflowTrace|engineSseSubscribe|event.subscribe|launch_config_matches|start_veslo_server|provider-start|lifecycle-register" packages/app/src/app packages/server/src packages/desktop/src-tauri/src
+```
+
+Mark done when:
+
+- `vsa11a_respawn_and_blackbox_diagnostics_done: true`.
+- This task's `done: true`.
+
 ## VSA11: Engine Config Hot Swap
 
 done: false
@@ -1128,11 +1214,14 @@ require a real runtime-config owner/API.
 Goal:
 
 Decouple server lifetime from workspace list, active workspace, and dynamic
-orchestrator daemon URL. Treat this as a runtime hot-swap project, not as part
-of the first server-access recovery slice.
+orchestrator daemon URL only if VSA11A proves this is still a material source of
+respawns or user-visible delay. Treat this as a runtime hot-swap project, not as
+part of the first server-access recovery slice.
 
 Implementation:
 
+- Do not start this full API slice until VSA11A is complete or an active
+  incident proves the specific hot-swap gap.
 - A smaller preceding fix may only prevent respawn on workspace-list changes if
   that can be done without a new runtime-config API. Keep the full hot-swap API
   in this task.
@@ -1187,6 +1276,8 @@ rg -n -- "--workspace|launch_config_matches|opencode_base_url|orchestrator_daemo
 
 Mark done when:
 
+- `vsa11a_respawn_and_blackbox_diagnostics_done: true`, or the VSA11A evidence
+  is explicitly recorded as not required for an incident-driven hot-swap fix.
 - `vsa11_engine_config_hot_swap_done: true`.
 - This task's `done: true`.
 
@@ -1256,17 +1347,155 @@ Mark done when:
 - `vsa12_port_conflict_policy_done: true`.
 - This task's `done: true`.
 
+## VSA13A: Unit, Contract, And Docs Gate
+
+done: false
+
+Goal:
+
+Close the current implemented server-access contract with cheap, repeatable
+tests and durable docs before waiting on installed-runtime pilot coverage.
+
+Implementation:
+
+- Run the focused desktop, app, server, and orchestrator tests that cover the
+  completed VSA01-VSA10/VSA12 behavior.
+- Update durable docs for the implemented contract only:
+  - descriptor ownership,
+  - token persistence and redaction,
+  - instance-id adoption,
+  - workspace id ownership/mapping,
+  - remote-server settings vs local descriptor credentials.
+- Record any VSA11 full hot-swap deferral from VSA11A evidence.
+- Keep pilot-only scenarios out of this gate unless the pilot environment is
+  already healthy.
+
+Acceptance:
+
+- Docs describe the current shipped source of truth without promising unbuilt
+  VSA11 hot-swap behavior.
+- Unit and contract tests pass for the current architecture.
+- Known skipped pilot/runtime validation is called out separately instead of
+  blocking this gate.
+
+Verification:
+
+```powershell
+cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml veslo_server::tests --quiet
+cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml commands::veslo_server::tests --quiet
+cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml commands::workspace::tests --quiet
+pnpm --filter veslo-server exec bun test src/tests/workspaces.test.ts src/tests/server.health-status-routes.test.ts
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/veslo-server-connection.test.ts src/app/tests/lib/veslo-server.test.ts
+pnpm --filter veslo-orchestrator exec bun test src/tests/workspace-id-golden.test.ts src/tests/workspace-id-mapping.test.ts
+git diff --check
+```
+
+Mark done when:
+
+- `vsa13a_unit_contract_docs_gate_done: true`.
+- This task's `done: true`.
+
+## VSA13B: Installed Runtime Smoke Gate
+
+done: false
+
+Goal:
+
+Validate the implemented local-server contract in an installed or pilot desktop
+runtime without expanding scope to every final release scenario.
+
+Implementation:
+
+- Run or add the smallest healthy pilot/runtime smoke for:
+  - fresh-profile cold boot reaches READY,
+  - first message works against the descriptor-provided local server,
+  - app restart adopts a matching live server by `instanceId`,
+  - foreign 8787 occupant falls back to an actual descriptor port or reports a
+    concrete `port_conflict`.
+- If the pilot environment is unhealthy, record the exact blocker and keep this
+  gate `done: false`.
+
+Acceptance:
+
+- Installed runtime proves the descriptor/token/instance-id path works outside
+  unit tests.
+- Failures are reported as pilot/runtime blockers, not folded into code
+  correctness unless code evidence points there.
+
+Verification:
+
+```powershell
+pnpm --filter @neatech/veslo-e2e test
+git diff --check
+```
+
+Mark done when:
+
+- `vsa13b_installed_runtime_smoke_done: true`.
+- This task's `done: true`.
+
+## VSA13C: Full Release Gate
+
+done: false
+
+Goal:
+
+Run the full release-level validation only after VSA11 is complete or explicitly
+deferred from VSA11A evidence.
+
+Implementation:
+
+- Include VSA13A and VSA13B results.
+- Add hot-swap-specific runtime scenarios only if VSA11 was implemented.
+- If VSA11 was deferred, document the evidence and remaining trigger that would
+  reopen it.
+- Run final hygiene checks and add a concise `docs/fixes/` checkpoint if the
+  linked issue or release process requires it.
+
+Acceptance:
+
+- The roadmap can be marked complete without mixing implemented behavior,
+  deferred behavior, and pilot blockers.
+- The final plan status reflects whether VSA11 shipped or was deliberately
+  deferred with evidence.
+
+Verification:
+
+```powershell
+cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml veslo_server::tests --quiet
+cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml commands::veslo_server::tests --quiet
+cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml commands::engine::tests --quiet
+cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml commands::workspace::tests --quiet
+pnpm --filter veslo-server test
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/veslo-server-connection.test.ts src/app/tests/lib/veslo-server.test.ts
+pnpm --filter @neatech/veslo-e2e test
+git diff --check
+git diff --cached --check
+```
+
+Mark done when:
+
+- `vsa13a_unit_contract_docs_gate_done: true`.
+- `vsa13b_installed_runtime_smoke_done: true`.
+- `vsa13c_full_release_gate_done: true`.
+- `vsa13_e2e_docs_and_release_gate_done: true`.
+- This task's `done: true`.
+
 ## VSA13: E2E, Docs, And Release Gate
 
 done: false
 
 Goal:
 
-Prove the full architecture in the installed desktop runtime and update durable
-docs after behavior lands.
+Umbrella task for VSA13A through VSA13C. Prove the implemented architecture in
+the right validation layer without making unit/docs progress depend on the full
+installed-runtime release gate.
 
 Implementation:
 
+- Complete VSA13A before treating docs and contract coverage as current.
+- Complete VSA13B before claiming installed-runtime validation.
+- Complete VSA13C before marking the roadmap complete.
 - Add or update Tauri-pilot scenarios:
   - fresh-profile cold boot reaches READY then first message works,
   - app restart with live previous server adopts by matching `instanceId`,
@@ -1292,8 +1521,8 @@ Acceptance:
 - Docs describe the new source of truth for descriptor, tokens, instance id,
   workspace ids, and remote-server settings.
 - Top-level front matter is changed to `status: completed` and `done: true`
-  only after VSA00 through VSA09, VSA10A through VSA10C, and VSA11 through
-  VSA13 are true.
+  only after VSA00 through VSA09, VSA10A through VSA10C, VSA11 or its recorded
+  deferral, VSA12, and VSA13A through VSA13C are true.
 
 Verification:
 
@@ -1311,6 +1540,9 @@ git diff --cached --check
 
 Mark done when:
 
+- `vsa13a_unit_contract_docs_gate_done: true`.
+- `vsa13b_installed_runtime_smoke_done: true`.
+- `vsa13c_full_release_gate_done: true`.
 - `vsa13_e2e_docs_and_release_gate_done: true`.
 - Top-level `status: completed`.
 - Top-level `done: true`.

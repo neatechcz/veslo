@@ -5,6 +5,7 @@ import { createRoot } from "solid-js";
 
 import {
   createVesloServerConnection,
+  mergeVesloServerDescriptorEvent,
   resolveVesloServerAuth,
   resolveVesloServerBaseUrl,
   type VesloServerConnectionClientFactory,
@@ -312,4 +313,45 @@ test("stable setters keep polled host and capability references when content is 
 
     dispose();
   });
+});
+
+test("server state events preserve trusted in-memory owner fields for the same descriptor", () => {
+  const current = {
+    ...runningHostInfo(),
+    hostToken: "host-token",
+    lastStdout: "stdout",
+    lastStderr: "stderr",
+  };
+  const eventPayload = {
+    ...runningHostInfo(),
+    hostToken: null,
+    lastStdout: null,
+    lastStderr: null,
+    clientToken: "client-next",
+  };
+
+  const merged = mergeVesloServerDescriptorEvent(current, eventPayload);
+
+  assert.equal(merged?.clientToken, "client-next");
+  assert.equal(merged?.hostToken, "host-token");
+  assert.equal(merged?.lastStdout, "stdout");
+  assert.equal(merged?.lastStderr, "stderr");
+});
+
+test("server state events do not carry host token across a new instance", () => {
+  const current = {
+    ...runningHostInfo(),
+    hostToken: "host-token",
+  };
+  const eventPayload = {
+    ...runningHostInfo(),
+    instanceId: "new-instance",
+    baseUrl: "http://127.0.0.1:8790",
+    hostToken: null,
+  };
+
+  const merged = mergeVesloServerDescriptorEvent(current, eventPayload);
+
+  assert.equal(merged?.instanceId, "new-instance");
+  assert.equal(merged?.hostToken, null);
 });
