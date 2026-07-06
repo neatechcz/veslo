@@ -59,6 +59,42 @@ test("verification auth email uses Lettr send-email payload", async () => {
   }
 })
 
+test("verification auth email uses branded button copy without a visible raw url", async () => {
+  withRequiredEnv()
+
+  const originalFetch = globalThis.fetch
+  const requests: Array<{ url: string; init: RequestInit | undefined }> = []
+  globalThis.fetch = async (input, init) => {
+    requests.push({ url: String(input), init })
+    return new Response(JSON.stringify({ message: "queued" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })
+  }
+
+  try {
+    const { sendVerificationAuthEmail } = await importAuthMailer()
+    const verificationUrl = "https://example.com/verify?token=abc123"
+
+    await sendVerificationAuthEmail({ to: "user@example.com", url: verificationUrl })
+
+    const body = JSON.parse(String(requests[0]?.init?.body))
+    const html = String(body.html)
+    const visibleHtml = html.replace(/\shref="[^"]*"/g, "")
+
+    assert.match(html, /https:\/\/veslo\.work\/assets\/veslo-logo-square\.svg/)
+    assert.doesNotMatch(html, /hero-skill-screenshot|hero-connected-systems/)
+    assert.match(html, />\s*Verify email\s*</)
+    assert.match(html, /href="https:\/\/example\.com\/verify\?token=abc123"/)
+    assert.doesNotMatch(visibleHtml, /https:\/\/example\.com\/verify\?token=abc123/)
+  } finally {
+    globalThis.fetch = originalFetch
+    for (const key of Object.keys(requiredEnv)) {
+      delete process.env[key]
+    }
+  }
+})
+
 test("background auth email helper absorbs rejected Lettr sends", async () => {
   withRequiredEnv()
 
