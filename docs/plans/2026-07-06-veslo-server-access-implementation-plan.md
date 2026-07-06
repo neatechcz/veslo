@@ -17,7 +17,7 @@ vsa08_single_auth_recovery_done: true
 vsa09_acknowledged_workspace_registration_done: true
 vsa10_server_owned_workspace_ids_done: false
 vsa10a_workspace_id_golden_vectors_done: true
-vsa10b_dual_id_mapping_migration_done: false
+vsa10b_dual_id_mapping_migration_done: true
 vsa10c_workspace_id_cutover_cleanup_done: false
 vsa11_engine_config_hot_swap_done: false
 vsa12_port_conflict_policy_done: false
@@ -915,7 +915,7 @@ Mark done when:
 
 ## VSA10B: Dual-ID Mapping And Migration
 
-done: false
+done: true
 
 Partial implementation note 2026-07-06: acknowledged local workspace
 registration now persists the server-confirmed workspace id into the desktop
@@ -926,10 +926,7 @@ accepted registration so the returned workspace list includes the mapping.
 The app's active local `vesloServerWorkspaceId` signal now also prefers
 `vesloWorkspaceId` with the existing app-local id as fallback, so server-bound
 callers that consume that signal move to the mapping without changing UI
-identity. This is only the first dual-id mapping step: the remaining app route
-builders, orchestrator data-dir/run-record migration coverage, compatibility
-migration coverage, and cutover safety remain open, so VSA10B stays
-`done: false`.
+identity.
 
 Partial implementation note 2026-07-06: `conversation-service` now has a
 dual-id compatibility regression test proving that a local app workspace keeps
@@ -942,10 +939,9 @@ Partial implementation note 2026-07-06: orchestrator now has a
 `workspace-id-mapping.test.ts`. Desktop orchestrator registration payloads now
 send both the app-local id and the mapped Veslo server id, and the orchestrator
 stores app-local/path-derived ids as legacy aliases so activation, dispose, and
-lookup by old ids can resolve to the same local workspace row. VSA10B remains
-open because broader app route-builder coverage, migration coverage for
-conflicting orchestrator run histories, and final cutover diagnostics are not
-complete.
+lookup by old ids can resolve to the same local workspace row. Conflicting
+orchestrator run histories are not merged; they are traced and left for manual
+inspection rather than silently rewriting active history.
 
 Partial implementation note 2026-07-06: desktop workspace-state tests now cover
 existing local rows with and without `vesloWorkspaceId` through the legacy
@@ -954,7 +950,8 @@ server-owned mapping and do not invent one when sync has not happened yet.
 Orchestrator runtime config dirs now have a narrow dual-id migration helper:
 when `opencode-config/<server-id>` is missing and a legacy alias config dir
 exists, the alias dir is copied before workspace config synchronization. This
-does not complete final cutover diagnostics, so VSA10B remains open.
+keeps the common app-id to server-id migration from splitting engine config
+state.
 
 Partial implementation note 2026-07-06: orchestrator run-store now has a
 safe `migrateWorkspaceId` operation. During local `/workspaces` registration,
@@ -970,6 +967,11 @@ does not route server-bound automation or materialization calls through the
 app-local id. Attachment staging now applies the same listed-mapping-first
 rule before path matching when choosing the server workspace for file-session
 uploads. Existing app-local ids remain the UI identity.
+
+Implementation note 2026-07-06: VSA10B is complete after the listed
+verification passed. Final server-owned ID authority cutover,
+`workspace_id_mismatch` cleanup, and any further downgrade/removal of legacy
+fallback behavior remain scoped to VSA10C.
 
 Goal:
 
