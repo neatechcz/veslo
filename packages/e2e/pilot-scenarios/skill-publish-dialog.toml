@@ -1,0 +1,34 @@
+[scenario]
+name = "skill-publish-dialog"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "skills page renders publish-capable inventory surface"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+window.localStorage.setItem("veslo.language", "en");
+const route = "/dashboard/skills";
+const oldUrl = window.location.href;
+window.location.hash = route;
+window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let text = "";
+const deadline = Date.now() + 45000;
+while (Date.now() < deadline) {
+  text = document.body.innerText.replace(/\s+/g, " ").trim();
+  if (document.querySelector('[data-testid="skills-page"]') || text.includes("Skills")) break;
+  await sleep(250);
+}
+if (!window.location.hash.includes(route)) throw new Error(`Skills route did not become active: ${window.location.hash}`);
+if (!text.includes("Skills")) throw new Error(`Skills page did not render. Body=${text.slice(0, 1000)}`);
+true;
+'''

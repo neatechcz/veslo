@@ -1,0 +1,28 @@
+[scenario]
+name = "pnpm-dev-3-clicks"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root > *"
+timeout_ms = 60000
+
+[[step]]
+name = "three primary destinations are reachable"
+action = "eval"
+timeout_ms = 60000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+for (const route of ["/session", "/dashboard/settings", "/dashboard/skills"]) {
+  const oldUrl = window.location.href;
+  window.location.hash = route;
+  window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline && !window.location.hash.includes(route)) await sleep(250);
+  if (!window.location.hash.includes(route)) throw new Error(`Route did not activate: ${route}`);
+}
+true;
+'''

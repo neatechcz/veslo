@@ -1,0 +1,31 @@
+[scenario]
+name = "veslo-server-startup"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "local Veslo server reports running info"
+action = "eval"
+timeout_ms = 90000
+script = '''
+const invoke = window.__TAURI_INTERNALS__?.invoke;
+if (typeof invoke !== "function") throw new Error("Tauri invoke bridge is unavailable.");
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let latest = null;
+const deadline = Date.now() + 90000;
+while (Date.now() < deadline) {
+  latest = await invoke("veslo_server_info").catch((error) => ({ error: error?.message || String(error) }));
+  if (latest?.running && latest?.baseUrl && latest?.clientToken) break;
+  await sleep(500);
+}
+if (!latest?.running || !latest?.baseUrl || !latest?.clientToken) {
+  throw new Error(`Veslo server did not become ready: ${JSON.stringify(latest)}`);
+}
+true;
+'''

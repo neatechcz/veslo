@@ -1,0 +1,27 @@
+[scenario]
+name = "private-chat-user-skills"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "private chat and user skills surfaces are reachable"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+window.localStorage.setItem("veslo.language", "en");
+const oldUrl = window.location.href;
+window.location.hash = "/dashboard/skills";
+window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const deadline = Date.now() + 45000;
+while (Date.now() < deadline && !document.querySelector('[data-testid="skills-page"]')) await sleep(250);
+if (!document.querySelector('[data-testid="skills-page"]')) throw new Error("Skills page did not render for private chat user skill coverage.");
+true;
+'''

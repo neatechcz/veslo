@@ -1,0 +1,49 @@
+[scenario]
+name = "settings-dashboard-link-tabs"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "settings dashboard link tabs route to dashboard pages"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+window.localStorage.setItem("veslo.language", "en");
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const navigate = (route) => {
+  const oldUrl = window.location.href;
+  window.location.hash = route;
+  window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+};
+navigate("/dashboard/settings");
+const deadline = Date.now() + 45000;
+let tabs = [];
+while (Date.now() < deadline) {
+  tabs = Array.from(document.querySelectorAll('button[data-settings-nav-tab]')).map((button) => button.getAttribute("data-settings-nav-tab"));
+  if (window.location.hash.includes("/dashboard/settings") && tabs.length > 0) break;
+  await sleep(250);
+}
+if (!window.location.hash.includes("/dashboard/settings")) throw new Error(`Settings route did not activate: ${window.location.hash}`);
+for (const expected of ["general", "archived", "soul", "skills", "mcp", "plugins"]) {
+  if (!tabs.includes(expected)) throw new Error(`Missing settings tab ${expected}: ${JSON.stringify(tabs)}`);
+}
+const clickTab = (tab) => {
+  const button = document.querySelector(`button[data-settings-nav-tab="${tab}"]`);
+  if (!(button instanceof HTMLButtonElement)) throw new Error(`Missing clickable dashboard tab ${tab}: ${JSON.stringify(tabs)}`);
+  button.click();
+};
+clickTab("skills");
+while (Date.now() < deadline && !window.location.hash.includes("/dashboard/skills")) await sleep(250);
+if (!window.location.hash.includes("/dashboard/skills")) throw new Error("Skills dashboard link did not route.");
+clickTab("mcp");
+while (Date.now() < deadline && !window.location.hash.includes("/dashboard/mcp")) await sleep(250);
+if (!window.location.hash.includes("/dashboard/mcp")) throw new Error("MCP dashboard link did not route.");
+true;
+'''

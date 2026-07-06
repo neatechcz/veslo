@@ -1,0 +1,26 @@
+[scenario]
+name = "sidebar-empty-private-chat"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "private chat entry surface renders without blank sidebar"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+const oldUrl = window.location.href;
+window.location.hash = "/session";
+window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const deadline = Date.now() + 45000;
+while (Date.now() < deadline && document.body.innerText.trim().length < 40) await sleep(250);
+if (document.body.innerText.trim().length < 40) throw new Error("Private chat sidebar shell rendered too little text.");
+true;
+'''

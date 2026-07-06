@@ -49,7 +49,7 @@ cd packages/e2e
 pnpm test:pilot -- --scenario <name-or-path>
 ```
 
-Legacy WebdriverIO specs are not a runtime gate. Convert the target behavior to `tauri-pilot` before relying on it for validation.
+WebdriverIO is not part of the Veslo E2E surface. Add or run a Tauri Pilot scenario before relying on desktop validation.
 For core platform skill materialization, run the focused pilot gate:
 
 ```bash

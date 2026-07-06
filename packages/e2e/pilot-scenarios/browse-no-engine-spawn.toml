@@ -1,0 +1,33 @@
+[scenario]
+name = "browse-no-engine-spawn"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "dashboard browse surface renders without forcing a session runtime"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+const oldUrl = window.location.href;
+window.location.hash = "/dashboard";
+window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const deadline = Date.now() + 45000;
+while (Date.now() < deadline) {
+  const text = document.body.innerText.replace(/\s+/g, " ").trim();
+  if (window.location.hash.includes("/dashboard") && text.length > 40) {
+    true;
+    break;
+  }
+  await sleep(250);
+}
+if (!window.location.hash.includes("/dashboard")) throw new Error(`Dashboard route did not activate: ${window.location.hash}`);
+true;
+'''

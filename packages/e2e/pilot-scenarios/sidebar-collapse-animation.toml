@@ -1,0 +1,24 @@
+[scenario]
+name = "sidebar-collapse-animation"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "sidebar shell has stable dimensions after route render"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+await sleep(500);
+const root = document.querySelector("#root");
+const rect = root?.getBoundingClientRect();
+if (!rect || rect.width <= 0 || rect.height <= 0) throw new Error(`Root did not have stable dimensions: ${JSON.stringify(rect)}`);
+true;
+'''

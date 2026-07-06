@@ -46,11 +46,9 @@ If a match looks like a user-launched production/bundled app or otherwise cannot
 
 In debug builds (`pnpm dev`), Veslo also runs an equivalent best-effort cleanup at startup — orphan sidecars whose process group differs from the booting Tauri process are SIGTERM'd before the new sidecars spawn. Release builds do not run this cleanup so a shipped Veslo never kills unrelated processes.
 
-Existing WebDriver reuse is not the default desktop test flow. Attach to an existing WebDriver server only when the user explicitly asks for a debug attach workflow.
-
 The `tauri-pilot` launcher waits for the Tauri process it started to exit during teardown and escalates to a force kill if the process ignores the graceful stop signal. This harness cleanup does not replace the preflight above; clear matching Veslo dev/test processes before each desktop runtime launch.
 
-Legacy WebdriverIO specs under `packages/e2e/specs` are historical only. Do not run them as the desktop validation gate. If a task needs behavior currently covered only by a legacy WDIO spec, first convert that scenario to `tauri-pilot`, then run the pilot scenario against the real Tauri runtime.
+WebdriverIO is no longer part of the Veslo desktop E2E surface. Desktop E2E coverage lives in `packages/e2e/pilot-scenarios` or focused `*.pilot.ts` scripts, and the default `packages/e2e` `test` script runs the Tauri Pilot `current-gate` suite.
 
 ## Fast Checks by Surface
 
@@ -134,6 +132,7 @@ Focused pilot scenarios can be run from `packages/e2e`:
 pnpm test:pilot:smoke
 pnpm test:pilot:navigation
 pnpm test:pilot:google-mcp
+pnpm test:pilot -- --suite current-gate
 pnpm test:pilot -- --scenario sidebar-session-retention
 pnpm test:pilot -- --scenario <name-or-path>
 ```
@@ -145,13 +144,11 @@ without completing Google OAuth.
 
 The E2E launcher uses an isolated app profile under `packages/e2e/.tmp-veslo-home` by default so local desktop state does not leak into tests. It also assigns an isolated local Veslo server port so a user-launched production app on `8787` does not block desktop tests; set `E2E_VESLO_SERVER_PORT` only when a focused test needs a stable port. Set `E2E_USE_EXISTING_PROFILE=1` only when a test explicitly needs the current user profile.
 
-The previous Windows sidecar runtime probe was WebDriver-based and is legacy. Convert it to `tauri-pilot` before using it for Windows validation.
-
-The previous visual snapshot flow was WebdriverIO-based and is legacy. Convert the visual check to `tauri-pilot` screenshot assertions before refreshing or relying on baselines.
+The previous Windows sidecar runtime probe and visual snapshot flow were removed with the WebdriverIO suite. Use focused Tauri Pilot scenarios for those validations.
 
 ### Tauri Pilot live desktop testing
 
-Tauri Pilot is available in Veslo E2E/debug automation builds. The repo carries the Rust plugin dependency in `packages/desktop/src-tauri/Cargo.toml`, registers it in `packages/desktop/src-tauri/src/lib.rs` under debug/E2E gates, and grants `pilot:default` only through the E2E Tauri config. Keep pilot permissions out of the default desktop capability. It is a live inspection and interaction surface for the real Tauri desktop app, not a release-runtime feature and not a substitute for the WebdriverIO E2E gate when a spec exists.
+Tauri Pilot is available in Veslo E2E/debug automation builds. The repo carries the Rust plugin dependency in `packages/desktop/src-tauri/Cargo.toml`, registers it in `packages/desktop/src-tauri/src/lib.rs` under debug/E2E gates, and grants `pilot:default` only through the E2E Tauri config. Keep pilot permissions out of the default desktop capability. It is the desktop E2E driver for the real Tauri app, not a release-runtime feature.
 
 Use Tauri Pilot when the behavior under test depends on the running desktop shell, the system WebView, sidecar startup, native dialogs, workspace activation, or real app state that a browser-only test cannot represent. It is especially useful for exploratory regression checks, timing probes, reproducing UI bugs with the user's current profile, and validating that the real desktop UI reaches the expected state after a fix.
 
@@ -212,7 +209,7 @@ scenario material.
 
 Use this only when a real feedback report and a real YouTrack issue are acceptable. This is not a CI gate.
 
-The previous live smoke used the desktop WebdriverIO harness to click the feedback UI, submit a unique report, confirm that the UI shows the returned YouTrack task number, and then poll YouTrack through REST until the projected issue appeared. It must be converted to `tauri-pilot` before it is used again as validation.
+The live smoke uses Tauri Pilot to open the real desktop feedback UI. Keep it opt-in because it can create a real feedback report and a real YouTrack issue.
 
 Requirements:
 
@@ -224,7 +221,7 @@ Requirements:
 
 When `E2E_DEN_AUTH_JSON` is provided, the live spec treats it as authoritative and does not replace loopback Den auth from the desktop snapshot. This allows a Coding Agent run to point the real desktop UI at a locally started Den instance whose projector uses the configured YouTrack REST API.
 
-The legacy `test:feedback-youtrack-live` script intentionally fails with a conversion message. Port the flow to `tauri-pilot` before running a live feedback-to-YouTrack validation.
+Run `pnpm --filter @neatech/veslo-e2e test:pilot:feedback-youtrack-live` for the Pilot version of this flow.
 
 ### Server changes in `packages/server/src`
 

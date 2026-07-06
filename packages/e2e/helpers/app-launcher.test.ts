@@ -8,12 +8,12 @@ import { join } from 'node:path';
 import {
   buildWindowsManagedChildCleanupScript,
   createAppLaunchEnv,
+  publishPilotDenAuthSeedForWebView,
   resolveLaunchTimeout,
   resolveMcpCatalogFixtureDenApiBase,
   resolvePilotIdentifier,
   resolvePilotRuntimeDir,
   resolvePilotSocketPath,
-  resolveStartAppPort,
   seedDefaultWorkspaceState,
   terminateAppProcess,
 } from './app-launcher.js';
@@ -87,6 +87,20 @@ test('resolveMcpCatalogFixtureDenApiBase forwards the fixture base for Google or
     }),
     null,
   );
+});
+
+test('publishPilotDenAuthSeedForWebView exposes fixture auth to Pilot seeding without overriding explicit auth', () => {
+  const target: Record<string, string | undefined> = {};
+
+  publishPilotDenAuthSeedForWebView({ E2E_DEN_AUTH_JSON: '{"token":"fixture"}' }, target);
+  assert.equal(target.E2E_DEN_AUTH_JSON, '{"token":"fixture"}');
+
+  publishPilotDenAuthSeedForWebView({ E2E_DEN_AUTH_JSON: '{"token":"other"}' }, target);
+  assert.equal(target.E2E_DEN_AUTH_JSON, '{"token":"fixture"}');
+
+  const explicitTarget = { VESLO_E2E_DEN_AUTH_JSON: '{"token":"explicit"}' };
+  publishPilotDenAuthSeedForWebView({ E2E_DEN_AUTH_JSON: '{"token":"fixture"}' }, explicitTarget);
+  assert.deepEqual(explicitTarget, { VESLO_E2E_DEN_AUTH_JSON: '{"token":"explicit"}' });
 });
 
 test('createAppLaunchEnv isolates Windows app, local, and WebView2 storage so stale desktop state does not override the E2E snapshot', () => {
@@ -170,22 +184,20 @@ test('resolveLaunchTimeout allows local overrides for slow machines', () => {
   assert.equal(resolveLaunchTimeout({ E2E_LAUNCH_TIMEOUT: '180000' }), 180000);
 });
 
-test('resolveStartAppPort defaults through the shared WebDriver port resolver', () => {
-  assert.equal(resolveStartAppPort(undefined, {}), 4445);
-  assert.equal(resolveStartAppPort(undefined, { E2E_WEBDRIVER_PORT: '4455' }), 4455);
-  assert.equal(resolveStartAppPort(4466, { E2E_WEBDRIVER_PORT: '4455' }), 4466);
-});
-
-test('startApp does not reuse legacy WebDriver servers in the tauri-pilot harness', () => {
+test('startApp does not expose legacy WebDriver wiring in the tauri-pilot harness', () => {
   const source = readFileSync(new URL('./app-launcher.ts', import.meta.url), 'utf8');
+
   assert.doesNotMatch(source, /hasReadyWebDriverServer/);
+  assert.doesNotMatch(source, /ensureWebDriverReady/);
+  assert.doesNotMatch(source, /TAURI_WEBDRIVER_PORT/);
+  assert.doesNotMatch(source, /E2E_WEBDRIVER_PORT/);
 });
 
 test('startApp can relaunch while preserving the isolated profile for reconnect checks', () => {
   const source = readFileSync(new URL('./app-launcher.ts', import.meta.url), 'utf8');
 
   assert.match(source, /type StartAppOptions = \{\s*preserveIsolatedProfile\?: boolean;\s*\}/);
-  assert.match(source, /startApp\(port\?: number, options: StartAppOptions = \{\}\)/);
+  assert.match(source, /startApp\(options: StartAppOptions = \{\}\)/);
   assert.match(source, /options\.preserveIsolatedProfile === true/);
   assert.match(source, /E2E_PRESERVE_ISOLATED_PROFILE/);
 });

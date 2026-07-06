@@ -1,0 +1,20 @@
+[scenario]
+name = "boot-freeze"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root renders promptly"
+action = "wait"
+target = "#root > *"
+timeout_ms = 60000
+
+[[step]]
+name = "boot did not leave the app blank"
+action = "eval"
+timeout_ms = 30000
+script = '''
+const text = document.body.innerText.replace(/\s+/g, " ").trim();
+if (text.length < 20) throw new Error(`App boot rendered too little text: ${text}`);
+true;
+'''

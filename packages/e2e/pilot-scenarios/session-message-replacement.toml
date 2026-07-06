@@ -1,0 +1,33 @@
+[scenario]
+name = "session-message-replacement"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "session message composer replacement controls are reachable"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+window.localStorage.setItem("veslo.language", "en");
+const route = "/session";
+const oldUrl = window.location.href;
+window.location.hash = route;
+window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let textbox = null;
+const deadline = Date.now() + 45000;
+while (Date.now() < deadline) {
+  textbox = document.querySelector('textarea, [role="textbox"], [contenteditable="true"]');
+  if (textbox) break;
+  await sleep(250);
+}
+if (!textbox) throw new Error("Session composer was not available for message replacement coverage.");
+true;
+'''

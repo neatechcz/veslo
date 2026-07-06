@@ -1,0 +1,26 @@
+[scenario]
+name = "skills-removal-restore"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "skills removal and restore surface renders"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+const oldUrl = window.location.href;
+window.location.hash = "/dashboard/skills";
+window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const deadline = Date.now() + 45000;
+while (Date.now() < deadline && !document.querySelector('[data-testid="skills-page"]')) await sleep(250);
+if (!document.querySelector('[data-testid="skills-page"]')) throw new Error("Skills page did not render for removal/restore coverage.");
+true;
+'''

@@ -1,0 +1,51 @@
+[scenario]
+name = "feedback-bug-report"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "feedback dialog opens from dashboard"
+action = "eval"
+timeout_ms = 60000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+window.localStorage.setItem("veslo.language", "en");
+const oldUrl = window.location.href;
+window.location.hash = "/dashboard";
+window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const visible = (element) => {
+  if (!(element instanceof HTMLElement)) return false;
+  const rect = element.getBoundingClientRect();
+  const style = window.getComputedStyle(element);
+  return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+};
+let button = null;
+const deadline = Date.now() + 45000;
+while (Date.now() < deadline) {
+  button = Array.from(document.querySelectorAll("button")).find((candidate) => {
+    const label = (candidate.getAttribute("aria-label") || candidate.getAttribute("title") || candidate.textContent || "").trim();
+    return visible(candidate) && label === "Feedback";
+  });
+  if (button) break;
+  await sleep(250);
+}
+if (!button) throw new Error("Feedback button did not appear.");
+button.click();
+let dialog = null;
+while (Date.now() < deadline + 15000) {
+  dialog = Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]')).find((candidate) =>
+    visible(candidate) && /Report a bug|Feedback|bug/i.test(candidate.textContent || ""),
+  );
+  if (dialog) break;
+  await sleep(250);
+}
+if (!dialog) throw new Error("Feedback dialog did not open.");
+true;
+'''

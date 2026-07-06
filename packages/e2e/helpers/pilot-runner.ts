@@ -16,6 +16,35 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DEFAULT_READY_POLL_INTERVAL = 250;
 const DEFAULT_PILOT_SCENARIO_NAMES = ['smoke', 'navigation'] as const;
+const PILOT_SCENARIO_SUITES = {
+  'current-gate': [
+    'smoke',
+    'navigation',
+    'admin-managed-ai-access',
+    'attachment-staging',
+    'composer',
+    'extensions-mcp',
+    'feedback-bug-report',
+    'markdown-drop-guard',
+    'skill-publish-dialog',
+    'skills-global-inventory',
+    'session-capabilities',
+    'session-message-replacement',
+    'skill-registry-materialization',
+    'shared-workspace-skill-lock',
+    'session-artifacts',
+    'session-prefetch',
+    'session',
+    'settings-dashboard-link-tabs',
+    'settings-gear-navigation',
+    'sidebar-primary-actions-overflow',
+    'sidebar-primary-actions-pointer-navigation',
+    'typography',
+    'veslo-server-startup',
+    'visual-regression',
+    'language-persistence',
+  ],
+} as const;
 
 type BuildPilotCommandOptions = {
   binary: string;
@@ -35,6 +64,7 @@ type RunPilotCommandOptions = {
 
 type ResolvePilotScenarioSelectionOptions = {
   scenario?: string[];
+  suite?: string;
 };
 
 type RunPilotScenariosOptions = ResolvePilotScenarioSelectionOptions & {
@@ -62,6 +92,14 @@ export function buildPilotCommand(options: BuildPilotCommandOptions): { command:
 
 export function defaultPilotScenarios(e2eRoot = resolve(__dirname, '..')): string[] {
   return DEFAULT_PILOT_SCENARIO_NAMES.map((name) => join(e2eRoot, 'pilot-scenarios', `${name}.toml`));
+}
+
+export function pilotScenarioSuiteNames(suiteName: string): string[] {
+  const suite = PILOT_SCENARIO_SUITES[suiteName as keyof typeof PILOT_SCENARIO_SUITES];
+  if (!suite) {
+    throw new Error(`Unknown tauri-pilot scenario suite: ${suiteName}`);
+  }
+  return [...suite];
 }
 
 export function pilotReadinessProbeCommands(): string[][] {
@@ -100,6 +138,13 @@ export function resolvePilotScenarioSelection(
   e2eRoot = resolve(__dirname, '..'),
 ): string[] {
   const requested = options.scenario?.map((value) => value.trim()).filter(Boolean) ?? [];
+  if (requested.length > 0 && options.suite?.trim()) {
+    throw new Error('Use either --scenario or --suite, not both.');
+  }
+  if (options.suite?.trim()) {
+    return pilotScenarioSuiteNames(options.suite.trim())
+      .map((name) => join(e2eRoot, 'pilot-scenarios', `${name}.toml`));
+  }
   if (requested.length === 0) return defaultPilotScenarios(e2eRoot);
 
   return requested.map((value) => {
@@ -467,7 +512,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
         }
         console.log('[e2e] Restarting app for VSLO-270 relaunch reconnect check...');
         await stopApp();
-        await startApp(undefined, { preserveIsolatedProfile: true });
+        await startApp({ preserveIsolatedProfile: true });
         await ensurePilotReady({ binary, socket, cwd: e2eRoot, timeoutMs });
         console.log(`[e2e] Running tauri-pilot scenario: ${reconnectScenario}`);
         await runPilotCommand({
@@ -487,6 +532,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
 
 export function parsePilotRunnerArgs(argv: string[]): ResolvePilotScenarioSelectionOptions {
   const scenario: string[] = [];
+  let suite: string | undefined;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--scenario' || arg === '-s') {
@@ -496,9 +542,16 @@ export function parsePilotRunnerArgs(argv: string[]): ResolvePilotScenarioSelect
       index += 1;
     } else if (arg.startsWith('--scenario=')) {
       scenario.push(arg.slice('--scenario='.length));
+    } else if (arg === '--suite') {
+      const value = argv[index + 1];
+      if (!value) throw new Error(`${arg} requires a suite name`);
+      suite = value;
+      index += 1;
+    } else if (arg.startsWith('--suite=')) {
+      suite = arg.slice('--suite='.length);
     }
   }
-  return { scenario };
+  return { scenario, suite };
 }
 
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : '';

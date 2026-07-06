@@ -10,6 +10,7 @@ import {
   buildPilotCommand,
   buildPilotDenAuthSeedScript,
   defaultPilotScenarios,
+  pilotScenarioSuiteNames,
   pilotReadinessProbeCommands,
   resolvePilotBinary,
   resolvePilotDenAuthJson,
@@ -56,6 +57,46 @@ test('defaultPilotScenarios contains the two migrated desktop checks', () => {
       '/repo/packages/e2e/pilot-scenarios/smoke.toml',
       '/repo/packages/e2e/pilot-scenarios/navigation.toml',
     ],
+  );
+});
+
+test('current-gate pilot suite enumerates the WDIO replacement scenarios explicitly', () => {
+  assert.deepEqual(pilotScenarioSuiteNames('current-gate'), [
+    'smoke',
+    'navigation',
+    'admin-managed-ai-access',
+    'attachment-staging',
+    'composer',
+    'extensions-mcp',
+    'feedback-bug-report',
+    'markdown-drop-guard',
+    'skill-publish-dialog',
+    'skills-global-inventory',
+    'session-capabilities',
+    'session-message-replacement',
+    'skill-registry-materialization',
+    'shared-workspace-skill-lock',
+    'session-artifacts',
+    'session-prefetch',
+    'session',
+    'settings-dashboard-link-tabs',
+    'settings-gear-navigation',
+    'sidebar-primary-actions-overflow',
+    'sidebar-primary-actions-pointer-navigation',
+    'typography',
+    'veslo-server-startup',
+    'visual-regression',
+    'language-persistence',
+  ]);
+});
+
+test('resolvePilotScenarioSelection resolves named suites to pilot scenario files', () => {
+  const e2eRoot = '/repo/packages/e2e';
+
+  assert.deepEqual(
+    resolvePilotScenarioSelection({ suite: 'current-gate' }, e2eRoot).map((scenario) => scenario.replaceAll('\\', '/')),
+    pilotScenarioSuiteNames('current-gate')
+      .map((name) => join(e2eRoot, 'pilot-scenarios', `${name}.toml`).replaceAll('\\', '/')),
   );
 });
 

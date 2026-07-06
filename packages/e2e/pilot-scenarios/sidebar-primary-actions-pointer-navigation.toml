@@ -1,0 +1,30 @@
+[scenario]
+name = "sidebar-primary-actions-pointer-navigation"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "settings navigation target remains pointer-reachable"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+window.localStorage.setItem("veslo.language", "en");
+const route = "/dashboard/settings";
+const oldUrl = window.location.href;
+window.location.hash = route;
+window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const deadline = Date.now() + 45000;
+while (Date.now() < deadline && !window.location.hash.includes(route)) await sleep(250);
+if (!window.location.hash.includes(route)) throw new Error(`Settings route did not activate: ${window.location.hash}`);
+const text = document.body.innerText.replace(/\s+/g, " ").trim();
+if (!text) throw new Error("Settings destination rendered no visible text.");
+true;
+'''
