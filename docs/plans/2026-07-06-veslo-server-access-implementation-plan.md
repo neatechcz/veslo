@@ -20,12 +20,15 @@ vsa10a_workspace_id_golden_vectors_done: true
 vsa10b_dual_id_mapping_migration_done: true
 vsa10c_workspace_id_cutover_cleanup_done: true
 vsa11_engine_config_hot_swap_done: false
+vsa11_engine_config_hot_swap_deferred: true
 vsa11a_respawn_and_blackbox_diagnostics_done: true
 vsa12_port_conflict_policy_done: true
 vsa13_e2e_docs_and_release_gate_done: false
 vsa13a_unit_contract_docs_gate_done: true
 vsa13b_installed_runtime_smoke_done: false
+vsa13b_installed_runtime_smoke_blocked: true
 vsa13c_full_release_gate_done: false
+vsa13c_full_release_gate_blocked: true
 ---
 
 # Veslo Server Access Architecture Implementation Plan
@@ -1234,6 +1237,17 @@ without rotating tokens or dropping streams. VSA11 remains `done: false`
 because dynamic OpenCode/orchestrator URL and lifecycle-token hot-swap still
 require a real runtime-config owner/API.
 
+Deferral note 2026-07-06: VSA11A diagnostics are now the guardrail for this
+full hot-swap project. Targeted installed-runtime smoke for server startup,
+matching-instance relaunch adoption, and port-contention fallback did not show
+a remaining server-access respawn blocker that justifies adding
+`POST /runtime/engine-config` in this slice. Keep
+`vsa11_engine_config_hot_swap_done: false` because no hot-swap API shipped, but
+`vsa11_engine_config_hot_swap_deferred: true` records the current rollout
+decision. Reopen VSA11 only if launch diagnostics show a user-visible
+`start-respawn` caused by `opencode_base_url`, `orchestrator_daemon_url`, or
+`orchestrator_lifecycle_token`.
+
 Goal:
 
 Decouple server lifetime from workspace list, active workspace, and dynamic
@@ -1430,6 +1444,28 @@ Mark done when:
 
 done: false
 
+Blocked verification note 2026-07-06:
+
+- `pnpm --filter @neatech/veslo-e2e test` did not pass the current gate:
+  `smoke.toml` passed, but `navigation.toml` failed at `settings route active`
+  because the app stayed at `http://tauri.localhost/#/onboarding` instead of
+  `/dashboard/settings`.
+- `pnpm --filter @neatech/veslo-e2e test:pilot -- --scenario veslo-server-startup`
+  passed and proved `veslo_server_info` reports `running`, `baseUrl`, and
+  `clientToken` in an isolated app profile.
+- `pnpm --filter @neatech/veslo-e2e test:pilot -- --scenario vslo-270-relaunch-reconnect`
+  passed and proved local host reconnect after relaunch.
+- `pnpm --filter @neatech/veslo-e2e test:pilot -- --scenario vslo-235-local-host-port-contention`
+  passed and proved explicit port contention reports the structured
+  `port_unavailable` blocked state.
+- `pnpm --filter @neatech/veslo-e2e test:pilot -- --scenario runtime-cold-start-session-handoff`
+  failed with `Boot warmup did not complete before send`; the workflow trace
+  reached repeated `ensure-engine:skills-ready` entries with
+  `skillsReady: false`, after descriptor-provided local server URL and managed
+  gateway routing were already visible. This is not accepted as a completed
+  VSA13B pass until it is fixed or rerun on a worktree where the skill/plugin
+  readiness gate is known healthy.
+
 Goal:
 
 Validate the implemented local-server contract in an installed or pilot desktop
@@ -1468,6 +1504,12 @@ Mark done when:
 ## VSA13C: Full Release Gate
 
 done: false
+
+Blocked verification note 2026-07-06: VSA13C remains blocked by the VSA13B
+runtime smoke failures above. The server-side full test suite passed with
+`pnpm --filter veslo-server test`, but the release gate cannot close while the
+current E2E gate fails navigation and first-message runtime smoke fails at
+skill readiness.
 
 Goal:
 
@@ -1515,6 +1557,12 @@ Mark done when:
 ## VSA13: E2E, Docs, And Release Gate
 
 done: false
+
+Status note 2026-07-06: VSA13A is complete, VSA11 full hot-swap is explicitly
+deferred from VSA11A evidence, and targeted descriptor/relaunch/port-contention
+pilot smoke passed. The roadmap is not complete because VSA13B and VSA13C are
+blocked by installed-runtime smoke failures that must be fixed or revalidated
+before top-level `status: completed` and `done: true`.
 
 Goal:
 
