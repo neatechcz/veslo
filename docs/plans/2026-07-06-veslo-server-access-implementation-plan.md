@@ -5,7 +5,7 @@ status: draft
 done: false
 issue: unlinked
 source_audit: docs/plans/2026-07-04-veslo-server-access-root-causes-and-architecture.md
-vsa00_baseline_and_tracking_done: false
+vsa00_baseline_and_tracking_done: true
 vsa01_persist_host_token_and_descriptor_done: true
 vsa02_instance_identity_adoption_done: true
 vsa03_cross_platform_orphan_cleanup_done: true
@@ -23,7 +23,7 @@ vsa11_engine_config_hot_swap_done: false
 vsa11a_respawn_and_blackbox_diagnostics_done: true
 vsa12_port_conflict_policy_done: true
 vsa13_e2e_docs_and_release_gate_done: false
-vsa13a_unit_contract_docs_gate_done: false
+vsa13a_unit_contract_docs_gate_done: true
 vsa13b_installed_runtime_smoke_done: false
 vsa13c_full_release_gate_done: false
 ---
@@ -209,14 +209,27 @@ changes from VSA02.
 
 ## VSA00: Baseline And Tracking
 
-done: false
+done: true
 
 Coordination note 2026-07-06: VSA00 was not completed before the first
-implementation slice, so it intentionally remains `done: false` instead of
-being retroactively claimed. Current branch when this note was added:
+implementation slice, so it was intentionally left `done: false` until a
+post-hoc ledger could be recorded. Current branch when this note was added:
 `local/sandbox-merge`, HEAD `5ef026f1`; this plan is tracked in git. Later
 agents should treat this as baseline debt, not as a blocker for the already
 verified VSA01-VSA05/VSA09 slice.
+
+Completion ledger 2026-07-06: VSA00 is now closed as a post-hoc ledger, not as
+pre-implementation evidence. Current branch is `local/sandbox-merge`, HEAD
+`50110d03`, and this plan is tracked in git. Dirty/untracked worktree entries
+seen while closing this ledger are outside the server-access slice:
+`opencode.jsonc`, `packages/server/src/platform-managed-plugins.ts`, plugin
+policy/materializer/route tests, `docs/dev/2026-07-06-app-server-flow-delay-blackbox-audit.md`,
+and `docs/plans/2026-07-06-opencode-sdk-plugins-mcp-implementation-plan.md`.
+Verified unit/contract coverage includes desktop server lifecycle/spawn,
+desktop server/workspace commands, server workspace/health/conversation routes,
+app connection/auth/runtime-readiness/SSE contracts, and orchestrator workspace
+ID golden/mapping tests. Installed runtime/pilot smoke was not run in this
+ledger pass; it remains explicitly tracked by VSA13B.
 
 Goal:
 
@@ -1359,7 +1372,15 @@ Mark done when:
 
 ## VSA13A: Unit, Contract, And Docs Gate
 
-done: false
+done: true
+
+Implementation note 2026-07-06: focused unit and source-contract gates passed
+for the implemented server-access architecture. The current source of truth is
+documented in this plan's implementation notes for descriptor ownership, token
+persistence/redaction, instance-ID adoption, workspace ID ownership/migration,
+remote settings credentials, VSA11A diagnostics, and the explicit VSA11
+hot-swap deferral. Installed-runtime validation remains outside this gate and
+is still tracked by VSA13B.
 
 Goal:
 
