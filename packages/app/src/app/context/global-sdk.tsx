@@ -11,6 +11,7 @@ import {
 } from "solid-js";
 
 import { extractSessionId } from "../utils";
+import { normalizeEvent } from "../utils/messages";
 import { reportError } from "../lib/error-reporter";
 import { engineSseSubscribe, isEngineSseAvailable } from "../lib/engine-sse";
 import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
@@ -28,6 +29,17 @@ type GlobalSDKContextValue = {
 };
 
 const GlobalSDKContext = createContext<GlobalSDKContextValue | undefined>(undefined);
+
+export function normalizeGlobalSdkStreamEvent(raw: unknown): { directory: string; payload: Event } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as { directory?: unknown; payload?: unknown };
+  const payload = normalizeEvent(record.payload ?? raw);
+  if (!payload?.type) return null;
+  return {
+    directory: typeof record.directory === "string" ? record.directory : "global",
+    payload: payload as Event,
+  };
+}
 
 export function GlobalSDKProvider(props: ParentProps) {
   const server = useServer();
@@ -145,11 +157,10 @@ export function GlobalSDKProvider(props: ParentProps) {
     const consumeEvents = async (stream: AsyncIterable<unknown>) => {
       let yielded = Date.now();
       for await (const event of stream) {
-        const record = event as Event & { directory?: string; payload?: Event };
-        const payload = record.payload ?? record;
-        if (!payload?.type) continue;
+        const normalized = normalizeGlobalSdkStreamEvent(event);
+        if (!normalized) continue;
 
-        const directory = typeof record.directory === "string" ? record.directory : "global";
+        const { directory, payload } = normalized;
         const key = keyForEvent(directory, payload);
         if (key) {
           const index = coalesced.get(key);

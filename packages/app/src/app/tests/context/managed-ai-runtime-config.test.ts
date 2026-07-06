@@ -169,15 +169,30 @@ test("runtime config sync writes managed provider config through project file pa
 
 test("runtime config sync writes managed provider config through Veslo server config path", async () => {
   const client = createVesloClient();
+  const registrations: Array<{ workspaceId: string; workspaceRoot?: string | null }> = [];
   const sync = createManagedAiRuntimeConfigSync(
     createOptions({
       vesloServerClient: () => client,
       vesloServerWorkspaceId: () => "ws-active",
+      activeWorkspaceDisplay: () => ({
+        id: "app-active",
+        workspaceType: "local",
+        path: "/repo",
+        directory: "/repo",
+        vesloWorkspaceId: "ws-active",
+      }),
+      activeWorkspaceId: () => "app-active",
+      resolveConversationServerWorkspaceId: () => "ws-active",
+      ensureConversationReadWorkspaceRegistered: async (_client, workspaceId, workspaceRoot) => {
+        registrations.push({ workspaceId, workspaceRoot });
+        return "ws-active";
+      },
     }),
   );
 
   await sync.syncActiveWorkspaceManagedAiConfig();
 
+  assert.deepEqual(registrations, []);
   assert.deepEqual(client.getConfigCalls, ["ws-active"]);
   assert.equal(client.patched.length, 1);
   assert.equal(client.patched[0]?.workspaceId, "ws-active");
@@ -186,6 +201,65 @@ test("runtime config sync writes managed provider config through Veslo server co
       ?.options as Record<string, unknown>)?.apiKey,
     VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE,
   );
+});
+
+test("runtime config sync registers local workspace before using fallback app id", async () => {
+  const client = createVesloClient();
+  const registrations: Array<{ workspaceId: string; workspaceRoot?: string | null }> = [];
+  const sync = createManagedAiRuntimeConfigSync(
+    createOptions({
+      vesloServerClient: () => client,
+      activeWorkspaceDisplay: () => ({
+        id: "app-local",
+        workspaceType: "local",
+        path: "/repo",
+        directory: "/repo",
+      }),
+      activeWorkspaceId: () => "app-local",
+      resolveConversationServerWorkspaceId: () => "app-local",
+      ensureConversationReadWorkspaceRegistered: async (_client, workspaceId, workspaceRoot) => {
+        registrations.push({ workspaceId, workspaceRoot });
+        return "server-local";
+      },
+    }),
+  );
+
+  await sync.syncActiveWorkspaceManagedAiConfig();
+
+  assert.deepEqual(registrations, [{ workspaceId: "app-local", workspaceRoot: "/repo" }]);
+  assert.deepEqual(client.getConfigCalls, ["server-local"]);
+  assert.equal(client.patched[0]?.workspaceId, "server-local");
+});
+
+test("runtime config check registers local workspace before reading server config", async () => {
+  const client = createVesloClient();
+  const registrations: Array<{ workspaceId: string; workspaceRoot?: string | null }> = [];
+  const sync = createManagedAiRuntimeConfigSync(
+    createOptions({
+      vesloServerClient: () => client,
+      activeWorkspaceDisplay: () => ({
+        id: "app-local",
+        workspaceType: "local",
+        path: "/repo",
+        directory: "/repo",
+      }),
+      activeWorkspaceId: () => "app-local",
+      resolveConversationServerWorkspaceId: () => "app-local",
+      ensureConversationReadWorkspaceRegistered: async (_client, workspaceId, workspaceRoot) => {
+        registrations.push({ workspaceId, workspaceRoot });
+        return "server-local";
+      },
+    }),
+  );
+
+  await sync.hasUsableManagedAiRuntimeConfigForSend({
+    workspaceId: "app-local",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+  });
+
+  assert.deepEqual(registrations, [{ workspaceId: "app-local", workspaceRoot: "/repo" }]);
+  assert.deepEqual(client.getConfigCalls, ["server-local"]);
 });
 
 test("inactive workspace heal marks unauthorized workspaces for the current token", async () => {

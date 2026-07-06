@@ -5,6 +5,34 @@ export function normalizeServerUrl(input: string) {
   return withProtocol.replace(/\/+$/, "");
 }
 
+export const SERVER_LIST_STORAGE_KEY = "veslo.server.list";
+export const SERVER_ACTIVE_STORAGE_KEY = "veslo.server.active";
+
+export function resolveServerProviderInitialState(input: {
+  defaultUrl: string;
+  storedList: string[];
+  storedActive: string;
+  isTauriRuntime: boolean;
+  forceProxy: boolean;
+}): { list: string[]; active: string } {
+  const fallback = normalizeServerUrl(input.defaultUrl) ?? "";
+  if ((input.forceProxy || input.isTauriRuntime) && fallback) {
+    return { list: [fallback], active: fallback };
+  }
+
+  const storedList = input.storedList
+    .map((item) => normalizeServerUrl(item) ?? "")
+    .filter(Boolean);
+  const storedActive = normalizeServerUrl(input.storedActive) ?? "";
+  const initialList = storedList.length ? storedList : fallback ? [fallback] : [];
+  const initialActive = storedActive || initialList[0] || fallback || "";
+  return { list: initialList, active: initialActive };
+}
+
+export function shouldPersistServerProviderStorage(isTauriRuntime: boolean) {
+  return !isTauriRuntime;
+}
+
 export function serverDisplayName(url: string) {
   if (!url) return "";
   return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");

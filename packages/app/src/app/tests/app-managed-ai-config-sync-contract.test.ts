@@ -47,8 +47,13 @@ test("managed AI runtime config sync executes controller decisions", () => {
   );
   assert.match(
     syncSource,
-    /const workspaceId = workspace\.id\?\.trim\(\) \|\| deps\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const vesloWorkspaceId = deps\.resolveConversationServerWorkspaceId\(workspaceId\);/,
-    "sync should derive the Veslo workspace id from the current app workspace, not stale server active status",
+    /const workspaceId = workspace\.id\?\.trim\(\) \|\| deps\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*let vesloWorkspaceId = deps\.resolveConversationServerWorkspaceId\(workspaceId\);/,
+    "sync should derive the initial Veslo workspace id from the current app workspace, not stale server active status",
+  );
+  assert.match(
+    syncSource,
+    /vesloWorkspaceId = await resolveManagedAiServerWorkspaceId\(\{[\s\S]*workspaceId,[\s\S]*register: deps\.ensureConversationReadWorkspaceRegistered,[\s\S]*\}\);/,
+    "local fallback app ids should be replaced by acknowledged server workspace registration before config writes",
   );
   assert.doesNotMatch(
     syncSource,

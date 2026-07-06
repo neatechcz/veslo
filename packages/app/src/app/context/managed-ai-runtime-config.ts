@@ -43,6 +43,7 @@ import {
 
 export type ManagedAiRuntimeWorkspace = {
   id?: string | null;
+  vesloWorkspaceId?: string | null;
   workspaceType?: "local" | "remote" | string | null;
   path?: string | null;
   directory?: string | null;
@@ -215,6 +216,23 @@ function workspaceKind(workspace: ManagedAiRuntimeWorkspace): "local" | "remote"
   return workspace.workspaceType === "local" || workspace.workspaceType === "remote"
     ? workspace.workspaceType
     : null;
+}
+
+async function resolveManagedAiServerWorkspaceId(input: {
+  client: ManagedAiRuntimeConfigVesloClient;
+  workspace: ManagedAiRuntimeWorkspace;
+  workspaceId: string;
+  workspaceRoot?: string | null;
+  resolvedWorkspaceId?: string | null;
+  register: ManagedAiRuntimeConfigSyncOptions["ensureConversationReadWorkspaceRegistered"];
+}): Promise<string> {
+  const resolved = input.resolvedWorkspaceId?.trim() ?? "";
+  const workspaceId = input.workspaceId.trim();
+  if (!workspaceId || workspaceKind(input.workspace) !== "local") return resolved;
+  if (input.workspace.vesloWorkspaceId?.trim()) return resolved;
+
+  const registered = await input.register(input.client, workspaceId, input.workspaceRoot);
+  return registered?.trim() || resolved;
 }
 
 export function createManagedAiRuntimeConfigSync(
@@ -437,13 +455,14 @@ export function createManagedAiRuntimeConfigSync(
 
     try {
       if (canUseVesloServer && vesloClient) {
-        if (!vesloWorkspaceId && targetWorkspaceId) {
-          vesloWorkspaceId = await deps.ensureConversationReadWorkspaceRegistered(
-            vesloClient,
-            targetWorkspaceId,
-            targetWorkspaceRoot,
-          );
-        }
+        vesloWorkspaceId = await resolveManagedAiServerWorkspaceId({
+          client: vesloClient,
+          workspace,
+          workspaceId: targetWorkspaceId || deps.activeWorkspaceId().trim(),
+          workspaceRoot: targetWorkspaceRoot,
+          resolvedWorkspaceId: vesloWorkspaceId,
+          register: deps.ensureConversationReadWorkspaceRegistered,
+        });
         if (!vesloWorkspaceId) {
           deps.recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:result", {
             ...routing.tracePayload,
@@ -614,14 +633,13 @@ export function createManagedAiRuntimeConfigSync(
     const managedAccessError = managedProfile ? null : deps.managedAiAccessError();
     const vesloClient = deps.vesloServerClient();
     const workspaceId = workspace.id?.trim() || deps.activeWorkspaceId().trim();
-    const vesloWorkspaceId = deps.resolveConversationServerWorkspaceId(workspaceId);
+    let vesloWorkspaceId = deps.resolveConversationServerWorkspaceId(workspaceId);
     const vesloCapabilities = deps.resolvedVesloCapabilities();
     const routing = buildProviderRoutingContext(workspace, workspaceId, root);
     const gatewayAccessToken = deps.managedAiGatewayAccessToken() || deps.denGatewayAccessToken();
-    const canUseVesloServer =
+    const canUseVesloServerBase =
       deps.vesloServerStatus() === "connected" &&
       vesloClient &&
-      vesloWorkspaceId &&
       vesloCapabilities?.config?.write;
     const providerRoutingReady = Boolean(
       routing.providerRoutingTarget?.serverClientToken && gatewayAccessToken,
@@ -629,7 +647,7 @@ export function createManagedAiRuntimeConfigSync(
     const providerRoutingReloadKey = routing.providerRoutingTarget
       ? `${routing.providerRoutingTarget.serverClientToken}@${routing.providerRoutingTarget.engineBaseUrl}`
       : "";
-    const configSyncTracePayload = {
+    let configSyncTracePayload = {
       workspaceId: workspace.id || null,
       workspaceType: workspace.workspaceType,
       workspaceRoot: root || null,
@@ -651,10 +669,9 @@ export function createManagedAiRuntimeConfigSync(
       hasGatewayClient: Boolean(routing.gatewayClient),
       hasGatewayToken: Boolean(routing.gatewayClient?.token),
       hasGatewayAccessToken: Boolean(gatewayAccessToken),
-      canUseVesloServer: Boolean(canUseVesloServer),
+      canUseVesloServer: Boolean(canUseVesloServerBase && vesloWorkspaceId),
       vesloConfigWriteCapable: Boolean(vesloCapabilities?.config?.write),
     };
-    deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:preflight", configSyncTracePayload);
     const syncGeneration = ++managedAiConfigSyncGeneration;
     const isCurrentManagedAiConfigSync = () =>
       !(options?.isCancelled?.() ?? false) && syncGeneration === managedAiConfigSyncGeneration;
@@ -662,6 +679,23 @@ export function createManagedAiRuntimeConfigSync(
       managedProfile && providerRoutingReady ? deps.beginManagedAiBootstrap?.() ?? null : null;
 
     try {
+      if (canUseVesloServerBase && vesloClient) {
+        vesloWorkspaceId = await resolveManagedAiServerWorkspaceId({
+          client: vesloClient,
+          workspace,
+          workspaceId,
+          workspaceRoot: root,
+          resolvedWorkspaceId: vesloWorkspaceId,
+          register: deps.ensureConversationReadWorkspaceRegistered,
+        });
+        configSyncTracePayload = {
+          ...configSyncTracePayload,
+          vesloWorkspaceId: vesloWorkspaceId || null,
+          canUseVesloServer: Boolean(vesloWorkspaceId),
+        };
+      }
+      deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:preflight", configSyncTracePayload);
+
       const providerReadinessDecision = resolveManagedAiConfigWriteDecision({
         managedProfilePresent: Boolean(managedProfile),
         providerRoutingReady,
@@ -680,7 +714,7 @@ export function createManagedAiRuntimeConfigSync(
         return;
       }
 
-      if (canUseVesloServer && vesloClient && vesloWorkspaceId) {
+      if (canUseVesloServerBase && vesloClient && vesloWorkspaceId) {
         await syncVesloServerConfig({
           vesloClient,
           vesloWorkspaceId,

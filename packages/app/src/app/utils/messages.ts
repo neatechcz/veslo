@@ -36,13 +36,7 @@ export function normalizeEvent(raw: unknown): OpencodeEvent | null {
   }
 
   if (record.payload && typeof record.payload === "object") {
-    const payload = record.payload as Record<string, unknown>;
-    if (typeof payload.type === "string") {
-      return {
-        type: payload.type,
-        properties: payload.properties,
-      };
-    }
+    return normalizeEvent(record.payload);
   }
 
   return null;

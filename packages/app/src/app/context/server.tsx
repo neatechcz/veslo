@@ -9,7 +9,15 @@ import {
   readVesloServerSettingsToken,
   resolveOpencodeProxyAuthHeaders,
 } from "../lib/veslo-server";
-import { isWorkspaceOpencodeProxyUrl, normalizeServerUrl, serverDisplayName } from "./server-url";
+import {
+  SERVER_ACTIVE_STORAGE_KEY,
+  SERVER_LIST_STORAGE_KEY,
+  isWorkspaceOpencodeProxyUrl,
+  normalizeServerUrl,
+  resolveServerProviderInitialState,
+  serverDisplayName,
+  shouldPersistServerProviderStorage,
+} from "./server-url";
 
 export { isWorkspaceOpencodeProxyUrl, normalizeServerUrl, serverDisplayName } from "./server-url";
 
@@ -33,7 +41,7 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
 
   const readStoredList = () => {
     try {
-      const raw = window.localStorage.getItem("veslo.server.list");
+      const raw = window.localStorage.getItem(SERVER_LIST_STORAGE_KEY);
       const parsed = raw ? (JSON.parse(raw) as unknown) : [];
       return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string") : [];
     } catch {
@@ -43,7 +51,7 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
 
   const readStoredActive = () => {
     try {
-      const stored = window.localStorage.getItem("veslo.server.active");
+      const stored = window.localStorage.getItem(SERVER_ACTIVE_STORAGE_KEY);
       return typeof stored === "string" ? stored : "";
     } catch {
       return "";
@@ -65,20 +73,30 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
         (typeof import.meta.env?.VITE_VESLO_URL === "string" &&
           import.meta.env.VITE_VESLO_URL.trim().length > 0));
     if (forceProxy && fallback) {
-      setList([fallback]);
-      setActiveRaw(fallback);
+      const initial = resolveServerProviderInitialState({
+        defaultUrl: fallback,
+        storedList: [],
+        storedActive: "",
+        isTauriRuntime: false,
+        forceProxy: true,
+      });
+      setList(initial.list);
+      setActiveRaw(initial.active);
       setReady(true);
       return;
     }
 
-    const storedList = readStoredList();
-    const storedActive = normalizeServerUrl(readStoredActive());
+    const tauri = isTauriRuntime();
+    const initial = resolveServerProviderInitialState({
+      defaultUrl: fallback,
+      storedList: tauri ? [] : readStoredList(),
+      storedActive: tauri ? "" : readStoredActive(),
+      isTauriRuntime: tauri,
+      forceProxy: false,
+    });
 
-    const initialList = storedList.length ? storedList : fallback ? [fallback] : [];
-    const initialActive = storedActive || initialList[0] || fallback || "";
-
-    setList(initialList);
-    setActiveRaw(initialActive);
+    setList(initial.list);
+    setActiveRaw(initial.active);
     setReady(true);
   });
 
@@ -87,8 +105,13 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
     if (typeof window === "undefined") return;
 
     try {
-      window.localStorage.setItem("veslo.server.list", JSON.stringify(list()));
-      window.localStorage.setItem("veslo.server.active", active());
+      if (!shouldPersistServerProviderStorage(isTauriRuntime())) {
+        window.localStorage.removeItem(SERVER_LIST_STORAGE_KEY);
+        window.localStorage.removeItem(SERVER_ACTIVE_STORAGE_KEY);
+        return;
+      }
+      window.localStorage.setItem(SERVER_LIST_STORAGE_KEY, JSON.stringify(list()));
+      window.localStorage.setItem(SERVER_ACTIVE_STORAGE_KEY, active());
     } catch {
       // ignore
     }

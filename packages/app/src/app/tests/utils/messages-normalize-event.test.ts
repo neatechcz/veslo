@@ -17,6 +17,16 @@ test("normalizeEvent keeps payload events unchanged", () => {
   });
 });
 
+test("normalizeEvent unwraps sync envelopes inside payload wrappers", () => {
+  assert.deepEqual(
+    normalizeEvent({ payload: { type: "sync", syncEvent: { type: "mcp.tools.changed.2", data: { server: "fs" } } } }),
+    {
+      type: "mcp.tools.changed",
+      properties: { server: "fs" },
+    },
+  );
+});
+
 test("normalizeEvent unwraps sync envelopes and strips trailing numeric schema suffixes", () => {
   assert.deepEqual(
     normalizeEvent({ type: "sync", syncEvent: { type: "session.updated.2", data: { id: "s1" } } }),
