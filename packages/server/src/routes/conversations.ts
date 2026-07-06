@@ -494,6 +494,7 @@ export function registerConversationSessionRoutes(
     const clientMessageId = optionalBodyString(body, "clientMessageId") || optionalBodyString(body, "messageID");
     const origin = optionalBodyString(body, "origin");
     const expectAiGatewayStart = optionalBodyBoolean(body, "expectAiGatewayStart") === true;
+    const runtimeAuthorizationActorTokenHash = ctx.actor?.tokenHash?.trim() || null;
     runTrace.record("server:conversation-run:payload", {
       workspaceId: workspace.id,
       conversationId: sessionOrConversationId,
@@ -501,6 +502,7 @@ export function registerConversationSessionRoutes(
       clientMessageId: clientMessageId || null,
       origin: origin || null,
       expectAiGatewayStart,
+      runtimeAuthorizationActorTokenHashPresent: Boolean(runtimeAuthorizationActorTokenHash),
     });
     const target = await runTrace.step(
       "server:conversation-run:resolve-target",
@@ -527,6 +529,7 @@ export function registerConversationSessionRoutes(
       clientMessageId: clientMessageId || null,
       origin: origin || null,
       expectAiGatewayStart,
+      runtimeAuthorizationActorTokenHash,
     });
     return jsonResponse(result.payload, result.httpStatus);
   });

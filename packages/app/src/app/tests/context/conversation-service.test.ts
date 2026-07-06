@@ -175,6 +175,11 @@ function createService(options: {
   addLocalWorkspaceItems?: FakeWorkspaceRegistryItem[];
   failWorkspaceRegistration?: boolean;
   engineBaseWorkspaceId?: string;
+  managedAiAccess?: {
+    providerId?: string | null;
+    defaultModel?: { modelID?: string | null } | null;
+  } | null;
+  runtimeAuthorizationResult?: boolean;
 } = {}) {
   const { client, calls, setRunConversationResult } = createFakeClient({
     listWorkspaceItems: options.listWorkspaceItems,
@@ -192,6 +197,7 @@ function createService(options: {
     uiSessionId?: string | null;
     runId?: string | null;
   }> = [];
+  const runtimeAuthorizationCalls: unknown[] = [];
   const runIds = new Map<string, string>();
   const lifecycleRunIds = new Map<string, string>();
   const rememberRunId = (
@@ -281,7 +287,14 @@ function createService(options: {
     resolveLatestConversationRunId: (input) => resolveRunId(runIds, input),
     rememberLatestConversationLifecycleRunId: (input) => rememberRunId(lifecycleRunIds, input),
     resolveLatestConversationLifecycleRunId: (input) => resolveRunId(lifecycleRunIds, input),
-    managedAiAccess: () => null,
+    managedAiAccess: () => options.managedAiAccess ?? null,
+    ensureManagedAiRuntimeAuthorizationForSend: async (targetWorkspace) => {
+      runtimeAuthorizationCalls.push(targetWorkspace ?? null);
+      calls.push(
+        `ensureManagedAiRuntimeAuthorizationForSend:${targetWorkspace?.workspaceId ?? ""}:${targetWorkspace?.directory ?? ""}`,
+      );
+      return options.runtimeAuthorizationResult ?? true;
+    },
     activeSendTraceId: () => null,
     recordSendTrace: () => undefined,
     sendTraceStep: async (_event, run) => run(),
@@ -295,7 +308,15 @@ function createService(options: {
     wsDebug: () => undefined,
   });
 
-  return { service, calls, ensureCalls, rememberedScopes, rememberedRuns, setRunConversationResult };
+  return {
+    service,
+    calls,
+    ensureCalls,
+    rememberedScopes,
+    rememberedRuns,
+    runtimeAuthorizationCalls,
+    setRunConversationResult,
+  };
 }
 
 test("conversation read workspace registration is cached per client and directory", async () => {
@@ -556,6 +577,58 @@ test("conversation run remembers submitted run ids under Veslo and UI identities
   assert.deepEqual(rememberedScopes.map((scope) => scope.sessionId), ["open-a", "sess-a"]);
   assert.equal(rememberedScopes[0]?.conversationId, "conv-a");
   assert.equal(rememberedScopes[1]?.conversationId, "conv-a");
+});
+
+test("managed conversation runs prime runtime authorization before submit", async () => {
+  const { service, calls, runtimeAuthorizationCalls } = createService({
+    managedAiAccess: {
+      providerId: "codex_oauth",
+      defaultModel: { modelID: "gpt-5.5" },
+    },
+  });
+
+  const result = await service.runConversationFromVesloWriteApi("sess-a", {
+    kind: "prompt_async",
+    directory: "/repo",
+  }, {
+    targetWorkspace: {
+      workspaceId: "app-ws",
+      workspaceRoot: "/repo",
+      directory: "/repo",
+    },
+  });
+
+  assert.equal(result?.status, "submitted");
+  assert.deepEqual(runtimeAuthorizationCalls, [{
+    workspaceId: "app-ws",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+  }]);
+  const authPrimeIndex = calls.findIndex((call) => call.startsWith("ensureManagedAiRuntimeAuthorizationForSend:"));
+  const runIndex = calls.findIndex((call) => call.startsWith("runConversation:"));
+  assert.ok(authPrimeIndex >= 0, "runtime authorization should be primed");
+  assert.ok(runIndex >= 0, "conversation should be submitted");
+  assert.ok(authPrimeIndex < runIndex, "runtime authorization must be primed before submit");
+});
+
+test("managed conversation runs stop before submit when runtime authorization is not ready", async () => {
+  const { service, calls } = createService({
+    managedAiAccess: {
+      providerId: "codex_oauth",
+      defaultModel: { modelID: "gpt-5.5" },
+    },
+    runtimeAuthorizationResult: false,
+  });
+
+  await assert.rejects(
+    () => service.runConversationFromVesloWriteApi("sess-a", {
+      kind: "prompt_async",
+      directory: "/repo",
+    }),
+    /Managed AI gateway authorization is not ready/,
+  );
+
+  assert.equal(calls.some((call) => call.startsWith("runConversation:")), false);
 });
 
 test("conversation run requires a scoped workspace instead of falling back to the active workspace", async () => {

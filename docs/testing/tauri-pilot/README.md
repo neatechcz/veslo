@@ -359,6 +359,21 @@ missing, OpenCode may surface only `AI_APICallError: Unauthorized` /
 not a provider API-key mode; the upstream credential still comes from the
 managed AI gateway runtime authorization.
 
+For managed `prompt_async` sends, runtime authorization must be primed before
+the app calls `/workspace/:id/conversations/:conversationId/runs`. The expected
+send trace contains
+`runConversationFromVesloWriteApi:managed-ai-runtime-auth-prime` before
+`runConversationFromVesloWriteApi:run`. The priming request uses the same local
+Veslo server routing target and `VESLO_OPENCODE_SERVER_CLIENT_TOKEN` that the
+generated OpenCode provider uses; it is not a direct provider API call.
+
+The server may correlate a provider request with the active run's actor token
+hash, but it must never fall back to a global "latest runtime authorization".
+Parallel sends can have different actors, sessions, and gateway credentials.
+If a provider request fails locally with `401` before `proxy-start`, inspect
+whether `gatewayAuthorizationSource` is `missing` and whether the active run
+diagnostics report `runtimeAuthorizationActorTokenHashPresent:true`.
+
 If the provider route returned `200` and the OpenCode SQLite transcript has
 the assistant text, but the UI still renders no assistant answer, compare the
 host transcript cache in `.veslo/conversations/bindings.sqlite`. A same-ID text

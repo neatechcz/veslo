@@ -10,6 +10,12 @@ const actor: Actor = {
   scope: "collaborator",
 };
 
+const opencodeActor: Actor = {
+  type: "remote",
+  tokenHash: "opencode-server-client-token",
+  scope: "collaborator",
+};
+
 const activeRun = {
   traceId: "trace-1",
   workspaceId: "workspace-1",
@@ -18,6 +24,7 @@ const activeRun = {
   opencodeSessionId: "session-1",
   clientMessageId: "client-message-1",
   origin: "composer",
+  runtimeAuthorizationActorTokenHash: null,
 };
 
 describe("createAiGatewayRuntimeOwner", () => {
@@ -124,6 +131,64 @@ describe("createAiGatewayRuntimeOwner", () => {
         actor,
         request: new Request("http://localhost"),
         accessTokenHeader: "x-veslo-gateway-token",
+      })
+    ).toThrow(ApiError);
+  });
+
+  test("uses run-scoped managed runtime authorization for local OpenCode server-client requests", () => {
+    const owner = createAiGatewayRuntimeOwner();
+    owner.syncRuntimeAuthorizationFromAccessBundle({
+      actor,
+      callerAuthorization: "Bearer den-caller-token",
+      value: {
+        aiAccess: { enabled: true },
+        accessToken: "runtime-token",
+      },
+    });
+
+    expect(() =>
+      owner.resolveProviderAuthorization({
+        actor: opencodeActor,
+        request: new Request("http://localhost"),
+        accessTokenHeader: "x-veslo-gateway-token",
+      })
+    ).toThrow(ApiError);
+
+    const runtime = owner.resolveProviderAuthorization({
+      actor: opencodeActor,
+      request: new Request("http://localhost"),
+      accessTokenHeader: "x-veslo-gateway-token",
+      runtimeAuthorizationActorTokenHash: actor.tokenHash,
+    });
+    expect(runtime).toEqual({
+      authorization: "Bearer runtime-token",
+      source: "ai-access-token",
+    });
+
+    const legacy = owner.resolveProviderAuthorization({
+      actor: opencodeActor,
+      request: new Request("http://localhost", {
+        headers: { "x-veslo-gateway-token": "legacy-token" },
+      }),
+      accessTokenHeader: "x-veslo-gateway-token",
+    });
+    expect(legacy).toEqual({
+      authorization: "Bearer legacy-token",
+      source: "legacy-header",
+    });
+
+    owner.syncRuntimeAuthorizationFromAccessBundle({
+      actor,
+      callerAuthorization: "Bearer den-caller-token",
+      value: { aiAccess: { enabled: false } },
+    });
+
+    expect(() =>
+      owner.resolveProviderAuthorization({
+        actor: opencodeActor,
+        request: new Request("http://localhost"),
+        accessTokenHeader: "x-veslo-gateway-token",
+        runtimeAuthorizationActorTokenHash: actor.tokenHash,
       })
     ).toThrow(ApiError);
   });

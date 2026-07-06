@@ -77,7 +77,10 @@ import {
   createManagedAiAccessStore,
   type ManagedAiAccessStore,
 } from "./context/managed-ai-access-store";
-import { createManagedAiRuntimeConfigSync } from "./context/managed-ai-runtime-config";
+import {
+  createManagedAiRuntimeConfigSync,
+  type ManagedAiRuntimeConfigSync,
+} from "./context/managed-ai-runtime-config";
 import { createConversationService } from "./context/conversation-service";
 import { createLiveTranscriptReadPolicy } from "./context/live-transcript-read-policy";
 import { createPendingSessionDraftController } from "./context/pending-session-draft-controller";
@@ -655,6 +658,10 @@ export default function App() {
     "managed-ai-access-store",
     { onEarlyAccess: reportLateBoundEarlyAccess },
   );
+  const lateManagedAiRuntimeConfig = createLateBound<ManagedAiRuntimeConfigSync>(
+    "managed-ai-runtime-config",
+    { onEarlyAccess: reportLateBoundEarlyAccess },
+  );
   const requestManagedAiAccessRefreshFromAuth = () => {
     lateManagedAiAccessStore.whenBound(
       (store) => store.requestManagedAiAccessRefresh(),
@@ -955,6 +962,12 @@ export default function App() {
     rememberLatestConversationLifecycleRunId,
     resolveLatestConversationLifecycleRunId,
     managedAiAccess: () => managedAiAccess(),
+    ensureManagedAiRuntimeAuthorizationForSend: (targetWorkspace) => {
+      const runtimeConfig = lateManagedAiRuntimeConfig.current();
+      return runtimeConfig
+        ? runtimeConfig.ensureManagedAiRuntimeAuthorizationForSend(targetWorkspace)
+        : Promise.resolve(false);
+    },
     activeSendTraceId,
     recordSendTrace,
     sendTraceStep,
@@ -2303,6 +2316,7 @@ export default function App() {
     ensureManagedAiRuntimeAuthorizationForSend,
     syncManagedAiRuntimeConfigForSend,
   } = managedAiRuntimeConfig;
+  lateManagedAiRuntimeConfig.bind(managedAiRuntimeConfig);
 
   const sendRuntimeReadiness = createSendRuntimeReadiness<Client>({
     isTauriRuntime,

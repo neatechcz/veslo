@@ -1495,6 +1495,7 @@ function syncAiGatewayRuntimeAuthorizationFromAccessBundle(input: {
 function resolveAiGatewayProviderAuthorization(input: {
   request: Request;
   actor?: Actor;
+  runtimeAuthorizationActorTokenHash?: string | null;
 }): {
   authorization: string;
   source: "legacy-header" | AiGatewayRuntimeAuthorizationEntry["source"];
@@ -1873,30 +1874,11 @@ async function proxyAiGatewayRequest(input: {
   const requestId = randomUUID();
   const gatewayAccessToken = input.request.headers.get(GATEWAY_ACCESS_TOKEN_HEADER)?.trim() ?? "";
   const gatewayCallerAuth = input.request.headers.get(GATEWAY_CALLER_AUTH_HEADER)?.trim() ?? "";
-  const providerAuthorization = input.auth === "gateway-token"
-    ? resolveAiGatewayProviderAuthorization({ request: input.request, actor: input.actor })
-    : null;
-  const authorization = input.auth === "caller"
-    ? requireAiGatewayCallerAuth(input.request)
-    : providerAuthorization?.authorization ?? "";
   const incomingSessionId = input.requireSessionId ? requireAiGatewaySessionId(input.request) : undefined;
   const incomingOpenCodeSessionId = input.requireSessionId ? trimmedHeader(input.request, "x-session-id") : undefined;
   const incomingWorkspaceId = trimmedHeader(input.request, GATEWAY_WORKSPACE_ID_HEADER);
   const provider = resolveAiGatewayProvider(input.gatewayPath) ?? null;
   const incomingHeaderNames = headerNamesForTrace(input.request.headers);
-  const incomingInternalHeaderSummary = {
-    hasGatewayAccessToken: Boolean(gatewayAccessToken),
-    hasRuntimeGatewayAuthorization: Boolean(providerAuthorization && providerAuthorization.source !== "legacy-header"),
-    gatewayAuthorizationSource: providerAuthorization?.source ?? (input.auth === "caller" ? "caller" : "missing"),
-    hasGatewayCallerAuth: Boolean(gatewayCallerAuth),
-    hasWorkspaceId: Boolean(incomingWorkspaceId),
-    hasSendTraceId: Boolean(trimmedHeader(input.request, "x-veslo-send-trace-id")),
-    hasSessionId: Boolean(incomingSessionId),
-    hasOpenCodeSessionId: Boolean(incomingOpenCodeSessionId),
-    hasOpenCodeSessionAffinity: Boolean(trimmedHeader(input.request, "x-session-affinity")),
-    hasHostToken: Boolean(trimmedHeader(input.request, "x-veslo-host-token")),
-    hasClientId: Boolean(trimmedHeader(input.request, "x-veslo-client-id")),
-  };
   const sessionResolution = input.requireSessionId
     ? resolveAiGatewaySession({
         incomingSessionId,
@@ -1910,6 +1892,32 @@ async function proxyAiGatewayRequest(input: {
     ? sessionResolution?.workspaceId ?? undefined
     : incomingWorkspaceId ?? undefined;
   const isSessionlessFallback = input.requireSessionId && sessionResolution?.source === "sessionless-fallback";
+  const providerAuthorization = input.auth === "gateway-token"
+    ? resolveAiGatewayProviderAuthorization({
+        request: input.request,
+        actor: input.actor,
+        runtimeAuthorizationActorTokenHash: activeRunContext?.runtimeAuthorizationActorTokenHash ?? null,
+      })
+    : null;
+  const authorization = input.auth === "caller"
+    ? requireAiGatewayCallerAuth(input.request)
+    : providerAuthorization?.authorization ?? "";
+  const incomingInternalHeaderSummary = {
+    hasGatewayAccessToken: Boolean(gatewayAccessToken),
+    hasRuntimeGatewayAuthorization: Boolean(providerAuthorization && providerAuthorization.source !== "legacy-header"),
+    gatewayAuthorizationSource: providerAuthorization?.source ?? (input.auth === "caller" ? "caller" : "missing"),
+    hasGatewayCallerAuth: Boolean(gatewayCallerAuth),
+    hasWorkspaceId: Boolean(incomingWorkspaceId),
+    hasSendTraceId: Boolean(trimmedHeader(input.request, "x-veslo-send-trace-id")),
+    hasSessionId: Boolean(incomingSessionId),
+    hasOpenCodeSessionId: Boolean(incomingOpenCodeSessionId),
+    hasOpenCodeSessionAffinity: Boolean(trimmedHeader(input.request, "x-session-affinity")),
+    hasHostToken: Boolean(trimmedHeader(input.request, "x-veslo-host-token")),
+    hasClientId: Boolean(trimmedHeader(input.request, "x-veslo-client-id")),
+    activeRunRuntimeAuthorizationActorTokenHashPresent: Boolean(
+      activeRunContext?.runtimeAuthorizationActorTokenHash,
+    ),
+  };
   const forwardedSessionId = input.requireSessionId
     ? isSessionlessFallback
       ? incomingSessionId?.trim() || OPENCODE_SESSION_ID_TEMPLATE

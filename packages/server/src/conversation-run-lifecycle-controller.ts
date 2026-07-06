@@ -58,11 +58,15 @@ export type ConversationRunLifecycleAiGatewayActiveRunInput = {
   opencodeSessionId: string;
   clientMessageId: string | null;
   origin: string | null;
+  runtimeAuthorizationActorTokenHash: string | null;
 };
 
 export type ConversationRunLifecycleAiGatewayActiveRunPort = {
   register(input: ConversationRunLifecycleAiGatewayActiveRunInput): void;
-  unregister(input: Omit<ConversationRunLifecycleAiGatewayActiveRunInput, "traceId" | "clientMessageId" | "origin">): void;
+  unregister(input: Omit<
+    ConversationRunLifecycleAiGatewayActiveRunInput,
+    "traceId" | "clientMessageId" | "origin" | "runtimeAuthorizationActorTokenHash"
+  >): void;
 };
 
 export type ConversationRunLifecycleProviderStartWatchInput = {
@@ -128,6 +132,7 @@ export type ConversationRunLifecycleSubmitInput = {
   clientMessageId: string | null;
   origin: string | null;
   expectAiGatewayStart: boolean;
+  runtimeAuthorizationActorTokenHash?: string | null;
 };
 
 export type ConversationRunLifecycleSubmitResult = {
@@ -256,6 +261,11 @@ function optionalBodyBoolean(body: Record<string, unknown>, key: string): boolea
   return typeof value === "boolean" ? value : null;
 }
 
+function optionalBodyString(body: Record<string, unknown>, key: string): string | undefined {
+  const value = body[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 function normalizeIntervalMs(value: number | null | undefined): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   const normalized = Math.floor(value);
@@ -353,6 +363,9 @@ export function createConversationRunLifecycleController(
       kind: input.kind,
       ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
       ...(input.origin ? { origin: input.origin } : {}),
+      ...(input.runtimeAuthorizationActorTokenHash
+        ? { runtimeAuthorizationActorTokenHash: input.runtimeAuthorizationActorTokenHash }
+        : {}),
     });
     const queued = options.queueStore.enqueue({
       workspaceId: input.workspace.id,
@@ -444,6 +457,7 @@ export function createConversationRunLifecycleController(
       opencodeSessionId: input.target.opencodeSessionId,
       clientMessageId: input.clientMessageId,
       origin: input.origin,
+      runtimeAuthorizationActorTokenHash: input.runtimeAuthorizationActorTokenHash?.trim() || null,
     });
     return true;
   };
@@ -863,6 +877,8 @@ export function createConversationRunLifecycleController(
 
       const kind = parseQueuedRunKind(item.kind);
       const expectAiGatewayStart = optionalBodyBoolean(body, "expectAiGatewayStart") === true;
+      const runtimeAuthorizationActorTokenHash =
+        optionalBodyString(body, "runtimeAuthorizationActorTokenHash") || null;
       const target: ConversationRunLifecycleTarget = {
         directory: item.directory,
         binding: null,
@@ -913,6 +929,7 @@ export function createConversationRunLifecycleController(
         clientMessageId: item.clientMessageId,
         origin: item.origin,
         expectAiGatewayStart,
+        runtimeAuthorizationActorTokenHash,
       }, lifecycleOwner);
       options.queueStore.markSubmitted(item.queueItemId);
       scheduleQueueDrain(workspaceId, normalizedConversationId, queueDrainPollMs);

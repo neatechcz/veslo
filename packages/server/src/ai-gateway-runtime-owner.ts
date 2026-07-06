@@ -17,6 +17,7 @@ export type ActiveAiGatewayRunContext = {
   opencodeSessionId: string;
   clientMessageId: string | null;
   origin: string | null;
+  runtimeAuthorizationActorTokenHash: string | null;
 };
 
 export type AiGatewaySessionResolutionSource =
@@ -157,6 +158,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
       opencodeSessionId: context.opencodeSessionId,
       clientMessageId: context.clientMessageId,
       origin: context.origin,
+      runtimeAuthorizationActorTokenHashPresent: Boolean(context.runtimeAuthorizationActorTokenHash),
     };
   };
 
@@ -288,16 +290,18 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     const key = actorRuntimeTokenKey(input.actor);
     const authorization = input.authorization.trim();
     if (!key || !authorization) return;
-    runtimeAuthorizationByActorToken.set(key, {
+    const entry = {
       authorization,
       source: input.source,
       at: now(),
-    });
+    };
+    runtimeAuthorizationByActorToken.set(key, entry);
   }
 
   function clearRuntimeAuthorization(actor?: Actor): void {
     const key = actorRuntimeTokenKey(actor);
-    if (key) runtimeAuthorizationByActorToken.delete(key);
+    if (!key) return;
+    runtimeAuthorizationByActorToken.delete(key);
   }
 
   function syncRuntimeAuthorizationFromAccessBundle(input: {
@@ -331,6 +335,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     request: Request;
     actor?: Actor;
     accessTokenHeader: string;
+    runtimeAuthorizationActorTokenHash?: string | null;
   }): {
     authorization: string;
     source: "legacy-header" | AiGatewayRuntimeAuthorizationEntry["source"];
@@ -344,11 +349,17 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     }
 
     const key = actorRuntimeTokenKey(input.actor);
+    const scopedKey = input.runtimeAuthorizationActorTokenHash?.trim() ?? "";
     const runtime = key ? runtimeAuthorizationByActorToken.get(key) : undefined;
-    if (runtime?.authorization.trim()) {
+    const scopedRuntime =
+      scopedKey && scopedKey !== key
+        ? runtimeAuthorizationByActorToken.get(scopedKey)
+        : undefined;
+    const resolvedRuntime = runtime ?? scopedRuntime;
+    if (resolvedRuntime?.authorization.trim()) {
       return {
-        authorization: runtime.authorization,
-        source: runtime.source,
+        authorization: resolvedRuntime.authorization,
+        source: resolvedRuntime.source,
       };
     }
 
@@ -383,6 +394,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
       opencodeSessionId: input.opencodeSessionId,
       clientMessageId: input.clientMessageId,
       origin: input.origin,
+      runtimeAuthorizationActorTokenHashPresent: Boolean(input.runtimeAuthorizationActorTokenHash),
       activeContextDiagnostics: buildResolutionDiagnostics({
         incomingSessionId: input.opencodeSessionId,
         workspaceId: input.workspaceId,

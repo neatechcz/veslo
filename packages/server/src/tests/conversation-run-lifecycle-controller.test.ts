@@ -854,7 +854,10 @@ test("submitRun provider-start success clears active gateway context without abo
     reconcileCalls,
   } = controllerHarness();
 
-  const result = await controller.submitRun(submitInput({ expectAiGatewayStart: true }));
+  const result = await controller.submitRun(submitInput({
+    expectAiGatewayStart: true,
+    runtimeAuthorizationActorTokenHash: "request-actor-hash",
+  }));
 
   expect(result.httpStatus).toBe(200);
   expect(result.payload.status).toBe("submitted");
@@ -862,6 +865,9 @@ test("submitRun provider-start success clears active gateway context without abo
   expect(providerWatchCalls).toHaveLength(1);
   expect(abortCalls).toEqual([]);
   expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
+  expect(activeGatewayCalls[0]?.input).toMatchObject({
+    runtimeAuthorizationActorTokenHash: "request-actor-hash",
+  });
   expect(reconcileCalls).toEqual([{
     workspaceId: "ws_1",
     conversationId: "conv-a",

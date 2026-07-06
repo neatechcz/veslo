@@ -224,6 +224,9 @@ export type ConversationServiceDeps<Client extends ConversationServiceClient = C
     uiSessionId?: string | null;
   }) => string;
   managedAiAccess: () => ConversationManagedProfile | null;
+  ensureManagedAiRuntimeAuthorizationForSend?: (
+    targetWorkspace?: SendTargetWorkspaceScope | null,
+  ) => Promise<boolean>;
   activeSendTraceId: () => string | null;
   recordSendTrace: (event: string, payload?: Record<string, unknown>) => void;
   sendTraceStep: <T>(
@@ -833,6 +836,28 @@ export function createConversationService<Client extends ConversationServiceClie
     if (!resolution) {
       deps.recordSendTrace("runConversationFromVesloWriteApi:unavailable", tracePayload);
       return null;
+    }
+    if (expectAiGatewayStart && deps.ensureManagedAiRuntimeAuthorizationForSend) {
+      const targetForRuntimeAuthorization = targetWorkspace ?? options.preflight?.targetWorkspace ?? null;
+      const runtimeAuthorizationReady = await deps.sendTraceStep(
+        "runConversationFromVesloWriteApi:managed-ai-runtime-auth-prime",
+        () => deps.ensureManagedAiRuntimeAuthorizationForSend!(targetForRuntimeAuthorization),
+        {
+          ...(tracePayload ?? {}),
+          workspaceId,
+          serverWorkspaceId: resolution.serverWorkspaceId,
+          targetWorkspaceId: targetForRuntimeAuthorization?.workspaceId ?? null,
+        },
+      );
+      deps.recordSendTrace("runConversationFromVesloWriteApi:managed-ai-runtime-auth-prime:result", {
+        ...(tracePayload ?? {}),
+        workspaceId,
+        serverWorkspaceId: resolution.serverWorkspaceId,
+        ready: runtimeAuthorizationReady,
+      });
+      if (!runtimeAuthorizationReady) {
+        throw new Error("Managed AI gateway authorization is not ready for this runtime.");
+      }
     }
     const conversationId = scope?.conversationId?.trim() || normalizedSessionId;
     const result = await deps.sendTraceStep(
