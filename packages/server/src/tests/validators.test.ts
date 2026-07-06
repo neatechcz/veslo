@@ -69,6 +69,11 @@ describe("validateMcpName", () => {
     expect(() => validateMcpName("foo bar")).toThrow();
     expect(() => validateMcpName("foo/bar")).toThrow();
   });
+
+  test("rejects reserved future-shape names", () => {
+    expect(() => validateMcpName("servers")).toThrow("MCP name is reserved");
+    expect(() => validateMcpName("Servers")).toThrow("MCP name is reserved");
+  });
 });
 
 describe("validateSkillName", () => {

@@ -38,7 +38,7 @@
     "start": "bun dist/cli.js start",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "setup": "bun scripts/setup.mjs",
-    "test:unit": "pnpm build && bun test test/db.test.js test/events.test.js test/permission-reply.test.js test/slack.test.js test/telegram.test.js test/health-send.test.js",
+    "test:unit": "pnpm build && node scripts/unit-tests.mjs",
     "test:smoke": "bun scripts/smoke.mjs",
     "test:cli": "pnpm build && bun scripts/test-cli.mjs",
     "test:npx": "bun scripts/test-npx.mjs"

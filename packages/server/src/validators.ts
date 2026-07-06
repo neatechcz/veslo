@@ -3,6 +3,7 @@ import { ApiError } from "./errors.js";
 const SKILL_NAME_REGEX = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const COMMAND_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
 const MCP_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
+const RESERVED_MCP_NAMES = new Set(["servers"]);
 const FORBIDDEN_CUSTOM_MCP_HEADER_NAMES = new Set([
   "authorization",
   "cookie",
@@ -47,6 +48,9 @@ export function validateCommandName(name: string): void {
 export function validateMcpName(name: string): void {
   if (!name || name.startsWith("-") || !MCP_NAME_REGEX.test(name)) {
     throw new ApiError(400, "invalid_mcp_name", "MCP name must be alphanumeric and not start with -");
+  }
+  if (RESERVED_MCP_NAMES.has(name.toLowerCase())) {
+    throw new ApiError(400, "invalid_mcp_name", `MCP name is reserved: ${name}`);
   }
 }
 

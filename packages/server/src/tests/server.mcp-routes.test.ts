@@ -124,6 +124,38 @@ describe("MCP routes", () => {
     }
   });
 
+  test("write paths reject reserved servers name before mutating future mcp.servers", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-mcp-servers-reserved-"));
+    const configPath = join(workspaceRoot, "opencode.jsonc");
+    const futureServers = {
+      future: {
+        type: "remote",
+        url: "https://future.example/mcp",
+      },
+    };
+    try {
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          mcp: {
+            servers: futureServers,
+          },
+        }),
+      );
+
+      await expect(addMcp(workspaceRoot, "servers", {
+        type: "remote",
+        url: "https://overwrite.example/mcp",
+      })).rejects.toThrow("MCP name is reserved");
+
+      const config = JSON.parse(await readFile(configPath, "utf8")) as Record<string, Record<string, unknown>>;
+      expect(config.mcp?.servers).toEqual(futureServers);
+      expect(await listMcp(workspaceRoot)).toEqual([]);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   test("listMcp honors official tools false globs and legacy tools.deny as disabled markers", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-mcp-tools-disabled-"));
     try {
