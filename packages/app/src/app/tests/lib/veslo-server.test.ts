@@ -6,7 +6,6 @@ import {
   buildVesloConnectInviteUrl,
   createVesloServerClient,
   DEFAULT_VESLO_CONNECT_APP_URL,
-  deriveLocalVesloServerUrlFromOpencodeBaseUrl,
   deriveVesloServerUrl,
   clearVesloServerSettings,
   requestManagedAiAccessBundle,
@@ -91,26 +90,6 @@ function withBrowserStorage<T>(seed: Record<string, string>, run: () => T): T {
     }
   }
 }
-
-test("deriveLocalVesloServerUrlFromOpencodeBaseUrl rewrites local loopback hosts to Veslo port", () => {
-  const derived = deriveLocalVesloServerUrlFromOpencodeBaseUrl("http://127.0.0.1:64792");
-  assert.equal(derived, "http://127.0.0.1:8787");
-});
-
-test("deriveLocalVesloServerUrlFromOpencodeBaseUrl preserves private LAN host and strips path/query", () => {
-  const derived = deriveLocalVesloServerUrlFromOpencodeBaseUrl("http://192.168.0.65:64792/v1?token=x#hash");
-  assert.equal(derived, "http://192.168.0.65:8787");
-});
-
-test("deriveLocalVesloServerUrlFromOpencodeBaseUrl returns null for non-local hosts", () => {
-  const derived = deriveLocalVesloServerUrlFromOpencodeBaseUrl("https://den-worker-dev-dev-cloud-worker-2.onrender.com");
-  assert.equal(derived, null);
-});
-
-test("deriveLocalVesloServerUrlFromOpencodeBaseUrl accepts explicit target port", () => {
-  const derived = deriveLocalVesloServerUrlFromOpencodeBaseUrl("http://localhost:64792", 9999);
-  assert.equal(derived, "http://localhost:9999");
-});
 
 test("deriveVesloServerUrl prefers normalized explicit settings override", () => {
   const derived = deriveVesloServerUrl("http://127.0.0.1:64792/opencode?x=1", {

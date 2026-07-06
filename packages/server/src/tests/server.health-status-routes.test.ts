@@ -7,6 +7,7 @@ function config(overrides: Partial<ServerConfig> = {}): ServerConfig {
   return {
     host: "127.0.0.1",
     port: 8787,
+    instanceId: "instance-test",
     token: "client",
     hostToken: "host",
     approval: { mode: "manual", timeoutMs: 1 },
@@ -77,6 +78,23 @@ describe("Health and status routes", () => {
     }
 
     expect(matchRoute(routes, "POST", "/status")).toBeNull();
+  });
+
+  test("health payload includes process identity without requiring auth", async () => {
+    const routes: Route[] = [];
+    const dependencies = {} as Parameters<typeof registerHealthStatusRoutes>[1];
+    registerHealthStatusRoutes(routes, dependencies);
+
+    const route = matchRoute(routes, "GET", "/health");
+    const response = await route!.handler({
+      config: config({ instanceId: "instance-health" }),
+    } as Parameters<Route["handler"]>[0]);
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.ok).toBe(true);
+    expect(payload.instanceId).toBe("instance-health");
+    expect(typeof payload.pid).toBe("number");
   });
 
   test("runtimeChain reports plain server_running without orchestrator config", async () => {

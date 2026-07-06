@@ -17,13 +17,14 @@ use uuid::Uuid;
 use crate::debug_logs_forwarder::DebugLogsForwarder;
 #[cfg(windows)]
 use crate::platform::configure_hidden;
-use crate::process_supervisor::spawn_output_collector_with_forwarder;
+use crate::process_supervisor::spawn_output_collector_with_forwarder_and_ready;
 use crate::types::{
     VesloServerInfo, VesloServerLifecycleReason, VesloServerLifecycleStatus, WorkspaceType,
 };
 use crate::utils::truncate_output;
 use crate::workspace::state::load_workspace_state;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
+use std::time::{Duration, Instant};
 
 pub mod manager;
 pub mod spawn;
@@ -35,6 +36,9 @@ use spawn::{
 
 const PERSISTED_STATE_FILE_NAME: &str = "veslo-server-state.json";
 const PERSISTED_PLUGIN_STATE_FILE_NAME: &str = "veslo-server-plugin-state.json";
+const RUNTIME_DESCRIPTOR_FILE_NAME: &str = "veslo-server-runtime.json";
+const VESLO_SERVER_READY_MARKER: &str = "VESLO_SERVER_READY ";
+const VESLO_SERVER_READINESS_TIMEOUT: Duration = Duration::from_secs(12);
 
 fn append_veslo_server_launch_diagnostic(
     app: &AppHandle,
@@ -74,11 +78,13 @@ fn resolve_workspace_ids(app: &AppHandle, workspace_paths: &[String]) -> Vec<Opt
 pub struct PersistedVesloServerState {
     pub host: Option<String>,
     pub port: Option<u16>,
+    pub instance_id: Option<String>,
     pub base_url: Option<String>,
     pub connect_url: Option<String>,
     pub mdns_url: Option<String>,
     pub lan_url: Option<String>,
     pub client_token: Option<String>,
+    pub host_token: Option<String>,
     pub pid: Option<u32>,
 }
 
@@ -415,6 +421,10 @@ fn persisted_plugin_state_path(dir: &Path) -> PathBuf {
     dir.join(PERSISTED_PLUGIN_STATE_FILE_NAME)
 }
 
+fn runtime_descriptor_path(dir: &Path) -> PathBuf {
+    dir.join(RUNTIME_DESCRIPTOR_FILE_NAME)
+}
+
 fn persisted_state_dir_override() -> Option<PathBuf> {
     crate::paths::app_local_data_dir_override()
 }
@@ -440,6 +450,7 @@ pub fn persisted_veslo_server_plugin_state_path(app: &AppHandle) -> Result<PathB
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct HealthIdentity {
+    pub instance_id: Option<String>,
     pub token: Option<String>,
     pub pid: Option<u32>,
 }
@@ -464,6 +475,8 @@ pub(crate) fn server_health_identity(base_url: &str) -> Option<HealthIdentity> {
     #[serde(rename_all = "camelCase")]
     struct HealthResponse {
         #[serde(default)]
+        instance_id: Option<String>,
+        #[serde(default)]
         token: Option<String>,
         #[serde(default)]
         pid: Option<u32>,
@@ -471,9 +484,70 @@ pub(crate) fn server_health_identity(base_url: &str) -> Option<HealthIdentity> {
 
     let body: HealthResponse = response.into_json().ok()?;
     Some(HealthIdentity {
+        instance_id: body.instance_id,
         token: body.token,
         pid: body.pid,
     })
+}
+
+fn health_identity_matches_instance(identity: &HealthIdentity, instance_id: &str) -> bool {
+    identity
+        .instance_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        == Some(instance_id)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReadySignalPayload {
+    #[serde(rename = "type")]
+    event_type: Option<String>,
+    instance_id: Option<String>,
+}
+
+fn ready_signal_instance_id(line: &str) -> Option<String> {
+    let marker_start = line.find(VESLO_SERVER_READY_MARKER)?;
+    let json_start = marker_start + VESLO_SERVER_READY_MARKER.len();
+    let payload: ReadySignalPayload = serde_json::from_str(line[json_start..].trim()).ok()?;
+    if payload.event_type.as_deref() != Some("veslo.server.ready") {
+        return None;
+    }
+    payload
+        .instance_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn wait_for_veslo_server_ready_signal(
+    ready_rx: &mpsc::Receiver<String>,
+    base_url: &str,
+    instance_id: &str,
+) -> bool {
+    let started_at = Instant::now();
+    loop {
+        let elapsed = started_at.elapsed();
+        if elapsed >= VESLO_SERVER_READINESS_TIMEOUT {
+            break;
+        }
+        let remaining = VESLO_SERVER_READINESS_TIMEOUT
+            .checked_sub(elapsed)
+            .unwrap_or_default();
+        match ready_rx.recv_timeout(remaining) {
+            Ok(line) => {
+                if ready_signal_instance_id(&line).as_deref() == Some(instance_id) {
+                    return true;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => break,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    server_health_identity(base_url)
+        .as_ref()
+        .is_some_and(|identity| health_identity_matches_instance(identity, instance_id))
 }
 
 fn persisted_state_to_info_with_health(
@@ -486,6 +560,23 @@ fn persisted_state_to_info_with_health(
         .filter(|value| !value.trim().is_empty())?;
 
     let identity = health_check(&base_url)?;
+    let expected_instance_id = state
+        .instance_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let actual_instance_id = identity
+        .instance_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    if expected_instance_id != actual_instance_id {
+        eprintln!(
+            "[veslo-server] identity mismatch - instanceId on {base_url} does not match persisted state, rejecting"
+        );
+        return None;
+    }
+
     // A matching bearer token is stronger than a PID match. In dev watch mode,
     // the managed Bun watcher PID can differ from the HTTP server PID.
     let token_verified = matches!(
@@ -523,13 +614,14 @@ fn persisted_state_to_info_with_health(
         lifecycle_reason: VesloServerLifecycleReason::None,
         host: state.host.clone(),
         port: state.port,
+        instance_id: state.instance_id.clone(),
         base_url: Some(base_url),
         connect_url: state.connect_url.clone(),
         mdns_url: state.mdns_url.clone(),
         lan_url: state.lan_url.clone(),
         engine_url: resolve_engine_url_for_bind_host(state.host.as_deref(), state.port),
         client_token: state.client_token.clone(),
-        host_token: None,
+        host_token: state.host_token.clone(),
         pid: state.pid,
         last_stdout: None,
         last_stderr: None,
@@ -560,6 +652,7 @@ fn read_persisted_veslo_server_info_with_cleanup(
         }
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(persisted_plugin_state_path(dir));
+        let _ = fs::remove_file(runtime_descriptor_path(dir));
     }
     Ok(info)
 }
@@ -656,29 +749,38 @@ fn discover_external_veslo_server() -> Option<VesloServerInfo> {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .or(identity.token);
+    let host_token = discover_external_host_token(|name| std::env::var(name).ok());
     Some(VesloServerInfo {
         running: true,
         lifecycle_status: VesloServerLifecycleStatus::Running,
         lifecycle_reason: VesloServerLifecycleReason::None,
         host: Some(host),
         port,
+        instance_id: identity.instance_id,
         base_url: Some(trimmed.to_string()),
         connect_url,
         mdns_url,
         lan_url,
         engine_url,
         client_token,
-        host_token: None,
+        host_token,
         pid: identity.pid,
         last_stdout: None,
         last_stderr: None,
     })
 }
 
+fn discover_external_host_token(read_env: impl Fn(&str) -> Option<String>) -> Option<String> {
+    read_env("VESLO_HOST_TOKEN")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 pub fn clear_persisted_veslo_server_info(app: &AppHandle) -> Result<(), String> {
     let dir = persisted_state_dir(app)?;
     let path = persisted_state_path(&dir);
     let plugin_path = persisted_plugin_state_path(&dir);
+    let runtime_path = runtime_descriptor_path(&dir);
     match fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -690,6 +792,14 @@ pub fn clear_persisted_veslo_server_info(app: &AppHandle) -> Result<(), String> 
         Err(error) => Err(format!(
             "Failed to remove {}: {error}",
             plugin_path.display()
+        )),
+    }?;
+    match fs::remove_file(&runtime_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "Failed to remove {}: {error}",
+            runtime_path.display()
         )),
     }
 }
@@ -754,11 +864,13 @@ fn persist_veslo_server_info(app: &AppHandle, info: &VesloServerInfo) -> Result<
     let state = PersistedVesloServerState {
         host: info.host.clone(),
         port: info.port,
+        instance_id: info.instance_id.clone(),
         base_url: info.base_url.clone(),
         connect_url: info.connect_url.clone(),
         mdns_url: info.mdns_url.clone(),
         lan_url: info.lan_url.clone(),
         client_token: info.client_token.clone(),
+        host_token: info.host_token.clone(),
         pid: info.pid,
     };
     let payload = serde_json::to_string_pretty(&state)
@@ -846,6 +958,31 @@ pub fn start_veslo_server(
     }
     let workspace_paths: &[String] = &workspace_paths_owned;
 
+    let should_try_persisted_recovery = {
+        let mut state = manager
+            .inner
+            .lock()
+            .map_err(|_| "veslo server mutex poisoned".to_string())?;
+        if state.external_info.is_some() && state.child.is_none() {
+            state.external_info = None;
+            false
+        } else {
+            state.child.is_none() && !state.child_exited && state.external_info.is_none()
+        }
+    };
+    if should_try_persisted_recovery {
+        if let Ok(Some(info)) = recover_persisted_veslo_server_info(app) {
+            let mut state = manager
+                .inner
+                .lock()
+                .map_err(|_| "veslo server mutex poisoned".to_string())?;
+            if state.child.is_none() && state.external_info.is_none() {
+                state.external_info = Some(info.clone());
+                return Ok(info);
+            }
+        }
+    }
+
     let mut state = manager
         .inner
         .lock()
@@ -879,6 +1016,7 @@ pub fn start_veslo_server(
     });
     if state.child.is_some()
         && !state.child_exited
+        && state.lifecycle_status == VesloServerLifecycleStatus::Running
         && state.client_token.is_some()
         && client_token_matches_request
         && state.host_token.is_some()
@@ -932,6 +1070,8 @@ pub fn start_veslo_server(
         .or(previous_client_token)
         .unwrap_or_else(generate_token);
     let host_token = previous_host_token.unwrap_or_else(generate_token);
+    let instance_id = Uuid::new_v4().to_string();
+    let runtime_descriptor_path = runtime_descriptor_path(&persisted_state_dir(app)?);
     let active_workspace = workspace_paths
         .first()
         .map(|path| path.as_str())
@@ -956,6 +1096,8 @@ pub fn start_veslo_server(
         app,
         &host,
         port,
+        &instance_id,
+        &runtime_descriptor_path,
         workspace_paths,
         &workspace_ids,
         &client_token,
@@ -1005,9 +1147,11 @@ pub fn start_veslo_server(
 
     state.child = Some(child);
     state.child_exited = false;
+    state.external_info = None;
     state.host = Some(host.clone());
     state.bridge_host = bridge_host.clone();
     state.port = Some(port);
+    state.instance_id = Some(instance_id.clone());
     state.base_url = Some(format!("http://127.0.0.1:{port}"));
     let (connect_url, mdns_url, lan_url, engine_url) = build_urls_for_host(&host, port);
     state.connect_url = connect_url;
@@ -1033,13 +1177,55 @@ pub fn start_veslo_server(
     state.sandbox_backend = Some(sandbox_backend);
     state.last_stdout = None;
     state.last_stderr = None;
-    state.lifecycle_status = VesloServerLifecycleStatus::Running;
-    state.lifecycle_reason = VesloServerLifecycleReason::None;
+    state.lifecycle_status = VesloServerLifecycleStatus::WaitingReady;
+    state.lifecycle_reason = VesloServerLifecycleReason::SpawnPending;
 
     let forwarder = app
         .try_state::<Arc<DebugLogsForwarder>>()
         .map(|s| (s.inner().clone(), "veslo-server-shell"));
-    spawn_output_collector_with_forwarder(rx, manager.inner.clone(), "Veslo server", forwarder);
+    let (ready_tx, ready_rx) = mpsc::channel();
+    spawn_output_collector_with_forwarder_and_ready(
+        rx,
+        manager.inner.clone(),
+        "Veslo server",
+        forwarder,
+        Some((ready_tx, VESLO_SERVER_READY_MARKER)),
+    );
+
+    let base_url = state
+        .base_url
+        .clone()
+        .unwrap_or_else(|| format!("http://127.0.0.1:{port}"));
+    drop(state);
+
+    let ready = wait_for_veslo_server_ready_signal(&ready_rx, &base_url, &instance_id);
+    let mut state = manager
+        .inner
+        .lock()
+        .map_err(|_| "veslo server mutex poisoned".to_string())?;
+    if state.instance_id.as_deref() == Some(instance_id.as_str()) && state.port == Some(port) {
+        if ready {
+            state.lifecycle_status = VesloServerLifecycleStatus::Running;
+            state.lifecycle_reason = VesloServerLifecycleReason::None;
+        } else {
+            state.lifecycle_status = VesloServerLifecycleStatus::Blocked;
+            state.lifecycle_reason = VesloServerLifecycleReason::HealthUnreachable;
+            state.last_stderr = Some(truncate_output(
+                &format!(
+                    "Veslo server did not report ready instance {instance_id} on {base_url} within 12s."
+                ),
+                8000,
+            ));
+            append_veslo_server_launch_diagnostic(
+                app,
+                "veslo-server-launch:readiness-timeout",
+                serde_json::json!({
+                    "baseUrl": base_url,
+                    "instanceId": instance_id,
+                }),
+            );
+        }
+    }
 
     let info = VesloServerManager::snapshot_locked(&mut state);
     drop(state);
@@ -1060,10 +1246,12 @@ pub fn start_veslo_server(
 mod tests {
     use super::manager::VesloServerState;
     use super::{
-        build_urls_for_host_with_engine_resolver, launch_config_matches, normalize_launch_token,
-        normalize_launch_url, publishes_external_urls, read_persisted_veslo_server_info,
-        read_persisted_veslo_server_info_with_cleanup, resolve_engine_url_for_bind_host,
-        should_bind_wsl_bridge, HealthIdentity, PersistedVesloServerState,
+        build_urls_for_host_with_engine_resolver, discover_external_host_token,
+        launch_config_matches, normalize_launch_token, normalize_launch_url,
+        publishes_external_urls, read_persisted_veslo_server_info,
+        read_persisted_veslo_server_info_with_cleanup, ready_signal_instance_id,
+        resolve_engine_url_for_bind_host, should_bind_wsl_bridge, HealthIdentity,
+        PersistedVesloServerState,
     };
     #[cfg(windows)]
     use super::{
@@ -1312,6 +1500,42 @@ mod tests {
     }
 
     #[test]
+    fn ready_signal_instance_id_parses_machine_readable_stdout_line() {
+        let line = r#"VESLO_SERVER_READY {"schemaVersion":1,"type":"veslo.server.ready","instanceId":"instance-1","host":"127.0.0.1","port":8787,"pid":123,"startedAt":1,"baseUrl":"http://127.0.0.1:8787"}"#;
+
+        assert_eq!(
+            ready_signal_instance_id(line).as_deref(),
+            Some("instance-1")
+        );
+    }
+
+    #[test]
+    fn ready_signal_instance_id_rejects_wrong_event_type() {
+        let line = r#"VESLO_SERVER_READY {"schemaVersion":1,"type":"other.ready","instanceId":"instance-1"}"#;
+
+        assert_eq!(ready_signal_instance_id(line), None);
+    }
+
+    #[test]
+    fn discover_external_host_token_reads_explicit_env_token() {
+        assert_eq!(
+            discover_external_host_token(|name| {
+                if name == "VESLO_HOST_TOKEN" {
+                    Some(" host-token ".to_string())
+                } else {
+                    None
+                }
+            })
+            .as_deref(),
+            Some("host-token")
+        );
+        assert_eq!(
+            discover_external_host_token(|_| Some("  ".to_string())),
+            None
+        );
+    }
+
+    #[test]
     fn read_persisted_server_info_recovers_live_server() {
         let listener = match TcpListener::bind("127.0.0.1:0") {
             Ok(listener) => listener,
@@ -1329,10 +1553,14 @@ mod tests {
             let bytes = stream.read(&mut buffer).expect("read health request");
             let request = String::from_utf8_lossy(&buffer[..bytes]);
             assert!(request.starts_with("GET /health "));
+            let body = r#"{"ok":true,"instanceId":"instance-live","pid":12345}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
             stream
-                .write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}",
-                )
+                .write_all(response.as_bytes())
                 .expect("write health response");
         });
 
@@ -1341,18 +1569,18 @@ mod tests {
         let state = PersistedVesloServerState {
             host: Some("0.0.0.0".to_string()),
             port: Some(port),
+            instance_id: Some("instance-live".to_string()),
             base_url: Some(format!("http://127.0.0.1:{port}")),
             connect_url: Some(format!("http://127.0.0.1:{port}")),
             mdns_url: None,
             lan_url: None,
             client_token: Some("client-token".to_string()),
+            host_token: Some("host-token".to_string()),
             pid: Some(12345),
         };
-        let mut payload = serde_json::to_value(&state).expect("serialize state to legacy payload");
-        payload["hostToken"] = serde_json::Value::String("host-token".to_string());
         fs::write(
             dir.join("veslo-server-state.json"),
-            serde_json::to_string_pretty(&payload).expect("serialize legacy state"),
+            serde_json::to_string_pretty(&state).expect("serialize state"),
         )
         .expect("write state file");
 
@@ -1365,7 +1593,8 @@ mod tests {
             Some(expected_base_url.as_str())
         );
         assert_eq!(recovered.client_token.as_deref(), Some("client-token"));
-        assert_eq!(recovered.host_token.as_deref(), None);
+        assert_eq!(recovered.host_token.as_deref(), Some("host-token"));
+        assert_eq!(recovered.instance_id.as_deref(), Some("instance-live"));
         assert!(recovered.running);
 
         handle.join().expect("health thread");
@@ -1379,11 +1608,13 @@ mod tests {
         let state = PersistedVesloServerState {
             host: Some("0.0.0.0".to_string()),
             port: Some(8787),
+            instance_id: Some("instance-stale".to_string()),
             base_url: Some("http://127.0.0.1:8787".to_string()),
             connect_url: Some("http://127.0.0.1:8787".to_string()),
             mdns_url: None,
             lan_url: None,
             client_token: Some("client-token".to_string()),
+            host_token: Some("host-token".to_string()),
             pid: Some(4242),
         };
         fs::write(
@@ -1424,11 +1655,13 @@ mod tests {
         let state = PersistedVesloServerState {
             host: Some("0.0.0.0".to_string()),
             port: Some(8787),
+            instance_id: Some("instance-stale".to_string()),
             base_url: Some("http://127.0.0.1:8787".to_string()),
             connect_url: Some("http://127.0.0.1:8787".to_string()),
             mdns_url: None,
             lan_url: None,
             client_token: Some("client-token".to_string()),
+            host_token: Some("host-token".to_string()),
             pid: Some(4242),
         };
         fs::write(
@@ -1468,11 +1701,13 @@ mod tests {
         PersistedVesloServerState {
             host: Some("0.0.0.0".to_string()),
             port: Some(8787),
+            instance_id: Some("instance-test".to_string()),
             base_url: Some("http://127.0.0.1:8787".to_string()),
             connect_url: Some("http://127.0.0.1:8787".to_string()),
             mdns_url: None,
             lan_url: None,
             client_token: Some(token.to_string()),
+            host_token: Some("host-token".to_string()),
             pid: Some(pid),
         }
     }
@@ -1487,6 +1722,7 @@ mod tests {
             &dir,
             |_| {
                 Some(HealthIdentity {
+                    instance_id: Some("instance-test".to_string()),
                     token: Some("foreign-token".to_string()),
                     pid: Some(4242),
                 })
@@ -1517,6 +1753,7 @@ mod tests {
             &dir,
             |_| {
                 Some(HealthIdentity {
+                    instance_id: Some("instance-test".to_string()),
                     token: Some("our-token".to_string()),
                     pid: Some(9999),
                 })
@@ -1545,6 +1782,7 @@ mod tests {
             &dir,
             |_| {
                 Some(HealthIdentity {
+                    instance_id: Some("instance-test".to_string()),
                     token: None,
                     pid: Some(9999),
                 })
@@ -1575,6 +1813,7 @@ mod tests {
             &dir,
             |_| {
                 Some(HealthIdentity {
+                    instance_id: Some("instance-test".to_string()),
                     token: None,
                     pid: Some(9999),
                 })
@@ -1592,7 +1831,7 @@ mod tests {
     }
 
     #[test]
-    fn read_persisted_server_info_tolerates_legacy_server_without_identity() {
+    fn read_persisted_server_info_rejects_legacy_server_without_instance_identity() {
         let dir =
             std::env::temp_dir().join(format!("veslo-server-state-legacy-{}", Uuid::new_v4()));
         fs::create_dir_all(&dir).expect("create test dir");
@@ -1603,12 +1842,12 @@ mod tests {
             |_| Some(HealthIdentity::default()),
             |_| Ok(()),
         )
-        .expect("read persisted state")
-        .expect("legacy server response must still recover persisted state");
+        .expect("read persisted state");
 
-        assert_eq!(recovered.client_token.as_deref(), Some("our-token"));
-        assert_eq!(recovered.pid, Some(4242));
-        assert!(recovered.running);
+        assert!(
+            recovered.is_none(),
+            "persisted adoption must reject health without matching instanceId"
+        );
 
         let _ = fs::remove_dir_all(dir);
     }

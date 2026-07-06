@@ -25,6 +25,7 @@ const runningHostInfo = (): VesloServerInfo => ({
   running: true,
   host: "127.0.0.1",
   port: 8787,
+  instanceId: "instance-test",
   baseUrl: "http://127.0.0.1:8787",
   connectUrl: null,
   mdnsUrl: null,
@@ -37,7 +38,7 @@ const runningHostInfo = (): VesloServerInfo => ({
   lastStderr: null,
 });
 
-test("server connection resolves local, server, and fallback endpoints without monolithic app state", () => {
+test("server connection resolves local and server endpoints without derived local fallback", () => {
   const localHost = {
     baseUrl: "http://127.0.0.1:8787",
     connectUrl: "http://127.0.0.1:8787",
@@ -49,7 +50,6 @@ test("server connection resolves local, server, and fallback endpoints without m
     resolveVesloServerBaseUrl({
       startupPreference: "local",
       activeHostInfo: localHost,
-      localFallbackUrl: "http://127.0.0.1:8787",
       settingsUrl: "https://remote.example",
     }),
     "http://127.0.0.1:8787",
@@ -58,7 +58,6 @@ test("server connection resolves local, server, and fallback endpoints without m
     resolveVesloServerBaseUrl({
       startupPreference: "server",
       activeHostInfo: localHost,
-      localFallbackUrl: "http://127.0.0.1:8787",
       settingsUrl: "https://remote.example",
     }),
     "https://remote.example",
@@ -67,10 +66,25 @@ test("server connection resolves local, server, and fallback endpoints without m
     resolveVesloServerAuth({
       startupPreference: null,
       activeHostInfo: localHost,
-      localFallbackUrl: "http://127.0.0.1:8787",
       settingsToken: "remote-token",
     }),
     { token: "local-token", hostToken: "host-token" },
+  );
+  assert.equal(
+    resolveVesloServerBaseUrl({
+      startupPreference: "local",
+      activeHostInfo: null,
+      settingsUrl: "https://remote.example",
+    }),
+    "",
+  );
+  assert.deepEqual(
+    resolveVesloServerAuth({
+      startupPreference: null,
+      activeHostInfo: null,
+      settingsToken: "remote-token",
+    }),
+    { token: "remote-token", hostToken: undefined },
   );
 });
 

@@ -36,6 +36,7 @@ export type EngineInfo = {
 export type VesloServerLifecycleStatus =
   | "stopped"
   | "starting"
+  | "waiting_ready"
   | "running"
   | "exited"
   | "blocked";
@@ -56,6 +57,7 @@ export type VesloServerInfo = {
   lifecycleReason?: VesloServerLifecycleReason;
   host: string | null;
   port: number | null;
+  instanceId: string | null;
   baseUrl: string | null;
   connectUrl: string | null;
   mdnsUrl: string | null;

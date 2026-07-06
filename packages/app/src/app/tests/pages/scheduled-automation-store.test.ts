@@ -68,6 +68,7 @@ function liveServerInfo(): VesloServerInfo {
     running: true,
     host: "127.0.0.1",
     port: 8787,
+    instanceId: "instance-test",
     baseUrl: "http://127.0.0.1:8787",
     connectUrl: null,
     mdnsUrl: null,

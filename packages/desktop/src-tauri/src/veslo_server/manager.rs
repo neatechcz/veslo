@@ -14,12 +14,14 @@ pub struct VesloServerManager {
 pub struct VesloServerState {
     pub child: Option<SupervisedCommandChild>,
     pub child_exited: bool,
+    pub external_info: Option<VesloServerInfo>,
     pub host: Option<String>,
     /// Optional secondary WSL-reachable bind address (the WSL virtual adapter
     /// IP) the server also listens on. Drives engineUrl publication for WSL
     /// runtimes without binding the primary listener to 0.0.0.0. See VSLO-250.
     pub bridge_host: Option<String>,
     pub port: Option<u16>,
+    pub instance_id: Option<String>,
     pub base_url: Option<String>,
     pub connect_url: Option<String>,
     pub mdns_url: Option<String>,
@@ -73,28 +75,49 @@ impl SupervisedChild for VesloServerState {
     }
 }
 
+fn reports_ready_running(child_running: bool, status: VesloServerLifecycleStatus) -> bool {
+    child_running && status == VesloServerLifecycleStatus::Running
+}
+
 impl VesloServerManager {
     pub fn snapshot_locked(state: &mut VesloServerState) -> VesloServerInfo {
-        let (running, pid) = resolve_running_pid(state);
-        if running {
-            state.lifecycle_status = VesloServerLifecycleStatus::Running;
-            state.lifecycle_reason = VesloServerLifecycleReason::None;
+        let (child_running, pid) = resolve_running_pid(state);
+        if child_running {
+            state.external_info = None;
+            if !matches!(
+                state.lifecycle_status,
+                VesloServerLifecycleStatus::Starting
+                    | VesloServerLifecycleStatus::WaitingReady
+                    | VesloServerLifecycleStatus::Blocked
+            ) {
+                state.lifecycle_status = VesloServerLifecycleStatus::Running;
+                state.lifecycle_reason = VesloServerLifecycleReason::None;
+            }
         } else if state.child_exited
             && matches!(
                 state.lifecycle_status,
-                VesloServerLifecycleStatus::Running | VesloServerLifecycleStatus::Starting
+                VesloServerLifecycleStatus::Running
+                    | VesloServerLifecycleStatus::Starting
+                    | VesloServerLifecycleStatus::WaitingReady
             )
         {
             state.lifecycle_status = VesloServerLifecycleStatus::Exited;
             state.lifecycle_reason = VesloServerLifecycleReason::ChildExited;
         }
+        if !child_running {
+            if let Some(info) = state.external_info.clone() {
+                return info;
+            }
+        }
+        let ready_running = reports_ready_running(child_running, state.lifecycle_status);
 
         VesloServerInfo {
-            running,
+            running: ready_running,
             lifecycle_status: state.lifecycle_status,
             lifecycle_reason: state.lifecycle_reason,
             host: state.host.clone(),
             port: state.port,
+            instance_id: state.instance_id.clone(),
             base_url: state.base_url.clone(),
             connect_url: state.connect_url.clone(),
             mdns_url: state.mdns_url.clone(),
@@ -113,6 +136,8 @@ impl VesloServerManager {
         state.host = None;
         state.bridge_host = None;
         state.port = None;
+        state.instance_id = None;
+        state.external_info = None;
         state.base_url = None;
         state.connect_url = None;
         state.mdns_url = None;
@@ -201,5 +226,57 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("port 8787"));
+    }
+
+    #[test]
+    fn snapshot_running_flag_requires_ready_lifecycle() {
+        assert!(reports_ready_running(
+            true,
+            VesloServerLifecycleStatus::Running
+        ));
+        assert!(!reports_ready_running(
+            true,
+            VesloServerLifecycleStatus::WaitingReady
+        ));
+        assert!(!reports_ready_running(
+            true,
+            VesloServerLifecycleStatus::Blocked
+        ));
+        assert!(!reports_ready_running(
+            false,
+            VesloServerLifecycleStatus::Running
+        ));
+    }
+
+    #[test]
+    fn snapshot_returns_adopted_external_info_without_child() {
+        let external = VesloServerInfo {
+            running: true,
+            lifecycle_status: VesloServerLifecycleStatus::Running,
+            lifecycle_reason: VesloServerLifecycleReason::None,
+            host: Some("127.0.0.1".to_string()),
+            port: Some(8787),
+            instance_id: Some("instance-external".to_string()),
+            base_url: Some("http://127.0.0.1:8787".to_string()),
+            connect_url: None,
+            mdns_url: None,
+            lan_url: None,
+            engine_url: None,
+            client_token: Some("client-token".to_string()),
+            host_token: Some("host-token".to_string()),
+            pid: Some(12345),
+            last_stdout: None,
+            last_stderr: None,
+        };
+        let mut state = VesloServerState {
+            external_info: Some(external.clone()),
+            ..Default::default()
+        };
+
+        let info = VesloServerManager::snapshot_locked(&mut state);
+
+        assert_eq!(info.base_url, external.base_url);
+        assert_eq!(info.instance_id, external.instance_id);
+        assert!(info.running);
     }
 }

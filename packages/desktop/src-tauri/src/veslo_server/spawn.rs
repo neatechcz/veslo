@@ -1,7 +1,7 @@
 use std::env;
 use std::fs;
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tauri::async_runtime::Receiver;
 use tauri::{AppHandle, Manager};
@@ -399,6 +399,8 @@ pub fn spawn_veslo_server(
     app: &AppHandle,
     host: &str,
     port: u16,
+    instance_id: &str,
+    runtime_descriptor_path: &Path,
     workspace_paths: &[String],
     workspace_ids: &[Option<String>],
     token: &str,
@@ -450,6 +452,11 @@ pub fn spawn_veslo_server(
         command.args(server_args).current_dir(cwd)
     }
     .env("VESLO_MANAGED_AI_BASE_URL", resolve_managed_ai_base_url());
+    command = command.env("VESLO_INSTANCE_ID", instance_id);
+    command = command.env(
+        "VESLO_RUNTIME_DESCRIPTOR_PATH",
+        runtime_descriptor_path.to_string_lossy().to_string(),
+    );
     command = command.env(VESLO_SANDBOX_BACKEND_ENV, sandbox_backend);
     for (key, value) in crate::runtime_preferences::shared_unsandboxed_engine_env_overrides(
         shared_unsandboxed_engine,

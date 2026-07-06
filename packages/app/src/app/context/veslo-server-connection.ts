@@ -12,7 +12,6 @@ import {
 } from "../lib/veslo-server/status-stability";
 import {
   createVesloServerClient,
-  deriveLocalVesloServerUrlFromOpencodeBaseUrl,
   normalizeVesloServerUrl,
   readVesloServerSettings,
   resolveSessionArchiveClientOptions,
@@ -111,14 +110,12 @@ export type VesloServerAuth = {
 export type ResolveVesloServerBaseUrlInput = {
   startupPreference: StartupPreference | null;
   activeHostInfo: VesloServerConnectionHostInfo | null;
-  localFallbackUrl: string;
   settingsUrl: string;
 };
 
 export type ResolveVesloServerAuthInput = {
   startupPreference: StartupPreference | null;
   activeHostInfo: VesloServerConnectionHostInfo | null;
-  localFallbackUrl: string;
   settingsToken: string;
 };
 
@@ -177,8 +174,7 @@ export function resolveVesloServerBaseUrl(input: ResolveVesloServerBaseUrlInput)
   const pref = input.startupPreference;
   const hostInfo = input.activeHostInfo;
   const settingsUrl = input.settingsUrl.trim();
-  const localFallbackUrl = input.localFallbackUrl.trim();
-  const preferredLocalUrl = hostInfo?.baseUrl?.trim() || localFallbackUrl;
+  const preferredLocalUrl = hostInfo?.baseUrl?.trim() ?? "";
 
   if (pref === "local") return preferredLocalUrl;
   if (pref === "server") return settingsUrl;
@@ -200,9 +196,6 @@ export function resolveVesloServerAuth(input: ResolveVesloServerAuthInput): Vesl
   }
   if (hostInfo?.baseUrl) {
     return { token: clientToken || undefined, hostToken: hostToken || undefined };
-  }
-  if (input.localFallbackUrl.trim()) {
-    return { token: undefined, hostToken: undefined };
   }
   return { token: settingsToken || undefined, hostToken: undefined };
 }
@@ -294,17 +287,10 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     return set;
   });
 
-  const vesloServerLocalFallbackBaseUrl = createMemo(() => {
-    if (!deps.isTauriRuntime()) return "";
-    if (deps.startupPreference() === "server") return "";
-    return deriveLocalVesloServerUrlFromOpencodeBaseUrl(deps.opencodeBaseUrl()) ?? "";
-  });
-
   const vesloServerBaseUrl = createMemo(() =>
     resolveVesloServerBaseUrl({
       startupPreference: deps.startupPreference(),
       activeHostInfo: activeVesloServerHostInfo(),
-      localFallbackUrl: vesloServerLocalFallbackBaseUrl(),
       settingsUrl: normalizeVesloServerUrl(vesloServerSettings().urlOverride ?? "") ?? "",
     }),
   );
@@ -314,7 +300,6 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       resolveVesloServerAuth({
         startupPreference: deps.startupPreference(),
         activeHostInfo: activeVesloServerHostInfo(),
-        localFallbackUrl: vesloServerLocalFallbackBaseUrl(),
         settingsToken: vesloServerSettings().token?.trim() ?? "",
       }),
     undefined,
@@ -374,7 +359,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     return resolveManagedAiGatewayBaseUrl({
       settingsUrl: normalizeVesloServerUrl(settings.urlOverride ?? "") ?? "",
       gatewayClientBaseUrl: gatewayVesloServerClient()?.baseUrl?.trim() ?? "",
-      localFallbackBaseUrl: vesloServerLocalFallbackBaseUrl(),
+      localFallbackBaseUrl: "",
       isDesktopRuntime: deps.isTauriRuntime(),
     });
   });
@@ -582,19 +567,17 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     const pref = deps.startupPreference();
     const info = activeVesloServerHostInfo();
     const hostUrl = info?.connectUrl ?? info?.lanUrl ?? info?.mdnsUrl ?? info?.baseUrl ?? "";
-    const localFallbackUrl = vesloServerLocalFallbackBaseUrl();
-    const resolvedLocalUrl = hostUrl || localFallbackUrl;
     const settingsUrl = normalizeVesloServerUrl(vesloServerSettings().urlOverride ?? "") ?? "";
 
     if (pref === "local") {
-      setVesloServerUrl(resolvedLocalUrl);
+      setVesloServerUrl(hostUrl);
       return;
     }
     if (pref === "server") {
       setVesloServerUrl(settingsUrl);
       return;
     }
-    setVesloServerUrl(resolvedLocalUrl || settingsUrl);
+    setVesloServerUrl(hostUrl || settingsUrl);
   });
 
   createEffect(() => {
@@ -910,7 +893,6 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     setDevtoolsWorkspaceId,
     activeVesloServerHostInfo,
     activeVesloServerRoutingInfo,
-    vesloServerLocalFallbackBaseUrl,
     vesloServerBaseUrl,
     vesloServerAuth,
     vesloServerClient,

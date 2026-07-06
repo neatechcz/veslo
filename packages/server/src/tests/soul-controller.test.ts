@@ -25,6 +25,7 @@ const workspaceB: WorkspaceInfo = {
 const baseConfig: ServerConfig = {
   host: "127.0.0.1",
   port: 0,
+  instanceId: "instance-soul-test",
   token: "token",
   hostToken: "host-token",
   approval: { mode: "auto", timeoutMs: 1 },

@@ -241,6 +241,7 @@ export function registerHealthStatusRoutes(
     version: serverVersion,
     uptimeMs: Date.now() - ctx.config.startedAt,
     pid: process.pid,
+    instanceId: ctx.config.instanceId ?? null,
   });
 
   addRoute(routes, "GET", "/health", "none", async (ctx) => {

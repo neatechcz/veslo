@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 
 use tauri::async_runtime::Receiver;
 
@@ -7,6 +7,7 @@ use crate::supervised_process::{CommandEvent, SupervisedCommandChild};
 use crate::utils::truncate_output;
 
 pub type SupervisorForwarder = (Arc<DebugLogsForwarder>, &'static str);
+pub type SupervisorReadySignal = (mpsc::Sender<String>, &'static str);
 
 const OUTPUT_BUFFER_LIMIT: usize = 8000;
 
@@ -68,10 +69,28 @@ pub fn spawn_output_collector<S>(
 }
 
 pub fn spawn_output_collector_with_forwarder<S>(
+    rx: Receiver<CommandEvent>,
+    state_handle: Arc<Mutex<S>>,
+    terminated_label: &'static str,
+    forwarder: Option<SupervisorForwarder>,
+) where
+    S: SupervisedChild + Send + 'static,
+{
+    spawn_output_collector_with_forwarder_and_ready::<S>(
+        rx,
+        state_handle,
+        terminated_label,
+        forwarder,
+        None,
+    );
+}
+
+pub fn spawn_output_collector_with_forwarder_and_ready<S>(
     mut rx: Receiver<CommandEvent>,
     state_handle: Arc<Mutex<S>>,
     terminated_label: &'static str,
     forwarder: Option<SupervisorForwarder>,
+    mut ready_signal: Option<SupervisorReadySignal>,
 ) where
     S: SupervisedChild + Send + 'static,
 {
@@ -85,6 +104,12 @@ pub fn spawn_output_collector_with_forwarder<S>(
                     }
                     if let Ok(mut state) = state_handle.try_lock() {
                         append_stdout(&mut *state, &line);
+                    }
+                    if let Some((tx, marker)) = ready_signal.as_ref() {
+                        if line.contains(marker) {
+                            let _ = tx.send(line.clone());
+                            ready_signal = None;
+                        }
                     }
                 }
                 CommandEvent::Stderr(line_bytes) => {

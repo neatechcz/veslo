@@ -8,12 +8,12 @@ use crate::types::{
     VesloServerInfo, VesloServerLifecycleReason, VesloServerLifecycleStatus, WorkspaceState,
     WorkspaceType,
 };
+#[cfg(any(test, all(debug_assertions, feature = "e2e")))]
 use crate::utils::truncate_output;
 use crate::veslo_server::manager::{VesloServerManager, VesloServerState};
-use crate::veslo_server::{
-    clear_persisted_veslo_server_info, recover_persisted_veslo_server_info, server_health_identity,
-    start_veslo_server, HealthIdentity,
-};
+use crate::veslo_server::start_veslo_server;
+#[cfg(test)]
+use crate::veslo_server::HealthIdentity;
 use crate::workspace::state::load_workspace_state;
 
 const ENGINE_URL_REFRESH_TTL: Duration = Duration::from_secs(120);
@@ -79,6 +79,7 @@ fn local_workspace_paths_for_server_restart(
     paths
 }
 
+#[cfg(test)]
 fn sanitize_live_info_with_health(
     mut info: VesloServerInfo,
     health_check: impl Fn(&str) -> Option<HealthIdentity>,
@@ -100,6 +101,14 @@ fn sanitize_live_info_with_health(
         return (info, false);
     };
 
+    let instance_verified = matches!(
+        (info.instance_id.as_deref(), identity.instance_id.as_deref()),
+        (Some(a), Some(b)) if a == b
+    );
+    let instance_mismatch = match info.instance_id.as_deref() {
+        Some(expected) => identity.instance_id.as_deref() != Some(expected),
+        None => false,
+    };
     let token_verified = matches!(
         (info.client_token.as_deref(), identity.token.as_deref()),
         (Some(a), Some(b)) if a == b
@@ -116,7 +125,21 @@ fn sanitize_live_info_with_health(
         && identity.token.is_none()
         && info.client_token.is_none()
         && matches!((info.pid, identity.pid), (Some(a), Some(b)) if a != b);
-    if !(token_mismatch || pid_mismatch) {
+    if !(instance_mismatch || token_mismatch || pid_mismatch) {
+        if instance_verified
+            && matches!(
+                info.lifecycle_status,
+                VesloServerLifecycleStatus::WaitingReady | VesloServerLifecycleStatus::Blocked
+            )
+            && matches!(
+                info.lifecycle_reason,
+                VesloServerLifecycleReason::SpawnPending
+                    | VesloServerLifecycleReason::HealthUnreachable
+            )
+        {
+            info.lifecycle_status = VesloServerLifecycleStatus::Running;
+            info.lifecycle_reason = VesloServerLifecycleReason::None;
+        }
         return (info, false);
     }
 
@@ -213,61 +236,74 @@ fn finish_engine_url_refresh(
 }
 
 #[tauri::command]
-pub fn veslo_server_info(app: AppHandle, manager: State<VesloServerManager>) -> VesloServerInfo {
-    let (running_snapshot, engine_url_refresh) = {
+pub fn veslo_server_info(_app: AppHandle, manager: State<VesloServerManager>) -> VesloServerInfo {
+    let mut sanitized = {
         let mut state = manager.inner.lock().expect("veslo server mutex poisoned");
-        let info = VesloServerManager::snapshot_locked(&mut state);
-        let (sanitized, stale) = sanitize_live_info_with_health(info, server_health_identity);
-        if sanitized.running {
-            let refresh = begin_engine_url_refresh_if_due(
-                &mut state,
-                &sanitized,
-                Instant::now(),
-                ENGINE_URL_REFRESH_TTL,
-                ENGINE_URL_REFRESH_LOCK_TIMEOUT,
-            );
-            (Some(sanitized), refresh)
-        } else {
-            if stale {
-                let _ = clear_persisted_veslo_server_info(&app);
-                return sanitized;
-            }
-            (None, None)
-        }
+        VesloServerManager::snapshot_locked(&mut state)
     };
 
-    if let Some(mut sanitized) = running_snapshot {
-        if let Some(lease) = engine_url_refresh {
-            let refreshed = if let Some(bridge_host) = lease.bridge_host.as_deref() {
-                crate::veslo_server::resolve_engine_url_for_bridge_host(bridge_host, lease.port)
-            } else {
-                crate::veslo_server::resolve_engine_url_for_bind_host(
-                    lease.host.as_deref(),
-                    Some(lease.port),
-                )
-            };
-            let mut state = manager.inner.lock().expect("veslo server mutex poisoned");
-            let live = VesloServerManager::snapshot_locked(&mut state);
-            if state.engine_url_refresh_generation == lease.generation {
-                if live.running && live.port == Some(lease.port) && live.host == lease.host {
-                    finish_engine_url_refresh(&mut state, lease, Instant::now(), refreshed);
-                    sanitized = VesloServerManager::snapshot_locked(&mut state);
-                } else {
-                    state.engine_url_refresh_started_at = None;
-                    state.engine_url_checked_at = Some(Instant::now());
-                }
-            }
-        }
+    if !sanitized.running {
         return sanitized;
     }
 
-    match recover_persisted_veslo_server_info(&app) {
-        Ok(Some(info)) => info,
-        Ok(None) | Err(_) => {
-            let mut state = manager.inner.lock().expect("veslo server mutex poisoned");
-            VesloServerManager::snapshot_locked(&mut state)
+    let engine_url_refresh = {
+        let mut state = manager.inner.lock().expect("veslo server mutex poisoned");
+        if state.instance_id != sanitized.instance_id || state.port != sanitized.port {
+            None
+        } else {
+            if sanitized.running {
+                if sanitized.lifecycle_status == VesloServerLifecycleStatus::Running
+                    && matches!(
+                        state.lifecycle_status,
+                        VesloServerLifecycleStatus::WaitingReady
+                            | VesloServerLifecycleStatus::Blocked
+                    )
+                    && matches!(
+                        state.lifecycle_reason,
+                        VesloServerLifecycleReason::SpawnPending
+                            | VesloServerLifecycleReason::HealthUnreachable
+                    )
+                {
+                    state.lifecycle_status = VesloServerLifecycleStatus::Running;
+                    state.lifecycle_reason = VesloServerLifecycleReason::None;
+                    sanitized = VesloServerManager::snapshot_locked(&mut state);
+                }
+                begin_engine_url_refresh_if_due(
+                    &mut state,
+                    &sanitized,
+                    Instant::now(),
+                    ENGINE_URL_REFRESH_TTL,
+                    ENGINE_URL_REFRESH_LOCK_TIMEOUT,
+                )
+            } else {
+                None
+            }
+        }
+    };
+
+    if let Some(lease) = engine_url_refresh {
+        let refreshed = if let Some(bridge_host) = lease.bridge_host.as_deref() {
+            crate::veslo_server::resolve_engine_url_for_bridge_host(bridge_host, lease.port)
+        } else {
+            crate::veslo_server::resolve_engine_url_for_bind_host(
+                lease.host.as_deref(),
+                Some(lease.port),
+            )
+        };
+        let mut state = manager.inner.lock().expect("veslo server mutex poisoned");
+        let live = VesloServerManager::snapshot_locked(&mut state);
+        if state.engine_url_refresh_generation == lease.generation {
+            if live.running && live.port == Some(lease.port) && live.host == lease.host {
+                finish_engine_url_refresh(&mut state, lease, Instant::now(), refreshed);
+                sanitized = VesloServerManager::snapshot_locked(&mut state);
+            } else {
+                state.engine_url_refresh_started_at = None;
+                state.engine_url_checked_at = Some(Instant::now());
+            }
         }
     }
+
+    sanitized
 }
 
 #[cfg(all(debug_assertions, feature = "e2e"))]
@@ -497,6 +533,7 @@ mod tests {
             running: true,
             host: Some("0.0.0.0".to_string()),
             port: Some(8787),
+            instance_id: Some("instance-live".to_string()),
             base_url: Some("http://127.0.0.1:8787".to_string()),
             connect_url: Some("http://192.168.0.10:8787".to_string()),
             mdns_url: Some("http://veslo.local:8787".to_string()),
@@ -701,6 +738,7 @@ mod tests {
         let info = sample_live_info();
         let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| {
             Some(HealthIdentity {
+                instance_id: info.instance_id.clone(),
                 token: info.client_token.clone(),
                 pid: info.pid,
             })
@@ -731,6 +769,7 @@ mod tests {
         let info = sample_live_info();
         let (sanitized, stale) = sanitize_live_info_with_health(info, |_| {
             Some(HealthIdentity {
+                instance_id: Some("instance-live".to_string()),
                 token: Some("foreign-token".to_string()),
                 pid: Some(12345),
             })
@@ -745,6 +784,7 @@ mod tests {
         let info = sample_live_info();
         let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| {
             Some(HealthIdentity {
+                instance_id: info.instance_id.clone(),
                 token: info.client_token.clone(),
                 pid: Some(99999),
             })
@@ -759,6 +799,7 @@ mod tests {
         let info = sample_live_info();
         let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| {
             Some(HealthIdentity {
+                instance_id: info.instance_id.clone(),
                 token: None,
                 pid: Some(99999),
             })
@@ -772,8 +813,10 @@ mod tests {
     fn sanitize_live_info_marks_tokenless_snapshot_stale_when_pid_mismatch() {
         let mut info = sample_live_info();
         info.client_token = None;
+        let instance_id = info.instance_id.clone();
         let (sanitized, stale) = sanitize_live_info_with_health(info, |_| {
             Some(HealthIdentity {
+                instance_id: instance_id.clone(),
                 token: None,
                 pid: Some(99999),
             })
@@ -783,12 +826,13 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_live_info_tolerates_legacy_server_without_identity_fields() {
+    fn sanitize_live_info_rejects_health_without_matching_instance_identity() {
         let info = sample_live_info();
         let (sanitized, stale) =
             sanitize_live_info_with_health(info.clone(), |_| Some(HealthIdentity::default()));
-        assert!(!stale);
-        assert!(sanitized.running);
-        assert_eq!(sanitized.client_token, info.client_token);
+        assert!(stale);
+        assert!(!sanitized.running);
+        assert_eq!(sanitized.client_token, None);
+        assert_eq!(sanitized.host_token, None);
     }
 }

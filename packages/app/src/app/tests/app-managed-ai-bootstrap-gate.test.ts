@@ -48,9 +48,9 @@ test("sendPrompt blocks when managed bootstrap readiness is unavailable before r
   const start = sendWorkflowSource.indexOf("async function sendPrompt(");
   const end = sendWorkflowSource.indexOf("async function abortSession", start);
   assert.ok(start >= 0 && end > start, "sendPrompt source should be present");
-  const createStart = createWorkflowSource.indexOf("const createSessionAndOpen = async (");
-  const createEnd = createWorkflowSource.indexOf("return {", createStart);
-  assert.ok(createStart >= 0 && createEnd > createStart, "createSessionAndOpen source should be present");
+  const createStart = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
+  const createEnd = createWorkflowSource.indexOf("const createSession = (", createStart);
+  assert.ok(createStart >= 0 && createEnd > createStart, "create session flow source should be present");
   const createSource = createWorkflowSource.slice(createStart, createEnd);
   const skipIndex = createSource.indexOf("createSessionAndOpen:managed-ai-bootstrap-skip");
   const gateIndex = createSource.indexOf('"createSessionAndOpen:ensure-managed-ai-bootstrap-ready"');
@@ -75,8 +75,13 @@ test("managed AI bootstrap waits for runtime gateway authorization before writin
 test("managed AI bootstrap routes desktop local providers through the local Veslo server target", () => {
   assert.match(
     runtimeConfigSource,
-    /const providerRoutingLocalHost = deps\.activeVesloServerRoutingInfo\(\);[\s\S]*?const providerRoutingLocalBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.baseUrl \?\?[\s\S]*?deriveLocalVesloServerUrlFromOpencodeBaseUrl\(deps\.baseUrl\(\)\) \?\?[\s\S]*?"";[\s\S]*?const providerRoutingEngineBaseUrl = providerRoutingLocalHost\?\.engineUrl \?\? "";/s,
-    "managed AI config writes should resolve provider routing from the local host snapshot instead of the remote access gateway client",
+    /const providerRoutingLocalHost = deps\.activeVesloServerRoutingInfo\(\);[\s\S]*?const providerRoutingLocalBaseUrl = providerRoutingLocalHost\?\.baseUrl \?\? "";[\s\S]*?const providerRoutingEngineBaseUrl = providerRoutingLocalHost\?\.engineUrl \?\? "";/s,
+    "managed AI config writes should resolve provider routing from the local host snapshot instead of guessing from the OpenCode base URL",
+  );
+  assert.doesNotMatch(
+    runtimeConfigSource,
+    /deriveLocalVesloServerUrlFromOpencodeBaseUrl|deps\.baseUrl\(\)/,
+    "managed AI local provider routing should not rewrite the OpenCode data-plane URL into a Veslo control-plane URL",
   );
   assert.match(
     runtimeConfigSource,

@@ -98,8 +98,10 @@ export interface ServerConfig {
    */
   bridgeHost?: string;
   port: number;
+  instanceId?: string;
   token: string;
   hostToken: string;
+  runtimeDescriptorPath?: string;
   configPath?: string;
   approval: ApprovalConfig;
   corsOrigins: string[];

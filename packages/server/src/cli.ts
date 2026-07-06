@@ -1,8 +1,48 @@
 #!/usr/bin/env bun
 
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+
 import { parseCliArgs, printHelp, resolveServerConfig } from "./config.js";
 import { createServerLogger, startServer } from "./server.js";
+import type { ServerConfig } from "./types.js";
 import pkg from "../package.json" with { type: "json" };
+
+type RuntimeDescriptor = {
+  schemaVersion: 1;
+  type: "veslo.server.ready";
+  instanceId: string | null;
+  host: string;
+  port: number;
+  pid: number;
+  startedAt: number;
+  baseUrl: string;
+};
+
+function runtimeDescriptor(config: ServerConfig, port: number): RuntimeDescriptor {
+  return {
+    schemaVersion: 1,
+    type: "veslo.server.ready",
+    instanceId: config.instanceId ?? null,
+    host: config.host,
+    port,
+    pid: process.pid,
+    startedAt: config.startedAt,
+    baseUrl: `http://${config.host}:${port}`,
+  };
+}
+
+async function writeRuntimeDescriptorAtomically(path: string, descriptor: RuntimeDescriptor): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await writeFile(tempPath, `${JSON.stringify(descriptor, null, 2)}\n`, { mode: 0o600 });
+    await rename(tempPath, path);
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
 
 const args = parseCliArgs(process.argv.slice(2));
 
@@ -22,6 +62,19 @@ const server = startServer(config);
 
 const url = `http://${config.host}:${server.port}`;
 logger.log("info", `Veslo server listening on ${url}`);
+const descriptor = runtimeDescriptor(config, server.port);
+if (config.runtimeDescriptorPath) {
+  try {
+    await writeRuntimeDescriptorAtomically(config.runtimeDescriptorPath, descriptor);
+  } catch (error) {
+    logger.log("error", "Failed to write Veslo server runtime descriptor", {
+      path: config.runtimeDescriptorPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    process.exit(1);
+  }
+}
+console.log(`VESLO_SERVER_READY ${JSON.stringify(descriptor)}`);
 
 if (config.tokenSource === "generated") {
   logger.log("info", `Client token: ${config.token}`);

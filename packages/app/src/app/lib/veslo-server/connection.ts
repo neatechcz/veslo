@@ -70,51 +70,6 @@ export function resolveSessionArchiveClientOptions(options: {
   return null;
 }
 
-function isLikelyLocalHostname(hostname: string) {
-  const normalized = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
-  if (!normalized) return false;
-  if (normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1") {
-    return true;
-  }
-
-  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(normalized)) {
-    const octets = normalized.split(".").map((part) => Number(part));
-    if (octets.length !== 4 || octets.some((value) => Number.isNaN(value) || value < 0 || value > 255)) {
-      return false;
-    }
-    const [a, b] = octets;
-    if (a === 10) return true;
-    if (a === 127) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-  }
-
-  return normalized.endsWith(".local");
-}
-
-export function deriveLocalVesloServerUrlFromOpencodeBaseUrl(
-  opencodeBaseUrl: string,
-  port: number = DEFAULT_VESLO_SERVER_PORT,
-) {
-  const trimmed = opencodeBaseUrl.trim();
-  if (!trimmed) return null;
-  if (!Number.isFinite(port) || port <= 0) return null;
-
-  try {
-    const parsed = new URL(trimmed);
-    if (!isLikelyLocalHostname(parsed.hostname)) {
-      return null;
-    }
-    parsed.port = String(port);
-    parsed.pathname = "";
-    parsed.search = "";
-    parsed.hash = "";
-    return parsed.origin;
-  } catch {
-    return null;
-  }
-}
-
 export function parseVesloWorkspaceIdFromUrl(input: string) {
   const normalized = normalizeVesloServerUrl(input) ?? "";
   if (!normalized) return null;

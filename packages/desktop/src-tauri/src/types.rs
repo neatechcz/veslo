@@ -110,6 +110,7 @@ pub struct EngineInfo {
 pub enum VesloServerLifecycleStatus {
     Stopped,
     Starting,
+    WaitingReady,
     Running,
     Exited,
     Blocked,
@@ -148,6 +149,7 @@ pub struct VesloServerInfo {
     pub lifecycle_reason: VesloServerLifecycleReason,
     pub host: Option<String>,
     pub port: Option<u16>,
+    pub instance_id: Option<String>,
     pub base_url: Option<String>,
     pub connect_url: Option<String>,
     pub mdns_url: Option<String>,

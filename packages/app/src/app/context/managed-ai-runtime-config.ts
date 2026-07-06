@@ -24,7 +24,6 @@ import {
   type RuntimeSandboxEngineSnapshot,
 } from "../lib/runtime-sandbox-state";
 import {
-  deriveLocalVesloServerUrlFromOpencodeBaseUrl,
   type VesloUserAiAccess,
   type VesloServerStatus,
 } from "../lib/veslo-server";
@@ -323,10 +322,7 @@ export function createManagedAiRuntimeConfigSync(
     targetWorkspaceRoot: string,
   ) => {
     const providerRoutingLocalHost = deps.activeVesloServerRoutingInfo();
-    const providerRoutingLocalBaseUrl =
-      providerRoutingLocalHost?.baseUrl ??
-      deriveLocalVesloServerUrlFromOpencodeBaseUrl(deps.baseUrl()) ??
-      "";
+    const providerRoutingLocalBaseUrl = providerRoutingLocalHost?.baseUrl ?? "";
     const providerRoutingEngineBaseUrl = providerRoutingLocalHost?.engineUrl ?? "";
     const runtimeSandboxState = resolveRuntimeSandboxStateForTarget({
       workspaceId: targetWorkspaceId || null,

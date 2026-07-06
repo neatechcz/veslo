@@ -43,8 +43,10 @@ interface FileConfig {
   host?: string;
   bridgeHost?: string;
   port?: number;
+  instanceId?: string;
   token?: string;
   hostToken?: string;
+  runtimeDescriptorPath?: string;
   approval?: Partial<ApprovalConfig>;
   workspaces?: WorkspaceConfig[];
   corsOrigins?: string[];
@@ -331,6 +333,9 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
 
   const tokenFromEnv = process.env.VESLO_TOKEN;
   const hostTokenFromEnv = process.env.VESLO_HOST_TOKEN;
+  const instanceId = process.env.VESLO_INSTANCE_ID?.trim() || fileConfig.instanceId?.trim() || shortId();
+  const runtimeDescriptorPath =
+    process.env.VESLO_RUNTIME_DESCRIPTOR_PATH?.trim() || fileConfig.runtimeDescriptorPath?.trim() || undefined;
 
   const token = cli.token ?? tokenFromEnv ?? fileConfig.token ?? shortId();
   const hostToken = cli.hostToken ?? hostTokenFromEnv ?? fileConfig.hostToken ?? shortId();
@@ -441,8 +446,10 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     host,
     bridgeHost,
     port: Number.isNaN(port) ? DEFAULT_PORT : port,
+    instanceId,
     token,
     hostToken,
+    runtimeDescriptorPath,
     configPath,
     approval,
     corsOrigins,
