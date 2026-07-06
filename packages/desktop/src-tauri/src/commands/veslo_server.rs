@@ -780,6 +780,22 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_live_info_rejects_matching_token_from_wrong_instance() {
+        let info = sample_live_info();
+        let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| {
+            Some(HealthIdentity {
+                instance_id: Some("foreign-instance".to_string()),
+                token: info.client_token.clone(),
+                pid: info.pid,
+            })
+        });
+        assert!(stale);
+        assert!(!sanitized.running);
+        assert_eq!(sanitized.client_token, None);
+        assert_eq!(sanitized.host_token, None);
+    }
+
+    #[test]
     fn sanitize_live_info_tolerates_pid_mismatch_when_token_matches() {
         let info = sample_live_info();
         let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| {

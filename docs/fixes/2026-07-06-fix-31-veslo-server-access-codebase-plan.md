@@ -82,3 +82,31 @@ The plan is complete for the codebase-only contract. Installed-runtime E2E and
 pilot validation remains skipped by owner decision and should be handled as a
 separate release/runtime validation track before claiming installed-runtime
 coverage.
+
+## Additional Hardening
+
+Follow-up test hardening added after the codebase checkpoint:
+
+- Desktop live snapshot sanitization now has a regression test proving a
+  matching bearer token is not enough to accept a foreign `instanceId`.
+- Frontend descriptor events now have a regression test proving a new
+  `instanceId` cannot inherit the previous host token even when the server
+  reuses the same local `baseUrl`.
+- Frontend workspace registration now rejects `workspace_exists` conflicts
+  whose returned path does not match the requested local workspace path.
+- Server secrets-file config now tests the legacy `token` alias and verifies it
+  still takes precedence over environment tokens.
+
+Validation:
+
+```powershell
+cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml commands::veslo_server::tests --quiet
+pnpm --filter veslo-server exec bun test src/tests/config.runtime-files.test.ts
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/veslo-server-connection.test.ts src/app/tests/context/workspace-server-registry.test.ts
+```
+
+Results:
+
+- desktop server command tests: `19` passed,
+- server runtime/secrets config tests: `6` passed,
+- app descriptor and workspace registry tests: `15` passed.

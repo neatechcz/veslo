@@ -355,3 +355,24 @@ test("server state events do not carry host token across a new instance", () => 
   assert.equal(merged?.instanceId, "new-instance");
   assert.equal(merged?.hostToken, null);
 });
+
+test("server state events do not carry host token when a new instance reuses the same base URL", () => {
+  const current = {
+    ...runningHostInfo(),
+    hostToken: "old-host-token",
+    lastStdout: "old stdout",
+  };
+  const eventPayload = {
+    ...runningHostInfo(),
+    instanceId: "new-instance",
+    hostToken: null,
+    lastStdout: null,
+  };
+
+  const merged = mergeVesloServerDescriptorEvent(current, eventPayload);
+
+  assert.equal(merged?.baseUrl, current.baseUrl);
+  assert.equal(merged?.instanceId, "new-instance");
+  assert.equal(merged?.hostToken, null);
+  assert.equal(merged?.lastStdout, null);
+});

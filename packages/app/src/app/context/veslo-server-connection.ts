@@ -157,6 +157,8 @@ export function mergeVesloServerDescriptorEvent(
     Boolean(current.baseUrl?.trim()) &&
     Boolean(next.baseUrl?.trim()) &&
     current.baseUrl?.trim() === next.baseUrl?.trim();
+  const bothHaveInstanceIds = Boolean(current.instanceId?.trim()) && Boolean(next.instanceId?.trim());
+  if (bothHaveInstanceIds && !sameInstance) return next;
   if (!sameInstance && !sameBaseUrl) return next;
 
   return {

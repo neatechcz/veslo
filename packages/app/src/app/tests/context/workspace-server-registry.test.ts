@@ -95,6 +95,48 @@ test("addLocalWorkspaceOnServer rejects workspace_exists without id and path evi
   assert.match(JSON.stringify(debug), /addLocalWorkspaceOnServer:failed/);
 });
 
+test("addLocalWorkspaceOnServer rejects workspace_exists for a different path", async () => {
+  const debug: unknown[] = [];
+  const registry = registryWithClient(
+    {
+      addLocalWorkspace: async () => {
+        throw new VesloServerError(409, "workspace_exists", "Workspace already exists", {
+          id: "ws-other",
+          path: "/tmp/other-project",
+        });
+      },
+    },
+    debug,
+  );
+
+  const result = await registry.addLocalWorkspaceOnServer("/tmp/project", "Project");
+
+  assert.equal(result.ok, false);
+  assert.match(JSON.stringify(debug), /addLocalWorkspaceOnServer:failed/);
+});
+
+test("activateVesloHostWorkspace rejects mismatched workspace_exists evidence instead of activating another path", async () => {
+  let activateCalls = 0;
+  const registry = registryWithClient({
+    listWorkspaces: async () => ({ activeId: null, items: [] }),
+    addLocalWorkspace: async () => {
+      throw new VesloServerError(409, "workspace_exists", "Workspace already exists", {
+        id: "ws-other",
+        path: "/tmp/other-project",
+      });
+    },
+    activateWorkspace: async () => {
+      activateCalls += 1;
+    },
+  });
+
+  await assert.rejects(
+    () => registry.activateVesloHostWorkspace("/tmp/project"),
+    /workspace_registry_unsynced:registration_failed/,
+  );
+  assert.equal(activateCalls, 0);
+});
+
 test("reconcileVesloServerWorkspaces is read-only for missing local workspaces", async () => {
   const debug: unknown[] = [];
   let addCalls = 0;

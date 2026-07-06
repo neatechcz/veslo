@@ -21,7 +21,7 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function workspaceExistsDetails(err: unknown): { id: string; path: string } | null {
+function workspaceExistsDetails(err: unknown, requestedPath: string): { id: string; path: string } | null {
   if (!(err instanceof VesloServerError) || err.status !== 409 || err.code !== "workspace_exists") {
     return null;
   }
@@ -30,7 +30,9 @@ function workspaceExistsDetails(err: unknown): { id: string; path: string } | nu
     : null;
   const id = typeof details?.id === "string" ? details.id.trim() : "";
   const path = typeof details?.path === "string" ? details.path.trim() : "";
-  return id && path ? { id, path } : null;
+  if (!id || !path) return null;
+  if (normalizeDirectoryPath(path) !== normalizeDirectoryPath(requestedPath)) return null;
+  return { id, path };
 }
 
 function workspaceRegistryUnsynced(reason: string, details?: Record<string, unknown>): Error {
@@ -59,7 +61,7 @@ export function createWorkspaceServerRegistry(deps: WorkspaceServerRegistryDeps)
         path: response.workspace?.path ?? trimmed,
       };
     } catch (err) {
-      const existing = workspaceExistsDetails(err);
+      const existing = workspaceExistsDetails(err, trimmed);
       if (existing) {
         return {
           ok: true,

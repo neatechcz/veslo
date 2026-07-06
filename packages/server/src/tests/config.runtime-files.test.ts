@@ -121,6 +121,32 @@ describe("runtime and secrets file config", () => {
     expect(config.hostTokenSource).toBe("cli");
   });
 
+  test("loads legacy token alias from secrets file without falling back to env", async () => {
+    snapshotEnv();
+
+    const configDir = await mkdtemp(join(tmpdir(), "veslo-server-runtime-files-"));
+    tempDirs.push(configDir);
+    const secretsPath = join(configDir, "secrets.json");
+    await writeFile(
+      secretsPath,
+      JSON.stringify({
+        token: " alias-client ",
+        hostToken: " alias-host ",
+      }),
+      "utf8",
+    );
+    process.env.VESLO_TOKEN = "env-client";
+    process.env.VESLO_HOST_TOKEN = "env-host";
+    process.env.VESLO_SECRETS_FILE = secretsPath;
+
+    const config = await resolveServerConfig(parseCliArgs([]));
+
+    expect(config.token).toBe("alias-client");
+    expect(config.hostToken).toBe("alias-host");
+    expect(config.tokenSource).toBe("secrets-file");
+    expect(config.hostTokenSource).toBe("secrets-file");
+  });
+
   test("fails closed when configured secrets file cannot be read", async () => {
     snapshotEnv();
 
