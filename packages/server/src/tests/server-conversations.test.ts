@@ -212,6 +212,163 @@ describe("conversation routes", () => {
     expect(upstreamRequests).toEqual([]);
   });
 
+  test("POST /workspace/:id/conversations/submit materializes a first conversation idempotently", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-materialize-"));
+    tempDirs.push(workspaceRoot);
+    const upstreamRequests: Array<{
+      path: string;
+      traceId: string | null;
+      body: Record<string, unknown> | null;
+    }> = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        upstreamRequests.push({
+          path: url.pathname,
+          traceId: request.headers.get("x-veslo-send-trace-id"),
+          body,
+        });
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({
+            id: "sess-submit-created",
+            title: body?.title ?? "First submit",
+            directory: body?.directory ?? workspaceRoot,
+            parentID: null,
+            time: { created: 100, updated: 100 },
+          });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+    const body = {
+      clientMessageId: "msg-submit-materialize",
+      origin: "session:normal",
+      source: "enter",
+      target: { directory: workspaceRoot, pendingClientSessionId: "pending-materialize" },
+      draft: {
+        mode: "prompt",
+        text: "Create from submit",
+        parts: [{ type: "text", text: "Create from submit" }],
+      },
+    };
+    const submit = () => fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "x-veslo-send-trace-id": "submit-materialize-trace",
+        },
+        body: JSON.stringify(body),
+      },
+    );
+
+    const firstResponse = await submit();
+    expect(firstResponse.status).toBe(200);
+    const firstPayload = await firstResponse.json() as {
+      status?: string;
+      workspaceId?: string;
+      conversationId?: string;
+      opencodeSessionId?: string;
+      clientMessageId?: string;
+      pendingClientSessionId?: string | null;
+      draftDisposition?: string;
+      materializedSession?: { id?: string; title?: string; conversationId?: string; opencodeSessionId?: string };
+    };
+    expect(firstPayload.status).toBe("materialized");
+    expect(firstPayload.workspaceId).toBe("ws_1");
+    expect(firstPayload.conversationId).toMatch(/^conv-/);
+    expect(firstPayload.opencodeSessionId).toBe("sess-submit-created");
+    expect(firstPayload.clientMessageId).toBe("msg-submit-materialize");
+    expect(firstPayload.pendingClientSessionId).toBe("pending-materialize");
+    expect(firstPayload.draftDisposition).toBe("keep");
+    expect(firstPayload.materializedSession?.id).toBe("sess-submit-created");
+    expect(firstPayload.materializedSession?.title).toBe("Create from submit");
+    expect(firstPayload.materializedSession?.conversationId).toBe(firstPayload.conversationId);
+    expect(firstPayload.materializedSession?.opencodeSessionId).toBe("sess-submit-created");
+    expect(upstreamRequests).toHaveLength(1);
+    expect(upstreamRequests[0]?.path).toBe("/session");
+    expect(upstreamRequests[0]?.traceId).toBe("submit-materialize-trace");
+    expect(upstreamRequests[0]?.body).toMatchObject({
+      directory: workspaceRoot,
+      title: "Create from submit",
+    });
+
+    const retryResponse = await submit();
+    expect(retryResponse.status).toBe(200);
+    expect(await retryResponse.json()).toEqual(firstPayload);
+    expect(upstreamRequests).toHaveLength(1);
+  });
+
+  test("POST /workspace/:id/conversations/submit returns a typed restore result when materialization fails", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-materialize-fail-"));
+    tempDirs.push(workspaceRoot);
+    const upstreamRequests: string[] = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        upstreamRequests.push(url.pathname);
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({ error: "create failed" }, { status: 500 });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          clientMessageId: "msg-submit-materialize-fail",
+          origin: "session:normal",
+          target: { directory: workspaceRoot },
+          draft: {
+            mode: "prompt",
+            text: "Create should fail",
+            parts: [{ type: "text", text: "Create should fail" }],
+          },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as {
+      status?: string;
+      code?: string;
+      draftDisposition?: string;
+      debugTrace?: Array<{ upstreamCode?: string | null; upstreamStatus?: number | null }>;
+    };
+    expect(payload.status).toBe("failed");
+    expect(payload.code).toBe("conversation_create_failed");
+    expect(payload.draftDisposition).toBe("restore");
+    expect(payload.debugTrace?.[0]?.upstreamCode).toBe("opencode_request_failed");
+    expect(payload.debugTrace?.[0]?.upstreamStatus).toBe(502);
+    expect(upstreamRequests).toEqual(["/session"]);
+  });
+
   test("POST /workspace/:id/conversations/submit rejects idempotency conflicts", async () => {
     await useTempVesloDataDir();
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-conflict-"));

@@ -609,6 +609,16 @@ Implementation notes:
 - Persist the materialized `conversationId` and `opencodeSessionId` into the
   submit-attempt record before any run submit.
 
+Current implementation checkpoint:
+
+- The server submit route has a single `submit` service entrypoint. `options.dryRun`
+  remains a request mode, not a separate HTTP/service workflow.
+- No-target local submits now materialize a conversation through
+  `conversationService.createConversation`, persist the materialized pointers in
+  the submit-attempt row, and return `status: "materialized"`.
+- Frontend pending-session handoff still needs to consume the materialized
+  submit result before this task can be marked done.
+
 Acceptance:
 
 - First prompt in an empty pending session can be submitted through the server

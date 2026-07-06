@@ -405,11 +405,13 @@ export function registerConversationSessionRoutes(
   addRoute(routes, "POST", "/workspace/:id/conversations/submit", "client", async (ctx) => {
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
+    const sendTraceId = ctx.request.headers.get("x-veslo-send-trace-id")?.trim() || null;
     const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
-    const result = await conversationSubmitService.dryRun({
+    const result = await conversationSubmitService.submit({
       workspace,
       body,
+      sendTraceId,
       resolveDirectory: (requestedRaw) => resolveConversationReadDirectory(workspace, requestedRaw),
     });
     return jsonResponse(result.payload, result.httpStatus);

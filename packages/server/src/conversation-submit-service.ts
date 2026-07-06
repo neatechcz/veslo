@@ -2,27 +2,36 @@ import {
   conversationSubmitDraftIsEmpty,
   createConversationSubmitRequestHash,
   parseConversationSubmitRequest,
+  type ConversationSubmitRequest,
   type ConversationSubmitResult,
 } from "./conversation-submit-contract.js";
 import type { ConversationSubmitAttemptStore } from "./conversation-submit-attempt-store.js";
+import type { ConversationService } from "./conversation-service.js";
 import { ApiError } from "./errors.js";
 import type { WorkspaceInfo } from "./types.js";
 
 export type ConversationSubmitService = {
-  dryRun(input: {
+  submit(input: {
     workspace: WorkspaceInfo;
     body: Record<string, unknown>;
+    sendTraceId?: string | null;
     resolveDirectory: (requestedRaw: string | null) => Promise<string | null>;
   }): Promise<{ payload: ConversationSubmitResult; httpStatus: number }>;
 };
 
 export function createConversationSubmitService(input: {
   attemptStore: ConversationSubmitAttemptStore;
+  conversationService: ConversationService;
 }): ConversationSubmitService {
-  const { attemptStore } = input;
+  const { attemptStore, conversationService } = input;
 
   return {
-    async dryRun({ workspace, body, resolveDirectory }) {
+    async submit({
+      workspace,
+      body,
+      sendTraceId,
+      resolveDirectory,
+    }) {
       const request = parseConversationSubmitRequest(body);
       const requestHash = createConversationSubmitRequestHash(request);
       const claimed = attemptStore.claim({
@@ -37,7 +46,10 @@ export function createConversationSubmitService(input: {
         });
       }
 
-      const completeAttempt = (payload: ConversationSubmitResult, status: "completed" | "blocked" | "failed") => {
+      const completeAttempt = (
+        payload: ConversationSubmitResult,
+        status: "materialized" | "completed" | "blocked" | "failed",
+      ) => {
         attemptStore.update({
           workspaceId: workspace.id,
           clientMessageId: request.clientMessageId,
@@ -62,7 +74,7 @@ export function createConversationSubmitService(input: {
             httpStatus: 200,
           };
         } catch {
-          // Fall through and rebuild the dry-run result.
+          // Fall through and rebuild the result from the current request.
         }
       }
 
@@ -93,23 +105,91 @@ export function createConversationSubmitService(input: {
       }
 
       const directory = await resolveDirectory(request.target?.directory ?? null);
-      const payload: ConversationSubmitResult = {
-        status: "dry_run",
-        workspaceId: workspace.id,
-        clientMessageId: request.clientMessageId,
-        requestHash,
-        draftDisposition: "keep",
-        target: {
+      const hasExistingTarget = Boolean(
+        request.target?.conversationId?.trim() || request.target?.opencodeSessionId?.trim(),
+      );
+      if (request.options?.dryRun === true) {
+        const payload: ConversationSubmitResult = {
+          status: "dry_run",
+          workspaceId: workspace.id,
+          clientMessageId: request.clientMessageId,
+          requestHash,
+          draftDisposition: "keep",
+          target: {
+            directory,
+            conversationId: request.target?.conversationId ?? null,
+            opencodeSessionId: request.target?.opencodeSessionId ?? null,
+            pendingClientSessionId: request.target?.pendingClientSessionId ?? null,
+          },
+        };
+        return {
+          payload: completeAttempt(payload, "completed"),
+          httpStatus: 200,
+        };
+      }
+
+      if (hasExistingTarget) {
+        return {
+          payload: completeAttempt({
+            status: "blocked",
+            code: "run_submit_unavailable",
+            message: "Server-owned run submit is not available yet",
+            draftDisposition: "restore",
+            recoverable: true,
+          }, "blocked"),
+          httpStatus: 200,
+        };
+      }
+
+      try {
+        const materializedSession = await conversationService.createConversation({
+          workspace,
           directory,
-          conversationId: request.target?.conversationId ?? null,
-          opencodeSessionId: request.target?.opencodeSessionId ?? null,
+          title: deriveSubmitConversationTitle(request),
+          sendTraceId: sendTraceId ?? null,
+        });
+        const payload: ConversationSubmitResult = {
+          status: "materialized",
+          workspaceId: workspace.id,
+          conversationId: materializedSession.conversationId,
+          opencodeSessionId: materializedSession.opencodeSessionId,
+          clientMessageId: request.clientMessageId,
           pendingClientSessionId: request.target?.pendingClientSessionId ?? null,
-        },
-      };
-      return {
-        payload: completeAttempt(payload, "completed"),
-        httpStatus: 200,
-      };
+          materializedSession,
+          draftDisposition: "keep",
+        };
+        return {
+          payload: completeAttempt(payload, "materialized"),
+          httpStatus: 200,
+        };
+      } catch (error) {
+        const payload: ConversationSubmitResult = {
+          status: "failed",
+          code: "conversation_create_failed",
+          message: error instanceof Error ? error.message : "Conversation creation failed",
+          draftDisposition: "restore",
+          debugTrace: [{
+            source: "server",
+            event: "conversation_create_failed",
+            upstreamCode: error instanceof ApiError ? error.code : null,
+            upstreamStatus: error instanceof ApiError ? error.status : null,
+          }],
+        };
+        return {
+          payload: completeAttempt(payload, "failed"),
+          httpStatus: 200,
+        };
+      }
     },
   };
+}
+
+function deriveSubmitConversationTitle(request: ConversationSubmitRequest): string | null {
+  const text = request.draft.text.trim() || request.draft.resolvedText?.trim() || "";
+  if (text) return text.slice(0, 160);
+  if (request.draft.command) {
+    const commandText = `/${request.draft.command.name} ${request.draft.command.arguments}`.trim();
+    return commandText.slice(0, 160);
+  }
+  return null;
 }

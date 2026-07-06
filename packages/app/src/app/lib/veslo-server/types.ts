@@ -1404,6 +1404,16 @@ export type VesloConversationSubmitResult =
       };
     }
   | {
+      status: "materialized";
+      workspaceId: string;
+      conversationId: string;
+      opencodeSessionId: string;
+      clientMessageId: string;
+      pendingClientSessionId?: string | null;
+      materializedSession: unknown;
+      draftDisposition: "keep";
+    }
+  | {
       status: "submitted";
       workspaceId: string;
       conversationId: string;

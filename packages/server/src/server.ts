@@ -3643,6 +3643,7 @@ function createRoutes(
       : null;
   const conversationSubmitService = createConversationSubmitService({
     attemptStore: conversationSubmitAttemptStore,
+    conversationService,
   });
 
   const sessionTranscriptPrefetch = createSessionTranscriptPrefetchStore({

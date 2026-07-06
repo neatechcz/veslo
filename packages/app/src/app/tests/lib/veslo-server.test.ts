@@ -494,6 +494,65 @@ test("submitConversation posts to the server-owned submit endpoint", async () =>
   }
 });
 
+test("submitConversation accepts a materialized first-session result", async () => {
+  const previousFetch = globalThis.fetch;
+
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        status: "materialized",
+        workspaceId: "ws_1",
+        conversationId: "conv_1",
+        opencodeSessionId: "sess_1",
+        clientMessageId: "msg_1",
+        pendingClientSessionId: "pending_1",
+        materializedSession: {
+          id: "sess_1",
+          title: "Hello",
+          conversationId: "conv_1",
+          opencodeSessionId: "sess_1",
+        },
+        draftDisposition: "keep",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    const result = await client.submitConversation("ws_1", {
+      clientMessageId: "msg_1",
+      origin: "session:normal",
+      target: { directory: "src", pendingClientSessionId: "pending_1" },
+      draft: {
+        mode: "prompt",
+        text: "Hello",
+        parts: [{ type: "text", text: "Hello" }],
+      },
+    });
+
+    assert.equal(result.status, "materialized");
+    assert.equal(result.conversationId, "conv_1");
+    assert.equal(result.opencodeSessionId, "sess_1");
+    assert.equal(result.pendingClientSessionId, "pending_1");
+    assert.deepEqual(result.materializedSession, {
+      id: "sess_1",
+      title: "Hello",
+      conversationId: "conv_1",
+      opencodeSessionId: "sess_1",
+    });
+    assert.equal(result.draftDisposition, "keep");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("OpenCode Router client methods use the server-owned /opencode-router namespace", async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string; body: unknown }> = [];

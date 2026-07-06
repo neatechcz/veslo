@@ -63,6 +63,17 @@ export type ConversationSubmitDryRunResult = {
   };
 };
 
+export type ConversationSubmitMaterializedResult = {
+  status: "materialized";
+  workspaceId: string;
+  conversationId: string;
+  opencodeSessionId: string;
+  clientMessageId: string;
+  pendingClientSessionId?: string | null;
+  materializedSession: unknown;
+  draftDisposition: "keep";
+};
+
 export type ConversationSubmitSubmittedResult = {
   status: "submitted";
   workspaceId: string;
@@ -105,6 +116,7 @@ export type ConversationSubmitFailedResult = {
 
 export type ConversationSubmitResult =
   | ConversationSubmitDryRunResult
+  | ConversationSubmitMaterializedResult
   | ConversationSubmitSubmittedResult
   | ConversationSubmitQueuedResult
   | ConversationSubmitBlockedResult
