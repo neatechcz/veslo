@@ -2429,6 +2429,7 @@ export default function WorkspaceSessionList(props: Props) {
 
       <div
         class="min-h-0 flex-1 overflow-y-auto -mr-3 pr-3"
+        data-testid="sidebar-session-list-scroll"
         ref={(el) => (scrollContainerRef = el)}
         onScroll={handleRecentScroll}
         onContextMenu={handleSidebarBackgroundContextMenu}

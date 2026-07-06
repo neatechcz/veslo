@@ -22,7 +22,7 @@
     "test:pilot:sharepoint-mcp": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario sharepoint-mcp-connectors",
     "test:pilot:wsl-direct-fallback": "node --import=tsx/esm ./specs/wsl-direct-fallback.pilot.ts",
     "test:pilot:core-platform-skills": "node --import=tsx/esm ./specs/core-platform-skills.pilot.ts",
-    "test:pilot:sidebar-context-menu": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario sidebar-context-menu",
+    "test:pilot:sidebar-context-menu": "node --import=tsx/esm ./specs/sidebar-context-menu.pilot.ts",
     "test:pilot:plugins-policy": "node --import=tsx/esm ./specs/plugins-policy.pilot.ts",
     "test:update-baselines": "wdio run wdio.conf.ts --update-visual-baseline",
     "test:feedback-youtrack-live": "wdio run wdio.conf.ts --spec ./specs/feedback-youtrack-live.spec.ts",
