@@ -11,6 +11,7 @@ import type {
 } from "../lib/attachment-prompt-routing";
 import type {
   VesloConversationRunInput,
+  VesloConversationSubmitRequest,
   VesloServerClient,
 } from "../lib/veslo-server";
 import {
@@ -59,6 +60,8 @@ export type SessionSendWorkflowCommand = {
   description?: string;
   source?: "command" | "mcp" | "skill";
 };
+
+type ConversationSubmitDraftInput = VesloConversationSubmitRequest["draft"];
 
 const DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME = {
   "veslo-docx": "docx",
@@ -135,6 +138,9 @@ export type SessionSendWorkflowOptions = {
       pendingSession?: PendingSidebarSessionMetadata | null;
       sendTraceId?: string | null;
       clientMessageId?: string | null;
+      submitDraft?: ConversationSubmitDraftInput;
+      submitOrigin?: string | null;
+      submitSource?: string | null;
       onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
       preflight?: SessionSendPreflightContext;
     },
@@ -655,6 +661,31 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         draftId: pendingDraftMeta?.id?.trim() || GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
       };
     })();
+    const serverSubmitMaterializationDraft = (() => {
+      const targetWorkspaceId = sendTargetWorkspace?.workspaceId?.trim() || "";
+      const targetWorkspaceType = targetWorkspaceId
+        ? (
+            deps.workspace.workspaces().find((workspace) => workspace.id === targetWorkspaceId)?.workspaceType ??
+            (deps.workspace.activeWorkspaceId().trim() === targetWorkspaceId
+              ? deps.workspace.activeWorkspaceDisplay().workspaceType
+              : null)
+          )
+        : deps.workspace.activeWorkspaceDisplay().workspaceType;
+      if (targetWorkspaceType !== "local") return undefined;
+      return {
+        mode: resolvedDraft.mode,
+        text: resolvedDraft.text,
+        resolvedText: resolvedDraft.resolvedText ?? null,
+        parts: resolvedDraft.parts,
+        command: resolvedDraft.command ?? null,
+        attachments: resolvedDraft.attachments.map((attachment) => ({
+          name: attachment.name,
+          kind: attachment.kind,
+          mimeType: attachment.mimeType,
+          dataUrl: attachment.dataUrl,
+        })),
+      } satisfies ConversationSubmitDraftInput;
+    })();
     if (!sessionID) {
       deps.recordSendTrace("sendPrompt:create-session-needed", {
         traceId: sendTraceId,
@@ -666,6 +697,8 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           pendingSession: pendingSidebarSession,
           sendTraceId,
           clientMessageId: sendCorrelation.clientMessageId,
+          submitDraft: serverSubmitMaterializationDraft,
+          submitOrigin: sendCorrelation.origin,
           onMaterializedSessionId: options.onMaterializedSessionId,
           preflight: sendPreflight,
         }),
@@ -681,9 +714,11 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         sessionID = materializedSessionId;
         pendingSidebarRowRegistered = false;
       } else {
+        deps.recordSendTrace("sendPrompt:create-session-missing-result", {
+          traceId: sendTraceId,
+        });
         cleanupPendingSidebarSession();
-        const selectedAfterCreate = deps.selectedSessionId();
-        sessionID = deps.isPendingSessionInstanceId(selectedAfterCreate) ? null : selectedAfterCreate;
+        sessionID = null;
       }
     }
     if (!sessionID) {

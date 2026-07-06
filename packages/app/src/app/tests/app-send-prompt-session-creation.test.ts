@@ -19,9 +19,9 @@ function sendPromptSource(): string {
 }
 
 function createSessionAndOpenSource(): string {
-  const start = createWorkflowSource.indexOf("const createSessionAndOpen = async (");
-  const end = createWorkflowSource.indexOf("return {", start);
-  assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
+  const start = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
+  const end = createWorkflowSource.indexOf("  const createSession = (", start);
+  assert.ok(start >= 0 && end > start, "create session flow source should be present");
   return createWorkflowSource.slice(start, end);
 }
 
@@ -48,6 +48,11 @@ test("sendPrompt keeps the session id returned by createSessionAndOpen before pr
     /preflight: sendPreflight,/,
     "sendPrompt should pass the preflight context when creating the first session",
   );
+  assert.doesNotMatch(
+    source.slice(createdSessionIdIndex, blockedIndex),
+    /selectedAfterCreate|deps\.selectedSessionId\(\)/,
+    "sendPrompt should not guess the materialized session from selectedSessionId after create",
+  );
 });
 
 test("sendPrompt skips first-session creation when a browsed session is the explicit target", () => {
@@ -58,9 +63,8 @@ test("sendPrompt skips first-session creation when a browsed session is the expl
   const scopedActivationIndex = source.indexOf('"sendPrompt:ensure-scoped-workspace-active"', sessionAssignmentIndex);
   const createGuardIndex = source.indexOf("if (!sessionID) {", scopedActivationIndex);
   const createNeededIndex = source.indexOf('recordSendTrace("sendPrompt:create-session-needed"', createGuardIndex);
-  const conversationRunIndex = source.indexOf(
-    "deps.runConversationFromVesloWriteApi(materializedSessionID",
-    createGuardIndex,
+  const conversationRunIndex = source.slice(createGuardIndex).search(
+    /deps\.runConversationFromVesloWriteApi\(\s*materializedSessionID/,
   );
 
   assert.ok(explicitTargetIndex >= 0, "sendPrompt should normalize an explicit target session id");
@@ -68,7 +72,27 @@ test("sendPrompt skips first-session creation when a browsed session is the expl
   assert.ok(scopedActivationIndex > sessionAssignmentIndex, "explicit target should activate its scoped workspace before sending");
   assert.ok(createGuardIndex > scopedActivationIndex, "first-session creation should be guarded by the resolved session id");
   assert.ok(createNeededIndex > createGuardIndex, "new-session creation should stay inside the missing-session branch");
-  assert.ok(conversationRunIndex > createGuardIndex, "prompt sends should route the materialized session through the conversation run API");
+  assert.ok(conversationRunIndex >= 0, "prompt sends should route the materialized session through the conversation run API");
+});
+
+test("sendPrompt passes the first local draft to server-owned submit materialization", () => {
+  const source = sendPromptSource();
+
+  assert.match(
+    source,
+    /const serverSubmitMaterializationDraft = \(\(\) => \{[\s\S]*targetWorkspaceType !== "local"[\s\S]*\}\)\(\);/,
+    "sendPrompt should only use server submit materialization for local workspaces",
+  );
+  assert.match(
+    source,
+    /submitDraft: serverSubmitMaterializationDraft,/,
+    "sendPrompt should pass the normalized draft into first-session creation",
+  );
+  assert.match(
+    source,
+    /submitOrigin: sendCorrelation\.origin,/,
+    "sendPrompt should preserve the send origin for server submit materialization",
+  );
 });
 
 test("createSessionAndOpen persists the first composer text as the initial backend title", () => {
@@ -87,6 +111,11 @@ test("createSessionAndOpen persists the first composer text as the initial backe
     /initialSessionTitle \|\| undefined,/,
     "createSessionAndOpen should persist the first composer text as the backend session title until an explicit rename/title update happens",
   );
+  assert.match(
+    source,
+    /createSessionAndOpen:veslo-conversation-submit-materialize/,
+    "createSessionAndOpen should use server-owned submit materialization when sendPrompt provides a draft",
+  );
   assert.doesNotMatch(
     source,
     /c\.session\.create\(/,
@@ -94,7 +123,7 @@ test("createSessionAndOpen persists the first composer text as the initial backe
   );
   assert.match(
     source,
-    /deps\.registerPendingInitialSessionTitle\(createdSession\.id, initialSessionTitle\);[\s\S]*const displaySession = deps\.applyPendingInitialSessionTitle\(createdSession\);/,
-    "createSessionAndOpen should register the prompt title locally and render it optimistically",
+    /initialTitle: initialSessionTitle,[\s\S]*deps\.applyCreatedSessionState\(creationResult, options\);/,
+    "createSessionAndOpen should preserve the prompt title in the creation result passed to app state",
   );
 });

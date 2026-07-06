@@ -10,6 +10,10 @@ import {
 import type { SessionFlowProgressEvent } from "../context/session-flow-progress-presenter";
 import type { SendRuntimePreflightContext, SendRuntimePreflightTargetWorkspace } from "../context/send-runtime-readiness";
 import type { MaterializedSessionHandoff } from "../lib/session-send-contract";
+import type {
+  VesloConversationSubmitRequest,
+  VesloConversationSubmitResult,
+} from "../lib/veslo-server";
 import type { PendingSidebarSessionMetadata, View } from "../types";
 
 export type SessionCreationWorkflowCreateOptions = {
@@ -17,6 +21,9 @@ export type SessionCreationWorkflowCreateOptions = {
   pendingSession?: PendingSidebarSessionMetadata | null;
   sendTraceId?: string | null;
   clientMessageId?: string | null;
+  submitDraft?: VesloConversationSubmitRequest["draft"];
+  submitOrigin?: string | null;
+  submitSource?: string | null;
   onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
   preflight?: SendRuntimePreflightContext;
 };
@@ -114,6 +121,12 @@ export type SessionCreationWorkflowOptions = {
     title?: string,
     preflight?: SendRuntimePreflightContext,
   ) => Promise<CreatedSession | null | undefined>;
+  submitConversationFromVesloWriteApi?: (
+    workspaceId: string,
+    directory: string,
+    input: VesloConversationSubmitRequest,
+    preflight?: SendRuntimePreflightContext,
+  ) => Promise<VesloConversationSubmitResult | null | undefined>;
   warn?: (message: string, payload?: Record<string, unknown>) => void;
 };
 
@@ -139,6 +152,33 @@ export function createSessionCreationWorkflow(
       return;
     }
     console.warn(message, payload);
+  };
+
+  const createdSessionFromSubmitResult = (
+    result: VesloConversationSubmitResult | null | undefined,
+  ): CreatedSession | null => {
+    if (!result) return null;
+    if (result.status === "blocked" || result.status === "failed") {
+      throw new Error(result.message);
+    }
+    if (result.status !== "materialized") {
+      throw new Error(`Conversation submit returned ${result.status} before session materialization was complete.`);
+    }
+    const materialized = result.materializedSession;
+    if (!materialized || typeof materialized !== "object" || Array.isArray(materialized)) {
+      throw new Error("Conversation submit did not return a materialized session.");
+    }
+    const session = materialized as CreatedSession;
+    const sessionId = typeof session.id === "string" ? session.id.trim() : "";
+    if (!sessionId) {
+      throw new Error("Conversation submit returned a materialized session without an id.");
+    }
+    return {
+      ...session,
+      id: sessionId,
+      conversationId: result.conversationId,
+      opencodeSessionId: result.opencodeSessionId,
+    };
   };
 
   const runCreateSessionFlow = async (
@@ -313,6 +353,7 @@ export function createSessionCreationWorkflow(
 
     try {
       const initialSessionTitle = initialTitle.trim();
+      const clientMessageId = options.clientMessageId?.trim() ?? "";
       let createdSession: CreatedSession;
       try {
         mark("session:create:start");
@@ -320,20 +361,47 @@ export function createSessionCreationWorkflow(
         if (!activeWorkspaceId) {
           throw new Error("Workspace id is required for session creation.");
         }
-        const vesloCreated = await deps.sendTraceStep(
-          "createSessionAndOpen:veslo-conversation-create",
-          () => deps.createConversationFromVesloWriteApi(
-            activeWorkspaceId,
-            sessionDirectory,
-            initialSessionTitle || undefined,
-            createPreflight,
-          ),
-          {
-            ...(tracePayload ?? {}),
-            workspaceId: activeWorkspaceId,
-            sessionDirectory,
-          },
-        );
+        const submitDraft = options.submitDraft;
+        const submitConversation = deps.submitConversationFromVesloWriteApi;
+        const vesloCreated = submitDraft && clientMessageId && submitConversation
+          ? createdSessionFromSubmitResult(await deps.sendTraceStep(
+            "createSessionAndOpen:veslo-conversation-submit-materialize",
+            () => submitConversation(
+              activeWorkspaceId,
+              sessionDirectory,
+              {
+                clientMessageId,
+                origin: options.submitOrigin?.trim() || "session:normal",
+                source: options.submitSource?.trim() || null,
+                target: {
+                  directory: sessionDirectory,
+                  pendingClientSessionId: pendingSidebarSession?.id ?? null,
+                },
+                draft: submitDraft,
+              },
+              createPreflight,
+            ),
+            {
+              ...(tracePayload ?? {}),
+              workspaceId: activeWorkspaceId,
+              sessionDirectory,
+              clientMessageId,
+            },
+          ))
+          : await deps.sendTraceStep(
+            "createSessionAndOpen:veslo-conversation-create",
+            () => deps.createConversationFromVesloWriteApi(
+              activeWorkspaceId,
+              sessionDirectory,
+              initialSessionTitle || undefined,
+              createPreflight,
+            ),
+            {
+              ...(tracePayload ?? {}),
+              workspaceId: activeWorkspaceId,
+              sessionDirectory,
+            },
+          );
         if (!vesloCreated) {
           deps.recordSendTrace("createSessionAndOpen:conversation-create-unavailable", {
             ...(tracePayload ?? {}),
@@ -370,7 +438,6 @@ export function createSessionCreationWorkflow(
       const createdWorkspaceRoot = createdWorkspaceId
         ? deps.resolveWorkspaceRootForConversationScope(createdWorkspaceId, sessionDirectory)
         : sessionDirectory;
-      const clientMessageId = options.clientMessageId?.trim() ?? "";
       const handoff: MaterializedSessionHandoff | null = clientMessageId
         ? {
           workspaceId: createdWorkspaceId || targetWorkspace?.workspaceId || deps.workspace.activeWorkspaceId().trim(),

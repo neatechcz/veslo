@@ -576,7 +576,13 @@ test("session send workflow emits live transcript policy event after successful 
 test("session send workflow selects the model from the materialized session id", async () => {
   const modelSessionIds: Array<string | null | undefined> = [];
   const runInputs: Array<{ sessionId: string; input: VesloConversationRunInput }> = [];
+  const createOptions: Array<Parameters<SessionSendWorkflowOptions["createSessionAndOpen"]>[1]> = [];
   const harness = createHarness({
+    createSessionAndOpen: async (_initialTitle, options) => {
+      createOptions.push(options);
+      harness.actions.push("create-session");
+      return "sess-created";
+    },
     modelForSession: (sessionId) => {
       modelSessionIds.push(sessionId);
       return {
@@ -612,6 +618,11 @@ test("session send workflow selects the model from the materialized session id",
     clientMessageId: "client-created-model",
     origin: "session:normal",
   }]);
+  assert.equal(createOptions[0]?.clientMessageId, "client-created-model");
+  assert.equal(createOptions[0]?.submitOrigin, "session:normal");
+  assert.equal(createOptions[0]?.submitDraft?.mode, "prompt");
+  assert.equal(createOptions[0]?.submitDraft?.text, "create then send");
+  assert.deepEqual(createOptions[0]?.submitDraft?.parts, [{ type: "text", text: "create then send" }]);
   assert.ok(harness.actions.includes("create-session"));
   assert.ok(harness.actions.includes("run:sess-created"));
 });

@@ -971,6 +971,7 @@ export default function App() {
     backfillConversationsToVesloReadApi,
     getTranscriptFromVesloReadApi,
     createConversationFromVesloWriteApi,
+    submitConversationFromVesloWriteApi,
     runConversationFromVesloWriteApi,
     resolveConversationAbortScope,
     abortConversationFromVesloWriteApi,
@@ -4123,6 +4124,13 @@ export default function App() {
         directory,
         title,
         preflight as Parameters<typeof createConversationFromVesloWriteApi>[3],
+      ),
+    submitConversationFromVesloWriteApi: (workspaceId, directory, input, preflight) =>
+      submitConversationFromVesloWriteApi(
+        workspaceId,
+        directory,
+        input,
+        preflight as Parameters<typeof submitConversationFromVesloWriteApi>[3],
       ),
   });
 

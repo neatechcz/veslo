@@ -10,7 +10,7 @@ bsw00_baseline_contract_done: false
 bsw01_shared_submit_contract_done: true
 bsw01a_submit_attempt_dedupe_store_done: true
 bsw02_server_submit_route_shell_done: true
-bsw03_server_session_materialization_done: false
+bsw03_server_session_materialization_done: true
 bsw04_server_draft_resolution_done: false
 bsw05_server_runtime_admission_done: false
 bsw05a_remote_workspace_contract_done: false
@@ -590,7 +590,7 @@ git diff --check
 
 ## BSW03 - Server Session Materialization
 
-Status: `done: false`
+Status: `done: true`
 
 Move no-session create-and-run materialization to the server submit service.
 
@@ -616,8 +616,10 @@ Current implementation checkpoint:
 - No-target local submits now materialize a conversation through
   `conversationService.createConversation`, persist the materialized pointers in
   the submit-attempt row, and return `status: "materialized"`.
-- Frontend pending-session handoff still needs to consume the materialized
-  submit result before this task can be marked done.
+- Frontend pending-session handoff now passes the first local draft into the
+  server submit materializer and uses the returned materialized session id.
+- The old post-create `selectedSessionId` guess was removed; a missing create
+  result blocks the send instead of targeting an unrelated selected session.
 
 Acceptance:
 

@@ -9,6 +9,8 @@ import {
   type VesloConversationRunInput,
   type VesloConversationRunResult,
   type VesloConversationRunStatusResult,
+  type VesloConversationSubmitRequest,
+  type VesloConversationSubmitResult,
   type VesloSessionTranscriptAppendInput,
   type VesloSessionTranscriptSnapshot,
 } from "../lib/veslo-server";
@@ -54,6 +56,11 @@ export type ConversationServiceClient = {
     input?: { directory?: string | null; title?: string | null },
     options?: { sendTraceId?: string | null },
   ) => Promise<VesloConversationCreateResult>;
+  submitConversation: (
+    workspaceId: string,
+    input: VesloConversationSubmitRequest,
+    options?: { sendTraceId?: string | null },
+  ) => Promise<VesloConversationSubmitResult>;
   runConversation: (
     workspaceId: string,
     conversationId: string,
@@ -695,6 +702,73 @@ export function createConversationService<Client extends ConversationServiceClie
     return result;
   };
 
+  const submitConversationFromVesloWriteApi = async (
+    workspaceId: string,
+    directory: string,
+    input: VesloConversationSubmitRequest,
+    preflight?: ConversationSendPreflightContext<Client>,
+  ): Promise<VesloConversationSubmitResult | null> => {
+    const tracePayload = preflight ? { traceId: preflight.traceId } : undefined;
+    deps.recordSendTrace("submitConversationFromVesloWriteApi:start", {
+      ...(tracePayload ?? {}),
+      workspaceId,
+      directory,
+      clientMessageId: input.clientMessageId,
+      origin: input.origin,
+      hasConversationTarget: Boolean(input.target?.conversationId?.trim() || input.target?.opencodeSessionId?.trim()),
+    });
+    const resolution = await resolveConversationServerWorkspaceForSend(
+      workspaceId,
+      directory,
+      preflight,
+      "submitConversationFromVesloWriteApi",
+    );
+    if (!resolution) {
+      deps.recordSendTrace("submitConversationFromVesloWriteApi:unavailable", tracePayload);
+      return null;
+    }
+    const request: VesloConversationSubmitRequest = {
+      ...input,
+      target: {
+        ...(input.target ?? {}),
+        directory,
+      },
+    };
+    const result = await deps.sendTraceStep(
+      "submitConversationFromVesloWriteApi:submit",
+      () => resolution.serverClient.submitConversation(resolution.serverWorkspaceId, request, {
+        sendTraceId: preflight?.traceId ?? null,
+      }),
+      {
+        ...(tracePayload ?? {}),
+        workspaceId,
+        serverWorkspaceId: resolution.serverWorkspaceId,
+        directory,
+        clientMessageId: input.clientMessageId,
+        origin: input.origin,
+      },
+    );
+    if ("debugTrace" in result) {
+      deps.recordExternalSendTraceEntries(result.debugTrace);
+    }
+    if (
+      result.status === "materialized" ||
+      result.status === "submitted" ||
+      result.status === "queued"
+    ) {
+      const workspaceRoot = deps.resolveWorkspaceRootForConversationScope(workspaceId, directory);
+      deps.rememberConversationScope({
+        sessionId: result.opencodeSessionId,
+        workspaceId,
+        workspaceRoot,
+        directory,
+        conversationId: result.conversationId,
+        opencodeSessionId: result.opencodeSessionId,
+      });
+    }
+    return result;
+  };
+
   const runConversationFromVesloWriteApi = async (
     sessionId: string,
     input: VesloConversationRunInput,
@@ -1032,6 +1106,7 @@ export function createConversationService<Client extends ConversationServiceClie
     backfillConversationsToVesloReadApi,
     getTranscriptFromVesloReadApi,
     createConversationFromVesloWriteApi,
+    submitConversationFromVesloWriteApi,
     runConversationFromVesloWriteApi,
     resolveConversationAbortScope,
     abortConversationFromVesloWriteApi,
