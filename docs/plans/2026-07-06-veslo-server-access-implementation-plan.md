@@ -20,7 +20,7 @@ vsa10a_workspace_id_golden_vectors_done: true
 vsa10b_dual_id_mapping_migration_done: true
 vsa10c_workspace_id_cutover_cleanup_done: true
 vsa11_engine_config_hot_swap_done: false
-vsa11a_respawn_and_blackbox_diagnostics_done: false
+vsa11a_respawn_and_blackbox_diagnostics_done: true
 vsa12_port_conflict_policy_done: true
 vsa13_e2e_docs_and_release_gate_done: false
 vsa13a_unit_contract_docs_gate_done: false
@@ -1132,7 +1132,17 @@ Mark done when:
 
 ## VSA11A: Respawn And Blackbox Diagnostics Gate
 
-done: false
+done: true
+
+Implementation note 2026-07-06: desktop `start_veslo_server` now emits
+bootstrap diagnostics for persisted adoption, idempotent reuse, accepted starts,
+and respawns, including previous PID/instance, lifecycle status/reason, and
+named non-secret config/status reasons. App SSE paths now record Rust proxy vs.
+SDK fallback transport in send-workflow trace, and local runtime health visible
+timeouts record that the underlying request may still be running. Server
+conversation-run tests already cover the existing resolve-target,
+lifecycle-active-peek/register, OpenCode submit, and provider-start trace events.
+No runtime-config hot-swap API was added in this slice.
 
 Goal:
 

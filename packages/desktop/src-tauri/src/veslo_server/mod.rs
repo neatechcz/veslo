@@ -1187,6 +1187,7 @@ fn client_token_for_spawn(previous: Option<String>, requested: Option<String>) -
     previous.or(requested).unwrap_or_else(generate_token)
 }
 
+#[cfg(test)]
 fn launch_config_matches(
     state: &manager::VesloServerState,
     _workspace_paths: &[String],
@@ -1197,12 +1198,99 @@ fn launch_config_matches(
     orchestrator_daemon_url: &Option<String>,
     orchestrator_lifecycle_token: &Option<String>,
 ) -> bool {
-    state.host.as_deref() == Some(host)
-        && state.bridge_host == *bridge_host
-        && state.sandbox_backend.as_deref() == Some(sandbox_backend)
-        && state.opencode_base_url == *opencode_base_url
-        && state.orchestrator_daemon_url == *orchestrator_daemon_url
-        && state.orchestrator_lifecycle_token == *orchestrator_lifecycle_token
+    launch_config_mismatch_reasons(
+        state,
+        _workspace_paths,
+        host,
+        bridge_host,
+        sandbox_backend,
+        opencode_base_url,
+        orchestrator_daemon_url,
+        orchestrator_lifecycle_token,
+    )
+    .is_empty()
+}
+
+fn launch_config_mismatch_reasons(
+    state: &manager::VesloServerState,
+    _workspace_paths: &[String],
+    host: &str,
+    bridge_host: &Option<String>,
+    sandbox_backend: &str,
+    opencode_base_url: &Option<String>,
+    orchestrator_daemon_url: &Option<String>,
+    orchestrator_lifecycle_token: &Option<String>,
+) -> Vec<&'static str> {
+    let mut reasons = Vec::new();
+    if state.host.as_deref() != Some(host) {
+        reasons.push("host");
+    }
+    if state.bridge_host != *bridge_host {
+        reasons.push("bridge_host");
+    }
+    if state.sandbox_backend.as_deref() != Some(sandbox_backend) {
+        reasons.push("sandbox_backend");
+    }
+    if state.opencode_base_url != *opencode_base_url {
+        reasons.push("opencode_base_url");
+    }
+    if state.orchestrator_daemon_url != *orchestrator_daemon_url {
+        reasons.push("orchestrator_daemon_url");
+    }
+    if state.orchestrator_lifecycle_token != *orchestrator_lifecycle_token {
+        reasons.push("orchestrator_lifecycle_token");
+    }
+    reasons
+}
+
+fn start_decision_reasons(
+    state: &manager::VesloServerState,
+    launch_config_mismatches: &[&'static str],
+) -> Vec<&'static str> {
+    let mut reasons = Vec::new();
+    if state.child.is_none() {
+        reasons.push("no_child");
+    }
+    if state.child_exited {
+        reasons.push("child_exited");
+    }
+    if state.lifecycle_status != VesloServerLifecycleStatus::Running {
+        reasons.push("lifecycle_not_running");
+    }
+    if state.client_token.is_none() {
+        reasons.push("client_token_missing");
+    }
+    if state.host_token.is_none() {
+        reasons.push("host_token_missing");
+    }
+    if state.port.is_none() {
+        reasons.push("port_missing");
+    }
+    reasons.extend_from_slice(launch_config_mismatches);
+    reasons
+}
+
+fn launch_decision_payload(
+    decision: &str,
+    state: &manager::VesloServerState,
+    reasons: &[&'static str],
+    workspace_count: usize,
+) -> serde_json::Value {
+    serde_json::json!({
+        "decision": decision,
+        "reason": reasons.first().copied().unwrap_or("matching_running_child"),
+        "reasons": reasons,
+        "previousPid": state.child.as_ref().map(|child| child.pid()),
+        "previousInstanceId": state.instance_id.as_deref(),
+        "lifecycleStatus": state.lifecycle_status,
+        "lifecycleReason": state.lifecycle_reason,
+        "workspaceCount": workspace_count,
+        "hasClientToken": state.client_token.as_ref().is_some_and(|token| !token.trim().is_empty()),
+        "hasHostToken": state.host_token.as_ref().is_some_and(|token| !token.trim().is_empty()),
+        "hasOpencodeBaseUrl": state.opencode_base_url.is_some(),
+        "hasOrchestratorDaemonUrl": state.orchestrator_daemon_url.is_some(),
+        "hasOrchestratorLifecycleToken": state.orchestrator_lifecycle_token.is_some(),
+    })
 }
 
 pub fn start_veslo_server(
@@ -1267,6 +1355,20 @@ pub fn start_veslo_server(
                 .map_err(|_| "veslo server mutex poisoned".to_string())?;
             if state.child.is_none() && state.external_info.is_none() {
                 state.external_info = Some(info.clone());
+                append_veslo_server_launch_diagnostic(
+                    app,
+                    "veslo-server-launch:persisted-adopted",
+                    serde_json::json!({
+                        "decision": "adopted",
+                        "reason": "matching_persisted_instance",
+                        "previousPid": info.pid,
+                        "previousInstanceId": info.instance_id.as_deref(),
+                        "lifecycleStatus": info.lifecycle_status,
+                        "lifecycleReason": info.lifecycle_reason,
+                        "hasClientToken": info.client_token.as_ref().is_some_and(|token| !token.trim().is_empty()),
+                        "hasHostToken": info.host_token.as_ref().is_some_and(|token| !token.trim().is_empty()),
+                    }),
+                );
                 emit_veslo_server_state(app, &info);
                 return Ok(info);
             }
@@ -1301,23 +1403,30 @@ pub fn start_veslo_server(
     } else {
         None
     };
+    let launch_config_mismatches = launch_config_mismatch_reasons(
+        &state,
+        workspace_paths,
+        &host,
+        &bridge_host,
+        &sandbox_backend,
+        &normalized_opencode_base_url,
+        &normalized_orchestrator_daemon_url,
+        &normalized_orchestrator_lifecycle_token,
+    );
+    let start_reasons = start_decision_reasons(&state, &launch_config_mismatches);
     if state.child.is_some()
         && !state.child_exited
         && state.lifecycle_status == VesloServerLifecycleStatus::Running
         && state.client_token.is_some()
         && state.host_token.is_some()
         && state.port.is_some()
-        && launch_config_matches(
-            &state,
-            workspace_paths,
-            &host,
-            &bridge_host,
-            &sandbox_backend,
-            &normalized_opencode_base_url,
-            &normalized_orchestrator_daemon_url,
-            &normalized_orchestrator_lifecycle_token,
-        )
+        && start_reasons.is_empty()
     {
+        append_veslo_server_launch_diagnostic(
+            app,
+            "veslo-server-launch:start-reused",
+            launch_decision_payload("reused", &state, &start_reasons, workspace_paths.len()),
+        );
         let info = snapshot_and_emit_veslo_server_state(app, &mut state);
         drop(state);
         // VSLO-86 — re-persist on every idempotent reuse so the on-disk
@@ -1332,6 +1441,20 @@ pub fn start_veslo_server(
 
     // Need to (re)spawn; keep tokens (if any) so the frontend's cached bearer
     // remains valid across the respawn.
+    let launch_decision = if state.child.is_some() && !state.child_exited {
+        "respawn"
+    } else {
+        "start"
+    };
+    append_veslo_server_launch_diagnostic(
+        app,
+        if launch_decision == "respawn" {
+            "veslo-server-launch:start-respawn"
+        } else {
+            "veslo-server-launch:start-accepted"
+        },
+        launch_decision_payload(launch_decision, &state, &start_reasons, workspace_paths.len()),
+    );
     let previous_client_token = state.client_token.clone();
     let previous_host_token = state.host_token.clone();
     VesloServerManager::stop_locked(&mut state);
@@ -1607,12 +1730,14 @@ mod tests {
     use super::{
         build_urls_for_host_with_engine_resolver, classify_stale_veslo_server_process,
         client_token_for_spawn, discover_external_host_token, launch_config_matches,
-        normalize_launch_token, normalize_launch_url, parse_macos_lsof_current_dir,
-        publishes_external_urls, read_persisted_veslo_server_info,
+        launch_config_mismatch_reasons, launch_decision_payload, normalize_launch_token,
+        normalize_launch_url, parse_macos_lsof_current_dir, publishes_external_urls,
+        read_persisted_veslo_server_info,
         read_persisted_veslo_server_info_with_cleanup, ready_signal_bound_port,
         ready_signal_instance_id, resolve_engine_url_for_bind_host, should_bind_wsl_bridge,
-        unix_kill_term_args, veslo_server_state_event_payload, windows_taskkill_args,
-        HealthIdentity, PersistedVesloServerState, StaleProcessMetadata, StaleProcessOwner,
+        start_decision_reasons, unix_kill_term_args, veslo_server_state_event_payload,
+        windows_taskkill_args, HealthIdentity, PersistedVesloServerState, StaleProcessMetadata,
+        StaleProcessOwner,
     };
     #[cfg(windows)]
     use super::{
@@ -1930,6 +2055,67 @@ mod tests {
             ),
             "workspace registry changes are acknowledged through API sync and must not respawn veslo-server"
         );
+    }
+
+    #[test]
+    fn launch_config_mismatch_reasons_name_respawn_fields() {
+        let state = VesloServerState {
+            host: Some("127.0.0.1".to_string()),
+            bridge_host: None,
+            sandbox_backend: Some("none".to_string()),
+            opencode_base_url: normalize_launch_url(Some("http://127.0.0.1:5000")),
+            orchestrator_daemon_url: normalize_launch_url(Some("http://127.0.0.1:6000")),
+            orchestrator_lifecycle_token: normalize_launch_token(Some("old-lifecycle")),
+            ..Default::default()
+        };
+
+        let reasons = launch_config_mismatch_reasons(
+            &state,
+            &[],
+            "127.0.0.1",
+            &Some("172.29.64.1".to_string()),
+            "windows-wsl2",
+            &normalize_launch_url(Some("http://127.0.0.1:5001")),
+            &normalize_launch_url(Some("http://127.0.0.1:6001")),
+            &normalize_launch_token(Some("new-lifecycle")),
+        );
+
+        assert_eq!(
+            reasons,
+            vec![
+                "bridge_host",
+                "sandbox_backend",
+                "opencode_base_url",
+                "orchestrator_daemon_url",
+                "orchestrator_lifecycle_token",
+            ]
+        );
+    }
+
+    #[test]
+    fn launch_decision_payload_reports_state_without_token_values() {
+        let state = VesloServerState {
+            lifecycle_status: VesloServerLifecycleStatus::WaitingReady,
+            lifecycle_reason: VesloServerLifecycleReason::SpawnPending,
+            instance_id: Some("instance-1".to_string()),
+            client_token: Some("client-secret".to_string()),
+            host_token: Some("host-secret".to_string()),
+            opencode_base_url: Some("http://127.0.0.1:5000".to_string()),
+            ..Default::default()
+        };
+        let reasons = start_decision_reasons(&state, &["opencode_base_url"]);
+
+        let payload = launch_decision_payload("respawn", &state, &reasons, 2);
+        let serialized = serde_json::to_string(&payload).expect("serialize payload");
+
+        assert_eq!(payload["decision"], "respawn");
+        assert_eq!(payload["reason"], "no_child");
+        assert_eq!(payload["previousInstanceId"], "instance-1");
+        assert_eq!(payload["hasClientToken"], true);
+        assert_eq!(payload["hasHostToken"], true);
+        assert!(serialized.contains("opencode_base_url"));
+        assert!(!serialized.contains("client-secret"));
+        assert!(!serialized.contains("host-secret"));
     }
 
     #[test]

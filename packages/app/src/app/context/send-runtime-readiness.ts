@@ -242,11 +242,15 @@ function assertLocalRuntimeHealthOk(
 export async function withLocalRuntimeHealthTimeout<T>(
   promise: Promise<T>,
   timeoutMs = 3_000,
+  onTimeout?: () => void,
 ): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(
-      () => reject(new Error(localRuntimeHealthTimeoutMessage)),
+      () => {
+        onTimeout?.();
+        reject(new Error(localRuntimeHealthTimeoutMessage));
+      },
       timeoutMs,
     );
   });
@@ -382,6 +386,15 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
               currentClient.global.health().then((result) =>
                 assertLocalRuntimeHealthOk(result, deps.safeStringify)
               ),
+              3_000,
+              () => {
+                deps.recordSendTrace(`${reason}:runtime-health-visible-timeout`, {
+                  ...(tracePayload ?? {}),
+                  timeoutMs: 3_000,
+                  targetWorkspaceId: targetWorkspaceId || null,
+                  requestMayStillBeRunning: true,
+                });
+              },
             );
             const engineInfo = await deps.engineInfo(
               resultWorkspaceId ?? undefined,

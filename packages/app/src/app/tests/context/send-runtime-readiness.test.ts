@@ -8,6 +8,7 @@ import {
   managedAiRuntimeAuthorizationNotReadyMessage,
   managedAiRuntimeConfigNotReadyMessage,
   shouldRecoverLocalRuntimeFromHealthError,
+  withLocalRuntimeHealthTimeout,
   type SendRuntimePreflightContext,
   type SendRuntimeReadinessDeps,
 } from "../../context/send-runtime-readiness.js";
@@ -846,4 +847,22 @@ test("local runtime health error helpers classify dead endpoints and probe timeo
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("upstream status 502")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("permission denied")), false);
   assert.equal(isLocalRuntimeHealthTimeoutError(new Error(localRuntimeHealthTimeoutMessage)), true);
+});
+
+test("local runtime health timeout callback marks a visible timeout", async () => {
+  let timedOut = false;
+
+  await assert.rejects(
+    () =>
+      withLocalRuntimeHealthTimeout(
+        new Promise(() => undefined),
+        1,
+        () => {
+          timedOut = true;
+        },
+      ),
+    new RegExp(localRuntimeHealthTimeoutMessage),
+  );
+
+  assert.equal(timedOut, true);
 });

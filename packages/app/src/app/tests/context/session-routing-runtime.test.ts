@@ -34,8 +34,16 @@ function createRuntimeStore(options: { routing: any; client?: () => any; setSseC
 test("session SSE subscription passes workspace routing auth to the Rust proxy", () => {
   assert.match(
     eventStreamSource,
-    /engineSseSubscribe\(\{[\s\S]*baseUrl: entry\.baseUrl,[\s\S]*directory: entry\.directory \?\? null,[\s\S]*\.\.\.engineSseAuthOptions\(entry\.auth\),[\s\S]*signal: controller\.signal,/,
+    /engineSseSubscribe\(\{[\s\S]*baseUrl: entry\?\.baseUrl \?\? "",[\s\S]*directory: entry\?\.directory \?\? null,[\s\S]*\.\.\.engineSseAuthOptions\(entry\?\.auth\),[\s\S]*signal: controller\.signal,/,
     "per-workspace desktop SSE must use the same auth as the SDK client",
+  );
+});
+
+test("session SSE records SDK fallback as degraded transport", () => {
+  assert.match(
+    eventStreamSource,
+    /recordSendWorkflowTrace\([\s\S]*"session-sse"[\s\S]*useRustSse \? "session-sse:rust-proxy" : "session-sse:sdk-fallback"[\s\S]*transport: useRustSse \? "rust-proxy" : "sdk-sse-fallback"/,
+    "desktop SDK SSE fallback should be visible in send workflow diagnostics",
   );
 });
 

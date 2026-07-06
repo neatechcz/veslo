@@ -6,6 +6,7 @@ import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client";
 import { engineSseSubscribe, isEngineSseAvailable } from "../lib/engine-sse";
 import { unwrap, type OpencodeAuth } from "../lib/opencode";
 import { perfNow, recordPerfLog } from "../lib/perf-log";
+import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 import { formatSessionError, truncateErrorField } from "../lib/session-error";
 import type {
   MessageInfo,
@@ -830,12 +831,28 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       currentController = controller;
       try {
         const entry = sourceWsId ? deps.routing.entry(sourceWsId) : null;
-        const sub = await (isEngineSseAvailable() && entry?.baseUrl
+        const useRustSse = Boolean(isEngineSseAvailable() && entry?.baseUrl);
+        recordSendWorkflowTrace(
+          "session-sse",
+          useRustSse ? "session-sse:rust-proxy" : "session-sse:sdk-fallback",
+          {
+            workspaceId: sourceWsId || null,
+            transport: useRustSse ? "rust-proxy" : "sdk-sse-fallback",
+            reason: useRustSse
+              ? "engine_sse_available"
+              : isEngineSseAvailable()
+                ? "missing_route_base_url"
+                : "engine_sse_unavailable",
+            hasRoute: Boolean(entry),
+            hasBaseUrl: Boolean(entry?.baseUrl),
+          },
+        );
+        const sub = await (useRustSse
           ? engineSseSubscribe({
               workspaceId: sourceWsId,
-              baseUrl: entry.baseUrl,
-              directory: entry.directory ?? null,
-              ...engineSseAuthOptions(entry.auth),
+              baseUrl: entry?.baseUrl ?? "",
+              directory: entry?.directory ?? null,
+              ...engineSseAuthOptions(entry?.auth),
               signal: controller.signal,
             })
           : c.event.subscribe(undefined, { signal: controller.signal }));

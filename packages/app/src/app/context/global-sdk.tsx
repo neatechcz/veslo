@@ -13,6 +13,7 @@ import {
 import { extractSessionId } from "../utils";
 import { reportError } from "../lib/error-reporter";
 import { engineSseSubscribe, isEngineSseAvailable } from "../lib/engine-sse";
+import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 import {
   readVesloServerSettingsToken,
   resolveOpencodeProxyAuthHeaders,
@@ -169,6 +170,10 @@ export function GlobalSDKProvider(props: ParentProps) {
 
     void (async () => {
       if (isEngineSseAvailable()) {
+        recordSendWorkflowTrace("global-sdk", "global-sse:rust-proxy", {
+          transport: "rust-proxy",
+          hasBaseUrl: Boolean(baseUrl),
+        });
         rustSubscription = await engineSseSubscribe({
           workspaceId: "__global__",
           baseUrl,
@@ -177,6 +182,11 @@ export function GlobalSDKProvider(props: ParentProps) {
         });
         await consumeEvents(rustSubscription.stream);
       } else {
+        recordSendWorkflowTrace("global-sdk", "global-sse:sdk-fallback", {
+          transport: "sdk-sse-fallback",
+          reason: "engine_sse_unavailable",
+          hasBaseUrl: Boolean(baseUrl),
+        });
         sdkSubscription = await eventClient.event.subscribe(undefined, { signal: abort.signal });
         await consumeEvents(sdkSubscription.stream as AsyncIterable<unknown>);
       }
