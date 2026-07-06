@@ -131,6 +131,7 @@ describe("ensureOpencodeManagedTools", () => {
       dependencies?: Record<string, string>;
     };
     expect(configPackageJson.dependencies?.["@ai-sdk/openai-compatible"]).toBe("3.0.5");
+    expect(configPackageJson.dependencies?.["@opencode-ai/plugin"]).toBeUndefined();
 
     const status = events.find((entry) => entry.event === "opencode-managed-dependencies:status");
     expect(status?.payload).toMatchObject({

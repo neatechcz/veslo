@@ -169,6 +169,9 @@ export type ManagedAiRuntimeConfigSync = {
     targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
   ) => Promise<boolean>;
   syncActiveWorkspaceManagedAiConfig: () => Promise<void>;
+  syncManagedAiRuntimeConfigForSend: (
+    targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
+  ) => Promise<void>;
   healInactiveManagedAiWorkspaceConfigs: () => Promise<void>;
   rememberKnownConfigSnapshot: (key: string, content: string | null) => void;
   clearManagedConfigTracking: () => void;
@@ -612,16 +615,41 @@ export function createManagedAiRuntimeConfigSync(
     }
   };
 
-  const syncActiveWorkspaceManagedAiConfig = async (
-    options?: { isCancelled?: () => boolean },
+  const syncWorkspaceManagedAiConfig = async (
+    options?: {
+      targetWorkspace?: SendRuntimePreflightTargetWorkspace | null;
+      isCancelled?: () => boolean;
+      reason?: string;
+    },
   ): Promise<void> => {
-    const workspace = deps.activeWorkspaceDisplay();
+    const activeWorkspaceId = deps.activeWorkspaceId().trim();
+    const targetWorkspace = options?.targetWorkspace ?? null;
+    const targetWorkspaceId = targetWorkspace?.workspaceId?.trim() ?? "";
+    const targetWorkspaceEntry = targetWorkspaceId
+      ? deps.workspaces().find((entry) => entry.id?.trim() === targetWorkspaceId)
+      : undefined;
+    const workspace =
+      targetWorkspaceEntry ||
+      (!targetWorkspaceId
+        ? deps.activeWorkspaceDisplay()
+        : {
+          id: targetWorkspaceId,
+          workspaceType: deps.activeWorkspaceDisplay().workspaceType,
+          path: targetWorkspace?.workspaceRoot?.trim() || targetWorkspace?.directory?.trim() || "",
+          directory: targetWorkspace?.directory?.trim() || targetWorkspace?.workspaceRoot?.trim() || "",
+        });
+    const workspaceRoot =
+      targetWorkspace?.workspaceRoot?.trim() ||
+      targetWorkspace?.directory?.trim() ||
+      workspace.path?.trim() ||
+      workspace.directory?.trim() ||
+      (!targetWorkspaceId || targetWorkspaceId === activeWorkspaceId ? deps.activeWorkspacePath() : "");
     const syncPreflight = resolveManagedAiConfigSyncPreflight({
       workspaceDefaultModelReady: deps.workspaceDefaultModelReady(),
       isDesktopRuntime: deps.isTauriRuntime(),
       defaultModelExplicit: deps.defaultModelExplicit(),
       workspaceType: workspaceKind(workspace),
-      workspaceRoot: deps.activeWorkspacePath(),
+      workspaceRoot,
     });
     if (syncPreflight.type === "skip") return;
     deps.denAuthRevision();
@@ -632,7 +660,7 @@ export function createManagedAiRuntimeConfigSync(
     const managedAccessBusy = managedProfile ? false : deps.managedAiAccessBusy();
     const managedAccessError = managedProfile ? null : deps.managedAiAccessError();
     const vesloClient = deps.vesloServerClient();
-    const workspaceId = workspace.id?.trim() || deps.activeWorkspaceId().trim();
+    const workspaceId = workspace.id?.trim() || targetWorkspaceId || activeWorkspaceId;
     let vesloWorkspaceId = deps.resolveConversationServerWorkspaceId(workspaceId);
     const vesloCapabilities = deps.resolvedVesloCapabilities();
     const routing = buildProviderRoutingContext(workspace, workspaceId, root);
@@ -649,6 +677,8 @@ export function createManagedAiRuntimeConfigSync(
       : "";
     let configSyncTracePayload = {
       workspaceId: workspace.id || null,
+      targetWorkspaceId: targetWorkspaceId || null,
+      syncReason: options?.reason ?? null,
       workspaceType: workspace.workspaceType,
       workspaceRoot: root || null,
       vesloWorkspaceId: vesloWorkspaceId || null,
@@ -757,6 +787,24 @@ export function createManagedAiRuntimeConfigSync(
     } finally {
       releaseManagedAiBootstrap?.();
     }
+  };
+
+  const syncActiveWorkspaceManagedAiConfig = async (
+    options?: { isCancelled?: () => boolean },
+  ): Promise<void> => {
+    await syncWorkspaceManagedAiConfig({
+      isCancelled: options?.isCancelled,
+      reason: "active-workspace",
+    });
+  };
+
+  const syncManagedAiRuntimeConfigForSend = async (
+    targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
+  ): Promise<void> => {
+    await syncWorkspaceManagedAiConfig({
+      targetWorkspace,
+      reason: "send-preflight",
+    });
   };
 
   const maybeMarkManagedConfigApplied = (
@@ -1120,6 +1168,7 @@ export function createManagedAiRuntimeConfigSync(
     resolveRuntimeSandboxStateForTarget,
     hasUsableManagedAiRuntimeConfigForSend,
     ensureManagedAiRuntimeAuthorizationForSend,
+    syncManagedAiRuntimeConfigForSend,
     syncActiveWorkspaceManagedAiConfig: () => syncActiveWorkspaceManagedAiConfig(),
     healInactiveManagedAiWorkspaceConfigs: () => healInactiveManagedAiWorkspaceConfigs(),
     rememberKnownConfigSnapshot,

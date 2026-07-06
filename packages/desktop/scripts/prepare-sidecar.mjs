@@ -10,11 +10,13 @@ import {
   readFileSync,
   readSync,
   readdirSync,
+  realpathSync,
   statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "fs";
+import { createRequire } from "module";
 import { dirname, join, relative, resolve } from "path";
 import { tmpdir } from "os";
 import { fileURLToPath } from "url";
@@ -395,6 +397,8 @@ const readJsonFile = (filePath) => JSON.parse(readFileSync(filePath, "utf8"));
 
 const packagePathParts = (name) => name.split("/").filter(Boolean);
 
+const packageTargetPath = (name) => packagePathParts(name).join("/");
+
 const packageRelativePath = (root, filePath) => relative(root, filePath).replace(/\\/g, "/");
 
 const readPackageFilesForManifest = (packageRoot) => {
@@ -411,6 +415,136 @@ const readPackageFilesForManifest = (packageRoot) => {
   }
 
   return files;
+};
+
+const findPackageJsonForResolvedEntry = (entryPath) => {
+  let current = statSync(entryPath).isDirectory() ? entryPath : dirname(entryPath);
+  while (true) {
+    const candidate = join(current, "package.json");
+    if (existsSync(candidate)) return candidate;
+    const next = dirname(current);
+    if (next === current) return null;
+    current = next;
+  }
+};
+
+const findPackageRootInAncestorNodeModules = (fromRoot, packageName) => {
+  const parts = packagePathParts(packageName);
+  let current = fromRoot;
+  while (true) {
+    const candidate = join(current, "node_modules", ...parts);
+    const packageJson = join(candidate, "package.json");
+    if (existsSync(packageJson)) return realpathSync(candidate);
+    const next = dirname(current);
+    if (next === current) return null;
+    current = next;
+  }
+};
+
+const resolvePackageRootFrom = (fromRoot, packageName) => {
+  const ancestor = findPackageRootInAncestorNodeModules(fromRoot, packageName);
+  if (ancestor) return ancestor;
+
+  const packageJsonPath = join(fromRoot, "package.json");
+  const req = createRequire(existsSync(packageJsonPath) ? packageJsonPath : join(fromRoot, "__veslo_resolve__.js"));
+  try {
+    const entry = req.resolve(packageName);
+    const resolvedPackageJson = findPackageJsonForResolvedEntry(entry);
+    if (resolvedPackageJson) return realpathSync(dirname(resolvedPackageJson));
+  } catch {
+    // Some packages intentionally export neither package.json nor a main entry.
+  }
+
+  return null;
+};
+
+const readManifestPackageJson = (packageRoot) => readJsonFile(resolve(packageRoot, "package.json"));
+
+const dependencyEntriesForPackage = (packageJson) => [
+  ...Object.entries(packageJson.dependencies ?? {}).map(([name, range]) => ({
+    name,
+    range: String(range ?? "").trim(),
+    optional: false,
+  })),
+  ...Object.entries(packageJson.optionalDependencies ?? {}).map(([name, range]) => ({
+    name,
+    range: String(range ?? "").trim(),
+    optional: true,
+  })),
+];
+
+const collectManagedDependencyGraph = (rootSpecs) => {
+  const topLevelVersions = new Map(rootSpecs.map((spec) => [spec.name, spec.version]));
+  const entries = new Map();
+
+  const collect = ({ name, version, target, fromRoot, optional = false }) => {
+    const packageRoot = resolvePackageRootFrom(fromRoot, name);
+    if (!packageRoot) {
+      if (optional) return;
+      throw new Error(`Managed dependency package root not found: ${name}@${version} from ${fromRoot}`);
+    }
+    const packageJson = readManifestPackageJson(packageRoot);
+    const actualVersion = String(packageJson.version ?? "").trim();
+    if (version && actualVersion !== version) {
+      throw new Error(`Managed dependency ${name} expected ${version}, found ${actualVersion || "(missing)"}`);
+    }
+    if (!actualVersion) {
+      throw new Error(`Managed dependency ${name} is missing package.json version at ${packageRoot}`);
+    }
+
+    const key = target.toLowerCase();
+    if (entries.has(key)) return;
+    entries.set(key, {
+      name,
+      version: actualVersion,
+      target,
+      packageRoot,
+    });
+
+    // Veslo managed tools import only @opencode-ai/plugin's public tool helper,
+    // whose runtime dependency is zod. Expanding the package's optional effect
+    // plugin graph makes the sidecar manifest large and reintroduces slow first-run installs.
+    if (version && name === "@opencode-ai/plugin") return;
+
+    for (const dependency of dependencyEntriesForPackage(packageJson)) {
+      const dependencyRoot = resolvePackageRootFrom(packageRoot, dependency.name);
+      if (!dependencyRoot) {
+        if (dependency.optional) continue;
+        throw new Error(
+          `Managed dependency ${name}@${actualVersion} requires ${dependency.name}@${dependency.range || "(unknown)"}, ` +
+            `but it was not found from ${packageRoot}`,
+        );
+      }
+      const dependencyPackageJson = readManifestPackageJson(dependencyRoot);
+      const dependencyVersion = String(dependencyPackageJson.version ?? "").trim();
+      if (!dependencyVersion) {
+        throw new Error(`Managed dependency ${dependency.name} is missing package.json version at ${dependencyRoot}`);
+      }
+      const topLevelVersion = topLevelVersions.get(dependency.name);
+      const dependencyTarget =
+        topLevelVersion === dependencyVersion
+          ? packageTargetPath(dependency.name)
+          : `${target}/node_modules/${packageTargetPath(dependency.name)}`;
+
+      collect({
+        name: dependency.name,
+        version: dependencyVersion,
+        target: dependencyTarget,
+        fromRoot: packageRoot,
+        optional: dependency.optional,
+      });
+    }
+  };
+
+  for (const spec of rootSpecs) {
+    collect({
+      ...spec,
+      target: packageTargetPath(spec.name),
+      fromRoot: orchestratorDir,
+    });
+  }
+
+  return [...entries.values()].sort((a, b) => a.target.localeCompare(b.target));
 };
 
 const buildManagedDepsManifest = (normalizedOpencodeVersion) => {
@@ -467,24 +601,16 @@ const buildManagedDepsManifest = (normalizedOpencodeVersion) => {
     );
   }
 
+  const packages = collectManagedDependencyGraph(specs);
+
   return {
     schemaVersion: 1,
-    packages: specs.map((spec) => {
-      const packageRoot = resolve(orchestratorDir, "node_modules", ...packagePathParts(spec.name));
-      if (!existsSync(packageRoot)) {
-        throw new Error(`Managed dependency package root not found: ${packageRoot}`);
-      }
-      const packageJson = readJsonFile(resolve(packageRoot, "package.json"));
-      const actualVersion = String(packageJson.version ?? "").trim();
-      if (actualVersion !== spec.version) {
-        throw new Error(`Managed dependency ${spec.name} expected ${spec.version}, found ${actualVersion || "(missing)"}`);
-      }
-      return {
-        name: spec.name,
-        version: spec.version,
-        files: readPackageFilesForManifest(packageRoot),
-      };
-    }),
+    packages: packages.map((pkg) => ({
+      name: pkg.name,
+      version: pkg.version,
+      ...(pkg.target === packageTargetPath(pkg.name) ? {} : { target: pkg.target }),
+      files: readPackageFilesForManifest(pkg.packageRoot),
+    })),
   };
 };
 

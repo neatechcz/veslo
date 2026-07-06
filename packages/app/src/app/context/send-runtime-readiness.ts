@@ -122,6 +122,9 @@ export type SendRuntimeReadinessDeps<Client extends SendRuntimeClient = SendRunt
   ensureManagedAiRuntimeAuthorizationForSend?: (
     targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
   ) => Promise<boolean>;
+  syncManagedAiRuntimeConfigForSend?: (
+    targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
+  ) => Promise<void>;
   waitForManagedAiBootstrapReady: (options: SendRuntimeManagedAiBootstrapReadyOptions) => Promise<void>;
   sendTraceStep: <T>(
     event: string,
@@ -273,6 +276,9 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
   ): Promise<boolean> => {
     try {
       const preflight = typeof preflightOrTraceId === "object" ? preflightOrTraceId ?? undefined : undefined;
+      const traceId = typeof preflightOrTraceId === "string"
+        ? preflightOrTraceId
+        : preflight?.traceId ?? null;
       const targetWorkspace = preflight?.targetWorkspace ?? null;
       const targetWorkspaceId = targetWorkspace?.workspaceId?.trim() ?? "";
       const hasManagedProfile = Boolean(deps.managedAiAccess());
@@ -281,9 +287,28 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         bootstrapPendingCount: deps.managedAiBootstrapPendingCount(),
         reloadBusy: deps.reloadBusy(),
       });
-      const canUseCurrentManagedConfig =
+      let canUseCurrentManagedConfig =
         (hasManagedProfile || currentConfigCheck.type === "check-current-config") &&
         (await deps.hasUsableManagedAiRuntimeConfigForSend(targetWorkspace));
+      if (
+        hasManagedProfile &&
+        !canUseCurrentManagedConfig &&
+        !deps.managedAiBootstrapBusy() &&
+        !deps.reloadBusy() &&
+        deps.syncManagedAiRuntimeConfigForSend
+      ) {
+        deps.recordSendTrace("managed-ai-bootstrap-config-sync:start", {
+          traceId,
+          targetWorkspaceId: targetWorkspaceId || null,
+        });
+        await deps.syncManagedAiRuntimeConfigForSend(targetWorkspace);
+        canUseCurrentManagedConfig = await deps.hasUsableManagedAiRuntimeConfigForSend(targetWorkspace);
+        deps.recordSendTrace("managed-ai-bootstrap-config-sync:end", {
+          traceId,
+          targetWorkspaceId: targetWorkspaceId || null,
+          canUseCurrentManagedConfig,
+        });
+      }
       if (canUseCurrentManagedConfig && deps.ensureManagedAiRuntimeAuthorizationForSend) {
         const runtimeAuthorizationReady =
           await deps.ensureManagedAiRuntimeAuthorizationForSend(targetWorkspace);

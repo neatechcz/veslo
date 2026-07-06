@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   OPENCODE_SESSION_ID_TEMPLATE,
+  VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV,
   VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE,
   applyGatewayProviderRouting,
   managedConfigContentsMatchForServerPatch,
@@ -246,7 +247,7 @@ test("openai_compatible provider config points at ai-gateway custom route", () =
 
   assert.equal(parsed.provider?.openai_compatible?.name, "OpenAI-compatible");
   assert.equal(parsed.provider?.openai_compatible?.npm, "@ai-sdk/openai-compatible");
-  assert.deepEqual(parsed.provider?.openai_compatible?.env, []);
+  assert.deepEqual(parsed.provider?.openai_compatible?.env, [VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV]);
   assert.equal(
     parsed.provider?.openai_compatible?.options?.baseURL,
     "http://127.0.0.1:4318/ai-gateway/providers/openai_compatible/v1",

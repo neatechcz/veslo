@@ -21,6 +21,7 @@ import {
 } from "../../lib/ai-access.js";
 import {
   OPENCODE_SESSION_ID_TEMPLATE,
+  VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV,
   VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE,
 } from "../../lib/opencode.js";
 
@@ -709,7 +710,7 @@ test("formatManagedAiAccessConfig routes codex_oauth through the gateway", () =>
   assert.equal(parsed.model, "codex_oauth/gpt-5.4");
   assert.equal(parsed.provider?.codex_oauth?.name, "Veslo Codex OAuth");
   assert.equal(parsed.provider?.codex_oauth?.npm, "@ai-sdk/openai-compatible");
-  assert.deepEqual(parsed.provider?.codex_oauth?.env, []);
+  assert.deepEqual(parsed.provider?.codex_oauth?.env, [VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV]);
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.name, "gpt-5.4");
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.tool_call, true);
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.reasoning, true);
@@ -774,7 +775,7 @@ test("formatManagedAiAccessConfig routes openai_compatible through the gateway",
   assert.equal(parsed.model, "openai_compatible/custom-model");
   assert.equal(parsed.provider?.openai_compatible?.name, "OpenAI-compatible");
   assert.equal(parsed.provider?.openai_compatible?.npm, "@ai-sdk/openai-compatible");
-  assert.deepEqual(parsed.provider?.openai_compatible?.env, []);
+  assert.deepEqual(parsed.provider?.openai_compatible?.env, [VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV]);
   assert.equal(parsed.provider?.openai_compatible?.models?.["custom-model"]?.name, "custom-model");
   assert.equal(parsed.provider?.openai_compatible?.models?.["custom-model"]?.tool_call, true);
   assert.equal(parsed.provider?.openai_compatible?.models?.["custom-model"]?.reasoning, true);

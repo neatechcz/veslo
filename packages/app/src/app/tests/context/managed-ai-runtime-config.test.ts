@@ -203,6 +203,50 @@ test("runtime config sync writes managed provider config through Veslo server co
   );
 });
 
+test("send preflight sync writes managed config for the snapshotted target workspace", async () => {
+  const client = createVesloClient();
+  const registrations: Array<{ workspaceId: string; workspaceRoot?: string | null }> = [];
+  const sync = createManagedAiRuntimeConfigSync(
+    createOptions({
+      vesloServerClient: () => client,
+      activeWorkspaceDisplay: () => ({
+        id: "app-active",
+        workspaceType: "local",
+        path: "/repo/active",
+        directory: "/repo/active",
+      }),
+      activeWorkspaceId: () => "app-active",
+      activeWorkspacePath: () => "/repo/active",
+      workspaces: () => [
+        { id: "app-active", workspaceType: "local", path: "/repo/active", directory: "/repo/active" },
+        { id: "app-target", workspaceType: "local", path: "/repo/target", directory: "/repo/target" },
+      ],
+      resolveConversationServerWorkspaceId: (workspaceId) =>
+        workspaceId === "app-active" ? "ws-active" : null,
+      ensureConversationReadWorkspaceRegistered: async (_client, workspaceId, workspaceRoot) => {
+        registrations.push({ workspaceId, workspaceRoot });
+        return "server-target";
+      },
+    }),
+  );
+
+  await sync.syncManagedAiRuntimeConfigForSend({
+    workspaceId: "app-target",
+    workspaceRoot: "/repo/target",
+    directory: "/repo/target",
+  });
+
+  assert.deepEqual(registrations, [{ workspaceId: "app-target", workspaceRoot: "/repo/target" }]);
+  assert.deepEqual(client.getConfigCalls, ["server-target"]);
+  assert.equal(client.patched.length, 1);
+  assert.equal(client.patched[0]?.workspaceId, "server-target");
+  assert.equal(
+    (((client.patched[0]?.payload.opencode?.provider as Record<string, unknown>)?.codex_oauth as Record<string, unknown>)
+      ?.options as Record<string, unknown>)?.apiKey,
+    VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE,
+  );
+});
+
 test("runtime config sync registers local workspace before using fallback app id", async () => {
   const client = createVesloClient();
   const registrations: Array<{ workspaceId: string; workspaceRoot?: string | null }> = [];

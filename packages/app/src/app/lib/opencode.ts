@@ -368,6 +368,14 @@ export function managedConfigContentsMatchForServerPatch(
   return matches;
 }
 
+function mergeProviderEnv(existing: unknown, required: string): string[] {
+  const values = Array.isArray(existing)
+    ? existing.map((value) => typeof value === "string" ? value.trim() : "").filter(Boolean)
+    : [];
+  if (!values.includes(required)) values.push(required);
+  return values;
+}
+
 export function applyGatewayProviderRouting(
   content: string | null | undefined,
   input: {
@@ -468,7 +476,7 @@ export function applyGatewayProviderRouting(
           npm: typeof existingProvider.npm === "string" && existingProvider.npm.trim()
             ? existingProvider.npm
             : "@ai-sdk/openai-compatible",
-          env: Array.isArray(existingProvider.env) ? existingProvider.env : [],
+          env: mergeProviderEnv(existingProvider.env, VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV),
         }
       : {}),
     options: {

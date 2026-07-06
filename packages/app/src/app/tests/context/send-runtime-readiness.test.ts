@@ -209,6 +209,39 @@ test("managed AI bootstrap readiness blocks managed sends when runtime config is
   assert.deepEqual(errors, [managedAiRuntimeConfigNotReadyMessage]);
 });
 
+test("managed AI bootstrap syncs the snapshotted workspace config before blocking", async () => {
+  const targets: Array<SendRuntimePreflightContext["targetWorkspace"]> = [];
+  const syncTargets: Array<SendRuntimePreflightContext["targetWorkspace"]> = [];
+  let configReady = false;
+  const { readiness, errors, events, clients } = createHarness({
+    managedAiAccess: () => ({ providerId: "codex_oauth" }),
+    hasUsableManagedAiRuntimeConfigForSend: async (targetWorkspace) => {
+      targets.push(targetWorkspace);
+      return configReady;
+    },
+    syncManagedAiRuntimeConfigForSend: async (targetWorkspace) => {
+      syncTargets.push(targetWorkspace);
+      configReady = true;
+    },
+  });
+  clients.set("target", createClient("target"));
+
+  const preflight: SendRuntimePreflightContext = {
+    traceId: "trace-managed-sync",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+  };
+
+  assert.equal(await readiness.ensureManagedAiBootstrapReady(preflight), true);
+  assert.deepEqual(targets, [preflight.targetWorkspace, preflight.targetWorkspace]);
+  assert.deepEqual(syncTargets, [preflight.targetWorkspace]);
+  assert.deepEqual(errors, []);
+  assert.ok(events.some((entry) => entry.event === "managed-ai-bootstrap-config-sync:start"));
+  assert.ok(events.some((entry) =>
+    entry.event === "managed-ai-bootstrap-config-sync:end" &&
+    entry.payload?.canUseCurrentManagedConfig === true
+  ));
+});
+
 test("managed AI bootstrap readiness validates the snapshotted target workspace config", async () => {
   const targets: Array<{ workspaceId?: string | null; workspaceRoot?: string | null; directory?: string | null } | null | undefined> = [];
   const waits: Array<{ hasClient: boolean }> = [];

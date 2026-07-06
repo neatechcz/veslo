@@ -26,6 +26,10 @@ const VESLO_MANAGED_RUNTIME_PACKAGES = [
   { name: "json-schema", version: VESLO_MANAGED_JSON_SCHEMA_VERSION },
 ] as const;
 
+const VESLO_CONFIG_PACKAGE_DEPENDENCIES = VESLO_MANAGED_RUNTIME_PACKAGES.filter(
+  (spec) => spec.name !== "@opencode-ai/plugin",
+);
+
 type ManagedDependencyEvent = {
   event: string;
   payload: Record<string, unknown>;
@@ -71,6 +75,7 @@ type ManagedDepsManifestFile = {
 type ManagedDepsManifestPackage = {
   name: string;
   version: string;
+  target?: string;
   files: Array<{
     path: string;
     contentBase64: string;
@@ -240,6 +245,7 @@ function parseManagedDepsManifestPackage(value: unknown): ManagedDepsManifestPac
   if (!isRecord(value)) return null;
   const name = typeof value.name === "string" ? value.name : "";
   const version = typeof value.version === "string" ? value.version : "";
+  const target = typeof value.target === "string" && value.target.trim() ? value.target.trim() : undefined;
   if (!name || !version || !Array.isArray(value.files)) return null;
 
   const files: ManagedDepsManifestPackage["files"] = [];
@@ -250,7 +256,7 @@ function parseManagedDepsManifestPackage(value: unknown): ManagedDepsManifestPac
     if (!path || contentBase64 === null) return null;
     files.push({ path, contentBase64 });
   }
-  return { name, version, files };
+  return { name, version, target, files };
 }
 
 async function readManagedDepsManifest(path: string): Promise<ManagedDepsManifestPackage[]> {
@@ -275,6 +281,97 @@ function safeManifestRelativeParts(path: string): string[] | null {
   const parts = normalized.split("/");
   if (parts.some((part) => !part || part === "." || part === "..")) return null;
   return parts;
+}
+
+async function writeManifestPackageToNodeModules(
+  manifestPackage: ManagedDepsManifestPackage,
+  destNodeModules: string,
+): Promise<{ target: string; wrote: boolean }> {
+  const targetPath = manifestPackage.target ?? manifestPackage.name;
+  const targetParts = safeManifestRelativeParts(targetPath);
+  if (!targetParts) {
+    throw new Error(
+      `Invalid managed dependency target '${targetPath}' for ${manifestPackage.name}@${manifestPackage.version}`,
+    );
+  }
+  const destDir = join(destNodeModules, ...targetParts);
+  const currentVersion = await readPackageJsonVersion(destDir);
+  if (currentVersion === manifestPackage.version) {
+    return { target: destDir, wrote: false };
+  }
+
+  await rm(destDir, { recursive: true, force: true });
+  for (const file of manifestPackage.files) {
+    const parts = safeManifestRelativeParts(file.path);
+    if (!parts) {
+      throw new Error(
+        `Invalid managed dependency file path '${file.path}' for ${manifestPackage.name}@${manifestPackage.version}`,
+      );
+    }
+    const target = join(destDir, ...parts);
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, Buffer.from(file.contentBase64, "base64"));
+  }
+
+  const actualVersion = await readPackageJsonVersion(destDir);
+  if (actualVersion !== manifestPackage.version) {
+    throw new Error(
+      `Managed dependencies manifest wrote ${manifestPackage.name}@${actualVersion ?? "unknown"} ` +
+        `instead of ${manifestPackage.name}@${manifestPackage.version}`,
+    );
+  }
+
+  return { target: destDir, wrote: true };
+}
+
+async function vendorManifestRuntimeTree(
+  destNodeModules: string,
+  options?: EnsureOpencodeManagedToolsOptions,
+): Promise<boolean> {
+  const candidates = managedDepsManifestCandidates(options);
+  for (const candidate of candidates) {
+    if (!(await pathExists(candidate.path))) {
+      if (candidate.explicit) {
+        emit(options, {
+          event: "opencode-managed-dependencies:manifest-miss",
+          payload: { manifestPath: candidate.path, manifestSource: candidate.source },
+        });
+      }
+      continue;
+    }
+
+    let packages: ManagedDepsManifestPackage[];
+    try {
+      packages = await readManagedDepsManifest(candidate.path);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      emit(options, {
+        event: "opencode-managed-dependencies:manifest-error",
+        payload: { manifestPath: candidate.path, manifestSource: candidate.source, error: message },
+      });
+      if (candidate.explicit) throw error;
+      continue;
+    }
+
+    let wrote = 0;
+    for (const manifestPackage of packages) {
+      const result = await writeManifestPackageToNodeModules(manifestPackage, destNodeModules);
+      if (result.wrote) wrote += 1;
+    }
+    emit(options, {
+      event: "opencode-managed-dependencies:manifest-tree-vendored",
+      payload: {
+        manifestPath: candidate.path,
+        manifestSource: candidate.source,
+        packageCount: packages.length,
+        wrote,
+        skipped: packages.length - wrote,
+      },
+    });
+    return true;
+  }
+
+  return false;
 }
 
 async function vendorManifestPackage(
@@ -320,24 +417,7 @@ async function vendorManifestPackage(
       continue;
     }
 
-    const destDir = join(destNodeModules, ...packagePathParts(pkg));
-    await rm(destDir, { recursive: true, force: true });
-    for (const file of manifestPackage.files) {
-      const parts = safeManifestRelativeParts(file.path);
-      if (!parts) {
-        throw new Error(`Invalid managed dependency file path '${file.path}' for ${pkg}@${version}`);
-      }
-      const target = join(destDir, ...parts);
-      await mkdir(dirname(target), { recursive: true });
-      await writeFile(target, Buffer.from(file.contentBase64, "base64"));
-    }
-
-    const actualVersion = await readPackageJsonVersion(destDir);
-    if (actualVersion !== version) {
-      throw new Error(
-        `Managed dependencies manifest wrote ${pkg}@${actualVersion ?? "unknown"} instead of ${pkg}@${version}`,
-      );
-    }
+    const { target: destDir } = await writeManifestPackageToNodeModules(manifestPackage, destNodeModules);
 
     emit(options, {
       event: "opencode-managed-dependencies:vendored",
@@ -521,7 +601,7 @@ async function ensureConfigPackageJsonDependencies(configDir: string): Promise<v
     : {};
   let changed = !isRecord(parsed.dependencies);
 
-  for (const spec of VESLO_MANAGED_RUNTIME_PACKAGES) {
+  for (const spec of VESLO_CONFIG_PACKAGE_DEPENDENCIES) {
     if (dependencies[spec.name] === spec.version) continue;
     dependencies[spec.name] = spec.version;
     changed = true;
@@ -562,6 +642,7 @@ export async function ensureOpencodeManagedTools(
   const nodeModulesDir = join(configDir, "node_modules");
   await mkdir(nodeModulesDir, { recursive: true });
   await ensureConfigPackageJsonDependencies(configDir);
+  await vendorManifestRuntimeTree(nodeModulesDir, options);
 
   for (const spec of VESLO_MANAGED_RUNTIME_PACKAGES) {
     await ensureManagedPackage(spec.name, spec.version, nodeModulesDir, options);

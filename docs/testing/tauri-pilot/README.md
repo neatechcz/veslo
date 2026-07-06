@@ -345,6 +345,32 @@ Then classify the failing runtime by trace evidence:
 | `provider-hit` exists and `server:ai-gateway:proxy:timing` has `401`, `403`, or `504` | The request reached the local proxy and failed in auth/upstream/gateway timing. Inspect gateway auth source, session id, workspace id, upstream status, and timeout. |
 | `server:ai-gateway:proxy:timing` has `status:200`, `outcome:"ok"`, and `upstreamContentType:"text/event-stream"` | The AI gateway provider route responded. If the UI still has no answer, look downstream at OpenCode event consumption, transcript reconcile, lifecycle status, or UI render. |
 
+Current live gateway behavior can return `/api/me/ai-access` with
+`aiAccess.enabled:true` and no top-level `accessToken`. That is valid: the local
+Veslo server then forwards the caller Den authorization to the provider route.
+The generated OpenCode provider must still contain
+`env:["VESLO_OPENCODE_SERVER_CLIENT_TOKEN"]` and
+`apiKey:"{env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}"`; otherwise OpenCode may
+surface only `AI_APICallError: Unauthorized` and the server watchdog may see no
+provider hit.
+
+If the provider route returned `200` and the OpenCode SQLite transcript has
+the assistant text, but the UI still renders no assistant answer, compare the
+host transcript cache in `.veslo/conversations/bindings.sqlite`. A same-ID text
+part with `text: ""` in `conversation_part.payload_json` means a stale
+streaming snapshot overwrote the richer engine transcript. That is an app/server
+transcript ingestion bug, not an auth or AI gateway failure.
+
+If the send run times out with `AI gateway provider request did not start within
+90000ms` and the OpenCode log has `background dependency install failed` or
+`ReleaseError: metadata missing`, inspect the orchestrator runtime trace for
+`opencode-managed-dependencies:manifest-tree-vendored`. A healthy shared config
+vendors the managed provider packages before inference, keeps
+`@opencode-ai/plugin` out of the generated `package.json` dependency install
+list, and still has `node_modules/@opencode-ai/plugin/package.json` locally for
+managed tools. In that state the next expected gateway evidence is a provider
+route hit under `/ai-gateway/providers/<provider>/v1/chat/completions`.
+
 Useful trace patterns:
 
 ```powershell
