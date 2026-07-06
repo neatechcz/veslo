@@ -1344,6 +1344,102 @@ export type VesloConversationRunLifecycleStatus =
   | "failed"
   | "aborted";
 
+export type VesloConversationSubmitAttachment = {
+  name: string;
+  kind: string;
+  mimeType: string;
+  dataUrl?: string | null;
+  contentBase64?: string | null;
+  fileSessionPath?: string | null;
+};
+
+export type VesloConversationSubmitRequest = {
+  clientMessageId: string;
+  origin: SessionSendOrigin | string;
+  source?: "button" | "enter" | "ctrl-enter" | string | null;
+  target?: {
+    conversationId?: string | null;
+    opencodeSessionId?: string | null;
+    directory?: string | null;
+    pendingClientSessionId?: string | null;
+  };
+  draft: {
+    mode: "prompt" | "shell";
+    text: string;
+    resolvedText?: string | null;
+    parts: unknown[];
+    command?: { name: string; arguments: string } | null;
+    attachments?: VesloConversationSubmitAttachment[];
+  };
+  options?: {
+    sendNow?: boolean;
+    replaceMessageId?: string | null;
+    submitQueuePolicy?: "normal" | "send-now" | "server-queue-only";
+    model?: unknown;
+    agent?: string | null;
+    variant?: string | null;
+    expectAiGatewayStart?: boolean;
+    dryRun?: boolean;
+  };
+};
+
+export type VesloConversationSubmitDebugTraceEntry = {
+  source?: string;
+  event: string;
+  [key: string]: unknown;
+};
+
+export type VesloConversationSubmitResult =
+  | {
+      status: "dry_run";
+      workspaceId: string;
+      clientMessageId: string;
+      requestHash: string;
+      draftDisposition: "keep";
+      target: {
+        directory: string | null;
+        conversationId?: string | null;
+        opencodeSessionId?: string | null;
+        pendingClientSessionId?: string | null;
+      };
+    }
+  | {
+      status: "submitted";
+      workspaceId: string;
+      conversationId: string;
+      opencodeSessionId: string;
+      runId: string;
+      clientMessageId: string;
+      materializedSession?: unknown | null;
+      draftDisposition: "clear";
+    }
+  | {
+      status: "queued";
+      workspaceId: string;
+      conversationId: string;
+      opencodeSessionId: string;
+      queueItemId: string;
+      reservedRunId: string;
+      queuePosition: number;
+      clientMessageId: string;
+      materializedSession?: unknown | null;
+      draftDisposition: "clear";
+    }
+  | {
+      status: "blocked";
+      code: string;
+      message: string;
+      draftDisposition: "restore" | "keep";
+      recoverable: boolean;
+    }
+  | {
+      status: "failed";
+      code: string;
+      message: string;
+      draftDisposition: "restore" | "mark-failed";
+      debugTrace?: VesloConversationSubmitDebugTraceEntry[];
+    };
+
 export type VesloConversationRunInput = {
   kind: VesloConversationRunKind;
   directory?: string | null;

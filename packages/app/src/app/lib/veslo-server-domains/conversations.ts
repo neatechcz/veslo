@@ -8,6 +8,8 @@ import type {
   VesloConversationRunInput,
   VesloConversationRunResult,
   VesloConversationRunStatusResult,
+  VesloConversationSubmitRequest,
+  VesloConversationSubmitResult,
   VesloSessionArchiveRecord,
   VesloSessionLatestRunArtifacts,
   VesloSessionTranscriptAppendInput,
@@ -165,6 +167,24 @@ export function createConversationsClient(context: ConversationsClientContext) {
       requestJson<VesloConversationRunResult>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/runs`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: input,
+          timeoutMs: timeouts.conversationRun,
+          extraHeaders: sendTraceHeaders(options),
+        },
+      ),
+
+    submit: (
+      workspaceId: string,
+      input: VesloConversationSubmitRequest,
+      options?: { sendTraceId?: string | null },
+    ) =>
+      requestJson<VesloConversationSubmitResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/conversations/submit`,
         {
           token,
           hostToken,

@@ -151,6 +151,202 @@ const startTestServer = (input: {
 };
 
 describe("conversation routes", () => {
+  test("POST /workspace/:id/conversations/submit returns a dry-run result without contacting OpenCode", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-dry-run-"));
+    tempDirs.push(workspaceRoot);
+    const upstreamRequests: string[] = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        upstreamRequests.push(new URL(request.url).pathname);
+        return Response.json({ error: "dry run must not contact upstream" }, { status: 500 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          clientMessageId: "msg-submit-1",
+          origin: "session:normal",
+          source: "enter",
+          target: { directory: workspaceRoot, pendingClientSessionId: "pending-1" },
+          draft: {
+            mode: "prompt",
+            text: "Hello",
+            parts: [{ type: "text", text: "Hello" }],
+          },
+          options: { dryRun: true },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as {
+      status?: string;
+      workspaceId?: string;
+      clientMessageId?: string;
+      requestHash?: string;
+      draftDisposition?: string;
+      target?: { directory?: string | null; pendingClientSessionId?: string | null };
+    };
+    expect(payload.status).toBe("dry_run");
+    expect(payload.workspaceId).toBe("ws_1");
+    expect(payload.clientMessageId).toBe("msg-submit-1");
+    expect(payload.requestHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(payload.draftDisposition).toBe("keep");
+    expect(payload.target?.directory).toBe(workspaceRoot);
+    expect(payload.target?.pendingClientSessionId).toBe("pending-1");
+    expect(upstreamRequests).toEqual([]);
+  });
+
+  test("POST /workspace/:id/conversations/submit rejects idempotency conflicts", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-conflict-"));
+    tempDirs.push(workspaceRoot);
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: 9,
+    });
+    const url = `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`;
+    const submit = (text: string) => fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        clientMessageId: "msg-submit-conflict",
+        origin: "session:normal",
+        target: { directory: workspaceRoot },
+        draft: {
+          mode: "prompt",
+          text,
+          parts: [{ type: "text", text }],
+        },
+        options: { dryRun: true },
+      }),
+    });
+
+    expect((await submit("First")).status).toBe(200);
+    const conflictResponse = await submit("Second");
+    expect(conflictResponse.status).toBe(409);
+    const conflict = await conflictResponse.json() as { code?: string; message?: string };
+    expect(conflict.code).toBe("idempotency_conflict");
+  });
+
+  test("POST /workspace/:id/conversations/submit treats dry-run and real submit intents as different requests", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-dry-run-hash-"));
+    tempDirs.push(workspaceRoot);
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: 9,
+    });
+    const url = `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`;
+    const baseBody = {
+      clientMessageId: "msg-submit-dry-run-hash",
+      origin: "session:normal",
+      target: { directory: workspaceRoot },
+      draft: {
+        mode: "prompt",
+        text: "Same text",
+        parts: [{ type: "text", text: "Same text" }],
+      },
+    };
+    const submit = (options?: Record<string, unknown>) => fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ...baseBody,
+        ...(options ? { options } : {}),
+      }),
+    });
+
+    expect((await submit({ dryRun: true })).status).toBe(200);
+    const conflictResponse = await submit();
+    expect(conflictResponse.status).toBe(409);
+    const conflict = await conflictResponse.json() as { code?: string };
+    expect(conflict.code).toBe("idempotency_conflict");
+  });
+
+  test("POST /workspace/:id/conversations/submit blocks remote workspaces before local queue ownership", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-remote-"));
+    tempDirs.push(workspaceRoot);
+    const upstreamRequests: string[] = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        upstreamRequests.push(new URL(request.url).pathname);
+        return Response.json({ error: "remote dry-run block must not contact upstream" }, { status: 500 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+      workspaces: [{
+        id: "ws_remote",
+        name: "Remote",
+        path: workspaceRoot,
+        workspaceType: "remote",
+        baseUrl: `http://127.0.0.1:${upstream.port}`,
+      }],
+    });
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_remote/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          clientMessageId: "msg-submit-remote",
+          origin: "session:normal",
+          target: { directory: workspaceRoot },
+          draft: {
+            mode: "prompt",
+            text: "Remote",
+            parts: [{ type: "text", text: "Remote" }],
+          },
+          options: { dryRun: true },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as {
+      status?: string;
+      code?: string;
+      draftDisposition?: string;
+      recoverable?: boolean;
+    };
+    expect(payload.status).toBe("blocked");
+    expect(payload.code).toBe("remote_submit_unavailable");
+    expect(payload.draftDisposition).toBe("restore");
+    expect(payload.recoverable).toBe(true);
+    expect(upstreamRequests).toEqual([]);
+  });
+
   test("POST /workspace/:id/conversations/import backfills live OpenCode sessions for passive reads", async () => {
     await useTempVesloDataDir();
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-import-"));

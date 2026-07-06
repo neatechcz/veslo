@@ -205,6 +205,8 @@ import { createConversationBindingStore } from "./conversation-binding-store.js"
 import { createConversationTranscriptStore } from "./conversation-transcript-store.js";
 import { createConversationService } from "./conversation-service.js";
 import { createConversationRunQueueStore } from "./conversation-run-queue-store.js";
+import { createConversationSubmitAttemptStore } from "./conversation-submit-attempt-store.js";
+import { createConversationSubmitService } from "./conversation-submit-service.js";
 import {
   createOrchestratorLifecycleClient,
   type OrchestratorLifecycleClient,
@@ -3614,6 +3616,7 @@ function createRoutes(
   const conversationBindingStore = createConversationBindingStore({ dataDir: serverDataDir });
   const conversationTranscriptStore = createConversationTranscriptStore({ dataDir: serverDataDir });
   const conversationRunQueueStore = createConversationRunQueueStore({ dataDir: serverDataDir });
+  const conversationSubmitAttemptStore = createConversationSubmitAttemptStore({ dataDir: serverDataDir });
   const conversationService = createConversationService({
     readStore: conversationReadStore,
     bindingStore: conversationBindingStore,
@@ -3638,6 +3641,9 @@ function createRoutes(
           token: config.orchestratorLifecycleToken,
         })
       : null;
+  const conversationSubmitService = createConversationSubmitService({
+    attemptStore: conversationSubmitAttemptStore,
+  });
 
   const sessionTranscriptPrefetch = createSessionTranscriptPrefetchStore({
     loadTranscript: async ({ workspaceId, sessionId, limit, directory }) => {
@@ -3912,6 +3918,7 @@ registerDocumentRuntimeRoutes(routes, createDocumentRuntimeProviderDependencies(
     conversationService,
     sessionTranscriptPrefetch,
     conversationRunLifecycleController,
+    conversationSubmitService,
     lifecycleClient,
     resolveConversationReadDirectory,
     loadConversationTranscriptResponse,

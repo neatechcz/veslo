@@ -414,6 +414,86 @@ test("runConversation includes the optional send trace id header", async () => {
   }
 });
 
+test("submitConversation posts to the server-owned submit endpoint", async () => {
+  const previousFetch = globalThis.fetch;
+  const originalSetTimeout = globalThis.setTimeout;
+  const calls: Array<{ url: string; method?: string; headers: Headers; body: unknown }> = [];
+  const timeoutDelays: number[] = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method,
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
+    });
+    return new Response(
+      JSON.stringify({
+        status: "dry_run",
+        workspaceId: "ws_1",
+        clientMessageId: "msg_1",
+        requestHash: "a".repeat(64),
+        draftDisposition: "keep",
+        target: { directory: "src" },
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  };
+  globalThis.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+    timeoutDelays.push(Number(timeout));
+    return originalSetTimeout(handler, timeout, ...args);
+  }) as typeof setTimeout;
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    const result = await client.submitConversation(
+      "ws_1",
+      {
+        clientMessageId: "msg_1",
+        origin: "session:normal",
+        source: "enter",
+        target: { directory: "src" },
+        draft: {
+          mode: "prompt",
+          text: "Hello",
+          parts: [{ type: "text", text: "Hello" }],
+        },
+        options: { dryRun: true },
+      },
+      { sendTraceId: "submit-trace-123" },
+    );
+
+    assert.equal(result.status, "dry_run");
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.url, "https://veslo.example/workspace/ws_1/conversations/submit");
+    assert.equal(calls[0]?.method, "POST");
+    assert.equal(calls[0]?.headers.get("x-veslo-send-trace-id"), "submit-trace-123");
+    assert.deepEqual(calls[0]?.body, {
+      clientMessageId: "msg_1",
+      origin: "session:normal",
+      source: "enter",
+      target: { directory: "src" },
+      draft: {
+        mode: "prompt",
+        text: "Hello",
+        parts: [{ type: "text", text: "Hello" }],
+      },
+      options: { dryRun: true },
+    });
+    assert.equal(timeoutDelays[0], 90_000);
+  } finally {
+    globalThis.fetch = previousFetch;
+    globalThis.setTimeout = originalSetTimeout;
+  }
+});
+
 test("OpenCode Router client methods use the server-owned /opencode-router namespace", async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string; body: unknown }> = [];

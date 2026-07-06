@@ -1,5 +1,6 @@
 import type { ConversationService, ConversationTranscriptResult } from "../conversation-service.js";
 import type { ConversationRunLifecycleController } from "../conversation-run-lifecycle-controller.js";
+import type { ConversationSubmitService } from "../conversation-submit-service.js";
 import { ApiError } from "../errors.js";
 import {
   OrchestratorLifecycleRequestError,
@@ -78,6 +79,7 @@ export type ConversationSessionRouteDependencies = {
   conversationService: ConversationService;
   sessionTranscriptPrefetch: SessionTranscriptPrefetchPort;
   conversationRunLifecycleController: ConversationRunLifecycleController;
+  conversationSubmitService: ConversationSubmitService;
   lifecycleClient: OrchestratorLifecycleClient | null;
   resolveConversationReadDirectory: ResolveConversationReadDirectory;
   loadConversationTranscriptResponse: LoadConversationTranscriptResponse;
@@ -316,6 +318,7 @@ export function registerConversationSessionRoutes(
     conversationService,
     sessionTranscriptPrefetch,
     conversationRunLifecycleController,
+    conversationSubmitService,
     lifecycleClient,
     resolveConversationReadDirectory,
     loadConversationTranscriptResponse,
@@ -397,6 +400,19 @@ export function registerConversationSessionRoutes(
       });
       throw error;
     }
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/conversations/submit", "client", async (ctx) => {
+    ensureWritable(ctx.config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const result = await conversationSubmitService.dryRun({
+      workspace,
+      body,
+      resolveDirectory: (requestedRaw) => resolveConversationReadDirectory(workspace, requestedRaw),
+    });
+    return jsonResponse(result.payload, result.httpStatus);
   });
 
   addRoute(routes, "POST", "/workspace/:id/conversations/import", "client", async (ctx) => {

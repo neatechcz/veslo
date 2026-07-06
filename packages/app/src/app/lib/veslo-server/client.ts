@@ -523,6 +523,7 @@ export function createVesloServerClient(options: {
     createConversation: conversations.create,
     importConversations: conversations.import,
     runConversation: conversations.run,
+    submitConversation: conversations.submit,
     abortConversation: conversations.abort,
     getConversationRunStatus: conversations.getRunStatus,
     getSessionLatestRunArtifacts: conversations.getLatestRunArtifacts,
