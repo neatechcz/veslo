@@ -6,7 +6,6 @@ import {
   buildVesloConnectInviteUrl,
   createVesloServerClient,
   DEFAULT_VESLO_CONNECT_APP_URL,
-  deriveVesloServerUrl,
   clearVesloServerSettings,
   requestManagedAiAccessBundle,
   readVesloServerSettings,
@@ -91,23 +90,6 @@ function withBrowserStorage<T>(seed: Record<string, string>, run: () => T): T {
     }
   }
 }
-
-test("deriveVesloServerUrl prefers normalized explicit settings override", () => {
-  const derived = deriveVesloServerUrl("http://127.0.0.1:64792/opencode?x=1", {
-    urlOverride: "veslo.example.test/api/",
-    portOverride: 9999,
-  });
-
-  assert.equal(derived, "http://veslo.example.test/api");
-});
-
-test("deriveVesloServerUrl rewrites the OpenCode URL to the configured Veslo port", () => {
-  const derived = deriveVesloServerUrl("http://127.0.0.1:64792/opencode?x=1#hash", {
-    portOverride: 9999,
-  });
-
-  assert.equal(derived, "http://127.0.0.1:9999");
-});
 
 test("Veslo server settings read write and clear canonicalize storage keys", () => {
   withBrowserStorage(

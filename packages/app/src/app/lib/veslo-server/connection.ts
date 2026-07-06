@@ -498,27 +498,3 @@ export function clearVesloServerSettings() {
     // ignore
   }
 }
-
-export function deriveVesloServerUrl(
-  opencodeBaseUrl: string,
-  settings?: VesloServerSettings,
-) {
-  const override = settings?.urlOverride?.trim();
-  if (override) {
-    return normalizeVesloServerUrl(override);
-  }
-
-  const base = opencodeBaseUrl.trim();
-  if (!base) return null;
-  try {
-    const url = new URL(base);
-    const port = settings?.portOverride ?? DEFAULT_VESLO_SERVER_PORT;
-    url.port = String(port);
-    url.pathname = "";
-    url.search = "";
-    url.hash = "";
-    return url.origin;
-  } catch {
-    return null;
-  }
-}

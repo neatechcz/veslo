@@ -98,7 +98,9 @@ export function createRuntimeOwner(options: RuntimeOwnerOptions): RuntimeOwner {
     const routedClientReady = Boolean(options.routing.entry(id));
     const routedClientCountsAsReady =
       routedClientReady && !options.requiresOrchestratorReadiness?.(id);
-    const activeLegacyEngineReady = activeWorkspace && options.activeLegacyEngineReady();
+    const requiresOrchestratorReadiness = options.requiresOrchestratorReadiness?.(id) === true;
+    const activeLegacyEngineReady =
+      activeWorkspace && !requiresOrchestratorReadiness && options.activeLegacyEngineReady();
     const busy = Object.keys(options.workspaceBusy?.()[id] ?? {}).length > 0;
     const ready = orchestratorReady || routedClientCountsAsReady || activeLegacyEngineReady;
     const reason: RuntimeOwnerReason = orchestratorReady

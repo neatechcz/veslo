@@ -112,6 +112,28 @@ test("runtime owner does not treat local orchestrator routes as ready without an
   assert.equal(snapshotReady.client("ws-local"), routed);
 });
 
+test("runtime owner does not let legacy engineReady bypass required orchestrator readiness", () => {
+  const owner = createRuntimeOwner({
+    activeWorkspaceId: () => "ws-local",
+    activeLegacyEngineReady: () => true,
+    readyEngineWorkspaceIds: () => new Set(),
+    requiresOrchestratorReadiness: (workspaceId) => workspaceId === "ws-local",
+    routing: createRouting({}),
+  });
+
+  assert.deepEqual(owner.resolveWorkspace("ws-local"), {
+    owner: null,
+    workspaceId: "ws-local",
+    ready: false,
+    reason: "not-ready",
+    activeWorkspace: true,
+    orchestratorReady: false,
+    routedClientReady: false,
+    activeLegacyEngineReady: false,
+    busy: false,
+  });
+});
+
 test("runtime owner conversation-read sync allows busy workspaces without pretending runtime is ready", () => {
   const owner = createRuntimeOwner({
     activeWorkspaceId: () => "ws-active",
