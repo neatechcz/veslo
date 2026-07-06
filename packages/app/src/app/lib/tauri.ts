@@ -5,6 +5,8 @@ import { validateMcpServerName } from "../mcp";
 import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
 import type { ComposerAttachment, ComposerDraft, ComposerPart, ModelRef, SkillInventoryRegistryMetadata } from "../types";
 
+export const VESLO_SERVER_STATE_EVENT = "veslo://server-state";
+
 export const RUNTIME_ENGINE_STATES = [
   "absent",
   "starting",

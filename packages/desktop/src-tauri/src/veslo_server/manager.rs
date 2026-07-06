@@ -8,6 +8,7 @@ use crate::types::{VesloServerInfo, VesloServerLifecycleReason, VesloServerLifec
 #[derive(Default)]
 pub struct VesloServerManager {
     pub inner: Arc<Mutex<VesloServerState>>,
+    pub start_queue: Arc<Mutex<()>>,
 }
 
 #[derive(Default)]

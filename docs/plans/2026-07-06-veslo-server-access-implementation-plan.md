@@ -11,7 +11,7 @@ vsa02_instance_identity_adoption_done: true
 vsa03_cross_platform_orphan_cleanup_done: true
 vsa04_secrets_files_not_argv_done: true
 vsa05_ready_handshake_and_mutex_split_done: true
-vsa06_serialized_desktop_state_machine_done: false
+vsa06_serialized_desktop_state_machine_done: true
 vsa07_frontend_single_descriptor_done: false
 vsa08_single_auth_recovery_done: true
 vsa09_acknowledged_workspace_registration_done: true
@@ -580,7 +580,17 @@ Mark done when:
 
 ## VSA06: Serialized Desktop State Machine
 
-done: false
+done: true
+
+Implementation note 2026-07-06: desktop server start/restart ownership is now
+serialized by `VesloServerManager::start_queue`, and all `start_veslo_server`
+callers run through that queue. Compatible parallel start intents preserve the
+live client token instead of treating a newly generated request token as a
+respawn trigger. The desktop emits `veslo://server-state` on adoption, reuse,
+starting, waiting-ready, blocked, and running transitions; the event payload
+keeps the client token for the trusted local descriptor path but redacts
+`hostToken`, stdout, and stderr. `veslo_server_info` remains the legacy
+snapshot/read model for existing callers.
 
 Goal:
 

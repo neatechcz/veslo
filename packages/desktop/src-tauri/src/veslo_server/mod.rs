@@ -10,8 +10,8 @@ use gethostname::gethostname;
 use local_ip_address::list_afinet_netifas;
 use local_ip_address::local_ip;
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
 use tauri::Manager;
+use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use crate::debug_logs_forwarder::DebugLogsForwarder;
@@ -41,6 +41,7 @@ const RUNTIME_DESCRIPTOR_FILE_NAME: &str = "veslo-server-runtime.json";
 const SERVER_SECRETS_FILE_NAME: &str = "veslo-server-secrets.json";
 const VESLO_SERVER_READY_MARKER: &str = "VESLO_SERVER_READY ";
 const VESLO_SERVER_READINESS_TIMEOUT: Duration = Duration::from_secs(12);
+const VESLO_SERVER_STATE_EVENT: &str = "veslo://server-state";
 
 fn append_veslo_server_launch_diagnostic(
     app: &AppHandle,
@@ -50,6 +51,30 @@ fn append_veslo_server_launch_diagnostic(
     if let Some(forwarder) = app.try_state::<Arc<DebugLogsForwarder>>() {
         forwarder.append_bootstrap_diagnostic(event_type, payload);
     }
+}
+
+fn veslo_server_state_event_payload(info: &VesloServerInfo) -> VesloServerInfo {
+    let mut payload = info.clone();
+    payload.host_token = None;
+    payload.last_stdout = None;
+    payload.last_stderr = None;
+    payload
+}
+
+fn emit_veslo_server_state(app: &AppHandle, info: &VesloServerInfo) {
+    let _ = app.emit(
+        VESLO_SERVER_STATE_EVENT,
+        veslo_server_state_event_payload(info),
+    );
+}
+
+fn snapshot_and_emit_veslo_server_state(
+    app: &AppHandle,
+    state: &mut manager::VesloServerState,
+) -> VesloServerInfo {
+    let info = VesloServerManager::snapshot_locked(state);
+    emit_veslo_server_state(app, &info);
+    info
 }
 
 fn resolve_workspace_ids(app: &AppHandle, workspace_paths: &[String]) -> Vec<Option<String>> {
@@ -1158,6 +1183,10 @@ fn normalize_launch_token(value: Option<&str>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn client_token_for_spawn(previous: Option<String>, requested: Option<String>) -> String {
+    previous.or(requested).unwrap_or_else(generate_token)
+}
+
 fn launch_config_matches(
     state: &manager::VesloServerState,
     _workspace_paths: &[String],
@@ -1188,6 +1217,11 @@ pub fn start_veslo_server(
     orchestrator_lifecycle_token: Option<&str>,
     veslo_server_client_token: Option<&str>,
 ) -> Result<VesloServerInfo, String> {
+    let _start_queue = manager
+        .start_queue
+        .lock()
+        .map_err(|_| "veslo server start queue mutex poisoned".to_string())?;
+
     // VSLO-86 — extend caller-supplied workspaces with every local workspace
     // from veslo-workspaces.json before spawn. The frontend passes only the
     // current/active workspace in engine_start, so a freshly-spawned veslo-
@@ -1233,6 +1267,7 @@ pub fn start_veslo_server(
                 .map_err(|_| "veslo server mutex poisoned".to_string())?;
             if state.child.is_none() && state.external_info.is_none() {
                 state.external_info = Some(info.clone());
+                emit_veslo_server_state(app, &info);
                 return Ok(info);
             }
         }
@@ -1266,14 +1301,10 @@ pub fn start_veslo_server(
     } else {
         None
     };
-    let client_token_matches_request = requested_client_token.as_ref().map_or(true, |token| {
-        state.client_token.as_deref() == Some(token.as_str())
-    });
     if state.child.is_some()
         && !state.child_exited
         && state.lifecycle_status == VesloServerLifecycleStatus::Running
         && state.client_token.is_some()
-        && client_token_matches_request
         && state.host_token.is_some()
         && state.port.is_some()
         && launch_config_matches(
@@ -1287,7 +1318,7 @@ pub fn start_veslo_server(
             &normalized_orchestrator_lifecycle_token,
         )
     {
-        let info = VesloServerManager::snapshot_locked(&mut state);
+        let info = snapshot_and_emit_veslo_server_state(app, &mut state);
         drop(state);
         // VSLO-86 — re-persist on every idempotent reuse so the on-disk
         // state.json stays in sync with the live in-memory state across
@@ -1306,6 +1337,7 @@ pub fn start_veslo_server(
     VesloServerManager::stop_locked(&mut state);
     state.lifecycle_status = VesloServerLifecycleStatus::Starting;
     state.lifecycle_reason = VesloServerLifecycleReason::SpawnPending;
+    let _ = snapshot_and_emit_veslo_server_state(app, &mut state);
 
     let port_resolution = match resolve_veslo_port_after_restart_detailed(&host) {
         Ok(resolution) => resolution,
@@ -1331,6 +1363,7 @@ pub fn start_veslo_server(
                 "veslo-server-launch:port-resolve-failed",
                 payload,
             );
+            let _ = snapshot_and_emit_veslo_server_state(app, &mut state);
             return Err(message);
         }
     };
@@ -1362,9 +1395,7 @@ pub fn start_veslo_server(
         );
         bridge_host = None;
     }
-    let client_token = requested_client_token
-        .or(previous_client_token)
-        .unwrap_or_else(generate_token);
+    let client_token = client_token_for_spawn(previous_client_token, requested_client_token);
     let host_token = previous_host_token.unwrap_or_else(generate_token);
     let instance_id = Uuid::new_v4().to_string();
     let state_dir = persisted_state_dir(app)?;
@@ -1447,6 +1478,7 @@ pub fn start_veslo_server(
                     "error": error,
                 }),
             );
+            let _ = snapshot_and_emit_veslo_server_state(app, &mut state);
             return Err(error);
         }
     };
@@ -1485,6 +1517,7 @@ pub fn start_veslo_server(
     state.last_stderr = None;
     state.lifecycle_status = VesloServerLifecycleStatus::WaitingReady;
     state.lifecycle_reason = VesloServerLifecycleReason::SpawnPending;
+    let _ = snapshot_and_emit_veslo_server_state(app, &mut state);
 
     let forwarder = app
         .try_state::<Arc<DebugLogsForwarder>>()
@@ -1553,7 +1586,7 @@ pub fn start_veslo_server(
         }
     }
 
-    let info = VesloServerManager::snapshot_locked(&mut state);
+    let info = snapshot_and_emit_veslo_server_state(app, &mut state);
     drop(state);
 
     if let Err(error) = persist_veslo_server_info(app, &info) {
@@ -1573,18 +1606,20 @@ mod tests {
     use super::manager::VesloServerState;
     use super::{
         build_urls_for_host_with_engine_resolver, classify_stale_veslo_server_process,
-        discover_external_host_token, launch_config_matches, normalize_launch_token,
-        normalize_launch_url, parse_macos_lsof_current_dir, publishes_external_urls,
-        read_persisted_veslo_server_info, read_persisted_veslo_server_info_with_cleanup,
-        ready_signal_bound_port, ready_signal_instance_id, resolve_engine_url_for_bind_host,
-        should_bind_wsl_bridge, unix_kill_term_args, windows_taskkill_args, HealthIdentity,
-        PersistedVesloServerState, StaleProcessMetadata, StaleProcessOwner,
+        client_token_for_spawn, discover_external_host_token, launch_config_matches,
+        normalize_launch_token, normalize_launch_url, parse_macos_lsof_current_dir,
+        publishes_external_urls, read_persisted_veslo_server_info,
+        read_persisted_veslo_server_info_with_cleanup, ready_signal_bound_port,
+        ready_signal_instance_id, resolve_engine_url_for_bind_host, should_bind_wsl_bridge,
+        unix_kill_term_args, veslo_server_state_event_payload, windows_taskkill_args,
+        HealthIdentity, PersistedVesloServerState, StaleProcessMetadata, StaleProcessOwner,
     };
     #[cfg(windows)]
     use super::{
         parse_wsl_engine_url_from_powershell_output, resolve_engine_url_from_candidates,
         resolve_engine_url_from_interfaces,
     };
+    use crate::types::{VesloServerInfo, VesloServerLifecycleReason, VesloServerLifecycleStatus};
     use std::fs;
     use std::io::ErrorKind;
     use std::io::Read;
@@ -1895,6 +1930,50 @@ mod tests {
             ),
             "workspace registry changes are acknowledged through API sync and must not respawn veslo-server"
         );
+    }
+
+    #[test]
+    fn client_token_for_spawn_prefers_previous_token_over_parallel_request() {
+        assert_eq!(
+            client_token_for_spawn(
+                Some("live-token".to_string()),
+                Some("new-request-token".to_string())
+            ),
+            "live-token"
+        );
+        assert_eq!(
+            client_token_for_spawn(None, Some("request-token".to_string())),
+            "request-token"
+        );
+    }
+
+    #[test]
+    fn server_state_event_payload_redacts_owner_token_and_logs() {
+        let info = VesloServerInfo {
+            running: true,
+            lifecycle_status: VesloServerLifecycleStatus::Running,
+            lifecycle_reason: VesloServerLifecycleReason::None,
+            host: Some("127.0.0.1".to_string()),
+            port: Some(8787),
+            instance_id: Some("instance-1".to_string()),
+            base_url: Some("http://127.0.0.1:8787".to_string()),
+            connect_url: None,
+            mdns_url: None,
+            lan_url: None,
+            engine_url: None,
+            client_token: Some("client-token".to_string()),
+            host_token: Some("host-token".to_string()),
+            pid: Some(123),
+            last_stdout: Some("stdout with possible diagnostics".to_string()),
+            last_stderr: Some("stderr with possible diagnostics".to_string()),
+        };
+
+        let payload = veslo_server_state_event_payload(&info);
+
+        assert_eq!(payload.client_token.as_deref(), Some("client-token"));
+        assert_eq!(payload.host_token, None);
+        assert_eq!(payload.last_stdout, None);
+        assert_eq!(payload.last_stderr, None);
     }
 
     #[test]
