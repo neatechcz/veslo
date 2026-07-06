@@ -40,8 +40,8 @@ importers:
         specifier: ^5.2.7
         version: 5.2.7
       '@opencode-ai/sdk':
-        specifier: 1.17.4
-        version: 1.17.4
+        specifier: 1.17.13
+        version: 1.17.13
       '@radix-ui/colors':
         specifier: ^3.0.0
         version: 3.0.0
@@ -185,8 +185,8 @@ importers:
   packages/opencode-router:
     dependencies:
       '@opencode-ai/sdk':
-        specifier: 1.17.4
-        version: 1.17.4
+        specifier: 1.17.13
+        version: 1.17.13
       '@slack/socket-mode':
         specifier: ^2.0.5
         version: 2.0.5
@@ -231,11 +231,11 @@ importers:
         specifier: 0.0.52
         version: 0.0.52
       '@opencode-ai/plugin':
-        specifier: 1.17.4
-        version: 1.17.4(@opentui/core@0.4.1(typescript@5.9.3)(web-tree-sitter@0.25.10))(@opentui/keymap@0.4.1(@opentui/solid@0.4.1(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10))(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10))(@opentui/solid@0.4.1(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10))
+        specifier: 1.17.13
+        version: 1.17.13(@opentui/core@0.4.1(typescript@5.9.3)(web-tree-sitter@0.25.10))(@opentui/keymap@0.4.1(@opentui/solid@0.4.1(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10))(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10))(@opentui/solid@0.4.1(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10))
       '@opencode-ai/sdk':
-        specifier: 1.17.4
-        version: 1.17.4
+        specifier: 1.17.13
+        version: 1.17.13
       '@opentui/core':
         specifier: 0.4.1
         version: 0.4.1(typescript@5.9.3)(web-tree-sitter@0.25.10)
@@ -487,6 +487,10 @@ packages:
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/provider@3.0.8':
+    resolution: {integrity: sha512-oGMAgGoQdBXbZqNG0Ze56CHjDZ1IDYOwGYxYjO5KLSlz5HiNQ9udIXsPZ61VWaHGZ5XW/jyjmr6t2xz2jGVwbQ==}
+    engines: {node: '>=18'}
 
   '@ai-sdk/provider@4.0.2':
     resolution: {integrity: sha512-pfPoy9J1B1xV7cqJ8MYHOsDYrMv5tR3+EMNfI249OhkD2uRakvav3Fo7XpD2luuN/YNCBY7KfEQc7vEV7KEtyw==}
@@ -1407,8 +1411,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@opencode-ai/plugin@1.17.4':
-    resolution: {integrity: sha512-jqXxfYnunCwyiEEsdVNDsKUhKznXytAntwzeW3uLd2zbIYsbVCiq5nG5ZSlo4mz1IXgRLWzXDYk1OnmfG15V2A==}
+  '@opencode-ai/plugin@1.17.13':
+    resolution: {integrity: sha512-JjoIs6qTPl0IrXo+J1GTqX9lcb2h2dMoW6BWMR2IbTT3MY2FQ/lvBXDzkx0d3zVRaYN+NTmV4u8Nth396xq+sQ==}
     peerDependencies:
       '@opentui/core': '>=0.3.4'
       '@opentui/keymap': '>=0.3.4'
@@ -1421,8 +1425,8 @@ packages:
       '@opentui/solid':
         optional: true
 
-  '@opencode-ai/sdk@1.17.4':
-    resolution: {integrity: sha512-OdHkBoNIQOjQsPnFtkcxAp9HsLAKn/MQiq7wIQURkRARmw8yhFqGiMPYbNm+UfLn6bMkx97rdPkWQARejMyiXQ==}
+  '@opencode-ai/sdk@1.17.13':
+    resolution: {integrity: sha512-VItOGjMzRQx3zypwmeFLNhCiIx32kxS7FqzIJvVZLfyNGCifs3rfGC9qzNKWcxQo4SjNvAw++v4gWWU6Inv+JQ==}
 
   '@opentui/core-darwin-arm64@0.4.1':
     resolution: {integrity: sha512-ocs73hj9n0zLArOTpUWIXCWU6ERThG+3wQzO78EvfaR4hb5FRrDHGKWTzXpr6ukSKsUtKdztK5XYTPsJ5e3vww==}
@@ -2428,8 +2432,8 @@ packages:
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
 
-  effect@4.0.0-beta.74:
-    resolution: {integrity: sha512-Yx+Kh12U+i2FmjwEfKs+ePFmpMd43RPD1oGqc/VraSS9bYzvF0Ff3PojwEFEVEewp8xc92Uxu28gTspU4qyvHA==}
+  effect@4.0.0-beta.83:
+    resolution: {integrity: sha512-0wsak8RtgGAr9UWSbVDgJHZcUqMSvicHcvaZv1MbMM7MCGgW4Rn/137J1MHQbwYPcwYGxT/IqehFd+UbYuj78w==}
 
   electron-to-chromium@1.5.267:
     resolution: {integrity: sha512-0Drusm6MVRXSOJpGbaSVgcQsuB4hEkMpHXaVstcPmhu5LIedxs1xNK/nIxmQIU/RPC0+1/o0AVZfBTkTNJOdUw==}
@@ -3690,6 +3694,10 @@ snapshots:
       eventsource-parser: 3.1.0
       zod: 4.1.8
 
+  '@ai-sdk/provider@3.0.8':
+    dependencies:
+      json-schema: 0.4.0
+
   '@ai-sdk/provider@4.0.2':
     dependencies:
       json-schema: 0.4.0
@@ -4482,17 +4490,18 @@ snapshots:
   '@openai/codex@0.137.0-win32-x64':
     optional: true
 
-  '@opencode-ai/plugin@1.17.4(@opentui/core@0.4.1(typescript@5.9.3)(web-tree-sitter@0.25.10))(@opentui/keymap@0.4.1(@opentui/solid@0.4.1(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10))(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10))(@opentui/solid@0.4.1(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10))':
+  '@opencode-ai/plugin@1.17.13(@opentui/core@0.4.1(typescript@5.9.3)(web-tree-sitter@0.25.10))(@opentui/keymap@0.4.1(@opentui/solid@0.4.1(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10))(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10))(@opentui/solid@0.4.1(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10))':
     dependencies:
-      '@opencode-ai/sdk': 1.17.4
-      effect: 4.0.0-beta.74
+      '@ai-sdk/provider': 3.0.8
+      '@opencode-ai/sdk': 1.17.13
+      effect: 4.0.0-beta.83
       zod: 4.1.8
     optionalDependencies:
       '@opentui/core': 0.4.1(typescript@5.9.3)(web-tree-sitter@0.25.10)
       '@opentui/keymap': 0.4.1(@opentui/solid@0.4.1(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10))(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10)
       '@opentui/solid': 0.4.1(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10)
 
-  '@opencode-ai/sdk@1.17.4':
+  '@opencode-ai/sdk@1.17.13':
     dependencies:
       cross-spawn: 7.0.6
 
@@ -5308,7 +5317,7 @@ snapshots:
 
   ee-first@1.1.1: {}
 
-  effect@4.0.0-beta.74:
+  effect@4.0.0-beta.83:
     dependencies:
       '@standard-schema/spec': 1.1.0
       fast-check: 4.8.0

@@ -5,6 +5,7 @@ export type PluginVisibility = "visible" | "hidden-debug-only";
 export type PluginEnabledPolicy = "locked-on" | "user-toggleable" | "admin-toggleable";
 export type PluginRemovalPolicy = "locked" | "admin-removable" | "user-removable";
 export type PluginLifecycle = "active" | "disabled" | "removed" | "conflict";
+export type PluginActivationPhase = "startup" | "post-ready" | "on-demand" | "background-runtime";
 
 export type PluginPolicy = {
   id: string;
@@ -15,6 +16,9 @@ export type PluginPolicy = {
   target: "user" | "project";
   visibility: PluginVisibility;
   autoInstall: boolean;
+  activationPhase?: PluginActivationPhase;
+  coldStartCritical?: boolean;
+  requiresEngineRestart?: boolean;
   enabledPolicy: PluginEnabledPolicy;
   removalPolicy: PluginRemovalPolicy;
   source:
@@ -24,6 +28,18 @@ export type PluginPolicy = {
     | "policy.project"
     | "config.unmanaged";
 };
+
+export function pluginPolicyActivationPhase(policy: Pick<PluginPolicy, "activationPhase">): PluginActivationPhase {
+  return policy.activationPhase ?? "startup";
+}
+
+export function pluginPolicyColdStartCritical(policy: Pick<PluginPolicy, "coldStartCritical">): boolean {
+  return policy.coldStartCritical ?? true;
+}
+
+export function pluginPolicyRequiresEngineRestart(policy: Pick<PluginPolicy, "requiresEngineRestart">): boolean {
+  return policy.requiresEngineRestart ?? false;
+}
 
 export type PluginPolicyResolutionInput = {
   scope: PluginPolicyOverrideScope;

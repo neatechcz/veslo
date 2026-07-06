@@ -199,6 +199,12 @@ export function createExtensionsStore(options: {
     "user-toggleable",
     "admin-toggleable",
   ]);
+  const validPluginActivationPhases = new Set<PluginInventoryCard["activationPhase"]>([
+    "startup",
+    "post-ready",
+    "on-demand",
+    "background-runtime",
+  ]);
 
   const normalizePluginInventoryScope = (
     value: unknown,
@@ -227,6 +233,11 @@ export function createExtensionsStore(options: {
     typeof value === "string" && validPluginEnabledPolicies.has(value as PluginInventoryCard["enabledPolicy"])
       ? (value as PluginInventoryCard["enabledPolicy"])
       : "user-toggleable";
+
+  const normalizePluginActivationPhase = (value: unknown): NonNullable<PluginInventoryCard["activationPhase"]> =>
+    typeof value === "string" && validPluginActivationPhases.has(value as PluginInventoryCard["activationPhase"])
+      ? (value as NonNullable<PluginInventoryCard["activationPhase"]>)
+      : "startup";
 
   const pluginInventoryScopeFromPluginScope = (scope: PluginScope): PluginInventoryCard["scope"] =>
     scope === "global" ? "user" : "project";
@@ -271,6 +282,9 @@ export function createExtensionsStore(options: {
       visibility,
       removalPolicy: normalizePluginRemovalPolicy(entry.removalPolicy),
       enabledPolicy: normalizePluginEnabledPolicy(entry.enabledPolicy),
+      activationPhase: normalizePluginActivationPhase(entry.activationPhase),
+      coldStartCritical: typeof entry.coldStartCritical === "boolean" ? entry.coldStartCritical : true,
+      requiresEngineRestart: typeof entry.requiresEngineRestart === "boolean" ? entry.requiresEngineRestart : false,
       ...(entry.debugOnly === true || visibility === "hidden-debug-only" ? { debugOnly: true } : {}),
       ...(target ? { target } : {}),
       ...(source ? { source } : {}),

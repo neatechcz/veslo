@@ -41,6 +41,71 @@ function isWorkspaceFolderAccessPermission(permission: PendingPermission): boole
   return typeof requestedPath === "string" && requestedPath.trim().length > 0;
 }
 
+function errorText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return safeStringify(error);
+}
+
+function isRequestNotFoundError(error: unknown): boolean {
+  return /(?:Permission|Question)NotFoundError|not found|status\s*404|HTTP\s*404/i.test(errorText(error));
+}
+
+async function replyPermissionWithV2Fallback(
+  client: RoutingClient,
+  permission: PendingPermission | undefined,
+  requestID: string,
+  reply: "once" | "always" | "reject",
+) {
+  try {
+    unwrap(await client.permission.reply({ requestID, reply }));
+    return;
+  } catch (error) {
+    const sessionID = permission?.sessionID;
+    const permissionApi = (client as any).v2?.session?.permission;
+    if (!sessionID || !isRequestNotFoundError(error) || typeof permissionApi?.reply !== "function") {
+      throw error;
+    }
+    unwrap(await permissionApi.reply({ sessionID, requestID, reply }));
+  }
+}
+
+async function replyQuestionWithV2Fallback(
+  client: RoutingClient,
+  question: PendingQuestion | undefined,
+  requestID: string,
+  answers: string[][],
+) {
+  try {
+    unwrap(await client.question.reply({ requestID, answers }));
+    return;
+  } catch (error) {
+    const sessionID = question?.sessionID;
+    const questionApi = (client as any).v2?.session?.question;
+    if (!sessionID || !isRequestNotFoundError(error) || typeof questionApi?.reply !== "function") {
+      throw error;
+    }
+    unwrap(await questionApi.reply({ sessionID, requestID, questionV2Reply: { answers } }));
+  }
+}
+
+async function rejectQuestionWithV2Fallback(
+  client: RoutingClient,
+  question: PendingQuestion | undefined,
+  requestID: string,
+) {
+  try {
+    unwrap(await client.question.reject({ requestID }));
+    return;
+  } catch (error) {
+    const sessionID = question?.sessionID;
+    const questionApi = (client as any).v2?.session?.question;
+    if (!sessionID || !isRequestNotFoundError(error) || typeof questionApi?.reject !== "function") {
+      throw error;
+    }
+    unwrap(await questionApi.reject({ sessionID, requestID }));
+  }
+}
+
 export function createSessionRuntimePrompts(deps: SessionRuntimePromptsDeps) {
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
   const [questionReplyBusy, setQuestionReplyBusy] = createSignal(false);
@@ -278,7 +343,7 @@ export function createSessionRuntimePrompts(deps: SessionRuntimePromptsDeps) {
     deps.setError(null);
 
     try {
-      unwrap(await c.permission.reply({ requestID, reply }));
+      await replyPermissionWithV2Fallback(c, perm, requestID, reply);
       await refreshPendingPermissions();
     } catch (e) {
       deps.addError(e);
@@ -298,7 +363,7 @@ export function createSessionRuntimePrompts(deps: SessionRuntimePromptsDeps) {
     deps.setError(null);
 
     try {
-      unwrap(await c.question.reply({ requestID, answers }));
+      await replyQuestionWithV2Fallback(c, question, requestID, answers);
       await refreshPendingQuestions();
     } catch (e) {
       deps.addError(e);
@@ -318,7 +383,7 @@ export function createSessionRuntimePrompts(deps: SessionRuntimePromptsDeps) {
     deps.setError(null);
 
     try {
-      unwrap(await c.question.reject({ requestID }));
+      await rejectQuestionWithV2Fallback(c, question, requestID);
       await refreshPendingQuestions();
     } catch (e) {
       deps.addError(e);

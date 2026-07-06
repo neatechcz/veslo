@@ -302,6 +302,14 @@ test("POST /workspace/:id/mcp/hub/:name installs catalog MCP config", async () =
   const configRaw = await readFile(join(workspaceRoot, "opencode.jsonc"), "utf8");
   expect(configRaw).toContain("\"demo\"");
   expect(configRaw).toContain("https://mcp.example.test/demo");
+  const parsedConfig = JSON.parse(configRaw) as { mcp?: Record<string, unknown> };
+  expect(parsedConfig.mcp?.demo).toEqual({
+    type: "remote",
+    enabled: true,
+    url: "https://mcp.example.test/demo",
+    oauth: true,
+  });
+  expect(parsedConfig.mcp?.servers).toBeUndefined();
 });
 
 test("POST /workspace/:id/mcp/hub/:name preserves Veslo connector headers without Google OAuth secrets", async () => {

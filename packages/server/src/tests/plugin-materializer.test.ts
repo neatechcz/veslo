@@ -7,6 +7,7 @@ import { readJsoncFile } from "../jsonc.js";
 import type { MaterializablePluginPolicy } from "../plugin-materializer.js";
 import { materializePluginPolicies } from "../plugin-materializer.js";
 import { listPlugins } from "../plugins.js";
+import { userOpencodeConfigPath } from "../workspace-files.js";
 
 const tempDirs: string[] = [];
 
@@ -15,6 +16,36 @@ afterEach(async () => {
     await rm(tempDirs.pop()!, { recursive: true, force: true });
   }
 });
+
+async function canCreateSymlinks(): Promise<boolean> {
+  const root = await mkdtemp(join(tmpdir(), "veslo-plugin-materializer-symlink-probe-"));
+  try {
+    const fileTarget = join(root, "target.txt");
+    const fileLink = join(root, "file-link");
+    const dirTarget = join(root, "target-dir");
+    const dirLink = join(root, "dir-link");
+    await writeFile(fileTarget, "probe\n", "utf8");
+    await symlink(fileTarget, fileLink);
+    await mkdir(dirTarget);
+    await symlink(dirTarget, dirLink, "dir");
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EPERM" || code === "EACCES") return false;
+    throw error;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+const symlinksAvailable = await canCreateSymlinks();
+
+function symlinkTest(name: string, run: () => Promise<void>): void {
+  test.skipIf(!symlinksAvailable)(
+    symlinksAvailable ? name : `${name} (skipped: symlink creation unavailable)`,
+    run,
+  );
+}
 
 describe("plugin materializer", () => {
   test("materializes enabled project config-spec policies and marks listPlugins entries as managed", async () => {
@@ -109,7 +140,95 @@ describe("plugin materializer", () => {
     });
   });
 
-  test("rejects dangling project managed spec manifest symlinks without writing the target", async () => {
+  test("skips non-auto-install policies during default materialization", async () => {
+    const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
+    const dataDir = await tempDir("veslo-plugin-materializer-data-");
+    const userOpencodeConfigDir = await tempDir("veslo-plugin-materializer-user-config-");
+    const configPath = userOpencodeConfigPath(userOpencodeConfigDir);
+    await writeFile(
+      configPath,
+      JSON.stringify({ plugin: ["unmanaged-global"] }, null, 2),
+      "utf8",
+    );
+
+    const scheduler = policyFor({
+      id: "platform.opencode-scheduler",
+      spec: "opencode-scheduler",
+      target: "user",
+      autoInstall: false,
+      activationPhase: "background-runtime",
+      enabledPolicy: "locked-on",
+      removalPolicy: "locked",
+      visibility: "hidden-debug-only",
+    });
+
+    const result = await materializePluginPolicies({
+      workspaceRoot,
+      dataDir,
+      userOpencodeConfigDir,
+      policies: [scheduler],
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("Expected materialization success");
+    expect(result.phase).toBe("startup");
+    expect(result.reloadRequired).toBe(false);
+    expect(result.user.config.addedSpecs).toEqual([]);
+
+    const { data: config } = await readJsoncFile<Record<string, unknown>>(configPath, {});
+    expect(config.plugin).toEqual(["unmanaged-global"]);
+  });
+
+  test("filters desired policies by materialization phase", async () => {
+    const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
+    const dataDir = await tempDir("veslo-plugin-materializer-data-");
+    await writeFile(
+      join(workspaceRoot, "opencode.jsonc"),
+      JSON.stringify({ plugin: [] }, null, 2),
+      "utf8",
+    );
+    const startup = policyFor({
+      id: "platform.startup",
+      spec: "startup-plugin",
+      target: "project",
+      activationPhase: "startup",
+    });
+    const background = policyFor({
+      id: "platform.background",
+      spec: "background-plugin",
+      target: "project",
+      activationPhase: "background-runtime",
+    });
+
+    const startupResult = await materializePluginPolicies({
+      workspaceRoot,
+      dataDir,
+      policies: [startup, background],
+      materializationPhase: "startup",
+    });
+
+    expect(startupResult.ok).toBe(true);
+    if (!startupResult.ok) throw new Error("Expected startup materialization success");
+    expect(startupResult.phase).toBe("startup");
+    expect(startupResult.project.config.addedSpecs).toEqual(["startup-plugin"]);
+
+    const backgroundResult = await materializePluginPolicies({
+      workspaceRoot,
+      dataDir,
+      policies: [startup, background],
+      materializationPhase: "background-runtime",
+    });
+
+    expect(backgroundResult.ok).toBe(true);
+    if (!backgroundResult.ok) throw new Error("Expected background materialization success");
+    expect(backgroundResult.phase).toBe("background-runtime");
+    expect(backgroundResult.project.config.addedSpecs).toEqual(["background-plugin"]);
+
+    const { data: config } = await readJsoncFile<Record<string, unknown>>(join(workspaceRoot, "opencode.jsonc"), {});
+    expect(config.plugin).toEqual(["startup-plugin", "background-plugin"]);
+  });
+
+  symlinkTest("rejects dangling project managed spec manifest symlinks without writing the target", async () => {
     const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
     const dataDir = await tempDir("veslo-plugin-materializer-data-");
     const outsideDir = await tempDir("veslo-plugin-materializer-outside-");
@@ -137,7 +256,7 @@ describe("plugin materializer", () => {
     expect(config.plugin).toEqual(["unmanaged-before"]);
   });
 
-  test("rejects existing project managed spec manifest symlinks without overwriting the target", async () => {
+  symlinkTest("rejects existing project managed spec manifest symlinks without overwriting the target", async () => {
     const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
     const dataDir = await tempDir("veslo-plugin-materializer-data-");
     const outsideDir = await tempDir("veslo-plugin-materializer-outside-");
@@ -172,7 +291,7 @@ describe("plugin materializer", () => {
     expect(config.plugin).toEqual(["unmanaged-before"]);
   });
 
-  test("rejects dangling user managed spec manifest symlinks without writing the target", async () => {
+  symlinkTest("rejects dangling user managed spec manifest symlinks without writing the target", async () => {
     const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
     const dataDir = await tempDir("veslo-plugin-materializer-data-");
     const userOpencodeConfigDir = await tempDir("veslo-plugin-materializer-user-config-");
@@ -283,6 +402,32 @@ describe("plugin materializer", () => {
         spec: next.spec,
       },
     ]);
+  });
+
+  test("preserves unrelated tuple config entries during managed config materialization", async () => {
+    const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
+    const dataDir = await tempDir("veslo-plugin-materializer-data-");
+    const tuplePlugin = ["tuple-plugin@1.0.0", { option: "value" }];
+    await writeFile(
+      join(workspaceRoot, "opencode.jsonc"),
+      JSON.stringify({ plugin: [tuplePlugin, "unmanaged-string"] }, null, 2),
+      "utf8",
+    );
+
+    const stale = policyFor({ id: "platform.tuple-stale-config", spec: "stale-managed", target: "project" });
+    await materializePluginPolicies({ workspaceRoot, dataDir, policies: [stale] });
+
+    const next = policyFor({ id: "platform.tuple-next-config", spec: "next-managed", target: "project" });
+    const result = await materializePluginPolicies({ workspaceRoot, dataDir, policies: [next] });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("Expected materialization success");
+    expect(result.project.config.removedSpecs).toEqual(["stale-managed"]);
+    expect(result.project.config.addedSpecs).toEqual(["next-managed"]);
+
+    const { data: config } = await readJsoncFile<Record<string, unknown>>(join(workspaceRoot, "opencode.jsonc"), {});
+    expect(config.plugin).toEqual([tuplePlugin, "unmanaged-string", "next-managed"]);
+    expect(config).not.toHaveProperty("plugins");
   });
 
   test("updates managed config specs by removing the exact old spec and adding the desired spec", async () => {
@@ -504,7 +649,7 @@ describe("plugin materializer", () => {
     expect(await readFile(join(outsideDir, "plugin.js"), "utf8")).toBe("keep outside plugin\n");
   });
 
-  test("rejects symlinked managed plugin directories before stale cleanup can delete outside files", async () => {
+  symlinkTest("rejects symlinked managed plugin directories before stale cleanup can delete outside files", async () => {
     const workspaceRoot = await tempDir("veslo-plugin-materializer-workspace-");
     const dataDir = await tempDir("veslo-plugin-materializer-data-");
     const outsideDir = await tempDir("veslo-plugin-materializer-outside-");
@@ -694,6 +839,11 @@ function policyFor(input: {
   target: "project" | "user";
   files?: MaterializablePluginPolicy["files"];
   effectiveEnabled?: boolean;
+  autoInstall?: boolean;
+  activationPhase?: MaterializablePluginPolicy["activationPhase"];
+  enabledPolicy?: MaterializablePluginPolicy["enabledPolicy"];
+  removalPolicy?: MaterializablePluginPolicy["removalPolicy"];
+  visibility?: MaterializablePluginPolicy["visibility"];
 }): MaterializablePluginPolicy {
   return {
     id: input.id,
@@ -701,10 +851,11 @@ function policyFor(input: {
     displayName: input.id.replace(/^platform\./, ""),
     owner: { kind: "platform", id: "veslo-platform", label: "Veslo" },
     target: input.target,
-    visibility: "visible",
-    autoInstall: true,
-    enabledPolicy: "user-toggleable",
-    removalPolicy: "user-removable",
+    visibility: input.visibility ?? "visible",
+    autoInstall: input.autoInstall ?? true,
+    activationPhase: input.activationPhase ?? "startup",
+    enabledPolicy: input.enabledPolicy ?? "user-toggleable",
+    removalPolicy: input.removalPolicy ?? "user-removable",
     source: "policy.platform",
     lifecycle: "active",
     effectiveEnabled: input.effectiveEnabled ?? true,

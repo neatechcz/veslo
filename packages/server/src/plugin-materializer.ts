@@ -4,7 +4,12 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { resolveVesloDataDir } from "./audit.js";
 import { readJsoncFile, updateJsoncTopLevel } from "./jsonc.js";
-import type { EffectivePluginPolicy, PluginPolicy } from "./plugin-policy.js";
+import {
+  pluginPolicyActivationPhase,
+  type EffectivePluginPolicy,
+  type PluginActivationPhase,
+  type PluginPolicy,
+} from "./plugin-policy.js";
 import {
   opencodeConfigPath,
   projectManagedPluginSpecManifestPath,
@@ -33,6 +38,7 @@ export type ManagedPluginSpecManifestEntry = {
   normalizedSpec: string;
   displayName: string;
   target: PluginMaterializationTarget;
+  activationPhase: PluginActivationPhase;
   source: PluginPolicy["source"];
   owner: PluginPolicy["owner"];
   materializedAt: string;
@@ -101,6 +107,7 @@ export type PluginMaterializationTargetResult = {
 
 export type PluginMaterializationSuccess = {
   ok: true;
+  phase: PluginActivationPhase;
   conflicts: [];
   project: PluginMaterializationTargetResult;
   user: PluginMaterializationTargetResult;
@@ -109,6 +116,7 @@ export type PluginMaterializationSuccess = {
 
 export type PluginMaterializationFailure = {
   ok: false;
+  phase: PluginActivationPhase;
   conflicts: PluginMaterializationConflict[];
   project: PluginMaterializationTargetResult;
   user: PluginMaterializationTargetResult;
@@ -122,14 +130,16 @@ export type MaterializePluginPoliciesInput = {
   dataDir?: string;
   userOpencodeConfigDir?: string;
   policies: MaterializablePluginPolicy[];
+  materializationPhase?: PluginActivationPhase;
 };
 
 type ConfigTargetContext = {
   target: PluginMaterializationTarget;
+  materializationPhase: PluginActivationPhase;
   configPath: string;
   manifestPath: string;
   manifestRootDir: string;
-  pluginSpecs: string[];
+  pluginSpecs: PluginConfigEntry[];
   previousManifest: ManagedPluginSpecManifest | null;
   desiredEntries: ManagedPluginSpecManifestEntry[];
   conflicts: PluginMaterializationConflict[];
@@ -201,7 +211,8 @@ export async function materializePluginPolicies(
   input: MaterializePluginPoliciesInput,
 ): Promise<PluginMaterializationResult> {
   const dataDir = resolveDataDir(input.dataDir);
-  const desiredPolicies = input.policies.filter(shouldMaterializePolicy);
+  const materializationPhase = input.materializationPhase ?? "startup";
+  const desiredPolicies = input.policies.filter((policy) => shouldMaterializePolicy(policy, materializationPhase));
   const configPolicies = desiredPolicies.filter((policy) => !isFilePolicy(policy));
   const filePolicies = desiredPolicies.filter(isFilePolicy);
   validateDesiredFilePolicies(filePolicies);
@@ -211,6 +222,7 @@ export async function materializePluginPolicies(
     configPath: opencodeConfigPath(input.workspaceRoot),
     manifestPath: projectManagedPluginSpecManifestPath(input.workspaceRoot),
     manifestRootDir: input.workspaceRoot,
+    materializationPhase,
     policies: configPolicies.filter((policy) => policy.target === "project"),
   });
   const userConfig = await prepareConfigTarget({
@@ -218,6 +230,7 @@ export async function materializePluginPolicies(
     configPath: userOpencodeConfigPath(input.userOpencodeConfigDir),
     manifestPath: userManagedPluginSpecManifestPath(dataDir),
     manifestRootDir: dataDir,
+    materializationPhase,
     policies: configPolicies.filter((policy) => policy.target === "user"),
   });
   const projectFiles = await prepareFileTarget({
@@ -240,6 +253,7 @@ export async function materializePluginPolicies(
   if (conflicts.length > 0) {
     return {
       ok: false,
+      phase: materializationPhase,
       conflicts,
       project: emptyTargetResult(projectConfig.manifestPath, projectFiles.rootDir),
       user: emptyTargetResult(userConfig.manifestPath, userFiles.rootDir),
@@ -258,6 +272,7 @@ export async function materializePluginPolicies(
 
   return {
     ok: true,
+    phase: materializationPhase,
     conflicts: [],
     project,
     user,
@@ -270,6 +285,7 @@ async function prepareConfigTarget(input: {
   configPath: string;
   manifestPath: string;
   manifestRootDir: string;
+  materializationPhase: PluginActivationPhase;
   policies: MaterializablePluginPolicy[];
 }): Promise<ConfigTargetContext> {
   const { data: config } = await readJsoncFile<Record<string, unknown>>(input.configPath, {});
@@ -280,11 +296,15 @@ async function prepareConfigTarget(input: {
   const conflicts: PluginMaterializationConflict[] = [];
 
   for (const entry of desiredEntries) {
-    const matchingSpecs = pluginSpecs.filter((spec) => normalizePluginSpec(spec) === entry.normalizedSpec);
+    const matchingSpecs = pluginSpecs.filter((spec) =>
+      normalizePluginSpec(pluginSpecFromConfigEntry(spec)) === entry.normalizedSpec
+    );
     for (const existing of matchingSpecs) {
+      const existingSpec = pluginSpecFromConfigEntry(existing);
       const previousKey = managedSpecOwnershipKey({
         policyId: entry.policyId,
-        spec: existing,
+        activationPhase: entry.activationPhase,
+        spec: existingSpec,
       });
       if (previousManagedSpecs.has(previousKey)) continue;
       conflicts.push({
@@ -293,13 +313,14 @@ async function prepareConfigTarget(input: {
         spec: entry.spec,
         target: input.target,
         path: input.configPath,
-        message: `Refusing to claim unmanaged OpenCode plugin spec ${existing}`,
+        message: `Refusing to claim unmanaged OpenCode plugin spec ${existingSpec}`,
       });
     }
   }
 
   return {
     target: input.target,
+    materializationPhase: input.materializationPhase,
     configPath: input.configPath,
     manifestPath: input.manifestPath,
     manifestRootDir: input.manifestRootDir,
@@ -315,19 +336,22 @@ async function applyConfigTarget(
 ): Promise<PluginMaterializationTargetResult["config"]> {
   const desiredManagedSpecs = new Set(context.desiredEntries.map(managedSpecOwnershipKey));
   const desiredSpecs = context.desiredEntries.map((entry) => entry.spec);
+  const previousEntries = context.previousManifest?.entries ?? [];
+  const previousSamePhase = previousEntries.filter((entry) => entry.activationPhase === context.materializationPhase);
+  const previousOtherPhase = previousEntries.filter((entry) => entry.activationPhase !== context.materializationPhase);
   const removedSpecs: string[] = [];
   let nextSpecs = [...context.pluginSpecs];
 
-  for (const previous of context.previousManifest?.entries ?? []) {
+  for (const previous of previousSamePhase) {
     if (desiredManagedSpecs.has(managedSpecOwnershipKey(previous))) continue;
     const before = nextSpecs.length;
-    nextSpecs = nextSpecs.filter((spec) => spec !== previous.spec);
+    nextSpecs = nextSpecs.filter((spec) => pluginSpecFromConfigEntry(spec) !== previous.spec);
     if (nextSpecs.length !== before) removedSpecs.push(previous.spec);
   }
 
   const addedSpecs: string[] = [];
   for (const entry of context.desiredEntries) {
-    if (nextSpecs.includes(entry.spec)) continue;
+    if (nextSpecs.some((spec) => pluginSpecFromConfigEntry(spec) === entry.spec)) continue;
     nextSpecs.push(entry.spec);
     addedSpecs.push(entry.spec);
   }
@@ -339,7 +363,7 @@ async function applyConfigTarget(
     await writeManagedPluginSpecManifest(
       context.manifestPath,
       context.target,
-      context.desiredEntries,
+      [...previousOtherPhase, ...context.desiredEntries],
       context.manifestRootDir,
     );
   }
@@ -555,7 +579,8 @@ async function writeManagedPluginFileMarker(
   );
 }
 
-function shouldMaterializePolicy(policy: MaterializablePluginPolicy): boolean {
+function shouldMaterializePolicy(policy: MaterializablePluginPolicy, materializationPhase: PluginActivationPhase): boolean {
+  if (pluginPolicyActivationPhase(policy) !== materializationPhase) return false;
   if (policy.autoInstall === false) return false;
   if (policy.effectiveEnabled === false) return false;
   if (policy.lifecycle === "disabled" || policy.lifecycle === "removed" || policy.lifecycle === "conflict") return false;
@@ -583,6 +608,7 @@ function specManifestEntryForPolicy(
     normalizedSpec: normalizePluginSpec(policy.spec),
     displayName: policy.displayName,
     target,
+    activationPhase: pluginPolicyActivationPhase(policy),
     source: policy.source,
     owner: policy.owner,
     materializedAt,
@@ -620,10 +646,28 @@ function normalizePluginFiles(files: MaterializablePluginFile[]): Materializable
   });
 }
 
-function pluginListFromConfig(config: Record<string, unknown>): string[] {
+type PluginConfigTuple = [string, Record<string, unknown>?];
+type PluginConfigEntry = string | PluginConfigTuple;
+
+function isPluginConfigTuple(value: unknown): value is PluginConfigTuple {
+  return Array.isArray(value) &&
+    typeof value[0] === "string" &&
+    value[0].trim().length > 0 &&
+    (value.length === 1 || (value.length === 2 && isRecord(value[1])));
+}
+
+function pluginSpecFromConfigEntry(entry: PluginConfigEntry): string {
+  return typeof entry === "string" ? entry : entry[0];
+}
+
+function pluginListFromConfig(config: Record<string, unknown>): PluginConfigEntry[] {
   const plugin = config.plugin;
   if (typeof plugin === "string") return [plugin];
-  if (Array.isArray(plugin)) return plugin.filter((item): item is string => typeof item === "string");
+  if (Array.isArray(plugin)) {
+    return plugin.filter((item): item is PluginConfigEntry =>
+      typeof item === "string" || isPluginConfigTuple(item)
+    );
+  }
   return [];
 }
 
@@ -858,8 +902,8 @@ async function lstatOrNull(path: string): Promise<Awaited<ReturnType<typeof lsta
   }
 }
 
-function managedSpecOwnershipKey(entry: Pick<ManagedPluginSpecManifestEntry, "policyId" | "spec">): string {
-  return `${entry.policyId}\0${entry.spec}`;
+function managedSpecOwnershipKey(entry: Pick<ManagedPluginSpecManifestEntry, "policyId" | "spec" | "activationPhase">): string {
+  return `${entry.policyId}\0${entry.activationPhase}\0${entry.spec}`;
 }
 
 function emptyTargetResult(manifestPath: string, rootDir: string): PluginMaterializationTargetResult {
@@ -929,10 +973,18 @@ function validateManagedPluginSpecManifestEntry(
     normalizedSpec: stringValue(value.normalizedSpec) || normalizePluginSpec(spec),
     displayName,
     target: validateTarget(value.target ?? target),
+    activationPhase: validatePluginActivationPhase(value.activationPhase),
     source: validatePolicySource(value.source),
     owner,
     materializedAt,
   };
+}
+
+function validatePluginActivationPhase(value: unknown): PluginActivationPhase {
+  if (value === "post-ready" || value === "on-demand" || value === "background-runtime") {
+    return value;
+  }
+  return "startup";
 }
 
 function validateManagedPluginFileManifest(value: unknown, rootDir: string): ManagedPluginFileManifest {
@@ -1097,7 +1149,9 @@ function validateOwner(value: unknown): PluginPolicy["owner"] | null {
 }
 
 function compareSpecEntries(left: ManagedPluginSpecManifestEntry, right: ManagedPluginSpecManifestEntry): number {
-  return left.policyId.localeCompare(right.policyId) || left.spec.localeCompare(right.spec);
+  return left.activationPhase.localeCompare(right.activationPhase) ||
+    left.policyId.localeCompare(right.policyId) ||
+    left.spec.localeCompare(right.spec);
 }
 
 function compareFileEntries(left: ManagedPluginFileManifestEntry, right: ManagedPluginFileManifestEntry): number {

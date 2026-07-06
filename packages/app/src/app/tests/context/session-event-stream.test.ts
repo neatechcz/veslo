@@ -4,7 +4,11 @@ import test from "node:test";
 import { createRoot } from "solid-js";
 import { createStore } from "solid-js/store";
 
-import { createSessionEventStreamController } from "../../context/session-event-stream.js";
+import {
+  createSessionEventStreamController,
+  isPermissionRefreshEvent,
+  isQuestionRefreshEvent,
+} from "../../context/session-event-stream.js";
 import type { MessageInfo, OpencodeEvent, SessionErrorTurn, TodoItem } from "../../types";
 
 function makeStore() {
@@ -161,6 +165,24 @@ function ok<T>(data: T) {
   };
 }
 
+test("permission and question refresh predicates include legacy and v2 event names", () => {
+  for (const type of ["permission.asked", "permission.replied", "permission.v2.asked", "permission.v2.replied"]) {
+    assert.equal(isPermissionRefreshEvent(type), true, type);
+  }
+  for (const type of [
+    "question.asked",
+    "question.replied",
+    "question.rejected",
+    "question.v2.asked",
+    "question.v2.replied",
+    "question.v2.rejected",
+  ]) {
+    assert.equal(isQuestionRefreshEvent(type), true, type);
+  }
+  assert.equal(isPermissionRefreshEvent("permission.unrelated"), false);
+  assert.equal(isQuestionRefreshEvent("question.unrelated"), false);
+});
+
 test("background events update scoped runtime state without mutating active messages", async () => {
   await createRoot(async (dispose) => {
     try {
@@ -183,6 +205,8 @@ test("background events update scoped runtime state without mutating active mess
       );
       await controller.applyEvent({ type: "permission.asked", properties: {} } as OpencodeEvent, "ws-b");
       await controller.applyEvent({ type: "question.asked", properties: {} } as OpencodeEvent, "ws-b");
+      await controller.applyEvent({ type: "permission.v2.asked", properties: {} } as OpencodeEvent, "ws-b");
+      await controller.applyEvent({ type: "question.v2.asked", properties: {} } as OpencodeEvent, "ws-b");
 
       assert.equal(store.sessionStatus["ws-b:sess-b"], "running");
       assert.deepEqual(busyCalls, [{ sessionID: "sess-b", status: "running", workspaceId: "ws-b" }]);
@@ -195,8 +219,8 @@ test("background events update scoped runtime state without mutating active mess
           delayMs: undefined,
         },
       ]);
-      assert.deepEqual(permissionRefreshes, ["permissions"]);
-      assert.deepEqual(questionRefreshes, ["questions"]);
+      assert.deepEqual(permissionRefreshes, ["permissions", "permissions"]);
+      assert.deepEqual(questionRefreshes, ["questions", "questions"]);
     } finally {
       dispose();
     }

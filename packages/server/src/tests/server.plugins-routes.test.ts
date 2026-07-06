@@ -36,12 +36,13 @@ describe("Plugin workspace routes", () => {
       userOpencodeConfigDir: "/tmp/veslo-plugin-policy-test-opencode",
     });
 
-    expect(routes).toHaveLength(6);
+    expect(routes).toHaveLength(7);
 
     const expectedRoutes: Array<[string, string, Route["auth"]]> = [
       ["GET", "/workspace/demo/plugins", "client"],
       ["POST", "/workspace/demo/plugins", "client"],
       ["POST", "/workspace/demo/plugins/materialization/sync", "client"],
+      ["POST", "/workspace/demo/plugins/platform.opencode-scheduler/prepare", "client"],
       ["POST", "/workspace/demo/plugins/platform.superpowers/enabled", "client"],
       ["DELETE", "/workspace/demo/plugins/platform.superpowers", "client"],
       ["POST", "/workspace/demo/plugins/platform.superpowers/restore", "client"],
@@ -80,6 +81,9 @@ describe("Plugin workspace routes", () => {
       lifecycle: "active",
       removalPolicy: "user-removable",
       enabledPolicy: "user-toggleable",
+      activationPhase: "startup",
+      coldStartCritical: true,
+      requiresEngineRestart: true,
       managed: true,
     }));
     expect(inventory.map((item) => item.id)).not.toContain(OPENCODE_SCHEDULER_PLATFORM_PLUGIN.id);
@@ -116,6 +120,36 @@ describe("Plugin workspace routes", () => {
     }));
   });
 
+  test("list add and remove preserve tuple plugin entries on the singular plugin key", async () => {
+    const tuplePlugin = ["tuple-plugin@2.0.0", { mode: "strict" }];
+    const fixture = await createFixture({
+      projectPlugins: [tuplePlugin, "plain-plugin@1.0.0"],
+    });
+
+    const listed = await invokeJson(fixture, "GET", "/workspace/ws_1/plugins?includeGlobal=false");
+    expect(inventoryItems(listed)).toContainEqual(expect.objectContaining({
+      spec: "tuple-plugin@2.0.0",
+      source: "config",
+      scope: "project",
+      managed: false,
+    }));
+
+    await invokeJson(fixture, "POST", "/workspace/ws_1/plugins", { spec: "added-plugin@1.0.0" });
+    let projectConfig = JSON.parse(await readFile(join(fixture.workspaceRoot, "opencode.json"), "utf8")) as Record<string, unknown>;
+    expect(projectConfig.plugin).toEqual([tuplePlugin, "plain-plugin@1.0.0", "added-plugin@1.0.0"]);
+    expect(projectConfig).not.toHaveProperty("plugins");
+
+    await invokeJson(fixture, "DELETE", "/workspace/ws_1/plugins/plain-plugin");
+    projectConfig = JSON.parse(await readFile(join(fixture.workspaceRoot, "opencode.json"), "utf8")) as Record<string, unknown>;
+    expect(projectConfig.plugin).toEqual([tuplePlugin, "added-plugin@1.0.0"]);
+    expect(projectConfig).not.toHaveProperty("plugins");
+
+    await invokeJson(fixture, "DELETE", "/workspace/ws_1/plugins/tuple-plugin");
+    projectConfig = JSON.parse(await readFile(join(fixture.workspaceRoot, "opencode.json"), "utf8")) as Record<string, unknown>;
+    expect(projectConfig.plugin).toEqual(["added-plugin@1.0.0"]);
+    expect(projectConfig).not.toHaveProperty("plugins");
+  });
+
   test("debug inventory includes hidden locked scheduler policy", async () => {
     const fixture = await createFixture();
 
@@ -135,11 +169,14 @@ describe("Plugin workspace routes", () => {
       lifecycle: "active",
       removalPolicy: "locked",
       enabledPolicy: "locked-on",
+      activationPhase: "background-runtime",
+      coldStartCritical: false,
+      requiresEngineRestart: true,
       managed: true,
     }));
   });
 
-  test("materialization sync applies active managed policies and emits reload events", async () => {
+  test("materialization sync applies startup managed policies and skips scheduler", async () => {
     const fixture = await createFixture();
 
     const body = await invokeJson(fixture, "POST", "/workspace/ws_1/plugins/materialization/sync");
@@ -147,13 +184,14 @@ describe("Plugin workspace routes", () => {
 
     expect(body).toMatchObject({
       ok: true,
+      phase: "startup",
       reloadRequired: true,
       conflicts: [],
     });
     expect(globalConfig.plugin).toEqual(expect.arrayContaining([
-      OPENCODE_SCHEDULER_PLATFORM_PLUGIN.spec,
       SUPERPOWERS_PLATFORM_PLUGIN.spec,
     ]));
+    expect(globalConfig.plugin).not.toContain(OPENCODE_SCHEDULER_PLATFORM_PLUGIN.spec);
     expect(fixture.reloadEvents.list("ws_1")).toEqual([
       expect.objectContaining({
         reason: "plugins",
@@ -164,6 +202,64 @@ describe("Plugin workspace routes", () => {
         }),
       }),
     ]);
+  });
+
+  test("background scheduler materialization requires an explicit phase and does not touch startup config", async () => {
+    const fixture = await createFixture();
+
+    const body = await invokeJson(
+      fixture,
+      "POST",
+      "/workspace/ws_1/plugins/materialization/sync",
+      { phase: "background-runtime" },
+    );
+    const globalConfig = JSON.parse(await readFile(userOpencodeConfigPath(fixture.userOpencodeConfigDir), "utf8"));
+
+    expect(body).toMatchObject({
+      ok: true,
+      phase: "background-runtime",
+      reloadRequired: false,
+      conflicts: [],
+    });
+    expect(globalConfig.plugin).not.toContain(OPENCODE_SCHEDULER_PLATFORM_PLUGIN.spec);
+    expect(fixture.reloadEvents.list("ws_1")).toEqual([]);
+  });
+
+  test("scheduler prepare reports deferred background activation without mutating config", async () => {
+    const fixture = await createFixture();
+
+    const body = await invokeJson(
+      fixture,
+      "POST",
+      "/workspace/ws_1/plugins/platform.opencode-scheduler/prepare",
+    );
+    const globalConfig = JSON.parse(await readFile(userOpencodeConfigPath(fixture.userOpencodeConfigDir), "utf8"));
+
+    expect(body).toMatchObject({
+      ok: true,
+      pluginId: OPENCODE_SCHEDULER_PLATFORM_PLUGIN.id,
+      spec: OPENCODE_SCHEDULER_PLATFORM_PLUGIN.spec,
+      activationPhase: "background-runtime",
+      coldStartCritical: false,
+      requiresEngineRestart: true,
+      activeConfigProjection: "deferred",
+    });
+    expect(Array.isArray(body.checks)).toBe(true);
+    const checks = body.checks as Array<Record<string, unknown>>;
+    expect(checks.map((check) => check.name)).toEqual([
+      "platform",
+      "systemCommand",
+      "packageSpec",
+      "activeConfigProjection",
+    ]);
+    const platformCheck = checks.find((check) => check.name === "platform");
+    expect(platformCheck?.ok).toBe(process.platform === "darwin" || process.platform === "linux");
+    if (process.platform === "win32") {
+      expect(body.status).toBe("degraded");
+      expect(platformCheck?.message).toBe("Scheduler platform support is unavailable on win32");
+    }
+    expect(globalConfig.plugin).not.toContain(OPENCODE_SCHEDULER_PLATFORM_PLUGIN.spec);
+    expect(fixture.reloadEvents.list("ws_1")).toEqual([]);
   });
 
   test("managed enable route disables and re-enables user-toggleable policies", async () => {
@@ -344,8 +440,8 @@ function registerRoutes(routes: Route[], dependencies: PluginRouteDependencies):
 }
 
 async function createFixture(input: {
-  projectPlugins?: string[];
-  globalPlugins?: string[];
+  projectPlugins?: unknown[];
+  globalPlugins?: unknown[];
 } = {}): Promise<Fixture> {
   const root = await tempDir("veslo-plugin-routes-");
   const workspaceRoot = join(root, "workspace");

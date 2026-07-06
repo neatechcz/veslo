@@ -670,6 +670,7 @@ export type SuggestedPlugin = {
 };
 
 export type PluginScope = "project" | "global";
+export type PluginActivationPhase = "startup" | "post-ready" | "on-demand" | "background-runtime";
 
 export type PluginInventoryCard = {
   id: string;
@@ -682,6 +683,9 @@ export type PluginInventoryCard = {
   visibility: "visible" | "hidden-debug-only";
   removalPolicy: "locked" | "admin-removable" | "user-removable";
   enabledPolicy: "locked-on" | "user-toggleable" | "admin-toggleable";
+  activationPhase?: PluginActivationPhase;
+  coldStartCritical?: boolean;
+  requiresEngineRestart?: boolean;
   debugOnly?: boolean;
   target?: "user" | "project";
   source?: string;

@@ -131,6 +131,9 @@ type RunState = {
   thinkingActive?: boolean;
 };
 
+type PermissionReplyMode = "once" | "always" | "reject";
+type PermissionEventType = "permission.asked" | "permission.v2.asked";
+
 const TOOL_LABELS: Record<string, string> = {
   bash: "bash",
   read: "read",
@@ -193,6 +196,56 @@ function setUserModel(channel: ChannelName, identityId: string, peerId: string, 
     userModelOverrides.set(key, model);
   } else {
     userModelOverrides.delete(key);
+  }
+}
+
+function errorLooksLikeNotFound(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error);
+  return /PermissionNotFoundError|not found|status\s*404|HTTP\s*404/i.test(text);
+}
+
+export async function replyToPermissionRequest(
+  client: ReturnType<typeof createClient>,
+  input: {
+    eventType: PermissionEventType;
+    sessionID: string;
+    requestID: string;
+    reply: PermissionReplyMode;
+  },
+) {
+  const v2PermissionApi = (client as any).v2?.session?.permission;
+  if (input.eventType === "permission.v2.asked" && typeof v2PermissionApi?.reply === "function") {
+    await v2PermissionApi.reply({
+      sessionID: input.sessionID,
+      requestID: input.requestID,
+      reply: input.reply,
+    });
+    return;
+  }
+
+  try {
+    await client.permission.reply({ requestID: input.requestID, reply: input.reply });
+    return;
+  } catch (error) {
+    if (typeof v2PermissionApi?.reply === "function" && errorLooksLikeNotFound(error)) {
+      await v2PermissionApi.reply({
+        sessionID: input.sessionID,
+        requestID: input.requestID,
+        reply: input.reply,
+      });
+      return;
+    }
+    const legacyRespond = (client.permission as any).respond;
+    if (typeof legacyRespond === "function") {
+      // Older OpenCode builds only exposed deprecated respond(); keep it as a last-resort legacy fallback.
+      await legacyRespond({
+        sessionID: input.sessionID,
+        permissionID: input.requestID,
+        response: input.reply,
+      });
+      return;
+    }
+    throw error;
   }
 }
 
@@ -1679,14 +1732,15 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           await sendText(run.channel, run.identityId, run.peerId, message, { kind: "tool" });
         }
 
-        if (event.type === "permission.asked") {
+        if (event.type === "permission.asked" || event.type === "permission.v2.asked") {
           const permission = event.properties as { id?: string; sessionID?: string };
           if (!permission?.id || !permission.sessionID) continue;
           const response = config.permissionMode === "deny" ? "reject" : "always";
-          await client.permission.respond({
+          await replyToPermissionRequest(client, {
+            eventType: event.type,
             sessionID: permission.sessionID,
-            permissionID: permission.id,
-            response,
+            requestID: permission.id,
+            reply: response,
           });
           if (response === "reject") {
             const run = activeRuns.get(keyForSession(resolved, permission.sessionID));

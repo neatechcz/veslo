@@ -18,6 +18,9 @@ const SCHEDULER_PLUGIN: PluginInventoryCard = {
   visibility: "hidden-debug-only",
   removalPolicy: "locked",
   enabledPolicy: "locked-on",
+  activationPhase: "background-runtime",
+  coldStartCritical: false,
+  requiresEngineRestart: true,
   debugOnly: true,
 };
 
@@ -32,6 +35,9 @@ const SUPERPOWERS_PLUGIN: PluginInventoryCard = {
   visibility: "visible",
   removalPolicy: "user-removable",
   enabledPolicy: "user-toggleable",
+  activationPhase: "startup",
+  coldStartCritical: true,
+  requiresEngineRestart: true,
 };
 
 const PROJECT_PLUGIN: PluginInventoryCard = {
@@ -200,7 +206,11 @@ test("debug refresh includes hidden platform scheduler", async () => {
   await withPluginStore(async ({ store, calls }) => {
     await store.refreshPlugins("project", { debug: true });
 
-    assert.ok(store.pluginInventory().some((item) => item.id === "platform.opencode-scheduler"));
+    const scheduler = store.pluginInventory().find((item) => item.id === "platform.opencode-scheduler");
+    assert.ok(scheduler);
+    assert.equal(scheduler.activationPhase, "background-runtime");
+    assert.equal(scheduler.coldStartCritical, false);
+    assert.equal(scheduler.requiresEngineRestart, true);
     assert.deepEqual(store.pluginList(), [
       "superpowers@git+https://github.com/obra/superpowers.git",
       "opencode-wakatime",

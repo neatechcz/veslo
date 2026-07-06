@@ -150,6 +150,7 @@ export type VesloPluginInventoryScope = "platform" | "organization" | "user" | "
 export type VesloPluginVisibility = "visible" | "hidden-debug-only";
 export type VesloPluginEnabledPolicy = "locked-on" | "user-toggleable" | "admin-toggleable";
 export type VesloPluginRemovalPolicy = "locked" | "admin-removable" | "user-removable";
+export type VesloPluginActivationPhase = "startup" | "post-ready" | "on-demand" | "background-runtime";
 export type VesloPluginPolicySource =
   | "policy.platform"
   | "policy.organization"
@@ -184,6 +185,9 @@ export type VesloPluginInventoryItem = {
   lifecycle: VesloPluginLifecycle;
   removalPolicy: VesloPluginRemovalPolicy;
   enabledPolicy: VesloPluginEnabledPolicy;
+  activationPhase?: VesloPluginActivationPhase;
+  coldStartCritical?: boolean;
+  requiresEngineRestart?: boolean;
   managed: boolean;
   debugOnly?: boolean;
   conflict?: string;
@@ -236,6 +240,7 @@ export type VesloPluginMaterializationConflict = {
 export type VesloPluginMaterializationSyncResult =
   | {
     ok: true;
+    phase?: VesloPluginActivationPhase;
     conflicts: [];
     project: VesloPluginMaterializationTargetResult;
     user: VesloPluginMaterializationTargetResult;
@@ -243,6 +248,7 @@ export type VesloPluginMaterializationSyncResult =
   }
   | {
     ok: false;
+    phase?: VesloPluginActivationPhase;
     conflicts: VesloPluginMaterializationConflict[];
     project: VesloPluginMaterializationTargetResult;
     user: VesloPluginMaterializationTargetResult;

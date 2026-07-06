@@ -2529,6 +2529,7 @@ const CONVERSATION_RUN_BODY_FIELDS: Record<string, string[]> = {
     "noReply",
     "tools",
     "system",
+    "mode",
     "variant",
     "parts",
   ],

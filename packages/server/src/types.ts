@@ -1,5 +1,6 @@
 import type {
   PluginEnabledPolicy,
+  PluginActivationPhase,
   PluginLifecycle,
   PluginPolicy,
   PluginRemovalPolicy,
@@ -224,6 +225,9 @@ export type PluginInventoryItem = {
   lifecycle: PluginLifecycle;
   removalPolicy: PluginRemovalPolicy;
   enabledPolicy: PluginEnabledPolicy;
+  activationPhase: PluginActivationPhase;
+  coldStartCritical: boolean;
+  requiresEngineRestart: boolean;
   managed: boolean;
   debugOnly?: boolean;
   conflict?: string;

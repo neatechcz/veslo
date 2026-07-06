@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { createWorkspaceServerRegistry } from "../../context/workspace-server-registry";
 import type { WorkspaceInfo } from "../../lib/tauri";
-import { VesloServerError, type VesloServerClient } from "../../lib/veslo-server";
+import { VesloServerError, type VesloServerClient, type VesloWorkspaceInfo } from "../../lib/veslo-server";
 
 const localWorkspace = {
   id: "local-1",
@@ -127,6 +127,13 @@ test("activateVesloHostWorkspace rejects mismatched workspace_exists evidence in
     },
     activateWorkspace: async () => {
       activateCalls += 1;
+      const workspace: VesloWorkspaceInfo = {
+        id: "ws-other",
+        name: "Other Project",
+        path: "/tmp/other-project",
+        workspaceType: "local",
+      };
+      return { activeId: workspace.id, workspace };
     },
   });
 

@@ -108,6 +108,22 @@ describe("validateMcpConfig", () => {
     ).not.toThrow();
   });
 
+  test("accepts override-only enabled sentinels", () => {
+    expect(() => validateMcpConfig({ enabled: false })).not.toThrow();
+    expect(() => validateMcpConfig({ enabled: true })).not.toThrow();
+  });
+
+  test("accepts local cwd and environment fields", () => {
+    expect(() =>
+      validateMcpConfig({
+        type: "local",
+        command: ["node", "server.js"],
+        cwd: "/repo",
+        environment: { NODE_ENV: "test" },
+      }),
+    ).not.toThrow();
+  });
+
   test("rejects unknown type", () => {
     expect(() => validateMcpConfig({ type: "unknown" })).toThrow();
   });

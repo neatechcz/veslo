@@ -516,19 +516,30 @@ export async function waitForHealthy(
 ) {
   const timeoutMs = options?.timeoutMs ?? 10_000;
   const pollMs = options?.pollMs ?? 250;
+  const maxRequestTimeoutMs = 1_500;
 
   const start = Date.now();
   let lastError: string | null = null;
 
   while (Date.now() - start < timeoutMs) {
+    const remainingMs = Math.max(1, timeoutMs - (Date.now() - start));
+    const requestTimeoutMs = Math.min(maxRequestTimeoutMs, remainingMs);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
     try {
-      const health = unwrap(await client.global.health());
+      const health = unwrap(await client.global.health({ signal: controller.signal }));
       if (health.healthy) {
         return health;
       }
       lastError = "Server reported unhealthy";
     } catch (error) {
-      lastError = error instanceof Error ? error.message : "Unknown error";
+      lastError = controller.signal.aborted
+        ? "OpenCode health request timed out"
+        : error instanceof Error
+          ? error.message
+          : "Unknown error";
+    } finally {
+      clearTimeout(timer);
     }
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }

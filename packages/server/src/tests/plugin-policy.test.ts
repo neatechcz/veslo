@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import {
   resolveEffectivePluginPolicies,
@@ -9,7 +10,15 @@ import {
 } from "../platform-managed-plugins.js";
 
 describe("plugin policy model", () => {
-  test("scheduler is hidden locked platform policy", () => {
+  test("root OpenCode config does not autoload scheduler", () => {
+    const rootConfig = readFileSync(new URL("../../../../opencode.jsonc", import.meta.url), "utf8");
+    const rootJsonConfig = readFileSync(new URL("../../../../opencode.json", import.meta.url), "utf8");
+
+    expect(rootConfig).not.toContain("opencode-scheduler");
+    expect(rootJsonConfig).not.toContain("opencode-scheduler");
+  });
+
+  test("scheduler is hidden locked non-startup platform policy", () => {
     expect(OPENCODE_SCHEDULER_PLATFORM_PLUGIN).toEqual({
       id: "platform.opencode-scheduler",
       spec: "opencode-scheduler",
@@ -17,7 +26,10 @@ describe("plugin policy model", () => {
       owner: { kind: "platform", id: "veslo-platform", label: "Veslo" },
       target: "user",
       visibility: "hidden-debug-only",
-      autoInstall: true,
+      autoInstall: false,
+      activationPhase: "background-runtime",
+      coldStartCritical: false,
+      requiresEngineRestart: true,
       enabledPolicy: "locked-on",
       removalPolicy: "locked",
       source: "policy.platform",
@@ -33,6 +45,9 @@ describe("plugin policy model", () => {
       target: "user",
       visibility: "visible",
       autoInstall: true,
+      activationPhase: "startup",
+      coldStartCritical: true,
+      requiresEngineRestart: true,
       enabledPolicy: "user-toggleable",
       removalPolicy: "user-removable",
       source: "policy.platform",

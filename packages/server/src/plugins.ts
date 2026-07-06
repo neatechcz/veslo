@@ -60,10 +60,32 @@ export function normalizePluginSpec(spec: string): string {
   return atIndex > 0 ? trimmed.slice(0, atIndex) : trimmed;
 }
 
-function pluginListFromConfig(config: Record<string, unknown>): string[] {
+type PluginConfigTuple = [string, Record<string, unknown>?];
+type PluginConfigEntry = string | PluginConfigTuple;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPluginConfigTuple(value: unknown): value is PluginConfigTuple {
+  return Array.isArray(value) &&
+    typeof value[0] === "string" &&
+    value[0].trim().length > 0 &&
+    (value.length === 1 || (value.length === 2 && isRecord(value[1])));
+}
+
+function pluginSpecFromConfigEntry(entry: PluginConfigEntry): string {
+  return typeof entry === "string" ? entry : entry[0];
+}
+
+function pluginListFromConfig(config: Record<string, unknown>): PluginConfigEntry[] {
   const plugin = config.plugin;
   if (typeof plugin === "string") return [plugin];
-  if (Array.isArray(plugin)) return plugin.filter((item) => typeof item === "string") as string[];
+  if (Array.isArray(plugin)) {
+    return plugin.filter((item): item is PluginConfigEntry =>
+      typeof item === "string" || isPluginConfigTuple(item)
+    );
+  }
   return [];
 }
 
@@ -148,7 +170,7 @@ export async function listPlugins(
   const projectSpecManifestWarning = latestManifestWarning(warnings, projectSpecManifestPath);
   const projectManagedSpecs = managedSpecEntryMap(projectSpecManifest?.entries ?? []);
   const items: PluginItem[] = pluginSpecs.map((spec) =>
-    configPluginItem(spec, "project", workspaceOwner, projectManagedSpecs, projectSpecManifestWarning)
+    configPluginItem(pluginSpecFromConfigEntry(spec), "project", workspaceOwner, projectManagedSpecs, projectSpecManifestWarning)
   );
 
   const projectDir = projectPluginsDir(workspaceRoot);
@@ -177,7 +199,7 @@ export async function listPlugins(
     const globalManagedSpecs = managedSpecEntryMap(globalSpecManifest?.entries ?? []);
     items.push(
       ...pluginListFromConfig(globalConfig).map((spec) =>
-        configPluginItem(spec, "global", globalOwner, globalManagedSpecs, globalSpecManifestWarning)
+        configPluginItem(pluginSpecFromConfigEntry(spec), "global", globalOwner, globalManagedSpecs, globalSpecManifestWarning)
       ),
     );
 
@@ -310,7 +332,7 @@ export async function addPlugin(workspaceRoot: string, spec: string): Promise<bo
   const { data: config } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
   const pluginSpecs = pluginListFromConfig(config);
   const normalized = normalizePluginSpec(spec);
-  const existing = pluginSpecs.find((item) => normalizePluginSpec(item) === normalized);
+  const existing = pluginSpecs.find((item) => normalizePluginSpec(pluginSpecFromConfigEntry(item)) === normalized);
   if (existing) return false;
   pluginSpecs.push(spec);
   await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { plugin: pluginSpecs });
@@ -321,7 +343,7 @@ export async function removePlugin(workspaceRoot: string, name: string): Promise
   const { data: config } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
   const pluginSpecs = pluginListFromConfig(config);
   const normalized = normalizePluginSpec(name);
-  const filtered = pluginSpecs.filter((item) => normalizePluginSpec(item) !== normalized);
+  const filtered = pluginSpecs.filter((item) => normalizePluginSpec(pluginSpecFromConfigEntry(item)) !== normalized);
   if (filtered.length === pluginSpecs.length) return false;
   await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { plugin: filtered });
   return true;

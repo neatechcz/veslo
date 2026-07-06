@@ -52,7 +52,7 @@
     "@fontsource-variable/ibm-plex-sans": "^5.2.8",
     "@fontsource-variable/source-sans-3": "^5.2.9",
     "@fontsource/ibm-plex-mono": "^5.2.7",
-    "@opencode-ai/sdk": "1.17.4",
+    "@opencode-ai/sdk": "1.17.13",
     "@radix-ui/colors": "^3.0.0",
     "@sentry/browser": "^10.59.0",
     "@solid-primitives/event-bus": "^1.1.2",

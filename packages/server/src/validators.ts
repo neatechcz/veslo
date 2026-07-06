@@ -100,17 +100,29 @@ function validateMcpOAuth(value: unknown): void {
   }
 }
 
+function validateOptionalString(value: unknown, field: string): void {
+  if (value === undefined) return;
+  if (typeof value !== "string" || !value.trim() || /[\0\r\n]/.test(value)) {
+    throw new ApiError(400, "invalid_mcp_config", `MCP ${field} must be a non-empty string`);
+  }
+}
+
 export function validateMcpConfig(config: Record<string, unknown>, options: ValidateMcpConfigOptions = {}): void {
   if (!config || typeof config !== "object" || Array.isArray(config)) {
     throw new ApiError(400, "invalid_mcp_config", "MCP config must be an object");
   }
 
+  if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
+    throw new ApiError(400, "invalid_mcp_config", "MCP enabled must be a boolean");
+  }
+  const keys = Object.keys(config);
+  if (config.type === undefined && keys.length === 1 && keys[0] === "enabled") {
+    return;
+  }
+
   const type = config.type;
   if (type !== "local" && type !== "remote") {
     throw new ApiError(400, "invalid_mcp_config", "MCP config type must be local or remote");
-  }
-  if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
-    throw new ApiError(400, "invalid_mcp_config", "MCP enabled must be a boolean");
   }
   if (
     config.timeout !== undefined &&
@@ -118,6 +130,7 @@ export function validateMcpConfig(config: Record<string, unknown>, options: Vali
   ) {
     throw new ApiError(400, "invalid_mcp_config", "MCP timeout must be a positive number");
   }
+  validateOptionalString(config.cwd, "cwd");
   validateMcpHeaders(config.headers, options);
   validateStringRecord(config.environment, "environment");
   validateStringRecord(config.env, "env");

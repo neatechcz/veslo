@@ -22,7 +22,7 @@ tauri-plugin-deep-link = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-http = { version = "2.5.6", default-features = false, features = ["rustls-tls", "http2", "charset", "macos-system-configuration"] }
 tauri-plugin-opener = "2.5.3"
-tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot", rev = "a6c5baa3f280fe75e75220be8e7689785a200d13", default-features = false }
+tauri-plugin-pilot = { version = "0.7.2", default-features = false }
 tauri-plugin-shell = "2"
 tauri-plugin-single-instance = "2"
 uuid = { version = "1", features = ["v4"] }

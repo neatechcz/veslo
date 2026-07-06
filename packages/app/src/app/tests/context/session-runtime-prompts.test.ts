@@ -43,26 +43,53 @@ function makeClient(input: {
   questions?: PendingQuestion[];
   permissionList?: () => Promise<unknown>;
   questionList?: () => Promise<unknown>;
+  permissionReply?: (input: { requestID: string; reply: string }) => Promise<unknown>;
+  questionReply?: (input: { requestID: string; answers?: string[][] }) => Promise<unknown>;
+  questionReject?: (input: { requestID: string }) => Promise<unknown>;
+  v2PermissionReply?: (input: { sessionID: string; requestID: string; reply: string }) => Promise<unknown>;
+  v2QuestionReply?: (input: {
+    sessionID: string;
+    requestID: string;
+    questionV2Reply: { answers: string[][] };
+  }) => Promise<unknown>;
+  v2QuestionReject?: (input: { sessionID: string; requestID: string }) => Promise<unknown>;
   calls?: string[];
   workspaceId: string;
 }) {
   return {
     permission: {
       list: input.permissionList ?? (async () => ok(input.permissions ?? [])),
-      reply: async ({ requestID, reply }: { requestID: string; reply: string }) => {
-        input.calls?.push(`${input.workspaceId}:permission:${requestID}:${reply}`);
-        return ok(null);
-      },
+      reply:
+        input.permissionReply ??
+        (async ({ requestID, reply }: { requestID: string; reply: string }) => {
+          input.calls?.push(`${input.workspaceId}:permission:${requestID}:${reply}`);
+          return ok(null);
+        }),
     },
     question: {
       list: input.questionList ?? (async () => ok(input.questions ?? [])),
-      reply: async ({ requestID }: { requestID: string }) => {
-        input.calls?.push(`${input.workspaceId}:question-reply:${requestID}`);
-        return ok(null);
-      },
-      reject: async ({ requestID }: { requestID: string }) => {
-        input.calls?.push(`${input.workspaceId}:question-reject:${requestID}`);
-        return ok(null);
+      reply:
+        input.questionReply ??
+        (async ({ requestID }: { requestID: string }) => {
+          input.calls?.push(`${input.workspaceId}:question-reply:${requestID}`);
+          return ok(null);
+        }),
+      reject:
+        input.questionReject ??
+        (async ({ requestID }: { requestID: string }) => {
+          input.calls?.push(`${input.workspaceId}:question-reject:${requestID}`);
+          return ok(null);
+        }),
+    },
+    v2: {
+      session: {
+        permission: {
+          reply: input.v2PermissionReply,
+        },
+        question: {
+          reply: input.v2QuestionReply,
+          reject: input.v2QuestionReject,
+        },
       },
     },
   };
@@ -349,6 +376,69 @@ test("permission and question replies route to the workspace that owns the promp
         "ws-b:permission:perm-b:once",
         "ws-b:question-reply:question-b",
         "ws-b:question-reject:question-b",
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("session-scoped v2 permission and question replies are used when top-level replies cannot find the request", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const calls: string[] = [];
+      const notFound = new Error('{"_tag":"QuestionNotFoundError","message":"not found"}');
+      const permissionNotFound = new Error('{"_tag":"PermissionNotFoundError","message":"not found"}');
+      const prompts = makeController({
+        activeWorkspaceId: "ws-a",
+        clients: {
+          "ws-a": makeClient({ workspaceId: "ws-a", calls }),
+          "ws-b": makeClient({
+            workspaceId: "ws-b",
+            calls,
+            permissions: [permission("perm-v2", "sess-v2")],
+            questions: [question("question-v2", "sess-v2")],
+            permissionReply: async ({ requestID, reply }) => {
+              calls.push(`ws-b:permission-top:${requestID}:${reply}`);
+              throw permissionNotFound;
+            },
+            questionReply: async ({ requestID, answers }) => {
+              calls.push(`ws-b:question-top:${requestID}:${JSON.stringify(answers)}`);
+              throw notFound;
+            },
+            questionReject: async ({ requestID }) => {
+              calls.push(`ws-b:question-reject-top:${requestID}`);
+              throw notFound;
+            },
+            v2PermissionReply: async ({ sessionID, requestID, reply }) => {
+              calls.push(`ws-b:v2-permission:${sessionID}:${requestID}:${reply}`);
+              return ok(null);
+            },
+            v2QuestionReply: async ({ sessionID, requestID, questionV2Reply }) => {
+              calls.push(`ws-b:v2-question:${sessionID}:${requestID}:${JSON.stringify(questionV2Reply.answers)}`);
+              return ok(null);
+            },
+            v2QuestionReject: async ({ sessionID, requestID }) => {
+              calls.push(`ws-b:v2-question-reject:${sessionID}:${requestID}`);
+              return ok(null);
+            },
+          }),
+        },
+      });
+      await prompts.refreshPendingPermissions();
+      await prompts.refreshPendingQuestions();
+
+      await prompts.respondPermission("perm-v2", "once");
+      await prompts.respondQuestion("question-v2", [["yes"]]);
+      await prompts.rejectQuestion("question-v2");
+
+      assert.deepEqual(calls, [
+        "ws-b:permission-top:perm-v2:once",
+        "ws-b:v2-permission:sess-v2:perm-v2:once",
+        'ws-b:question-top:question-v2:[["yes"]]',
+        'ws-b:v2-question:sess-v2:question-v2:[["yes"]]',
+        "ws-b:question-reject-top:question-v2",
+        "ws-b:v2-question-reject:sess-v2:question-v2",
       ]);
     } finally {
       dispose();

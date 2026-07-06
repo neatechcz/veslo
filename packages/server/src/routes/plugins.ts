@@ -1,10 +1,17 @@
+import { existsSync } from "node:fs";
+import { delimiter, join } from "node:path";
+
 import { recordAudit } from "../audit.js";
 import { ApiError } from "../errors.js";
 import { materializePluginPolicies } from "../plugin-materializer.js";
 import {
+  pluginPolicyActivationPhase,
+  pluginPolicyColdStartCritical,
+  pluginPolicyRequiresEngineRestart,
   resolveEffectivePluginPolicies,
   visiblePluginPolicies,
   type EffectivePluginPolicy,
+  type PluginActivationPhase,
   type PluginOwnerKind,
   type PluginPolicy,
 } from "../plugin-policy.js";
@@ -25,6 +32,7 @@ import {
   ensureWritable,
   jsonResponse,
   readJsonBody,
+  readOptionalJsonBody,
   requireApproval,
   requireClientScope,
   resolveWorkspace,
@@ -45,6 +53,13 @@ const PLATFORM_PLUGIN_POLICIES = [
   OPENCODE_SCHEDULER_PLATFORM_PLUGIN,
   SUPERPOWERS_PLATFORM_PLUGIN,
 ];
+
+const PLUGIN_ACTIVATION_PHASES = new Set<PluginActivationPhase>([
+  "startup",
+  "post-ready",
+  "on-demand",
+  "background-runtime",
+]);
 
 export type PluginRouteDependencies = {
   serverDataDir?: string;
@@ -113,10 +128,12 @@ export function registerPluginRoutes(routes: Route[], dependencies: PluginRouteD
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readOptionalJsonBody(ctx.request);
+    const phase = parsePluginActivationPhase(body.phase ?? ctx.url.searchParams.get("phase"));
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "plugins.materialization.sync",
-      summary: "Sync managed plugins into OpenCode runtime state",
+      summary: `Sync ${phase} managed plugins into OpenCode runtime state`,
       paths: materializationApprovalPaths(workspace, serverDataDir, userOpencodeConfigDir),
     });
     const policies = await resolveManagedPluginPolicies(workspace, { serverDataDir });
@@ -125,6 +142,7 @@ export function registerPluginRoutes(routes: Route[], dependencies: PluginRouteD
       dataDir: serverDataDir,
       userOpencodeConfigDir,
       policies,
+      materializationPhase: phase,
     });
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -132,7 +150,7 @@ export function registerPluginRoutes(routes: Route[], dependencies: PluginRouteD
       actor: ctx.actor ?? { type: "remote" },
       action: "plugins.materialization.sync",
       target: workspace.path,
-      summary: `Synced ${policies.length} managed plugin policy record(s)`,
+      summary: `Synced ${phase} managed plugin policy record(s) from ${policies.length} total policy record(s)`,
       timestamp: Date.now(),
     });
     if (result.reloadRequired) {
@@ -143,6 +161,16 @@ export function registerPluginRoutes(routes: Route[], dependencies: PluginRouteD
       });
     }
     return jsonResponse(result, result.ok ? 200 : 409);
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/plugins/:pluginId/prepare", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    requireClientScope(ctx, "collaborator");
+    const policy = requireManagedPluginPolicy(ctx.params.pluginId);
+    if (policy.id !== OPENCODE_SCHEDULER_PLATFORM_PLUGIN.id) {
+      throw new ApiError(409, "plugin_prepare_not_supported", "Plugin prepare is supported only for scheduler");
+    }
+    return jsonResponse(schedulerPrepareStatus(policy, workspace.id));
   });
 
   addRoute(routes, "POST", "/workspace/:id/plugins/:pluginId/enabled", "client", async (ctx) => {
@@ -391,6 +419,9 @@ function pluginPolicyInventoryItem(policy: EffectivePluginPolicy, workspace: Wor
     lifecycle: policy.lifecycle,
     removalPolicy: policy.removalPolicy,
     enabledPolicy: policy.enabledPolicy,
+    activationPhase: pluginPolicyActivationPhase(policy),
+    coldStartCritical: pluginPolicyColdStartCritical(policy),
+    requiresEngineRestart: pluginPolicyRequiresEngineRestart(policy),
     managed: true,
     ...(policy.visibility === "hidden-debug-only" ? { debugOnly: true } : {}),
   };
@@ -411,9 +442,97 @@ function unmanagedPluginInventoryItem(item: PluginItem, workspace: WorkspaceInfo
     lifecycle: item.lifecycle ?? "active",
     removalPolicy: "user-removable",
     enabledPolicy: "user-toggleable",
+    activationPhase: "startup",
+    coldStartCritical: true,
+    requiresEngineRestart: false,
     managed: false,
     ...(item.conflict ? { conflict: item.conflict } : {}),
   };
+}
+
+function parsePluginActivationPhase(value: unknown): PluginActivationPhase {
+  if (typeof value !== "string" || !value.trim()) return "startup";
+  const phase = value.trim();
+  if (PLUGIN_ACTIVATION_PHASES.has(phase as PluginActivationPhase)) {
+    return phase as PluginActivationPhase;
+  }
+  throw new ApiError(400, "invalid_plugin_activation_phase", "Invalid plugin materialization phase", {
+    phase,
+  });
+}
+
+function schedulerPrepareStatus(policy: PluginPolicy, workspaceId: string) {
+  const activationPhase = pluginPolicyActivationPhase(policy);
+  const schedulerCommand = schedulerSystemCommand();
+  const platformSupported = schedulerCommand !== null;
+  const schedulerCommandAvailable = schedulerCommand ? commandExists(schedulerCommand) : false;
+  const packageSpecAvailable = Boolean(policy.spec.trim());
+  const activeConfigDeferred = activationPhase !== "startup" && policy.autoInstall === false;
+  const status = platformSupported && schedulerCommandAvailable && packageSpecAvailable && activeConfigDeferred
+    ? "ready"
+    : "degraded";
+
+  return {
+    ok: true,
+    status,
+    workspaceId,
+    pluginId: policy.id,
+    spec: policy.spec,
+    activationPhase,
+    coldStartCritical: pluginPolicyColdStartCritical(policy),
+    requiresEngineRestart: pluginPolicyRequiresEngineRestart(policy),
+    activeConfigProjection: activeConfigDeferred ? "deferred" : "startup",
+    checks: [
+      {
+        name: "platform",
+        ok: platformSupported,
+        message: platformSupported
+          ? `Scheduler platform support is available on ${process.platform}`
+          : `Scheduler platform support is unavailable on ${process.platform}`,
+      },
+      {
+        name: "systemCommand",
+        ok: schedulerCommandAvailable,
+        message: schedulerCommand
+          ? `${schedulerCommand} ${schedulerCommandAvailable ? "was found" : "was not found"} on PATH`
+          : "No scheduler system command applies to this platform",
+      },
+      {
+        name: "packageSpec",
+        ok: packageSpecAvailable,
+        message: packageSpecAvailable
+          ? `Scheduler package spec is ${policy.spec}`
+          : "Scheduler package spec is missing",
+      },
+      {
+        name: "activeConfigProjection",
+        ok: activeConfigDeferred,
+        message: activeConfigDeferred
+          ? "Scheduler remains outside active OpenCode config during prepare"
+          : "Scheduler would be projected into startup OpenCode config",
+      },
+    ],
+  };
+}
+
+function schedulerSystemCommand(): string | null {
+  if (process.platform === "darwin") return "launchctl";
+  if (process.platform === "linux") return "systemctl";
+  return null;
+}
+
+function commandExists(command: string): boolean {
+  const pathValue = process.env.PATH ?? "";
+  const extensions = process.platform === "win32"
+    ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean)
+    : [""];
+  for (const dir of pathValue.split(delimiter)) {
+    if (!dir) continue;
+    for (const extension of extensions) {
+      if (existsSync(join(dir, `${command}${extension}`))) return true;
+    }
+  }
+  return false;
 }
 
 function unmanagedDisplayName(spec: string): string {

@@ -15,6 +15,19 @@ export function normalizeEvent(raw: unknown): OpencodeEvent | null {
 
   const record = raw as Record<string, unknown>;
 
+  if (record.type === "sync") {
+    const syncEvent = record.syncEvent;
+    if (!syncEvent || typeof syncEvent !== "object") return null;
+    const syncRecord = syncEvent as Record<string, unknown>;
+    if (typeof syncRecord.type !== "string") return null;
+
+    // OpenCode v2 wraps real events in sync envelopes with schema suffixes.
+    return {
+      type: stripTrailingNumericSchemaSuffix(syncRecord.type),
+      properties: syncRecord.data,
+    };
+  }
+
   if (typeof record.type === "string") {
     return {
       type: record.type,
@@ -33,6 +46,10 @@ export function normalizeEvent(raw: unknown): OpencodeEvent | null {
   }
 
   return null;
+}
+
+function stripTrailingNumericSchemaSuffix(type: string): string {
+  return type.replace(/\.\d+$/, "");
 }
 
 export function upsertSession(list: Session[], next: Session) {

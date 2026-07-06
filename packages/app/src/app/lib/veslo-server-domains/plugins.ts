@@ -1,4 +1,5 @@
 import type {
+  VesloPluginActivationPhase,
   VesloPluginListResponse,
   VesloPluginMaterializationSyncResult,
   VesloPluginMutationResponse,
@@ -41,11 +42,11 @@ export function createPluginsClient(context: PluginsClientContext) {
         { token, hostToken },
       ),
 
-    syncMaterialization: (workspaceId: string) =>
+    syncMaterialization: (workspaceId: string, options?: { phase?: VesloPluginActivationPhase }) =>
       requestJson<VesloPluginMaterializationSyncResult>(
         baseUrl,
         `${workspacePluginsPath(workspaceId)}/materialization/sync`,
-        { token, hostToken, method: "POST" },
+        { token, hostToken, method: "POST", ...(options?.phase ? { body: { phase: options.phase } } : {}) },
       ),
 
     setEnabled: (workspaceId: string, pluginId: string, enabled: boolean) =>

@@ -16,6 +16,7 @@ import { once } from "node:events";
 
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { TuiHandle } from "./tui/app.js";
+import { normalizeOpencodeEvent as normalizeEvent } from "./opencode-event-normalization.js";
 import { reconcileOpencodeVersion } from "./opencode-version.js";
 import { sanitizeRuntimePayloadForLogs } from "./security.js";
 import { buildUnsandboxedSandboxWarning, resolveEngineSandbox } from "./sandbox-mode.js";
@@ -2146,16 +2147,18 @@ async function fetchOpencodeHealthViaSdk(
   client: ReturnType<typeof createOpencodeClient>,
   requestTimeoutMs: number,
 ) {
-  const healthRequest = client.global.health();
-  healthRequest.catch(() => {});
-  return unwrap(
-    await Promise.race([
-      healthRequest,
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("OpenCode health request timed out")), requestTimeoutMs),
-      ),
-    ]),
-  );
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+  try {
+    return unwrap(await client.global.health({ signal: controller.signal }));
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("OpenCode health request timed out");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function fetchOpencodeHealthRaw(
@@ -3243,15 +3246,6 @@ async function fetchJson(url: string, init?: RequestInit): Promise<any> {
     throw new Error(`HTTP ${response.status}${message}`);
   }
   return payload;
-}
-
-function normalizeEvent(raw: unknown): { type: string } | null {
-  if (!raw || typeof raw !== "object") return null;
-  const record = raw as Record<string, unknown>;
-  if (typeof record.type === "string") return { type: record.type };
-  const payload = record.payload as Record<string, unknown> | undefined;
-  if (payload && typeof payload.type === "string") return { type: payload.type };
-  return null;
 }
 
 async function waitForRouterHealthy(baseUrl: string, timeoutMs = 10_000, pollMs = 250): Promise<void> {

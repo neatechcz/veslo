@@ -23,24 +23,59 @@ function globalOpenCodeConfigPath(): string {
   return jsonc; // fall back to jsonc (readJsoncFile handles missing files gracefully)
 }
 
-function getMcpConfig(config: Record<string, unknown>): Record<string, Record<string, unknown>> {
-  const mcp = config.mcp;
-  if (!mcp || typeof mcp !== "object") return {};
-  return mcp as Record<string, Record<string, unknown>>;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function getDeniedToolPatterns(config: Record<string, unknown>): string[] {
+function getMcpConfig(config: Record<string, unknown>): Record<string, Record<string, unknown>> {
+  const mcp = getMcpObject(config);
+  const result: Record<string, Record<string, unknown>> = {};
+  for (const [name, entry] of Object.entries(mcp)) {
+    // Future OpenCode v2 docs use mcp.servers; Veslo stays on top-level mcp.<name> for the installed SDK.
+    if (name === "servers") continue;
+    if (!isRecord(entry)) continue;
+    result[name] = entry;
+  }
+  return result;
+}
+
+function getMcpObject(config: Record<string, unknown>): Record<string, unknown> {
+  return isRecord(config.mcp) ? { ...config.mcp } : {};
+}
+
+function getDisabledToolPatterns(config: Record<string, unknown>): string[] {
   const tools = config.tools;
-  if (!tools || typeof tools !== "object") return [];
-  const deny = (tools as { deny?: unknown }).deny;
-  if (!Array.isArray(deny)) return [];
-  return deny.filter((item) => typeof item === "string") as string[];
+  if (!isRecord(tools)) return [];
+  const patterns: string[] = [];
+  for (const [pattern, value] of Object.entries(tools)) {
+    if (pattern === "deny") continue;
+    if (value === false) patterns.push(pattern);
+  }
+  const deny = tools.deny;
+  if (Array.isArray(deny)) {
+    for (const item of deny) {
+      if (typeof item === "string") patterns.push(item);
+    }
+  }
+  return patterns;
 }
 
 function isMcpDisabledByTools(config: Record<string, unknown>, name: string): boolean {
-  const patterns = getDeniedToolPatterns(config);
+  const patterns = getDisabledToolPatterns(config);
   if (patterns.length === 0) return false;
-  const candidates = [`mcp.${name}`, `mcp.${name}.*`, `mcp:${name}`, `mcp:${name}:*`, "mcp.*", "mcp:*"];
+  // Official boolean tool globs and legacy tools.deny are additive; any disabled pattern wins.
+  const candidates = [
+    name,
+    `${name}.*`,
+    `${name}:*`,
+    `${name}-tool`,
+    `mcp.${name}`,
+    `mcp.${name}.*`,
+    `mcp:${name}`,
+    `mcp:${name}:*`,
+    "mcp.*",
+    "mcp:*",
+  ];
   return patterns.some((pattern) => candidates.some((candidate) => minimatch(candidate, pattern)));
 }
 
@@ -91,19 +126,21 @@ export async function addMcp(
   validateMcpName(name);
   validateMcpConfig(config, options);
   const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
+  const mcp = getMcpObject(data);
   const mcpMap = getMcpConfig(data);
   const existed = Object.prototype.hasOwnProperty.call(mcpMap, name);
-  mcpMap[name] = config;
-  await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { mcp: mcpMap });
+  mcp[name] = config;
+  await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { mcp });
   return { action: existed ? "updated" : "added" };
 }
 
 export async function removeMcp(workspaceRoot: string, name: string): Promise<boolean> {
   const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
+  const mcp = getMcpObject(data);
   const mcpMap = getMcpConfig(data);
   if (!Object.prototype.hasOwnProperty.call(mcpMap, name)) return false;
-  delete mcpMap[name];
-  await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { mcp: mcpMap });
+  delete mcp[name];
+  await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { mcp });
   return true;
 }
 
@@ -150,6 +187,7 @@ export async function refreshMcpRuntimeToken(
   }
 
   const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
+  const mcp = getMcpObject(data);
   const mcpMap = getMcpConfig(data);
   const entry = mcpMap[name];
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
@@ -171,7 +209,7 @@ export async function refreshMcpRuntimeToken(
     },
   };
   validateMcpConfig(nextEntry, { allowVesloConnectorTokenHeader: true });
-  mcpMap[name] = nextEntry;
-  await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { mcp: mcpMap });
+  mcp[name] = nextEntry;
+  await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { mcp });
   return { name, action: "updated" };
 }

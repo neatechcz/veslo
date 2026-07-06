@@ -59,6 +59,30 @@ type EventStreamStoreState = {
   events: Array<{ type: string; properties?: unknown }>;
 };
 
+const PERMISSION_REFRESH_EVENT_TYPES = new Set([
+  "permission.asked",
+  "permission.replied",
+  "permission.v2.asked",
+  "permission.v2.replied",
+]);
+
+const QUESTION_REFRESH_EVENT_TYPES = new Set([
+  "question.asked",
+  "question.replied",
+  "question.rejected",
+  "question.v2.asked",
+  "question.v2.replied",
+  "question.v2.rejected",
+]);
+
+export function isPermissionRefreshEvent(type: string): boolean {
+  return PERMISSION_REFRESH_EVENT_TYPES.has(type);
+}
+
+export function isQuestionRefreshEvent(type: string): boolean {
+  return QUESTION_REFRESH_EVENT_TYPES.has(type);
+}
+
 export type SessionEventStreamControllerDeps = {
   store: EventStreamStoreState;
   setStore: (...args: any[]) => void;
@@ -272,16 +296,12 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       return;
     }
 
-    if (event.type === "permission.asked" || event.type === "permission.replied") {
+    if (isPermissionRefreshEvent(event.type)) {
       void deps.refreshPendingPermissions();
       return;
     }
 
-    if (
-      event.type === "question.asked" ||
-      event.type === "question.replied" ||
-      event.type === "question.rejected"
-    ) {
+    if (isQuestionRefreshEvent(event.type)) {
       void deps.refreshPendingQuestions();
     }
   };
@@ -616,7 +636,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       }
     }
 
-    if (event.type === "permission.asked" || event.type === "permission.replied") {
+    if (isPermissionRefreshEvent(event.type)) {
       try {
         await deps.refreshPendingPermissions();
       } catch {
@@ -624,11 +644,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       }
     }
 
-    if (
-      event.type === "question.asked" ||
-      event.type === "question.replied" ||
-      event.type === "question.rejected"
-    ) {
+    if (isQuestionRefreshEvent(event.type)) {
       try {
         await deps.refreshPendingQuestions();
       } catch {

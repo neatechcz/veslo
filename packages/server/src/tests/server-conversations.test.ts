@@ -1478,6 +1478,13 @@ describe("conversation routes", () => {
           extra: "must-not-forward",
           clientMessageId: "msg-client-1",
           origin: "session:normal",
+          messageID: "msg-client-1",
+          model: { providerID: "openai", modelID: "gpt-5.5" },
+          agent: "build",
+          system: "system prompt",
+          tools: { read: false },
+          mode: "build",
+          variant: "xhigh",
           parts: [{ type: "text", text: "Hello" }],
         }),
       },
@@ -1503,7 +1510,13 @@ describe("conversation routes", () => {
     expect(receivedRunPaths[0]).toBe(`/session/sess-created/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`);
     expect(receivedRunDirectories[0]).toBe(workspaceRoot);
     expect(receivedBodies[1]?.parts).toEqual([{ type: "text", text: "Hello" }]);
-    expect(receivedBodies[1]?.messageID).toBeUndefined();
+    expect(receivedBodies[1]?.messageID).toBe("msg-client-1");
+    expect(receivedBodies[1]?.model).toEqual({ providerID: "openai", modelID: "gpt-5.5" });
+    expect(receivedBodies[1]?.agent).toBe("build");
+    expect(receivedBodies[1]?.system).toBe("system prompt");
+    expect(receivedBodies[1]?.tools).toEqual({ read: false });
+    expect(receivedBodies[1]?.mode).toBe("build");
+    expect(receivedBodies[1]?.variant).toBe("xhigh");
     expect(receivedBodies[1]?.directory).toBeUndefined();
     expect(receivedBodies[1]?.kind).toBeUndefined();
     expect(receivedBodies[1]?.sessionID).toBeUndefined();
