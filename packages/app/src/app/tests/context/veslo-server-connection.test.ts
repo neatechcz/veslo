@@ -232,6 +232,170 @@ test("local Tauri server check requires runtimeChain readiness", async () => {
   });
 });
 
+test("local server-only ensure does not require runtimeChain readiness before runtime start", async () => {
+  let restartCalls = 0;
+  const workspaceStatusCalls: string[] = [];
+  const factory: VesloServerConnectionClientFactory = () => ({
+    baseUrl: "http://127.0.0.1:8787",
+    health: async () => ({ ok: true, version: "test", uptimeMs: 1 }),
+    capabilities: async () => capabilities(),
+    workspace: {
+      statusForWorkspace: async (workspaceId: string) => {
+        workspaceStatusCalls.push(workspaceId);
+        return {
+          ok: true,
+          version: "test",
+          uptimeMs: 1,
+          readOnly: false,
+          approval: { mode: "manual", timeoutMs: 1 },
+          corsOrigins: [],
+          workspaceCount: 1,
+          activeWorkspaceId: "ws-a",
+          workspace: null,
+          authorizedRoots: [],
+          server: { host: "127.0.0.1", port: 8787, configPath: null },
+          tokenSource: { client: "generated", host: "generated" },
+          runtimeChain: {
+            status: "orchestrator_unavailable",
+            checkedAt: Date.now(),
+            orchestrator: {
+              configured: true,
+              daemonUrl: "http://127.0.0.1:52008",
+              ok: false,
+              engineTopology: null,
+              error: "connect ECONNREFUSED",
+            },
+            sharedEngine: { running: null, pending: null, engineState: null, baseUrl: null },
+            proxy: { workspaceId: "ws-a", ok: null, status: null, error: null },
+          },
+        };
+      },
+    } as any,
+  });
+
+  await createRoot(async (dispose) => {
+    try {
+      const connection = createVesloServerConnection({
+        startupPreference: () => "local",
+        opencodeBaseUrl: () => "",
+        authenticatedAccountId: () => null,
+        cloudEnvironment: {},
+        documentVisible: () => false,
+        developerMode: () => false,
+        isTauriRuntime: () => true,
+        workspace: {
+          workspacesHydrated: () => true,
+          activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
+          activeWorkspaceId: () => "ws-a",
+          activeWorkspaceRoot: () => "/tmp/ws-a",
+        },
+        vesloServerInfo: async () => runningHostInfo(),
+        vesloServerRestart: async () => {
+          restartCalls += 1;
+          return runningHostInfo();
+        },
+        createClient: factory,
+      });
+
+      const ok = await connection.ensureLocalVesloServerRunning({
+        ignoreStartupPreference: true,
+        requireRuntimeChainReady: false,
+      });
+
+      assert.equal(ok, true);
+      assert.equal(restartCalls, 0);
+      assert.deepEqual(workspaceStatusCalls, []);
+      assert.equal(connection.vesloServerStatus(), "connected");
+      assert.deepEqual(connection.vesloServerCapabilities(), capabilities());
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("local ensure single-flights each readiness mode independently", async () => {
+  let infoCalls = 0;
+  let releaseInfo: (() => void) | null = null;
+  const infoGate = new Promise<void>((resolve) => {
+    releaseInfo = resolve;
+  });
+  const factory: VesloServerConnectionClientFactory = () => ({
+    baseUrl: "http://127.0.0.1:8787",
+    health: async () => ({ ok: true, version: "test", uptimeMs: 1 }),
+    capabilities: async () => capabilities(),
+    workspace: {
+      statusForWorkspace: async () => ({
+        ok: true,
+        version: "test",
+        uptimeMs: 1,
+        readOnly: false,
+        approval: { mode: "manual", timeoutMs: 1 },
+        corsOrigins: [],
+        workspaceCount: 1,
+        activeWorkspaceId: "ws-a",
+        workspace: null,
+        authorizedRoots: [],
+        server: { host: "127.0.0.1", port: 8787, configPath: null },
+        tokenSource: { client: "generated", host: "generated" },
+        runtimeChain: {
+          status: "runtime_chain_ready",
+          checkedAt: Date.now(),
+          orchestrator: {
+            configured: true,
+            daemonUrl: "http://127.0.0.1:52008",
+            ok: true,
+            engineTopology: "shared-unsandboxed",
+            error: null,
+          },
+          sharedEngine: { running: true, pending: false, engineState: "ready", baseUrl: "http://127.0.0.1:53553" },
+          proxy: { workspaceId: "ws-a", ok: true, status: 200, error: null },
+        },
+      }),
+    } as any,
+  });
+
+  await createRoot(async (dispose) => {
+    try {
+      const connection = createVesloServerConnection({
+        startupPreference: () => "local",
+        opencodeBaseUrl: () => "",
+        authenticatedAccountId: () => null,
+        cloudEnvironment: {},
+        documentVisible: () => false,
+        developerMode: () => false,
+        isTauriRuntime: () => true,
+        workspace: {
+          workspacesHydrated: () => true,
+          activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
+          activeWorkspaceId: () => "ws-a",
+          activeWorkspaceRoot: () => "/tmp/ws-a",
+        },
+        vesloServerInfo: async () => {
+          infoCalls += 1;
+          await infoGate;
+          return runningHostInfo();
+        },
+        createClient: factory,
+      });
+
+      const runtimeChain = connection.ensureLocalVesloServerRunning({ ignoreStartupPreference: true });
+      const serverOnly = connection.ensureLocalVesloServerRunning({
+        ignoreStartupPreference: true,
+        requireRuntimeChainReady: false,
+      });
+      const runtimeChainDuplicate = connection.ensureLocalVesloServerRunning({ ignoreStartupPreference: true });
+
+      assert.equal(infoCalls, 2);
+      releaseInfo?.();
+
+      assert.deepEqual(await Promise.all([runtimeChain, serverOnly, runtimeChainDuplicate]), [true, true, true]);
+      assert.equal(infoCalls, 2);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("local ensure does not restart the server on auth desync", async () => {
   let restartCalls = 0;
   const factory: VesloServerConnectionClientFactory = () => ({

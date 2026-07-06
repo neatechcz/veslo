@@ -473,11 +473,59 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
       );
       const recoveredClient = targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient();
       if (!started || !recoveredClient) {
+        let retryStarted: boolean | null = null;
+        let retryHasClient: boolean | null = null;
+        if (!started && !recoveredClient) {
+          deps.recordSendTrace(`${reason}:runtime-recovery-first-attempt-not-started`, {
+            ...(tracePayload ?? {}),
+            started,
+            hasClient: false,
+            targetWorkspaceId: targetWorkspaceId || null,
+          });
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          retryStarted = await deps.sendTraceStep(
+            `${reason}:runtime-recovery-ensure-engine-retry`,
+            () => deps.ensureEngineForWorkspace(targetWorkspaceId || undefined, {
+              reason: `${reason}-runtime-recovery-retry`,
+              loadSessions: false,
+            }),
+            {
+              ...(tracePayload ?? {}),
+              activeWorkspaceId: deps.activeWorkspaceId().trim(),
+              activeWorkspaceRoot: deps.activeWorkspaceRoot().trim(),
+              targetWorkspaceId: targetWorkspaceId || null,
+            },
+          );
+          const retryClient = targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient();
+          retryHasClient = Boolean(retryClient);
+          if (retryStarted && retryClient) {
+            deps.recordSendTrace(`${reason}:runtime-recovery-ok`, {
+              ...(tracePayload ?? {}),
+              hasClient: true,
+              targetWorkspaceId: targetWorkspaceId || null,
+              retryAttempted: true,
+            });
+            if (preflight) preflight.runtimeHealthOk = true;
+            if (preflight) preflight.forceRecovery = false;
+            return {
+              ok: true,
+              runtimeReady: true,
+              managedAiReady: false,
+              workspaceId: resultWorkspaceId,
+              activeWorkspace: targetIsActiveWorkspace,
+              recoveryAttempted: true,
+              reason: "runtime-recovery-ok",
+            };
+          }
+        }
         deps.recordSendTrace(`${reason}:runtime-recovery-not-started`, {
           ...(tracePayload ?? {}),
           started,
           hasClient: Boolean(recoveredClient),
           targetWorkspaceId: targetWorkspaceId || null,
+          retryAttempted: !started && !recoveredClient,
+          retryStarted,
+          retryHasClient,
         });
         return {
           ok: false,

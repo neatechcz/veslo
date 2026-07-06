@@ -30,10 +30,14 @@ test("workspace materialization sync forwards the signed-in Den API base", () =>
 });
 
 test("local materialization sync starts the managed server before using the fallback client", () => {
-  const ensureIdx = source.indexOf("await deps.ensureLocalVesloServerRunning?.()");
+  const ensureIdx = source.indexOf("await deps.ensureLocalVesloServerRunning?.({ requireRuntimeChainReady: false })");
   const clientIdx = source.indexOf("const client = deps.vesloServerClient?.()");
 
-  assert.notStrictEqual(ensureIdx, -1, "local sync should ensure the managed Veslo server is running");
+  assert.notStrictEqual(
+    ensureIdx,
+    -1,
+    "local sync should ensure the managed Veslo server process is running without requiring the runtime chain it is about to start",
+  );
   assert.notStrictEqual(clientIdx, -1, "local sync should read the Veslo server client");
   assert.ok(ensureIdx < clientIdx, "managed server startup must happen before reading the fallback client");
 });

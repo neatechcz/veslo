@@ -277,6 +277,7 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
     const ensureReason = options.reason?.trim() || "ensure-engine-for-workspace";
     const shouldLoadSessions = options.loadSessions !== false;
     const isBootWarmup = ensureReason === "boot-warmup";
+    const isRuntimeRecovery = ensureReason.includes("runtime-recovery");
     if (!deps.workspacesHydrated()) {
       const start = Date.now();
       while (!deps.workspacesHydrated() && Date.now() - start < 5_000) {
@@ -342,11 +343,16 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           return false;
         }
 
-        const skillSyncMaxAttempts = isBootWarmup ? 6 : 1;
+        const skillSyncMaxAttempts = isBootWarmup || isRuntimeRecovery ? 6 : 1;
+        const skillSyncReason = isBootWarmup
+          ? "boot-warmup"
+          : isRuntimeRecovery
+            ? "runtime-recovery"
+            : "browse-attach";
         let skillsReady = false;
         for (let attempt = 1; attempt <= skillSyncMaxAttempts; attempt += 1) {
           skillsReady = await deps.syncWorkspaceSkillMaterializationBeforeRuntime(workspace, {
-            reason: isBootWarmup ? "boot-warmup" : "browse-attach",
+            reason: skillSyncReason,
           });
           recordSendWorkflowTrace("workspace-runtime", "ensure-engine:skills-ready", {
             workspaceId: id,

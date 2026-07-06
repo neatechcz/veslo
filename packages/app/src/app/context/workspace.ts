@@ -175,7 +175,7 @@ export function createWorkspaceStore(options: {
     engineUrl?: string | null;
     clientToken?: string | null;
   } | null;
-  ensureLocalVesloServerRunning?: () => Promise<boolean>;
+  ensureLocalVesloServerRunning?: (options?: { requireRuntimeChainReady?: boolean }) => Promise<boolean>;
   setOpencodeConnectStatus?: (status: OpencodeConnectStatus | null) => void;
   onEngineStable?: () => void;
   engineRuntime?: () => EngineRuntime;

@@ -12,10 +12,11 @@ import {
   isTauriRuntime,
   safeStringify,
 } from "../utils";
+import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 
 export type WorkspaceSkillMaterializationGateDeps = {
   workspaceBusy: () => Record<string, Record<string, { startedAt: number }>>;
-  ensureLocalVesloServerRunning?: () => Promise<boolean>;
+  ensureLocalVesloServerRunning?: (options?: { requireRuntimeChainReady?: boolean }) => Promise<boolean>;
   vesloServerClient?: () => VesloServerClient | null;
   refreshSkills: (options?: { force?: boolean }) => Promise<void>;
   setError: (value: string | null) => void;
@@ -45,11 +46,23 @@ export function createWorkspaceSkillMaterializationGate(
   ) {
     const workspaceId = workspace.id?.trim() ?? "";
     if (!workspaceId) return true;
+    const trace = (event: string, payload?: Record<string, unknown>) => {
+      recordSendWorkflowTrace("workspace-skill-materialization", event, {
+        workspaceId,
+        reason: context?.reason ?? null,
+        ...payload,
+      });
+    };
 
     try {
+      trace("start", {
+        workspaceType: workspace.workspaceType ?? null,
+        localTauri: Boolean(isTauriRuntime() && workspace.workspaceType === "local"),
+      });
       if (isTauriRuntime() && workspace.workspaceType === "local") {
-        const ensured = await deps.ensureLocalVesloServerRunning?.();
+        const ensured = await deps.ensureLocalVesloServerRunning?.({ requireRuntimeChainReady: false });
         if (ensured === false) {
+          trace("server-unavailable");
           deps.wsDebug("skills:materialization:failed:server-unavailable", {
             workspaceId,
             reason: context?.reason ?? null,
@@ -63,7 +76,10 @@ export function createWorkspaceSkillMaterializationGate(
       }
 
       const client = deps.vesloServerClient?.();
-      if (!client) return true;
+      if (!client) {
+        trace("skip:no-client");
+        return true;
+      }
 
       const denAuth = readDenAuth();
       const materializationAuth = {
@@ -74,6 +90,11 @@ export function createWorkspaceSkillMaterializationGate(
       };
 
       const status = await client.getWorkspaceSkillMaterializationStatus(workspaceId);
+      trace("status", {
+        registryConfigured: status.registryConfigured,
+        status: status.status,
+        reloadRequired: status.reloadRequired ?? false,
+      });
       if (!status.registryConfigured) {
         deps.wsDebug("skills:materialization:skip:not-configured", {
           workspaceId,
@@ -85,6 +106,7 @@ export function createWorkspaceSkillMaterializationGate(
       const activeRun = Object.keys(deps.workspaceBusy()[workspace.id] ?? {}).length > 0;
       if (activeRun) {
         await client.syncWorkspaceSkillMaterialization(workspaceId, { ...materializationAuth, activeRun: true });
+        trace("pending:active-run");
         deps.wsDebug("skills:materialization:pending:active-run", {
           workspaceId,
           reason: context?.reason ?? null,
@@ -93,6 +115,7 @@ export function createWorkspaceSkillMaterializationGate(
       }
 
       if (status.status === "current" && status.reloadRequired !== true) {
+        trace("skip:current");
         deps.wsDebug("skills:materialization:skip:current", {
           workspaceId,
           reason: context?.reason ?? null,
@@ -101,6 +124,13 @@ export function createWorkspaceSkillMaterializationGate(
       }
 
       const result = await client.syncWorkspaceSkillMaterialization(workspaceId, materializationAuth);
+      trace("synced", {
+        status: result.status,
+        synced: result.synced,
+        reloadRequired: result.reloadRequired ?? false,
+        materializedCount: result.materializedSkills.length,
+        removedCount: result.removedSkillNames?.length ?? 0,
+      });
       deps.wsDebug("skills:materialization:synced", {
         workspaceId,
         reason: context?.reason ?? null,
@@ -116,6 +146,7 @@ export function createWorkspaceSkillMaterializationGate(
       return true;
     } catch (error) {
       if (error instanceof VesloServerError && error.status === 404) {
+        trace("skip:unsupported-server");
         deps.wsDebug("skills:materialization:skip:unsupported-server", {
           workspaceId,
           reason: context?.reason ?? null,
@@ -124,6 +155,11 @@ export function createWorkspaceSkillMaterializationGate(
       }
       const message = error instanceof Error ? error.message : safeStringify(error);
       if (isSkillRegistryMaterializationError(error)) {
+        trace("degraded", {
+          message,
+          code: error instanceof VesloServerError ? error.code : null,
+          status: error instanceof VesloServerError ? error.status : null,
+        });
         deps.wsDebug("skills:materialization:degraded", {
           workspaceId,
           reason: context?.reason ?? null,
@@ -132,6 +168,11 @@ export function createWorkspaceSkillMaterializationGate(
         reportError(error, "workspace.skillMaterialization");
         return true;
       }
+      trace("failed", {
+        message,
+        code: error instanceof VesloServerError ? error.code : null,
+        status: error instanceof VesloServerError ? error.status : null,
+      });
       deps.wsDebug("skills:materialization:failed", {
         workspaceId,
         reason: context?.reason ?? null,

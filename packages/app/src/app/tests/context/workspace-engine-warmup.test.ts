@@ -96,8 +96,8 @@ test("runtime ensure preserves single-flight startup and can skip loadSessions f
   );
   assert.match(
     runtimeSource,
-    /const isBootWarmup = ensureReason === "boot-warmup";[\s\S]*const skillSyncMaxAttempts = isBootWarmup \? 6 : 1;[\s\S]*reason: isBootWarmup \? "boot-warmup" : "browse-attach",[\s\S]*"ensure-engine:skills-ready"[\s\S]*attempt,[\s\S]*maxAttempts: skillSyncMaxAttempts,/s,
-    "boot warmup should wait briefly for skill materialization readiness instead of failing the shared ensure immediately",
+    /const isBootWarmup = ensureReason === "boot-warmup";[\s\S]*const isRuntimeRecovery = ensureReason\.includes\("runtime-recovery"\);[\s\S]*const skillSyncMaxAttempts = isBootWarmup \|\| isRuntimeRecovery \? 6 : 1;[\s\S]*const skillSyncReason = isBootWarmup[\s\S]*\? "boot-warmup"[\s\S]*: isRuntimeRecovery[\s\S]*\? "runtime-recovery"[\s\S]*: "browse-attach";[\s\S]*reason: skillSyncReason,[\s\S]*"ensure-engine:skills-ready"[\s\S]*attempt,[\s\S]*maxAttempts: skillSyncMaxAttempts,/s,
+    "boot warmup and first-send runtime recovery should wait briefly for skill materialization readiness instead of failing the shared ensure immediately",
   );
   assert.match(
     runtimeSource,
