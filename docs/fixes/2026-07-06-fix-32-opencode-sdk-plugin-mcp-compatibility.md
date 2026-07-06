@@ -44,6 +44,9 @@ transitive changes: `@ai-sdk/provider@3.0.8` and `effect@4.0.0-beta.83`.
 - Existing `mcp.servers` proposal-shape config is preserved on Veslo write
   paths while adding, removing, or refreshing current top-level `mcp.<name>`
   entries.
+- The reserved MCP name `servers` is rejected on current write paths so
+  proposal-shape `mcp.servers` cannot be overwritten by a current
+  `mcp.<name>` mutation.
 - Veslo accepts installed `enabled` sentinels and keeps
   `tools: { "<glob>": false }` support for MCP tool disabling.
 
@@ -55,6 +58,8 @@ transitive changes: `@ai-sdk/provider@3.0.8` and `effect@4.0.0-beta.83`.
   deferred activation without mutating active OpenCode config.
 - Windows scheduler prepare is explicitly unsupported/degraded until a proven
   Windows OS scheduler command path is added.
+- This checkpoint does not implement Windows OS scheduler activation; that
+  remains a separate scheduler follow-up.
 
 ## SDK/Event Outcome
 
@@ -120,8 +125,12 @@ After the final plan evaluation, the remaining non-E2E issues were closed:
 
 - MCP write paths now preserve existing proposal-shape `mcp.servers` config
   while mutating only current top-level `mcp.<name>` entries.
-- Router `test:unit` now runs a stable explicit unit subset instead of the
-  Windows/Bun-sensitive `test/*.test.js` glob.
+- Router `test:unit` now runs a Windows-safe unit runner that includes all
+  non-bridge `test/*.test.js` files instead of the Windows/Bun-sensitive
+  shell glob.
+- Live Pilot source/scenario changes remain outside the SDK/plugin/MCP
+  checkpoint acceptance and require their own live Den auth run before being
+  treated as end-to-end complete.
 - Scheduler prepare has an explicit Windows degraded assertion, making Windows
   scheduler OS activation unsupported by product decision until a proven
   Windows scheduler command path is added.
@@ -144,7 +153,37 @@ Results:
 - Router `test:unit`: `23` passed.
 - App and server typechecks passed.
 - `git diff --check` passed with LF/CRLF warnings only.
-- E2E/pilot changes were intentionally left outside this checkpoint.
+- Live Pilot managed-AI acceptance was not run in this checkpoint because it
+  requires the live Den auth/Pilot environment; E2E/pilot source changes remain
+  outside this SDK/plugin/MCP checkpoint.
+
+Post-audit verification:
+
+- Reserved MCP name regression bundle:
+  `corepack pnpm@10.27.0 --filter veslo-server exec bun test src/tests/server.mcp-routes.test.ts src/tests/validators.test.ts`
+  passed with `30` pass.
+- Router dynamic unit runner:
+  `corepack pnpm@10.27.0 --filter veslo-code-router exec pnpm test:unit`
+  passed with `23` pass.
+- Current dirty app managed-AI/runtime readiness focused bundle passed with
+  `51` pass.
+- Current E2E Pilot runner unit tests passed with `33` pass.
+- Live Pilot was still not run because the live Den/Pilot auth environment
+  variables were not present in this shell.
+
+Continuation audit fixes:
+
+- Local Veslo server ensure now keeps independent in-flight entries per
+  readiness mode, so a server-only materialization startup cannot break
+  deduplication for an overlapping runtime-chain ensure.
+- Live managed-AI Pilot acceptance now rejects bracketed IPv6 localhost gateway
+  overrides such as `http://[::1]:8788`, matching the existing IPv4 loopback
+  guard.
+- Desktop/orchestrator managed dependency manifests now expect the upgraded
+  OpenCode plugin package version `1.17.13`.
+- Changed Pilot TOML scenarios parsed through `tomllib`, and their embedded
+  eval scripts parsed as async JavaScript before a live Pilot run.
+- Targeted native manifest tests passed via `cargo test manifest`.
 
 ## Worktree Note
 

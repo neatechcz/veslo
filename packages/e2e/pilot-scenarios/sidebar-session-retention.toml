@@ -326,13 +326,45 @@ if (!window.__veslo230RetentionStarted) {
         message: `Local Veslo server did not become ready. Server info=${JSON.stringify(latest)}`,
       });
     };
+    const parseDenAuth = (raw) => {
+      if (!raw || typeof raw !== "string") return null;
+      try {
+        const parsed = JSON.parse(raw);
+        const token = normalize(parsed?.token);
+        if (!token) return null;
+        return {
+          token,
+          email: normalize(parsed?.user?.email),
+          userId: normalize(parsed?.user?.id),
+          orgId: normalize(parsed?.orgId || parsed?.org?.id),
+          denApiBase: trimBaseUrl(parsed?.denApiBase),
+        };
+      } catch {
+        return null;
+      }
+    };
+    const readDenAuthForAiAccess = async () => {
+      const storageAuth = parseDenAuth(
+        window.localStorage.getItem("veslo.den.auth") ||
+        window.sessionStorage.getItem("veslo.den.auth"),
+      );
+      if (storageAuth) return storageAuth;
+
+      const snapshot = await tauriInvoke("den_auth_snapshot_read", {}, 15000).catch(() => null);
+      return parseDenAuth(snapshot?.authJson);
+    };
     const waitForAiAccessReady = async (connection) => {
       let latest = null;
       return await waitUntil(async () => {
+        const auth = await readDenAuthForAiAccess();
+        if (!auth?.token || !auth.email || auth.email.endsWith("@example.test")) {
+          latest = { auth: auth ? { email: auth.email, userId: auth.userId, orgId: auth.orgId, denApiBase: auth.denApiBase, hasToken: Boolean(auth.token) } : null };
+          return false;
+        }
         const response = await fetch(`${connection.baseUrl}/ai-gateway/me/ai-access`, {
           headers: {
             authorization: `Bearer ${connection.clientToken}`,
-            "x-veslo-gateway-authorization": "Bearer veslo-e2e-managed-ai-token",
+            "x-veslo-gateway-authorization": `Bearer ${auth.token}`,
             accept: "application/json",
           },
         }).catch((error) => {

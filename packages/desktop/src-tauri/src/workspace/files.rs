@@ -630,7 +630,7 @@ pub fn ensure_workspace_files(
         }
     }
 
-    // OpenCode 1.17.4 can stall session creation while loading the external
+    // OpenCode can stall session creation while loading the external
     // scheduler plugin. Scheduled automations now run through Veslo server
     // routes, so new workspaces should not auto-install that plugin.
     let required_plugins: Vec<&str> = vec![];

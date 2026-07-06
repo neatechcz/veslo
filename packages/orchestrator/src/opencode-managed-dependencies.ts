@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const VESLO_MANAGED_PLUGIN_VERSION = "1.17.4";
+export const VESLO_MANAGED_PLUGIN_VERSION = "1.17.13";
 export const VESLO_MANAGED_ZOD_VERSION = "4.1.8";
 export const VESLO_MANAGED_OPENAI_COMPATIBLE_VERSION = "3.0.5";
 export const VESLO_MANAGED_AI_SDK_PROVIDER_VERSION = "4.0.2";

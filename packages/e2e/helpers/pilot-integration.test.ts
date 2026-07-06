@@ -18,7 +18,7 @@ test('desktop e2e feature uses tauri-pilot instead of WebDriver', () => {
   assert.match(cargoToml, /e2e = \["tauri-plugin-pilot\/press"\]/);
   assert.match(
     cargoToml,
-    /tauri-plugin-pilot = \{ git = "https:\/\/github\.com\/mpiton\/tauri-pilot", rev = "a6c5baa3f280fe75e75220be8e7689785a200d13", default-features = false \}/,
+    /tauri-plugin-pilot = \{ version = "0\.7\.2", default-features = false \}/,
   );
   assert.doesNotMatch(cargoToml, /tauri-plugin-webdriver/);
 });

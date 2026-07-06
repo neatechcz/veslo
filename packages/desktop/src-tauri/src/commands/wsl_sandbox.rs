@@ -277,13 +277,13 @@ mod tests {
         let package_json = root.path().join("package.json");
         std::fs::write(
             &package_json,
-            r#"{"name":"@neatech/veslo","opencodeVersion":"1.17.4"}"#,
+            r#"{"name":"@neatech/veslo","opencodeVersion":"1.17.13"}"#,
         )
         .expect("write package");
 
         assert_eq!(
             read_opencode_version_from_package_json(&package_json).as_deref(),
-            Some("1.17.4"),
+            Some("1.17.13"),
         );
     }
 

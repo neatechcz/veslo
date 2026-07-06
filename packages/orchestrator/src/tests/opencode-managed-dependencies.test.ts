@@ -219,13 +219,13 @@ describe("ensureOpencodeManagedTools", () => {
     await writeManagedDepsManifest(manifestPath, [
       {
         name: "@opencode-ai/plugin",
-        version: "1.17.4",
+        version: VESLO_MANAGED_PLUGIN_VERSION,
         files: [
           {
             path: "package.json",
             content: `${JSON.stringify({
               name: "@opencode-ai/plugin",
-              version: "1.17.4",
+              version: VESLO_MANAGED_PLUGIN_VERSION,
               type: "module",
               exports: {
                 ".": { import: "./dist/index.js" },
@@ -281,7 +281,7 @@ describe("ensureOpencodeManagedTools", () => {
         "utf8",
       ),
     ) as { version?: string };
-    expect(pluginPackageJson.version).toBe("1.17.4");
+    expect(pluginPackageJson.version).toBe(VESLO_MANAGED_PLUGIN_VERSION);
     expect(zodPackageJson.version).toBe("4.1.8");
     expect(openAiCompatiblePackageJson.version).toBe("3.0.5");
 
@@ -289,7 +289,7 @@ describe("ensureOpencodeManagedTools", () => {
     expect(status?.payload).toMatchObject({
       configDir,
       pluginMode: "vendored",
-      pluginVersion: "1.17.4",
+      pluginVersion: VESLO_MANAGED_PLUGIN_VERSION,
       zodMode: "vendored",
       zodVersion: "4.1.8",
       openAiCompatibleMode: "vendored",
@@ -325,7 +325,7 @@ describe("ensureOpencodeManagedTools", () => {
         "utf8",
       ),
     ) as { version?: string };
-    expect(pluginPackageJson.version).toBe("1.17.4");
+    expect(pluginPackageJson.version).toBe(VESLO_MANAGED_PLUGIN_VERSION);
     expect(zodPackageJson.version).toBe("4.1.8");
     expect(openAiCompatiblePackageJson.version).toBe("3.0.5");
 

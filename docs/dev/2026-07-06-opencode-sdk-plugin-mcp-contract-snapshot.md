@@ -16,9 +16,9 @@ Use this order when sources disagree:
 
 Do not migrate runtime config only because the v2 proposal uses a newer key.
 
-## Versions
+## Baseline Versions
 
-Installed in Veslo:
+Installed in Veslo before OSDKMCP08:
 
 | Package surface | Version |
 | --- | --- |
@@ -37,11 +37,11 @@ NPM latest on 2026-07-06:
 | `@opencode-ai/plugin` | `1.17.13` |
 | `opencode-ai` | `1.17.13` |
 
-Installed plugin package path:
+Baseline installed plugin package path:
 
 `node_modules/.pnpm/@opencode-ai+plugin@1.17.4__1d19f68c912aff9b3e795be1915f080e`
 
-## Contract Matrix
+## Baseline Contract Matrix
 
 | Surface | Installed legacy `dist/gen` | Installed `dist/v2/gen` | Context7 current docs | Context7 v2 proposal |
 | --- | --- | --- | --- | --- |
@@ -68,16 +68,25 @@ Installed SDK types:
 - session-scoped `Permission2.reply`: `packages/app/node_modules/@opencode-ai/sdk/dist/v2/gen/sdk.gen.d.ts:1559`
 - session-scoped `Question2.reply`: `packages/app/node_modules/@opencode-ai/sdk/dist/v2/gen/sdk.gen.d.ts:1580`
 
-Current Veslo parser risks:
+Baseline Veslo parser risks captured before OSDKMCP06/OSDKMCP07:
 
-- Server plugin list parsing keeps only string array items:
+- Server plugin list parsing kept only string array items:
   `packages/server/src/plugins.ts:63`
-- Plugin materializer list parsing keeps only string array items:
+- Plugin materializer list parsing kept only string array items:
   `packages/server/src/plugin-materializer.ts:646`
-- App plugin utility parsing still needs tuple-safe handling in OSDKMCP07:
+- App plugin utility parsing still needed tuple-safe handling in OSDKMCP07:
   `packages/app/src/app/utils/plugins.ts:12`
-- MCP read path still treats top-level `mcp` keys as server names:
+- MCP read path still treated all top-level `mcp` keys as server names:
   `packages/server/src/mcp.ts:26`
+
+Post-upgrade current state in this checkout:
+
+- OpenCode SDK/plugin/opencodeVersion surfaces were upgraded to `1.17.13`.
+- Server/app plugin parsing preserves current singular `plugin` tuple entries.
+- MCP list reads ignore future `mcp.servers` instead of listing a fake server.
+- MCP writes preserve existing future `mcp.servers` and reject the reserved
+  MCP name `servers` so the future-shape object cannot be overwritten through
+  current top-level `mcp.<name>` mutations.
 
 Context7 evidence:
 

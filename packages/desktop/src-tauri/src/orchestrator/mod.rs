@@ -18,6 +18,8 @@ use crate::types::{
 
 pub mod manager;
 
+const EXPECTED_OPENCODE_PLUGIN_VERSION: &str = "1.17.13";
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrchestratorAuthFile {
@@ -227,7 +229,7 @@ fn managed_deps_manifest_has_expected_packages(path: &Path) -> bool {
         })
     };
 
-    has_package("@opencode-ai/plugin", "1.17.4")
+    has_package("@opencode-ai/plugin", EXPECTED_OPENCODE_PLUGIN_VERSION)
         && has_package("zod", "4.1.8")
         && has_package("@ai-sdk/openai-compatible", "3.0.5")
         && has_package("@ai-sdk/provider", "4.0.2")
@@ -674,12 +676,12 @@ mod tests {
         fs::create_dir_all(&dir).expect("create test dir");
         fs::write(
             dir.join("versions.json.exe"),
-            r#"{"veslo-code":{"version":"1.17.4","sha256":"abc"}}"#,
+            r#"{"veslo-code":{"version":"1.17.13","sha256":"abc"}}"#,
         )
         .expect("write manifest");
 
         let version = resolve_manifest_opencode_version(&[dir.clone()]);
-        assert_eq!(version.as_deref(), Some("1.17.4"));
+        assert_eq!(version.as_deref(), Some("1.17.13"));
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -702,7 +704,7 @@ mod tests {
             r#"{
   "schemaVersion": 1,
   "packages": [
-    { "name": "@opencode-ai/plugin", "version": "1.17.4", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "@opencode-ai/plugin", "version": "1.17.13", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
     { "name": "zod", "version": "4.1.8", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
     { "name": "@ai-sdk/openai-compatible", "version": "3.0.5", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
     { "name": "@ai-sdk/provider", "version": "4.0.2", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },

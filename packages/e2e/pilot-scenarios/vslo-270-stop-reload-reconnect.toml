@@ -231,11 +231,14 @@ if (!window.__veslo270StopReloadReconnectStarted) {
         setProgress("waiting-ai-access");
         await waitUntil(async () => {
           const auth = await readDenAuthForAiAccess();
-          const userToken = auth?.token || "veslo-e2e-managed-ai-token";
+          if (!auth?.token || !auth.email || auth.email.endsWith("@example.test")) {
+            latest = { auth: auth ? { email: auth.email, userId: auth.userId, orgId: auth.orgId, denApiBase: auth.denApiBase, hasToken: Boolean(auth.token) } : null };
+            return false;
+          }
           const response = await fetch(`${connection.baseUrl}/ai-gateway/me/ai-access`, {
             headers: {
               authorization: `Bearer ${connection.clientToken}`,
-              "x-veslo-gateway-authorization": `Bearer ${userToken}`,
+              "x-veslo-gateway-authorization": `Bearer ${auth.token}`,
               accept: "application/json",
             },
           }).catch((error) => {

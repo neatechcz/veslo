@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -16,6 +16,17 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DEFAULT_READY_POLL_INTERVAL = 250;
 const DEFAULT_PILOT_SCENARIO_NAMES = ['smoke', 'navigation'] as const;
+const MANAGED_AI_INFERENCE_SCENARIO_NAMES = [
+  'global-unpublished-draft',
+  'message-send-registry-degraded',
+  'model-stream-retry-no-progress',
+  'pending-session-instance-isolation',
+  'runtime-cold-start-session-handoff',
+  'sidebar-session-retention',
+  'startup-sidebar-existing-sessions',
+  'vslo-270-stop-reload-reconnect',
+  'vslo-271-windows-idle-runtime-chain-recovery',
+] as const;
 const PILOT_SCENARIO_SUITES = {
   'current-gate': [
     'smoke',
@@ -62,6 +73,24 @@ type RunPilotCommandOptions = {
   inheritStdio?: boolean;
 };
 
+type PilotCommandCaptureResult = {
+  command: string;
+  args: string[];
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  timedOut: boolean;
+  error: string | null;
+};
+
+type PilotFailureDiagnosticCommand = {
+  name: string;
+  args: string[];
+  outputFile: string;
+  timeoutMs?: number;
+};
+
 type ResolvePilotScenarioSelectionOptions = {
   scenario?: string[];
   suite?: string;
@@ -79,6 +108,14 @@ type PortContentionFixture = {
   previousE2ePort: string | undefined;
 };
 
+type DenAuthSummary = {
+  denApiBase: string | null;
+  email: string | null;
+  hasToken: boolean;
+  source: string | null;
+  token: string | null;
+};
+
 export function resolvePilotBinary(env: Record<string, string | undefined> = process.env): string {
   return env.E2E_TAURI_PILOT_BIN?.trim() || 'tauri-pilot';
 }
@@ -88,6 +125,58 @@ export function buildPilotCommand(options: BuildPilotCommandOptions): { command:
     command: options.binary,
     args: ['--socket', options.socket, ...options.args],
   };
+}
+
+export function sanitizePilotArtifactName(value: string): string {
+  const base = basename(value.replaceAll('\\', '/')).replace(/\.toml$/i, '');
+  const safe = base
+    .replace(/[^A-Za-z0-9_.-]+/g, '-')
+    .replace(/^[.-]+|[.-]+$/g, '')
+    .slice(0, 96);
+  return safe || 'scenario';
+}
+
+export function tailText(value: string, maxLength = 20_000): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, 1_000)}\n...<truncated ${value.length - maxLength} chars>...\n${value.slice(-maxLength + 1_000)}`;
+}
+
+export function pilotFailureDiagnosticCommands(outputDir: string): PilotFailureDiagnosticCommand[] {
+  return [
+    { name: 'state', args: ['--window', 'main', 'state', '--json'], outputFile: 'state.json' },
+    { name: 'windows', args: ['windows', '--json'], outputFile: 'windows.json' },
+    { name: 'snapshot', args: ['--window', 'main', 'snapshot', '-i', '--depth', '6'], outputFile: 'snapshot.txt' },
+    { name: 'snapshot-json', args: ['--window', 'main', 'snapshot', '--json', '--depth', '5'], outputFile: 'snapshot.json' },
+    { name: 'logs', args: ['--window', 'main', 'logs', '--last', '200', '--json'], outputFile: 'logs.json' },
+    { name: 'network', args: ['--window', 'main', 'network', '--last', '200', '--json'], outputFile: 'network.json' },
+    {
+      name: 'network-failed',
+      args: ['--window', 'main', 'network', '--failed', '--last', '100', '--json'],
+      outputFile: 'network-failed.json',
+    },
+    { name: 'storage-local', args: ['--window', 'main', 'storage', '--json', 'list'], outputFile: 'storage-local.json' },
+    { name: 'storage-session', args: ['--window', 'main', 'storage', '--session', '--json', 'list'], outputFile: 'storage-session.json' },
+    { name: 'forms', args: ['--window', 'main', 'forms', '--json'], outputFile: 'forms.json' },
+    {
+      name: 'send-workflow-trace',
+      args: [
+        '--window',
+        'main',
+        'eval',
+        '--json',
+        '(window.__vesloDumpSendWorkflowTrace?.() ?? window.__vesloSendWorkflowTrace ?? []).slice(-300)',
+      ],
+      outputFile: 'send-workflow-trace.json',
+    },
+    { name: 'veslo-server-info', args: ['--window', 'main', 'ipc', '--json', 'veslo_server_info'], outputFile: 'veslo-server-info.json' },
+    { name: 'workspace-bootstrap', args: ['--window', 'main', 'ipc', '--json', 'workspace_bootstrap'], outputFile: 'workspace-bootstrap.json' },
+    {
+      name: 'screenshot',
+      args: ['--window', 'main', 'screenshot', join(outputDir, 'webview.png')],
+      outputFile: 'screenshot.txt',
+      timeoutMs: 10_000,
+    },
+  ];
 }
 
 export function defaultPilotScenarios(e2eRoot = resolve(__dirname, '..')): string[] {
@@ -108,7 +197,12 @@ export function pilotReadinessProbeCommands(): string[][] {
 
 export function resolvePilotDenAuthJson(env: Record<string, string | undefined> = process.env): string | null {
   const raw = env.VESLO_E2E_DEN_AUTH_JSON?.trim() || env.E2E_DEN_AUTH_JSON?.trim() || '';
-  return raw || null;
+  if (raw) return raw;
+
+  const snapshotPath = resolveLiveDenAuthSnapshotPath(env);
+  if (!snapshotPath || !existsSync(snapshotPath)) return null;
+
+  return readDenAuthJsonFromSnapshot(snapshotPath);
 }
 
 export function buildPilotDenAuthSeedScript(authJson: string): string {
@@ -183,14 +277,8 @@ export function scenarioSelectionNeedsSharePointMcpCatalogFixture(scenarios: str
 }
 
 export function scenarioSelectionNeedsManagedAiGatewayFixture(scenarios: string[]): boolean {
-  return scenarios.some((scenario) =>
-    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/message-send-registry-degraded.toml') ||
-    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/model-stream-retry-no-progress.toml') ||
-    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml') ||
-    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/runtime-cold-start-session-handoff.toml') ||
-    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/sidebar-session-retention.toml') ||
-    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/global-unpublished-draft.toml'),
-  );
+  void scenarios;
+  return false;
 }
 
 export function scenarioSelectionNeedsModelStreamRetryFixture(scenarios: string[]): boolean {
@@ -240,13 +328,27 @@ export function scenarioSelectionNeedsPortContentionFixture(scenarios: string[])
 }
 
 export function scenarioSelectionRequiresLiveManagedAiAuth(scenarios: string[]): boolean {
-  return scenarios.some((scenario) =>
-    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-271-windows-idle-runtime-chain-recovery.toml'),
-  );
+  return scenarios.some((scenario) => {
+    const normalized = scenario.replaceAll('\\', '/');
+    return MANAGED_AI_INFERENCE_SCENARIO_NAMES.some((name) =>
+      normalized.endsWith(`/pilot-scenarios/${name}.toml`),
+    );
+  });
 }
 
 function normalizeOptionalText(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function isLoopbackUrl(value: string | null): boolean {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
+  } catch {
+    return false;
+  }
 }
 
 function resolveLiveDenAuthSnapshotPath(env: Record<string, string | undefined>): string | null {
@@ -255,14 +357,25 @@ function resolveLiveDenAuthSnapshotPath(env: Record<string, string | undefined>)
   return snapshotPath ? resolve(snapshotPath) : null;
 }
 
-function readDenAuthSummaryFromSnapshot(snapshotPath: string): { email: string | null; hasToken: boolean } {
+function readDenAuthJsonFromSnapshot(snapshotPath: string): string {
   const raw = readFileSync(snapshotPath, 'utf8').replace(/^\uFEFF/, '');
   const snapshot = JSON.parse(raw) as { authJson?: unknown };
-  const authRaw = typeof snapshot.authJson === 'string' ? snapshot.authJson : raw;
-  const auth = JSON.parse(authRaw) as { token?: unknown; user?: { email?: unknown } };
+  return typeof snapshot.authJson === 'string' ? snapshot.authJson : raw;
+}
+
+function readDenAuthSummaryFromJson(authRaw: string, source: string | null): DenAuthSummary {
+  const parsed = JSON.parse(authRaw.replace(/^\uFEFF/, '')) as {
+    denApiBase?: unknown;
+    token?: unknown;
+    user?: { email?: unknown };
+    source?: unknown;
+  };
   return {
-    email: normalizeOptionalText(auth.user?.email),
-    hasToken: Boolean(normalizeOptionalText(auth.token)),
+    denApiBase: normalizeOptionalText(parsed.denApiBase),
+    email: normalizeOptionalText(parsed.user?.email),
+    hasToken: Boolean(normalizeOptionalText(parsed.token)),
+    source: normalizeOptionalText(parsed.source) ?? source,
+    token: normalizeOptionalText(parsed.token),
   };
 }
 
@@ -272,26 +385,48 @@ export function assertLiveManagedAiAuthForScenarioSelection(
 ): void {
   if (!scenarioSelectionRequiresLiveManagedAiAuth(scenarios)) return;
 
-  if (env.E2E_MANAGED_AI_GATEWAY_FIXTURE?.trim() !== '0') {
+  if (env.E2E_MANAGED_AI_GATEWAY_FIXTURE?.trim() === '1') {
     throw new Error(
-      'VSLO-271 pilot must run the live managed-AI path. Set E2E_MANAGED_AI_GATEWAY_FIXTURE=0 before running it.',
+      'Managed-AI inference pilot scenarios must run the live managed-AI path. Unset E2E_MANAGED_AI_GATEWAY_FIXTURE or set it to 0.',
     );
   }
 
-  const snapshotPath = resolveLiveDenAuthSnapshotPath(env);
-  if (!snapshotPath) {
+  const managedAiOverride =
+    normalizeOptionalText(env.VESLO_MANAGED_AI_BASE_URL) ?? normalizeOptionalText(env.VESLO_AI_GATEWAY_BASE_URL);
+  if (isLoopbackUrl(managedAiOverride)) {
     throw new Error(
-      'VSLO-271 pilot requires live Den auth. Set VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE to a real user snapshot, for example C:\\Users\\jajse\\.veslo\\den-auth.json.',
+      `Managed-AI inference pilot scenarios require a live managed-AI gateway, got loopback override: ${managedAiOverride}.`,
     );
   }
-  if (!existsSync(snapshotPath)) {
-    throw new Error(`VSLO-271 live Den auth snapshot does not exist: ${snapshotPath}`);
+
+  let summary: DenAuthSummary | null = null;
+  const rawAuthJson = normalizeOptionalText(env.VESLO_E2E_DEN_AUTH_JSON) ?? normalizeOptionalText(env.E2E_DEN_AUTH_JSON);
+  if (rawAuthJson) {
+    summary = readDenAuthSummaryFromJson(rawAuthJson, 'env');
+  } else {
+    const snapshotPath = resolveLiveDenAuthSnapshotPath(env);
+    if (!snapshotPath) {
+      throw new Error(
+        'Managed-AI inference pilot scenarios require live Den auth. Set VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE to a real user snapshot, for example C:\\Users\\jajse\\.veslo\\den-auth.json.',
+      );
+    }
+    if (!existsSync(snapshotPath)) {
+      throw new Error(`Live Den auth snapshot does not exist: ${snapshotPath}`);
+    }
+    summary = readDenAuthSummaryFromJson(readDenAuthJsonFromSnapshot(snapshotPath), snapshotPath);
   }
 
-  const summary = readDenAuthSummaryFromSnapshot(snapshotPath);
-  if (!summary.hasToken || !summary.email || summary.email.endsWith('@example.test')) {
+  const invalidReasons = [
+    !summary.hasToken ? 'token missing' : null,
+    !summary.email ? 'email missing' : null,
+    summary.email?.endsWith('@example.test') ? `test email ${summary.email}` : null,
+    summary.token?.startsWith('veslo-e2e-') ? 'E2E fixture token' : null,
+    isLoopbackUrl(summary.denApiBase) ? `loopback Den base ${summary.denApiBase}` : null,
+  ].filter((reason): reason is string => Boolean(reason));
+
+  if (invalidReasons.length > 0) {
     throw new Error(
-      `VSLO-271 pilot requires a real Den user auth snapshot, got email=${summary.email ?? 'missing'} token=${summary.hasToken ? 'present' : 'missing'}.`,
+      `Managed-AI inference pilot scenarios require a real Den user auth seed, got email=${summary.email ?? 'missing'} token=${summary.hasToken ? 'present' : 'missing'} source=${summary.source ?? 'unknown'} (${invalidReasons.join(', ')}).`,
     );
   }
 }
@@ -355,14 +490,20 @@ export async function runPilotCommand(options: RunPilotCommandOptions): Promise<
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env ?? process.env,
-      stdio: options.inheritStdio ? 'inherit' : ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     const output: Uint8Array[] = [];
     const errors: Uint8Array[] = [];
     let timeout: NodeJS.Timeout | null = null;
 
-    child.stdout?.on('data', (chunk: Uint8Array) => output.push(chunk));
-    child.stderr?.on('data', (chunk: Uint8Array) => errors.push(chunk));
+    child.stdout?.on('data', (chunk: Uint8Array) => {
+      output.push(chunk);
+      if (options.inheritStdio) process.stdout.write(chunk);
+    });
+    child.stderr?.on('data', (chunk: Uint8Array) => {
+      errors.push(chunk);
+      if (options.inheritStdio) process.stderr.write(chunk);
+    });
 
     if (options.timeoutMs) {
       timeout = setTimeout(() => {
@@ -386,9 +527,135 @@ export async function runPilotCommand(options: RunPilotCommandOptions): Promise<
       const stderr = Buffer.concat(errors).toString().trim();
       const stdout = Buffer.concat(output).toString().trim();
       const detail = [stderr, stdout].filter(Boolean).join('\n');
-      reject(new Error(`tauri-pilot exited with ${code ?? signal}: ${args.join(' ')}${detail ? `\n${detail}` : ''}`));
+      reject(new Error(`tauri-pilot exited with ${code ?? signal}: ${args.join(' ')}${detail ? `\n${tailText(detail)}` : ''}`));
     });
   });
+}
+
+async function runPilotCommandCapture(options: Omit<RunPilotCommandOptions, 'inheritStdio'>): Promise<PilotCommandCaptureResult> {
+  const binary = options.binary ?? resolvePilotBinary(options.env);
+  const socket = options.socket ?? resolvePilotSocketPath({ runtimeDir: resolvePilotRuntimeDir() });
+  const { command, args } = buildPilotCommand({ binary, socket, args: options.args });
+
+  return await new Promise<PilotCommandCaptureResult>((resolveCommand) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env ?? process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const output: Uint8Array[] = [];
+    const errors: Uint8Array[] = [];
+    let timeout: NodeJS.Timeout | null = null;
+    let timedOut = false;
+
+    child.stdout?.on('data', (chunk: Uint8Array) => output.push(chunk));
+    child.stderr?.on('data', (chunk: Uint8Array) => errors.push(chunk));
+
+    if (options.timeoutMs) {
+      timeout = setTimeout(() => {
+        timedOut = true;
+        child.kill(process.platform === 'win32' ? undefined : 'SIGKILL');
+      }, options.timeoutMs);
+    }
+
+    child.on('error', (error) => {
+      if (timeout) clearTimeout(timeout);
+      resolveCommand({
+        command,
+        args,
+        stdout: Buffer.concat(output).toString(),
+        stderr: Buffer.concat(errors).toString(),
+        exitCode: null,
+        signal: null,
+        timedOut,
+        error: error.message,
+      });
+    });
+
+    child.on('exit', (code, signal) => {
+      if (timeout) clearTimeout(timeout);
+      resolveCommand({
+        command,
+        args,
+        stdout: Buffer.concat(output).toString(),
+        stderr: Buffer.concat(errors).toString(),
+        exitCode: code,
+        signal,
+        timedOut,
+        error: null,
+      });
+    });
+  });
+}
+
+async function collectPilotFailureDiagnostics(options: {
+  binary: string;
+  socket: string;
+  cwd: string;
+  e2eRoot: string;
+  scenario: string;
+  error: unknown;
+  timeoutMs: number;
+}): Promise<void> {
+  if (process.env.E2E_PILOT_FAILURE_DIAGNOSTICS?.trim() === '0') return;
+
+  const scenarioName = sanitizePilotArtifactName(options.scenario);
+  const outputDir = join(options.e2eRoot, 'tauri-pilot-failures', `diagnostics-${Date.now()}-${scenarioName}`);
+  mkdirSync(outputDir, { recursive: true });
+
+  const errorText = options.error instanceof Error
+    ? `${options.error.stack ?? options.error.message}\n`
+    : `${String(options.error)}\n`;
+  writeFileSync(join(outputDir, 'failure.txt'), errorText, 'utf8');
+
+  const commands = pilotFailureDiagnosticCommands(outputDir);
+  const results: Array<{
+    name: string;
+    command: string;
+    args: string[];
+    outputFile: string;
+    exitCode: number | null;
+    signal: NodeJS.Signals | null;
+    timedOut: boolean;
+    error: string | null;
+  }> = [];
+
+  for (const diagnostic of commands) {
+    const result = await runPilotCommandCapture({
+      binary: options.binary,
+      socket: options.socket,
+      cwd: options.cwd,
+      args: diagnostic.args,
+      timeoutMs: diagnostic.timeoutMs ?? Math.min(5_000, Math.max(1_000, options.timeoutMs)),
+    });
+    const body = [
+      result.stdout.trim() ? result.stdout.trim() : null,
+      result.stderr.trim() ? `stderr:\n${result.stderr.trim()}` : null,
+      result.error ? `error:\n${result.error}` : null,
+      result.exitCode === 0 && !result.timedOut ? null : `status: exit=${result.exitCode ?? 'null'} signal=${result.signal ?? 'null'} timedOut=${result.timedOut}`,
+    ].filter(Boolean).join('\n\n');
+
+    writeFileSync(join(outputDir, diagnostic.outputFile), body ? `${body}\n` : '', 'utf8');
+    results.push({
+      name: diagnostic.name,
+      command: result.command,
+      args: result.args,
+      outputFile: diagnostic.outputFile,
+      exitCode: result.exitCode,
+      signal: result.signal,
+      timedOut: result.timedOut,
+      error: result.error,
+    });
+  }
+
+  writeFileSync(join(outputDir, 'summary.json'), JSON.stringify({
+    scenario: options.scenario,
+    capturedAt: new Date().toISOString(),
+    failure: errorText.trim(),
+    commands: results,
+  }, null, 2), 'utf8');
+
+  console.error(`[e2e] Pilot failure diagnostics captured: ${outputDir}`);
 }
 
 export async function ensurePilotReady(options: Omit<RunPilotCommandOptions, 'args'> = {}): Promise<void> {
@@ -465,9 +732,6 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     process.env.E2E_SKILL_REGISTRY_FIXTURE ||= '1';
     process.env.E2E_SKILL_REGISTRY_AUTH_BASE ||= 'fixture';
   }
-  if (scenarioSelectionNeedsManagedAiGatewayFixture(scenarios)) {
-    process.env.E2E_MANAGED_AI_GATEWAY_FIXTURE ||= '1';
-  }
   if (scenarioSelectionNeedsModelStreamRetryFixture(scenarios)) {
     process.env.E2E_RUN_ACTIVITY_PROBE_MODE ||= 'model-retry-no-progress';
     process.env.E2E_MANAGED_AI_RESPONSE_DELAY_MS ||= '30000';
@@ -498,13 +762,18 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     await seedPilotDenAuthIfConfigured({ binary, socket, cwd: e2eRoot, timeoutMs });
     for (const scenario of scenarios) {
       console.log(`[e2e] Running tauri-pilot scenario: ${scenario}`);
-      await runPilotCommand({
-        binary,
-        socket,
-        args: ['run', scenario],
-        cwd: e2eRoot,
-        inheritStdio: true,
-      });
+      try {
+        await runPilotCommand({
+          binary,
+          socket,
+          args: ['run', scenario],
+          cwd: e2eRoot,
+          inheritStdio: true,
+        });
+      } catch (error) {
+        await collectPilotFailureDiagnostics({ binary, socket, cwd: e2eRoot, e2eRoot, scenario, error, timeoutMs });
+        throw error;
+      }
       if (scenarioSelectionNeedsRelaunchReconnectCheck([scenario])) {
         const reconnectScenario = join(e2eRoot, 'pilot-scenarios', 'vslo-270-relaunch-reconnect.toml');
         if (!existsSync(reconnectScenario)) {
@@ -515,13 +784,26 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
         await startApp({ preserveIsolatedProfile: true });
         await ensurePilotReady({ binary, socket, cwd: e2eRoot, timeoutMs });
         console.log(`[e2e] Running tauri-pilot scenario: ${reconnectScenario}`);
-        await runPilotCommand({
-          binary,
-          socket,
-          args: ['run', reconnectScenario],
-          cwd: e2eRoot,
-          inheritStdio: true,
-        });
+        try {
+          await runPilotCommand({
+            binary,
+            socket,
+            args: ['run', reconnectScenario],
+            cwd: e2eRoot,
+            inheritStdio: true,
+          });
+        } catch (error) {
+          await collectPilotFailureDiagnostics({
+            binary,
+            socket,
+            cwd: e2eRoot,
+            e2eRoot,
+            scenario: reconnectScenario,
+            error,
+            timeoutMs,
+          });
+          throw error;
+        }
       }
     }
   } finally {

@@ -169,6 +169,33 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
         `Tauri command ${command} did not resolve within ${timeout}ms`,
       );
     };
+    const parseDenAuth = (raw) => {
+      if (!raw || typeof raw !== "string") return null;
+      try {
+        const parsed = JSON.parse(raw);
+        const token = normalize(parsed?.token);
+        if (!token) return null;
+        return {
+          token,
+          email: normalize(parsed?.user?.email),
+          userId: normalize(parsed?.user?.id),
+          orgId: normalize(parsed?.orgId || parsed?.org?.id),
+          denApiBase: trimBaseUrl(parsed?.denApiBase),
+        };
+      } catch {
+        return null;
+      }
+    };
+    const readDenAuthForAiAccess = async () => {
+      const storageAuth = parseDenAuth(
+        window.localStorage.getItem("veslo.den.auth") ||
+        window.sessionStorage.getItem("veslo.den.auth"),
+      );
+      if (storageAuth) return storageAuth;
+
+      const snapshot = await tauriInvoke("den_auth_snapshot_read", {}, 15000).catch(() => null);
+      return parseDenAuth(snapshot?.authJson);
+    };
     const isVisibleElement = (element) => {
       if (!(element instanceof HTMLElement)) return false;
       const rect = element.getBoundingClientRect();
@@ -305,10 +332,15 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
       let latest = null;
       setProgress("waiting-ai-access");
       return await waitUntil(async () => {
+        const auth = await readDenAuthForAiAccess();
+        if (!auth?.token || !auth.email || auth.email.endsWith("@example.test")) {
+          latest = { auth: auth ? { email: auth.email, userId: auth.userId, orgId: auth.orgId, denApiBase: auth.denApiBase, hasToken: Boolean(auth.token) } : null };
+          return false;
+        }
         const response = await fetch(`${connection.baseUrl}/ai-gateway/me/ai-access`, {
           headers: {
             authorization: `Bearer ${connection.clientToken}`,
-            "x-veslo-gateway-authorization": "Bearer veslo-e2e-managed-ai-token",
+            "x-veslo-gateway-authorization": `Bearer ${auth.token}`,
             accept: "application/json",
           },
         }).catch((error) => {
@@ -521,7 +553,7 @@ if (!window.__vesloGlobalUnpublishedDraftStarted) {
       }, {
         timeout: 90000,
         interval: 1000,
-        message: `Managed AI fixture response did not render for token ${token}. Body=${visibleBodyText().slice(0, 2500)} Trace=${JSON.stringify(sendTrace())}`,
+        message: `Managed AI response did not render for token ${token}. Body=${visibleBodyText().slice(0, 2500)} Trace=${JSON.stringify(sendTrace())}`,
       });
       const createEntries = sendTrace()
         .slice(traceLengthBeforeClick)

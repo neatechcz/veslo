@@ -314,7 +314,7 @@ pub fn spawn_orchestrator_dev_autostart(app: AppHandle) {
         // frontend has a chance to surface the user's engineSource preference,
         // so without this override the path resolver falls back to system
         // PATH and picks /opt/homebrew/bin/opencode (typically 1.3.2),
-        // incompatible with the bundled orchestrator (expects 1.17.4).
+        // incompatible with the bundled orchestrator (expects 1.17.13).
         // Engine spawns then silently time out.
         let result = engine_start(
             app.clone(),

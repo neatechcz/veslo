@@ -31,13 +31,20 @@ This guide is based on three sources:
 - Tauri v2 capability/permission docs:
   <https://v2.tauri.app/security/capabilities/>
 - current local CLI help from `C:\Users\jajse\.cargo\bin\tauri-pilot.exe`
+  (`tauri-pilot 0.7.2`)
 - Veslo's pinned plugin integration in `packages/desktop/src-tauri`
 
-Veslo currently pins `tauri-plugin-pilot` from
-`https://github.com/mpiton/tauri-pilot` at git revision
-`a6c5baa3f280fe75e75220be8e7689785a200d13`. Treat upstream docs as the API
-shape, but prefer local `tauri-pilot.exe <command> --help` when a command's
-options matter for a live run.
+Veslo currently pins `tauri-plugin-pilot = "0.7.2"` from crates.io. Keep the
+local CLI on the same version:
+
+```powershell
+tauri-pilot --version
+cargo install tauri-pilot-cli --version 0.7.2 --locked
+```
+
+Treat upstream docs as the API shape, but prefer local
+`tauri-pilot.exe <command> --help` when a command's options matter for a live
+run.
 
 Relevant local compatibility points:
 
@@ -151,6 +158,128 @@ Rebuild the E2E debug Tauri binary when any of these changed:
 Changing only a TOML pilot scenario or `packages/e2e/helpers/pilot-runner.ts`
 does not require a Tauri rebuild. Rerun the package script.
 
+## E2E Build Verification
+
+Use this build path when validating the actual desktop binary that Pilot will
+drive:
+
+```powershell
+pnpm --filter veslo-server build:bin
+
+$env:VESLO_SIDECAR_FORCE_BUILD = "1"
+pnpm --filter @neatech/veslo run prepare:sidecar
+Remove-Item Env:\VESLO_SIDECAR_FORCE_BUILD
+
+Push-Location packages\desktop
+pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e
+Pop-Location
+```
+
+After the build, these invariants should hold:
+
+- `packages/desktop/src-tauri/target/debug/veslo.exe` exists and has a fresh
+  timestamp.
+- `packages/desktop/src-tauri/tauri.e2e.conf.json` uses identifier
+  `com.neatech.veslo.e2e`.
+- `packages/desktop/src-tauri/tauri.conf.json` keeps the release identifier
+  `com.neatech.veslo`.
+- `pilot:default` appears only in `tauri.e2e.conf.json`; it must not appear in
+  the default capability files or release config.
+- `tauri_plugin_pilot::init()` remains guarded by
+  `#[cfg(all(debug_assertions, feature = "e2e"))]`.
+- `packages/desktop/src-tauri/Cargo.toml` keeps the `e2e` feature wired to
+  `tauri-plugin-pilot/press`.
+- `tauri-pilot --version` reports `tauri-pilot 0.7.2`, matching
+  `tauri-plugin-pilot = "0.7.2"`.
+- The package runner still seeds WebView Den auth from
+  `VESLO_E2E_DEN_AUTH_JSON` or `VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE` before a
+  TOML scenario runs.
+- Managed-AI/inference scenarios still reject
+  `E2E_MANAGED_AI_GATEWAY_FIXTURE=1` and do not auto-enable that fixture.
+
+Useful local checks:
+
+```powershell
+Test-Path packages\desktop\src-tauri\target\debug\veslo.exe
+Select-String -Path packages\desktop\src-tauri\tauri.e2e.conf.json -Pattern "com.neatech.veslo.e2e|pilot:default"
+Select-String -Path packages\desktop\src-tauri\tauri.conf.json,packages\desktop\src-tauri\capabilities\*.json -Pattern "pilot:default"
+Select-String -Path packages\desktop\src-tauri\src\lib.rs -Pattern "debug_assertions, feature = `"e2e`"|tauri_plugin_pilot::init"
+Select-String -Path packages\desktop\src-tauri\Cargo.toml -Pattern "e2e =|tauri-plugin-pilot"
+tauri-pilot --version
+```
+
+Then run a non-inference Pilot smoke to prove the rebuilt binary accepts the
+socket and Pilot capability:
+
+```powershell
+pnpm --filter @neatech/veslo-e2e test:pilot -- --scenario smoke
+```
+
+For managed-AI/inference acceptance, add the live seed and keep the fixture
+disabled:
+
+```powershell
+$env:VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE = "C:\Users\jajse\.veslo\den-auth.json"
+$env:E2E_MANAGED_AI_GATEWAY_FIXTURE = "0"
+pnpm --filter @neatech/veslo-e2e test:pilot -- --scenario message-send-registry-degraded
+```
+
+## Scenario Authoring Boundaries
+
+Pilot scenarios should prove the same user-facing path the desktop app uses in
+production.
+
+- Prefer visible UI actions and app/server readiness checks over direct Tauri
+  command shortcuts.
+- Do not call `engine_start`, `engine_info`, or
+  `orchestrator_workspace_activate` from ordinary active-workspace send
+  scenarios. Those commands are legacy/debug control points and can bypass the
+  current lazy workspace runtime path. Use them only when the scenario
+  explicitly tests lifecycle recovery, workspace switching, isolation, or debug
+  command behavior.
+- Long-running eval steps should start an async task, write a hidden DOM
+  progress/error/complete marker, and let a following `wait` step observe the
+  marker. That keeps the Pilot command responsive while preserving rich failure
+  detail.
+- Eval scripts with `await` must still parse as valid JavaScript before Pilot
+  runs them. A syntax error in the script body can surface as Pilot's
+  "top-level await detected" wrapper error. For large TOML scripts, run a
+  local parse check against the `script = '''...'''` body before starting a
+  full live scenario.
+- For managed-AI/inference scenarios, read Den auth from WebView storage first
+  and then from `den_auth_snapshot_read`; never use a hardcoded
+  `veslo-e2e-*` token.
+
+## Automatic Failure Diagnostics
+
+The package runner captures a diagnostic bundle whenever `tauri-pilot run`
+fails. Look under:
+
+```text
+packages/e2e/tauri-pilot-failures/diagnostics-<timestamp>-<scenario>/
+```
+
+Start with these files:
+
+- `failure.txt`: original runner error with the tauri-pilot step output tail.
+- `summary.json`: command list, exit codes, and artifact names.
+- `snapshot.txt`: accessibility tree around the failed state.
+- `logs.json`: recent browser console logs.
+- `network.json` and `network-failed.json`: recent requests and failed
+  requests.
+- `veslo-server-info.json` and `workspace-bootstrap.json`: app-side Tauri IPC
+  state.
+- `storage-local.json` and `storage-session.json`: WebView storage, including
+  whether Den auth was seeded.
+- `webview.png`: full-page WebView screenshot when screenshot capture succeeds.
+
+Use these artifacts before rerunning a scenario. They usually answer whether
+the failure was UI targeting, missing auth seed, local server startup,
+workspace bootstrap, runtime recovery, or remote gateway/network behavior.
+
+Set `E2E_PILOT_FAILURE_DIAGNOSTICS=0` only for narrow runner debugging where
+the diagnostic probes themselves would obscure the original process failure.
+
 ## E2E Profile And Auth Knobs
 
 The E2E runner does not behave like `pnpm dev`.
@@ -170,21 +299,25 @@ For live Den auth in the E2E runner, set the E2E seed input:
 $env:VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE = "C:\Users\jajse\.veslo\den-auth.json"
 ```
 
-The runner copies that snapshot into the isolated profile and launches the app
-with `VESLO_DEN_AUTH_SNAPSHOT_PATH` pointing at the copied file. Setting only
-`VESLO_DEN_AUTH_SNAPSHOT_PATH` is correct for a manual `pnpm dev` run, but it
-is not the primary input for the E2E launcher.
+The runner copies that snapshot into the isolated profile, launches the app
+with `VESLO_DEN_AUTH_SNAPSHOT_PATH` pointing at the copied file, and seeds the
+WebView Den localStorage from the same snapshot before the TOML scenario runs.
+Setting only `VESLO_DEN_AUTH_SNAPSHOT_PATH` is correct for a manual `pnpm dev`
+run, but it is not the primary input for the E2E launcher.
 
-For a live managed AI path, disable the E2E managed-AI fixture:
+Managed-AI/inference pilot scenarios must use the live Den auth seed. They
+fail fast when the seed is missing, when it uses an `@example.test` user,
+when it carries an E2E fixture token, when it points Den at loopback, or when
+a managed-AI gateway loopback override is set. Keep this explicit no-fixture
+setting in live runs:
 
 ```powershell
 $env:E2E_MANAGED_AI_GATEWAY_FIXTURE = "0"
 ```
 
-Several pilot scenarios opt into the fixture by default through
-`scenarioSelectionNeedsManagedAiGatewayFixture`. If the goal is to debug live
-gateway behavior, override the fixture explicitly and record that override in
-the run notes.
+`E2E_MANAGED_AI_GATEWAY_FIXTURE=1` is not valid acceptance evidence for
+managed-AI/inference pilot scenarios. It can still be used for narrow fixture
+debugging outside those scenarios, but record it as fixture-only evidence.
 
 To remove Veslo automations from a pilot diagnosis without deleting files:
 
@@ -398,7 +531,8 @@ re-running it:
 - whether the run used `pnpm dev` or the E2E debug binary
 - profile mode: real profile, isolated profile, or custom `E2E_OPENCODE_HOME`
 - auth source and expected Den user email
-- fixture state, especially `E2E_MANAGED_AI_GATEWAY_FIXTURE`
+- fixture state, especially that `E2E_MANAGED_AI_GATEWAY_FIXTURE` is unset or
+  `0` for managed-AI/inference runs
 - automation plugin state
 - selected workspace id, conversation id, run id, and OpenCode session id
 - `runtime-trace.ndjson`, `send-workflow-trace.ndjson`, and app stdout/stderr

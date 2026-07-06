@@ -686,6 +686,9 @@ Result:
   a fake MCP named `servers`.
 - Future `mcp.servers` is preserved on write paths while Veslo mutates current
   top-level `mcp.<name>` entries for add, remove, and runtime-token refresh.
+- The reserved MCP name `servers` is rejected on current write paths so
+  proposal-shape `mcp.servers` cannot be overwritten through an MCP server
+  mutation.
 - Hub MCP install remains top-level `mcp.<name>` and is covered by test.
 - Validator accepts override-only `{ enabled: false }` and `{ enabled: true }`
   sentinel entries.
@@ -894,9 +897,9 @@ Result on 2026-07-06:
   app node-test bundle 56 pass; app plugin bundle 3 pass; server bundle 106
   pass with 4 symlink tests skipped; orchestrator bundle 8 pass; router
   targeted bundle 8 pass.
-- The router `test:unit` script now runs the stable unit subset with explicit
-  file paths and passed with 23 pass, 0 fail; bridge E2E-style router tests
-  remain outside this unit gate.
+- The router `test:unit` script now builds first and runs a Windows-safe unit
+  runner that includes all `test/*.test.js` files except bridge E2E-style
+  tests; it passed with 23 pass, 0 fail.
 - Fixed an app test double in
   `packages/app/src/app/tests/context/workspace-server-registry.test.ts` so its
   fake `activateWorkspace` returns the current Veslo server client payload

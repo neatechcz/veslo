@@ -21,8 +21,8 @@ const opencode: WslOpencodeRuntime = {
   bin: "/usr/local/bin/opencode",
   binDir: "/usr/local/bin",
   source: "path",
-  version: "1.17.4",
-  expectedVersion: "1.17.4",
+  version: "1.17.13",
+  expectedVersion: "1.17.13",
 };
 
 function spawnOptions(configDir: string): SandboxSpawnOptions {
@@ -39,7 +39,7 @@ function spawnOptions(configDir: string): SandboxSpawnOptions {
     workspacePath: "C:\\Users\\alice\\project",
     engine: {
       kind: "opencode",
-      expectedVersion: "1.17.4",
+      expectedVersion: "1.17.13",
     },
   };
 }
