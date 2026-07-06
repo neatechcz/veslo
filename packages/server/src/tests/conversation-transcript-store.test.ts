@@ -130,6 +130,50 @@ describe("conversation transcript store", () => {
     expect((result!.partsByMessageId["msg-1"][0] as { text: string }).text).toBe("final");
   });
 
+  test("preserves completed text parts when a stale snapshot repeats the same part id empty", async () => {
+    const store = await newStore();
+    const base = {
+      workspaceId: "ws-a",
+      engineSessionId: "ses-1",
+      messages: [
+        {
+          id: "msg-1",
+          role: "assistant",
+          createdAt: 10,
+          payload: { id: "msg-1", role: "assistant" },
+          parts: [
+            {
+              id: "prt-1",
+              type: "text",
+              payload: { id: "prt-1", type: "text", text: "final answer", time: { start: 12, end: 20 } },
+            },
+          ],
+        },
+      ],
+    };
+    await store.appendTranscript(base);
+    await store.appendTranscript({
+      ...base,
+      messages: [
+        {
+          ...base.messages[0],
+          parts: [
+            {
+              id: "prt-1",
+              type: "text",
+              payload: { id: "prt-1", type: "text", text: "", time: { start: 12 } },
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await store.getTranscript({ workspaceId: "ws-a", engineSessionId: "ses-1" });
+    const part = result!.partsByMessageId["msg-1"][0] as { text: string; time: { end?: number } };
+    expect(part.text).toBe("final answer");
+    expect(part.time.end).toBe(20);
+  });
+
   test("replaces a message part snapshot and deletes removed messages", async () => {
     const store = await newStore();
     await store.appendTranscript({

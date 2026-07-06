@@ -49,6 +49,8 @@ export type ConversationTranscriptStore = {
 
 type MessageRow = { message_id: string; payload_json: string };
 type PartRow = { message_id: string; payload_json: string };
+type PartPayloadRow = { payload_json: string };
+type PartIdRow = { part_id: string };
 
 const normalizeText = (value: string | null | undefined) => value?.trim() ?? "";
 
@@ -70,6 +72,52 @@ const safeParse = (raw: string): unknown => {
   } catch {
     return null;
   }
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const readNonEmptyText = (value: unknown): string => {
+  if (!isRecord(value) || typeof value.text !== "string") return "";
+  return normalizeText(value.text);
+};
+
+const isTextPartPayload = (value: unknown): value is Record<string, unknown> =>
+  isRecord(value) && (value.type === "text" || typeof value.text === "string");
+
+const mergeTimeRecord = (existing: unknown, incoming: unknown): unknown => {
+  if (!isRecord(existing) || !isRecord(incoming)) return incoming ?? existing;
+  return {
+    ...existing,
+    ...incoming,
+    start: incoming.start ?? existing.start,
+    end: incoming.end ?? existing.end,
+  };
+};
+
+const mergePartPayload = (existing: unknown, incoming: unknown): unknown => {
+  if (!isTextPartPayload(existing) || !isTextPartPayload(incoming)) return incoming;
+  const existingText = readNonEmptyText(existing);
+  const incomingText = readNonEmptyText(incoming);
+  if (!existingText || incomingText) {
+    return {
+      ...existing,
+      ...incoming,
+      time: mergeTimeRecord(existing.time, incoming.time),
+    };
+  }
+  return {
+    ...incoming,
+    text: existing.text,
+    time: mergeTimeRecord(existing.time, incoming.time),
+  };
+};
+
+const mergePartPayloadJson = (existingRaw: string | null | undefined, incomingRaw: string): string => {
+  if (!existingRaw) return incomingRaw;
+  const existing = safeParse(existingRaw);
+  const incoming = safeParse(incomingRaw);
+  return JSON.stringify(mergePartPayload(existing, incoming));
 };
 
 function createDatabase(dbPath: string): Database {
@@ -189,6 +237,15 @@ export function createConversationTranscriptStore(options?: {
           `DELETE FROM conversation_part
            WHERE workspace_id = ?1 AND engine_session_id = ?2 AND message_id = ?3 AND part_id = ?4`,
         );
+        const listPartsForMessage = db.query<PartIdRow, [string, string, string]>(
+          `SELECT part_id FROM conversation_part
+           WHERE workspace_id = ?1 AND engine_session_id = ?2 AND message_id = ?3`,
+        );
+        const readPartPayload = db.query<PartPayloadRow, [string, string, string, string]>(
+          `SELECT payload_json FROM conversation_part
+           WHERE workspace_id = ?1 AND engine_session_id = ?2 AND message_id = ?3 AND part_id = ?4
+           LIMIT 1`,
+        );
 
         db.exec("BEGIN IMMEDIATE");
         try {
@@ -229,20 +286,31 @@ export function createConversationTranscriptStore(options?: {
               JSON.stringify(message.payload ?? null),
               seenAt,
             );
-            // The app sends a snapshot of the current parts for each message.
-            // Replace that set so removed/transient parts do not resurrect on
-            // the next host-first transcript read.
-            deletePartsForMessage.run(workspaceId, engineSessionId, messageId);
-            for (const part of message.parts ?? []) {
+            const parts = (message.parts ?? [])
+              .map((part) => ({
+                ...part,
+                id: normalizeText(part.id),
+              }))
+              .filter((part) => part.id);
+            const incomingPartIds = new Set(parts.map((part) => part.id));
+            for (const row of listPartsForMessage.all(workspaceId, engineSessionId, messageId)) {
+              if (!incomingPartIds.has(row.part_id)) {
+                deletePart.run(workspaceId, engineSessionId, messageId, row.part_id);
+              }
+            }
+            for (const part of parts) {
               const partId = normalizeText(part.id);
               if (!partId) continue;
+              const incomingPayloadJson = JSON.stringify(part.payload ?? null);
+              const existingPayloadJson =
+                readPartPayload.get(workspaceId, engineSessionId, messageId, partId)?.payload_json ?? null;
               insertPart.run(
                 workspaceId,
                 engineSessionId,
                 messageId,
                 partId,
                 normalizeText(part.type) || null,
-                JSON.stringify(part.payload ?? null),
+                mergePartPayloadJson(existingPayloadJson, incomingPayloadJson),
                 seenAt,
               );
             }
