@@ -237,9 +237,18 @@ function hasUsableServerClientCredential(
   const isOpenAiCompatibleGatewayProvider = providerId === "codex_oauth" || providerId === "openai_compatible";
   if (isOpenAiCompatibleGatewayProvider) {
     const apiKey = typeof options.apiKey === "string" ? options.apiKey.trim() : "";
+    const headers = readConfigObject(options.headers);
+    const authorization = typeof headers.Authorization === "string"
+      ? headers.Authorization.trim()
+      : typeof headers.authorization === "string"
+        ? headers.authorization.trim()
+        : "";
     return apiKey === VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE ||
       apiKey === expectedToken ||
-      apiKey === REDACTED_SECRET_VALUE;
+      apiKey === REDACTED_SECRET_VALUE ||
+      authorization === `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}` ||
+      authorization === `Bearer ${expectedToken}` ||
+      authorization === REDACTED_SECRET_VALUE;
   }
 
   const models = readConfigObject(providerConfig.models);

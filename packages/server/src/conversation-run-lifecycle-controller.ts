@@ -491,31 +491,63 @@ export function createConversationRunLifecycleController(
     ).catch(() => undefined);
   };
 
-  const abortOpenCodeAfterProviderStartTimeout = async (input: ConversationRunLifecycleSubmitInput) => {
-    if (!options.abortOpenCode) return;
-    await input.runTrace.step(
-      "server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout",
-      () => options.abortOpenCode!({
-        runTrace: input.runTrace,
-        workspace: input.workspace,
-        target: input.target,
-        runId: input.runId,
-      }),
-      {
-        workspaceId: input.workspace.id,
-        conversationId: input.target.conversationId,
-        runId: input.runId,
-        opencodeSessionId: input.target.opencodeSessionId,
-      },
-    ).catch((abortError) => {
-      input.runTrace.record("server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout:error", {
-        workspaceId: input.workspace.id,
-        conversationId: input.target.conversationId,
-        runId: input.runId,
-        opencodeSessionId: input.target.opencodeSessionId,
-        error: abortError instanceof Error ? abortError.message : String(abortError),
-      });
-    });
+  const scheduleProviderStartWatch = (
+    input: ConversationRunLifecycleSubmitInput,
+    lifecycleOwner: OrchestratorLifecycleClient | null,
+    providerWatchStartedAt: number,
+    unregisterRegisteredAiGatewayRun: () => void,
+  ): boolean => {
+    if (!lifecycleOwner || input.kind !== "prompt_async" || input.expectAiGatewayStart !== true) return false;
+
+    const tracePayload = {
+      workspaceId: input.workspace.id,
+      conversationId: input.target.conversationId,
+      runId: input.runId,
+      clientMessageId: input.clientMessageId,
+      origin: input.origin,
+      opencodeSessionId: input.target.opencodeSessionId,
+    };
+
+    if (!options.aiGatewayProviderWatch) {
+      input.runTrace.record("server:conversation-run:ai-gateway-provider-start-watch:unavailable", tracePayload);
+      return false;
+    }
+
+    input.runTrace.record("server:conversation-run:ai-gateway-provider-start-watch:scheduled", tracePayload);
+    void (async () => {
+      try {
+        const providerStart = await input.runTrace.step(
+          "server:conversation-run:ai-gateway-provider-start-watch",
+          () => options.aiGatewayProviderWatch!.waitForProviderStart({
+            workspaceId: input.workspace.id,
+            conversationId: input.target.conversationId,
+            runId: input.runId,
+            opencodeSessionId: input.target.opencodeSessionId,
+            clientMessageId: input.clientMessageId,
+            origin: input.origin,
+            startedAt: providerWatchStartedAt,
+          }),
+          tracePayload,
+        );
+        if (!providerStart.started) {
+          input.runTrace.record("server:conversation-run:ai-gateway-provider-start-watch:timeout", {
+            ...tracePayload,
+            timeoutMs: providerStart.timeoutMs,
+            message: `AI gateway provider request did not start within ${providerStart.timeoutMs}ms.`,
+          });
+          scheduleAcceptedRunReconcile(input, "ai-gateway-provider-start-timeout", 0);
+        }
+      } catch (error) {
+        input.runTrace.record("server:conversation-run:ai-gateway-provider-start-watch:error", {
+          ...tracePayload,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        scheduleAcceptedRunReconcile(input, "ai-gateway-provider-start-watch-error", 0);
+      } finally {
+        unregisterRegisteredAiGatewayRun();
+      }
+    })();
+    return true;
   };
 
   const submitAcceptedRun = async (
@@ -557,57 +589,13 @@ export function createConversationRunLifecycleController(
       throw error;
     }
 
-    try {
-      if (lifecycleOwner && input.kind === "prompt_async" && input.expectAiGatewayStart) {
-        if (!options.aiGatewayProviderWatch) {
-          throw new Error("AI gateway provider-start watch port is required for managed prompt runs");
-        }
-        const providerStart = await input.runTrace.step(
-          "server:conversation-run:ai-gateway-provider-start-watch",
-          () => options.aiGatewayProviderWatch!.waitForProviderStart({
-            workspaceId: input.workspace.id,
-            conversationId: input.target.conversationId,
-            runId: input.runId,
-            opencodeSessionId: input.target.opencodeSessionId,
-            clientMessageId: input.clientMessageId,
-            origin: input.origin,
-            startedAt: providerWatchStartedAt,
-          }),
-          {
-            workspaceId: input.workspace.id,
-            conversationId: input.target.conversationId,
-            runId: input.runId,
-            clientMessageId: input.clientMessageId,
-            origin: input.origin,
-            opencodeSessionId: input.target.opencodeSessionId,
-          },
-        );
-        if (!providerStart.started) {
-          const error = `AI gateway provider request did not start within ${providerStart.timeoutMs}ms.`;
-          await markLifecycleFailed(
-            input,
-            lifecycleOwner,
-            "server:conversation-run:lifecycle-mark-failed-ai-gateway-provider-start-timeout",
-            error,
-            {
-              opencodeSessionId: input.target.opencodeSessionId,
-              timeoutMs: providerStart.timeoutMs,
-            },
-          );
-          scheduleAcceptedRunReconcile(input, "ai-gateway-provider-start-timeout", 0);
-          await abortOpenCodeAfterProviderStartTimeout(input);
-          throw new ApiError(504, "ai_gateway_provider_start_timeout", error, {
-            workspaceId: input.workspace.id,
-            conversationId: input.target.conversationId,
-            runId: input.runId,
-            opencodeSessionId: input.target.opencodeSessionId,
-            clientMessageId: input.clientMessageId,
-            origin: input.origin,
-            timeoutMs: providerStart.timeoutMs,
-          });
-        }
-      }
-    } finally {
+    const providerWatchOwnsGatewayRun = scheduleProviderStartWatch(
+      input,
+      lifecycleOwner,
+      providerWatchStartedAt,
+      unregisterRegisteredAiGatewayRun,
+    );
+    if (!providerWatchOwnsGatewayRun) {
       unregisterRegisteredAiGatewayRun();
     }
 

@@ -117,6 +117,11 @@ describe("ensureOpencodeManagedTools", () => {
         type: "module",
       },
     );
+    await writePackageJson(configDir, {
+      dependencies: {
+        "@opencode-ai/plugin": VESLO_MANAGED_PLUGIN_VERSION,
+      },
+    });
 
     await ensureOpencodeManagedTools(configDir, {
       home,
@@ -131,7 +136,7 @@ describe("ensureOpencodeManagedTools", () => {
       dependencies?: Record<string, string>;
     };
     expect(configPackageJson.dependencies?.["@ai-sdk/openai-compatible"]).toBe("3.0.5");
-    expect(configPackageJson.dependencies?.["@opencode-ai/plugin"]).toBeUndefined();
+    expect(configPackageJson.dependencies?.["@opencode-ai/plugin"]).toBe(VESLO_MANAGED_PLUGIN_VERSION);
 
     const status = events.find((entry) => entry.event === "opencode-managed-dependencies:status");
     expect(status?.payload).toMatchObject({

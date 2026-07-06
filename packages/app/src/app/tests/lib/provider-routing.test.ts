@@ -160,7 +160,9 @@ test("codex_oauth provider config points at ai-gateway codex route", () => {
 
   assert.equal(parsed.provider?.codex_oauth?.options?.baseURL, "http://127.0.0.1:4318/ai-gateway/providers/codex_oauth/v1");
   assert.equal(parsed.provider?.codex_oauth?.options?.apiKey, VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE);
-  assert.equal(parsed.provider?.codex_oauth?.options?.headers, undefined);
+  assert.deepEqual(parsed.provider?.codex_oauth?.options?.headers, {
+    Authorization: `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`,
+  });
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.name, "gpt-5.4");
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.tool_call, true);
   assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.reasoning, true);
@@ -253,7 +255,9 @@ test("openai_compatible provider config points at ai-gateway custom route", () =
     "http://127.0.0.1:4318/ai-gateway/providers/openai_compatible/v1",
   );
   assert.equal(parsed.provider?.openai_compatible?.options?.apiKey, VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE);
-  assert.equal(parsed.provider?.openai_compatible?.options?.headers, undefined);
+  assert.deepEqual(parsed.provider?.openai_compatible?.options?.headers, {
+    Authorization: `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`,
+  });
   assert.equal(parsed.provider?.openai_compatible?.models?.["custom-model"]?.name, "custom-model");
   assert.equal(parsed.provider?.openai_compatible?.models?.["custom-model"]?.tool_call, true);
   assert.equal(parsed.provider?.openai_compatible?.models?.["custom-model"]?.reasoning, true);

@@ -350,9 +350,14 @@ Current live gateway behavior can return `/api/me/ai-access` with
 Veslo server then forwards the caller Den authorization to the provider route.
 The generated OpenCode provider must still contain
 `env:["VESLO_OPENCODE_SERVER_CLIENT_TOKEN"]` and
-`apiKey:"{env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}"`; otherwise OpenCode may
-surface only `AI_APICallError: Unauthorized` and the server watchdog may see no
-provider hit.
+`apiKey:"{env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}"`. For
+`@ai-sdk/openai-compatible` gateway providers it must also contain
+`options.headers.Authorization:"Bearer {env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}"`
+so the local Veslo server receives the internal client auth header. If this is
+missing, OpenCode may surface only `AI_APICallError: Unauthorized` /
+`Invalid bearer token`, and the server watchdog may see no provider hit. This is
+not a provider API-key mode; the upstream credential still comes from the
+managed AI gateway runtime authorization.
 
 If the provider route returned `200` and the OpenCode SQLite transcript has
 the assistant text, but the UI still renders no assistant answer, compare the
@@ -361,15 +366,26 @@ part with `text: ""` in `conversation_part.payload_json` means a stale
 streaming snapshot overwrote the richer engine transcript. That is an app/server
 transcript ingestion bug, not an auth or AI gateway failure.
 
-If the send run times out with `AI gateway provider request did not start within
-90000ms` and the OpenCode log has `background dependency install failed` or
+Provider-start timeout is diagnostic evidence, not a valid reason to fail or
+abort a live inference by itself. After OpenCode accepts `prompt_async`, the
+conversation run route should return `submitted`; the provider-start watch keeps
+the active gateway context long enough to correlate the first provider request
+and records `server:conversation-run:ai-gateway-provider-start-watch:timeout`
+only if that request is not observed. If the UI still receives no answer, keep
+following OpenCode errors/events, lifecycle status, transcript reconcile, and
+gateway proxy traces. Do not treat the watchdog timeout alone as proof that the
+hosted AI gateway rejected the request.
+
+If the OpenCode log has `background dependency install failed` or
 `ReleaseError: metadata missing`, inspect the orchestrator runtime trace for
 `opencode-managed-dependencies:manifest-tree-vendored`. A healthy shared config
-vendors the managed provider packages before inference, keeps
-`@opencode-ai/plugin` out of the generated `package.json` dependency install
-list, and still has `node_modules/@opencode-ai/plugin/package.json` locally for
-managed tools. In that state the next expected gateway evidence is a provider
-route hit under `/ai-gateway/providers/<provider>/v1/chat/completions`.
+vendors the managed provider packages before inference and declares the same
+managed runtime packages in the generated config `package.json`, including
+`@opencode-ai/plugin` because Veslo managed tools import it. The package must
+also exist locally at `node_modules/@opencode-ai/plugin/package.json`; OpenCode
+should not have to discover or repair that dependency during inference. In that
+state the next expected gateway evidence is a provider route hit under
+`/ai-gateway/providers/<provider>/v1/chat/completions`.
 
 Useful trace patterns:
 
@@ -389,8 +405,10 @@ Known 2026-07-03 evidence:
   `/providers/codex_oauth/v1/chat/completions` twice with `200` SSE responses.
 - The server later marked the conversation run `completed` through transcript
   reconcile.
-- E2E Pilot runs with the corrected live login and automations disabled could
-  still log `AI gateway provider request did not start within 30000ms`.
+- E2E Pilot runs with the corrected live login and automations disabled used to
+  fail the app request on provider-start timeout; current behavior keeps this as
+  a background diagnostic and lets OpenCode/lifecycle/gateway errors be the
+  source of truth.
 
 The practical conclusion is: if `pnpm dev` proves a `200` SSE provider route
 but E2E Pilot logs provider-start timeout, treat the next investigation as an

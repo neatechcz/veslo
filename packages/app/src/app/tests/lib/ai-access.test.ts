@@ -722,7 +722,9 @@ test("formatManagedAiAccessConfig routes codex_oauth through the gateway", () =>
   );
   assert.doesNotMatch(content, /den_token_123/);
   assert.equal(parsed.provider?.codex_oauth?.options?.apiKey, VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE);
-  assert.equal(parsed.provider?.codex_oauth?.options?.headers, undefined);
+  assert.deepEqual(parsed.provider?.codex_oauth?.options?.headers, {
+    Authorization: `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`,
+  });
   assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.headers, {
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
@@ -785,7 +787,9 @@ test("formatManagedAiAccessConfig routes openai_compatible through the gateway",
   );
   assert.doesNotMatch(content, /den_token_123/);
   assert.equal(parsed.provider?.openai_compatible?.options?.apiKey, VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE);
-  assert.equal(parsed.provider?.openai_compatible?.options?.headers, undefined);
+  assert.deepEqual(parsed.provider?.openai_compatible?.options?.headers, {
+    Authorization: `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`,
+  });
   assert.deepEqual(parsed.provider?.openai_compatible?.models?.["custom-model"]?.headers, {
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });

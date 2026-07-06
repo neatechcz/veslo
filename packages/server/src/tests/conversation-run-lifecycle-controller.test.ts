@@ -442,6 +442,11 @@ function snapshotStub(overrides: Partial<ConversationRunLifecycleSnapshot> = {})
   };
 }
 
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 test("controller shell starts, stops, and clears diagnostics timers", () => {
   const timers = new TimerHarness();
   const traceEvents: string[] = [];
@@ -803,7 +808,7 @@ test("submitRun marks lifecycle failed, schedules reconcile, and clears active g
   expect(providerWatchCalls).toEqual([]);
 });
 
-test("submitRun provider-start timeout marks failed, aborts OpenCode, and clears active gateway context", async () => {
+test("submitRun provider-start timeout records diagnostics without failing or aborting OpenCode", async () => {
   const {
     controller,
     behavior,
@@ -815,14 +820,19 @@ test("submitRun provider-start timeout marks failed, aborts OpenCode, and clears
   } = controllerHarness();
   behavior.providerStartResult = { started: false, timeoutMs: 25 };
 
-  await expect(controller.submitRun(submitInput({ expectAiGatewayStart: true }))).rejects.toMatchObject({
-    status: 504,
-    code: "ai_gateway_provider_start_timeout",
-  } satisfies Partial<ApiError>);
+  const result = await controller.submitRun(submitInput({ expectAiGatewayStart: true }));
 
-  const timeoutMessage = "AI gateway provider request did not start within 25ms.";
-  expect(lifecycle.calls).toContain(`markFailed:ws_1:run-reserved:${timeoutMessage}`);
+  expect(result.httpStatus).toBe(200);
+  expect(result.payload.status).toBe("submitted");
+  await flushMicrotasks();
+  expect(lifecycle.calls.some((call) => call.startsWith("markFailed:"))).toBe(false);
   expect(reconcileCalls).toEqual([{
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "accepted",
+    delayMs: 1_234,
+  }, {
     workspaceId: "ws_1",
     conversationId: "conv-a",
     runId: "run-reserved",
@@ -831,7 +841,7 @@ test("submitRun provider-start timeout marks failed, aborts OpenCode, and clears
   }]);
   expect(providerWatchCalls).toHaveLength(1);
   expect(typeof (providerWatchCalls[0] as { startedAt?: unknown }).startedAt).toBe("number");
-  expect(abortCalls).toHaveLength(1);
+  expect(abortCalls).toEqual([]);
   expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
 });
 
@@ -848,6 +858,7 @@ test("submitRun provider-start success clears active gateway context without abo
 
   expect(result.httpStatus).toBe(200);
   expect(result.payload.status).toBe("submitted");
+  await flushMicrotasks();
   expect(providerWatchCalls).toHaveLength(1);
   expect(abortCalls).toEqual([]);
   expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);

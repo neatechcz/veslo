@@ -376,6 +376,10 @@ function mergeProviderEnv(existing: unknown, required: string): string[] {
   return values;
 }
 
+function gatewayServerAuthorizationHeader(): string {
+  return `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`;
+}
+
 export function applyGatewayProviderRouting(
   content: string | null | undefined,
   input: {
@@ -483,7 +487,18 @@ export function applyGatewayProviderRouting(
       ...existingOptions,
       ...(isOpenAiCompatibleGatewayProvider ? { apiKey: VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE } : {}),
       baseURL: `${serverBaseUrl}/ai-gateway/providers/${providerId}/v1`,
-      ...(Object.keys(existingHeaders).length > 0 ? { headers: existingHeaders } : {}),
+      ...(
+        isOpenAiCompatibleGatewayProvider
+          ? {
+              headers: {
+                ...existingHeaders,
+                Authorization: gatewayServerAuthorizationHeader(),
+              },
+            }
+          : Object.keys(existingHeaders).length > 0
+            ? { headers: existingHeaders }
+            : {}
+      ),
     },
   };
 

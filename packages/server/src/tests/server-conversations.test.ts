@@ -2438,7 +2438,7 @@ describe("conversation routes", () => {
     expect(engineRequests).toHaveLength(engineRequestsBeforeConflict);
   });
 
-  test("managed prompt runs fail fast when the expected AI gateway provider request never starts", async () => {
+  test("managed prompt provider-start watchdog records diagnostics without failing accepted runs", async () => {
     setEnvVarForTest("VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS", "25");
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-gateway-start-watch-"));
     tempDirs.push(workspaceRoot);
@@ -2617,10 +2617,9 @@ describe("conversation routes", () => {
         }),
       },
     );
-    expect(runResponse.status).toBe(504);
-    const runPayload = await runResponse.json() as { code?: string; message?: string };
-    expect(runPayload.code).toBe("ai_gateway_provider_start_timeout");
-    expect(runPayload.message).toContain("AI gateway provider request did not start");
+    expect(runResponse.status).toBe(200);
+    const runPayload = await runResponse.json() as { status?: string };
+    expect(runPayload.status).toBe("submitted");
 
     await waitForCondition(
       () => providerRequests.length > 0 || Boolean(providerFetchError),
@@ -2640,12 +2639,9 @@ describe("conversation routes", () => {
       },
     ]);
 
-    await waitForCondition(
-      () => failedRequests.length > 0,
-      { timeoutMs: 1_000, message: "expected gateway provider start watchdog to mark the run failed" },
-    );
-    expect(String(failedRequests[0]?.error ?? "")).toContain("AI gateway provider request did not start");
-    expect(abortRequests).toEqual([workspaceRoot]);
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    expect(failedRequests).toEqual([]);
+    expect(abortRequests).toEqual([]);
   });
 
   test("managed prompt provider-start watchdog does not resolve ambiguous same-workspace placeholder hits", async () => {
@@ -2854,9 +2850,10 @@ describe("conversation routes", () => {
     ]);
 
     const [firstRun, secondRun] = await Promise.all([firstRunPromise, secondRunPromise]);
-    expect(firstRun.status).toBe(504);
-    expect(secondRun.status).toBe(504);
-    expect(failedRequests).toHaveLength(2);
+    expect(firstRun.status).toBe(200);
+    expect(secondRun.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    expect(failedRequests).toEqual([]);
   });
 
   test("managed prompt provider-start watchdog matches placeholder session ids by workspace header", async () => {
@@ -3337,7 +3334,8 @@ describe("conversation routes", () => {
     expect(failedRequests.some((entry) => entry.workspaceId === "ws_target")).toBe(false);
 
     const staleRun = await staleRunPromise;
-    expect(staleRun.status).toBe(504);
-    expect(failedRequests.some((entry) => entry.workspaceId === "ws_stale")).toBe(true);
+    expect(staleRun.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 550));
+    expect(failedRequests.some((entry) => entry.workspaceId === "ws_stale")).toBe(false);
   });
 });

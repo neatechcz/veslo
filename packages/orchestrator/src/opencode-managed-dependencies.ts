@@ -26,9 +26,7 @@ const VESLO_MANAGED_RUNTIME_PACKAGES = [
   { name: "json-schema", version: VESLO_MANAGED_JSON_SCHEMA_VERSION },
 ] as const;
 
-const VESLO_CONFIG_PACKAGE_DEPENDENCIES = VESLO_MANAGED_RUNTIME_PACKAGES.filter(
-  (spec) => spec.name !== "@opencode-ai/plugin",
-);
+const VESLO_CONFIG_PACKAGE_DEPENDENCIES = VESLO_MANAGED_RUNTIME_PACKAGES;
 
 type ManagedDependencyEvent = {
   event: string;
