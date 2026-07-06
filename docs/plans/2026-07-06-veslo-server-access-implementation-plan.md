@@ -15,10 +15,10 @@ vsa06_serialized_desktop_state_machine_done: false
 vsa07_frontend_single_descriptor_done: false
 vsa08_single_auth_recovery_done: true
 vsa09_acknowledged_workspace_registration_done: true
-vsa10_server_owned_workspace_ids_done: false
+vsa10_server_owned_workspace_ids_done: true
 vsa10a_workspace_id_golden_vectors_done: true
 vsa10b_dual_id_mapping_migration_done: true
-vsa10c_workspace_id_cutover_cleanup_done: false
+vsa10c_workspace_id_cutover_cleanup_done: true
 vsa11_engine_config_hot_swap_done: false
 vsa12_port_conflict_policy_done: false
 vsa13_e2e_docs_and_release_gate_done: false
@@ -1038,7 +1038,7 @@ Mark done when:
 
 ## VSA10C: Server-Owned ID Cutover And Mismatch Cleanup
 
-done: false
+done: true
 
 Goal:
 
@@ -1060,6 +1060,18 @@ Implementation:
 - Update docs that describe workspace id ownership and migration semantics.
 - Set umbrella `vsa10_server_owned_workspace_ids_done: true` only after VSA10A,
   VSA10B, and VSA10C are true.
+
+Implementation status:
+
+- Normal frontend transport no longer synthesizes `workspace_id_mismatch` from
+  orchestrator proxy `{"error":"workspace not found"}` responses. That path now
+  reports `workspace_registry_unsynced`, matching the acknowledged-registration
+  diagnostics from VSA09.
+- The readiness recovery helper still accepts legacy `workspace_id_mismatch`
+  strings as a backward-compatible input, but correctly registered local
+  workspaces no longer depend on it as the normal recovery signal.
+- VSA10A golden vectors and VSA10B dual-id mapping cover the desktop, app,
+  server, and orchestrator compatibility paths before this cleanup.
 
 Acceptance:
 

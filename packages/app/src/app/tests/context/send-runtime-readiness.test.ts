@@ -838,6 +838,7 @@ test("local runtime health error helpers classify dead endpoints and probe timeo
     true,
   );
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"workspace not found"}')), true);
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("workspace_registry_unsynced")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("workspace_id_mismatch")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"opencode_request_failed","status":503}')), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("OpenCode health returned status 404")), true);

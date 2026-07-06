@@ -1177,7 +1177,7 @@ test("searchRegistrySkills rejects invalid registry search payloads", async () =
   }
 });
 
-test("workspace not found 404 maps to workspace_id_mismatch", async () => {
+test("workspace not found 404 maps to workspace_registry_unsynced", async () => {
   const previousFetch = globalThis.fetch;
 
   globalThis.fetch = async (input) => {
@@ -1200,7 +1200,7 @@ test("workspace not found 404 maps to workspace_id_mismatch", async () => {
       (error) => {
         assert.ok(error instanceof VesloServerError);
         assert.equal(error.status, 404);
-        assert.equal(error.code, "workspace_id_mismatch");
+        assert.equal(error.code, "workspace_registry_unsynced");
         assert.equal(error.message, "workspace not found");
         return true;
       },

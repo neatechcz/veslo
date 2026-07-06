@@ -181,6 +181,7 @@ export function shouldRecoverLocalRuntimeFromHealthError(
     normalized.includes("opencode_request_failed") ||
     normalized.includes("workspace not found") ||
     normalized.includes("workspace_not_found") ||
+    normalized.includes("workspace_registry_unsynced") ||
     normalized.includes("workspace_id_mismatch") ||
     normalized.includes("opencode_proxy_failed") ||
     normalized.includes("socket closed") ||
