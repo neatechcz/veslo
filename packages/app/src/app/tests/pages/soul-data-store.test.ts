@@ -68,6 +68,7 @@ function createClient(options: {
       return {
         items: [
           { id: "veslo-local", path: "/repo/local" },
+          { id: "veslo-remote", path: "/remote/explicit" },
           { id: "veslo-directory", directory: "/remote/directory" },
         ],
       };
@@ -100,7 +101,7 @@ test("Soul data store maps app workspaces to current Soul source owners", async 
     try {
       const calls: SoulClientCall[] = [];
       const workspaces: SoulDataStoreWorkspace[] = [
-        { id: "local-app", workspaceType: "local", path: "/repo/local" },
+        { id: "local-app", workspaceType: "local", path: "/repo/local", vesloWorkspaceId: "veslo-local" },
         {
           id: "remote-app",
           workspaceType: "remote",
@@ -138,7 +139,7 @@ test("Soul data store maps app workspaces to current Soul source owners", async 
   });
 });
 
-test("Soul data store falls back to remote directory matching without legacy status calls", async () => {
+test("Soul data store does not fall back to remote directory matching", async () => {
   await createRoot(async (dispose) => {
     try {
       const calls: SoulClientCall[] = [];
@@ -158,9 +159,7 @@ test("Soul data store falls back to remote directory matching without legacy sta
       await store.refreshSoulData({ force: true });
       await flushAsyncWork();
 
-      assert.deepEqual(store.soulWorkspaceMap(), {
-        "directory-app": "veslo-directory",
-      });
+      assert.deepEqual(store.soulWorkspaceMap(), {});
       assert.deepEqual(calls.map((call) => call.kind), ["overview", "list-workspaces"]);
       assert.equal(store.soulError(), null);
     } finally {

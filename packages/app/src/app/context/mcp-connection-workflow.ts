@@ -111,20 +111,8 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
 
   const resolveWritableVesloMcpContext = async () => {
     const vesloClient = deps.vesloServerClient();
-    let vesloWorkspaceId = deps.vesloServerWorkspaceId();
+    const vesloWorkspaceId = deps.vesloServerWorkspaceId();
     const vesloCapabilities = deps.vesloCapabilities();
-    if (!vesloWorkspaceId && vesloClient && deps.vesloServerStatus() === "connected") {
-      try {
-        const response = await vesloClient.listWorkspaces();
-        const match = response.items?.[0];
-        if (match?.id) {
-          vesloWorkspaceId = match.id;
-          deps.setVesloServerWorkspaceId(match.id);
-        }
-      } catch {
-        // ignore
-      }
-    }
     const canUseVesloServer = Boolean(
       deps.vesloServerStatus() === "connected" &&
       vesloClient &&
@@ -288,17 +276,11 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
   async function ensureMcpRuntimeContext() {
     const projectDir = deps.workspaceProjectDir().trim();
 
-    let activeClient = deps.routedClient();
+    const activeClient = deps.routedClient();
     if (!activeClient) {
-      const vesloBaseUrl = deps.vesloServerBaseUrl().trim();
-      const auth = deps.vesloServerAuth();
-      if (vesloBaseUrl && auth.token) {
-        const opencodeUrl = `${vesloBaseUrl.replace(/\/+$/, "")}/opencode`;
-        activeClient = deps.createClient(opencodeUrl, undefined, { token: auth.token, mode: "veslo" });
-        deps.setClient(activeClient);
-      }
-    }
-    if (!activeClient) {
+      deps.recordPerfLog(deps.developerMode(), "workspace.mcp", "runtime-context-missing-routed-client", {
+        workspaceId: deps.activeWorkspaceId() || null,
+      });
       throw new Error(tr("mcp.connect_server_first"));
     }
 
@@ -675,23 +657,17 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
       return;
     }
 
-    let activeClient = deps.routedClient();
-    if (!activeClient) {
-      const vesloBaseUrl = deps.vesloServerBaseUrl().trim();
-      const auth = deps.vesloServerAuth();
-      if (vesloBaseUrl && auth.token) {
-        const opencodeUrl = `${vesloBaseUrl.replace(/\/+$/, "")}/opencode`;
-        activeClient = deps.createClient(opencodeUrl, undefined, { token: auth.token, mode: "veslo" });
-        deps.setClient(activeClient);
-      }
-    }
-    if (!activeClient) {
+    const activeClient = deps.routedClient();
+    if (!activeClient && !canUseVesloServer) {
+      deps.recordPerfLog(deps.developerMode(), "workspace.mcp", "logout-missing-routed-client", {
+        workspaceId: deps.activeWorkspaceId() || null,
+      });
       deps.setMcpStatus(tr("mcp.connect_server_first"));
       return;
     }
 
     let resolvedProjectDir = projectDir;
-    if (!resolvedProjectDir) {
+    if (!resolvedProjectDir && activeClient) {
       try {
         const pathInfo = deps.unwrap(await activeClient.path.get());
         const discoveredRaw = deps.normalizeDirectoryQueryPath(pathInfo.directory ?? "");
@@ -716,6 +692,10 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
       if (canUseVesloServer && vesloClient && vesloWorkspaceId) {
         await vesloClient.mcp.logoutAuth(vesloWorkspaceId, safeName);
       } else {
+        if (!activeClient) {
+          deps.setMcpStatus(tr("mcp.connect_server_first"));
+          return;
+        }
         try {
           await activeClient.mcp.disconnect({ directory: resolvedProjectDir, name: safeName });
         } catch {
@@ -724,11 +704,18 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
         await activeClient.mcp.auth.remove({ directory: resolvedProjectDir, name: safeName });
       }
 
-      try {
-        const status = deps.unwrap(await activeClient.mcp.status({ directory: resolvedProjectDir }));
-        deps.setMcpStatuses(status as McpStatusMap);
-      } catch {
-        // ignore
+      if (activeClient) {
+        try {
+          const status = deps.unwrap(await activeClient.mcp.status({ directory: resolvedProjectDir }));
+          deps.setMcpStatuses(status as McpStatusMap);
+        } catch {
+          // ignore
+        }
+      } else {
+        deps.recordPerfLog(deps.developerMode(), "workspace.mcp", "logout-status-refresh-skipped", {
+          workspaceId: deps.activeWorkspaceId() || null,
+          reason: "missing-routed-client",
+        });
       }
 
       await deps.refreshMcpServers({ mode: "explicit", reason: "mcp-logout" });

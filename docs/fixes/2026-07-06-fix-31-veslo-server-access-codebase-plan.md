@@ -110,6 +110,10 @@ Follow-up test hardening added after the codebase checkpoint:
   describes a server-acknowledged id mapping rather than a new opaque id
   generator, and VSA13C no longer requires the skipped E2E gate to be marked
   done.
+- Follow-up app hardening in Fix 35 removes frontend path/directory,
+  `activeId`, and first-listed-workspace inference for server workspace ids;
+  local server-bound calls now require an acknowledged `vesloWorkspaceId`
+  mapping or fail closed.
 
 Validation:
 

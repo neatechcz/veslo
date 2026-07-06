@@ -286,7 +286,7 @@ export function createConversationService<Client extends ConversationServiceClie
       );
     }
 
-    return workspace.vesloWorkspaceId?.trim() || workspaceId;
+    return workspace.vesloWorkspaceId?.trim() || "";
   };
 
   const passiveReadPolicyAllowsServerStart = (policy: ConversationPassiveReadPolicy | undefined) =>
@@ -368,7 +368,7 @@ export function createConversationService<Client extends ConversationServiceClie
     const targetDirectoryRaw = directoryRaw?.trim() || workspaceRootRaw;
     const workspaceRoot = normalizeDirectoryPath(workspaceRootRaw);
     const targetDirectory = normalizeDirectoryPath(targetDirectoryRaw);
-    if (!targetDirectory) return fallback;
+    if (!targetDirectory) return "";
     const matchDirectories = new Set([workspaceRoot, targetDirectory].filter(Boolean));
 
     const resolveLocalOpencodeRegistration = async () => {
@@ -401,12 +401,11 @@ export function createConversationService<Client extends ConversationServiceClie
       const existingBaseUrl = normalizeBaseUrlForCompare(entry.baseUrl || entry.opencode?.baseUrl);
       const mountId = parseWorkspaceMountId(registration.baseUrl);
       if (mountId && entry.id !== mountId) return false;
+      if (!existingBaseUrl) return true;
       return existingBaseUrl === registration.baseUrl;
     };
 
     const findMatchingWorkspace = (items: ConversationWorkspaceRegistryEntry[]) => {
-      const exact = items.find((entry) => entry.id === fallback);
-      if (exact) return exact;
       const match = items.find((entry) => {
         const candidates = [
           entry.path,
@@ -453,7 +452,9 @@ export function createConversationService<Client extends ConversationServiceClie
           opencodePassword: opencodeRegistration?.opencodePassword ?? undefined,
         });
         const registered = findMatchingWorkspace(added.items);
-        if (registered) return { id: registered.id, cacheable: true };
+        if (registered && matchesRegistration(registered, opencodeRegistration)) {
+          return { id: registered.id, cacheable: true };
+        }
       } catch (error) {
         deps.wsDebug("conversation-read:workspace-register:failed", {
           workspaceId,
@@ -463,7 +464,7 @@ export function createConversationService<Client extends ConversationServiceClie
         });
       }
 
-      return { id: fallback, cacheable: false };
+      return { id: "", cacheable: false };
     })();
 
     registrationCache.set(registrationCacheKey, registrationPromise);
@@ -709,16 +710,27 @@ export function createConversationService<Client extends ConversationServiceClie
     const targetWorkspace = options.targetWorkspace ?? options.preflight?.targetWorkspace ?? null;
     const managedProfile = deps.managedAiAccess();
     const expectAiGatewayStart = input.kind === "prompt_async" && Boolean(managedProfile);
-    const workspaceId = scope?.workspaceId?.trim() || targetWorkspace?.workspaceId?.trim() || deps.activeWorkspaceId().trim();
-    if (!workspaceId) {
-      throw new Error("Workspace id is required for conversation run.");
-    }
+    const scopeWorkspaceId = scope?.workspaceId?.trim() || "";
     const targetWorkspaceId = targetWorkspace?.workspaceId?.trim() || "";
-    if (targetWorkspaceId && workspaceId !== targetWorkspaceId) {
+    const workspaceId = scopeWorkspaceId || targetWorkspaceId;
+    if (!workspaceId) {
+      deps.recordSendTrace("runConversationFromVesloWriteApi:blocked-missing-workspace-scope", {
+        ...(tracePayload ?? {}),
+        sessionId: normalizedSessionId,
+        kind: input.kind,
+      });
+      throw new Error("Conversation run requires a scoped workspace.");
+    }
+    if (scopeWorkspaceId && targetWorkspaceId && scopeWorkspaceId !== targetWorkspaceId) {
       throw new Error("Conversation workspace does not match the send target workspace.");
     }
-    const workspaceRoot = scope?.workspaceRoot?.trim() || targetWorkspace?.workspaceRoot?.trim() || deps.activeWorkspaceRoot().trim();
-    const directory = input.directory?.trim() || scope?.directory?.trim() || targetWorkspace?.directory?.trim() || workspaceRoot;
+    const scopedDirectory = input.directory?.trim() || scope?.directory?.trim() || targetWorkspace?.directory?.trim() || "";
+    const workspaceRoot =
+      scope?.workspaceRoot?.trim() ||
+      targetWorkspace?.workspaceRoot?.trim() ||
+      deps.resolveWorkspaceRootForConversationScope(workspaceId, scopedDirectory) ||
+      "";
+    const directory = scopedDirectory || workspaceRoot;
     if (!directory) {
       throw new Error("Conversation directory is required.");
     }
@@ -790,7 +802,7 @@ export function createConversationService<Client extends ConversationServiceClie
     if (normalizedSessionId && normalizedSessionId !== opencodeSessionId) {
       rememberRunConversationScope(normalizedSessionId);
     }
-    const latestRunId = result.status === "submitted"
+    const abortRunId = result.status === "submitted"
       ? result.runId
       : result.activeRunId?.trim() || result.reservedRunId;
     deps.rememberLatestConversationRunId({
@@ -798,7 +810,7 @@ export function createConversationService<Client extends ConversationServiceClie
       conversationId: result.conversationId,
       opencodeSessionId: result.opencodeSessionId,
       uiSessionId: normalizedSessionId,
-      runId: latestRunId,
+      runId: abortRunId,
     });
     const lifecycleRunId = result.status === "submitted"
       ? result.runId

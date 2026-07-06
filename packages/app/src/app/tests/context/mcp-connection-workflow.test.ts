@@ -70,7 +70,10 @@ function createHarness(overrides: Record<string, unknown> = {}) {
     },
   };
   const vesloClient = {
-    listWorkspaces: async () => ({ items: [{ id: "ws_1" }] }),
+    listWorkspaces: async () => {
+      calls.push({ name: "veslo.listWorkspaces", args: [] });
+      return { items: [{ id: "ws_1" }] };
+    },
     mcp: {
       add: async (...args: unknown[]) => {
         calls.push({ name: "veslo.mcp.add", args });
@@ -115,6 +118,7 @@ function createHarness(overrides: Record<string, unknown> = {}) {
     vesloCapabilities: () => vesloCapabilities,
     vesloServerBaseUrl: () => "https://worker.example",
     vesloServerAuth: () => ({ token: "worker-token" }),
+    activeWorkspaceId: () => "ws_1",
     mcpServers: () => mcpServers,
     selectedMcp: () => selectedMcp,
     setSelectedMcp: (value: string | null) => {
@@ -268,6 +272,57 @@ test("MCP connection workflow writes local project config before activating runt
   assert.equal(harness.mcpConnectingName, null);
 });
 
+test("MCP runtime context does not manufacture an unscoped fallback client", async () => {
+  const harness = createHarness({
+    routedClient: () => null,
+  });
+
+  await assert.rejects(
+    () => harness.workflow.ensureMcpRuntimeContext(),
+    /mcp\.connect_server_first/,
+  );
+
+  assert.equal(harness.calls.some((call) => call.name === "createClient"), false);
+  assert.equal(harness.calls.some((call) => call.name === "setClient"), false);
+  assert.equal(
+    harness.calls.some((call) =>
+      call.name === "recordPerfLog" &&
+      call.args[1] === "workspace.mcp" &&
+      call.args[2] === "runtime-context-missing-routed-client"
+    ),
+    true,
+  );
+});
+
+test("MCP auth logout SDK fallback requires a routed runtime client", async () => {
+  const harness = createHarness({
+    routedClient: () => null,
+  });
+
+  await harness.workflow.logoutMcpAuth("github");
+
+  assert.equal(harness.mcpStatus, "mcp.connect_server_first");
+  assert.equal(harness.calls.some((call) => call.name === "createClient"), false);
+  assert.equal(harness.calls.some((call) => call.name === "setClient"), false);
+  assert.equal(harness.calls.some((call) => call.name === "runtime.mcp.auth.remove"), false);
+});
+
+test("MCP auth logout keeps the Veslo server facade usable without a routed runtime client", async () => {
+  const harness = createHarness({
+    routedClient: () => null,
+  });
+  harness.vesloStatus = "connected";
+  harness.vesloCapabilitiesValue = { mcp: { read: true, write: true } };
+
+  await harness.workflow.logoutMcpAuth("github");
+
+  assert.deepEqual(harness.calls.find((call) => call.name === "veslo.mcp.logoutAuth")?.args, ["ws_1", "github"]);
+  assert.equal(harness.calls.some((call) => call.name === "createClient"), false);
+  assert.equal(harness.calls.some((call) => call.name === "setClient"), false);
+  assert.equal(harness.calls.some((call) => call.name === "runtime.mcp.status"), false);
+  assert.equal(harness.mcpStatus, "mcp.logout_success");
+});
+
 test("MCP connection workflow uses the Veslo server MCP facade before runtime activation when writable", async () => {
   const harness = createHarness();
   harness.vesloStatus = "connected";
@@ -290,6 +345,20 @@ test("MCP connection workflow uses the Veslo server MCP facade before runtime ac
   assert.equal(harness.calls.some((call) => call.name === "readOpencodeConfig"), false);
   assert.equal(harness.calls.some((call) => call.name === "runtime.mcp.add"), true);
   assert.equal(harness.mcpStatus, "mcp.connected");
+});
+
+test("MCP connection workflow does not adopt the first server workspace when the workspace id is unresolved", async () => {
+  const harness = createHarness();
+  harness.vesloStatus = "connected";
+  harness.vesloCapabilitiesValue = { mcp: { read: true, write: true } };
+  harness.vesloWorkspaceId = null;
+
+  await harness.workflow.connectMcp(remoteEntry({ oauth: false }));
+
+  assert.equal(harness.calls.some((call) => call.name === "veslo.listWorkspaces"), false);
+  assert.equal(harness.calls.some((call) => call.name === "veslo.mcp.add"), false);
+  assert.equal(harness.calls.some((call) => call.name === "readOpencodeConfig"), true);
+  assert.equal(harness.calls.some((call) => call.name === "runtime.mcp.add"), true);
 });
 
 test("hub MCP install starts Veslo-managed OAuth in the browser without local runtime activation", async () => {

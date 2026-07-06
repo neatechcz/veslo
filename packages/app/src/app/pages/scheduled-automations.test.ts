@@ -193,7 +193,7 @@ test("scheduled automation store only treats remote automation workspace ids as 
   assert.match(source, /connectedServerBaseUrl:\s*client\.baseUrl/);
   assert.match(mapSource, /const listedServerWorkspaceIds = new Set\(input\.serverWorkspaces\.map\(\(item\) => item\.id\)\)/);
   assert.match(mapSource, /listedServerWorkspaceIds\.has\(storedServerWorkspaceId\)/);
-  assert.match(mapSource, /findServerWorkspaceByDirectory\(input\.serverWorkspaces, workspace\.directory \?\? workspace\.path \?\? ""\)/);
+  assert.doesNotMatch(mapSource, /findServerWorkspaceByDirectory|serverWorkspaceDirectoryCandidates|idByLocalPath/);
   assert.match(mapSource, /remoteWorkspaceBelongsToDifferentServer\(workspace, input\.connectedServerBaseUrl\)/);
   assert.doesNotMatch(source, /serverWorkspaceId =\s*\n\s*workspace\.vesloWorkspaceId\?\.trim\(\)/);
 });

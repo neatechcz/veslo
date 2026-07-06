@@ -197,8 +197,8 @@ test("refreshScheduledJobs keeps successful workspaces when another workspace fa
       const goodAutomation = automation({ id: "auto-1", workspaceId: "server-good", name: "Daily brief" });
       const { deps, setWorkspaces } = createDeps();
       setWorkspaces([
-        workspace({ id: "app-good", path: "C:/work/good", directory: "C:/work/good" }),
-        workspace({ id: "app-bad", path: "C:/work/bad", directory: "C:/work/bad" }),
+        workspace({ id: "app-good", path: "C:/work/good", directory: "C:/work/good", vesloWorkspaceId: "server-good" }),
+        workspace({ id: "app-bad", path: "C:/work/bad", directory: "C:/work/bad", vesloWorkspaceId: "server-bad" }),
       ]);
       const client = createClient({
         listWorkspaces: async () => ({

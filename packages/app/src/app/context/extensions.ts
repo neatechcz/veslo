@@ -1,6 +1,5 @@
 import { createEffect, createSignal } from "solid-js";
 
-import { applyEdits, modify } from "jsonc-parser";
 import { join } from "@tauri-apps/api/path";
 import { currentLocale, t } from "../../i18n";
 
@@ -24,9 +23,11 @@ import type {
 } from "../types";
 import { addOpencodeCacheHint, isTauriRuntime } from "../utils";
 import {
+  addPluginSpecToContent,
   isPluginInstalled,
   loadPluginsFromConfig as loadPluginsFromConfigHelpers,
   parsePluginListFromContent,
+  removePluginSpecFromContent,
   stripPluginVersion,
 } from "../utils/plugins";
 import {
@@ -727,7 +728,7 @@ export function createExtensionsStore(options: {
 
   const syncUserGlobalSkillStoreForActiveWorkspace = async () => {
     const client = getUserGlobalSkillStoreClient();
-    const workspaceId = options.vesloServerWorkspaceId()?.trim() || options.activeWorkspaceId().trim();
+    const workspaceId = options.vesloServerWorkspaceId()?.trim() ?? "";
     if (!workspaceId || typeof client?.syncUserGlobalSkillStore !== "function") return;
     try {
       const result = await client.syncUserGlobalSkillStore(workspaceId);
@@ -1743,7 +1744,7 @@ export function createExtensionsStore(options: {
       const isRemoteWorkspace = options.workspaceType() === "remote";
       const isLocalWorkspace = options.workspaceType() === "local";
       const vesloClient = options.vesloServerClient();
-      const vesloWorkspaceId = options.vesloServerWorkspaceId()?.trim() || options.activeWorkspaceId().trim();
+      const vesloWorkspaceId = options.vesloServerWorkspaceId()?.trim() ?? "";
       const vesloCapabilities = options.vesloServerCapabilities();
       const canUseVesloServer =
         options.vesloServerStatus() === "connected" &&
@@ -1960,21 +1961,16 @@ export function createExtensionsStore(options: {
         return;
       }
 
-      const plugins = parsePluginListFromContent(raw);
-
       const desired = stripPluginVersion(pluginName).toLowerCase();
+      const plugins = parsePluginListFromContent(raw);
       if (plugins.some((entry) => stripPluginVersion(entry).toLowerCase() === desired)) {
         setPluginStatus(translate("skills.plugin_already_listed"));
         return;
       }
 
-      const next = [...plugins, pluginName];
-      const edits = modify(raw, ["plugin"], next, {
-        formattingOptions: { insertSpaces: true, tabSize: 2 },
-      });
-      const updated = applyEdits(raw, edits);
+      const update = addPluginSpecToContent(raw, pluginName);
 
-      await writeOpencodeConfig(scope, targetDir, updated);
+      await writeOpencodeConfig(scope, targetDir, update.content);
       options.markReloadRequired?.("plugins", { type: "plugin", name: triggerName, action: "added" });
       if (isManualInput) {
         setPluginInput("");
@@ -2161,19 +2157,16 @@ export function createExtensionsStore(options: {
         return;
       }
 
-      const plugins = parsePluginListFromContent(raw);
       const desired = stripPluginVersion(name).toLowerCase();
+      const plugins = parsePluginListFromContent(raw);
       const next = plugins.filter((entry) => stripPluginVersion(entry).toLowerCase() !== desired);
       if (next.length === plugins.length) {
         setPluginStatus(__vesloIndirectT("ui.indirect.plugin_not_found_1yk6mg", __vesloIndirectLocale()));
         return;
       }
 
-      const edits = modify(raw, ["plugin"], next, {
-        formattingOptions: { insertSpaces: true, tabSize: 2 },
-      });
-      const updated = applyEdits(raw, edits);
-      await writeOpencodeConfig(scope, targetDir, updated);
+      const update = removePluginSpecFromContent(raw, name);
+      await writeOpencodeConfig(scope, targetDir, update.content);
       options.markReloadRequired?.("plugins", { type: "plugin", name: triggerName, action: "removed" });
       await refreshPlugins(scope);
     } catch (e) {
@@ -2797,7 +2790,7 @@ export function createExtensionsStore(options: {
       target.restoreTarget?.workspaceId?.trim() ||
       target.workspaceId?.trim() ||
       (scope === "workspace"
-        ? options.vesloServerWorkspaceId()?.trim() || options.activeWorkspaceId().trim()
+        ? options.vesloServerWorkspaceId()?.trim() ?? ""
         : "");
     const syncOptions = resolveDenRegistryContext();
 
@@ -2857,7 +2850,7 @@ export function createExtensionsStore(options: {
     const workspaceId =
       target.workspaceId?.trim() ||
       options.vesloServerWorkspaceId()?.trim() ||
-      options.activeWorkspaceId().trim();
+      "";
     if (!vesloClient || !workspaceId) {
       return managedSkillMutationUnavailable(translate("skills.recoverable_remove_server_required"));
     }

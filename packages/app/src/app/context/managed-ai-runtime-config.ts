@@ -232,7 +232,7 @@ async function resolveManagedAiServerWorkspaceId(input: {
   if (input.workspace.vesloWorkspaceId?.trim()) return resolved;
 
   const registered = await input.register(input.client, workspaceId, input.workspaceRoot);
-  return registered?.trim() || resolved;
+  return registered?.trim() || "";
 }
 
 export function createManagedAiRuntimeConfigSync(
@@ -1037,9 +1037,9 @@ export function createManagedAiRuntimeConfigSync(
     const activeWorkspace = deps.activeWorkspaceDisplay();
     const activeWorkspaceAppId = activeWorkspace.id?.trim() || deps.activeWorkspaceId().trim();
     const activeWorkspaceId =
+      (deps.vesloServerWorkspaceId() ?? "").trim() ||
       deps.resolveConversationServerWorkspaceId(activeWorkspaceAppId) ||
-      (activeWorkspaceAppId.startsWith("ws-") ? activeWorkspaceAppId : "") ||
-      (deps.vesloServerWorkspaceId() ?? "").trim();
+      "";
     const healGeneration = ++inactiveWorkspaceBaseUrlHealGeneration;
     const isCurrentInactiveWorkspaceHeal = () =>
       !(options?.isCancelled?.() ?? false) &&

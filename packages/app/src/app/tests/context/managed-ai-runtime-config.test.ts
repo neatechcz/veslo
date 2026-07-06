@@ -231,6 +231,40 @@ test("runtime config sync registers local workspace before using fallback app id
   assert.equal(client.patched[0]?.workspaceId, "server-local");
 });
 
+test("runtime config sync does not use fallback app id when local registration fails", async () => {
+  const client = createVesloClient();
+  const registrations: Array<{ workspaceId: string; workspaceRoot?: string | null }> = [];
+  const fileWrites: Array<{ root: string; content: string }> = [];
+  const sync = createManagedAiRuntimeConfigSync(
+    createOptions({
+      vesloServerClient: () => client,
+      activeWorkspaceDisplay: () => ({
+        id: "app-local",
+        workspaceType: "local",
+        path: "/repo",
+        directory: "/repo",
+      }),
+      activeWorkspaceId: () => "app-local",
+      resolveConversationServerWorkspaceId: () => "app-local",
+      ensureConversationReadWorkspaceRegistered: async (_client, workspaceId, workspaceRoot) => {
+        registrations.push({ workspaceId, workspaceRoot });
+        return "";
+      },
+      writeOpencodeConfig: async (_scope, root, content) => {
+        fileWrites.push({ root, content });
+        return { ok: true, stdout: "", stderr: "" };
+      },
+    }),
+  );
+
+  await sync.syncActiveWorkspaceManagedAiConfig();
+
+  assert.deepEqual(registrations, [{ workspaceId: "app-local", workspaceRoot: "/repo" }]);
+  assert.deepEqual(client.getConfigCalls, []);
+  assert.deepEqual(client.patched, []);
+  assert.equal(fileWrites[0]?.root, "/repo");
+});
+
 test("runtime config check registers local workspace before reading server config", async () => {
   const client = createVesloClient();
   const registrations: Array<{ workspaceId: string; workspaceRoot?: string | null }> = [];
@@ -260,6 +294,38 @@ test("runtime config check registers local workspace before reading server confi
 
   assert.deepEqual(registrations, [{ workspaceId: "app-local", workspaceRoot: "/repo" }]);
   assert.deepEqual(client.getConfigCalls, ["server-local"]);
+});
+
+test("runtime config check does not read server config with fallback app id when local registration fails", async () => {
+  const client = createVesloClient();
+  const registrations: Array<{ workspaceId: string; workspaceRoot?: string | null }> = [];
+  const sync = createManagedAiRuntimeConfigSync(
+    createOptions({
+      vesloServerClient: () => client,
+      activeWorkspaceDisplay: () => ({
+        id: "app-local",
+        workspaceType: "local",
+        path: "/repo",
+        directory: "/repo",
+      }),
+      activeWorkspaceId: () => "app-local",
+      resolveConversationServerWorkspaceId: () => "app-local",
+      ensureConversationReadWorkspaceRegistered: async (_client, workspaceId, workspaceRoot) => {
+        registrations.push({ workspaceId, workspaceRoot });
+        return "";
+      },
+    }),
+  );
+
+  const ok = await sync.hasUsableManagedAiRuntimeConfigForSend({
+    workspaceId: "app-local",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+  });
+
+  assert.equal(ok, false);
+  assert.deepEqual(registrations, [{ workspaceId: "app-local", workspaceRoot: "/repo" }]);
+  assert.deepEqual(client.getConfigCalls, []);
 });
 
 test("inactive workspace heal marks unauthorized workspaces for the current token", async () => {

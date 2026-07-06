@@ -175,7 +175,10 @@ async function withPluginStore(
       vesloServerClient: () => vesloServerClient as never,
       vesloServerStatus: () => "connected",
       vesloServerCapabilities: () => ({ plugins: { read: true, write: true } }) as never,
-      vesloServerWorkspaceId: () => options.vesloServerWorkspaceId ?? "ws-alpha",
+      vesloServerWorkspaceId: () =>
+        Object.prototype.hasOwnProperty.call(options, "vesloServerWorkspaceId")
+          ? options.vesloServerWorkspaceId ?? null
+          : "ws-alpha",
       setBusy: () => undefined,
       setBusyLabel: () => undefined,
       setBusyStartedAt: () => undefined,
@@ -266,13 +269,13 @@ test("plugin refresh queues latest request while another plugin refresh is in fl
   );
 });
 
-test("plugin refresh falls back to active workspace id while server workspace id is resolving", async () => {
+test("plugin refresh waits for acknowledged server workspace id instead of using the app workspace id", async () => {
   await withPluginStore(
     async ({ store, calls }) => {
       await store.refreshPlugins("project");
 
-      assert.equal(calls.list[0]?.workspaceId, "ws-alpha");
-      assert.ok(store.pluginInventory().some((item) => item.id === "platform.superpowers"));
+      assert.deepEqual(calls.list, []);
+      assert.equal(store.pluginInventory().some((item) => item.id === "platform.superpowers"), false);
     },
     { vesloServerWorkspaceId: null },
   );

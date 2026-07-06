@@ -1,4 +1,3 @@
-import { normalizeDirectoryPath } from "../utils";
 import {
   parseVesloWorkspaceIdFromUrl,
   type VesloSoulAnyMaterializationResult,
@@ -32,41 +31,18 @@ export type PendingSoulMaterializationReplay = {
 
 const normalizedText = (value: string | null | undefined): string => value?.trim() ?? "";
 
-const serverWorkspaceDirectoryCandidates = (
-  workspace: Pick<VesloWorkspaceInfo, "path" | "directory" | "opencode">,
-) =>
-  [
-    normalizeDirectoryPath(workspace.path ?? ""),
-    normalizeDirectoryPath(workspace.directory ?? ""),
-    normalizeDirectoryPath(workspace.opencode?.directory ?? ""),
-  ].filter(Boolean);
-
 export function buildSoulWorkspaceIdMap(input: {
   appWorkspaces: SoulWorkspaceMapWorkspace[];
   serverWorkspaces: VesloWorkspaceInfo[];
 }): SoulWorkspaceIdMap {
   const map: SoulWorkspaceIdMap = {};
-  const idByLocalPath = new Map<string, string>();
   const listedServerWorkspaceIds = new Set(input.serverWorkspaces.map((item) => item.id));
-
-  for (const item of input.serverWorkspaces) {
-    const path = normalizeDirectoryPath(item.path ?? "");
-    if (path) {
-      idByLocalPath.set(path, item.id);
-    }
-  }
 
   for (const workspace of input.appWorkspaces) {
     if (workspace.workspaceType === "local") {
       const explicitId = workspace.vesloWorkspaceId?.trim() ?? "";
       if (explicitId && listedServerWorkspaceIds.has(explicitId)) {
         map[workspace.id] = explicitId;
-        continue;
-      }
-      const key = normalizeDirectoryPath(workspace.path ?? "");
-      const serverWorkspaceId = key ? idByLocalPath.get(key) : null;
-      if (serverWorkspaceId) {
-        map[workspace.id] = serverWorkspaceId;
       }
       continue;
     }
@@ -79,18 +55,8 @@ export function buildSoulWorkspaceIdMap(input: {
       workspace.vesloWorkspaceId?.trim() ||
       parseVesloWorkspaceIdFromUrl(workspace.vesloHostUrl ?? "") ||
       parseVesloWorkspaceIdFromUrl(workspace.baseUrl ?? "");
-    if (explicitId) {
+    if (explicitId && listedServerWorkspaceIds.has(explicitId)) {
       map[workspace.id] = explicitId;
-      continue;
-    }
-
-    const directoryHint = normalizeDirectoryPath(workspace.directory ?? workspace.path ?? "");
-    if (!directoryHint) continue;
-    const match = input.serverWorkspaces.find((entry) =>
-      serverWorkspaceDirectoryCandidates(entry).includes(directoryHint),
-    );
-    if (match?.id) {
-      map[workspace.id] = match.id;
     }
   }
 

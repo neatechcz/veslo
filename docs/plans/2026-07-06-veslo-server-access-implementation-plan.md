@@ -973,10 +973,10 @@ workspace row's `vesloWorkspaceId` field when the server response includes a
 matching path. Desktop rename/delete server calls prefer this mapped id with a
 fallback to the existing app-local id, and create-local reloads state after an
 accepted registration so the returned workspace list includes the mapping.
-The app's active local `vesloServerWorkspaceId` signal now also prefers
-`vesloWorkspaceId` with the existing app-local id as fallback, so server-bound
-callers that consume that signal move to the mapping without changing UI
-identity.
+The app's active local `vesloServerWorkspaceId` signal now uses only the
+acknowledged `vesloWorkspaceId` mapping. It no longer publishes the app-local
+workspace id as a server workspace id, so unmapped local workspaces fail closed
+instead of silently routing server-bound calls through UI identity.
 
 Partial implementation note 2026-07-06: `conversation-service` now has a
 dual-id compatibility regression test proving that a local app workspace keeps
@@ -1011,12 +1011,12 @@ skipped and traced. This preserves old run history for the common app-id to
 server-id migration without merging conflicting histories.
 
 Partial implementation note 2026-07-06: app-side workspace route builders now
-have broader dual-id coverage. Automation and Soul workspace maps prefer a
-listed local `vesloWorkspaceId` over path matching, so path-normalization drift
-does not route server-bound automation or materialization calls through the
-app-local id. Attachment staging now applies the same listed-mapping-first
-rule before path matching when choosing the server workspace for file-session
-uploads. Existing app-local ids remain the UI identity.
+have broader dual-id coverage. Automation and Soul workspace maps use explicit
+`vesloWorkspaceId` mappings only after the connected server lists that id; they
+do not infer server workspace ids from path or directory matches. Attachment
+staging uses the same explicit-id validation and no longer chooses a server
+workspace from path matching, `activeId`, or a singleton workspace list.
+Existing app-local ids remain the UI identity.
 
 Implementation note 2026-07-06: VSA10B is complete after the listed
 verification passed. Final server-owned ID authority cutover,
@@ -1125,6 +1125,12 @@ Implementation status:
 - The current `/workspaces/local` server id remains deterministic from the
   resolved path. This task is therefore a server-acknowledged server-call
   authority cutover, not a new opaque id-generator cutover.
+- The app no longer publishes local app workspace ids as Veslo server workspace
+  ids. Local server-bound calls use an acknowledged `vesloWorkspaceId` mapping
+  or fail closed with visible unsynced/unavailable state.
+- Frontend automation, Soul, attachment staging, MCP, plugin, workspace share,
+  and managed-AI paths no longer adopt a server workspace by path/directory
+  match, `activeId`, or "first listed workspace" fallback.
 
 Acceptance:
 
@@ -1143,6 +1149,7 @@ cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml workspace::stat
 cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml commands::workspace::tests --quiet
 pnpm --filter veslo-server exec bun test src/tests/workspaces.test.ts
 pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/send-runtime-readiness.test.ts src/app/tests/lib/veslo-server.test.ts
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/conversation-service.test.ts src/app/tests/app-managed-ai-config-sync-contract.test.ts src/app/tests/context/extensions-plugin-policy.test.ts src/app/tests/context/mcp-connection-workflow.test.ts src/app/pages/scheduled-automations.test.ts src/app/tests/components/session/composer-docx-delegation.test.ts src/app/tests/components/session/composer-screenshot-staging-regression.test.ts src/app/tests/pages/scheduled-automation-store.test.ts src/app/tests/pages/session-attachment-staging.test.ts src/app/tests/pages/workspace-share-controller.test.ts src/app/tests/pages/soul-data-store.test.ts src/app/tests/lib/automation-workspace-map.test.ts src/app/tests/lib/soul-workspace-map.test.ts
 pnpm --filter veslo-orchestrator exec bun test src/tests/workspace-id-golden.test.ts src/tests/workspace-id-mapping.test.ts
 pnpm --filter veslo-orchestrator typecheck
 rg -n "stable_workspace_id|workspaceIdForPath|workspaceIdForLocal|workspace_id_mismatch|veslo_workspace_id" packages/desktop/src-tauri/src packages/server/src packages/orchestrator/src packages/app/src/app

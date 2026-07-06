@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, on, onCleanup, type Accessor } from "solid-js";
+import { createEffect, createMemo, createSignal, on, type Accessor } from "solid-js";
 import type { WorkspaceInfo, VesloServerInfo } from "../lib/tauri";
 import {
   buildVesloConnectInviteUrl,
@@ -14,7 +14,6 @@ import type {
   SharedSkillsSetBundleV1,
   SharedWorkspaceProfileBundleV1,
 } from "../lib/shared-bundles";
-import { normalizeDirectoryPath } from "../utils";
 
 export type WorkspaceShareField = {
   label: string;
@@ -24,7 +23,7 @@ export type WorkspaceShareField = {
   hint?: string;
 };
 
-export type WorkspaceShareClient = Pick<VesloServerClient, "listWorkspaces" | "exportWorkspace">;
+export type WorkspaceShareClient = Pick<VesloServerClient, "exportWorkspace">;
 
 export type WorkspaceShareCreateClient = (input: {
   baseUrl: string;
@@ -290,44 +289,6 @@ export const resolveExportDisabledReason = ({
   return null;
 };
 
-const resolveLocalWorkspaceIdFromList = ({
-  workspacePath,
-  items,
-}: {
-  workspacePath: string;
-  items: Array<{ id: string; path?: string | null }>;
-}) => {
-  const targetPath = normalizeDirectoryPath(workspacePath);
-  const match = items.find((entry) => normalizeDirectoryPath(entry.path ?? "") === targetPath);
-  return (match?.id ?? "").trim();
-};
-
-const resolveRemoteWorkspaceIdFromList = ({
-  workspace,
-  items,
-  activeId,
-}: {
-  workspace: WorkspaceInfo;
-  items: Array<{
-    id: string;
-    path?: string | null;
-    directory?: string | null;
-    opencode?: { directory?: string | null } | null;
-  }>;
-  activeId?: string | null;
-}) => {
-  const directoryHint = normalizeDirectoryPath(workspace.directory?.trim() ?? workspace.path?.trim() ?? "");
-  const match = directoryHint
-    ? items.find((entry) => {
-        const entryPath = normalizeDirectoryPath(
-          (entry.opencode?.directory ?? entry.directory ?? entry.path ?? "").trim(),
-        );
-        return Boolean(entryPath && entryPath === directoryHint);
-      })
-    : (activeId ? items.find((entry) => entry.id === activeId) : null) ?? items[0];
-  return (match?.id ?? "").trim();
-};
-
 export const resolveShareExportContext = async ({
   workspace,
   hostInfo,
@@ -358,15 +319,8 @@ export const resolveShareExportContext = async ({
     const client = createClient({ baseUrl, token });
 
     let workspaceId = localVesloWorkspaceId?.trim() ?? "";
-    if (!workspaceId) {
-      const response = await client.listWorkspaces();
-      const items = Array.isArray(response.items) ? response.items : [];
-      workspaceId = resolveLocalWorkspaceIdFromList({
-        workspacePath: workspace.path?.trim() ?? "",
-        items,
-      });
-      setLocalVesloWorkspaceId(workspaceId || null);
-    }
+    if (!workspaceId) workspaceId = workspace.vesloWorkspaceId?.trim() ?? "";
+    setLocalVesloWorkspaceId(workspaceId || null);
 
     if (!workspaceId) {
       throw new Error(t("share.resolve_local_worker_failed"));
@@ -391,16 +345,6 @@ export const resolveShareExportContext = async ({
     parseVesloWorkspaceIdFromUrl(workspace.vesloHostUrl ?? "") ||
     parseVesloWorkspaceIdFromUrl(workspace.baseUrl ?? "") ||
     "";
-
-  if (!workspaceId) {
-    const response = await client.listWorkspaces();
-    const items = Array.isArray(response.items) ? response.items : [];
-    workspaceId = resolveRemoteWorkspaceIdFromList({
-      workspace,
-      items,
-      activeId: response.activeId,
-    });
-  }
 
   if (!workspaceId) {
     throw new Error(t("share.resolve_remote_worker_failed"));
@@ -544,35 +488,12 @@ export function createWorkspaceShareController(
     const workspace = shareWorkspace();
     const baseUrl = deps.serverHostInfo()?.baseUrl?.trim() ?? "";
     const token = deps.serverHostInfo()?.clientToken?.trim() ?? "";
-    const workspacePath = workspace?.workspaceType === "local" ? workspace.path?.trim() ?? "" : "";
-
-    if (!workspace || workspace.workspaceType !== "local" || !workspacePath || !baseUrl || !token) {
+    if (!workspace || workspace.workspaceType !== "local" || !baseUrl || !token) {
       setShareLocalVesloWorkspaceId(null);
       return;
     }
 
-    let cancelled = false;
-    setShareLocalVesloWorkspaceId(null);
-
-    void (async () => {
-      try {
-        const client = createClient({ baseUrl, token });
-        const response = await client.listWorkspaces();
-        if (cancelled) return;
-        const items = Array.isArray(response.items) ? response.items : [];
-        const workspaceId = resolveLocalWorkspaceIdFromList({
-          workspacePath,
-          items,
-        });
-        setShareLocalVesloWorkspaceId(workspaceId || null);
-      } catch {
-        if (!cancelled) setShareLocalVesloWorkspaceId(null);
-      }
-    })();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
+    setShareLocalVesloWorkspaceId(workspace.vesloWorkspaceId?.trim() || null);
   });
 
   const shareFields = createMemo(() =>

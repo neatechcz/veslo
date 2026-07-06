@@ -576,7 +576,6 @@ export default function App() {
     vesloArchiveClient,
     gatewayVesloServerClient,
     managedAiGatewayBaseUrl,
-    devtoolsVesloClient,
     checkVesloServer,
     testVesloServerConnection,
     reconnectVesloServer,
@@ -714,6 +713,7 @@ export default function App() {
     activeWorkspaceId: () => currentWorkspaceStoreRef()?.activeWorkspaceId().trim() ?? "",
     activeLegacyEngineReady: () => engineReady(),
     readyEngineWorkspaceIds,
+    workspaceLifecycleState: () => currentWorkspaceStoreRef()?.workspaceLifecycleState() ?? null,
     requiresOrchestratorReadiness: (workspaceId) => {
       if (!isTauriRuntime() || engineRuntime() !== "veslo-orchestrator") return false;
       const workspace = currentWorkspaceStoreRef()?.workspaces().find((entry) => entry.id === workspaceId);
@@ -2155,7 +2155,7 @@ export default function App() {
       return;
     }
 
-    const workspaceId = vesloServerWorkspaceId()?.trim() || workspaceStore.activeWorkspaceId().trim();
+    const workspaceId = vesloServerWorkspaceId()?.trim() ?? "";
     if (!workspaceId) return;
 
     const key = [
@@ -3046,7 +3046,6 @@ export default function App() {
   createEffect(() => {
     const active = workspaceStore.activeWorkspaceDisplay();
     const client = vesloServerClient();
-    const vesloUrl = vesloServerUrl().trim();
 
     if (!client || vesloServerStatus() !== "connected") {
       setVesloServerWorkspaceId(null);
@@ -3056,51 +3055,18 @@ export default function App() {
     if (active.workspaceType === "remote" && active.remoteType === "veslo") {
       const inferredWorkspaceId =
         parseVesloWorkspaceIdFromUrl(active.vesloHostUrl ?? "") ??
-        parseVesloWorkspaceIdFromUrl(active.baseUrl ?? "") ??
-        parseVesloWorkspaceIdFromUrl(vesloUrl);
-      const storedId = active.vesloWorkspaceId?.trim() || inferredWorkspaceId || envVesloWorkspaceId || null;
+        parseVesloWorkspaceIdFromUrl(active.baseUrl ?? "");
+      const storedId = active.vesloWorkspaceId?.trim() || inferredWorkspaceId || null;
       if (storedId) {
         setVesloServerWorkspaceId(storedId);
         return;
       }
-
-      let cancelled = false;
-      const resolveWorkspace = async () => {
-        try {
-          const response = await client.listWorkspaces();
-          if (cancelled) return;
-          const items = Array.isArray(response.items) ? response.items : [];
-          const directoryHint = normalizeDirectoryPath(active.directory?.trim() ?? active.path?.trim() ?? "");
-          const matchByDirectory = directoryHint
-            ? items.find((entry) => {
-                const entryPath = normalizeDirectoryPath((entry.opencode?.directory ?? entry.directory ?? entry.path ?? "").trim());
-                return Boolean(entryPath && entryPath === directoryHint);
-              })
-            : undefined;
-          const matchByActiveId = response.activeId
-            ? items.find((entry) => entry.id === response.activeId)
-            : undefined;
-          const match = matchByDirectory || matchByActiveId || items[0];
-          setVesloServerWorkspaceId(match?.id ?? response.activeId ?? null);
-        } catch {
-          if (!cancelled) setVesloServerWorkspaceId(null);
-        }
-      };
-
-      void resolveWorkspace();
-      onCleanup(() => {
-        cancelled = true;
-      });
+      setVesloServerWorkspaceId(null);
       return;
     }
 
     if (active.workspaceType === "local") {
-      setVesloServerWorkspaceId(
-        active.vesloWorkspaceId?.trim() ||
-        active.id?.trim() ||
-        workspaceStore.activeWorkspaceId().trim() ||
-        null,
-      );
+      setVesloServerWorkspaceId(active.vesloWorkspaceId?.trim() || null);
       return;
     }
 
@@ -3108,45 +3074,13 @@ export default function App() {
   });
 
   createEffect(() => {
-    if (!developerMode()) {
-      setDevtoolsWorkspaceId(null);
-      return;
-    }
-    if (!documentVisible()) return;
-
-    const client = devtoolsVesloClient();
-    if (!client) {
-      setDevtoolsWorkspaceId(null);
-      return;
-    }
-
-    const root = normalizeDirectoryPath(workspaceStore.activeWorkspaceRoot().trim());
-    let active = true;
-
-    const run = async () => {
-      try {
-        const response = await client.listWorkspaces();
-        if (!active) return;
-        const items = Array.isArray(response.items) ? response.items : [];
-        const activeMatch = response.activeId ? items.find((item) => item.id === response.activeId) : null;
-        const match = root ? items.find((item) => normalizeDirectoryPath(item.path) === root) : activeMatch ?? items[0];
-        setDevtoolsWorkspaceId(activeMatch?.id ?? match?.id ?? null);
-      } catch {
-        if (active) setDevtoolsWorkspaceId(null);
-      }
-    };
-
-    run();
-    const interval = window.setInterval(run, 20_000);
-    onCleanup(() => {
-      active = false;
-      window.clearInterval(interval);
-    });
+    void developerMode();
+    setDevtoolsWorkspaceId(null);
   });
 
   createEffect(() => {
     const client = vesloServerClient();
-    const workspaceId = devtoolsWorkspaceId() || vesloServerWorkspaceId();
+    const workspaceId = vesloServerWorkspaceId();
     if (!client || !workspaceId) {
       setVesloAuditEntries([]);
       setVesloAuditStatus("idle");

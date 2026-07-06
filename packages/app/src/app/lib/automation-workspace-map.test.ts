@@ -52,11 +52,12 @@ test("buildAutomationWorkspaceSummaries skips remote Veslo workspaces from anoth
   });
 
   assert.deepEqual(summaries.map((summary) => summary.appWorkspaceId), ["app-local"]);
-  assert.equal(summaries[0]?.serverWorkspaceId, "server-local");
+  assert.equal(summaries[0]?.serverWorkspaceId, null);
+  assert.equal(summaries[0]?.status, "unavailable");
   assert.equal(summaries.some((summary) => summary.name === "workspace"), false);
   assert.equal(
     summaries.some((summary) => summary.error === "Workspace is not mapped on the connected Veslo server."),
-    false,
+    true,
   );
 });
 

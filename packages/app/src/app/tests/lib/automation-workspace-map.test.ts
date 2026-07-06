@@ -52,7 +52,8 @@ test("buildAutomationWorkspaceSummaries skips remote Veslo workspaces from anoth
   });
 
   assert.deepEqual(summaries.map((summary) => summary.appWorkspaceId), ["app-local"]);
-  assert.equal(summaries[0]?.serverWorkspaceId, "server-local");
+  assert.equal(summaries[0]?.serverWorkspaceId, null);
+  assert.equal(summaries[0]?.status, "unavailable");
   assert.equal(summaries.some((summary) => summary.name === "workspace"), false);
 });
 
@@ -69,7 +70,7 @@ test("buildAutomationWorkspaceSummaries reports local workspaces missing from th
   assert.equal(summaries[0]?.error, "Workspace is not mapped on the connected Veslo server.");
 });
 
-test("buildAutomationWorkspaceSummaries prefers mapped local Veslo workspace ids over path matching", () => {
+test("buildAutomationWorkspaceSummaries uses mapped local Veslo workspace ids and ignores path matching", () => {
   const summaries = buildAutomationWorkspaceSummaries({
     appWorkspaces: [
       localWorkspace({

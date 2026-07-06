@@ -128,7 +128,7 @@ test("validates cached workspace ids against the active server list before stagi
   assert.equal(calls.listWorkspaces, 1);
 });
 
-test("prefers mapped local Veslo workspace ids before path matching for attachment staging", async () => {
+test("uses mapped local Veslo workspace ids and ignores path matching for attachment staging", async () => {
   const { client, calls } = makeClient({
     workspaces: [[
       { id: "server-mapped", path: "/private/var/repo", directory: "/private/var/repo" },
@@ -162,6 +162,7 @@ test("recovers a missing local server workspace once before retrying file-sessio
   let createAttempts = 0;
   let restartCalls = 0;
   let checkCalls = 0;
+  let cachedWorkspaceId = "local-old";
   const { client, calls } = makeClient({
     workspaces: [
       [{ id: "local-old", path: "/repo", directory: "/repo" }],
@@ -177,8 +178,10 @@ test("recovers a missing local server workspace once before retrying file-sessio
   });
   const staging = createSessionAttachmentStaging(
     makeDeps(client, {
+      vesloServerWorkspaceId: () => cachedWorkspaceId,
       vesloServerRestart: async () => {
         restartCalls += 1;
+        cachedWorkspaceId = "local-new";
         return { running: true, baseUrl: "http://127.0.0.1:7777" };
       },
       checkVesloServer: async () => {

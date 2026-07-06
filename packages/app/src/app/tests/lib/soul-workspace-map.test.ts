@@ -37,7 +37,7 @@ const soulMaterializationResult = (
   ...input,
 });
 
-test("buildSoulWorkspaceIdMap maps local paths and explicit Veslo remote ids", () => {
+test("buildSoulWorkspaceIdMap ignores local path matches and maps verified Veslo remote ids", () => {
   assert.deepEqual(
     buildSoulWorkspaceIdMap({
       appWorkspaces: [
@@ -58,17 +58,18 @@ test("buildSoulWorkspaceIdMap maps local paths and explicit Veslo remote ids", (
       ],
       serverWorkspaces: [
         serverWorkspace({ id: "veslo-local", path: "/repo/local" }),
+        serverWorkspace({ id: "veslo-remote-explicit", path: "/remote/explicit" }),
+        serverWorkspace({ id: "veslo-url", path: "/remote/url" }),
       ],
     }),
     {
-      "local-app": "veslo-local",
       "remote-explicit-app": "veslo-remote-explicit",
       "remote-url-app": "veslo-url",
     },
   );
 });
 
-test("buildSoulWorkspaceIdMap prefers mapped local Veslo workspace ids over path matching", () => {
+test("buildSoulWorkspaceIdMap uses mapped local Veslo workspace ids and ignores path matching", () => {
   assert.deepEqual(
     buildSoulWorkspaceIdMap({
       appWorkspaces: [
@@ -90,7 +91,7 @@ test("buildSoulWorkspaceIdMap prefers mapped local Veslo workspace ids over path
   );
 });
 
-test("buildSoulWorkspaceIdMap falls back to server directory hints for Veslo remotes only", () => {
+test("buildSoulWorkspaceIdMap does not fall back to server directory hints", () => {
   assert.deepEqual(
     buildSoulWorkspaceIdMap({
       appWorkspaces: [
@@ -121,9 +122,7 @@ test("buildSoulWorkspaceIdMap falls back to server directory hints for Veslo rem
         }),
       ],
     }),
-    {
-      "remote-directory-app": "veslo-directory",
-    },
+    {},
   );
 });
 

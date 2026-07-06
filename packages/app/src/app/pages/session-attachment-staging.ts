@@ -244,42 +244,26 @@ export function createSessionAttachmentStaging<
     const response = await client.listWorkspaces();
     const items = Array.isArray(response.items) ? response.items : [];
     const active = deps.activeWorkspaceDisplay();
-    const activeId = response.activeId?.trim() ?? "";
     const cachedWorkspaceId = (deps.vesloServerWorkspaceId() ?? "").trim();
-
-    const findByPath = (targetPath: string) => {
-      const normalizedTarget = normalizeDirectoryPath(targetPath.trim());
-      if (normalizedTarget === "") return null;
-      return items.find((entry) => {
-        const candidates = [
-          normalizeDirectoryPath((entry.path ?? "").trim()),
-          normalizeDirectoryPath((entry.directory ?? "").trim()),
-          normalizeDirectoryPath((entry.opencode?.directory ?? "").trim()),
-        ].filter(Boolean);
-        return candidates.includes(normalizedTarget);
-      }) ?? null;
+    const listedWorkspaceId = (workspaceId: string | null | undefined) => {
+      const id = workspaceId?.trim() ?? "";
+      return id && items.some((entry) => entry.id === id) ? id : "";
     };
 
     let resolved = "";
     if (active.workspaceType === "remote" && active.remoteType === "veslo") {
       const inferredWorkspaceId =
         parseVesloWorkspaceIdFromUrl(active.vesloHostUrl ?? "") ??
-        parseVesloWorkspaceIdFromUrl(active.baseUrl ?? "") ??
-        parseVesloWorkspaceIdFromUrl(deps.vesloServerUrl().trim());
-      const storedId = active.vesloWorkspaceId?.trim() || inferredWorkspaceId || deps.envVesloWorkspaceId || "";
+        parseVesloWorkspaceIdFromUrl(active.baseUrl ?? "");
+      const storedId = active.vesloWorkspaceId?.trim() || inferredWorkspaceId || "";
       resolved =
-        (storedId && items.find((entry) => entry.id === storedId)?.id) ||
-        (cachedWorkspaceId && items.find((entry) => entry.id === cachedWorkspaceId)?.id) ||
-        findByPath(active.directory?.trim() ?? active.path?.trim() ?? "")?.id ||
-        activeId ||
-        (items.length === 1 ? items[0]?.id ?? "" : "");
+        listedWorkspaceId(storedId) ||
+        listedWorkspaceId(cachedWorkspaceId);
     } else if (active.workspaceType === "local") {
-      const activeRoot = deps.activeWorkspaceRoot().trim();
       const mappedWorkspaceId = active.vesloWorkspaceId?.trim() ?? "";
       resolved =
-        (mappedWorkspaceId && items.find((entry) => entry.id === mappedWorkspaceId)?.id) ||
-        findByPath(activeRoot)?.id ||
-        (!activeRoot && items.length === 1 ? (activeId || items[0]?.id || "") : "");
+        listedWorkspaceId(mappedWorkspaceId) ||
+        listedWorkspaceId(cachedWorkspaceId);
     }
 
     if (resolved) {

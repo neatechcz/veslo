@@ -131,7 +131,7 @@ test("workspace materialization can request server-only local Veslo startup", ()
 });
 
 test("local Veslo workspace readiness uses the stable local workspace id", () => {
-  const resolutionEffectStart = source.indexOf("const vesloUrl = vesloServerUrl().trim();");
+  const resolutionEffectStart = source.indexOf("const active = workspaceStore.activeWorkspaceDisplay();");
   assert.notStrictEqual(resolutionEffectStart, -1, "Veslo workspace resolution effect is missing");
 
   const localBranchStart = source.indexOf('if (active.workspaceType === "local") {', resolutionEffectStart);
@@ -143,12 +143,12 @@ test("local Veslo workspace readiness uses the stable local workspace id", () =>
 
   assert.match(
     localBranch,
-    /setVesloServerWorkspaceId\(\s*active\.vesloWorkspaceId\?\.trim\(\) \|\|\s*active\.id\?\.trim\(\) \|\|\s*workspaceStore\.activeWorkspaceId\(\)\.trim\(\) \|\|\s*null,\s*\);/,
-    "local workspace readiness should prefer the server-owned id before the legacy stable id",
+    /setVesloServerWorkspaceId\(active\.vesloWorkspaceId\?\.trim\(\) \|\| null\);/,
+    "local workspace readiness should use only the server-owned id",
   );
   assert.doesNotMatch(
     localBranch,
-    /listWorkspaces|entry\.path|entry\.directory|entry\.opencode\?\.directory/,
-    "local workspace readiness should not perform a server path scan during startup",
+    /active\.id|workspaceStore\.activeWorkspaceId|listWorkspaces|entry\.path|entry\.directory|entry\.opencode\?\.directory/,
+    "local workspace readiness should not publish app ids or perform a server path scan during startup",
   );
 });

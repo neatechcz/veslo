@@ -66,11 +66,14 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
 - `scheduled.tsx`
   Scheduled jobs, templates, scheduler status, and run-now entry points.
 - `scheduled-automation-store.ts`
-  Scheduled automation loading, mutation, run-now orchestration, templates, and scheduler status.
+  Scheduled automation loading, mutation, run-now orchestration, templates, scheduler status, and
+  explicit server-workspace-id mapping for automation requests. Do not infer server workspace ids
+  from local paths here.
 - `soul.tsx`
   Soul source overview, source detail, version history, materialization diagnostics, and workspace heartbeat toggle.
 - `soul-data-store.ts`
-  Soul overview and workspace-source mapping refresh behavior for the dashboard tab.
+  Soul overview and workspace-source mapping refresh behavior for the dashboard tab. Workspace
+  source maps use explicit listed `vesloWorkspaceId` values, not path/directory matching.
 - `identities.tsx`
   Messaging channels and OpenCode Router identities management for workspace-scoped messaging.
 
@@ -89,7 +92,8 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
   Feedback modal state, runtime metadata collection, submission flow, and post-submit cleanup.
 - `packages/app/src/app/context/veslo-server-connection.ts`
   Veslo server settings, connection status, current client selection, invite/share link helpers,
-  and server polling owned outside the app shell.
+  pushed descriptor state, and server polling owned outside the app shell. Local descriptor state is
+  the owner for the active Veslo server/workspace identity exposed to the UI.
 - `packages/app/src/app/context/workspace-runtime-debug-probe.ts`
   Runtime diagnostics probing and workspace busy/debug state refresh behavior.
 - `packages/app/src/app/context/den-desktop-auth-workflow.ts`
@@ -101,14 +105,16 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
   Managed-AI runtime config sync, provider/model routing repair, and OpenCode config patching.
 - `packages/app/src/app/context/conversation-service.ts`
   Conversation read/write adapter used by app/session workflows instead of calling server APIs
-  inline from `app.tsx`.
+  inline from `app.tsx`. Server-bound local workspace calls must use acknowledged
+  `vesloWorkspaceId` mappings, not app-local workspace ids.
 - `packages/app/src/app/context/app-deep-link-workflow.ts`
   Shared bundle import, remote-connect deep-link handling, and queued deep-link processing.
 - `packages/app/src/app/context/skill-registry-orchestrator.ts`
   Skill registry refresh orchestration after extension, workspace, auth, and server state changes.
 - `packages/app/src/app/context/mcp-connection-workflow.ts`
   MCP and Notion connection flow state, auth start/polling, reload banners, and quick-connect
-  mutations.
+  mutations. Local Veslo server mutations use the active acknowledged server workspace id and do not
+  adopt the first listed server workspace.
 - `packages/app/src/app/context/app-send-trace.ts`
   App-level send trace id creation, preflight trace context, timed step wrapper, and external trace fan-in from Veslo server conversation runs.
 - `packages/app/src/app/context/app-startup-hydration.ts`
@@ -152,7 +158,8 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
   Session send, queue, pending-session, retry, replacement, and active-run orchestration.
 - `packages/app/src/app/pages/session-attachment-staging.ts`
   Session attachment staging, DOCX/screenshot/imported-file materialization, and staged prompt part
-  conversion.
+  conversion. Fallback staging validates explicit server workspace ids only; it must not infer a
+  workspace from path matching, `activeId`, or a singleton server list.
 - `packages/app/src/app/pages/session-send-workflow.ts`
   Prompt, shell, command, retry, pending-draft, managed-AI preflight, queue, trace, and
   conversation-run send orchestration.
@@ -176,6 +183,8 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
   routing.
 - `packages/app/src/app/pages/workspace-share-controller.ts`
   Shared session/dashboard workspace sharing, public-link publishing, export, and share-modal state.
+  Local export/share uses an acknowledged `vesloWorkspaceId`; it does not discover a server
+  workspace by path.
 - `packages/app/src/app/pages/session-left-sidebar.tsx`
   Session left-sidebar docked/overlay layout, workspace session list placement, dashboard nav, and
   status controls.

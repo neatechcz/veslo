@@ -1,5 +1,4 @@
 import type { AutomationWorkspaceSummary } from "../types";
-import { normalizeDirectoryPath } from "../utils";
 import type { WorkspaceInfo } from "./tauri";
 import { parseVesloWorkspaceIdFromUrl, type VesloWorkspaceInfo } from "./veslo-server";
 
@@ -11,24 +10,6 @@ const automationWorkspaceName = (workspace: WorkspaceInfo) =>
   workspace.name?.trim() ||
   workspace.path?.trim() ||
   workspace.id;
-
-const serverWorkspaceDirectoryCandidates = (
-  workspace: { path?: string | null; directory?: string | null; opencode?: { directory?: string | null } | null },
-) =>
-  [
-    normalizeDirectoryPath(workspace.path ?? ""),
-    normalizeDirectoryPath(workspace.directory ?? ""),
-    normalizeDirectoryPath(workspace.opencode?.directory ?? ""),
-  ].filter(Boolean);
-
-const findServerWorkspaceByDirectory = (
-  workspaces: Array<{ id: string; path?: string | null; directory?: string | null; opencode?: { directory?: string | null } | null }>,
-  directory: string | null | undefined,
-) => {
-  const key = normalizeDirectoryPath(directory ?? "");
-  if (!key) return null;
-  return workspaces.find((entry) => serverWorkspaceDirectoryCandidates(entry).includes(key)) ?? null;
-};
 
 const urlOrigin = (value: string | null | undefined) => {
   const trimmed = value?.trim() ?? "";
@@ -59,12 +40,6 @@ export function buildAutomationWorkspaceSummaries(input: {
   serverWorkspaces: VesloWorkspaceInfo[];
   connectedServerBaseUrl: string | null | undefined;
 }): AutomationWorkspaceSummary[] {
-  const idByLocalPath = new Map<string, string>();
-  for (const item of input.serverWorkspaces) {
-    for (const path of serverWorkspaceDirectoryCandidates(item)) {
-      idByLocalPath.set(path, item.id);
-    }
-  }
   const listedServerWorkspaceIds = new Set(input.serverWorkspaces.map((item) => item.id));
   const summaries: AutomationWorkspaceSummary[] = [];
 
@@ -73,11 +48,10 @@ export function buildAutomationWorkspaceSummaries(input: {
 
     if (workspace.workspaceType === "local") {
       const mappedServerWorkspaceId = workspace.vesloWorkspaceId?.trim() ?? "";
-      const key = normalizeDirectoryPath(workspace.path ?? "");
       serverWorkspaceId =
         mappedServerWorkspaceId && listedServerWorkspaceIds.has(mappedServerWorkspaceId)
           ? mappedServerWorkspaceId
-          : key ? idByLocalPath.get(key) ?? null : null;
+          : null;
     } else if (workspace.remoteType === "veslo") {
       const storedServerWorkspaceId =
         workspace.vesloWorkspaceId?.trim() ||
@@ -89,11 +63,6 @@ export function buildAutomationWorkspaceSummaries(input: {
         storedServerWorkspaceId && listedServerWorkspaceIds.has(storedServerWorkspaceId)
           ? storedServerWorkspaceId
           : null;
-
-      if (!serverWorkspaceId) {
-        const match = findServerWorkspaceByDirectory(input.serverWorkspaces, workspace.directory ?? workspace.path ?? "");
-        serverWorkspaceId = match?.id ?? null;
-      }
 
       if (!serverWorkspaceId && remoteWorkspaceBelongsToDifferentServer(workspace, input.connectedServerBaseUrl)) {
         continue;

@@ -24,13 +24,13 @@ test("attachment staging validates cached workspace ids against the active serve
   );
   assert.match(
     resolverSource,
-    /\(cachedWorkspaceId && items\.find\(\(entry\) => entry\.id === cachedWorkspaceId\)\?\.id\)/,
+    /const listedWorkspaceId = \(workspaceId: string \| null \| undefined\) => \{[\s\S]*items\.some\(\(entry\) => entry\.id === id\)/,
     "cached remote workspace ids should only be reused when the connected server still lists them",
   );
-  assert.match(
+  assert.doesNotMatch(
     resolverSource,
-    /findByPath\(activeRoot\)\?\.id \|\|[\s\S]*\(!activeRoot && items\.length === 1/s,
-    "local attachment staging should prefer the active workspace root before falling back to a single listed workspace",
+    /findByPath|activeId|items\.length === 1|items\[0\]|entry\.path|entry\.directory|entry\.opencode\?\.directory/,
+    "attachment staging must not infer workspace ids from path, activeId, or singleton server lists",
   );
 });
 

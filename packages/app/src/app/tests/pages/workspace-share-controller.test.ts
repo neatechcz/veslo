@@ -107,14 +107,11 @@ test("workspace share helpers derive disabled reasons and fields for local and r
 test("share export context resolves local and remote workspace ids without page-specific state", async () => {
   const localIds: string[] = [];
   const localClient = {
-    listWorkspaces: async () => ({
-      items: [{ id: "worker-local-a", name: "Local A", path: "C:\\work\\local-a", workspaceType: "local" }],
-    }),
     exportWorkspace: async () => ({ workspaceId: "worker-local-a", exportedAt: 1, skills: [] }),
   };
 
   const localContext = await resolveShareExportContext({
-    workspace: localWorkspace({ path: "C:/work/local-a" }),
+    workspace: localWorkspace({ path: "C:/work/local-a", vesloWorkspaceId: "worker-local-a" }),
     hostInfo: { baseUrl: "http://127.0.0.1:3939", clientToken: "local-token" } as any,
     settings: {},
     localVesloWorkspaceId: null,
@@ -149,6 +146,33 @@ test("share export context resolves local and remote workspace ids without page-
   });
 
   assert.equal(remoteContext.workspaceId, "remote-a");
+});
+
+test("share export context does not infer local worker ids from the server workspace list", async () => {
+  const calls: string[] = [];
+  const localClient = {
+    listWorkspaces: async () => {
+      calls.push("listWorkspaces");
+      return {
+        items: [{ id: "worker-local-a", name: "Local A", path: "C:\\work\\local-a", workspaceType: "local" }],
+      };
+    },
+    exportWorkspace: async () => ({ workspaceId: "worker-local-a", exportedAt: 1, skills: [] }),
+  };
+
+  await assert.rejects(
+    () => resolveShareExportContext({
+      workspace: localWorkspace({ path: "C:/work/local-a" }),
+      hostInfo: { baseUrl: "http://127.0.0.1:3939", clientToken: "local-token" } as any,
+      settings: {},
+      localVesloWorkspaceId: null,
+      setLocalVesloWorkspaceId: () => undefined,
+      createClient: () => localClient as any,
+      t,
+    }),
+    /share\.resolve_local_worker_failed/,
+  );
+  assert.deepEqual(calls, []);
 });
 
 test("share publishing builds workspace profile and skills-set bundles from the same export context", async () => {

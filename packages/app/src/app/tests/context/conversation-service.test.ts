@@ -45,7 +45,11 @@ type FakeWorkspaceRegistryItem = {
   };
 };
 
-function createFakeClient(options: { listWorkspaceItems?: FakeWorkspaceRegistryItem[] } = {}) {
+function createFakeClient(options: {
+  listWorkspaceItems?: FakeWorkspaceRegistryItem[];
+  addLocalWorkspaceItems?: FakeWorkspaceRegistryItem[];
+  failWorkspaceRegistration?: boolean;
+} = {}) {
   const calls: string[] = [];
   const listWorkspaceItems = options.listWorkspaceItems ?? [];
   let runConversationResult:
@@ -59,15 +63,19 @@ function createFakeClient(options: { listWorkspaceItems?: FakeWorkspaceRegistryI
     },
     addLocalWorkspace: async (input: { path: string }) => {
       calls.push(`addLocalWorkspace:${input.path}`);
+      if (options.failWorkspaceRegistration) {
+        throw new Error("registration unavailable");
+      }
+      const items = options.addLocalWorkspaceItems ?? [
+        {
+          id: "server-ws",
+          path: input.path,
+          directory: input.path,
+        },
+      ];
       return {
-        items: [
-          {
-            id: "server-ws",
-            path: input.path,
-            directory: input.path,
-          },
-        ],
-        activeId: "server-ws",
+        items,
+        activeId: items[0]?.id ?? null,
       };
     },
     listConversations: async (workspaceId: string) => {
@@ -130,14 +138,17 @@ function createFakeClient(options: { listWorkspaceItems?: FakeWorkspaceRegistryI
         kind: "abort" as const,
       };
     },
-    getConversationRunStatus: async (workspaceId: string, conversationId: string, runId: string) => ({
-      ok: true,
-      workspaceId,
-      conversationId,
-      runId,
-      status: "running" as const,
-      stale: false,
-    }),
+    getConversationRunStatus: async (workspaceId: string, conversationId: string, runId: string) => {
+      calls.push(`getConversationRunStatus:${workspaceId}:${conversationId}:${runId}`);
+      return {
+        ok: true,
+        workspaceId,
+        conversationId,
+        runId,
+        status: "running" as const,
+        stale: false,
+      };
+    },
     appendSessionTranscript: async (workspaceId: string, sessionId: string, input: { messages: unknown[]; partsByMessageId: Record<string, unknown[]> }) => {
       calls.push(`appendSessionTranscript:${workspaceId}:${sessionId}:${input.messages.length}`);
       return {
@@ -161,10 +172,14 @@ function createService(options: {
   startDisconnected?: boolean;
   workspaceVesloWorkspaceId?: string | null;
   listWorkspaceItems?: FakeWorkspaceRegistryItem[];
+  addLocalWorkspaceItems?: FakeWorkspaceRegistryItem[];
+  failWorkspaceRegistration?: boolean;
   engineBaseWorkspaceId?: string;
 } = {}) {
   const { client, calls, setRunConversationResult } = createFakeClient({
     listWorkspaceItems: options.listWorkspaceItems,
+    addLocalWorkspaceItems: options.addLocalWorkspaceItems,
+    failWorkspaceRegistration: options.failWorkspaceRegistration,
   });
   let serverClient: ConversationServiceClient | null = options.startDisconnected ? null : client;
   const engineBaseWorkspaceId = options.engineBaseWorkspaceId ?? "server-ws";
@@ -333,6 +348,133 @@ test("mapped local workspace id is used for server calls while app scopes stay l
   assert.equal(rememberedScopes[0]?.conversationId, "conv-created");
 });
 
+test("unmapped local workspace id is not treated as a server workspace id", () => {
+  const { service } = createService();
+
+  assert.equal(service.resolveConversationServerWorkspaceId("app-ws"), "");
+});
+
+test("local workspace registration rejects exact id matches without path evidence", async () => {
+  const { service, calls } = createService({
+    failWorkspaceRegistration: true,
+    listWorkspaceItems: [
+      {
+        id: "app-ws",
+        path: "/other",
+        directory: "/other",
+      },
+    ],
+  });
+
+  assert.equal(await service.ensureConversationReadWorkspaceRegistered(
+    service.vesloServerClient()!,
+    "app-ws",
+    "/repo",
+  ), "");
+  assert.deepEqual(calls, [
+    "listWorkspaces",
+    "addLocalWorkspace:/repo",
+  ]);
+});
+
+test("local workspace registration failure does not continue with fallback app workspace id", async () => {
+  const cases: Array<{
+    name: string;
+    run: (service: ReturnType<typeof createService>["service"]) => Promise<unknown>;
+  }> = [
+    {
+      name: "list",
+      run: async (service) => {
+        const result = await service.listConversationsFromVesloReadApi("app-ws", "/repo");
+        assert.equal(result.source, "unavailable");
+        return result;
+      },
+    },
+    {
+      name: "backfill",
+      run: (service) => service.backfillConversationsToVesloReadApi("app-ws", "/repo", [
+        {
+          id: "sess-import",
+          slug: "sess-import",
+          projectID: "app-ws",
+          directory: "/repo",
+          version: "1",
+          title: "Import",
+          time: { created: 1, updated: 1 },
+        },
+      ]),
+    },
+    {
+      name: "transcript",
+      run: async (service) => {
+        const result = await service.getTranscriptFromVesloReadApi("app-ws", "sess-a", 10, "/repo");
+        assert.equal(result, null);
+        return result;
+      },
+    },
+    {
+      name: "create",
+      run: async (service) => {
+        const result = await service.createConversationFromVesloWriteApi("app-ws", "/repo", "Create");
+        assert.equal(result, null);
+        return result;
+      },
+    },
+    {
+      name: "run",
+      run: async (service) => {
+        const result = await service.runConversationFromVesloWriteApi("sess-a", {
+          kind: "prompt_async",
+          directory: "/repo",
+        });
+        assert.equal(result, null);
+        return result;
+      },
+    },
+    {
+      name: "abort",
+      run: async (service) => {
+        const result = await service.abortConversationFromVesloWriteApi("sess-a");
+        assert.equal(result, null);
+        return result;
+      },
+    },
+    {
+      name: "status",
+      run: async (service) => {
+        const result = await service.readConversationRunStatus({
+          workspaceId: "app-ws",
+          directory: "/repo",
+          conversationId: "conv-a",
+          runId: "run-a",
+        });
+        assert.equal(result, null);
+        return result;
+      },
+    },
+    {
+      name: "append",
+      run: (service) => service.appendTranscriptSnapshot({
+        workspaceId: "app-ws",
+        sessionId: "sess-a",
+        directory: "/repo",
+        messages: [],
+        partsByMessageId: {},
+      }),
+    },
+  ];
+
+  for (const entry of cases) {
+    const { service, calls } = createService({ failWorkspaceRegistration: true });
+    await entry.run(service);
+    assert.equal(
+      calls.some((call) => /(?:listConversations|importConversations|getSessionTranscript|createConversation|runConversation|abortConversation|getConversationRunStatus|appendSessionTranscript):app-ws(?::|$)/.test(call)),
+      false,
+      `${entry.name} should not call a server API with fallback app workspace id; calls=${calls.join(",")}`,
+    );
+  }
+});
+
 test("conversation transcript read preserves unavailable snapshots at the app boundary", async () => {
   const { service, rememberedScopes } = createService();
 
@@ -414,6 +556,20 @@ test("conversation run remembers submitted run ids under Veslo and UI identities
   assert.deepEqual(rememberedScopes.map((scope) => scope.sessionId), ["open-a", "sess-a"]);
   assert.equal(rememberedScopes[0]?.conversationId, "conv-a");
   assert.equal(rememberedScopes[1]?.conversationId, "conv-a");
+});
+
+test("conversation run requires a scoped workspace instead of falling back to the active workspace", async () => {
+  const { service, calls } = createService();
+
+  await assert.rejects(
+    () => service.runConversationFromVesloWriteApi("unknown-session", {
+      kind: "prompt_async",
+      directory: "/repo",
+    }),
+    /scoped workspace/,
+  );
+
+  assert.equal(calls.some((call) => call.startsWith("runConversation:")), false);
 });
 
 test("queued conversation runs keep the active run id as the current abort target", async () => {

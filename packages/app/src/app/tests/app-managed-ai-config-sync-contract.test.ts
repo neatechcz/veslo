@@ -112,8 +112,8 @@ test("managed AI config sync ignores stale async runs before writing config", ()
   );
 });
 
-test("local Veslo workspace id resolves without listing server workspaces", () => {
-  const effectMarker = appSource.indexOf("const vesloUrl = vesloServerUrl().trim();");
+test("local Veslo workspace id uses only acknowledged server workspace mapping", () => {
+  const effectMarker = appSource.indexOf("const active = workspaceStore.activeWorkspaceDisplay();");
   const localBranchStart = appSource.indexOf('if (active.workspaceType === "local") {', effectMarker);
   const localBranchEnd = appSource.indexOf("setVesloServerWorkspaceId(null);", localBranchStart);
   assert.ok(effectMarker >= 0 && localBranchStart > effectMarker && localBranchEnd > localBranchStart);
@@ -121,8 +121,13 @@ test("local Veslo workspace id resolves without listing server workspaces", () =
 
   assert.match(
     localBranchSource,
-    /setVesloServerWorkspaceId\(\s*active\.vesloWorkspaceId\?\.trim\(\) \|\|\s*active\.id\?\.trim\(\) \|\|\s*workspaceStore\.activeWorkspaceId\(\)\.trim\(\) \|\|\s*null,\s*\);/,
-    "local Veslo workspace id should prefer the server-owned mapping and fall back to the app-local workspace state contract",
+    /setVesloServerWorkspaceId\(active\.vesloWorkspaceId\?\.trim\(\) \|\| null\);/,
+    "local Veslo workspace id should use only the acknowledged server-owned mapping",
+  );
+  assert.doesNotMatch(
+    localBranchSource,
+    /active\.id\?\.trim\(\) \|\|\s*workspaceStore\.activeWorkspaceId\(\)\.trim\(\)/,
+    "local app workspace ids must not be published as server workspace ids",
   );
   assert.doesNotMatch(
     localBranchSource,
