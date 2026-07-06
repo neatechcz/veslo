@@ -5,6 +5,7 @@ import {
   buildEffectiveMcpServerEntriesFromContent,
   canRemoveMcpFromProjectConfig,
   mergeMcpServerEntries,
+  parseMcpServersFromContent,
   parseLocalCommandInput,
   quickConnectEntryKey,
 } from "../mcp.js";
@@ -108,6 +109,23 @@ test("buildEffectiveMcpServerEntriesFromContent uses server-equivalent glob patt
 
   assert.equal(result.find((entry) => entry.name === "foo")?.disabledByTools, true);
   assert.equal(result.find((entry) => entry.name === "food")?.disabledByTools, undefined);
+});
+
+test("parseMcpServersFromContent ignores future mcp.servers shape", () => {
+  const result = parseMcpServersFromContent(JSON.stringify({
+    mcp: {
+      servers: {
+        type: "remote",
+        url: "https://future.example",
+      },
+      playwright: {
+        type: "remote",
+        url: "https://playwright.example",
+      },
+    },
+  }));
+
+  assert.deepEqual(result.map((entry) => entry.name), ["playwright"]);
 });
 
 test("canRemoveMcpFromProjectConfig blocks effective global-only entries", () => {

@@ -1,39 +1,96 @@
-import { parse } from "jsonc-parser";
+import { applyEdits, modify, parse } from "jsonc-parser";
 
 import type { OpencodeConfigFile } from "../lib/tauri";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
+export type PluginConfigTuple = [string, Record<string, unknown>?];
+export type PluginConfigEntry = string | PluginConfigTuple;
 type PluginListValue = string | unknown[] | null | undefined;
 
 type PluginConfig = {
   content: string | null;
 } | null;
 
-function pluginSpecFromListEntry(entry: unknown): string {
-  if (typeof entry === "string") return entry.trim();
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizePluginConfigEntry(entry: unknown): PluginConfigEntry | null {
+  if (typeof entry === "string") {
+    const trimmed = entry.trim();
+    return trimmed ? trimmed : null;
+  }
   if (
     Array.isArray(entry) &&
     typeof entry[0] === "string" &&
     entry[0].trim().length > 0 &&
-    (entry.length === 1 || (entry.length === 2 && typeof entry[1] === "object" && entry[1] !== null && !Array.isArray(entry[1])))
+    (entry.length === 1 || (entry.length === 2 && isRecord(entry[1])))
   ) {
-    return entry[0].trim();
+    return entry.length === 1 ? [entry[0].trim()] : [entry[0].trim(), entry[1]];
   }
-  return "";
+  return null;
 }
 
-export function normalizePluginList(value: PluginListValue) {
-  if (!value) return [] as string[];
-  if (Array.isArray(value)) {
-    return value
-      .map(pluginSpecFromListEntry)
-      .filter((entry) => entry.length > 0);
-  }
+function pluginSpecFromConfigEntry(entry: PluginConfigEntry): string {
+  return typeof entry === "string" ? entry : entry[0];
+}
+
+export function normalizePluginConfigEntries(value: PluginListValue): PluginConfigEntry[] {
   if (typeof value === "string") {
     const trimmed = value.trim();
     return trimmed ? [trimmed] : [];
   }
-  return [] as string[];
+  if (Array.isArray(value)) {
+    return value
+      .map(normalizePluginConfigEntry)
+      .filter((entry): entry is PluginConfigEntry => Boolean(entry));
+  }
+  return [];
+}
+
+export function normalizePluginList(value: PluginListValue) {
+  if (!value) return [] as string[];
+  return normalizePluginConfigEntries(value).map(pluginSpecFromConfigEntry);
+}
+
+function pluginListFromContent(content: string): PluginConfigEntry[] {
+  const parsed = parse(content) as Record<string, unknown> | undefined;
+  return normalizePluginConfigEntries(parsed?.plugin as PluginListValue);
+}
+
+function writePluginListToContent(content: string, plugins: PluginConfigEntry[]): string {
+  const edits = modify(content, ["plugin"], plugins, {
+    formattingOptions: { insertSpaces: true, tabSize: 2 },
+  });
+  return applyEdits(content, edits);
+}
+
+export function addPluginSpecToContent(content: string, pluginName: string): { added: boolean; content: string } {
+  const spec = pluginName.trim();
+  const plugins = pluginListFromContent(content);
+  const normalized = stripPluginVersion(spec).toLowerCase();
+  if (plugins.some((entry) => stripPluginVersion(pluginSpecFromConfigEntry(entry)).toLowerCase() === normalized)) {
+    return { added: false, content };
+  }
+  return { added: true, content: writePluginListToContent(content, [...plugins, spec]) };
+}
+
+export function removePluginSpecFromContent(content: string, pluginName: string): { removed: boolean; content: string } {
+  const plugins = pluginListFromContent(content);
+  const normalized = stripPluginVersion(pluginName.trim()).toLowerCase();
+  const next = plugins.filter((entry) => stripPluginVersion(pluginSpecFromConfigEntry(entry)).toLowerCase() !== normalized);
+  if (next.length === plugins.length) {
+    return { removed: false, content };
+  }
+  return { removed: true, content: writePluginListToContent(content, next) };
+}
+
+export function pluginConfigEntriesFromContent(content: string): PluginConfigEntry[] {
+  try {
+    return pluginListFromContent(content);
+  } catch {
+    return [];
+  }
 }
 
 export function stripPluginVersion(spec: string) {

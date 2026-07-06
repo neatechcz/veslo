@@ -45,7 +45,7 @@
     "UI follows `design.ts` (ported to Solid + Tailwind) and is wired to real OpenCode v2 sessions/messages/todos/permissions.",
     "Folder picking uses Tauri dialog plugin (no manual path required in Host mode).",
     "Templates UI exists (create/save/run) backed by localStorage.",
-    "Skills UI exists: list installed `.opencode/skill` and install/import via OpenPackage + local folder import (Host mode).",
+    "Skills UI exists: list installed `.opencode/skills` and install/import via OpenPackage + local folder import (Host mode).",
     "Redacts sensitive metadata keys (e.g. reasoningEncryptedContent) from UI to prevent leaks.",
     "`pnpm typecheck` and `pnpm build:ui` succeed.",
     "Permissions entrypoint exists, but permission prompts may not appear without agent-driven tool calls."

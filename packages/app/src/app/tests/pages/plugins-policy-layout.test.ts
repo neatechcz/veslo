@@ -84,7 +84,9 @@ test("plugins tab refreshes policy inventory after local Veslo server connects",
   assert.match(appSource, /lastPluginsConnectedRefreshKey/);
   assert.match(appSource, /tab\(\) !== "plugins"/);
   assert.match(appSource, /vesloServerStatus\(\) !== "connected"/);
-  assert.match(appSource, /vesloServerWorkspaceId\(\)\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\)/);
+  assert.match(appSource, /const workspaceId = vesloServerWorkspaceId\(\)\?\.trim\(\) \?\? "";/);
+  assert.match(appSource, /if \(!workspaceId\) return;/);
+  assert.doesNotMatch(appSource, /vesloServerWorkspaceId\(\)\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\)/);
   assert.match(appSource, /refreshPlugins\(pluginScope\(\), \{ debug: developerMode\(\) \}\)/);
   assert.match(appSource, /plugins\.refresh\.connected/);
 });

@@ -136,6 +136,9 @@ export function parseMcpServersFromContent(content: string): McpServerEntry[] {
   }
 
   return Object.entries(mcp).flatMap(([name, value]) => {
+    if (name === "servers") {
+      return [];
+    }
     if (!value || typeof value !== "object") {
       return [];
     }
