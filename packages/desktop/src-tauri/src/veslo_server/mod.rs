@@ -511,26 +511,38 @@ struct ReadySignalPayload {
     #[serde(rename = "type")]
     event_type: Option<String>,
     instance_id: Option<String>,
+    port: Option<u16>,
 }
 
-fn ready_signal_instance_id(line: &str) -> Option<String> {
+fn ready_signal_payload(line: &str) -> Option<ReadySignalPayload> {
     let marker_start = line.find(VESLO_SERVER_READY_MARKER)?;
     let json_start = marker_start + VESLO_SERVER_READY_MARKER.len();
     let payload: ReadySignalPayload = serde_json::from_str(line[json_start..].trim()).ok()?;
     if payload.event_type.as_deref() != Some("veslo.server.ready") {
         return None;
     }
+    Some(payload)
+}
+
+#[cfg(test)]
+fn ready_signal_instance_id(line: &str) -> Option<String> {
+    let payload = ready_signal_payload(line)?;
     payload
         .instance_id
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
 
+#[cfg(test)]
+fn ready_signal_bound_port(line: &str) -> Option<u16> {
+    ready_signal_payload(line)?.port.filter(|port| *port > 0)
+}
+
 fn wait_for_veslo_server_ready_signal(
     ready_rx: &mpsc::Receiver<String>,
     base_url: &str,
     instance_id: &str,
-) -> bool {
+) -> Option<ReadySignalPayload> {
     let started_at = Instant::now();
     loop {
         let elapsed = started_at.elapsed();
@@ -542,8 +554,15 @@ fn wait_for_veslo_server_ready_signal(
             .unwrap_or_default();
         match ready_rx.recv_timeout(remaining) {
             Ok(line) => {
-                if ready_signal_instance_id(&line).as_deref() == Some(instance_id) {
-                    return true;
+                if let Some(payload) = ready_signal_payload(&line) {
+                    let payload_instance_id = payload
+                        .instance_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty());
+                    if payload_instance_id == Some(instance_id) {
+                        return Some(payload);
+                    }
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => break,
@@ -553,7 +572,12 @@ fn wait_for_veslo_server_ready_signal(
 
     server_health_identity(base_url)
         .as_ref()
-        .is_some_and(|identity| health_identity_matches_instance(identity, instance_id))
+        .filter(|identity| health_identity_matches_instance(identity, instance_id))
+        .map(|_| ReadySignalPayload {
+            event_type: Some("veslo.server.ready".to_string()),
+            instance_id: Some(instance_id.to_string()),
+            port: None,
+        })
 }
 
 fn persisted_state_to_info_with_health(
@@ -1249,7 +1273,7 @@ pub fn start_veslo_server(
     // Gate on the active sandbox backend (the same source the server is told via
     // VESLO_SANDBOX_BACKEND): with sandboxing disabled the engine is direct and
     // routes over loopback, so no WSL bridge is set up.
-    let bridge_host = if should_bind_wsl_bridge(&host, &sandbox_backend) {
+    let mut bridge_host = if should_bind_wsl_bridge(&host, &sandbox_backend) {
         resolve_wsl_bridge_host()
     } else {
         None
@@ -1295,8 +1319,8 @@ pub fn start_veslo_server(
     state.lifecycle_status = VesloServerLifecycleStatus::Starting;
     state.lifecycle_reason = VesloServerLifecycleReason::SpawnPending;
 
-    let port = match resolve_veslo_port_after_restart_detailed(&host) {
-        Ok(port) => port,
+    let port_resolution = match resolve_veslo_port_after_restart_detailed(&host) {
+        Ok(resolution) => resolution,
         Err(error) => {
             let message = error.message();
             state.lifecycle_status = VesloServerLifecycleStatus::Blocked;
@@ -1322,6 +1346,34 @@ pub fn start_veslo_server(
             return Err(message);
         }
     };
+    let port = port_resolution.bind_port;
+    if let Some(conflict) = port_resolution.fallback_conflict.as_ref() {
+        append_veslo_server_launch_diagnostic(
+            app,
+            "veslo-server-launch:port-conflict-fallback",
+            serde_json::json!({
+                "reason": "port_conflict",
+                "host": conflict.host.clone(),
+                "port": conflict.port,
+                "requestedPort": port_resolution.requested_port,
+                "fallbackPort": port,
+                "defaultPort": conflict.is_default_port(),
+                "fallbackPolicy": conflict.fallback_policy(),
+                "error": conflict.source.clone(),
+            }),
+        );
+    }
+    if port == 0 && bridge_host.is_some() {
+        append_veslo_server_launch_diagnostic(
+            app,
+            "veslo-server-launch:bridge-disabled-for-ephemeral-port",
+            serde_json::json!({
+                "reason": "ephemeral_port_bridge_unsupported",
+                "requestedPort": port_resolution.requested_port,
+            }),
+        );
+        bridge_host = None;
+    }
     let client_token = requested_client_token
         .or(previous_client_token)
         .unwrap_or_else(generate_token);
@@ -1341,6 +1393,11 @@ pub fn start_veslo_server(
         "veslo-server-launch:spawn-start",
         serde_json::json!({
             "port": port,
+            "requestedPort": port_resolution.requested_port,
+            "fallbackPolicy": port_resolution
+                .fallback_conflict
+                .as_ref()
+                .map(|conflict| conflict.fallback_policy()),
             "workspaceCount": workspace_paths.len(),
             "workspaceIds": workspace_ids.clone(),
             "hasOpencodeBaseUrl": normalized_opencode_base_url.is_some(),
@@ -1382,6 +1439,7 @@ pub fn start_veslo_server(
                 "veslo-server-launch:spawn-succeeded",
                 serde_json::json!({
                     "port": port,
+                    "requestedPort": port_resolution.requested_port,
                     "workspaceCount": workspace_paths.len(),
                 }),
             );
@@ -1396,6 +1454,7 @@ pub fn start_veslo_server(
                 "veslo-server-launch:spawn-failed",
                 serde_json::json!({
                     "port": port,
+                    "requestedPort": port_resolution.requested_port,
                     "workspaceCount": workspace_paths.len(),
                     "error": error,
                 }),
@@ -1463,7 +1522,27 @@ pub fn start_veslo_server(
         .lock()
         .map_err(|_| "veslo server mutex poisoned".to_string())?;
     if state.instance_id.as_deref() == Some(instance_id.as_str()) && state.port == Some(port) {
-        if ready {
+        if let Some(ready_payload) = ready {
+            let bound_port = ready_payload
+                .port
+                .filter(|ready_port| *ready_port > 0)
+                .unwrap_or(port);
+            if bound_port != port {
+                state.port = Some(bound_port);
+                state.base_url = Some(format!("http://127.0.0.1:{bound_port}"));
+                let (connect_url, mdns_url, lan_url, engine_url) =
+                    build_urls_for_host(&host, bound_port);
+                state.connect_url = connect_url;
+                state.mdns_url = mdns_url;
+                state.lan_url = lan_url;
+                state.engine_url = engine_url;
+                state.engine_url_checked_at = if bridge_host.is_some() {
+                    None
+                } else {
+                    Some(std::time::Instant::now())
+                };
+                state.engine_url_refresh_started_at = None;
+            }
             state.lifecycle_status = VesloServerLifecycleStatus::Running;
             state.lifecycle_reason = VesloServerLifecycleReason::None;
         } else {
@@ -1509,9 +1588,9 @@ mod tests {
         discover_external_host_token, launch_config_matches, normalize_launch_token,
         normalize_launch_url, parse_macos_lsof_current_dir, publishes_external_urls,
         read_persisted_veslo_server_info, read_persisted_veslo_server_info_with_cleanup,
-        ready_signal_instance_id, resolve_engine_url_for_bind_host, should_bind_wsl_bridge,
-        unix_kill_term_args, windows_taskkill_args, HealthIdentity, PersistedVesloServerState,
-        StaleProcessMetadata, StaleProcessOwner,
+        ready_signal_bound_port, ready_signal_instance_id, resolve_engine_url_for_bind_host,
+        should_bind_wsl_bridge, unix_kill_term_args, windows_taskkill_args, HealthIdentity,
+        PersistedVesloServerState, StaleProcessMetadata, StaleProcessOwner,
     };
     #[cfg(windows)]
     use super::{
@@ -1862,6 +1941,7 @@ mod tests {
             ready_signal_instance_id(line).as_deref(),
             Some("instance-1")
         );
+        assert_eq!(ready_signal_bound_port(line), Some(8787));
     }
 
     #[test]

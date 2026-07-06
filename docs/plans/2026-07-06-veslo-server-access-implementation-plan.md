@@ -20,7 +20,7 @@ vsa10a_workspace_id_golden_vectors_done: true
 vsa10b_dual_id_mapping_migration_done: true
 vsa10c_workspace_id_cutover_cleanup_done: true
 vsa11_engine_config_hot_swap_done: false
-vsa12_port_conflict_policy_done: false
+vsa12_port_conflict_policy_done: true
 vsa13_e2e_docs_and_release_gate_done: false
 ---
 
@@ -1174,16 +1174,16 @@ Mark done when:
 
 ## VSA12: Port Conflict Policy
 
-done: false
+done: true
 
-Partial implementation note 2026-07-06: desktop port resolution now returns a
-typed `VesloPortConflict` for listener contention and preserves the existing
-`Blocked(PortUnavailable)` behavior with a stable `port_conflict` message,
-host, port, default-port flag, and `fallbackPolicy: "disabled"` in launch
-diagnostics. This makes the current policy explicit and testable without
-claiming the later ephemeral-port fallback. VSA12 remains `done: false` until
-the desktop stops pre-building URLs from the requested port and publishes only
-the READY/runtime-descriptor bound port.
+Implementation note 2026-07-06: desktop port resolution now treats the default
+8787 listener as an identity-safe preferred port, not a hard dependency. If the
+default port remains occupied after restart grace, the desktop spawns
+veslo-server with `--port 0`, records `port-conflict-fallback` diagnostics, and
+publishes `baseUrl`, `connectUrl`, `lanUrl`, and `engineUrl` from the actual
+port reported by the READY/runtime descriptor. Explicit
+`VESLO_DESKTOP_SERVER_PORT` values still fail closed on contention, while
+`VESLO_DESKTOP_SERVER_PORT=0` is accepted as an explicit ephemeral bind request.
 
 Goal:
 

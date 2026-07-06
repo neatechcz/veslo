@@ -31,6 +31,7 @@ pub struct VesloPortConflict {
     pub host: String,
     pub port: u16,
     pub source: String,
+    fallback_policy: VesloPortFallbackPolicy,
 }
 
 impl VesloPortConflict {
@@ -39,15 +40,66 @@ impl VesloPortConflict {
     }
 
     pub fn fallback_policy(&self) -> &'static str {
-        "disabled"
+        self.fallback_policy.as_str()
     }
 
     pub fn message(&self) -> String {
-        format!(
-            "port_conflict: Veslo server port {} on {} is unavailable: {}; ephemeral fallback is disabled, so local mode is blocked until the occupant exits or the port is changed.",
-            self.port, self.host, self.source
-        )
+        if self.fallback_policy == VesloPortFallbackPolicy::Ephemeral {
+            format!(
+                "port_conflict: Veslo server port {} on {} is unavailable: {}; using an ephemeral fallback port.",
+                self.port, self.host, self.source
+            )
+        } else {
+            format!(
+                "port_conflict: Veslo server port {} on {} is unavailable: {}; ephemeral fallback is disabled, so local mode is blocked until the occupant exits or the port is changed.",
+                self.port, self.host, self.source
+            )
+        }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VesloPortFallbackPolicy {
+    Disabled,
+    Ephemeral,
+}
+
+impl VesloPortFallbackPolicy {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::Ephemeral => "ephemeral",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ConfiguredVesloPort {
+    port: u16,
+    source: VesloPortSource,
+}
+
+impl ConfiguredVesloPort {
+    fn fallback_policy(self) -> VesloPortFallbackPolicy {
+        if self.source == VesloPortSource::Default && self.port == DEFAULT_VESLO_PORT {
+            VesloPortFallbackPolicy::Ephemeral
+        } else {
+            VesloPortFallbackPolicy::Disabled
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VesloPortSource {
+    Default,
+    Explicit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VesloPortResolution {
+    pub requested_port: u16,
+    pub bind_port: u16,
+    pub fallback_conflict: Option<VesloPortConflict>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,40 +217,89 @@ fn validate_managed_opencode_base_url(opencode_base_url: Option<&str>) -> Result
 #[cfg(test)]
 pub fn resolve_veslo_port() -> Result<u16, String> {
     let host = resolve_veslo_host();
-    let port = configured_veslo_port()?;
-    bind_veslo_port(&host, port).map_err(|error| error.message())
+    let configured = configured_veslo_port()?;
+    if configured.port == 0 {
+        return Ok(0);
+    }
+    bind_veslo_port(&host, configured.port, configured.fallback_policy())
+        .map_err(|error| error.message())
 }
 
-fn bind_veslo_port(host: &str, port: u16) -> Result<u16, VesloPortConflict> {
+fn bind_veslo_port(
+    host: &str,
+    port: u16,
+    fallback_policy: VesloPortFallbackPolicy,
+) -> Result<u16, VesloPortConflict> {
     TcpListener::bind((host, port))
-        .map(|_| port)
+        .map(|listener| {
+            listener
+                .local_addr()
+                .map(|addr| addr.port())
+                .unwrap_or(port)
+        })
         .map_err(|error| VesloPortConflict {
             host: host.to_string(),
             port,
             source: error.to_string(),
+            fallback_policy,
         })
 }
 
-pub fn resolve_veslo_port_after_restart_detailed(host: &str) -> Result<u16, VesloPortResolveError> {
-    let port = configured_veslo_port().map_err(VesloPortResolveError::InvalidConfig)?;
+pub fn resolve_veslo_port_after_restart_detailed(
+    host: &str,
+) -> Result<VesloPortResolution, VesloPortResolveError> {
+    let configured = configured_veslo_port().map_err(VesloPortResolveError::InvalidConfig)?;
+    let port = configured.port;
+    if port == 0 {
+        return Ok(VesloPortResolution {
+            requested_port: port,
+            bind_port: port,
+            fallback_conflict: None,
+        });
+    }
+    let fallback_policy = configured.fallback_policy();
     let deadline = std::time::Instant::now() + PORT_RESTART_RETRY_TIMEOUT;
     loop {
-        match bind_veslo_port(host, port) {
-            Ok(resolved) => return Ok(resolved),
+        match bind_veslo_port(host, port, fallback_policy) {
+            Ok(resolved) => {
+                return Ok(VesloPortResolution {
+                    requested_port: port,
+                    bind_port: resolved,
+                    fallback_conflict: None,
+                });
+            }
             Err(error) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(PORT_RESTART_RETRY_INTERVAL);
                 if std::time::Instant::now() >= deadline {
+                    if fallback_policy == VesloPortFallbackPolicy::Ephemeral {
+                        return Ok(VesloPortResolution {
+                            requested_port: port,
+                            bind_port: 0,
+                            fallback_conflict: Some(error),
+                        });
+                    }
                     return Err(VesloPortResolveError::Conflict(error));
                 }
             }
-            Err(error) => return Err(VesloPortResolveError::Conflict(error)),
+            Err(error) => {
+                if fallback_policy == VesloPortFallbackPolicy::Ephemeral {
+                    return Ok(VesloPortResolution {
+                        requested_port: port,
+                        bind_port: 0,
+                        fallback_conflict: Some(error),
+                    });
+                }
+                return Err(VesloPortResolveError::Conflict(error));
+            }
         }
     }
 }
 
 #[cfg(test)]
 pub fn resolve_veslo_port_after_restart(host: &str) -> Result<u16, String> {
-    resolve_veslo_port_after_restart_detailed(host).map_err(|error| error.message())
+    resolve_veslo_port_after_restart_detailed(host)
+        .map(|resolution| resolution.bind_port)
+        .map_err(|error| error.message())
 }
 
 fn resolve_veslo_host_from_env(value: Option<&str>) -> String {
@@ -213,24 +314,30 @@ pub fn resolve_veslo_host() -> String {
     resolve_veslo_host_from_env(env::var(VESLO_DESKTOP_SERVER_HOST_ENV).ok().as_deref())
 }
 
-fn configured_veslo_port() -> Result<u16, String> {
+fn configured_veslo_port() -> Result<ConfiguredVesloPort, String> {
     let raw = match env::var(VESLO_DESKTOP_SERVER_PORT_ENV) {
         Ok(value) => value,
-        Err(_) => return Ok(DEFAULT_VESLO_PORT),
+        Err(_) => {
+            return Ok(ConfiguredVesloPort {
+                port: DEFAULT_VESLO_PORT,
+                source: VesloPortSource::Default,
+            });
+        }
     };
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Ok(DEFAULT_VESLO_PORT);
+        return Ok(ConfiguredVesloPort {
+            port: DEFAULT_VESLO_PORT,
+            source: VesloPortSource::Default,
+        });
     }
     let port = trimmed.parse::<u16>().map_err(|_| {
         format!("Invalid {VESLO_DESKTOP_SERVER_PORT_ENV}: expected TCP port, got {trimmed}")
     })?;
-    if port == 0 {
-        return Err(format!(
-            "Invalid {VESLO_DESKTOP_SERVER_PORT_ENV}: desktop server port must be greater than 0"
-        ));
-    }
-    Ok(port)
+    Ok(ConfiguredVesloPort {
+        port,
+        source: VesloPortSource::Explicit,
+    })
 }
 
 pub fn build_veslo_args(
@@ -764,7 +871,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_veslo_port_reports_fixed_port_contention() {
+    fn resolve_veslo_port_falls_back_to_ephemeral_for_default_port_contention() {
         let _lock = ENV_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
@@ -773,23 +880,18 @@ mod tests {
         let fixed_port_guard =
             TcpListener::bind((resolve_veslo_host().as_str(), DEFAULT_VESLO_PORT)).ok();
 
-        let error = resolve_veslo_port()
-            .expect_err("Veslo desktop must not fall back to a dynamic server port");
+        let resolution = resolve_veslo_port_after_restart_detailed(resolve_veslo_host().as_str())
+            .expect("default-port contention should select an ephemeral bind request");
 
         drop(fixed_port_guard);
 
-        assert!(
-            error.contains(&DEFAULT_VESLO_PORT.to_string()),
-            "fixed-port contention errors should name the configured Veslo server port: {error}"
-        );
-        assert!(
-            error.contains("port_conflict"),
-            "fixed-port contention errors should expose a stable diagnostic code: {error}"
-        );
-        assert!(
-            error.contains("ephemeral fallback is disabled"),
-            "fixed-port contention should make the current fallback policy explicit: {error}"
-        );
+        assert_eq!(resolution.requested_port, DEFAULT_VESLO_PORT);
+        assert_eq!(resolution.bind_port, 0);
+        let conflict = resolution
+            .fallback_conflict
+            .expect("fallback should preserve conflict diagnostics");
+        assert_eq!(conflict.port, DEFAULT_VESLO_PORT);
+        assert_eq!(conflict.fallback_policy(), "ephemeral");
     }
 
     #[test]
@@ -802,7 +904,11 @@ mod tests {
         let _guard = EnvGuard::unset(VESLO_DESKTOP_SERVER_PORT_ENV);
         let fixed_port_guard = TcpListener::bind((host.as_str(), DEFAULT_VESLO_PORT)).ok();
 
-        let conflict = bind_veslo_port(&host, DEFAULT_VESLO_PORT)
+        let conflict = bind_veslo_port(
+            &host,
+            DEFAULT_VESLO_PORT,
+            VesloPortFallbackPolicy::Disabled,
+        )
             .expect_err("reserved fixed port should report structured conflict");
 
         drop(fixed_port_guard);
@@ -812,6 +918,42 @@ mod tests {
         assert!(conflict.is_default_port());
         assert_eq!(conflict.fallback_policy(), "disabled");
         assert!(conflict.message().contains("port_conflict"));
+    }
+
+    #[test]
+    fn resolve_veslo_port_blocks_explicit_port_contention() {
+        let _lock = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("reserve explicit port");
+        let port = listener.local_addr().expect("read explicit port").port();
+        let _guard = EnvGuard::set(VESLO_DESKTOP_SERVER_PORT_ENV, port.to_string());
+
+        let error = resolve_veslo_port_after_restart(resolve_veslo_host().as_str())
+            .expect_err("explicit configured port conflict must remain blocking");
+
+        drop(listener);
+
+        assert!(error.contains("port_conflict"));
+        assert!(error.contains(&port.to_string()));
+        assert!(error.contains("ephemeral fallback is disabled"));
+    }
+
+    #[test]
+    fn resolve_veslo_port_allows_explicit_ephemeral_request() {
+        let _lock = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = EnvGuard::set(VESLO_DESKTOP_SERVER_PORT_ENV, "0".to_string());
+
+        let resolution = resolve_veslo_port_after_restart_detailed(resolve_veslo_host().as_str())
+            .expect("explicit ephemeral port should be a valid bind request");
+
+        assert_eq!(resolution.requested_port, 0);
+        assert_eq!(resolution.bind_port, 0);
+        assert_eq!(resolution.fallback_conflict, None);
     }
 
     #[test]
