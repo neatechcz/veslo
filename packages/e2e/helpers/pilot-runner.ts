@@ -55,6 +55,10 @@ const PILOT_SCENARIO_SUITES = {
     'visual-regression',
     'language-persistence',
   ],
+  'live-inference': [
+    'runtime-cold-start-session-handoff',
+    'message-send-registry-degraded',
+  ],
 } as const;
 
 type BuildPilotCommandOptions = {

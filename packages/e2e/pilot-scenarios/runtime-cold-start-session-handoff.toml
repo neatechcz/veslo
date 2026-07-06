@@ -351,6 +351,10 @@ if (!window.__vesloRuntimeColdStartSessionHandoffStarted) {
     };
     const messageRoleCount = (role) =>
       Array.from(conversationPane().querySelectorAll(`[data-message-role="${role}"]`)).filter(isVisibleElement).length;
+    const visibleMessageTexts = (role) =>
+      Array.from(conversationPane().querySelectorAll(`[data-message-role="${role}"]`))
+        .filter(isVisibleElement)
+        .map((element) => normalize(element.textContent));
 
     const watchdog = setTimeout(() => {
       appendMarker(errorSelector, {
@@ -387,8 +391,9 @@ if (!window.__vesloRuntimeColdStartSessionHandoffStarted) {
 
       const warmup = await waitForBootWarmup(workspace);
       const managedConfig = await waitForActiveManagedConfigReady(workspace);
-      const text = `runtime cold start handoff ${Date.now()}`;
-      setProgress("sending-first-prompt", { text, warmup, managedConfig });
+      const token = `runtime-handoff-${Date.now()}`;
+      const text = `Reply with exactly ${token}. Do not use tools. No other words.`;
+      setProgress("sending-first-prompt", { text, token, warmup, managedConfig });
       setComposerText(composer, text);
       await waitUntil(() => normalize(composer.textContent || composer.value).includes(text), {
         timeout: 10000,
@@ -430,6 +435,11 @@ if (!window.__vesloRuntimeColdStartSessionHandoffStarted) {
       assert(visibleTranscriptText().includes(text), `Prompt missing after run settled. Transcript=${visibleTranscriptText().slice(0, 2500)}`);
       assert(messageRoleCount("user") >= 1, `No user message rendered after run settled. Transcript=${visibleTranscriptText().slice(0, 2500)}`);
       assert(messageRoleCount("assistant") >= 1, `No assistant message rendered after run settled. Transcript=${visibleTranscriptText().slice(0, 2500)}`);
+      const assistantTexts = visibleMessageTexts("assistant");
+      assert(
+        assistantTexts.some((value) => value.includes(token)),
+        `No assistant message contained live inference token ${token}. Assistant=${JSON.stringify(assistantTexts)}`,
+      );
       assertNoSendFailed();
 
       const workflowAfterClick = workflowTrace().slice(workflowTraceBeforeClick);
@@ -445,6 +455,7 @@ if (!window.__vesloRuntimeColdStartSessionHandoffStarted) {
       appendMarker(completeSelector, {
         ok: true,
         text,
+        token,
         warmup,
         overlayMs,
         sendTrace: sendTrace(),

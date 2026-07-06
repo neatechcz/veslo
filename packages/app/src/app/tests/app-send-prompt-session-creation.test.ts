@@ -93,6 +93,11 @@ test("sendPrompt passes the first local draft to server-owned submit materializa
     /submitOrigin: sendCorrelation\.origin,/,
     "sendPrompt should preserve the send origin for server submit materialization",
   );
+  assert.match(
+    source,
+    /submitSource: sendCorrelation\.source,/,
+    "sendPrompt should preserve the composer source for server submit materialization",
+  );
 });
 
 test("createSessionAndOpen persists the first composer text as the initial backend title", () => {

@@ -12,6 +12,7 @@
     "test:pilot:smoke": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario smoke",
     "test:pilot:folder-access-consent": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario folder-access-consent",
     "test:pilot:navigation": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario navigation",
+    "test:pilot:live-inference": "node --import=tsx/esm ./helpers/pilot-runner.ts --suite live-inference",
     "test:pilot:soul-dashboard": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario soul-dashboard",
     "test:pilot:soul-den-local": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario soul-den-local",
     "test:pilot:google-mcp": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario google-mcp-connectors",

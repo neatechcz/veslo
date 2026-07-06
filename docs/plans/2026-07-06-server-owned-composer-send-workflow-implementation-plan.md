@@ -643,6 +643,26 @@ git diff --check
 
 Status: `done: false`
 
+Progress:
+
+- 2026-07-06: submit service now has a server-side draft-resolution slice for
+  document-runtime skill commands. Local submit requests for `veslo-docx`,
+  `veslo-xlsx`, `veslo-pdf`, or `veslo-pptx` are blocked with
+  `code: "document_runtime_blocked"` before dry-run, directory resolution, or
+  session materialization when the document runtime is not ready.
+- 2026-07-06: server draft resolver now prepares run-input intent for prompt,
+  shell, explicit `draft.command`, and slash-command text without relying on
+  the frontend command hint.
+- 2026-07-06: submit dry-runs now return the server `resolvedRunInput`, giving
+  the frontend a shadow-safe comparison hook before existing-session run submit
+  is moved behind the server command.
+- 2026-07-06: server submit draft resolution now supports implicit skill
+  command matching through server-owned skill sources (`listSkills`,
+  disabled-skill overrides, and `resolveSkillMatch`). Dry-run submit can now
+  shadow prompts such as "use company search skill..." as command run input, and
+  implicit document skill matches are blocked by server document-runtime
+  readiness before directory resolution or session materialization.
+
 Move prompt mode, shell mode, slash command, skill command, and document runtime
 blocking out of the frontend send workflow.
 

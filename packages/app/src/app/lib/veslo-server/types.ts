@@ -1389,6 +1389,23 @@ export type VesloConversationSubmitDebugTraceEntry = {
   [key: string]: unknown;
 };
 
+export type VesloConversationSubmitResolvedRunInput =
+  | {
+      kind: "prompt_async";
+      text: string;
+      parts: unknown[];
+    }
+  | {
+      kind: "shell";
+      command: string;
+    }
+  | {
+      kind: "command";
+      command: string;
+      arguments: string;
+      parts?: unknown[];
+    };
+
 export type VesloConversationSubmitResult =
   | {
       status: "dry_run";
@@ -1396,6 +1413,7 @@ export type VesloConversationSubmitResult =
       clientMessageId: string;
       requestHash: string;
       draftDisposition: "keep";
+      resolvedRunInput: VesloConversationSubmitResolvedRunInput;
       target: {
         directory: string | null;
         conversationId?: string | null;

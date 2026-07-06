@@ -6,6 +6,11 @@ import {
   type ConversationSubmitResult,
 } from "./conversation-submit-contract.js";
 import type { ConversationSubmitAttemptStore } from "./conversation-submit-attempt-store.js";
+import {
+  resolveConversationSubmitDraft,
+  type ConversationSubmitDocumentRuntimeStatusReader,
+  type ConversationSubmitSkillCommandResolver,
+} from "./conversation-submit-draft-resolution.js";
 import type { ConversationService } from "./conversation-service.js";
 import { ApiError } from "./errors.js";
 import type { WorkspaceInfo } from "./types.js";
@@ -22,8 +27,10 @@ export type ConversationSubmitService = {
 export function createConversationSubmitService(input: {
   attemptStore: ConversationSubmitAttemptStore;
   conversationService: ConversationService;
+  documentRuntimeStatus?: ConversationSubmitDocumentRuntimeStatusReader;
+  resolveSkillCommand?: ConversationSubmitSkillCommandResolver;
 }): ConversationSubmitService {
-  const { attemptStore, conversationService } = input;
+  const { attemptStore, conversationService, documentRuntimeStatus, resolveSkillCommand } = input;
 
   return {
     async submit({
@@ -104,6 +111,20 @@ export function createConversationSubmitService(input: {
         };
       }
 
+      const draftResolution = await resolveConversationSubmitDraft({
+        request,
+        documentRuntimeStatus,
+        resolveSkillCommand,
+        workspace,
+        includeGlobal: workspace.workspaceType === "local",
+      });
+      if (draftResolution.status === "blocked") {
+        return {
+          payload: completeAttempt(draftResolution.result, "blocked"),
+          httpStatus: 200,
+        };
+      }
+
       const directory = await resolveDirectory(request.target?.directory ?? null);
       const hasExistingTarget = Boolean(
         request.target?.conversationId?.trim() || request.target?.opencodeSessionId?.trim(),
@@ -115,6 +136,7 @@ export function createConversationSubmitService(input: {
           clientMessageId: request.clientMessageId,
           requestHash,
           draftDisposition: "keep",
+          resolvedRunInput: draftResolution.resolvedRunInput,
           target: {
             directory,
             conversationId: request.target?.conversationId ?? null,

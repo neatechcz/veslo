@@ -156,6 +156,35 @@ test('current-gate pilot suite enumerates the WDIO replacement scenarios explici
   ]);
 });
 
+test('live-inference pilot suite uses production-path managed AI scenarios', () => {
+  const e2eRoot = '/repo/packages/e2e';
+  const names = pilotScenarioSuiteNames('live-inference');
+
+  assert.deepEqual(names, [
+    'runtime-cold-start-session-handoff',
+    'message-send-registry-degraded',
+  ]);
+
+  const scenarios = resolvePilotScenarioSelection({ suite: 'live-inference' }, e2eRoot);
+  assert.equal(scenarioSelectionRequiresLiveManagedAiAuth(scenarios), true);
+  assert.equal(scenarioSelectionNeedsManagedAiGatewayFixture(scenarios), false);
+
+  for (const scenarioName of names) {
+    const content = readFileSync(new URL(`../pilot-scenarios/${scenarioName}.toml`, import.meta.url), 'utf8');
+    assert.doesNotMatch(
+      content,
+      /tauriInvoke\("(?:engine_start|engine_info|orchestrator_workspace_activate)"/,
+      `${scenarioName} must not bypass the production workspace runtime path`,
+    );
+    assert.match(content, /ai-gateway\/me\/ai-access/, `${scenarioName} must check live AI gateway access`);
+    assert.match(
+      content,
+      /messageRoleCount\("assistant"\)|visibleMessageTexts\("assistant"\)/,
+      `${scenarioName} must require a rendered assistant response`,
+    );
+  }
+});
+
 test('resolvePilotScenarioSelection resolves named suites to pilot scenario files', () => {
   const e2eRoot = '/repo/packages/e2e';
 
@@ -366,6 +395,18 @@ test('runtime cold-start handoff pilot scenario requires live managed-AI auth', 
 
   assert.equal(scenarioSelectionNeedsManagedAiGatewayFixture(scenarios), false);
   assert.equal(scenarioSelectionRequiresLiveManagedAiAuth(scenarios), true);
+});
+
+test('runtime cold-start handoff pilot scenario uses a deterministic live inference prompt', () => {
+  const content = readFileSync(
+    new URL('../pilot-scenarios/runtime-cold-start-session-handoff.toml', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(content, /const token = `runtime-handoff-\$\{Date\.now\(\)\}`;/);
+  assert.match(content, /Reply with exactly \$\{token\}\. Do not use tools\. No other words\./);
+  assert.doesNotMatch(content, /runtime cold start handoff \$\{Date\.now\(\)\}/);
+  assert.match(content, /assistantTexts\.some\(\(value\) => value\.includes\(token\)\)/);
 });
 
 test('runtime cold-start handoff pilot scenario disables debug dev autostart', () => {

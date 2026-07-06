@@ -207,7 +207,10 @@ test("failed first-send run reset uses the handoff-aware key in every failure br
   );
 
   const rejectedStart = flowSendImmediateSource.indexOf("if (!accepted) {", tryStart);
-  const acceptedStart = flowSendImmediateSource.indexOf("if (accepted && pendingSessionKeyBeforeHandoff)", rejectedStart);
+  const acceptedStart = flowSendImmediateSource.indexOf(
+    "if (accepted && pendingSessionKeyBeforeHandoff && materializedSessionIdFromHandoff)",
+    rejectedStart,
+  );
   assert.notEqual(rejectedStart, -1, "rejected send branch should exist");
   assert.notEqual(acceptedStart, -1, "accepted handoff branch should follow rejected send branch");
   const rejectedFailure = flowSendImmediateSource.slice(rejectedStart, acceptedStart);
@@ -366,7 +369,10 @@ test("failed first-send optimistic drafts keep the captured pending instance sel
   assert.doesNotMatch(aiAccessFailure, /setPendingQueueKeyAwaitingSessionId\(null\);/);
 
   const rejectedStart = flowSendImmediateSource.indexOf("if (!accepted) {", tryStart);
-  const acceptedStart = flowSendImmediateSource.indexOf("if (accepted && pendingSessionKeyBeforeHandoff)", rejectedStart);
+  const acceptedStart = flowSendImmediateSource.indexOf(
+    "if (accepted && pendingSessionKeyBeforeHandoff && materializedSessionIdFromHandoff)",
+    rejectedStart,
+  );
   assert.notEqual(rejectedStart, -1, "rejected send branch should exist");
   assert.notEqual(acceptedStart, -1, "accepted handoff branch should follow rejected send branch");
   const rejectedFailure = flowSendImmediateSource.slice(rejectedStart, acceptedStart);
@@ -467,8 +473,13 @@ test("pending handoffs materialize from the app callback with captured keys", ()
   );
   assert.match(
     sendImmediateSource,
-    /const materializedSessionId =[\s\S]*materializedSessionIdFromHandoff \?\? deps\.sessionKeys\.selectedSessionId\(\)\?\.trim\(\);/,
-    "accepted fallback should prefer the materialized id reported by the app handoff over current selected session state",
+    /if \(accepted && pendingSessionKeyBeforeHandoff && materializedSessionIdFromHandoff\) \{[\s\S]*sessionId: materializedSessionIdFromHandoff,/,
+    "accepted first-send materialization should only use the materialized id reported by the app handoff",
+  );
+  assert.doesNotMatch(
+    sendImmediateSource,
+    /materializedSessionIdFromHandoff \?\? deps\.sessionKeys\.selectedSessionId\(\)\?\.trim\(\)/,
+    "accepted fallback must not guess the materialized session from current selected session state",
   );
   assert.match(
     conversationFlowSource,

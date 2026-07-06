@@ -9,6 +9,7 @@ export type SessionSendOrigin =
 export type SessionSendCorrelation = {
   clientMessageId: string;
   origin: SessionSendOrigin;
+  source?: string | null;
 };
 
 export type SessionSendOptionsBase = SessionSendCorrelation & {
@@ -34,8 +35,10 @@ export function createSessionClientMessageId(): string {
 }
 
 export function normalizeSessionSendCorrelation(input: SessionSendCorrelation): SessionSendCorrelation {
+  const source = input.source?.trim() || null;
   return {
     clientMessageId: input.clientMessageId.trim(),
     origin: input.origin,
+    ...(source ? { source } : {}),
   };
 }

@@ -459,11 +459,13 @@ export type SendPromptImmediateOptions = {
   replaceMessageId?: string;
   restoreDraftOnFailure?: boolean;
   sendTraceId?: string | null;
+  source?: string | null;
 };
 
 export type HandleSendPromptOptions = {
   sendNow?: boolean;
   sendTraceId?: string | null;
+  source?: string | null;
 };
 
 export type SessionConversationFlowControllerDeps = {
@@ -831,6 +833,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
     sendPromptImmediate: async (draft, options = {}) => {
       const origin = resolveSessionSendOriginForReason(options.reason);
       const clientMessageId = deps.identity.createClientMessageId();
+      const source = options.source?.trim() || null;
       const expectedSessionKey = options.expectedSessionKey;
       const baseSessionKey = expectedSessionKey ?? deps.sessionKeys.currentSessionQueueKey();
       const targetSessionId = deps.sessionKeys.sessionIdForQueueKey(baseSessionKey);
@@ -849,6 +852,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         sendTraceId: options.sendTraceId ?? null,
         clientMessageId,
         origin,
+        source,
         aiAccessBlockedReason: deps.runtime.aiAccessBlockedReason(),
         busyHint: deps.runtime.busyHint(),
         busyLabel: deps.runtime.busyLabel(),
@@ -1033,6 +1037,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           sendTraceId: options.sendTraceId ?? null,
           clientMessageId,
           origin,
+          source,
           sessionKey,
           targetSessionId,
           pendingSessionKeyBeforeHandoff,
@@ -1064,6 +1069,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         deps.trace.recordSendTrace("sendPromptImmediate:blocked-ai-access", {
           clientMessageId,
           origin,
+          source,
           aiAccessBlockedReason,
           expectedSessionKey: expectedSessionKey ?? null,
           targetSessionId,
@@ -1086,6 +1092,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         } = {
           clientMessageId,
           origin,
+          source,
           ...(targetSessionId ? { targetSessionId } : {}),
           ...(options.sendTraceId ? { sendTraceId: options.sendTraceId } : {}),
           ...(pendingSessionKeyBeforeHandoff
@@ -1098,6 +1105,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         const replaceOptions: SessionSendOptionsBase & { targetSessionId?: string | null } = {
           clientMessageId,
           origin,
+          source,
           ...(targetSessionId ? { targetSessionId } : {}),
           ...(options.sendTraceId ? { sendTraceId: options.sendTraceId } : {}),
         };
@@ -1109,6 +1117,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           sendTraceId: options.sendTraceId ?? null,
           clientMessageId,
           origin,
+          source,
           accepted,
           error: deps.runtime.error(),
           expectedSessionKey: expectedSessionKey ?? null,
@@ -1134,19 +1143,15 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             detail: `sessionKey=${sessionKey}`,
           },
         );
-        if (accepted && pendingSessionKeyBeforeHandoff) {
-          const materializedSessionId =
-            materializedSessionIdFromHandoff ?? deps.sessionKeys.selectedSessionId()?.trim();
-          if (materializedSessionId) {
-            materializePendingHandoffToSession({
-              workspaceId:
-                expectedWorkspaceId || deps.sessionKeys.activeUiConversationWorkspaceId(),
-              pendingSessionKey: pendingSessionKeyBeforeHandoff,
-              sessionId: materializedSessionId,
-              clientMessageId,
-              sendTraceId: options.sendTraceId ?? null,
-            });
-          }
+        if (accepted && pendingSessionKeyBeforeHandoff && materializedSessionIdFromHandoff) {
+          materializePendingHandoffToSession({
+            workspaceId:
+              expectedWorkspaceId || deps.sessionKeys.activeUiConversationWorkspaceId(),
+            pendingSessionKey: pendingSessionKeyBeforeHandoff,
+            sessionId: materializedSessionIdFromHandoff,
+            clientMessageId,
+            sendTraceId: options.sendTraceId ?? null,
+          });
         }
         if (
           options.expectedSessionKey &&
@@ -1223,6 +1228,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             expectedSessionKey: sessionKey,
             restoreDraftOnFailure: false,
             sendTraceId: options.sendTraceId,
+            source: options.source,
           });
           const resultSessionKey = deps.queue.resolveQueueKeyForQueuedDraft(sessionKey, editingId);
           if (!accepted) {
@@ -1250,6 +1256,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             expectedSessionKey: sessionKey,
             replaceMessageId: action.messageId,
             sendTraceId: options.sendTraceId,
+            source: options.source,
           });
           if (!accepted) return false;
           return true;
@@ -1284,6 +1291,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             reason: "send-now",
             expectedSessionKey: sessionKey,
             sendTraceId: options.sendTraceId,
+            source: options.source,
           });
           if (accepted && wasPaused) {
             deps.queue.setQueuePausedForSessionKey(sessionKey, false);
@@ -1295,6 +1303,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           return controller.sendPromptImmediate(draft, {
             reason: "normal",
             sendTraceId: options.sendTraceId,
+            source: options.source,
           });
       }
     },

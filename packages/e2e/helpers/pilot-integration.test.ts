@@ -36,6 +36,9 @@ test('e2e package exposes runnable tauri-pilot scripts used by root commands', (
   const packageJson = JSON.parse(readRepoFile('packages/e2e/package.json')) as {
     scripts: Record<string, string>;
   };
+  const rootPackageJson = JSON.parse(readRepoFile('package.json')) as {
+    scripts: Record<string, string>;
+  };
 
   assert.equal(packageJson.scripts['test:pilot'], 'node --import=tsx/esm ./helpers/pilot-runner.ts');
   assert.equal(
@@ -46,6 +49,14 @@ test('e2e package exposes runnable tauri-pilot scripts used by root commands', (
   assert.equal(
     packageJson.scripts['test:pilot:navigation'],
     'node --import=tsx/esm ./helpers/pilot-runner.ts --scenario navigation',
+  );
+  assert.equal(
+    packageJson.scripts['test:pilot:live-inference'],
+    'node --import=tsx/esm ./helpers/pilot-runner.ts --suite live-inference',
+  );
+  assert.equal(
+    rootPackageJson.scripts['test:e2e:ui:live-inference'],
+    'pnpm --filter @neatech/veslo-e2e test:pilot:live-inference',
   );
   assert.equal(
     packageJson.scripts['test:pilot:soul-dashboard'],

@@ -2863,6 +2863,7 @@ export default function SessionView(props: SessionViewProps) {
     return sessionFlowFacade.handleSendPrompt(draft, {
       sendNow: options.sendNow,
       sendTraceId: options.sendTraceId,
+      source: options.source,
     });
   };
 

@@ -221,7 +221,13 @@ disabled:
 ```powershell
 $env:VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE = "C:\Users\jajse\.veslo\den-auth.json"
 $env:E2E_MANAGED_AI_GATEWAY_FIXTURE = "0"
-pnpm --filter @neatech/veslo-e2e test:pilot -- --scenario message-send-registry-degraded
+pnpm --filter @neatech/veslo-e2e test:pilot:live-inference
+```
+
+From the workspace root, the same gate is available as:
+
+```powershell
+pnpm test:e2e:ui:live-inference
 ```
 
 ## Scenario Authoring Boundaries

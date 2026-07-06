@@ -38,10 +38,12 @@ test("session send correlation trims the client message id", () => {
     normalizeSessionSendCorrelation({
       clientMessageId: " msg_123 ",
       origin: "session:normal",
+      source: " enter ",
     }),
     {
       clientMessageId: "msg_123",
       origin: "session:normal",
+      source: "enter",
     },
   );
 });

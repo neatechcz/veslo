@@ -49,12 +49,30 @@ export type ConversationSubmitDebugTraceEntry = {
   [key: string]: unknown;
 };
 
+export type ConversationSubmitResolvedRunInput =
+  | {
+      kind: "prompt_async";
+      text: string;
+      parts: unknown[];
+    }
+  | {
+      kind: "shell";
+      command: string;
+    }
+  | {
+      kind: "command";
+      command: string;
+      arguments: string;
+      parts?: unknown[];
+    };
+
 export type ConversationSubmitDryRunResult = {
   status: "dry_run";
   workspaceId: string;
   clientMessageId: string;
   requestHash: string;
   draftDisposition: "keep";
+  resolvedRunInput: ConversationSubmitResolvedRunInput;
   target: {
     directory: string | null;
     conversationId?: string | null;

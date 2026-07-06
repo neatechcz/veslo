@@ -699,6 +699,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           clientMessageId: sendCorrelation.clientMessageId,
           submitDraft: serverSubmitMaterializationDraft,
           submitOrigin: sendCorrelation.origin,
+          submitSource: sendCorrelation.source,
           onMaterializedSessionId: options.onMaterializedSessionId,
           preflight: sendPreflight,
         }),

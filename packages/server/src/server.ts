@@ -153,6 +153,7 @@ import {
 } from "./routes/file-sessions.js";
 import { registerHealthStatusRoutes } from "./routes/health.js";
 import {
+  createDocumentRuntimeStatusPayload,
   createDocumentRuntimeProviderDependencies,
   registerDocumentRuntimeRoutes,
 } from "./routes/document-runtime.js";
@@ -207,6 +208,7 @@ import { createConversationService } from "./conversation-service.js";
 import { createConversationRunQueueStore } from "./conversation-run-queue-store.js";
 import { createConversationSubmitAttemptStore } from "./conversation-submit-attempt-store.js";
 import { createConversationSubmitService } from "./conversation-submit-service.js";
+import { createConversationSubmitSkillCommandResolver } from "./conversation-submit-skill-command-resolution.js";
 import {
   createOrchestratorLifecycleClient,
   type OrchestratorLifecycleClient,
@@ -3625,6 +3627,7 @@ function createRoutes(
   const conversationTranscriptStore = createConversationTranscriptStore({ dataDir: serverDataDir });
   const conversationRunQueueStore = createConversationRunQueueStore({ dataDir: serverDataDir });
   const conversationSubmitAttemptStore = createConversationSubmitAttemptStore({ dataDir: serverDataDir });
+  const documentRuntimeDependencies = createDocumentRuntimeProviderDependencies();
   const conversationService = createConversationService({
     readStore: conversationReadStore,
     bindingStore: conversationBindingStore,
@@ -3652,6 +3655,10 @@ function createRoutes(
   const conversationSubmitService = createConversationSubmitService({
     attemptStore: conversationSubmitAttemptStore,
     conversationService,
+    documentRuntimeStatus: async () => documentRuntimeDependencies.readStatus
+      ? await documentRuntimeDependencies.readStatus({} as RequestContext)
+      : createDocumentRuntimeStatusPayload(documentRuntimeDependencies),
+    resolveSkillCommand: createConversationSubmitSkillCommandResolver({ dataDir: serverDataDir }),
   });
 
   const sessionTranscriptPrefetch = createSessionTranscriptPrefetchStore({
@@ -3900,7 +3907,7 @@ function createRoutes(
     serializeWorkspaceForResponse,
   });
 
-registerDocumentRuntimeRoutes(routes, createDocumentRuntimeProviderDependencies());
+  registerDocumentRuntimeRoutes(routes, documentRuntimeDependencies);
 
   registerWorkspaceManagementRoutes(routes, {
     serverDataDir,
