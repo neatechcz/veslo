@@ -1146,17 +1146,6 @@ fn persist_veslo_server_info(app: &AppHandle, info: &VesloServerInfo) -> Result<
     persist_veslo_server_plugin_state(&dir, info)
 }
 
-fn normalize_workspace_paths(paths: &[String]) -> Vec<String> {
-    let mut normalized: Vec<String> = paths
-        .iter()
-        .map(|path| path.trim().trim_end_matches('/').to_string())
-        .filter(|path| !path.is_empty())
-        .collect();
-    normalized.sort();
-    normalized.dedup();
-    normalized
-}
-
 fn normalize_launch_url(value: Option<&str>) -> Option<String> {
     value
         .map(|value| value.trim().trim_end_matches('/').to_string())
@@ -1171,7 +1160,7 @@ fn normalize_launch_token(value: Option<&str>) -> Option<String> {
 
 fn launch_config_matches(
     state: &manager::VesloServerState,
-    workspace_paths: &[String],
+    _workspace_paths: &[String],
     host: &str,
     bridge_host: &Option<String>,
     sandbox_backend: &str,
@@ -1179,8 +1168,7 @@ fn launch_config_matches(
     orchestrator_daemon_url: &Option<String>,
     orchestrator_lifecycle_token: &Option<String>,
 ) -> bool {
-    normalize_workspace_paths(workspace_paths) == normalize_workspace_paths(&state.workspace_paths)
-        && state.host.as_deref() == Some(host)
+    state.host.as_deref() == Some(host)
         && state.bridge_host == *bridge_host
         && state.sandbox_backend.as_deref() == Some(sandbox_backend)
         && state.opencode_base_url == *opencode_base_url
@@ -1877,6 +1865,35 @@ mod tests {
                 &lifecycle_token,
             ),
             "correcting workspace//opencode to a workspace-scoped URL must respawn veslo-server"
+        );
+    }
+
+    #[test]
+    fn launch_config_reuses_server_when_workspace_list_changes() {
+        let state = VesloServerState {
+            workspace_paths: vec!["/workspace/project".to_string()],
+            host: Some("127.0.0.1".to_string()),
+            bridge_host: None,
+            sandbox_backend: Some("none".to_string()),
+            ..Default::default()
+        };
+        let workspace_paths = vec![
+            "/workspace/project".to_string(),
+            "/workspace/new-project".to_string(),
+        ];
+
+        assert!(
+            launch_config_matches(
+                &state,
+                &workspace_paths,
+                "127.0.0.1",
+                &None,
+                "none",
+                &None,
+                &None,
+                &None,
+            ),
+            "workspace registry changes are acknowledged through API sync and must not respawn veslo-server"
         );
     }
 

@@ -1107,6 +1107,14 @@ Mark done when:
 
 done: false
 
+Partial implementation note 2026-07-06: `launch_config_matches` no longer
+treats workspace-list drift as a respawn trigger. After VSA09/VSA10, workspace
+add/rename/delete registration is acknowledged through server APIs, so a
+sidebar workspace-list change can reuse the existing veslo-server process
+without rotating tokens or dropping streams. VSA11 remains `done: false`
+because dynamic OpenCode/orchestrator URL and lifecycle-token hot-swap still
+require a real runtime-config owner/API.
+
 Goal:
 
 Decouple server lifetime from workspace list, active workspace, and dynamic
