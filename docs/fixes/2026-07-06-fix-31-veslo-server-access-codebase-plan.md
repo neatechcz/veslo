@@ -37,10 +37,11 @@ The plan is now marked:
 - The frontend consumes the Tauri `veslo://server-state` descriptor and avoids
   tokenless local fallback paths.
 - Workspace registration is acknowledged, reports
-  `workspace_registry_unsynced` on failures, and uses server-owned workspace id
-  mapping for server-bound calls.
-- Workspace-id golden vectors, dual-id migration, and server-owned id cutover
-  are covered across desktop, server, app, and orchestrator.
+  `workspace_registry_unsynced` on failures, and uses server-acknowledged
+  workspace id mapping for server-bound calls.
+- Workspace-id golden vectors, dual-id migration, and server-acknowledged
+  server-call cutover are covered across desktop, server, app, and
+  orchestrator.
 - The full engine-config hot-swap API remains deliberately deferred; VSA11A
   diagnostics are the trigger for reopening it.
 - E2E/pilot validation is explicitly skipped for this checkpoint and is not
@@ -104,6 +105,11 @@ Follow-up test hardening added after the codebase checkpoint:
 - The plan frontmatter now keeps the E2E-done flag false and records the E2E
   decision through `vsa13_e2e_docs_and_release_gate_skipped: true`, so
   codebase completion cannot be mistaken for installed-runtime E2E validation.
+- Plan wording was tightened after review: VSA06 now matches the implemented
+  lifecycle states, VSA07 no longer carries stale `done: false` wording, VSA10
+  describes a server-acknowledged id mapping rather than a new opaque id
+  generator, and VSA13C no longer requires the skipped E2E gate to be marked
+  done.
 
 Validation:
 

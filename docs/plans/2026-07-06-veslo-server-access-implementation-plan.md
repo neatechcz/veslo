@@ -644,10 +644,9 @@ Implementation:
 - Coalesce compatible start intents instead of kill/respawn ping-pong.
 - Model lifecycle states explicitly:
   - `Stopped`,
-  - `Spawning`,
+  - `Starting`,
   - `WaitingReady`,
   - `Running`,
-  - `Degraded`,
   - `Blocked(reason)`.
 - Emit a Tauri event on every descriptor/state transition. Payload should
   include status, reason, URLs, tokens, `instanceId`, PID, and timestamps.
@@ -668,7 +667,7 @@ Acceptance:
 - Concurrent start requests cannot interleave with different configs and cause
   repeated respawns.
 - UI and logs can distinguish booting, stopped, auth desync, port conflict,
-  identity conflict, and degraded health.
+  identity conflict, and blocked readiness/health.
 - No event/log path leaks `hostToken` outside the in-memory trusted desktop
   renderer path.
 
@@ -678,7 +677,7 @@ Verification:
 cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml veslo_server::manager::tests --quiet
 cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml commands::engine::tests --quiet
 cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml commands::veslo_server::tests --quiet
-rg -n "veslo_server_restart|start_veslo_server|emit_all|VesloServerLifecycleStatus|Blocked|Degraded|WaitingReady" packages/desktop/src-tauri/src packages/app/src/app
+rg -n "veslo_server_restart|start_veslo_server|emit_all|VesloServerLifecycleStatus|Blocked|WaitingReady" packages/desktop/src-tauri/src packages/app/src/app
 ```
 
 Mark done when:
@@ -696,7 +695,7 @@ tokenless local fallback auth path. The `deriveLocalVesloServerUrlFromOpencodeBa
 helper and the active `localFallbackUrl` resolver contract were removed, and
 managed-AI provider routing now uses only `activeVesloServerRoutingInfo()` for
 local server base URL and tokens. The broader event-fed single descriptor store
-is still open, so this task remains `done: false`.
+was completed later in this task.
 
 Partial implementation note 2026-07-06: `global-sdk.tsx` and `server.tsx` no
 longer read `veslo.server.token` directly from localStorage. Remote OpenCode
@@ -712,7 +711,8 @@ local descriptor from one `veslo_server_info` snapshot, then consumes
 slow snapshot watchdog remains for lost events and child-exit detection. Event
 payloads are merged with the existing in-memory descriptor so redacted events
 do not erase the trusted `hostToken` or captured logs for the same
-instance/baseUrl, but a new instance never inherits the previous host token.
+instance. Events without identity, or from a new instance on the same base URL,
+never inherit the previous host token.
 
 Goal:
 
@@ -723,8 +723,8 @@ Implementation:
 
 - First slice: remove the derived local URL fallback and tokenless local mode
   using the current trusted desktop snapshot.
-- Follow-up: add one app-side local server descriptor store fed by Tauri events
-  from VSA06 and seeded by one snapshot on startup.
+- Add one app-side local server descriptor store fed by Tauri events from VSA06
+  and seeded by one snapshot on startup.
 - Reduce local-mode URL/auth resolution:
   - local mode uses descriptor URL and descriptor `clientToken` only for normal
     bearer requests;
@@ -1048,8 +1048,8 @@ Implementation:
   - run lifecycle/register/status keys,
   - run-store and run-registry history.
 - Preserve or migrate existing orchestrator directories and run records so a
-  server-owned id cutover does not split active engine state from previous run
-  history.
+  server-acknowledged id cutover does not split active engine state from
+  previous run history.
 - Keep `workspace_id_mismatch` recovery in place during this task as a safety
   net, but add diagnostics that show when dual-id mapping prevented it.
 
@@ -1086,25 +1086,25 @@ Mark done when:
 - `vsa10b_dual_id_mapping_migration_done: true`.
 - This task's `done: true`.
 
-## VSA10C: Server-Owned ID Cutover And Mismatch Cleanup
+## VSA10C: Server-Acknowledged ID Cutover And Mismatch Cleanup
 
 done: true
 
 Goal:
 
-Complete the workspace-id authority migration and remove symptom-level
-workspace-id mismatch recovery where it is no longer needed. Do this only
-after VSA10B proves dual-id compatibility in app, server, and orchestrator.
+Complete the server-bound workspace-id migration and remove symptom-level
+workspace-id mismatch recovery where it is no longer needed. Do this only after
+VSA10B proves dual-id compatibility in app, server, and orchestrator.
 
 Implementation:
 
-- Make veslo-server the workspace id authority for local server registry after
-  VSA09 and VSA10B are complete.
-- Ensure all local-server API routes and frontend clients use server-assigned
-  ids for server calls.
-- Ensure orchestrator runtime identity uses the migrated server-owned id or an
-  explicit compatibility mapping for config dirs, engine pools, run lifecycle
-  calls, and run-store lookups.
+- Make the veslo-server registration response the authority for server-bound
+  local workspace ids after VSA09 and VSA10B are complete.
+- Ensure all local-server API routes and frontend clients use
+  server-acknowledged ids for server calls.
+- Ensure orchestrator runtime identity uses the migrated server-acknowledged id
+  or an explicit compatibility mapping for config dirs, engine pools, run
+  lifecycle calls, and run-store lookups.
 - Remove or downgrade `workspace_id_mismatch` recovery only after tests prove
   dual-id mapping covers the previous failure cases.
 - Update docs that describe workspace id ownership and migration semantics.
@@ -1122,6 +1122,9 @@ Implementation status:
   workspaces no longer depend on it as the normal recovery signal.
 - VSA10A golden vectors and VSA10B dual-id mapping cover the desktop, app,
   server, and orchestrator compatibility paths before this cleanup.
+- The current `/workspaces/local` server id remains deterministic from the
+  resolved path. This task is therefore a server-acknowledged server-call
+  authority cutover, not a new opaque id-generator cutover.
 
 Acceptance:
 
@@ -1576,7 +1579,9 @@ Mark done when:
 - `vsa13b_installed_runtime_smoke_skipped: true`, unless E2E acceptance is
   re-enabled.
 - `vsa13c_full_release_gate_done: true`.
-- `vsa13_e2e_docs_and_release_gate_done: true`.
+- `vsa13_codebase_release_gate_done: true`.
+- `vsa13_e2e_docs_and_release_gate_skipped: true`, unless E2E acceptance is
+  re-enabled and completed in a separate installed-runtime gate.
 - This task's `done: true`.
 
 ## VSA13: E2E, Docs, And Release Gate
@@ -1651,7 +1656,7 @@ Mark done when:
 - `vsa13c_full_release_gate_done: true`.
 - `vsa13_codebase_release_gate_done: true`.
 - `vsa13_e2e_docs_and_release_gate_skipped: true`, unless E2E acceptance is
-  re-enabled and `vsa13_e2e_docs_and_release_gate_done: true`.
+  re-enabled and completed in a separate installed-runtime gate.
 - Top-level `status: completed`.
 - Top-level `done: true`.
 - This task's `done: true`.
