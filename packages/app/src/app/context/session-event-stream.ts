@@ -430,7 +430,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           deps.setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
           deps.notifySessionBusy(sessionID, "idle", sourceWsId);
           const c = sourceWsId
-            ? deps.routing.client(sourceWsId) ?? deps.client()
+            ? deps.routing.client(sourceWsId)
             : deps.client();
           if (c) {
             try {
@@ -439,8 +439,18 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             } catch {
               // ignore
             }
+          } else if (sourceWsId) {
+            deps.recordSessionStatusTrace("sse-session-idle-live-refresh-skipped", {
+              sessionId: sessionID,
+              sourceWorkspaceId: sourceWsId,
+              reason: "missing-routed-client",
+            });
           }
           deps.scheduleTranscriptIngestion(sessionID, sourceWsId, "session.idle", 0);
+          const workspaceId = deps.resolveTranscriptIngestWorkspaceId(sourceWsId);
+          if (workspaceId) {
+            deps.scheduleBackgroundTranscriptIngestion(sessionID, workspaceId, "session.idle engine snapshot", 0);
+          }
         }
       }
     }
@@ -786,9 +796,12 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           const normalized = normalizeSessionStatus(fetched?.status);
           deps.setSessionStatusForWorkspace(sessionID, normalized, sourceWsId);
           deps.notifySessionBusy(sessionID, normalized, sourceWsId);
-        } catch {
-          deps.setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
-          deps.notifySessionBusy(sessionID, "idle", sourceWsId);
+        } catch (error) {
+          deps.recordSessionStatusTrace("sse-reconnect-catchup-status-failed", {
+            sessionId: sessionID,
+            sourceWorkspaceId: sourceWsId || null,
+            message: error instanceof Error ? error.message : String(error),
+          });
           continue;
         }
 

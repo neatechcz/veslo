@@ -67,8 +67,13 @@ test("inactive workspace baseURL healing skips active workspace and stale async 
   );
   assert.match(
     effectSource,
-    /const activeWorkspaceAppId = activeWorkspace\.id\?\.trim\(\) \|\| deps\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const activeWorkspaceId =[\s\S]*deps\.resolveConversationServerWorkspaceId\(activeWorkspaceAppId\) \|\|[\s\S]*activeWorkspaceAppId\.startsWith\("ws-"\) \? activeWorkspaceAppId : ""[\s\S]*\(deps\.vesloServerWorkspaceId\(\) \?\? ""\)\.trim\(\);/,
-    "inactive workspace healing should resolve the active server workspace id before listing workspaces",
+    /const activeWorkspaceAppId = activeWorkspace\.id\?\.trim\(\) \|\| deps\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const activeWorkspaceId =[\s\S]*\(deps\.vesloServerWorkspaceId\(\) \?\? ""\)\.trim\(\) \|\|[\s\S]*deps\.resolveConversationServerWorkspaceId\(activeWorkspaceAppId\) \|\|[\s\S]*"";/,
+    "inactive workspace healing should use acknowledged server workspace ids before listing workspaces",
+  );
+  assert.doesNotMatch(
+    effectSource,
+    /activeWorkspaceAppId\.startsWith\("ws-"\) \? activeWorkspaceAppId/,
+    "inactive workspace healing must not treat local app ids as server workspace ids",
   );
   assert.match(
     effectSource,

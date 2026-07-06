@@ -1,6 +1,7 @@
 import type { Accessor } from "solid-js";
 
 import type { WorkspaceBusyMap } from "./workspace-debug";
+import type { WorkspaceLifecycleState } from "./workspace-lifecycle-state";
 import type { RoutingClient, WorkspaceRouting } from "./workspace-routing";
 
 export type RuntimeOwnerReason =
@@ -28,6 +29,7 @@ export type RuntimeOwnerOptions = {
   activeWorkspaceId: Accessor<string>;
   activeLegacyEngineReady: Accessor<boolean>;
   readyEngineWorkspaceIds: Accessor<ReadonlySet<string>>;
+  workspaceLifecycleState?: Accessor<WorkspaceLifecycleState | null | undefined>;
   requiresOrchestratorReadiness?: (workspaceId: string) => boolean;
   workspaceBusy?: Accessor<WorkspaceBusyMap>;
   routing: Pick<WorkspaceRouting, "client" | "entry" | "entryIds">;
@@ -94,11 +96,17 @@ export function createRuntimeOwner(options: RuntimeOwnerOptions): RuntimeOwner {
     }
 
     const activeWorkspace = id === activeWorkspaceId();
-    const orchestratorReady = options.readyEngineWorkspaceIds().has(id);
+    const lifecycleEntry = options.workspaceLifecycleState?.()?.byWorkspace[id] ?? null;
+    const requiresOrchestratorReadiness = options.requiresOrchestratorReadiness?.(id) === true;
     const routedClientReady = Boolean(options.routing.entry(id));
+    const lifecycleConnectedReady =
+      requiresOrchestratorReadiness &&
+      routedClientReady &&
+      lifecycleEntry?.phase === "connected" &&
+      lifecycleEntry.runtime === "veslo-orchestrator";
+    const orchestratorReady = options.readyEngineWorkspaceIds().has(id) || lifecycleConnectedReady;
     const routedClientCountsAsReady =
       routedClientReady && !options.requiresOrchestratorReadiness?.(id);
-    const requiresOrchestratorReadiness = options.requiresOrchestratorReadiness?.(id) === true;
     const activeLegacyEngineReady =
       activeWorkspace && !requiresOrchestratorReadiness && options.activeLegacyEngineReady();
     const busy = Object.keys(options.workspaceBusy?.()[id] ?? {}).length > 0;

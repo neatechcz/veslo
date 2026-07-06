@@ -426,6 +426,65 @@ test("session send workflow releases in-flight tracking when conversation run th
   assert.ok(harness.events.includes("sendPrompt:error"));
 });
 
+test("abortSession blocks active legacy fallback when workspace scope is missing", async () => {
+  const abortCalls: string[] = [];
+  const harness = createHarness({
+    abortConversationFromVesloWriteApi: async () => null,
+    abortSessionTyped: async (_client, sessionId) => {
+      abortCalls.push(sessionId);
+    },
+    resolveSelectedSessionBrowseScope: () => null,
+    resolveConversationAbortScope: (sessionId) => ({
+      sessionId,
+      workspaceId: "ws-active",
+      workspaceRoot: "/active",
+      directory: "/active",
+      hasConversationScope: false,
+      conversationId: sessionId,
+      opencodeSessionId: sessionId,
+    }),
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  await workflow.abortSession("sess-unscoped");
+
+  assert.deepEqual(abortCalls, []);
+  assert.ok(harness.events.includes("abortSession:legacy-fallback-blocked-missing-workspace-scope"));
+  assert.match(harness.errors.at(-1) ?? "", /workspace scope is missing/);
+});
+
+test("abortSession blocks active legacy fallback for foreign workspace scope", async () => {
+  const abortCalls: string[] = [];
+  const harness = createHarness({
+    abortConversationFromVesloWriteApi: async () => null,
+    abortSessionTyped: async (_client, sessionId) => {
+      abortCalls.push(sessionId);
+    },
+    routedClient: (workspaceId?: string | null) => workspaceId ? null : ({} as Client),
+    resolveSelectedSessionBrowseScope: () => ({
+      workspaceId: "ws-foreign",
+      workspaceRoot: "/foreign",
+      directory: "/foreign",
+    }),
+    resolveConversationAbortScope: (sessionId) => ({
+      sessionId,
+      workspaceId: "ws-foreign",
+      workspaceRoot: "/foreign",
+      directory: "/foreign",
+      hasConversationScope: false,
+      conversationId: sessionId,
+      opencodeSessionId: sessionId,
+    }),
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  await workflow.abortSession("sess-foreign");
+
+  assert.deepEqual(abortCalls, []);
+  assert.ok(harness.events.includes("abortSession:legacy-fallback-blocked-foreign-workspace"));
+  assert.match(harness.errors.at(-1) ?? "", /belongs to another workspace/);
+});
+
 test("session send workflow retries recoverable runtime run failure once with same client message id", async () => {
   const runCalls: Array<{ clientMessageId?: string | null; forceRecovery?: boolean }> = [];
   const prepareForceRecoveryValues: Array<boolean | undefined> = [];

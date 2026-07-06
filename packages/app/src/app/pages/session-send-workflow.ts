@@ -1044,12 +1044,18 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
     const id = (sessionID ?? deps.selectedSessionId() ?? "").trim();
     if (!id) return;
     const scope = deps.resolveConversationAbortScope(id, target);
+    const explicitAbortWorkspaceId =
+      target?.workspaceId?.trim() ||
+      deps.resolveSelectedSessionBrowseScope(id)?.workspaceId?.trim() ||
+      "";
+    const activeAbortWorkspaceId = deps.workspace.activeWorkspaceId().trim();
     deps.recordSendTrace("abortSession:start", {
       sessionID: id,
       workspaceId: scope.workspaceId || null,
       conversationId: scope.conversationId || null,
       opencodeSessionId: scope.opencodeSessionId || null,
       hasConversationScope: scope.hasConversationScope,
+      explicitWorkspaceId: explicitAbortWorkspaceId || null,
     });
     const abortSessionViaScopedLegacy = async (): Promise<boolean> => {
       if (!scope.workspaceId) return false;
@@ -1062,6 +1068,23 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         directory: scope.directory?.trim() || undefined,
       });
       return true;
+    };
+    const blockActiveLegacyFallbackIfUnsafe = (): boolean => {
+      if (!explicitAbortWorkspaceId) {
+        deps.recordSendTrace("abortSession:legacy-fallback-blocked-missing-workspace-scope", { sessionID: id });
+        deps.setError("Cannot stop this run because its workspace scope is missing. Re-select the session and try again.");
+        return true;
+      }
+      if (!activeAbortWorkspaceId || explicitAbortWorkspaceId !== activeAbortWorkspaceId) {
+        deps.recordSendTrace("abortSession:legacy-fallback-blocked-foreign-workspace", {
+          sessionID: id,
+          workspaceId: explicitAbortWorkspaceId,
+          activeWorkspaceId: activeAbortWorkspaceId || null,
+        });
+        deps.setError("Cannot stop this run through the active workspace because it belongs to another workspace.");
+        return true;
+      }
+      return false;
     };
     try {
       const result = await deps.abortConversationFromVesloWriteApi(id, target);
@@ -1103,7 +1126,14 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         deps.recordSendTrace("abortSession:scoped-legacy-fallback", { sessionID: id });
         return;
       }
+      if (blockActiveLegacyFallbackIfUnsafe()) {
+        return;
+      }
       console.warn("[conversation-abort] falling back to OpenCode SDK", error);
+    }
+
+    if (blockActiveLegacyFallbackIfUnsafe()) {
+      return;
     }
 
     const c = deps.routedClient();

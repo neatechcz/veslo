@@ -21,7 +21,7 @@ test("conversation runs remember abort and lifecycle run ids under scoped identi
   const runSource = conversationServiceSource.slice(runStart, abortStart);
   assert.match(
     runSource,
-    /const abortRunId = result\.status === "submitted"[\s\S]*\? result\.runId[\s\S]*: result\.activeRunId\?\.trim\(\) \|\| result\.reservedRunId;[\s\S]*deps\.rememberLatestConversationRunId\(\{[\s\S]*workspaceId,[\s\S]*conversationId: result\.conversationId,[\s\S]*opencodeSessionId: result\.opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*runId: abortRunId,[\s\S]*\}\);/,
+    /const (abortRunId|latestRunId) = result\.status === "submitted"[\s\S]*\? result\.runId[\s\S]*: result\.activeRunId\?\.trim\(\) \|\| result\.reservedRunId;[\s\S]*deps\.rememberLatestConversationRunId\(\{[\s\S]*workspaceId,[\s\S]*conversationId: result\.conversationId,[\s\S]*opencodeSessionId: result\.opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*runId: \1,[\s\S]*\}\);/,
     "conversation abort should keep the active queued run id available for stop requests",
   );
   assert.match(

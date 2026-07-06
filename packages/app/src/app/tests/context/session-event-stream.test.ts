@@ -49,9 +49,11 @@ function makeController(options: {
   developerMode?: boolean;
   workspaceSessionIds?: Set<string>;
   observer?: (sessionID: string) => void;
+  transcriptIngest?: Array<Record<string, unknown>>;
   backgroundIngest?: Array<Record<string, unknown>>;
   permissionRefreshes?: string[];
   questionRefreshes?: string[];
+  statusTraces?: Array<{ event: string; payload?: Record<string, unknown> }>;
   setSseConnected?: (connected: boolean) => void;
   setMessagesForSession?: (sessionID: string, list: Array<{ info: MessageInfo; parts: any[] }>) => void;
   routing?: any;
@@ -60,6 +62,7 @@ function makeController(options: {
 } = {}) {
   const [store, setStore] = makeStore();
   const workspaceSessionIds = options.workspaceSessionIds ?? new Set<string>();
+  const transcriptIngest = options.transcriptIngest ?? [];
   const backgroundIngest = options.backgroundIngest ?? [];
   const permissionRefreshes = options.permissionRefreshes ?? [];
   const questionRefreshes = options.questionRefreshes ?? [];
@@ -85,7 +88,9 @@ function makeController(options: {
     onAssistantResponseObserved: options.observer,
     sessionDebugEnabled: () => options.developerMode ?? false,
     sessionWarn: () => {},
-    recordSessionStatusTrace: () => {},
+    recordSessionStatusTrace: (event, payload) => {
+      options.statusTraces?.push({ event, payload });
+    },
     readStatusForSession: (sessionID, workspaceId) =>
       store.sessionStatus[`${workspaceId ?? ""}:${sessionID ?? ""}`] ?? "idle",
     setSessionStatusForWorkspace: (sessionID, status, workspaceId) => {
@@ -108,7 +113,9 @@ function makeController(options: {
     resolveSessionIdForMessage: () => null,
     recordPendingTranscriptMessageDeletion: () => {},
     recordPendingTranscriptPartDeletion: () => {},
-    scheduleTranscriptIngestion: () => {},
+    scheduleTranscriptIngestion: (sessionID, sourceWsId, reason, delayMs) => {
+      transcriptIngest.push({ sessionID, sourceWsId, reason, delayMs });
+    },
     scheduleBackgroundTranscriptIngestion: (sessionID, workspaceId, reason, delayMs) => {
       backgroundIngest.push({ sessionID, workspaceId, reason, delayMs });
     },
@@ -134,6 +141,7 @@ function makeController(options: {
     setStore,
     workspaceSessionIds,
     busyCalls,
+    transcriptIngest,
     backgroundIngest,
     permissionRefreshes,
     questionRefreshes,
@@ -265,6 +273,95 @@ test("active message updates report assistant responses only after accepting the
 
       assert.deepEqual(store.messages["sess-a"].map((message) => message.id), ["msg-a"]);
       assert.deepEqual(observed, ["sess-a"]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("active session idle schedules local and engine transcript ingestion immediately", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const transcriptIngest: Array<Record<string, unknown>> = [];
+      const backgroundIngest: Array<Record<string, unknown>> = [];
+      const { controller } = makeController({
+        workspaceSessionIds: new Set(["sess-a"]),
+        transcriptIngest,
+        backgroundIngest,
+      });
+
+      await controller.applyEvent(
+        {
+          type: "session.idle",
+          properties: { sessionID: "sess-a" },
+        } as OpencodeEvent,
+        "ws-a",
+      );
+
+      assert.deepEqual(transcriptIngest, [
+        {
+          sessionID: "sess-a",
+          sourceWsId: "ws-a",
+          reason: "session.idle",
+          delayMs: 0,
+        },
+      ]);
+      assert.deepEqual(backgroundIngest, [
+        {
+          sessionID: "sess-a",
+          workspaceId: "ws-a",
+          reason: "session.idle engine snapshot",
+          delayMs: 0,
+        },
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("scoped session idle does not refresh through the active fallback client", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const activeClientGets: string[] = [];
+      const statusTraces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+      const routing = {
+        activeWorkspaceId: () => "ws-a",
+        active: () => null,
+        client: () => null,
+        entry: () => null,
+        entryIds: () => ["ws-a"],
+        release: () => {},
+      };
+      const activeClient = {
+        session: {
+          get: async ({ sessionID }: { sessionID: string }) => {
+            activeClientGets.push(sessionID);
+            return ok({ id: sessionID, status: "idle" });
+          },
+        },
+      };
+      const { controller } = makeController({
+        activeWorkspaceId: "ws-a",
+        workspaceSessionIds: new Set(["sess-a"]),
+        routing,
+        client: () => activeClient,
+        statusTraces,
+      });
+
+      await controller.applyEvent(
+        {
+          type: "session.idle",
+          properties: { sessionID: "sess-a" },
+        } as OpencodeEvent,
+        "ws-a",
+      );
+
+      assert.deepEqual(activeClientGets, []);
+      assert.equal(
+        statusTraces.some((trace) => trace.event === "sse-session-idle-live-refresh-skipped"),
+        true,
+      );
     } finally {
       dispose();
     }
@@ -463,6 +560,73 @@ test("reconnect catch-up refreshes sessions that were running during the outage"
     assert.deepEqual(messageWrites, ["sess-a"]);
     assert.deepEqual(permissionRefreshes, ["permissions"]);
     assert.deepEqual(questionRefreshes, ["questions"]);
+
+    cleanup();
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
+});
+
+test("reconnect catch-up preserves running status when status refresh fails", async () => {
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  let reconnectCallback: (() => void) | null = null;
+  const statusRefreshes: string[] = [];
+  const statusTraces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+  let subscribeCount = 0;
+
+  globalThis.setTimeout = ((callback: (...args: unknown[]) => void) => {
+    reconnectCallback = () => callback();
+    return 1 as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = (() => {}) as typeof clearTimeout;
+
+  try {
+    const { controller, setStore, store, busyCalls } = makeController({
+      activeWorkspaceId: "ws-a",
+      statusTraces,
+    });
+    setStore("sessionStatus", "ws-a\0sess-a", "running");
+
+    const client = {
+      ...makeEventClient(async () => {
+        subscribeCount += 1;
+        if (subscribeCount === 1) {
+          return {
+            stream: (async function* () {})(),
+          };
+        }
+        return {
+          stream: (async function* () {
+            await new Promise<void>(() => {});
+          })(),
+        };
+      }),
+      session: {
+        get: async ({ sessionID }: { sessionID: string }) => {
+          statusRefreshes.push(sessionID);
+          throw new Error("status unavailable");
+        },
+      },
+    } as any;
+
+    const cleanup = controller.setupSseStream("ws-a", client);
+    await tick(4);
+    const runReconnect = reconnectCallback as (() => void) | null;
+    assert.ok(runReconnect);
+
+    runReconnect();
+    await tick(12);
+
+    assert.deepEqual(statusRefreshes, ["sess-a"]);
+    assert.equal(store.sessionStatus["ws-a\0sess-a"], "running");
+    assert.equal(store.sessionStatus["ws-a:sess-a"], undefined);
+    assert.equal(busyCalls.some((call) => call.sessionID === "sess-a" && call.status === "idle"), false);
+    assert.equal(
+      statusTraces.some((trace) => trace.event === "sse-reconnect-catchup-status-failed"),
+      true,
+    );
 
     cleanup();
   } finally {

@@ -5,6 +5,10 @@ import {
   createRuntimeOwnedRouting,
   createRuntimeOwner,
 } from "../../context/runtime-owner.js";
+import {
+  createInitialWorkspaceLifecycleState,
+  reduceWorkspaceLifecycleState,
+} from "../../context/workspace-lifecycle-state.js";
 
 const client = (id: string) => ({ id }) as any;
 
@@ -110,6 +114,37 @@ test("runtime owner does not treat local orchestrator routes as ready without an
   assert.equal(routeOnly.anyWorkspaceRuntimeReady(), false);
   assert.equal(snapshotReady.isWorkspaceRuntimeReady("ws-local"), true);
   assert.equal(snapshotReady.client("ws-local"), routed);
+});
+
+test("runtime owner accepts a connected local orchestrator lifecycle before the engine poll refreshes", () => {
+  const routed = client("ws-local");
+  const lifecycleState = reduceWorkspaceLifecycleState(createInitialWorkspaceLifecycleState(), {
+    type: "connected",
+    workspaceId: "ws-local",
+    runtime: "veslo-orchestrator",
+    reason: "sendPrompt-runtime-recovery",
+  });
+  const owner = createRuntimeOwner({
+    activeWorkspaceId: () => "ws-local",
+    activeLegacyEngineReady: () => false,
+    readyEngineWorkspaceIds: () => new Set(),
+    workspaceLifecycleState: () => lifecycleState,
+    requiresOrchestratorReadiness: (workspaceId) => workspaceId === "ws-local",
+    routing: createRouting({ "ws-local": routed }),
+  });
+  const routeMissing = createRuntimeOwner({
+    activeWorkspaceId: () => "ws-local",
+    activeLegacyEngineReady: () => false,
+    readyEngineWorkspaceIds: () => new Set(),
+    workspaceLifecycleState: () => lifecycleState,
+    requiresOrchestratorReadiness: (workspaceId) => workspaceId === "ws-local",
+    routing: createRouting({}),
+  });
+
+  assert.equal(owner.resolveWorkspace("ws-local").reason, "orchestrator-ready");
+  assert.equal(owner.client("ws-local"), routed);
+  assert.equal(routeMissing.isWorkspaceRuntimeReady("ws-local"), false);
+  assert.equal(routeMissing.client("ws-local"), null);
 });
 
 test("runtime owner does not let legacy engineReady bypass required orchestrator readiness", () => {

@@ -107,6 +107,7 @@ test("selectSession completes initial transcript load without waiting for health
         developerMode: () => false,
         setError: () => {},
         setSseConnected: () => {},
+        engineReady: () => true,
         onSessionLoadComplete: () => {
           loadCompleteCount += 1;
         },
@@ -445,6 +446,7 @@ test("re-selecting the same session while the first load is in flight still appl
         developerMode: () => false,
         setError: () => {},
         setSseConnected: () => {},
+        engineReady: () => true,
       });
 
       const first = store.selectSession("sess-a");

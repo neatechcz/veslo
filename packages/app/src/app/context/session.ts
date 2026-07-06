@@ -217,7 +217,7 @@ export function createSessionStore(options: {
   const isWorkspaceRuntimeReady = (workspaceId?: string | null) => {
     const id = workspaceId?.trim() ?? "";
     if (id && options.isWorkspaceRuntimeReady) return options.isWorkspaceRuntimeReady(id);
-    return options.engineReady ? options.engineReady() : true;
+    return options.engineReady ? options.engineReady() : false;
   };
 
   const isActiveWorkspaceRuntimeReady = () =>
