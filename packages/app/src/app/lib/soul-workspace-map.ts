@@ -47,6 +47,7 @@ export function buildSoulWorkspaceIdMap(input: {
 }): SoulWorkspaceIdMap {
   const map: SoulWorkspaceIdMap = {};
   const idByLocalPath = new Map<string, string>();
+  const listedServerWorkspaceIds = new Set(input.serverWorkspaces.map((item) => item.id));
 
   for (const item of input.serverWorkspaces) {
     const path = normalizeDirectoryPath(item.path ?? "");
@@ -57,6 +58,11 @@ export function buildSoulWorkspaceIdMap(input: {
 
   for (const workspace of input.appWorkspaces) {
     if (workspace.workspaceType === "local") {
+      const explicitId = workspace.vesloWorkspaceId?.trim() ?? "";
+      if (explicitId && listedServerWorkspaceIds.has(explicitId)) {
+        map[workspace.id] = explicitId;
+        continue;
+      }
       const key = normalizeDirectoryPath(workspace.path ?? "");
       const serverWorkspaceId = key ? idByLocalPath.get(key) : null;
       if (serverWorkspaceId) {

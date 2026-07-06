@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::net::TcpListener;
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -86,25 +86,61 @@ fn resolve_live_base_url_from_status(status: &OrchestratorStatus) -> Result<Stri
         .ok_or_else(|| "orchestrator daemon is not running".to_string())
 }
 
-fn workspace_id_for_registered_path(app: &AppHandle, workspace_path: &str) -> Option<String> {
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct RegisteredWorkspaceIdentity {
+    app_workspace_id: Option<String>,
+    server_workspace_id: Option<String>,
+}
+
+fn non_empty_trimmed(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn workspace_identity_for_registered_path(
+    app: &AppHandle,
+    workspace_path: &str,
+) -> RegisteredWorkspaceIdentity {
     let needle = workspace_path.trim();
     if needle.is_empty() {
-        return None;
+        return RegisteredWorkspaceIdentity::default();
     }
     crate::workspace::state::load_workspace_state(app)
-        .ok()?
-        .workspaces
-        .into_iter()
-        .find(|workspace| {
-            matches!(workspace.workspace_type, crate::types::WorkspaceType::Local)
-                && workspace.path.trim() == needle
+        .ok()
+        .and_then(|state| {
+            state.workspaces.into_iter().find(|workspace| {
+                matches!(workspace.workspace_type, crate::types::WorkspaceType::Local)
+                    && workspace.path.trim() == needle
+            })
         })
-        .map(|workspace| workspace.id)
+        .map(|workspace| RegisteredWorkspaceIdentity {
+            app_workspace_id: non_empty_trimmed(Some(workspace.id.as_str())).map(ToOwned::to_owned),
+            server_workspace_id: non_empty_trimmed(workspace.veslo_workspace_id.as_deref())
+                .map(ToOwned::to_owned),
+        })
+        .unwrap_or_default()
+}
+
+fn orchestrator_workspace_registration_payload(
+    workspace_path: &str,
+    app_workspace_id: Option<&str>,
+    server_workspace_id: Option<&str>,
+    name: Option<&str>,
+) -> Value {
+    let app_workspace_id = non_empty_trimmed(app_workspace_id);
+    let server_workspace_id = non_empty_trimmed(server_workspace_id);
+    json!({
+        "path": workspace_path,
+        "id": app_workspace_id,
+        "appWorkspaceId": app_workspace_id,
+        "serverWorkspaceId": server_workspace_id,
+        "vesloWorkspaceId": server_workspace_id,
+        "name": non_empty_trimmed(name),
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_live_base_url_from_status;
+    use super::{orchestrator_workspace_registration_payload, resolve_live_base_url_from_status};
     use crate::types::{OrchestratorDaemonState, OrchestratorStatus};
 
     fn status(running: bool, base_url: Option<&str>) -> OrchestratorStatus {
@@ -147,6 +183,34 @@ mod tests {
             resolve_live_base_url_from_status(&status(true, Some("http://127.0.0.1:52008")));
 
         assert_eq!(result.as_deref(), Ok("http://127.0.0.1:52008"));
+    }
+
+    #[test]
+    fn workspace_registration_payload_preserves_app_and_server_ids() {
+        let payload = orchestrator_workspace_registration_payload(
+            "C:/repo",
+            Some(" app-ws "),
+            Some(" server-ws "),
+            Some(" Project "),
+        );
+
+        assert_eq!(payload["path"], "C:/repo");
+        assert_eq!(payload["id"], "app-ws");
+        assert_eq!(payload["appWorkspaceId"], "app-ws");
+        assert_eq!(payload["serverWorkspaceId"], "server-ws");
+        assert_eq!(payload["vesloWorkspaceId"], "server-ws");
+        assert_eq!(payload["name"], "Project");
+    }
+
+    #[test]
+    fn workspace_registration_payload_keeps_legacy_id_when_server_id_is_absent() {
+        let payload =
+            orchestrator_workspace_registration_payload("/repo", Some(" app-ws "), None, None);
+
+        assert_eq!(payload["id"], "app-ws");
+        assert_eq!(payload["appWorkspaceId"], "app-ws");
+        assert!(payload["serverWorkspaceId"].is_null());
+        assert!(payload["vesloWorkspaceId"].is_null());
     }
 }
 
@@ -319,15 +383,17 @@ pub fn spawn_engine_event_poller(app: AppHandle) {
 fn register_workspace_with_orchestrator(
     base_url: &str,
     workspace_path: &str,
-    workspace_id: Option<&str>,
+    app_workspace_id: Option<&str>,
+    server_workspace_id: Option<&str>,
     name: Option<&str>,
 ) -> Result<OrchestratorWorkspace, String> {
     let add_url = format!("{}/workspaces", base_url.trim_end_matches('/'));
-    let payload = json!({
-        "path": workspace_path,
-        "id": workspace_id,
-        "name": name,
-    });
+    let payload = orchestrator_workspace_registration_payload(
+        workspace_path,
+        app_workspace_id,
+        server_workspace_id,
+        name,
+    );
 
     crate::flow_log!(
         "[veslo:http] OUT POST {add_url} (orchestrator.add-workspace) path={workspace_path:?}"
@@ -400,6 +466,7 @@ pub fn reconcile_orchestrator_workspaces(
             &base_url,
             path,
             Some(workspace.id.as_str()),
+            workspace.veslo_workspace_id.as_deref(),
             display_name,
         ) {
             Ok(_) => registered += 1,
@@ -421,12 +488,14 @@ pub async fn orchestrator_workspace_activate(
         validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?
             .to_string_lossy()
             .to_string();
+    let registered_identity = workspace_identity_for_registered_path(&app, &workspace_path);
     let workspace_id = workspace_id
         .as_deref()
         .map(str::trim)
         .filter(|id| !id.is_empty())
         .map(ToOwned::to_owned)
-        .or_else(|| workspace_id_for_registered_path(&app, &workspace_path));
+        .or(registered_identity.app_workspace_id);
+    let server_workspace_id = registered_identity.server_workspace_id;
     let base_url = resolve_base_url(&manager)?;
 
     // VSLO-86 — push the blocking ureq calls onto a dedicated thread so the
@@ -440,6 +509,7 @@ pub async fn orchestrator_workspace_activate(
                 &base_url,
                 &workspace_path,
                 workspace_id.as_deref(),
+                server_workspace_id.as_deref(),
                 name.as_deref(),
             )?;
         let activate_url = format!(
@@ -497,13 +567,15 @@ pub fn orchestrator_instance_dispose(
         validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?
             .to_string_lossy()
             .to_string();
-    let workspace_id = workspace_id_for_registered_path(&app, &workspace_path);
+    let workspace_identity = workspace_identity_for_registered_path(&app, &workspace_path);
     let base_url = resolve_base_url(&manager)?;
     let add_url = format!("{}/workspaces", base_url.trim_end_matches('/'));
-    let payload = json!({
-        "path": workspace_path,
-        "id": workspace_id,
-    });
+    let payload = orchestrator_workspace_registration_payload(
+        &workspace_path,
+        workspace_identity.app_workspace_id.as_deref(),
+        workspace_identity.server_workspace_id.as_deref(),
+        None,
+    );
 
     let add_response = ureq::post(&add_url)
         .set("Content-Type", "application/json")

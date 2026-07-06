@@ -26,3 +26,53 @@ export function workspaceIdForRemote(baseUrl: string, directory?: string | null)
   const key = directory ? `${baseUrl}::${directory}` : baseUrl;
   return `ws-${createHash("sha1").update(key).digest("hex").slice(0, 12)}`;
 }
+
+export type WorkspaceRuntimeIdentityInput = {
+  appWorkspaceId?: string | null;
+  serverWorkspaceId?: string | null;
+  workdir?: string | null;
+};
+
+export type WorkspaceRuntimeIdentity = {
+  workspaceId: string;
+  serverWorkspaceId: string | null;
+  appWorkspaceId: string | null;
+  derivedLocalWorkspaceId: string | null;
+  legacyWorkspaceIds: string[];
+};
+
+function trimmed(value: string | null | undefined): string {
+  return value?.trim() ?? "";
+}
+
+function uniqueNonEmpty(values: Array<string | null | undefined>): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const normalized = trimmed(value);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+export function resolveWorkspaceRuntimeIdentity(
+  input: WorkspaceRuntimeIdentityInput,
+): WorkspaceRuntimeIdentity {
+  const serverWorkspaceId = trimmed(input.serverWorkspaceId);
+  const appWorkspaceId = trimmed(input.appWorkspaceId);
+  const workdir = trimmed(input.workdir);
+  const derivedLocalWorkspaceId = workdir ? workspaceIdForLocal(workdir) : "";
+  const workspaceId = serverWorkspaceId || appWorkspaceId || derivedLocalWorkspaceId;
+  const legacyWorkspaceIds = uniqueNonEmpty([appWorkspaceId, derivedLocalWorkspaceId])
+    .filter((id) => id !== workspaceId);
+
+  return {
+    workspaceId,
+    serverWorkspaceId: serverWorkspaceId || null,
+    appWorkspaceId: appWorkspaceId || null,
+    derivedLocalWorkspaceId: derivedLocalWorkspaceId || null,
+    legacyWorkspaceIds,
+  };
+}

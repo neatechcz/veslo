@@ -692,6 +692,78 @@ mod tests {
     }
 
     #[test]
+    fn load_workspace_state_preserves_server_mapping_while_remapping_legacy_local_id() {
+        let root = temp_root("mapped-id-remap");
+        let current_data_dir = root.join("com.neatech.veslo");
+        let current_state_path = current_data_dir.join("veslo-workspaces.json");
+        let mut workspace = local_workspace("legacy-local-id", "Mapped", "/tmp/mapped-project");
+        workspace.veslo_workspace_id = Some("server-ws-mapped".to_string());
+
+        write_state(
+            &current_state_path,
+            &WorkspaceState {
+                version: 4,
+                active_id: "legacy-local-id".to_string(),
+                workspaces: vec![workspace],
+            },
+        );
+
+        let loaded = load_workspace_state_from_paths(&current_data_dir, &current_state_path)
+            .expect("load migrated state");
+        let stable_id = stable_workspace_id("/tmp/mapped-project");
+
+        assert_eq!(loaded.active_id, stable_id);
+        assert_eq!(loaded.workspaces.len(), 1);
+        assert_eq!(loaded.workspaces[0].id, stable_id);
+        assert_eq!(
+            loaded.workspaces[0].veslo_workspace_id.as_deref(),
+            Some("server-ws-mapped")
+        );
+
+        let persisted = fs::read_to_string(&current_state_path).expect("read persisted state");
+        let parsed: WorkspaceState =
+            serde_json::from_str(&persisted).expect("parse persisted state");
+        assert_eq!(parsed.workspaces[0].id, stable_id);
+        assert_eq!(
+            parsed.workspaces[0].veslo_workspace_id.as_deref(),
+            Some("server-ws-mapped")
+        );
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn load_workspace_state_does_not_invent_missing_server_mapping() {
+        let root = temp_root("missing-mapped-id");
+        let current_data_dir = root.join("com.neatech.veslo");
+        let current_state_path = current_data_dir.join("veslo-workspaces.json");
+
+        write_state(
+            &current_state_path,
+            &WorkspaceState {
+                version: 4,
+                active_id: "legacy-local-id".to_string(),
+                workspaces: vec![local_workspace(
+                    "legacy-local-id",
+                    "Unmapped",
+                    "/tmp/unmapped-project",
+                )],
+            },
+        );
+
+        let loaded = load_workspace_state_from_paths(&current_data_dir, &current_state_path)
+            .expect("load migrated state");
+
+        assert_eq!(
+            loaded.workspaces[0].id,
+            stable_workspace_id("/tmp/unmapped-project")
+        );
+        assert_eq!(loaded.workspaces[0].veslo_workspace_id, None);
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
     fn load_workspace_state_merges_neighbor_veslo_entries_when_current_exists() {
         let root = temp_root("merge-neighbor");
         let current_data_dir = root.join("com.neatech.veslo");

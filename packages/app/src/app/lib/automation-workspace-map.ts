@@ -72,8 +72,12 @@ export function buildAutomationWorkspaceSummaries(input: {
     let serverWorkspaceId: string | null = null;
 
     if (workspace.workspaceType === "local") {
+      const mappedServerWorkspaceId = workspace.vesloWorkspaceId?.trim() ?? "";
       const key = normalizeDirectoryPath(workspace.path ?? "");
-      serverWorkspaceId = key ? idByLocalPath.get(key) ?? null : null;
+      serverWorkspaceId =
+        mappedServerWorkspaceId && listedServerWorkspaceIds.has(mappedServerWorkspaceId)
+          ? mappedServerWorkspaceId
+          : key ? idByLocalPath.get(key) ?? null : null;
     } else if (workspace.remoteType === "veslo") {
       const storedServerWorkspaceId =
         workspace.vesloWorkspaceId?.trim() ||

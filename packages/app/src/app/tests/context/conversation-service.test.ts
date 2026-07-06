@@ -34,8 +34,20 @@ function transcript(sessionId: string): VesloSessionTranscriptSnapshot {
   };
 }
 
-function createFakeClient() {
+type FakeWorkspaceRegistryItem = {
+  id: string;
+  path?: string;
+  directory?: string;
+  baseUrl?: string;
+  opencode?: {
+    baseUrl?: string;
+    directory?: string;
+  };
+};
+
+function createFakeClient(options: { listWorkspaceItems?: FakeWorkspaceRegistryItem[] } = {}) {
   const calls: string[] = [];
+  const listWorkspaceItems = options.listWorkspaceItems ?? [];
   let runConversationResult:
     | Awaited<ReturnType<ConversationServiceClient["runConversation"]>>
     | null = null;
@@ -43,7 +55,7 @@ function createFakeClient() {
     baseUrl: "http://127.0.0.1:8787",
     listWorkspaces: async () => {
       calls.push("listWorkspaces");
-      return { items: [], activeId: null };
+      return { items: listWorkspaceItems, activeId: listWorkspaceItems[0]?.id ?? null };
     },
     addLocalWorkspace: async (input: { path: string }) => {
       calls.push(`addLocalWorkspace:${input.path}`);
@@ -145,9 +157,17 @@ function createFakeClient() {
   };
 }
 
-function createService(options: { startDisconnected?: boolean } = {}) {
-  const { client, calls, setRunConversationResult } = createFakeClient();
+function createService(options: {
+  startDisconnected?: boolean;
+  workspaceVesloWorkspaceId?: string | null;
+  listWorkspaceItems?: FakeWorkspaceRegistryItem[];
+  engineBaseWorkspaceId?: string;
+} = {}) {
+  const { client, calls, setRunConversationResult } = createFakeClient({
+    listWorkspaceItems: options.listWorkspaceItems,
+  });
   let serverClient: ConversationServiceClient | null = options.startDisconnected ? null : client;
+  const engineBaseWorkspaceId = options.engineBaseWorkspaceId ?? "server-ws";
   const ensureCalls: string[] = [];
   const rememberedScopes: RememberedScope[] = [];
   const rememberedRuns: Array<{
@@ -208,6 +228,7 @@ function createService(options: { startDisconnected?: boolean } = {}) {
         workspaceType: "local",
         path: "/repo",
         directory: "/repo",
+        vesloWorkspaceId: options.workspaceVesloWorkspaceId ?? null,
       },
     ],
     activeWorkspaceId: () => "app-ws",
@@ -251,7 +272,7 @@ function createService(options: { startDisconnected?: boolean } = {}) {
     sendTraceStep: async (_event, run) => run(),
     recordExternalSendTraceEntries: () => undefined,
     engineInfo: async () => ({
-      baseUrl: "http://127.0.0.1:4096/workspace/server-ws/opencode",
+      baseUrl: `http://127.0.0.1:4096/workspace/${encodeURIComponent(engineBaseWorkspaceId)}/opencode`,
       projectDir: "/repo",
       opencodeUsername: "user",
       opencodePassword: "pass",
@@ -279,6 +300,37 @@ test("conversation read workspace registration is cached per client and director
   assert.deepEqual(calls.filter((call) => call.startsWith("addLocalWorkspace")), [
     "addLocalWorkspace:/repo",
   ]);
+});
+
+test("mapped local workspace id is used for server calls while app scopes stay local", async () => {
+  const mappedWorkspaceId = "server-ws-mapped";
+  const opencodeBaseUrl = `http://127.0.0.1:4096/workspace/${mappedWorkspaceId}/opencode`;
+  const { service, calls, rememberedScopes } = createService({
+    workspaceVesloWorkspaceId: mappedWorkspaceId,
+    engineBaseWorkspaceId: mappedWorkspaceId,
+    listWorkspaceItems: [
+      {
+        id: mappedWorkspaceId,
+        path: "/repo",
+        directory: "/repo",
+        baseUrl: opencodeBaseUrl,
+      },
+    ],
+  });
+
+  assert.equal(service.resolveConversationServerWorkspaceId("app-ws"), mappedWorkspaceId);
+
+  const result = await service.createConversationFromVesloWriteApi("app-ws", "/repo", "Mapped");
+
+  assert.equal(result?.id, "sess-created");
+  assert.equal(calls.includes(`createConversation:${mappedWorkspaceId}`), true);
+  assert.equal(
+    calls.some((call) => call.startsWith("addLocalWorkspace:")),
+    false,
+    "existing mapped server workspace should not be re-registered",
+  );
+  assert.equal(rememberedScopes[0]?.workspaceId, "app-ws");
+  assert.equal(rememberedScopes[0]?.conversationId, "conv-created");
 });
 
 test("conversation transcript read preserves unavailable snapshots at the app boundary", async () => {

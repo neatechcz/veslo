@@ -31,6 +31,7 @@ export type EngineState =
 export type EngineWorkspace = {
   id: string;
   path?: string;
+  legacyWorkspaceIds?: string[];
 };
 
 export type EngineSpawnContext = {

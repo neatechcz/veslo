@@ -927,8 +927,49 @@ The app's active local `vesloServerWorkspaceId` signal now also prefers
 `vesloWorkspaceId` with the existing app-local id as fallback, so server-bound
 callers that consume that signal move to the mapping without changing UI
 identity. This is only the first dual-id mapping step: the remaining app route
-builders, orchestrator runtime identity, compatibility migration coverage, and
-cutover safety remain open, so VSA10B stays `done: false`.
+builders, orchestrator data-dir/run-record migration coverage, compatibility
+migration coverage, and cutover safety remain open, so VSA10B stays
+`done: false`.
+
+Partial implementation note 2026-07-06: `conversation-service` now has a
+dual-id compatibility regression test proving that a local app workspace keeps
+its app-local `workspaceId` in remembered conversation scopes while
+server-bound conversation creation uses the mapped `vesloWorkspaceId` and does
+not re-register a registry row that already matches the mapping.
+
+Partial implementation note 2026-07-06: orchestrator now has a
+`resolveWorkspaceRuntimeIdentity` mapping primitive and
+`workspace-id-mapping.test.ts`. Desktop orchestrator registration payloads now
+send both the app-local id and the mapped Veslo server id, and the orchestrator
+stores app-local/path-derived ids as legacy aliases so activation, dispose, and
+lookup by old ids can resolve to the same local workspace row. VSA10B remains
+open because broader app route-builder coverage, migration coverage for
+conflicting orchestrator run histories, and final cutover diagnostics are not
+complete.
+
+Partial implementation note 2026-07-06: desktop workspace-state tests now cover
+existing local rows with and without `vesloWorkspaceId` through the legacy
+local-id remap path, proving app-local identity remaps do not drop a persisted
+server-owned mapping and do not invent one when sync has not happened yet.
+Orchestrator runtime config dirs now have a narrow dual-id migration helper:
+when `opencode-config/<server-id>` is missing and a legacy alias config dir
+exists, the alias dir is copied before workspace config synchronization. This
+does not complete final cutover diagnostics, so VSA10B remains open.
+
+Partial implementation note 2026-07-06: orchestrator run-store now has a
+safe `migrateWorkspaceId` operation. During local `/workspaces` registration,
+legacy alias run records move to the server-owned workspace id only when the
+target workspace id has no existing run history; otherwise the migration is
+skipped and traced. This preserves old run history for the common app-id to
+server-id migration without merging conflicting histories.
+
+Partial implementation note 2026-07-06: app-side workspace route builders now
+have broader dual-id coverage. Automation and Soul workspace maps prefer a
+listed local `vesloWorkspaceId` over path matching, so path-normalization drift
+does not route server-bound automation or materialization calls through the
+app-local id. Attachment staging now applies the same listed-mapping-first
+rule before path matching when choosing the server workspace for file-session
+uploads. Existing app-local ids remain the UI identity.
 
 Goal:
 
@@ -976,10 +1017,15 @@ Verification:
 cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml workspace::state::tests --quiet
 cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml workspace::server_client::tests --quiet
 cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml commands::workspace::tests --quiet
+cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml commands::orchestrator::tests --quiet
+cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml commands::engine::tests --quiet
 pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/app-managed-ai-config-sync-contract.test.ts src/app/tests/app-veslo-server-state-stability.test.ts
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/conversation-service.test.ts
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/lib/automation-workspace-map.test.ts src/app/tests/lib/soul-workspace-map.test.ts
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-attachment-staging.test.ts
 pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/send-runtime-readiness.test.ts src/app/tests/lib/veslo-server.test.ts
 pnpm --filter veslo-server exec bun test src/tests/workspaces.test.ts
-pnpm --filter veslo-orchestrator exec bun test src/tests/workspace-id-golden.test.ts src/tests/workspace-id-mapping.test.ts
+pnpm --filter veslo-orchestrator exec bun test src/tests/run-store.test.ts src/tests/workspace-id-golden.test.ts src/tests/workspace-id-mapping.test.ts src/tests/workspace-runtime-migration.test.ts
 rg -n "veslo_workspace_id|workspace_id_mismatch|workspaceIdForPath|stable_workspace_id_for_veslo|workspaceIdForLocal|opencode-config|run-store|server workspace id" packages/desktop/src-tauri/src packages/app/src/app packages/server/src packages/orchestrator/src
 ```
 

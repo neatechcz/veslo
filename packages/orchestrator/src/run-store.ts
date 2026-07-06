@@ -56,6 +56,7 @@ export type RunStore = {
   activeForConversation(workspaceId: string, conversationId: string): RunRecord | null;
   activeForEngineOwner(engineOwnerId: string): RunRecord[];
   activeCreatedBefore(createdBefore: number, limit?: number): RunRecord[];
+  migrateWorkspaceId(sourceWorkspaceId: string, targetWorkspaceId: string): RunStoreWorkspaceMigrationResult;
   /**
    * True when the workspace has any run in an active status created at or
    * after `createdSince` (epoch ms). The lower bound keeps a stale record -
@@ -63,6 +64,14 @@ export type RunStore = {
    * counting as active work forever.
    */
   hasActiveForWorkspace(workspaceId: string, createdSince: number): boolean;
+};
+
+export type RunStoreWorkspaceMigrationResult = {
+  migrated: boolean;
+  sourceWorkspaceId: string;
+  targetWorkspaceId: string;
+  updated: number;
+  reason: "migrated" | "invalid_input" | "same_workspace" | "source_missing" | "target_has_records";
 };
 
 type RunRow = {
@@ -97,6 +106,10 @@ const TERMINAL_STATUSES: ReadonlySet<RunStatus> = new Set(["completed", "failed"
 export const isActiveRunStatus = (status: RunStatus): boolean =>
   (ACTIVE_RUN_STATUSES as readonly RunStatus[]).includes(status);
 export const isTerminalRunStatus = (status: RunStatus): boolean => TERMINAL_STATUSES.has(status);
+
+function normalizeWorkspaceId(value: string): string {
+  return value.trim();
+}
 
 function rowToRecord(row: RunRow): RunRecord {
   return {
@@ -384,6 +397,53 @@ export function createRunStore(options: { dbPath: string }): RunStore {
            LIMIT ?2`,
         ).all(createdBefore, safeLimit);
         return row.map(rowToRecord);
+      });
+    },
+
+    migrateWorkspaceId(sourceWorkspaceId, targetWorkspaceId) {
+      const source = normalizeWorkspaceId(sourceWorkspaceId);
+      const target = normalizeWorkspaceId(targetWorkspaceId);
+      const base = {
+        sourceWorkspaceId: source,
+        targetWorkspaceId: target,
+        updated: 0,
+      };
+      if (!source || !target) {
+        return { ...base, migrated: false, reason: "invalid_input" };
+      }
+      if (source === target) {
+        return { ...base, migrated: false, reason: "same_workspace" };
+      }
+
+      return withDb((db) => {
+        const sourceCount = db.query<{ count: number }, [string]>(
+          `SELECT COUNT(*) AS count FROM conversation_run WHERE workspace_id = ?1`,
+        ).get(source)?.count ?? 0;
+        if (sourceCount <= 0) {
+          return { ...base, migrated: false, reason: "source_missing" };
+        }
+        const targetCount = db.query<{ count: number }, [string]>(
+          `SELECT COUNT(*) AS count FROM conversation_run WHERE workspace_id = ?1`,
+        ).get(target)?.count ?? 0;
+        if (targetCount > 0) {
+          return { ...base, migrated: false, reason: "target_has_records" };
+        }
+
+        const result = db.query(
+          `UPDATE conversation_run
+           SET workspace_id = ?1,
+               engine_owner_id = CASE
+                 WHEN engine_owner_id = ?2 THEN ?1
+                 ELSE engine_owner_id
+               END
+           WHERE workspace_id = ?2`,
+        ).run(target, source);
+        return {
+          ...base,
+          migrated: true,
+          updated: Number(result.changes ?? sourceCount),
+          reason: "migrated",
+        };
       });
     },
 

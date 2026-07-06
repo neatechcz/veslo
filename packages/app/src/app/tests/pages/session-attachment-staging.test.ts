@@ -128,6 +128,36 @@ test("validates cached workspace ids against the active server list before stagi
   assert.equal(calls.listWorkspaces, 1);
 });
 
+test("prefers mapped local Veslo workspace ids before path matching for attachment staging", async () => {
+  const { client, calls } = makeClient({
+    workspaces: [[
+      { id: "server-mapped", path: "/private/var/repo", directory: "/private/var/repo" },
+      { id: "server-path-match", path: "/repo-drifted", directory: "/repo-drifted" },
+    ]],
+  });
+  let storedWorkspaceId = "";
+  const staging = createSessionAttachmentStaging(
+    makeDeps(client, {
+      activeWorkspaceRoot: () => "/repo-drifted",
+      activeWorkspaceDisplay: () => ({
+        workspaceType: "local",
+        path: "/repo-drifted",
+        directory: "/repo-drifted",
+        vesloWorkspaceId: "server-mapped",
+      }),
+      setVesloServerWorkspaceId: (value) => {
+        storedWorkspaceId = value;
+      },
+    }),
+  );
+
+  const resolved = await staging.resolveWorkspaceIdForAttachmentStaging(client);
+
+  assert.equal(resolved, "server-mapped");
+  assert.equal(storedWorkspaceId, "server-mapped");
+  assert.deepEqual(calls.createFileSession, []);
+});
+
 test("recovers a missing local server workspace once before retrying file-session creation", async () => {
   let createAttempts = 0;
   let restartCalls = 0;

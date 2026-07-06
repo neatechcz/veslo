@@ -69,6 +69,35 @@ test("buildAutomationWorkspaceSummaries reports local workspaces missing from th
   assert.equal(summaries[0]?.error, "Workspace is not mapped on the connected Veslo server.");
 });
 
+test("buildAutomationWorkspaceSummaries prefers mapped local Veslo workspace ids over path matching", () => {
+  const summaries = buildAutomationWorkspaceSummaries({
+    appWorkspaces: [
+      localWorkspace({
+        vesloWorkspaceId: "server-mapped",
+        path: "/Users/example/project-with-drift",
+      }),
+    ],
+    serverWorkspaces: [
+      serverWorkspace({
+        id: "server-mapped",
+        path: "/private/var/example/project",
+        opencode: { directory: "/private/var/example/project" },
+      }),
+      serverWorkspace({
+        id: "server-path-match",
+        path: "/Users/example/project-with-drift",
+        opencode: { directory: "/Users/example/project-with-drift" },
+      }),
+    ],
+    connectedServerBaseUrl: "http://127.0.0.1:8787",
+  });
+
+  assert.equal(summaries.length, 1);
+  assert.equal(summaries[0]?.appWorkspaceId, "app-local");
+  assert.equal(summaries[0]?.serverWorkspaceId, "server-mapped");
+  assert.equal(summaries[0]?.status, "ready");
+});
+
 test("buildAutomationWorkspaceSummaries keeps remote Veslo workspaces that belong to the connected server", () => {
   const summaries = buildAutomationWorkspaceSummaries({
     appWorkspaces: [remoteVesloWorkspace()],

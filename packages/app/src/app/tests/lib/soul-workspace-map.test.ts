@@ -68,6 +68,28 @@ test("buildSoulWorkspaceIdMap maps local paths and explicit Veslo remote ids", (
   );
 });
 
+test("buildSoulWorkspaceIdMap prefers mapped local Veslo workspace ids over path matching", () => {
+  assert.deepEqual(
+    buildSoulWorkspaceIdMap({
+      appWorkspaces: [
+        {
+          id: "local-app",
+          workspaceType: "local",
+          path: "/repo/local-drifted",
+          vesloWorkspaceId: "server-mapped",
+        },
+      ],
+      serverWorkspaces: [
+        serverWorkspace({ id: "server-mapped", path: "/private/var/local" }),
+        serverWorkspace({ id: "server-path-match", path: "/repo/local-drifted" }),
+      ],
+    }),
+    {
+      "local-app": "server-mapped",
+    },
+  );
+});
+
 test("buildSoulWorkspaceIdMap falls back to server directory hints for Veslo remotes only", () => {
   assert.deepEqual(
     buildSoulWorkspaceIdMap({

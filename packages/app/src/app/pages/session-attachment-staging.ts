@@ -275,7 +275,9 @@ export function createSessionAttachmentStaging<
         (items.length === 1 ? items[0]?.id ?? "" : "");
     } else if (active.workspaceType === "local") {
       const activeRoot = deps.activeWorkspaceRoot().trim();
+      const mappedWorkspaceId = active.vesloWorkspaceId?.trim() ?? "";
       resolved =
+        (mappedWorkspaceId && items.find((entry) => entry.id === mappedWorkspaceId)?.id) ||
         findByPath(activeRoot)?.id ||
         (!activeRoot && items.length === 1 ? (activeId || items[0]?.id || "") : "");
     }

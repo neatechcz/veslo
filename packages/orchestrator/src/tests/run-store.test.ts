@@ -230,6 +230,61 @@ describe("run store", () => {
     expect(store.activeForEngineOwner("shared-unsandboxed").map((item) => item.runId)).toEqual(["run-engine-b"]);
   });
 
+  test("migrates legacy workspace run records to a server-owned workspace id", async () => {
+    const store = await createTempStore();
+    store.insert(record({
+      workspaceId: "app-ws",
+      runId: "run-legacy",
+      conversationId: "conv-legacy",
+      engineSessionId: "sess-legacy",
+      engineOwnerId: "app-ws",
+    }));
+
+    const result = store.migrateWorkspaceId("app-ws", "server-ws");
+
+    expect(result).toEqual({
+      migrated: true,
+      sourceWorkspaceId: "app-ws",
+      targetWorkspaceId: "server-ws",
+      updated: 1,
+      reason: "migrated",
+    });
+    expect(store.get("app-ws", "run-legacy")).toBeNull();
+    expect(store.get("server-ws", "run-legacy")).toMatchObject({
+      workspaceId: "server-ws",
+      engineOwnerId: "server-ws",
+    });
+    expect(store.latestForConversation("server-ws", "conv-legacy")?.runId).toBe("run-legacy");
+  });
+
+  test("does not migrate legacy run records when the target already has history", async () => {
+    const store = await createTempStore();
+    store.insert(record({
+      workspaceId: "app-ws",
+      runId: "run-legacy",
+      conversationId: "conv-legacy",
+      engineSessionId: "sess-legacy",
+    }));
+    store.insert(record({
+      workspaceId: "server-ws",
+      runId: "run-server",
+      conversationId: "conv-server",
+      engineSessionId: "sess-server",
+    }));
+
+    const result = store.migrateWorkspaceId("app-ws", "server-ws");
+
+    expect(result).toEqual({
+      migrated: false,
+      sourceWorkspaceId: "app-ws",
+      targetWorkspaceId: "server-ws",
+      updated: 0,
+      reason: "target_has_records",
+    });
+    expect(store.get("app-ws", "run-legacy")?.workspaceId).toBe("app-ws");
+    expect(store.get("server-ws", "run-server")?.workspaceId).toBe("server-ws");
+  });
+
   test("migrates existing run databases without engine ownership columns", async () => {
     const dbPath = await createTempDbPath();
     const db = new Database(dbPath);

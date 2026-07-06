@@ -53,7 +53,13 @@ import {
   type EnginePathMapping,
 } from "./engine-paths.js";
 import { ensureOpencodeManagedTools as ensureOpencodeManagedToolsRuntime } from "./opencode-managed-dependencies.js";
-import { normalizeWorkspacePath, workspaceIdForLocal, workspaceIdForRemote } from "./workspace-id.js";
+import { migrateLegacyWorkspaceConfigDir } from "./workspace-runtime-migration.js";
+import {
+  normalizeWorkspacePath,
+  resolveWorkspaceRuntimeIdentity,
+  workspaceIdForLocal,
+  workspaceIdForRemote,
+} from "./workspace-id.js";
 
 type ApprovalMode = "manual" | "auto";
 
@@ -206,6 +212,10 @@ type RouterWorkspace = {
   workspaceType: RouterWorkspaceType;
   baseUrl?: string;
   directory?: string;
+  serverWorkspaceId?: string;
+  appWorkspaceId?: string;
+  derivedLocalWorkspaceId?: string;
+  legacyWorkspaceIds?: string[];
   createdAt: number;
   lastUsedAt?: number;
 };
@@ -1963,7 +1973,14 @@ function opencodeRouterStatusToolSource(): string {
 function findWorkspace(state: RouterState, input: string): RouterWorkspace | undefined {
   const trimmed = input.trim();
   if (!trimmed) return undefined;
-  const direct = state.workspaces.find((entry) => entry.id === trimmed || entry.name === trimmed);
+  const direct = state.workspaces.find((entry) =>
+    entry.id === trimmed ||
+    entry.name === trimmed ||
+    entry.serverWorkspaceId === trimmed ||
+    entry.appWorkspaceId === trimmed ||
+    entry.derivedLocalWorkspaceId === trimmed ||
+    entry.legacyWorkspaceIds?.includes(trimmed)
+  );
   if (direct) return direct;
   const normalized = normalizeWorkspacePath(trimmed);
   return state.workspaces.find((entry) => entry.path && normalizeWorkspacePath(entry.path) === normalized);
@@ -4057,6 +4074,39 @@ async function runRouterDaemon(args: ParsedArgs) {
         });
         const workdir = await ensureWorkspace(ws.path ?? "");
         const configDir = join(dataDir, "opencode-config", ws.id || workspaceIdForLocal(workdir));
+        if (ws.legacyWorkspaceIds?.length) {
+          try {
+            const migration = await migrateLegacyWorkspaceConfigDir({
+              dataDir,
+              workspaceId: ws.id,
+              legacyWorkspaceIds: ws.legacyWorkspaceIds,
+            });
+            if (migration.migrated) {
+              traceRuntime("orchestrator:workspace-config-dir:migrated", {
+                workspaceId: ws.id,
+                sourceWorkspaceId: migration.sourceWorkspaceId,
+                sourceDir: migration.sourceDir,
+                targetDir: migration.targetDir,
+              });
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            logger.warn(
+              "workspace config dir migration failed",
+              {
+                workspaceId: ws.id,
+                legacyWorkspaceIds: ws.legacyWorkspaceIds,
+                error: message,
+              },
+              "veslo-orchestrator",
+            );
+            traceRuntime("orchestrator:workspace-config-dir:migration-failed", {
+              workspaceId: ws.id,
+              legacyWorkspaceIds: ws.legacyWorkspaceIds,
+              error: message,
+            });
+          }
+        }
         await syncWorkspaceOpencodeConfigToConfigDir(workdir, configDir);
         const configFiles = await opencodeConfigFileStats(configDir);
         await ensureOpencodeManagedToolsRuntime(configDir, {
@@ -4680,7 +4730,24 @@ async function runRouterDaemon(args: ParsedArgs) {
         }
         const resolved = await ensureWorkspace(pathInput);
         const requestedId = typeof body?.id === "string" ? body.id.trim() : "";
-        const id = requestedId || workspaceIdForLocal(resolved);
+        const requestedServerWorkspaceId =
+          typeof body?.serverWorkspaceId === "string"
+            ? body.serverWorkspaceId.trim()
+            : typeof body?.vesloWorkspaceId === "string"
+              ? body.vesloWorkspaceId.trim()
+              : "";
+        const requestedAppWorkspaceId =
+          typeof body?.appWorkspaceId === "string"
+            ? body.appWorkspaceId.trim()
+            : requestedId && requestedId !== requestedServerWorkspaceId
+              ? requestedId
+              : "";
+        const identity = resolveWorkspaceRuntimeIdentity({
+          appWorkspaceId: requestedAppWorkspaceId || requestedId,
+          serverWorkspaceId: requestedServerWorkspaceId,
+          workdir: resolved,
+        });
+        const id = identity.workspaceId;
         const name = typeof body?.name === "string" && body.name.trim()
           ? body.name.trim()
           : resolved.split(/[\\/]/).filter(Boolean).pop() ?? "Workspace";
@@ -4689,20 +4756,40 @@ async function runRouterDaemon(args: ParsedArgs) {
           if (entry.workspaceType !== "local" || !entry.path) return false;
           return normalizeWorkspacePath(entry.path) === normalizedResolved;
         });
-        const existing = matchingLocalWorkspaces.find((entry) => entry.id === id);
-        const legacyIds = matchingLocalWorkspaces
-          .map((entry) => entry.id)
-          .filter((entryId) => entryId !== id);
+        const existing =
+          matchingLocalWorkspaces.find((entry) => entry.id === id) ?? matchingLocalWorkspaces[0];
+        const legacyIds = Array.from(
+          new Set([
+            ...identity.legacyWorkspaceIds,
+            ...matchingLocalWorkspaces.map((entry) => entry.id),
+            ...matchingLocalWorkspaces.flatMap((entry) => entry.legacyWorkspaceIds ?? []),
+          ]),
+        ).filter((entryId) => entryId !== id);
         const entry: RouterWorkspace = {
           id,
           name,
           path: resolved,
           workspaceType: "local",
+          ...(identity.serverWorkspaceId ? { serverWorkspaceId: identity.serverWorkspaceId } : {}),
+          ...(identity.appWorkspaceId ? { appWorkspaceId: identity.appWorkspaceId } : {}),
+          ...(identity.derivedLocalWorkspaceId
+            ? { derivedLocalWorkspaceId: identity.derivedLocalWorkspaceId }
+            : {}),
+          ...(legacyIds.length ? { legacyWorkspaceIds: legacyIds } : {}),
           createdAt: existing?.createdAt ?? nowMs(),
           lastUsedAt: nowMs(),
         };
         for (const legacyId of legacyIds) {
           await pool.forget(legacyId);
+        }
+        const runStoreMigrations = legacyIds
+          .map((legacyId) => runStore.migrateWorkspaceId(legacyId, id))
+          .filter((migration) => migration.migrated || migration.reason === "target_has_records");
+        if (runStoreMigrations.length) {
+          traceRuntime("orchestrator:workspace-run-store:migration", {
+            workspaceId: id,
+            migrations: runStoreMigrations,
+          });
         }
         state.workspaces = state.workspaces.filter((item) => item.id !== id && !legacyIds.includes(item.id));
         state.workspaces.push(entry);

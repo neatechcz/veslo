@@ -214,6 +214,14 @@ pub struct OrchestratorWorkspace {
     pub name: String,
     pub path: String,
     pub workspace_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_local_workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub legacy_workspace_ids: Vec<String>,
     pub base_url: Option<String>,
     pub directory: Option<String>,
     pub created_at: Option<u64>,

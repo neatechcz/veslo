@@ -63,6 +63,16 @@ function createMemoryRunStore(): RunStore {
       );
     },
 
+    migrateWorkspaceId(sourceWorkspaceId, targetWorkspaceId) {
+      return {
+        migrated: false,
+        sourceWorkspaceId,
+        targetWorkspaceId,
+        updated: 0,
+        reason: "source_missing",
+      };
+    },
+
     activeForEngineOwner(engineOwnerId) {
       return [...records.values()]
         .filter((record) =>
