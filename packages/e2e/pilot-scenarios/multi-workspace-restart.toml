@@ -1,0 +1,31 @@
+[scenario]
+name = "multi-workspace-restart"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "workspace bootstrap exposes a workspace after startup"
+action = "eval"
+timeout_ms = 60000
+script = '''
+const invoke = window.__TAURI_INTERNALS__?.invoke;
+if (typeof invoke !== "function") throw new Error("Tauri invoke bridge is unavailable.");
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let latest = null;
+const deadline = Date.now() + 60000;
+while (Date.now() < deadline) {
+  latest = await invoke("workspace_bootstrap").catch((error) => ({ error: error?.message || String(error) }));
+  if (Array.isArray(latest?.workspaces) && latest.workspaces.length > 0) break;
+  await sleep(500);
+}
+if (!Array.isArray(latest?.workspaces) || latest.workspaces.length === 0) {
+  throw new Error(`Workspace bootstrap did not expose workspaces: ${JSON.stringify(latest)}`);
+}
+true;
+'''

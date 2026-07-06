@@ -1,0 +1,27 @@
+[scenario]
+name = "markdown-drop-guard"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "markdown file drag is prevented at window scope"
+action = "eval"
+timeout_ms = 30000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+const file = new File(["# dropped"], "dropped.md", { type: "text/markdown" });
+const dataTransfer = new DataTransfer();
+dataTransfer.items.add(file);
+const event = new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer });
+const canceled = !window.dispatchEvent(event);
+if (!event.defaultPrevented && !canceled) {
+  throw new Error("Markdown dragover was not prevented.");
+}
+true;
+'''

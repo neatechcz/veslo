@@ -1,0 +1,35 @@
+[scenario]
+name = "attachment-staging"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "session composer surface accepts attachment staging checks"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+window.localStorage.setItem("veslo.language", "en");
+const route = "/session";
+const oldUrl = window.location.href;
+window.location.hash = route;
+window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let found = false;
+let text = "";
+const deadline = Date.now() + 45000;
+while (Date.now() < deadline) {
+  text = document.body.innerText.replace(/\s+/g, " ").trim();
+  found = Boolean(document.querySelector('textarea, [contenteditable="true"], [role="textbox"], [data-testid*="composer"]'));
+  if (window.location.hash.includes(route) && found) break;
+  await sleep(250);
+}
+if (!found) throw new Error(`Composer textbox was not available for attachment staging. Body=${text.slice(0, 1000)}`);
+true;
+'''

@@ -1,0 +1,35 @@
+[scenario]
+name = "session-capabilities"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "session capability surfaces render from the active session"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+window.localStorage.setItem("veslo.language", "en");
+const route = "/session";
+const oldUrl = window.location.href;
+window.location.hash = route;
+window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let text = "";
+let ready = false;
+const deadline = Date.now() + 45000;
+while (Date.now() < deadline) {
+  text = document.body.innerText.replace(/\s+/g, " ").trim();
+  ready = Boolean(document.querySelector('[data-testid="session-conversation-pane"]') || document.querySelector('textarea, [role="textbox"], [contenteditable="true"]'));
+  if (ready) break;
+  await sleep(250);
+}
+if (!ready) throw new Error(`Session capability surface did not render. Body=${text.slice(0, 1000)}`);
+true;
+'''

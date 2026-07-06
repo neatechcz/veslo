@@ -8,7 +8,7 @@
     "skipLibCheck": true,
     "outDir": "dist",
     "rootDir": ".",
-    "types": ["node", "@wdio/globals/types", "@types/mocha"]
+    "types": ["node"]
   },
-  "include": ["global.d.ts", "tauri-api.d.ts", "specs/**/*.ts", "helpers/**/*.ts", "scripts/**/*.ts", "wdio.conf.ts"]
+  "include": ["tauri-api.d.ts", "specs/**/*.ts", "helpers/**/*.ts", "scripts/**/*.ts"]
 }

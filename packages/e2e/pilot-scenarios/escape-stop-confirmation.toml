@@ -1,0 +1,25 @@
+[scenario]
+name = "escape-stop-confirmation"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "session route can receive Escape without crashing"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+const oldUrl = window.location.href;
+window.location.hash = "/session";
+window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+const text = document.body.innerText.replace(/\s+/g, " ").trim();
+if (!text) throw new Error("Session UI became blank after Escape.");
+true;
+'''

@@ -1,0 +1,53 @@
+[scenario]
+name = "composer"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "composer accepts text and can be cleared"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+window.localStorage.setItem("veslo.language", "en");
+const route = "/session";
+const oldUrl = window.location.href;
+window.location.hash = route;
+window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const visible = (element) => {
+  if (!(element instanceof HTMLElement)) return false;
+  const rect = element.getBoundingClientRect();
+  const style = window.getComputedStyle(element);
+  return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+};
+let textbox = null;
+const deadline = Date.now() + 45000;
+while (Date.now() < deadline) {
+  textbox = Array.from(document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]')).find(visible);
+  if (textbox) break;
+  await sleep(250);
+}
+if (!textbox) throw new Error("Composer textbox was not found.");
+const value = "Hello from Tauri Pilot composer replacement";
+if (textbox instanceof HTMLTextAreaElement || textbox instanceof HTMLInputElement) {
+  textbox.value = value;
+  textbox.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+  if (!textbox.value.includes(value)) throw new Error("Composer did not retain typed value.");
+  textbox.value = "";
+  textbox.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+} else {
+  textbox.textContent = value;
+  textbox.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+  if (!(textbox.textContent ?? "").includes(value)) throw new Error("Composer did not retain typed text.");
+  textbox.textContent = "";
+  textbox.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+}
+true;
+'''

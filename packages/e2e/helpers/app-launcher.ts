@@ -27,7 +27,6 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const DEFAULT_WEBDRIVER_PORT = 4445;
 const DEFAULT_PILOT_IDENTIFIER = 'com.neatech.veslo.e2e';
 const DEFAULT_LAUNCH_TIMEOUT = 120_000;
 const LAUNCH_TIMEOUT = resolveLaunchTimeout();
@@ -95,25 +94,6 @@ type ResolvePilotSocketPathOptions = ResolvePilotRuntimeDirOptions & {
 type StartAppOptions = {
   preserveIsolatedProfile?: boolean;
 };
-
-export function resolveWebDriverPort(env: Record<string, string | undefined> = process.env): number {
-  const raw = env.E2E_WEBDRIVER_PORT?.trim();
-  if (!raw) return DEFAULT_WEBDRIVER_PORT;
-
-  const port = Number(raw);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`Invalid E2E_WEBDRIVER_PORT: ${raw}`);
-  }
-
-  return port;
-}
-
-export function resolveStartAppPort(
-  port?: number,
-  env: Record<string, string | undefined> = process.env,
-): number {
-  return port ?? resolveWebDriverPort(env);
-}
 
 export function resolvePilotIdentifier(env: Record<string, string | undefined> = process.env): string {
   return env.E2E_TAURI_PILOT_IDENTIFIER?.trim() || DEFAULT_PILOT_IDENTIFIER;
@@ -607,6 +587,19 @@ export function resolveMcpCatalogFixtureDenApiBase(input: {
   return input.skillRegistryFixtureBaseUrl;
 }
 
+export function publishPilotDenAuthSeedForWebView(
+  seedEnv: Record<string, string | undefined>,
+  targetEnv: Record<string, string | undefined> = process.env,
+): void {
+  const existing = targetEnv.VESLO_E2E_DEN_AUTH_JSON?.trim() || targetEnv.E2E_DEN_AUTH_JSON?.trim();
+  if (existing) return;
+
+  const seed = seedEnv.VESLO_E2E_DEN_AUTH_JSON?.trim() || seedEnv.E2E_DEN_AUTH_JSON?.trim();
+  if (!seed) return;
+
+  targetEnv.E2E_DEN_AUTH_JSON = seed;
+}
+
 async function startManagedAiGatewayFixtureIfRequested(): Promise<ManagedAiGatewayFixture | null> {
   if (!shouldUseManagedAiGatewayFixture()) {
     return null;
@@ -639,24 +632,11 @@ async function cleanupStartedFixtures(): Promise<void> {
   return fixtureCleanupPromise;
 }
 
-export async function ensureWebDriverReady(
-  _port: number = DEFAULT_WEBDRIVER_PORT,
-  _timeout: number = Math.min(5_000, LAUNCH_TIMEOUT),
-): Promise<void> {
-  throw new Error(
-    'WebDriver has been replaced by tauri-pilot for Veslo desktop E2E. Convert this legacy WDIO test to a tauri-pilot scenario before running it.',
-  );
-}
-
-export async function startApp(port?: number, options: StartAppOptions = {}): Promise<void> {
-  const resolvedPort = resolveStartAppPort(port);
-
+export async function startApp(options: StartAppOptions = {}): Promise<void> {
   const binaryPath = resolveBinaryPath();
   const pilotRuntimeDir = resolvePilotRuntimeDir();
   preparePilotRuntimeDir(pilotRuntimeDir);
-  const pilotSocket = resolvePilotSocketPath({ runtimeDir: pilotRuntimeDir });
   console.log(`[e2e] Launching Tauri binary: ${binaryPath}`);
-  console.log(`[e2e] WebDriver port: ${resolvedPort}`);
   const useGoogleMcpCatalogFixture = shouldUseGoogleMcpCatalogFixture();
   const useSharePointMcpCatalogFixture = shouldUseSharePointMcpCatalogFixture();
   const useMcpCatalogFixture = useGoogleMcpCatalogFixture || useSharePointMcpCatalogFixture;
@@ -701,6 +681,7 @@ export async function startApp(port?: number, options: StartAppOptions = {}): Pr
         }),
       }
     : process.env;
+  publishPilotDenAuthSeedForWebView(seedEnv);
   if (skillRegistryFixtureBaseUrl) {
     console.log(`[e2e] Skill registry fixture: ${skillRegistryFixtureBaseUrl}`);
   }
@@ -757,7 +738,6 @@ export async function startApp(port?: number, options: StartAppOptions = {}): Pr
   } else {
     env = {
       ...process.env,
-      TAURI_WEBDRIVER_PORT: String(resolvedPort),
       ...(mcpCatalogFixtureDenApiBase ? { VESLO_DEN_API_BASE: mcpCatalogFixtureDenApiBase } : {}),
     } as NodeJS.ProcessEnv;
     if (process.platform !== 'win32') {
@@ -839,47 +819,4 @@ export async function stopApp(): Promise<void> {
     console.log(`[e2e] Stopped ${stoppedChildren} managed child process${stoppedChildren === 1 ? '' : 'es'} from app PID ${processToStopPid}.`);
   }
   await cleanupStartedFixtures();
-}
-
-/** Utility for HashRouter-based URL assertions (just the fragment). */
-export function hashFragment(path: string): string {
-  return `#${path.startsWith('/') ? path : '/' + path}`;
-}
-
-/**
- * Navigate to a hash route in the Tauri app.
- * WebDriver's browser.url() requires a full URL, so we use
- * window.location.hash to navigate within the HashRouter.
- */
-export async function navigateToHash(path: string): Promise<void> {
-  const hash = path.startsWith('/') ? path : '/' + path;
-  const previousHash = await currentHashRoute().catch(() => '');
-  await browser.execute((h: string) => {
-    const oldUrl = window.location.href;
-    window.location.hash = h;
-    window.dispatchEvent(new HashChangeEvent('hashchange', {
-      oldURL: oldUrl,
-      newURL: window.location.href,
-    }));
-  }, hash);
-
-  await browser.pause(50);
-  const nextHash = await currentHashRoute().catch(() => '');
-  if (nextHash === previousHash && !nextHash.includes(hash)) {
-    const currentUrl = await browser.getUrl().catch(() => '');
-    const baseUrl = currentUrl.replace(/#.*$/, '');
-    if (!baseUrl) throw new Error(`Unable to resolve current URL before navigating to #${hash}`);
-    await browser.url(`${baseUrl}#${hash}`);
-  }
-}
-
-export async function currentHashRoute(): Promise<string> {
-  return browser.execute(() => window.location.hash);
-}
-
-export async function waitForHashRoute(hashFragment: string, timeout = 10000): Promise<void> {
-  await browser.waitUntil(
-    async () => (await currentHashRoute()).includes(hashFragment),
-    { timeout, timeoutMsg: `Route did not change to ${hashFragment} within ${timeout}ms` },
-  );
 }

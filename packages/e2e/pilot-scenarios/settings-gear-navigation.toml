@@ -1,0 +1,36 @@
+[scenario]
+name = "settings-gear-navigation"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "settings route remains reachable after skills route"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+window.localStorage.setItem("veslo.language", "en");
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const navigate = (route) => {
+  const oldUrl = window.location.href;
+  window.location.hash = route;
+  window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+};
+navigate("/dashboard/skills");
+await sleep(500);
+navigate("/dashboard/settings");
+const deadline = Date.now() + 45000;
+while (Date.now() < deadline && !window.location.hash.includes("/dashboard/settings")) await sleep(250);
+if (!window.location.hash.includes("/dashboard/settings")) throw new Error(`Settings route did not activate: ${window.location.hash}`);
+const text = document.body.innerText.replace(/\s+/g, " ").trim();
+if (!text.includes("Settings") && !text.includes("Run preferences") && !text.includes("AI access")) {
+  throw new Error(`Settings page did not render expected text. Body=${text.slice(0, 1000)}`);
+}
+true;
+'''

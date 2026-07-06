@@ -1,0 +1,31 @@
+[scenario]
+name = "session-media-evidence"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "session media evidence route surface renders"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+const oldUrl = window.location.href;
+window.location.hash = "/session";
+window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const deadline = Date.now() + 45000;
+while (Date.now() < deadline) {
+  if (document.querySelector('[data-testid="session-conversation-pane"], textarea, [role="textbox"], [contenteditable="true"]')) break;
+  await sleep(250);
+}
+if (!document.querySelector('[data-testid="session-conversation-pane"], textarea, [role="textbox"], [contenteditable="true"]')) {
+  throw new Error("Session media evidence surface did not render.");
+}
+true;
+'''

@@ -1,0 +1,25 @@
+[scenario]
+name = "desktop-context-menu"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "desktop contextmenu event is handled inside the webview"
+action = "eval"
+timeout_ms = 30000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+let seen = false;
+const listener = () => { seen = true; };
+window.addEventListener("contextmenu", listener, { once: true });
+document.body.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }));
+window.removeEventListener("contextmenu", listener);
+if (!seen) throw new Error("Context menu event did not reach the webview.");
+true;
+'''

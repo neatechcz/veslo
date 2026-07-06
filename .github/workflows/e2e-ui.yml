@@ -36,7 +36,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install tauri-pilot CLI
-        run: cargo install tauri-pilot-cli --version 0.7.1 --locked
+        run: cargo install tauri-pilot-cli --version 0.7.2 --locked
 
       - name: Install Linux system deps
         if: runner.os == 'Linux'
@@ -54,7 +54,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Tauri (debug, no bundle, e2e feature)
-        run: pnpm tauri build --debug --no-bundle -- --features e2e
+        run: pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e
         working-directory: packages/desktop
 
       - name: Run E2E UI tests (Linux)

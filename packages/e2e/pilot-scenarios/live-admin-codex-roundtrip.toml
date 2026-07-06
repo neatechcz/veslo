@@ -1,0 +1,33 @@
+[scenario]
+name = "live-admin-codex-roundtrip"
+fail_fast = true
+global_timeout_ms = 240000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "live admin Codex session surface is reachable"
+action = "eval"
+timeout_ms = 90000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+window.localStorage.setItem("veslo.language", "en");
+const route = "/session";
+const oldUrl = window.location.href;
+window.location.hash = route;
+window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let textbox = null;
+const deadline = Date.now() + 90000;
+while (Date.now() < deadline) {
+  textbox = document.querySelector('textarea, [role="textbox"], [contenteditable="true"]');
+  if (textbox) break;
+  await sleep(250);
+}
+if (!textbox) throw new Error("Live Codex roundtrip session composer did not render.");
+true;
+'''

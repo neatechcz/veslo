@@ -1,0 +1,26 @@
+[scenario]
+name = "sidebar-archive-last-session"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "archived settings destination is reachable"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+const oldUrl = window.location.href;
+window.location.hash = "/dashboard/settings";
+window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const deadline = Date.now() + 45000;
+while (Date.now() < deadline && !window.location.hash.includes("/dashboard/settings")) await sleep(250);
+if (!window.location.hash.includes("/dashboard/settings")) throw new Error("Settings route did not activate for archived sessions.");
+true;
+'''

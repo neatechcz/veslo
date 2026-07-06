@@ -1,0 +1,36 @@
+[scenario]
+name = "language-persistence"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "language preference persists across reload"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+window.localStorage.setItem("veslo.language", "en");
+const before = window.localStorage.getItem("veslo.language");
+if (before !== "en") throw new Error(`Language preference was not written: ${before}`);
+window.location.reload();
+true;
+'''
+
+[[step]]
+name = "language preference remains after reload"
+action = "eval"
+timeout_ms = 45000
+script = '''
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const deadline = Date.now() + 45000;
+while (Date.now() < deadline && !document.querySelector("#root")?.children.length) await sleep(250);
+const after = window.localStorage.getItem("veslo.language");
+if (after !== "en") throw new Error(`Language preference did not persist after reload: ${after}`);
+true;
+'''

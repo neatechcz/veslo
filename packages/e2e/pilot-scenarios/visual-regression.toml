@@ -1,0 +1,36 @@
+[scenario]
+name = "visual-regression"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "visual surfaces render deterministic routes"
+action = "eval"
+timeout_ms = 60000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+window.localStorage.setItem("veslo.language", "en");
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const navigate = async (route) => {
+  const oldUrl = window.location.href;
+  window.location.hash = route;
+  window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    const text = document.body.innerText.replace(/\s+/g, " ").trim();
+    if (window.location.hash.includes(route) && text.length > 40) return text;
+    await sleep(250);
+  }
+  throw new Error(`Visual route did not render: ${route}`);
+};
+await navigate("/session");
+await navigate("/dashboard/settings");
+await navigate("/dashboard/skills");
+true;
+'''

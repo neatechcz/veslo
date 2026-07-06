@@ -1,0 +1,21 @@
+[scenario]
+name = "session-sidebar-context-menu"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "delegate to sidebar context menu replacement surface"
+action = "eval"
+timeout_ms = 45000
+script = '''
+window.localStorage.setItem("veslo.onboardingComplete", "1");
+window.localStorage.setItem("veslo.sidebar-session-view.v1", "by-project");
+const oldUrl = window.location.href;
+window.location.hash = "/session";
+window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const deadline = Date.now() + 45000;
+while (Date.now() < deadline && document.body.innerText.trim().length < 40) await sleep(250);
+if (document.body.innerText.trim().length < 40) throw new Error("Sidebar context surface did not render.");
+true;
+'''
