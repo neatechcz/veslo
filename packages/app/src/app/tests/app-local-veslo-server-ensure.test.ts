@@ -122,6 +122,14 @@ test("local Veslo server ensure effect is registered after the real implementati
   );
 });
 
+test("workspace materialization can request server-only local Veslo startup", () => {
+  assert.match(
+    source,
+    /ensureLocalVesloServerRunning:\s*\(options\) => ensureLocalVesloServerRunning\(\{\s*ignoreStartupPreference: true,\s*requireRuntimeChainReady: options\?\.requireRuntimeChainReady,\s*\}\)/s,
+    "workspace store wiring must forward requireRuntimeChainReady so pre-runtime materialization can ensure only the server process",
+  );
+});
+
 test("local Veslo workspace readiness uses the stable local workspace id", () => {
   const resolutionEffectStart = source.indexOf("const vesloUrl = vesloServerUrl().trim();");
   assert.notStrictEqual(resolutionEffectStart, -1, "Veslo workspace resolution effect is missing");
