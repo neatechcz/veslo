@@ -24,6 +24,7 @@ const allowedSessionPageModules = new Set([
   "session-send-workflow.ts",
   "session-transcript-viewport.ts",
   "session-search-command-controller.ts",
+  "session-run-elapsed-label.ts",
   "session-attachment-staging.ts",
   "session-mutation-workflow.ts",
   "session-left-sidebar.tsx",
@@ -40,6 +41,7 @@ const plannedExtractedModules = [
   "session-send-workflow.ts",
   "session-transcript-viewport.ts",
   "session-search-command-controller.ts",
+  "session-run-elapsed-label.ts",
   "session-attachment-staging.ts",
   "session-mutation-workflow.ts",
   "session-left-sidebar.tsx",
@@ -50,6 +52,7 @@ const plannedExtractedModules = [
 
 const minimumExtractedModuleLineCounts = new Map<string, number>([
   ["session-center.tsx", 60],
+  ["session-run-elapsed-label.ts", 10],
 ]);
 
 function productionPageModules() {

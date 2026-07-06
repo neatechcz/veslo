@@ -98,7 +98,7 @@ import {
   type SidebarViewMode,
 } from "./workspace-session-list-prefs";
 import { deriveLoadedSidebarPrefetchInterest } from "./workspace-session-list-prefetch-interest";
-import { currentLocale, t } from "../../../i18n";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../../i18n";
 
 type Props = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
@@ -256,12 +256,12 @@ const workspaceLabel = (workspace: WorkspaceInfo) =>
   workspace.name?.trim() ||
   workspace.directory?.trim() ||
   workspace.path?.trim() ||
-  t("sidebar.workspace_fallback", currentLocale());
+  __vesloT("sidebar.workspace_fallback", __vesloCurrentLocale());
 
 const workspaceKindLabel = (workspace: WorkspaceInfo) =>
   workspace.workspaceType === "remote"
-    ? t("sidebar.workspace_kind_remote", currentLocale())
-    : t("sidebar.workspace_kind_local", currentLocale());
+    ? __vesloT("sidebar.workspace_kind_remote", __vesloCurrentLocale())
+    : __vesloT("sidebar.workspace_kind_local", __vesloCurrentLocale());
 
 const sidebarControlTooltipClass =
   "relative after:pointer-events-none after:absolute after:left-1/2 after:bottom-full after:z-30 after:mb-1 after:-translate-x-1/2 after:rounded-md after:border after:border-gray-6 after:bg-gray-1 after:px-2 after:py-1 after:text-[10px] after:font-medium after:leading-none after:text-gray-11 after:whitespace-nowrap after:opacity-0 after:shadow-lg after:transition-opacity after:duration-150 after:delay-[250ms] hover:after:opacity-100 focus-visible:after:opacity-100 after:content-[attr(data-tooltip)]";
@@ -504,7 +504,7 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
 };
 
 export default function WorkspaceSessionList(props: Props) {
-  const tr = (key: string) => t(key, currentLocale());
+  const tr = (key: string) => __vesloT(key, __vesloCurrentLocale());
   const loadMoreLabel = (count: number) => tr("sidebar.load_more").replace("{count}", String(count));
   const [sidebarModeSignal, setSidebarModeSignal] = createSignal<SidebarViewMode>(readSidebarViewMode());
   const [openProjectKey, setOpenProjectKey] = createSignal<string | null>(null);
@@ -2013,7 +2013,7 @@ export default function WorkspaceSessionList(props: Props) {
               ? ""
               : "group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
           }`}
-          title={formatSessionTimestampTooltip(displayTimestamp(session()), currentLocale())}
+          title={formatSessionTimestampTooltip(displayTimestamp(session()), __vesloCurrentLocale())}
         >
           {formatSessionRelativeAge(displayTimestamp(session()))}
         </span>
@@ -2152,7 +2152,7 @@ export default function WorkspaceSessionList(props: Props) {
               ? ""
               : "group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
           }`}
-          title={formatSessionTimestampTooltip(displayTimestamp(session()), currentLocale())}
+          title={formatSessionTimestampTooltip(displayTimestamp(session()), __vesloCurrentLocale())}
         >
           {formatSessionRelativeAge(displayTimestamp(session()))}
         </span>
@@ -2672,7 +2672,7 @@ export default function WorkspaceSessionList(props: Props) {
                                 <Show when={props.readyEngineWorkspaceIds?.has(workspace().id)}>
                                   <span
                                     class="h-1.5 w-1.5 shrink-0 rounded-full bg-green-9"
-                                    title="Engine ready — switching is instant"
+                                    title={__vesloT("ui.literal.engine_ready_switching_is_instant_r9k4qm", __vesloCurrentLocale())}
                                   />
                                 </Show>
                                 <Show when={workspace().workspaceType === "remote"}>
@@ -2686,7 +2686,7 @@ export default function WorkspaceSessionList(props: Props) {
                                 <Show when={(props.pendingPermissionCountByWs?.[workspace().id] ?? 0) > 0}>
                                   <span
                                     class="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-9 text-white text-[10px] font-semibold"
-                                    title="Pending permission request"
+                                    title={__vesloT("ui.literal.pending_permission_request_q1v8zx", __vesloCurrentLocale())}
                                   >
                                     {props.pendingPermissionCountByWs![workspace().id]}
                                   </span>

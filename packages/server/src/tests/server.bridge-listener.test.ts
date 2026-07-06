@@ -28,6 +28,28 @@ async function findFreePort(): Promise<number> {
   return port;
 }
 
+async function canBindHost(host: string): Promise<boolean> {
+  const probe = createServer();
+  try {
+    probe.listen(0, host);
+    await once(probe, "listening");
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (probe.listening) {
+      probe.close();
+      await once(probe, "close");
+    } else {
+      try {
+        probe.close();
+      } catch {
+        // best effort cleanup
+      }
+    }
+  }
+}
+
 function createConfig(overrides: Partial<ServerConfig>): ServerConfig {
   return {
     host: "127.0.0.1",
@@ -57,24 +79,40 @@ function createConfig(overrides: Partial<ServerConfig>): ServerConfig {
   };
 }
 
+const bridgeHostBindable = await canBindHost("127.0.0.2");
+
 describe("veslo-server bridge listener", () => {
-  test("serves the same handler on the bridge host as on the primary host", async () => {
+  test.skipIf(!bridgeHostBindable)(
+    bridgeHostBindable
+      ? "serves the same handler on the bridge host as on the primary host"
+      : "serves the same handler on the bridge host as on the primary host (skipped: 127.0.0.2 cannot be bound)",
+    async () => {
+      const port = await findFreePort();
+      const server = startServer(createConfig({ host: "127.0.0.1", bridgeHost: "127.0.0.2", port }));
+      servers.push(server);
+
+      const primary = await fetch(`http://127.0.0.1:${port}/health`);
+      const bridge = await fetch(`http://127.0.0.2:${port}/health`);
+
+      expect(primary.status).toBe(200);
+      expect(bridge.status).toBe(200);
+
+      const primaryBody = await primary.json();
+      const bridgeBody = await bridge.json();
+      // Same shared fetch handler => same non-secret health identity.
+      expect(bridgeBody).toMatchObject({ pid: (primaryBody as { pid?: number }).pid });
+      expect((primaryBody as { token?: unknown }).token).toBeUndefined();
+      expect((bridgeBody as { token?: unknown }).token).toBeUndefined();
+    },
+  );
+
+  test("keeps the primary listener alive when the bridge host cannot be bound", async () => {
     const port = await findFreePort();
-    const server = startServer(createConfig({ host: "127.0.0.1", bridgeHost: "127.0.0.2", port }));
+    const server = startServer(createConfig({ host: "127.0.0.1", bridgeHost: "203.0.113.1", port }));
     servers.push(server);
 
     const primary = await fetch(`http://127.0.0.1:${port}/health`);
-    const bridge = await fetch(`http://127.0.0.2:${port}/health`);
-
     expect(primary.status).toBe(200);
-    expect(bridge.status).toBe(200);
-
-    const primaryBody = await primary.json();
-    const bridgeBody = await bridge.json();
-    // Same shared fetch handler => same non-secret health identity.
-    expect(bridgeBody).toMatchObject({ pid: (primaryBody as { pid?: number }).pid });
-    expect((primaryBody as { token?: unknown }).token).toBeUndefined();
-    expect((bridgeBody as { token?: unknown }).token).toBeUndefined();
   });
 
   test("does not open a bridge listener when bridgeHost is unset", async () => {

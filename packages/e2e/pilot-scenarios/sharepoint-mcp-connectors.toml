@@ -212,24 +212,22 @@ true;
 
 [[step]]
 name = "sharepoint oauth start is visible"
-action = "eval"
+action = "wait"
+target = '[data-testid="mcp-status-message"]'
 timeout_ms = 15000
+
+[[step]]
+name = "sharepoint oauth start message is correct"
+action = "eval"
 script = '''
 const normalize = (value) => `${value ?? ""}`.replace(/\s+/g, " ").trim();
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const deadline = Date.now() + 15000;
-let found = false;
-let text = "";
-while (Date.now() < deadline) {
-  text = normalize(document.body.innerText);
-  if (text.includes("Follow the authorization steps in the browser.")) {
-    found = true;
-    break;
-  }
-  await sleep(250);
+const status = document.querySelector('[data-testid="mcp-status-message"]');
+if (!(status instanceof HTMLElement)) {
+  throw new Error("MCP status message was not found");
 }
-if (!found) {
-  throw new Error(`SharePoint OAuth start message did not appear. Body=${text.slice(0, 2000)}`);
+const text = normalize(status.textContent ?? status.innerText);
+if (!text.includes("Follow the authorization steps in the browser.")) {
+  throw new Error(`SharePoint OAuth start message did not appear. Status=${text}`);
 }
 true;
 '''

@@ -219,7 +219,7 @@ test('skill registry fixture serves Google MCP runtime token and OAuth start rou
   }
 });
 
-test('skill registry fixture serves SharePoint MCP runtime token route when enabled', async () => {
+test('skill registry fixture serves SharePoint MCP runtime token and OAuth routes when enabled', async () => {
   const previousGoogleFlag = process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE;
   const previousSharePointFlag = process.env.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE;
   delete process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE;
@@ -238,6 +238,34 @@ test('skill registry fixture serves SharePoint MCP runtime token route when enab
     const runtimePayload = await runtimeResponse.json() as { token?: string; connectorId?: string };
     assert.equal(runtimePayload.token, 'e2e-runtime-token-microsoft-sharepoint');
     assert.equal(runtimePayload.connectorId, 'microsoft-sharepoint');
+
+    const startResponse = await fetch(`${baseUrl}/v1/orgs/${E2E_SKILL_REGISTRY_ORG_ID}/integrations/microsoft/microsoft-sharepoint/oauth/start`, {
+      headers: {
+        Authorization: `Bearer ${E2E_SKILL_REGISTRY_TOKEN}`,
+      },
+    });
+
+    assert.equal(startResponse.status, 200);
+    assert.equal(startResponse.headers.get('access-control-allow-origin'), '*');
+    const startPayload = await startResponse.json() as { authorizeUrl?: string; connectorId?: string };
+    assert.match(startPayload.authorizeUrl ?? '', /\/__e2e\/microsoft-oauth\/microsoft-sharepoint$/);
+    assert.equal(startPayload.connectorId, 'microsoft-sharepoint');
+
+    const preflightResponse = await fetch(`${baseUrl}/v1/orgs/${E2E_SKILL_REGISTRY_ORG_ID}/integrations/microsoft/microsoft-sharepoint/oauth/start`, {
+      method: 'OPTIONS',
+      headers: {
+        'Access-Control-Request-Headers': 'authorization',
+        'Access-Control-Request-Method': 'GET',
+        Origin: 'tauri://localhost',
+      },
+    });
+    assert.equal(preflightResponse.status, 204);
+    assert.equal(preflightResponse.headers.get('access-control-allow-origin'), '*');
+
+    const oauthPageResponse = await fetch(startPayload.authorizeUrl ?? '');
+    assert.equal(oauthPageResponse.status, 200);
+    assert.match(oauthPageResponse.headers.get('content-type') ?? '', /text\/html/);
+    assert.match(await oauthPageResponse.text(), /OAuth fixture ready/);
   } finally {
     if (previousGoogleFlag === undefined) {
       delete process.env.E2E_GOOGLE_MCP_CATALOG_FIXTURE;

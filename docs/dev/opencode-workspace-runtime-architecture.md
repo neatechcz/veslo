@@ -118,8 +118,11 @@ side effect of switching the visible workspace.
 
 Fresh desktop profiles have no configured workspace yet. The desktop shell must
 therefore allow a managed `veslo-server` restart with an empty workspace list,
-using the app data directory as a stable process cwd until the first workspace is
-created. Private chat workspace creation must also create the app-owned private
+using the app data directory as a stable process cwd. Registered local workspace
+paths are passed as explicit server arguments, but they must not become the
+server process cwd; a denied protected-folder prompt for one project must not
+block app-service startup or hide the rest of Veslo's project/session data.
+Private chat workspace creation must also create the app-owned private
 workspace root before validating or registering the nested scratch directory, so
 the first `Chat` click cannot dead-end on a missing parent directory.
 

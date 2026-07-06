@@ -3683,9 +3683,7 @@ export default function SessionView(props: SessionViewProps) {
                         }`}
                       />
                       <span class="truncate">{(runPhase() === "error" && props.error) ? props.error : (runDiagnosticLabel() || thinkingStatus() || runLabel())}</span>
-                      <Show when={props.developerMode}>
-                        <span class="text-[10px] text-gray-8 ml-auto shrink-0">{runElapsedLabel()}</span>
-                      </Show>
+                      <span class="text-[10px] text-gray-8 ml-auto shrink-0">{runElapsedLabel()}</span>
                     </div>
                   </div>
                 </div>

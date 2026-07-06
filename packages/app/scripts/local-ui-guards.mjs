@@ -2,13 +2,22 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const listSource = readFileSync(new URL("../src/app/components/session/workspace-session-list.tsx", import.meta.url), "utf8");
+const sidebarContextMenuModelSource = readFileSync(
+  new URL("../src/app/components/session/sidebar-context-menu-model.ts", import.meta.url),
+  "utf8",
+);
 const sessionSource = readFileSync(new URL("../src/app/pages/session.tsx", import.meta.url), "utf8");
 const composerSource = readFileSync(new URL("../src/app/components/session/composer.tsx", import.meta.url), "utf8");
 
 assert.equal(
-  listSource.includes('tr("sidebar.new_session")'),
+  listSource.includes("buildProjectHeaderMenuItems(") && listSource.includes("onNewSession:"),
   true,
-  "workspace list must expose the new session primary action",
+  "workspace list must expose the new session primary action via the project header menu",
+);
+assert.equal(
+  sidebarContextMenuModelSource.includes('tr("sidebar.create_session_in_project")'),
+  true,
+  "project header menu model must keep the create-session-in-project action label",
 );
 
 assert.equal(
@@ -65,4 +74,4 @@ assert.equal(
   "session empty state must not expose remote worker connect in the default UI",
 );
 
-console.log(JSON.stringify({ ok: true, checks: 10 }));
+console.log(JSON.stringify({ ok: true, checks: 11 }));

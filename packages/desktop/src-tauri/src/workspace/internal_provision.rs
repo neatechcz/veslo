@@ -191,7 +191,10 @@ fn ensure_veslo_agent_instructions(
     write_if_changed(&path, next.as_bytes(), stats)
 }
 
-fn automations_plugin_enabled_from_env(_primary: Option<&str>, _plugin_alias: Option<&str>) -> bool {
+fn automations_plugin_enabled_from_env(
+    _primary: Option<&str>,
+    _plugin_alias: Option<&str>,
+) -> bool {
     false
 }
 
@@ -984,10 +987,11 @@ mod tests {
         assert_eq!(result.status, ProvisionStatus::Updated);
 
         assert!(!opencode_path(&workspace_root, &["plugins", AUTOMATIONS_PLUGIN_FILE]).exists());
-        assert!(
-            !opencode_path(&workspace_root, &["plugins", AUTOMATIONS_PLUGIN_DISABLED_FILE])
-                .exists()
-        );
+        assert!(!opencode_path(
+            &workspace_root,
+            &["plugins", AUTOMATIONS_PLUGIN_DISABLED_FILE]
+        )
+        .exists());
 
         let second = provision_internal_workspace_assets(&workspace_root, None).unwrap();
         assert_eq!(second.status, ProvisionStatus::Unchanged);

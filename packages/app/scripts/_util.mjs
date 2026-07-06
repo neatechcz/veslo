@@ -141,7 +141,10 @@ export async function waitForHealthy(client, { timeoutMs = 10_000, pollMs = 250 
 
   while (Date.now() - start < timeoutMs) {
     try {
-      const health = await client.global.health();
+      const remainingMs = timeoutMs - (Date.now() - start);
+      if (remainingMs <= 0) break;
+      const attemptMs = Math.min(2_000, remainingMs < 250 ? remainingMs : Math.max(250, remainingMs));
+      const health = await client.global.health({ signal: AbortSignal.timeout(attemptMs) });
       assert.equal(health.healthy, true);
       assert.ok(typeof health.version === "string");
       return health;

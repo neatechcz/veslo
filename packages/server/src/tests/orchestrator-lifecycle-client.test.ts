@@ -17,7 +17,7 @@ describe("orchestrator lifecycle client", () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchImpl = mockFetch(async (input, init) => {
       calls.push({ url: String(input), init });
-      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      return new Response(JSON.stringify({ ok: true, runId: "run-a", status: "active" }), { status: 200 });
     });
     const client = createOrchestratorLifecycleClient({
       daemonUrl: "http://127.0.0.1:1234/",
@@ -25,7 +25,7 @@ describe("orchestrator lifecycle client", () => {
       fetchImpl,
     });
 
-    await client.register({
+    const result = await client.register({
       workspaceId: "ws-a",
       conversationId: "conv-a",
       runId: "run-a",
@@ -37,6 +37,7 @@ describe("orchestrator lifecycle client", () => {
     expect(calls[0]?.url).toBe("http://127.0.0.1:1234/workspace/ws-a/runs/register");
     expect(calls[0]?.init?.method).toBe("POST");
     expect((calls[0]?.init?.headers as Record<string, string>)[ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER]).toBe("secret-token");
+    expect(result).toMatchObject({ runId: "run-a", status: "active" });
   });
 
   test("register maps orchestrator 409 to RunAlreadyActiveError", async () => {

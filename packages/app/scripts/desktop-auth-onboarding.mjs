@@ -57,11 +57,24 @@ assert.equal(
 // ── c. app.tsx – auth-complete deep link handling ───────────────────────
 
 const app = readFileSync(new URL("../src/app/app.tsx", import.meta.url), "utf8");
+const denDesktopAuthWorkflow = readFileSync(
+  new URL("../src/app/context/den-desktop-auth-workflow.ts", import.meta.url),
+  "utf8",
+);
+const appStartupHydration = readFileSync(
+  new URL("../src/app/context/app-startup-hydration.ts", import.meta.url),
+  "utf8",
+);
 
-assert.equal(
-  app.includes("parseAuthCompleteDeepLink"),
-  true,
-  "app.tsx must import parseAuthCompleteDeepLink",
+assert.match(
+  denDesktopAuthWorkflow,
+  /import\s+\{[\s\S]*\bparseAuthCompleteDeepLink\b[\s\S]*\}\s+from\s+["']\.\.\/lib\/den-auth["'];/,
+  "desktop auth deep-link parsing must stay wired through the den desktop auth workflow",
+);
+assert.match(
+  denDesktopAuthWorkflow,
+  /\bparseAuthCompleteDeepLink\(rawUrl\)|\bparseAuthCompleteDeepLink\s*:/,
+  "desktop auth deep-link parsing must stay wired through the den desktop auth workflow",
 );
 assert.equal(
   app.includes("queueAuthCompleteDeepLink"),
@@ -69,41 +82,41 @@ assert.equal(
   "app.tsx must contain auth-complete deep link handling",
 );
 assert.equal(
-  app.includes("readPendingDesktopAuthSession"),
+  denDesktopAuthWorkflow.includes("readPendingDesktopAuthSession"),
   true,
-  "app.tsx must reuse pending desktop auth session data for retry/resume flows",
+  "desktop auth workflow must reuse pending desktop auth session data for retry/resume flows",
 );
 assert.equal(
-  app.includes("startDesktopAuthStatusPolling(pendingExchangeProof.sessionId)"),
+  appStartupHydration.includes("startDesktopAuthStatusPolling"),
   false,
-  "app.tsx must not auto-resume desktop browser auth polling on startup",
+  "desktop startup hydration must not auto-resume desktop browser auth polling on startup",
 );
 assert.equal(
-  app.includes("const hydrationPromise = hydrateDenAuthFromDesktopSnapshot().catch(() => false)"),
+  appStartupHydration.includes("const hydrationPromise = hydrateDenAuthFromDesktopSnapshot().catch(() => false)"),
   true,
-  "app.tsx must preserve the desktop auth hydration promise for slow-start recovery",
+  "startup hydration must preserve the desktop auth hydration promise for slow-start recovery",
 );
 assert.equal(
-  app.includes("if (!imported || onboardingStep() !== \"auth\")"),
+  appStartupHydration.includes("if (!imported || deps.onboardingStep() !== \"auth\")"),
   true,
-  "app.tsx must retry onboarding only when delayed desktop auth hydration arrives after the auth gate",
+  "startup hydration must retry onboarding only when delayed desktop auth hydration arrives after the auth gate",
 );
 assert.equal(
-  app.includes("setOnboardingStep(\"connecting\");\n          setView(\"onboarding\");"),
+  denDesktopAuthWorkflow.includes("options.ui.setOnboardingStep(\"connecting\");\n          options.ui.setView(\"onboarding\");"),
   true,
-  "app.tsx must leave the auth gate immediately after a successful desktop browser sign-in",
+  "desktop auth workflow must leave the auth gate immediately after a successful desktop browser sign-in",
 );
 assert.equal(
-  app.includes("setOnboardingStep(\"connecting\");\n            setBooting(true);"),
+  appStartupHydration.includes("deps.setOnboardingStep(\"connecting\");\n        deps.setBooting(true);"),
   true,
-  "app.tsx must switch delayed desktop auth recovery from auth to connecting before retrying bootstrap",
+  "startup hydration must switch delayed desktop auth recovery from auth to connecting before retrying bootstrap",
 );
 
 // Isolate the handler function to verify it is free of veslo.server refs
-const handlerStart = app.indexOf("const queueAuthCompleteDeepLink");
-const handlerEnd = app.indexOf("};", handlerStart);
-assert.ok(handlerStart > -1, "queueAuthCompleteDeepLink handler must exist in app.tsx");
-const handlerSection = app.slice(handlerStart, handlerEnd + 2);
+const handlerStart = denDesktopAuthWorkflow.indexOf("const queueAuthCompleteDeepLink");
+const handlerEnd = denDesktopAuthWorkflow.indexOf("};", handlerStart);
+assert.ok(handlerStart > -1, "queueAuthCompleteDeepLink handler must exist in the desktop auth workflow");
+const handlerSection = denDesktopAuthWorkflow.slice(handlerStart, handlerEnd + 2);
 assert.equal(
   handlerSection.includes("veslo.server"),
   false,
@@ -128,14 +141,17 @@ assert.equal(
 // ── e. onboarding.tsx – Veslo browser auth copy ────────────────────────
 
 const onboarding = readFileSync(new URL("../src/app/pages/onboarding.tsx", import.meta.url), "utf8");
+const enLocale = readFileSync(new URL("../src/i18n/locales/en.ts", import.meta.url), "utf8");
 
 assert.equal(
-  onboarding.includes("Sign in to Veslo"),
+  onboarding.includes('__vesloT("ui.literal.sign_in_to_veslo_jyklev"') &&
+    enLocale.includes('"ui.literal.sign_in_to_veslo_jyklev": "Sign in to Veslo"'),
   true,
   "desktop onboarding must brand browser auth entry as Veslo",
 );
 assert.equal(
-  onboarding.includes("Email verification and password recovery happen in the browser."),
+  onboarding.includes('__vesloT("ui.literal.sign_in_with_your_account_to_continue_setup__e22ry2"') &&
+    enLocale.includes("Email verification and password recovery happen in the browser."),
   true,
   "desktop onboarding must explain that verification and password recovery happen in the browser flow",
 );
@@ -146,4 +162,4 @@ assert.equal(
 );
 
 // ── done ────────────────────────────────────────────────────────────────
-console.log(JSON.stringify({ ok: true, checks: 21 }));
+console.log(JSON.stringify({ ok: true, checks: 22 }));

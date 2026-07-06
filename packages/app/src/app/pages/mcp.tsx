@@ -268,7 +268,10 @@ export default function McpView(props: McpViewProps) {
 
       {/* ── Status message ───────────────────────────── */}
       <Show when={props.mcpStatus}>
-        <div class="rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary whitespace-pre-wrap break-words">
+        <div
+          data-testid="mcp-status-message"
+          class="rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary whitespace-pre-wrap break-words"
+        >
           {props.mcpStatus}
         </div>
       </Show>

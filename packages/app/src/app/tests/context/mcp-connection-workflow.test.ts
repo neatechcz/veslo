@@ -370,6 +370,50 @@ test("installed hub MCP row can start Veslo-managed OAuth from catalog metadata"
   );
 });
 
+test("installed hub MCP row keeps browser-step status when desktop opener fails", async () => {
+  const harness = createHarness({
+    openDesktopAuthUrl: async () => {
+      throw new Error("Load failed");
+    },
+  });
+  harness.hubEntries.push(remoteEntry({
+    id: "microsoft-sharepoint",
+    name: "Microsoft SharePoint",
+    oauth: false,
+    authorization: {
+      type: "veslo-server-oauth",
+      provider: "microsoft",
+      connectorId: "microsoft-sharepoint",
+      scopes: ["Sites.Read.All", "Files.Read.All"],
+      startPath: "/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/oauth/start",
+      runtimeTokenPath: "/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/runtime-token",
+      statusPath: "/v1/orgs/org_1/integrations/microsoft/connections",
+      disconnectPath: "/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/connection",
+    },
+  }));
+  const installedEntry: McpServerEntry = {
+    name: "microsoft-sharepoint",
+    source: "config.project",
+    config: {
+      type: "remote",
+      url: "https://api.veslo.work/v1/orgs/org_1/integrations/microsoft/microsoft-sharepoint/mcp",
+      oauth: false,
+    },
+  };
+
+  await harness.workflow.authorizeMcp(installedEntry);
+
+  assert.equal(harness.mcpStatus, "mcp.auth.follow_browser_steps");
+  assert.equal(
+    harness.calls.some((call) =>
+      call.name === "recordPerfLog" &&
+      call.args[1] === "mcp.oauth" &&
+      call.args[2] === "browser-open-failed"
+    ),
+    true,
+  );
+});
+
 test("removing an MCP refreshes the list and clears the selected server", async () => {
   const harness = createHarness();
 

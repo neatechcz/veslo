@@ -4,6 +4,7 @@ import test from "node:test";
 
 const source = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
+const viewPropsSource = readFileSync(new URL("../../app-view-props.ts", import.meta.url), "utf8");
 
 test("session page routes explicit folder access permissions to the localized consent modal", () => {
   assert.match(source, /import FolderAccessConsentModal from "\.\.\/components\/folder-access-consent-modal";/);
@@ -37,7 +38,7 @@ test("app passes a workspace config refresh callback into the session view", () 
   assert.match(appSource, /workspaceStore\.setAuthorizedDirs\(roots\.length \? roots : \[targetPath\]\)/);
   assert.match(appSource, /const reloadWorkspaceEngineAndResume = async \(workspaceId\?: string\)/);
   assert.match(appSource, /workspaceStore\.activateWorkspace\(targetWorkspaceId/);
-  assert.match(appSource, /refreshWorkspaceConfig: refreshWorkspaceConfigForPath/);
+  assert.match(viewPropsSource, /refreshWorkspaceConfig: refreshWorkspaceConfigForPath/);
 });
 
 test("app exposes a guarded E2E-only folder access permission injection hook", () => {
@@ -57,6 +58,7 @@ test("app consumes synthetic E2E folder access permissions without calling the l
   assert.match(appSource, /setPendingPermissions\(pendingPermissions\(\)\.filter\(\(permission\) => permission\.id !== requestId\)\)/);
   assert.match(appSource, /__vesloE2ELastFolderAccessPermissionReply = \{ requestID: requestId, reply \}/);
   assert.match(appSource, /await respondPermission\(requestID, reply\)/);
-  assert.match(appSource, /respondPermission: respondPermissionForSessionView/);
+  assert.match(appSource, /const respondPermissionForAppViewProps = respondPermissionForSessionView/);
+  assert.match(viewPropsSource, /respondPermission: respondPermissionForAppViewProps/);
   assert.match(appSource, /await respondPermissionForSessionView\(requestID, reply\)/);
 });

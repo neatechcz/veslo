@@ -455,7 +455,10 @@ fn collect_skill_files_from_dir(
 
     for entry in entries {
         let file_name = entry.file_name().to_string_lossy().to_string();
-        if matches!(file_name.as_str(), ".DS_Store" | "Thumbs.db" | "desktop.ini") {
+        if matches!(
+            file_name.as_str(),
+            ".DS_Store" | "Thumbs.db" | "desktop.ini"
+        ) {
             continue;
         }
         let file_type = entry.file_type().map_err(|e| e.to_string())?;

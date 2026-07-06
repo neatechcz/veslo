@@ -31,38 +31,79 @@ try {
   const agent = agents[0]?.id || agents[0]?.name;
   assert.ok(agent, "expected at least one agent for shell execution");
 
-  const session = await clientA.session.create({ title: "Directory switch", directory: dirA });
-  assert.ok(session?.id, "expected a session id");
+  const sessionA = await clientA.session.create({ title: "Directory switch A", directory: dirA });
+  assert.ok(sessionA?.id, "expected a session id");
 
   cpSync(dirA, dirB, { recursive: true });
 
   await clientA.session.shell({
-    sessionID: session.id,
+    sessionID: sessionA.id,
     directory: dirB,
     agent,
-    command: "node -e \"require('node:fs').writeFileSync('switched.txt', 'switched')\"",
+    command: "node -e \"require('node:fs').writeFileSync('pinned.txt', 'pinned')\"",
   });
 
-  assert.equal(existsSync(join(dirA, "switched.txt")), false, "command must not write into the old folder");
-  assert.equal(existsSync(join(dirB, "switched.txt")), true, "command must write into the new folder");
-  assert.equal(readFileSync(join(dirB, "switched.txt"), "utf8"), "switched");
-
-  const reopened = await clientA.session.get({ sessionID: session.id, directory: dirB });
-  assert.equal(reopened.id, session.id);
   assert.equal(
-    normalizeMacOSTempPath(reopened.directory),
+    existsSync(join(dirA, "pinned.txt")),
+    true,
+    "existing OpenCode session must stay pinned to its creation directory",
+  );
+  assert.equal(
+    existsSync(join(dirB, "pinned.txt")),
+    false,
+    "per-request directory override must not retarget an existing OpenCode session; Veslo must create a new session when the workspace directory changes",
+  );
+  assert.equal(readFileSync(join(dirA, "pinned.txt"), "utf8"), "pinned");
+
+  const reopenedA = await clientA.session.get({ sessionID: sessionA.id, directory: dirB });
+  assert.equal(reopenedA.id, sessionA.id);
+  assert.equal(
+    normalizeMacOSTempPath(reopenedA.directory),
     normalizeMacOSTempPath(dirA),
-    "OpenCode still stores the original session directory",
+    "session.get with a different directory must still report the original pinned session directory",
+  );
+
+  const clientB = makeClient({ baseUrl: server.baseUrl, directory: dirB });
+  const sessionB = await clientB.session.create({ title: "Directory switch B", directory: dirB });
+  assert.ok(sessionB?.id, "expected a second session id");
+
+  await clientB.session.shell({
+    sessionID: sessionB.id,
+    directory: dirB,
+    agent,
+    command: "node -e \"require('node:fs').writeFileSync('bound.txt', 'bound')\"",
+  });
+
+  assert.equal(
+    existsSync(join(dirB, "bound.txt")),
+    true,
+    "a second OpenCode session created for dirB must execute in dirB on the shared server process",
+  );
+  assert.equal(
+    existsSync(join(dirA, "bound.txt")),
+    false,
+    "per-session directory binding must isolate dirB commands from dirA on the shared server process",
+  );
+  assert.equal(readFileSync(join(dirB, "bound.txt"), "utf8"), "bound");
+
+  const reopenedB = await clientB.session.get({ sessionID: sessionB.id, directory: dirB });
+  assert.equal(reopenedB.id, sessionB.id);
+  assert.equal(
+    normalizeMacOSTempPath(reopenedB.directory),
+    normalizeMacOSTempPath(dirB),
+    "session B must store dirB as its pinned directory",
   );
 
   console.log(
     JSON.stringify({
       ok: true,
       baseUrl: server.baseUrl,
-      sessionID: session.id,
+      sessionID: sessionA.id,
+      sessionBID: sessionB.id,
       oldDirectory: dirA,
       newDirectory: dirB,
-      storedDirectory: reopened.directory,
+      storedDirectory: reopenedA.directory,
+      sessionBStoredDirectory: reopenedB.directory,
     }),
   );
 } catch (error) {

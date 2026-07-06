@@ -4,6 +4,10 @@ import { readFileSync } from "node:fs";
 const source = readFileSync(new URL("../src/app/pages/onboarding.tsx", import.meta.url), "utf8");
 const workspaceSource = readFileSync(new URL("../src/app/context/workspace.ts", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/app/app.tsx", import.meta.url), "utf8");
+const appStartupControllerSource = readFileSync(
+  new URL("../src/app/controllers/app-startup-controller.ts", import.meta.url),
+  "utf8",
+);
 
 assert.equal(
   source.includes("if (CLOUD_ONLY_MODE)"),
@@ -36,18 +40,17 @@ assert.equal(
   "language onboarding gate must check persisted language preference key",
 );
 assert.equal(
-  appSource.includes(
-    'if ((onboardingStep() === "language" || onboardingStep() === "auth") && !path.startsWith("/onboarding"))',
-  ),
+  appStartupControllerSource.includes('input.onboardingStep === "language" || input.onboardingStep === "auth"') &&
+    appStartupControllerSource.includes('reason: "onboarding-required"') &&
+    appSource.includes("startStartupRouteSync"),
   true,
-  "router must enter onboarding route when language step is active",
+  "startup route controller must route active language/auth onboarding into the onboarding view",
 );
 assert.equal(
-  appSource.includes(
-    'if (path.startsWith("/onboarding")) {\n      if (onboardingStep() === "language" || onboardingStep() === "auth") {\n        return;\n      }',
-  ),
+  appStartupControllerSource.includes('if (path.startsWith("/onboarding"))') &&
+    appStartupControllerSource.includes('reason: "onboarding-active"'),
   true,
-  "router must not redirect away from onboarding while language step is active",
+  "startup route controller must not redirect away from onboarding while language/auth onboarding is active",
 );
 assert.equal(
   /async function onConnectClient\(\)[\s\S]*options\.setOnboardingStep\("connecting"\)[\s\S]*remoteStoreRef\.createRemoteWorkspaceFlow\([\s\S]*if \(!ok\) \{\s*[\s\S]*options\.setOnboardingStep\("server"\);\s*return;[\s\S]*\}\s*[\s\S]*options\.setOnboardingStep\("server"\);/.test(

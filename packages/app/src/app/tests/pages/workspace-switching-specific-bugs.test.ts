@@ -91,7 +91,7 @@ test("dashboard runtime availability is not inferred from local connected browse
   const runtimeAvailabilitySource = sourceBetween(
     dashboardSource,
     "  const runtimeAvailableWithoutClient = createMemo(() => {",
-    "  const soulNavIconClass",
+    "  const handleDashboardTabSelection",
   );
 
   assert.doesNotMatch(

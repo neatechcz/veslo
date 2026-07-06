@@ -768,8 +768,21 @@ function restoreSoulDocument(scope: SoulScope, req: IncomingMessage, versionId: 
 function json(res: ServerResponse, status: number, payload: unknown): void {
   res.writeHead(status, {
     'content-type': 'application/json',
+    'access-control-allow-origin': '*',
+    'access-control-allow-headers': 'authorization,content-type',
+    'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
   });
   res.end(`${JSON.stringify(payload)}\n`);
+}
+
+function html(res: ServerResponse, status: number, body: string): void {
+  res.writeHead(status, {
+    'content-type': 'text/html; charset=utf-8',
+    'access-control-allow-origin': '*',
+    'access-control-allow-headers': 'authorization,content-type',
+    'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
+  });
+  res.end(body);
 }
 
 function installationFor(skill: FixtureSkill, workspaceId = E2E_SKILL_REGISTRY_WORKSPACE_ID) {
@@ -853,6 +866,16 @@ function readJsonBody(req: IncomingMessage, callback: (body: Record<string, unkn
 function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void {
   const base = registryBaseUrl ?? 'http://127.0.0.1';
   const url = new URL(req.url ?? '/', base);
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'access-control-allow-origin': '*',
+      'access-control-allow-headers': 'authorization,content-type',
+      'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
+    });
+    res.end();
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/__e2e/reset') {
     useUpdatedRuntimeVersion = false;
     deletedInstallationIds = new Set();
@@ -870,6 +893,18 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
   }
   if (req.method === 'GET' && url.pathname === '/__e2e/events') {
     json(res, 200, { deletedInstallationCalls, updatedRolloutPolicyCalls });
+    return;
+  }
+
+  const mcpOAuthPageMatch = /^\/__e2e\/(google|microsoft)-oauth\/([^/]+)$/.exec(url.pathname);
+  if (req.method === 'GET' && mcpOAuthPageMatch?.[1] && mcpOAuthPageMatch[2]) {
+    const provider = mcpOAuthPageMatch[1];
+    const connectorId = decodeURIComponent(mcpOAuthPageMatch[2]);
+    html(
+      res,
+      200,
+      `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Veslo ${provider} OAuth E2E</title></head><body><h1>OAuth fixture ready</h1><p>${connectorId}</p></body></html>`,
+    );
     return;
   }
 

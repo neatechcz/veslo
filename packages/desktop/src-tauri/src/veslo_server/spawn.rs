@@ -373,16 +373,11 @@ pub fn resolve_server_sandbox_backend_for_runtime_preference(
     }
 }
 
-fn server_cwd_for_workspace_paths(app: &AppHandle, workspace_paths: &[String]) -> PathBuf {
-    if let Some(path) = workspace_paths
-        .first()
-        .map(|path| path.trim())
-        .filter(|path| !path.is_empty())
-    {
-        return PathBuf::from(path);
-    }
-
-    if let Ok(app_data_dir) = app.path().app_data_dir() {
+fn server_cwd_from_app_data_dir(
+    app_data_dir: Option<PathBuf>,
+    _workspace_paths: &[String],
+) -> PathBuf {
+    if let Some(app_data_dir) = app_data_dir {
         if let Err(error) = fs::create_dir_all(&app_data_dir) {
             println!(
                 "[veslo-server] warning: failed to create app data cwd {}: {error}",
@@ -394,6 +389,10 @@ fn server_cwd_for_workspace_paths(app: &AppHandle, workspace_paths: &[String]) -
     }
 
     PathBuf::from(".")
+}
+
+fn server_cwd_for_workspace_paths(app: &AppHandle, workspace_paths: &[String]) -> PathBuf {
+    server_cwd_from_app_data_dir(app.path().app_data_dir().ok(), workspace_paths)
 }
 
 pub fn spawn_veslo_server(
@@ -562,6 +561,24 @@ mod tests {
             "0.0.0.0".to_string(),
         ];
         assert_eq!(build_veslo_server_dev_watch_args(args), expected);
+    }
+
+    #[test]
+    fn server_cwd_uses_app_data_dir_even_when_workspace_paths_exist() {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after epoch")
+            .as_nanos();
+        let app_data_dir = std::env::temp_dir().join(format!(
+            "veslo-server-cwd-test-{}-{suffix}",
+            std::process::id(),
+        ));
+        let protected_workspace = "/Users/example/Documents/Denied Project".to_string();
+
+        let cwd = server_cwd_from_app_data_dir(Some(app_data_dir.clone()), &[protected_workspace]);
+
+        assert_eq!(cwd, app_data_dir);
+        let _ = fs::remove_dir_all(cwd);
     }
 
     #[test]
@@ -754,8 +771,7 @@ mod tests {
     #[test]
     fn managed_ai_base_url_derives_from_deployment_domain() {
         let staging_domain = "staging.veslo.work";
-        let resolved =
-            resolve_managed_ai_base_url_from_env(None, None, Some(staging_domain));
+        let resolved = resolve_managed_ai_base_url_from_env(None, None, Some(staging_domain));
 
         assert_eq!(resolved, format!("https://ai.{}", staging_domain));
     }

@@ -15,6 +15,7 @@ describe("Workspace skill routes", () => {
       ["POST", "/workspace/ws_1/skills/resolve", "client"],
       ["POST", "/workspace/ws_1/skills/hub/example-skill", "client"],
       ["GET", "/workspace/ws_1/skills/example-skill", "client"],
+      ["GET", "/workspace/ws_1/skills/example-skill/files", "client"],
       ["POST", "/workspace/ws_1/skills", "client"],
       ["DELETE", "/workspace/ws_1/skills/example-skill", "client"],
     ];

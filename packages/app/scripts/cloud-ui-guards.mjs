@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const settingsSource = readFileSync(new URL("../src/app/pages/settings.tsx", import.meta.url), "utf8");
+const enLocaleSource = readFileSync(new URL("../src/i18n/locales/en.ts", import.meta.url), "utf8");
 assert.equal(
   settingsSource.includes("Start local server"),
   false,
@@ -50,9 +51,14 @@ assert.equal(
   "session empty state title must not imply local setup",
 );
 assert.equal(
-  settingsSource.includes("This build is cloud-only. Local host mode is disabled."),
+  settingsSource.includes('__vesloT("ui.literal.this_build_is_cloud_only_local_host_mode_is__1nekpu"'),
   true,
-  "settings must expose the cloud-only banner copy",
+  "settings must expose the localized cloud-only banner copy",
+);
+assert.equal(
+  enLocaleSource.includes('"ui.literal.this_build_is_cloud_only_local_host_mode_is__1nekpu"'),
+  true,
+  "English locale must define the cloud-only banner copy",
 );
 
-console.log(JSON.stringify({ ok: true, checks: 9 }));
+console.log(JSON.stringify({ ok: true, checks: 10 }));

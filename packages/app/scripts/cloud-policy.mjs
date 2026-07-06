@@ -85,14 +85,19 @@ assert.equal(nonCloudMerged.next.token, "persist-token");
 assert.equal(nonCloudMerged.next.portOverride, 8787);
 assert.equal(nonCloudMerged.changed, false);
 
-const vesloServerSource = readFileSync(
-  new URL("../src/app/lib/veslo-server.ts", import.meta.url),
+const vesloServerConnectionSource = readFileSync(
+  new URL("../src/app/lib/veslo-server/connection.ts", import.meta.url),
   "utf8",
 );
-assert.equal(
-  vesloServerSource.includes("mergeVesloServerSettingsWithEnv"),
-  true,
-  "veslo-server.ts must merge env settings through cloud policy helper",
+assert.match(
+  vesloServerConnectionSource,
+  /import\s+\{[^}]*\bmergeVesloServerSettingsWithEnv\b[^}]*\}\s+from\s+["']\.\.\/cloud-policy["'];/,
+  "veslo server connection must import env settings merger from cloud policy helper",
+);
+assert.match(
+  vesloServerConnectionSource,
+  /\bmergeVesloServerSettingsWithEnv\s*\(/,
+  "veslo server connection must merge env settings through cloud policy helper",
 );
 
 const entrySource = readFileSync(new URL("../src/app/entry.tsx", import.meta.url), "utf8");
@@ -111,6 +116,11 @@ assert.equal(
   false,
   "workspace bootstrap should retain local workers in local-sync mode",
 );
-assert.equal(workspaceSource.includes("cloud_only_local_disabled"), true, "workspace store must expose cloud-only local action guard code");
+assert.equal(
+  workspaceSource.includes('cloudOnlyMessage("cloud_only_local_workspace_filtered"') &&
+    workspaceSource.includes('blockLocalAction("cloud_only_host_mode_removed"'),
+  true,
+  "workspace store must expose cloud-only local action guard code",
+);
 
-console.log(JSON.stringify({ ok: true, checks: 27 }));
+console.log(JSON.stringify({ ok: true, checks: 28 }));

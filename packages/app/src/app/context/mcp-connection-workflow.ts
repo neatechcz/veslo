@@ -414,7 +414,15 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
     }
 
     deps.setMcpStatus(tr("mcp.auth.follow_browser_steps"));
-    await deps.openDesktopAuthUrl(payload.authorizeUrl);
+    try {
+      await deps.openDesktopAuthUrl(payload.authorizeUrl);
+    } catch (error) {
+      deps.recordPerfLog(deps.developerMode(), "mcp.oauth", "browser-open-failed", {
+        provider: entry.authorization.provider,
+        connectorId: entry.authorization.connectorId,
+        message: error instanceof Error ? error.message : deps.safeStringify(error),
+      });
+    }
     return true;
   }
 

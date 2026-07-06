@@ -42,8 +42,8 @@ test("pending permission and question modals do not fall back while no real sess
 
   assert.match(
     permissionSource,
-    /const id = deps\.selectedSessionId\(\);[\s\S]*if \(id\) \{[\s\S]*if \(scoped\) return scoped;[\s\S]*\} else \{\s*return null;\s*\}/s,
-    "permission modal should not surface an unrelated background request while the UI is on a pending/new chat",
+    /const id = deps\.selectedSessionId\(\);[\s\S]*if \(id\) \{[\s\S]*if \(scoped\) return scoped;[\s\S]*\} else \{[\s\S]*const activeWsId = deps\.routing\.activeWorkspaceId\(\);[\s\S]*return\s+\w+\.find\(\(perm\) =>\s*perm\.workspaceId === activeWsId\s*&&\s*isWorkspaceFolderAccessPermission\(perm\)\s*\)\s*\?\? null;\s*\}/s,
+    "permission modal should only fall back to an active-workspace folder-access request while the UI is on a pending/new chat",
   );
   assert.match(
     questionSource,

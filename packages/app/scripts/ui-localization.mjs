@@ -21,11 +21,17 @@ const UI_TEXT_ATTRIBUTES = new Set([
 const ALLOWED_TEXT = new Set([
   "@BotFather",
   "API",
+  // Keyboard key cap rendered on a kbd hint; locale-neutral.
+  "Esc",
   "MCP",
   "OpenCode",
   "OpenCodeRouter",
   "PID",
   "RESET",
+  // Pinned verbatim by settings-runtime-preferences.test.ts; localizing needs a product spec change first.
+  "Sandbox",
+  "Toggle Sandbox",
+  "A sandbox gives the AI a safe place to work. It can use the files in a folder, but it is kept separate from the rest of your computer.",
   "Slack",
   "Telegram",
   "URL",
@@ -89,7 +95,31 @@ for (const filePath of tsxFiles) {
     });
   };
 
+  const isDeveloperModeShow = (node) => {
+    if (ts.isJsxElement(node)) {
+      const openingElement = node.openingElement;
+      if (openingElement.tagName.getText(sourceFile) !== "Show") return false;
+      const whenAttribute = openingElement.attributes.properties.find(
+        (property) => ts.isJsxAttribute(property) && property.name.getText(sourceFile) === "when",
+      );
+      return Boolean(whenAttribute?.initializer?.getText(sourceFile).includes("developerMode"));
+    }
+
+    if (ts.isJsxSelfClosingElement(node)) {
+      if (node.tagName.getText(sourceFile) !== "Show") return false;
+      const whenAttribute = node.attributes.properties.find(
+        (property) => ts.isJsxAttribute(property) && property.name.getText(sourceFile) === "when",
+      );
+      return Boolean(whenAttribute?.initializer?.getText(sourceFile).includes("developerMode"));
+    }
+
+    return false;
+  };
+
   const visit = (node) => {
+    // Developer-mode-gated diagnostics are not production UI copy.
+    if (isDeveloperModeShow(node)) return;
+
     if (ts.isJsxText(node)) {
       addFinding(node, "JSX text", node.getText(sourceFile));
     } else if (
