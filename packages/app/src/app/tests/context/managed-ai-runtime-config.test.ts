@@ -141,6 +141,74 @@ function createOptions(
   return options;
 }
 
+test("runtime auth prime is single-flight and cached for a short success window", async () => {
+  let now = 1_000;
+  let accessCalls = 0;
+  const firstAccessGate: { release?: () => void } = {};
+  const traces: string[] = [];
+  const response = {
+    aiAccess: {
+      id: "access-1",
+      enabled: true,
+      userId: profile.userId,
+      provider: profile.providerId,
+      defaultModel: profile.defaultModel.modelID,
+      allowedModels: profile.allowedModels,
+      updatedAt: profile.updatedAt,
+    },
+    accessToken: "runtime-access-token",
+  };
+
+  const sync = createManagedAiRuntimeConfigSync(
+    createOptions({
+      now: () => now,
+      runtimeAuthorizationPrimeSuccessTtlMs: 5_000,
+      recordManagedAiWorkflowTrace: (event) => {
+        traces.push(event);
+      },
+      createVesloServerClient: () => ({
+        baseUrl: "http://127.0.0.1:34115",
+        getMyAiAccess: async () => {
+          accessCalls += 1;
+          if (accessCalls === 1) {
+            await new Promise<void>((resolve) => {
+              firstAccessGate.release = resolve;
+            });
+          }
+          return response;
+        },
+      }),
+    }),
+  );
+
+  const first = sync.ensureManagedAiRuntimeAuthorizationForSend();
+  const second = sync.ensureManagedAiRuntimeAuthorizationForSend();
+  await Promise.resolve();
+  assert.equal(accessCalls, 1);
+  assert.ok(traces.includes("managed-ai-runtime-auth-prime:join"));
+
+  const releaseFirstAccess = firstAccessGate.release;
+  if (typeof releaseFirstAccess !== "function") {
+    throw new Error("first access was not awaited");
+  }
+  releaseFirstAccess();
+  assert.equal(await first, true);
+  assert.equal(await second, true);
+  assert.equal(accessCalls, 1);
+
+  assert.equal(await sync.ensureManagedAiRuntimeAuthorizationForSend(), true);
+  assert.equal(accessCalls, 1);
+  assert.ok(traces.includes("managed-ai-runtime-auth-prime:cache-hit"));
+
+  sync.clearManagedAiRuntimeAuthorizationPrimeCache();
+  assert.equal(await sync.ensureManagedAiRuntimeAuthorizationForSend(), true);
+  assert.equal(accessCalls, 2);
+
+  now = 7_001;
+  assert.equal(await sync.ensureManagedAiRuntimeAuthorizationForSend(), true);
+  assert.equal(accessCalls, 3);
+});
+
 test("runtime config sync writes managed provider config through project file path without reloading", async () => {
   const writes: Array<{ scope: string; root: string; content: string }> = [];
   const reloads: string[] = [];

@@ -5,7 +5,7 @@ plan_type: implementation
 agw_l01_provider_start_session_scoped_done: true
 agw_l02_legacy_gateway_token_redaction_done: true
 agw_l03_runtime_authorization_logout_ttl_done: true
-agw_l04_runtime_auth_prime_singleflight_done: false
+agw_l04_runtime_auth_prime_singleflight_done: true
 agw_s01_gateway_auth_before_body_parse_done: true
 agw_s02_den_session_lookup_cache_done: false
 agw_s03_gateway_async_error_boundary_done: true
@@ -905,14 +905,14 @@ Acceptance:
 
 #### AGW-L04: Runtime auth prime single-flight
 
-Status: optional optimization, not a correctness blocker for the first fix
-batch. Not required for top-level `done` unless a maintainer promotes duplicate
-runtime-auth priming to an active incident class.
-Done flag: `agw_l04_runtime_auth_prime_singleflight_done: false`.
+Status: implemented after confirming the current send path can prime once in
+readiness and again in submit/run.
+Done flag: `agw_l04_runtime_auth_prime_singleflight_done: true`.
 
 Owner files:
 
 - `packages/app/src/app/context/managed-ai-runtime-config.ts`
+- `packages/app/src/app/app.tsx`
 - `packages/app/src/app/tests/context/managed-ai-runtime-config.test.ts`
 - `packages/app/src/app/tests/context/send-runtime-readiness.test.ts`
 - `packages/app/src/app/tests/context/conversation-service.test.ts`
@@ -1176,6 +1176,11 @@ Implementation verification on 2026-07-07:
   blocked by pre-existing unrelated session workflow test type errors in
   `src/app/tests/pages/session-creation-workflow.test.ts` and
   `src/app/tests/pages/session-send-workflow.test.ts`.
+- `AGW-L04`: `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/managed-ai-runtime-config.test.ts src/app/tests/context/send-runtime-readiness.test.ts src/app/tests/context/conversation-service.test.ts`
+  passed with 54 tests.
+- `AGW-L04`: `pnpm --filter @neatech/veslo-ui typecheck` was attempted after
+  fixing the L04 type errors; it is currently blocked by unrelated dirty
+  `src/app/tests/pages/session-send-workflow.test.ts` queue item type errors.
 
 The original audit was performed against the live checkout on branch
 `local/sandbox-merge...origin/local/sandbox-merge`. At that time, the worktree

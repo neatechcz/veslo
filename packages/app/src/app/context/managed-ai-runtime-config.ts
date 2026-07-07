@@ -41,6 +41,8 @@ import {
   parseModelRef,
 } from "../utils";
 
+const RUNTIME_AUTH_PRIME_SUCCESS_TTL_MS = 15_000;
+
 export type ManagedAiRuntimeWorkspace = {
   id?: string | null;
   vesloWorkspaceId?: string | null;
@@ -156,6 +158,8 @@ export type ManagedAiRuntimeConfigSyncOptions = {
   shouldRetryManagedAiConfigReadForSend?: (error: unknown, baseUrl: string) => boolean;
   delay?: (ms: number) => Promise<void>;
   random?: () => number;
+  now?: () => number;
+  runtimeAuthorizationPrimeSuccessTtlMs?: number;
 };
 
 export type ManagedAiRuntimeConfigSync = {
@@ -175,10 +179,22 @@ export type ManagedAiRuntimeConfigSync = {
   healInactiveManagedAiWorkspaceConfigs: () => Promise<void>;
   rememberKnownConfigSnapshot: (key: string, content: string | null) => void;
   clearManagedConfigTracking: () => void;
+  clearManagedAiRuntimeAuthorizationPrimeCache: () => void;
 };
 
 function defaultDelay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function hashRuntimeAuthorizationCachePart(value?: string | null): string {
+  const input = value?.trim() ?? "";
+  if (!input) return "";
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
 }
 
 function summarizeUrlForManagedAiTrace(value: string | null | undefined): Record<string, unknown> {
@@ -244,8 +260,17 @@ export function createManagedAiRuntimeConfigSync(
   const effect = deps.effect ?? ((fn: () => void) => createEffect(fn));
   const delay = deps.delay ?? defaultDelay;
   const random = deps.random ?? Math.random;
+  const now = deps.now ?? (() => Date.now());
+  const runtimeAuthorizationPrimeSuccessTtlMs = Math.max(
+    0,
+    deps.runtimeAuthorizationPrimeSuccessTtlMs ?? RUNTIME_AUTH_PRIME_SUCCESS_TTL_MS,
+  );
   const lastKnownConfigSnapshotByWs = new Map<string, string>();
   const inactiveWorkspaceBaseUrlHealedFor = new Map<string, string>();
+  const runtimeAuthorizationPrimeInFlight = new Map<string, Promise<boolean>>();
+  let runtimeAuthorizationPrimeSuccess:
+    | { key: string; expiresAt: number }
+    | null = null;
   let managedAiConfigSyncGeneration = 0;
   let inactiveWorkspaceBaseUrlHealGeneration = 0;
   let lastManagedAiAccessResetKey = "";
@@ -258,6 +283,11 @@ export function createManagedAiRuntimeConfigSync(
     setLastManagedAiConfigAppliedForServerToken("");
     lastKnownConfigSnapshotByWs.clear();
     inactiveWorkspaceBaseUrlHealedFor.clear();
+  };
+
+  const clearManagedAiRuntimeAuthorizationPrimeCache = () => {
+    runtimeAuthorizationPrimeSuccess = null;
+    runtimeAuthorizationPrimeInFlight.clear();
   };
 
   const rememberKnownConfigSnapshot = (key: string, content: string | null) => {
@@ -572,46 +602,96 @@ export function createManagedAiRuntimeConfigSync(
       });
       return false;
     }
+    const providerRoutingTarget = routing.providerRoutingTarget;
+    const providerRoutingLocalHost = routing.providerRoutingLocalHost;
 
-    deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:start", routing.tracePayload);
-    try {
-      const runtimeClient = deps.createVesloServerClient({
-        baseUrl: routing.providerRoutingTarget.baseUrl,
-        token: routing.providerRoutingTarget.serverClientToken,
-        hostToken: routing.providerRoutingLocalHost?.hostToken || undefined,
-      });
-      const response = await runtimeClient.getMyAiAccess(userToken);
-      const { profile, gatewayAccessToken, reason } = resolveManagedAiAccessBundleState({
-        aiAccess: response.aiAccess,
-        accessToken: response.accessToken,
-        fallbackAccessToken: userToken,
-        requireGatewayAccessToken: false,
-      });
-      if (!profile) {
-        deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:result", {
-          ...routing.tracePayload,
-          ok: false,
-          reason,
-        });
-        if (reason) deps.setManagedAiAccessError(reason);
-        return false;
-      }
+    const runtimeAuthorizationPrimeCacheKey = [
+      providerRoutingTarget.baseUrl.trim().replace(/\/+$/, ""),
+      targetWorkspaceId || workspace.id?.trim() || "",
+      hashRuntimeAuthorizationCachePart(providerRoutingTarget.serverClientToken),
+      hashRuntimeAuthorizationCachePart(providerRoutingLocalHost?.hostToken),
+      hashRuntimeAuthorizationCachePart(userToken),
+      String(deps.denAuthRevision()),
+    ].join("|");
 
-      deps.applyManagedAiAccessProfile(profile, gatewayAccessToken, { writeCache: true });
-      deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:result", {
+    if (
+      runtimeAuthorizationPrimeSuccess?.key === runtimeAuthorizationPrimeCacheKey &&
+      runtimeAuthorizationPrimeSuccess.expiresAt > now()
+    ) {
+      deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:cache-hit", {
         ...routing.tracePayload,
-        ok: true,
-        providerId: profile.providerId,
-        defaultModelId: profile.defaultModel.modelID,
-        gatewayAccessTokenPresent: Boolean(gatewayAccessToken),
+        expiresInMs: Math.max(0, runtimeAuthorizationPrimeSuccess.expiresAt - now()),
       });
       return true;
-    } catch (error) {
-      deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:error", {
-        ...routing.tracePayload,
-        message: error instanceof Error ? error.message : deps.safeStringify(error),
-      });
-      return false;
+    }
+    if (
+      runtimeAuthorizationPrimeSuccess?.key === runtimeAuthorizationPrimeCacheKey &&
+      runtimeAuthorizationPrimeSuccess.expiresAt <= now()
+    ) {
+      runtimeAuthorizationPrimeSuccess = null;
+    }
+
+    const inFlight = runtimeAuthorizationPrimeInFlight.get(runtimeAuthorizationPrimeCacheKey);
+    if (inFlight) {
+      deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:join", routing.tracePayload);
+      return inFlight;
+    }
+
+    const prime = (async (): Promise<boolean> => {
+      deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:start", routing.tracePayload);
+      try {
+        const runtimeClient = deps.createVesloServerClient({
+          baseUrl: providerRoutingTarget.baseUrl,
+          token: providerRoutingTarget.serverClientToken,
+          hostToken: providerRoutingLocalHost?.hostToken || undefined,
+        });
+        const response = await runtimeClient.getMyAiAccess(userToken);
+        const { profile, gatewayAccessToken, reason } = resolveManagedAiAccessBundleState({
+          aiAccess: response.aiAccess,
+          accessToken: response.accessToken,
+          fallbackAccessToken: userToken,
+          requireGatewayAccessToken: false,
+        });
+        if (!profile) {
+          deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:result", {
+            ...routing.tracePayload,
+            ok: false,
+            reason,
+          });
+          if (reason) deps.setManagedAiAccessError(reason);
+          return false;
+        }
+
+        deps.applyManagedAiAccessProfile(profile, gatewayAccessToken, { writeCache: true });
+        if (runtimeAuthorizationPrimeSuccessTtlMs > 0) {
+          runtimeAuthorizationPrimeSuccess = {
+            key: runtimeAuthorizationPrimeCacheKey,
+            expiresAt: now() + runtimeAuthorizationPrimeSuccessTtlMs,
+          };
+        }
+        deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:result", {
+          ...routing.tracePayload,
+          ok: true,
+          providerId: profile.providerId,
+          defaultModelId: profile.defaultModel.modelID,
+          gatewayAccessTokenPresent: Boolean(gatewayAccessToken),
+        });
+        return true;
+      } catch (error) {
+        deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:error", {
+          ...routing.tracePayload,
+          message: error instanceof Error ? error.message : deps.safeStringify(error),
+        });
+        return false;
+      }
+    })();
+    runtimeAuthorizationPrimeInFlight.set(runtimeAuthorizationPrimeCacheKey, prime);
+    try {
+      return await prime;
+    } finally {
+      if (runtimeAuthorizationPrimeInFlight.get(runtimeAuthorizationPrimeCacheKey) === prime) {
+        runtimeAuthorizationPrimeInFlight.delete(runtimeAuthorizationPrimeCacheKey);
+      }
     }
   };
 
@@ -1146,6 +1226,7 @@ export function createManagedAiRuntimeConfigSync(
     if (nextKey === lastManagedAiAccessResetKey) return;
     lastManagedAiAccessResetKey = nextKey;
     clearManagedConfigTracking();
+    clearManagedAiRuntimeAuthorizationPrimeCache();
   });
 
   effect(() => {
@@ -1173,5 +1254,6 @@ export function createManagedAiRuntimeConfigSync(
     healInactiveManagedAiWorkspaceConfigs: () => healInactiveManagedAiWorkspaceConfigs(),
     rememberKnownConfigSnapshot,
     clearManagedConfigTracking,
+    clearManagedAiRuntimeAuthorizationPrimeCache,
   };
 }

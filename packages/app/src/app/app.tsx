@@ -672,6 +672,7 @@ export default function App() {
     lateManagedAiAccessStore.current()?.clearManagedAiAccessCache();
   };
   const clearManagedAiRuntimeAuthorizationFromAuth = async () => {
+    lateManagedAiRuntimeConfig.current()?.clearManagedAiRuntimeAuthorizationPrimeCache();
     const client = vesloServerClient();
     if (!client || vesloServerStatus() === "disconnected") return;
     await client.clearMyAiGatewayRuntimeAuthorization();
