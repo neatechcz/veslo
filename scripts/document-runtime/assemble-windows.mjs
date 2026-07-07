@@ -3,7 +3,8 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { access, copyFile, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, copyFile, cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -64,6 +65,14 @@ const exists = async (path) => {
 };
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
+
+const shortTempParent = () => resolve(process.env.RUNNER_TEMP || tmpdir());
+
+async function createShortTempWorkDir() {
+  const parent = shortTempParent();
+  await mkdir(parent, { recursive: true });
+  return await mkdtemp(join(parent, `vdr-${process.pid.toString(36)}-${Date.now().toString(36)}-`));
+}
 
 const writeJson = async (path, value) => {
   await mkdir(dirname(path), { recursive: true });
@@ -327,27 +336,69 @@ async function runCommand(command, args, { cwd, env = process.env, timeoutMs = 0
   });
 }
 
-async function extractArchive(archivePath, destination, runner = runCommand) {
-  await rm(destination, { recursive: true, force: true });
-  await mkdir(destination, { recursive: true });
-  await runner("tar", ["-xf", archivePath, "-C", destination], { timeoutMs: 15 * 60 * 1000 });
+const sleep = async (delayMs) => {
+  if (delayMs > 0) await new Promise((resolvePromise) => setTimeout(resolvePromise, delayMs));
+};
+
+export async function runCommandWithRetry(command, args, options = {}, { attempts = 3, delayMs = 3000, runner = runCommand } = {}) {
+  if (!Number.isSafeInteger(attempts) || attempts < 1) throw new Error("runCommandWithRetry attempts must be a positive integer.");
+  const failures = [];
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await runner(command, args, options);
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+      if (attempt < attempts) await sleep(delayMs);
+    }
+  }
+  throw new Error([
+    `${command} ${args.join(" ")} failed after ${attempts} attempts.`,
+    ...failures.map((failure, index) => `attempt ${index + 1}: ${failure}`),
+  ].join("\n"));
 }
 
-async function findFile(root, predicate) {
+async function resolveTarCommand() {
+  const systemRoot = process.env.SystemRoot || process.env.windir || "C:\\Windows";
+  const systemTar = join(systemRoot, "System32", "tar.exe");
+  return (await exists(systemTar)) ? systemTar : "tar";
+}
+
+export async function extractArchive(archivePath, destination, runner = runCommand) {
+  await rm(destination, { recursive: true, force: true });
+  await mkdir(destination, { recursive: true });
+  await runner(await resolveTarCommand(), ["-xf", archivePath, "-C", destination], { timeoutMs: 15 * 60 * 1000 });
+}
+
+async function collectMatchingFiles(root, predicate, matches = []) {
   const entries = (await readdir(root, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
     const path = join(root, entry.name);
     if (entry.isDirectory()) {
-      const found = await findFile(path, predicate);
-      if (found) return found;
+      await collectMatchingFiles(path, predicate, matches);
     } else if (entry.isFile() && predicate(path, entry.name)) {
-      return path;
+      matches.push(path);
     }
   }
-  return null;
+  return matches;
 }
 
-async function findFileByName(root, name) {
+const pathDepthFromRoot = (root, filePath) => {
+  const path = relative(root, filePath);
+  if (!path) return 0;
+  return path.split(/[\\/]+/).filter(Boolean).length;
+};
+
+async function findFile(root, predicate) {
+  const matches = await collectMatchingFiles(root, predicate);
+  if (matches.length === 0) return null;
+  return matches.reduce((best, candidate) => {
+    const bestDepth = pathDepthFromRoot(root, best);
+    const candidateDepth = pathDepthFromRoot(root, candidate);
+    return candidateDepth < bestDepth ? candidate : best;
+  });
+}
+
+export async function findFileByName(root, name) {
   const lower = name.toLowerCase();
   return await findFile(root, (_path, entryName) => entryName.toLowerCase() === lower);
 }
@@ -414,11 +465,48 @@ async function assertRequiredLayout(targetDir) {
   }
 }
 
+async function readUtf16LogTail(logPath, maxChars = 4000) {
+  try {
+    const content = await readFile(logPath);
+    return content.toString("utf16le").slice(-maxChars).trim();
+  } catch {
+    return "";
+  }
+}
+
+export async function runMsiAdministrativeInstall({ msiPath, adminDir, logPath, runner = runCommand } = {}) {
+  if (!msiPath) throw new Error("runMsiAdministrativeInstall requires msiPath.");
+  if (!adminDir) throw new Error("runMsiAdministrativeInstall requires adminDir.");
+  if (!logPath) throw new Error("runMsiAdministrativeInstall requires logPath.");
+
+  let lastError = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    await rm(adminDir, { recursive: true, force: true });
+    await rm(logPath, { force: true });
+    await mkdir(adminDir, { recursive: true });
+    try {
+      await runner("msiexec.exe", ["/a", msiPath, "/qn", `TARGETDIR=${adminDir}`, "/L*V", logPath], {
+        timeoutMs: 30 * 60 * 1000,
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt === 1) continue;
+    }
+  }
+
+  const tail = await readUtf16LogTail(logPath);
+  const message = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error([
+    `LibreOffice MSI administrative install failed after retry: ${message}`,
+    tail ? `msiexec verbose log tail (${logPath}):\n${tail}` : `msiexec verbose log was not readable: ${logPath}`,
+  ].join("\n"));
+}
+
 async function installLibreOffice(download, workDir, targetDir, runner) {
-  const adminDir = join(workDir, "libreoffice-admin");
-  await rm(adminDir, { recursive: true, force: true });
-  await mkdir(adminDir, { recursive: true });
-  await runner("msiexec.exe", ["/a", download.filePath, "/qn", `TARGETDIR=${adminDir}`], { timeoutMs: 30 * 60 * 1000 });
+  const adminDir = join(workDir, "lo");
+  const logPath = join(workDir, "lo-msi.log");
+  await runMsiAdministrativeInstall({ msiPath: download.filePath, adminDir, logPath, runner });
   const soffice = await findFileByName(adminDir, "soffice.exe");
   if (!soffice) throw new Error("LibreOffice administrative install did not produce soffice.exe.");
   const programDir = dirname(soffice);
@@ -450,6 +538,18 @@ async function installQpdf(download, workDir, targetDir, runner) {
   await copyFileDirectory(dirname(qpdf), join(targetDir, "bin"));
 }
 
+const replaceLiteral = (text, search, replacement) => search ? text.split(search).join(replacement) : text;
+
+export async function fixVenvPyvenvCfg(venvDir, stagingRoot, targetRoot) {
+  const configPath = join(venvDir, "pyvenv.cfg");
+  const original = await readFile(configPath, "utf8");
+  let updated = replaceLiteral(original, stagingRoot, targetRoot);
+  updated = replaceLiteral(updated, stagingRoot.split("\\").join("/"), targetRoot.split("\\").join("/"));
+  if (updated.includes(stagingRoot) || updated.includes(stagingRoot.split("\\").join("/"))) {
+    throw new Error(`Failed to rewrite staging path in ${configPath}.`);
+  }
+  if (updated !== original) await writeFile(configPath, updated, "utf8");
+}
 async function installPython(download, workDir, targetDir, inventory, runner) {
   const extractDir = join(workDir, "python");
   await extractArchive(download.filePath, extractDir, runner);
@@ -459,29 +559,36 @@ async function installPython(download, workDir, targetDir, inventory, runner) {
   await cp(dirname(pythonExe), runtimeDir, { recursive: true, force: true });
   const runtimePython = join(runtimeDir, "python.exe");
   const venvDir = join(targetDir, "python", "venv");
-  await runner(runtimePython, ["-m", "venv", venvDir], { timeoutMs: 10 * 60 * 1000 });
+  await runCommandWithRetry(runtimePython, ["-m", "venv", venvDir], { timeoutMs: 10 * 60 * 1000 }, { runner });
   const venvPython = join(venvDir, "Scripts", "python.exe");
-  await runner(venvPython, ["-m", "ensurepip", "--upgrade"], { timeoutMs: 10 * 60 * 1000 });
-  await runner(venvPython, [
+  await runCommandWithRetry(venvPython, ["-m", "ensurepip", "--upgrade"], { timeoutMs: 10 * 60 * 1000 }, { runner });
+  await runCommandWithRetry(venvPython, [
     "-m",
     "pip",
     "install",
     "--no-cache-dir",
     "--disable-pip-version-check",
     ...inventory.pythonPackages,
-  ], { timeoutMs: 60 * 60 * 1000 });
+  ], { timeoutMs: 60 * 60 * 1000 }, { runner });
   await mkdir(join(targetDir, "python", "site-packages"), { recursive: true });
   await writeWindowsLauncher(join(targetDir, "bin"), "python", normalizePath(join("..", "python", "venv", "Scripts", "python.exe")));
   await writeWindowsLauncher(join(targetDir, "bin"), "weasyprint", normalizePath(join("..", "python", "venv", "Scripts", "weasyprint.exe")));
 }
 
-async function installNode(download, workDir, targetDir, inventory, runner) {
+export async function installNode(download, workDir, targetDir, inventory, runner) {
   const extractDir = join(workDir, "node");
   await extractArchive(download.filePath, extractDir, runner);
   const nodeExe = await findFileByName(extractDir, "node.exe");
   if (!nodeExe) throw new Error("Node.js archive did not include node.exe.");
   const runtimeDir = join(targetDir, "node", "runtime");
   await cp(dirname(nodeExe), runtimeDir, { recursive: true, force: true });
+  const runtimeNode = join(runtimeDir, "node.exe");
+  const runtimeNpmCli = join(runtimeDir, "node_modules", "npm", "bin", "npm-cli.js");
+  try {
+    await access(runtimeNpmCli);
+  } catch {
+    throw new Error("Node.js runtime did not include node_modules/npm/bin/npm-cli.js.");
+  }
   await writeWindowsLauncher(join(targetDir, "bin"), "node", normalizePath(join("..", "node", "runtime", "node.exe")));
   await writeWindowsLauncher(join(targetDir, "bin"), "npm", normalizePath(join("..", "node", "runtime", "npm.cmd")));
   const packageJson = {
@@ -491,9 +598,9 @@ async function installNode(download, workDir, targetDir, inventory, runner) {
     dependencies: Object.fromEntries(inventory.nodePackages.map((name) => [name, "*"])),
   };
   await writeJson(join(targetDir, "package.json"), packageJson);
-  await runner(join(runtimeDir, "npm.cmd"), ["install", "--prefix", targetDir, "--omit=dev", "--no-audit", "--no-fund"], {
+  await runCommandWithRetry(runtimeNode, [runtimeNpmCli, "install", "--prefix", targetDir, "--omit=dev", "--no-audit", "--no-fund"], {
     timeoutMs: 60 * 60 * 1000,
-  });
+  }, { runner });
 }
 
 async function installFonts(downloads, workDir, targetDir, runner) {
@@ -543,9 +650,8 @@ async function createDryRunRuntimeTree(targetDir, inventory, targetTemplate) {
 
 async function createRealRuntimeTree({ targetDir, downloads, inventory, targetTemplate, runner = runCommand }) {
   const stagingDir = `${targetDir}.staging-${process.pid}-${Date.now()}`;
-  const workDir = `${targetDir}.work-${process.pid}-${Date.now()}`;
+  const workDir = await createShortTempWorkDir();
   await rm(stagingDir, { recursive: true, force: true });
-  await rm(workDir, { recursive: true, force: true });
   await mkdir(stagingDir, { recursive: true });
   await mkdir(workDir, { recursive: true });
   try {
@@ -564,6 +670,7 @@ async function createRealRuntimeTree({ targetDir, downloads, inventory, targetTe
     await rm(targetDir, { recursive: true, force: true });
     await mkdir(dirname(targetDir), { recursive: true });
     await rename(stagingDir, targetDir);
+    await fixVenvPyvenvCfg(join(targetDir, "python", "venv"), stagingDir, targetDir);
     return manifest;
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
