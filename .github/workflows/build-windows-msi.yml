@@ -76,6 +76,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
+      - name: Cache document runtime downloads
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            packages/document-runtime/.cache/windows-native-x64
+            packages/document-runtime/manifests/sources/windows-native-x64.lock.json
+          key: windows-document-runtime-${{ hashFiles('packages/document-runtime/manifests/sources/windows-native-x64.json') }}
+          restore-keys: |
+            windows-document-runtime-
+
+      - name: Assemble Windows document runtime
+        shell: pwsh
+        run: node scripts/document-runtime/assemble-windows.mjs
+
       - name: Resolve Windows signing
         id: signing
         shell: bash
