@@ -44,6 +44,7 @@ import {
 import {
   sessionSubmitAcceptedResult,
   sessionSubmitBlockedResult,
+  sessionSubmitQueuedResult,
   type SessionSubmitResult,
 } from "../../lib/session-send-contract.js";
 
@@ -273,6 +274,286 @@ test("conversation flow controller blocks before transport while preserving opti
   assert.deepEqual(toasts, ["AI access blocked"]);
   assert.equal(pendingDrafts["pending-session:generated"]?.state, "error");
   assert.equal(pendingDrafts["pending-session:generated"]?.error, "AI access blocked");
+});
+
+test("conversation flow controller submits running Enter to the server queue", async () => {
+  const queueAppends: string[] = [];
+  const sendCalls: Array<{
+    text: string;
+    origin: string;
+    targetSessionId: string | null | undefined;
+    clientMessageId: string;
+  }> = [];
+
+  const controller = createSessionConversationFlow({
+    identity: {
+      createClientMessageId: () => "submit-running-enter",
+      createPendingSessionInstanceId: () => "pending-session:unused",
+      now: () => 123,
+    },
+    sessionKeys: {
+      activeUiConversationWorkspaceId: () => "workspace-1",
+      activeWorkspaceId: () => "workspace-1",
+      currentSessionQueueKey: () => "session-a",
+      pendingSessionQueueKey: () => "pending:base",
+      selectedSessionId: () => "session-a",
+      sessionIdForQueueKey: (sessionKey) => (sessionKey === "session-a" ? "session-a" : null),
+      sessionQueueKeyForSessionId: (sessionId) => sessionId ?? "pending:base",
+      workspaceIdForQueueKey: () => "workspace-1",
+    },
+    runtime: {
+      activePendingDraftKey: () => null,
+      aiAccessBlockedReason: () => null,
+      busyHint: () => null,
+      busyLabel: () => null,
+      error: () => null,
+    },
+    transcript: {
+      messageCount: () => 0,
+      messageIds: () => [],
+    },
+    pendingHandoff: {
+      clearPendingQueueKeyAwaitingSessionIdForBaseKey: () => undefined,
+      createPendingSidebarSessionWorkspaceId: () => "workspace-1",
+      createPendingSidebarSessionWorkspaceRoot: () => "/workspace",
+      remapPendingQueueToSession: () => undefined,
+      restoreMaterializedQueueToPending: () => undefined,
+      setPendingQueueKeyAwaitingSessionIdForBaseKey: () => undefined,
+    },
+    pendingSubmitted: {
+      optimisticSubmittedDraft: () => null,
+      setOptimisticSubmittedDraft: () => undefined,
+      updatePendingSubmittedDrafts: () => undefined,
+    },
+    queue: {
+      appendDraftToCurrentQueue: (queuedDraft) => {
+        queueAppends.push(queuedDraft.text);
+      },
+      editingQueuedDraftId: () => null,
+      queuePaused: () => false,
+      queuePausedForSessionKey: () => false,
+      queuedDrafts: () => [],
+      queuedDraftsBySessionKey: () => ({}),
+      resolveQueueKeyForQueuedDraft: (sessionKey) => sessionKey,
+      setEditingQueuedDraftId: () => undefined,
+      setQueuePausedForSessionKey: () => undefined,
+      updateCurrentQueue: () => undefined,
+      updateQueueForSessionKey: () => undefined,
+    },
+    composer: {
+      clearComposerDraftForSession: () => undefined,
+      currentDraftMode: () => "prompt",
+      setComposerDraft: () => undefined,
+    },
+    transcriptEdit: {
+      editableUserMessage: () => null,
+      editingTranscriptMessageId: () => null,
+      setEditingTranscriptMessageId: () => undefined,
+    },
+    runControl: {
+      abortBusy: () => false,
+      abortSession: async () => undefined,
+      lastPromptSent: () => "",
+      retryLastPrompt: () => undefined,
+      runPhase: () => "thinking",
+      setAbortBusy: () => undefined,
+      setEscapeStopConfirmationPending: () => undefined,
+    },
+    runState: {
+      resetRunState: () => undefined,
+      showRunIndicator: () => true,
+      startRun: () => undefined,
+    },
+    viewport: {
+      scheduleScrollToLatest: () => undefined,
+      setStickToBottom: () => undefined,
+    },
+    transport: {
+      replaceUserMessageAsync: async () => {
+        throw new Error("replacement should not run for running Enter");
+      },
+      sendPromptAsync: async (sentDraft, options) => {
+        sendCalls.push({
+          text: sentDraft.text,
+          origin: options.origin,
+          targetSessionId: options.targetSessionId,
+          clientMessageId: options.clientMessageId,
+        });
+        return sessionSubmitQueuedResult({
+          queueItemId: "queue-running-enter",
+          reservedRunId: "run-running-enter",
+          queuePosition: 1,
+          clientMessageId: options.clientMessageId,
+        });
+      },
+    },
+    feedback: {
+      setToastMessage: () => undefined,
+      tr: (key) => key,
+    },
+    trace: {
+      markTempRuntimeUiRenderSource: () => undefined,
+      recordSendTrace: () => undefined,
+      reportError: () => undefined,
+    },
+    effects: {
+      batch: (fn) => fn(),
+    },
+  });
+
+  const result = await controller.handleSendPrompt(
+    { ...draft, text: "queue me", resolvedText: "queue me" },
+  );
+
+  assert.deepEqual(queueAppends, []);
+  assert.deepEqual(sendCalls, [
+    {
+      text: "queue me",
+      origin: "session:queue-drain",
+      targetSessionId: "session-a",
+      clientMessageId: "submit-running-enter",
+    },
+  ]);
+  assert.equal(result.accepted, true);
+  assert.equal(result.status, "queued");
+  assert.equal(result.queueItemId, "queue-running-enter");
+  assert.equal(result.reservedRunId, "run-running-enter");
+  assert.equal(result.clientMessageId, "submit-running-enter");
+});
+
+test("conversation flow controller preserves running Enter drafts when server queue admission is blocked", async () => {
+  const queueAppends: string[] = [];
+  const composerDrafts: string[] = [];
+  const toasts: string[] = [];
+  const sendOrigins: string[] = [];
+
+  const controller = createSessionConversationFlow({
+    identity: {
+      createClientMessageId: () => "submit-running-enter-blocked",
+      createPendingSessionInstanceId: () => "pending-session:unused",
+      now: () => 123,
+    },
+    sessionKeys: {
+      activeUiConversationWorkspaceId: () => "workspace-1",
+      activeWorkspaceId: () => "workspace-1",
+      currentSessionQueueKey: () => "session-a",
+      pendingSessionQueueKey: () => "pending:base",
+      selectedSessionId: () => "session-a",
+      sessionIdForQueueKey: (sessionKey) => (sessionKey === "session-a" ? "session-a" : null),
+      sessionQueueKeyForSessionId: (sessionId) => sessionId ?? "pending:base",
+      workspaceIdForQueueKey: () => "workspace-1",
+    },
+    runtime: {
+      activePendingDraftKey: () => null,
+      aiAccessBlockedReason: () => null,
+      busyHint: () => null,
+      busyLabel: () => null,
+      error: () => null,
+    },
+    transcript: {
+      messageCount: () => 0,
+      messageIds: () => [],
+    },
+    pendingHandoff: {
+      clearPendingQueueKeyAwaitingSessionIdForBaseKey: () => undefined,
+      createPendingSidebarSessionWorkspaceId: () => "workspace-1",
+      createPendingSidebarSessionWorkspaceRoot: () => "/workspace",
+      remapPendingQueueToSession: () => undefined,
+      restoreMaterializedQueueToPending: () => undefined,
+      setPendingQueueKeyAwaitingSessionIdForBaseKey: () => undefined,
+    },
+    pendingSubmitted: {
+      optimisticSubmittedDraft: () => null,
+      setOptimisticSubmittedDraft: () => undefined,
+      updatePendingSubmittedDrafts: () => undefined,
+    },
+    queue: {
+      appendDraftToCurrentQueue: (queuedDraft) => {
+        queueAppends.push(queuedDraft.text);
+      },
+      editingQueuedDraftId: () => null,
+      queuePaused: () => false,
+      queuePausedForSessionKey: () => false,
+      queuedDrafts: () => [],
+      queuedDraftsBySessionKey: () => ({}),
+      resolveQueueKeyForQueuedDraft: (sessionKey) => sessionKey,
+      setEditingQueuedDraftId: () => undefined,
+      setQueuePausedForSessionKey: () => undefined,
+      updateCurrentQueue: () => undefined,
+      updateQueueForSessionKey: () => undefined,
+    },
+    composer: {
+      clearComposerDraftForSession: () => undefined,
+      currentDraftMode: () => "prompt",
+      setComposerDraft: (nextDraft) => {
+        composerDrafts.push(nextDraft.text);
+      },
+    },
+    transcriptEdit: {
+      editableUserMessage: () => null,
+      editingTranscriptMessageId: () => null,
+      setEditingTranscriptMessageId: () => undefined,
+    },
+    runControl: {
+      abortBusy: () => false,
+      abortSession: async () => undefined,
+      lastPromptSent: () => "",
+      retryLastPrompt: () => undefined,
+      runPhase: () => "thinking",
+      setAbortBusy: () => undefined,
+      setEscapeStopConfirmationPending: () => undefined,
+    },
+    runState: {
+      resetRunState: () => undefined,
+      showRunIndicator: () => true,
+      startRun: () => undefined,
+    },
+    viewport: {
+      scheduleScrollToLatest: () => undefined,
+      setStickToBottom: () => undefined,
+    },
+    transport: {
+      replaceUserMessageAsync: async () => {
+        throw new Error("replacement should not run for running Enter");
+      },
+      sendPromptAsync: async (_sentDraft, options) => {
+        sendOrigins.push(options.origin);
+        return sessionSubmitBlockedResult({
+          code: "queue_admission_blocked",
+          message: "Server queue is unavailable.",
+          draftDisposition: "restore",
+        });
+      },
+    },
+    feedback: {
+      setToastMessage: (message) => {
+        toasts.push(message);
+      },
+      tr: (key) => key,
+    },
+    trace: {
+      markTempRuntimeUiRenderSource: () => undefined,
+      recordSendTrace: () => undefined,
+      reportError: () => undefined,
+    },
+    effects: {
+      batch: (fn) => fn(),
+    },
+  });
+
+  const result = await controller.handleSendPrompt(
+    { ...draft, text: "keep me", resolvedText: "keep me" },
+  );
+
+  assert.deepEqual(queueAppends, []);
+  assert.deepEqual(sendOrigins, ["session:queue-drain"]);
+  assert.equal(result.accepted, false);
+  assert.equal(result.status, "blocked");
+  assert.equal(result.code, "queue_admission_blocked");
+  assert.equal(result.message, "Server queue is unavailable.");
+  assert.equal(result.draftDisposition, "restore");
+  assert.deepEqual(composerDrafts, []);
+  assert.deepEqual(toasts, ["Server queue is unavailable."]);
 });
 
 test("conversation flow controller drains one queued draft per captured session lock", async () => {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { registerAiGatewayRoutes } from "../routes/ai-gateway.js";
-import { matchRoute, type Route } from "../routing.js";
+import { matchRoute, type RequestContext, type Route } from "../routing.js";
 
 describe("AI gateway routes", () => {
   test("registers the AI gateway proxy contract", () => {
@@ -32,5 +32,37 @@ describe("AI gateway routes", () => {
     }
 
     expect(matchRoute(routes, "POST", "/ai/providers/openai/v1/chat/completions")).toBeNull();
+  });
+
+  test("provider proxy routes require collaborator scope", async () => {
+    const routes: Route[] = [];
+    let proxyCalled = false;
+    const proxy = async () => {
+      proxyCalled = true;
+      return new Response("{}");
+    };
+    registerAiGatewayRoutes(routes, {
+      clearAiGatewayRuntimeAuthorization: () => undefined,
+      proxyAiGatewayReadinessRequest: proxy,
+      proxyAiGatewayRequest: proxy,
+    });
+
+    const route = matchRoute(routes, "POST", "/ai-gateway/providers/openai/v1/chat/completions");
+    expect(route).not.toBeNull();
+
+    await expect(route?.handler({
+      request: new Request("http://127.0.0.1/ai-gateway/providers/openai/v1/chat/completions", { method: "POST" }),
+      url: new URL("http://127.0.0.1/ai-gateway/providers/openai/v1/chat/completions"),
+      params: {},
+      actor: { type: "remote", scope: "viewer" },
+    } as RequestContext)).rejects.toMatchObject({
+      status: 403,
+      code: "forbidden",
+      details: {
+        required: "collaborator",
+        scope: "viewer",
+      },
+    });
+    expect(proxyCalled).toBe(false);
   });
 });

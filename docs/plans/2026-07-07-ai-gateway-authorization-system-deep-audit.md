@@ -1,6 +1,6 @@
 ---
-done: false
-status: in_progress
+done: true
+status: complete
 plan_type: implementation
 agw_l01_provider_start_session_scoped_done: true
 agw_l02_legacy_gateway_token_redaction_done: true
@@ -9,9 +9,9 @@ agw_l04_runtime_auth_prime_singleflight_done: true
 agw_s01_gateway_auth_before_body_parse_done: true
 agw_s02_den_session_lookup_cache_done: true
 agw_s03_gateway_async_error_boundary_done: true
-agw_d01_local_provider_route_scope_decision_done: false
-agw_d02_browser_gateway_token_cache_decision_done: false
-agw_d03_sessionless_fallback_identity_decision_done: false
+agw_d01_local_provider_route_scope_decision_done: true
+agw_d02_browser_gateway_token_cache_decision_done: true
+agw_d03_sessionless_fallback_identity_decision_done: true
 agw_deferred_followups_done: false
 ---
 
@@ -1060,43 +1060,61 @@ These items need a product/security decision before code changes.
 
 #### AGW-D01: Local provider route minimum scope
 
-Decision needed: should local provider proxy POST routes require
-`collaborator` scope, matching conversation submit, or are `viewer` tokens
-allowed to spend inference?
-Decision flag: `agw_d01_local_provider_route_scope_decision_done: false`.
+Decision: local provider proxy POST routes require `collaborator` scope,
+matching conversation submit. `viewer` tokens are not allowed to spend managed
+AI inference through provider proxy routes.
+Decision flag: `agw_d01_local_provider_route_scope_decision_done: true`.
 
-Default recommendation: require `collaborator` unless there is a documented
-read-only inference product rule.
+Rationale: no documented read-only inference product rule was found, and the
+provider POST route is an inference-spending mutation even though it proxies to
+the standalone gateway. The generated OpenCode/local runtime path uses the
+built-in local server client token, and the server token contract resolves that
+built-in client token as `collaborator`.
 
-Implementation note: local Veslo server route registration only distinguishes
-`none`, `client`, and `host` auth modes. A `collaborator` decision cannot be
-implemented by changing the `addRoute` auth mode alone; it needs an explicit
-scope check such as `requireClientScope(ctx, "collaborator")` or the local
-equivalent inside the provider route handler/dependency boundary.
+Implementation: provider route handlers in `packages/server/src/routes/ai-gateway.ts`
+perform an explicit `requireClientScope(ctx, "collaborator")` check before
+proxying. Local Veslo server route registration still distinguishes only
+`none`, `client`, and `host` auth modes, so the minimum scope is enforced inside
+the provider route handler boundary.
 
-Acceptance after decision:
+Acceptance:
 
+- Viewer tokens receive `403 forbidden` before any provider upstream request is
+  sent.
 - The route contract test states the expected minimum scope.
 - Generated OpenCode/local runtime tokens are verified to satisfy the scope.
 
 #### AGW-D02: Browser/non-Tauri gateway token cache
 
-Decision needed: is localStorage persistence for web/non-Tauri gateway tokens an
-intentional web-mode tradeoff?
-Decision flag: `agw_d02_browser_gateway_token_cache_decision_done: false`.
+Decision: keep browser/non-Tauri `localStorage` persistence for web-mode gateway
+tokens as an explicit short-lived web-mode tradeoff for now.
+Decision flag: `agw_d02_browser_gateway_token_cache_decision_done: true`.
 
-Default recommendation: document it explicitly now; remove it only if the web
-mode can use a no-token proof/cache flow without breaking current auth UX.
+Rationale: desktop/Tauri already uses the no-token proof cache path and returns
+an empty `gatewayAccessToken` from proof cache reads. Browser/non-Tauri mode
+still needs the live gateway access token to restore managed AI access without a
+desktop proof channel. The cache remains scoped by user, org, and gateway base
+URL, uses the existing short TTL, and rejects empty or `[REDACTED]` token
+states.
+
+Follow-up boundary: remove browser token persistence only if web mode gains a
+no-token proof/cache flow or a server-backed refresh path that does not break
+current auth UX.
 
 #### AGW-D03: Sessionless fallback identity width
 
-Decision needed: is sessionless managed traffic only diagnostic/auxiliary, or
-can it become a normal prompt path?
-Decision flag: `agw_d03_sessionless_fallback_identity_decision_done: false`.
+Decision: sessionless managed traffic is compatibility/diagnostic traffic, not
+the normal prompt identity path.
+Decision flag: `agw_d03_sessionless_fallback_identity_decision_done: true`.
 
-Default recommendation: keep current fallback for compatibility, add
-diagnostics, and only narrow the fallback id if sessionless traffic becomes
-common enough to affect lease/usage isolation.
+Rationale: normal prompt traffic should resolve a concrete Veslo/OpenCode
+session id through explicit session headers or active run context. The current
+sessionless fallback remains forwardable for placeholder compatibility, emits
+`server:ai-gateway:sessionless-forward` diagnostics, and does not count as
+provider-start watchdog evidence.
+
+Follow-up boundary: narrow the fallback identity only if sessionless traffic
+becomes common enough to affect lease or usage isolation.
 
 ### Deferred follow-ups
 
@@ -1181,6 +1199,29 @@ Implementation verification on 2026-07-07:
 - `AGW-S02`: `pnpm --filter @neatech/ai-gateway exec tsx --test test/proxy-auth.test.ts test/user-credentials.test.ts test/gateway-session-cache.test.ts`
   passed with 12 tests.
 - `AGW-S02`: `pnpm --filter @neatech/ai-gateway exec tsc --noEmit` passed.
+
+Decision-gate continuation verification on 2026-07-07:
+
+- `AGW-D01`: `bun test packages/server/src/tests/server.ai-gateway.test.ts -t "viewer tokens cannot proxy ai-gateway provider requests"` first failed with
+  `Expected: 403` and `Received: 200`, proving viewer tokens could reach the
+  provider proxy before the route-local scope check.
+- `AGW-D01`: after adding the explicit provider route scope check,
+  `bun test packages/server/src/tests/server.ai-gateway.test.ts -t "viewer tokens cannot proxy ai-gateway provider requests"`
+  passed with 1 test.
+- `AGW-D01`: `bun test packages/server/src/tests/server.ai-gateway-routes.test.ts`
+  passed with 2 tests and covers the route-level collaborator-scope contract.
+- `AGW-D01`: `bun test packages/server/src/tests/server.ai-gateway.test.ts packages/server/src/tests/server.ai-gateway-routes.test.ts packages/server/src/tests/ai-gateway-runtime-owner.test.ts packages/server/src/tests/tokens.test.ts`
+  passed with 41 tests after the route-level contract assertion was added.
+- `AGW-D02`: `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/managed-ai-access-store.test.ts`
+  passed with 5 tests, covering browser token cache behavior and desktop proof
+  cache behavior.
+- `AGW-D03`: the same server AI gateway regression run covered
+  `server forwards placeholder session ids for sessionless managed calls`,
+  including `server:ai-gateway:sessionless-forward` diagnostics and
+  `watchdogHitRecorded: false`.
+- Server typecheck: `pnpm --filter veslo-server typecheck` passed after the
+  route-scope implementation and route contract test were added.
+- Diff hygiene: `git diff --check` passed with line-ending warnings only.
 
 The original audit was performed against the live checkout on branch
 `local/sandbox-merge...origin/local/sandbox-merge`. At that time, the worktree

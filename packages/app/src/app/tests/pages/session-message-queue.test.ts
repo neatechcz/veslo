@@ -88,20 +88,22 @@ test("session page owns session-local queue state and handleSendPrompt accepts s
   );
 });
 
-test("running non-sendNow sends append to the queue before any immediate send path", () => {
+test("running non-sendNow sends use server queue admission", () => {
   const resolverBranch = conversationFlowSource.indexOf("if (runVisible && !sendNow)");
   const handlerStart = flowHandleSendSource.indexOf("handleSendPrompt: async (");
   const runningCase = flowHandleSendSource.indexOf('case "append-to-running-queue"', handlerStart);
-  const appendCall = flowHandleSendSource.indexOf("deps.queue.appendDraftToCurrentQueue(draft);", runningCase);
-  const returnQueued = flowHandleSendSource.indexOf('return localQueuedResult("local_queue_running_append");', appendCall);
-  const sendNormalCase = flowHandleSendSource.indexOf('case "send-normal"', returnQueued);
+  const sendImmediateCall = flowHandleSendSource.indexOf("return controller.sendPromptImmediate(draft, {", runningCase);
+  const queueDrainReason = flowHandleSendSource.indexOf('reason: "queue-drain"', sendImmediateCall);
+  const expectedSessionKey = flowHandleSendSource.indexOf("expectedSessionKey: sessionKey", sendImmediateCall);
+  const sendNormalCase = flowHandleSendSource.indexOf('case "send-normal"', sendImmediateCall);
 
   assert.notEqual(resolverBranch, -1, "conversation-flow resolver should classify running non-sendNow sends");
   assert.notEqual(handlerStart, -1, "conversation-flow send handler should exist");
   assert.ok(runningCase > handlerStart, "handler should have a running-queue action branch");
-  assert.ok(appendCall > runningCase, "running Enter sends should append to the session queue");
-  assert.ok(returnQueued > appendCall, "queued sends should return a typed queued result so the composer clears");
-  assert.ok(sendNormalCase > returnQueued, "running queued sends should return before the normal immediate send branch");
+  assert.ok(sendImmediateCall > runningCase, "running Enter sends should call the immediate submit path");
+  assert.ok(queueDrainReason > sendImmediateCall, "running Enter sends should request server queue admission");
+  assert.ok(expectedSessionKey > sendImmediateCall, "running Enter sends should target the current session queue key");
+  assert.ok(sendNormalCase > sendImmediateCall, "running queued sends should return before the normal immediate send branch");
 });
 
 test("paused queue Enter append unpauses and starts the first drain-eligible queued draft", () => {

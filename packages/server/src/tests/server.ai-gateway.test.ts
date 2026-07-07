@@ -243,6 +243,71 @@ describe("ai gateway proxy routes", () => {
     }
   });
 
+  test("viewer tokens cannot proxy ai-gateway provider requests", async () => {
+    const requests: Array<{ pathname: string }> = [];
+    const upstream = createServer((_req, res) => {
+      requests.push({ pathname: _req.url ?? "/" });
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ ok: true }));
+    });
+    const upstreamPort = await listenTestServer(upstream);
+
+    try {
+      await withManagedAiEnv(
+        {
+          managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}`,
+          legacyAiGatewayBaseUrl: undefined,
+        },
+        async () => {
+          const server = startServer(createTestConfig());
+
+          try {
+            const tokenResponse = await fetch(`http://127.0.0.1:${server.port}/tokens`, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "x-veslo-host-token": "host-token",
+              },
+              body: JSON.stringify({ scope: "viewer" }),
+            });
+            expect(tokenResponse.status).toBe(201);
+            const { token: viewerToken } = await tokenResponse.json() as { token: string };
+
+            const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/openai/v1/chat/completions`, {
+              method: "POST",
+              headers: {
+                authorization: `Bearer ${viewerToken}`,
+                "content-type": "application/json",
+                "x-veslo-gateway-token": "gateway-access-token",
+                "x-veslo-session-id": "session_123",
+              },
+              body: JSON.stringify({
+                model: "gpt-4o-mini",
+                messages: [{ role: "user", content: "Hello" }],
+              }),
+            });
+
+            expect(response.status).toBe(403);
+            expect(await response.json()).toMatchObject({
+              code: "forbidden",
+              details: {
+                required: "collaborator",
+                scope: "viewer",
+              },
+            });
+            expect(requests).toEqual([]);
+          } finally {
+            stopTestServer(server);
+          }
+        },
+      );
+    } finally {
+      upstream.close();
+      await once(upstream, "close");
+    }
+  });
+
   test("server resolves placeholder gateway session ids from OpenCode request session headers", async () => {
     const requests: Array<{
       authorization: string | null;

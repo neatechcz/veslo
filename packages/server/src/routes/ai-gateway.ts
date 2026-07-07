@@ -1,5 +1,5 @@
 import { addRoute, type Route } from "../routing.js";
-import { jsonResponse } from "../route-helpers.js";
+import { jsonResponse, requireClientScope } from "../route-helpers.js";
 import type { Actor } from "../types.js";
 
 type AiGatewayProxyRequestInput = {
@@ -48,6 +48,7 @@ export function registerAiGatewayRoutes(routes: Route[], dependencies: AiGateway
   });
 
   addRoute(routes, "POST", "/ai-gateway/providers/openai/v1/chat/completions", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
     return dependencies.proxyAiGatewayRequest({
       request: ctx.request,
       url: ctx.url,
@@ -59,6 +60,7 @@ export function registerAiGatewayRoutes(routes: Route[], dependencies: AiGateway
   });
 
   addRoute(routes, "POST", "/ai-gateway/providers/anthropic/v1/messages", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
     return dependencies.proxyAiGatewayRequest({
       request: ctx.request,
       url: ctx.url,
@@ -70,6 +72,7 @@ export function registerAiGatewayRoutes(routes: Route[], dependencies: AiGateway
   });
 
   addRoute(routes, "POST", "/ai-gateway/providers/codex_oauth/v1/chat/completions", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
     return dependencies.proxyAiGatewayRequest({
       request: ctx.request,
       url: ctx.url,
@@ -81,6 +84,7 @@ export function registerAiGatewayRoutes(routes: Route[], dependencies: AiGateway
   });
 
   addRoute(routes, "POST", "/ai-gateway/providers/openai_compatible/v1/chat/completions", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
     return dependencies.proxyAiGatewayRequest({
       request: ctx.request,
       url: ctx.url,

@@ -1313,8 +1313,13 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         }
 
         case "append-to-running-queue": {
-          deps.queue.appendDraftToCurrentQueue(draft);
-          return localQueuedResult("local_queue_running_append");
+          const sessionKey = deps.sessionKeys.currentSessionQueueKey();
+          return controller.sendPromptImmediate(draft, {
+            reason: "queue-drain",
+            expectedSessionKey: sessionKey,
+            sendTraceId: options.sendTraceId,
+            source: options.source,
+          });
         }
 
         case "send-now": {

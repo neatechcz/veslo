@@ -192,10 +192,16 @@ function resolveVesloServerWatcherPids(processes, ports) {
   return family;
 }
 
-function stopProcesses(pids) {
+export function stopProcesses(pids, runner = runPowerShell, warn = console.warn) {
   if (pids.length === 0) return;
-  const quoted = pids.map((pid) => String(pid)).join(",");
-  runPowerShell(`Stop-Process -Id ${quoted} -Force -ErrorAction SilentlyContinue`);
+  for (const pid of pids) {
+    try {
+      runner(`Stop-Process -Id ${pid} -Force -ErrorAction SilentlyContinue`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      warn(`[veslo] Failed to stop stale process pid=${pid}: ${message}`);
+    }
+  }
 }
 
 export function findStaleDevProcesses(processes, listeningPorts, context) {

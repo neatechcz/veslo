@@ -39,18 +39,18 @@ test("desktop window keeps a 390px minimum width for phone-standard layouts", ()
   }
 });
 
-test("desktop runtime preferences default to sandbox on", () => {
+test("desktop runtime preferences default to shared non-sandbox engine on supported desktop platforms", () => {
   const source = readFileSync(runtimePreferencesPath, "utf8");
 
   assert.match(
     source,
-    /fn default_shared_unsandboxed_engine_enabled\(\) -> bool \{\s*false\s*\}/,
-    "Missing desktop runtime preferences must leave the internal shared-unsandboxed opt-out off",
+    /fn default_shared_unsandboxed_engine_enabled\(\) -> bool \{\s*cfg!\(any\(windows,\s*target_os = "macos"\)\)\s*\}/,
+    "Missing desktop runtime preferences should enable the shared non-sandbox engine on supported desktop platforms",
   );
   assert.doesNotMatch(
     source,
-    /fn default_shared_unsandboxed_engine_enabled\(\) -> bool \{\s*cfg!\(windows\)\s*\}/,
-    "Windows must not default to shared non-sandbox mode when no runtime preference has been saved",
+    /fn default_shared_unsandboxed_engine_enabled\(\) -> bool \{\s*false\s*\}/,
+    "Desktop runtime preferences must not silently fall back to sandbox-on defaults after the shared engine migration",
   );
 });
 
@@ -669,8 +669,8 @@ test("Windows NSIS builds a current-user client installer with dormant WSL runti
   );
   assert.match(
     hook,
-    /Skipping Veslo WSL runtime preparation during installation; sandbox setup is handled by the app\./,
-    "NSIS installer should leave default sandbox setup to the installed app",
+    /Skipping Veslo WSL runtime preparation; shared non-sandbox runtime is enabled by default\./,
+    "NSIS installer should not run default sandbox preparation while shared non-sandbox runtime is the desktop default",
   );
   assert.match(
     hook,
