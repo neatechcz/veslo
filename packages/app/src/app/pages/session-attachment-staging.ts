@@ -244,7 +244,6 @@ export function createSessionAttachmentStaging<
     const response = await client.listWorkspaces();
     const items = Array.isArray(response.items) ? response.items : [];
     const active = deps.activeWorkspaceDisplay();
-    const cachedWorkspaceId = (deps.vesloServerWorkspaceId() ?? "").trim();
     const listedWorkspaceId = (workspaceId: string | null | undefined) => {
       const id = workspaceId?.trim() ?? "";
       return id && items.some((entry) => entry.id === id) ? id : "";
@@ -256,14 +255,10 @@ export function createSessionAttachmentStaging<
         parseVesloWorkspaceIdFromUrl(active.vesloHostUrl ?? "") ??
         parseVesloWorkspaceIdFromUrl(active.baseUrl ?? "");
       const storedId = active.vesloWorkspaceId?.trim() || inferredWorkspaceId || "";
-      resolved =
-        listedWorkspaceId(storedId) ||
-        listedWorkspaceId(cachedWorkspaceId);
+      resolved = listedWorkspaceId(storedId);
     } else if (active.workspaceType === "local") {
       const mappedWorkspaceId = active.vesloWorkspaceId?.trim() ?? "";
-      resolved =
-        listedWorkspaceId(mappedWorkspaceId) ||
-        listedWorkspaceId(cachedWorkspaceId);
+      resolved = listedWorkspaceId(mappedWorkspaceId);
     }
 
     if (resolved) {

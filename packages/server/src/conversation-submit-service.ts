@@ -2,8 +2,13 @@ import {
   conversationSubmitDraftIsEmpty,
   createConversationSubmitRequestHash,
   parseConversationSubmitRequest,
+  type ConversationSubmitBlockedResult,
+  type ConversationSubmitFailedResult,
   type ConversationSubmitRequest,
+  type ConversationSubmitQueuedResult,
+  type ConversationSubmitResolvedRunInput,
   type ConversationSubmitResult,
+  type ConversationSubmitSubmittedResult,
 } from "./conversation-submit-contract.js";
 import type { ConversationSubmitAttemptStore } from "./conversation-submit-attempt-store.js";
 import {
@@ -20,9 +25,27 @@ export type ConversationSubmitService = {
     workspace: WorkspaceInfo;
     body: Record<string, unknown>;
     sendTraceId?: string | null;
+    runtimeAuthorizationActorTokenHash?: string | null;
     resolveDirectory: (requestedRaw: string | null) => Promise<string | null>;
+    submitResolvedRun?: ConversationSubmitResolvedRunSubmitter | null;
   }): Promise<{ payload: ConversationSubmitResult; httpStatus: number }>;
 };
+
+export type ConversationSubmitResolvedRunSubmitter = (input: {
+  workspace: WorkspaceInfo;
+  request: ConversationSubmitRequest;
+  resolvedRunInput: ConversationSubmitResolvedRunInput;
+  directory: string | null;
+  sendTraceId?: string | null;
+  runtimeAuthorizationActorTokenHash?: string | null;
+}) => Promise<{
+  payload:
+    | ConversationSubmitSubmittedResult
+    | ConversationSubmitQueuedResult
+    | ConversationSubmitBlockedResult
+    | ConversationSubmitFailedResult;
+  httpStatus: number;
+}>;
 
 export function createConversationSubmitService(input: {
   attemptStore: ConversationSubmitAttemptStore;
@@ -37,7 +60,9 @@ export function createConversationSubmitService(input: {
       workspace,
       body,
       sendTraceId,
+      runtimeAuthorizationActorTokenHash,
       resolveDirectory,
+      submitResolvedRun,
     }) {
       const request = parseConversationSubmitRequest(body);
       const requestHash = createConversationSubmitRequestHash(request);
@@ -69,6 +94,16 @@ export function createConversationSubmitService(input: {
             "opencodeSessionId" in payload && typeof payload.opencodeSessionId === "string"
               ? payload.opencodeSessionId
               : request.target?.opencodeSessionId ?? null,
+          runId:
+            "runId" in payload && typeof payload.runId === "string"
+              ? payload.runId
+              : "reservedRunId" in payload && typeof payload.reservedRunId === "string"
+                ? payload.reservedRunId
+                : null,
+          queueItemId:
+            "queueItemId" in payload && typeof payload.queueItemId === "string"
+              ? payload.queueItemId
+              : null,
           resultJson: JSON.stringify(payload),
         });
         return payload;
@@ -129,6 +164,18 @@ export function createConversationSubmitService(input: {
       const hasExistingTarget = Boolean(
         request.target?.conversationId?.trim() || request.target?.opencodeSessionId?.trim(),
       );
+      if (draftResolution.resolvedRunInput.kind === "summarize" && !hasExistingTarget) {
+        return {
+          payload: completeAttempt({
+            status: "blocked",
+            code: "compact_target_required",
+            message: "Select a session with messages before running /compact.",
+            draftDisposition: "restore",
+            recoverable: true,
+          }, "blocked"),
+          httpStatus: 200,
+        };
+      }
       if (request.options?.dryRun === true) {
         const payload: ConversationSubmitResult = {
           status: "dry_run",
@@ -151,6 +198,48 @@ export function createConversationSubmitService(input: {
       }
 
       if (hasExistingTarget) {
+        if (submitResolvedRun) {
+          try {
+            const result = await submitResolvedRun({
+              workspace,
+              request,
+              resolvedRunInput: draftResolution.resolvedRunInput,
+              directory,
+              sendTraceId: sendTraceId ?? null,
+              runtimeAuthorizationActorTokenHash: runtimeAuthorizationActorTokenHash ?? null,
+            });
+            if (result.payload.status === "blocked" || result.payload.status === "failed") {
+              return {
+                payload: completeAttempt(
+                  result.payload,
+                  result.payload.status === "blocked" ? "blocked" : "failed",
+                ),
+                httpStatus: result.httpStatus,
+              };
+            }
+            return {
+              payload: completeAttempt(result.payload, "completed"),
+              httpStatus: result.httpStatus,
+            };
+          } catch (error) {
+            const payload: ConversationSubmitResult = {
+              status: "failed",
+              code: error instanceof ApiError ? error.code : "run_submit_failed",
+              message: error instanceof Error ? error.message : "Run submit failed",
+              draftDisposition: "restore",
+              debugTrace: [{
+                source: "server",
+                event: "run_submit_failed",
+                upstreamCode: error instanceof ApiError ? error.code : null,
+                upstreamStatus: error instanceof ApiError ? error.status : null,
+              }],
+            };
+            return {
+              payload: completeAttempt(payload, "failed"),
+              httpStatus: 200,
+            };
+          }
+        }
         return {
           payload: completeAttempt({
             status: "blocked",
@@ -170,6 +259,60 @@ export function createConversationSubmitService(input: {
           title: deriveSubmitConversationTitle(request),
           sendTraceId: sendTraceId ?? null,
         });
+        if (submitResolvedRun) {
+          const materializedRequest: ConversationSubmitRequest = {
+            ...request,
+            target: {
+              ...request.target,
+              directory,
+              conversationId: materializedSession.conversationId,
+              opencodeSessionId: materializedSession.opencodeSessionId,
+            },
+          };
+          try {
+            const result = await submitResolvedRun({
+              workspace,
+              request: materializedRequest,
+              resolvedRunInput: draftResolution.resolvedRunInput,
+              directory,
+              sendTraceId: sendTraceId ?? null,
+              runtimeAuthorizationActorTokenHash: runtimeAuthorizationActorTokenHash ?? null,
+            });
+            if (result.payload.status === "blocked" || result.payload.status === "failed") {
+              return {
+                payload: completeAttempt(
+                  result.payload,
+                  result.payload.status === "blocked" ? "blocked" : "failed",
+                ),
+                httpStatus: result.httpStatus,
+              };
+            }
+            return {
+              payload: completeAttempt({
+                ...result.payload,
+                materializedSession,
+              }, "completed"),
+              httpStatus: result.httpStatus,
+            };
+          } catch (error) {
+            const payload: ConversationSubmitResult = {
+              status: "failed",
+              code: error instanceof ApiError ? error.code : "run_submit_failed",
+              message: error instanceof Error ? error.message : "Run submit failed",
+              draftDisposition: "restore",
+              debugTrace: [{
+                source: "server",
+                event: "run_submit_failed_after_materialization",
+                upstreamCode: error instanceof ApiError ? error.code : null,
+                upstreamStatus: error instanceof ApiError ? error.status : null,
+              }],
+            };
+            return {
+              payload: completeAttempt(payload, "failed"),
+              httpStatus: 200,
+            };
+          }
+        }
         const payload: ConversationSubmitResult = {
           status: "materialized",
           workspaceId: workspace.id,

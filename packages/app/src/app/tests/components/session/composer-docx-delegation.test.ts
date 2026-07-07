@@ -11,6 +11,13 @@ const appShellEnvironmentSource = readFileSync(
   "utf8",
 );
 
+function legacyConversationRunFallbackSource(): string {
+  const start = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+  const end = sendWorkflowSource.indexOf("export function createSessionSendWorkflow", start);
+  assert.ok(start >= 0 && end > start, "legacy conversation run fallback source should be present");
+  return sendWorkflowSource.slice(start, end);
+}
+
 test("composer keeps dropped files as attachment chips and does not inject path text on drop", () => {
   assert.doesNotMatch(
     composerSource,
@@ -87,19 +94,19 @@ test("all attachment staging happens in session-directory send pipeline, not in 
   );
 
   assert.match(
-    sendWorkflowSource,
+    legacyConversationRunFallbackSource(),
     /const routedDraft = deps\.routeStagedAttachmentsForModel\(\{\s*draft: resolvedDraft,\s*stagedAttachments,\s*model,\s*providers: deps\.providers\(\),\s*\}\);/s,
     "send pipeline should route staged attachments only after it knows the selected model capabilities",
   );
 
   assert.match(
-    sendWorkflowSource,
-    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, sendPreflight\)/,
+    legacyConversationRunFallbackSource(),
+    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, input\.sendPreflight\)/,
     "send pipeline should stage attachments after session selection and before provider calls",
   );
 
   assert.doesNotMatch(
-    sendWorkflowSource,
+    legacyConversationRunFallbackSource(),
     /stagedPaths\.join\("\\n"\)/,
     "staging should not append attachment filenames directly into prompt text",
   );

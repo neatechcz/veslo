@@ -11,6 +11,7 @@ const readOptionalSource = (path: string) => {
 };
 
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const appViewPropsSource = readFileSync(new URL("../app-view-props.ts", import.meta.url), "utf8");
 const composerTargetControllerSource = readFileSync(
   new URL("../context/composer-target-controller.ts", import.meta.url),
   "utf8",
@@ -45,9 +46,9 @@ const assertComposerDraftSeededBeforeActivation = (source: string, draftName: st
 test("session view receives composer target picker state from app", () => {
   assert.match(typesSource, /export type ComposerTargetOption = \{/);
   assert.match(typesSource, /export type ComposerTargetSwitchResult =/);
-  assert.match(appSource, /composerTargetOptions: composerTargetController\.composerTargetOptions\(\)/);
-  assert.match(appSource, /activeComposerTargetId: composerTargetController\.activeComposerTargetId\(\)/);
-  assert.match(appSource, /switchComposerTarget: composerTargetController\.switchComposerTarget/);
+  assert.match(appViewPropsSource, /composerTargetOptions: composerTargetController\.composerTargetOptions\(\)/);
+  assert.match(appViewPropsSource, /activeComposerTargetId: composerTargetController\.activeComposerTargetId\(\)/);
+  assert.match(appViewPropsSource, /switchComposerTarget: composerTargetController\.switchComposerTarget/);
   assert.match(sessionSource, /composerTargetOptions: ComposerTargetOption\[\];/);
 });
 

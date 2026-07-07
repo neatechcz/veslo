@@ -39,6 +39,9 @@ server-bound calls to the wrong workspace.
   uses the same `vesloServerWorkspaceId` signal as normal app paths.
 - Regression tests now assert that unmapped local workspaces fail closed instead
   of treating app workspace ids or list-derived ids as server-owned ids.
+- Follow-up hardening on 2026-07-07 removed the last attachment-staging fallback
+  to the global cached Veslo server workspace id; attachment writes now require
+  the active remote id or acknowledged local `vesloWorkspaceId`.
 
 ## Scope Boundaries
 
@@ -69,4 +72,6 @@ Results:
 ## Status
 
 Implementation is complete for this codebase-only fail-closed cleanup slice. No
-installed-runtime E2E or tauri-pilot validation was run.
+installed-runtime E2E or tauri-pilot validation was run. The follow-up
+attachment-staging hardening is recorded in
+`docs/fixes/2026-07-07-fix-36-server-owned-legacy-fallback-hardening.md`.

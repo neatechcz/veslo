@@ -173,6 +173,64 @@ test("session creation reuses send preflight readiness without rerunning runtime
   assert.doesNotMatch(harness.actions.join("\n"), /ensure-runtime|ensure-managed-ai/);
 });
 
+test("session creation lets server submit own first-message runtime admission", async () => {
+  const observedPreflights: Array<SendRuntimePreflightContext | undefined> = [];
+  const harness = createHarness({
+    ensureLocalRuntimeReachableForSend: async () => {
+      throw new Error("runtime gate should not run before server submit materialization");
+    },
+    ensureManagedAiBootstrapReady: async () => {
+      throw new Error("managed AI gate should not run before server submit materialization");
+    },
+    routedClientForSendTarget: () => {
+      throw new Error("routed client should not be required before server submit materialization");
+    },
+    submitConversationFromVesloWriteApi: async (_workspaceId, _directory, input, preflight) => {
+      observedPreflights.push(preflight);
+      return {
+        status: "submitted",
+        workspaceId: "ws-main",
+        conversationId: "conv-submit",
+        opencodeSessionId: "open-submit",
+        runId: "run-submit",
+        clientMessageId: input.clientMessageId,
+        draftDisposition: "clear",
+        materializedSession: {
+          ...session({ id: "sess-submit" }),
+          conversationId: "conv-submit",
+          opencodeSessionId: "open-submit",
+        },
+      };
+    },
+  });
+  const workflow = createSessionCreationWorkflow(harness.options);
+
+  const result = await workflow.createSessionAndOpen("hello", {
+    clientMessageId: "client-submit",
+    submitDraft: {
+      mode: "prompt",
+      text: "hello",
+      resolvedText: "hello",
+      parts: [{ type: "text", text: "hello" }],
+      command: null,
+      attachments: [],
+    },
+    preflight: {
+      traceId: "trace-submit",
+      targetWorkspace,
+      runtimeHealthOk: false,
+    },
+  });
+
+  assert.equal(result, "sess-submit");
+  assert.equal(observedPreflights.length, 1);
+  assert.equal(observedPreflights[0]?.enginePrepared, undefined);
+  assert.equal(observedPreflights[0]?.managedAiReady, undefined);
+  assert.ok(harness.events.includes("createSessionAndOpen:server-submit-runtime-admission-skip"));
+  assert.ok(harness.events.includes("createSessionAndOpen:server-submit-managed-ai-admission-skip"));
+  assert.doesNotMatch(harness.actions.join("\n"), /ensure-runtime|ensure-managed-ai|create-conversation/);
+});
+
 test("session creation passes the prepared create preflight to conversation creation", async () => {
   let observedPreflight: SendRuntimePreflightContext | undefined;
   const harness = createHarness({

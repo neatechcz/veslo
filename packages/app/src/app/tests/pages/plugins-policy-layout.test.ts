@@ -73,7 +73,6 @@ test("plugin policy inventory and actions are wired through dashboard and app", 
   assert.match(dashboardSource, /restoreManagedPlugin\?:\s*\(pluginId: string\) => Promise<void>/);
   assert.match(dashboardSource, /pluginInventory=\{props\.pluginInventory \?\? \[\]\}/);
   assert.match(dashboardSource, /developerMode=\{props\.developerMode\}/);
-  assert.match(appSource, /\bpluginInventory,\s*[\s\S]*\bsetPluginEnabled,\s*[\s\S]*\bremoveManagedPlugin,\s*[\s\S]*\brestoreManagedPlugin,/);
   assert.match(appSource, /pluginInventory=\{pluginInventory\(\)\}/);
   assert.match(appSource, /setPluginEnabled=\{setPluginEnabled\}/);
   assert.match(appSource, /removeManagedPlugin=\{removeManagedPlugin\}/);

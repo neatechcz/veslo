@@ -388,6 +388,7 @@ pub fn request_orchestrator_shutdown(
 
 pub fn build_orchestrator_env_overrides(
     veslo_server_state_path: Option<&Path>,
+    veslo_server_client_token: Option<&str>,
     shared_unsandboxed_engine: Option<bool>,
 ) -> Vec<(String, String)> {
     let mut env = Vec::new();
@@ -396,6 +397,16 @@ pub fn build_orchestrator_env_overrides(
         env.push((
             "VESLO_SERVER_STATE_PATH".to_string(),
             path.to_string_lossy().to_string(),
+        ));
+    }
+
+    if let Some(token) = veslo_server_client_token
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        env.push((
+            "VESLO_OPENCODE_SERVER_CLIENT_TOKEN".to_string(),
+            token.to_string(),
         ));
     }
 
@@ -510,9 +521,11 @@ pub fn spawn_orchestrator_daemon(
     }
 
     let veslo_server_state_path = options.veslo_server_state_path.as_deref().map(Path::new);
-    for (key, value) in
-        build_orchestrator_env_overrides(veslo_server_state_path, options.shared_unsandboxed_engine)
-    {
+    for (key, value) in build_orchestrator_env_overrides(
+        veslo_server_state_path,
+        options.veslo_token.as_deref(),
+        options.shared_unsandboxed_engine,
+    ) {
         command = command.env(key, value);
     }
 
@@ -564,7 +577,7 @@ mod tests {
             .join("veslo-orchestrator-env-test")
             .join("veslo-server-plugin-state.json");
 
-        let env = build_orchestrator_env_overrides(Some(&state_path), None);
+        let env = build_orchestrator_env_overrides(Some(&state_path), None, None);
 
         assert!(env.iter().any(|(key, value)| {
             key == "VESLO_SERVER_STATE_PATH" && value == state_path.to_string_lossy().as_ref()
@@ -573,7 +586,7 @@ mod tests {
 
     #[test]
     fn orchestrator_env_overrides_include_shared_unsandboxed_engine_pair_when_enabled() {
-        let env = build_orchestrator_env_overrides(None, Some(true));
+        let env = build_orchestrator_env_overrides(None, None, Some(true));
 
         assert!(env
             .iter()
@@ -581,6 +594,15 @@ mod tests {
         assert!(env
             .iter()
             .any(|(key, value)| key == "VESLO_SHARED_OPENCODE_ENGINE" && value == "1"));
+    }
+
+    #[test]
+    fn orchestrator_env_overrides_include_opencode_server_client_token_when_available() {
+        let env = build_orchestrator_env_overrides(None, Some(" client-token "), None);
+
+        assert!(env.iter().any(|(key, value)| {
+            key == "VESLO_OPENCODE_SERVER_CLIENT_TOKEN" && value == "client-token"
+        }));
     }
 
     #[test]

@@ -26,7 +26,7 @@ test("recent mode renders from recentRowsVisible without using the chat project 
 
   assert.match(
     recentBranch,
-    /renderSessionTreeRows\(\(\) => recentRowsVisible\(\), recentHasChildren, \{\s*anchorPrefix: "recent",\s*variant: "recent",\s*\}\)/,
+    /renderSessionTreeRows\(\(\) => recentRowsVisible\(\), recentHasChildren, \{\s*variant: "recent",\s*\}\)/,
     "recent mode should continue rendering the single activity-sorted recent row stream",
   );
 
@@ -86,7 +86,7 @@ test("recent rows keep timestamp on the right and replace it with menu trigger o
 
   assert.match(
     source,
-    /title=\{formatSessionTimestampTooltip\(displayTimestamp\(session\(\)\), currentLocale\(\)\)\}/,
+    /title=\{formatSessionTimestampTooltip\(displayTimestamp\(session\(\)\), __vesloCurrentLocale\(\)\)\}/,
     "recent row timestamp should expose exact datetime in tooltip",
   );
 
@@ -134,7 +134,7 @@ test("by-project session rows reserve right space and swap time for three-dot me
 
   assert.match(
     source,
-    /title=\{formatSessionTimestampTooltip\(displayTimestamp\(session\(\)\), currentLocale\(\)\)\}/,
+    /title=\{formatSessionTimestampTooltip\(displayTimestamp\(session\(\)\), __vesloCurrentLocale\(\)\)\}/,
     "by-project row timestamp should expose exact datetime in tooltip",
   );
 

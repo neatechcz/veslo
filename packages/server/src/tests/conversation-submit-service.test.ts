@@ -35,6 +35,13 @@ const workspace = (root: string): WorkspaceInfo => ({
   baseUrl: "http://127.0.0.1:9",
 });
 
+const remoteWorkspace = (root: string): WorkspaceInfo => ({
+  ...workspace(root),
+  id: "ws_remote",
+  name: "Remote",
+  workspaceType: "remote",
+});
+
 const createConversationServiceStub = (
   onCreate: () => void,
 ): ConversationService => ({
@@ -113,6 +120,46 @@ describe("conversation submit service", () => {
         kind: "command",
         command: "review",
         arguments: "src/app.ts",
+      },
+    });
+    expect(createConversationCalls).toBe(0);
+  });
+
+  test("resolves compact submit as a summarize run for existing targets", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-compact-resolution-"));
+    tempDirs.push(workspaceRoot);
+    let createConversationCalls = 0;
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-compact-resolution-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => {
+        createConversationCalls += 1;
+      }),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+    });
+
+    const result = await service.submit({
+      workspace: workspace(workspaceRoot),
+      body: {
+        clientMessageId: "msg-compact-resolution",
+        origin: "session:normal",
+        target: { conversationId: "conv-compact", directory: workspaceRoot },
+        draft: {
+          mode: "prompt",
+          text: "/compact",
+          parts: [{ type: "text", text: "/compact" }],
+        },
+        options: { dryRun: true },
+      },
+      resolveDirectory: async () => workspaceRoot,
+    });
+
+    expect(result.httpStatus).toBe(200);
+    expect(result.payload).toMatchObject({
+      status: "dry_run",
+      resolvedRunInput: {
+        kind: "summarize",
       },
     });
     expect(createConversationCalls).toBe(0);
@@ -225,5 +272,299 @@ describe("conversation submit service", () => {
     expect(skillResolveCalls).toBe(1);
     expect(createConversationCalls).toBe(0);
     expect(resolveDirectoryCalls).toBe(0);
+  });
+
+  test("submits resolved existing targets through the injected run submitter idempotently", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-existing-run-"));
+    tempDirs.push(workspaceRoot);
+    let createConversationCalls = 0;
+    let resolveDirectoryCalls = 0;
+    let submitRunCalls = 0;
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-existing-run-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => {
+        createConversationCalls += 1;
+      }),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+    });
+    const body = {
+      clientMessageId: "msg-existing-submit",
+      origin: "session:normal",
+      target: { conversationId: "conv-existing", directory: workspaceRoot },
+      draft: {
+        mode: "prompt",
+        text: "Submit existing",
+        parts: [{ type: "text", text: "Submit existing" }],
+      },
+    };
+    const submit = () => service.submit({
+      workspace: workspace(workspaceRoot),
+      body,
+      runtimeAuthorizationActorTokenHash: "actor-hash",
+      resolveDirectory: async () => {
+        resolveDirectoryCalls += 1;
+        return workspaceRoot;
+      },
+      submitResolvedRun: async (input) => {
+        submitRunCalls += 1;
+        expect(input.directory).toBe(workspaceRoot);
+        expect(input.runtimeAuthorizationActorTokenHash).toBe("actor-hash");
+        expect(input.request.target?.conversationId).toBe("conv-existing");
+        expect(input.resolvedRunInput).toMatchObject({
+          kind: "prompt_async",
+          text: "Submit existing",
+          parts: [{ type: "text", text: "Submit existing" }],
+        });
+        return {
+          httpStatus: 200,
+          payload: {
+            status: "submitted",
+            workspaceId: "ws_1",
+            conversationId: "conv-existing",
+            opencodeSessionId: "sess-existing",
+            runId: "run-existing",
+            clientMessageId: input.request.clientMessageId,
+            draftDisposition: "clear",
+          },
+        };
+      },
+    });
+
+    const first = await submit();
+    expect(first.httpStatus).toBe(200);
+    expect(first.payload).toMatchObject({
+      status: "submitted",
+      conversationId: "conv-existing",
+      opencodeSessionId: "sess-existing",
+      runId: "run-existing",
+      clientMessageId: "msg-existing-submit",
+      draftDisposition: "clear",
+    });
+    const retry = await submit();
+    expect(retry.payload).toEqual(first.payload);
+    expect(submitRunCalls).toBe(1);
+    expect(resolveDirectoryCalls).toBe(1);
+    expect(createConversationCalls).toBe(0);
+  });
+
+  test("blocks prompt image attachments when model metadata says image input is unsupported", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-attachment-nonvision-"));
+    tempDirs.push(workspaceRoot);
+    let createConversationCalls = 0;
+    let resolveDirectoryCalls = 0;
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-attachment-nonvision-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => {
+        createConversationCalls += 1;
+      }),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+    });
+
+    const result = await service.submit({
+      workspace: workspace(workspaceRoot),
+      body: {
+        clientMessageId: "msg-attachment-nonvision",
+        origin: "session:normal",
+        target: { conversationId: "conv-existing", directory: workspaceRoot },
+        draft: {
+          mode: "prompt",
+          text: "inspect this screenshot",
+          parts: [{ type: "text", text: "inspect this screenshot" }],
+          attachments: [{
+            name: "shot.png",
+            kind: "image",
+            mimeType: "image/png",
+            dataUrl: "data:image/png;base64,aGVsbG8=",
+            fileSessionPath: "sessions/sess-existing/shot.png",
+          }],
+        },
+        options: {
+          dryRun: true,
+          model: {
+            providerID: "openai",
+            modelID: "text-only",
+            modalities: { input: ["text"], output: ["text"] },
+          },
+        },
+      },
+      resolveDirectory: async () => {
+        resolveDirectoryCalls += 1;
+        return workspaceRoot;
+      },
+    });
+
+    expect(result.httpStatus).toBe(200);
+    expect(result.payload).toMatchObject({
+      status: "blocked",
+      code: "attachment_rejected",
+      draftDisposition: "restore",
+      recoverable: true,
+    });
+    expect(createConversationCalls).toBe(0);
+    expect(resolveDirectoryCalls).toBe(0);
+  });
+
+  test("blocks prompt image attachments when model capabilities are unavailable", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-attachment-unknown-model-"));
+    tempDirs.push(workspaceRoot);
+    let resolveDirectoryCalls = 0;
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-attachment-unknown-model-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => undefined),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+    });
+
+    const result = await service.submit({
+      workspace: workspace(workspaceRoot),
+      body: {
+        clientMessageId: "msg-attachment-unknown-model",
+        origin: "session:normal",
+        target: { conversationId: "conv-existing", directory: workspaceRoot },
+        draft: {
+          mode: "prompt",
+          text: "inspect this screenshot",
+          parts: [{ type: "text", text: "inspect this screenshot" }],
+          attachments: [{
+            name: "shot.png",
+            kind: "image",
+            mimeType: "image/png",
+            dataUrl: "data:image/png;base64,aGVsbG8=",
+          }],
+        },
+        options: {
+          dryRun: true,
+          model: { providerID: "openai", modelID: "unknown" },
+        },
+      },
+      resolveDirectory: async () => {
+        resolveDirectoryCalls += 1;
+        return workspaceRoot;
+      },
+    });
+
+    expect(result.httpStatus).toBe(200);
+    expect(result.payload).toMatchObject({
+      status: "blocked",
+      code: "model_capabilities_unavailable",
+      draftDisposition: "restore",
+      recoverable: true,
+    });
+    expect(resolveDirectoryCalls).toBe(0);
+  });
+
+  test("constructs prompt parts and path injection for staged file attachments", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-attachment-parts-"));
+    tempDirs.push(workspaceRoot);
+    let createConversationCalls = 0;
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-attachment-parts-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => {
+        createConversationCalls += 1;
+      }),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+    });
+
+    const result = await service.submit({
+      workspace: workspace(workspaceRoot),
+      body: {
+        clientMessageId: "msg-attachment-parts",
+        origin: "session:normal",
+        target: { conversationId: "conv-existing", directory: workspaceRoot },
+        draft: {
+          mode: "prompt",
+          text: "review the brief",
+          parts: [{ type: "text", text: "review the brief" }],
+          attachments: [{
+            name: "brief.txt",
+            kind: "file",
+            mimeType: "text/plain",
+            dataUrl: "data:text/plain;base64,YnJpZWY=",
+            fileSessionPath: "sessions/sess-existing/brief.txt",
+          }],
+        },
+        options: {
+          dryRun: true,
+          model: { providerID: "openai", modelID: "gpt-4.1" },
+        },
+      },
+      resolveDirectory: async () => workspaceRoot,
+    });
+
+    expect(result.httpStatus).toBe(200);
+    expect(result.payload).toMatchObject({
+      status: "dry_run",
+      resolvedRunInput: {
+        kind: "prompt_async",
+        text: "review the brief\nsessions/sess-existing/brief.txt",
+        parts: [
+          { type: "text", text: "review the brief\nsessions/sess-existing/brief.txt" },
+          {
+            type: "file",
+            url: "data:text/plain;base64,YnJpZWY=",
+            filename: "brief.txt",
+            mime: "text/plain",
+          },
+        ],
+      },
+    });
+    expect(createConversationCalls).toBe(0);
+  });
+
+  test("blocks remote workspace submit before local resolution or materialization", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-remote-"));
+    tempDirs.push(workspaceRoot);
+    let createConversationCalls = 0;
+    let resolveDirectoryCalls = 0;
+    let skillResolveCalls = 0;
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-remote-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => {
+        createConversationCalls += 1;
+      }),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+      resolveSkillCommand: async () => {
+        skillResolveCalls += 1;
+        return "veslo-docx";
+      },
+    });
+
+    const result = await service.submit({
+      workspace: remoteWorkspace(workspaceRoot),
+      body: {
+        clientMessageId: "msg-remote-submit",
+        origin: "session:normal",
+        target: { directory: workspaceRoot },
+        draft: {
+          mode: "prompt",
+          text: "remote submit",
+          parts: [{ type: "text", text: "remote submit" }],
+        },
+      },
+      resolveDirectory: async () => {
+        resolveDirectoryCalls += 1;
+        return workspaceRoot;
+      },
+    });
+
+    expect(result.httpStatus).toBe(200);
+    expect(result.payload).toMatchObject({
+      status: "blocked",
+      code: "remote_submit_unavailable",
+      draftDisposition: "restore",
+      recoverable: true,
+    });
+    expect(createConversationCalls).toBe(0);
+    expect(resolveDirectoryCalls).toBe(0);
+    expect(skillResolveCalls).toBe(0);
   });
 });

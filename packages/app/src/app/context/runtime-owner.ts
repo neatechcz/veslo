@@ -7,7 +7,6 @@ import type { RoutingClient, WorkspaceRouting } from "./workspace-routing";
 export type RuntimeOwnerReason =
   | "orchestrator-ready"
   | "routed-client"
-  | "active-legacy-engine-ready"
   | "not-ready";
 
 export type RuntimeOwnerDecision = {
@@ -110,14 +109,12 @@ export function createRuntimeOwner(options: RuntimeOwnerOptions): RuntimeOwner {
     const activeLegacyEngineReady =
       activeWorkspace && !requiresOrchestratorReadiness && options.activeLegacyEngineReady();
     const busy = Object.keys(options.workspaceBusy?.()[id] ?? {}).length > 0;
-    const ready = orchestratorReady || routedClientCountsAsReady || activeLegacyEngineReady;
+    const ready = orchestratorReady || routedClientCountsAsReady;
     const reason: RuntimeOwnerReason = orchestratorReady
       ? "orchestrator-ready"
       : routedClientCountsAsReady
         ? "routed-client"
-        : activeLegacyEngineReady
-          ? "active-legacy-engine-ready"
-          : "not-ready";
+        : "not-ready";
 
     return {
       owner: ready ? { type: "workspace-runtime", workspaceId: id } : null,

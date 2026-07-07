@@ -19,6 +19,14 @@ function sendPromptSource(): string {
   return sendWorkflowSource.slice(start, end);
 }
 
+function legacyConversationRunFallbackSource(): string {
+  const start = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+  const end = sendWorkflowSource.indexOf("export function createSessionSendWorkflow", start);
+  assert.notEqual(start, -1, "legacy conversation run fallback should exist");
+  assert.notEqual(end, -1, "legacy conversation run fallback block should end before createSessionSendWorkflow");
+  return sendWorkflowSource.slice(start, end);
+}
+
 function createSessionAndOpenSource(): string {
   const start = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
   const end = createWorkflowSource.indexOf("\n  const createSession = (", start);
@@ -43,15 +51,27 @@ test("pending draft sends snapshot selected target metadata and fall back to the
 });
 
 test("successful pending draft sends consume the pending draft only after the prompt handoff succeeds", () => {
+  const source = sendPromptSource();
+  const fallbackSource = legacyConversationRunFallbackSource();
   assert.match(
-    sendPromptSource(),
-    /await runConversationOrFail\(\s*\{[\s\S]*kind: "prompt_async",[\s\S]*\}\);\s*\}\s*if \(pendingDraftSendState\) \{[\s\S]*const pendingDraftStorageKey = pendingDraftSendState\.key;[\s\S]*const pendingDraftId = pendingDraftSendState\.draftId;[\s\S]*if \(pendingDraftId && deps\.isTauriRuntime\(\)\) \{[\s\S]*await deps\.pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*\}[\s\S]*deps\.clearActivePendingDraftState\(\);[\s\S]*deps\.setComposerDraftBySessionId\(\(current\) => deleteSessionComposerDraft\(current, \{[\s\S]*storageKey: pendingDraftStorageKey,[\s\S]*\}\)\);[\s\S]*\}\s*deps\.finishPerf\(perfEnabled, "session\.prompt", "done", startedAt, \{[\s\S]*\}\);\s*deps\.recordSendTrace\("sendPrompt:success"[\s\S]*return true;/s,
-    "pending drafts should be deleted and cleared only after the conversation prompt handoff succeeds",
+    source,
+    /const consumePendingDraftAfterAcceptedSend = async \(clearDisplayedPendingDraftState: boolean\) => \{[\s\S]*const pendingDraftStorageKey = pendingDraftSendState\.key;[\s\S]*const pendingDraftId = pendingDraftSendState\.draftId;[\s\S]*if \(pendingDraftId && deps\.isTauriRuntime\(\)\) \{[\s\S]*await deps\.pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*\}[\s\S]*deps\.setComposerDraftBySessionId\(\(current\) => deleteSessionComposerDraft\(current, \{[\s\S]*storageKey: pendingDraftStorageKey,[\s\S]*\}\)\);[\s\S]*\};/s,
+    "pending drafts should be deleted and cleared through the accepted-send cleanup helper",
+  );
+  assert.match(
+    fallbackSource,
+    /await runConversationOrFail\(\s*\{[\s\S]*kind: "prompt_async",[\s\S]*\}\);\s*\}\s*await input\.consumePendingDraftAfterAcceptedSend\(input\.sendTargetStillDisplayed\(\)\);[\s\S]*deps\.finishPerf\(perfEnabled, "session\.prompt", "done", startedAt, \{[\s\S]*\}\);\s*deps\.recordSendTrace\("sendPrompt:success"[\s\S]*return true;/s,
+    "legacy fallback should consume pending drafts only after the prompt handoff succeeds",
+  );
+  assert.match(
+    source,
+    /deps\.emitLiveTranscriptPolicyEvent\(\{[\s\S]*reason: "sendPrompt:success",[\s\S]*\}\);\s*await consumePendingDraftAfterAcceptedSend\(true\);[\s\S]*return true;/s,
+    "first-session server submit success should consume pending drafts after the typed success result",
   );
 });
 
 test("failed sends do not consume pending draft state", () => {
-  const source = sendPromptSource();
+  const source = legacyConversationRunFallbackSource();
   const catchStart = source.indexOf("    } catch (e) {");
   const catchEnd = source.indexOf("    } finally {", catchStart);
   assert.notEqual(catchStart, -1, "send failure path should exist");
@@ -82,14 +102,14 @@ test("pending draft cleanup failures are handled separately from prompt handoff 
 });
 
 test("slash command sends preassign the message id used for optimistic display", () => {
-  const source = sendPromptSource();
-  const commandBranchStart = source.indexOf("        commandMessageIDToClear = sendCorrelation.clientMessageId;");
+  const source = legacyConversationRunFallbackSource();
+  const commandBranchStart = source.indexOf("        commandMessageIDToClear = input.sendCorrelation.clientMessageId;");
   const commandBranchEnd = source.indexOf("        commandMessageIDToClear = null;", commandBranchStart);
-  assert.notEqual(commandBranchStart, -1, "sendPrompt should have a slash command branch");
+  assert.notEqual(commandBranchStart, -1, "legacy fallback should have a slash command branch");
   assert.notEqual(commandBranchEnd, -1, "slash command branch should end before promptAsync branch");
 
   const commandBranch = source.slice(commandBranchStart, commandBranchEnd);
-  assert.match(commandBranch, /commandMessageIDToClear = sendCorrelation\.clientMessageId;/);
+  assert.match(commandBranch, /commandMessageIDToClear = input\.sendCorrelation\.clientMessageId;/);
   assert.match(
     commandBranch,
     /deps\.sessionStoreSetCommandDisplay\(commandMessageID,\s*command\.name,\s*command\.arguments\);/,
@@ -98,7 +118,7 @@ test("slash command sends preassign the message id used for optimistic display",
 });
 
 test("failed slash command sends clear the preassigned command display alias", () => {
-  const source = sendPromptSource();
+  const source = legacyConversationRunFallbackSource();
   const catchStart = source.indexOf("    } catch (e) {");
   const catchEnd = source.indexOf("    } finally {", catchStart);
   assert.notEqual(catchStart, -1, "send failure path should exist");

@@ -24,11 +24,19 @@ const flowHandleSendStart = conversationFlowSource.indexOf("handleSendPrompt: as
 const flowHandleSendEnd = conversationFlowSource.indexOf("drainNextQueuedDraft: async (", flowHandleSendStart);
 const flowHandleSendSource = conversationFlowSource.slice(flowHandleSendStart, flowHandleSendEnd);
 
+function legacyConversationRunFallbackSource(): string {
+  const start = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+  const end = sendWorkflowSource.indexOf("export function createSessionSendWorkflow", start);
+  assert.notEqual(start, -1, "legacy conversation run fallback should exist");
+  assert.notEqual(end, -1, "legacy conversation run fallback block should end before createSessionSendWorkflow");
+  return sendWorkflowSource.slice(start, end);
+}
+
 test("session page imports queue model helpers, queue list component, and composer send options", () => {
   assert.match(
     source,
-    /import type \{ ComposerSendOptions \} from "\.\.\/components\/session\/composer";/,
-    "session view should consume ComposerSendOptions from the composer component",
+    /import type \{ ComposerSendOptions, ComposerSendResult \} from "\.\.\/components\/session\/composer";/,
+    "session view should consume ComposerSendOptions and ComposerSendResult from the composer component",
   );
   assert.match(
     source,
@@ -60,13 +68,13 @@ test("session page owns session-local queue state and handleSendPrompt accepts s
   );
   assert.match(
     source,
-    /const handleSendPrompt = async \(draft: ComposerDraft, options: ComposerSendOptions = \{\}\) => \{/,
-    "session send handler should accept composer send options",
+    /const handleSendPrompt = async \(draft: ComposerDraft, options: ComposerSendOptions = \{\}\): Promise<ComposerSendResult> => \{/,
+    "session send handler should accept composer send options and return a typed result",
   );
   assert.match(
     sessionSource,
-    /const sessionFlowFacade = createSessionViewFlowFacade\(\{ conversationFlow \}\);[\s\S]*return sessionFlowFacade\.handleSendPrompt\(draft, \{\s*sendNow: options\.sendNow,\s*sendTraceId: options\.sendTraceId,\s*source: options\.source,\s*\}\);/s,
-    "session send handler should delegate queue/send branching and source intent through the session flow facade",
+    /const sessionFlowFacade = createSessionViewFlowFacade\(\{ conversationFlow \}\);[\s\S]*const accepted = await sessionFlowFacade\.handleSendPrompt\(draft, \{\s*sendNow: options\.sendNow,\s*sendTraceId: options\.sendTraceId,\s*source: options\.source,\s*\}\);[\s\S]*return sessionSubmitResultFromAccepted\(accepted, props\.error\);/s,
+    "session send handler should delegate queue/send branching and wrap the boolean facade result for the composer",
   );
   assert.match(
     flowHandleSendSource,
@@ -380,19 +388,39 @@ test("rejected pending queue drain updates the remapped item key", () => {
 test("app prompt send accepts an explicit target session without freezing model bootstrap", () => {
   const sendStart = sendWorkflowSource.indexOf("async function sendPrompt");
   const targetCapture = sendWorkflowSource.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceId(options.targetSessionId)", sendStart);
-  const bootstrap = sendWorkflowSource.indexOf('deps.prepareSendRuntimeForSend("sendPrompt", sendPreflight)', sendStart);
-  const modelResolution = sendWorkflowSource.indexOf("const model = deps.modelForSession(materializedSessionID);", sendStart);
-  const agentResolution = sendWorkflowSource.indexOf("const agent = deps.agentForSession(sessionID);", sendStart);
+  const fallbackPrepare = sendWorkflowSource.indexOf("legacyConversationRunFallback.prepare({", targetCapture);
+  const fallbackSubmit = sendWorkflowSource.indexOf("legacyConversationRunFallback.submit({", fallbackPrepare);
+  const fallbackSource = legacyConversationRunFallbackSource();
 
   assert.notEqual(sendStart, -1, "app sendPrompt should exist");
   assert.ok(targetCapture > sendStart, "sendPrompt should accept a captured target session id");
   assert.match(
-    sendWorkflowSource.slice(targetCapture, bootstrap),
+    sendWorkflowSource.slice(targetCapture, fallbackPrepare),
     /let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;/,
     "sendPrompt should prefer an explicit target session over implicit active-workspace selection",
   );
-  assert.ok(modelResolution > bootstrap, "model should resolve after managed AI bootstrap");
-  assert.ok(agentResolution > bootstrap, "agent should resolve after managed AI bootstrap");
+  assert.ok(fallbackPrepare > targetCapture, "legacy fallback prepare should run after the explicit target is captured");
+  assert.ok(fallbackSubmit > fallbackPrepare, "legacy fallback submit should run after prepare for the legacy send path");
+  assert.match(
+    sendWorkflowSource.slice(fallbackPrepare, fallbackSubmit),
+    /sendTargetWorkspace,/,
+    "sendPrompt should pass the snapshotted target workspace into legacy fallback prepare",
+  );
+  assert.match(
+    sendWorkflowSource.slice(fallbackSubmit),
+    /sendTargetWorkspace,/,
+    "sendPrompt should pass the snapshotted target workspace into legacy fallback submit",
+  );
+  assert.match(
+    fallbackSource,
+    /deps\.prepareSendRuntimeForSend\("sendPrompt", input\.sendPreflight\)[\s\S]*const c = deps\.routedClientForSendTarget\(input\.sendTargetWorkspace\);/,
+    "legacy fallback should prepare the target runtime before reading its routed client",
+  );
+  assert.match(
+    fallbackSource,
+    /const model = deps\.modelForSession\(materializedSessionID\);[\s\S]*const agent = deps\.agentForSession\(sessionID\);/,
+    "legacy fallback should resolve model and agent after the prepared legacy handoff begins",
+  );
 });
 
 test("queued edit lifecycle restores editing items and drains idle saves", () => {

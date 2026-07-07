@@ -1404,6 +1404,9 @@ export type VesloConversationSubmitResolvedRunInput =
       command: string;
       arguments: string;
       parts?: unknown[];
+    }
+  | {
+      kind: "summarize";
     };
 
 export type VesloConversationSubmitResult =

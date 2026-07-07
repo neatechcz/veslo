@@ -5,6 +5,7 @@ import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 
 import type { VesloSessionTranscriptSnapshot } from "../lib/veslo-server";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
+import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 import { unwrap } from "../lib/opencode";
 import type {
   DirectoryQueryPathMode,
@@ -508,6 +509,15 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
         ...(payload ?? {}),
       });
     };
+    const traceSelect = (event: string, payload?: Record<string, unknown>) => {
+      recordSendWorkflowTrace("session.select", event, {
+        runId,
+        sessionID,
+        selectionKey,
+        elapsedMs: Math.round((perfNow() - startedAt) * 100) / 100,
+        ...(payload ?? {}),
+      });
+    };
     const isStale = () =>
       version !== selectGuard.currentVersion() ||
       deps.selectedSessionId() !== sessionID ||
@@ -520,6 +530,7 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
 
     const run = (async () => {
       mark("start");
+      traceSelect("start");
 
       const existingLimit = deps.messageLimitBySession()[sessionID] ?? 0;
       const requestLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, existingLimit);
@@ -537,11 +548,23 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
       const c = sessionClient.client;
       const readPolicy = deps.sessionReadPolicy(sessionID, sessionClient.workspaceId);
       const loadOfflineTranscriptFallback = async (reason: string) => {
+        const fallbackStartedAt = perfNow();
         mark("calling offline transcript fallback", {
           limit: requestLimit,
           reason,
           activeWorkspaceId: readPolicy.activeWorkspaceId || null,
           sessionWorkspaceId: readPolicy.sessionWorkspaceId || null,
+        });
+        traceSelect("offline-transcript-fallback:start", {
+          limit: requestLimit,
+          reason,
+          activeWorkspaceId: readPolicy.activeWorkspaceId || null,
+          sessionWorkspaceId: readPolicy.sessionWorkspaceId || null,
+          browseFromDb: readPolicy.browseFromDb,
+          browseModeOnly: readPolicy.browseModeOnly,
+          configuredBrowseFromDb: readPolicy.configuredBrowseFromDb,
+          foreignWorkspace: readPolicy.foreignWorkspace,
+          liveRecoveryFromUnavailable: readPolicy.liveRecoveryFromUnavailable,
         });
         let history: SessionHistoryLoadResult;
         try {
@@ -559,9 +582,19 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
             reason,
             error: error instanceof Error ? error.message : safeStringify(error),
           });
+          traceSelect("offline-transcript-fallback:error", {
+            reason,
+            durationMs: Math.round((perfNow() - fallbackStartedAt) * 100) / 100,
+            error: error instanceof Error ? error.message : safeStringify(error),
+          });
           return { status: "failed" as const };
         }
         if (abortIfStale("selection changed before offline transcript applied")) {
+          traceSelect("offline-transcript-fallback:stale", {
+            reason,
+            durationMs: Math.round((perfNow() - fallbackStartedAt) * 100) / 100,
+            status: history.status,
+          });
           return { status: "stale" as const };
         }
         if (history.status === "loaded" || history.status === "empty") {
@@ -575,10 +608,26 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
             reason,
             status: history.status,
           });
+          traceSelect("offline-transcript-fallback:done", {
+            reason,
+            durationMs: Math.round((perfNow() - fallbackStartedAt) * 100) / 100,
+            status: history.status,
+            count: snapshot.messages.length,
+            limit: requestLimit,
+            assistantCount: snapshot.messages
+              .filter((message) => (message as { role?: string }).role === "assistant")
+              .length,
+          });
           return { status: "applied" as const, history };
         }
         mark("offline transcript fallback unavailable", {
           reason,
+          unavailableReason: history.reason ?? null,
+          scope: history.scope,
+        });
+        traceSelect("offline-transcript-fallback:unavailable", {
+          reason,
+          durationMs: Math.round((perfNow() - fallbackStartedAt) * 100) / 100,
           unavailableReason: history.reason ?? null,
           scope: history.scope,
         });
@@ -596,9 +645,22 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
             activeWorkspaceId: readPolicy.activeWorkspaceId || null,
             sessionWorkspaceId: readPolicy.sessionWorkspaceId || null,
           });
+          traceSelect("live-recovery:skipped", {
+            hasClient: Boolean(c),
+            liveRecoveryFromUnavailable: readPolicy.liveRecoveryFromUnavailable,
+            hasEngineSessionId: Boolean(engineSessionID),
+            activeWorkspaceId: readPolicy.activeWorkspaceId || null,
+            sessionWorkspaceId: readPolicy.sessionWorkspaceId || null,
+          });
           return false;
         }
+        const recoveryStartedAt = perfNow();
         mark("calling live recovery session.messages", {
+          limit: requestLimit,
+          uiSessionID: sessionID,
+          engineSessionID,
+        });
+        traceSelect("live-recovery:start", {
           limit: requestLimit,
           uiSessionID: sessionID,
           engineSessionID,
@@ -617,6 +679,12 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
             engineSessionID,
             error: error instanceof Error ? error.message : safeStringify(error),
           });
+          traceSelect("live-recovery:error", {
+            durationMs: Math.round((perfNow() - recoveryStartedAt) * 100) / 100,
+            engineSessionID,
+            error: error instanceof Error ? error.message : safeStringify(error),
+            sessionNotFound: deps.isSessionNotFoundError(error),
+          });
           if (deps.isSessionNotFoundError(error)) return false;
           deps.addError(error);
           return false;
@@ -624,6 +692,16 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
         mark("live recovery session.messages done", {
           limit: requestLimit,
           count: msgs.length,
+          uiSessionID: sessionID,
+          engineSessionID,
+        });
+        traceSelect("live-recovery:messages", {
+          durationMs: Math.round((perfNow() - recoveryStartedAt) * 100) / 100,
+          count: msgs.length,
+          assistantCount: msgs
+            .filter((message) => (message.info as { role?: string }).role === "assistant")
+            .length,
+          limit: requestLimit,
           uiSessionID: sessionID,
           engineSessionID,
         });
@@ -653,6 +731,16 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
         foreignWorkspace: readPolicy.foreignWorkspace,
         liveRecoveryFromUnavailable: readPolicy.liveRecoveryFromUnavailable,
         sessionID,
+        activeWorkspaceId: readPolicy.activeWorkspaceId || null,
+        sessionWorkspaceId: readPolicy.sessionWorkspaceId || null,
+      });
+      traceSelect("read-policy", {
+        hasClient: Boolean(c),
+        browseModeOnly: readPolicy.browseModeOnly,
+        browseFromDb: readPolicy.browseFromDb,
+        configuredBrowseFromDb: readPolicy.configuredBrowseFromDb,
+        foreignWorkspace: readPolicy.foreignWorkspace,
+        liveRecoveryFromUnavailable: readPolicy.liveRecoveryFromUnavailable,
         activeWorkspaceId: readPolicy.activeWorkspaceId || null,
         sessionWorkspaceId: readPolicy.sessionWorkspaceId || null,
       });

@@ -5,7 +5,14 @@ import test from "node:test";
 const stagingModuleSource = readFileSync(new URL("../pages/session-attachment-staging.ts", import.meta.url), "utf8");
 const sendWorkflowSource = readFileSync(new URL("../pages/session-send-workflow.ts", import.meta.url), "utf8");
 
-test("attachment staging validates cached workspace ids against the active server list", () => {
+function legacyConversationRunFallbackSource(): string {
+  const start = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+  const end = sendWorkflowSource.indexOf("export function createSessionSendWorkflow(", start);
+  assert.ok(start >= 0 && end > start, "legacy conversation run fallback source should be present");
+  return sendWorkflowSource.slice(start, end);
+}
+
+test("attachment staging resolves workspace ids from active remote/local identity only", () => {
   const resolverStart = stagingModuleSource.indexOf("const resolveWorkspaceIdForAttachmentStaging = async (");
   const resolverEnd = stagingModuleSource.indexOf("  const recoverWorkspaceReadyForAttachmentStaging = async (", resolverStart);
   assert.notEqual(resolverStart, -1, "workspace resolver should exist");
@@ -19,13 +26,18 @@ test("attachment staging validates cached workspace ids against the active serve
   );
   assert.match(
     resolverSource,
-    /const response = await client\.listWorkspaces\(\);[\s\S]*const cachedWorkspaceId = \(deps\.vesloServerWorkspaceId\(\) \?\? ""\)\.trim\(\);/s,
+    /const response = await client\.listWorkspaces\(\);/,
     "attachment staging should always inspect the current server workspace list before resolving a workspace id",
+  );
+  assert.doesNotMatch(
+    resolverSource,
+    /vesloServerWorkspaceId|cachedWorkspaceId/,
+    "attachment staging must not use the global cached Veslo workspace id as a write target fallback",
   );
   assert.match(
     resolverSource,
     /const listedWorkspaceId = \(workspaceId: string \| null \| undefined\) => \{[\s\S]*items\.some\(\(entry\) => entry\.id === id\)/,
-    "cached remote workspace ids should only be reused when the connected server still lists them",
+    "active remote/local workspace ids should only be used when the connected server still lists them",
   );
   assert.doesNotMatch(
     resolverSource,
@@ -65,10 +77,11 @@ test("attachment staging self-heals a missing local server workspace once before
     "file-session creation should retry once after refreshing the local workspace/server state",
   );
 
-  const appStagingCallIndex = sendWorkflowSource.search(
-    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, sendPreflight\)/,
+  const fallbackSource = legacyConversationRunFallbackSource();
+  const appStagingCallIndex = fallbackSource.search(
+    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, input\.sendPreflight\)/,
   );
-  const promptAsyncIndex = sendWorkflowSource.indexOf('kind: "prompt_async"');
+  const promptAsyncIndex = fallbackSource.indexOf('kind: "prompt_async"');
   assert.notEqual(appStagingCallIndex, -1, "send workflow should call the staging module");
   assert.notEqual(promptAsyncIndex, -1, "prompt_async conversation handoff should exist");
   assert.ok(

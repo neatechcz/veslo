@@ -16,14 +16,14 @@ test("composer exports send intent options and passes them to onSend", () => {
 
   assert.match(
     composerSource,
-    /onSend: \(draft: ComposerDraft, options\?: ComposerSendOptions\) => Promise<boolean>;/,
-    "composer onSend should accept optional send intent options",
+    /onSend: \(draft: ComposerDraft, options\?: ComposerSendOptions\) => Promise<ComposerSendResult>;/,
+    "composer onSend should accept optional send intent options and return a typed result",
   );
 
   const handlerStart = composerSource.indexOf("const sendDraft = async (");
   const submittedDraftIndex = composerSource.indexOf("const submittedDraft = draft;", handlerStart);
   const onSendIndex = composerSource.indexOf("sendPromise = props.onSend(submittedDraft, options);", handlerStart);
-  const awaitIndex = composerSource.indexOf("sent = await sendPromise;", handlerStart);
+  const awaitIndex = composerSource.indexOf("sendResult = await sendPromise;", handlerStart);
   assert.notEqual(handlerStart, -1, "sendDraft should exist");
   assert.notEqual(submittedDraftIndex, -1, "sendDraft should capture the draft being submitted");
   assert.notEqual(onSendIndex, -1, "sendDraft should pass the send intent through to onSend");
@@ -46,17 +46,21 @@ test("composer creates a trace id before parent send handoff", () => {
   );
 });
 
-test("composer calls onSend before clearing the parent draft", () => {
+test("composer clears the parent draft only after a clear disposition", () => {
   const handlerStart = composerSource.indexOf("const sendDraft = async (");
   const onSendIndex = composerSource.indexOf("sendPromise = props.onSend(submittedDraft, options);", handlerStart);
+  const awaitIndex = composerSource.indexOf("sendResult = await sendPromise;", handlerStart);
+  const dispositionIndex = composerSource.indexOf('sendResult.draftDisposition === "clear"', handlerStart);
   const clearDraftIndex = composerSource.indexOf("props.onDraftChange({", handlerStart);
 
   assert.notEqual(handlerStart, -1, "sendDraft should exist");
   assert.notEqual(onSendIndex, -1, "sendDraft should call onSend");
-  assert.notEqual(clearDraftIndex, -1, "sendDraft should clear the parent draft after submit");
+  assert.notEqual(awaitIndex, -1, "sendDraft should await the typed send result");
+  assert.notEqual(dispositionIndex, -1, "sendDraft should branch on draftDisposition");
+  assert.notEqual(clearDraftIndex, -1, "sendDraft should still clear the parent draft on accepted clear results");
   assert.ok(
-    onSendIndex < clearDraftIndex,
-    "sendDraft should let the parent capture edit/replacement state before it clears the parent draft",
+    onSendIndex < awaitIndex && awaitIndex < dispositionIndex && dispositionIndex < clearDraftIndex,
+    "sendDraft should clear only after the parent returns a clear draft disposition",
   );
 });
 

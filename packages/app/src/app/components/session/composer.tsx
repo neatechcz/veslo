@@ -5,6 +5,7 @@ import { ArrowUp, File as FileIcon, Loader2, Paperclip, Square, Terminal, X, Zap
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
+import type { SessionSubmitResult } from "../../lib/session-send-contract";
 import { logUiEvent, readClipboardFilePaths } from "../../lib/tauri";
 import { recordSendWorkflowTrace } from "../../lib/send-workflow-trace";
 import { currentLocale, t, useTranslate } from "../../../i18n";
@@ -33,6 +34,8 @@ export type ComposerSendOptions = {
   sendTraceId?: string;
 };
 
+export type ComposerSendResult = SessionSubmitResult;
+
 type ComposerSendTraceRoot = typeof window & {
   __vesloActiveSendTraceId?: string | null;
 };
@@ -47,7 +50,7 @@ type ComposerProps = {
   compactTopSpacing?: boolean;
   compactWidth?: boolean;
   entryPlacement?: "footer" | "center";
-  onSend: (draft: ComposerDraft, options?: ComposerSendOptions) => Promise<boolean>;
+  onSend: (draft: ComposerDraft, options?: ComposerSendOptions) => Promise<ComposerSendResult>;
   onStop: () => void;
   onDraftChange: (draft: ComposerDraft) => void;
   selectedAgent: string | null;
@@ -1070,7 +1073,8 @@ export default function Composer(props: ComposerProps) {
       source: options.source,
     });
     let sent = false;
-    let sendPromise: Promise<boolean>;
+    let sendResult: ComposerSendResult | null = null;
+    let sendPromise: Promise<ComposerSendResult>;
     try {
       setActiveSendTraceId(options.sendTraceId ?? null);
       sendPromise = props.onSend(submittedDraft, options);
@@ -1086,23 +1090,25 @@ export default function Composer(props: ComposerProps) {
       });
       return;
     }
-    setAttachments([]);
-    setEditorText("");
-    rememberRecentEmit("");
-    suppressPromptSync = true;
-    props.onDraftChange({
-      mode: submittedDraft.mode,
-      parts: [],
-      attachments: [],
-      text: "",
-      resolvedText: "",
-    });
-    queueMicrotask(() => {
-      suppressPromptSync = false;
-    });
-    setSending(false);
     try {
-      sent = await sendPromise;
+      sendResult = await sendPromise;
+      sent = sendResult.accepted;
+      if (sendResult.draftDisposition === "clear") {
+        setAttachments([]);
+        setEditorText("");
+        rememberRecentEmit("");
+        suppressPromptSync = true;
+        props.onDraftChange({
+          mode: submittedDraft.mode,
+          parts: [],
+          attachments: [],
+          text: "",
+          resolvedText: "",
+        });
+        queueMicrotask(() => {
+          suppressPromptSync = false;
+        });
+      }
     } catch (error) {
       recordSendTrace("sendDraft:onSend:error", {
         sendTraceId: options.sendTraceId,
@@ -1111,6 +1117,7 @@ export default function Composer(props: ComposerProps) {
         source: options.source,
       });
     } finally {
+      setSending(false);
       setActiveSendTraceId(null);
       if (options.sendNow) setSendNowPending(false);
     }
@@ -1121,6 +1128,8 @@ export default function Composer(props: ComposerProps) {
       streaming: props.isStreaming,
       sendNow: options.sendNow,
       source: options.source,
+      draftDisposition: sendResult?.draftDisposition ?? null,
+      status: sendResult?.status ?? null,
     });
     if (!sent) {
       return;

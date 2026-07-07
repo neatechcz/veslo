@@ -1,6 +1,17 @@
 import type { ConversationService, ConversationTranscriptResult } from "../conversation-service.js";
 import type { ConversationRunLifecycleController } from "../conversation-run-lifecycle-controller.js";
-import type { ConversationSubmitService } from "../conversation-submit-service.js";
+import type {
+  ConversationSubmitResolvedRunSubmitter,
+  ConversationSubmitService,
+} from "../conversation-submit-service.js";
+import type {
+  ConversationSubmitBlockedResult,
+  ConversationSubmitFailedResult,
+  ConversationSubmitQueuedResult,
+  ConversationSubmitRequest,
+  ConversationSubmitResolvedRunInput,
+  ConversationSubmitSubmittedResult,
+} from "../conversation-submit-contract.js";
 import { ApiError } from "../errors.js";
 import {
   OrchestratorLifecycleRequestError,
@@ -86,6 +97,27 @@ export type ConversationSessionRouteDependencies = {
   createConversationRunTracer(request: Request): ConversationRunTracer;
   resolveConversationExecutionTarget: ResolveConversationExecutionTarget;
   deleteOpenCodeSession(input: { workspace: WorkspaceInfo; sessionId: string }): Promise<unknown>;
+  loadOpenCodeSession(input: {
+    workspace: WorkspaceInfo;
+    target: ConversationExecutionTarget;
+    sendTraceId?: string | null;
+  }): Promise<unknown>;
+  abortOpenCodeSession(input: {
+    workspace: WorkspaceInfo;
+    target: ConversationExecutionTarget;
+    sendTraceId?: string | null;
+  }): Promise<unknown>;
+  revertOpenCodeSession(input: {
+    workspace: WorkspaceInfo;
+    target: ConversationExecutionTarget;
+    messageId: string;
+    sendTraceId?: string | null;
+  }): Promise<unknown>;
+  unrevertOpenCodeSession(input: {
+    workspace: WorkspaceInfo;
+    target: ConversationExecutionTarget;
+    sendTraceId?: string | null;
+  }): Promise<unknown>;
   recordSendWorkflowTrace(source: "server", event: string, payload: Record<string, unknown>): void;
 };
 
@@ -168,6 +200,17 @@ function parseSessionTranscriptDeletedParts(input: unknown): Record<string, stri
 
 function isRecordLike(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function messageFromUnknownError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function sessionRevertMessageId(session: unknown): string | null {
+  if (!isRecordLike(session)) return null;
+  const revert = isRecordLike(session.revert) ? session.revert : null;
+  const messageId = typeof revert?.messageID === "string" ? revert.messageID.trim() : "";
+  return messageId || null;
 }
 
 function readTranscriptMessageInfo(message: unknown): Record<string, unknown> | null {
@@ -286,6 +329,113 @@ function parseConversationRunKind(input: unknown): ConversationRunKind {
   throw new ApiError(400, "invalid_payload", "kind must be prompt_async, command, shell, or summarize");
 }
 
+function promptPartsFromResolvedRunInput(input: Extract<ConversationSubmitResolvedRunInput, { kind: "prompt_async" }>) {
+  if (input.parts.length > 0) return input.parts;
+  const text = input.text.trim();
+  return text ? [{ type: "text", text }] : [];
+}
+
+function stripSubmitModelMetadata(model: unknown): unknown {
+  if (!model || typeof model !== "object" || Array.isArray(model)) return model;
+  const providerID = (model as { providerID?: unknown }).providerID;
+  const modelID = (model as { modelID?: unknown }).modelID;
+  if (typeof providerID !== "string" || !providerID.trim()) return model;
+  if (typeof modelID !== "string" || !modelID.trim()) return model;
+  return {
+    providerID: providerID.trim(),
+    modelID: modelID.trim(),
+  };
+}
+
+function modelForSubmitRunKind(kind: ConversationRunKind, model: unknown): unknown {
+  const stripped = stripSubmitModelMetadata(model);
+  if (kind !== "command") return stripped;
+  if (typeof stripped === "string") return stripped;
+  if (!stripped || typeof stripped !== "object" || Array.isArray(stripped)) return stripped;
+  const providerID = (stripped as { providerID?: unknown }).providerID;
+  const modelID = (stripped as { modelID?: unknown }).modelID;
+  return typeof providerID === "string" && providerID && typeof modelID === "string" && modelID
+    ? `${providerID}/${modelID}`
+    : stripped;
+}
+
+function assignSummarizeModelFields(body: Record<string, unknown>, model: unknown): void {
+  if (typeof model === "string") {
+    const slashIndex = model.indexOf("/");
+    const providerID = slashIndex > 0 ? model.slice(0, slashIndex).trim() : "";
+    const modelID = slashIndex > 0 ? model.slice(slashIndex + 1).trim() : "";
+    assignDefinedRunBodyField(body, "providerID", providerID || undefined);
+    assignDefinedRunBodyField(body, "modelID", modelID || undefined);
+    return;
+  }
+  if (!model || typeof model !== "object" || Array.isArray(model)) return;
+  const providerID = (model as { providerID?: unknown }).providerID;
+  const modelID = (model as { modelID?: unknown }).modelID;
+  assignDefinedRunBodyField(body, "providerID", typeof providerID === "string" ? providerID.trim() : undefined);
+  assignDefinedRunBodyField(body, "modelID", typeof modelID === "string" ? modelID.trim() : undefined);
+}
+
+function assignDefinedRunBodyField(body: Record<string, unknown>, field: string, value: unknown): void {
+  if (value !== undefined && value !== null) body[field] = value;
+}
+
+function buildConversationSubmitRunBody(input: {
+  request: ConversationSubmitRequest;
+  resolvedRunInput: ConversationSubmitResolvedRunInput;
+  directory: string;
+}): { kind: ConversationRunKind; body: Record<string, unknown> } {
+  const { request, resolvedRunInput, directory } = input;
+  const kind = resolvedRunInput.kind;
+  const body: Record<string, unknown> = {
+    kind,
+    directory,
+    clientMessageId: request.clientMessageId,
+    origin: request.origin,
+  };
+  assignDefinedRunBodyField(body, "agent", request.options?.agent);
+  assignDefinedRunBodyField(body, "variant", request.options?.variant);
+  if (kind === "summarize") {
+    assignSummarizeModelFields(body, request.options?.model);
+  } else {
+    assignDefinedRunBodyField(body, "model", modelForSubmitRunKind(kind, request.options?.model));
+  }
+  if (request.options?.expectAiGatewayStart === true) {
+    body.expectAiGatewayStart = true;
+  }
+
+  switch (resolvedRunInput.kind) {
+    case "prompt_async":
+      body.messageID = request.clientMessageId;
+      body.parts = promptPartsFromResolvedRunInput(resolvedRunInput);
+      break;
+    case "command":
+      body.messageID = request.clientMessageId;
+      body.command = resolvedRunInput.command;
+      body.arguments = resolvedRunInput.arguments;
+      if (resolvedRunInput.parts?.length) body.parts = resolvedRunInput.parts;
+      break;
+    case "shell":
+      body.command = resolvedRunInput.command;
+      break;
+    case "summarize":
+      break;
+  }
+
+  return { kind, body };
+}
+
+function requireStringPayloadField(payload: Record<string, unknown>, field: string): string {
+  const value = payload[field];
+  if (typeof value === "string" && value.trim()) return value;
+  throw new ApiError(502, "invalid_run_submit_result", `Run submit result is missing ${field}`);
+}
+
+function requireNumberPayloadField(payload: Record<string, unknown>, field: string): number {
+  const value = payload[field];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  throw new ApiError(502, "invalid_run_submit_result", `Run submit result is missing ${field}`);
+}
+
 function lifecycleRequestApiError(error: OrchestratorLifecycleRequestError): ApiError {
   const status = error.status === 401 || error.status === 403
     ? 503
@@ -325,6 +475,10 @@ export function registerConversationSessionRoutes(
     createConversationRunTracer,
     resolveConversationExecutionTarget,
     deleteOpenCodeSession,
+    loadOpenCodeSession,
+    abortOpenCodeSession,
+    revertOpenCodeSession,
+    unrevertOpenCodeSession,
     recordSendWorkflowTrace,
   } = dependencies;
 
@@ -408,11 +562,285 @@ export function registerConversationSessionRoutes(
     const sendTraceId = ctx.request.headers.get("x-veslo-send-trace-id")?.trim() || null;
     const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
+    const runtimeAuthorizationActorTokenHash = ctx.actor?.tokenHash?.trim() || null;
+    const submitResolvedRun: ConversationSubmitResolvedRunSubmitter = async ({
+      request,
+      resolvedRunInput,
+      directory,
+      runtimeAuthorizationActorTokenHash,
+    }) => {
+      const targetId = request.target?.conversationId?.trim() ||
+        request.target?.opencodeSessionId?.trim() ||
+        "";
+      if (!targetId) {
+        throw new ApiError(400, "invalid_payload", "Conversation submit target is required");
+      }
+      const runTrace = createConversationRunTracer(ctx.request);
+      runTrace.record("server:conversation-submit-run:start", {
+        workspaceId: workspace.id,
+        conversationId: request.target?.conversationId ?? null,
+        opencodeSessionId: request.target?.opencodeSessionId ?? null,
+        clientMessageId: request.clientMessageId,
+        origin: request.origin,
+        runtimeAuthorizationActorTokenHashPresent: Boolean(runtimeAuthorizationActorTokenHash),
+      });
+      const target = await runTrace.step(
+        "server:conversation-submit-run:resolve-target",
+        () => resolveConversationExecutionTarget({
+          workspace,
+          sessionOrConversationId: targetId,
+          requestedDirectory: directory?.trim() || undefined,
+          missingDirectoryMessage: "Conversation submit directory is required",
+        }),
+        {
+          workspaceId: workspace.id,
+          workspaceType: workspace.workspaceType,
+        },
+      );
+      const submitRunToTarget = async () => {
+        const { kind, body } = buildConversationSubmitRunBody({
+          request,
+          resolvedRunInput,
+          directory: target.directory,
+        });
+        const result = await conversationRunLifecycleController.submitRun({
+          runTrace,
+          workspace,
+          target,
+          runId: shortId(),
+          kind,
+          body,
+          clientMessageId: request.clientMessageId,
+          origin: request.origin,
+          expectAiGatewayStart: request.options?.expectAiGatewayStart === true,
+          runtimeAuthorizationActorTokenHash,
+        });
+        const payload = result.payload;
+        if (payload.status === "submitted") {
+          return {
+            httpStatus: result.httpStatus,
+            payload: {
+              status: "submitted",
+              workspaceId: workspace.id,
+              conversationId: target.conversationId,
+              opencodeSessionId: target.opencodeSessionId,
+              runId: requireStringPayloadField(payload, "runId"),
+              clientMessageId: request.clientMessageId,
+              draftDisposition: "clear",
+            } satisfies ConversationSubmitSubmittedResult,
+          };
+        }
+        if (payload.status === "queued") {
+          return {
+            httpStatus: result.httpStatus,
+            payload: {
+              status: "queued",
+              workspaceId: workspace.id,
+              conversationId: target.conversationId,
+              opencodeSessionId: target.opencodeSessionId,
+              queueItemId: requireStringPayloadField(payload, "queueItemId"),
+              reservedRunId: requireStringPayloadField(payload, "reservedRunId"),
+              queuePosition: requireNumberPayloadField(payload, "queuePosition"),
+              clientMessageId: request.clientMessageId,
+              draftDisposition: "clear",
+            } satisfies ConversationSubmitQueuedResult,
+          };
+        }
+        throw new ApiError(502, "invalid_run_submit_result", "Run submit returned an unsupported status");
+      };
+
+      const replaceMessageId = request.options?.replaceMessageId?.trim() || "";
+      if (!replaceMessageId) {
+        return await submitRunToTarget();
+      }
+
+      runTrace.record("server:conversation-submit-replace:start", {
+        workspaceId: workspace.id,
+        conversationId: target.conversationId,
+        opencodeSessionId: target.opencodeSessionId,
+        replaceMessageId,
+        clientMessageId: request.clientMessageId,
+      });
+      let previousRevertMessageId: string | null = null;
+      try {
+        previousRevertMessageId = sessionRevertMessageId(await loadOpenCodeSession({
+          workspace,
+          target,
+          sendTraceId,
+        }));
+      } catch (error) {
+        const message = messageFromUnknownError(error);
+        runTrace.record("server:conversation-submit-replace:state-load-error", {
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          message,
+        });
+        return {
+          httpStatus: 200,
+          payload: {
+            status: "blocked",
+            code: "replacement_state_unavailable",
+            message: "Replacement could not read the current session revert state before changing it.",
+            draftDisposition: "restore",
+            recoverable: true,
+          } satisfies ConversationSubmitBlockedResult,
+        };
+      }
+
+      if (lifecycleClient) {
+        try {
+          const activeRun = await runTrace.step(
+            "server:conversation-submit-replace:lifecycle-active",
+            () => lifecycleClient.active(workspace.id, target.conversationId),
+            {
+              workspaceId: workspace.id,
+              conversationId: target.conversationId,
+            },
+          );
+          if (activeRun?.runId) {
+            await conversationRunLifecycleController.abortRun({
+              workspace,
+              target,
+              runId: activeRun.runId,
+            });
+          }
+        } catch (error) {
+          const message = messageFromUnknownError(error);
+          runTrace.record("server:conversation-submit-replace:abort-error", {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            message,
+          });
+          return {
+            httpStatus: 200,
+            payload: {
+              status: "blocked",
+              code: "replacement_abort_failed",
+              message: "Replacement could not abort the active run before reverting the session.",
+              draftDisposition: "restore",
+              recoverable: true,
+            } satisfies ConversationSubmitBlockedResult,
+          };
+        }
+      } else {
+        await abortOpenCodeSession({ workspace, target, sendTraceId }).catch((error) => {
+          runTrace.record("server:conversation-submit-replace:best-effort-abort-error", {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            message: messageFromUnknownError(error),
+          });
+        });
+      }
+
+      try {
+        await revertOpenCodeSession({
+          workspace,
+          target,
+          messageId: replaceMessageId,
+          sendTraceId,
+        });
+      } catch (error) {
+        const message = messageFromUnknownError(error);
+        runTrace.record("server:conversation-submit-replace:revert-error", {
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          replaceMessageId,
+          message,
+        });
+        return {
+          httpStatus: 200,
+          payload: {
+            status: "blocked",
+            code: "replacement_revert_failed",
+            message: "Replacement could not revert the session before submit.",
+            draftDisposition: "restore",
+            recoverable: true,
+          } satisfies ConversationSubmitBlockedResult,
+        };
+      }
+
+      try {
+        const result = await submitRunToTarget();
+        runTrace.record("server:conversation-submit-replace:submitted", {
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          replaceMessageId,
+          status: result.payload.status,
+        });
+        return result;
+      } catch (error) {
+        const submitMessage = messageFromUnknownError(error);
+        const restore = async () => {
+          if (previousRevertMessageId) {
+            await revertOpenCodeSession({
+              workspace,
+              target,
+              messageId: previousRevertMessageId,
+              sendTraceId,
+            });
+            return "previous-revert";
+          }
+          await unrevertOpenCodeSession({ workspace, target, sendTraceId });
+          return "unrevert";
+        };
+        try {
+          const restoreMode = await restore();
+          runTrace.record("server:conversation-submit-replace:restore-succeeded", {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            replaceMessageId,
+            restoreMode,
+            submitMessage,
+          });
+          return {
+            httpStatus: 200,
+            payload: {
+              status: "failed",
+              code: "replacement_submit_failed_restore_succeeded",
+              message: "Replacement submit failed and the previous session state was restored.",
+              draftDisposition: "restore",
+              debugTrace: [{
+                source: "server",
+                event: "replacement_submit_failed_restore_succeeded",
+                submitMessage,
+                restoreMode,
+              }],
+            } satisfies ConversationSubmitFailedResult,
+          };
+        } catch (restoreError) {
+          const restoreMessage = messageFromUnknownError(restoreError);
+          runTrace.record("server:conversation-submit-replace:restore-failed", {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            replaceMessageId,
+            submitMessage,
+            restoreMessage,
+          });
+          return {
+            httpStatus: 200,
+            payload: {
+              status: "failed",
+              code: "replacement_submit_failed_restore_failed",
+              message: "Replacement submit failed and restoring the previous session state also failed.",
+              draftDisposition: "restore",
+              debugTrace: [{
+                source: "server",
+                event: "replacement_submit_failed_restore_failed",
+                submitMessage,
+                restoreMessage,
+              }],
+            } satisfies ConversationSubmitFailedResult,
+          };
+        }
+      }
+    };
     const result = await conversationSubmitService.submit({
       workspace,
       body,
       sendTraceId,
+      runtimeAuthorizationActorTokenHash,
       resolveDirectory: (requestedRaw) => resolveConversationReadDirectory(workspace, requestedRaw),
+      submitResolvedRun,
     });
     return jsonResponse(result.payload, result.httpStatus);
   });

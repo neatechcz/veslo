@@ -5,9 +5,9 @@ import test from "node:test";
 const createWorkflowSource = readFileSync(new URL("../pages/session-creation-workflow.ts", import.meta.url), "utf8");
 
 function createSessionAndOpenSource(): string {
-  const start = createWorkflowSource.indexOf("const createSessionAndOpen = async (");
-  const end = createWorkflowSource.indexOf("  return {", start);
-  assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
+  const start = createWorkflowSource.indexOf("  const runCreateSessionFlow = async (");
+  const end = createWorkflowSource.indexOf("  const createSession = (", start);
+  assert.ok(start >= 0 && end > start, "createSessionAndOpen runtime preflight source should be present");
   return createWorkflowSource.slice(start, end);
 }
 

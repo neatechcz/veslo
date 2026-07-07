@@ -8,6 +8,7 @@ import {
 import type {
   VesloConversationAbortInput,
   VesloConversationRunInput,
+  VesloConversationSubmitRequest,
   VesloSessionTranscriptSnapshot,
 } from "../../lib/veslo-server.js";
 
@@ -54,6 +55,9 @@ function createFakeClient(options: {
   const listWorkspaceItems = options.listWorkspaceItems ?? [];
   let runConversationResult:
     | Awaited<ReturnType<ConversationServiceClient["runConversation"]>>
+    | null = null;
+  let submitConversationResult:
+    | Awaited<ReturnType<ConversationServiceClient["submitConversation"]>>
     | null = null;
   const client = {
     baseUrl: "http://127.0.0.1:8787",
@@ -106,6 +110,22 @@ function createFakeClient(options: {
         time: { created: 1, updated: 1 },
         conversationId: "conv-created",
         opencodeSessionId: "open-created",
+      };
+    },
+    submitConversation: async (
+      workspaceId: string,
+      input: VesloConversationSubmitRequest,
+    ) => {
+      calls.push(`submitConversation:${workspaceId}:${input.options?.expectAiGatewayStart === true}`);
+      if (submitConversationResult) return submitConversationResult;
+      return {
+        status: "submitted" as const,
+        workspaceId,
+        conversationId: input.target?.conversationId ?? "conv-a",
+        opencodeSessionId: input.target?.opencodeSessionId ?? "open-a",
+        runId: "run-submit",
+        clientMessageId: input.clientMessageId,
+        draftDisposition: "clear" as const,
       };
     },
     runConversation: async (
@@ -165,6 +185,9 @@ function createFakeClient(options: {
     setRunConversationResult: (result: Awaited<ReturnType<ConversationServiceClient["runConversation"]>>) => {
       runConversationResult = result;
     },
+    setSubmitConversationResult: (result: Awaited<ReturnType<ConversationServiceClient["submitConversation"]>>) => {
+      submitConversationResult = result;
+    },
   };
 }
 
@@ -181,7 +204,7 @@ function createService(options: {
   } | null;
   runtimeAuthorizationResult?: boolean;
 } = {}) {
-  const { client, calls, setRunConversationResult } = createFakeClient({
+  const { client, calls, setRunConversationResult, setSubmitConversationResult } = createFakeClient({
     listWorkspaceItems: options.listWorkspaceItems,
     addLocalWorkspaceItems: options.addLocalWorkspaceItems,
     failWorkspaceRegistration: options.failWorkspaceRegistration,
@@ -316,6 +339,7 @@ function createService(options: {
     rememberedRuns,
     runtimeAuthorizationCalls,
     setRunConversationResult,
+    setSubmitConversationResult,
   };
 }
 
@@ -609,6 +633,55 @@ test("managed conversation runs prime runtime authorization before submit", asyn
   assert.ok(authPrimeIndex >= 0, "runtime authorization should be primed");
   assert.ok(runIndex >= 0, "conversation should be submitted");
   assert.ok(authPrimeIndex < runIndex, "runtime authorization must be primed before submit");
+});
+
+test("managed conversation submit primes runtime authorization and forwards gateway expectation", async () => {
+  const { service, calls, runtimeAuthorizationCalls } = createService({
+    managedAiAccess: {
+      providerId: "codex_oauth",
+      defaultModel: { modelID: "gpt-5.5" },
+    },
+  });
+
+  const result = await service.submitConversationFromVesloWriteApi(
+    "app-ws",
+    "/repo",
+    {
+      clientMessageId: "msg-submit-managed",
+      origin: "session:normal",
+      target: {
+        conversationId: "conv-a",
+        opencodeSessionId: "open-a",
+      },
+      draft: {
+        mode: "prompt",
+        text: "managed submit",
+        parts: [{ type: "text", text: "managed submit" }],
+      },
+    },
+    {
+      traceId: "trace-submit-managed",
+      targetWorkspace: {
+        workspaceId: "app-ws",
+        workspaceRoot: "/repo",
+        directory: "/repo",
+      },
+      conversationWorkspaceByDirectory: new Map(),
+    },
+  );
+
+  assert.equal(result?.status, "submitted");
+  assert.deepEqual(runtimeAuthorizationCalls, [{
+    workspaceId: "app-ws",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+  }]);
+  const authPrimeIndex = calls.findIndex((call) => call.startsWith("ensureManagedAiRuntimeAuthorizationForSend:"));
+  const submitIndex = calls.findIndex((call) => call.startsWith("submitConversation:"));
+  assert.ok(authPrimeIndex >= 0, "runtime authorization should be primed");
+  assert.ok(submitIndex >= 0, "conversation should be submitted");
+  assert.ok(authPrimeIndex < submitIndex, "runtime authorization must be primed before submit");
+  assert.ok(calls.includes("submitConversation:server-ws:true"));
 });
 
 test("managed conversation runs stop before submit when runtime authorization is not ready", async () => {

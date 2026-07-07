@@ -29,6 +29,8 @@ Three app paths still outlived the server-access cleanup:
   OpenCode data-plane URL.
 - Fenced `activeLegacyEngineReady` in `runtime-owner` so it cannot bypass
   `requiresOrchestratorReadiness`.
+- Follow-up hardening on 2026-07-07 demoted legacy `engineReady` completely to
+  diagnostics; it no longer contributes to workspace runtime readiness.
 - Added a regression test proving a workspace that requires orchestrator
   readiness remains `not-ready` when only the legacy active `engineReady` flag is
   true.
@@ -60,4 +62,6 @@ source-reader fixtures:
 ## Status
 
 Implementation is complete for this codebase-only app legacy readiness cleanup
-slice. No E2E/pilot validation was run.
+slice. Follow-up hardening is recorded in
+`docs/fixes/2026-07-07-fix-36-server-owned-legacy-fallback-hardening.md`. No
+E2E/pilot validation was run.

@@ -45,6 +45,13 @@ const createWorkflowSource = readFileSync(
   "utf8",
 );
 
+function legacyConversationRunFallbackSource(): string {
+  const start = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+  const end = sendWorkflowSource.indexOf("export function createSessionSendWorkflow(", start);
+  assert.ok(start >= 0 && end > start, "legacy conversation run fallback source should be present");
+  return sendWorkflowSource.slice(start, end);
+}
+
 test("send preflight records per-step latency trace entries for step 2", () => {
   assert.match(
     appSendTraceSource,
@@ -217,23 +224,20 @@ test("create session preflight records duration for duplicate gates and server c
 });
 
 test("create run and compact do not fall back to legacy OpenCode SDK writes", () => {
-  const sendStart = sendWorkflowSource.indexOf("async function sendPrompt(");
-  const sendEnd = sendWorkflowSource.indexOf("async function abortSession(", sendStart);
   const compactStart = mutationWorkflowSource.indexOf("  async function compactCurrentSession(");
   const compactEnd = mutationWorkflowSource.indexOf("  async function replaceUserMessage(", compactStart);
   const createStart = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
   const createEnd = createWorkflowSource.indexOf("\n  const createSession = (", createStart);
 
-  assert.ok(sendStart >= 0 && sendEnd > sendStart, "sendPrompt source should be present");
   assert.ok(compactStart >= 0 && compactEnd > compactStart, "compactCurrentSession source should be present");
   assert.ok(createStart >= 0 && createEnd > createStart, "runCreateSessionFlow source should be present");
 
-  const sendSource = sendWorkflowSource.slice(sendStart, sendEnd);
+  const fallbackSource = legacyConversationRunFallbackSource();
   const compactSource = mutationWorkflowSource.slice(compactStart, compactEnd);
   const createSource = createWorkflowSource.slice(createStart, createEnd);
 
-  assert.match(sendSource, /const runConversationOrFail = async \(input: VesloConversationRunInput\)/);
-  assert.doesNotMatch(sendSource, /runConversationOrLegacy|sendPrompt:legacy-run-fallback|c\.session\.promptAsync|c\.session\.command|shellInSession/);
+  assert.match(fallbackSource, /const runConversationOrFail = async \(runInput: VesloConversationRunInput\)/);
+  assert.doesNotMatch(fallbackSource, /runConversationOrLegacy|sendPrompt:legacy-run-fallback|c\.session\.promptAsync|c\.session\.command|shellInSession/);
   assert.doesNotMatch(compactSource, /compactSession:legacy-run-fallback|compactSessionTyped|falling back to OpenCode SDK/);
   assert.doesNotMatch(createSource, /legacy-create-fallback|legacy-session-create|c\.session\.create|falling back to OpenCode SDK/);
   assert.match(createSource, /throw new Error\("Conversation service is unavailable for session creation\."\);/);

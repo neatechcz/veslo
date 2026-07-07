@@ -3730,14 +3730,14 @@ function createRoutes(
       directory,
       sessionOrConversationId: input.sessionOrConversationId,
     });
-    if (!binding && isVesloConversationId(input.sessionOrConversationId)) {
+    if (!binding) {
       throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
     }
     return {
       directory,
       binding,
-      opencodeSessionId: binding?.engineSessionId ?? input.sessionOrConversationId,
-      conversationId: binding?.conversationId ?? input.sessionOrConversationId,
+      opencodeSessionId: binding.engineSessionId,
+      conversationId: binding.conversationId,
     };
   };
 
@@ -3759,6 +3759,17 @@ function createRoutes(
       case "summarize":
         return `${sessionPath}/summarize?${query.toString()}`;
     }
+  };
+
+  const buildConversationSessionActionPath = (
+    opencodeSessionId: string,
+    directory: string,
+    action?: "abort" | "revert" | "unrevert",
+  ) => {
+    const query = new URLSearchParams();
+    query.set("directory", directory);
+    const sessionPath = `/session/${encodeURIComponent(opencodeSessionId)}`;
+    return `${action ? `${sessionPath}/${action}` : sessionPath}?${query.toString()}`;
   };
 
   const submitConversationRunToOpenCode = async (input: {
@@ -3945,6 +3956,38 @@ function createRoutes(
         method: "DELETE",
       });
     },
+    loadOpenCodeSession: async ({ workspace, target, sendTraceId }) =>
+      await fetchOpencodeJsonWithOrchestratorFallback(
+        config,
+        { ...workspace, directory: target.directory },
+        buildConversationSessionActionPath(target.opencodeSessionId, target.directory),
+        { method: "GET", sendTraceId },
+      ),
+    abortOpenCodeSession: async ({ workspace, target, sendTraceId }) =>
+      await fetchOpencodeJsonWithOrchestratorFallback(
+        config,
+        { ...workspace, directory: target.directory },
+        buildConversationSessionActionPath(target.opencodeSessionId, target.directory, "abort"),
+        { method: "POST", sendTraceId },
+      ),
+    revertOpenCodeSession: async ({ workspace, target, messageId, sendTraceId }) =>
+      await fetchOpencodeJsonWithOrchestratorFallback(
+        config,
+        { ...workspace, directory: target.directory },
+        buildConversationSessionActionPath(target.opencodeSessionId, target.directory, "revert"),
+        {
+          method: "POST",
+          body: { messageID: messageId },
+          sendTraceId,
+        },
+      ),
+    unrevertOpenCodeSession: async ({ workspace, target, sendTraceId }) =>
+      await fetchOpencodeJsonWithOrchestratorFallback(
+        config,
+        { ...workspace, directory: target.directory },
+        buildConversationSessionActionPath(target.opencodeSessionId, target.directory, "unrevert"),
+        { method: "POST", sendTraceId },
+      ),
     recordSendWorkflowTrace,
   });
 

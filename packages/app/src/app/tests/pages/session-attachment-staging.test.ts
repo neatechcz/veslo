@@ -101,7 +101,7 @@ function makeDeps(client: SessionAttachmentStagingClient, overrides?: Partial<Se
   };
 }
 
-test("validates cached workspace ids against the active server list before staging", async () => {
+test("uses only active remote identity for attachment staging, not cached global workspace ids", async () => {
   const { client, calls } = makeClient({
     workspaces: [[{ id: "fresh-workspace", path: "/repo", directory: "/repo" }]],
   });
@@ -126,6 +126,26 @@ test("validates cached workspace ids against the active server list before stagi
   assert.equal(resolved, "fresh-workspace");
   assert.equal(storedWorkspaceId, "fresh-workspace");
   assert.equal(calls.listWorkspaces, 1);
+});
+
+test("does not use cached local Veslo workspace ids as attachment staging fallback", async () => {
+  const { client } = makeClient({
+    workspaces: [[{ id: "stale-cached-workspace", path: "/old", directory: "/old" }]],
+  });
+  const staging = createSessionAttachmentStaging(
+    makeDeps(client, {
+      vesloServerWorkspaceId: () => "stale-cached-workspace",
+      activeWorkspaceDisplay: () => ({
+        workspaceType: "local",
+        path: "/repo",
+        directory: "/repo",
+      }),
+    }),
+  );
+
+  const resolved = await staging.resolveWorkspaceIdForAttachmentStaging(client);
+
+  assert.equal(resolved, "");
 });
 
 test("uses mapped local Veslo workspace ids and ignores path matching for attachment staging", async () => {
@@ -179,6 +199,12 @@ test("recovers a missing local server workspace once before retrying file-sessio
   const staging = createSessionAttachmentStaging(
     makeDeps(client, {
       vesloServerWorkspaceId: () => cachedWorkspaceId,
+      activeWorkspaceDisplay: () => ({
+        workspaceType: "local",
+        path: "/repo",
+        directory: "/repo",
+        vesloWorkspaceId: cachedWorkspaceId,
+      }),
       vesloServerRestart: async () => {
         restartCalls += 1;
         cachedWorkspaceId = "local-new";

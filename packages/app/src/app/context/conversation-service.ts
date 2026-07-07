@@ -720,6 +720,8 @@ export function createConversationService<Client extends ConversationServiceClie
       origin: input.origin,
       hasConversationTarget: Boolean(input.target?.conversationId?.trim() || input.target?.opencodeSessionId?.trim()),
     });
+    const managedProfile = deps.managedAiAccess();
+    const expectAiGatewayStart = input.draft.mode === "prompt" && Boolean(managedProfile);
     const resolution = await resolveConversationServerWorkspaceForSend(
       workspaceId,
       directory,
@@ -730,11 +732,37 @@ export function createConversationService<Client extends ConversationServiceClie
       deps.recordSendTrace("submitConversationFromVesloWriteApi:unavailable", tracePayload);
       return null;
     }
+    if (expectAiGatewayStart && deps.ensureManagedAiRuntimeAuthorizationForSend) {
+      const targetForRuntimeAuthorization = preflight?.targetWorkspace ?? null;
+      const runtimeAuthorizationReady = await deps.sendTraceStep(
+        "submitConversationFromVesloWriteApi:managed-ai-runtime-auth-prime",
+        () => deps.ensureManagedAiRuntimeAuthorizationForSend!(targetForRuntimeAuthorization),
+        {
+          ...(tracePayload ?? {}),
+          workspaceId,
+          serverWorkspaceId: resolution.serverWorkspaceId,
+          targetWorkspaceId: targetForRuntimeAuthorization?.workspaceId ?? null,
+        },
+      );
+      deps.recordSendTrace("submitConversationFromVesloWriteApi:managed-ai-runtime-auth-prime:result", {
+        ...(tracePayload ?? {}),
+        workspaceId,
+        serverWorkspaceId: resolution.serverWorkspaceId,
+        ready: runtimeAuthorizationReady,
+      });
+      if (!runtimeAuthorizationReady) {
+        throw new Error("Managed AI gateway authorization is not ready for this runtime.");
+      }
+    }
     const request: VesloConversationSubmitRequest = {
       ...input,
       target: {
         ...(input.target ?? {}),
         directory,
+      },
+      options: {
+        ...(input.options ?? {}),
+        ...(expectAiGatewayStart ? { expectAiGatewayStart: true } : {}),
       },
     };
     const result = await deps.sendTraceStep(

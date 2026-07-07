@@ -22,6 +22,13 @@ import {
   normalizeTodoItems as defaultNormalizeTodoItems,
 } from "../utils";
 import type {
+  VesloConversationSubmitRequest,
+  VesloConversationSubmitResult,
+  VesloServerClient,
+} from "../lib/veslo-server";
+import type { ConversationSendPreflightContext } from "../context/conversation-service";
+import type { SendTargetWorkspaceScope } from "../context/workspace-session-selection";
+import type {
   Client,
   ComposerDraft,
   MessageWithParts,
@@ -53,13 +60,20 @@ export type SessionMutationCommand = {
   source?: "command" | "mcp" | "skill";
 };
 
-type SendPreflightContextLike = {
-  traceId: string;
-  targetWorkspace: unknown | null;
+type SendPreflightContextLike = ConversationSendPreflightContext<VesloServerClient> & {
+  targetWorkspace: SendTargetWorkspaceScope | null;
   enginePrepared?: boolean;
   effectiveSandbox?: unknown | null;
   managedAiReady?: boolean;
   runtimeHealthOk?: boolean;
+};
+
+type SessionMutationBrowseScope = {
+  workspaceId?: string | null;
+  workspaceRoot?: string | null;
+  directory?: string | null;
+  conversationId?: string | null;
+  opencodeSessionId?: string | null;
 };
 
 type SessionMutationClient = Client;
@@ -86,10 +100,10 @@ export type SessionMutationWorkflowDeps = {
     run: () => Promise<boolean>,
     payload?: Record<string, unknown>,
   ) => Promise<boolean>;
-  resolveSendTargetWorkspaceScope: (sessionId?: string | null) => unknown | null;
+  resolveSendTargetWorkspaceScope: (sessionId?: string | null) => SendTargetWorkspaceScope | null;
   prepareSendRuntimeForSend: (event: string, preflight: SendPreflightContextLike) => Promise<{ ok: boolean }>;
-  resolveRuntimeSandboxStateForTarget: (target: unknown | null) => unknown | null;
-  routedClientForSendTarget: (target: unknown | null) => SessionMutationClient | null;
+  resolveRuntimeSandboxStateForTarget: (target: SendTargetWorkspaceScope | null) => unknown | null;
+  routedClientForSendTarget: (target: SendTargetWorkspaceScope | null) => SessionMutationClient | null;
   engineReady: () => boolean;
   client: () => unknown;
   reportError: (error: unknown, context: string) => void;
@@ -112,16 +126,13 @@ export type SessionMutationWorkflowDeps = {
   perfNow: () => number;
   sessionDirectoryOverrideById: () => Record<string, string | undefined>;
   workspaceProjectDir: () => string;
-  resolveSelectedSessionBrowseScope: (sessionId: string) => { workspaceId?: string | null; conversationId?: string | null } | null;
-  runConversationFromVesloWriteApi: (
-    sessionId: string,
-    input: {
-      kind: "summarize";
-      directory?: string;
-      providerID: string;
-      modelID: string;
-    },
-  ) => Promise<unknown>;
+  resolveSelectedSessionBrowseScope: (sessionId: string) => SessionMutationBrowseScope | null;
+  submitConversationFromVesloWriteApi?: (
+    workspaceId: string,
+    directory: string,
+    input: VesloConversationSubmitRequest,
+    preflight?: SendPreflightContextLike,
+  ) => Promise<VesloConversationSubmitResult | null | undefined>;
   messageFromUnknownError: (error: unknown) => string;
   safeStringify: (value: unknown) => string;
   renameSession: (sessionId: string, title: string, workspaceId?: string) => Promise<unknown>;
@@ -170,6 +181,22 @@ function restorePromptFromUserMessage(message: MessageWithParts, setPrompt: (val
   setPrompt(text);
 }
 
+function conversationSubmitDraftFromComposerDraft(draft: ComposerDraft): VesloConversationSubmitRequest["draft"] {
+  return {
+    mode: draft.mode,
+    text: draft.text,
+    resolvedText: draft.resolvedText ?? null,
+    parts: draft.parts,
+    command: draft.command ?? null,
+    attachments: draft.attachments.map((attachment) => ({
+      name: attachment.name,
+      kind: attachment.kind,
+      mimeType: attachment.mimeType,
+      dataUrl: attachment.dataUrl,
+    })),
+  };
+}
+
 function downloadSessionExport(payload: unknown, fileName: string) {
   const json = JSON.stringify(payload, null, 2);
   const blob = new Blob([json], { type: "application/json" });
@@ -216,10 +243,6 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
     if (!(await deps.ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
       return;
     }
-    const c = deps.routedClient();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
 
     const visible = deps.messages();
     if (!visible.length) {
@@ -239,34 +262,107 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
     try {
       const directory = deps.sessionDirectoryOverrideById()[sessionID] ?? (deps.workspaceProjectDir().trim() || undefined);
       const scope = deps.resolveSelectedSessionBrowseScope(sessionID);
-      try {
-        const result = await deps.runConversationFromVesloWriteApi(sessionID, {
-          kind: "summarize",
-          directory,
-          providerID: model.providerID,
-          modelID: model.modelID,
-        });
-        if (result) {
-          deps.finishPerf(deps.developerMode(), "session.compact", "done", startedAt, {
-            sessionID,
-            messageCount: visible.length,
-            model: modelLabel,
-          });
-          return;
-        }
-        deps.recordSendTrace("compactSession:conversation-run-unavailable", {
+      const workspaceId = scope?.workspaceId?.trim() || deps.activeWorkspaceId().trim();
+      const workspaceType = deps.workspaces().find((workspace) => workspace.id === workspaceId)?.workspaceType ?? null;
+      const submitConversation = deps.submitConversationFromVesloWriteApi;
+      const submitDirectory =
+        scope?.directory?.trim() ||
+        directory?.trim() ||
+        scope?.workspaceRoot?.trim() ||
+        deps.workspaceRootForId(workspaceId, deps.activeWorkspaceRoot()).trim();
+      if (!submitConversation || !workspaceId || workspaceType !== "local" || !submitDirectory) {
+        deps.recordSendTrace("compactSession:server-submit-unavailable", {
           sessionID,
-          hasConversationScope: Boolean(scope?.conversationId),
+          workspaceId,
+          workspaceType,
+          hasSubmitConversation: Boolean(submitConversation),
+          hasDirectory: Boolean(submitDirectory),
         });
-        throw new Error("Conversation service is unavailable for this session.");
-      } catch (error) {
-        deps.recordSendTrace("compactSession:conversation-run-error", {
-          sessionID,
-          hasConversationScope: Boolean(scope?.conversationId),
-          message: deps.messageFromUnknownError(error),
-        });
-        throw error;
+        throw new Error("Server-owned compact is unavailable for this session.");
       }
+      const preflight = deps.createSendPreflightContext();
+      preflight.targetWorkspace = {
+        workspaceId,
+        workspaceRoot: scope?.workspaceRoot?.trim() || deps.workspaceRootForId(workspaceId, submitDirectory),
+        directory: submitDirectory,
+      };
+      const clientMessageId = deps.createClientMessageId();
+      deps.recordSendTrace("compactSession:server-submit-start", {
+        traceId: preflight.traceId,
+        sessionID,
+        workspaceId,
+        directory: submitDirectory,
+        conversationId: scope?.conversationId ?? null,
+        opencodeSessionId: scope?.opencodeSessionId ?? sessionID,
+        clientMessageId,
+      });
+      const result = await submitConversation(workspaceId, submitDirectory, {
+        clientMessageId,
+        origin: "app:compact-session",
+        target: {
+          directory: submitDirectory,
+          conversationId: scope?.conversationId ?? null,
+          opencodeSessionId: scope?.opencodeSessionId ?? sessionID,
+        },
+        draft: {
+          mode: "prompt",
+          text: "/compact",
+          resolvedText: "/compact",
+          parts: [{ type: "text", text: "/compact" }],
+          command: { name: "compact", arguments: "" },
+          attachments: [],
+        },
+        options: {
+          model,
+          variant: deps.modelVariant() ?? null,
+          submitQueuePolicy: "normal",
+        },
+      }, preflight);
+      if (result?.status === "submitted" || result?.status === "queued") {
+        deps.recordSendTrace("compactSession:server-submit-success", {
+          traceId: preflight.traceId,
+          sessionID,
+          workspaceId,
+          status: result.status,
+          runId: result.status === "submitted" ? result.runId : result.reservedRunId,
+          queueItemId: result.status === "queued" ? result.queueItemId : null,
+          draftDisposition: result.draftDisposition,
+        });
+        deps.finishPerf(deps.developerMode(), "session.compact", "done", startedAt, {
+          sessionID,
+          messageCount: visible.length,
+          model: modelLabel,
+          serverSubmit: true,
+          status: result.status,
+        });
+        return;
+      }
+      if (result?.status === "blocked" || result?.status === "failed") {
+        deps.recordSendTrace(`compactSession:server-submit-${result.status}`, {
+          traceId: preflight.traceId,
+          sessionID,
+          workspaceId,
+          code: result.code,
+          message: result.message,
+          draftDisposition: result.draftDisposition,
+        });
+        throw new Error(result.message);
+      }
+      if (result) {
+        deps.recordSendTrace("compactSession:server-submit-unexpected-result", {
+          traceId: preflight.traceId,
+          sessionID,
+          workspaceId,
+          status: result.status,
+        });
+        throw new Error(`Conversation submit returned ${result.status} for compact.`);
+      }
+      deps.recordSendTrace("compactSession:server-submit-unavailable", {
+        traceId: preflight.traceId,
+        sessionID,
+        workspaceId,
+      });
+      throw new Error("Server-owned compact is unavailable for this session.");
     } catch (error) {
       deps.finishPerf(deps.developerMode(), "session.compact", "error", startedAt, {
         sessionID,
@@ -321,6 +417,87 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
     }
     const sendTargetWorkspace = deps.resolveSendTargetWorkspaceScope(sessionID);
     replacePreflight.targetWorkspace = sendTargetWorkspace;
+    const submitConversation = deps.submitConversationFromVesloWriteApi;
+    const scope = deps.resolveSelectedSessionBrowseScope(sessionID);
+    const workspaceId = scope?.workspaceId?.trim() || deps.activeWorkspaceId().trim();
+    const submitDirectory =
+      scope?.directory?.trim() ||
+      deps.sessionDirectoryOverrideById()[sessionID]?.trim() ||
+      sendTargetWorkspace?.directory?.trim() ||
+      sendTargetWorkspace?.workspaceRoot?.trim() ||
+      scope?.workspaceRoot?.trim() ||
+      deps.workspaceRootForId(workspaceId, deps.activeWorkspaceRoot()).trim();
+    if (submitConversation && workspaceId && submitDirectory) {
+      replacePreflight.targetWorkspace = {
+        workspaceId,
+        workspaceRoot: scope?.workspaceRoot?.trim() || sendTargetWorkspace?.workspaceRoot?.trim() ||
+          deps.workspaceRootForId(workspaceId, submitDirectory),
+        directory: submitDirectory,
+      };
+      replacePreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(replacePreflight.targetWorkspace);
+      deps.recordSendTrace("replaceUserMessage:server-submit-start", {
+        traceId: sendTraceId,
+        sessionID,
+        workspaceId,
+        directory: submitDirectory,
+        conversationId: scope?.conversationId ?? null,
+        opencodeSessionId: scope?.opencodeSessionId ?? sessionID,
+        replaceMessageId: messageID,
+        clientMessageId: sendCorrelation.clientMessageId,
+        origin: sendCorrelation.origin,
+      });
+      const result = await submitConversation(workspaceId, submitDirectory, {
+        clientMessageId: sendCorrelation.clientMessageId,
+        origin: sendCorrelation.origin,
+        source: sendCorrelation.source ?? null,
+        target: {
+          directory: submitDirectory,
+          conversationId: scope?.conversationId ?? null,
+          opencodeSessionId: scope?.opencodeSessionId ?? sessionID,
+        },
+        draft: conversationSubmitDraftFromComposerDraft(draft),
+        options: {
+          replaceMessageId: messageID,
+          model: deps.selectedSessionModel(),
+          variant: deps.modelVariant() ?? null,
+          submitQueuePolicy: "normal",
+        },
+      }, replacePreflight);
+      if (result?.status === "submitted" || result?.status === "queued") {
+        deps.recordSendTrace("replaceUserMessage:server-submit-success", {
+          traceId: sendTraceId,
+          sessionID,
+          workspaceId,
+          status: result.status,
+          runId: result.status === "submitted" ? result.runId : result.reservedRunId,
+          queueItemId: result.status === "queued" ? result.queueItemId : null,
+          replaceMessageId: messageID,
+          clientMessageId: sendCorrelation.clientMessageId,
+        });
+        return true;
+      }
+      deps.recordSendTrace(
+        result
+          ? `replaceUserMessage:server-submit-${result.status}`
+          : "replaceUserMessage:server-submit-unavailable",
+        {
+          traceId: sendTraceId,
+          sessionID,
+          workspaceId,
+          replaceMessageId: messageID,
+          clientMessageId: sendCorrelation.clientMessageId,
+          ...(result && "code" in result ? { code: result.code, message: result.message } : {}),
+        },
+      );
+      return false;
+    }
+    deps.recordSendTrace("replaceUserMessage:server-submit-unavailable", {
+      traceId: sendTraceId,
+      sessionID,
+      workspaceId: workspaceId || null,
+      hasSubmitConversation: Boolean(submitConversation),
+      hasDirectory: Boolean(submitDirectory),
+    });
     const replaceRuntimePreparation = await deps.prepareSendRuntimeForSend("replaceUserMessage", replacePreflight);
     if (!replaceRuntimePreparation.ok) return false;
     replacePreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);

@@ -62,10 +62,10 @@ test("session SSE does not connect while lazy boot has no ready engine", () => {
     /for \(const wsId of entryIds\) \{[\s\S]*if \(!deps\.isWorkspaceRuntimeReady\(wsId\)\) continue;[\s\S]*const c = deps\.routing\.client\(wsId\);/s,
     "workspace SSE streams should only open for routed workspaces whose runtime is ready",
   );
-  assert.match(
+  assert.doesNotMatch(
     eventStreamSource,
-    /else if \(fallback && deps\.isActiveWorkspaceRuntimeReady\(\)\) \{[\s\S]*targets\.push\(\{ wsId: "", client: fallback \}\);[\s\S]*\}/s,
-    "legacy fallback SSE should still require active workspace runtime readiness",
+    /const fallback = deps\.client\(\)|targets\.push\(\{ wsId: "", client: fallback \}\)|deps\.client\(\)/,
+    "session SSE should not open a global active-client fallback stream without a routed workspace id",
   );
   assert.match(
     eventStreamSource,

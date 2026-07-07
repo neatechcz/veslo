@@ -21,21 +21,26 @@ const runtimeConfigSource = readFileSync(
 );
 const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
 
+function legacyConversationRunFallbackPrepareSource(): string {
+  const fallbackStart = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+  const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", fallbackStart);
+  const submitStart = sendWorkflowSource.indexOf("  const submit = async", prepareStart);
+  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "legacy fallback prepare source should be present");
+  return sendWorkflowSource.slice(prepareStart, submitStart);
+}
+
 test("managed AI bootstrap readiness returns a blocking result when setup is not ready", () => {
   const start = readinessSource.indexOf("const ensureManagedAiBootstrapReady = async");
   const end = readinessSource.indexOf("async function ensureLocalRuntimeReachableForSend", start);
   assert.ok(start >= 0 && end > start, "ensureManagedAiBootstrapReady source should be present");
-  const sendStart = sendWorkflowSource.indexOf("async function sendPrompt(");
-  const sendEnd = sendWorkflowSource.indexOf("async function abortSession", sendStart);
-  assert.ok(sendStart >= 0 && sendEnd > sendStart, "sendPrompt source should be present");
-  const sendSource = sendWorkflowSource.slice(sendStart, sendEnd);
-  const gateIndex = sendSource.indexOf('deps.prepareSendRuntimeForSend("sendPrompt", sendPreflight)');
-  const clientIndex = sendSource.indexOf("const c = deps.routedClientForSendTarget(sendTargetWorkspace);");
-  assert.ok(gateIndex >= 0, "sendPrompt should call the runtime readiness owner");
-  assert.ok(clientIndex >= 0, "sendPrompt should read the routed client");
+  const prepareSource = legacyConversationRunFallbackPrepareSource();
+  const gateIndex = prepareSource.indexOf('deps.prepareSendRuntimeForSend("sendPrompt", input.sendPreflight)');
+  const clientIndex = prepareSource.indexOf("const c = deps.routedClientForSendTarget(input.sendTargetWorkspace);");
+  assert.ok(gateIndex >= 0, "legacy fallback prepare should call the runtime readiness owner");
+  assert.ok(clientIndex >= 0, "legacy fallback prepare should read the routed client");
   assert.ok(
     gateIndex < clientIndex,
-    "sendPrompt should wait for managed bootstrap readiness before grabbing the routed client",
+    "legacy fallback prepare should wait for managed bootstrap readiness before grabbing the routed client",
   );
   assert.match(
     readinessSource,

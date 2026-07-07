@@ -21,6 +21,14 @@ const mutationWorkflowSource = readFileSync(
   "utf8",
 );
 
+function legacyConversationRunFallbackPrepareSource(): string {
+  const fallbackStart = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+  const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", fallbackStart);
+  const submitStart = sendWorkflowSource.indexOf("  const submit = async", prepareStart);
+  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "legacy fallback prepare source should be present");
+  return sendWorkflowSource.slice(prepareStart, submitStart);
+}
+
 test("send preflight snapshots the target workspace before cold-start awaits", () => {
   const sendStart = sendWorkflowSource.indexOf("async function sendPrompt(");
   const sendEnd = sendWorkflowSource.indexOf("    const sendPromptBusyOwnership", sendStart);
@@ -73,15 +81,12 @@ test("createSessionAndOpen uses preflight target only when send preflight provid
 });
 
 test("send engine startup uses the snapshotted target workspace", () => {
-  const start = sendWorkflowSource.indexOf("async function sendPrompt(");
-  const end = sendWorkflowSource.indexOf("async function abortSession", start);
-  assert.ok(start >= 0 && end > start, "sendPrompt source should be present");
-  const sendSource = sendWorkflowSource.slice(start, end);
+  const prepareSource = legacyConversationRunFallbackPrepareSource();
 
   assert.match(
-    sendSource,
-    /deps\.prepareSendRuntimeForSend\("sendPrompt", sendPreflight\)/,
-    "browsing-mode send should delegate engine startup to the send runtime readiness owner",
+    prepareSource,
+    /deps\.prepareSendRuntimeForSend\("sendPrompt", input\.sendPreflight\)/,
+    "browsing-mode legacy fallback should delegate engine startup to the send runtime readiness owner",
   );
   assert.match(
     readinessSource,
@@ -102,9 +107,9 @@ test("scoped send and session creation do not fall back to the active client", (
     "explicitly scoped sends should return null when the target workspace client is missing instead of using the active workspace client",
   );
   assert.match(
-    sendWorkflowSource,
-    /const c = deps\.routedClientForSendTarget\(sendTargetWorkspace\);/,
-    "sendPrompt should use the scoped client resolver",
+    legacyConversationRunFallbackPrepareSource(),
+    /const c = deps\.routedClientForSendTarget\(input\.sendTargetWorkspace\);/,
+    "legacy fallback prepare should use the scoped client resolver",
   );
   assert.match(
     createWorkflowSource,

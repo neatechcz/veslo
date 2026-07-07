@@ -431,7 +431,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           deps.notifySessionBusy(sessionID, "idle", sourceWsId);
           const c = sourceWsId
             ? deps.routing.client(sourceWsId)
-            : deps.client();
+            : null;
           if (c) {
             try {
               const latest = deps.applySessionDirectoryOverride(unwrap(await c.session.get({ sessionID })));
@@ -1045,17 +1045,12 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
   const startEventStreams = () => {
     createEffect(() => {
       const entryIds = deps.routing.entryIds();
-      const fallback = deps.client();
 
       const targets: Array<{ wsId: string; client: RoutingClient }> = [];
-      if (entryIds.length > 0) {
-        for (const wsId of entryIds) {
-          if (!deps.isWorkspaceRuntimeReady(wsId)) continue;
-          const c = deps.routing.client(wsId);
-          if (c) targets.push({ wsId, client: c });
-        }
-      } else if (fallback && deps.isActiveWorkspaceRuntimeReady()) {
-        targets.push({ wsId: "", client: fallback });
+      for (const wsId of entryIds) {
+        if (!deps.isWorkspaceRuntimeReady(wsId)) continue;
+        const c = deps.routing.client(wsId);
+        if (c) targets.push({ wsId, client: c });
       }
 
       deps.workspaceSessionIds.clear();

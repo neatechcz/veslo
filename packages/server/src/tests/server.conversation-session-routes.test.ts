@@ -13,6 +13,7 @@ describe("Conversation and session routes", () => {
       ["DELETE", "/workspace/demo/sessions/session-1", "client"],
       ["GET", "/workspace/demo/conversations", "client"],
       ["POST", "/workspace/demo/conversations", "client"],
+      ["POST", "/workspace/demo/conversations/submit", "client"],
       ["POST", "/workspace/demo/conversations/import", "client"],
       ["GET", "/workspace/demo/conversations/conv-1/transcript", "client"],
       ["POST", "/workspace/demo/conversations/conv-1/runs", "client"],

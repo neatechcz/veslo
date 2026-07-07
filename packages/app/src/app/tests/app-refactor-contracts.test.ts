@@ -247,8 +247,8 @@ test("session flow owners keep UI progress state behind narrow app adapters", ()
   );
   assert.match(
     source,
-    /createSessionSendWorkflow\(\{[\s\S]*emitFlowProgress: \(event\) => sessionFlowProgressPresenter\.emit\(event\),[\s\S]*prepareSendRuntimeForSend: \(event, preflight\) => prepareSendRuntimeForSend\(event, preflight\),[\s\S]*\}\);/s,
-    "send workflow should receive progress and runtime preparation adapters instead of UI setters",
+    /const legacyConversationRunFallback = createLegacyConversationRunFallback\(\{[\s\S]*prepareSendRuntimeForSend: \(event, preflight\) => prepareSendRuntimeForSend\(event, preflight\),[\s\S]*\}\);[\s\S]*createSessionSendWorkflow\(\{[\s\S]*emitFlowProgress: \(event\) => sessionFlowProgressPresenter\.emit\(event\),[\s\S]*legacyConversationRunFallback,[\s\S]*\}\);/s,
+    "send workflow should receive progress adapters while runtime preparation stays behind the legacy fallback adapter",
   );
   assert.match(
     source,

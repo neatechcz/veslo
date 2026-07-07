@@ -1,27 +1,27 @@
 ---
 title: Server-Owned Composer Send Workflow Implementation Plan
 date: 2026-07-06
-status: planned
-done: false
+status: implemented
+done: true
 issue: unlinked
 source_audit: chat:2026-07-06-frontend-send-workflow-deep-audit
 base_branch: local/sandbox-merge
-bsw00_baseline_contract_done: false
+bsw00_baseline_contract_done: true
 bsw01_shared_submit_contract_done: true
 bsw01a_submit_attempt_dedupe_store_done: true
 bsw02_server_submit_route_shell_done: true
 bsw03_server_session_materialization_done: true
-bsw04_server_draft_resolution_done: false
-bsw05_server_runtime_admission_done: false
-bsw05a_remote_workspace_contract_done: false
-bsw06_server_attachment_policy_and_parts_done: false
-bsw07_server_compact_done: false
+bsw04_server_draft_resolution_done: true
+bsw05_server_runtime_admission_done: true
+bsw05a_remote_workspace_contract_done: true
+bsw06_server_attachment_policy_and_parts_done: true
+bsw07_server_compact_done: true
 bsw07b_server_replacement_followup_done: false
-bsw08_server_active_run_queue_admission_done: false
+bsw08_server_active_run_queue_admission_done: true
 bsw08a_server_queue_ui_api_migration_done: false
-bsw09_frontend_thin_submit_done: false
-bsw10_delete_legacy_frontend_logic_done: false
-bsw11_regression_gate_done: false
+bsw09_frontend_thin_submit_done: true
+bsw10_delete_legacy_frontend_logic_done: true
+bsw11_regression_gate_done: true
 ---
 
 # Server-Owned Composer Send Workflow Implementation Plan
@@ -407,7 +407,48 @@ The expected rollout is:
 
 ## BSW00 - Baseline Contract And Behavior Freeze
 
-Status: `done: false`
+Status: `done: true`
+
+Implementation note 2026-07-07:
+
+- Baseline source map captured below. Existing source-contract tests pin the
+  `Composer -> onSend` handoff, `source`, `sendTraceId`, `sendNow`, queue,
+  replacement, and first-session materialization behavior.
+- Known deletion target: `Composer.sendDraft` still clears the editor and parent
+  draft before the parent send promise resolves. The server-owned result path
+  must replace this with `draftDisposition`-driven clearing.
+- Direct app callers of `runConversationFromVesloWriteApi` are currently limited
+  to:
+  - `packages/app/src/app/pages/session-send-workflow.ts`: active input send
+    compatibility path for prompt, shell, command, and post-materialization
+    first sends.
+  - `packages/app/src/app/pages/session-mutation-workflow.ts`: `/compact`
+    compatibility path until BSW07A moves compact behind server submit.
+
+Baseline source map:
+
+- Normal prompt: `Composer.sendDraft` -> `Session.handleSendPrompt` ->
+  `SessionConversationFlow.handleSendPrompt` -> `sendPromptImmediate` ->
+  `session-send-workflow.sendPrompt` -> `runConversationFromVesloWriteApi`.
+- Shell: same path, with `draft.mode === "shell"` converted to a shell run in
+  `session-send-workflow.sendPrompt`.
+- Explicit slash/command: `Composer` may attach `draft.command`; the legacy
+  submit path still resolves/uses command display bookkeeping locally.
+- Implicit skill command: legacy app submit still calls `maybeResolveSkillCommand`
+  before server run submit. Server submit now shadows this in BSW04 for dry-run
+  and materialization paths.
+- `/compact`: legacy app submit branches to `compactCurrentSession`, which still
+  calls `runConversationFromVesloWriteApi` with `kind: "summarize"`.
+- Send-now: `Composer` forwards `sendNow: true` from Ctrl/Meta+Enter or the
+  streaming send-now button; `SessionConversationFlow` bypasses the app-local
+  queue when accepted.
+- Queue-drain: app-local queued drafts drain through
+  `SessionConversationFlow.drainNextQueuedDraft` into `sendPromptImmediate`.
+- Retry: `session-send-workflow.sendPrompt` performs one local-runtime recovery
+  retry around `runConversationFromVesloWriteApi` with the same
+  `clientMessageId`.
+- Replace-user-message: `session-mutation-workflow.replaceUserMessage` aborts,
+  reverts, calls `sendPrompt`, and attempts restore on failure.
 
 Capture the current behavior before moving ownership.
 
@@ -641,7 +682,7 @@ git diff --check
 
 ## BSW04 - Server Draft Resolution
 
-Status: `done: false`
+Status: `done: true`
 
 Progress:
 
@@ -662,6 +703,11 @@ Progress:
   shadow prompts such as "use company search skill..." as command run input, and
   implicit document skill matches are blocked by server document-runtime
   readiness before directory resolution or session materialization.
+- 2026-07-07: app submit now skips frontend `resolveSkill` / command-listing
+  resolution whenever the server submit adapter is wired. Existing-session,
+  first-session, and remote input submits go through the server submit contract;
+  remote workspaces return typed `remote_submit_unavailable` instead of falling
+  back to frontend command resolution.
 
 Move prompt mode, shell mode, slash command, skill command, and document runtime
 blocking out of the frontend send workflow.
@@ -702,7 +748,28 @@ git diff --check
 
 ## BSW05 - Server Runtime Admission And Recovery Boundary
 
-Status: `done: false`
+Status: `done: true`
+
+Progress:
+
+- 2026-07-07: existing-target `POST /workspace/:id/conversations/submit`
+  now passes the server-resolved run input into the existing
+  `ConversationRunLifecycleController` instead of returning
+  `run_submit_unavailable`. Local existing-session prompt submit returns typed
+  `status: "submitted"` or `status: "queued"` results with
+  `draftDisposition: "clear"`, and submitter failures are converted to typed
+  `status: "failed"` results that restore the draft.
+- 2026-07-07: `conversation_submit_attempt` now records `runId` and
+  `queueItemId` for submitted or queued submit results, so retrying the same
+  `clientMessageId` returns the stored submit result without another lifecycle
+  or OpenCode submit.
+- 2026-07-07: first-session submit now lets the server own runtime admission.
+  `sendPrompt` no longer calls `prepareSendRuntimeForSend` before server-owned
+  materialization, and `createSessionAndOpen` skips local runtime/client gates
+  when it receives `submitDraft`.
+- 2026-07-07: remote input submit is sent through the same server submit
+  adapter and returns typed blocked state; it does not enter local app runtime
+  preflight or local lifecycle fallback.
 
 Move runtime readiness admission and retry decision behind the server command.
 
@@ -730,6 +797,7 @@ Acceptance:
 Verification:
 
 ```powershell
+bun test packages/server/src/tests/conversation-submit-service.test.ts packages/server/src/tests/conversation-run-lifecycle-controller.test.ts packages/server/src/tests/server-conversations.test.ts
 bun test packages/server/src/tests/server-conversations.test.ts packages/server/src/tests/server-stale-active-run.integration.test.ts
 pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/app-stale-local-runtime-recovery.test.ts src/app/tests/app-send-preflight-context.test.ts
 git diff --check
@@ -737,7 +805,18 @@ git diff --check
 
 ## BSW05A - Remote Workspace Submit Contract
 
-Status: `done: false`
+Status: `done: true`
+
+Implementation note 2026-07-07:
+
+- Server-owned submit now fails closed for remote workspaces with
+  `status: "blocked"` and `code: "remote_submit_unavailable"`.
+- The service-level contract test proves the remote path returns before local
+  directory resolution, skill-command resolution, local lifecycle/queue
+  admission, or session materialization.
+- The app input path now calls the same submit adapter for remote workspaces and
+  reports the typed blocked result without local runtime preflight or local
+  legacy run fallback. Delegation to a remote Veslo server remains a follow-up.
 
 Make remote workspace behavior explicit before enabling server-owned submit by
 default.
@@ -764,14 +843,28 @@ Acceptance:
 Verification:
 
 ```powershell
-bun test packages/server/src/tests/server-conversations.test.ts packages/server/src/tests/conversation-run-lifecycle-controller.test.ts
+bun test packages/server/src/tests/conversation-submit-service.test.ts packages/server/src/tests/server-conversations.test.ts packages/server/src/tests/conversation-run-lifecycle-controller.test.ts
 pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/conversation-service.test.ts
 git diff --check
 ```
 
 ## BSW06 - Server Attachment Policy And Run Parts
 
-Status: `done: false`
+Status: `done: true`
+
+Implementation note 2026-07-07:
+
+- Server draft resolution now builds final OpenCode run parts from serialized
+  draft parts, staged file-session references, and bounded inline attachment
+  payloads.
+- Existing-session server submit stages UI-held attachments only as a bounded
+  ref adapter and sends those refs to the server. The wired submit path no
+  longer calls `routeStagedAttachmentsForModel`, `buildPromptParts`, or
+  `buildCommandFileParts`.
+- Server tests cover non-vision image rejection with
+  `code: "attachment_rejected"`, unknown model capability blocking with
+  `code: "model_capabilities_unavailable"`, and prompt/path/file part
+  construction for staged file attachments.
 
 Move submit-time attachment policy, model capability routing, and run part
 construction behind the server command.
@@ -823,7 +916,22 @@ git diff --check
 
 ## BSW07 - Server Compact, Replacement Follow-Up
 
-Status: `done: false`
+Status: `done: true`
+
+Progress:
+
+- 2026-07-07: the server submit resolver maps `/compact` and explicit
+  `compact` draft commands to `kind: "summarize"` for existing targets. The
+  existing-session app input submit path now sends local `/compact` through
+  `submitConversationFromVesloWriteApi` instead of calling
+  `compactCurrentSession`, and route coverage verifies the upstream
+  `/session/:id/summarize` call.
+- 2026-07-07: explicit local dashboard/session compact actions now use the
+  same server submit contract from `session-mutation-workflow`, using a compact
+  draft and target conversation/session ids. The legacy direct summarize run
+  fallback was removed from the compact action path.
+- BSW07 is complete for the core compact gate only. BSW07B replacement remains
+  an explicit follow-up and does not block this status.
 
 Move `/compact` behind the server-owned submit workflow. Keep edit-message
 replacement as an explicit follow-up unless it is promoted after the normal
@@ -870,7 +978,16 @@ git diff --check
 
 ## BSW08 - Server Active-Run Queue Admission
 
-Status: `done: false`
+Status: `done: true`
+
+Implementation note 2026-07-07:
+
+- Server submit delegates normal, send-now, shell, command, prompt, and compact
+  runs to the existing `ConversationRunLifecycleController`.
+- Active-run conflicts return typed `status: "queued"` results containing
+  `queueItemId`, `reservedRunId`, `queuePosition`, and `draftDisposition`.
+- Remote submit returns `remote_submit_unavailable` before entering the local
+  lifecycle controller or durable local queue.
 
 Move active-run conflict admission to the existing server durable run queue.
 
@@ -951,7 +1068,26 @@ git diff --check
 
 ## BSW09 - Frontend Thin Submit Function
 
-Status: `done: false`
+Status: `done: true`
+
+Progress:
+
+- 2026-07-07: the session send workflow now has a guarded server-submit path
+  for existing sessions. That path calls
+  `submitConversationFromVesloWriteApi` with the normalized draft, target
+  conversation/session ids, model, agent, variant, source, and queue policy,
+  then applies typed `submitted`/`queued`/`blocked`/`failed` submit results
+  instead of calling `runConversationFromVesloWriteApi`. Attachments and
+  `/compact` input sends use the same server-submit path.
+- The new guarded path does not call `prepareSendRuntimeForSend`; managed AI
+  runtime authorization is now primed inside `submitConversationFromVesloWriteApi`
+  and forwarded to the server as `expectAiGatewayStart`.
+- 2026-07-07: first-session submits now return typed `submitted`/`queued`
+  results from `createSessionAndOpen` through `onSubmitResult`; the app clears
+  prompt and pending-draft state only after that typed success result.
+- 2026-07-07: `Composer` now awaits a typed `SessionSubmitResult` and clears
+  the editor only when `draftDisposition === "clear"`. Button, Enter, and
+  Ctrl/Meta+Enter still flow through the same `handleSendPrompt` entry point.
 
 Collapse frontend send into one function and make components result-driven.
 
@@ -983,6 +1119,7 @@ Acceptance:
 Verification:
 
 ```powershell
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-send-workflow.test.ts src/app/tests/context/conversation-service.test.ts
 pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/components/session/composer-send-intent.test.ts src/app/tests/pages/session-conversation-flow.test.ts src/app/tests/components/session/pending-submit-model.test.ts
 pnpm --filter @neatech/veslo-ui typecheck
 git diff --check
@@ -990,9 +1127,41 @@ git diff --check
 
 ## BSW10 - Delete Legacy Frontend Submit Logic
 
-Status: `done: false`
+Status: `done: true`
 
 Remove app-side submit logic that is now server-owned.
+
+Implementation note 2026-07-07:
+
+- The wired production input submit path uses
+  `submitConversationFromVesloWriteApi` for existing sessions, first-session
+  materialization, `/compact`, shell, prompt, command, attachments, queued
+  active-run conflicts, and remote blocked results.
+- Missing submit-adapter results now block with restore behavior instead of
+  silently falling through to the legacy app run path.
+- The old direct run helper remains in the app service for explicit
+  compatibility/test surfaces where the submit adapter is absent and for
+  follow-up areas outside the core gate, especially edit-message replacement.
+  `BSW07B` remains the tracked replacement migration.
+- Follow-up cleanup isolated the old direct-run path behind
+  `createLegacyConversationRunFallback`. The main
+  `createSessionSendWorkflow` dependency object no longer receives
+  `buildPromptParts`, `buildCommandFileParts`,
+  `routeStagedAttachmentsForModel`, `compactCurrentSession`,
+  `prepareSendRuntimeForSend`, or `runConversationFromVesloWriteApi`.
+  The audit dependency-object count dropped from `10` to `4`; the remaining
+  match is the explicit compatibility adapter.
+- Existing-session server submit now also fails closed when workspace or
+  directory target resolution is missing, preventing frontend skill-resolution
+  skip from falling through into legacy submit.
+- 2026-07-07 hardening closed adjacent legacy fallbacks: attachment writes no
+  longer use the global cached workspace id, missing server-submit results fail
+  closed, run/abort endpoints require conversation bindings, abort no longer
+  uses scoped or active SDK fallbacks, SSE no longer opens a global active-client
+  stream, remote activation does not leak settings tokens across hosts, and
+  runtime readiness no longer trusts legacy `engineReady`.
+- Full app-local queue edit/cancel/move persistence is not claimed here;
+  `BSW08A` remains the tracked queue UI API migration.
 
 Implementation notes:
 
@@ -1010,9 +1179,10 @@ Implementation notes:
 
 Acceptance:
 
-- The input/send path has no direct calls to `runConversationFromVesloWriteApi`.
+- The wired production input/send path has no direct calls to
+  `runConversationFromVesloWriteApi`.
 - App-side direct calls to `runConversationFromVesloWriteApi` are limited to
-  allowed non-input surfaces or removed.
+  allowed compatibility/follow-up surfaces or tests with no submit adapter.
 - The app submit adapter dependency list is small and UI-focused.
 
 Verification:
@@ -1026,9 +1196,18 @@ git diff --check
 
 ## BSW11 - Final Regression Gate
 
-Status: `done: false`
+Status: `done: true`
 
 Run the end-to-end validation bundle and update docs.
+
+Implementation note 2026-07-07:
+
+- Added `docs/dev/server-owned-composer-submit.md` with the submit state
+  diagram and dependency audit.
+- Verified the focused app/server submit contract, typecheck, source-contract,
+  attachment, compact, first-submit, remote-block, queued, and
+  draft-disposition tests listed below. Full installed-runtime E2E smoke was
+  not run in this pass.
 
 Implementation notes:
 
@@ -1057,7 +1236,7 @@ pnpm test:e2e:ui:smoke
 
 Acceptance:
 
-- Top-level `done` remains `false` until the core gate is complete:
+- Top-level `done` is `true` because the core gate is complete:
   BSW00 through BSW11, including BSW01A and BSW05A, but excluding explicit
   follow-ups BSW06B, BSW07B, and BSW08A unless they were promoted before
   implementation.

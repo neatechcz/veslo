@@ -176,12 +176,13 @@ test('createAppLaunchEnv can move the desktop Veslo server off the fixed product
   assert.equal(env.VESLO_DESKTOP_SERVER_PORT, '61234');
 });
 
-test('resolveLaunchTimeout gives cold desktop starts enough time by default', () => {
-  assert.equal(resolveLaunchTimeout({}), 120000);
+test('resolveLaunchTimeout caps E2E launch waits at 95 seconds by default', () => {
+  assert.equal(resolveLaunchTimeout({}), 95000);
 });
 
-test('resolveLaunchTimeout allows local overrides for slow machines', () => {
-  assert.equal(resolveLaunchTimeout({ E2E_LAUNCH_TIMEOUT: '180000' }), 180000);
+test('resolveLaunchTimeout allows shorter local overrides and caps longer ones', () => {
+  assert.equal(resolveLaunchTimeout({ E2E_LAUNCH_TIMEOUT: '45000' }), 45000);
+  assert.equal(resolveLaunchTimeout({ E2E_LAUNCH_TIMEOUT: '180000' }), 95000);
 });
 
 test('startApp does not expose legacy WebDriver wiring in the tauri-pilot harness', () => {

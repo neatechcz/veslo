@@ -28,7 +28,7 @@ function createRouting(entries: Record<string, any>) {
   };
 }
 
-test("runtime owner resolves workspace readiness from orchestrator, routing, and active legacy fallback", () => {
+test("runtime owner resolves workspace readiness from orchestrator and routing only", () => {
   const owner = createRuntimeOwner({
     activeWorkspaceId: () => "ws-active",
     activeLegacyEngineReady: () => true,
@@ -48,11 +48,12 @@ test("runtime owner resolves workspace readiness from orchestrator, routing, and
     busy: false,
   });
   assert.equal(owner.resolveWorkspace("ws-routed").reason, "routed-client");
-  assert.equal(owner.resolveWorkspace("ws-active").reason, "active-legacy-engine-ready");
+  assert.equal(owner.resolveWorkspace("ws-active").reason, "not-ready");
+  assert.equal(owner.resolveWorkspace("ws-active").activeLegacyEngineReady, true);
   assert.equal(owner.resolveWorkspace("ws-cold").ready, false);
 });
 
-test("runtime owner only uses legacy engineReady for the active workspace", () => {
+test("runtime owner treats legacy engineReady as diagnostics, not readiness", () => {
   const owner = createRuntimeOwner({
     activeWorkspaceId: () => "ws-active",
     activeLegacyEngineReady: () => true,
@@ -60,7 +61,7 @@ test("runtime owner only uses legacy engineReady for the active workspace", () =
     routing: createRouting({}),
   });
 
-  assert.equal(owner.isWorkspaceRuntimeReady("ws-active"), true);
+  assert.equal(owner.isWorkspaceRuntimeReady("ws-active"), false);
   assert.equal(owner.isWorkspaceRuntimeReady("ws-other"), false);
 });
 

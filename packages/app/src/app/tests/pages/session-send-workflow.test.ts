@@ -3,16 +3,21 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  createLegacyConversationRunFallback,
   createSessionSendWorkflow,
   documentRuntimeBlockReasonForSkillCommand,
   documentRuntimeFormatForSkillCommand,
+  type LegacyConversationRunFallbackOptions,
   type SessionSendWorkflowOptions,
 } from "../../pages/session-send-workflow.js";
 import type { SendTargetWorkspaceScope } from "../../context/workspace-session-selection.js";
 import type { SessionFlowProgressEvent } from "../../context/session-flow-progress-presenter.js";
 import type { LiveTranscriptReadPolicyEvent } from "../../context/live-transcript-read-policy.js";
 import type { DocumentRuntimeStatusPayload } from "../../lib/document-runtime.js";
-import type { VesloConversationRunInput } from "../../lib/veslo-server.js";
+import type {
+  VesloConversationRunInput,
+  VesloConversationSubmitRequest,
+} from "../../lib/veslo-server.js";
 import type { Client, ComposerDraft, ModelRef } from "../../types.js";
 
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
@@ -23,6 +28,15 @@ const promptDraft = (text = "hello"): ComposerDraft => ({
   resolvedText: text,
   parts: [{ type: "text", text }],
   attachments: [],
+});
+
+const compactDraft = (): ComposerDraft => ({
+  mode: "prompt",
+  text: "/compact",
+  resolvedText: "/compact",
+  parts: [{ type: "text", text: "/compact" }],
+  attachments: [],
+  command: { name: "compact", arguments: "" },
 });
 
 type Harness = {
@@ -74,7 +88,9 @@ function documentRuntimePayload(
   };
 }
 
-function createHarness(overrides: Partial<SessionSendWorkflowOptions> = {}): Harness {
+function createHarness(
+  overrides: Partial<SessionSendWorkflowOptions & LegacyConversationRunFallbackOptions> = {},
+): Harness {
   const events: string[] = [];
   const progressEvents: SessionFlowProgressEvent["type"][] = [];
   const actions: string[] = [];
@@ -96,7 +112,7 @@ function createHarness(overrides: Partial<SessionSendWorkflowOptions> = {}): Har
   const liveReadAllowedWorkspaceIds: string[] = [];
   const liveTranscriptPolicyEvents: LiveTranscriptReadPolicyEvent[] = [];
 
-  const options: SessionSendWorkflowOptions = {
+  const optionsWithLegacy = {
     abortConversationFromVesloWriteApi: async () => null,
     abortSessionTyped: async () => undefined,
     activePendingDraftKey: () => null,
@@ -179,9 +195,6 @@ function createHarness(overrides: Partial<SessionSendWorkflowOptions> = {}): Har
     recordSendTrace: (event) => events.push(event),
     refreshPendingDraftSummaries: () => actions.push("refresh-pending-drafts"),
     registerPendingSidebarSession: () => actions.push("register-pending-sidebar"),
-    releaseSendPromptInFlight: () => {
-      sendPromptInFlightCount = Math.max(0, sendPromptInFlightCount - 1);
-    },
     removeSessionFromWorkspaceSidebar: (workspaceId, sessionId) => actions.push(`remove-pending:${workspaceId}:${sessionId}`),
     reportError: () => undefined,
     resolveConversationAbortScope: (sessionId, target) => ({
@@ -247,6 +260,14 @@ function createHarness(overrides: Partial<SessionSendWorkflowOptions> = {}): Har
     },
     ensureSelectedSessionWorkspaceActiveForSend: async () => true,
     ...optionOverrides,
+  } as SessionSendWorkflowOptions & LegacyConversationRunFallbackOptions;
+
+  const options: SessionSendWorkflowOptions = {
+    ...optionsWithLegacy,
+    legacyConversationRunFallback:
+      optionsWithLegacy.legacyConversationRunFallback ?? createLegacyConversationRunFallback(optionsWithLegacy),
+    stageServerSubmitAttachments:
+      optionsWithLegacy.stageServerSubmitAttachments ?? optionsWithLegacy.stageAttachmentsIntoSessionDirectory,
   };
 
   return {
@@ -370,7 +391,7 @@ test("session send workflow releases in-flight tracking when runtime preparation
   assert.equal(harness.busyState(), false);
 });
 
-test("session send workflow releases in-flight tracking when conversation run throws", async () => {
+test("session send workflow keeps busy state and releases in-flight tracking when conversation run throws", async () => {
   const busyValues: boolean[] = [];
   const runSnapshots: Array<{
     sessionId: string;
@@ -426,7 +447,685 @@ test("session send workflow releases in-flight tracking when conversation run th
   assert.ok(harness.events.includes("sendPrompt:error"));
 });
 
-test("abortSession blocks active legacy fallback when workspace scope is missing", async () => {
+test("session send workflow submits an existing local prompt through server submit without runtime prep", async () => {
+  const submitCalls: Array<{
+    workspaceId: string;
+    directory: string;
+    input: VesloConversationSubmitRequest;
+    traceId?: string | null;
+  }> = [];
+  const harness = createHarness({
+    listCommands: async () => {
+      throw new Error("frontend command listing should not run for server submit");
+    },
+    prepareSendRuntimeForSend: async () => {
+      throw new Error("runtime prep should not run for server submit");
+    },
+    runConversationFromVesloWriteApi: async () => {
+      throw new Error("legacy run should not run for server submit");
+    },
+    resolveSelectedSessionBrowseScope: (sessionId) =>
+      sessionId === "sess-target"
+        ? {
+            sessionId,
+            workspaceId: "ws-active",
+            workspaceRoot: "/active",
+            directory: "/active",
+            conversationId: "conv-target",
+            opencodeSessionId: "open-target",
+          }
+        : null,
+    submitConversationFromVesloWriteApi: async (workspaceId, directory, input, preflight) => {
+      submitCalls.push({ workspaceId, directory, input, traceId: preflight?.traceId });
+      return {
+        status: "submitted",
+        workspaceId,
+        conversationId: "conv-target",
+        opencodeSessionId: "open-target",
+        runId: "run-submit",
+        clientMessageId: input.clientMessageId,
+        draftDisposition: "clear",
+      };
+    },
+    vesloServerClient: () => ({
+      resolveSkill: async () => {
+        throw new Error("frontend skill resolution should not run for server submit");
+      },
+    }),
+    vesloServerStatus: () => "connected",
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("server submit"), {
+    clientMessageId: "client-server-submit",
+    origin: "session:normal",
+    source: "enter",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent, true);
+  assert.equal(submitCalls.length, 1);
+  assert.deepEqual(submitCalls.map(({ workspaceId, directory, traceId }) => ({
+    workspaceId,
+    directory,
+    traceId,
+  })), [{
+    workspaceId: "ws-active",
+    directory: "/active",
+    traceId: "trace-created",
+  }]);
+  assert.deepEqual(submitCalls[0]?.input, {
+    clientMessageId: "client-server-submit",
+    origin: "session:normal",
+    source: "enter",
+    target: {
+      directory: "/active",
+      conversationId: "conv-target",
+      opencodeSessionId: "open-target",
+    },
+    draft: {
+      mode: "prompt",
+      text: "server submit",
+      resolvedText: "server submit",
+      parts: [{ type: "text", text: "server submit" }],
+      command: null,
+      attachments: [],
+    },
+    options: {
+      model: { providerID: "openai", modelID: "gpt-4.1" },
+      agent: null,
+      variant: null,
+      submitQueuePolicy: "normal",
+    },
+  });
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing:start"));
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing-success"));
+  assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
+});
+
+test("session send workflow stages existing local attachments as server submit refs", async () => {
+  const submitCalls: Array<{
+    workspaceId: string;
+    directory: string;
+    input: VesloConversationSubmitRequest;
+  }> = [];
+  const stagedSessionIds: string[] = [];
+  const attachmentDraft: ComposerDraft = {
+    mode: "prompt",
+    text: "review attachment",
+    resolvedText: "review attachment",
+    parts: [{ type: "text", text: "review attachment" }],
+    attachments: [{
+      id: "att-1",
+      name: "brief.txt",
+      kind: "file",
+      mimeType: "text/plain",
+      size: 5,
+      dataUrl: "data:text/plain;base64,YnJpZWY=",
+    }],
+  };
+  const harness = createHarness({
+    buildCommandFileParts: () => {
+      throw new Error("legacy command file part construction should not run for server submit attachments");
+    },
+    buildPromptParts: () => {
+      throw new Error("legacy prompt part construction should not run for server submit attachments");
+    },
+    prepareSendRuntimeForSend: async () => {
+      throw new Error("runtime prep should not run for server submit attachments");
+    },
+    routeStagedAttachmentsForModel: () => {
+      throw new Error("legacy attachment routing should not run for server submit attachments");
+    },
+    runConversationFromVesloWriteApi: async () => {
+      throw new Error("legacy run should not run for server submit attachments");
+    },
+    resolveSelectedSessionBrowseScope: (sessionId) =>
+      sessionId === "sess-target"
+        ? {
+            sessionId,
+            workspaceId: "ws-active",
+            workspaceRoot: "/active",
+            directory: "/active",
+            conversationId: "conv-target",
+            opencodeSessionId: "open-target",
+          }
+        : null,
+    stageAttachmentsIntoSessionDirectory: async (_draft, sessionId) => {
+      stagedSessionIds.push(sessionId);
+      return [{
+        name: "brief.txt",
+        kind: "file",
+        mimeType: "text/plain",
+        relativePath: "sessions/sess-target/brief.txt",
+        absolutePath: "/active/sessions/sess-target/brief.txt",
+      }];
+    },
+    submitConversationFromVesloWriteApi: async (workspaceId, directory, input) => {
+      submitCalls.push({ workspaceId, directory, input });
+      return {
+        status: "submitted",
+        workspaceId,
+        conversationId: "conv-target",
+        opencodeSessionId: "open-target",
+        runId: "run-submit-attachment",
+        clientMessageId: input.clientMessageId,
+        draftDisposition: "clear",
+      };
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(attachmentDraft, {
+    clientMessageId: "client-server-submit-attachment",
+    origin: "session:normal",
+    source: "enter",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent, true);
+  assert.deepEqual(stagedSessionIds, ["sess-target"]);
+  assert.equal(submitCalls.length, 1);
+  assert.deepEqual(submitCalls[0]?.input.draft.attachments, [{
+    name: "brief.txt",
+    kind: "file",
+    mimeType: "text/plain",
+    dataUrl: "data:text/plain;base64,YnJpZWY=",
+    fileSessionPath: "sessions/sess-target/brief.txt",
+  }]);
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing-stage-attachments"));
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing-success"));
+  assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
+});
+
+test("session send workflow submits existing local compact through server submit", async () => {
+  const submitCalls: Array<{
+    workspaceId: string;
+    directory: string;
+    input: VesloConversationSubmitRequest;
+  }> = [];
+  const lastPromptSends: string[] = [];
+  const harness = createHarness({
+    compactCurrentSession: async () => {
+      throw new Error("legacy compact should not run for server submit");
+    },
+    messages: () => [{ parts: [{ type: "text", text: "already here" }] }],
+    prepareSendRuntimeForSend: async () => {
+      throw new Error("runtime prep should not run for server compact submit");
+    },
+    runConversationFromVesloWriteApi: async () => {
+      throw new Error("legacy run should not run for server compact submit");
+    },
+    resolveSelectedSessionBrowseScope: (sessionId) =>
+      sessionId === "sess-target"
+        ? {
+            sessionId,
+            workspaceId: "ws-active",
+            workspaceRoot: "/active",
+            directory: "/active",
+            conversationId: "conv-target",
+            opencodeSessionId: "open-target",
+          }
+        : null,
+    setLastPromptSent: (value) => {
+      lastPromptSends.push(value);
+    },
+    submitConversationFromVesloWriteApi: async (workspaceId, directory, input) => {
+      submitCalls.push({ workspaceId, directory, input });
+      return {
+        status: "submitted",
+        workspaceId,
+        conversationId: "conv-target",
+        opencodeSessionId: "open-target",
+        runId: "run-compact",
+        clientMessageId: input.clientMessageId,
+        draftDisposition: "clear",
+      };
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(compactDraft(), {
+    clientMessageId: "client-server-compact",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent, true);
+  assert.equal(submitCalls.length, 1);
+  assert.deepEqual(submitCalls.map(({ workspaceId, directory }) => ({ workspaceId, directory })), [{
+    workspaceId: "ws-active",
+    directory: "/active",
+  }]);
+  assert.deepEqual(submitCalls[0]?.input.draft, {
+    mode: "prompt",
+    text: "/compact",
+    resolvedText: "/compact",
+    parts: [{ type: "text", text: "/compact" }],
+    command: { name: "compact", arguments: "" },
+    attachments: [],
+  });
+  assert.equal(submitCalls[0]?.input.options?.submitQueuePolicy, "normal");
+  assert.deepEqual(lastPromptSends, []);
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing:start"));
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing-success"));
+  assert.ok(harness.events.includes("sendPrompt:compact-success"));
+  assert.ok(!harness.actions.includes("compact"));
+  assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
+  assert.equal(harness.liveTranscriptPolicyEvents.at(-1)?.type, "conversation-compact.succeeded");
+  assert.equal(harness.liveTranscriptPolicyEvents.at(-1)?.reason, "sendPrompt:compact-success");
+});
+
+test("session send workflow handles queued server submit results for send-now", async () => {
+  const submitCalls: Array<{
+    workspaceId: string;
+    directory: string;
+    input: VesloConversationSubmitRequest;
+  }> = [];
+  const harness = createHarness({
+    prepareSendRuntimeForSend: async () => {
+      throw new Error("runtime prep should not run for queued server submit");
+    },
+    runConversationFromVesloWriteApi: async () => {
+      throw new Error("legacy run should not run for queued server submit");
+    },
+    resolveSelectedSessionBrowseScope: (sessionId) =>
+      sessionId === "sess-target"
+        ? {
+            sessionId,
+            workspaceId: "ws-active",
+            workspaceRoot: "/active",
+            directory: "/active",
+            conversationId: "conv-target",
+            opencodeSessionId: "open-target",
+          }
+        : null,
+    submitConversationFromVesloWriteApi: async (workspaceId, directory, input) => {
+      submitCalls.push({ workspaceId, directory, input });
+      return {
+        status: "queued",
+        workspaceId,
+        conversationId: "conv-target",
+        opencodeSessionId: "open-target",
+        queueItemId: "queue-submit",
+        reservedRunId: "run-reserved",
+        queuePosition: 1,
+        clientMessageId: input.clientMessageId,
+        draftDisposition: "clear",
+      };
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("server queued"), {
+    clientMessageId: "client-server-queued",
+    origin: "session:send-now",
+    source: "send-now",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent, true);
+  assert.equal(submitCalls.length, 1);
+  assert.equal(submitCalls[0]?.input.options?.submitQueuePolicy, "send-now");
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing:start"));
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing-success"));
+  assert.ok(harness.actions.includes("hold:sess-target:sendPrompt:server-submit-existing-success"));
+  assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
+  assert.equal(harness.liveTranscriptPolicyEvents.at(-1)?.type, "conversation-run.succeeded");
+  assert.equal(harness.liveTranscriptPolicyEvents.at(-1)?.reason, "sendPrompt:success");
+});
+
+test("session send workflow does not clear the active composer for explicit server submit drafts", async () => {
+  const submitCalls: VesloConversationSubmitRequest[] = [];
+  const lastPromptSends: string[] = [];
+  const promptWrites: string[] = [];
+  const harness = createHarness({
+    prepareSendRuntimeForSend: async () => {
+      throw new Error("runtime prep should not run for explicit server submit");
+    },
+    runConversationFromVesloWriteApi: async () => {
+      throw new Error("legacy run should not run for explicit server submit");
+    },
+    resolveSelectedSessionBrowseScope: (sessionId) =>
+      sessionId === "sess-target"
+        ? {
+            sessionId,
+            workspaceId: "ws-active",
+            workspaceRoot: "/active",
+            directory: "/active",
+            conversationId: "conv-target",
+            opencodeSessionId: "open-target",
+          }
+        : null,
+    setLastPromptSent: (value) => {
+      lastPromptSends.push(value);
+    },
+    setPrompt: (value) => {
+      promptWrites.push(value);
+    },
+    submitConversationFromVesloWriteApi: async (_workspaceId, _directory, input) => {
+      submitCalls.push(input);
+      return {
+        status: "submitted",
+        workspaceId: "ws-active",
+        conversationId: "conv-target",
+        opencodeSessionId: "open-target",
+        runId: "run-explicit-draft",
+        clientMessageId: input.clientMessageId,
+        draftDisposition: "clear",
+      };
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("explicit draft"), {
+    clientMessageId: "client-server-explicit-draft",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent, true);
+  assert.equal(submitCalls.length, 1);
+  assert.deepEqual(lastPromptSends, ["explicit draft"]);
+  assert.deepEqual(promptWrites, []);
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing-success"));
+});
+
+test("session send workflow reports failed server submit into the visible transcript", async () => {
+  const appendedErrors: Array<{ sessionId: string; message: string }> = [];
+  const harness = createHarness({
+    addOpencodeCacheHint: (message) => `${message} Clear the OpenCode cache and retry.`,
+    prepareSendRuntimeForSend: async () => {
+      throw new Error("runtime prep should not run after failed server submit");
+    },
+    runConversationFromVesloWriteApi: async () => {
+      throw new Error("legacy run should not run after failed server submit");
+    },
+    resolveSelectedSessionBrowseScope: (sessionId) =>
+      sessionId === "sess-target"
+        ? {
+            sessionId,
+            workspaceId: "ws-active",
+            workspaceRoot: "/active",
+            directory: "/active",
+            conversationId: "conv-target",
+            opencodeSessionId: "open-target",
+          }
+        : null,
+    sessionStoreAppendSessionErrorTurn: (sessionId, message) => {
+      appendedErrors.push({ sessionId, message });
+    },
+    submitConversationFromVesloWriteApi: async (_workspaceId, _directory, input) => ({
+      status: "failed",
+      code: "run_submit_failed",
+      message: `Submit failed for ${input.clientMessageId}`,
+      draftDisposition: "restore",
+      debugTrace: [{ source: "server", event: "run_submit_failed" }],
+    }),
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("server failure"), {
+    clientMessageId: "client-server-failed",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent, false);
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing-failed"));
+  assert.match(harness.errors.at(-1) ?? "", /Clear the OpenCode cache/);
+  assert.deepEqual(appendedErrors, [{
+    sessionId: "sess-target",
+    message: "Submit failed for client-server-failed Clear the OpenCode cache and retry.",
+  }]);
+  assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
+});
+
+test("session send workflow reports remote server-submit blocks without legacy run", async () => {
+  const submitCalls: VesloConversationSubmitRequest[] = [];
+  const harness = createHarness({
+    prepareSendRuntimeForSend: async () => {
+      throw new Error("runtime prep should not run for remote server submit");
+    },
+    resolveSelectedSessionBrowseScope: (sessionId) =>
+      sessionId === "sess-remote"
+        ? {
+            sessionId,
+            workspaceId: "ws-remote",
+            workspaceRoot: "/remote",
+            directory: "/remote",
+            conversationId: "conv-remote",
+            opencodeSessionId: "open-remote",
+          }
+        : null,
+    resolveSendTargetWorkspaceScope: () => ({
+      workspaceId: "ws-remote",
+      workspaceRoot: "/remote",
+      directory: "/remote",
+    }),
+    runConversationFromVesloWriteApi: async () => {
+      throw new Error("legacy run should not run for remote server submit block");
+    },
+    submitConversationFromVesloWriteApi: async (_workspaceId, _directory, input) => {
+      submitCalls.push(input);
+      return {
+        status: "blocked",
+        code: "remote_submit_unavailable",
+        message: "Remote workspace submit is not available through the local server.",
+        draftDisposition: "restore",
+        recoverable: false,
+      };
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("remote submit"), {
+    clientMessageId: "client-remote-submit",
+    origin: "session:normal",
+    targetSessionId: "sess-remote",
+  });
+
+  assert.equal(sent, false);
+  assert.equal(submitCalls.length, 1);
+  assert.equal(submitCalls[0]?.target?.conversationId, "conv-remote");
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing-blocked"));
+  assert.match(harness.errors.at(-1) ?? "", /Remote workspace submit/);
+});
+
+test("session send workflow blocks legacy run when server submit is unavailable", async () => {
+  const submitCalls: VesloConversationSubmitRequest[] = [];
+  const prepareCalls: string[] = [];
+  const harness = createHarness({
+    prepareSendRuntimeForSend: async (reason) => {
+      prepareCalls.push(reason);
+      return {
+        ok: true,
+        runtimeReady: true,
+        managedAiReady: true,
+        workspaceId: "ws-active",
+        activeWorkspace: true,
+        recoveryAttempted: false,
+        reason: "runtime-health-ok",
+      };
+    },
+    resolveSelectedSessionBrowseScope: (sessionId) =>
+      sessionId === "sess-target"
+        ? {
+            sessionId,
+            workspaceId: "ws-active",
+            workspaceRoot: "/active",
+            directory: "/active",
+            conversationId: "conv-target",
+            opencodeSessionId: "open-target",
+          }
+        : null,
+    submitConversationFromVesloWriteApi: async (_workspaceId, _directory, input) => {
+      submitCalls.push(input);
+      return null;
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("legacy fallback"), {
+    clientMessageId: "client-server-unavailable",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent, false);
+  assert.equal(submitCalls.length, 1);
+  assert.deepEqual(prepareCalls, []);
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing-unavailable"));
+  assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
+  assert.match(harness.errors.at(-1) ?? "", /Server-owned conversation submit is unavailable/);
+});
+
+test("session send workflow blocks legacy run when server submit target is missing", async () => {
+  const harness = createHarness({
+    prepareSendRuntimeForSend: async () => {
+      throw new Error("legacy runtime prep should not run after server target resolution failed");
+    },
+    resolveSendTargetWorkspaceScope: () => ({
+      workspaceId: "",
+      workspaceRoot: "",
+      directory: "",
+    }),
+    runConversationFromVesloWriteApi: async () => {
+      throw new Error("legacy run should not run after server target resolution failed");
+    },
+    submitConversationFromVesloWriteApi: async () => {
+      throw new Error("server submit should not be called without a workspace and directory");
+    },
+    workspace: {
+      activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
+      activeWorkspaceId: () => "",
+      activeWorkspaceRoot: () => "",
+      workspaces: () => [],
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("missing target"), {
+    clientMessageId: "client-server-missing-target",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent, false);
+  assert.ok(harness.events.includes("sendPrompt:maybe-resolve-skill-command:server-owned-skip"));
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing-missing-target"));
+  assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
+  assert.match(harness.errors.at(-1) ?? "", /missing a workspace or directory/);
+});
+
+test("session send workflow blocks first-session legacy run when server submit materialization is unavailable", async () => {
+  const createOptions: Array<Parameters<SessionSendWorkflowOptions["createSessionAndOpen"]>[1]> = [];
+  const runInputs: VesloConversationRunInput[] = [];
+  const harness = createHarness({
+    createSessionAndOpen: async (_initialTitle, options) => {
+      createOptions.push(options);
+      harness.actions.push("create-session");
+      return "sess-created";
+    },
+    listCommands: async () => {
+      throw new Error("frontend command listing should not run for server-owned materialization");
+    },
+    runConversationFromVesloWriteApi: async (_sessionId, input) => {
+      runInputs.push(input);
+      return true;
+    },
+    submitConversationFromVesloWriteApi: async () => null,
+    vesloServerClient: () => ({
+      resolveSkill: async () => {
+        throw new Error("frontend skill resolution should not run for server-owned materialization");
+      },
+    }),
+    vesloServerStatus: () => "connected",
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("use company search skill"), {
+    clientMessageId: "client-server-materialize-skill",
+    origin: "session:normal",
+    source: "enter",
+  });
+
+  assert.equal(sent, false);
+  assert.equal(createOptions.length, 1);
+  assert.deepEqual(createOptions[0]?.submitDraft, {
+    mode: "prompt",
+    text: "use company search skill",
+    resolvedText: "use company search skill",
+    parts: [{ type: "text", text: "use company search skill" }],
+    command: null,
+    attachments: [],
+  });
+  assert.equal(runInputs.length, 0);
+  assert.ok(harness.events.includes("sendPrompt:maybe-resolve-skill-command:server-owned-skip"));
+  assert.ok(harness.events.includes("sendPrompt:server-submit-first-missing-result"));
+  assert.match(harness.errors.at(-1) ?? "", /did not return a queued or submitted result/);
+});
+
+test("session send workflow accepts first-session server submit results without legacy run", async () => {
+  const createOptions: Array<Parameters<SessionSendWorkflowOptions["createSessionAndOpen"]>[1]> = [];
+  const composerDraftCleanupCalls: string[] = [];
+  const harness = createHarness({
+    activePendingDraftKey: () => "pending-draft:first-submit",
+    activePendingDraftMeta: () => ({ id: "pending-id-first-submit" }),
+    createSessionAndOpen: async (_initialTitle, options) => {
+      createOptions.push(options);
+      options?.onSubmitResult?.({
+        status: "submitted",
+        workspaceId: "ws-active",
+        conversationId: "conv-created",
+        opencodeSessionId: "sess-created",
+        runId: "run-created",
+        clientMessageId: "client-first-server-submit",
+        materializedSession: {
+          id: "sess-created",
+          conversationId: "conv-created",
+          opencodeSessionId: "sess-created",
+        },
+        draftDisposition: "clear",
+      });
+      harness.actions.push("create-session");
+      return "sess-created";
+    },
+    prepareSendRuntimeForSend: async () => {
+      throw new Error("runtime prep should not run before first-session server submit");
+    },
+    routedClientForSendTarget: () => {
+      throw new Error("routed client should not be required before first-session server submit");
+    },
+    runConversationFromVesloWriteApi: async () => {
+      throw new Error("legacy run should not run after first-session server submit");
+    },
+    selectedSessionId: () => null,
+    setComposerDraftBySessionId: (updater) => {
+      composerDraftCleanupCalls.push("cleanup");
+      updater({});
+    },
+    submitConversationFromVesloWriteApi: async () => null,
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("first server submit"), {
+    clientMessageId: "client-first-server-submit",
+    origin: "session:normal",
+    source: "enter",
+  });
+
+  assert.equal(sent, true);
+  assert.equal(createOptions[0]?.submitDraft?.text, "first server submit");
+  assert.ok(harness.events.includes("sendPrompt:server-submit-first-success"));
+  assert.equal(harness.liveTranscriptPolicyEvents.at(-1)?.reason, "sendPrompt:success");
+  assert.ok(harness.actions.includes("clear-pending-draft"));
+  assert.ok(harness.actions.includes("refresh-pending-drafts"));
+  assert.deepEqual(composerDraftCleanupCalls, ["cleanup"]);
+  assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
+});
+
+test("abortSession blocks abort when workspace scope is missing", async () => {
   const abortCalls: string[] = [];
   const harness = createHarness({
     abortConversationFromVesloWriteApi: async () => null,
@@ -449,11 +1148,11 @@ test("abortSession blocks active legacy fallback when workspace scope is missing
   await workflow.abortSession("sess-unscoped");
 
   assert.deepEqual(abortCalls, []);
-  assert.ok(harness.events.includes("abortSession:legacy-fallback-blocked-missing-workspace-scope"));
+  assert.ok(harness.events.includes("abortSession:abort-blocked-missing-workspace-scope"));
   assert.match(harness.errors.at(-1) ?? "", /workspace scope is missing/);
 });
 
-test("abortSession blocks active legacy fallback for foreign workspace scope", async () => {
+test("abortSession blocks abort for foreign workspace scope", async () => {
   const abortCalls: string[] = [];
   const harness = createHarness({
     abortConversationFromVesloWriteApi: async () => null,
@@ -481,8 +1180,43 @@ test("abortSession blocks active legacy fallback for foreign workspace scope", a
   await workflow.abortSession("sess-foreign");
 
   assert.deepEqual(abortCalls, []);
-  assert.ok(harness.events.includes("abortSession:legacy-fallback-blocked-foreign-workspace"));
+  assert.ok(harness.events.includes("abortSession:abort-blocked-foreign-workspace"));
   assert.match(harness.errors.at(-1) ?? "", /belongs to another workspace/);
+});
+
+test("abortSession blocks scoped abort when server abort is unavailable", async () => {
+  const abortCalls: string[] = [];
+  const harness = createHarness({
+    abortConversationFromVesloWriteApi: async () => null,
+    abortSessionTyped: async (_client, sessionId) => {
+      abortCalls.push(sessionId);
+    },
+    routedClient: () => ({} as Client),
+    resolveSelectedSessionBrowseScope: () => ({
+      workspaceId: "ws-active",
+      workspaceRoot: "/active",
+      directory: "/active",
+      conversationId: "conv-scoped",
+      opencodeSessionId: "open-scoped",
+    }),
+    resolveConversationAbortScope: (sessionId) => ({
+      sessionId,
+      workspaceId: "ws-active",
+      workspaceRoot: "/active",
+      directory: "/active",
+      hasConversationScope: true,
+      conversationId: "conv-scoped",
+      opencodeSessionId: "open-scoped",
+    }),
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  await workflow.abortSession("conv-scoped");
+
+  assert.deepEqual(abortCalls, []);
+  assert.ok(harness.events.includes("abortSession:conversation-abort-unavailable"));
+  assert.ok(harness.events.includes("abortSession:conversation-abort-blocked-unavailable"));
+  assert.match(harness.errors.at(-1) ?? "", /Conversation service is unavailable/);
 });
 
 test("session send workflow retries recoverable runtime run failure once with same client message id", async () => {
@@ -573,13 +1307,26 @@ test("session send workflow emits live transcript policy event after successful 
   assert.deepEqual(harness.liveTranscriptPolicyEvents.map((event) => event.reason), ["sendPrompt:success"]);
 });
 
-test("session send workflow selects the model from the materialized session id", async () => {
+test("session send workflow sends the initial model snapshot with first server submit", async () => {
   const modelSessionIds: Array<string | null | undefined> = [];
-  const runInputs: Array<{ sessionId: string; input: VesloConversationRunInput }> = [];
   const createOptions: Array<Parameters<SessionSendWorkflowOptions["createSessionAndOpen"]>[1]> = [];
   const harness = createHarness({
     createSessionAndOpen: async (_initialTitle, options) => {
       createOptions.push(options);
+      options?.onSubmitResult?.({
+        status: "submitted",
+        workspaceId: "ws-active",
+        conversationId: "conv-created",
+        opencodeSessionId: "sess-created",
+        runId: "run-created-model",
+        clientMessageId: "client-created-model",
+        materializedSession: {
+          id: "sess-created",
+          conversationId: "conv-created",
+          opencodeSessionId: "sess-created",
+        },
+        draftDisposition: "clear",
+      });
       harness.actions.push("create-session");
       return "sess-created";
     },
@@ -587,14 +1334,13 @@ test("session send workflow selects the model from the materialized session id",
       modelSessionIds.push(sessionId);
       return {
         providerID: "openai",
-        modelID: sessionId === "sess-created" ? "gpt-4.1" : "wrong-session",
+        modelID: sessionId === "sess-created" ? "gpt-4.1" : "gpt-4.1-default",
       };
     },
-    runConversationFromVesloWriteApi: async (sessionId, input) => {
-      harness.actions.push(`run:${sessionId}`);
-      runInputs.push({ sessionId, input });
-      return true;
+    runConversationFromVesloWriteApi: async () => {
+      throw new Error("legacy run should not run after first server submit");
     },
+    submitConversationFromVesloWriteApi: async () => null,
   });
   const workflow = createSessionSendWorkflow(harness.options);
 
@@ -604,27 +1350,17 @@ test("session send workflow selects the model from the materialized session id",
   });
 
   assert.equal(sent, true);
-  assert.deepEqual(modelSessionIds, ["sess-created"]);
-  assert.deepEqual(runInputs.map(({ sessionId, input }) => ({
-    sessionId,
-    kind: input.kind,
-    model: input.kind === "prompt_async" ? input.model : null,
-    clientMessageId: input.clientMessageId,
-    origin: input.origin,
-  })), [{
-    sessionId: "sess-created",
-    kind: "prompt_async",
-    model: { providerID: "openai", modelID: "gpt-4.1" },
-    clientMessageId: "client-created-model",
-    origin: "session:normal",
-  }]);
+  assert.deepEqual(modelSessionIds, [null]);
+  assert.deepEqual(createOptions[0]?.submitOptions?.model, {
+    providerID: "openai",
+    modelID: "gpt-4.1-default",
+  });
   assert.equal(createOptions[0]?.clientMessageId, "client-created-model");
   assert.equal(createOptions[0]?.submitOrigin, "session:normal");
   assert.equal(createOptions[0]?.submitDraft?.mode, "prompt");
   assert.equal(createOptions[0]?.submitDraft?.text, "create then send");
-  assert.deepEqual(createOptions[0]?.submitDraft?.parts, [{ type: "text", text: "create then send" }]);
   assert.ok(harness.actions.includes("create-session"));
-  assert.ok(harness.actions.includes("run:sess-created"));
+  assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
 });
 
 test("session send workflow uses OpenCode variant instead of raw reasoning effort for codex oauth", async () => {

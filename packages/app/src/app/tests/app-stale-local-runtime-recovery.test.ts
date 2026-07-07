@@ -8,6 +8,14 @@ const sendWorkflowSource = readFileSync(
 );
 const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
 
+function legacyConversationRunFallbackPrepareSource(): string {
+  const fallbackStart = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+  const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", fallbackStart);
+  const submitStart = sendWorkflowSource.indexOf("  const submit = async", prepareStart);
+  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "legacy fallback prepare source should be present");
+  return sendWorkflowSource.slice(prepareStart, submitStart);
+}
+
 function ensureLocalRuntimeReachableForSendResultSource(): string {
   const start = readinessSource.indexOf("async function ensureLocalRuntimeReachableForSendResult(");
   const end = readinessSource.indexOf("async function ensureLocalRuntimeReachableForSend(", start);
@@ -16,18 +24,14 @@ function ensureLocalRuntimeReachableForSendResultSource(): string {
 }
 
 test("sendPrompt recovers a stale local runtime before reading the client", () => {
-  const start = sendWorkflowSource.indexOf("async function sendPrompt(");
-  const end = sendWorkflowSource.indexOf("async function abortSession", start);
-  assert.ok(start >= 0 && end > start, "sendPrompt source should be present");
-
-  const sendPromptSource = sendWorkflowSource.slice(start, end);
-  const recoveryCheckIndex = sendPromptSource.indexOf('deps.prepareSendRuntimeForSend("sendPrompt", sendPreflight)');
-  const routedClientIndex = sendPromptSource.indexOf("const c = deps.routedClientForSendTarget(sendTargetWorkspace);");
-  assert.ok(recoveryCheckIndex >= 0, "sendPrompt should prepare send runtime readiness");
-  assert.ok(routedClientIndex >= 0, "sendPrompt should capture the routed client after recovery");
+  const prepareSource = legacyConversationRunFallbackPrepareSource();
+  const recoveryCheckIndex = prepareSource.indexOf('deps.prepareSendRuntimeForSend("sendPrompt", input.sendPreflight)');
+  const routedClientIndex = prepareSource.indexOf("const c = deps.routedClientForSendTarget(input.sendTargetWorkspace);");
+  assert.ok(recoveryCheckIndex >= 0, "legacy fallback should prepare send runtime readiness");
+  assert.ok(routedClientIndex >= 0, "legacy fallback should capture the routed client after recovery");
   assert.ok(
     recoveryCheckIndex < routedClientIndex,
-    "sendPrompt should verify and recover the local runtime before capturing the routed client used for prompt calls",
+    "legacy fallback should verify and recover the local runtime before capturing the routed client used for prompt calls",
   );
 });
 

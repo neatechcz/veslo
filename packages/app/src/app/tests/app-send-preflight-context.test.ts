@@ -27,6 +27,14 @@ function sendPromptSource(): string {
   return sendWorkflowSource.slice(start, end);
 }
 
+function legacyConversationRunFallbackPrepareSource(): string {
+  const fallbackStart = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+  const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", fallbackStart);
+  const submitStart = sendWorkflowSource.indexOf("  const submit = async", prepareStart);
+  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "legacy fallback prepare source should be present");
+  return sendWorkflowSource.slice(prepareStart, submitStart);
+}
+
 function createSessionAndOpenSource(): string {
   const start = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
   const end = createWorkflowSource.indexOf("return {", start);
@@ -36,6 +44,7 @@ function createSessionAndOpenSource(): string {
 
 test("sendPrompt carries a preflight context into first-session creation", () => {
   const source = sendPromptSource();
+  const fallbackPrepareSource = legacyConversationRunFallbackPrepareSource();
 
   assert.match(
     source,
@@ -43,17 +52,17 @@ test("sendPrompt carries a preflight context into first-session creation", () =>
     "sendPrompt should create one preflight context for the whole send flow",
   );
   assert.match(
-    source,
-    /const sendRuntimePreparation = await deps\.prepareSendRuntimeForSend\("sendPrompt", sendPreflight\);[\s\S]*if \(!sendRuntimePreparation\.ok\) \{/,
-    "sendPrompt should delegate runtime and managed AI readiness to the send readiness owner and consume its typed result",
+    fallbackPrepareSource,
+    /const sendRuntimePreparation = await deps\.prepareSendRuntimeForSend\("sendPrompt", input\.sendPreflight\);[\s\S]*if \(!sendRuntimePreparation\.ok\) \{/,
+    "legacy fallback prepare should delegate runtime and managed AI readiness to the send readiness owner and consume its typed result",
   );
   const prepareStart = runtimeReadinessSource.indexOf("async function prepareSendRuntimeForSend(");
   const prepareEnd = runtimeReadinessSource.indexOf("async function connectLocalRuntimeClientFromEngineInfo", prepareStart);
   assert.ok(prepareStart >= 0 && prepareEnd > prepareStart, "prepareSendRuntimeForSend source should be present");
-  const prepareSource = runtimeReadinessSource.slice(prepareStart, prepareEnd);
+  const readinessPrepareSource = runtimeReadinessSource.slice(prepareStart, prepareEnd);
   assert.ok(
-    prepareSource.indexOf("${reason}:ensure-local-runtime-reachable") <
-      prepareSource.indexOf("${reason}:ensure-managed-ai-bootstrap-ready"),
+    readinessPrepareSource.indexOf("${reason}:ensure-local-runtime-reachable") <
+      readinessPrepareSource.indexOf("${reason}:ensure-managed-ai-bootstrap-ready"),
     "send readiness owner should refresh runtime state before validating managed AI routing",
   );
   assert.doesNotMatch(

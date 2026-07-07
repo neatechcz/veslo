@@ -797,7 +797,7 @@ test("keeps windows workspace containment case-insensitive", () => {
   });
 
   assert.equal(evidence.length, 1);
-  assert.equal(evidence[0]?.src, "file:///c:/users/me/project/result.png");
+  assert.equal(evidence[0]?.src, "file:///C:/Users/me/project/result.png");
 });
 
 test("keeps absolute file evidence inside workspace root", () => {

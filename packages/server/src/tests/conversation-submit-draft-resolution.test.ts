@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -7,10 +9,19 @@ import type { ConversationSubmitRequest } from "../conversation-submit-contract.
 
 const request = (
   draft: ConversationSubmitRequest["draft"],
+  overrides: Omit<Partial<ConversationSubmitRequest>, "draft"> = {},
 ): ConversationSubmitRequest => ({
   clientMessageId: "msg_1",
   origin: "session:normal",
+  ...overrides,
   draft,
+});
+
+const localWorkspace = (root: string) => ({
+  id: "ws_1",
+  name: "Workspace",
+  path: root,
+  workspaceType: "local" as const,
 });
 
 describe("conversation submit draft resolution", () => {
@@ -91,6 +102,84 @@ describe("conversation submit draft resolution", () => {
         kind: "command",
         command: "company-research-czech",
         arguments: "use company research skill for this site",
+      },
+    });
+  });
+
+  test("resolves workspace file draft parts and ignores paths outside the workspace", async () => {
+    const root = process.cwd();
+    const result = await resolveConversationSubmitDraft({
+      request: request({
+        mode: "prompt",
+        text: "inspect project files",
+        parts: [
+          { type: "text", text: "inspect project files" },
+          { type: "file", path: "docs/brief.md" },
+          { type: "file", path: "../outside.md" },
+          { type: "agent", name: "reviewer" },
+        ],
+      }),
+      workspace: localWorkspace(root),
+    });
+
+    expect(result).toMatchObject({
+      status: "ok",
+      resolvedRunInput: {
+        kind: "prompt_async",
+        text: "inspect project files",
+        parts: [
+          { type: "text", text: "inspect project files" },
+          {
+            type: "file",
+            url: pathToFileURL(resolve(root, "docs/brief.md")).href,
+            filename: "brief.md",
+            mime: "text/plain",
+          },
+          { type: "agent", name: "reviewer" },
+        ],
+      },
+    });
+  });
+
+  test("keeps image attachment paths out of prompt text while preserving the inline file part", async () => {
+    const result = await resolveConversationSubmitDraft({
+      request: request({
+        mode: "prompt",
+        text: "inspect screenshot",
+        parts: [{ type: "text", text: "inspect screenshot" }],
+        attachments: [{
+          name: "shot.png",
+          kind: "image",
+          mimeType: "image/png",
+          dataUrl: "data:image/png;base64,aGVsbG8=",
+          fileSessionPath: "sessions/sess_1/shot.png",
+        }],
+      }, {
+        options: {
+          model: {
+            providerID: "openai",
+            modelID: "vision",
+            modalities: { input: ["text", "image"], output: ["text"] },
+          },
+        },
+      }),
+      workspace: localWorkspace(process.cwd()),
+    });
+
+    expect(result).toMatchObject({
+      status: "ok",
+      resolvedRunInput: {
+        kind: "prompt_async",
+        text: "inspect screenshot",
+        parts: [
+          { type: "text", text: "inspect screenshot" },
+          {
+            type: "file",
+            url: "data:image/png;base64,aGVsbG8=",
+            filename: "shot.png",
+            mime: "image/png",
+          },
+        ],
       },
     });
   });

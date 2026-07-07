@@ -1,0 +1,221 @@
+---
+title: Tauri Pilot E2E Parity KISS Plan
+date: 2026-07-07
+status: planned
+done: false
+issue: unlinked
+source_audit: chat:2026-07-07-tauri-pilot-e2e-parity-audit
+base_branch: local/sandbox-merge
+tpe00_token_handoff_done: false
+tpe01_fresh_e2e_build_done: false
+tpe02_redacted_diagnostics_done: false
+tpe03_live_inference_timeout_policy_done: false
+tpe04_production_path_suite_contract_done: false
+---
+
+# Tauri Pilot E2E Parity KISS Plan
+
+## Goal
+
+Make the Tauri Pilot E2E path behave as close as practical to the development
+and release desktop paths, especially for live managed-AI inference.
+
+The acceptance path must prove that:
+
+- the app uses the real local Veslo AI gateway,
+- OpenCode receives the local Veslo server client token through
+  `VESLO_OPENCODE_SERVER_CLIENT_TOKEN`,
+- inference goes through `codex_oauth` and not an OpenAI API-key fallback,
+- E2E does not silently test stale sidecars or a stale Tauri binary,
+- failure diagnostics explain the failing transition without leaking live auth
+  secrets.
+
+## Current Evidence
+
+- The E2E Tauri config uses the dedicated identifier
+  `com.neatech.veslo.e2e` and grants `pilot:default` only in
+  `packages/desktop/src-tauri/tauri.e2e.conf.json`.
+- The Rust Pilot plugin is gated behind
+  `#[cfg(all(debug_assertions, feature = "e2e"))]`.
+- `tauri-pilot` and `tauri-plugin-pilot` are currently on `0.7.2`.
+- Live managed-AI Pilot scenarios reject the gateway fixture and require a real
+  Den auth snapshot.
+- The latest live inference failure reached OpenCode with
+  `providerID=codex_oauth` and `modelID=gpt-5.5`, then failed locally on
+  `/ai-gateway/providers/codex_oauth/v1/chat/completions` with `401`.
+
+## KISS Principles
+
+- Fix the real app path first. Do not hide app bugs behind E2E fallbacks.
+- Keep `pilot:default` isolated to E2E builds.
+- Prefer one client-token source of truth over retry/fallback logic.
+- Prefer one explicit fresh E2E build command over implicit stale-binary checks.
+- Redact diagnostics at capture time instead of relying on reviewers to avoid
+  sharing sensitive artifacts.
+- Keep lifecycle/recovery scenarios separate from production-path inference
+  acceptance scenarios.
+
+## TPE00 - Fix Veslo Server Client Token Handoff
+
+### Problem
+
+`commands/engine.rs` can generate a Veslo server client token before starting
+the local server and passes that token to the orchestrator. `start_veslo_server`
+can then adopt persisted server state with a different token before it considers
+the requested token. OpenCode then calls the local AI gateway with a bearer
+token that the local server does not accept.
+
+This matches the observed live failure:
+
+- submit reaches server successfully,
+- OpenCode selects `codex_oauth/gpt-5.5`,
+- local `/ai-gateway/.../chat/completions` returns `401`.
+
+### KISS Fix
+
+- Normalize `veslo_server_client_token` before persisted recovery in
+  `start_veslo_server`.
+- Adopt persisted server info only when either no requested token exists or the
+  recovered `client_token` equals the requested token.
+- When persisted recovery is rejected because of a requested-token mismatch,
+  emit a diagnostic with booleans only:
+  `hasRequestedClientToken`, `hasRecoveredClientToken`, `decision`, `reason`.
+- Seed a newly generated token from `current_or_new_veslo_client_token` back
+  into `VesloServerManager` state so repeated callers reuse the same token.
+- Do not log token values.
+
+### Tests
+
+- Unit test that requested-token mismatch rejects persisted adoption.
+- Unit test that requested-token match allows persisted adoption.
+- Unit test or focused assertion that `current_or_new_veslo_client_token`
+  returns a stable manager-backed token after first generation.
+
+## TPE01 - Add Fresh E2E Desktop Build Entry Point
+
+### Problem
+
+The E2E runner launches an already-built debug binary from
+`packages/desktop/src-tauri/target/debug/veslo.exe`. It does not rebuild
+sidecars or the Tauri binary. Development and release paths do prepare sidecars
+as part of their normal build/start flow, so E2E can test old code.
+
+### KISS Fix
+
+- Add a small script such as `packages/e2e/scripts/build-e2e-desktop.mjs`.
+- The script should run, in order:
+  - `pnpm --filter veslo-server build:bin`
+  - `VESLO_SIDECAR_FORCE_BUILD=1 pnpm --filter @neatech/veslo run prepare:sidecar`
+  - from `packages/desktop`:
+    `pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e`
+- Add package scripts that make the intended path obvious, for example:
+  - `build:desktop:e2e`
+  - `test:pilot:live-inference:fresh`
+- Update stale launcher error messages that still point at
+  `tauri.dev.conf.json`; E2E builds should point at `tauri.e2e.conf.json`.
+
+### Tests
+
+- Unit or smoke test that the launcher error text references
+  `tauri.e2e.conf.json`.
+- Script dry-run or command-construction test if the script is structured for
+  testability.
+
+## TPE02 - Redact Pilot Failure Diagnostics
+
+### Problem
+
+Pilot diagnostics currently capture raw storage dumps. Live Den auth can be
+present in `veslo.den.auth`, which risks writing bearer tokens into
+`storage-local.json` or `storage-session.json`.
+
+### KISS Fix
+
+- Replace raw storage output with redacted storage output for known auth keys.
+- For `veslo.den.auth`, write only:
+  `present`, `hasToken`, `email`, `denApiBase`, and parse errors if any.
+- Add a generic diagnostic redactor for sensitive field names:
+  `token`, `accessToken`, `refreshToken`, `Authorization`, `apiKey`,
+  `secret`, `password`.
+- Add high-signal non-secret artifacts:
+  - sidecar `versions.json`,
+  - redacted OpenCode provider config summary,
+  - OpenCode log tail filtered for provider, model, and error lines,
+  - env presence booleans for `VESLO_OPENCODE_SERVER_CLIENT_TOKEN`.
+
+### Tests
+
+- Unit test that diagnostics do not include a sample Den token.
+- Unit test that `veslo.den.auth` is summarized instead of copied.
+- Unit test that generated redacted provider config preserves provider/model
+  evidence while hiding bearer material.
+
+## TPE03 - Define the 95 Second Live-Inference Timeout Policy
+
+### Problem
+
+`resolveLaunchTimeout` caps app launch waits at 95 seconds, but many Pilot TOML
+scenarios still define `global_timeout_ms` or `timeout_ms` above 95 seconds.
+The current policy is therefore only a launcher policy, not an E2E scenario
+policy.
+
+### KISS Fix
+
+- Apply the 95 second cap first to the canonical `live-inference` suite.
+- Keep long lifecycle/recovery scenarios outside the canonical production-path
+  inference suite unless they can complete under the cap.
+- Add a helper test that rejects `global_timeout_ms` and step `timeout_ms`
+  above 95000 for canonical live-inference scenarios.
+- Leave broader non-inference scenario cleanup for a separate pass.
+
+### Tests
+
+- Helper test that the `live-inference` suite scenarios have no timeout above
+  95000.
+- Focused check that `VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS` remains
+  bounded for live-inference runs.
+
+## TPE04 - Mark the Production-Path Inference Suite Explicitly
+
+### Problem
+
+Some managed-AI scenarios use direct Tauri IPC calls such as `engine_start`,
+`engine_info`, or `orchestrator_workspace_activate`. That can be valid for
+lifecycle/recovery coverage, but it is not the same as proving the production
+user path.
+
+### KISS Fix
+
+- Keep a small canonical production-path suite for live inference.
+- For that suite, require:
+  - no managed-AI gateway fixture,
+  - real Den auth,
+  - no OpenAI API-key fallback,
+  - no direct engine-start IPC unless explicitly allowed by the suite contract,
+  - bounded timeouts.
+- Keep lifecycle/recovery scenarios in a separate suite with explicit labels.
+
+### Tests
+
+- Extend existing runner tests so the canonical production-path suite rejects
+  direct engine IPC commands.
+- Keep allowlisted lifecycle scenarios out of that assertion.
+
+## Verification Order
+
+1. Run targeted Rust tests around `veslo_server` token adoption.
+2. Run E2E helper tests:
+   `pnpm --filter @neatech/veslo-e2e exec node --test --import=tsx/esm helpers/app-launcher.test.ts helpers/pilot-runner.test.ts`.
+3. Run the fresh E2E desktop build script.
+4. Run the canonical live-inference Pilot suite with a real Den auth snapshot
+   and `E2E_MANAGED_AI_GATEWAY_FIXTURE=0`.
+5. Inspect diagnostics from any failure and confirm they identify the first
+   failing transition without exposing auth tokens.
+
+## Non-Goals
+
+- Do not enable Pilot in release builds.
+- Do not make fixture gateway runs count as live inference acceptance.
+- Do not replace the local Veslo AI gateway with direct OpenAI API calls.
+- Do not globally rewrite all Pilot scenarios in the first patch.
+- Do not introduce a new auth fallback to mask local server token mismatch.

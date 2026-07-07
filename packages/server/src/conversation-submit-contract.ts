@@ -64,6 +64,9 @@ export type ConversationSubmitResolvedRunInput =
       command: string;
       arguments: string;
       parts?: unknown[];
+    }
+  | {
+      kind: "summarize";
     };
 
 export type ConversationSubmitDryRunResult = {

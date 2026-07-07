@@ -180,8 +180,8 @@ test("conversation flow controller owns prompt send orchestration behind grouped
   );
   assert.match(
     sessionSource,
-    /const sessionFlowFacade = createSessionViewFlowFacade\(\{ conversationFlow \}\);[\s\S]*return sessionFlowFacade\.handleSendPrompt\(draft, \{\s*sendNow: options\.sendNow,\s*sendTraceId: options\.sendTraceId,\s*\}\);/s,
-    "SessionView should delegate prompt send branching through the session flow facade",
+    /const sessionFlowFacade = createSessionViewFlowFacade\(\{ conversationFlow \}\);[\s\S]*const accepted = await sessionFlowFacade\.handleSendPrompt\(draft, \{[\s\S]*sendNow: options\.sendNow,[\s\S]*sendTraceId: options\.sendTraceId,[\s\S]*source: options\.source,[\s\S]*\}\);[\s\S]*return sessionSubmitResultFromAccepted\(accepted, props\.error\);/s,
+    "SessionView should delegate prompt send branching through the session flow facade and wrap the result for Composer",
   );
   assert.match(
     sessionSource,

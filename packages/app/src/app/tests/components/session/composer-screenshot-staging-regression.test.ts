@@ -8,18 +8,27 @@ const sessionPageSource = readFileSync(new URL("../../../pages/session.tsx", imp
 const sessionSendWorkflowSource = readFileSync(new URL("../../../pages/session-send-workflow.ts", import.meta.url), "utf8");
 const stagingSource = readFileSync(new URL("../../../pages/session-attachment-staging.ts", import.meta.url), "utf8");
 
+function legacyConversationRunFallbackSource(): string {
+  const start = sessionSendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+  const end = sessionSendWorkflowSource.indexOf("export function createSessionSendWorkflow", start);
+  assert.notEqual(start, -1, "legacy conversation run fallback source should exist");
+  assert.notEqual(end, -1, "legacy conversation run fallback block should end before createSessionSendWorkflow");
+  return sessionSendWorkflowSource.slice(start, end);
+}
+
 test("staging failure blocks send with an explicit error and no draft clear", () => {
-  const stagingStart = sessionSendWorkflowSource.indexOf(
+  const fallbackSource = legacyConversationRunFallbackSource();
+  const stagingStart = fallbackSource.indexOf(
     '"sendPrompt:stage-attachments"',
   );
-  const stagingEnd = sessionSendWorkflowSource.indexOf("const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();");
+  const stagingEnd = fallbackSource.indexOf("const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();");
   assert.notEqual(stagingStart, -1, "staging call should exist in send flow");
   assert.notEqual(stagingEnd, -1, "send flow should continue after staging call");
-  const stagingWindow = sessionSendWorkflowSource.slice(stagingStart, stagingEnd);
+  const stagingWindow = fallbackSource.slice(stagingStart, stagingEnd);
 
   assert.match(
     stagingWindow,
-    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, sendPreflight\)[\s\S]*const routedDraft = deps\.routeStagedAttachmentsForModel\(\{[\s\S]*if \(routedDraft\.error\) \{[\s\S]*restorePendingDraftAfterSendFailure\(\);[\s\S]*deps\.setError\(routedDraft\.error\);[\s\S]*stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\} catch \(error\) \{[\s\S]*restorePendingDraftAfterSendFailure\(\);[\s\S]*deps\.setError\(error instanceof Error \? error\.message : deps\.safeStringify\(error\)\);[\s\S]*stopSendPromptBusy\(\);[\s\S]*return false;/s,
+    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, input\.sendPreflight\)[\s\S]*const routedDraft = deps\.routeStagedAttachmentsForModel\(\{[\s\S]*if \(routedDraft\.error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*deps\.setError\(routedDraft\.error\);[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\} catch \(error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*deps\.setError\(error instanceof Error \? error\.message : deps\.safeStringify\(error\)\);[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;/s,
     "send flow should hard-fail when attachment staging or routing fails",
   );
 
@@ -69,12 +78,12 @@ test("composer keeps dropped files as attachment chips", () => {
 test("composer exposes send result so the parent can handle failed handoff state", () => {
   assert.match(
     composerSource,
-    /onSend: \(draft: ComposerDraft, options\?: ComposerSendOptions\) => Promise<boolean>;/,
-    "composer onSend contract should keep exposing send success/failure",
+    /onSend: \(draft: ComposerDraft, options\?: ComposerSendOptions\) => Promise<ComposerSendResult>;/,
+    "composer onSend contract should expose the typed submit result",
   );
 });
 
-test("composer clears the submitted draft and releases the editor before send handoff settles", () => {
+test("composer clears the submitted draft only after a clear submit disposition", () => {
   assert.match(
     composerSource,
     /const sendDisabled = createMemo\(\(\) => !hasDraftContent\(\) \|\| \(props\.busy && !props\.isStreaming\)\);/,
@@ -95,14 +104,14 @@ test("composer clears the submitted draft and releases the editor before send ha
 
   assert.match(
     composerSource,
-    /const submittedDraft = draft;[\s\S]*setSending\(true\);[\s\S]*setMentionOpen\(false\);\s*setMentionQuery\(""\);\s*setSlashOpen\(false\);\s*setSlashQuery\(""\);[\s\S]*setAttachments\(\[\]\);[\s\S]*setEditorText\(""\);[\s\S]*props\.onDraftChange\(\{[\s\S]*mode: submittedDraft\.mode,[\s\S]*parts: \[\],[\s\S]*attachments: \[\],[\s\S]*text: "",[\s\S]*resolvedText: "",[\s\S]*\}\);/,
-    "composer should clear the editor and immediately emit an empty draft after snapshotting the submitted draft",
+    /sendResult = await sendPromise;[\s\S]*sent = sendResult\.accepted;[\s\S]*if \(sendResult\.draftDisposition === "clear"\) \{[\s\S]*setAttachments\(\[\]\);[\s\S]*setEditorText\(""\);[\s\S]*props\.onDraftChange\(\{[\s\S]*mode: submittedDraft\.mode,[\s\S]*parts: \[\],[\s\S]*attachments: \[\],[\s\S]*text: "",[\s\S]*resolvedText: "",[\s\S]*\}\);/,
+    "composer should clear the editor only after the submit result asks it to clear",
   );
 
   assert.match(
     composerSource,
-    /sendPromise = props\.onSend\(submittedDraft, options\);[\s\S]*setSending\(false\);[\s\S]*sent = await sendPromise;/,
-    "local sending should be released before awaiting the handoff promise",
+    /sendPromise = props\.onSend\(submittedDraft, options\);[\s\S]*finally \{[\s\S]*setSending\(false\);[\s\S]*setActiveSendTraceId\(null\);/,
+    "local sending should be released after the handoff promise settles",
   );
 
   assert.doesNotMatch(
@@ -129,20 +138,22 @@ test("session props do not borrow devtools workspace fallbacks for attachment ga
 });
 
 test("send flow blocks screenshot analysis on non-vision models instead of relying on a hidden read fallback", () => {
+  const fallbackSource = legacyConversationRunFallbackSource();
+
   assert.match(
-    sessionSendWorkflowSource,
+    fallbackSource,
     /const routedDraft = deps\.routeStagedAttachmentsForModel\(\{\s*draft: resolvedDraft,\s*stagedAttachments,\s*model,\s*providers: deps\.providers\(\),\s*\}\);/s,
     "send flow should route staged attachments using the selected model capabilities",
   );
 
   assert.match(
-    sessionSendWorkflowSource,
-    /if \(routedDraft\.error\) \{[\s\S]*restorePendingDraftAfterSendFailure\(\);[\s\S]*deps\.setError\(routedDraft\.error\);[\s\S]*stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\}/s,
+    fallbackSource,
+    /if \(routedDraft\.error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*deps\.setError\(routedDraft\.error\);[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\}/s,
     "non-vision screenshot sends should fail with a visible error before the prompt runs",
   );
 
   assert.doesNotMatch(
-    sessionSendWorkflowSource,
+    fallbackSource,
     /stagedPaths\.join\("\\n"\)/,
     "staged screenshot filenames should not be appended directly into prompt text",
   );

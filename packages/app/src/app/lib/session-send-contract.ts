@@ -16,6 +16,16 @@ export type SessionSendOptionsBase = SessionSendCorrelation & {
   sendTraceId?: string | null;
 };
 
+export type SessionSubmitDraftDisposition = "clear" | "restore" | "keep" | "mark-failed";
+
+export type SessionSubmitResult = {
+  accepted: boolean;
+  status: "accepted" | "blocked" | "failed";
+  draftDisposition: SessionSubmitDraftDisposition;
+  code?: string | null;
+  message?: string | null;
+};
+
 export type MaterializedSessionHandoff = {
   workspaceId: string;
   pendingSessionKey?: string | null;
@@ -41,4 +51,23 @@ export function normalizeSessionSendCorrelation(input: SessionSendCorrelation): 
     origin: input.origin,
     ...(source ? { source } : {}),
   };
+}
+
+export function sessionSubmitResultFromAccepted(
+  accepted: boolean,
+  message?: string | null,
+): SessionSubmitResult {
+  return accepted
+    ? {
+        accepted: true,
+        status: "accepted",
+        draftDisposition: "clear",
+      }
+    : {
+        accepted: false,
+        status: "blocked",
+        draftDisposition: "restore",
+        code: "send_rejected",
+        message: message ?? null,
+      };
 }

@@ -63,6 +63,11 @@ export type SessionLifecycleRecoveryControllerOptions = {
     reason: string,
     delayMs?: number,
   ) => void;
+  refreshSelectedSessionTranscript?: (
+    sessionId: string,
+    workspaceId: string,
+    reason: string,
+  ) => Promise<void> | void;
   trace?: (event: string, payload?: Record<string, unknown>) => void;
   initialDelayMs?: number;
   pollMs?: number;
@@ -184,6 +189,48 @@ export function createSessionLifecycleRecoveryController(
     if (transcriptSessionId && workspaceId) {
       if (selectedSessionId && sessionIds.includes(selectedSessionId)) {
         options.scheduleTranscriptIngestion(transcriptSessionId, workspaceId, "lifecycle recovery", 0);
+        if (options.refreshSelectedSessionTranscript) {
+          trace("session-lifecycle-recovery:refresh-selected-transcript:start", {
+            workspaceId,
+            conversationId: scope.conversationId,
+            runId: scope.runId,
+            sessionId: transcriptSessionId,
+            status,
+          });
+          try {
+            void Promise.resolve(
+              options.refreshSelectedSessionTranscript(transcriptSessionId, workspaceId, "lifecycle recovery"),
+            )
+              .then(() => {
+                trace("session-lifecycle-recovery:refresh-selected-transcript:done", {
+                  workspaceId,
+                  conversationId: scope.conversationId,
+                  runId: scope.runId,
+                  sessionId: transcriptSessionId,
+                  status,
+                });
+              })
+              .catch((error) => {
+                trace("session-lifecycle-recovery:refresh-selected-transcript:error", {
+                  workspaceId,
+                  conversationId: scope.conversationId,
+                  runId: scope.runId,
+                  sessionId: transcriptSessionId,
+                  status,
+                  message: error instanceof Error ? error.message : String(error),
+                });
+              });
+          } catch (error) {
+            trace("session-lifecycle-recovery:refresh-selected-transcript:error", {
+              workspaceId,
+              conversationId: scope.conversationId,
+              runId: scope.runId,
+              sessionId: transcriptSessionId,
+              status,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
       } else {
         options.scheduleBackgroundTranscriptIngestion(transcriptSessionId, workspaceId, "lifecycle recovery", 0);
       }
@@ -207,6 +254,7 @@ export function createSessionLifecycleRecoveryController(
     }
     watch.inFlight = true;
     watch.attempts += 1;
+    const pollStartedAt = Date.now();
     try {
       const status = await options.readConversationRunStatus(watch.scope);
       trace("session-lifecycle-recovery:poll", {
@@ -218,6 +266,7 @@ export function createSessionLifecycleRecoveryController(
         waitReason: status?.waitReason ?? null,
         noProgressSeconds: status?.noProgressSeconds ?? null,
         attempt: watch.attempts,
+        durationMs: Date.now() - pollStartedAt,
       });
       if (!status) {
         options.onConversationRunStatus?.(watch.scope, null);

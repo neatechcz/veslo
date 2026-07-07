@@ -38,6 +38,21 @@ test("remote workspace activation lives in a scoped activation module", () => {
     /soulAuthContext:\s*\(\)\s*=>[\s\S]*readDenAuth\(\)[\s\S]*denToken[\s\S]*denOrgId[\s\S]*denUserId/,
     "workspace activation should provide the active Den identity to remote provisioning",
   );
+  assert.match(
+    remoteSource,
+    /const canUseFallbackToken =[\s\S]*!workspaceToken[\s\S]*Boolean\(fallbackToken\)[\s\S]*normalizeVesloHostForTokenFallback\(settingsHostUrl\) === normalizeVesloHostForTokenFallback\(hostUrl\)/,
+    "global Veslo token fallback should be allowed only when the settings host exactly matches the workspace host",
+  );
+  assert.match(
+    remoteSource,
+    /const tokenToPersistWithWorkspace = workspaceToken \|\| null;/,
+    "workspace activation must not silently persist an inherited global token into the workspace credential",
+  );
+  assert.match(
+    remoteSource,
+    /updateVesloServerSettings\(\{[\s\S]*token: token \|\| undefined,[\s\S]*\}\);/,
+    "switching remote Veslo hosts without a matching token should clear stale global credentials instead of carrying them forward",
+  );
   assert.doesNotMatch(facadeSource, /workspace-switch-veslo/);
   assert.doesNotMatch(facadeSource, /workspace-switch-direct/);
 });

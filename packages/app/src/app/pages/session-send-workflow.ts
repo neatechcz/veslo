@@ -12,6 +12,7 @@ import type {
 import type {
   VesloConversationRunInput,
   VesloConversationSubmitRequest,
+  VesloConversationSubmitResult,
   VesloServerClient,
 } from "../lib/veslo-server";
 import {
@@ -62,6 +63,42 @@ export type SessionSendWorkflowCommand = {
 };
 
 type ConversationSubmitDraftInput = VesloConversationSubmitRequest["draft"];
+type ConversationSubmitOptionsInput = NonNullable<VesloConversationSubmitRequest["options"]>;
+
+function conversationSubmitDraftFromComposerDraft(
+  draft: ComposerDraft,
+  stagedAttachments: StagedSessionAttachment[] = [],
+): ConversationSubmitDraftInput {
+  return {
+    mode: draft.mode,
+    text: draft.text,
+    resolvedText: draft.resolvedText ?? null,
+    parts: draft.parts,
+    command: draft.command ?? null,
+    attachments: draft.attachments.map((attachment, index) => ({
+      name: attachment.name,
+      kind: attachment.kind,
+      mimeType: attachment.mimeType,
+      dataUrl: attachment.dataUrl,
+      fileSessionPath: stagedAttachments[index]?.relativePath ?? null,
+    })),
+  };
+}
+
+function conversationSubmitModelForAttachments(
+  model: ModelRef,
+  providers: ProviderListItem[],
+  includeCapabilities: boolean,
+): ConversationSubmitOptionsInput["model"] {
+  if (!includeCapabilities) return model;
+  const modelInfo = providers.find((provider) => provider.id === model.providerID)?.models?.[model.modelID];
+  return {
+    providerID: model.providerID,
+    modelID: model.modelID,
+    ...(typeof modelInfo?.attachment === "boolean" ? { attachment: modelInfo.attachment } : {}),
+    ...(modelInfo?.modalities ? { modalities: modelInfo.modalities } : {}),
+  };
+}
 
 const DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME = {
   "veslo-docx": "docx",
@@ -97,9 +134,130 @@ export type SessionSendWorkflowWorkspace = {
   workspaces: () => WorkspaceDisplay[];
 };
 
+type NormalizedSessionSendCorrelation = ReturnType<typeof normalizeSessionSendCorrelation>;
+
+type StartSendPromptBusy = (
+  event: Extract<SessionFlowProgressEvent, { type: "runtime.connecting" | "conversation.running" }>,
+) => void;
+
 export type SessionSendPreflightContext =
   SendRuntimePreflightContext &
   ConversationSendPreflightContext<VesloServerClient>;
+
+export type LegacyConversationRunFallbackPrepareInput = {
+  cleanupPendingSidebarSession: () => void;
+  sendPreflight: SessionSendPreflightContext;
+  sendTargetWorkspace?: SendTargetWorkspaceScope | null;
+  startSendPromptBusy: StartSendPromptBusy;
+  stopSendPromptBusy: () => void;
+  traceId: string;
+};
+
+export type LegacyConversationRunFallbackSubmitInput = {
+  commandName: string | null;
+  compactCommand: boolean;
+  consumePendingDraftAfterAcceptedSend: (clearDisplayedPendingDraftState: boolean) => Promise<void>;
+  draft: ComposerDraft;
+  hasExplicitDraft: boolean;
+  reportSendErrorToDisplayedTarget: (message: string) => void;
+  restorePendingDraftAfterSendFailure: () => void;
+  sendCorrelation: NormalizedSessionSendCorrelation;
+  sendPreflight: SessionSendPreflightContext;
+  sendTargetStillDisplayed: () => boolean;
+  sendTargetWorkspace?: SendTargetWorkspaceScope | null;
+  sessionID: string;
+  startSendPromptBusy: StartSendPromptBusy;
+  stopSendPromptBusy: () => void;
+  traceId: string;
+};
+
+export type LegacyConversationRunFallback = {
+  prepare: (input: LegacyConversationRunFallbackPrepareInput) => Promise<boolean>;
+  submit: (input: LegacyConversationRunFallbackSubmitInput) => Promise<boolean>;
+};
+
+export type LegacyConversationRunFallbackOptions = {
+  agentForSession: (sessionId: string | null | undefined) => string | null | undefined;
+  buildCommandFileParts: (draft: ComposerDraft) => unknown[];
+  buildPromptParts: (draft: ComposerDraft) => unknown[];
+  compactCurrentSession: (sessionId?: string) => Promise<unknown>;
+  developerMode: () => boolean;
+  emitLiveTranscriptPolicyEvent: (event: LiveTranscriptReadPolicyEvent) => void;
+  finishPerf: (
+    enabled: boolean,
+    scope: string,
+    event: string,
+    startedAt: number,
+    payload?: Record<string, unknown>,
+  ) => void;
+  holdVisibleRuntimeActivity: (sessionId: string | null | undefined, reason: string) => void;
+  isWorkspaceClientStaleError: (error: unknown) => error is {
+    entryWorkspaceId?: string | null;
+    currentWorkspaceId?: string | null;
+  };
+  isWorkspaceRuntimeReady: (workspaceId?: string | null) => boolean;
+  messageFromUnknownError: (error: unknown) => string;
+  messages: () => Array<{ parts: unknown[] }>;
+  modelForSession: (sessionId: string | null | undefined) => ModelRef;
+  modelVariant: () => string | null | undefined;
+  perfNow: () => number;
+  prepareSendRuntimeForSend: (event: "sendPrompt", preflight: SessionSendPreflightContext) => Promise<SendRuntimePreparationResult>;
+  providers: () => ProviderListItem[];
+  recordPerfLog: (
+    enabled: boolean,
+    scope: string,
+    event: string,
+    payload?: Record<string, unknown>,
+  ) => void;
+  recordSendTrace: (event: string, payload?: Record<string, unknown>) => void;
+  resolveRuntimeSandboxStateForTarget: (
+    targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
+  ) => unknown;
+  resolveSelectedSessionBrowseScope: (sessionId: string) => {
+    workspaceId?: string | null;
+    workspaceRoot?: string | null;
+    directory?: string | null;
+    conversationId?: string | null;
+    opencodeSessionId?: string | null;
+  } | null;
+  routeStagedAttachmentsForModel: (input: {
+    draft: ComposerDraft;
+    stagedAttachments: StagedSessionAttachment[];
+    model: ModelRef;
+    providers: ProviderListItem[];
+  }) => {
+    draft: ComposerDraft;
+    system?: string;
+    error?: string;
+  };
+  routedClientForSendTarget: (targetWorkspace?: SendTargetWorkspaceScope | null) => Client | null;
+  runConversationFromVesloWriteApi: (
+    sessionId: string,
+    input: VesloConversationRunInput,
+    options?: {
+      preflight?: SessionSendPreflightContext;
+      targetWorkspace?: SendTargetWorkspaceScope | null;
+    },
+  ) => Promise<unknown>;
+  safeStringify: (value: unknown) => string;
+  sendTraceStep: <T>(
+    event: string,
+    run: () => Promise<T>,
+    payload?: Record<string, unknown>,
+  ) => Promise<T>;
+  sessionDirectoryOverrideById: () => Record<string, string | undefined>;
+  sessionStoreClearCommandDisplay: (messageId: string) => void;
+  sessionStoreSetCommandDisplay: (messageId: string, command: string, args: string) => void;
+  setError: (message: string | null) => void;
+  setLastPromptSent: (prompt: string) => void;
+  setPrompt: (value: string) => void;
+  stageAttachmentsIntoSessionDirectory: (
+    draft: ComposerDraft,
+    sessionId: string,
+    preflight?: SessionSendPreflightContext,
+  ) => Promise<StagedSessionAttachment[]>;
+  workspace: SessionSendWorkflowWorkspace;
+};
 
 export type SessionSendWorkflowOptions = {
   abortConversationFromVesloWriteApi: (
@@ -121,14 +279,11 @@ export type SessionSendWorkflowOptions = {
   activeUiScopeToken: () => UiScopeToken;
   addOpencodeCacheHint: (message: string) => string;
   agentForSession: (sessionId: string | null | undefined) => string | null | undefined;
-  buildCommandFileParts: (draft: ComposerDraft) => unknown[];
-  buildPromptParts: (draft: ComposerDraft) => unknown[];
   busy: () => boolean;
   busyLabel: () => string | null | undefined;
   captureDisplayedConversationGuard: (sessionId: string) => DisplayedConversationGuard;
   clearActivePendingDraftState: () => void;
   clearConsumedPendingDraftId: (draftId: string) => void;
-  compactCurrentSession: (sessionId?: string) => Promise<unknown>;
   composerDraft: () => ComposerDraft;
   createSendPreflightContext: (traceId?: string | null) => SessionSendPreflightContext;
   createSessionAndOpen: (
@@ -139,8 +294,10 @@ export type SessionSendWorkflowOptions = {
       sendTraceId?: string | null;
       clientMessageId?: string | null;
       submitDraft?: ConversationSubmitDraftInput;
+      submitOptions?: ConversationSubmitOptionsInput;
       submitOrigin?: string | null;
       submitSource?: string | null;
+      onSubmitResult?: (result: VesloConversationSubmitResult) => void;
       onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
       preflight?: SessionSendPreflightContext;
     },
@@ -179,7 +336,6 @@ export type SessionSendWorkflowOptions = {
   modelVariant: () => string | null | undefined;
   pendingSessionDraftsDelete: (draftId: string) => Promise<boolean>;
   perfNow: () => number;
-  prepareSendRuntimeForSend: (event: "sendPrompt", preflight: SessionSendPreflightContext) => Promise<SendRuntimePreparationResult>;
   providers: () => ProviderListItem[];
   recordPerfLog: (
     enabled: boolean,
@@ -218,26 +374,14 @@ export type SessionSendWorkflowOptions = {
   resolveSendPromptBusyOwnership: (input: { sessionId: string | null | undefined }) => { ownsBusy: boolean };
   resolveSendTargetWorkspaceScope: (sessionId?: string | null) => SendTargetWorkspaceScope | null;
   resolvedDevtoolsWorkspaceId: () => string;
-  routeStagedAttachmentsForModel: (input: {
-    draft: ComposerDraft;
-    stagedAttachments: StagedSessionAttachment[];
-    model: ModelRef;
-    providers: ProviderListItem[];
-  }) => {
-    draft: ComposerDraft;
-    system?: string;
-    error?: string;
-  };
   routedClient: (workspaceId?: string | null) => Client | null;
-  routedClientForSendTarget: (targetWorkspace?: SendTargetWorkspaceScope | null) => Client | null;
-  runConversationFromVesloWriteApi: (
-    sessionId: string,
-    input: VesloConversationRunInput,
-    options?: {
-      preflight?: SessionSendPreflightContext;
-      targetWorkspace?: SendTargetWorkspaceScope | null;
-    },
-  ) => Promise<unknown>;
+  legacyConversationRunFallback: LegacyConversationRunFallback;
+  submitConversationFromVesloWriteApi?: (
+    workspaceId: string,
+    directory: string,
+    input: VesloConversationSubmitRequest,
+    preflight?: SessionSendPreflightContext,
+  ) => Promise<VesloConversationSubmitResult | null | undefined>;
   safeStringify: (value: unknown) => string;
   selectedSessionId: () => string | null | undefined;
   sendTraceStep: <T>(
@@ -245,7 +389,6 @@ export type SessionSendWorkflowOptions = {
     run: () => Promise<T>,
     payload?: Record<string, unknown>,
   ) => Promise<T>;
-  sessionDirectoryOverrideById: () => Record<string, string | undefined>;
   sessionStoreAppendSessionErrorTurn: (sessionId: string, message: string) => void;
   sessionStoreClearCommandDisplay: (messageId: string) => void;
   sessionStoreSetCommandDisplay: (messageId: string, command: string, args: string) => void;
@@ -259,7 +402,7 @@ export type SessionSendWorkflowOptions = {
   setPrompt: (value: string) => void;
   setSelectedSessionId: (sessionId: string | null) => void;
   setView: (view: View) => void;
-  stageAttachmentsIntoSessionDirectory: (
+  stageServerSubmitAttachments: (
     draft: ComposerDraft,
     sessionId: string,
     preflight?: SessionSendPreflightContext,
@@ -275,7 +418,338 @@ export type SessionSendWorkflow = {
   abortSession: (sessionId?: string, target?: ConversationAbortTarget) => Promise<void>;
 };
 
+export function createLegacyConversationRunFallback(
+  deps: LegacyConversationRunFallbackOptions,
+): LegacyConversationRunFallback {
+  const prepare = async (input: LegacyConversationRunFallbackPrepareInput): Promise<boolean> => {
+    const sendRuntimeWorkspaceId = input.sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim();
+    const sendRuntimeReady = deps.isWorkspaceRuntimeReady(sendRuntimeWorkspaceId);
+    if (!sendRuntimeReady) {
+      input.startSendPromptBusy({ type: "runtime.connecting" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    const sendRuntimePreparation = await deps.prepareSendRuntimeForSend("sendPrompt", input.sendPreflight);
+    if (!sendRuntimePreparation.ok) {
+      input.cleanupPendingSidebarSession();
+      input.stopSendPromptBusy();
+      return false;
+    }
+    input.sendPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(input.sendTargetWorkspace);
+
+    const c = deps.routedClientForSendTarget(input.sendTargetWorkspace);
+    if (!c) {
+      deps.recordSendTrace("sendPrompt:blocked-no-client", {
+        traceId: input.traceId,
+      });
+      input.cleanupPendingSidebarSession();
+      input.stopSendPromptBusy();
+      return false;
+    }
+    return true;
+  };
+
+  const submit = async (input: LegacyConversationRunFallbackSubmitInput): Promise<boolean> => {
+    let resolvedDraft = input.draft;
+    const sessionID = input.sessionID;
+    const materializedSessionID = input.sessionID;
+    const model = deps.modelForSession(materializedSessionID);
+    let promptSystem: string | undefined;
+
+    try {
+      const stagedAttachments = await deps.sendTraceStep(
+        "sendPrompt:stage-attachments",
+        () => deps.stageAttachmentsIntoSessionDirectory(resolvedDraft, materializedSessionID, input.sendPreflight),
+        {
+          traceId: input.traceId,
+          sessionID,
+          attachmentCount: resolvedDraft.attachments.length,
+        },
+      );
+      const routedDraft = deps.routeStagedAttachmentsForModel({
+        draft: resolvedDraft,
+        stagedAttachments,
+        model,
+        providers: deps.providers(),
+      });
+      if (routedDraft.error) {
+        deps.recordSendTrace("sendPrompt:staged-attachment-routing-error", {
+          traceId: input.traceId,
+          sessionID,
+          message: routedDraft.error,
+        });
+        input.restorePendingDraftAfterSendFailure();
+        if (input.sendTargetStillDisplayed()) {
+          deps.setError(routedDraft.error);
+        }
+        input.stopSendPromptBusy();
+        return false;
+      }
+      resolvedDraft = routedDraft.draft;
+      promptSystem = routedDraft.system;
+    } catch (error) {
+      deps.recordSendTrace("sendPrompt:stage-attachments-error", {
+        traceId: input.traceId,
+        sessionID,
+        message: deps.messageFromUnknownError(error),
+      });
+      input.restorePendingDraftAfterSendFailure();
+      if (input.sendTargetStillDisplayed()) {
+        deps.setError(error instanceof Error ? error.message : deps.safeStringify(error));
+      }
+      input.stopSendPromptBusy();
+      return false;
+    }
+
+    const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
+    if (!content && !resolvedDraft.attachments.length && !promptSystem) {
+      deps.recordSendTrace("sendPrompt:blocked-empty-after-staging", {
+        traceId: input.traceId,
+        sessionID,
+      });
+      input.stopSendPromptBusy();
+      return false;
+    }
+
+    input.startSendPromptBusy({ type: "conversation.running" });
+    deps.setError(null);
+
+    const perfEnabled = deps.developerMode();
+    const startedAt = deps.perfNow();
+    const visible = deps.messages();
+    const visibleParts = visible.reduce((total, message) => total + message.parts.length, 0);
+    let commandMessageIDToClear: string | null = null;
+    deps.recordPerfLog(perfEnabled, "session.prompt", "start", {
+      sessionID,
+      mode: resolvedDraft.mode,
+      command: input.commandName,
+      charCount: content.length,
+      attachmentCount: resolvedDraft.attachments.length,
+      messageCount: visible.length,
+      partCount: visibleParts,
+    });
+
+    try {
+      if (!input.compactCommand) {
+        deps.setLastPromptSent(content);
+      }
+      if (!input.hasExplicitDraft) {
+        deps.setPrompt("");
+      }
+
+      const agent = deps.agentForSession(sessionID);
+      const parts = deps.buildPromptParts(resolvedDraft);
+      const selectedVariant = deps.modelVariant() ?? undefined;
+      const promptOverrides = {
+        ...(promptSystem ? { system: promptSystem } : {}),
+      };
+
+      const sessionDirOverride = deps.sessionDirectoryOverrideById()[materializedSessionID] ?? undefined;
+      let localRuntimeRetryUsed = false;
+      const runConversationOrFail = async (runInput: VesloConversationRunInput) => {
+        const scope = deps.resolveSelectedSessionBrowseScope(materializedSessionID);
+        const inputWithCorrelation: VesloConversationRunInput = {
+          ...runInput,
+          clientMessageId: input.sendCorrelation.clientMessageId,
+          origin: input.sendCorrelation.origin,
+        };
+        const submitConversationRun = async () => deps.runConversationFromVesloWriteApi(
+          materializedSessionID,
+          inputWithCorrelation,
+          {
+            preflight: input.sendPreflight,
+            targetWorkspace: input.sendTargetWorkspace,
+          },
+        );
+        try {
+          const result = await submitConversationRun();
+          if (result) return;
+          deps.recordSendTrace("sendPrompt:conversation-run-unavailable", {
+            traceId: input.traceId,
+            sessionID,
+            kind: runInput.kind,
+            clientMessageId: input.sendCorrelation.clientMessageId,
+            origin: input.sendCorrelation.origin,
+            hasConversationScope: Boolean(scope?.conversationId),
+          });
+          throw new Error("Conversation service is unavailable for this session.");
+        } catch (error) {
+          const recoverable = shouldRecoverLocalRuntimeFromHealthError(error, deps.safeStringify);
+          deps.recordSendTrace("sendPrompt:conversation-run-error", {
+            traceId: input.traceId,
+            sessionID,
+            kind: runInput.kind,
+            clientMessageId: input.sendCorrelation.clientMessageId,
+            origin: input.sendCorrelation.origin,
+            hasConversationScope: Boolean(scope?.conversationId),
+            message: deps.messageFromUnknownError(error),
+            recoverable,
+            retryUsed: localRuntimeRetryUsed,
+          });
+          if (recoverable && !localRuntimeRetryUsed && input.sendTargetStillDisplayed()) {
+            localRuntimeRetryUsed = true;
+            input.sendPreflight.forceRecovery = true;
+            input.sendPreflight.runtimeHealthOk = false;
+            input.sendPreflight.enginePrepared = false;
+            deps.recordSendTrace("sendPrompt:conversation-run-runtime-recovery-start", {
+              traceId: input.traceId,
+              sessionID,
+              kind: runInput.kind,
+              clientMessageId: input.sendCorrelation.clientMessageId,
+              origin: input.sendCorrelation.origin,
+            });
+            const recovery = await deps.prepareSendRuntimeForSend("sendPrompt", input.sendPreflight);
+            deps.recordSendTrace("sendPrompt:conversation-run-runtime-recovery-result", {
+              traceId: input.traceId,
+              sessionID,
+              kind: runInput.kind,
+              ok: recovery.ok,
+              reason: recovery.reason,
+              recoveryAttempted: recovery.recoveryAttempted,
+              clientMessageId: input.sendCorrelation.clientMessageId,
+              origin: input.sendCorrelation.origin,
+            });
+            if (recovery.ok && input.sendTargetStillDisplayed()) {
+              const retryResult = await submitConversationRun();
+              if (retryResult) return;
+            }
+          }
+          throw error;
+        }
+      };
+
+      if (resolvedDraft.mode === "shell") {
+        await runConversationOrFail({
+          kind: "shell",
+          directory: sessionDirOverride,
+          command: content,
+          model,
+          agent: agent ?? undefined,
+        });
+      } else if (resolvedDraft.command || input.compactCommand) {
+        if (input.compactCommand) {
+          await deps.compactCurrentSession(sessionID);
+          deps.finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
+            sessionID,
+            mode: resolvedDraft.mode,
+            command: input.commandName,
+          });
+          deps.recordSendTrace("sendPrompt:compact-success", {
+            traceId: input.traceId,
+            sessionID,
+          });
+          deps.emitLiveTranscriptPolicyEvent({
+            type: "conversation-compact.succeeded",
+            reason: "sendPrompt:compact-success",
+            workspaceId: input.sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim(),
+            sessionId: sessionID,
+            traceId: input.traceId,
+          });
+          return true;
+        }
+
+        const command = resolvedDraft.command;
+        if (!command) {
+          throw new Error("Command was not resolved.");
+        }
+
+        commandMessageIDToClear = input.sendCorrelation.clientMessageId;
+        const commandMessageID = commandMessageIDToClear;
+        deps.sessionStoreSetCommandDisplay(commandMessageID, command.name, command.arguments);
+        const modelString = `${model.providerID}/${model.modelID}`;
+        const files = deps.buildCommandFileParts(resolvedDraft);
+
+        await runConversationOrFail({
+          kind: "command",
+          sessionID,
+          messageID: commandMessageID,
+          command: command.name,
+          arguments: command.arguments,
+          agent: agent ?? undefined,
+          model: modelString,
+          variant: selectedVariant,
+          parts: files.length ? files : undefined,
+          directory: sessionDirOverride,
+        });
+        commandMessageIDToClear = null;
+      } else {
+        await runConversationOrFail({
+          kind: "prompt_async",
+          directory: sessionDirOverride,
+          model,
+          agent: agent ?? undefined,
+          variant: selectedVariant,
+          ...promptOverrides,
+          parts,
+        });
+      }
+      await input.consumePendingDraftAfterAcceptedSend(input.sendTargetStillDisplayed());
+
+      deps.finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
+        sessionID,
+        mode: resolvedDraft.mode,
+        command: input.commandName,
+      });
+      deps.recordSendTrace("sendPrompt:success", {
+        traceId: input.traceId,
+        sessionID,
+        clientMessageId: input.sendCorrelation.clientMessageId,
+        origin: input.sendCorrelation.origin,
+        mode: resolvedDraft.mode,
+        command: input.commandName,
+      });
+      deps.emitLiveTranscriptPolicyEvent({
+        type: "conversation-run.succeeded",
+        reason: "sendPrompt:success",
+        workspaceId: input.sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim(),
+        sessionId: sessionID,
+        traceId: input.traceId,
+      });
+      deps.holdVisibleRuntimeActivity(sessionID, "sendPrompt:success");
+      return true;
+    } catch (e) {
+      input.restorePendingDraftAfterSendFailure();
+      if (commandMessageIDToClear) {
+        deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
+      }
+      if (deps.isWorkspaceClientStaleError(e)) {
+        deps.recordSendTrace("sendPrompt:stale-client", {
+          traceId: input.traceId,
+          sessionID,
+          clientMessageId: input.sendCorrelation.clientMessageId,
+          origin: input.sendCorrelation.origin,
+          entryWorkspaceId: e.entryWorkspaceId,
+          currentWorkspaceId: e.currentWorkspaceId,
+        });
+        return false;
+      }
+      deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
+        sessionID,
+        mode: resolvedDraft.mode,
+        command: input.commandName,
+        error: e instanceof Error ? e.message : deps.safeStringify(e),
+      });
+      const message = e instanceof Error ? e.message : deps.safeStringify(e);
+      deps.recordSendTrace("sendPrompt:error", {
+        traceId: input.traceId,
+        sessionID,
+        clientMessageId: input.sendCorrelation.clientMessageId,
+        origin: input.sendCorrelation.origin,
+        message,
+      });
+      input.reportSendErrorToDisplayedTarget(message);
+      return false;
+    } finally {
+      input.stopSendPromptBusy();
+    }
+  };
+
+  return { prepare, submit };
+}
+
 export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): SessionSendWorkflow {
+  const legacyConversationRunFallback = deps.legacyConversationRunFallback;
+
   async function maybeResolveSkillCommand(
     draft: ComposerDraft,
     traceId?: string | null,
@@ -580,24 +1054,35 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       sendPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
     }
 
-    const skillResolution = await deps.sendTraceStep(
-      "sendPrompt:maybe-resolve-skill-command",
-      () => maybeResolveSkillCommand(resolvedDraft, sendTraceId, sendTargetWorkspace),
-      {
+    const shouldUseServerSubmitBeforeFrontendSkillResolution = Boolean(
+      deps.submitConversationFromVesloWriteApi,
+    );
+    if (shouldUseServerSubmitBeforeFrontendSkillResolution) {
+      deps.recordSendTrace("sendPrompt:maybe-resolve-skill-command:server-owned-skip", {
         traceId: sendTraceId,
         mode: resolvedDraft.mode,
         targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
-      },
-    );
-    if (skillResolution.blockedReason) {
-      deps.setError(skillResolution.blockedReason);
-      deps.recordSendTrace("sendPrompt:blocked-document-runtime", {
-        traceId: sendTraceId,
-        reason: skillResolution.blockedReason,
       });
-      return false;
+    } else {
+      const skillResolution = await deps.sendTraceStep(
+        "sendPrompt:maybe-resolve-skill-command",
+        () => maybeResolveSkillCommand(resolvedDraft, sendTraceId, sendTargetWorkspace),
+        {
+          traceId: sendTraceId,
+          mode: resolvedDraft.mode,
+          targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
+        },
+      );
+      if (skillResolution.blockedReason) {
+        deps.setError(skillResolution.blockedReason);
+        deps.recordSendTrace("sendPrompt:blocked-document-runtime", {
+          traceId: sendTraceId,
+          reason: skillResolution.blockedReason,
+        });
+        return false;
+      }
+      resolvedDraft = skillResolution.draft;
     }
-    resolvedDraft = skillResolution.draft;
 
     const initialSessionTitle = resolvedDraft.text.trim();
     const initialContent = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
@@ -613,31 +1098,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       pendingSidebarRowRegistered = true;
     }
 
-    const sendRuntimeWorkspaceId = sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim();
-    const sendRuntimeReady = deps.isWorkspaceRuntimeReady(sendRuntimeWorkspaceId);
-    if (!sendRuntimeReady) {
-      startSendPromptBusy({ type: "runtime.connecting" });
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-
-    const sendRuntimePreparation = await deps.prepareSendRuntimeForSend("sendPrompt", sendPreflight);
-    if (!sendRuntimePreparation.ok) {
-      cleanupPendingSidebarSession();
-      stopSendPromptBusy();
-      return false;
-    }
-    sendPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
-
-    const c = deps.routedClientForSendTarget(sendTargetWorkspace);
-    if (!c) {
-      deps.recordSendTrace("sendPrompt:blocked-no-client", {
-        traceId: sendTraceId,
-      });
-      cleanupPendingSidebarSession();
-      stopSendPromptBusy();
-      return false;
-    }
-
     const compactShortcut = /^\/compact(?:\s+.*)?$/i.test(initialContent);
     const compactCommand = resolvedDraft.command?.name === "compact" || compactShortcut;
     const commandName = compactCommand ? "compact" : (resolvedDraft.command?.name ?? null);
@@ -648,6 +1108,355 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       deps.setError("Select a session with messages before running /compact.");
       cleanupPendingSidebarSession();
       return false;
+    }
+
+    const hadExistingSessionBeforeMaterialization = Boolean(sessionID?.trim());
+    const submitExistingSessionWithServer = async (): Promise<boolean | null> => {
+      const submitConversation = deps.submitConversationFromVesloWriteApi;
+      const existingSessionId = sessionID?.trim() || "";
+      if (!submitConversation || !existingSessionId || !hadExistingSessionBeforeMaterialization) return null;
+
+      const displayedConversationGuard = deps.captureDisplayedConversationGuard(existingSessionId);
+      const displayedUiScopeToken = deps.activeUiScopeToken();
+      const sendTargetStillDisplayed = () =>
+        deps.displayedConversationStillMatches(displayedConversationGuard) &&
+        deps.isUiScopeTokenCurrent(displayedUiScopeToken);
+      const reportServerSubmitError = (message: string) => {
+        if (!sendTargetStillDisplayed()) return;
+        const hintedMessage = deps.addOpencodeCacheHint(message);
+        deps.setError(hintedMessage);
+        deps.sessionStoreAppendSessionErrorTurn(existingSessionId, hintedMessage);
+      };
+      const workspaceId = sendTargetWorkspace?.workspaceId?.trim() || deps.workspace.activeWorkspaceId().trim();
+      const directory =
+        sendTargetWorkspace?.directory?.trim() ||
+        sendTargetWorkspace?.workspaceRoot?.trim() ||
+        deps.workspace.activeWorkspaceRoot().trim();
+      if (!workspaceId || !directory) {
+        const message = "Server-owned conversation submit is missing a workspace or directory for this local session.";
+        deps.recordSendTrace("sendPrompt:server-submit-existing-missing-target", {
+          traceId: sendTraceId,
+          sessionID: existingSessionId,
+          workspaceId: workspaceId || null,
+          directory: directory || null,
+        });
+        reportServerSubmitError(message);
+        return false;
+      }
+
+      const scope = deps.resolveSelectedSessionBrowseScope(existingSessionId);
+      const conversationId = scope?.conversationId?.trim() || null;
+      const opencodeSessionId = scope?.opencodeSessionId?.trim() || existingSessionId;
+      const model = deps.modelForSession(existingSessionId);
+      const agent = deps.agentForSession(existingSessionId);
+      const selectedVariant = deps.modelVariant() ?? undefined;
+      const command = compactCommand ? null : resolvedDraft.command;
+      let commandMessageIDToClear: string | null = null;
+      if (command) {
+        commandMessageIDToClear = sendCorrelation.clientMessageId;
+        deps.sessionStoreSetCommandDisplay(commandMessageIDToClear, command.name, command.arguments);
+      }
+
+      const perfEnabled = deps.developerMode();
+      const startedAt = deps.perfNow();
+      const visible = deps.messages();
+      if (compactCommand && !visible.length) {
+        deps.recordSendTrace("sendPrompt:blocked-compact-empty", {
+          traceId: sendTraceId,
+          sessionID: existingSessionId,
+        });
+        deps.setError("Nothing to compact yet.");
+        return false;
+      }
+      const visibleParts = visible.reduce((total, message) => total + message.parts.length, 0);
+      startSendPromptBusy({ type: "conversation.running" });
+      deps.setError(null);
+      let stagedAttachments: StagedSessionAttachment[] = [];
+      if (resolvedDraft.attachments.length > 0) {
+        try {
+          deps.recordSendTrace("sendPrompt:server-submit-existing-stage-attachments", {
+            traceId: sendTraceId,
+            sessionID: existingSessionId,
+            clientMessageId: sendCorrelation.clientMessageId,
+            origin: sendCorrelation.origin,
+            attachmentCount: resolvedDraft.attachments.length,
+          });
+          stagedAttachments = await deps.sendTraceStep(
+            "sendPrompt:server-submit-existing-stage-attachments",
+            () => deps.stageServerSubmitAttachments(resolvedDraft, existingSessionId, sendPreflight),
+            {
+              traceId: sendTraceId,
+              sessionID: existingSessionId,
+              attachmentCount: resolvedDraft.attachments.length,
+            },
+          );
+          deps.recordSendTrace("sendPrompt:server-submit-existing-stage-attachments-done", {
+            traceId: sendTraceId,
+            sessionID: existingSessionId,
+            clientMessageId: sendCorrelation.clientMessageId,
+            origin: sendCorrelation.origin,
+            attachmentCount: stagedAttachments.length,
+          });
+        } catch (error) {
+          if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
+          const message = deps.messageFromUnknownError(error);
+          deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
+            sessionID: existingSessionId,
+            mode: resolvedDraft.mode,
+            command: commandName,
+            error: message,
+            serverSubmit: true,
+            phase: "stage-attachments",
+          });
+          deps.recordSendTrace("sendPrompt:server-submit-existing-stage-attachments-error", {
+            traceId: sendTraceId,
+            sessionID: existingSessionId,
+            clientMessageId: sendCorrelation.clientMessageId,
+            origin: sendCorrelation.origin,
+            message,
+          });
+          reportServerSubmitError(message);
+          return false;
+        }
+      }
+      const submitModel = conversationSubmitModelForAttachments(
+        model,
+        deps.providers(),
+        resolvedDraft.attachments.length > 0,
+      );
+      deps.recordPerfLog(perfEnabled, "session.prompt", "start", {
+        sessionID: existingSessionId,
+        mode: resolvedDraft.mode,
+        command: commandName,
+        charCount: initialContent.length,
+        attachmentCount: resolvedDraft.attachments.length,
+        messageCount: visible.length,
+        partCount: visibleParts,
+        serverSubmit: true,
+      });
+      deps.recordSendTrace("sendPrompt:server-submit-existing:start", {
+        traceId: sendTraceId,
+        sessionID: existingSessionId,
+        workspaceId,
+        directory,
+        conversationId,
+        opencodeSessionId,
+        clientMessageId: sendCorrelation.clientMessageId,
+        origin: sendCorrelation.origin,
+        mode: resolvedDraft.mode,
+        command: commandName,
+        attachmentCount: resolvedDraft.attachments.length,
+      });
+
+      let result: VesloConversationSubmitResult | null | undefined;
+      try {
+        result = await deps.sendTraceStep(
+          "sendPrompt:server-submit-existing",
+          () => submitConversation(
+            workspaceId,
+            directory,
+            {
+              clientMessageId: sendCorrelation.clientMessageId,
+              origin: sendCorrelation.origin,
+              source: sendCorrelation.source ?? null,
+              target: {
+                directory,
+                conversationId,
+                opencodeSessionId,
+              },
+              draft: conversationSubmitDraftFromComposerDraft(resolvedDraft, stagedAttachments),
+              options: {
+                model: submitModel,
+                agent: agent ?? null,
+                variant: selectedVariant ?? null,
+                submitQueuePolicy: sendCorrelation.origin === "session:send-now"
+                  ? "send-now"
+                  : sendCorrelation.origin === "session:queue-drain"
+                    ? "server-queue-only"
+                    : "normal",
+              },
+            },
+            sendPreflight,
+          ),
+          {
+            traceId: sendTraceId,
+            sessionID: existingSessionId,
+            workspaceId,
+            directory,
+            clientMessageId: sendCorrelation.clientMessageId,
+            origin: sendCorrelation.origin,
+          },
+        );
+      } catch (error) {
+        if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
+        const message = deps.messageFromUnknownError(error);
+        deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
+          sessionID: existingSessionId,
+          mode: resolvedDraft.mode,
+          command: commandName,
+          error: message,
+          serverSubmit: true,
+        });
+        deps.recordSendTrace("sendPrompt:server-submit-existing:error", {
+          traceId: sendTraceId,
+          sessionID: existingSessionId,
+          clientMessageId: sendCorrelation.clientMessageId,
+          origin: sendCorrelation.origin,
+          message,
+        });
+        reportServerSubmitError(message);
+        return false;
+      }
+
+      if (!result) {
+        if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
+        const message = "Server-owned conversation submit is unavailable for this local session.";
+        deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
+          sessionID: existingSessionId,
+          mode: resolvedDraft.mode,
+          command: commandName,
+          error: message,
+          serverSubmit: true,
+          phase: "submit-unavailable",
+        });
+        deps.recordSendTrace("sendPrompt:server-submit-existing-unavailable", {
+          traceId: sendTraceId,
+          sessionID: existingSessionId,
+          workspaceId,
+          clientMessageId: sendCorrelation.clientMessageId,
+          origin: sendCorrelation.origin,
+        });
+        reportServerSubmitError(message);
+        return false;
+      }
+
+      if (result.status === "blocked" || result.status === "failed") {
+        if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
+        deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
+          sessionID: existingSessionId,
+          mode: resolvedDraft.mode,
+          command: commandName,
+          error: result.message,
+          serverSubmit: true,
+          status: result.status,
+          code: result.code,
+        });
+        deps.recordSendTrace(`sendPrompt:server-submit-existing-${result.status}`, {
+          traceId: sendTraceId,
+          sessionID: existingSessionId,
+          clientMessageId: sendCorrelation.clientMessageId,
+          origin: sendCorrelation.origin,
+          code: result.code,
+          draftDisposition: result.draftDisposition,
+          message: result.message,
+        });
+        if (result.status === "failed") {
+          reportServerSubmitError(result.message);
+        } else if (sendTargetStillDisplayed()) {
+          deps.setError(result.message);
+        }
+        return false;
+      }
+
+      if (result.status !== "submitted" && result.status !== "queued") {
+        if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
+        const message = `Conversation submit returned ${result.status} for an existing session.`;
+        deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
+          sessionID: existingSessionId,
+          mode: resolvedDraft.mode,
+          command: commandName,
+          error: message,
+          serverSubmit: true,
+        });
+        deps.recordSendTrace("sendPrompt:server-submit-existing-unexpected-result", {
+          traceId: sendTraceId,
+          sessionID: existingSessionId,
+          status: result.status,
+        });
+        reportServerSubmitError(message);
+        return false;
+      }
+
+      if (result.draftDisposition === "clear") {
+        if (!compactCommand) {
+          deps.setLastPromptSent(initialContent);
+        }
+        if (!hasExplicitDraft) {
+          deps.setPrompt("");
+        }
+      }
+      deps.finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
+        sessionID: existingSessionId,
+        mode: resolvedDraft.mode,
+        command: commandName,
+        serverSubmit: true,
+        status: result.status,
+      });
+      deps.recordSendTrace("sendPrompt:server-submit-existing-success", {
+        traceId: sendTraceId,
+        sessionID: existingSessionId,
+        clientMessageId: sendCorrelation.clientMessageId,
+        origin: sendCorrelation.origin,
+        status: result.status,
+        runId: result.status === "submitted" ? result.runId : result.reservedRunId,
+        queueItemId: result.status === "queued" ? result.queueItemId : null,
+        draftDisposition: result.draftDisposition,
+      });
+      if (compactCommand) {
+        deps.recordSendTrace("sendPrompt:compact-success", {
+          traceId: sendTraceId,
+          sessionID: existingSessionId,
+          serverSubmit: true,
+        });
+      }
+      if (compactCommand) {
+        deps.emitLiveTranscriptPolicyEvent({
+          type: "conversation-compact.succeeded",
+          reason: "sendPrompt:compact-success",
+          workspaceId,
+          sessionId: existingSessionId,
+          traceId: sendTraceId,
+        });
+      } else {
+        deps.emitLiveTranscriptPolicyEvent({
+          type: "conversation-run.succeeded",
+          reason: "sendPrompt:success",
+          workspaceId,
+          sessionId: existingSessionId,
+          traceId: sendTraceId,
+        });
+      }
+      deps.holdVisibleRuntimeActivity(
+        existingSessionId,
+        compactCommand ? "sendPrompt:server-submit-existing-compact-success" : "sendPrompt:server-submit-existing-success",
+      );
+      return true;
+    };
+    const serverSubmitExistingSessionResult = await submitExistingSessionWithServer();
+    if (serverSubmitExistingSessionResult !== null) {
+      return serverSubmitExistingSessionResult;
+    }
+
+    const shouldUseServerSubmitForFirstSession = Boolean(
+      !sessionID &&
+      deps.submitConversationFromVesloWriteApi,
+    );
+    if (shouldUseServerSubmitForFirstSession) {
+      deps.recordSendTrace("sendPrompt:runtime-preflight:server-submit-first-skip", {
+        traceId: sendTraceId,
+        targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
+      });
+    } else {
+      if (!(await legacyConversationRunFallback.prepare({
+        cleanupPendingSidebarSession,
+        sendPreflight,
+        sendTargetWorkspace,
+        startSendPromptBusy,
+        stopSendPromptBusy,
+        traceId: sendTraceId,
+      }))) {
+        return false;
+      }
     }
 
     const pendingDraftSendState = (() => {
@@ -661,31 +1470,50 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         draftId: pendingDraftMeta?.id?.trim() || GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
       };
     })();
+    const consumePendingDraftAfterAcceptedSend = async (clearDisplayedPendingDraftState: boolean) => {
+      if (!pendingDraftSendState) return;
+      const pendingDraftStorageKey = pendingDraftSendState.key;
+      const pendingDraftId = pendingDraftSendState.draftId;
+      if (pendingDraftId && deps.isTauriRuntime()) {
+        try {
+          const deleted = await deps.pendingSessionDraftsDelete(pendingDraftId);
+          if (!deleted) {
+            deps.markPendingDraftConsumed(pendingDraftId);
+            console.warn("[pendingDrafts.consume] failed to delete pending draft", { pendingDraftId });
+          } else {
+            deps.clearConsumedPendingDraftId(pendingDraftId);
+          }
+        } catch (error) {
+          deps.markPendingDraftConsumed(pendingDraftId);
+          deps.reportError(error, "pendingDrafts.consume");
+        }
+      }
+      if (clearDisplayedPendingDraftState) {
+        deps.clearActivePendingDraftState();
+      }
+      deps.setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, {
+        storageKey: pendingDraftStorageKey,
+      }));
+      deps.refreshPendingDraftSummaries();
+    };
     const serverSubmitMaterializationDraft = (() => {
-      const targetWorkspaceId = sendTargetWorkspace?.workspaceId?.trim() || "";
-      const targetWorkspaceType = targetWorkspaceId
-        ? (
-            deps.workspace.workspaces().find((workspace) => workspace.id === targetWorkspaceId)?.workspaceType ??
-            (deps.workspace.activeWorkspaceId().trim() === targetWorkspaceId
-              ? deps.workspace.activeWorkspaceDisplay().workspaceType
-              : null)
-          )
-        : deps.workspace.activeWorkspaceDisplay().workspaceType;
-      if (targetWorkspaceType !== "local") return undefined;
-      return {
-        mode: resolvedDraft.mode,
-        text: resolvedDraft.text,
-        resolvedText: resolvedDraft.resolvedText ?? null,
-        parts: resolvedDraft.parts,
-        command: resolvedDraft.command ?? null,
-        attachments: resolvedDraft.attachments.map((attachment) => ({
-          name: attachment.name,
-          kind: attachment.kind,
-          mimeType: attachment.mimeType,
-          dataUrl: attachment.dataUrl,
-        })),
-      } satisfies ConversationSubmitDraftInput;
+      if (!deps.submitConversationFromVesloWriteApi) return undefined;
+      return conversationSubmitDraftFromComposerDraft(resolvedDraft);
     })();
+    const serverSubmitMaterializationOptions = serverSubmitMaterializationDraft
+      ? {
+          model: conversationSubmitModelForAttachments(
+            deps.modelForSession(sessionID),
+            deps.providers(),
+            resolvedDraft.attachments.length > 0,
+          ),
+          agent: sessionID ? (deps.agentForSession(sessionID) ?? null) : null,
+          variant: deps.modelVariant() ?? null,
+        } satisfies ConversationSubmitOptionsInput
+      : undefined;
+    const serverFirstSubmitResultHolder: {
+      current: Extract<VesloConversationSubmitResult, { status: "submitted" | "queued" }> | null;
+    } = { current: null };
     if (!sessionID) {
       deps.recordSendTrace("sendPrompt:create-session-needed", {
         traceId: sendTraceId,
@@ -698,8 +1526,14 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           sendTraceId,
           clientMessageId: sendCorrelation.clientMessageId,
           submitDraft: serverSubmitMaterializationDraft,
+          submitOptions: serverSubmitMaterializationOptions,
           submitOrigin: sendCorrelation.origin,
           submitSource: sendCorrelation.source,
+          onSubmitResult: (result) => {
+            if (result.status === "submitted" || result.status === "queued") {
+              serverFirstSubmitResultHolder.current = result;
+            }
+          },
           onMaterializedSessionId: options.onMaterializedSessionId,
           preflight: sendPreflight,
         }),
@@ -731,6 +1565,51 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       return false;
     }
 
+    const serverFirstSubmitResult = serverFirstSubmitResultHolder.current;
+    if (serverFirstSubmitResult) {
+      if (serverFirstSubmitResult.draftDisposition === "clear") {
+        deps.setLastPromptSent(initialContent);
+        if (!hasExplicitDraft) {
+          deps.setPrompt("");
+        }
+      }
+      deps.recordSendTrace("sendPrompt:server-submit-first-success", {
+        traceId: sendTraceId,
+        sessionID,
+        clientMessageId: sendCorrelation.clientMessageId,
+        origin: sendCorrelation.origin,
+        status: serverFirstSubmitResult.status,
+        runId: serverFirstSubmitResult.status === "submitted"
+          ? serverFirstSubmitResult.runId
+          : serverFirstSubmitResult.reservedRunId,
+        queueItemId: serverFirstSubmitResult.status === "queued" ? serverFirstSubmitResult.queueItemId : null,
+        draftDisposition: serverFirstSubmitResult.draftDisposition,
+      });
+      deps.emitLiveTranscriptPolicyEvent({
+        type: "conversation-run.succeeded",
+        reason: "sendPrompt:success",
+        workspaceId: serverFirstSubmitResult.workspaceId,
+        sessionId: sessionID,
+        traceId: sendTraceId,
+      });
+      await consumePendingDraftAfterAcceptedSend(true);
+      deps.holdVisibleRuntimeActivity(sessionID, "sendPrompt:server-submit-first-success");
+      return true;
+    }
+
+    if (shouldUseServerSubmitForFirstSession) {
+      const message = "Server-owned conversation submit did not return a queued or submitted result.";
+      deps.recordSendTrace("sendPrompt:server-submit-first-missing-result", {
+        traceId: sendTraceId,
+        sessionID,
+        clientMessageId: sendCorrelation.clientMessageId,
+        origin: sendCorrelation.origin,
+      });
+      deps.setError(message);
+      stopSendPromptBusy();
+      return false;
+    }
+
     const materializedSessionID: string = sessionID;
 
     const displayedConversationGuard = deps.captureDisplayedConversationGuard(materializedSessionID);
@@ -750,8 +1629,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       deps.setError(hintedMessage);
       deps.sessionStoreAppendSessionErrorTurn(materializedSessionID, hintedMessage);
     };
-    const model = deps.modelForSession(materializedSessionID);
-    let promptSystem: string | undefined;
     const restorePendingDraftAfterSendFailure = () => {
       if (!sendTargetStillDisplayed()) return;
       if (pendingDraftSendState) {
@@ -761,316 +1638,23 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       }
     };
 
-    try {
-      const stagedAttachments = await deps.sendTraceStep(
-        "sendPrompt:stage-attachments",
-        () => deps.stageAttachmentsIntoSessionDirectory(resolvedDraft, materializedSessionID, sendPreflight),
-        {
-          traceId: sendTraceId,
-          sessionID,
-          attachmentCount: resolvedDraft.attachments.length,
-        },
-      );
-      const routedDraft = deps.routeStagedAttachmentsForModel({
-        draft: resolvedDraft,
-        stagedAttachments,
-        model,
-        providers: deps.providers(),
-      });
-      if (routedDraft.error) {
-        deps.recordSendTrace("sendPrompt:staged-attachment-routing-error", {
-          traceId: sendTraceId,
-          sessionID,
-          message: routedDraft.error,
-        });
-        restorePendingDraftAfterSendFailure();
-        if (sendTargetStillDisplayed()) {
-          deps.setError(routedDraft.error);
-        }
-        stopSendPromptBusy();
-        return false;
-      }
-      resolvedDraft = routedDraft.draft;
-      promptSystem = routedDraft.system;
-    } catch (error) {
-      deps.recordSendTrace("sendPrompt:stage-attachments-error", {
-        traceId: sendTraceId,
-        sessionID,
-        message: deps.messageFromUnknownError(error),
-      });
-      restorePendingDraftAfterSendFailure();
-      if (sendTargetStillDisplayed()) {
-        deps.setError(error instanceof Error ? error.message : deps.safeStringify(error));
-      }
-      stopSendPromptBusy();
-      return false;
-    }
-
-    const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
-    if (!content && !resolvedDraft.attachments.length && !promptSystem) {
-      deps.recordSendTrace("sendPrompt:blocked-empty-after-staging", {
-        traceId: sendTraceId,
-        sessionID,
-      });
-      stopSendPromptBusy();
-      return false;
-    }
-
-    startSendPromptBusy({ type: "conversation.running" });
-    deps.setError(null);
-
-    const perfEnabled = deps.developerMode();
-    const startedAt = deps.perfNow();
-    const visible = deps.messages();
-    const visibleParts = visible.reduce((total, message) => total + message.parts.length, 0);
-    let commandMessageIDToClear: string | null = null;
-    deps.recordPerfLog(perfEnabled, "session.prompt", "start", {
-      sessionID,
-      mode: resolvedDraft.mode,
-      command: commandName,
-      charCount: content.length,
-      attachmentCount: resolvedDraft.attachments.length,
-      messageCount: visible.length,
-      partCount: visibleParts,
+    return await legacyConversationRunFallback.submit({
+      commandName,
+      compactCommand,
+      consumePendingDraftAfterAcceptedSend,
+      draft: resolvedDraft,
+      hasExplicitDraft,
+      reportSendErrorToDisplayedTarget,
+      restorePendingDraftAfterSendFailure,
+      sendCorrelation,
+      sendPreflight,
+      sendTargetStillDisplayed,
+      sendTargetWorkspace,
+      sessionID: materializedSessionID,
+      startSendPromptBusy,
+      stopSendPromptBusy,
+      traceId: sendTraceId,
     });
-
-    try {
-      if (!compactCommand) {
-        deps.setLastPromptSent(content);
-      }
-      if (!hasExplicitDraft) {
-        deps.setPrompt("");
-      }
-
-      const agent = deps.agentForSession(sessionID);
-      const parts = deps.buildPromptParts(resolvedDraft);
-      const selectedVariant = deps.modelVariant() ?? undefined;
-      const promptOverrides = {
-        ...(promptSystem ? { system: promptSystem } : {}),
-      };
-
-      const sessionDirOverride = deps.sessionDirectoryOverrideById()[materializedSessionID] ?? undefined;
-      let localRuntimeRetryUsed = false;
-      const runConversationOrFail = async (input: VesloConversationRunInput) => {
-        const scope = deps.resolveSelectedSessionBrowseScope(materializedSessionID);
-        const inputWithCorrelation: VesloConversationRunInput = {
-          ...input,
-          clientMessageId: sendCorrelation.clientMessageId,
-          origin: sendCorrelation.origin,
-        };
-        const submitConversationRun = async () => deps.runConversationFromVesloWriteApi(
-          materializedSessionID,
-          inputWithCorrelation,
-          {
-            preflight: sendPreflight,
-            targetWorkspace: sendTargetWorkspace,
-          },
-        );
-        try {
-          const result = await submitConversationRun();
-          if (result) return;
-          deps.recordSendTrace("sendPrompt:conversation-run-unavailable", {
-            traceId: sendTraceId,
-            sessionID,
-            kind: input.kind,
-            clientMessageId: sendCorrelation.clientMessageId,
-            origin: sendCorrelation.origin,
-            hasConversationScope: Boolean(scope?.conversationId),
-          });
-          throw new Error("Conversation service is unavailable for this session.");
-        } catch (error) {
-          const recoverable = shouldRecoverLocalRuntimeFromHealthError(error, deps.safeStringify);
-          deps.recordSendTrace("sendPrompt:conversation-run-error", {
-            traceId: sendTraceId,
-            sessionID,
-            kind: input.kind,
-            clientMessageId: sendCorrelation.clientMessageId,
-            origin: sendCorrelation.origin,
-            hasConversationScope: Boolean(scope?.conversationId),
-            message: deps.messageFromUnknownError(error),
-            recoverable,
-            retryUsed: localRuntimeRetryUsed,
-          });
-          if (recoverable && !localRuntimeRetryUsed && sendTargetStillDisplayed()) {
-            localRuntimeRetryUsed = true;
-            sendPreflight.forceRecovery = true;
-            sendPreflight.runtimeHealthOk = false;
-            sendPreflight.enginePrepared = false;
-            deps.recordSendTrace("sendPrompt:conversation-run-runtime-recovery-start", {
-              traceId: sendTraceId,
-              sessionID,
-              kind: input.kind,
-              clientMessageId: sendCorrelation.clientMessageId,
-              origin: sendCorrelation.origin,
-            });
-            const recovery = await deps.prepareSendRuntimeForSend("sendPrompt", sendPreflight);
-            deps.recordSendTrace("sendPrompt:conversation-run-runtime-recovery-result", {
-              traceId: sendTraceId,
-              sessionID,
-              kind: input.kind,
-              ok: recovery.ok,
-              reason: recovery.reason,
-              recoveryAttempted: recovery.recoveryAttempted,
-              clientMessageId: sendCorrelation.clientMessageId,
-              origin: sendCorrelation.origin,
-            });
-            if (recovery.ok && sendTargetStillDisplayed()) {
-              const retryResult = await submitConversationRun();
-              if (retryResult) return;
-            }
-          }
-          throw error;
-        }
-      };
-
-      if (resolvedDraft.mode === "shell") {
-        await runConversationOrFail({
-          kind: "shell",
-          directory: sessionDirOverride,
-          command: content,
-          model,
-          agent: agent ?? undefined,
-        });
-      } else if (resolvedDraft.command || compactCommand) {
-        if (compactCommand) {
-          await deps.compactCurrentSession(sessionID);
-          deps.finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
-            sessionID,
-            mode: resolvedDraft.mode,
-            command: commandName,
-          });
-          deps.recordSendTrace("sendPrompt:compact-success", {
-            traceId: sendTraceId,
-            sessionID,
-          });
-          deps.emitLiveTranscriptPolicyEvent({
-            type: "conversation-compact.succeeded",
-            reason: "sendPrompt:compact-success",
-            workspaceId: sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim(),
-            sessionId: sessionID,
-            traceId: sendTraceId,
-          });
-          return true;
-        }
-
-        const command = resolvedDraft.command;
-        if (!command) {
-          throw new Error("Command was not resolved.");
-        }
-
-        commandMessageIDToClear = sendCorrelation.clientMessageId;
-        const commandMessageID = commandMessageIDToClear;
-        deps.sessionStoreSetCommandDisplay(commandMessageID, command.name, command.arguments);
-        const modelString = `${model.providerID}/${model.modelID}`;
-        const files = deps.buildCommandFileParts(resolvedDraft);
-
-        await runConversationOrFail({
-          kind: "command",
-          sessionID,
-          messageID: commandMessageID,
-          command: command.name,
-          arguments: command.arguments,
-          agent: agent ?? undefined,
-          model: modelString,
-          variant: selectedVariant,
-          parts: files.length ? files : undefined,
-          directory: sessionDirOverride,
-        });
-        commandMessageIDToClear = null;
-
-      } else {
-        await runConversationOrFail({
-          kind: "prompt_async",
-          directory: sessionDirOverride,
-          model,
-          agent: agent ?? undefined,
-          variant: selectedVariant,
-          ...promptOverrides,
-          parts,
-        });
-      }
-      if (pendingDraftSendState) {
-        const pendingDraftStorageKey = pendingDraftSendState.key;
-        const pendingDraftId = pendingDraftSendState.draftId;
-        const clearDisplayedPendingDraftState = sendTargetStillDisplayed();
-        if (pendingDraftId && deps.isTauriRuntime()) {
-          try {
-            const deleted = await deps.pendingSessionDraftsDelete(pendingDraftId);
-            if (!deleted) {
-              deps.markPendingDraftConsumed(pendingDraftId);
-              console.warn("[pendingDrafts.consume] failed to delete pending draft", { pendingDraftId });
-            } else {
-              deps.clearConsumedPendingDraftId(pendingDraftId);
-            }
-          } catch (error) {
-            deps.markPendingDraftConsumed(pendingDraftId);
-            deps.reportError(error, "pendingDrafts.consume");
-          }
-        }
-        if (clearDisplayedPendingDraftState) {
-          deps.clearActivePendingDraftState();
-        }
-        deps.setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, {
-          storageKey: pendingDraftStorageKey,
-        }));
-        deps.refreshPendingDraftSummaries();
-      }
-
-      deps.finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
-        sessionID,
-        mode: resolvedDraft.mode,
-        command: commandName,
-      });
-      deps.recordSendTrace("sendPrompt:success", {
-        traceId: sendTraceId,
-        sessionID,
-        clientMessageId: sendCorrelation.clientMessageId,
-        origin: sendCorrelation.origin,
-        mode: resolvedDraft.mode,
-        command: commandName,
-      });
-      deps.emitLiveTranscriptPolicyEvent({
-        type: "conversation-run.succeeded",
-        reason: "sendPrompt:success",
-        workspaceId: sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim(),
-        sessionId: sessionID,
-        traceId: sendTraceId,
-      });
-      deps.holdVisibleRuntimeActivity(sessionID, "sendPrompt:success");
-      return true;
-    } catch (e) {
-      restorePendingDraftAfterSendFailure();
-      if (commandMessageIDToClear) {
-        deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
-      }
-      if (deps.isWorkspaceClientStaleError(e)) {
-        deps.recordSendTrace("sendPrompt:stale-client", {
-          traceId: sendTraceId,
-          sessionID,
-          clientMessageId: sendCorrelation.clientMessageId,
-          origin: sendCorrelation.origin,
-          entryWorkspaceId: e.entryWorkspaceId,
-          currentWorkspaceId: e.currentWorkspaceId,
-        });
-        return false;
-      }
-      deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
-        sessionID,
-        mode: resolvedDraft.mode,
-        command: commandName,
-        error: e instanceof Error ? e.message : deps.safeStringify(e),
-      });
-      const message = e instanceof Error ? e.message : deps.safeStringify(e);
-      deps.recordSendTrace("sendPrompt:error", {
-        traceId: sendTraceId,
-        sessionID,
-        clientMessageId: sendCorrelation.clientMessageId,
-        origin: sendCorrelation.origin,
-        message,
-      });
-      reportSendErrorToDisplayedTarget(message);
-      return false;
-    }
     } finally {
       stopSendPromptBusy();
     }
@@ -1093,26 +1677,14 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       hasConversationScope: scope.hasConversationScope,
       explicitWorkspaceId: explicitAbortWorkspaceId || null,
     });
-    const abortSessionViaScopedLegacy = async (): Promise<boolean> => {
-      if (!scope.workspaceId) return false;
-      const opencodeSessionId = scope.opencodeSessionId?.trim() || id;
-      const conversationId = scope.hasConversationScope ? scope.conversationId?.trim() : "";
-      if (!opencodeSessionId || (conversationId && opencodeSessionId === conversationId)) return false;
-      const scopedClient = deps.routedClient(scope.workspaceId);
-      if (!scopedClient) return false;
-      await deps.abortSessionTyped(scopedClient, opencodeSessionId, {
-        directory: scope.directory?.trim() || undefined,
-      });
-      return true;
-    };
-    const blockActiveLegacyFallbackIfUnsafe = (): boolean => {
+    const blockAbortWithoutSafeServerScope = (): boolean => {
       if (!explicitAbortWorkspaceId) {
-        deps.recordSendTrace("abortSession:legacy-fallback-blocked-missing-workspace-scope", { sessionID: id });
+        deps.recordSendTrace("abortSession:abort-blocked-missing-workspace-scope", { sessionID: id });
         deps.setError("Cannot stop this run because its workspace scope is missing. Re-select the session and try again.");
         return true;
       }
       if (!activeAbortWorkspaceId || explicitAbortWorkspaceId !== activeAbortWorkspaceId) {
-        deps.recordSendTrace("abortSession:legacy-fallback-blocked-foreign-workspace", {
+        deps.recordSendTrace("abortSession:abort-blocked-foreign-workspace", {
           sessionID: id,
           workspaceId: explicitAbortWorkspaceId,
           activeWorkspaceId: activeAbortWorkspaceId || null,
@@ -1121,6 +1693,17 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         return true;
       }
       return false;
+    };
+    const reportAbortUnavailable = (message: string) => {
+      if (blockAbortWithoutSafeServerScope()) return;
+      deps.recordSendTrace("abortSession:conversation-abort-blocked-unavailable", {
+        sessionID: id,
+        workspaceId: scope.workspaceId || null,
+        conversationId: scope.conversationId || null,
+        opencodeSessionId: scope.opencodeSessionId || null,
+        hasConversationScope: scope.hasConversationScope,
+      });
+      deps.setError(message);
     };
     try {
       const result = await deps.abortConversationFromVesloWriteApi(id, target);
@@ -1138,44 +1721,22 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         sessionID: id,
         hasConversationScope: scope.hasConversationScope,
       });
-      if (target?.workspaceId?.trim() && await abortSessionViaScopedLegacy()) {
-        deps.recordSendTrace("abortSession:scoped-legacy-fallback", { sessionID: id });
-        return;
-      }
-      if (scope.hasConversationScope) {
-        throw new Error("Conversation service is unavailable for this scoped conversation.");
-      }
+      reportAbortUnavailable(
+        scope.hasConversationScope
+          ? "Conversation service is unavailable for this scoped conversation."
+          : "Cannot stop this run because the Veslo conversation service is unavailable for this session.",
+      );
+      return;
     } catch (error) {
+      const message = deps.messageFromUnknownError(error);
       deps.recordSendTrace("abortSession:conversation-abort-error", {
         sessionID: id,
         hasConversationScope: scope.hasConversationScope,
-        message: deps.messageFromUnknownError(error),
+        message,
       });
-      if (scope.hasConversationScope) {
-        if (await abortSessionViaScopedLegacy()) {
-          deps.recordSendTrace("abortSession:scoped-legacy-fallback", { sessionID: id });
-          return;
-        }
-        throw error;
-      }
-      if (target?.workspaceId?.trim() && await abortSessionViaScopedLegacy()) {
-        deps.recordSendTrace("abortSession:scoped-legacy-fallback", { sessionID: id });
-        return;
-      }
-      if (blockActiveLegacyFallbackIfUnsafe()) {
-        return;
-      }
-      console.warn("[conversation-abort] falling back to OpenCode SDK", error);
-    }
-
-    if (blockActiveLegacyFallbackIfUnsafe()) {
+      reportAbortUnavailable(message);
       return;
     }
-
-    const c = deps.routedClient();
-    if (!c) return;
-    deps.recordSendTrace("abortSession:legacy-fallback", { sessionID: id });
-    await deps.abortSessionTyped(c, id);
   }
 
   return {

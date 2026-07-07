@@ -23,6 +23,7 @@ test("session lifecycle recovery clears local busy state after terminal backend 
   const statusWrites: Array<{ sessionId: string; status: string; workspaceId?: string | null }> = [];
   const busyWrites: Array<{ sessionId: string; status: string; workspaceId?: string }> = [];
   const transcriptIngestions: Array<{ sessionId: string; workspaceId?: string; reason: string }> = [];
+  const selectedTranscriptRefreshes: Array<{ sessionId: string; workspaceId: string; reason: string }> = [];
   let readCount = 0;
 
   const controller = createSessionLifecycleRecoveryController({
@@ -51,6 +52,9 @@ test("session lifecycle recovery clears local busy state after terminal backend 
     },
     scheduleBackgroundTranscriptIngestion: (sessionId, workspaceId, reason) => {
       transcriptIngestions.push({ sessionId, workspaceId, reason });
+    },
+    refreshSelectedSessionTranscript: (sessionId, workspaceId, reason) => {
+      selectedTranscriptRefreshes.push({ sessionId, workspaceId, reason });
     },
     scheduleTimer: (callback, delayMs) => {
       const timer = { callback, delayMs, cleared: false };
@@ -83,6 +87,9 @@ test("session lifecycle recovery clears local busy state after terminal backend 
   assert.deepEqual(transcriptIngestions, [
     { sessionId: "ses-a", workspaceId: "ws-a", reason: "lifecycle recovery" },
   ]);
+  assert.deepEqual(selectedTranscriptRefreshes, [
+    { sessionId: "ses-a", workspaceId: "ws-a", reason: "lifecycle recovery" },
+  ]);
   assert.equal(controller.activeWatchCount(), 0);
 });
 
@@ -94,6 +101,7 @@ test("session lifecycle recovery keeps polling stale backend statuses", async ()
     { runId: "run-a", status: "completed", stale: false },
   ];
   const statusWrites: string[] = [];
+  let selectedTranscriptRefreshCount = 0;
 
   const controller = createSessionLifecycleRecoveryController({
     sessionStatusById: () => statuses,
@@ -112,6 +120,9 @@ test("session lifecycle recovery keeps polling stale backend statuses", async ()
     notifySessionBusy: () => {},
     scheduleTranscriptIngestion: () => {},
     scheduleBackgroundTranscriptIngestion: () => {},
+    refreshSelectedSessionTranscript: () => {
+      selectedTranscriptRefreshCount += 1;
+    },
     scheduleTimer: (callback, delayMs) => {
       const timer = { callback, delayMs, cleared: false };
       timers.push(timer);
@@ -136,6 +147,7 @@ test("session lifecycle recovery keeps polling stale backend statuses", async ()
   await waitForAsyncPoll();
 
   assert.deepEqual(statusWrites, ["ses-a:idle", "conv-a:idle"]);
+  assert.equal(selectedTranscriptRefreshCount, 0);
   assert.equal(controller.activeWatchCount(), 0);
 });
 

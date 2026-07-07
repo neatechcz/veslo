@@ -127,7 +127,7 @@ test("first submit dismisses the centered composer entry before backend handoff 
 
   assert.match(
     sessionSource,
-    /const handleSendPrompt = async \(draft: ComposerDraft, options: ComposerSendOptions = \{\}\) => \{[\s\S]*if \(showComposerEntryState\(\) \|\| showFooterComposerTargetContext\(\)\) \{[\s\S]*dismissComposerEntryForSessionKey\(\);[\s\S]*\}/s,
+    /const handleSendPrompt = async \(draft: ComposerDraft, options: ComposerSendOptions = \{\}\): Promise<ComposerSendResult> => \{[\s\S]*if \(showComposerEntryState\(\) \|\| showFooterComposerTargetContext\(\)\) \{[\s\S]*dismissComposerEntryForSessionKey\(\);[\s\S]*\}/s,
     "the send handler should dismiss the no-session target context immediately when the user submits from the bare new-session state",
   );
 });

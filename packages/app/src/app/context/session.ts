@@ -728,6 +728,14 @@ export function createSessionStore(options: {
     scheduleBackgroundTranscriptIngestion,
   } = transcriptController;
 
+  const countAssistantMessagesForSession = (sessionID: string) =>
+    (store.messages[sessionID] ?? [])
+      .filter((message) => (message as { role?: string }).role === "assistant")
+      .length;
+  let refreshSelectedSessionTranscriptAfterLifecycle:
+    | ((sessionID: string, workspaceId: string, reason: string) => Promise<void> | void)
+    | null = null;
+
   const lifecycleRecoveryController =
     options.resolveConversationRunForSession && options.readConversationRunStatus
       ? createSessionLifecycleRecoveryController({
@@ -740,6 +748,8 @@ export function createSessionStore(options: {
           notifySessionBusy,
           scheduleTranscriptIngestion,
           scheduleBackgroundTranscriptIngestion,
+          refreshSelectedSessionTranscript: (sessionID, workspaceId, reason) =>
+            refreshSelectedSessionTranscriptAfterLifecycle?.(sessionID, workspaceId, reason),
           trace: recordSessionStatusTrace,
         })
       : null;
@@ -835,6 +845,37 @@ export function createSessionStore(options: {
     selectSession,
     loadEarlierMessages,
   } = selectionController;
+  refreshSelectedSessionTranscriptAfterLifecycle = async (sessionID, workspaceId, reason) => {
+    const normalizedSessionId = sessionID.trim();
+    const selectedSessionId = options.selectedSessionId()?.trim() ?? "";
+    if (!normalizedSessionId || selectedSessionId !== normalizedSessionId) {
+      recordSessionStatusTrace("lifecycle-refresh-selected-transcript:skip", {
+        sessionId: normalizedSessionId || null,
+        selectedSessionId: selectedSessionId || null,
+        workspaceId: workspaceId || null,
+        reason,
+      });
+      return;
+    }
+
+    const beforeMessages = store.messages[normalizedSessionId] ?? [];
+    recordSessionStatusTrace("lifecycle-refresh-selected-transcript:start", {
+      sessionId: normalizedSessionId,
+      workspaceId: workspaceId || null,
+      reason,
+      beforeMessageCount: beforeMessages.length,
+      beforeAssistantCount: countAssistantMessagesForSession(normalizedSessionId),
+    });
+    await selectSession(normalizedSessionId);
+    const afterMessages = store.messages[normalizedSessionId] ?? [];
+    recordSessionStatusTrace("lifecycle-refresh-selected-transcript:done", {
+      sessionId: normalizedSessionId,
+      workspaceId: workspaceId || null,
+      reason,
+      afterMessageCount: afterMessages.length,
+      afterAssistantCount: countAssistantMessagesForSession(normalizedSessionId),
+    });
+  };
 
   const sessionStatusById = () => store.sessionStatus;
   const conversationRunDiagnosticsBySessionKey = () => store.conversationRunDiagnosticsBySessionKey;

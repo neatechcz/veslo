@@ -212,7 +212,7 @@ describe("conversation routes", () => {
     expect(upstreamRequests).toEqual([]);
   });
 
-  test("POST /workspace/:id/conversations/submit materializes a first conversation idempotently", async () => {
+  test("POST /workspace/:id/conversations/submit materializes and submits a first conversation idempotently", async () => {
     await useTempVesloDataDir();
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-materialize-"));
     tempDirs.push(workspaceRoot);
@@ -240,6 +240,9 @@ describe("conversation routes", () => {
             parentID: null,
             time: { created: 100, updated: 100 },
           });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-submit-created/prompt_async") {
+          return Response.json({ ok: true });
         }
         return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
       },
@@ -280,34 +283,476 @@ describe("conversation routes", () => {
       workspaceId?: string;
       conversationId?: string;
       opencodeSessionId?: string;
+      runId?: string;
       clientMessageId?: string;
       pendingClientSessionId?: string | null;
       draftDisposition?: string;
       materializedSession?: { id?: string; title?: string; conversationId?: string; opencodeSessionId?: string };
     };
-    expect(firstPayload.status).toBe("materialized");
+    expect(firstPayload.status).toBe("submitted");
     expect(firstPayload.workspaceId).toBe("ws_1");
     expect(firstPayload.conversationId).toMatch(/^conv-/);
     expect(firstPayload.opencodeSessionId).toBe("sess-submit-created");
+    expect(firstPayload.runId).toMatch(/^[a-z0-9_-]+$/i);
     expect(firstPayload.clientMessageId).toBe("msg-submit-materialize");
-    expect(firstPayload.pendingClientSessionId).toBe("pending-materialize");
-    expect(firstPayload.draftDisposition).toBe("keep");
+    expect(firstPayload.pendingClientSessionId).toBeUndefined();
+    expect(firstPayload.draftDisposition).toBe("clear");
     expect(firstPayload.materializedSession?.id).toBe("sess-submit-created");
     expect(firstPayload.materializedSession?.title).toBe("Create from submit");
     expect(firstPayload.materializedSession?.conversationId).toBe(firstPayload.conversationId);
     expect(firstPayload.materializedSession?.opencodeSessionId).toBe("sess-submit-created");
-    expect(upstreamRequests).toHaveLength(1);
+    expect(upstreamRequests).toHaveLength(2);
     expect(upstreamRequests[0]?.path).toBe("/session");
     expect(upstreamRequests[0]?.traceId).toBe("submit-materialize-trace");
     expect(upstreamRequests[0]?.body).toMatchObject({
       directory: workspaceRoot,
       title: "Create from submit",
     });
+    expect(upstreamRequests[1]?.path).toBe("/session/sess-submit-created/prompt_async");
+    expect(upstreamRequests[1]?.traceId).toBe("submit-materialize-trace");
+    expect(upstreamRequests[1]?.body?.messageID).toBe("msg-submit-materialize");
+    expect(upstreamRequests[1]?.body?.parts).toEqual([{ type: "text", text: "Create from submit" }]);
 
     const retryResponse = await submit();
     expect(retryResponse.status).toBe(200);
     expect(await retryResponse.json()).toEqual(firstPayload);
+    expect(upstreamRequests).toHaveLength(2);
+  });
+
+  test("POST /workspace/:id/conversations/submit submits an existing conversation through run admission", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-existing-run-"));
+    tempDirs.push(workspaceRoot);
+    const upstreamRequests: Array<{
+      path: string;
+      traceId: string | null;
+      body: Record<string, unknown> | null;
+    }> = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        upstreamRequests.push({
+          path: `${url.pathname}${url.search}`,
+          traceId: request.headers.get("x-veslo-send-trace-id"),
+          body,
+        });
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({
+            id: "sess-submit-existing",
+            title: body?.title ?? "Existing submit",
+            directory: body?.directory ?? workspaceRoot,
+            parentID: null,
+            time: { created: 100, updated: 100 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-submit-existing/prompt_async") {
+          return Response.json({ ok: true });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+
+    const createResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Existing submit",
+        }),
+      },
+    );
+    expect(createResponse.status).toBe(201);
+    const created = await createResponse.json() as {
+      conversationId: string;
+      opencodeSessionId: string;
+    };
+    expect(created.opencodeSessionId).toBe("sess-submit-existing");
+
+    const submitBody = {
+      clientMessageId: "msg-submit-existing-run",
+      origin: "session:normal",
+      source: "enter",
+      target: { conversationId: created.conversationId, directory: workspaceRoot },
+      draft: {
+        mode: "prompt",
+        text: "Submit existing run",
+        parts: [{ type: "text", text: "Submit existing run" }],
+        attachments: [{
+          name: "brief.txt",
+          kind: "file",
+          mimeType: "text/plain",
+          dataUrl: "data:text/plain;base64,YnJpZWY=",
+          fileSessionPath: "sessions/sess-submit-existing/brief.txt",
+        }],
+      },
+      options: {
+        model: {
+          providerID: "openai",
+          modelID: "gpt-5.5",
+          attachment: true,
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        agent: "build",
+        variant: "xhigh",
+      },
+    };
+    const submit = () => fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "x-veslo-send-trace-id": "submit-existing-run-trace",
+        },
+        body: JSON.stringify(submitBody),
+      },
+    );
+
+    const submitResponse = await submit();
+    expect(submitResponse.status).toBe(200);
+    const payload = await submitResponse.json() as {
+      status?: string;
+      workspaceId?: string;
+      conversationId?: string;
+      opencodeSessionId?: string;
+      runId?: string;
+      clientMessageId?: string;
+      draftDisposition?: string;
+    };
+    expect(payload.status).toBe("submitted");
+    expect(payload.workspaceId).toBe("ws_1");
+    expect(payload.conversationId).toBe(created.conversationId);
+    expect(payload.opencodeSessionId).toBe("sess-submit-existing");
+    expect(payload.runId).toMatch(/^[a-z0-9_-]+$/i);
+    expect(payload.clientMessageId).toBe("msg-submit-existing-run");
+    expect(payload.draftDisposition).toBe("clear");
+    expect(upstreamRequests).toHaveLength(2);
+    expect(upstreamRequests[1]?.path).toBe(
+      `/session/sess-submit-existing/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`,
+    );
+    expect(upstreamRequests[1]?.traceId).toBe("submit-existing-run-trace");
+    expect(upstreamRequests[1]?.body?.parts).toEqual([
+      { type: "text", text: "Submit existing run\nsessions/sess-submit-existing/brief.txt" },
+      {
+        type: "file",
+        url: "data:text/plain;base64,YnJpZWY=",
+        filename: "brief.txt",
+        mime: "text/plain",
+      },
+    ]);
+    expect(upstreamRequests[1]?.body?.messageID).toBe("msg-submit-existing-run");
+    expect(upstreamRequests[1]?.body?.model).toEqual({ providerID: "openai", modelID: "gpt-5.5" });
+    expect(upstreamRequests[1]?.body?.agent).toBe("build");
+    expect(upstreamRequests[1]?.body?.variant).toBe("xhigh");
+    expect(upstreamRequests[1]?.body?.directory).toBeUndefined();
+    expect(upstreamRequests[1]?.body?.kind).toBeUndefined();
+    expect(upstreamRequests[1]?.body?.clientMessageId).toBeUndefined();
+    expect(upstreamRequests[1]?.body?.origin).toBeUndefined();
+
+    const retryResponse = await submit();
+    expect(retryResponse.status).toBe(200);
+    expect(await retryResponse.json()).toEqual(payload);
+    expect(upstreamRequests).toHaveLength(2);
+  });
+
+  test("POST /workspace/:id/conversations/submit returns queued for send-now when lifecycle has an active run", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-send-now-queued-"));
+    tempDirs.push(workspaceRoot);
+    const upstreamRequests: Array<{
+      path: string;
+      traceId: string | null;
+      body: Record<string, unknown> | null;
+    }> = [];
+    const engineSubmits: string[] = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        upstreamRequests.push({
+          path: `${url.pathname}${url.search}`,
+          traceId: request.headers.get("x-veslo-send-trace-id"),
+          body,
+        });
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({
+            id: "sess-submit-send-now-queued",
+            title: body?.title ?? "Send now queued",
+            directory: body?.directory ?? workspaceRoot,
+            parentID: null,
+            time: { created: 100, updated: 100 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-submit-send-now-queued/prompt_async") {
+          engineSubmits.push(url.pathname);
+          return Response.json({ ok: true });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    let activeRequests = 0;
+    let latestRequests = 0;
+    const registerRequests: string[] = [];
+    const orchestrator = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== "lifecycle-token") {
+          return Response.json({ error: "unauthorized" }, { status: 401 });
+        }
+        if (request.method === "GET" && url.pathname.endsWith("/runs/active")) {
+          activeRequests += 1;
+          return Response.json({
+            ok: true,
+            workspaceId: "ws_1",
+            conversationId: "conv-active",
+            runId: "run-active",
+            status: "running",
+            stale: false,
+          });
+        }
+        if (request.method === "GET" && url.pathname.endsWith("/runs/latest")) {
+          latestRequests += 1;
+          return Response.json({
+            ok: true,
+            workspaceId: "ws_1",
+            conversationId: "conv-active",
+            runId: "run-active",
+            status: "running",
+            stale: false,
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/runs/register") {
+          const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+          registerRequests.push(typeof body?.runId === "string" ? body.runId : "");
+          return Response.json({ ok: true, ...body, workspaceId: "ws_1", status: "running", stale: false });
+        }
+        return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(orchestrator as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+      orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
+      orchestratorLifecycleToken: "lifecycle-token",
+    });
+
+    const createResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Send now queued",
+        }),
+      },
+    );
+    expect(createResponse.status).toBe(201);
+    const created = await createResponse.json() as {
+      conversationId: string;
+      opencodeSessionId: string;
+    };
+    expect(created.opencodeSessionId).toBe("sess-submit-send-now-queued");
+
+    const submitBody = {
+      clientMessageId: "msg-submit-send-now-queued",
+      origin: "session:send-now",
+      source: "send-now",
+      target: { conversationId: created.conversationId, directory: workspaceRoot },
+      draft: {
+        mode: "prompt",
+        text: "Send now queued",
+        parts: [{ type: "text", text: "Send now queued" }],
+      },
+      options: {
+        submitQueuePolicy: "send-now",
+        model: { providerID: "openai", modelID: "gpt-5.5" },
+      },
+    };
+    const submit = () => fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "x-veslo-send-trace-id": "submit-send-now-queued-trace",
+        },
+        body: JSON.stringify(submitBody),
+      },
+    );
+
+    const submitResponse = await submit();
+    expect(submitResponse.status).toBe(202);
+    const payload = await submitResponse.json() as {
+      status?: string;
+      workspaceId?: string;
+      conversationId?: string;
+      opencodeSessionId?: string;
+      queueItemId?: string;
+      reservedRunId?: string;
+      queuePosition?: number;
+      clientMessageId?: string;
+      draftDisposition?: string;
+    };
+    expect(payload.status).toBe("queued");
+    expect(payload.workspaceId).toBe("ws_1");
+    expect(payload.conversationId).toBe(created.conversationId);
+    expect(payload.opencodeSessionId).toBe("sess-submit-send-now-queued");
+    expect(payload.queueItemId).toMatch(/^queue_/);
+    expect(payload.reservedRunId).toMatch(/^[a-z0-9_-]+$/i);
+    expect(payload.queuePosition).toBe(1);
+    expect(payload.clientMessageId).toBe("msg-submit-send-now-queued");
+    expect(payload.draftDisposition).toBe("clear");
+    expect(activeRequests).toBeGreaterThan(0);
+    expect(registerRequests).toEqual([]);
+    expect(engineSubmits).toEqual([]);
     expect(upstreamRequests).toHaveLength(1);
+
+    const activeRequestsAfterFirstSubmit = activeRequests;
+    const latestRequestsAfterFirstSubmit = latestRequests;
+    const retryResponse = await submit();
+    expect(retryResponse.status).toBe(200);
+    expect(await retryResponse.json()).toEqual(payload);
+    expect(activeRequests).toBe(activeRequestsAfterFirstSubmit);
+    expect(latestRequests).toBe(latestRequestsAfterFirstSubmit);
+    expect(registerRequests).toEqual([]);
+    expect(engineSubmits).toEqual([]);
+    expect(upstreamRequests).toHaveLength(1);
+  });
+
+  test("POST /workspace/:id/conversations/submit submits compact as a summarize run", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-compact-run-"));
+    tempDirs.push(workspaceRoot);
+    const upstreamRequests: Array<{
+      path: string;
+      traceId: string | null;
+      body: Record<string, unknown> | null;
+    }> = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        upstreamRequests.push({
+          path: `${url.pathname}${url.search}`,
+          traceId: request.headers.get("x-veslo-send-trace-id"),
+          body,
+        });
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({
+            id: "sess-submit-compact",
+            title: body?.title ?? "Compact submit",
+            directory: body?.directory ?? workspaceRoot,
+            parentID: null,
+            time: { created: 100, updated: 100 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-submit-compact/summarize") {
+          return Response.json({ ok: true });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+
+    const createResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Compact submit",
+        }),
+      },
+    );
+    expect(createResponse.status).toBe(201);
+    const created = await createResponse.json() as {
+      conversationId: string;
+      opencodeSessionId: string;
+    };
+    expect(created.opencodeSessionId).toBe("sess-submit-compact");
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "x-veslo-send-trace-id": "submit-compact-run-trace",
+        },
+        body: JSON.stringify({
+          clientMessageId: "msg-submit-compact-run",
+          origin: "session:normal",
+          target: { conversationId: created.conversationId, directory: workspaceRoot },
+          draft: {
+            mode: "prompt",
+            text: "/compact",
+            parts: [{ type: "text", text: "/compact" }],
+          },
+          options: {
+            model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
+          },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as {
+      status?: string;
+      conversationId?: string;
+      opencodeSessionId?: string;
+      draftDisposition?: string;
+    };
+    expect(payload.status).toBe("submitted");
+    expect(payload.conversationId).toBe(created.conversationId);
+    expect(payload.opencodeSessionId).toBe("sess-submit-compact");
+    expect(payload.draftDisposition).toBe("clear");
+    expect(upstreamRequests).toHaveLength(2);
+    expect(upstreamRequests[1]?.path).toBe(
+      `/session/sess-submit-compact/summarize?directory=${encodeURIComponent(workspaceRoot)}`,
+    );
+    expect(upstreamRequests[1]?.traceId).toBe("submit-compact-run-trace");
+    expect(upstreamRequests[1]?.body).toEqual({
+      providerID: "anthropic",
+      modelID: "claude-sonnet-4",
+    });
   });
 
   test("POST /workspace/:id/conversations/submit returns a typed restore result when materialization fails", async () => {
@@ -2099,6 +2544,62 @@ describe("conversation routes", () => {
     );
     expect(abortResponse.status).toBe(404);
     expect(upstreamHits).toBe(1);
+  });
+
+  test("conversation run and abort reject unbound OpenCode session ids before engine contact", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-unbound-session-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+
+    let upstreamHits = 0;
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async () => {
+        upstreamHits += 1;
+        return Response.json({ error: "unbound session must not reach upstream" }, { status: 500 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+
+    const runResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent("sess-unbound")}/runs`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          kind: "prompt_async",
+          directory: workspaceRoot,
+          parts: [{ type: "text", text: "Should not run" }],
+        }),
+      },
+    );
+    expect(runResponse.status).toBe(404);
+
+    const abortResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent("sess-unbound")}/abort`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          runId: "run-unbound",
+        }),
+      },
+    );
+    expect(abortResponse.status).toBe(404);
+    expect(upstreamHits).toBe(0);
   });
 
   test("conversation runs delegate lifecycle to orchestrator before engine submit", async () => {

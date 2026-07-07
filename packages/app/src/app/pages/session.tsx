@@ -86,6 +86,7 @@ import {
 } from "../lib/folder-access-request";
 import {
   createSessionClientMessageId,
+  sessionSubmitResultFromAccepted,
   type MaterializedSessionHandoff,
   type SessionSendOptionsBase,
   type SessionSendOrigin,
@@ -97,7 +98,7 @@ import type { UpdateDownloadRetryInfo } from "../context/updater";
 
 import MessageList, { type PendingMessageState } from "../components/session/message-list";
 import Composer from "../components/session/composer";
-import type { ComposerSendOptions } from "../components/session/composer";
+import type { ComposerSendOptions, ComposerSendResult } from "../components/session/composer";
 import ComposerTargetPicker from "../components/session/composer-target-picker";
 import QueuedMessageList from "../components/session/queued-message-list";
 import { getEditableUserMessageDraft, type EditableUserMessageDraft } from "../components/session/message-editability";
@@ -2848,7 +2849,7 @@ export default function SessionView(props: SessionViewProps) {
     sessionFlowFacade.handleEditUserMessage(editable);
   };
 
-  const handleSendPrompt = async (draft: ComposerDraft, options: ComposerSendOptions = {}) => {
+  const handleSendPrompt = async (draft: ComposerDraft, options: ComposerSendOptions = {}): Promise<ComposerSendResult> => {
     recordSendTrace("handleSendPrompt:start", {
       sendTraceId: options.sendTraceId ?? null,
       sendNow: options.sendNow,
@@ -2860,11 +2861,12 @@ export default function SessionView(props: SessionViewProps) {
     if (showComposerEntryState() || showFooterComposerTargetContext()) {
       dismissComposerEntryForSessionKey();
     }
-    return sessionFlowFacade.handleSendPrompt(draft, {
+    const accepted = await sessionFlowFacade.handleSendPrompt(draft, {
       sendNow: options.sendNow,
       sendTraceId: options.sendTraceId,
       source: options.source,
     });
+    return sessionSubmitResultFromAccepted(accepted, props.error);
   };
 
   const tempRuntimeUiDiagnosticBadge = (visibleSurface: TempRuntimeUiRenderSurface) => (

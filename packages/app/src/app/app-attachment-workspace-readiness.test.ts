@@ -5,6 +5,13 @@ import test from "node:test";
 const stagingModuleSource = readFileSync(new URL("./pages/session-attachment-staging.ts", import.meta.url), "utf8");
 const sendWorkflowSource = readFileSync(new URL("./pages/session-send-workflow.ts", import.meta.url), "utf8");
 
+function legacyConversationRunFallbackSource(): string {
+  const start = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+  const end = sendWorkflowSource.indexOf("export function createSessionSendWorkflow(", start);
+  assert.ok(start >= 0 && end > start, "legacy conversation run fallback source should be present");
+  return sendWorkflowSource.slice(start, end);
+}
+
 test("attachment staging validates explicit workspace ids against the active server list", () => {
   const resolverStart = stagingModuleSource.indexOf("const resolveWorkspaceIdForAttachmentStaging = async (");
   const resolverEnd = stagingModuleSource.indexOf("  const recoverWorkspaceReadyForAttachmentStaging = async (", resolverStart);
@@ -45,10 +52,11 @@ test("attachment staging self-heals a missing server workspace once before faili
     "staging should retry file-session creation once after refreshing the local workspace/server state",
   );
 
-  const appStagingCallIndex = sendWorkflowSource.search(
-    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, sendPreflight\)/,
+  const fallbackSource = legacyConversationRunFallbackSource();
+  const appStagingCallIndex = fallbackSource.search(
+    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, input\.sendPreflight\)/,
   );
-  const promptAsyncIndex = sendWorkflowSource.indexOf('kind: "prompt_async"');
+  const promptAsyncIndex = fallbackSource.indexOf('kind: "prompt_async"');
   assert.notEqual(appStagingCallIndex, -1, "send workflow should call the staging module");
   assert.notEqual(promptAsyncIndex, -1, "prompt_async conversation handoff should exist");
   assert.ok(

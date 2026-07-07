@@ -27,38 +27,59 @@ function createSessionAndOpenSource(): string {
 test("app delegates created session materialization decisions to session creation flow helpers", () => {
   assert.match(
     creationWorkflowSource,
-    /import \{\s*buildCreatedSidebarSessionItem,\s*resolveCreatedSessionWorkspaceId,\s*shouldRouteCreatedSessionAfterSelect,\s*type CreatedSession,\s*\} from "\.\.\/controllers\/session-creation-flow";/,
-    "the session creation workflow module should own the creation flow helpers",
+    /import \{[\s\S]*resolveCreatedSessionWorkspaceId,[\s\S]*shouldRouteCreatedSessionAfterSelect,[\s\S]*type CreatedSession,[\s\S]*\} from "\.\.\/controllers\/session-creation-flow";/,
+    "the session creation workflow module should own session creation routing decisions",
   );
   assert.match(
     source,
-    /import \{\s*createSessionCreationWorkflow,\s*type SessionCreationWorkflowCreateOptions,\s*\} from "\.\/pages\/session-creation-workflow";/,
+    /import \{[\s\S]*buildCreatedSidebarSessionItem,[\s\S]*\} from "\.\/controllers\/session-creation-flow";/,
+    "app.tsx should keep sidebar materialization on the app-side state boundary",
+  );
+  assert.match(
+    source,
+    /import \{[\s\S]*createSessionCreationWorkflow,[\s\S]*type SessionCreationWorkflowCreateOptions,[\s\S]*\} from "\.\/pages\/session-creation-workflow";/,
     "app.tsx should import the session creation workflow module",
   );
   assert.match(
     source,
-    /const sessionCreationWorkflow = createSessionCreationWorkflow\(\{[\s\S]*sessionRouteSync,[\s\S]*createConversationFromVesloWriteApi[\s\S]*\}\);/,
-    "app.tsx should wire route handoff and Veslo conversation creation into the workflow",
+    /const sessionCreationWorkflow = createSessionCreationWorkflow\(\{[\s\S]*applyCreatedSessionState,[\s\S]*applyCreatedSessionTransition,[\s\S]*createConversationFromVesloWriteApi:[\s\S]*submitConversationFromVesloWriteApi:[\s\S]*\}\);/,
+    "app.tsx should wire app state effects and Veslo conversation creation into the workflow",
   );
 });
 
 test("createSessionAndOpen uses the creation flow helpers before selecting the session", () => {
-  const createSource = createSessionAndOpenSource();
+  const createSource = creationWorkflowSource.slice(
+    creationWorkflowSource.indexOf("  const runCreateSessionFlow = async ("),
+    creationWorkflowSource.indexOf("  const createSession = ("),
+  );
+  const applyStateStart = source.indexOf("  const applyCreatedSessionState = (");
+  const applyTransitionStart = source.indexOf("  const applyCreatedSessionTransition = async");
+  const workflowStart = source.indexOf("  const sessionCreationWorkflow = createSessionCreationWorkflow", applyTransitionStart);
+  assert.notEqual(applyStateStart, -1, "app-side created session state helper should exist");
+  assert.notEqual(applyTransitionStart, -1, "app-side created session transition helper should exist");
+  assert.notEqual(workflowStart, -1, "session creation workflow wiring should exist");
+  const applyStateSource = source.slice(applyStateStart, applyTransitionStart);
+  const applyTransitionSource = source.slice(applyTransitionStart, workflowStart);
 
   assert.match(
     createSource,
-    /const newItem = buildCreatedSidebarSessionItem\(\{[\s\S]*session: createdSession,[\s\S]*displaySession,[\s\S]*pendingSidebarSession,[\s\S]*\}\);/,
-    "sidebar item construction should live in the creation flow helper",
+    /const createdWorkspaceId = resolveCreatedSessionWorkspaceId\(\{[\s\S]*pendingSidebarSession,[\s\S]*targetWorkspaceId: targetWorkspace\?\.workspaceId,[\s\S]*connectingWorkspaceId: deps\.workspace\.connectingWorkspaceId\(\),[\s\S]*activeWorkspaceId: deps\.workspace\.activeWorkspaceId\(\),[\s\S]*\}\);/,
+    "workspace id selection should live in the creation workflow helper",
   );
   assert.match(
     createSource,
-    /const createdWorkspaceId = resolveCreatedSessionWorkspaceId\(\{[\s\S]*pendingSidebarSession,[\s\S]*targetWorkspaceId: targetWorkspace\?\.workspaceId,[\s\S]*connectingWorkspaceId: deps\.workspace\.connectingWorkspaceId\(\),[\s\S]*activeWorkspaceId: deps\.workspace\.activeWorkspaceId\(\),[\s\S]*\}\);[\s\S]*if \(createdWorkspaceId\) \{[\s\S]*deps\.rememberConversationScope\(\{[\s\S]*workspaceId: createdWorkspaceId,[\s\S]*\}\);[\s\S]*const wsId = createdWorkspaceId;/,
-    "workspace id selection should live in the creation flow helper",
+    /transition: \{[\s\S]*shouldRouteAfterSelect: shouldRouteCreatedSessionAfterSelect\(\{[\s\S]*blockAppDuringCreate,[\s\S]*currentView: deps\.currentView\(\),[\s\S]*\}\),[\s\S]*sessionId: createdSession\.id,[\s\S]*\},/,
+    "route-after-select decision should stay inside the creation workflow result",
   );
   assert.match(
-    createSource,
-    /const shouldRouteCreatedSession = shouldRouteCreatedSessionAfterSelect\(\{[^}]*blockAppDuringCreate,[^}]*currentView: deps\.currentView\(\)[^}]*\}\);[\s\S]*if \(shouldRouteCreatedSession\) \{[\s\S]*deps\.sessionRouteSync\.markOwnNavigationSession\(createdSession\.id\);[\s\S]*\}[\s\S]*mark\("session:select:start", \{ sessionID: createdSession\.id \}\);[\s\S]*"createSessionAndOpen:select-session"[\s\S]*catch \(selectError\) \{[\s\S]*deps\.sessionRouteSync\.clearOwnNavigationSessionIf\(createdSession\.id\);[\s\S]*throw selectError;[\s\S]*\}[\s\S]*mark\("session:select:ok", \{ sessionID: createdSession\.id \}\);[\s\S]*if \(shouldRouteCreatedSession\) \{[\s\S]*deps\.sessionRouteSync\.markOwnNavigationSession\(createdSession\.id\);[\s\S]*deps\.goToSession\(createdSession\.id\);[\s\S]*\}/s,
-    "created sessions should seed the route-sync own-navigation handoff before selecting, clear it on selection failure, then route after selection",
+    applyStateSource,
+    /rememberConversationScope\(\{[\s\S]*sessionId: result\.sessionId,[\s\S]*workspaceId: result\.workspaceScope\.workspaceId,[\s\S]*\}\);[\s\S]*buildCreatedSidebarSessionItem\(\{[\s\S]*session: result\.session,[\s\S]*displaySession,[\s\S]*pendingSidebarSession: result\.pendingSession,[\s\S]*\}\)[\s\S]*options\.onMaterializedSessionId\?\.\(result\.handoff\);/s,
+    "app-side state helper should publish scope, materialize the sidebar row, and emit the scoped handoff",
+  );
+  assert.match(
+    applyTransitionSource,
+    /if \(result\.transition\.shouldRouteAfterSelect\) \{[\s\S]*sessionRouteSync\.markOwnNavigationSession\(sessionId\);[\s\S]*\}[\s\S]*await selectSession\(sessionId\);[\s\S]*catch \(selectError\) \{[\s\S]*sessionRouteSync\.clearOwnNavigationSessionIf\(sessionId\);[\s\S]*throw selectError;[\s\S]*\}[\s\S]*if \(result\.transition\.shouldRouteAfterSelect\) \{[\s\S]*sessionRouteSync\.markOwnNavigationSession\(sessionId\);[\s\S]*goToSession\(sessionId\);[\s\S]*\}/s,
+    "created sessions should arm route handoff before selecting, clear it on selection failure, then route after selection",
   );
 });
 

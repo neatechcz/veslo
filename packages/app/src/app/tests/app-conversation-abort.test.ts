@@ -31,7 +31,7 @@ test("conversation runs remember abort and lifecycle run ids under scoped identi
   );
 });
 
-test("abortSession routes scoped conversations through Veslo abort and scoped legacy fallback", () => {
+test("abortSession routes scoped conversations through Veslo abort without legacy SDK fallback", () => {
   const abortWrapperStart = conversationServiceSource.indexOf("  const abortConversationFromVesloWriteApi = async (");
   const serviceReturnStart = conversationServiceSource.indexOf("  return {", abortWrapperStart);
   assert.notEqual(abortWrapperStart, -1, "abortConversationFromVesloWriteApi should exist");
@@ -54,23 +54,16 @@ test("abortSession routes scoped conversations through Veslo abort and scoped le
   assert.notEqual(retryStart, -1, "abortSession should end before the workflow return");
   const abortSessionSource = sendWorkflowSource.slice(abortSessionStart, retryStart);
   const serviceCall = abortSessionSource.indexOf("deps.abortConversationFromVesloWriteApi(id, target)");
-  const scopedFallbackHelper = abortSessionSource.indexOf("const abortSessionViaScopedLegacy = async");
-  const scopedFallbackCall = abortSessionSource.indexOf("if (await abortSessionViaScopedLegacy())");
-  const targetScopedFallbackCall = abortSessionSource.indexOf("target?.workspaceId?.trim() && await abortSessionViaScopedLegacy()");
-  const fallbackWarn = abortSessionSource.indexOf('console.warn("[conversation-abort] falling back to OpenCode SDK", error);');
-  const legacyAbort = abortSessionSource.indexOf("await deps.abortSessionTyped(c, id);");
-  const finalThrow = abortSessionSource.indexOf("throw error;", scopedFallbackCall);
   assert.ok(serviceCall >= 0, "abortSession should attempt Veslo abort first");
-  assert.ok(scopedFallbackHelper >= 0 && scopedFallbackHelper < serviceCall, "abortSession should define a scoped legacy fallback before service errors");
-  assert.ok(scopedFallbackCall > serviceCall, "known scoped conversations should try scoped legacy abort before throwing service errors");
-  assert.ok(targetScopedFallbackCall > serviceCall, "background workspace targets should try scoped abort before active-workspace legacy fallback");
-  assert.ok(finalThrow > scopedFallbackCall, "scoped abort should throw only after scoped legacy fallback is unavailable");
-  assert.ok(fallbackWarn > finalThrow, "active legacy fallback should only be reachable for unscoped migration cases");
-  assert.ok(legacyAbort > fallbackWarn, "active OpenCode abort should remain only as an unscoped migration fallback");
   assert.match(
     abortSessionSource,
-    /const scopedClient = deps\.routedClient\(scope\.workspaceId\);[\s\S]*await deps\.abortSessionTyped\(scopedClient, opencodeSessionId, \{[\s\S]*directory: scope\.directory\?\.trim\(\) \|\| undefined,[\s\S]*\}\);/,
-    "scoped fallback should use the exact workspace entry client and directory, not the active workspace client",
+    /abortSession:conversation-abort-blocked-unavailable/,
+    "server abort unavailability should become an explicit blocked state",
+  );
+  assert.doesNotMatch(
+    abortSessionSource,
+    /abortSessionViaScopedLegacy|scoped-legacy-fallback|legacy-fallback|OpenCode SDK|abortSessionTyped|routedClient\(/,
+    "abortSession should not bypass server-owned abort through scoped or active legacy SDK clients",
   );
 });
 

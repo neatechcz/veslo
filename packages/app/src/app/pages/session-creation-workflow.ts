@@ -22,8 +22,10 @@ export type SessionCreationWorkflowCreateOptions = {
   sendTraceId?: string | null;
   clientMessageId?: string | null;
   submitDraft?: VesloConversationSubmitRequest["draft"];
+  submitOptions?: VesloConversationSubmitRequest["options"];
   submitOrigin?: string | null;
   submitSource?: string | null;
+  onSubmitResult?: (result: VesloConversationSubmitResult) => void;
   onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
   preflight?: SendRuntimePreflightContext;
 };
@@ -161,7 +163,7 @@ export function createSessionCreationWorkflow(
     if (result.status === "blocked" || result.status === "failed") {
       throw new Error(result.message);
     }
-    if (result.status !== "materialized") {
+    if (result.status !== "materialized" && result.status !== "submitted" && result.status !== "queued") {
       throw new Error(`Conversation submit returned ${result.status} before session materialization was complete.`);
     }
     const materialized = result.materializedSession;
@@ -203,6 +205,12 @@ export function createSessionCreationWorkflow(
       pendingTargetWorkspace ??
       deps.resolveSendTargetWorkspaceScope(null) ??
       null;
+    const clientMessageId = options.clientMessageId?.trim() ?? "";
+    const serverSubmitOwnsRuntimeAdmission = Boolean(
+      options.submitDraft &&
+      clientMessageId &&
+      deps.submitConversationFromVesloWriteApi,
+    );
     deps.recordSendTrace("createSessionAndOpen:start", {
       ...(tracePayload ?? {}),
       connectingWorkspaceId: deps.workspace.connectingWorkspaceId(),
@@ -212,6 +220,7 @@ export function createSessionCreationWorkflow(
       targetWorkspaceRoot: targetWorkspace?.workspaceRoot ?? null,
       targetDirectory: targetWorkspace?.directory ?? null,
       hasClient: Boolean(deps.routedClient()),
+      serverSubmitOwnsRuntimeAdmission,
     });
 
     const connectingWorkspaceId = deps.workspace.connectingWorkspaceId()?.trim() ?? "";
@@ -245,7 +254,12 @@ export function createSessionCreationWorkflow(
       preflightEnginePrepared: Boolean(createPreflight.enginePrepared),
       preflightRuntimeHealthOk: Boolean(createPreflight.runtimeHealthOk),
     });
-    if (runtimeHealthPreflightDecision.type === "skip") {
+    if (serverSubmitOwnsRuntimeAdmission) {
+      deps.recordSendTrace("createSessionAndOpen:server-submit-runtime-admission-skip", {
+        ...(tracePayload ?? {}),
+        targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
+      });
+    } else if (runtimeHealthPreflightDecision.type === "skip") {
       deps.recordSendTrace("createSessionAndOpen:health-skip", {
         ...(tracePayload ?? {}),
         reason: runtimeHealthPreflightDecision.reason,
@@ -272,12 +286,19 @@ export function createSessionCreationWorkflow(
       deps.setError("Local runtime is not ready yet.");
       return undefined;
     }
-    createPreflight.enginePrepared = true;
+    if (!serverSubmitOwnsRuntimeAdmission) {
+      createPreflight.enginePrepared = true;
+    }
     createPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(targetWorkspace);
     const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision({
       preflightManagedAiReady: Boolean(createPreflight.managedAiReady),
     });
-    if (managedAiPreflightDecision.type === "skip") {
+    if (serverSubmitOwnsRuntimeAdmission) {
+      deps.recordSendTrace("createSessionAndOpen:server-submit-managed-ai-admission-skip", {
+        ...(tracePayload ?? {}),
+        targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
+      });
+    } else if (managedAiPreflightDecision.type === "skip") {
       deps.recordSendTrace("createSessionAndOpen:managed-ai-bootstrap-skip", {
         ...(tracePayload ?? {}),
         reason: managedAiPreflightDecision.reason,
@@ -300,11 +321,13 @@ export function createSessionCreationWorkflow(
       }
       createPreflight.managedAiReady = true;
     }
-    const client = deps.routedClientForSendTarget(targetWorkspace);
-    if (!client) {
-      deps.recordSendTrace("createSessionAndOpen:blocked-no-client", tracePayload);
-      deps.setError("Local runtime is not ready yet.");
-      return undefined;
+    if (!serverSubmitOwnsRuntimeAdmission) {
+      const client = deps.routedClientForSendTarget(targetWorkspace);
+      if (!client) {
+        deps.recordSendTrace("createSessionAndOpen:blocked-no-client", tracePayload);
+        deps.setError("Local runtime is not ready yet.");
+        return undefined;
+      }
     }
 
     const sessionDirectory =
@@ -353,7 +376,6 @@ export function createSessionCreationWorkflow(
 
     try {
       const initialSessionTitle = initialTitle.trim();
-      const clientMessageId = options.clientMessageId?.trim() ?? "";
       let createdSession: CreatedSession;
       try {
         mark("session:create:start");
@@ -364,30 +386,35 @@ export function createSessionCreationWorkflow(
         const submitDraft = options.submitDraft;
         const submitConversation = deps.submitConversationFromVesloWriteApi;
         const vesloCreated = submitDraft && clientMessageId && submitConversation
-          ? createdSessionFromSubmitResult(await deps.sendTraceStep(
-            "createSessionAndOpen:veslo-conversation-submit-materialize",
-            () => submitConversation(
-              activeWorkspaceId,
-              sessionDirectory,
-              {
-                clientMessageId,
-                origin: options.submitOrigin?.trim() || "session:normal",
-                source: options.submitSource?.trim() || null,
-                target: {
-                  directory: sessionDirectory,
-                  pendingClientSessionId: pendingSidebarSession?.id ?? null,
+          ? await (async () => {
+            const submitResult = await deps.sendTraceStep(
+              "createSessionAndOpen:veslo-conversation-submit-materialize",
+              () => submitConversation(
+                activeWorkspaceId,
+                sessionDirectory,
+                {
+                  clientMessageId,
+                  origin: options.submitOrigin?.trim() || "session:normal",
+                  source: options.submitSource?.trim() || null,
+                  target: {
+                    directory: sessionDirectory,
+                    pendingClientSessionId: pendingSidebarSession?.id ?? null,
+                  },
+                  draft: submitDraft,
+                  options: options.submitOptions,
                 },
-                draft: submitDraft,
+                createPreflight,
+              ),
+              {
+                ...(tracePayload ?? {}),
+                workspaceId: activeWorkspaceId,
+                sessionDirectory,
+                clientMessageId,
               },
-              createPreflight,
-            ),
-            {
-              ...(tracePayload ?? {}),
-              workspaceId: activeWorkspaceId,
-              sessionDirectory,
-              clientMessageId,
-            },
-          ))
+            );
+            if (submitResult) options.onSubmitResult?.(submitResult);
+            return createdSessionFromSubmitResult(submitResult);
+          })()
           : await deps.sendTraceStep(
             "createSessionAndOpen:veslo-conversation-create",
             () => deps.createConversationFromVesloWriteApi(

@@ -95,7 +95,11 @@ function createHarness(overrides: Record<string, unknown> = {}) {
       clientMessageId: options.clientMessageId ?? "",
       origin: options.origin ?? "test",
     }),
-    createSendPreflightContext: () => ({ traceId: "trace_1" }),
+    createSendPreflightContext: () => ({
+      traceId: "trace_1",
+      targetWorkspace: null,
+      conversationWorkspaceByDirectory: new Map(),
+    }),
     recordSendTrace: (event: string, payload?: Record<string, unknown>) => {
       calls.push({ name: "recordSendTrace", args: [event, payload] });
     },
@@ -122,10 +126,6 @@ function createHarness(overrides: Record<string, unknown> = {}) {
     sessionDirectoryOverrideById: () => ({}),
     workspaceProjectDir: () => "/repo",
     resolveSelectedSessionBrowseScope: () => null,
-    runConversationFromVesloWriteApi: async (...args: unknown[]) => {
-      calls.push({ name: "runConversationFromVesloWriteApi", args });
-      return { ok: true };
-    },
     messageFromUnknownError: String,
     safeStringify: JSON.stringify,
     renameSession: async (...args: unknown[]) => {
@@ -240,13 +240,77 @@ test("session mutation workflow delete clears selected state and removes sidebar
   assert.equal(harness.statusById.ses_1, undefined);
 });
 
-test("session mutation workflow compact preserves the selected session and runs summarize", async () => {
-  const harness = createHarness();
+test("session mutation workflow compact submits through server submit when local scope is available", async () => {
+  const submitCalls: Array<{ workspaceId: string; directory: string; input: Record<string, unknown>; traceId?: string | null }> = [];
+  const harness = createHarness({
+    resolveSelectedSessionBrowseScope: () => ({
+      workspaceId: "ws_1",
+      workspaceRoot: "/repo",
+      directory: "/repo",
+      conversationId: "conv_1",
+      opencodeSessionId: "open_1",
+    }),
+    submitConversationFromVesloWriteApi: async (
+      workspaceId: string,
+      directory: string,
+      input: Record<string, unknown>,
+      preflight?: { traceId?: string | null },
+    ) => {
+      submitCalls.push({ workspaceId, directory, input, traceId: preflight?.traceId });
+      return {
+        status: "submitted",
+        workspaceId,
+        conversationId: "conv_1",
+        opencodeSessionId: "open_1",
+        runId: "run_compact",
+        clientMessageId: String(input.clientMessageId),
+        draftDisposition: "clear",
+      };
+    },
+  });
   await harness.workflow.compactCurrentSession("ses_1");
 
   assert.equal(harness.selectedSessionId, "ses_1");
-  const runCall = harness.calls.find((call) => call.name === "runConversationFromVesloWriteApi");
-  assert.equal((runCall?.args[1] as { kind?: string })?.kind, "summarize");
+  assert.equal(submitCalls.length, 1);
+  assert.deepEqual(submitCalls.map(({ workspaceId, directory, traceId }) => ({ workspaceId, directory, traceId })), [{
+    workspaceId: "ws_1",
+    directory: "/repo",
+    traceId: "trace_1",
+  }]);
+  assert.deepEqual(submitCalls[0]?.input, {
+    clientMessageId: "client_msg_1",
+    origin: "app:compact-session",
+    target: {
+      directory: "/repo",
+      conversationId: "conv_1",
+      opencodeSessionId: "open_1",
+    },
+    draft: {
+      mode: "prompt",
+      text: "/compact",
+      resolvedText: "/compact",
+      parts: [{ type: "text", text: "/compact" }],
+      command: { name: "compact", arguments: "" },
+      attachments: [],
+    },
+    options: {
+      model: { providerID: "openai", modelID: "gpt-5" },
+      variant: null,
+      submitQueuePolicy: "normal",
+    },
+  });
+  assert.ok(harness.calls.some((call) => call.name === "recordSendTrace" && call.args[0] === "compactSession:server-submit-success"));
+});
+
+test("session mutation workflow compact fails explicitly when server submit is unavailable", async () => {
+  const harness = createHarness();
+  await assert.rejects(
+    () => harness.workflow.compactCurrentSession("ses_1"),
+    /Server-owned compact is unavailable/,
+  );
+
+  assert.equal(harness.selectedSessionId, "ses_1");
+  assert.ok(harness.calls.some((call) => call.name === "recordSendTrace" && call.args[0] === "compactSession:server-submit-unavailable"));
 });
 
 test("session mutation workflow lists the built-in compact command when backend commands omit it", async () => {

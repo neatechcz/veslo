@@ -38,13 +38,13 @@ test("background SSE events update scoped runtime state without merging messages
   );
   assert.match(
     eventStreamSource,
-    /if \(event\.type === "permission\.asked" \|\| event\.type === "permission\.replied"\) \{[\s\S]*void deps\.refreshPendingPermissions\(\);[\s\S]*\}/,
+    /if \(isPermissionRefreshEvent\(event\.type\)\) \{[\s\S]*void deps\.refreshPendingPermissions\(\);[\s\S]*\}/,
     "background permission events should refresh aggregated permission state",
   );
   assert.match(
     eventStreamSource,
-    /const c = sourceWsId\s*\?\s*deps\.routing\.client\(sourceWsId\) \?\? deps\.client\(\)\s*:\s*deps\.client\(\);/,
-    "session idle refreshes should use the source workspace client before falling back to the active client",
+    /const c = sourceWsId\s*\?\s*deps\.routing\.client\(sourceWsId\)\s*:\s*null;[\s\S]*else if \(sourceWsId\) \{[\s\S]*reason: "missing-routed-client"/,
+    "session idle refreshes should use only the source workspace client and avoid silently mutating through the active client",
   );
   assert.match(
     appSource,

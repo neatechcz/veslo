@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join, resolve, dirname, win32, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,7 +28,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const DEFAULT_PILOT_IDENTIFIER = 'com.neatech.veslo.e2e';
-const DEFAULT_LAUNCH_TIMEOUT = 120_000;
+const MAX_E2E_TIMEOUT = 95_000;
+const DEFAULT_LAUNCH_TIMEOUT = MAX_E2E_TIMEOUT;
 const LAUNCH_TIMEOUT = resolveLaunchTimeout();
 const REAL_PROFILE_ENV = process.env.E2E_USE_EXISTING_PROFILE?.trim() === '1';
 const CUSTOM_BINARY_PATH = process.env.E2E_TAURI_BINARY?.trim() ?? '';
@@ -108,7 +109,7 @@ export function resolveLaunchTimeout(env: Record<string, string | undefined> = p
     throw new Error(`Invalid E2E_LAUNCH_TIMEOUT: ${raw}`);
   }
 
-  return timeout;
+  return Math.min(timeout, MAX_E2E_TIMEOUT);
 }
 
 function resolveDesktopRoot(): string {
@@ -751,6 +752,23 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
   }
   console.log(`[e2e] Veslo server port: ${vesloServerPort}`);
 
+  const appLogRoot = env.OPENCODE_HOME
+    ? join(env.OPENCODE_HOME, '.veslo', 'e2e-logs')
+    : '';
+  const appStdoutLog = appLogRoot ? join(appLogRoot, 'app-stdout.log') : '';
+  const appStderrLog = appLogRoot ? join(appLogRoot, 'app-stderr.log') : '';
+  if (appLogRoot) {
+    mkdirSync(appLogRoot, { recursive: true });
+    const header = `[e2e] started=${new Date().toISOString()} binary=${binaryPath}\n`;
+    writeFileSync(appStdoutLog, header, 'utf8');
+    writeFileSync(appStderrLog, header, 'utf8');
+    console.log(`[e2e] Capturing app logs: ${appLogRoot}`);
+  }
+  const appendAppLog = (path: string, data: Buffer) => {
+    if (!path) return;
+    appendFileSync(path, data);
+  };
+
   appProcess = spawn(binaryPath, [], {
     env: {
       ...env,
@@ -775,9 +793,11 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
   });
 
   appProcess.stdout?.on('data', (data: Buffer) => {
+    appendAppLog(appStdoutLog, data);
     process.stdout.write(`[app:stdout] ${data}`);
   });
   appProcess.stderr?.on('data', (data: Buffer) => {
+    appendAppLog(appStderrLog, data);
     process.stderr.write(`[app:stderr] ${data}`);
   });
 

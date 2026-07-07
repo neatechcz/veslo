@@ -10,7 +10,7 @@ const runtimeConfigSource = readFileSync(
 
 function managedAiRuntimeConfigSource(): string {
   const marker = runtimeConfigSource.indexOf("const syncPreflight = resolveManagedAiConfigSyncPreflight");
-  const start = runtimeConfigSource.lastIndexOf("const syncActiveWorkspaceManagedAiConfig = async", marker);
+  const start = runtimeConfigSource.lastIndexOf("const syncWorkspaceManagedAiConfig = async", marker);
   const end = runtimeConfigSource.indexOf("function managedConfigContentsMatch", marker);
   assert.ok(
     marker >= 0 && start >= 0 && end > start,
@@ -22,7 +22,7 @@ function managedAiRuntimeConfigSource(): string {
 test("app delegates managed AI config sync side effects to the runtime config module", () => {
   assert.match(
     appSource,
-    /import \{ createManagedAiRuntimeConfigSync \} from "\.\/context\/managed-ai-runtime-config";/,
+    /import \{[\s\S]*createManagedAiRuntimeConfigSync,[\s\S]*\} from "\.\/context\/managed-ai-runtime-config";/,
     "app.tsx should import the managed AI runtime config module",
   );
   assert.match(
@@ -42,12 +42,12 @@ test("managed AI runtime config sync executes controller decisions", () => {
 
   assert.match(
     syncSource,
-    /const syncPreflight = resolveManagedAiConfigSyncPreflight\(\{[\s\S]*workspaceDefaultModelReady: deps\.workspaceDefaultModelReady\(\),[\s\S]*isDesktopRuntime: deps\.isTauriRuntime\(\),[\s\S]*defaultModelExplicit: deps\.defaultModelExplicit\(\),[\s\S]*workspaceType: workspaceKind\(workspace\),[\s\S]*workspaceRoot: deps\.activeWorkspacePath\(\),[\s\S]*\}\);/,
+    /const syncPreflight = resolveManagedAiConfigSyncPreflight\(\{[\s\S]*workspaceDefaultModelReady: deps\.workspaceDefaultModelReady\(\),[\s\S]*isDesktopRuntime: deps\.isTauriRuntime\(\),[\s\S]*defaultModelExplicit: deps\.defaultModelExplicit\(\),[\s\S]*workspaceType: workspaceKind\(workspace\),[\s\S]*workspaceRoot,[\s\S]*\}\);/,
     "sync preflight should be delegated to the config sync controller",
   );
   assert.match(
     syncSource,
-    /const workspaceId = workspace\.id\?\.trim\(\) \|\| deps\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*let vesloWorkspaceId = deps\.resolveConversationServerWorkspaceId\(workspaceId\);/,
+    /const workspaceId = workspace\.id\?\.trim\(\) \|\| targetWorkspaceId \|\| activeWorkspaceId;[\s\S]*let vesloWorkspaceId = deps\.resolveConversationServerWorkspaceId\(workspaceId\);/,
     "sync should derive the initial Veslo workspace id from the current app workspace, not stale server active status",
   );
   assert.match(

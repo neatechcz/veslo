@@ -12,6 +12,10 @@ import {
 import { isTauriRuntime } from "../utils";
 import type { ConnectToServer, WorkspaceActivationOptions } from "./workspace-types";
 
+function normalizeVesloHostForTokenFallback(value: string | null | undefined) {
+  return (value ?? "").trim().replace(/\/+$/, "");
+}
+
 export type WorkspaceRemoteActivationDeps = {
   setStartupPreference: (value: any) => void;
   vesloServerSettings: () => VesloServerSettings;
@@ -96,11 +100,17 @@ export function createWorkspaceRemoteActivation(deps: WorkspaceRemoteActivationD
       return false;
     }
 
-    const workspaceToken = next.vesloToken?.trim() ?? "";
-    const fallbackToken = deps.vesloServerSettings().token ?? "";
-    const token = workspaceToken || fallbackToken;
-
     const currentSettings = deps.vesloServerSettings();
+    const workspaceToken = next.vesloToken?.trim() ?? "";
+    const fallbackToken = currentSettings.token?.trim() ?? "";
+    const settingsHostUrl = currentSettings.urlOverride?.trim() ?? "";
+    const canUseFallbackToken =
+      !workspaceToken &&
+      Boolean(fallbackToken) &&
+      normalizeVesloHostForTokenFallback(settingsHostUrl) === normalizeVesloHostForTokenFallback(hostUrl);
+    const token = workspaceToken || (canUseFallbackToken ? fallbackToken : "");
+    const tokenToPersistWithWorkspace = workspaceToken || null;
+
     if (
       currentSettings.urlOverride?.trim() !== hostUrl ||
       (token && currentSettings.token?.trim() !== token)
@@ -108,7 +118,7 @@ export function createWorkspaceRemoteActivation(deps: WorkspaceRemoteActivationD
       deps.updateVesloServerSettings({
         ...currentSettings,
         urlOverride: hostUrl,
-        token: token || currentSettings.token,
+        token: token || undefined,
       });
     }
 
@@ -219,7 +229,7 @@ export function createWorkspaceRemoteActivation(deps: WorkspaceRemoteActivationD
           baseUrl: resolvedBaseUrl,
           directory: resolvedDirectory || null,
           vesloHostUrl: hostUrl,
-          vesloToken: token ? token : null,
+          vesloToken: tokenToPersistWithWorkspace,
           vesloWorkspaceId: workspaceInfo?.id ?? next.vesloWorkspaceId ?? null,
           vesloWorkspaceName: workspaceInfo?.name ?? next.vesloWorkspaceName ?? null,
         });
@@ -229,7 +239,6 @@ export function createWorkspaceRemoteActivation(deps: WorkspaceRemoteActivationD
         // ignore
       }
     } else {
-      const resolvedToken = token.trim();
       deps.setWorkspaces((prev) =>
         prev.map((ws) => {
           if (ws.id !== next.id) return ws;
@@ -239,7 +248,7 @@ export function createWorkspaceRemoteActivation(deps: WorkspaceRemoteActivationD
             baseUrl: resolvedBaseUrl.replace(/\/+$/, ""),
             directory: resolvedDirectory || null,
             vesloHostUrl: hostUrl,
-            vesloToken: resolvedToken || null,
+            vesloToken: tokenToPersistWithWorkspace,
             vesloWorkspaceId: workspaceInfo?.id ?? ws.vesloWorkspaceId ?? null,
             vesloWorkspaceName: workspaceInfo?.name ?? ws.vesloWorkspaceName ?? null,
           };
