@@ -257,7 +257,12 @@ test("session creation opens a materialized session when first server submit fai
   const workflow = createSessionCreationWorkflow(harness.options);
 
   const result = await workflow.createSessionAndOpen("hello", {
-    submitDraft: { text: "hello" },
+    submitDraft: {
+      mode: "prompt",
+      text: "hello",
+      resolvedText: "hello",
+      parts: [{ type: "text", text: "hello" }],
+    },
     clientMessageId: "client-failed-after-create",
     onSubmitResult: (submitResult) => submitResults.push(submitResult),
   });

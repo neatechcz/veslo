@@ -41,6 +41,11 @@ import {
   createUiConversationKey,
   parseUiConversationKey,
 } from "../../lib/ui-conversation-scope.js";
+import {
+  sessionSubmitAcceptedResult,
+  sessionSubmitBlockedResult,
+  type SessionSubmitResult,
+} from "../../lib/session-send-contract.js";
 
 const sessionConversationFlowSource = readFileSync(
   new URL("../../pages/session-conversation-flow.ts", import.meta.url),
@@ -121,6 +126,14 @@ const draft = {
   text: "hello",
   resolvedText: "hello",
 };
+
+const acceptedSubmitResult = (): SessionSubmitResult => sessionSubmitAcceptedResult();
+
+const blockedSubmitResult = (message = "send rejected"): SessionSubmitResult =>
+  sessionSubmitBlockedResult({
+    code: "test_rejected",
+    message,
+  });
 
 test("conversation flow controller blocks before transport while preserving optimistic failure state", async () => {
   const mappings: Array<[string, string]> = [];
@@ -224,11 +237,11 @@ test("conversation flow controller blocks before transport while preserving opti
     transport: {
       replaceUserMessageAsync: async () => {
         transportCalls.push("replace");
-        return true;
+        return acceptedSubmitResult();
       },
       sendPromptAsync: async () => {
         transportCalls.push("send");
-        return true;
+        return acceptedSubmitResult();
       },
     },
     feedback: {
@@ -249,7 +262,7 @@ test("conversation flow controller blocks before transport while preserving opti
 
   const accepted = await controller.sendPromptImmediate(draft);
 
-  assert.equal(accepted, false);
+  assert.equal(accepted.accepted, false);
   assert.deepEqual(transportCalls, []);
   assert.deepEqual(mappings, [
     ["pending:base", "pending-session:generated"],
@@ -272,7 +285,7 @@ test("conversation flow controller drains one queued draft per captured session 
   const sends: Array<{ text: string; expectedSessionKey: string | null }> = [];
   const updates: Array<{ sessionKey: string; states: string[] }> = [];
   let sendReleaseArmed = false;
-  let releaseSend: (accepted: boolean) => void = (_accepted) => {
+  let releaseSend: (accepted: SessionSubmitResult) => void = (_accepted) => {
     assert.fail("test transport should be waiting for the first queued send");
   };
   let pendingDrafts: PendingSubmittedDraftBySessionKey = {};
@@ -379,13 +392,13 @@ test("conversation flow controller drains one queued draft per captured session 
       setStickToBottom: () => undefined,
     },
     transport: {
-      replaceUserMessageAsync: async () => true,
+      replaceUserMessageAsync: async () => acceptedSubmitResult(),
       sendPromptAsync: async (sentDraft, options) => {
         sends.push({
           text: sentDraft.text,
           expectedSessionKey: options.targetSessionId ?? null,
         });
-        return new Promise<boolean>((resolve) => {
+        return new Promise<SessionSubmitResult>((resolve) => {
           sendReleaseArmed = true;
           releaseSend = resolve;
         });
@@ -416,7 +429,7 @@ test("conversation flow controller drains one queued draft per captured session 
   });
 
   assert.equal(sendReleaseArmed, true, "test transport should be waiting for the first queued send");
-  releaseSend(true);
+  releaseSend(acceptedSubmitResult());
   await firstDrain;
 
   assert.deepEqual(
@@ -551,10 +564,10 @@ test("conversation flow controller sends edited queued drafts now with remap-awa
       setStickToBottom: () => undefined,
     },
     transport: {
-      replaceUserMessageAsync: async () => true,
+      replaceUserMessageAsync: async () => acceptedSubmitResult(),
       sendPromptAsync: async (sentDraft) => {
         sentDrafts.push(sentDraft.text);
-        return false;
+        return blockedSubmitResult();
       },
     },
     feedback: {
@@ -576,7 +589,7 @@ test("conversation flow controller sends edited queued drafts now with remap-awa
     { sendNow: true, sendTraceId: "trace-1" },
   );
 
-  assert.equal(accepted, false);
+  assert.equal(accepted.accepted, false);
   assert.deepEqual(sentDrafts, ["edited"]);
   assert.deepEqual(composerDrafts, [""]);
   assert.deepEqual(pauseWrites, []);
@@ -691,8 +704,8 @@ test("conversation flow controller owns queued draft edit actions", () => {
       setStickToBottom: () => undefined,
     },
     transport: {
-      replaceUserMessageAsync: async () => true,
-      sendPromptAsync: async () => true,
+      replaceUserMessageAsync: async () => acceptedSubmitResult(),
+      sendPromptAsync: async () => acceptedSubmitResult(),
     },
     feedback: {
       setToastMessage: () => undefined,
@@ -847,8 +860,8 @@ test("conversation flow controller owns transcript edit recovery", () => {
       setStickToBottom: () => undefined,
     },
     transport: {
-      replaceUserMessageAsync: async () => true,
-      sendPromptAsync: async () => true,
+      replaceUserMessageAsync: async () => acceptedSubmitResult(),
+      sendPromptAsync: async () => acceptedSubmitResult(),
     },
     feedback: {
       setToastMessage: () => undefined,
@@ -975,8 +988,8 @@ test("conversation flow controller pauses queues before cancelling active runs",
       setStickToBottom: () => undefined,
     },
     transport: {
-      replaceUserMessageAsync: async () => true,
-      sendPromptAsync: async () => true,
+      replaceUserMessageAsync: async () => acceptedSubmitResult(),
+      sendPromptAsync: async () => acceptedSubmitResult(),
     },
     feedback: {
       setToastMessage: (message) => {
@@ -1105,8 +1118,8 @@ test("conversation flow controller aborts backend-active error runs", async () =
       setStickToBottom: () => undefined,
     },
     transport: {
-      replaceUserMessageAsync: async () => true,
-      sendPromptAsync: async () => true,
+      replaceUserMessageAsync: async () => acceptedSubmitResult(),
+      sendPromptAsync: async () => acceptedSubmitResult(),
     },
     feedback: {
       setToastMessage: (message) => {
@@ -1233,8 +1246,8 @@ test("conversation flow controller retries after best-effort abort failure", asy
       setStickToBottom: () => undefined,
     },
     transport: {
-      replaceUserMessageAsync: async () => true,
-      sendPromptAsync: async () => true,
+      replaceUserMessageAsync: async () => acceptedSubmitResult(),
+      sendPromptAsync: async () => acceptedSubmitResult(),
     },
     feedback: {
       setToastMessage: (message) => {
@@ -1364,8 +1377,8 @@ test("conversation flow controller restores edit state when sessions switch", ()
       setStickToBottom: () => undefined,
     },
     transport: {
-      replaceUserMessageAsync: async () => true,
-      sendPromptAsync: async () => true,
+      replaceUserMessageAsync: async () => acceptedSubmitResult(),
+      sendPromptAsync: async () => acceptedSubmitResult(),
     },
     feedback: {
       setToastMessage: () => undefined,

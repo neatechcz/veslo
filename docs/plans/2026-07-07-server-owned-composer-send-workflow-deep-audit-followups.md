@@ -9,7 +9,7 @@ e2e_status: skipped
 bsw_aud01_concurrent_submit_idempotency_done: true
 bsw_aud02_replacement_failure_ui_surface_done: false
 bsw_aud03_docs_status_alignment_done: false
-bsw_aud04_typed_app_boundary_done: false
+bsw_aud04_typed_app_boundary_done: true
 bsw_aud05_running_enter_server_queue_done: false
 bsw_aud06_queued_live_transcript_semantics_done: false
 bsw_aud07_queued_failure_surface_done: false
@@ -374,7 +374,7 @@ Implementation note:
 
 ### BSW-AUD04: Typed app submit boundary
 
-Status: `done: false`
+Status: `done: true`
 
 Severity: P2
 
@@ -458,7 +458,44 @@ git diff --check
 
 Implementation note:
 
-- Pending.
+- 2026-07-07:
+  - Changed `packages/app/src/app/lib/session-send-contract.ts`,
+    `packages/app/src/app/pages/session.tsx`,
+    `packages/app/src/app/context/session-flow-facade.ts`,
+    `packages/app/src/app/pages/session-conversation-flow.ts`,
+    `packages/app/src/app/pages/session-send-workflow.ts`, and
+    `packages/app/src/app/pages/session-mutation-workflow.ts`.
+  - Added app-level typed submit statuses for `submitted`, `queued`,
+    `blocked`, and `failed`, plus queue/run identity fields. Normal
+    `Composer.onSend` now receives the typed flow result directly instead of
+    rebuilding it through `sessionSubmitResultFromAccepted`.
+  - `SessionConversationFlow` transport, `sendPromptImmediate`, and
+    `handleSendPrompt` now return `SessionSubmitResult`. Local queue-only
+    branches return explicit typed `queued` results, while server
+    `submitted`/`queued` results preserve run id, queue item id, and draft
+    disposition.
+  - `SessionSendWorkflow` and `SessionMutationWorkflow` map server submit
+    results into the app submit result. The legacy fallback remains a narrow
+    compatibility adapter and is still owned by BSW-AUD08 cleanup.
+  - Updated source-contract and behavior tests in:
+    `session-message-queue.test.ts`, `session-conversation-flow.test.ts`,
+    `composer-send-intent.test.ts`, `session-flow-facade.test.ts`,
+    `session-message-replacement.test.ts`,
+    `session-view-modularization.test.ts`,
+    `session-send-workflow.test.ts`, and
+    `session-creation-workflow.test.ts`.
+  - Verification passed:
+    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-message-queue.test.ts src/app/tests/pages/session-conversation-flow.test.ts src/app/tests/components/session/composer-send-intent.test.ts`
+    with 75 tests; `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/session-flow-facade.test.ts src/app/tests/pages/session-message-replacement.test.ts src/app/tests/pages/session-view-modularization.test.ts src/app/tests/pages/session-send-workflow.test.ts`
+    with 40 tests; `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-creation-workflow.test.ts`
+    with 7 tests; `pnpm --filter @neatech/veslo-ui exec tsc --noEmit --pretty false`;
+    `pnpm --filter @neatech/veslo-ui exec node scripts/legacy-symbol-audit.mjs --limit=40`.
+  - `legacy-symbol-audit.mjs` still reports four dependency-object matches:
+    `createSessionSendWorkflow.isWorkspaceClientStaleError`,
+    `createSessionSendWorkflow.legacyConversationRunFallback`,
+    `createSessionMutationWorkflow.prepareSendRuntimeForSend`, and
+    `createSessionCreationWorkflow.isWorkspaceClientStaleError`. These remain
+    intentionally deferred to BSW-AUD08.
 
 ### BSW-AUD05: Running Enter uses server queue admission
 

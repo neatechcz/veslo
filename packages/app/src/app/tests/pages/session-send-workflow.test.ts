@@ -318,7 +318,7 @@ test("session send workflow blocks sends without a client message id", async () 
 
   const sent = await workflow.sendPrompt(promptDraft(), { origin: "session:normal", clientMessageId: "" });
 
-  assert.equal(sent, false);
+  assert.equal(sent.accepted, false);
   assert.deepEqual(harness.actions, []);
   assert.ok(harness.events.includes("sendPrompt:blocked-missing-client-message-id"));
 });
@@ -352,7 +352,7 @@ test("session send workflow blocks document skill runs when document runtime is 
     targetSessionId: "sess-target",
   });
 
-  assert.equal(sent, false);
+  assert.equal(sent.accepted, false);
   assert.match(harness.errors.at(-1) ?? "", /package is missing/);
   assert.equal(harness.actions.some((action) => action.startsWith("run:")), false);
   assert.ok(harness.events.includes("maybeResolveSkillCommand:blocked-document-runtime"));
@@ -423,7 +423,7 @@ test("session send workflow keeps busy state and releases in-flight tracking whe
     targetSessionId: "sess-target",
   });
 
-  assert.equal(sent, false);
+  assert.equal(sent.accepted, false);
   assert.equal(harness.sendPromptInFlightCount(), 0);
   assert.deepEqual(runSnapshots.map((snapshot) => ({
     sessionId: snapshot.sessionId,
@@ -503,7 +503,7 @@ test("session send workflow submits an existing local prompt through server subm
     targetSessionId: "sess-target",
   });
 
-  assert.equal(sent, true);
+  assert.equal(sent.accepted, true);
   assert.equal(submitCalls.length, 1);
   assert.deepEqual(submitCalls.map(({ workspaceId, directory, traceId }) => ({
     workspaceId,
@@ -623,7 +623,7 @@ test("session send workflow stages existing local attachments as server submit r
     targetSessionId: "sess-target",
   });
 
-  assert.equal(sent, true);
+  assert.equal(sent.accepted, true);
   assert.deepEqual(stagedSessionIds, ["sess-target"]);
   assert.equal(submitCalls.length, 1);
   assert.deepEqual(submitCalls[0]?.input.draft.attachments, [{
@@ -691,7 +691,7 @@ test("session send workflow submits existing local compact through server submit
     targetSessionId: "sess-target",
   });
 
-  assert.equal(sent, true);
+  assert.equal(sent.accepted, true);
   assert.equal(submitCalls.length, 1);
   assert.deepEqual(submitCalls.map(({ workspaceId, directory }) => ({ workspaceId, directory })), [{
     workspaceId: "ws-active",
@@ -764,7 +764,10 @@ test("session send workflow handles queued server submit results for send-now", 
     targetSessionId: "sess-target",
   });
 
-  assert.equal(sent, true);
+  assert.equal(sent.accepted, true);
+  assert.equal(sent.status, "queued");
+  assert.equal(sent.queueItemId, "queue-submit");
+  assert.equal(sent.reservedRunId, "run-reserved");
   assert.equal(submitCalls.length, 1);
   assert.equal(submitCalls[0]?.input.options?.submitQueuePolicy, "send-now");
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing:start"));
@@ -824,7 +827,7 @@ test("session send workflow does not clear the active composer for explicit serv
     targetSessionId: "sess-target",
   });
 
-  assert.equal(sent, true);
+  assert.equal(sent.accepted, true);
   assert.equal(submitCalls.length, 1);
   assert.deepEqual(lastPromptSends, ["explicit draft"]);
   assert.deepEqual(promptWrites, []);
@@ -871,7 +874,7 @@ test("session send workflow reports failed server submit into the visible transc
     targetSessionId: "sess-target",
   });
 
-  assert.equal(sent, false);
+  assert.equal(sent.accepted, false);
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing-failed"));
   assert.match(harness.errors.at(-1) ?? "", /Clear the OpenCode cache/);
   assert.deepEqual(appendedErrors, [{
@@ -925,7 +928,7 @@ test("session send workflow reports remote server-submit blocks without legacy r
     targetSessionId: "sess-remote",
   });
 
-  assert.equal(sent, false);
+  assert.equal(sent.accepted, false);
   assert.equal(submitCalls.length, 1);
   assert.equal(submitCalls[0]?.target?.conversationId, "conv-remote");
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing-blocked"));
@@ -972,7 +975,7 @@ test("session send workflow blocks legacy run when server submit is unavailable"
     targetSessionId: "sess-target",
   });
 
-  assert.equal(sent, false);
+  assert.equal(sent.accepted, false);
   assert.equal(submitCalls.length, 1);
   assert.deepEqual(prepareCalls, []);
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing-unavailable"));
@@ -1011,7 +1014,7 @@ test("session send workflow blocks legacy run when server submit target is missi
     targetSessionId: "sess-target",
   });
 
-  assert.equal(sent, false);
+  assert.equal(sent.accepted, false);
   assert.ok(harness.events.includes("sendPrompt:maybe-resolve-skill-command:server-owned-skip"));
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing-missing-target"));
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
@@ -1050,7 +1053,7 @@ test("session send workflow blocks first-session legacy run when server submit m
     source: "enter",
   });
 
-  assert.equal(sent, false);
+  assert.equal(sent.accepted, false);
   assert.equal(createOptions.length, 1);
   assert.deepEqual(createOptions[0]?.submitDraft, {
     mode: "prompt",
@@ -1115,7 +1118,7 @@ test("session send workflow accepts first-session server submit results without 
     source: "enter",
   });
 
-  assert.equal(sent, true);
+  assert.equal(sent.accepted, true);
   assert.equal(createOptions[0]?.submitDraft?.text, "first server submit");
   assert.ok(harness.events.includes("sendPrompt:server-submit-first-success"));
   assert.equal(harness.liveTranscriptPolicyEvents.at(-1)?.reason, "sendPrompt:success");
@@ -1128,7 +1131,7 @@ test("session send workflow accepts first-session server submit results without 
 test("session send workflow opens first materialized session and reports failed server submit", async () => {
   const createOptions: Array<Parameters<SessionSendWorkflowOptions["createSessionAndOpen"]>[1]> = [];
   const pendingDraftMeta = { id: "pending-id-first-failed", title: "hello" };
-  let activePendingDraftKey = "pending-draft:first-failed";
+  let activePendingDraftKey: string | null = "pending-draft:first-failed";
   let activePendingDraftMeta: typeof pendingDraftMeta | null = pendingDraftMeta;
   const harness = createHarness({
     activePendingDraftKey: () => activePendingDraftKey,
@@ -1168,8 +1171,9 @@ test("session send workflow opens first materialized session and reports failed 
       harness.actions.push(`set-active-pending-draft-key:${key}`);
     },
     setActivePendingDraftMeta: (meta) => {
-      activePendingDraftMeta = meta ?? null;
-      harness.actions.push(`set-active-pending-draft-meta:${meta?.id ?? "null"}`);
+      const nextMeta = meta as typeof pendingDraftMeta | null;
+      activePendingDraftMeta = nextMeta;
+      harness.actions.push(`set-active-pending-draft-meta:${nextMeta?.id ?? "null"}`);
     },
     setComposerDraftBySessionId: (updater) => {
       harness.actions.push("set-composer-draft-by-session");
@@ -1187,7 +1191,7 @@ test("session send workflow opens first materialized session and reports failed 
     source: "enter",
   });
 
-  assert.equal(accepted, false);
+  assert.equal(accepted.accepted, false);
   assert.equal(createOptions.length, 1);
   assert.ok(harness.events.includes("sendPrompt:server-submit-first-failed"));
   assert.deepEqual(harness.errors, ["OpenCode prompt failed Clear the OpenCode cache and retry."]);
@@ -1331,7 +1335,7 @@ test("session send workflow retries recoverable runtime run failure once with sa
     origin: "session:normal",
   });
 
-  assert.equal(sent, true);
+  assert.equal(sent.accepted, true);
   assert.deepEqual(runCalls.map((call) => call.clientMessageId), [
     "client-runtime-retry",
     "client-runtime-retry",
@@ -1356,7 +1360,7 @@ test("session send workflow ignores a selected session from another workspace wh
     origin: "session:normal",
   });
 
-  assert.equal(sent, true);
+  assert.equal(sent.accepted, true);
   assert.ok(harness.actions.includes("create-session"));
   assert.ok(harness.actions.includes("run:sess-created"));
   assert.ok(!harness.actions.includes("run:sess-selected"));
@@ -1378,7 +1382,7 @@ test("session send workflow emits live transcript policy event after successful 
     targetSessionId: "sess-target",
   });
 
-  assert.equal(sent, true);
+  assert.equal(sent.accepted, true);
   assert.deepEqual(harness.liveReadAllowedWorkspaceIds, ["ws-send-target"]);
   assert.deepEqual(harness.liveTranscriptPolicyEvents.map((event) => event.reason), ["sendPrompt:success"]);
 });
@@ -1425,7 +1429,7 @@ test("session send workflow sends the initial model snapshot with first server s
     origin: "session:normal",
   });
 
-  assert.equal(sent, true);
+  assert.equal(sent.accepted, true);
   assert.deepEqual(modelSessionIds, [null]);
   assert.deepEqual(createOptions[0]?.submitOptions?.model, {
     providerID: "openai",
@@ -1461,7 +1465,7 @@ test("session send workflow uses OpenCode variant instead of raw reasoning effor
     targetSessionId: "sess-target",
   });
 
-  assert.equal(sent, true);
+  assert.equal(sent.accepted, true);
   assert.equal(runInputs.length, 1);
   const input = runInputs[0]?.input;
   assert.equal(input?.kind, "prompt_async");
@@ -1480,7 +1484,7 @@ test("session send workflow sends to an explicit target session without creating
     targetSessionId: "sess-target",
   });
 
-  assert.equal(sent, true);
+  assert.equal(sent.accepted, true);
   assert.ok(!harness.actions.includes("create-session"));
   assert.ok(harness.actions.includes("run:sess-target"));
 });

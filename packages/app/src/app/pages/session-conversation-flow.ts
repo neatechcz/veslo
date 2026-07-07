@@ -27,6 +27,12 @@ import type {
   MaterializedSessionHandoff,
   SessionSendOptionsBase,
   SessionSendOrigin,
+  SessionSubmitResult,
+} from "../lib/session-send-contract";
+import {
+  sessionSubmitBlockedResult,
+  sessionSubmitQueuedResult,
+  sessionSubmitWasAccepted,
 } from "../lib/session-send-contract";
 import {
   createUiConversationKey,
@@ -568,7 +574,7 @@ export type SessionConversationFlowControllerDeps = {
       messageId: string,
       draft: ComposerDraft,
       options: SessionSendOptionsBase & { targetSessionId?: string | null },
-    ) => Promise<boolean>;
+    ) => Promise<SessionSubmitResult>;
     sendPromptAsync: (
       draft: ComposerDraft,
       options: SessionSendOptionsBase & {
@@ -576,7 +582,7 @@ export type SessionConversationFlowControllerDeps = {
         onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
         pendingSession?: PendingSidebarSessionMetadata | null;
       },
-    ) => Promise<boolean>;
+    ) => Promise<SessionSubmitResult>;
   };
   feedback: {
     setToastMessage: (message: string) => void;
@@ -606,7 +612,7 @@ export type SessionConversationFlowController = {
   handleEditQueuedDraft: (id: string) => boolean;
   handleEditUserMessage: (editable: EditableUserMessageDraft) => boolean;
   handleMoveQueuedDraft: (id: string, targetIndex: number) => void;
-  handleSendPrompt: (draft: ComposerDraft, options?: HandleSendPromptOptions) => Promise<boolean>;
+  handleSendPrompt: (draft: ComposerDraft, options?: HandleSendPromptOptions) => Promise<SessionSubmitResult>;
   handleActiveSessionStatusChanged: (status: string, previousStatus: string | undefined) => void;
   handleSelectedSessionChanged: (input: {
     sessionId: string | null | undefined;
@@ -626,7 +632,7 @@ export type SessionConversationFlowController = {
   ) => void;
   retryRun: () => Promise<void>;
   restoreEditingQueuedDraft: (sessionKey: string, id: string | null) => void;
-  sendPromptImmediate: (draft: ComposerDraft, options?: SendPromptImmediateOptions) => Promise<boolean>;
+  sendPromptImmediate: (draft: ComposerDraft, options?: SendPromptImmediateOptions) => Promise<SessionSubmitResult>;
 };
 
 export const resolveSessionSendOriginForReason = (
@@ -653,6 +659,12 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
     deps.sessionStatus?.statusForSessionId(sessionId, statuses) ?? statuses[sessionId]?.trim() ?? "idle";
   const statusForQueueKey = (sessionKey: string, statuses: Record<string, string>) =>
     deps.sessionStatus?.statusForQueueKey(sessionKey, statuses) ?? statuses[sessionKey]?.trim() ?? "idle";
+  const localQueuedResult = (code = "local_queue"): SessionSubmitResult =>
+    sessionSubmitQueuedResult({
+      code,
+      message: null,
+      draftDisposition: "clear",
+    });
   const controller: SessionConversationFlowController = {
     cancelRun: async () => {
       deps.runControl.setEscapeStopConfirmationPending(false);
@@ -868,7 +880,10 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         deps.sessionKeys.currentSessionQueueKey() !== expectedSessionKey &&
         !targetSessionId
       ) {
-        return false;
+        return sessionSubmitBlockedResult({
+          code: "stale_session_queue",
+          message: "The target session changed before the prompt could be sent.",
+        });
       }
 
       const showOptimisticSubmit = !options.replaceMessageId && options.reason !== "queue-drain";
@@ -1081,7 +1096,10 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         }
         finishPendingSessionHandoffFailure();
         deps.feedback.setToastMessage(aiAccessBlockedReason);
-        return false;
+        return sessionSubmitBlockedResult({
+          code: "ai_access_blocked",
+          message: aiAccessBlockedReason,
+        });
       }
 
       try {
@@ -1109,7 +1127,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           ...(targetSessionId ? { targetSessionId } : {}),
           ...(options.sendTraceId ? { sendTraceId: options.sendTraceId } : {}),
         };
-        const accepted = await (options.replaceMessageId
+        const submitResult = await (options.replaceMessageId
           ? deps.transport.replaceUserMessageAsync(options.replaceMessageId, draft, replaceOptions)
           : deps.transport.sendPromptAsync(draft, promptSendOptions)
         );
@@ -1118,21 +1136,31 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           clientMessageId,
           origin,
           source,
-          accepted,
+          accepted: submitResult.accepted,
+          status: submitResult.status,
+          code: submitResult.code ?? null,
+          draftDisposition: submitResult.draftDisposition,
           error: deps.runtime.error(),
           expectedSessionKey: expectedSessionKey ?? null,
           targetSessionId,
           reason: options.reason ?? "normal",
         });
-        if (!accepted) {
+        if (!submitResult.accepted) {
           if (showOptimisticSubmit) {
-            const errorMessage = deps.runtime.error() ?? deps.feedback.tr("session.connect_server_to_attach");
+            const errorMessage =
+              submitResult.message ??
+              deps.runtime.error() ??
+              deps.feedback.tr("session.connect_server_to_attach");
             markMatchingPendingSubmitFailed(errorMessage);
             deps.runState.resetRunState(runStateSessionKeyForHandoffFailure());
           }
           finishPendingSessionHandoffFailure();
-          deps.feedback.setToastMessage(deps.runtime.error() ?? deps.feedback.tr("session.connect_server_to_attach"));
-          return false;
+          deps.feedback.setToastMessage(
+            submitResult.message ??
+            deps.runtime.error() ??
+            deps.feedback.tr("session.connect_server_to_attach"),
+          );
+          return submitResult;
         }
         deps.trace.markTempRuntimeUiRenderSource(
           "SessionConversationFlow.sendPromptImmediate:accepted",
@@ -1143,7 +1171,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             detail: `sessionKey=${sessionKey}`,
           },
         );
-        if (accepted && pendingSessionKeyBeforeHandoff && materializedSessionIdFromHandoff) {
+        if (pendingSessionKeyBeforeHandoff && materializedSessionIdFromHandoff) {
           materializePendingHandoffToSession({
             workspaceId:
               expectedWorkspaceId || deps.sessionKeys.activeUiConversationWorkspaceId(),
@@ -1160,7 +1188,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           if (showOptimisticSubmit) {
             clearMatchingPendingSubmit();
           }
-          return accepted;
+          return submitResult;
         }
         deps.viewport.setStickToBottom(true);
         deps.viewport.scheduleScrollToLatest("auto");
@@ -1169,7 +1197,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             ? deps.sessionKeys.sessionQueueKeyForSessionId(materializedSessionIdFromHandoff)
             : sessionKey,
         );
-        return true;
+        return submitResult;
       } catch (error) {
         if (showOptimisticSubmit) {
           const errorMessage =
@@ -1183,7 +1211,13 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         finishPendingSessionHandoffFailure();
         deps.trace.reportError(error, "session.sendPrompt");
         deps.feedback.setToastMessage(deps.runtime.error() ?? deps.feedback.tr("session.connect_server_to_attach"));
-        return false;
+        return sessionSubmitBlockedResult({
+          code: "send_exception",
+          message: deps.runtime.error() ??
+            (error instanceof Error
+              ? error.message
+              : deps.feedback.tr("session.connect_server_to_attach")),
+        });
       }
     },
     handleSendPrompt: async (draft, options = {}) => {
@@ -1209,7 +1243,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           if (!deps.runState.showRunIndicator() && !deps.queue.queuePausedForSessionKey(sessionKey)) {
             void controller.drainNextQueuedDraft("normal", sessionKey);
           }
-          return true;
+          return localQueuedResult("local_queue_edit_saved");
         }
 
         case "send-edited-queued-draft-now": {
@@ -1223,7 +1257,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             deps.queue.setEditingQueuedDraftId(null);
             deps.composer.setComposerDraft(createEmptyComposerDraft(draft.mode));
           }
-          const accepted = await controller.sendPromptImmediate(draft, {
+          const submitResult = await controller.sendPromptImmediate(draft, {
             reason: "send-now",
             expectedSessionKey: sessionKey,
             restoreDraftOnFailure: false,
@@ -1231,35 +1265,34 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             source: options.source,
           });
           const resultSessionKey = deps.queue.resolveQueueKeyForQueuedDraft(sessionKey, editingId);
-          if (!accepted) {
+          if (!sessionSubmitWasAccepted(submitResult)) {
             deps.queue.updateQueueForSessionKey(resultSessionKey, (queue) =>
               markQueuedDraftError(
                 queue,
                 editingId,
-                deps.runtime.error() ?? deps.feedback.tr("session.connect_server_to_attach"),
+                submitResult.message ?? deps.runtime.error() ?? deps.feedback.tr("session.connect_server_to_attach"),
               ),
             );
-            return false;
+            return submitResult;
           }
           deps.queue.updateQueueForSessionKey(resultSessionKey, (queue) => removeQueuedDraft(queue, editingId));
-          if (accepted && wasPaused) {
+          if (wasPaused) {
             deps.queue.setQueuePausedForSessionKey(sessionKey, false);
           }
-          return true;
+          return submitResult;
         }
 
         case "replace-transcript-message": {
           const sessionKey = deps.sessionKeys.currentSessionQueueKey();
           deps.transcriptEdit.setEditingTranscriptMessageId(null);
-          const accepted = await controller.sendPromptImmediate(draft, {
+          const submitResult = await controller.sendPromptImmediate(draft, {
             reason: "replacement",
             expectedSessionKey: sessionKey,
             replaceMessageId: action.messageId,
             sendTraceId: options.sendTraceId,
             source: options.source,
           });
-          if (!accepted) return false;
-          return true;
+          return submitResult;
         }
 
         case "append-to-paused-queue-and-drain": {
@@ -1267,7 +1300,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           deps.queue.appendDraftToCurrentQueue(draft);
           deps.queue.setQueuePausedForSessionKey(sessionKey, false);
           void controller.drainNextQueuedDraft("normal", sessionKey);
-          return true;
+          return localQueuedResult("local_queue_paused_append");
         }
 
         case "append-to-existing-queue-and-drain-if-idle": {
@@ -1276,27 +1309,27 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           if (!deps.runState.showRunIndicator() && !deps.queue.queuePausedForSessionKey(sessionKey)) {
             void controller.drainNextQueuedDraft("normal", sessionKey);
           }
-          return true;
+          return localQueuedResult("local_queue_existing_append");
         }
 
         case "append-to-running-queue": {
           deps.queue.appendDraftToCurrentQueue(draft);
-          return true;
+          return localQueuedResult("local_queue_running_append");
         }
 
         case "send-now": {
           const sessionKey = deps.sessionKeys.currentSessionQueueKey();
           const wasPaused = deps.queue.queuePausedForSessionKey(sessionKey);
-          const accepted = await controller.sendPromptImmediate(draft, {
+          const submitResult = await controller.sendPromptImmediate(draft, {
             reason: "send-now",
             expectedSessionKey: sessionKey,
             sendTraceId: options.sendTraceId,
             source: options.source,
           });
-          if (accepted && wasPaused) {
+          if (sessionSubmitWasAccepted(submitResult) && wasPaused) {
             deps.queue.setQueuePausedForSessionKey(sessionKey, false);
           }
-          return accepted;
+          return submitResult;
         }
 
         case "send-normal":
@@ -1342,12 +1375,12 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           return;
         }
 
-        const accepted = await controller.sendPromptImmediate(start.item.draft, {
+        const submitResult = await controller.sendPromptImmediate(start.item.draft, {
           reason,
           expectedSessionKey: drainSessionKey,
         });
         const result = resolveQueueDrainCompletionAction({
-          accepted,
+          accepted: sessionSubmitWasAccepted(submitResult),
           currentSessionKey: deps.sessionKeys.currentSessionQueueKey(),
           drainSessionKey,
           drainSessionId: deps.sessionKeys.sessionIdForQueueKey(drainSessionKey),

@@ -5,6 +5,7 @@ import type {
   SessionSendWorkflow,
   SessionSendWorkflowSendOptions,
 } from "../pages/session-send-workflow";
+import type { SessionSubmitResult } from "../lib/session-send-contract";
 import type { ComposerDraft } from "../types";
 
 export type SessionFlowFacade = {
@@ -12,7 +13,7 @@ export type SessionFlowFacade = {
     initialTitle?: string,
     options?: SessionCreationWorkflowCreateOptions,
   ) => Promise<string | undefined>;
-  sendPrompt: (draft: ComposerDraft, options: SessionSendWorkflowSendOptions) => Promise<boolean>;
+  sendPrompt: (draft: ComposerDraft, options: SessionSendWorkflowSendOptions) => Promise<SessionSubmitResult>;
   abortSession: (sessionId?: string, target?: ConversationAbortTarget) => Promise<void>;
 };
 

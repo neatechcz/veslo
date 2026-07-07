@@ -86,10 +86,10 @@ import {
 } from "../lib/folder-access-request";
 import {
   createSessionClientMessageId,
-  sessionSubmitResultFromAccepted,
   type MaterializedSessionHandoff,
   type SessionSendOptionsBase,
   type SessionSendOrigin,
+  type SessionSubmitResult,
 } from "../lib/session-send-contract";
 import type { UiConversationRef } from "../lib/ui-conversation-scope";
 import { resolveEscapeStopShortcut } from "./session-shortcuts";
@@ -332,12 +332,12 @@ export type SessionViewProps = {
       onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
       pendingSession?: PendingSidebarSessionMetadata | null;
     },
-  ) => Promise<boolean>;
+  ) => Promise<SessionSubmitResult>;
   replaceUserMessageAsync: (
     messageId: string,
     draft: ComposerDraft,
     options: SessionSendOptionsBase & { targetSessionId?: string | null },
-  ) => Promise<boolean>;
+  ) => Promise<SessionSubmitResult>;
   clearComposerDraftForSession: (sessionId: string | null | undefined) => void;
   abortSession: (sessionId?: string) => Promise<void>;
   sessionRevertMessageId: string | null;
@@ -2861,12 +2861,11 @@ export default function SessionView(props: SessionViewProps) {
     if (showComposerEntryState() || showFooterComposerTargetContext()) {
       dismissComposerEntryForSessionKey();
     }
-    const accepted = await sessionFlowFacade.handleSendPrompt(draft, {
+    return sessionFlowFacade.handleSendPrompt(draft, {
       sendNow: options.sendNow,
       sendTraceId: options.sendTraceId,
       source: options.source,
     });
-    return sessionSubmitResultFromAccepted(accepted, props.error);
   };
 
   const tempRuntimeUiDiagnosticBadge = (visibleSurface: TempRuntimeUiRenderSurface) => (

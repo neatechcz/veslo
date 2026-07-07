@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { createSessionFlowFacade } from "../../context/session-flow-facade.js";
+import { sessionSubmitAcceptedResult } from "../../lib/session-send-contract.js";
 import type { ComposerDraft } from "../../types.js";
 
 const facadeSource = readFileSync(new URL("../../context/session-flow-facade.ts", import.meta.url), "utf8");
@@ -25,7 +26,7 @@ test("session flow facade exposes first-send and create-session entrypoints thro
     sendWorkflow: {
       sendPrompt: async (nextDraft, options) => {
         calls.push(`send:${nextDraft.text}:${options.clientMessageId}`);
-        return true;
+        return sessionSubmitAcceptedResult();
       },
       abortSession: async (sessionId) => {
         calls.push(`abort:${sessionId ?? ""}`);
@@ -37,13 +38,10 @@ test("session flow facade exposes first-send and create-session entrypoints thro
     await facade.createSessionAndOpen("title", { clientMessageId: "client-create" }),
     "sess-created",
   );
-  assert.equal(
-    await facade.sendPrompt(draft("queued"), {
-      clientMessageId: "client-send",
-      origin: "session:normal",
-    }),
-    true,
-  );
+  assert.equal((await facade.sendPrompt(draft("queued"), {
+    clientMessageId: "client-send",
+    origin: "session:normal",
+  })).accepted, true);
   await facade.abortSession("sess-created");
 
   assert.deepEqual(calls, [

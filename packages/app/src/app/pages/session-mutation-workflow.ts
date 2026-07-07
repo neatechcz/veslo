@@ -9,8 +9,13 @@ import {
 import { unwrap as defaultUnwrap } from "../lib/opencode";
 import {
   normalizeSessionSendCorrelation,
+  sessionSubmitBlockedResult,
+  sessionSubmitFailedResult,
+  sessionSubmitQueuedResult,
+  sessionSubmitSubmittedResult,
   type MaterializedSessionHandoff,
   type SessionSendOptionsBase,
+  type SessionSubmitResult,
 } from "../lib/session-send-contract";
 import {
   deleteSessionComposerDraft as defaultDeleteSessionComposerDraft,
@@ -80,7 +85,7 @@ type SessionMutationClient = Client;
 
 export type SessionMutationWorkflowDeps = {
   lastPromptSent: () => string;
-  sendPrompt: (draft: ComposerDraft, options: SessionMutationSendOptions) => Promise<boolean>;
+  sendPrompt: (draft: ComposerDraft, options: SessionMutationSendOptions) => Promise<SessionSubmitResult>;
   createClientMessageId: () => string;
   selectedSessionId: () => string | null | undefined;
   selectedSession: () => Session | null | undefined;
@@ -163,6 +168,58 @@ export type SessionMutationWorkflowDeps = {
   downloadSessionExport?: (payload: unknown, fileName: string) => string;
   normalizeTodoItems?: typeof defaultNormalizeTodoItems;
 };
+
+type TerminalReplacementSubmitResult = Extract<
+  VesloConversationSubmitResult,
+  { status: "submitted" | "queued" | "blocked" | "failed" }
+>;
+
+function sessionSubmitResultFromReplacementSubmit(
+  result: TerminalReplacementSubmitResult,
+): SessionSubmitResult {
+  if (result.status === "submitted") {
+    return sessionSubmitSubmittedResult({
+      workspaceId: result.workspaceId,
+      conversationId: result.conversationId,
+      opencodeSessionId: result.opencodeSessionId,
+      runId: result.runId,
+      clientMessageId: result.clientMessageId,
+      draftDisposition: result.draftDisposition,
+    });
+  }
+  if (result.status === "queued") {
+    return sessionSubmitQueuedResult({
+      workspaceId: result.workspaceId,
+      conversationId: result.conversationId,
+      opencodeSessionId: result.opencodeSessionId,
+      queueItemId: result.queueItemId,
+      reservedRunId: result.reservedRunId,
+      queuePosition: result.queuePosition,
+      clientMessageId: result.clientMessageId,
+      draftDisposition: result.draftDisposition,
+    });
+  }
+  if (result.status === "blocked") {
+    return sessionSubmitBlockedResult({
+      code: result.code,
+      message: result.message,
+      workspaceId: result.workspaceId,
+      conversationId: result.conversationId,
+      opencodeSessionId: result.opencodeSessionId,
+      clientMessageId: result.clientMessageId,
+      draftDisposition: result.draftDisposition,
+    });
+  }
+  return sessionSubmitFailedResult({
+    code: result.code,
+    message: result.message,
+    workspaceId: result.workspaceId,
+    conversationId: result.conversationId,
+    opencodeSessionId: result.opencodeSessionId,
+    clientMessageId: result.clientMessageId,
+    draftDisposition: result.draftDisposition,
+  });
+}
 
 export type SessionMutationWorkflow = ReturnType<typeof createSessionMutationWorkflow>;
 
@@ -378,18 +435,26 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
     messageID: string,
     draft: ComposerDraft,
     options: SessionMutationReplaceOptions,
-  ): Promise<boolean> {
+  ): Promise<SessionSubmitResult> {
     const sendCorrelation = normalizeSendCorrelation(options);
     if (!sendCorrelation.clientMessageId) {
       deps.recordSendTrace("replaceUserMessage:blocked-missing-client-message-id", {
         origin: sendCorrelation.origin,
       });
-      return false;
+      return sessionSubmitBlockedResult({
+        code: "missing_client_message_id",
+        message: "Cannot replace this message because its client message id is missing.",
+      });
     }
     const replacePreflight = deps.createSendPreflightContext(options.sendTraceId);
     const sendTraceId = replacePreflight.traceId;
     const sessionID = (options.targetSessionId?.trim() || deps.selectedSessionId() || "").trim();
-    if (!sessionID || !messageID.trim()) return false;
+    if (!sessionID || !messageID.trim()) {
+      return sessionSubmitBlockedResult({
+        code: "replacement_missing_target",
+        message: "Cannot replace this message because the target session or message is missing.",
+      });
+    }
 
     deps.recordSendTrace("replaceUserMessage:start", {
       traceId: sendTraceId,
@@ -402,7 +467,10 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
     });
     if (!(await deps.ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
       deps.recordSendTrace("replaceUserMessage:blocked-scoped-workspace", { sessionID });
-      return false;
+      return sessionSubmitBlockedResult({
+        code: "workspace_scope_unavailable",
+        message: "The selected session workspace is not ready for replacement.",
+      });
     }
 
     if (
@@ -413,7 +481,10 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
       ))
     ) {
       deps.recordSendTrace("replaceUserMessage:blocked-scoped-workspace", { traceId: sendTraceId, sessionID });
-      return false;
+      return sessionSubmitBlockedResult({
+        code: "workspace_scope_unavailable",
+        message: "The selected session workspace is not ready for replacement.",
+      });
     }
     const sendTargetWorkspace = deps.resolveSendTargetWorkspaceScope(sessionID);
     replacePreflight.targetWorkspace = sendTargetWorkspace;
@@ -474,7 +545,7 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
           replaceMessageId: messageID,
           clientMessageId: sendCorrelation.clientMessageId,
         });
-        return true;
+        return sessionSubmitResultFromReplacementSubmit(result);
       }
       deps.recordSendTrace(
         result
@@ -489,7 +560,13 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
           ...(result && "code" in result ? { code: result.code, message: result.message } : {}),
         },
       );
-      return false;
+      if (result?.status === "blocked" || result?.status === "failed") {
+        return sessionSubmitResultFromReplacementSubmit(result);
+      }
+      return sessionSubmitFailedResult({
+        code: "replacement_submit_unavailable",
+        message: "Server-owned replacement submit is unavailable for this session.",
+      });
     }
     deps.recordSendTrace("replaceUserMessage:server-submit-unavailable", {
       traceId: sendTraceId,
@@ -499,7 +576,12 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
       hasDirectory: Boolean(submitDirectory),
     });
     const replaceRuntimePreparation = await deps.prepareSendRuntimeForSend("replaceUserMessage", replacePreflight);
-    if (!replaceRuntimePreparation.ok) return false;
+    if (!replaceRuntimePreparation.ok) {
+      return sessionSubmitBlockedResult({
+        code: "replacement_runtime_unavailable",
+        message: "The runtime is not ready for replacement.",
+      });
+    }
     replacePreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
     const c = deps.routedClientForSendTarget(sendTargetWorkspace);
     if (!c) {
@@ -508,7 +590,10 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
         sessionID,
         workspaceId: (sendTargetWorkspace as { workspaceId?: string | null } | null)?.workspaceId ?? null,
       });
-      return false;
+      return sessionSubmitBlockedResult({
+        code: "replacement_no_client",
+        message: "No runtime client is available for replacement.",
+      });
     }
 
     await abortSessionSafe(c, sessionID);
@@ -523,7 +608,7 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
       clientMessageId: sendCorrelation.clientMessageId,
       origin: sendCorrelation.origin,
     });
-    if (!accepted) {
+    if (!accepted.accepted) {
       try {
         const restored = previousRevertMessageID
           ? await revertSession(c, sessionID, previousRevertMessageID)

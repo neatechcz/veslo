@@ -58,12 +58,12 @@ test("clicking a transcript edit action loads the draft and arms replacement sen
   );
   assert.match(
     flowHandleSendSource,
-    /case "replace-transcript-message": \{\s*const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*deps\.transcriptEdit\.setEditingTranscriptMessageId\(null\);\s*const accepted = await controller\.sendPromptImmediate\(draft, \{[\s\S]*reason: "replacement",[\s\S]*expectedSessionKey: sessionKey,[\s\S]*replaceMessageId: action\.messageId,[\s\S]*\}\);/,
+    /case "replace-transcript-message": \{\s*const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*deps\.transcriptEdit\.setEditingTranscriptMessageId\(null\);\s*const submitResult = await controller\.sendPromptImmediate\(draft, \{[\s\S]*reason: "replacement",[\s\S]*expectedSessionKey: sessionKey,[\s\S]*replaceMessageId: action\.messageId,[\s\S]*\}\);/,
     "sending while a transcript edit is armed should clear edit state before handoff and use the captured replacement action id",
   );
   assert.doesNotMatch(
     flowHandleSendSource,
-    /const accepted = await controller\.sendPromptImmediate\(draft, \{[\s\S]*reason: "replacement"[\s\S]*\}\);[\s\S]*deps\.transcriptEdit\.setEditingTranscriptMessageId\(null\);/,
+    /const submitResult = await controller\.sendPromptImmediate\(draft, \{[\s\S]*reason: "replacement"[\s\S]*\}\);[\s\S]*deps\.transcriptEdit\.setEditingTranscriptMessageId\(null\);/,
     "replacement sends should not keep edit state armed until after the handoff settles",
   );
 });
@@ -71,7 +71,7 @@ test("clicking a transcript edit action loads the draft and arms replacement sen
 test("replacement send path reverts to the original message before sending the edited draft", () => {
   assert.match(
     sendWorkflowSource,
-    /async function sendPrompt\(\s*draft: ComposerDraft,\s*options: SessionSendWorkflowSendOptions,[\s\S]*\): Promise<boolean> \{/,
+    /async function sendPrompt\(\s*draft: ComposerDraft,\s*options: SessionSendWorkflowSendOptions,[\s\S]*\): Promise<SessionSubmitResult> \{/,
     "app send API should require a typed send contract for every prompt handoff",
   );
   assert.doesNotMatch(
@@ -88,12 +88,12 @@ test("replacement send path reverts to the original message before sending the e
   );
   assert.match(
     sessionSource,
-    /replaceUserMessageAsync: \(\s*messageId: string,\s*draft: ComposerDraft,\s*options: SessionSendOptionsBase & \{ targetSessionId\?: string \| null \},\s*\) => Promise<boolean>;/,
+    /replaceUserMessageAsync: \(\s*messageId: string,\s*draft: ComposerDraft,\s*options: SessionSendOptionsBase & \{ targetSessionId\?: string \| null \},\s*\) => Promise<SessionSubmitResult>;/,
     "session props should expose a replacement send API",
   );
   assert.match(
     flowSendImmediateSource,
-    /const accepted = await \(options\.replaceMessageId\s*\? deps\.transport\.replaceUserMessageAsync\(options\.replaceMessageId, draft, replaceOptions\)\s*: deps\.transport\.sendPromptAsync\(draft, promptSendOptions\)\s*\);/s,
+    /const submitResult = await \(options\.replaceMessageId\s*\? deps\.transport\.replaceUserMessageAsync\(options\.replaceMessageId, draft, replaceOptions\)\s*: deps\.transport\.sendPromptAsync\(draft, promptSendOptions\)\s*\);/s,
     "sendPromptImmediate should route replacement sends through replaceUserMessageAsync",
   );
   const serverReplacementStart = mutationWorkflowSource.indexOf("const submitConversation = deps.submitConversationFromVesloWriteApi;");
@@ -113,7 +113,7 @@ test("replacement send path reverts to the original message before sending the e
   );
   assert.match(
     mutationWorkflowSource,
-    /if \(!accepted\) \{[\s\S]*previousRevertMessageID\s*\? await revertSession\(c, sessionID, previousRevertMessageID\)\s*: await unrevertSession\(c, sessionID\)/,
+    /if \(!accepted\.accepted\) \{[\s\S]*previousRevertMessageID\s*\? await revertSession\(c, sessionID, previousRevertMessageID\)\s*: await unrevertSession\(c, sessionID\)/,
     "legacy replacement fallback should still restore the prior revert boundary if the edited send is rejected",
   );
   assert.match(
