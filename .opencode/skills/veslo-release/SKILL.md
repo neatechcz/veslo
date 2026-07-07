@@ -38,8 +38,8 @@ Public update invariant:
 - Required public publishing credentials live in GitHub Actions secrets/variables, not in local files.
 - Do not put secrets, local paths, private repo URLs, branch names, CI implementation details, or internal debugging notes into public release notes.
 - Every distributed macOS build must be signed with the Apple Developer ID Application certificate. Do not use `allow_unsigned_macos=true` or `ALLOW_UNSIGNED_MACOS=true` for production, beta, prerelease, staging, or tester-distributed macOS builds.
-- The expected macOS certificate identity is `Developer ID Application: Neatech s.r.o. (D7XT3SG9WA)`. Verify the `.app` with `codesign --verify --deep --strict --verbose=2` and the `.dmg` with `codesign --verify --verbose=2` before calling macOS release assets complete.
-- Notarization can be disabled only when notarization credentials are unavailable; certificate signing must still remain enabled.
+- Every distributed macOS release must be notarized and stapled before upload. Do not ship signed-only macOS builds.
+- The expected macOS certificate identity is `Developer ID Application: Neatech s.r.o. (D7XT3SG9WA)`. Verify the `.app` with `codesign --verify --deep --strict --verbose=2`, the `.dmg` with `codesign --verify --verbose=2`, and notarization with `xcrun stapler validate` before calling macOS release assets complete.
 
 ## Public Release Notes
 
@@ -105,7 +105,7 @@ gh release view <tag> --repo neatechcz/veslo-updates
 Use beta when the user wants a prerelease/internal validation build instead of the stable updater path.
 - Prefer the repository's existing prerelease workflow for branch/SHA prereleases when that matches the request.
 - For a staging/test desktop app release, use the manual `Build Staging App` workflow. It must create a private prerelease in `neatechcz/veslo` and upload the installable staging assets there; GitHub Actions artifacts are only a fallback, not the primary distribution surface.
-- macOS staging/test app builds must use the Apple Developer ID Application certificate and verify `codesign` output for the `.app` and `.dmg`. The staging macOS path is fail-closed when Apple signing secrets are absent; do not require notarization unless the user explicitly asks and notarization credentials are confirmed.
+- macOS staging/test app builds must use the Apple Developer ID Application certificate, notarize and staple the macOS assets, and verify `codesign` plus `xcrun stapler validate` output before upload. The staging macOS path is fail-closed when Apple signing or notarization secrets are absent.
 - If using the production workflow manually for a beta-style release, set the GitHub Release as prerelease and do not mark it latest.
 - Make release notes public-safe, but label the release as beta/prerelease and describe expected validation scope.
 - Do not publish a beta as the production latest update unless the user explicitly asks and the workflow supports that safely.
