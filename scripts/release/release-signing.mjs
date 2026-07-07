@@ -46,7 +46,7 @@ export function resolveReleaseSigning(options = {}) {
   const allowUnsignedMacos = parseBool(
     options.allowUnsignedMacos ?? readOption("ALLOW_UNSIGNED_MACOS", "false"),
   );
-  const macosNotarize = parseBool(options.macosNotarize ?? readOption("MACOS_NOTARIZE", "false"));
+  const macosNotarize = parseBool(options.macosNotarize ?? readOption("MACOS_NOTARIZE", "true"));
 
   if (!hasValue(updaterPrivateKey) || !hasValue(updaterPrivateKeyPassword)) {
     throw new Error(
@@ -95,29 +95,31 @@ export function resolveReleaseSigning(options = {}) {
     };
   }
 
-  if (macosNotarize) {
-    if (!appleSigningReady) {
-      throw new Error(
-        "APPLE_SIGNING_IDENTITY, APPLE_CERTIFICATE, and APPLE_CERTIFICATE_PASSWORD are required when macOS notarization is enabled.",
-      );
-    }
-    if (!appleNotaryReady) {
-      throw new Error(
-        "APPLE_API_KEY/APPLE_API_ISSUER and APPLE_NOTARY_API_KEY_P8_BASE64 or APPLE_API_KEY_PATH, or APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID are required when macOS notarization is enabled.",
-      );
-    }
-  }
-
-  let macosBuildMode = "signed";
-  if (appleSigningReady) {
-    macosBuildMode = macosNotarize ? "signed-notarized" : "signed";
-  } else if (allowUnsignedMacos) {
-    macosBuildMode = "unsigned";
-  } else {
+  if (allowUnsignedMacos) {
     throw new Error(
-      "APPLE_SIGNING_IDENTITY, APPLE_CERTIFICATE, and APPLE_CERTIFICATE_PASSWORD are required unless unsigned macOS releases are explicitly enabled.",
+      "Unsigned macOS releases are not allowed. Every distributed macOS release must be signed, notarized, and stapled.",
     );
   }
+
+  if (!macosNotarize) {
+    throw new Error(
+      "macOS releases must be notarized. Set MACOS_NOTARIZE=true and provide Apple notarization credentials.",
+    );
+  }
+
+  if (!appleSigningReady) {
+    throw new Error(
+      "APPLE_SIGNING_IDENTITY, APPLE_CERTIFICATE, and APPLE_CERTIFICATE_PASSWORD are required for macOS notarized releases.",
+    );
+  }
+
+  if (!appleNotaryReady) {
+    throw new Error(
+      "APPLE_API_KEY/APPLE_API_ISSUER and APPLE_NOTARY_API_KEY_P8_BASE64 or APPLE_API_KEY_PATH, or APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID are required for macOS notarized releases.",
+    );
+  }
+
+  const macosBuildMode = "signed-notarized";
 
   return {
     updaterSigningReady: true,

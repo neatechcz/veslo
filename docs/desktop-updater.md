@@ -149,7 +149,7 @@ Required secrets:
 - `TAURI_SIGNING_PRIVATE_KEY`
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
 
-Optional macOS signing and notarization secrets:
+Required macOS signing and notarization secrets:
 
 - `APPLE_SIGNING_IDENTITY`
 - `APPLE_CODESIGN_CERT_P12_BASE64`
@@ -176,8 +176,12 @@ Behavior:
 
 - updater signing is always required
 - non-macOS releases only require updater signing
-- macOS can run in signed, signed-notarized, or explicitly allowed unsigned test mode
-- unsigned macOS is only allowed through the `allow_unsigned_macos` workflow input or repo default
+- Every distributed macOS build must be signed with the Apple Developer ID Application certificate.
+- Do not use `allow_unsigned_macos=true` or `ALLOW_UNSIGNED_MACOS=true` for production, beta, prerelease, staging, or tester-distributed macOS builds.
+- Every distributed macOS release must be notarized and stapled before upload.
+- verify the expected certificate identity, `Developer ID Application: Neatech s.r.o. (D7XT3SG9WA)`, with `codesign --verify --deep --strict --verbose=2` for the `.app` and `codesign --verify --verbose=2` for the `.dmg`, then verify notarization with `xcrun stapler validate`
+- Do not ship signed-only macOS builds.
+- signed-only and unsigned macOS release artifacts are not allowed for production, prerelease, staging, or tester-distributed builds
 
 ### Source release vs public release
 
@@ -322,7 +326,7 @@ pnpm release:prepare
 pnpm release:ship --watch
 ```
 
-Or use the `Release App` workflow dispatch directly if you need custom inputs such as `allow_unsigned_macos=true`.
+Or use the `Release App` workflow dispatch directly when you need custom release notes, draft, prerelease, or publishing inputs.
 
 #### Follow-up release
 
@@ -382,8 +386,9 @@ If the UI reports an install error before the updater hands off to Tauri, check 
 Check:
 
 - updater signing secrets are set
-- Apple signing secrets are set for signed/notarized runs
-- if this is an internal test-only build, use `allow_unsigned_macos=true`
+- Apple signing secrets are set
+- Apple notarization secrets are set
+- the workflow reaches the notarization and `xcrun stapler validate` steps before upload
 
 ## Current Gaps
 

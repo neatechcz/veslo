@@ -17,6 +17,7 @@ repo_root="${GITHUB_WORKSPACE:-$(pwd)}"
 target_triple="${VESLO_MACOS_TARGET_TRIPLE:-}"
 auth_mode="${VESLO_NOTARY_AUTH_MODE:-}"
 notary_timeout="${VESLO_NOTARY_TIMEOUT:-30m}"
+require_updater_artifacts="${VESLO_REQUIRE_UPDATER_ARTIFACTS:-true}"
 
 require_env VESLO_MACOS_TARGET_TRIPLE
 require_env VESLO_NOTARY_AUTH_MODE
@@ -62,9 +63,15 @@ app_path="$(find "$macos_bundle_dir" -maxdepth 1 -type d -name "*.app" | sort | 
 [ -n "$app_path" ] || fail "No .app bundle found in $macos_bundle_dir"
 
 app_tar_path="$(find "$macos_bundle_dir" -maxdepth 1 -type f -name "*.app.tar.gz" | sort | head -n 1 || true)"
-[ -n "$app_tar_path" ] || fail "No updater tarball found in $macos_bundle_dir"
-app_tar_sig_path="$app_tar_path.sig"
-[ -s "$app_tar_sig_path" ] || fail "No updater signature found: $app_tar_sig_path"
+app_tar_sig_path=""
+if [ -n "$app_tar_path" ]; then
+  app_tar_sig_path="$app_tar_path.sig"
+  [ -s "$app_tar_sig_path" ] || fail "No updater signature found: $app_tar_sig_path"
+elif [ "$require_updater_artifacts" = "true" ]; then
+  fail "No updater tarball found in $macos_bundle_dir"
+else
+  echo "No updater tarball found in $macos_bundle_dir; continuing because VESLO_REQUIRE_UPDATER_ARTIFACTS=false"
+fi
 
 dmg_path="$(find "$dmg_bundle_dir" -maxdepth 1 -type f -name "*.dmg" | sort | head -n 1 || true)"
 [ -n "$dmg_path" ] || fail "No DMG found in $dmg_bundle_dir"
@@ -172,9 +179,11 @@ spctl -a -vvv -t open --context context:primary-signature "$dmg_path"
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   {
     echo "asset_arch=$asset_arch"
-    echo "app_tar_path=$app_tar_path"
-    echo "app_tar_sig_path=$app_tar_sig_path"
     echo "dmg_path=$dmg_path"
+    if [ -n "$app_tar_path" ]; then
+      echo "app_tar_path=$app_tar_path"
+      echo "app_tar_sig_path=$app_tar_sig_path"
+    fi
   } >> "$GITHUB_OUTPUT"
 fi
 

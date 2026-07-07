@@ -28,16 +28,6 @@ on:
         required: false
         type: boolean
         default: false
-      notarize:
-        description: "Notarize macOS builds (requires Apple team configured)"
-        required: false
-        type: boolean
-        default: false
-      allow_unsigned_macos:
-        description: "Allow unsigned macOS artifacts for internal test releases"
-        required: false
-        type: boolean
-        default: false
       build_tauri:
         description: "Build desktop (Tauri) artifacts"
         required: false
@@ -72,8 +62,6 @@ jobs:
       release_body: ${{ steps.resolve.outputs.release_body }}
       draft: ${{ steps.resolve.outputs.draft }}
       prerelease: ${{ steps.resolve.outputs.prerelease }}
-      notarize: ${{ steps.resolve.outputs.notarize }}
-      allow_unsigned_macos: ${{ steps.resolve.outputs.allow_unsigned_macos }}
       build_tauri: ${{ steps.resolve.outputs.build_tauri }}
       publish_sidecars: ${{ steps.resolve.outputs.publish_sidecars }}
       publish_npm: ${{ steps.resolve.outputs.publish_npm }}
@@ -92,15 +80,11 @@ jobs:
           INPUT_RELEASE_BODY: ${{ github.event.inputs.release_body }}
           INPUT_DRAFT: ${{ github.event.inputs.draft }}
           INPUT_PRERELEASE: ${{ github.event.inputs.prerelease }}
-          INPUT_NOTARIZE: ${{ github.event.inputs.notarize }}
-          INPUT_ALLOW_UNSIGNED_MACOS: ${{ github.event.inputs.allow_unsigned_macos }}
           INPUT_BUILD_TAURI: ${{ github.event.inputs.build_tauri }}
           INPUT_PUBLISH_SIDECARS: ${{ github.event.inputs.publish_sidecars }}
           INPUT_PUBLISH_NPM: ${{ github.event.inputs.publish_npm }}
           DEFAULT_PUBLISH_SIDECARS: ${{ vars.RELEASE_PUBLISH_SIDECARS }}
           DEFAULT_PUBLISH_NPM: ${{ vars.RELEASE_PUBLISH_NPM }}
-          DEFAULT_NOTARIZE: ${{ vars.MACOS_NOTARIZE }}
-          DEFAULT_ALLOW_UNSIGNED_MACOS: ${{ vars.RELEASE_ALLOW_UNSIGNED_MACOS }}
           DEFAULT_BUILD_TAURI: ${{ vars.RELEASE_BUILD_TAURI }}
         run: |
           set -euo pipefail
@@ -147,15 +131,6 @@ jobs:
             fi
           fi
           prerelease="${INPUT_PRERELEASE:-false}"
-          notarize="${INPUT_NOTARIZE:-}"
-          if [ -z "$notarize" ]; then
-            notarize="${DEFAULT_NOTARIZE:-true}"
-          fi
-          allow_unsigned_macos="${INPUT_ALLOW_UNSIGNED_MACOS:-}"
-          if [ -z "$allow_unsigned_macos" ]; then
-            allow_unsigned_macos="${DEFAULT_ALLOW_UNSIGNED_MACOS:-false}"
-          fi
-
           build_tauri="${INPUT_BUILD_TAURI:-}"
           if [ -z "$build_tauri" ]; then
             build_tauri="${DEFAULT_BUILD_TAURI:-true}"
@@ -179,8 +154,6 @@ jobs:
           echo "release_name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
           echo "draft=$draft" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-          echo "notarize=$notarize" >> "$GITHUB_OUTPUT"
-          echo "allow_unsigned_macos=$allow_unsigned_macos" >> "$GITHUB_OUTPUT"
           echo "build_tauri=$build_tauri" >> "$GITHUB_OUTPUT"
           echo "publish_sidecars=$publish_sidecars" >> "$GITHUB_OUTPUT"
           echo "publish_npm=$publish_npm" >> "$GITHUB_OUTPUT"
@@ -259,8 +232,8 @@ jobs:
       RELEASE_BODY: ${{ needs.resolve-release.outputs.release_body }}
       RELEASE_DRAFT: ${{ needs.resolve-release.outputs.draft }}
       RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}
-      MACOS_NOTARIZE: ${{ needs.resolve-release.outputs.notarize }}
-      ALLOW_UNSIGNED_MACOS: ${{ needs.resolve-release.outputs.allow_unsigned_macos }}
+      MACOS_NOTARIZE: true
+      ALLOW_UNSIGNED_MACOS: false
       # Ensure Tauri's beforeBuildCommand (prepare:sidecar) uses our fork.
       OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
       OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
@@ -599,59 +572,6 @@ jobs:
             "$dmg_asset_path" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
-
-      - name: Build + upload (signed macOS)
-        if: matrix.os_type == 'macos' && steps.signing.outputs.shouldBuildSignedMacos == 'true' && steps.signing.outputs.shouldNotarizeMacos != 'true'
-        uses: tauri-apps/tauri-action@390cbe447412ced1303d35abe75287949e43437a
-        env:
-          CI: true
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-          # Tauri updater signing
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
-          # macOS signing
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
-        with:
-          tagName: ${{ env.RELEASE_TAG }}
-          releaseName: ${{ env.RELEASE_NAME }}
-          releaseBody: ${{ env.RELEASE_BODY }}
-          releaseDraft: ${{ env.RELEASE_DRAFT == 'true' }}
-          prerelease: ${{ env.RELEASE_PRERELEASE == 'true' }}
-          projectPath: packages/desktop
-          tauriScript: pnpm exec tauri -vvv
-          args: ${{ matrix.args }}
-          retryAttempts: 3
-          uploadUpdaterJson: false
-          updaterJsonPreferNsis: true
-          releaseAssetNamePattern: veslo-desktop-[platform]-[arch][ext]
-
-      - name: Build + upload (unsigned macOS)
-        if: matrix.os_type == 'macos' && steps.signing.outputs.shouldBuildUnsignedMacos == 'true'
-        uses: tauri-apps/tauri-action@390cbe447412ced1303d35abe75287949e43437a
-        env:
-          CI: true
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-          # Tauri updater signing
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: ${{ env.RELEASE_TAG }}
-          releaseName: ${{ env.RELEASE_NAME }}
-          releaseBody: ${{ env.RELEASE_BODY }}
-          releaseDraft: ${{ env.RELEASE_DRAFT == 'true' }}
-          prerelease: ${{ env.RELEASE_PRERELEASE == 'true' }}
-          projectPath: packages/desktop
-          tauriScript: pnpm exec tauri -vvv
-          args: ${{ matrix.args }}
-          retryAttempts: 3
-          uploadUpdaterJson: false
-          updaterJsonPreferNsis: true
-          releaseAssetNamePattern: veslo-desktop-[platform]-[arch][ext]
 
       - name: Verify versions.json bundled (macOS)
         if: success() && matrix.os_type == 'macos'

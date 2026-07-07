@@ -84,7 +84,7 @@ jobs:
       RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
       RELEASE_NAME: ${{ needs.prepare-release.outputs.release_name }}
       RELEASE_BODY: ${{ needs.prepare-release.outputs.release_body }}
-      MACOS_NOTARIZE: ${{ vars.MACOS_NOTARIZE || 'false' }}
+      MACOS_NOTARIZE: true
       OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
       OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
       TAURI_WINDOWS_RELEASE_CONFIG: src-tauri/tauri.windows.release.conf.json
@@ -340,7 +340,7 @@ jobs:
           "VESLO_WINDOWS_SIGNING_METADATA_PATH=$metadataPath" >> $env:GITHUB_ENV
 
       - name: Resolve macOS signing
-        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
+        if: matrix.os_type == 'macos'
         id: macos_signing
         shell: bash
         env:
@@ -465,27 +465,6 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
-        with:
-          tagName: ${{ env.RELEASE_TAG }}
-          releaseName: ${{ env.RELEASE_NAME }}
-          releaseBody: ${{ env.RELEASE_BODY }}
-          prerelease: true
-          releaseDraft: false
-          projectPath: packages/desktop
-          tauriScript: pnpm exec tauri -vvv
-          args: ${{ matrix.args }}
-          retryAttempts: 3
-
-      - name: Build + upload (unsigned macOS)
-        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE != 'true'
-        uses: tauri-apps/tauri-action@v0.5.17
-        env:
-          CI: true
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-          # Tauri updater signing
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: ${{ env.RELEASE_NAME }}

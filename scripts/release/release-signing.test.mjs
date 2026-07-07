@@ -29,47 +29,34 @@ test("requires updater signing secrets for any updater release", () => {
   );
 });
 
-test("resolves signed macOS mode when Apple signing secrets are present", () => {
-  const result = resolveReleaseSigning({
-    updaterPrivateKey: "private-key",
-    updaterPrivateKeyPassword: "secret",
-    appleSigningIdentity: "Developer ID Application: Example",
-    appleCertificate: "base64-cert",
-    appleCertificatePassword: "cert-password",
-    allowUnsignedMacos: false,
-    macosNotarize: false,
-  });
-
-  assert.equal(result.appleSigningReady, true);
-  assert.equal(result.macosBuildMode, "signed");
-  assert.equal(result.shouldBuildUnsignedMacos, false);
-});
-
-test("resolves unsigned macOS mode only when explicitly enabled", () => {
-  const result = resolveReleaseSigning({
-    osType: "macos",
-    updaterPrivateKey: "private-key",
-    updaterPrivateKeyPassword: "secret",
-    allowUnsignedMacos: true,
-    macosNotarize: false,
-  });
-
-  assert.equal(result.appleSigningReady, false);
-  assert.equal(result.macosBuildMode, "unsigned");
-  assert.equal(result.shouldBuildUnsignedMacos, true);
-});
-
-test("rejects unsigned macOS mode in strict releases", () => {
+test("rejects signed-only macOS releases", () => {
   assert.throws(
     () =>
       resolveReleaseSigning({
         osType: "macos",
         updaterPrivateKey: "private-key",
         updaterPrivateKeyPassword: "secret",
+        appleSigningIdentity: "Developer ID Application: Example",
+        appleCertificate: "base64-cert",
+        appleCertificatePassword: "cert-password",
         allowUnsignedMacos: false,
         macosNotarize: false,
       }),
-    /APPLE_SIGNING_IDENTITY|unsigned macOS/i,
+    /macOS releases must be notarized/i,
+  );
+});
+
+test("rejects unsigned macOS releases even when explicitly enabled", () => {
+  assert.throws(
+    () =>
+      resolveReleaseSigning({
+        osType: "macos",
+        updaterPrivateKey: "private-key",
+        updaterPrivateKeyPassword: "secret",
+        allowUnsignedMacos: true,
+        macosNotarize: true,
+      }),
+    /unsigned macOS releases are not allowed/i,
   );
 });
 
@@ -107,6 +94,25 @@ test("accepts App Store Connect API key notarization secrets", () => {
 
   assert.equal(result.appleNotaryReady, true);
   assert.equal(result.appleNotaryAuthMode, "api-key");
+  assert.equal(result.macosBuildMode, "signed-notarized");
+  assert.equal(result.shouldNotarizeMacos, true);
+});
+
+test("defaults macOS releases to notarized mode", () => {
+  const result = resolveReleaseSigning({
+    osType: "macos",
+    updaterPrivateKey: "private-key",
+    updaterPrivateKeyPassword: "secret",
+    appleSigningIdentity: "Developer ID Application: Example",
+    appleCertificate: "base64-cert",
+    appleCertificatePassword: "cert-password",
+    appleNotaryApiKeyId: "key-id",
+    appleNotaryApiIssuerId: "issuer-id",
+    appleNotaryApiKeyPath: "/tmp/AuthKey.p8",
+    allowUnsignedMacos: false,
+  });
+
+  assert.equal(result.macosNotarize, true);
   assert.equal(result.macosBuildMode, "signed-notarized");
   assert.equal(result.shouldNotarizeMacos, true);
 });
@@ -184,9 +190,7 @@ test("workflow routes signing through the release signing resolver", () => {
   const workflowPath = resolve(import.meta.dirname, "../../.github/workflows/release-macos-aarch64.yml");
   const workflow = readFileSync(workflowPath, "utf8");
 
-  assert.match(workflow, /allow_unsigned_macos:/);
   assert.match(workflow, /release-signing\.mjs/);
-  assert.match(workflow, /shouldBuildUnsignedMacos/);
   assert.match(workflow, /publish-tauri-windows:/);
   assert.match(workflow, /azure\/login@/);
   assert.match(workflow, /Artifact Signing dlib package/);
@@ -209,6 +213,11 @@ test("workflow routes signing through the release signing resolver", () => {
   assert.match(workflow, /APPLE_NOTARY_APPLE_ID/);
   assert.match(workflow, /APPLE_NOTARY_APP_SPECIFIC_PASSWORD/);
   assert.match(workflow, /APPLE_TEAM_ID/);
+  assert.doesNotMatch(workflow, /allow_unsigned_macos:/);
+  assert.doesNotMatch(workflow, /Build \+ upload \(signed macOS\)/);
+  assert.doesNotMatch(workflow, /Build \+ upload \(unsigned macOS\)/);
+  assert.doesNotMatch(workflow, /shouldBuildUnsignedMacos/);
+  assert.doesNotMatch(workflow, /shouldBuildSignedMacos/);
 });
 
 test("manual macOS notarization script staples the DMG and preserves updater artifacts", () => {
@@ -333,12 +342,14 @@ test("release checklist documents Windows signing timeout controls", () => {
   assert.match(checklist, /Azure Artifact Signing request/);
 });
 
-test("release docs require Developer ID certificate signing for every macOS release", () => {
+test("release docs require notarization and Developer ID certificate signing for every macOS release", () => {
   const requiredText = [
     "Every distributed macOS build must be signed with the Apple Developer ID Application certificate.",
     "Do not use `allow_unsigned_macos=true` or `ALLOW_UNSIGNED_MACOS=true` for production, beta, prerelease, staging, or tester-distributed macOS builds.",
-    "Notarization can be disabled only when notarization credentials are unavailable; certificate signing must still remain enabled.",
+    "Every distributed macOS release must be notarized and stapled before upload.",
+    "Do not ship signed-only macOS builds.",
     "codesign --verify --deep --strict --verbose=2",
+    "xcrun stapler validate",
     "Developer ID Application: Neatech s.r.o. (D7XT3SG9WA)",
   ];
   const docs = [
@@ -348,6 +359,7 @@ test("release docs require Developer ID certificate signing for every macOS rele
     "../../.opencode/skills/release/SKILL.md",
     "../../.opencode/skills/veslo-release/SKILL.md",
     "../../.claude/skills/veslo-release/SKILL.md",
+    "../../docs/desktop-updater.md",
   ];
 
   for (const docPath of docs) {
@@ -355,6 +367,31 @@ test("release docs require Developer ID certificate signing for every macOS rele
     for (const text of requiredText) {
       assert.match(doc, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `${docPath} missing ${text}`);
     }
+    assert.doesNotMatch(doc, /Notarization can be disabled/i, `${docPath} still allows disabling notarization`);
+    assert.doesNotMatch(doc, /do not require notarization/i, `${docPath} still treats notarization as optional`);
+  }
+});
+
+test("all macOS release workflows require notarization before upload", () => {
+  const workflows = [
+    "../../.github/workflows/release-macos-aarch64.yml",
+    "../../.github/workflows/prerelease.yml",
+    "../../.github/workflows/build-staging-app.yml",
+  ];
+
+  for (const workflowPath of workflows) {
+    const workflow = readFileSync(resolve(import.meta.dirname, workflowPath), "utf8");
+
+    assert.match(workflow, /MACOS_NOTARIZE:\s*(true|\$\{\{ env\.MACOS_NOTARIZE \}\})/);
+    assert.match(workflow, /APPLE_NOTARY_API_KEY_ID/);
+    assert.match(workflow, /APPLE_NOTARY_API_ISSUER_ID/);
+    assert.match(workflow, /APPLE_NOTARY_API_KEY_P8_BASE64/);
+    assert.match(workflow, /APPLE_NOTARY_APPLE_ID/);
+    assert.match(workflow, /APPLE_NOTARY_APP_SPECIFIC_PASSWORD/);
+    assert.match(workflow, /APPLE_TEAM_ID/);
+    assert.doesNotMatch(workflow, /MACOS_NOTARIZE:\s*false/);
+    assert.doesNotMatch(workflow, /Build \+ upload \(unsigned macOS\)/);
+    assert.doesNotMatch(workflow, /Build \+ upload \(signed macOS\)/);
   }
 });
 
