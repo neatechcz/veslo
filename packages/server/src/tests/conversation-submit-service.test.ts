@@ -573,6 +573,67 @@ describe("conversation submit service", () => {
     expect(createConversationCalls).toBe(1);
   });
 
+  test("first-session blocked submit after materialization returns materialized session metadata", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-materialized-blocked-"));
+    tempDirs.push(workspaceRoot);
+    let createConversationCalls = 0;
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-materialized-blocked-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => {
+        createConversationCalls += 1;
+      }),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+    });
+
+    const result = await service.submit({
+      workspace: workspace(workspaceRoot),
+      body: {
+        clientMessageId: "msg-materialized-run-blocked",
+        origin: "session:normal",
+        target: { directory: workspaceRoot, pendingClientSessionId: "pending-materialized-blocked" },
+        draft: {
+          mode: "prompt",
+          text: "Create then block",
+          parts: [{ type: "text", text: "Create then block" }],
+        },
+        options: {},
+      },
+      resolveDirectory: async () => workspaceRoot,
+      submitResolvedRun: async () => ({
+        httpStatus: 200,
+        payload: {
+          status: "blocked",
+          code: "runtime_busy",
+          message: "Runtime is busy",
+          draftDisposition: "restore",
+          recoverable: true,
+        },
+      }),
+    });
+
+    expect(result.httpStatus).toBe(200);
+    expect(result.payload.status).toBe("blocked");
+    expect(result.payload.code).toBe("runtime_busy");
+    expect(result.payload.draftDisposition).toBe("restore");
+    expect("materializedSession" in result.payload ? result.payload.materializedSession : null).toMatchObject({
+      id: "sess_1",
+      conversationId: "conv_1",
+      opencodeSessionId: "sess_1",
+    });
+    expect("workspaceId" in result.payload ? result.payload.workspaceId : null).toBe("ws_1");
+    expect("conversationId" in result.payload ? result.payload.conversationId : null).toBe("conv_1");
+    expect("opencodeSessionId" in result.payload ? result.payload.opencodeSessionId : null).toBe("sess_1");
+    expect("clientMessageId" in result.payload ? result.payload.clientMessageId : null).toBe(
+      "msg-materialized-run-blocked",
+    );
+    expect("pendingClientSessionId" in result.payload ? result.payload.pendingClientSessionId : null).toBe(
+      "pending-materialized-blocked",
+    );
+    expect(createConversationCalls).toBe(1);
+  });
+
   test("blocks remote workspace submit before local resolution or materialization", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-remote-"));
     tempDirs.push(workspaceRoot);
