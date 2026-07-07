@@ -223,6 +223,41 @@ test("GET /ai-gateway/me/ai-access returns the signed-in user's admin-managed ai
   }
 });
 
+test("GET /api/me/ai-access returns bounded JSON when session lookup throws", async () => {
+  const app = createApp({
+    userCredentials: {
+      sessionResolver: {
+        async resolveSession() {
+          throw new Error("den lookup failed");
+        },
+      },
+      aiAccess: {
+        async getUserAiAccess() {
+          assert.fail("ai access lookup should not run when session lookup throws");
+        },
+        async upsertUserAiAccess() {
+          throw new Error("unused");
+        },
+      },
+    } as never,
+  });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/api/me/ai-access`, {
+      headers: { authorization: "Bearer den_token_throws" },
+    });
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), { error: "user_session_lookup_failed" });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
 test("legacy user BYOK credential routes are no longer exposed", async () => {
   const runtime = createUserAiAccessApp({});
   const server = runtime.app.listen(0, "127.0.0.1");

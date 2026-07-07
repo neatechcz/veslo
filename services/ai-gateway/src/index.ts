@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import { pathToFileURL } from "node:url";
 
 import { createDb } from "./db/index.js";
@@ -6,7 +6,7 @@ import { ensureAiGatewaySchema } from "./db/schema-reconcile.js";
 import { isAdminAlertEmailConfigured } from "./email/admin-alert-mailer.js";
 import { env } from "./env.js";
 import { createAdminRouter, createDefaultAdminService, type AdminService } from "./http/admin.js";
-import { createProxyRouter, type ProxyDependencies } from "./http/proxy.js";
+import { createProxyRouter, readGatewayAccessToken, type ProxyDependencies } from "./http/proxy.js";
 import { createReadinessRouter, type ReadinessDependencies } from "./http/readiness.js";
 import { createUserCredentialsRouter, type UserCredentialDependencies } from "./http/user-credentials.js";
 import {
@@ -31,6 +31,8 @@ export function createApp(deps: AppDependencies = {}) {
   const app = express();
   const runtime = deps.runtime ?? createDefaultRuntimeState();
   const managedAiProxyJsonParser = express.json({ limit: MANAGED_AI_PROXY_JSON_LIMIT });
+  app.use("/providers", requireProviderGatewayAuthHeader);
+  app.use("/ai-gateway/providers", requireProviderGatewayAuthHeader);
   app.use("/providers", managedAiProxyJsonParser);
   app.use("/ai-gateway/providers", managedAiProxyJsonParser);
   app.use(express.json());
@@ -47,6 +49,14 @@ export function createApp(deps: AppDependencies = {}) {
   app.use("/ai-gateway", createProxyRouter(proxyDeps));
 
   return app;
+}
+
+function requireProviderGatewayAuthHeader(req: Request, res: Response, next: NextFunction) {
+  if (!readGatewayAccessToken(req)) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  next();
 }
 
 export async function startServer() {

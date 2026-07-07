@@ -120,6 +120,18 @@ describe("createAiGatewayRuntimeOwner", () => {
       source: "legacy-header",
     });
 
+    const redactedLegacy = owner.resolveProviderAuthorization({
+      actor,
+      request: new Request("http://localhost", {
+        headers: { "x-veslo-gateway-token": "[REDACTED]" },
+      }),
+      accessTokenHeader: "x-veslo-gateway-token",
+    });
+    expect(redactedLegacy).toEqual({
+      authorization: "Bearer runtime-token",
+      source: "ai-access-token",
+    });
+
     owner.syncRuntimeAuthorizationFromAccessBundle({
       actor,
       callerAuthorization: "Bearer caller-token",
@@ -175,6 +187,19 @@ describe("createAiGatewayRuntimeOwner", () => {
     expect(legacy).toEqual({
       authorization: "Bearer legacy-token",
       source: "legacy-header",
+    });
+
+    const redactedLegacy = owner.resolveProviderAuthorization({
+      actor: opencodeActor,
+      request: new Request("http://localhost", {
+        headers: { "x-veslo-gateway-token": "Bearer [redacted]" },
+      }),
+      accessTokenHeader: "x-veslo-gateway-token",
+      runtimeAuthorizationActorTokenHash: actor.tokenHash,
+    });
+    expect(redactedLegacy).toEqual({
+      authorization: "Bearer runtime-token",
+      source: "ai-access-token",
     });
 
     owner.syncRuntimeAuthorizationFromAccessBundle({
@@ -280,6 +305,46 @@ describe("createAiGatewayRuntimeOwner", () => {
 
     expect(owner.hasProviderHitAfter({
       sessionId: "session-1",
+      workspaceId: "workspace-1",
+      startedAt: now - 1,
+    })).toBe(true);
+  });
+
+  test("does not satisfy session-scoped provider start detection with another run's workspace hit", () => {
+    const now = 1000;
+    const owner = createAiGatewayRuntimeOwner({ now: () => now });
+    owner.registerActiveRun({
+      ...activeRun,
+      runId: "run-a",
+      opencodeSessionId: "session-a",
+    });
+    owner.registerActiveRun({
+      ...activeRun,
+      runId: "run-b",
+      opencodeSessionId: "session-b",
+    });
+
+    owner.recordSessionHit({
+      sessionId: "session-b",
+      workspaceId: "workspace-1",
+      requestId: "request-b",
+      provider: "openai",
+      gatewayPath: "/providers/openai/v1/chat/completions",
+      at: now,
+    });
+
+    expect(owner.hasProviderHitAfter({
+      sessionId: "session-a",
+      workspaceId: "workspace-1",
+      startedAt: now - 1,
+    })).toBe(false);
+    expect(owner.hasProviderHitAfter({
+      sessionId: "session-b",
+      workspaceId: "workspace-1",
+      startedAt: now - 1,
+    })).toBe(true);
+    expect(owner.hasProviderHitAfter({
+      sessionId: "",
       workspaceId: "workspace-1",
       startedAt: now - 1,
     })).toBe(true);

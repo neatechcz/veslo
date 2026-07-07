@@ -93,6 +93,13 @@ export function containsUnresolvedOpenCodeSessionId(value?: string | null): bool
   return (value?.trim() ?? "").includes(OPENCODE_SESSION_ID_MARKER);
 }
 
+function isRedactedGatewayTokenPlaceholder(value: string): boolean {
+  const normalized = value.trim();
+  if (!normalized) return false;
+  const token = normalized.replace(/^Bearer\s+/i, "").trim().toLowerCase();
+  return token === AI_GATEWAY_REDACTED_SECRET_VALUE.toLowerCase() || token === "[redacted]" || token === "redacted";
+}
+
 function actorRuntimeTokenKey(actor?: Actor): string {
   return actor?.tokenHash?.trim() ?? "";
 }
@@ -341,7 +348,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     source: "legacy-header" | AiGatewayRuntimeAuthorizationEntry["source"];
   } {
     const legacyAccessToken = input.request.headers.get(input.accessTokenHeader)?.trim() ?? "";
-    if (legacyAccessToken) {
+    if (legacyAccessToken && !isRedactedGatewayTokenPlaceholder(legacyAccessToken)) {
       return {
         authorization: `Bearer ${legacyAccessToken}`,
         source: "legacy-header",
@@ -592,6 +599,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     ) {
       return true;
     }
+    if (normalizedSessionId) return false;
     if (
       normalizedWorkspaceId &&
       (workspaceHits.get(normalizedWorkspaceId) ?? []).some((hit) => hit.at >= input.startedAt)

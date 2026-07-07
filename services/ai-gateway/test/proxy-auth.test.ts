@@ -80,7 +80,7 @@ test("provider proxy rejects requests without gateway bearer auth", async () => 
   }
 });
 
-test("provider proxy accepts large model request bodies before gateway auth", async () => {
+test("provider proxy rejects unauthenticated malformed JSON before body parsing", async () => {
   const app = createApp({
     proxy: {
       gatewaySessions: {
@@ -134,22 +134,93 @@ test("provider proxy accepts large model request bodies before gateway auth", as
 
   try {
     const { port } = server.address() as AddressInfo;
-    const largeContext = "x".repeat(256 * 1024);
+    const malformedLargeJson = `{"model":"gpt-5.5","messages":["${"x".repeat(256 * 1024)}`;
     const response = await fetch(`http://127.0.0.1:${port}/providers/codex_oauth/v1/chat/completions`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "x-veslo-session-id": "session_large_context_1",
       },
-      body: JSON.stringify({
-        model: "gpt-5.5",
-        stream: true,
-        messages: [{ role: "user", content: largeContext }],
-      }),
+      body: malformedLargeJson,
     });
 
     assert.equal(response.status, 401);
     assert.deepEqual(await response.json(), { error: "unauthorized" });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("provider proxy returns bounded JSON when gateway session lookup throws", async () => {
+  const app = createApp({
+    proxy: {
+      gatewaySessions: {
+        async resolveSession() {
+          throw new Error("den lookup failed");
+        },
+      },
+      credentials: {
+        async getCredentialRecordById() {
+          return null;
+        },
+        async listHealthyCredentialRecordIds() {
+          return [];
+        },
+        async getCredentialRecordByBindingId() {
+          return null;
+        },
+        async markCredentialState() {},
+      },
+      usageRepository: {
+        async recordUsage() {},
+      },
+      leaseBroker: {
+        async getOrCreateActiveLease() {
+          assert.fail("lease broker should not be reached when gateway session lookup throws");
+        },
+        async handleUpstreamFailure() {
+          assert.fail("failure handler should not be reached when gateway session lookup throws");
+        },
+      } as never,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          assert.fail("token broker should not be reached when gateway session lookup throws");
+        },
+      },
+      openAiTransport: {
+        async chatCompletions() {
+          assert.fail("transport should not be reached when gateway session lookup throws");
+        },
+      },
+      anthropicTransport: {
+        async messages() {
+          assert.fail("transport should not be reached when gateway session lookup throws");
+        },
+      },
+    } as never,
+  });
+
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/providers/openai/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer gateway-access-token",
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_auth_lookup_throw",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: "Hello" }],
+      }),
+    });
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), { error: "gateway_auth_lookup_failed" });
   } finally {
     server.close();
     await once(server, "close");
