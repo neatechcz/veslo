@@ -90,6 +90,63 @@ Consider startup complete only when both appear in logs:
 
 If only Vite runs, desktop runtime is not fully started; stop it and use the desktop startup flow.
 
+## Send Boundary Validation Diagnostics
+
+App-side send boundary validation is controlled by
+`VITE_VESLO_SEND_BOUNDARY_VALIDATION`:
+
+- `off` skips validation and produces no validation trace events.
+- `report` is the default; malformed send boundary payloads are recorded but do
+  not block the send.
+- `strict` records and fails closed. Use this only for focused debugging or
+  tests.
+
+During `pnpm dev`, validation failures are written to the existing send trace:
+
+- A stable gitignored mirror is written to `.tmp/send-workflow-trace.ndjson`.
+- The timestamped dev runtime archive is printed at startup as
+  `sendWorkflowTrace=.../send-workflow-trace.ndjson`.
+- WebView DevTools console shows `[SENDTRACE] app:<event>`.
+- The Tauri dev terminal receives `[ui:send-trace] <event> <json>`.
+- The current WebView keeps recent entries in `window.__vesloSendTrace`.
+
+From DevTools, filter validation failures with:
+
+```js
+window.__vesloSendTrace?.filter((entry) =>
+  String(entry.event ?? "").includes("validation-failed")
+)
+```
+
+PowerShell examples:
+
+```powershell
+# Report-only diagnostics, same mode as default production behavior.
+$env:VITE_VESLO_SEND_BOUNDARY_VALIDATION = "report"
+pnpm dev
+```
+
+```powershell
+# Strict debugging: validation failures can block send.
+$env:VITE_VESLO_SEND_BOUNDARY_VALIDATION = "strict"
+pnpm dev
+```
+
+The `pnpm dev` wrapper enables workflow tracing by default. To override the
+stable mirror path:
+
+```powershell
+$env:VITE_VESLO_SEND_WORKFLOW_TRACE = "1"
+$env:VESLO_SEND_WORKFLOW_TRACE = "1"
+$env:VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE = "$PWD\.tmp\send-workflow-trace.ndjson"
+pnpm dev
+```
+
+Then inspect `window.__vesloDumpSendWorkflowTrace?.()` in DevTools or the
+configured NDJSON file. The mirror is an append-only developer convenience; if
+you need a single clean run, delete `.tmp/send-workflow-trace.ndjson` before
+starting `pnpm dev`.
+
 ## Browser Web Dev With Services
 
 For browser-based web development that still needs local Veslo services, run:

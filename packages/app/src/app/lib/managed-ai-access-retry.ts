@@ -12,7 +12,6 @@ export function shouldRetryManagedAiAccessRefresh(input: {
 
 export function resolveManagedAiAccessRetryDelayMs(attempt: number): number {
   const normalizedAttempt = Number.isFinite(attempt) ? Math.max(0, Math.floor(attempt)) : 0;
-  return MANAGED_AI_ACCESS_RETRY_DELAYS_MS[
-    Math.min(normalizedAttempt, MANAGED_AI_ACCESS_RETRY_DELAYS_MS.length - 1)
-  ];
+  const delayIndex = Math.min(normalizedAttempt, MANAGED_AI_ACCESS_RETRY_DELAYS_MS.length - 1);
+  return MANAGED_AI_ACCESS_RETRY_DELAYS_MS[delayIndex] ?? 60_000;
 }

@@ -180,7 +180,7 @@ describe("createAiGatewayRuntimeOwner", () => {
       actor: opencodeActor,
       request: new Request("http://localhost"),
       accessTokenHeader: "x-veslo-gateway-token",
-      runtimeAuthorizationActorTokenHash: actor.tokenHash,
+      runtimeAuthorizationActorTokenHash: actor.tokenHash ?? null,
     });
     expect(runtime).toEqual({
       authorization: "Bearer runtime-token",
@@ -193,7 +193,7 @@ describe("createAiGatewayRuntimeOwner", () => {
         headers: { "x-veslo-gateway-token": "legacy-token" },
       }),
       accessTokenHeader: "x-veslo-gateway-token",
-      runtimeAuthorizationActorTokenHash: actor.tokenHash,
+      runtimeAuthorizationActorTokenHash: actor.tokenHash ?? null,
       activeRunContextPresent: true,
     });
     expect(scopedRuntimeWithLegacyHeader).toEqual({
@@ -217,7 +217,7 @@ describe("createAiGatewayRuntimeOwner", () => {
         headers: { "x-veslo-gateway-token": "Bearer [redacted]" },
       }),
       accessTokenHeader: "x-veslo-gateway-token",
-      runtimeAuthorizationActorTokenHash: actor.tokenHash,
+      runtimeAuthorizationActorTokenHash: actor.tokenHash ?? null,
     });
     expect(redactedLegacy).toEqual({
       authorization: "Bearer runtime-token",
@@ -235,7 +235,7 @@ describe("createAiGatewayRuntimeOwner", () => {
         actor: opencodeActor,
         request: new Request("http://localhost"),
         accessTokenHeader: "x-veslo-gateway-token",
-        runtimeAuthorizationActorTokenHash: actor.tokenHash,
+        runtimeAuthorizationActorTokenHash: actor.tokenHash ?? null,
         activeRunContextPresent: true,
       })
     ).toThrow(ApiError);
@@ -247,7 +247,7 @@ describe("createAiGatewayRuntimeOwner", () => {
           headers: { "x-veslo-gateway-token": "legacy-token" },
         }),
         accessTokenHeader: "x-veslo-gateway-token",
-        runtimeAuthorizationActorTokenHash: actor.tokenHash,
+        runtimeAuthorizationActorTokenHash: actor.tokenHash ?? null,
         activeRunContextPresent: true,
       })
     ).toThrow(ApiError);
@@ -353,7 +353,7 @@ describe("createAiGatewayRuntimeOwner", () => {
       actor: opencodeActor,
       request: new Request("http://localhost"),
       accessTokenHeader: "x-veslo-gateway-token",
-      runtimeAuthorizationActorTokenHash: actor.tokenHash,
+      runtimeAuthorizationActorTokenHash: actor.tokenHash ?? null,
       activeRunContextPresent: true,
     })).toEqual({
       authorization: "Bearer fresh-actor-runtime-token",

@@ -64,6 +64,7 @@ import {
   type MaterializedSessionHandoff,
   type SessionSendOptionsBase,
 } from "./lib/session-send-contract";
+import { resolveSendBoundaryValidationMode } from "./lib/send-boundary-validation";
 import { createUiConversationKey } from "./lib/ui-conversation-scope";
 import {
   createWorkspaceSessionSelection,
@@ -1664,6 +1665,8 @@ export default function App() {
     submitConversationFromVesloWriteApi,
     safeStringify,
     selectedSessionId,
+    sendBoundaryValidationMode: () =>
+      resolveSendBoundaryValidationMode(import.meta.env as Record<string, string | boolean | undefined>),
     sendTraceStep,
     sessionStoreAppendSessionErrorTurn: (sessionId, message) => sessionStore.appendSessionErrorTurn(sessionId, message),
     sessionStoreClearCommandDisplay: (messageId) => sessionStore.clearCommandDisplay(messageId),

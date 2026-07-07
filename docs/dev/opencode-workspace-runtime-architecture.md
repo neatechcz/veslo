@@ -67,6 +67,60 @@ message and let the runtime attach the workspace and create the conversation in
 the background. Workspace activation must not be a UI-blocking precondition for
 the send action.
 
+### Send Boundary Validation
+
+The app can validate Veslo-owned send boundary payloads before treating them as
+business facts. Runtime preflight results, server-owned conversation submit
+requests, and terminal submit responses are validated at runtime and reported
+through send trace events when malformed.
+
+The validation mode is controlled by `VITE_VESLO_SEND_BOUNDARY_VALIDATION`:
+`off` skips validation, `report` records validation failures without changing
+the send result, and `strict` fails closed. The default is `report` so release
+builds keep sending even when a malformed background diagnostic payload is
+observed.
+
+Validation uses Zod `safeParse`; failures are converted to send trace payloads
+with `schema`, `validationMode`, `blocking`, `issueCount`, `issues`, and a small
+redacted payload summary. The validator must not throw directly.
+
+When running `pnpm dev`, validation output is visible through the existing send
+trace surfaces:
+
+- stable gitignored mirror: `.tmp/send-workflow-trace.ndjson`
+- timestamped runtime archive printed by startup:
+  `sendWorkflowTrace=.../send-workflow-trace.ndjson`
+- webview DevTools console: `[SENDTRACE] app:<event>`
+- Tauri dev terminal/stderr: `[ui:send-trace] <event> <json>`
+- in-memory webview buffer: `window.__vesloSendTrace`
+
+Useful validation events include:
+
+- `sendPrompt:runtime-preflight:validation-failed`
+- `sendPrompt:runtime-recovery:validation-failed`
+- `sendPrompt:server-submit-existing-request:validation-failed`
+- `sendPrompt:server-submit-existing-result:validation-failed`
+- `sendPrompt:server-submit-first-result:validation-failed`
+
+To inspect the buffer from DevTools:
+
+```js
+window.__vesloSendTrace?.filter((entry) =>
+  String(entry.event ?? "").includes("validation-failed")
+)
+```
+
+Strict validation failures are fail-closed for fields needed to continue
+safely: workspace/session/run ids, client message ids, submit status, queue
+ids, and draft disposition. Diagnostic-only payloads, such as debug trace
+entries, must not block a send only because they contain extra or partially
+shaped data.
+
+Do not use the app-side validator as a generic provider-stream parser. OpenCode
+events and AI gateway provider responses can vary by provider and should be
+validated only at small Veslo-owned envelopes or correlation points unless a
+specific provider contract is being tested.
+
 ### Veslo Server
 
 Veslo server owns the app-facing conversation and run boundary.
@@ -82,6 +136,13 @@ Responsibilities:
 - reject conversation ids that belong to another workspace,
 - reject directories outside the authorized workspace roots,
 - strip client-supplied OpenCode routing fields from mutation bodies.
+
+When a local workspace call is routed through the orchestrator mount
+(`/workspace/:id/opencode/...`), the server must first ensure the orchestrator
+knows the workspace by idempotently registering the local workspace identity.
+This applies to first-message `/session` creation as well as later run submit
+calls. Passive app browse state or `POST /workspaces/local` alone is not enough
+proof that the orchestrator router has mounted the workspace.
 
 The server route shape should remain workspace-scoped:
 
@@ -199,11 +260,13 @@ Do not build a separate conversation model only for sandboxed execution.
 3. The app sends a Veslo intent to the workspace-scoped server API.
 4. Veslo server validates the workspace and directory.
 5. Veslo server creates the conversation when needed.
-6. Veslo server creates or resolves the bound OpenCode session.
-7. Veslo server creates the run record.
-8. The orchestrator resolves the execution target.
-9. OpenCode receives the prompt for the bound session and directory.
-10. Events and transcript data are mirrored back to the conversation and run.
+6. Veslo server ensures orchestrator workspace registration when the effective
+   OpenCode route uses the orchestrator workspace mount.
+7. Veslo server creates or resolves the bound OpenCode session.
+8. Veslo server creates the run record.
+9. The orchestrator resolves the execution target.
+10. OpenCode receives the prompt for the bound session and directory.
+11. Events and transcript data are mirrored back to the conversation and run.
 
 If any step fails, store the failure at the narrowest correct level:
 
@@ -247,6 +310,10 @@ part of the persisted conversation/run state.
   another run.
 - Active run conflict: reject or surface the active run id; do not submit a
   second active run to the same conversation.
+- Stale/no-progress active run: if lifecycle status is stale or past the
+  configured no-progress budget, mark the run failed through the lifecycle
+  owner and wake the conversation queue. Do not let queue drain poll forever
+  behind a zombie active run.
 
 ## Validation Requirements
 

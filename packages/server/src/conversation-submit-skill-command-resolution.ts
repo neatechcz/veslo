@@ -12,9 +12,9 @@ export function createConversationSubmitSkillCommandResolver(_input: {
     if (!normalizedText || !workspace) return null;
 
     const disabledSkills = await listDisabledSkills({
-      dataDir: _input.dataDir,
       workspaceId: workspace.id,
       includeGlobal: true,
+      ...(_input.dataDir ? { dataDir: _input.dataDir } : {}),
     });
     const skills = await listSkills(workspace.path, {
       includeGlobal,

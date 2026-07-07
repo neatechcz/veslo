@@ -335,7 +335,7 @@ test("exchangeHandoffCode uses legacy v1 exchange when no PKCE proof is availabl
         token: "legacy-token",
         orgId: "org_456",
         user: { id: "user_123", name: "Legacy User", email: "legacy@example.com" },
-        org: { id: "org_456", name: "Legacy Org", slug: undefined, role: undefined },
+        org: { id: "org_456", name: "Legacy Org" },
       },
     });
     assert.equal(calls.length, 2);
@@ -469,7 +469,7 @@ test("exchangeHandoffCode accepts accessToken from the v2 exchange contract", as
         token: "pkce-access-token",
         orgId: "org_v2_contract",
         user: { id: "user_v2_contract", name: "Contract User", email: "contract@example.com" },
-        org: { id: "org_v2_contract", name: undefined, slug: "v2-contract-org", role: "owner" },
+        org: { id: "org_v2_contract", slug: "v2-contract-org", role: "owner" },
       },
     });
   } finally {
@@ -574,7 +574,7 @@ test("exchangeHandoffCode enriches the returned auth state with /v1/me email det
         token: "legacy-token",
         orgId: "org_456",
         user: { id: "user_123", name: "Michal", email: "michal@example.com" },
-        org: { id: "org_456", name: "Legacy Org", slug: undefined, role: undefined },
+        org: { id: "org_456", name: "Legacy Org" },
       },
     });
     assert.equal(calls.length, 2);
@@ -604,7 +604,7 @@ test("hydrateDenAuthFromDesktopSnapshot imports persisted auth before onboarding
   const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
   const storage = installDomStorage({
     tauriInvoke: async (command, args) => {
-      calls.push({ command, args });
+      calls.push({ command, ...(args ? { args } : {}) });
       if (command === "den_auth_snapshot_read") {
         return {
           authJson: JSON.stringify(authState),
@@ -648,7 +648,7 @@ test("writeDenAuth skips desktop snapshot writes during WebDriver sessions", asy
   const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
   const storage = installDomStorage({
     tauriInvoke: async (command, args) => {
-      calls.push({ command, args });
+      calls.push({ command, ...(args ? { args } : {}) });
       return null;
     },
   });
@@ -759,7 +759,7 @@ test("hydrateDenAuthFromDesktopSnapshot replaces stale browser auth when desktop
   const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
   const storage = installDomStorage({
     tauriInvoke: async (command, args) => {
-      calls.push({ command, args });
+      calls.push({ command, ...(args ? { args } : {}) });
       if (command === "den_auth_snapshot_read") {
         return {
           authJson: JSON.stringify(snapshotAuth),
@@ -809,7 +809,7 @@ test("hydrateDenAuthFromDesktopSnapshot preserves browser auth when snapshot mat
   const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
   const storage = installDomStorage({
     tauriInvoke: async (command, args) => {
-      calls.push({ command, args });
+      calls.push({ command, ...(args ? { args } : {}) });
       if (command === "den_auth_snapshot_read") {
         return {
           authJson: JSON.stringify(snapshotAuth),
@@ -860,7 +860,7 @@ test("hydrateDenAuthFromDesktopSnapshot replaces same-user browser auth from exp
   const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
   const storage = installDomStorage({
     tauriInvoke: async (command, args) => {
-      calls.push({ command, args });
+      calls.push({ command, ...(args ? { args } : {}) });
       if (command === "den_auth_snapshot_read") {
         return {
           authJson: JSON.stringify(snapshotAuth),
@@ -911,7 +911,7 @@ test("hydrateDenAuthFromDesktopSnapshot preserves an existing browser language p
   const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
   const storage = installDomStorage({
     tauriInvoke: async (command, args) => {
-      calls.push({ command, args });
+      calls.push({ command, ...(args ? { args } : {}) });
       if (command === "den_auth_snapshot_read") {
         return {
           authJson: JSON.stringify(snapshotAuth),
@@ -1080,7 +1080,7 @@ test("writeDenAuth syncs desktop snapshot with language and onboarding metadata"
   const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
   const storage = installDomStorage({
     tauriInvoke: async (command, args) => {
-      calls.push({ command, args });
+      calls.push({ command, ...(args ? { args } : {}) });
       if (command === "den_auth_snapshot_write") {
         return null;
       }
@@ -1119,7 +1119,7 @@ test("queued desktop snapshot writes use the Tauri bridge captured at queue time
   const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
   const storage = installDomStorage({
     tauriInvoke: async (command, args) => {
-      calls.push({ command, args });
+      calls.push({ command, ...(args ? { args } : {}) });
       if (command === "den_auth_snapshot_write") {
         return null;
       }
@@ -1161,7 +1161,7 @@ test("flushPendingDesktopSnapshotWrite waits for the queued desktop snapshot wri
   const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
   const storage = installDomStorage({
     tauriInvoke: async (command, args) => {
-      calls.push({ command, args });
+      calls.push({ command, ...(args ? { args } : {}) });
       if (command === "den_auth_snapshot_write") {
         await new Promise<void>((resolve) => {
           resolveWrite = () => resolve();

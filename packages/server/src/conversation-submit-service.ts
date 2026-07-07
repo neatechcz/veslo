@@ -214,13 +214,13 @@ export function createConversationSubmitService(input: {
       const debugTrace: ConversationSubmitDebugTraceEntry[] = [];
       const draftResolution = await resolveConversationSubmitDraft({
         request,
-        documentRuntimeStatus,
-        resolveSkillCommand,
         recordDebugTrace: (entry) => {
           debugTrace.push(entry);
         },
         workspace,
         includeGlobal: workspace.workspaceType === "local",
+        ...(documentRuntimeStatus ? { documentRuntimeStatus } : {}),
+        ...(resolveSkillCommand ? { resolveSkillCommand } : {}),
       });
       if (draftResolution.status === "blocked") {
         return {

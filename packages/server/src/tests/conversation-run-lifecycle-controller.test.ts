@@ -938,6 +938,28 @@ test("queue drain keeps pending work blocked while latest lifecycle is active", 
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500]);
 });
 
+test("queue drain fails stale active latest runs and wakes queued work", async () => {
+  const { controller, lifecycle, queue, submitCalls, timers } = controllerHarness();
+  enqueuePendingRun(queue);
+  lifecycle.statusResult = {
+    runId: "run-zombie",
+    status: "running",
+    stale: true,
+    waitReason: "engine_unreachable",
+    noProgressSeconds: 900,
+  };
+
+  await controller.drainConversationQueue("ws_1", "conv-a");
+
+  expect(queue.items[0]?.state).toBe("pending");
+  expect(submitCalls).toEqual([]);
+  expect(lifecycle.calls).toContain("status:ws_1:conv-a:latest");
+  expect(lifecycle.calls).toContain(
+    "markFailed:ws_1:run-zombie:run lifecycle stale/no-progress while draining queued conversation runs",
+  );
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
+});
+
 test("lifecycle reconcile keeps polling stale status until terminal", async () => {
   const { controller, lifecycle, timers, workspaces } = controllerHarness();
   lifecycle.statusResult = { runId: "run-stale", status: "running", stale: true };
@@ -951,6 +973,31 @@ test("lifecycle reconcile keeps polling stale status until terminal", async () =
 
   expect(lifecycle.calls).toEqual(["status:ws_1:conv-a:run-stale"]);
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([2_000]);
+});
+
+test("lifecycle reconcile fails stale active runs after poll budget exhaustion and wakes queue", async () => {
+  const { controller, lifecycle, timers, workspaces } = controllerHarness();
+  lifecycle.statusResult = {
+    runId: "run-stale",
+    status: "blocked",
+    stale: true,
+    waitReason: "engine_unreachable",
+    noProgressSeconds: 900,
+  };
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-stale",
+    reason: "accepted",
+    attempt: 2,
+  });
+
+  expect(lifecycle.calls).toContain("status:ws_1:conv-a:run-stale");
+  expect(lifecycle.calls).toContain(
+    "markFailed:ws_1:run-stale:run lifecycle reconcile exhausted after stale/no-progress active status",
+  );
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
 });
 
 test("lifecycle reconcile trace includes active run diagnostics", async () => {

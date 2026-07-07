@@ -131,14 +131,15 @@ export async function requestJson<T>(
     shareable: method.trim().toUpperCase() === "GET" && body === undefined,
     run: async () => {
       const fetchImpl = resolveFetch();
+      const init: RequestInit = {
+        method,
+        headers,
+        ...(body !== undefined ? { body } : {}),
+      };
       const response = await fetchWithTimeout(
         fetchImpl,
         url,
-        {
-          method,
-          headers,
-          body,
-        },
+        init,
         timeoutMs,
       );
 
@@ -173,14 +174,16 @@ export async function requestJsonRaw<T>(
 ): Promise<RawJsonResponse<T>> {
   const url = `${baseUrl}${path}`;
   const fetchImpl = resolveFetch();
+  const body = options.body ? JSON.stringify(options.body) : undefined;
+  const init: RequestInit = {
+    method: options.method ?? "GET",
+    headers: buildHeaders(options.token, options.hostToken),
+    ...(body !== undefined ? { body } : {}),
+  };
   const response = await fetchWithTimeout(
     fetchImpl,
     url,
-    {
-      method: options.method ?? "GET",
-      headers: buildHeaders(options.token, options.hostToken),
-      body: options.body ? JSON.stringify(options.body) : undefined,
-    },
+    init,
     options.timeoutMs ?? DEFAULT_VESLO_SERVER_TIMEOUT_MS,
   );
 
@@ -202,14 +205,15 @@ export async function requestMultipartRaw(
 ): Promise<{ ok: boolean; status: number; text: string }>{
   const url = `${baseUrl}${path}`;
   const fetchImpl = resolveFetch();
+  const init: RequestInit = {
+    method: options.method ?? "POST",
+    headers: buildAuthHeaders(options.token, options.hostToken),
+    ...(options.body ? { body: options.body } : {}),
+  };
   const response = await fetchWithTimeout(
     fetchImpl,
     url,
-    {
-      method: options.method ?? "POST",
-      headers: buildAuthHeaders(options.token, options.hostToken),
-      body: options.body,
-    },
+    init,
     options.timeoutMs ?? DEFAULT_VESLO_SERVER_TIMEOUT_MS,
   );
   const text = await response.text();

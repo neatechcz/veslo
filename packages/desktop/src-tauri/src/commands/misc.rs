@@ -312,13 +312,26 @@ fn resolve_send_workflow_trace_file() -> Option<PathBuf> {
     None
 }
 
-fn append_send_workflow_trace_event(message: &str, payload: Option<&str>) {
-    let Some(path) = resolve_send_workflow_trace_file() else {
-        return;
-    };
+fn resolve_send_workflow_trace_mirror_file() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed));
+        }
+    }
+    None
+}
+
+fn append_send_workflow_trace_line(path: &Path, line: &str) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{}", line);
+    }
+}
+
+fn append_send_workflow_trace_event(message: &str, payload: Option<&str>) {
     let line = match payload {
         Some(raw) if !raw.trim().is_empty() => raw.trim().to_string(),
         _ => format!(
@@ -326,8 +339,17 @@ fn append_send_workflow_trace_event(message: &str, payload: Option<&str>) {
             serde_json::to_string(message).unwrap_or_else(|_| "\"ui-event\"".to_string())
         ),
     };
-    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(file, "{}", line);
+    let primary = resolve_send_workflow_trace_file();
+    let mirror = resolve_send_workflow_trace_mirror_file();
+
+    if let Some(path) = primary.as_deref() {
+        append_send_workflow_trace_line(path, &line);
+    }
+    if let Some(path) = mirror.as_deref() {
+        if primary.as_ref().is_some_and(|primary_path| primary_path == path) {
+            return;
+        }
+        append_send_workflow_trace_line(path, &line);
     }
 }
 
