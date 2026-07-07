@@ -240,7 +240,14 @@ export function resolveSkillMatch(input: {
   let match: SkillResolveCandidate | null = null;
 
   if (best && best.score >= threshold) {
-    const ambiguous = second && best.score < 0.9 && best.score - second.score < ambiguityDelta;
+    const bestHasSpecificMention = best.reasons.includes("exact-name") || best.reasons.includes("alias");
+    const secondHasSpecificMention = Boolean(
+      second && (second.reasons.includes("exact-name") || second.reasons.includes("alias")),
+    );
+    const ambiguous =
+      second &&
+      best.score - second.score < ambiguityDelta &&
+      !(bestHasSpecificMention && !secondHasSpecificMention);
     if (!ambiguous) {
       match = best;
     }

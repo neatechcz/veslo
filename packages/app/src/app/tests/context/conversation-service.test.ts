@@ -5,6 +5,7 @@ import {
   createConversationService,
   type ConversationServiceClient,
 } from "../../context/conversation-service.js";
+import type { ManagedAiRuntimeAuthPrimeDiagnostic } from "../../context/managed-ai-runtime-config.js";
 import type {
   VesloConversationAbortInput,
   VesloConversationRunInput,
@@ -46,12 +47,19 @@ type FakeWorkspaceRegistryItem = {
   };
 };
 
+type SubmitConversationCall = {
+  workspaceId: string;
+  input: VesloConversationSubmitRequest;
+  options?: Parameters<ConversationServiceClient["submitConversation"]>[2];
+};
+
 function createFakeClient(options: {
   listWorkspaceItems?: FakeWorkspaceRegistryItem[];
   addLocalWorkspaceItems?: FakeWorkspaceRegistryItem[];
   failWorkspaceRegistration?: boolean;
 } = {}) {
   const calls: string[] = [];
+  const submitConversationCalls: SubmitConversationCall[] = [];
   const listWorkspaceItems = options.listWorkspaceItems ?? [];
   let runConversationResult:
     | Awaited<ReturnType<ConversationServiceClient["runConversation"]>>
@@ -115,8 +123,10 @@ function createFakeClient(options: {
     submitConversation: async (
       workspaceId: string,
       input: VesloConversationSubmitRequest,
+      submitOptions?: Parameters<ConversationServiceClient["submitConversation"]>[2],
     ) => {
       calls.push(`submitConversation:${workspaceId}:${input.options?.expectAiGatewayStart === true}`);
+      submitConversationCalls.push({ workspaceId, input, options: submitOptions });
       if (submitConversationResult) return submitConversationResult;
       return {
         status: "submitted" as const,
@@ -182,6 +192,7 @@ function createFakeClient(options: {
   return {
     client: client as unknown as ConversationServiceClient,
     calls,
+    submitConversationCalls,
     setRunConversationResult: (result: Awaited<ReturnType<ConversationServiceClient["runConversation"]>>) => {
       runConversationResult = result;
     },
@@ -203,8 +214,9 @@ function createService(options: {
     defaultModel?: { modelID?: string | null } | null;
   } | null;
   runtimeAuthorizationResult?: boolean;
+  runtimeAuthorizationDiagnostic?: ManagedAiRuntimeAuthPrimeDiagnostic | null;
 } = {}) {
-  const { client, calls, setRunConversationResult, setSubmitConversationResult } = createFakeClient({
+  const { client, calls, submitConversationCalls, setRunConversationResult, setSubmitConversationResult } = createFakeClient({
     listWorkspaceItems: options.listWorkspaceItems,
     addLocalWorkspaceItems: options.addLocalWorkspaceItems,
     failWorkspaceRegistration: options.failWorkspaceRegistration,
@@ -213,6 +225,7 @@ function createService(options: {
   const engineBaseWorkspaceId = options.engineBaseWorkspaceId ?? "server-ws";
   const ensureCalls: string[] = [];
   const rememberedScopes: RememberedScope[] = [];
+  const sendTraces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
   const rememberedRuns: Array<{
     workspaceId: string;
     conversationId?: string | null;
@@ -318,8 +331,11 @@ function createService(options: {
       );
       return options.runtimeAuthorizationResult ?? true;
     },
+    managedAiRuntimeAuthorizationPrimeDiagnostic: () => options.runtimeAuthorizationDiagnostic ?? null,
     activeSendTraceId: () => null,
-    recordSendTrace: () => undefined,
+    recordSendTrace: (event, payload) => {
+      sendTraces.push({ event, payload });
+    },
     sendTraceStep: async (_event, run) => run(),
     recordExternalSendTraceEntries: () => undefined,
     engineInfo: async () => ({
@@ -334,9 +350,11 @@ function createService(options: {
   return {
     service,
     calls,
+    submitConversationCalls,
     ensureCalls,
     rememberedScopes,
     rememberedRuns,
+    sendTraces,
     runtimeAuthorizationCalls,
     setRunConversationResult,
     setSubmitConversationResult,
@@ -682,6 +700,170 @@ test("managed conversation submit primes runtime authorization and forwards gate
   assert.ok(submitIndex >= 0, "conversation should be submitted");
   assert.ok(authPrimeIndex < submitIndex, "runtime authorization must be primed before submit");
   assert.ok(calls.includes("submitConversation:server-ws:true"));
+});
+
+test("conversation submit boundary injects directory and preserves composer send intent", async () => {
+  const { service, submitConversationCalls, runtimeAuthorizationCalls } = createService();
+
+  const result = await service.submitConversationFromVesloWriteApi(
+    "app-ws",
+    "/repo/packages/app",
+    {
+      clientMessageId: "msg-submit-boundary",
+      origin: "session:send-now",
+      source: "send-now",
+      target: {
+        directory: "/stale-directory",
+        conversationId: "conv-a",
+        opencodeSessionId: "open-a",
+      },
+      draft: {
+        mode: "prompt",
+        text: "boundary prompt",
+        parts: [{ type: "text", text: "boundary prompt" }],
+      },
+      options: {
+        model: { providerID: "openai", modelID: "gpt-4.1" },
+        submitQueuePolicy: "send-now",
+      },
+    },
+    {
+      traceId: "trace-submit-boundary",
+      targetWorkspace: {
+        workspaceId: "app-ws",
+        workspaceRoot: "/repo",
+        directory: "/repo/packages/app",
+      },
+      conversationWorkspaceByDirectory: new Map(),
+    },
+  );
+
+  assert.equal(result?.status, "submitted");
+  assert.deepEqual(runtimeAuthorizationCalls, []);
+  assert.equal(submitConversationCalls.length, 1);
+  assert.equal(submitConversationCalls[0]?.workspaceId, "server-ws");
+  assert.deepEqual(submitConversationCalls[0]?.options, { sendTraceId: "trace-submit-boundary" });
+  assert.deepEqual(submitConversationCalls[0]?.input, {
+    clientMessageId: "msg-submit-boundary",
+    origin: "session:send-now",
+    source: "send-now",
+    target: {
+      directory: "/repo/packages/app",
+      conversationId: "conv-a",
+      opencodeSessionId: "open-a",
+    },
+    draft: {
+      mode: "prompt",
+      text: "boundary prompt",
+      parts: [{ type: "text", text: "boundary prompt" }],
+    },
+    options: {
+      model: { providerID: "openai", modelID: "gpt-4.1" },
+      submitQueuePolicy: "send-now",
+    },
+  });
+});
+
+test("managed conversation submit stops before server contact when runtime authorization is not ready", async () => {
+  const authPrimeDiagnostic: ManagedAiRuntimeAuthPrimeDiagnostic = {
+    reason: "request-failed",
+    supportMessage: "Managed AI runtime authorization could not be refreshed. Check the local Veslo server connection and retry.",
+    message: "HTTP 504",
+  };
+  const { service, calls, runtimeAuthorizationCalls, submitConversationCalls, sendTraces } = createService({
+    managedAiAccess: {
+      providerId: "codex_oauth",
+      defaultModel: { modelID: "gpt-5.5" },
+    },
+    runtimeAuthorizationResult: false,
+    runtimeAuthorizationDiagnostic: authPrimeDiagnostic,
+  });
+
+  await assert.rejects(
+    () => service.submitConversationFromVesloWriteApi(
+      "app-ws",
+      "/repo",
+      {
+        clientMessageId: "msg-submit-auth-blocked",
+        origin: "session:normal",
+        target: {
+          conversationId: "conv-a",
+          opencodeSessionId: "open-a",
+        },
+        draft: {
+          mode: "prompt",
+          text: "managed submit",
+          parts: [{ type: "text", text: "managed submit" }],
+        },
+      },
+      {
+        traceId: "trace-submit-auth-blocked",
+        targetWorkspace: {
+          workspaceId: "app-ws",
+          workspaceRoot: "/repo",
+          directory: "/repo",
+        },
+        conversationWorkspaceByDirectory: new Map(),
+      },
+    ),
+    /Managed AI gateway authorization is not ready/,
+  );
+
+  assert.deepEqual(runtimeAuthorizationCalls, [{
+    workspaceId: "app-ws",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+  }]);
+  assert.equal(submitConversationCalls.length, 0);
+  assert.equal(calls.some((call) => call.startsWith("submitConversation:")), false);
+  const authPrimeResult = sendTraces.find((entry) =>
+    entry.event === "submitConversationFromVesloWriteApi:managed-ai-runtime-auth-prime:result"
+  );
+  assert.equal(authPrimeResult?.payload?.ready, false);
+  assert.equal(authPrimeResult?.payload?.authPrimeDiagnosticReason, "request-failed");
+  assert.deepEqual(authPrimeResult?.payload?.authPrimeDiagnostic, authPrimeDiagnostic);
+});
+
+test("managed shell conversation submit does not prime AI gateway authorization", async () => {
+  const { service, submitConversationCalls, runtimeAuthorizationCalls } = createService({
+    managedAiAccess: {
+      providerId: "codex_oauth",
+      defaultModel: { modelID: "gpt-5.5" },
+    },
+  });
+
+  const result = await service.submitConversationFromVesloWriteApi(
+    "app-ws",
+    "/repo",
+    {
+      clientMessageId: "msg-submit-shell",
+      origin: "session:normal",
+      target: {
+        conversationId: "conv-a",
+        opencodeSessionId: "open-a",
+      },
+      draft: {
+        mode: "shell",
+        text: "pnpm test",
+        parts: [{ type: "text", text: "pnpm test" }],
+      },
+    },
+    {
+      traceId: "trace-submit-shell",
+      targetWorkspace: {
+        workspaceId: "app-ws",
+        workspaceRoot: "/repo",
+        directory: "/repo",
+      },
+      conversationWorkspaceByDirectory: new Map(),
+    },
+  );
+
+  assert.equal(result?.status, "submitted");
+  assert.deepEqual(runtimeAuthorizationCalls, []);
+  assert.equal(submitConversationCalls.length, 1);
+  assert.equal(submitConversationCalls[0]?.input.options?.expectAiGatewayStart, undefined);
+  assert.equal(submitConversationCalls[0]?.input.draft.mode, "shell");
 });
 
 test("managed conversation runs stop before submit when runtime authorization is not ready", async () => {

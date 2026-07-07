@@ -4,11 +4,11 @@ import type {
   PermissionRequest as ApiPermissionRequest,
   QuestionRequest,
   Session,
+  OpencodeClient,
 } from "@opencode-ai/sdk/v2/client";
-import type { createClient } from "./lib/opencode";
-import type { OpencodeConfigFile, ScheduledJob as TauriScheduledJob, WorkspaceInfo } from "./lib/tauri";
+import type { OpencodeConfigFile, ScheduledJob as TauriScheduledJob, WorkspaceInfo } from "./lib/tauri-types";
 
-export type Client = ReturnType<typeof createClient>;
+export type Client = OpencodeClient;
 
 export type ProviderListModel = {
   id: string;

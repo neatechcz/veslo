@@ -576,7 +576,7 @@ test("CachedCodexCredentialStatusProvider persists auth JSON written by the Code
       saveCredentialAuthJson: async (credentialId, authJson) => {
         savedAuthJson.push({ credentialId, authJson });
       },
-      command: commandPath,
+      ...nodeScriptCommand(commandPath),
       workDir: rootDir,
       timeoutMs: 5000,
     });
@@ -646,7 +646,7 @@ test("CachedCodexCredentialStatusProvider probes with the supported Codex catalo
       ttlMs: 5 * 60 * 1000,
       now: () => new Date("2026-04-26T12:00:00.000Z"),
       loadCredentialAuthJson: async () => authJson,
-      command: commandPath,
+      ...nodeScriptCommand(commandPath),
       workDir: rootDir,
       timeoutMs: 5000,
     });
@@ -714,7 +714,7 @@ test("CachedCodexCredentialStatusProvider keeps successful probe status when tem
       ttlMs: 5 * 60 * 1000,
       now: () => new Date("2026-04-26T12:00:00.000Z"),
       loadCredentialAuthJson: async () => authJson,
-      command: commandPath,
+      ...nodeScriptCommand(commandPath),
       workDir: rootDir,
       timeoutMs: 5000,
     });
@@ -797,4 +797,11 @@ async function makeTreeWritable(root: string): Promise<void> {
       }
     }),
   );
+}
+
+function nodeScriptCommand(scriptPath: string): { command: string; commandArgsPrefix?: string[] } {
+  if (process.platform === "win32") {
+    return { command: process.execPath, commandArgsPrefix: [scriptPath] };
+  }
+  return { command: scriptPath };
 }

@@ -11,7 +11,7 @@ import type { ProviderTransportResponse } from "../../providers/transport.js"
 import { ProviderTransportError } from "../../providers/transport.js"
 import { readOpenAiCompatibleUsage } from "../../usage/token-accounting.js"
 import { applyAiAccessPolicy } from "./access-policy.js"
-import type { ProxyDependencies } from "../proxy.js"
+import type { ProxyDependencies } from "../proxy-dependencies.js"
 
 export function createCodexOAuthProxyRouter(
   deps: Pick<

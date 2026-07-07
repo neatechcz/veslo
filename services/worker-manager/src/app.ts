@@ -1,7 +1,7 @@
 import express from "express"
 import http from "node:http"
 import { z } from "zod"
-import { DockerWorkerAdapter, type WorkerDockerAdapter } from "./docker.js"
+import { DockerWorkerAdapter, type DockerWorkerAdapterConfig, type WorkerDockerAdapter } from "./docker.js"
 
 export type WorkerManagerConfig = {
   token: string
@@ -109,7 +109,7 @@ export function readWorkerManagerConfig(input: NodeJS.ProcessEnv = process.env):
     throw new Error("OWNED_WORKER_MANAGER_TOKEN is required")
   }
 
-  return {
+  const config: ResolvedWorkerManagerConfig = {
     token,
     publicDomainSuffix: normalizeDomain(input.OWNED_WORKER_PUBLIC_DOMAIN_SUFFIX || input.WORKER_PUBLIC_DOMAIN_SUFFIX || "workers.veslo.work"),
     workerImage: input.WORKER_IMAGE?.trim() || "veslo-owned-server-worker-runtime:local",
@@ -119,13 +119,23 @@ export function readWorkerManagerConfig(input: NodeJS.ProcessEnv = process.env):
     provisionTimeoutMs: parsePositiveNumber(input.WORKER_PROVISION_TIMEOUT_MS, 180_000, "WORKER_PROVISION_TIMEOUT_MS"),
     pollIntervalMs: parsePositiveNumber(input.WORKER_POLL_INTERVAL_MS, 2_000, "WORKER_POLL_INTERVAL_MS"),
     healthcheckTimeoutMs: parsePositiveNumber(input.WORKER_HEALTHCHECK_TIMEOUT_MS, 2_000, "WORKER_HEALTHCHECK_TIMEOUT_MS"),
-    memoryBytes: parseOptionalPositiveInteger(input.WORKER_RESOURCE_MEMORY_BYTES, "WORKER_RESOURCE_MEMORY_BYTES"),
-    nanoCpus: parseOptionalNanoCpus(input.WORKER_RESOURCE_CPUS),
   }
+
+  const memoryBytes = parseOptionalPositiveInteger(input.WORKER_RESOURCE_MEMORY_BYTES, "WORKER_RESOURCE_MEMORY_BYTES")
+  if (memoryBytes !== undefined) {
+    config.memoryBytes = memoryBytes
+  }
+
+  const nanoCpus = parseOptionalNanoCpus(input.WORKER_RESOURCE_CPUS)
+  if (nanoCpus !== undefined) {
+    config.nanoCpus = nanoCpus
+  }
+
+  return config
 }
 
 export function createDefaultDockerAdapter(config: ResolvedWorkerManagerConfig) {
-  return new DockerWorkerAdapter({
+  const dockerConfig: DockerWorkerAdapterConfig = {
     socketPath: config.dockerSocketPath,
     publicDomainSuffix: config.publicDomainSuffix,
     workerImage: config.workerImage,
@@ -133,9 +143,16 @@ export function createDefaultDockerAdapter(config: ResolvedWorkerManagerConfig) 
     provisionTimeoutMs: config.provisionTimeoutMs,
     pollIntervalMs: config.pollIntervalMs,
     healthcheckTimeoutMs: config.healthcheckTimeoutMs,
-    memoryBytes: config.memoryBytes,
-    nanoCpus: config.nanoCpus,
-  })
+  }
+
+  if (config.memoryBytes !== undefined) {
+    dockerConfig.memoryBytes = config.memoryBytes
+  }
+  if (config.nanoCpus !== undefined) {
+    dockerConfig.nanoCpus = config.nanoCpus
+  }
+
+  return new DockerWorkerAdapter(dockerConfig)
 }
 
 export function createWorkerManagerApp(options: CreateWorkerManagerAppOptions): express.Express {

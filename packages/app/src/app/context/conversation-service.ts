@@ -16,6 +16,7 @@ import {
 } from "../lib/veslo-server";
 import { normalizeDirectoryPath, safeStringify } from "../utils";
 import type { StartupPreference } from "../types";
+import type { ManagedAiRuntimeAuthPrimeDiagnostic } from "./managed-ai-runtime-config";
 import type { SendTargetWorkspaceScope } from "./workspace-session-selection";
 
 export type ConversationServiceClient = {
@@ -227,6 +228,7 @@ export type ConversationServiceDeps<Client extends ConversationServiceClient = C
   ensureManagedAiRuntimeAuthorizationForSend?: (
     targetWorkspace?: SendTargetWorkspaceScope | null,
   ) => Promise<boolean>;
+  managedAiRuntimeAuthorizationPrimeDiagnostic?: () => ManagedAiRuntimeAuthPrimeDiagnostic | null;
   activeSendTraceId: () => string | null;
   recordSendTrace: (event: string, payload?: Record<string, unknown>) => void;
   sendTraceStep: <T>(
@@ -744,11 +746,16 @@ export function createConversationService<Client extends ConversationServiceClie
           targetWorkspaceId: targetForRuntimeAuthorization?.workspaceId ?? null,
         },
       );
+      const authPrimeDiagnostic = runtimeAuthorizationReady
+        ? null
+        : deps.managedAiRuntimeAuthorizationPrimeDiagnostic?.() ?? null;
       deps.recordSendTrace("submitConversationFromVesloWriteApi:managed-ai-runtime-auth-prime:result", {
         ...(tracePayload ?? {}),
         workspaceId,
         serverWorkspaceId: resolution.serverWorkspaceId,
         ready: runtimeAuthorizationReady,
+        authPrimeDiagnosticReason: authPrimeDiagnostic?.reason ?? null,
+        ...(authPrimeDiagnostic ? { authPrimeDiagnostic } : {}),
       });
       if (!runtimeAuthorizationReady) {
         throw new Error("Managed AI gateway authorization is not ready for this runtime.");
@@ -877,11 +884,16 @@ export function createConversationService<Client extends ConversationServiceClie
           targetWorkspaceId: targetForRuntimeAuthorization?.workspaceId ?? null,
         },
       );
+      const authPrimeDiagnostic = runtimeAuthorizationReady
+        ? null
+        : deps.managedAiRuntimeAuthorizationPrimeDiagnostic?.() ?? null;
       deps.recordSendTrace("runConversationFromVesloWriteApi:managed-ai-runtime-auth-prime:result", {
         ...(tracePayload ?? {}),
         workspaceId,
         serverWorkspaceId: resolution.serverWorkspaceId,
         ready: runtimeAuthorizationReady,
+        authPrimeDiagnosticReason: authPrimeDiagnostic?.reason ?? null,
+        ...(authPrimeDiagnostic ? { authPrimeDiagnostic } : {}),
       });
       if (!runtimeAuthorizationReady) {
         throw new Error("Managed AI gateway authorization is not ready for this runtime.");

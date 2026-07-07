@@ -1,4 +1,4 @@
-import type { AdminCredentialRecord } from "../../http/admin.js"
+import type { AdminCredentialRecord } from "../credentials/repository.js"
 import type { CodexUsageStatus } from "./codex-status.js"
 
 export type CodexCapacityCredential = {

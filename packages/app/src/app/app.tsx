@@ -975,6 +975,8 @@ export default function App() {
         ? runtimeConfig.ensureManagedAiRuntimeAuthorizationForSend(targetWorkspace)
         : Promise.resolve(false);
     },
+    managedAiRuntimeAuthorizationPrimeDiagnostic: () =>
+      lateManagedAiRuntimeConfig.current()?.lastManagedAiRuntimeAuthorizationPrimeDiagnostic() ?? null,
     activeSendTraceId,
     recordSendTrace,
     sendTraceStep,

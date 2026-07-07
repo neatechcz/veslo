@@ -167,8 +167,10 @@ export async function readAuditEntries(
   const slice = rawLines.slice(-Math.max(1, limit));
   const entries: AuditEntry[] = [];
   for (let i = slice.length - 1; i >= 0; i -= 1) {
+    const rawEntry = slice[i];
+    if (!rawEntry) continue;
     try {
-      entries.push(JSON.parse(slice[i]) as AuditEntry);
+      entries.push(JSON.parse(rawEntry) as AuditEntry);
     } catch {
       // ignore malformed entry
     }

@@ -11,6 +11,7 @@ import type {
 } from "./types.js";
 import { normalizeDenApiBaseUrl } from "./den-api-base.js";
 import { deploymentServiceUrl } from "./deployment-endpoints.js";
+import { readServerEnv } from "./env.js";
 import { buildWorkspaceInfos } from "./workspaces.js";
 import { parseList, readJsonFile, shortId } from "./utils.js";
 
@@ -86,21 +87,6 @@ function normalizeLogFormat(value: string | undefined): LogFormat | undefined {
   if (normalized === "json") return "json";
   if (normalized === "pretty" || normalized === "text" || normalized === "human") return "pretty";
   return undefined;
-}
-
-function parseBoolean(value: string | undefined): boolean | undefined {
-  if (!value) return undefined;
-  const normalized = value.trim().toLowerCase();
-  if (["true", "1", "yes", "on"].includes(normalized)) return true;
-  if (["false", "0", "no", "off"].includes(normalized)) return false;
-  return undefined;
-}
-
-function parsePositiveInteger(value: string | undefined): number | undefined {
-  if (!value) return undefined;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) return undefined;
-  return parsed;
 }
 
 function normalizeOptionalUrl(value: string | undefined): string | undefined {
@@ -333,17 +319,18 @@ async function loadSecretsFileConfig(path: string): Promise<{
 }
 
 export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
-  const envConfigPath = process.env.VESLO_SERVER_CONFIG;
+  const env = readServerEnv();
+  const envConfigPath = env.VESLO_SERVER_CONFIG;
   const configPath = cli.configPath ?? envConfigPath ?? resolve(homedir(), ".config", "veslo", "server.json");
   const fileConfig = await loadFileConfig(configPath);
-  const secretsFilePath = process.env.VESLO_SECRETS_FILE?.trim() || undefined;
+  const secretsFilePath = env.VESLO_SECRETS_FILE;
   const secretsFileConfig = secretsFilePath ? await loadSecretsFileConfig(secretsFilePath) : null;
   const secretsClientToken = secretsFileConfig?.clientToken;
   const secretsHostToken = secretsFileConfig?.hostToken;
   const secretsOrchestratorLifecycleToken = secretsFileConfig?.orchestratorLifecycleToken;
   const configDir = dirname(configPath);
 
-  const envWorkspaces = parseList(process.env.VESLO_WORKSPACES);
+  const envWorkspaces = parseList(env.VESLO_WORKSPACES);
   const workspaceConfigSource: "cli" | "env" | "file" =
     cli.workspaces.length > 0
       ? "cli"
@@ -357,22 +344,22 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
         ? envWorkspaces.map((path) => ({ path }))
         : fileConfig.workspaces ?? [];
 
-  const envOpencodeBaseUrl = process.env.VESLO_OPENCODE_BASE_URL;
-  const envOpencodeDirectory = process.env.VESLO_OPENCODE_DIRECTORY;
-  const envOpencodeUsername = process.env.VESLO_OPENCODE_USERNAME;
-  const envOpencodePassword = process.env.VESLO_OPENCODE_PASSWORD;
+  const envOpencodeBaseUrl = env.VESLO_OPENCODE_BASE_URL;
+  const envOpencodeDirectory = env.VESLO_OPENCODE_DIRECTORY;
+  const envOpencodeUsername = env.VESLO_OPENCODE_USERNAME;
+  const envOpencodePassword = env.VESLO_OPENCODE_PASSWORD;
   const opencodeBaseUrl = cli.opencodeBaseUrl ?? envOpencodeBaseUrl;
   const opencodeDirectory = cli.opencodeDirectory ?? envOpencodeDirectory;
   const opencodeUsername = cli.opencodeUsername ?? envOpencodeUsername ?? fileConfig.opencodeUsername;
   const opencodePassword = cli.opencodePassword ?? envOpencodePassword ?? fileConfig.opencodePassword;
   const orchestratorDaemonUrl =
     normalizeOptionalUrl(cli.orchestratorDaemonUrl) ??
-    normalizeOptionalUrl(process.env.VESLO_ORCHESTRATOR_URL) ??
+    normalizeOptionalUrl(env.VESLO_ORCHESTRATOR_URL) ??
     normalizeOptionalUrl(fileConfig.orchestratorDaemonUrl);
   const orchestratorLifecycleToken =
     cli.orchestratorLifecycleToken?.trim() ||
     secretsOrchestratorLifecycleToken ||
-    process.env.VESLO_ORCHESTRATOR_LIFECYCLE_TOKEN?.trim() ||
+    env.VESLO_ORCHESTRATOR_LIFECYCLE_TOKEN ||
     fileConfig.orchestratorLifecycleToken?.trim() ||
     undefined;
 
@@ -393,12 +380,12 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
 
   const workspaces = buildWorkspaceInfos(workspaceConfigs, configDir);
 
-  const tokenFromEnv = process.env.VESLO_TOKEN;
-  const hostTokenFromEnv = process.env.VESLO_HOST_TOKEN;
-  const instanceId = process.env.VESLO_INSTANCE_ID?.trim() || fileConfig.instanceId?.trim() || shortId();
+  const tokenFromEnv = env.VESLO_TOKEN;
+  const hostTokenFromEnv = env.VESLO_HOST_TOKEN;
+  const instanceId = env.VESLO_INSTANCE_ID || fileConfig.instanceId?.trim() || shortId();
   const runtimeDescriptorPath =
-    process.env.VESLO_RUNTIME_FILE?.trim() ||
-    process.env.VESLO_RUNTIME_DESCRIPTOR_PATH?.trim() ||
+    env.VESLO_RUNTIME_FILE ||
+    env.VESLO_RUNTIME_DESCRIPTOR_PATH ||
     fileConfig.runtimeDescriptorPath?.trim() ||
     undefined;
 
@@ -427,13 +414,13 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
 
   const approvalMode =
     cli.approvalMode ??
-    (process.env.VESLO_APPROVAL_MODE as ApprovalMode | undefined) ??
+    env.VESLO_APPROVAL_MODE ??
     fileConfig.approval?.mode ??
     "manual";
 
   const approvalTimeoutMs =
     cli.approvalTimeoutMs ??
-    (process.env.VESLO_APPROVAL_TIMEOUT_MS ? Number(process.env.VESLO_APPROVAL_TIMEOUT_MS) : undefined) ??
+    env.VESLO_APPROVAL_TIMEOUT_MS ??
     fileConfig.approval?.timeoutMs ??
     DEFAULT_TIMEOUT_MS;
 
@@ -442,36 +429,26 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     timeoutMs: Number.isNaN(approvalTimeoutMs) ? DEFAULT_TIMEOUT_MS : approvalTimeoutMs,
   };
 
-  const envCorsOrigins = process.env.VESLO_CORS_ORIGINS;
+  const envCorsOrigins = env.VESLO_CORS_ORIGINS;
   const parsedEnvCors = envCorsOrigins ? parseList(envCorsOrigins) : null;
   const corsOrigins = cli.corsOrigins ?? parsedEnvCors ?? fileConfig.corsOrigins ?? ["*"];
 
-  const envReadOnly = process.env.VESLO_READONLY;
-  const parsedReadOnly = envReadOnly
-    ? ["true", "1", "yes"].includes(envReadOnly.toLowerCase())
-    : undefined;
-  const readOnly = cli.readOnly ?? parsedReadOnly ?? fileConfig.readOnly ?? false;
+  const readOnly = cli.readOnly ?? env.VESLO_READONLY ?? fileConfig.readOnly ?? false;
 
-  const envLogFormat = process.env.VESLO_LOG_FORMAT;
   const logFormat =
     cli.logFormat ??
-    normalizeLogFormat(envLogFormat) ??
+    env.VESLO_LOG_FORMAT ??
     normalizeLogFormat(fileConfig.logFormat) ??
     DEFAULT_LOG_FORMAT;
 
-  const envLogRequests = parseBoolean(process.env.VESLO_LOG_REQUESTS);
-  const logRequests = cli.logRequests ?? envLogRequests ?? fileConfig.logRequests ?? DEFAULT_LOG_REQUESTS;
+  const logRequests = cli.logRequests ?? env.VESLO_LOG_REQUESTS ?? fileConfig.logRequests ?? DEFAULT_LOG_REQUESTS;
 
-  const debugLogIngestUrl = process.env.VESLO_LOG_INGEST_URL?.trim() || null;
-  const debugLogIngestToken = process.env.VESLO_LOG_INGEST_TOKEN?.trim() || null;
-  const debugLogBatchMaxEvents =
-    parsePositiveInteger(process.env.VESLO_LOG_BATCH_MAX_EVENTS) ?? DEFAULT_DEBUG_LOG_BATCH_MAX_EVENTS;
-  const debugLogBatchMaxBytes =
-    parsePositiveInteger(process.env.VESLO_LOG_BATCH_MAX_BYTES) ?? DEFAULT_DEBUG_LOG_BATCH_MAX_BYTES;
-  const debugLogSpoolMaxBytes =
-    parsePositiveInteger(process.env.VESLO_LOG_SPOOL_MAX_BYTES) ?? DEFAULT_DEBUG_LOG_SPOOL_MAX_BYTES;
-  const debugLogFlushIntervalMs =
-    parsePositiveInteger(process.env.VESLO_LOG_FLUSH_INTERVAL_MS) ?? DEFAULT_DEBUG_LOG_FLUSH_INTERVAL_MS;
+  const debugLogIngestUrl = env.VESLO_LOG_INGEST_URL ?? null;
+  const debugLogIngestToken = env.VESLO_LOG_INGEST_TOKEN ?? null;
+  const debugLogBatchMaxEvents = env.VESLO_LOG_BATCH_MAX_EVENTS ?? DEFAULT_DEBUG_LOG_BATCH_MAX_EVENTS;
+  const debugLogBatchMaxBytes = env.VESLO_LOG_BATCH_MAX_BYTES ?? DEFAULT_DEBUG_LOG_BATCH_MAX_BYTES;
+  const debugLogSpoolMaxBytes = env.VESLO_LOG_SPOOL_MAX_BYTES ?? DEFAULT_DEBUG_LOG_SPOOL_MAX_BYTES;
+  const debugLogFlushIntervalMs = env.VESLO_LOG_FLUSH_INTERVAL_MS ?? DEFAULT_DEBUG_LOG_FLUSH_INTERVAL_MS;
   const debugLogs: DebugLogConfig = {
     enabled: Boolean(debugLogIngestUrl && debugLogIngestToken),
     ingestUrl: debugLogIngestUrl,
@@ -482,14 +459,14 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     flushIntervalMs: debugLogFlushIntervalMs,
   };
   const denApiBase =
-    normalizeDenApiBaseUrl(process.env.VESLO_DEN_API_BASE) ??
+    env.VESLO_DEN_API_BASE ??
     normalizeDenApiBaseUrl(fileConfig.denApiBase) ??
-    deploymentServiceUrl("api", process.env.VESLO_DEPLOYMENT_DOMAIN);
+    deploymentServiceUrl("api", env.VESLO_DEPLOYMENT_DOMAIN);
   const skillRegistryBaseUrl =
-    normalizeDenApiBaseUrl(process.env.VESLO_SKILL_REGISTRY_BASE_URL) ??
+    env.VESLO_SKILL_REGISTRY_BASE_URL ??
     normalizeDenApiBaseUrl(fileConfig.skillRegistryBaseUrl) ??
     denApiBase;
-  const skillRegistryToken = process.env.VESLO_SKILL_REGISTRY_TOKEN?.trim() || undefined;
+  const skillRegistryToken = env.VESLO_SKILL_REGISTRY_TOKEN;
 
   const configuredAuthorizedRoots = fileConfig.authorizedRoots?.length
     ? fileConfig.authorizedRoots.map((root) => resolve(configDir, root))
@@ -504,9 +481,9 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
       : workspaces.map((workspace) => workspace.path)
   ).map((root) => resolve(root))));
 
-  const host = cli.host ?? process.env.VESLO_HOST ?? fileConfig.host ?? DEFAULT_HOST;
-  const port = cli.port ?? (process.env.VESLO_PORT ? Number(process.env.VESLO_PORT) : undefined) ?? fileConfig.port ?? DEFAULT_PORT;
-  const bridgeHostRaw = cli.bridgeHost ?? process.env.VESLO_BRIDGE_HOST ?? fileConfig.bridgeHost;
+  const host = cli.host ?? env.VESLO_HOST ?? fileConfig.host ?? DEFAULT_HOST;
+  const port = cli.port ?? env.VESLO_PORT ?? fileConfig.port ?? DEFAULT_PORT;
+  const bridgeHostRaw = cli.bridgeHost ?? env.VESLO_BRIDGE_HOST ?? fileConfig.bridgeHost;
   const bridgeHostTrimmed = bridgeHostRaw?.trim();
   // A bridge host equal to the primary host adds no reachability, so drop it.
   const bridgeHost = bridgeHostTrimmed && bridgeHostTrimmed !== host ? bridgeHostTrimmed : undefined;

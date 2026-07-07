@@ -17,7 +17,7 @@ import {
 } from "./proxy-failure-alert.js"
 import { normalizeGatewaySessionId } from "./session-id.js"
 import { asyncHandler } from "../async-handler.js"
-import type { ProxyDependencies } from "../proxy.js"
+import type { ProxyDependencies } from "../proxy-dependencies.js"
 
 export function createCodexOAuthProxyRouter(
   deps: Pick<

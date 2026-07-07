@@ -1,4 +1,4 @@
-import type { WorkspaceInfo } from "../lib/tauri";
+import type { WorkspaceInfo } from "../lib/tauri-types";
 import { currentLocale, t } from "../../i18n";
 
 const tr = (key: string) => t(key, currentLocale());

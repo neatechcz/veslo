@@ -406,7 +406,9 @@ test("materializes Codex auth JSON into the worker CODEX_HOME without logging se
 
     const authPath = path.join(codexHome, "auth.json")
     assert.deepEqual(JSON.parse(await readFile(authPath, "utf8")), JSON.parse(authJson))
-    assert.equal((await stat(authPath)).mode & 0o777, 0o600)
+    if (process.platform !== "win32") {
+      assert.equal((await stat(authPath)).mode & 0o777, 0o600)
+    }
   } finally {
     await rm(codexHome, { recursive: true, force: true })
   }

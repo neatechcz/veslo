@@ -1,42 +1,16 @@
 import { Router, type Request } from "express";
 
-import type { AlertRepository } from "../alerts/repository.js";
-import type { AutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js";
-import type { AiAccessRepository, UserAiAccessPolicyRecord } from "../access/repository.js";
+import type { UserAiAccessPolicyRecord } from "../access/repository.js";
 import { readBearerToken } from "../auth/user-session.js";
-import type { GatewaySession, GatewaySessionResolver } from "../auth/gateway-session.js";
-import type { CredentialRepository } from "../credentials/repository.js";
-import type { SecretStore } from "../credentials/secret-store.js";
-import type { TokenBroker } from "../credentials/token-broker.js";
-import type { LeaseBroker } from "../leases/lease-broker.js";
-import type {
-  AnthropicProviderTransport,
-  CodexOAuthProviderTransport,
-  OpenAiCompatibleProviderTransport,
-  OpenAiProviderTransport,
-} from "../providers/transport.js";
-import type { UsageRepository } from "../usage/repository.js";
+import type { GatewaySession } from "../auth/gateway-session.js";
 import { createAnthropicProxyRouter } from "./providers/anthropic.js";
 import { createCodexOAuthProxyRouter } from "./providers/codex-oauth.js";
 import { createOpenAiCompatibleProxyRouter } from "./providers/openai-compatible.js";
 import { createOpenAiProxyRouter } from "./providers/openai.js";
 import { asyncHandler, jsonErrorHandler } from "./async-handler.js";
+import type { ProxyDependencies } from "./proxy-dependencies.js";
 
-export type ProxyDependencies = {
-  aiAccess?: AiAccessRepository;
-  alertRepository?: AlertRepository;
-  autoAssignedCodexCredentialRotation?: AutoAssignedCodexCredentialRotationService;
-  gatewaySessions: GatewaySessionResolver;
-  credentials: CredentialRepository;
-  secrets: SecretStore;
-  usageRepository: UsageRepository;
-  leaseBroker: LeaseBroker;
-  tokenBroker: TokenBroker;
-  openAiTransport: OpenAiProviderTransport;
-  anthropicTransport: AnthropicProviderTransport;
-  codexOAuthTransport: CodexOAuthProviderTransport;
-  openAiCompatibleTransport: OpenAiCompatibleProviderTransport;
-};
+export type { ProxyDependencies } from "./proxy-dependencies.js";
 
 export function createProxyRouter(deps: ProxyDependencies) {
   const router = Router();

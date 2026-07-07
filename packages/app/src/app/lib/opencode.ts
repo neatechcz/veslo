@@ -2,7 +2,7 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { parse } from "jsonc-parser";
 
-import { isTauriRuntime } from "../utils";
+import { isTauriRuntime } from "../utils/paths";
 import { isGatewayOwnedProvider, type GatewayOwnedProviderId } from "../utils/providers";
 import { fetchWithTimeout } from "./http";
 import { recordSendWorkflowTrace } from "./send-workflow-trace";

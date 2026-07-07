@@ -22,8 +22,8 @@ function hostFromDeploymentValue(value: string): string {
     const parsed = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
     return parsed.hostname.trim().toLowerCase().replace(/\.+$/, "");
   } catch {
-    return trimmed
-      .split(/[/?#]/, 1)[0]
+    const host = trimmed.split(/[/?#]/, 1)[0] ?? "";
+    return host
       .trim()
       .toLowerCase()
       .replace(/\.+$/, "");

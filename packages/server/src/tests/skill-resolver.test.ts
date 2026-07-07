@@ -61,6 +61,29 @@ describe("resolveSkillMatch", () => {
     expect(result.match?.name).toBe("company-research-czech");
   });
 
+  test("does not auto-match tied high-score implicit skill candidates", () => {
+    const skills: SkillItem[] = [
+      skill({
+        name: "company-research-czech",
+        description: "Use when user asks for company research and website profile extraction.",
+        trigger: "company research",
+      }),
+      skill({
+        name: "company-research-global",
+        description: "Use when user asks for company research and website profile extraction.",
+        trigger: "company research",
+      }),
+    ];
+
+    const result = resolveSkillMatch({
+      text: "Please use company research skill for this website",
+      skills,
+    });
+
+    expect(result.match).toBeNull();
+    expect(result.candidates.map((candidate) => candidate.score)).toEqual([1, 1]);
+  });
+
   test("matches the platform DOCX skill from MS Word wording", () => {
     const skills: SkillItem[] = [
       skill({

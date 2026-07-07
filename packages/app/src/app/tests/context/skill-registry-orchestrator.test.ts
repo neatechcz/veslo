@@ -372,7 +372,7 @@ test("event listener key does not expose the raw Veslo client token", () => {
   assert.equal(key.includes("server-token-super-secret"), false);
 });
 
-test("event listener auth failure stops polling and reacquires the managed server client", async () => {
+test("event listener auth failure stays stopped when reacquire leaves the same server client", async () => {
   await createRoot(async (dispose) => {
     try {
       const calls: MaterializationCall[] = [];
@@ -408,6 +408,55 @@ test("event listener auth failure stops polling and reacquires the managed serve
       assert.equal(listener.started, 1);
 
       await listener.options.onUnauthorized?.(new SkillRegistryEventsAuthError(401));
+
+      assert.equal(listener.stopped, 1);
+      assert.deepEqual(errors, [{ scope: "skills.registry.events.auth", status: 401 }]);
+      assert.deepEqual(ensures, [{ requireRuntimeChainReady: false }]);
+      assert.equal(listener.started, 1);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("event listener auth failure restarts when reacquire rotates the server client token", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const calls: MaterializationCall[] = [];
+      const errors: Array<{ scope: string; status: number | null }> = [];
+      const ensures: unknown[] = [];
+      const listener = createListenerCapture();
+      const [client, setClient] = createSignal(createClient(calls, "server-token-1"));
+
+      createSkillRegistryOrchestrator({
+        vesloServerClient: client,
+        vesloServerStatus: () => "connected",
+        activeWorkspaceId: () => "workspace-1",
+        workspaceBusy: () => ({}),
+        denAuthRevision: () => 1,
+        readDenAuth: denAuth,
+        refreshSkills: async () => undefined,
+        invalidateSkillRegistryInventory: async () => undefined,
+        markReloadRequired: () => undefined,
+        reportError: (error, scope) => {
+          errors.push({
+            scope,
+            status: error instanceof SkillRegistryEventsAuthError ? error.status : null,
+          });
+        },
+        ensureLocalVesloServerRunning: async (options) => {
+          ensures.push(options);
+          setClient(createClient(calls, "server-token-2"));
+          return true;
+        },
+        createListener: listener.createListener,
+      });
+
+      await flushEffects();
+      assert.equal(listener.started, 1);
+
+      await listener.options.onUnauthorized?.(new SkillRegistryEventsAuthError(401));
+      await flushEffects();
 
       assert.equal(listener.stopped, 1);
       assert.deepEqual(errors, [{ scope: "skills.registry.events.auth", status: 401 }]);

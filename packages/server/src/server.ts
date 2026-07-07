@@ -992,7 +992,7 @@ async function fetchOpencodeJson(
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
 
-  const [pathname, search = ""] = path.split("?");
+  const [pathname = "", search = ""] = path.split("?");
   const url = new URL(buildOpencodeProxyUrl(
     baseUrl,
     pathname.startsWith("/") ? pathname : `/${pathname}`,

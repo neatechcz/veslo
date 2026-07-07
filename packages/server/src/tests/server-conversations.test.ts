@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -302,6 +302,95 @@ describe("conversation routes", () => {
     expect(upstreamRequests).toEqual([]);
   });
 
+  test("POST /workspace/:id/conversations/submit rejects invalid composer payloads before OpenCode contact", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-invalid-"));
+    tempDirs.push(workspaceRoot);
+    let upstreamHits = 0;
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async () => {
+        upstreamHits += 1;
+        return Response.json({ error: "invalid submit must not reach OpenCode" }, { status: 500 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+    const target = { directory: workspaceRoot, pendingClientSessionId: "pending-invalid" };
+    const cases: Array<{ body: Record<string, unknown>; message: string }> = [
+      {
+        body: {
+          clientMessageId: "msg-invalid-parts",
+          origin: "session:normal",
+          source: "enter",
+          target,
+          draft: {
+            mode: "prompt",
+            text: "Hello",
+            parts: { unexpected: true },
+          },
+        },
+        message: "draft.parts must be an array",
+      },
+      {
+        body: {
+          clientMessageId: "msg-invalid-attachments",
+          origin: "session:normal",
+          source: "enter",
+          target,
+          draft: {
+            mode: "prompt",
+            text: "Hello",
+            parts: [],
+            attachments: { name: "not-an-array" },
+          },
+        },
+        message: "draft.attachments must be an array",
+      },
+      {
+        body: {
+          clientMessageId: "msg-invalid-queue-policy",
+          origin: "session:normal",
+          source: "enter",
+          target,
+          draft: {
+            mode: "prompt",
+            text: "Hello",
+            parts: [],
+          },
+          options: {
+            submitQueuePolicy: "urgent",
+          },
+        },
+        message: "options.submitQueuePolicy is invalid",
+      },
+    ];
+
+    for (const item of cases) {
+      const response = await fetch(
+        `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer client-token",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(item.body),
+        },
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        code: "invalid_payload",
+        message: item.message,
+      });
+    }
+    expect(upstreamHits).toBe(0);
+  });
+
   test("POST /workspace/:id/conversations/submit materializes and submits a first conversation idempotently", async () => {
     await useTempVesloDataDir();
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-materialize-"));
@@ -407,6 +496,659 @@ describe("conversation routes", () => {
     expect(retryResponse.status).toBe(200);
     expect(await retryResponse.json()).toEqual(firstPayload);
     expect(upstreamRequests).toHaveLength(2);
+  });
+
+  test("POST /workspace/:id/conversations/submit joins duplicate sends while OpenCode is slow", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-slow-"));
+    tempDirs.push(workspaceRoot);
+    const upstreamRequests: Array<{
+      path: string;
+      traceId: string | null;
+      body: Record<string, unknown> | null;
+    }> = [];
+    let sessionRequests = 0;
+    let promptRequests = 0;
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        upstreamRequests.push({
+          path: url.pathname,
+          traceId: request.headers.get("x-veslo-send-trace-id"),
+          body,
+        });
+        if (request.method === "POST" && url.pathname === "/session") {
+          sessionRequests += 1;
+          await new Promise((resolve) => setTimeout(resolve, 90));
+          return Response.json({
+            id: "sess-submit-slow",
+            title: body?.title ?? "Slow submit",
+            directory: body?.directory ?? workspaceRoot,
+            parentID: null,
+            time: { created: 100, updated: 100 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-submit-slow/prompt_async") {
+          promptRequests += 1;
+          await new Promise((resolve) => setTimeout(resolve, 90));
+          return Response.json({ ok: true });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+    const body = {
+      clientMessageId: "msg-submit-slow",
+      origin: "session:normal",
+      source: "enter",
+      target: { directory: workspaceRoot, pendingClientSessionId: "pending-slow" },
+      draft: {
+        mode: "prompt",
+        text: "Slow network duplicate send",
+        parts: [{ type: "text", text: "Slow network duplicate send" }],
+      },
+    };
+    const submit = () => fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "x-veslo-send-trace-id": "submit-slow-trace",
+        },
+        body: JSON.stringify(body),
+      },
+    );
+
+    const firstSubmit = submit();
+    await waitForCondition(
+      () => sessionRequests === 1,
+      { timeoutMs: 1_000, message: "expected the slow session creation to start" },
+    );
+    const secondSubmit = submit();
+    const [firstResponse, secondResponse] = await Promise.all([firstSubmit, secondSubmit]);
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    const firstPayload = await firstResponse.json() as {
+      status?: string;
+      conversationId?: string;
+      opencodeSessionId?: string;
+      runId?: string;
+      materializedSession?: { id?: string };
+    };
+    const secondPayload = await secondResponse.json() as typeof firstPayload;
+    expect(firstPayload.status).toBe("submitted");
+    expect(secondPayload).toEqual(firstPayload);
+    expect(firstPayload.opencodeSessionId).toBe("sess-submit-slow");
+    expect(firstPayload.materializedSession?.id).toBe("sess-submit-slow");
+    expect(sessionRequests).toBe(1);
+    expect(promptRequests).toBe(1);
+    expect(upstreamRequests.map((entry) => entry.path)).toEqual([
+      "/session",
+      "/session/sess-submit-slow/prompt_async",
+    ]);
+    expect(upstreamRequests.every((entry) => entry.traceId === "submit-slow-trace")).toBe(true);
+    expect(upstreamRequests[1]?.body?.messageID).toBe("msg-submit-slow");
+  });
+
+  test("POST /workspace/:id/conversations/submit resolves implicit skills from a large workspace inventory with MCP config present", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-many-skills-"));
+    const homeRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-many-skills-home-"));
+    tempDirs.push(workspaceRoot, homeRoot);
+    setEnvVarForTest("HOME", homeRoot);
+    setEnvVarForTest("USERPROFILE", homeRoot);
+    setEnvVarForTest("XDG_CONFIG_HOME", join(homeRoot, ".config"));
+    await mkdir(join(workspaceRoot, ".git"), { recursive: true });
+    const skillsRoot = join(workspaceRoot, ".opencode", "skills");
+    await mkdir(skillsRoot, { recursive: true });
+    const fillerSkills = Array.from({ length: 60 }, (_, index) => `general-helper-${String(index).padStart(2, "0")}`);
+    await Promise.all(fillerSkills.map(async (name, index) => {
+      const skillDir = join(skillsRoot, name);
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        join(skillDir, "SKILL.md"),
+        [
+          "---",
+          `name: ${name}`,
+          `description: General helper ${index} for unrelated maintenance notes.`,
+          `trigger: unrelated helper ${index}`,
+          "---",
+          "",
+          `# ${name}`,
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+    }));
+    await mkdir(join(skillsRoot, "broken-skill"), { recursive: true });
+    await writeFile(
+      join(skillsRoot, "broken-skill", "SKILL.md"),
+      [
+        "---",
+        "name: broken-skill",
+        "---",
+        "",
+        "# Broken Skill",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await mkdir(join(skillsRoot, "company-research-czech"), { recursive: true });
+    await writeFile(
+      join(skillsRoot, "company-research-czech", "SKILL.md"),
+      [
+        "---",
+        "name: company-research-czech",
+        "description: Use when user asks for company search and profile extraction from a website.",
+        "trigger: company search",
+        "---",
+        "",
+        "# Company Research Czech",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      join(workspaceRoot, "opencode.jsonc"),
+      JSON.stringify({
+        mcp: {
+          browser: {
+            type: "local",
+            command: ["node", "browser-mcp.js"],
+          },
+          remoteDocs: {
+            type: "remote",
+            url: "https://mcp.example.test/docs",
+          },
+          servers: {
+            futureShape: {
+              type: "remote",
+              url: "https://future.example.test/mcp",
+            },
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    const upstreamRequests: Array<{
+      path: string;
+      body: Record<string, unknown> | null;
+    }> = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        upstreamRequests.push({
+          path: `${url.pathname}${url.search}`,
+          body,
+        });
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({
+            id: "sess-many-skills",
+            title: body?.title ?? "Many skills",
+            directory: body?.directory ?? workspaceRoot,
+            parentID: null,
+            time: { created: 100, updated: 100 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-many-skills/command") {
+          return Response.json({ ok: true });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "x-veslo-send-trace-id": "submit-many-skills-trace",
+        },
+        body: JSON.stringify({
+          clientMessageId: "msg-submit-many-skills",
+          origin: "session:normal",
+          source: "enter",
+          target: { directory: workspaceRoot, pendingClientSessionId: "pending-many-skills" },
+          draft: {
+            mode: "prompt",
+            text: "https://example.test use company search skill for this",
+            parts: [],
+          },
+          options: {
+            model: {
+              providerID: "openai",
+              modelID: "gpt-5.5",
+              modalities: { input: ["text"], output: ["text"] },
+            },
+            agent: "build",
+            variant: "xhigh",
+          },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as {
+      status?: string;
+      opencodeSessionId?: string;
+      debugTrace?: Array<{ event: string }>;
+    };
+    expect(payload.status).toBe("submitted");
+    expect(payload.opencodeSessionId).toBe("sess-many-skills");
+    expect(upstreamRequests.map((entry) => entry.path)).toEqual([
+      "/session",
+      `/session/sess-many-skills/command?directory=${encodeURIComponent(workspaceRoot)}`,
+    ]);
+    expect(upstreamRequests[1]?.body).toMatchObject({
+      messageID: "msg-submit-many-skills",
+      command: "company-research-czech",
+      arguments: "https://example.test use company search skill for this",
+      agent: "build",
+      model: "openai/gpt-5.5",
+      variant: "xhigh",
+    });
+    expect(upstreamRequests[1]?.body?.parts).toBeUndefined();
+    expect(payload.debugTrace?.some((entry) => entry.event === "server:conversation-run:opencode-submit"))
+      .toBe(true);
+  });
+
+  test("POST /workspace/:id/conversations/submit keeps ambiguous implicit skill prompts as prompt runs", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-ambiguous-skills-"));
+    const homeRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-ambiguous-skills-home-"));
+    tempDirs.push(workspaceRoot, homeRoot);
+    setEnvVarForTest("HOME", homeRoot);
+    setEnvVarForTest("USERPROFILE", homeRoot);
+    setEnvVarForTest("XDG_CONFIG_HOME", join(homeRoot, ".config"));
+    await mkdir(join(workspaceRoot, ".git"), { recursive: true });
+    const skillsRoot = join(workspaceRoot, ".opencode", "skills");
+    await mkdir(skillsRoot, { recursive: true });
+    for (const name of ["company-research-czech", "company-research-global"]) {
+      await mkdir(join(skillsRoot, name), { recursive: true });
+      await writeFile(
+        join(skillsRoot, name, "SKILL.md"),
+        [
+          "---",
+          `name: ${name}`,
+          "description: Use when user asks for company research and website profile extraction.",
+          "trigger: company research",
+          "---",
+          "",
+          `# ${name}`,
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+    }
+
+    const upstreamRequests: Array<{
+      path: string;
+      body: Record<string, unknown> | null;
+    }> = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        upstreamRequests.push({
+          path: `${url.pathname}${url.search}`,
+          body,
+        });
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({
+            id: "sess-ambiguous-skills",
+            title: body?.title ?? "Ambiguous skills",
+            directory: body?.directory ?? workspaceRoot,
+            parentID: null,
+            time: { created: 100, updated: 100 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-ambiguous-skills/prompt_async") {
+          return Response.json({ ok: true });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          clientMessageId: "msg-submit-ambiguous-skills",
+          origin: "session:normal",
+          source: "enter",
+          target: { directory: workspaceRoot, pendingClientSessionId: "pending-ambiguous-skills" },
+          draft: {
+            mode: "prompt",
+            text: "Please use company research skill for this website",
+            parts: [],
+          },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as { status?: string; opencodeSessionId?: string };
+    expect(payload.status).toBe("submitted");
+    expect(payload.opencodeSessionId).toBe("sess-ambiguous-skills");
+    expect(upstreamRequests.map((entry) => entry.path)).toEqual([
+      "/session",
+      `/session/sess-ambiguous-skills/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`,
+    ]);
+    expect(upstreamRequests[1]?.body).toMatchObject({
+      messageID: "msg-submit-ambiguous-skills",
+      parts: [{ type: "text", text: "Please use company research skill for this website" }],
+    });
+    expect(upstreamRequests[1]?.body?.command).toBeUndefined();
+  });
+
+  test("POST /workspace/:id/conversations/submit keeps ordinary prompts as prompt runs when no skills or MCP are present", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-no-skills-"));
+    const homeRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-no-skills-home-"));
+    tempDirs.push(workspaceRoot, homeRoot);
+    setEnvVarForTest("HOME", homeRoot);
+    setEnvVarForTest("USERPROFILE", homeRoot);
+    setEnvVarForTest("XDG_CONFIG_HOME", join(homeRoot, ".config"));
+    await mkdir(join(workspaceRoot, ".git"), { recursive: true });
+    const upstreamRequests: Array<{
+      path: string;
+      body: Record<string, unknown> | null;
+    }> = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        upstreamRequests.push({
+          path: `${url.pathname}${url.search}`,
+          body,
+        });
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({
+            id: "sess-no-skills",
+            title: body?.title ?? "No skills",
+            directory: body?.directory ?? workspaceRoot,
+            parentID: null,
+            time: { created: 100, updated: 100 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-no-skills/prompt_async") {
+          return Response.json({ ok: true });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          clientMessageId: "msg-submit-no-skills",
+          origin: "session:normal",
+          source: "enter",
+          target: { directory: workspaceRoot, pendingClientSessionId: "pending-no-skills" },
+          draft: {
+            mode: "prompt",
+            text: "Please inspect this repository",
+            parts: [],
+          },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as { status?: string; opencodeSessionId?: string };
+    expect(payload.status).toBe("submitted");
+    expect(payload.opencodeSessionId).toBe("sess-no-skills");
+    expect(upstreamRequests.map((entry) => entry.path)).toEqual([
+      "/session",
+      `/session/sess-no-skills/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`,
+    ]);
+    expect(upstreamRequests[1]?.body).toMatchObject({
+      messageID: "msg-submit-no-skills",
+      parts: [{ type: "text", text: "Please inspect this repository" }],
+    });
+    expect(upstreamRequests[1]?.body?.command).toBeUndefined();
+  });
+
+  test("POST /workspace/:id/conversations/submit carries run-scoped AI gateway authorization to OpenCode provider calls", async () => {
+    const dataDir = await useTempVesloDataDir();
+    setEnvVarForTest("VESLO_TOKEN_STORE", join(dataDir, "tokens.json"));
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-gateway-"));
+    tempDirs.push(workspaceRoot);
+    await mkdir(join(workspaceRoot, ".git"), { recursive: true });
+
+    const gatewayRequests: Array<{
+      path: string;
+      authorization: string | null;
+      gatewayToken: string | null;
+      sessionId: string | null;
+      workspaceId: string | null;
+      body: unknown;
+    }> = [];
+    const gateway = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (request.method === "GET" && url.pathname === "/api/me/ai-access") {
+          gatewayRequests.push({
+            path: url.pathname,
+            authorization: request.headers.get("authorization"),
+            gatewayToken: request.headers.get("x-veslo-gateway-token"),
+            sessionId: request.headers.get("x-veslo-session-id"),
+            workspaceId: request.headers.get("x-veslo-workspace-id"),
+            body: null,
+          });
+          return managedAiAccessBundleResponse("runtime-scoped-gateway-token");
+        }
+        if (request.method === "POST" && url.pathname === "/providers/codex_oauth/v1/chat/completions") {
+          const requestBody = await request.json().catch(() => null) as unknown;
+          gatewayRequests.push({
+            path: url.pathname,
+            authorization: request.headers.get("authorization"),
+            gatewayToken: request.headers.get("x-veslo-gateway-token"),
+            sessionId: request.headers.get("x-veslo-session-id"),
+            workspaceId: request.headers.get("x-veslo-workspace-id"),
+            body: requestBody,
+          });
+          return Response.json({
+            id: "chatcmpl_submit_gateway",
+            object: "chat.completion",
+            created: 1,
+            model: "gpt-5.5",
+            choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+          });
+        }
+        return Response.json({ error: "unexpected gateway route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(gateway as { stop?: (closeActiveConnections?: boolean) => void });
+    setEnvVarForTest("VESLO_AI_GATEWAY_BASE_URL", `http://127.0.0.1:${gateway.port}`);
+
+    let serverPort = 0;
+    let providerFetchStatus = 0;
+    let providerFetchError = "";
+    const upstreamRequests: string[] = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        upstreamRequests.push(url.pathname);
+        const body = request.method === "POST"
+          ? await request.json().catch(() => null) as Record<string, unknown> | null
+          : null;
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({
+            id: "sess-submit-gateway",
+            title: body?.title ?? "Gateway submit",
+            directory: body?.directory ?? workspaceRoot,
+            parentID: null,
+            time: { created: 100, updated: 100 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-submit-gateway/prompt_async") {
+          try {
+            const providerResponse = await fetch(
+              `http://127.0.0.1:${serverPort}/ai-gateway/providers/codex_oauth/v1/chat/completions`,
+              {
+                method: "POST",
+                headers: {
+                  Authorization: "Bearer client-token",
+                  "Content-Type": "application/json",
+                  "x-veslo-gateway-token": "Bearer [redacted]",
+                  "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
+                  "x-veslo-workspace-id": "ws_1",
+                },
+                body: JSON.stringify({
+                  model: "gpt-5.5",
+                  messages: [{ role: "user", content: "Composer gateway" }],
+                }),
+              },
+            );
+            providerFetchStatus = providerResponse.status;
+          } catch (error) {
+            providerFetchError = error instanceof Error ? error.message : String(error);
+          }
+          return Response.json({ ok: true });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+    serverPort = server.port;
+
+    const tokenResponse = await fetch(`http://127.0.0.1:${server.port}/tokens`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-veslo-host-token": "host-token",
+      },
+      body: JSON.stringify({ scope: "collaborator", label: "composer" }),
+    });
+    expect(tokenResponse.status).toBe(201);
+    const issued = await tokenResponse.json() as { token: string };
+
+    const accessResponse = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/me/ai-access`, {
+      headers: {
+        Authorization: `Bearer ${issued.token}`,
+        "x-veslo-gateway-authorization": "Bearer den-user-token",
+      },
+    });
+    expect(accessResponse.status).toBe(200);
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${issued.token}`,
+          "Content-Type": "application/json",
+          "x-veslo-send-trace-id": "submit-gateway-trace",
+        },
+        body: JSON.stringify({
+          clientMessageId: "msg-submit-gateway",
+          origin: "session:normal",
+          source: "enter",
+          target: { directory: workspaceRoot, pendingClientSessionId: "pending-submit-gateway" },
+          draft: {
+            mode: "prompt",
+            text: "Composer should call managed AI",
+            parts: [{ type: "text", text: "Composer should call managed AI" }],
+          },
+          options: {
+            expectAiGatewayStart: true,
+          },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as {
+      status?: string;
+      opencodeSessionId?: string;
+      debugTrace?: Array<{ event: string }>;
+    };
+    expect(payload.status).toBe("submitted");
+    expect(payload.opencodeSessionId).toBe("sess-submit-gateway");
+    expect(providerFetchStatus).toBe(200);
+    expect(providerFetchError).toBe("");
+    expect(upstreamRequests).toEqual([
+      "/session",
+      "/session/sess-submit-gateway/prompt_async",
+    ]);
+    expect(gatewayRequests).toEqual([
+      {
+        path: "/api/me/ai-access",
+        authorization: "Bearer den-user-token",
+        gatewayToken: null,
+        sessionId: null,
+        workspaceId: null,
+        body: null,
+      },
+      {
+        path: "/providers/codex_oauth/v1/chat/completions",
+        authorization: "Bearer runtime-scoped-gateway-token",
+        gatewayToken: null,
+        sessionId: "sess-submit-gateway",
+        workspaceId: null,
+        body: {
+          model: "gpt-5.5",
+          messages: [{ role: "user", content: "Composer gateway" }],
+        },
+      },
+    ]);
+    expect(payload.debugTrace?.some((entry) => entry.event === "server:conversation-run:opencode-submit"))
+      .toBe(true);
   });
 
   test("POST /workspace/:id/conversations/submit returns materialized session when first run submit fails", async () => {

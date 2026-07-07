@@ -41,9 +41,9 @@ test("desktop onboarding page requests JSON authorize transport and keeps author
     "onboarding page must accept a JSON authorize success response",
   )
 
-  assert.equal(
-    onboardingPage.includes("updateUI();\n                showError(errorMessage);"),
-    true,
+  assert.match(
+    onboardingPage,
+    /updateUI\(\);[\s\S]*?showError\(errorMessage\);/,
     "onboarding page must restore the form before rendering the authorize error",
   )
 

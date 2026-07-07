@@ -10,7 +10,7 @@ import {
   type CodexOAuthProviderTransport,
   type ProviderTransportResponse,
 } from "./transport.js"
-import { resolveCodexCliCommand } from "./codex-command.js"
+import { resolveCodexCliCommandSpec, type CodexCliCommandSpec } from "./codex-command.js"
 import type { TokenUsageAccounting } from "../usage/token-accounting.js"
 
 export type CodexCliWorkerRunInput = {
@@ -31,6 +31,7 @@ export type CodexCliWorkerRunResult = {
 export type CodexCliWorkerTransportDeps = {
   spawnCodex?: (input: CodexCliWorkerRunInput) => Promise<CodexCliWorkerRunResult>
   command?: string
+  commandArgsPrefix?: string[]
   codexHome?: string
   allowHostHome?: boolean
   authJson?: string
@@ -42,7 +43,7 @@ export type CodexCliWorkerTransportDeps = {
 
 export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
   private readonly spawnCodex: (input: CodexCliWorkerRunInput) => Promise<CodexCliWorkerRunResult>
-  private readonly command: string
+  private readonly command: CodexCliCommandSpec
   private readonly codexHome: string
   private readonly allowHostHome: boolean
   private readonly authJson: string
@@ -52,7 +53,11 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
   private readonly randomId: () => string
 
   constructor(deps: CodexCliWorkerTransportDeps = {}) {
-    this.command = resolveCodexCliCommand(deps.command ?? process.env.AI_GATEWAY_CODEX_COMMAND)
+    const commandSpec = resolveCodexCliCommandSpec(deps.command ?? process.env.AI_GATEWAY_CODEX_COMMAND)
+    this.command = {
+      command: commandSpec.command,
+      argsPrefix: deps.commandArgsPrefix ?? commandSpec.argsPrefix,
+    }
     this.codexHome = deps.codexHome?.trim() || process.env.AI_GATEWAY_CODEX_HOME?.trim() || ""
     this.allowHostHome = deps.allowHostHome ?? process.env.AI_GATEWAY_CODEX_ALLOW_HOST_HOME?.trim() === "1"
     this.authJson = deps.authJson?.trim() || process.env.AI_GATEWAY_CODEX_AUTH_JSON?.trim() || ""
@@ -203,8 +208,8 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
 
       args.push(input.prompt)
       const result = await runProcess({
-        command: this.command,
-        args,
+        command: this.command.command,
+        args: [...this.command.argsPrefix, ...args],
         cwd: scratchDir,
         codexHome: this.codexHome,
         timeoutMs: this.timeoutMs,
@@ -245,7 +250,12 @@ function readCodexTokenUsageFromText(text: string): TokenUsageAccounting | null 
     .filter(Boolean)
 
   for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const parsed = parseJsonRecord(lines[index])
+    const line = lines[index]
+    if (!line) {
+      continue
+    }
+
+    const parsed = parseJsonRecord(line)
     const payload = getRecord(parsed?.payload)
     if (!payload || getString(payload, "type") !== "token_count") {
       continue
