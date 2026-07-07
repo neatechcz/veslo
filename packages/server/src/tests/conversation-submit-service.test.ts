@@ -277,6 +277,48 @@ describe("conversation submit service", () => {
     expect(resolveDirectoryCalls).toBe(1);
   });
 
+  test("returns debug trace when implicit skill resolution fails before dry-run submit", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-skill-fallback-"));
+    tempDirs.push(workspaceRoot);
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-skill-fallback-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => undefined),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+      resolveSkillCommand: async () => {
+        throw new Error("skill registry unavailable");
+      },
+    });
+
+    const result = await service.submit({
+      workspace: workspace(workspaceRoot),
+      body: {
+        clientMessageId: "msg-skill-fallback-trace",
+        origin: "session:normal",
+        target: { directory: workspaceRoot },
+        draft: {
+          mode: "prompt",
+          text: "plain prompt",
+          parts: [{ type: "text", text: "plain prompt" }],
+        },
+        options: { dryRun: true },
+      },
+      resolveDirectory: async () => workspaceRoot,
+    });
+
+    expect(result.httpStatus).toBe(200);
+    expect(result.payload).toMatchObject({
+      status: "dry_run",
+      debugTrace: [
+        {
+          event: "implicit_skill_resolution_failed",
+          message: "skill registry unavailable",
+        },
+      ],
+    });
+  });
+
   test("submits resolved existing targets through the injected run submitter idempotently", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-existing-run-"));
     tempDirs.push(workspaceRoot);

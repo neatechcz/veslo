@@ -108,6 +108,7 @@ describe("conversation submit draft resolution", () => {
   });
 
   test("falls back to prompt when implicit skill resolution fails", async () => {
+    const debugTrace: Array<Record<string, unknown>> = [];
     const result = await resolveConversationSubmitDraft({
       request: request({
         mode: "prompt",
@@ -117,6 +118,7 @@ describe("conversation submit draft resolution", () => {
       resolveSkillCommand: async () => {
         throw new Error("skill registry unavailable");
       },
+      recordDebugTrace: (entry) => debugTrace.push(entry),
     });
 
     expect(result).toMatchObject({
@@ -126,6 +128,12 @@ describe("conversation submit draft resolution", () => {
         text: "plain prompt should still send",
       },
     });
+    expect(debugTrace).toMatchObject([
+      {
+        event: "implicit_skill_resolution_failed",
+        message: "skill registry unavailable",
+      },
+    ]);
   });
 
   test("falls back to prompt when implicit document skill lacks runtime", async () => {

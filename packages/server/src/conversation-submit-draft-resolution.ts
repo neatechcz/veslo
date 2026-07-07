@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import type {
   ConversationSubmitBlockedResult,
   ConversationSubmitAttachment,
+  ConversationSubmitDebugTraceEntry,
   ConversationSubmitRequest,
   ConversationSubmitResolvedRunInput,
 } from "./conversation-submit-contract.js";
@@ -360,6 +361,7 @@ async function resolveRunInput(input: {
   request: ConversationSubmitRequest;
   documentRuntimeStatus?: ConversationSubmitDocumentRuntimeStatusReader;
   resolveSkillCommand?: ConversationSubmitSkillCommandResolver;
+  recordDebugTrace?: (entry: ConversationSubmitDebugTraceEntry) => void;
   workspace?: WorkspaceInfo | null;
   includeGlobal?: boolean;
 }): Promise<ConversationSubmitRunInputResolution> {
@@ -422,7 +424,12 @@ async function resolveRunInput(input: {
         workspace: input.workspace ?? null,
         includeGlobal: input.includeGlobal === true,
       }))?.trim();
-    } catch {
+    } catch (error) {
+      input.recordDebugTrace?.({
+        source: "conversation-submit-draft-resolution",
+        event: "implicit_skill_resolution_failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
       skillCommandName = undefined;
     }
     if (skillCommandName) {
@@ -465,6 +472,7 @@ export async function resolveConversationSubmitDraft(input: {
   request: ConversationSubmitRequest;
   documentRuntimeStatus?: ConversationSubmitDocumentRuntimeStatusReader;
   resolveSkillCommand?: ConversationSubmitSkillCommandResolver;
+  recordDebugTrace?: (entry: ConversationSubmitDebugTraceEntry) => void;
   workspace?: WorkspaceInfo | null;
   includeGlobal?: boolean;
 }): Promise<ConversationSubmitDraftResolution> {

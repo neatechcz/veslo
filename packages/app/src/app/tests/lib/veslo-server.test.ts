@@ -435,6 +435,7 @@ test("submitConversation posts to the server-owned submit endpoint", async () =>
         requestHash: "a".repeat(64),
         draftDisposition: "keep",
         target: { directory: "src" },
+        debugTrace: [{ source: "server", event: "implicit_skill_resolution_failed" }],
       }),
       {
         status: 200,
@@ -471,6 +472,7 @@ test("submitConversation posts to the server-owned submit endpoint", async () =>
     );
 
     assert.equal(result.status, "dry_run");
+    assert.deepEqual(result.debugTrace, [{ source: "server", event: "implicit_skill_resolution_failed" }]);
     assert.equal(calls.length, 1);
     assert.equal(calls[0]?.url, "https://veslo.example/workspace/ws_1/conversations/submit");
     assert.equal(calls[0]?.method, "POST");

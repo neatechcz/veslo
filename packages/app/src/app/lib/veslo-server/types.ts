@@ -1425,6 +1425,7 @@ export type VesloConversationSubmitResult =
         opencodeSessionId?: string | null;
         pendingClientSessionId?: string | null;
       };
+      debugTrace?: VesloConversationSubmitDebugTraceEntry[];
     }
   | {
       status: "materialized";

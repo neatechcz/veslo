@@ -82,6 +82,7 @@ export type ConversationSubmitDryRunResult = {
     opencodeSessionId?: string | null;
     pendingClientSessionId?: string | null;
   };
+  debugTrace?: ConversationSubmitDebugTraceEntry[];
 };
 
 export type ConversationSubmitMaterializedResult = {

@@ -3,6 +3,7 @@ import {
   createConversationSubmitRequestHash,
   parseConversationSubmitRequest,
   type ConversationSubmitBlockedResult,
+  type ConversationSubmitDebugTraceEntry,
   type ConversationSubmitFailedResult,
   type ConversationSubmitRequest,
   type ConversationSubmitQueuedResult,
@@ -210,10 +211,14 @@ export function createConversationSubmitService(input: {
         };
       }
 
+      const debugTrace: ConversationSubmitDebugTraceEntry[] = [];
       const draftResolution = await resolveConversationSubmitDraft({
         request,
         documentRuntimeStatus,
         resolveSkillCommand,
+        recordDebugTrace: (entry) => {
+          debugTrace.push(entry);
+        },
         workspace,
         includeGlobal: workspace.workspaceType === "local",
       });
@@ -254,6 +259,7 @@ export function createConversationSubmitService(input: {
             opencodeSessionId: request.target?.opencodeSessionId ?? null,
             pendingClientSessionId: request.target?.pendingClientSessionId ?? null,
           },
+          ...(debugTrace.length ? { debugTrace } : {}),
         };
         return {
           payload: completeAttempt(payload, "completed"),
