@@ -498,6 +498,143 @@ describe("conversation routes", () => {
     expect(upstreamRequests).toHaveLength(2);
   });
 
+  test("POST /workspace/:id/conversations/submit registers server-created local workspaces before orchestrator session create", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-private-orchestrator-"));
+    tempDirs.push(workspaceRoot);
+    const registeredWorkspaces = new Set<string>();
+    const orchestratorRequests: Array<{ path: string; body: Record<string, unknown> | null }> = [];
+    const orchestrator = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = request.method === "POST"
+          ? await request.json().catch(() => null) as Record<string, unknown> | null
+          : null;
+        orchestratorRequests.push({ path: url.pathname, body });
+        if (request.method === "POST" && url.pathname === "/workspaces") {
+          const id = typeof body?.serverWorkspaceId === "string"
+            ? body.serverWorkspaceId
+            : typeof body?.id === "string"
+              ? body.id
+              : "";
+          if (!id || typeof body?.path !== "string") {
+            return Response.json({ error: "invalid workspace registration" }, { status: 400 });
+          }
+          registeredWorkspaces.add(id);
+          return Response.json({
+            activeId: id,
+            workspace: {
+              id,
+              name: body.name ?? "Private",
+              path: body.path,
+              workspaceType: "local",
+              serverWorkspaceId: id,
+              createdAt: Date.now(),
+            },
+          });
+        }
+
+        const sessionMatch = url.pathname.match(/^\/workspace\/([^/]+)\/opencode\/session$/);
+        if (request.method === "POST" && sessionMatch?.[1]) {
+          const workspaceId = decodeURIComponent(sessionMatch[1]);
+          if (!registeredWorkspaces.has(workspaceId)) {
+            return Response.json({ error: "workspace not found" }, { status: 404 });
+          }
+          return Response.json({
+            id: "sess-private-created",
+            title: body?.title ?? "Private first submit",
+            directory: body?.directory ?? workspaceRoot,
+            parentID: null,
+            time: { created: 100, updated: 100 },
+          });
+        }
+
+        const promptMatch = url.pathname.match(/^\/workspace\/([^/]+)\/opencode\/session\/([^/]+)\/prompt_async$/);
+        if (request.method === "POST" && promptMatch?.[1] && promptMatch?.[2]) {
+          const workspaceId = decodeURIComponent(promptMatch[1]);
+          if (!registeredWorkspaces.has(workspaceId)) {
+            return Response.json({ error: "workspace not found" }, { status: 404 });
+          }
+          return Response.json({ ok: true });
+        }
+        return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(orchestrator as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: 0,
+      workspaces: [],
+      orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
+    });
+
+    const workspaceResponse = await fetch(`http://127.0.0.1:${server.port}/workspaces/local`, {
+      method: "POST",
+      headers: {
+        "x-veslo-host-token": "host-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name: "Private", path: workspaceRoot }),
+    });
+    expect(workspaceResponse.status).toBe(201);
+    const workspacePayload = await workspaceResponse.json() as {
+      workspace?: { id?: string; path?: string; baseUrl?: string };
+    };
+    const workspaceId = workspacePayload.workspace?.id ?? "";
+    expect(workspaceId).toMatch(/^ws-/);
+    expect(workspacePayload.workspace?.baseUrl).toBe(
+      `http://127.0.0.1:${orchestrator.port}/workspace/${workspaceId}/opencode`,
+    );
+
+    const submitResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/${encodeURIComponent(workspaceId)}/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "x-veslo-send-trace-id": "submit-private-orchestrator-trace",
+        },
+        body: JSON.stringify({
+          clientMessageId: "msg-private-orchestrator",
+          origin: "composer-target:create-private",
+          source: "enter",
+          target: { directory: workspaceRoot, pendingClientSessionId: "pending-private-orchestrator" },
+          draft: {
+            mode: "prompt",
+            text: "Private server submit",
+            parts: [{ type: "text", text: "Private server submit" }],
+          },
+        }),
+      },
+    );
+
+    expect(submitResponse.status).toBe(200);
+    const submitPayload = await submitResponse.json() as {
+      status?: string;
+      workspaceId?: string;
+      opencodeSessionId?: string;
+      clientMessageId?: string;
+    };
+    expect(submitPayload.status).toBe("submitted");
+    expect(submitPayload.workspaceId).toBe(workspaceId);
+    expect(submitPayload.opencodeSessionId).toBe("sess-private-created");
+    expect(submitPayload.clientMessageId).toBe("msg-private-orchestrator");
+
+    const paths = orchestratorRequests.map((entry) => entry.path);
+    const firstRegisterIndex = paths.indexOf("/workspaces");
+    const sessionIndex = paths.indexOf(`/workspace/${workspaceId}/opencode/session`);
+    const promptIndex = paths.indexOf(`/workspace/${workspaceId}/opencode/session/sess-private-created/prompt_async`);
+    expect(firstRegisterIndex).toBeGreaterThanOrEqual(0);
+    expect(sessionIndex).toBeGreaterThan(firstRegisterIndex);
+    expect(promptIndex).toBeGreaterThan(sessionIndex);
+    const registrations = orchestratorRequests.filter((entry) => entry.path === "/workspaces");
+    expect(registrations.every((entry) => entry.body?.serverWorkspaceId === workspaceId)).toBe(true);
+    expect(registrations.every((entry) => entry.body?.path === workspaceRoot)).toBe(true);
+  });
+
   test("POST /workspace/:id/conversations/submit joins duplicate sends while OpenCode is slow", async () => {
     await useTempVesloDataDir();
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-slow-"));

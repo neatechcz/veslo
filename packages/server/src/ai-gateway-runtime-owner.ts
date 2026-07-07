@@ -330,7 +330,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     const accessToken = readAiAccessBundleAccessToken(input.value);
     if (accessToken) {
       registerRuntimeAuthorization({
-        actor: input.actor,
+        ...(input.actor ? { actor: input.actor } : {}),
         authorization: `Bearer ${accessToken}`,
         source: "ai-access-token",
       });
@@ -338,7 +338,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     }
 
     registerRuntimeAuthorization({
-      actor: input.actor,
+      ...(input.actor ? { actor: input.actor } : {}),
       authorization: input.callerAuthorization,
       source: "caller-authorization",
     });

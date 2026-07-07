@@ -33,7 +33,7 @@ import {
   type SessionArtifactMessage,
   type SessionArtifactPart,
 } from "../session-artifacts.js";
-import type { WorkspaceInfo } from "../types.js";
+import type { ServerConfig, WorkspaceInfo } from "../types.js";
 import { shortId } from "../utils.js";
 
 const SESSION_TRANSCRIPT_DEFAULT_LIMIT = 140;
@@ -139,6 +139,18 @@ function optionalBodyNullableString(body: Record<string, unknown>, field: string
 function optionalBodyBoolean(body: Record<string, unknown>, field: string): boolean | undefined {
   const value = body[field];
   return typeof value === "boolean" ? value : undefined;
+}
+
+function requireRouteParam(params: Record<string, string>, field: string, label = field): string {
+  const value = params[field]?.trim() ?? "";
+  if (!value) {
+    throw new ApiError(400, "invalid_payload", `${label} is required`);
+  }
+  return value;
+}
+
+function resolveRouteWorkspace(config: ServerConfig, params: Record<string, string>): Promise<WorkspaceInfo> {
+  return resolveWorkspace(config, requireRouteParam(params, "id", "workspace id"));
 }
 
 function parseSessionTranscriptLimit(input: unknown): number {
@@ -448,6 +460,13 @@ function readSubmitDebugTrace(payload: Record<string, unknown>): ConversationSub
   return entries.length > 0 ? entries : undefined;
 }
 
+function optionalSubmitDebugTrace(payload: Record<string, unknown>): {
+  debugTrace?: ConversationSubmitDebugTraceEntry[];
+} {
+  const debugTrace = readSubmitDebugTrace(payload);
+  return debugTrace ? { debugTrace } : {};
+}
+
 function serializeConversationRunQueueStatus(item: ConversationRunQueueItem): Record<string, unknown> {
   return {
     ok: true,
@@ -521,7 +540,7 @@ export function registerConversationSessionRoutes(
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
 
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const sessionId = (ctx.params.sessionId ?? "").trim();
     if (!sessionId) {
       throw new ApiError(400, "invalid_payload", "sessionId is required");
@@ -533,7 +552,7 @@ export function registerConversationSessionRoutes(
   });
 
   addRoute(routes, "GET", "/workspace/:id/conversations", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const directory = await resolveConversationReadDirectory(
       workspace,
       ctx.url.searchParams.get("directory"),
@@ -550,7 +569,7 @@ export function registerConversationSessionRoutes(
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
     const sendTraceId = ctx.request.headers.get("x-veslo-send-trace-id")?.trim() || null;
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const body = await readOptionalJsonBody(ctx.request);
     const directory = await resolveConversationReadDirectory(
       workspace,
@@ -595,7 +614,7 @@ export function registerConversationSessionRoutes(
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
     const sendTraceId = ctx.request.headers.get("x-veslo-send-trace-id")?.trim() || null;
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const body = await readJsonBody(ctx.request);
     const runtimeAuthorizationActorTokenHash = ctx.actor?.tokenHash?.trim() || null;
     const submitResolvedRun: ConversationSubmitResolvedRunSubmitter = async ({
@@ -649,7 +668,7 @@ export function registerConversationSessionRoutes(
           origin: request.origin,
           submitQueuePolicy: request.options?.submitQueuePolicy ?? "normal",
           expectAiGatewayStart: request.options?.expectAiGatewayStart === true,
-          runtimeAuthorizationActorTokenHash,
+          ...(runtimeAuthorizationActorTokenHash !== undefined ? { runtimeAuthorizationActorTokenHash } : {}),
         });
         const payload = result.payload;
         if (payload.status === "submitted") {
@@ -663,7 +682,7 @@ export function registerConversationSessionRoutes(
               runId: requireStringPayloadField(payload, "runId"),
               clientMessageId: request.clientMessageId,
               draftDisposition: "clear",
-              debugTrace: readSubmitDebugTrace(payload),
+              ...optionalSubmitDebugTrace(payload),
             } satisfies ConversationSubmitSubmittedResult,
           };
         }
@@ -680,7 +699,7 @@ export function registerConversationSessionRoutes(
               queuePosition: requireNumberPayloadField(payload, "queuePosition"),
               clientMessageId: request.clientMessageId,
               draftDisposition: "clear",
-              debugTrace: readSubmitDebugTrace(payload),
+              ...optionalSubmitDebugTrace(payload),
             } satisfies ConversationSubmitQueuedResult,
           };
         }
@@ -886,7 +905,7 @@ export function registerConversationSessionRoutes(
   addRoute(routes, "POST", "/workspace/:id/conversations/import", "client", async (ctx) => {
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const body = await readJsonBody(ctx.request);
     const rawSessions = body.sessions;
     if (!Array.isArray(rawSessions)) {
@@ -923,7 +942,7 @@ export function registerConversationSessionRoutes(
   });
 
   addRoute(routes, "GET", "/workspace/:id/conversations/:conversationId/transcript", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const conversationId = (ctx.params.conversationId ?? "").trim();
     if (!conversationId) {
       throw new ApiError(400, "invalid_payload", "conversationId is required");
@@ -946,15 +965,14 @@ export function registerConversationSessionRoutes(
     const runTrace = createConversationRunTracer(ctx.request);
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
+    const routeWorkspaceId = requireRouteParam(ctx.params, "id", "workspace id");
+    const routeConversationId = requireRouteParam(ctx.params, "conversationId", "conversationId");
     runTrace.record("server:conversation-run:start", {
-      workspaceId: ctx.params.id,
-      conversationId: ctx.params.conversationId,
+      workspaceId: routeWorkspaceId,
+      conversationId: routeConversationId,
     });
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
-    const sessionOrConversationId = (ctx.params.conversationId ?? "").trim();
-    if (!sessionOrConversationId) {
-      throw new ApiError(400, "invalid_payload", "conversationId is required");
-    }
+    const workspace = await resolveWorkspace(ctx.config, routeWorkspaceId);
+    const sessionOrConversationId = routeConversationId;
     const body = await readJsonBody(ctx.request);
     const kind = parseConversationRunKind(body.kind);
     const clientMessageId = optionalBodyString(body, "clientMessageId") || optionalBodyString(body, "messageID");
@@ -1002,7 +1020,7 @@ export function registerConversationSessionRoutes(
 
   addRoute(routes, "GET", "/workspace/:id/conversations/:conversationId/queue/:queueItemId", "client", async (ctx) => {
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const conversationId = (ctx.params.conversationId ?? "").trim();
     const queueItemId = (ctx.params.queueItemId ?? "").trim();
     if (!conversationId || !queueItemId) {
@@ -1022,7 +1040,7 @@ export function registerConversationSessionRoutes(
   addRoute(routes, "POST", "/workspace/:id/conversations/:conversationId/abort", "client", async (ctx) => {
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const sessionOrConversationId = (ctx.params.conversationId ?? "").trim();
     if (!sessionOrConversationId) {
       throw new ApiError(400, "invalid_payload", "conversationId is required");
@@ -1089,7 +1107,7 @@ export function registerConversationSessionRoutes(
 
   addRoute(routes, "GET", "/workspace/:id/conversations/:conversationId/runs/:runId", "client", async (ctx) => {
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const conversationId = (ctx.params.conversationId ?? "").trim();
     const runId = (ctx.params.runId ?? "").trim();
     if (!conversationId || !runId) {
@@ -1126,7 +1144,7 @@ export function registerConversationSessionRoutes(
   });
 
   addRoute(routes, "POST", "/workspace/:id/sessions/transcript-prefetch", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const body = await readJsonBody(ctx.request);
     const payload = body as Record<string, unknown>;
     const clickedSessionId = parseOptionalSessionId(payload.clickedSessionId);
@@ -1152,13 +1170,13 @@ export function registerConversationSessionRoutes(
     }
     const result = await sessionTranscriptPrefetch.updateInterest({
       workspaceId: workspace.id,
-      clickedSessionId,
-      selectedSessionId,
       loadedTopLevelSessionIds,
       expandedSubagentSessionIds,
       directory,
       sessionDirectoriesById,
       limit,
+      ...(clickedSessionId ? { clickedSessionId } : {}),
+      ...(selectedSessionId ? { selectedSessionId } : {}),
     });
     return jsonResponse(result);
   });
@@ -1166,7 +1184,7 @@ export function registerConversationSessionRoutes(
   addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/transcript", "client", async (ctx) => {
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const sessionId = (ctx.params.sessionId ?? "").trim();
     if (!sessionId) {
       throw new ApiError(400, "invalid_payload", "sessionId is required");
@@ -1225,7 +1243,7 @@ export function registerConversationSessionRoutes(
   });
 
   addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/transcript", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const sessionId = (ctx.params.sessionId ?? "").trim();
     if (!sessionId) {
       throw new ApiError(400, "invalid_payload", "sessionId is required");
@@ -1245,7 +1263,7 @@ export function registerConversationSessionRoutes(
   });
 
   addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/artifacts/latest-run", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const sessionId = (ctx.params.sessionId ?? "").trim();
     if (!sessionId) {
       throw new ApiError(400, "invalid_payload", "sessionId is required");

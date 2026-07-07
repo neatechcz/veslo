@@ -1178,12 +1178,113 @@ function orchestratorFallbackWorkspace(config: ServerConfig, workspace: Workspac
   return { ...workspace, baseUrl };
 }
 
+async function ensureOrchestratorWorkspaceRegistered(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  init: Pick<Parameters<typeof fetchOpencodeJson>[2], "method" | "sendTraceId">,
+): Promise<void> {
+  if (workspace.workspaceType !== "local") return;
+  const daemonUrl = config.orchestratorDaemonUrl?.trim().replace(/\/+$/, "") ?? "";
+  const workspaceId = workspace.id?.trim() ?? "";
+  const workspacePath = workspace.path?.trim() ?? "";
+  if (!daemonUrl || !workspaceId || !workspacePath) return;
+
+  const timeoutMs = resolveOpenCodeJsonFetchTimeoutMs();
+  const targetUrl = `${daemonUrl}/workspaces`;
+  const requestStartedAt = Date.now();
+  recordSendWorkflowTrace("server", "server:orchestrator-workspace-register:start", {
+    traceId: init.sendTraceId?.trim() || null,
+    workspaceId,
+    method: init.method,
+    timeoutMs,
+  });
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  if (typeof timeout === "object" && timeout && "unref" in timeout) {
+    (timeout as { unref?: () => void }).unref?.();
+  }
+
+  try {
+    const response = await fetch(targetUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: workspaceId,
+        serverWorkspaceId: workspaceId,
+        vesloWorkspaceId: workspaceId,
+        name: workspace.name,
+        path: workspacePath,
+      }),
+      signal: controller.signal,
+    });
+    const text = await readResponseTextWithLimit(response, 128 * 1024).catch((error) => {
+      if (timedOut || isAbortError(error)) {
+        throw new ApiError(502, "orchestrator_workspace_registration_timeout", "Orchestrator workspace registration timed out", {
+          workspaceId,
+          timeoutMs,
+        });
+      }
+      throw error;
+    });
+    let body: unknown = null;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = text;
+    }
+    if (!response.ok) {
+      if ([404, 405, 501].includes(response.status)) {
+        recordSendWorkflowTrace("server", "server:orchestrator-workspace-register:unsupported", {
+          traceId: init.sendTraceId?.trim() || null,
+          workspaceId,
+          status: response.status,
+          durationMs: Date.now() - requestStartedAt,
+        });
+        return;
+      }
+      throw new ApiError(502, "orchestrator_workspace_registration_failed", "Orchestrator workspace registration failed", {
+        workspaceId,
+        status: response.status,
+        body,
+      });
+    }
+    recordSendWorkflowTrace("server", "server:orchestrator-workspace-register:done", {
+      traceId: init.sendTraceId?.trim() || null,
+      workspaceId,
+      status: response.status,
+      durationMs: Date.now() - requestStartedAt,
+    });
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    if (timedOut || isAbortError(error)) {
+      throw new ApiError(502, "orchestrator_workspace_registration_timeout", "Orchestrator workspace registration timed out", {
+        workspaceId,
+        timeoutMs,
+      });
+    }
+    throw new ApiError(502, "orchestrator_workspace_registration_failed", "Orchestrator workspace registration failed", {
+      workspaceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchOpencodeJsonWithOrchestratorFallback(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   path: string,
   init: Parameters<typeof fetchOpencodeJson>[2],
 ) {
+  const orchestratorBaseUrl = buildOrchestratorWorkspaceOpencodeBaseUrl(config, workspace);
+  if (orchestratorBaseUrl && workspace.baseUrl?.trim() === orchestratorBaseUrl) {
+    await ensureOrchestratorWorkspaceRegistered(config, workspace, init);
+  }
   try {
     return await fetchOpencodeJson(workspace, path, init);
   } catch (error) {
@@ -1201,6 +1302,7 @@ async function fetchOpencodeJsonWithOrchestratorFallback(
       error: error instanceof Error ? error.message : String(error),
       code: error instanceof ApiError ? error.code : null,
     });
+    await ensureOrchestratorWorkspaceRegistered(config, workspace, init);
     return await fetchOpencodeJson(fallback, path, init);
   }
 }
@@ -1598,8 +1700,12 @@ function recordAiGatewaySessionHit(input: {
   now?: number;
 }): void {
   aiGatewayRuntimeOwner.recordSessionHit({
-    ...input,
-    at: input.now,
+    requestId: input.requestId,
+    provider: input.provider,
+    gatewayPath: input.gatewayPath,
+    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+    ...(input.now !== undefined ? { at: input.now } : {}),
   });
 }
 
@@ -1666,24 +1772,26 @@ function summarizeChatCompletionBody(json: Record<string, unknown>, text: string
   const model = typeof json.model === "string" && json.model.trim() ? json.model.trim() : undefined;
   const tools = Array.isArray(json.tools) ? json.tools : undefined;
 
-  return {
+  const diagnostic: AiGatewayRequestDiagnostic = {
     contentType: null,
     contentLength: null,
     bodySha256: createHash("sha256").update(text).digest("hex"),
     bodyBytes: Buffer.byteLength(text, "utf8"),
     jsonKeys: Object.keys(json).sort((a, b) => a.localeCompare(b)),
-    model,
-    stream: typeof json.stream === "boolean" ? json.stream : undefined,
     messageCount: messages.length,
     messageRoles: messageRoles.slice(-12),
-    lastMessageRole: messageRoles[messageRoles.length - 1],
-    lastUserContentBytes,
-    toolCount: tools?.length,
     hasTools: Boolean(tools?.length),
     hasToolChoice: "tool_choice" in json || "toolChoice" in json,
     hasResponseFormat: "response_format" in json || "responseFormat" in json,
     hasReasoning: "reasoning" in json || "reasoning_effort" in json || "reasoningEffort" in json,
   };
+  if (model) diagnostic.model = model;
+  if (typeof json.stream === "boolean") diagnostic.stream = json.stream;
+  const lastMessageRole = messageRoles[messageRoles.length - 1];
+  if (lastMessageRole) diagnostic.lastMessageRole = lastMessageRole;
+  if (lastUserContentBytes !== undefined) diagnostic.lastUserContentBytes = lastUserContentBytes;
+  if (tools) diagnostic.toolCount = tools.length;
+  return diagnostic;
 }
 
 async function readAiGatewayRequestDiagnostic(request: Request): Promise<AiGatewayRequestDiagnostic> {
@@ -1926,9 +2034,9 @@ async function proxyAiGatewayRequest(input: {
   const incomingHeaderNames = headerNamesForTrace(input.request.headers);
   const sessionResolution = input.requireSessionId
     ? resolveAiGatewaySession({
-        incomingSessionId,
-        openCodeSessionId: incomingOpenCodeSessionId,
-        workspaceId: incomingWorkspaceId,
+        ...(incomingSessionId !== undefined ? { incomingSessionId } : {}),
+        ...(incomingOpenCodeSessionId !== undefined ? { openCodeSessionId: incomingOpenCodeSessionId } : {}),
+        ...(incomingWorkspaceId !== undefined ? { workspaceId: incomingWorkspaceId } : {}),
       })
     : null;
   const activeRunContext = sessionResolution?.activeRunContext ?? null;
@@ -1940,7 +2048,7 @@ async function proxyAiGatewayRequest(input: {
   const providerAuthorization = input.auth === "gateway-token"
     ? resolveAiGatewayProviderAuthorization({
         request: input.request,
-        actor: input.actor,
+        ...(input.actor ? { actor: input.actor } : {}),
         runtimeAuthorizationActorTokenHash: activeRunContext?.runtimeAuthorizationActorTokenHash ?? null,
         activeRunContextPresent: Boolean(activeRunContext),
       })
@@ -1977,8 +2085,8 @@ async function proxyAiGatewayRequest(input: {
   let activeContextDiagnosticsForUnresolved: Record<string, unknown> | null = null;
   const getActiveContextDiagnosticsForUnresolved = () => {
     activeContextDiagnosticsForUnresolved ??= buildActiveAiGatewayResolutionDiagnostics({
-      incomingSessionId,
-      workspaceId: incomingWorkspaceId,
+      ...(incomingSessionId !== undefined ? { incomingSessionId } : {}),
+      ...(incomingWorkspaceId !== undefined ? { workspaceId: incomingWorkspaceId } : {}),
     });
     return activeContextDiagnosticsForUnresolved;
   };
@@ -2054,8 +2162,8 @@ async function proxyAiGatewayRequest(input: {
       incomingHeaders: incomingHeaderNames,
       incomingInternalHeaders: incomingInternalHeaderSummary,
       activeContextDiagnostics: buildActiveAiGatewayResolutionDiagnostics({
-        incomingSessionId,
-        workspaceId: incomingWorkspaceId,
+        ...(incomingSessionId !== undefined ? { incomingSessionId } : {}),
+        ...(incomingWorkspaceId !== undefined ? { workspaceId: incomingWorkspaceId } : {}),
       }),
     };
     recordSendWorkflowTrace("server", "server:ai-gateway:sessionless-forward", sessionlessTrace);
@@ -2074,11 +2182,11 @@ async function proxyAiGatewayRequest(input: {
   const watchdogHitRecorded = !isSessionlessFallback;
   if (watchdogHitRecorded) {
     recordAiGatewaySessionHit({
-      sessionId,
-      workspaceId,
       requestId,
       provider,
       gatewayPath: input.gatewayPath,
+      ...(sessionId ? { sessionId } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
     });
   }
   recordSendWorkflowTrace("server", "server:ai-gateway:provider-hit", {
@@ -2298,12 +2406,13 @@ async function proxyAiGatewayRequest(input: {
   try {
     upstreamFetchStartedAt = perfMs();
     logEvent("start", { timeoutMs: headersTimeoutMs });
-    response = await fetch(target.toString(), {
+    const fetchInit: RequestInit = {
       method,
       headers,
-      body,
       signal: controller.signal,
-    });
+    };
+    if (body) fetchInit.body = body;
+    response = await fetch(target.toString(), fetchInit);
     upstreamHeadersReceivedAt = perfMs();
     recordSendWorkflowTrace("server", "server:ai-gateway:upstream-headers", {
       evidenceLayer: "upstream-headers",
@@ -2399,12 +2508,12 @@ async function proxyAiGatewayRequest(input: {
       requestId,
       request: input.request,
       gatewayPath: input.gatewayPath,
-      sessionId,
-      model: diagnosticModel,
       response,
       responseText: diagnostic.text,
       responseTextTruncated: diagnostic.truncated,
       knownSecrets: expandKnownSecrets([gatewayAccessToken, gatewayCallerAuth, authorization]),
+      ...(sessionId ? { sessionId } : {}),
+      ...(diagnosticModel ? { model: diagnosticModel } : {}),
     }));
   }
 
@@ -2433,16 +2542,16 @@ async function proxyAiGatewayRequest(input: {
     });
     return new Response(text, {
       status: response.status,
-      headers: contentType ? { "Content-Type": contentType } : undefined,
+      ...(contentType ? { headers: { "Content-Type": contentType } } : {}),
     });
   }
 
   const redacted = input.preserveAiAccessToken ? redactAiAccessBundleForClient(json) : redactSensitiveConfig(json);
   if (input.auth === "caller" && input.preserveAiAccessToken) {
     syncAiGatewayRuntimeAuthorizationFromAccessBundle({
-      actor: input.actor,
       value: json,
       callerAuthorization: gatewayCallerAuth,
+      ...(input.actor ? { actor: input.actor } : {}),
     });
   }
   redactionDoneAt = perfMs();

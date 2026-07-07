@@ -744,16 +744,16 @@ async function readDenSessionUser(
   const userEmail = typeof payload?.user?.email === "string" ? payload.user.email.trim() : "";
   return {
     id: userId,
-    name: userName || undefined,
-    email: userEmail || undefined,
+    ...(userName ? { name: userName } : {}),
+    ...(userEmail ? { email: userEmail } : {}),
   };
 }
 
 function bytesToBase64Url(bytes: Uint8Array): string {
   if (typeof btoa === "function") {
     let binary = "";
-    for (let i = 0; i < bytes.length; i += 1) {
-      binary += String.fromCharCode(bytes[i]);
+    for (const byte of bytes) {
+      binary += String.fromCharCode(byte);
     }
     return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
   }
@@ -807,15 +807,16 @@ function readPendingDesktopAuth(): PendingDesktopAuth | null {
       return null;
     }
 
+    const authorizeUrl =
+      typeof candidate.authorizeUrl === "string" && candidate.authorizeUrl.trim()
+        ? candidate.authorizeUrl.trim()
+        : "";
     return {
       sessionId: candidate.sessionId,
       state: candidate.state,
       codeVerifier: candidate.codeVerifier,
       expiresAt: candidate.expiresAt,
-      authorizeUrl:
-        typeof candidate.authorizeUrl === "string" && candidate.authorizeUrl.trim()
-          ? candidate.authorizeUrl.trim()
-          : undefined,
+      ...(authorizeUrl ? { authorizeUrl } : {}),
     };
   } catch {
     return null;
@@ -958,7 +959,7 @@ export async function getDesktopBrowserAuthStatus(
       {
         method: "GET",
         headers: { Accept: "application/json" },
-        signal,
+        ...(signal ? { signal } : {}),
       },
       DEN_STATUS_TIMEOUT_MS,
     );
@@ -1065,14 +1066,14 @@ export async function exchangeHandoffCode(
       orgId,
       user: {
         id: userId,
-        name: payload.user?.name,
-        email: payload.user?.email,
+        ...(payload.user?.name ? { name: payload.user.name } : {}),
+        ...(payload.user?.email ? { email: payload.user.email } : {}),
       },
       org: {
         id: orgId,
-        name: payload.org?.name,
-        slug: payload.org?.slug,
-        role: payload.org?.role,
+        ...(payload.org?.name ? { name: payload.org.name } : {}),
+        ...(payload.org?.slug ? { slug: payload.org.slug } : {}),
+        ...(payload.org?.role ? { role: payload.org.role } : {}),
       },
     };
 

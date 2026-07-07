@@ -19,6 +19,10 @@ import type {
   VesloConversationSubmitRequest,
   VesloConversationSubmitResult,
 } from "../../lib/veslo-server.js";
+import {
+  classifySendBoundaryFailurePhase,
+  resolveSendBoundaryValidationMode,
+} from "../../lib/send-boundary-validation.js";
 import type { Client, ComposerDraft, ModelRef } from "../../types.js";
 
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
@@ -226,6 +230,7 @@ function createHarness(
     },
     safeStringify: (value) => JSON.stringify(value),
     selectedSessionId: () => selectedSessionId,
+    sendBoundaryValidationMode: () => "strict",
     sendTraceStep: async (_event, run) => run(),
     sessionDirectoryOverrideById: () => ({}),
     sessionStoreAppendSessionErrorTurn: () => undefined,
@@ -435,6 +440,114 @@ test("session send workflow releases in-flight tracking when runtime preparation
   assert.equal(harness.busyState(), false);
 });
 
+test("send boundary validation mode is report-only unless explicitly strict or off", () => {
+  assert.equal(resolveSendBoundaryValidationMode({}), "report");
+  assert.equal(resolveSendBoundaryValidationMode({ VITE_VESLO_SEND_BOUNDARY_VALIDATION: "strict" }), "strict");
+  assert.equal(resolveSendBoundaryValidationMode({ VITE_VESLO_SEND_BOUNDARY_VALIDATION: "off" }), "off");
+  assert.equal(resolveSendBoundaryValidationMode({ VITE_VESLO_SEND_BOUNDARY_VALIDATION: "false" }), "off");
+  assert.equal(resolveSendBoundaryValidationMode({ VITE_VESLO_SEND_BOUNDARY_VALIDATION: "enabled" }), "report");
+});
+
+test("send boundary classifier preserves the failing submit layer", () => {
+  assert.equal(
+    classifySendBoundaryFailurePhase({ schema: "send-runtime-preparation-result", phase: "runtime-preflight" }),
+    "app-runtime-preflight",
+  );
+  assert.equal(
+    classifySendBoundaryFailurePhase({
+      code: "opencode_request_failed",
+      debugTrace: [{ event: "server:conversation-submit:conversation-create-failed" }],
+      message: "POST /workspace/ws-1/opencode/session returned 404",
+    }),
+    "server-session-create",
+  );
+  assert.equal(
+    classifySendBoundaryFailurePhase({
+      debugTrace: [{ event: "server:conversation-run:opencode-submit:error" }],
+      message: "POST /workspace/ws-1/opencode/session/sess-1/prompt_async failed",
+    }),
+    "server-run-submit",
+  );
+  assert.equal(
+    classifySendBoundaryFailurePhase({
+      event: "server:conversation-run:queue-drain-scheduled",
+      message: "queued behind active run",
+    }),
+    "queued-run-drain",
+  );
+});
+
+test("session send workflow reports invalid runtime preflight contracts", async () => {
+  const harness = createHarness({
+    prepareSendRuntimeForSend: async () => ({
+      ok: true,
+      runtimeReady: true,
+      managedAiReady: true,
+    } as unknown as Awaited<ReturnType<LegacyConversationRunFallbackOptions["prepareSendRuntimeForSend"]>>),
+    runConversationFromVesloWriteApi: async () => {
+      throw new Error("legacy run should not run after invalid preflight");
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("invalid preflight"), {
+    clientMessageId: "client-invalid-preflight",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent.accepted, false);
+  assert.equal(sent.status, "blocked");
+  assert.equal(sent.code, "legacy_prepare_blocked");
+  assert.ok(harness.events.includes("sendPrompt:runtime-preflight:validation-failed"));
+  assert.match(harness.errors.at(-1) ?? "", /send-runtime-preparation-result/);
+  assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
+});
+
+test("session send workflow can report invalid preflight contracts without blocking send", async () => {
+  const harness = createHarness({
+    prepareSendRuntimeForSend: async () => ({
+      ok: true,
+      runtimeReady: true,
+      managedAiReady: true,
+    } as unknown as Awaited<ReturnType<LegacyConversationRunFallbackOptions["prepareSendRuntimeForSend"]>>),
+    sendBoundaryValidationMode: () => "report",
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("report-only preflight"), {
+    clientMessageId: "client-report-only-preflight",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent.accepted, true);
+  assert.ok(harness.events.includes("sendPrompt:runtime-preflight:validation-failed"));
+  assert.ok(harness.actions.includes("run:sess-target"));
+});
+
+test("session send workflow can disable boundary validation reporting", async () => {
+  const harness = createHarness({
+    prepareSendRuntimeForSend: async () => ({
+      ok: true,
+      runtimeReady: true,
+      managedAiReady: true,
+    } as unknown as Awaited<ReturnType<LegacyConversationRunFallbackOptions["prepareSendRuntimeForSend"]>>),
+    sendBoundaryValidationMode: () => "off",
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("validation off preflight"), {
+    clientMessageId: "client-validation-off-preflight",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent.accepted, true);
+  assert.equal(harness.events.includes("sendPrompt:runtime-preflight:validation-failed"), false);
+  assert.ok(harness.actions.includes("run:sess-target"));
+});
+
 test("session send workflow keeps busy state and releases in-flight tracking when conversation run throws", async () => {
   const busyValues: boolean[] = [];
   const runSnapshots: Array<{
@@ -584,6 +697,57 @@ test("session send workflow submits an existing local prompt through server subm
   });
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing:start"));
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing-success"));
+  assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
+});
+
+test("session send workflow reports invalid server submit result contracts", async () => {
+  const appendedErrors: Array<{ sessionId: string; message: string }> = [];
+  const harness = createHarness({
+    prepareSendRuntimeForSend: async () => {
+      throw new Error("runtime prep should not run after invalid server submit result");
+    },
+    runConversationFromVesloWriteApi: async () => {
+      throw new Error("legacy run should not run after invalid server submit result");
+    },
+    resolveSelectedSessionBrowseScope: (sessionId) =>
+      sessionId === "sess-target"
+        ? {
+            sessionId,
+            workspaceId: "ws-active",
+            workspaceRoot: "/active",
+            directory: "/active",
+            conversationId: "conv-target",
+            opencodeSessionId: "open-target",
+          }
+        : null,
+    sessionStoreAppendSessionErrorTurn: (sessionId, message) => {
+      appendedErrors.push({ sessionId, message });
+    },
+    submitConversationFromVesloWriteApi: async (workspaceId, _directory, input) => ({
+      status: "submitted",
+      workspaceId,
+      conversationId: "conv-target",
+      opencodeSessionId: "open-target",
+      clientMessageId: input.clientMessageId,
+      draftDisposition: "clear",
+    } as unknown as VesloConversationSubmitResult),
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("invalid submit result"), {
+    clientMessageId: "client-invalid-submit-result",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent.accepted, false);
+  assert.equal(sent.status, "failed");
+  assert.equal(sent.code, "server_submit_invalid_result");
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing-result:validation-failed"));
+  assert.match(sent.message ?? "", /runId/);
+  assert.match(harness.errors.at(-1) ?? "", /runId/);
+  assert.equal(appendedErrors.length, 1);
+  assert.ok(!harness.events.includes("sendPrompt:server-submit-existing-success"));
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
 });
 

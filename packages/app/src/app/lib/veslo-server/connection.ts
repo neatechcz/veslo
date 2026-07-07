@@ -229,8 +229,8 @@ export function readVesloConnectInviteFromSearch(input: string | URLSearchParams
 
   return {
     url,
-    token: token || undefined,
-    startup,
+    ...(token ? { token } : {}),
+    ...(startup ? { startup } : {}),
   } satisfies VesloConnectInvite;
 }
 
@@ -350,9 +350,9 @@ export function readVesloBundleInviteFromSearch(input: string | URLSearchParams)
   return {
     bundleUrl,
     intent,
-    source: source || undefined,
-    orgId: orgId || undefined,
-    label: label || undefined,
+    ...(source ? { source } : {}),
+    ...(orgId ? { orgId } : {}),
+    ...(label ? { label } : {}),
   } satisfies VesloBundleInvite;
 }
 
@@ -407,10 +407,11 @@ export function readVesloServerSettings(): VesloServerSettings {
       window.localStorage.getItem(STORAGE_TOKEN) ??
       window.localStorage.getItem(LEGACY_STORAGE_TOKEN) ??
       undefined;
+    const trimmedToken = token?.trim() ?? "";
     return {
-      urlOverride: urlOverride ?? undefined,
-      portOverride: Number.isNaN(portOverride) ? undefined : portOverride,
-      token: token?.trim() || undefined,
+      ...(urlOverride ? { urlOverride } : {}),
+      ...(typeof portOverride === "number" && !Number.isNaN(portOverride) ? { portOverride } : {}),
+      ...(trimmedToken ? { token: trimmedToken } : {}),
     };
   } catch {
     return {};

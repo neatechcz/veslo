@@ -123,6 +123,8 @@ Frontend environment variables:
 - `VITE_VESLO_GLITCHTIP_ENABLED` - optional kill switch. Values `0`, `false`, `no`, or `off` disable monitoring even when a DSN is present.
 - `VITE_VESLO_GLITCHTIP_ENVIRONMENT` - optional environment name. Defaults to `production` for production frontend builds and `development` otherwise.
 - `VITE_VESLO_GLITCHTIP_TRACES_SAMPLE_RATE` - optional trace sample rate, clamped to `0..1`. Defaults to `0`.
+- `VITE_VESLO_SEND_BOUNDARY_VALIDATION` - app-side send contract validation mode. Values `off`, `report`, or `strict`; default is `report`. `report` records malformed Veslo-owned send boundary payloads through send trace without blocking production sends.
+- `VITE_VESLO_SEND_WORKFLOW_TRACE` - enables the app-side send workflow trace buffer and native forwarding. `pnpm dev` enables this by default through the desktop wrapper.
 
 Desktop shell environment variables:
 
@@ -130,6 +132,9 @@ Desktop shell environment variables:
 - `VESLO_GLITCHTIP_ENVIRONMENT` - optional environment name. Defaults to `production` in release builds and `development` in debug builds.
 - `VESLO_GLITCHTIP_TRACES_SAMPLE_RATE` - optional trace sample rate, clamped to `0..1`. Defaults to `0`.
 - `VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV` - release verifier strict-mode flag. Use `1` in publishing workflows that must fail when release monitoring values are missing.
+- `VESLO_SEND_WORKFLOW_TRACE` - enables native send workflow trace file writes when UI events are forwarded through Tauri.
+- `VESLO_SEND_WORKFLOW_TRACE_FILE` - primary send workflow trace NDJSON path. `pnpm dev` writes this under the timestamped `dev-specific/tauri-pilot/...` runtime directory.
+- `VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE` - optional mirror NDJSON path for quick local inspection. `pnpm dev` defaults this to `.tmp/send-workflow-trace.ndjson`, which is gitignored.
 
 Privacy defaults:
 

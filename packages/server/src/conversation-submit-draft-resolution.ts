@@ -95,7 +95,7 @@ function promptRunInput(
       text: finalText,
       draftParts: request.draft.parts,
       attachmentParts: attachmentParts.inlineFileParts,
-      workspace,
+      ...(workspace !== undefined ? { workspace } : {}),
     }),
   };
 }
@@ -371,7 +371,7 @@ async function resolveRunInput(input: {
   );
   const attachmentResolution = resolveAttachmentRunParts({
     request,
-    workspace: input.workspace,
+    ...(input.workspace !== undefined ? { workspace: input.workspace } : {}),
     validatePromptImageCapabilities: hasExistingTarget || Boolean(request.options?.model),
   });
   if (attachmentResolution.status === "blocked") return attachmentResolution;

@@ -188,12 +188,16 @@ function parseTarget(value: unknown): ConversationSubmitRequest["target"] {
   if (!isRecord(value)) {
     throw new ApiError(400, "invalid_payload", "target must be an object");
   }
-  return {
-    conversationId: optionalBodyString(value, "conversationId"),
-    opencodeSessionId: optionalBodyString(value, "opencodeSessionId"),
-    directory: optionalBodyString(value, "directory"),
-    pendingClientSessionId: optionalBodyString(value, "pendingClientSessionId"),
-  };
+  const target: NonNullable<ConversationSubmitRequest["target"]> = {};
+  const conversationId = optionalBodyString(value, "conversationId");
+  if (conversationId !== undefined) target.conversationId = conversationId;
+  const opencodeSessionId = optionalBodyString(value, "opencodeSessionId");
+  if (opencodeSessionId !== undefined) target.opencodeSessionId = opencodeSessionId;
+  const directory = optionalBodyString(value, "directory");
+  if (directory !== undefined) target.directory = directory;
+  const pendingClientSessionId = optionalBodyString(value, "pendingClientSessionId");
+  if (pendingClientSessionId !== undefined) target.pendingClientSessionId = pendingClientSessionId;
+  return target;
 }
 
 function parseCommand(value: unknown): ConversationSubmitRequest["draft"]["command"] {
@@ -226,14 +230,18 @@ function parseAttachments(value: unknown): ConversationSubmitAttachment[] | unde
     if (!name || !kind || !mimeType) {
       throw new ApiError(400, "invalid_payload", `draft.attachments[${index}] requires name, kind, and mimeType`);
     }
-    return {
+    const attachment: ConversationSubmitAttachment = {
       name,
       kind,
       mimeType,
-      dataUrl: optionalBodyString(item, "dataUrl"),
-      contentBase64: optionalBodyString(item, "contentBase64"),
-      fileSessionPath: optionalBodyString(item, "fileSessionPath"),
     };
+    const dataUrl = optionalBodyString(item, "dataUrl");
+    if (dataUrl !== undefined) attachment.dataUrl = dataUrl;
+    const contentBase64 = optionalBodyString(item, "contentBase64");
+    if (contentBase64 !== undefined) attachment.contentBase64 = contentBase64;
+    const fileSessionPath = optionalBodyString(item, "fileSessionPath");
+    if (fileSessionPath !== undefined) attachment.fileSessionPath = fileSessionPath;
+    return attachment;
   });
 }
 
@@ -251,16 +259,23 @@ function parseOptions(value: unknown): ConversationSubmitRequest["options"] {
   if (queuePolicyRaw && !submitQueuePolicy) {
     throw new ApiError(400, "invalid_payload", "options.submitQueuePolicy is invalid");
   }
-  return {
-    sendNow: optionalBodyBoolean(value, "sendNow"),
-    replaceMessageId: optionalBodyString(value, "replaceMessageId"),
+  const options: NonNullable<ConversationSubmitRequest["options"]> = {
     ...(submitQueuePolicy ? { submitQueuePolicy } : {}),
-    model: value.model,
-    agent: optionalBodyString(value, "agent"),
-    variant: optionalBodyString(value, "variant"),
-    expectAiGatewayStart: optionalBodyBoolean(value, "expectAiGatewayStart"),
-    dryRun: optionalBodyBoolean(value, "dryRun"),
   };
+  const sendNow = optionalBodyBoolean(value, "sendNow");
+  if (sendNow !== undefined) options.sendNow = sendNow;
+  const replaceMessageId = optionalBodyString(value, "replaceMessageId");
+  if (replaceMessageId !== undefined) options.replaceMessageId = replaceMessageId;
+  if (value.model !== undefined) options.model = value.model;
+  const agent = optionalBodyString(value, "agent");
+  if (agent !== undefined) options.agent = agent;
+  const variant = optionalBodyString(value, "variant");
+  if (variant !== undefined) options.variant = variant;
+  const expectAiGatewayStart = optionalBodyBoolean(value, "expectAiGatewayStart");
+  if (expectAiGatewayStart !== undefined) options.expectAiGatewayStart = expectAiGatewayStart;
+  const dryRun = optionalBodyBoolean(value, "dryRun");
+  if (dryRun !== undefined) options.dryRun = dryRun;
+  return options;
 }
 
 export function parseConversationSubmitRequest(body: Record<string, unknown>): ConversationSubmitRequest {
@@ -284,21 +299,30 @@ export function parseConversationSubmitRequest(body: Record<string, unknown>): C
   if (parts !== undefined && !Array.isArray(parts)) {
     throw new ApiError(400, "invalid_payload", "draft.parts must be an array");
   }
-  return {
+  const draft: ConversationSubmitRequest["draft"] = {
+    mode,
+    text: typeof draftInput.text === "string" ? draftInput.text : "",
+    parts: Array.isArray(parts) ? parts : [],
+  };
+  const resolvedText = optionalBodyString(draftInput, "resolvedText");
+  if (resolvedText !== undefined) draft.resolvedText = resolvedText;
+  const command = parseCommand(draftInput.command);
+  if (command !== undefined) draft.command = command;
+  const attachments = parseAttachments(draftInput.attachments);
+  if (attachments !== undefined) draft.attachments = attachments;
+
+  const request: ConversationSubmitRequest = {
     clientMessageId,
     origin,
-    source: optionalBodyString(body, "source"),
-    target: parseTarget(body.target),
-    draft: {
-      mode,
-      text: typeof draftInput.text === "string" ? draftInput.text : "",
-      resolvedText: optionalBodyString(draftInput, "resolvedText"),
-      parts: Array.isArray(parts) ? parts : [],
-      command: parseCommand(draftInput.command),
-      attachments: parseAttachments(draftInput.attachments),
-    },
-    options: parseOptions(body.options),
+    draft,
   };
+  const source = optionalBodyString(body, "source");
+  if (source !== undefined) request.source = source;
+  const target = parseTarget(body.target);
+  if (target !== undefined) request.target = target;
+  const options = parseOptions(body.options);
+  if (options !== undefined) request.options = options;
+  return request;
 }
 
 function stableJsonValue(value: unknown): unknown {

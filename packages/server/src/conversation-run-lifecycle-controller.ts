@@ -337,6 +337,23 @@ function lifecycleStatusTraceFields(
   };
 }
 
+function lifecycleNoProgressThresholdSeconds(maxAttempts: number, pollMs: number): number {
+  return Math.max(60, Math.ceil((Math.max(1, maxAttempts) * Math.max(1, pollMs)) / 1000));
+}
+
+function shouldFailStaleActiveLifecycleRun(
+  status: LifecycleRunStatusResult | null | undefined,
+  maxAttempts: number,
+  pollMs: number,
+): boolean {
+  if (!status || !isActiveLifecycleStatus(status.status)) return false;
+  if (status.stale === true) return true;
+  const noProgressSeconds = status.noProgressSeconds;
+  return typeof noProgressSeconds === "number" &&
+    Number.isFinite(noProgressSeconds) &&
+    noProgressSeconds >= lifecycleNoProgressThresholdSeconds(maxAttempts, pollMs);
+}
+
 function createNoopRunTrace(): ConversationRunLifecycleTracer {
   const entries: Array<Record<string, unknown>> = [];
   return {
@@ -754,7 +771,7 @@ export function createConversationRunLifecycleController(
     }
 
     const attempt = input.attempt ?? 0;
-    const scheduleNextAttempt = () => {
+    const scheduleNextAttempt = async (status?: LifecycleRunStatusResult | null) => {
       const nextAttempt = attempt + 1;
       if (nextAttempt >= maxAttempts) {
         recordTrace("server:conversation-run:lifecycle-reconcile-exhausted", {
@@ -764,7 +781,37 @@ export function createConversationRunLifecycleController(
           reason: input.reason,
           abortRequested: input.abortRequested === true,
           attempts: nextAttempt,
+          status: status?.status ?? null,
+          stale: status?.stale ?? null,
+          ...lifecycleStatusTraceFields(status),
         });
+        if (shouldFailStaleActiveLifecycleRun(status, maxAttempts, pollMs)) {
+          await lifecycleOwner.markFailed(
+            input.workspace.id,
+            status?.runId?.trim() || runId,
+            "run lifecycle reconcile exhausted after stale/no-progress active status",
+          ).then(() => {
+            recordTrace("server:conversation-run:lifecycle-reconcile-stale-failed", {
+              workspaceId: input.workspace.id,
+              conversationId,
+              runId: status?.runId?.trim() || runId,
+              reason: input.reason,
+              attempts: nextAttempt,
+              status: status?.status ?? null,
+              stale: status?.stale ?? null,
+              ...lifecycleStatusTraceFields(status),
+            });
+            scheduleQueueDrain(input.workspace.id, conversationId, 0);
+          }).catch((error) => {
+            recordTrace("server:conversation-run:lifecycle-mark-failed-error", {
+              workspaceId: input.workspace.id,
+              conversationId,
+              runId: status?.runId?.trim() || runId,
+              reason: input.reason,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }
         return;
       }
       scheduleLifecycleReconcile({
@@ -821,7 +868,7 @@ export function createConversationRunLifecycleController(
           abortRequested: input.abortRequested === true,
           attempt,
         });
-        scheduleNextAttempt();
+        await scheduleNextAttempt(status);
         return;
       }
 
@@ -846,7 +893,7 @@ export function createConversationRunLifecycleController(
         return;
       }
 
-      scheduleNextAttempt();
+      await scheduleNextAttempt(status);
     } catch (error) {
       recordTrace("server:conversation-run:lifecycle-reconcile-error", {
         workspaceId: input.workspace.id,
@@ -857,7 +904,7 @@ export function createConversationRunLifecycleController(
         attempt,
         message: error instanceof Error ? error.message : String(error),
       });
-      scheduleNextAttempt();
+      await scheduleNextAttempt();
     } finally {
       lifecycleReconcileInFlight.delete(key);
     }
@@ -879,6 +926,43 @@ export function createConversationRunLifecycleController(
         try {
           const latest = await lifecycleOwner.status(workspace.id, normalizedConversationId, "latest");
           if (latest && isActiveLifecycleStatus(latest.status)) {
+            const reconcilePollMs = normalizeIntervalMs(options.resolveLifecycleReconcilePollMs?.()) ?? 1_000;
+            const reconcileMaxAttempts = Math.max(
+              1,
+              Math.floor(options.resolveLifecycleReconcileMaxAttempts?.() ?? 600),
+            );
+            if (shouldFailStaleActiveLifecycleRun(latest, reconcileMaxAttempts, reconcilePollMs)) {
+              const activeRunId = latest.runId?.trim() || "latest";
+              runTrace.record("server:conversation-run:queue-drain-stale-active-failing", {
+                workspaceId,
+                conversationId: normalizedConversationId,
+                runId: activeRunId,
+                status: latest.status,
+                stale: latest.stale,
+                ...lifecycleStatusTraceFields(latest),
+              });
+              await lifecycleOwner.markFailed(
+                workspace.id,
+                activeRunId,
+                "run lifecycle stale/no-progress while draining queued conversation runs",
+              ).then(() => {
+                runTrace.record("server:conversation-run:queue-drain-stale-active-failed", {
+                  workspaceId,
+                  conversationId: normalizedConversationId,
+                  runId: activeRunId,
+                });
+                scheduleQueueDrain(workspaceId, normalizedConversationId, 0);
+              }).catch((error) => {
+                runTrace.record("server:conversation-run:queue-drain-stale-active-failed-error", {
+                  workspaceId,
+                  conversationId: normalizedConversationId,
+                  runId: activeRunId,
+                  message: error instanceof Error ? error.message : String(error),
+                });
+                scheduleQueueDrain(workspaceId, normalizedConversationId, queueDrainPollMs);
+              });
+              return;
+            }
             scheduleQueueDrain(workspaceId, normalizedConversationId, queueDrainPollMs);
             return;
           }

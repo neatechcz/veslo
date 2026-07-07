@@ -156,6 +156,11 @@ function createManualPilotRuntime(baseEnv) {
   const pilotSocket = resolvePilotSocket(baseEnv);
   const runtimeTraceFile = valueOrDefault(baseEnv, "VESLO_RUNTIME_TRACE_FILE", join(logDir, "runtime-trace.ndjson"));
   const sendWorkflowTraceFile = valueOrDefault(baseEnv, "VESLO_SEND_WORKFLOW_TRACE_FILE", join(logDir, "send-workflow-trace.ndjson"));
+  const sendWorkflowTraceMirrorFile = valueOrDefault(
+    baseEnv,
+    "VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE",
+    join(repoRoot, ".tmp", "send-workflow-trace.ndjson"),
+  );
   const opencodeHealthDiagFile = valueOrDefault(baseEnv, "VESLO_OPENCODE_HEALTH_DIAG_FILE", join(logDir, "opencode-health.ndjson"));
   const runtimeInfoPath = join(logDir, "runtime-info.json");
 
@@ -169,6 +174,7 @@ function createManualPilotRuntime(baseEnv) {
     VESLO_RUNTIME_TRACE_FILE: runtimeTraceFile,
     VESLO_SEND_WORKFLOW_TRACE: valueOrDefault(baseEnv, "VESLO_SEND_WORKFLOW_TRACE", "1"),
     VESLO_SEND_WORKFLOW_TRACE_FILE: sendWorkflowTraceFile,
+    VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE: sendWorkflowTraceMirrorFile,
     VESLO_SEND_WORKFLOW_TRACE_CONSOLE: valueOrDefault(baseEnv, "VESLO_SEND_WORKFLOW_TRACE_CONSOLE", "1"),
     VITE_VESLO_SEND_WORKFLOW_TRACE: valueOrDefault(baseEnv, "VITE_VESLO_SEND_WORKFLOW_TRACE", "1"),
     VESLO_OPENCODE_HEALTH_DIAG: valueOrDefault(baseEnv, "VESLO_OPENCODE_HEALTH_DIAG", "1"),
@@ -186,6 +192,7 @@ function createManualPilotRuntime(baseEnv) {
     pilotCli: resolvePilotCli(baseEnv),
     runtimeTraceFile,
     sendWorkflowTraceFile,
+    sendWorkflowTraceMirrorFile,
     opencodeHealthDiagFile,
     env,
   };
@@ -220,6 +227,7 @@ function writeManualRuntimeInfo(runtime, env, args) {
       logDir: runtime.logDir,
       runtimeTraceFile: runtime.runtimeTraceFile,
       sendWorkflowTraceFile: runtime.sendWorkflowTraceFile,
+      sendWorkflowTraceMirrorFile: runtime.sendWorkflowTraceMirrorFile,
       opencodeHealthDiagFile: runtime.opencodeHealthDiagFile,
     },
     env: {
@@ -232,6 +240,7 @@ function writeManualRuntimeInfo(runtime, env, args) {
       TAURI_PILOT_LOG_DIR: env.TAURI_PILOT_LOG_DIR,
       VESLO_RUNTIME_TRACE_FILE: env.VESLO_RUNTIME_TRACE_FILE,
       VESLO_SEND_WORKFLOW_TRACE_FILE: env.VESLO_SEND_WORKFLOW_TRACE_FILE,
+      VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE: env.VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE,
       VESLO_OPENCODE_HEALTH_DIAG_FILE: env.VESLO_OPENCODE_HEALTH_DIAG_FILE,
       VESLO_DEN_AUTH_SNAPSHOT_PATH: env.VESLO_DEN_AUTH_SNAPSHOT_PATH || null,
     },
@@ -254,6 +263,7 @@ function printManualRuntimeInfo(info) {
   console.info(`[veslo:dev-runtime] pilotPing=${info.pilot.pingCommand.join(" ")}`);
   console.info(`[veslo:dev-runtime] runtimeTrace=${info.traces.runtimeTraceFile}`);
   console.info(`[veslo:dev-runtime] sendWorkflowTrace=${info.traces.sendWorkflowTraceFile}`);
+  console.info(`[veslo:dev-runtime] sendWorkflowTraceMirror=${info.traces.sendWorkflowTraceMirrorFile}`);
   console.info(`[veslo:dev-runtime] opencodeHealthDiag=${info.traces.opencodeHealthDiagFile}`);
 }
 

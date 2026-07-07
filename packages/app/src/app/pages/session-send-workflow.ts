@@ -12,6 +12,13 @@ import {
   type SessionSendOptionsBase,
   type SessionSubmitResult,
 } from "../lib/session-send-contract";
+import {
+  validateConversationSubmitRequest,
+  validateConversationSubmitTerminalResult,
+  validateSendRuntimePreparationResult,
+  type ConversationSubmitTerminalResult,
+  type SendBoundaryValidationMode,
+} from "../lib/send-boundary-validation";
 import type {
   StagedSessionAttachment,
 } from "../lib/attachment-prompt-routing";
@@ -246,6 +253,7 @@ export type LegacyConversationRunFallbackOptions = {
     },
   ) => Promise<unknown>;
   safeStringify: (value: unknown) => string;
+  sendBoundaryValidationMode?: () => SendBoundaryValidationMode;
   sendTraceStep: <T>(
     event: string,
     run: () => Promise<T>,
@@ -390,6 +398,7 @@ export type SessionSendWorkflowOptions = {
   ) => Promise<VesloConversationSubmitResult | null | undefined>;
   safeStringify: (value: unknown) => string;
   selectedSessionId: () => string | null | undefined;
+  sendBoundaryValidationMode?: () => SendBoundaryValidationMode;
   sendTraceStep: <T>(
     event: string,
     run: () => Promise<T>,
@@ -424,13 +433,8 @@ export type SessionSendWorkflow = {
   abortSession: (sessionId?: string, target?: ConversationAbortTarget) => Promise<void>;
 };
 
-type TerminalConversationSubmitResult = Extract<
-  VesloConversationSubmitResult,
-  { status: "submitted" | "queued" | "blocked" | "failed" }
->;
-
 function sessionSubmitResultFromConversationSubmit(
-  result: TerminalConversationSubmitResult,
+  result: ConversationSubmitTerminalResult,
 ): SessionSubmitResult {
   if (result.status === "submitted") {
     return sessionSubmitSubmittedResult({
@@ -480,6 +484,28 @@ function sessionSubmitResultFromConversationSubmit(
   });
 }
 
+type SendBoundaryValidationRuntimeDeps = {
+  recordSendTrace: (event: string, payload?: Record<string, unknown>) => void;
+  sendBoundaryValidationMode?: () => SendBoundaryValidationMode;
+};
+
+type SendBoundaryValidationRuntimeOptions = {
+  context?: Record<string, unknown>;
+  event: string;
+  traceId?: string | null;
+};
+
+function sendBoundaryValidationOptions(
+  deps: SendBoundaryValidationRuntimeDeps,
+  options: SendBoundaryValidationRuntimeOptions,
+) {
+  return {
+    ...options,
+    mode: deps.sendBoundaryValidationMode?.(),
+    recordSendTrace: deps.recordSendTrace,
+  };
+}
+
 export function createLegacyConversationRunFallback(
   deps: LegacyConversationRunFallbackOptions,
 ): LegacyConversationRunFallback {
@@ -492,6 +518,20 @@ export function createLegacyConversationRunFallback(
     }
 
     const sendRuntimePreparation = await deps.prepareSendRuntimeForSend("sendPrompt", input.sendPreflight);
+    const sendRuntimePreparationValidation = validateSendRuntimePreparationResult(sendRuntimePreparation, sendBoundaryValidationOptions(deps, {
+      event: "sendPrompt:runtime-preflight:validation-failed",
+      traceId: input.traceId,
+      context: {
+        phase: "legacy-prepare",
+        targetWorkspaceId: input.sendTargetWorkspace?.workspaceId ?? null,
+      },
+    }));
+    if (!sendRuntimePreparationValidation.ok) {
+      input.cleanupPendingSidebarSession();
+      input.stopSendPromptBusy();
+      deps.setError(sendRuntimePreparationValidation.message);
+      return false;
+    }
     if (!sendRuntimePreparation.ok) {
       input.cleanupPendingSidebarSession();
       input.stopSendPromptBusy();
@@ -661,6 +701,20 @@ export function createLegacyConversationRunFallback(
               origin: input.sendCorrelation.origin,
             });
             const recovery = await deps.prepareSendRuntimeForSend("sendPrompt", input.sendPreflight);
+            const recoveryValidation = validateSendRuntimePreparationResult(recovery, sendBoundaryValidationOptions(deps, {
+              event: "sendPrompt:runtime-recovery:validation-failed",
+              traceId: input.traceId,
+              context: {
+                phase: "legacy-run-retry",
+                sessionID,
+                kind: runInput.kind,
+                clientMessageId: input.sendCorrelation.clientMessageId,
+                origin: input.sendCorrelation.origin,
+              },
+            }));
+            if (!recoveryValidation.ok) {
+              throw new Error(recoveryValidation.message);
+            }
             deps.recordSendTrace("sendPrompt:conversation-run-runtime-recovery-result", {
               traceId: input.traceId,
               sessionID,
@@ -1337,6 +1391,56 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         attachmentCount: resolvedDraft.attachments.length,
       });
 
+      const submitRequest: VesloConversationSubmitRequest = {
+        clientMessageId: sendCorrelation.clientMessageId,
+        origin: sendCorrelation.origin,
+        source: sendCorrelation.source ?? null,
+        target: {
+          directory,
+          conversationId,
+          opencodeSessionId,
+        },
+        draft: conversationSubmitDraftFromComposerDraft(resolvedDraft, stagedAttachments),
+        options: {
+          model: submitModel,
+          agent: agent ?? null,
+          variant: selectedVariant ?? null,
+          submitQueuePolicy: sendCorrelation.origin === "session:send-now"
+            ? "send-now"
+            : sendCorrelation.origin === "session:queue-drain"
+              ? "server-queue-only"
+              : "normal",
+        },
+      };
+      const submitRequestValidation = validateConversationSubmitRequest(submitRequest, sendBoundaryValidationOptions(deps, {
+        event: "sendPrompt:server-submit-existing-request:validation-failed",
+        traceId: sendTraceId,
+        context: {
+          phase: "server-submit-existing",
+          sessionID: existingSessionId,
+          workspaceId,
+          directory,
+          clientMessageId: sendCorrelation.clientMessageId,
+          origin: sendCorrelation.origin,
+        },
+      }));
+      if (!submitRequestValidation.ok) {
+        if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
+        deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
+          sessionID: existingSessionId,
+          mode: resolvedDraft.mode,
+          command: commandName,
+          error: submitRequestValidation.message,
+          serverSubmit: true,
+          phase: "request-validation",
+        });
+        reportServerSubmitError(submitRequestValidation.message);
+        return sessionSubmitFailedResult({
+          code: "server_submit_invalid_request",
+          message: submitRequestValidation.message,
+        });
+      }
+
       let result: VesloConversationSubmitResult | null | undefined;
       try {
         result = await deps.sendTraceStep(
@@ -1344,27 +1448,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           () => submitConversation(
             workspaceId,
             directory,
-            {
-              clientMessageId: sendCorrelation.clientMessageId,
-              origin: sendCorrelation.origin,
-              source: sendCorrelation.source ?? null,
-              target: {
-                directory,
-                conversationId,
-                opencodeSessionId,
-              },
-              draft: conversationSubmitDraftFromComposerDraft(resolvedDraft, stagedAttachments),
-              options: {
-                model: submitModel,
-                agent: agent ?? null,
-                variant: selectedVariant ?? null,
-                submitQueuePolicy: sendCorrelation.origin === "session:send-now"
-                  ? "send-now"
-                  : sendCorrelation.origin === "session:queue-drain"
-                    ? "server-queue-only"
-                    : "normal",
-              },
-            },
+            submitRequestValidation.value,
             sendPreflight,
           ),
           {
@@ -1425,6 +1509,35 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         });
       }
 
+      const resultValidation = validateConversationSubmitTerminalResult(result, sendBoundaryValidationOptions(deps, {
+        event: "sendPrompt:server-submit-existing-result:validation-failed",
+        traceId: sendTraceId,
+        context: {
+          phase: "server-submit-existing",
+          sessionID: existingSessionId,
+          workspaceId,
+          clientMessageId: sendCorrelation.clientMessageId,
+          origin: sendCorrelation.origin,
+        },
+      }));
+      if (!resultValidation.ok) {
+        if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
+        deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
+          sessionID: existingSessionId,
+          mode: resolvedDraft.mode,
+          command: commandName,
+          error: resultValidation.message,
+          serverSubmit: true,
+          phase: "result-validation",
+        });
+        reportServerSubmitError(resultValidation.message);
+        return sessionSubmitFailedResult({
+          code: "server_submit_invalid_result",
+          message: resultValidation.message,
+        });
+      }
+      result = resultValidation.value;
+
       if (result.status === "blocked" || result.status === "failed") {
         if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
         deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
@@ -1451,28 +1564,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           deps.setError(result.message);
         }
         return sessionSubmitResultFromConversationSubmit(result);
-      }
-
-      if (result.status !== "submitted" && result.status !== "queued") {
-        if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
-        const message = `Conversation submit returned ${result.status} for an existing session.`;
-        deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
-          sessionID: existingSessionId,
-          mode: resolvedDraft.mode,
-          command: commandName,
-          error: message,
-          serverSubmit: true,
-        });
-        deps.recordSendTrace("sendPrompt:server-submit-existing-unexpected-result", {
-          traceId: sendTraceId,
-          sessionID: existingSessionId,
-          status: result.status,
-        });
-        reportServerSubmitError(message);
-        return sessionSubmitFailedResult({
-          code: "server_submit_unexpected_result",
-          message,
-        });
       }
 
       if (result.draftDisposition === "clear") {
@@ -1636,8 +1727,9 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         } satisfies ConversationSubmitOptionsInput
       : undefined;
     const serverFirstSubmitResultHolder: {
-      current: Extract<VesloConversationSubmitResult, { status: "submitted" | "queued" | "failed" | "blocked" }> | null;
-    } = { current: null };
+      current: ConversationSubmitTerminalResult | null;
+      invalidMessage: string | null;
+    } = { current: null, invalidMessage: null };
     if (!sessionID) {
       deps.recordSendTrace("sendPrompt:create-session-needed", {
         traceId: sendTraceId,
@@ -1660,7 +1752,21 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
               result.status === "failed" ||
               result.status === "blocked"
             ) {
-              serverFirstSubmitResultHolder.current = result;
+              const validation = validateConversationSubmitTerminalResult(result, sendBoundaryValidationOptions(deps, {
+                event: "sendPrompt:server-submit-first-result:validation-failed",
+                traceId: sendTraceId,
+                context: {
+                  phase: "server-submit-first",
+                  clientMessageId: sendCorrelation.clientMessageId,
+                  origin: sendCorrelation.origin,
+                  targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
+                },
+              }));
+              if (validation.ok) {
+                serverFirstSubmitResultHolder.current = validation.value;
+              } else {
+                serverFirstSubmitResultHolder.invalidMessage = validation.message;
+              }
             }
           },
           onMaterializedSessionId: options.onMaterializedSessionId,
@@ -1684,6 +1790,25 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         cleanupPendingSidebarSession();
         sessionID = null;
       }
+    }
+    if (serverFirstSubmitResultHolder.invalidMessage) {
+      const hintedMessage = deps.addOpencodeCacheHint(serverFirstSubmitResultHolder.invalidMessage);
+      deps.recordSendTrace("sendPrompt:server-submit-first-invalid-result", {
+        traceId: sendTraceId,
+        sessionID: sessionID?.trim() || null,
+        clientMessageId: sendCorrelation.clientMessageId,
+        origin: sendCorrelation.origin,
+      });
+      deps.setError(hintedMessage);
+      if (sessionID) {
+        deps.sessionStoreAppendSessionErrorTurn(sessionID, hintedMessage);
+      }
+      cleanupPendingSidebarSession();
+      stopSendPromptBusy();
+      return sessionSubmitFailedResult({
+        code: "server_submit_invalid_result",
+        message: hintedMessage,
+      });
     }
     const serverFirstSubmitResult = serverFirstSubmitResultHolder.current;
     if (

@@ -101,7 +101,6 @@ test("Veslo server settings read write and clear canonicalize storage keys", () 
     () => {
       assert.deepEqual(readVesloServerSettings(), {
         urlOverride: "http://legacy.example.test/path",
-        portOverride: undefined,
         token: "legacy-token",
       });
 
@@ -121,11 +120,7 @@ test("Veslo server settings read write and clear canonicalize storage keys", () 
       assert.equal(window.localStorage.getItem("openwork.server.token"), null);
 
       clearVesloServerSettings();
-      assert.deepEqual(readVesloServerSettings(), {
-        urlOverride: undefined,
-        portOverride: undefined,
-        token: undefined,
-      });
+      assert.deepEqual(readVesloServerSettings(), {});
     },
   );
 });
