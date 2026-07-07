@@ -10,7 +10,7 @@ bsw_aud01_concurrent_submit_idempotency_done: true
 bsw_aud02_replacement_failure_ui_surface_done: true
 bsw_aud03_docs_status_alignment_done: false
 bsw_aud04_typed_app_boundary_done: true
-bsw_aud05_running_enter_server_queue_done: false
+bsw_aud05_running_enter_server_queue_done: true
 bsw_aud06_queued_live_transcript_semantics_done: true
 bsw_aud07_queued_failure_surface_done: false
 bsw_aud08_legacy_dependency_cleanup_done: false
@@ -540,7 +540,7 @@ Implementation note:
 
 ### BSW-AUD05: Running Enter uses server queue admission
 
-Status: `done: false`
+Status: `done: true`
 
 Severity: P2
 
@@ -620,7 +620,44 @@ git diff --check
 
 Implementation note:
 
-- Pending.
+- 2026-07-07:
+  - Changed `packages/app/src/app/pages/session-conversation-flow.ts`,
+    `packages/app/src/app/tests/pages/session-conversation-flow.test.ts`, and
+    `packages/app/src/app/tests/pages/session-message-queue.test.ts`.
+  - The running Enter branch now calls `sendPromptImmediate` with
+    `reason: "queue-drain"` and the current session queue key instead of
+    appending a frontend-only queued draft. The existing send workflow maps that
+    origin to server `submitQueuePolicy: "server-queue-only"`, so active-run
+    Enter submissions reach durable server queue admission before the composer
+    sees an accepted queued result.
+  - Added controller regression coverage proving running Enter returns the
+    server queued result with `queueItemId`/`reservedRunId`, does not append to
+    the local queue first, and preserves the draft with the server message when
+    queue admission returns a typed blocked result.
+  - The new RED test failed before the fix with `queueAppends` containing the
+    draft text, proving the previous path was local-only.
+  - Verification passed:
+    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-conversation-flow.test.ts`
+    with 50 tests;
+    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-message-queue.test.ts`
+    with 21 tests;
+    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-message-queue.test.ts src/app/tests/pages/session-conversation-flow.test.ts src/app/tests/pages/session-send-workflow.test.ts`
+    with 99 tests;
+    `pnpm --filter @neatech/veslo-ui exec tsc --noEmit --pretty false`;
+    `pnpm --filter veslo-server exec bun test src/tests/conversation-run-lifecycle-controller.test.ts`
+    with 34 tests; and
+    `pnpm --filter veslo-server exec bun test src/tests/server-conversations.test.ts --test-name-pattern "queue|queued|server-queue-only|send-now"`
+    with 5 tests.
+  - `git diff --check` passed with CRLF conversion warnings only.
+  - Additional check:
+    `pnpm --filter veslo-server exec bun test src/tests/conversation-run-lifecycle-controller.test.ts src/tests/server-conversations.test.ts`
+    still fails in the pre-existing managed AI gateway watchdog cases
+    `managed prompt provider-start watchdog matches placeholder session ids by
+    workspace header` and `managed prompt provider-start watchdog prefers
+    OpenCode session id over stale workspace headers`; all queue/lifecycle
+    cases in that run passed.
+  - Deferred: no broad BSW08A queue UI migration and no server source changes
+    were made in this AUD05 slice.
 
 ### BSW-AUD06: Queued live-transcript semantics
 

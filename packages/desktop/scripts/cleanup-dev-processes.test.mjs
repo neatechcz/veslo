@@ -5,6 +5,7 @@ import {
   findStaleDevProcesses,
   isPathInside,
   looksLikeVesloServerWatcher,
+  stopProcesses,
 } from "./cleanup-dev-processes.mjs";
 
 const targetDebugDir = "C:\\repo\\packages\\desktop\\src-tauri\\target\\debug";
@@ -64,4 +65,30 @@ test("findStaleDevProcesses includes repo sidecars and related Bun watcher famil
     stale.map((item) => item.pid),
     [10, 20, 21],
   );
+});
+
+test("stopProcesses tolerates Windows process cleanup races", () => {
+  const commands = [];
+  const warnings = [];
+
+  assert.doesNotThrow(() => {
+    stopProcesses(
+      [10, 20],
+      (command) => {
+        commands.push(command);
+        if (command.includes("-Id 10 ")) {
+          throw new Error("PowerShell command failed");
+        }
+        return "";
+      },
+      (message) => warnings.push(message),
+    );
+  });
+
+  assert.deepEqual(commands, [
+    "Stop-Process -Id 10 -Force -ErrorAction SilentlyContinue",
+    "Stop-Process -Id 20 -Force -ErrorAction SilentlyContinue",
+  ]);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /Failed to stop stale process pid=10/);
 });
