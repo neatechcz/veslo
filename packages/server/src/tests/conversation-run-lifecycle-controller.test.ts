@@ -636,6 +636,24 @@ test("submitRun registers inactive local runs before submitting", async () => {
   expect(submitCalls).toHaveLength(1);
 });
 
+test("submitRun queues immediately for server-queue-only policy", async () => {
+  const { controller, lifecycle, queue, submitCalls, timers } = controllerHarness();
+
+  const result = await controller.submitRun(submitInput({
+    submitQueuePolicy: "server-queue-only",
+  }));
+
+  expect(result.httpStatus).toBe(202);
+  expect(result.payload.status).toBe("queued");
+  expect(result.payload.reservedRunId).toBe("run-reserved");
+  expect(result.payload.queueItemId).toBe("queue-1");
+  expect(result.payload.activeRunId).toBe(null);
+  expect(lifecycle.calls).toEqual([]);
+  expect(queue.enqueueCalls[0]?.activeRunId).toBe(null);
+  expect(submitCalls).toEqual([]);
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500]);
+});
+
 test("submitRun queues when active peek finds an active run", async () => {
   const { controller, lifecycle, queue, submitCalls, timers } = controllerHarness();
   lifecycle.activeResult = { runId: "run-active", status: "running", stale: false };

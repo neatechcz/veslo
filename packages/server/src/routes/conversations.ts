@@ -622,6 +622,7 @@ export function registerConversationSessionRoutes(
           body,
           clientMessageId: request.clientMessageId,
           origin: request.origin,
+          submitQueuePolicy: request.options?.submitQueuePolicy ?? "normal",
           expectAiGatewayStart: request.options?.expectAiGatewayStart === true,
           runtimeAuthorizationActorTokenHash,
         });

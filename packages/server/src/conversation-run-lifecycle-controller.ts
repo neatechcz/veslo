@@ -122,6 +122,8 @@ export type ConversationRunLifecycleScheduleReconcileInput = {
   attempt?: number;
 };
 
+export type ConversationRunLifecycleSubmitQueuePolicy = "normal" | "send-now" | "server-queue-only";
+
 export type ConversationRunLifecycleSubmitInput = {
   runTrace: ConversationRunLifecycleTracer;
   workspace: WorkspaceInfo;
@@ -131,6 +133,7 @@ export type ConversationRunLifecycleSubmitInput = {
   body: Record<string, unknown>;
   clientMessageId: string | null;
   origin: string | null;
+  submitQueuePolicy?: ConversationRunLifecycleSubmitQueuePolicy;
   expectAiGatewayStart: boolean;
   runtimeAuthorizationActorTokenHash?: string | null;
 };
@@ -377,6 +380,7 @@ export function createConversationRunLifecycleController(
       kind: input.kind,
       ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
       ...(input.origin ? { origin: input.origin } : {}),
+      ...(input.submitQueuePolicy ? { submitQueuePolicy: input.submitQueuePolicy } : {}),
       ...(input.runtimeAuthorizationActorTokenHash
         ? { runtimeAuthorizationActorTokenHash: input.runtimeAuthorizationActorTokenHash }
         : {}),
@@ -404,6 +408,7 @@ export function createConversationRunLifecycleController(
       inserted: queued.inserted,
       clientMessageId: input.clientMessageId,
       origin: input.origin,
+      submitQueuePolicy: input.submitQueuePolicy ?? null,
     });
     scheduleQueueDrain(input.workspace.id, input.target.conversationId, queueDrainPollMs);
     return {
@@ -1100,6 +1105,16 @@ export function createConversationRunLifecycleController(
         enabled: Boolean(lifecycleOwner),
         workspaceType: input.workspace.workspaceType,
       });
+      if (input.submitQueuePolicy === "server-queue-only") {
+        input.runTrace.record("server:conversation-run:queue-policy-server-only", {
+          workspaceId: input.workspace.id,
+          conversationId: input.target.conversationId,
+          runId: input.runId,
+          clientMessageId: input.clientMessageId,
+          origin: input.origin,
+        });
+        return queueRun(input, null);
+      }
       if (lifecycleOwner) {
         try {
           const active = await input.runTrace.step(

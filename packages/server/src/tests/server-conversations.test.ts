@@ -1141,6 +1141,38 @@ describe("conversation routes", () => {
     expect(engineSubmits).toEqual([]);
     expect(upstreamRequests).toHaveLength(1);
 
+    const serverQueueOnlyResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "x-veslo-send-trace-id": "submit-server-queue-only-trace",
+        },
+        body: JSON.stringify({
+          ...submitBody,
+          clientMessageId: "msg-submit-server-queue-only",
+          options: {
+            ...submitBody.options,
+            submitQueuePolicy: "server-queue-only",
+          },
+        }),
+      },
+    );
+    expect(serverQueueOnlyResponse.status).toBe(202);
+    const serverQueueOnlyPayload = await serverQueueOnlyResponse.json() as {
+      status?: string;
+      queueItemId?: string;
+      reservedRunId?: string;
+      draftDisposition?: string;
+    };
+    expect(serverQueueOnlyPayload.status).toBe("queued");
+    expect(serverQueueOnlyPayload.queueItemId).toMatch(/^queue_/);
+    expect(serverQueueOnlyPayload.reservedRunId).toMatch(/^[a-z0-9_-]+$/i);
+    expect(serverQueueOnlyPayload.draftDisposition).toBe("clear");
+    expect(engineSubmits).toEqual([]);
+
     const activeRequestsAfterFirstSubmit = activeRequests;
     const latestRequestsAfterFirstSubmit = latestRequests;
     const retryResponse = await submit();
