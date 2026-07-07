@@ -565,6 +565,9 @@ function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPath: str
 }
 
 export function startServer(config: ServerConfig) {
+  // The gateway runtime owner is module-scoped; every server instance must start
+  // without active runs, proxy requests, or runtime auth from a previous instance.
+  aiGatewayRuntimeOwner.resetForTests();
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
