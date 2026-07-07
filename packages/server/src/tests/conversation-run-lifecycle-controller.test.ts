@@ -325,6 +325,7 @@ function controllerHarness() {
   const providerWatchCalls: unknown[] = [];
   const abortCalls: unknown[] = [];
   const drainCalls: Array<{ workspaceId: string; conversationId: string; delayMs: number }> = [];
+  const traceEntries: Array<Record<string, unknown>> = [];
   const reconcileCalls: Array<{
     workspaceId: string;
     conversationId: string;
@@ -371,6 +372,7 @@ function controllerHarness() {
     resolveLifecycleReconcileMaxAttempts: () => 3,
     trace: {
       record: (event, payload = {}) => {
+        traceEntries.push({ event, ...payload });
         if (event !== "conversation-run-lifecycle:start" && event !== "conversation-run-lifecycle:stop") {
           reconcileCalls.push({
             workspaceId: typeof payload.workspaceId === "string" ? payload.workspaceId : "",
@@ -397,6 +399,7 @@ function controllerHarness() {
     providerWatchCalls,
     abortCalls,
     drainCalls,
+    traceEntries,
     reconcileCalls,
   };
 }
@@ -905,6 +908,40 @@ test("lifecycle reconcile keeps polling stale status until terminal", async () =
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([2_000]);
 });
 
+test("lifecycle reconcile trace includes active run diagnostics", async () => {
+  const { controller, lifecycle, traceEntries, workspaces } = controllerHarness();
+  lifecycle.statusResult = {
+    runId: "run-active",
+    status: "running",
+    stale: false,
+    clientMessageId: "msg-a",
+    origin: "session:normal",
+    activityKind: "unknown",
+    waitReason: "assistant_message_open",
+    noProgressSeconds: 17,
+  };
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-active",
+    reason: "accepted",
+  });
+
+  expect(
+    traceEntries.find((entry) => entry.event === "server:conversation-run:lifecycle-reconcile"),
+  ).toMatchObject({
+    runId: "run-active",
+    status: "running",
+    stale: false,
+    clientMessageId: "msg-a",
+    origin: "session:normal",
+    activityKind: "unknown",
+    waitReason: "assistant_message_open",
+    noProgressSeconds: 17,
+  });
+});
+
 test("queue drain submits the next pending item after terminal latest lifecycle", async () => {
   const { controller, lifecycle, queue, submitCalls } = controllerHarness();
   enqueuePendingRun(queue);
@@ -1052,6 +1089,42 @@ test("transcript wake-up does not mark terminal or wake queue while latest lifec
 
   expect(lifecycle.calls).toEqual(["status:ws_1:conv-a:latest"]);
   expect(lifecycle.calls.some((call) => call.startsWith("mark"))).toBe(false);
+  expect(timers.activeTimers()).toEqual([]);
+});
+
+test("transcript wake-up trace includes latest active run diagnostics", async () => {
+  const { controller, lifecycle, traceEntries, timers, workspaces } = controllerHarness();
+  lifecycle.statusResult = {
+    runId: "run-active",
+    status: "running",
+    stale: false,
+    clientMessageId: "msg-a",
+    origin: "session:normal",
+    activityKind: "unknown",
+    waitReason: "assistant_message_open",
+    noProgressSeconds: 19,
+  };
+
+  await controller.handleTranscriptAppend({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    sessionId: "sess-a",
+    reason: "session.idle",
+    shouldReconcile: true,
+  });
+
+  expect(
+    traceEntries.find((entry) => entry.event === "server:conversation-run:transcript-reconcile"),
+  ).toMatchObject({
+    runId: "run-active",
+    status: "running",
+    stale: false,
+    clientMessageId: "msg-a",
+    origin: "session:normal",
+    activityKind: "unknown",
+    waitReason: "assistant_message_open",
+    noProgressSeconds: 19,
+  });
   expect(timers.activeTimers()).toEqual([]);
 });
 

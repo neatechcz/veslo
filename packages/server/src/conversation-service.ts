@@ -70,6 +70,7 @@ export type ConversationService = {
 
   resolveOpenCodeSessionForRead(input: {
     workspaceId: string;
+    workspace?: WorkspaceInfo | null;
     directory: string | null;
     sessionOrConversationId: string;
   }): Promise<ConversationBinding | null>;
@@ -118,6 +119,9 @@ export type ConversationService = {
 };
 
 const normalizeText = (value: string | null | undefined) => value?.trim() ?? "";
+
+const isVesloConversationId = (value: string) =>
+  /^conv-[0-9a-f]{20}$/i.test(value.trim());
 
 const normalizeNullableText = (value: unknown): string | null => {
   if (typeof value !== "string") return null;
@@ -263,6 +267,7 @@ export function createConversationService(options: {
 
   const resolveOpenCodeSessionForRead = async (input: {
     workspaceId: string;
+    workspace?: WorkspaceInfo | null;
     directory: string | null;
     sessionOrConversationId: string;
   }) => {
@@ -272,10 +277,31 @@ export function createConversationService(options: {
     if (!workspaceId || !directory || !sessionOrConversationId) return null;
 
     try {
-      return await options.bindingStore.resolveOpenCodeSession({
+      const binding = await options.bindingStore.resolveOpenCodeSession({
         workspaceId,
         directory,
         sessionOrConversationId,
+      });
+      if (binding || isVesloConversationId(sessionOrConversationId)) return binding;
+
+      const source = await options.readStore.listConversations({
+        workspaceId,
+        directory,
+        workspace: input.workspace ?? null,
+      });
+      if (source.source !== "sqlite") return null;
+
+      const session = source.items.find((item) => normalizeText(item.id) === sessionOrConversationId);
+      if (!session) return null;
+
+      return await options.bindingStore.bindOpenCodeSession({
+        workspaceId,
+        directory,
+        engineSessionId: session.id,
+        title: session.title,
+        parentEngineSessionId: session.parentID,
+        createdAt: session.time.created,
+        updatedAt: session.time.updated,
       });
     } catch (error) {
       warn("[veslo-server] conversation binding resolution failed", {
@@ -447,6 +473,7 @@ export function createConversationService(options: {
     async loadTranscript(input) {
       const binding = await resolveOpenCodeSessionForRead({
         workspaceId: input.workspace.id,
+        workspace: input.workspace,
         directory: input.directory,
         sessionOrConversationId: input.sessionId,
       });
@@ -522,14 +549,18 @@ export function createConversationService(options: {
 
       const binding = await resolveOpenCodeSessionForRead({
         workspaceId,
+        workspace: input.workspace,
         directory,
         sessionOrConversationId: sessionId,
       });
-      const opencodeSessionId = binding?.engineSessionId ?? sessionId;
+      if (!binding) {
+        throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
+      }
+      const opencodeSessionId = binding.engineSessionId;
       const limit = Number.isFinite(input.limit ?? Number.NaN) && (input.limit ?? 0) > 0
         ? Math.floor(input.limit as number)
         : Math.max(input.messages.length, deletedMessageIds.length, 1);
-      const conversationIdField = binding?.conversationId
+      const conversationIdField = binding.conversationId
         ? { conversationId: binding.conversationId }
         : {};
 

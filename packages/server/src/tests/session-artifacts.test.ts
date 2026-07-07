@@ -119,6 +119,27 @@ const appendHostTranscript = async (input: {
   messages: Array<Record<string, unknown>>;
   partsByMessageId: Record<string, unknown[]>;
 }) => {
+  const importResponse = await fetch(
+    `http://127.0.0.1:${input.port}/workspace/${input.workspaceId}/conversations/import`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        directory: input.directory,
+        sessions: [{
+          id: input.sessionId,
+          title: input.sessionId,
+          parentID: null,
+          time: { created: 1, updated: 1 },
+        }],
+      }),
+    },
+  );
+  expect(importResponse.status).toBe(200);
+
   const response = await fetch(
     `http://127.0.0.1:${input.port}/workspace/${input.workspaceId}/sessions/${input.sessionId}/transcript`,
     {

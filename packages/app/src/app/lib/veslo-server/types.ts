@@ -1256,6 +1256,8 @@ export type VesloSessionArtifactItem = {
 
 export type VesloSessionLatestRunArtifacts = {
   sessionId: string;
+  conversationId?: string;
+  opencodeSessionId?: string;
   workspaceId: string;
   runId: string | null;
   items: VesloSessionArtifactItem[];
@@ -1443,6 +1445,7 @@ export type VesloConversationSubmitResult =
       clientMessageId: string;
       materializedSession?: unknown | null;
       draftDisposition: "clear";
+      debugTrace?: VesloConversationSubmitDebugTraceEntry[];
     }
   | {
       status: "queued";
@@ -1455,6 +1458,7 @@ export type VesloConversationSubmitResult =
       clientMessageId: string;
       materializedSession?: unknown | null;
       draftDisposition: "clear";
+      debugTrace?: VesloConversationSubmitDebugTraceEntry[];
     }
   | {
       status: "blocked";

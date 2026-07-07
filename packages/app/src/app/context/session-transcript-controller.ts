@@ -4,6 +4,7 @@ import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 
 import type { VesloSessionTranscriptSnapshot } from "../lib/veslo-server";
 import { unwrap } from "../lib/opencode";
+import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 import { normalizeDirectoryPath } from "../utils";
 import type { MessageInfo, MessageWithParts } from "../types";
 import type { WorkspaceRouting } from "./workspace-routing";
@@ -160,6 +161,9 @@ export function createSessionTranscriptController(deps: SessionTranscriptControl
   const resolveTranscriptIngestWorkspaceId = (sourceWsId?: string | null) =>
     sourceWsId?.trim() || deps.routing.activeWorkspaceId().trim();
 
+  const countPartsByMessageId = (partsByMessageId: Record<string, Part[]>) =>
+    Object.values(partsByMessageId).reduce((total, parts) => total + parts.length, 0);
+
   const resolveSessionIdForMessage = (messageID: string) => {
     const id = messageID.trim();
     if (!id) return "";
@@ -290,6 +294,20 @@ export function createSessionTranscriptController(deps: SessionTranscriptControl
     if (!writer) return undefined;
     const payload = buildTranscriptIngestPayload(workspaceId, sessionID, reason);
     if (!payload) return undefined;
+    const messageCount = payload.messages.length;
+    const partCount = countPartsByMessageId(payload.partsByMessageId);
+    const deletedMessageCount = payload.deletedMessageIds?.length ?? 0;
+    const deletedPartCount = Object.values(payload.deletedPartsByMessageId ?? {})
+      .reduce((total, partIds) => total + partIds.length, 0);
+    recordSendWorkflowTrace("session-transcript", "session-transcript:ingest-flush-start", {
+      workspaceId,
+      sessionID,
+      reason,
+      messageCount,
+      partCount,
+      deletedMessageCount,
+      deletedPartCount,
+    });
 
     const previous = transcriptIngestInFlight.get(key) ?? Promise.resolve();
     const run = previous
@@ -297,8 +315,27 @@ export function createSessionTranscriptController(deps: SessionTranscriptControl
       .then(async () => {
         await writer(payload);
         clearPendingTranscriptDeletions(key, payload);
+        recordSendWorkflowTrace("session-transcript", "session-transcript:ingest-flush-done", {
+          workspaceId,
+          sessionID,
+          reason,
+          messageCount,
+          partCount,
+          deletedMessageCount,
+          deletedPartCount,
+        });
       })
       .catch((error) => {
+        recordSendWorkflowTrace("session-transcript", "session-transcript:ingest-flush-error", {
+          workspaceId,
+          sessionID,
+          reason,
+          messageCount,
+          partCount,
+          deletedMessageCount,
+          deletedPartCount,
+          error: error instanceof Error ? error.message : String(error),
+        });
         deps.sessionWarn("transcript-ingest:failed", {
           workspaceId,
           sessionID,
@@ -327,6 +364,13 @@ export function createSessionTranscriptController(deps: SessionTranscriptControl
     const key = transcriptIngestKey(workspaceId, sessionID);
     const existing = transcriptIngestTimers.get(key);
     if (existing) clearTimeout(existing);
+    recordSendWorkflowTrace("session-transcript", "session-transcript:ingest-scheduled", {
+      workspaceId,
+      sessionID,
+      reason,
+      delayMs,
+      replacedExistingTimer: Boolean(existing),
+    });
     transcriptIngestTimers.set(
       key,
       setTimeout(() => {

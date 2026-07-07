@@ -42,6 +42,32 @@ export type SkillRegistryOrchestratorDeps = {
   createListener?: SkillRegistryOrchestratorListenerFactory;
 };
 
+function createTokenFingerprint(token: string): string {
+  if (!token) return "none";
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < token.length; i += 1) {
+    hash ^= token.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `${token.length}:${hash.toString(16).padStart(8, "0")}`;
+}
+
+export function createSkillRegistryEventsKey(input: {
+  baseUrl: string;
+  orgId: string;
+  token: string;
+  workspaceId: string;
+  status: VesloServerStatus;
+}): string {
+  return JSON.stringify({
+    baseUrl: input.baseUrl,
+    orgId: input.orgId,
+    token: createTokenFingerprint(input.token),
+    workspaceId: input.workspaceId,
+    status: input.status,
+  });
+}
+
 export function createSkillRegistryOrchestrator(deps: SkillRegistryOrchestratorDeps) {
   const createListener: SkillRegistryOrchestratorListenerFactory =
     deps.createListener ?? ((options) => createSkillRegistryEventsListener(options));
@@ -166,7 +192,7 @@ export function createSkillRegistryOrchestrator(deps: SkillRegistryOrchestratorD
     const workspaceId = deps.activeWorkspaceId().trim();
     const token = client?.token?.trim() ?? "";
     const status = deps.vesloServerStatus();
-    const nextKey = JSON.stringify({ baseUrl, orgId, token: token ? "set" : "none", workspaceId, status });
+    const nextKey = createSkillRegistryEventsKey({ baseUrl, orgId, token, workspaceId, status });
     if (nextKey === skillRegistryEventsKey) return;
     skillRegistryEventsKey = nextKey;
     stopSkillRegistryEventsListener();

@@ -80,35 +80,31 @@ Prefer this order while debugging:
 
 ## Known-Good Launch Paths
 
-### Manual dev runtime without Pilot
+### Manual dev runtime with Pilot
 
-Use this when the goal is to isolate the app/local server/AI gateway path from
-the E2E harness.
+Use this when the goal is to inspect the app/local server/AI gateway path
+through the normal `pnpm dev` loop, without the isolated E2E launcher.
+`pnpm dev` enables the dev-only Pilot capability through an inline Tauri config
+merge, compiles the `e2e` Cargo feature, and writes a runtime manifest plus
+trace files under `dev-specific/tauri-pilot/manual-runtime-*-pnpm-dev/`.
 
 ```powershell
-$RunDir = "dev-specific\tauri-pilot\manual-runtime-YYYYMMDD-HHMMSS-ai-gateway-dev"
-New-Item -ItemType Directory -Force $RunDir | Out-Null
-
 $env:VESLO_DEN_AUTH_SNAPSHOT_PATH = "C:\Users\jajse\.veslo\den-auth.json"
-$env:VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE = $env:VESLO_DEN_AUTH_SNAPSHOT_PATH
 $env:E2E_MANAGED_AI_GATEWAY_FIXTURE = "0"
-
-$env:VESLO_RUNTIME_TRACE = "1"
-$env:VESLO_RUNTIME_TRACE_FILE = "$PWD\$RunDir\runtime-trace.ndjson"
-$env:VESLO_SEND_WORKFLOW_TRACE = "1"
-$env:VESLO_SEND_WORKFLOW_TRACE_FILE = "$PWD\$RunDir\send-workflow-trace.ndjson"
-$env:VESLO_SEND_WORKFLOW_TRACE_CONSOLE = "1"
-$env:VITE_VESLO_SEND_WORKFLOW_TRACE = "1"
-$env:VESLO_OPENCODE_HEALTH_DIAG = "1"
-$env:VESLO_OPENCODE_HEALTH_DIAG_FILE = "$PWD\$RunDir\opencode-health.ndjson"
 
 pnpm dev
 ```
 
+At startup, copy the printed `[veslo:dev-runtime] pilotPing=...` command to
+attach the raw Pilot CLI to the exact socket for that run. The same banner
+prints `runtime-info.json`, `runtime-trace.ndjson`, `send-workflow-trace.ndjson`,
+and `opencode-health.ndjson`.
+
 For this path, do not set `HOME` or `USERPROFILE`. Corepack/pnpm and the
 normal desktop profile should stay tied to the real Windows user. Do not set
 `VESLO_DISABLE_DEV_AUTOSTART` unless the test is specifically about that
-boundary.
+boundary. Set `VESLO_TAURI_PILOT=0` only when you need the old standard dev
+runtime without Pilot or trace defaults.
 
 ### E2E debug binary with Pilot
 

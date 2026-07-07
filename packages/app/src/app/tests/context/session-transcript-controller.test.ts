@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { createRoot } from "solid-js";
@@ -10,6 +11,11 @@ import {
   INITIAL_SESSION_MESSAGE_LIMIT,
 } from "../../context/session-transcript-controller.js";
 import type { MessageInfo, MessageWithParts } from "../../types";
+
+const transcriptControllerSource = readFileSync(
+  new URL("../../context/session-transcript-controller.ts", import.meta.url),
+  "utf8",
+);
 
 function ok<T>(data: T) {
   return {
@@ -274,4 +280,22 @@ test("scheduled transcript ingestion timers are cleared on controller cleanup", 
 
   await new Promise((resolve) => setTimeout(resolve, 70));
   assert.equal(writes, 0);
+});
+
+test("transcript ingestion writes schedule and flush diagnostic trace events", () => {
+  assert.match(
+    transcriptControllerSource,
+    /recordSendWorkflowTrace\(\s*"session-transcript",\s*"session-transcript:ingest-scheduled",[\s\S]*workspaceId,[\s\S]*sessionID,[\s\S]*reason,[\s\S]*delayMs/,
+    "scheduled live transcript ingestion should record metadata-only diagnostics",
+  );
+  assert.match(
+    transcriptControllerSource,
+    /recordSendWorkflowTrace\(\s*"session-transcript",\s*"session-transcript:ingest-flush-start",[\s\S]*workspaceId,[\s\S]*sessionID,[\s\S]*reason,[\s\S]*messageCount[:,][\s\S]*partCount[:,]/,
+    "live transcript flush should record the payload shape without transcript content",
+  );
+  assert.match(
+    transcriptControllerSource,
+    /recordSendWorkflowTrace\(\s*"session-transcript",\s*"session-transcript:ingest-flush-done",[\s\S]*workspaceId,[\s\S]*sessionID,[\s\S]*reason,[\s\S]*messageCount[:,][\s\S]*partCount[:,]/,
+    "successful live transcript flush should record completion diagnostics",
+  );
 });

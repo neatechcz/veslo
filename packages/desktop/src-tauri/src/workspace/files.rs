@@ -7,6 +7,8 @@ use crate::utils::now_ms;
 use crate::workspace::commands::{sanitize_command_name, serialize_command_frontmatter};
 use crate::workspace::internal_provision::{provision_internal_workspace_assets, ProvisionStatus};
 
+const LEGACY_SCHEDULER_PLUGIN: &str = "opencode-scheduler";
+
 const DEFAULT_SOUL_COMPANY: &str = r#"# Company Instructions
 
 <!-- Edit this file to set company-wide tone, guardrails, and context. -->
@@ -58,6 +60,37 @@ pub fn merge_plugins(existing: Vec<String>, required: &[&str]) -> Vec<String> {
         }
     }
     out
+}
+
+fn remove_legacy_scheduler_plugin(config: &mut serde_json::Value) -> bool {
+    let Some(obj) = config.as_object_mut() else {
+        return false;
+    };
+
+    let mut should_remove_plugin_key = false;
+    let mut changed = false;
+
+    if let Some(plugin_value) = obj.get_mut("plugin") {
+        match plugin_value {
+            serde_json::Value::Array(plugins) => {
+                let before = plugins.len();
+                plugins.retain(|plugin| plugin.as_str() != Some(LEGACY_SCHEDULER_PLUGIN));
+                changed = plugins.len() != before;
+                should_remove_plugin_key = changed && plugins.is_empty();
+            }
+            serde_json::Value::String(plugin) if plugin == LEGACY_SCHEDULER_PLUGIN => {
+                changed = true;
+                should_remove_plugin_key = true;
+            }
+            _ => {}
+        }
+    }
+
+    if should_remove_plugin_key {
+        obj.remove("plugin");
+    }
+
+    changed
 }
 
 fn has_chrome_mcp_alias(mcp_obj: &serde_json::Map<String, serde_json::Value>) -> bool {
@@ -630,6 +663,10 @@ pub fn ensure_workspace_files(
         }
     }
 
+    if remove_legacy_scheduler_plugin(&mut config) {
+        config_changed = true;
+    }
+
     // OpenCode can stall session creation while loading the external
     // scheduler plugin. Scheduled automations now run through Veslo server
     // routes, so new workspaces should not auto-install that plugin.
@@ -795,6 +832,52 @@ mod tests {
             .unwrap_or_default();
 
         assert!(!plugins.contains(&serde_json::Value::String("opencode-scheduler".to_string())));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn ensure_workspace_files_removes_legacy_scheduler_plugin_from_existing_config() {
+        let root = temp_workspace_root("legacy-scheduler-plugin");
+        let config_path = root.join("opencode.jsonc");
+        fs::write(
+            &config_path,
+            r#"{
+  "plugin": ["opencode-scheduler", "user-plugin"],
+  "mcp": {
+    "custom": {
+      "type": "remote",
+      "url": "https://mcp.example/custom"
+    }
+  }
+}"#,
+        )
+        .expect("write existing config");
+
+        let root_str = root.to_string_lossy().to_string();
+        ensure_workspace_files(&root_str, "starter", None, None, None)
+            .expect("seed workspace files");
+
+        let config_raw = fs::read_to_string(&config_path).expect("read updated config");
+        let config: serde_json::Value =
+            serde_json::from_str(&config_raw).expect("parse updated config");
+        let plugins = config
+            .get("plugin")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        assert_eq!(
+            plugins,
+            vec![serde_json::Value::String("user-plugin".to_string())]
+        );
+        assert!(
+            config
+                .get("mcp")
+                .and_then(|value| value.as_object())
+                .is_some_and(|mcp| mcp.contains_key("custom")),
+            "MCP config entries should be preserved while removing the legacy scheduler plugin"
+        );
 
         fs::remove_dir_all(root).ok();
     }

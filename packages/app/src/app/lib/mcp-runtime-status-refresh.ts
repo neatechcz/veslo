@@ -28,6 +28,7 @@ export type McpRuntimeStatusRefresherOptions<
   }) => Promise<boolean>;
   setStatuses: (statuses: McpStatusMap) => void;
   recordEvent?: McpRuntimeStatusRefreshEvent;
+  now?: () => number;
 };
 
 export function mcpRuntimeStatusEntriesKey(entries: McpServerEntry[]) {
@@ -104,6 +105,8 @@ export function createMcpRuntimeStatusRefresher<
     if (inFlightByKey.has(key)) return;
 
     const task = (async () => {
+      const now = () => options.now?.() ?? Date.now();
+      const startedAt = now();
       try {
         const activeRuntimeActivityIdAtStart = options.activeRuntimeActivityId()?.trim();
         if (activeRuntimeActivityIdAtStart) {
@@ -148,9 +151,15 @@ export function createMcpRuntimeStatusRefresher<
         }
         if (!isCurrentTarget(workspaceId, directory, entriesKey)) return;
         options.setStatuses(filterConfiguredMcpStatuses(status, entries));
-      } catch {
+      } catch (error) {
         if (isCurrentTarget(workspaceId, directory, entriesKey)) {
-          options.setStatuses({});
+          options.recordEvent?.("runtime-status-error", {
+            activeWorkspaceId: workspaceId,
+            projectDir: directory,
+            entries: entries.map((entry) => entry.name),
+            durationMs: Math.max(0, now() - startedAt),
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
       } finally {
         inFlightByKey.delete(key);

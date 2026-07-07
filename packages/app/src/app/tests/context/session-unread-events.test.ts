@@ -21,6 +21,19 @@ test("message updated events report only assistant responses after accepting the
   );
 });
 
+test("accepted assistant stream events write metadata-only handoff trace entries", () => {
+  assert.match(
+    eventStreamSource,
+    /recordSendWorkflowTrace\(\s*"session-sse",\s*"session-sse:assistant-message-updated",[\s\S]*sessionID: info\.sessionID,[\s\S]*messageID: info\.id,[\s\S]*role: "assistant"/,
+    "assistant message.updated events should write a durable session-sse handoff trace",
+  );
+  assert.match(
+    eventStreamSource,
+    /recordSendWorkflowTrace\(\s*"session-sse",\s*"session-sse:assistant-part-updated",[\s\S]*sessionID: part\.sessionID,[\s\S]*messageID: part\.messageID,[\s\S]*partID: part\.id,[\s\S]*deltaLength:[\s\S]*textLength:[\s\S]*hasText:/,
+    "assistant text part updates should write metadata-only part handoff trace",
+  );
+});
+
 test("message part updates are not used as unread response triggers", () => {
   const callbackIndex = eventStreamSource.indexOf("onAssistantResponseObserved");
   const messageBranchIndex = eventStreamSource.indexOf('if (event.type === "message.updated")');

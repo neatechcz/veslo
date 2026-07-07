@@ -169,8 +169,10 @@ For Windows desktop behavior, run the Desktop Test Runtime Preflight first, star
 ```bash
 pnpm dev
 
-/mnt/c/Users/jajse/.cargo/bin/tauri-pilot.exe ping
-/mnt/c/Users/jajse/.cargo/bin/tauri-pilot.exe --window main snapshot -i
+# Use the exact socket printed by pnpm dev as:
+# [veslo:dev-runtime] pilotPing=...
+/mnt/c/Users/jajse/.cargo/bin/tauri-pilot.exe --socket '\\.\pipe\tauri-pilot-com.neatech.veslo.dev' ping
+/mnt/c/Users/jajse/.cargo/bin/tauri-pilot.exe --socket '\\.\pipe\tauri-pilot-com.neatech.veslo.dev' --window main snapshot -i
 ```
 
 For complex interactions or timing probes, run JavaScript through stdin:

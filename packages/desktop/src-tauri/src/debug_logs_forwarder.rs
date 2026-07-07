@@ -76,6 +76,7 @@ pub struct DebugLogsForwarder {
     cloud_context: Mutex<Option<CloudDiagnosticsContext>>,
     direct_fallback_retry_after: Mutex<Option<SystemTime>>,
     direct_fallback_retry_files: Mutex<HashSet<PathBuf>>,
+    local_cloud_upload_disabled_log_after: Mutex<Option<SystemTime>>,
     write_lock: Mutex<()>,
     sequence: AtomicU64,
 }
@@ -364,6 +365,7 @@ impl DebugLogsForwarder {
             cloud_context: Mutex::new(None),
             direct_fallback_retry_after: Mutex::new(None),
             direct_fallback_retry_files: Mutex::new(HashSet::new()),
+            local_cloud_upload_disabled_log_after: Mutex::new(None),
             write_lock: Mutex::new(()),
             sequence: AtomicU64::new(0),
         }
@@ -433,6 +435,29 @@ impl DebugLogsForwarder {
         if let Ok(mut guard) = self.direct_fallback_retry_after.lock() {
             *guard = Some(now + DIRECT_FALLBACK_FAILURE_BACKOFF);
         }
+    }
+
+    fn record_missing_direct_fallback_context(&self, now: SystemTime) -> bool {
+        if !self.should_attempt_direct_fallback(now) {
+            return false;
+        }
+        self.record_direct_fallback_failure(now);
+        true
+    }
+
+    fn record_local_cloud_upload_disabled(&self, now: SystemTime) -> bool {
+        let Ok(mut guard) = self.local_cloud_upload_disabled_log_after.lock() else {
+            return true;
+        };
+        if guard
+            .as_ref()
+            .map(|retry_after| now < *retry_after)
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        *guard = Some(now + DIRECT_FALLBACK_FAILURE_BACKOFF);
+        true
     }
 
     fn mark_direct_fallback_retry_file(&self, path: &Path) {
@@ -955,9 +980,11 @@ pub fn spawn_flush_task(
                         match post_batch(base_url, host_token, &batch_id, chunk_vec) {
                             Ok(LocalPostResult::CloudUploaded) => {}
                             Ok(LocalPostResult::CloudNotUploaded) => {
-                                eprintln!(
-                                    "[debug-logs-forwarder] local debug-log post accepted without cloud upload"
-                                );
+                                if forwarder.record_local_cloud_upload_disabled(SystemTime::now()) {
+                                    eprintln!(
+                                        "[debug-logs-forwarder] local debug-log post accepted without cloud upload"
+                                    );
+                                }
                                 local_accepted_without_cloud_upload = true;
                                 local_delivered = false;
                                 break;
@@ -1008,7 +1035,10 @@ pub fn spawn_flush_task(
             }
 
             let Some(context) = cloud_context.as_ref() else {
-                eprintln!("[debug-logs-forwarder] direct fallback skipped: missing cloud diagnostics context");
+                forwarder.mark_direct_fallback_retry_file(&file);
+                if forwarder.record_missing_direct_fallback_context(SystemTime::now()) {
+                    eprintln!("[debug-logs-forwarder] direct fallback skipped: missing cloud diagnostics context");
+                }
                 continue;
             };
             if !forwarder.should_attempt_direct_fallback(SystemTime::now()) {
@@ -1319,6 +1349,36 @@ mod tests {
         forwarder.record_direct_fallback_success(&flushing_file);
         assert!(forwarder.should_attempt_direct_fallback(now));
         assert!(!forwarder.is_direct_fallback_retry_file(&flushing_file));
+    }
+
+    #[test]
+    fn missing_direct_fallback_context_uses_backoff() {
+        let dir = tempdir().unwrap();
+        let forwarder = DebugLogsForwarder::new(dir.path().to_path_buf());
+        let now = UNIX_EPOCH + Duration::from_secs(1_000);
+
+        assert!(forwarder.record_missing_direct_fallback_context(now));
+        assert!(!forwarder.record_missing_direct_fallback_context(
+            now + DIRECT_FALLBACK_FAILURE_BACKOFF - Duration::from_secs(1)
+        ));
+        assert!(forwarder.record_missing_direct_fallback_context(
+            now + DIRECT_FALLBACK_FAILURE_BACKOFF
+        ));
+    }
+
+    #[test]
+    fn local_cloud_upload_disabled_log_uses_backoff() {
+        let dir = tempdir().unwrap();
+        let forwarder = DebugLogsForwarder::new(dir.path().to_path_buf());
+        let now = UNIX_EPOCH + Duration::from_secs(1_000);
+
+        assert!(forwarder.record_local_cloud_upload_disabled(now));
+        assert!(!forwarder.record_local_cloud_upload_disabled(
+            now + DIRECT_FALLBACK_FAILURE_BACKOFF - Duration::from_secs(1)
+        ));
+        assert!(forwarder.record_local_cloud_upload_disabled(
+            now + DIRECT_FALLBACK_FAILURE_BACKOFF
+        ));
     }
 
     #[test]

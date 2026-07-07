@@ -55,6 +55,7 @@ import {
 } from "./engine-paths.js";
 import { ensureOpencodeManagedTools as ensureOpencodeManagedToolsRuntime } from "./opencode-managed-dependencies.js";
 import { migrateLegacyWorkspaceConfigDir } from "./workspace-runtime-migration.js";
+import { sanitizeOpencodeRuntimeConfigText } from "./opencode-config-sanitizer.js";
 import {
   normalizeWorkspacePath,
   resolveWorkspaceRuntimeIdentity,
@@ -592,7 +593,9 @@ async function syncWorkspaceOpencodeConfigToConfigDir(workspace: string, configD
     const source = join(workspace, name);
     const target = join(configDir, name);
     if (await fileExists(source)) {
-      await copyFile(source, target);
+      const raw = await readFile(source, "utf8");
+      const sanitized = sanitizeOpencodeRuntimeConfigText(raw);
+      await writeFile(target, sanitized.text, "utf8");
     } else {
       await rm(target, { force: true });
     }

@@ -2,6 +2,8 @@ export type SessionTranscriptSnapshot = {
   workspaceId: string;
   sessionId: string;
   directory?: string;
+  conversationId?: string;
+  opencodeSessionId?: string;
   limit: number;
   messages: unknown[];
   partsByMessageId: Record<string, unknown[]>;
@@ -20,6 +22,8 @@ export type SessionTranscriptLoadInput = {
 export type SessionTranscriptLoadResult = {
   workspaceId?: string;
   sessionId?: string;
+  conversationId?: string;
+  opencodeSessionId?: string;
   messages: unknown[];
   partsByMessageId?: Record<string, unknown[]>;
   fetchedAt?: number;
@@ -314,6 +318,12 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
         workspaceId,
         sessionId,
         ...(directory ? { directory } : {}),
+        ...(typeof raw.conversationId === "string" && raw.conversationId.trim()
+          ? { conversationId: raw.conversationId.trim() }
+          : {}),
+        ...(typeof raw.opencodeSessionId === "string" && raw.opencodeSessionId.trim()
+          ? { opencodeSessionId: raw.opencodeSessionId.trim() }
+          : {}),
         limit,
         messages: Array.isArray(raw.messages) ? raw.messages : [],
         partsByMessageId: sanitizePartsByMessageId(raw.partsByMessageId),

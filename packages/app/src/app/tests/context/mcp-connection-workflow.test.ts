@@ -36,6 +36,7 @@ function createHarness(overrides: Record<string, unknown> = {}) {
   let vesloWorkspaceId: string | null = "ws_1";
   let vesloCapabilities = { mcp: { read: true, write: false } };
   let readConfigContent = "";
+  let runtimeMcpAddError: Error | null = null;
   let mcpServers: McpServerEntry[] = [
     {
       name: "github",
@@ -51,6 +52,9 @@ function createHarness(overrides: Record<string, unknown> = {}) {
     mcp: {
       add: async (...args: unknown[]) => {
         calls.push({ name: "runtime.mcp.add", args });
+        if (runtimeMcpAddError) {
+          throw runtimeMcpAddError;
+        }
         return { github: { status: "connected" } };
       },
       status: async (...args: unknown[]) => {
@@ -226,6 +230,9 @@ function createHarness(overrides: Record<string, unknown> = {}) {
     set mcpServersValue(value: McpServerEntry[]) {
       mcpServers = value;
     },
+    set runtimeMcpAddError(value: Error | null) {
+      runtimeMcpAddError = value;
+    },
     get mcpStatus() {
       return mcpStatus;
     },
@@ -270,6 +277,39 @@ test("MCP connection workflow writes local project config before activating runt
   assert.equal(harness.authModalOpen, true);
   assert.equal(harness.authNeedsReload, true);
   assert.equal(harness.mcpConnectingName, null);
+});
+
+test("MCP connection workflow keeps written config when runtime activation fails", async () => {
+  const harness = createHarness();
+  harness.readConfigContent = '{ "$schema": "https://opencode.ai/config.json", "mcp": { "old": { "type": "remote", "url": "https://old.example" } } }';
+  harness.runtimeMcpAddError = new Error("Request timed out");
+
+  await harness.workflow.connectMcp(remoteEntry({ oauth: false }));
+
+  const written = JSON.parse(harness.writtenConfig);
+  assert.deepEqual(written.mcp.github, {
+    type: "remote",
+    enabled: true,
+    url: "https://mcp.example/github",
+  });
+  assert.equal(harness.calls.some((call) => call.name === "runtime.mcp.add"), true);
+  assert.equal(
+    harness.calls.some((call) =>
+      call.name === "refreshMcpServers" &&
+      (call.args[0] as { reason?: string } | undefined)?.reason === "mcp-configured-activation-error"
+    ),
+    true,
+  );
+  assert.equal(harness.mcpStatus, "MCP configured, but runtime activation failed: Request timed out");
+  assert.equal(harness.mcpConnectingName, null);
+  assert.equal(
+    harness.calls.some((call) =>
+      call.name === "finishPerf" &&
+      call.args[1] === "mcp.connect" &&
+      call.args[2] === "configured-activation-error"
+    ),
+    true,
+  );
 });
 
 test("MCP runtime context does not manufacture an unscoped fallback client", async () => {

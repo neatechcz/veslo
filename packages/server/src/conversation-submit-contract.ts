@@ -104,6 +104,7 @@ export type ConversationSubmitSubmittedResult = {
   clientMessageId: string;
   materializedSession?: unknown | null;
   draftDisposition: "clear";
+  debugTrace?: ConversationSubmitDebugTraceEntry[];
 };
 
 export type ConversationSubmitQueuedResult = {
@@ -117,6 +118,7 @@ export type ConversationSubmitQueuedResult = {
   clientMessageId: string;
   materializedSession?: unknown | null;
   draftDisposition: "clear";
+  debugTrace?: ConversationSubmitDebugTraceEntry[];
 };
 
 export type ConversationSubmitBlockedResult = {

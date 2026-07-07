@@ -4,6 +4,7 @@ import test from "node:test";
 import { createRoot, createSignal } from "solid-js";
 
 import {
+  createSkillRegistryEventsKey,
   createSkillRegistryOrchestrator,
   type SkillRegistryOrchestratorListenerFactory,
 } from "../../context/skill-registry-orchestrator.js";
@@ -91,10 +92,10 @@ function createListenerCapture() {
   };
 }
 
-function createClient(calls: MaterializationCall[]): VesloServerClient {
+function createClient(calls: MaterializationCall[], token = "server-token"): VesloServerClient {
   return {
     baseUrl: "http://127.0.0.1:8787",
-    token: "server-token",
+    token,
     syncWorkspaceSkillMaterialization: async (workspaceId: string, options?: unknown) => {
       calls.push({ kind: "workspace", workspaceId, options });
       return { synced: true, reloadRequired: false };
@@ -342,4 +343,30 @@ test("global update during active run queues global replay", async () => {
       dispose();
     }
   });
+});
+
+test("event listener key changes when the Veslo client token rotates", () => {
+  const base = {
+    baseUrl: "http://127.0.0.1:8787",
+    orgId: "org-1",
+    workspaceId: "workspace-1",
+    status: "connected" as const,
+  };
+
+  assert.notEqual(
+    createSkillRegistryEventsKey({ ...base, token: "server-token-1" }),
+    createSkillRegistryEventsKey({ ...base, token: "server-token-2" }),
+  );
+});
+
+test("event listener key does not expose the raw Veslo client token", () => {
+  const key = createSkillRegistryEventsKey({
+    baseUrl: "http://127.0.0.1:8787",
+    orgId: "org-1",
+    token: "server-token-super-secret",
+    workspaceId: "workspace-1",
+    status: "connected",
+  });
+
+  assert.equal(key.includes("server-token-super-secret"), false);
 });

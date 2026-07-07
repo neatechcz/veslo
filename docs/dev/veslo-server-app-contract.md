@@ -390,6 +390,16 @@ opt-in read unions the live source with host bindings and tunnels any missing
 sessions back into the host store; it must not be used to cold-start another
 workspace runtime.
 
+When a request targets a raw OpenCode session id and the Veslo
+`conversation_binding` row is missing, the server may materialize the binding
+at resolution time. This applies to transcript reads, transcript snapshot
+append/backfill, artifact derivation, run submit, and abort/replacement control
+paths. The import is allowed only when the server can read an exact OpenCode
+`session` row for that id under the resolved workspace directory. Unknown raw
+ids, `conv-*` ids without bindings, wrong-directory matches, and foreign
+workspace targets must remain rejected instead of falling back to app-owned
+OpenCode routing.
+
 `POST /workspace/:id/conversations/:conversationId/runs` is server-authoritative
 for conversation run admission. A successful immediate submit returns
 `status: "submitted"` with `runId`. If the orchestrator lifecycle reports an

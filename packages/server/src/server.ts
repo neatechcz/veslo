@@ -3682,13 +3682,14 @@ function createRoutes(
   }) => {
     const binding = await conversationService.resolveOpenCodeSessionForRead({
       workspaceId: input.workspace.id,
+      workspace: input.workspace,
       directory: input.directory,
       sessionOrConversationId: input.sessionOrConversationId,
     });
-    if (!binding && isVesloConversationId(input.sessionOrConversationId)) {
+    if (!binding) {
       throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
     }
-    const opencodeSessionId = binding?.engineSessionId ?? input.sessionOrConversationId;
+    const opencodeSessionId = binding.engineSessionId;
     const snapshot = await sessionTranscriptPrefetch.getOrLoad({
       workspaceId: input.workspace.id,
       sessionId: opencodeSessionId,
@@ -3698,7 +3699,7 @@ function createRoutes(
     return {
       workspaceId: input.workspace.id,
       sessionId: opencodeSessionId,
-      conversationId: binding?.conversationId,
+      conversationId: binding.conversationId,
       opencodeSessionId,
       limit: snapshot.limit,
       messages: snapshot.messages,
@@ -3727,6 +3728,7 @@ function createRoutes(
     }
     const binding = await conversationService.resolveOpenCodeSessionForRead({
       workspaceId: input.workspace.id,
+      workspace: input.workspace,
       directory,
       sessionOrConversationId: input.sessionOrConversationId,
     });

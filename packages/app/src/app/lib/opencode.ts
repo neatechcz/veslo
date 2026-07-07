@@ -133,7 +133,7 @@ const createTauriFetch = (auth?: OpencodeAuth) => {
         auditedTauriFetch,
         request,
         undefined,
-        DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS,
+        resolveRequestTimeoutMs(request, DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS),
       );
     }
 
@@ -146,7 +146,7 @@ const createTauriFetch = (auth?: OpencodeAuth) => {
         ...init,
         headers,
       },
-      DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS,
+      resolveRequestTimeoutMs(input, DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS),
     );
   };
 };
@@ -176,7 +176,12 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
   const fetchImpl = isTauriRuntime()
     ? createTauriFetch(auth)
     : (input: RequestInfo | URL, init?: RequestInit) =>
-        fetchWithTimeout(globalThis.fetch, input, init, DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS);
+        fetchWithTimeout(
+          globalThis.fetch,
+          input,
+          init,
+          resolveRequestTimeoutMs(input, DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS),
+        );
   return createOpencodeClient({
     baseUrl,
     directory,

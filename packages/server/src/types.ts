@@ -569,6 +569,8 @@ export interface SessionArtifactItem {
 
 export interface SessionLatestRunArtifactsResponse {
   sessionId: string;
+  conversationId?: string;
+  opencodeSessionId?: string;
   workspaceId: string;
   runId: string | null;
   items: SessionArtifactItem[];

@@ -43,6 +43,36 @@ function makeMessage(sessionID: string, id = "msg-a", role = "assistant") {
   } as unknown as MessageInfo;
 }
 
+type SendWorkflowTraceTestWindow = {
+  __vesloSendWorkflowTraceEnabled?: boolean;
+  __vesloSendWorkflowTrace?: Array<Record<string, unknown>>;
+  __vesloSendWorkflowTraceSeq?: number;
+};
+
+function withSendWorkflowTraceWindow(
+  run: (target: SendWorkflowTraceTestWindow) => void | Promise<void>,
+) {
+  return async () => {
+    const root = globalThis as unknown as Record<string, unknown>;
+    const hadWindow = Object.prototype.hasOwnProperty.call(root, "window");
+    const previousWindow = root.window;
+    const target: SendWorkflowTraceTestWindow = {
+      __vesloSendWorkflowTraceEnabled: true,
+    };
+    root.window = target;
+
+    try {
+      await run(target);
+    } finally {
+      if (!hadWindow) {
+        Reflect.deleteProperty(root, "window");
+      } else {
+        root.window = previousWindow;
+      }
+    }
+  };
+}
+
 function makeController(options: {
   activeWorkspaceId?: string;
   selectedSessionId?: string | null;
@@ -278,6 +308,110 @@ test("active message updates report assistant responses only after accepting the
     }
   });
 });
+
+test(
+  "text part trace records assistant updates only for assistant messages",
+  withSendWorkflowTraceWindow(async (traceWindow) => {
+    await createRoot(async (dispose) => {
+      try {
+        const { controller } = makeController({
+          workspaceSessionIds: new Set(["sess-a"]),
+        });
+
+        await controller.applyEvent(
+          {
+            type: "message.updated",
+            properties: { info: makeMessage("sess-a", "msg-user", "user") },
+          } as OpencodeEvent,
+          "ws-a",
+        );
+        await controller.applyEvent(
+          {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "part-user",
+                sessionID: "sess-a",
+                messageID: "msg-user",
+                type: "text",
+                text: "hello from user",
+              },
+            },
+          } as OpencodeEvent,
+          "ws-a",
+        );
+        await controller.applyEvent(
+          {
+            type: "message.updated",
+            properties: { info: makeMessage("sess-a", "msg-assistant", "assistant") },
+          } as OpencodeEvent,
+          "ws-a",
+        );
+        await controller.applyEvent(
+          {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "part-assistant",
+                sessionID: "sess-a",
+                messageID: "msg-assistant",
+                type: "text",
+                text: "hello from assistant",
+              },
+            },
+          } as OpencodeEvent,
+          "ws-a",
+        );
+
+        const assistantPartTrace = (traceWindow.__vesloSendWorkflowTrace ?? []).filter(
+          (entry) => entry.event === "session-sse:assistant-part-updated",
+        );
+        assert.deepEqual(
+          assistantPartTrace.map((entry) => entry.messageID),
+          ["msg-assistant"],
+        );
+      } finally {
+        dispose();
+      }
+    });
+  }),
+);
+
+test(
+  "text part trace does not infer assistant role from a placeholder message",
+  withSendWorkflowTraceWindow(async (traceWindow) => {
+    await createRoot(async (dispose) => {
+      try {
+        const { controller } = makeController({
+          workspaceSessionIds: new Set(["sess-a"]),
+        });
+
+        await controller.applyEvent(
+          {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "part-before-message",
+                sessionID: "sess-a",
+                messageID: "msg-before-message",
+                type: "text",
+                text: "parent role not known yet",
+              },
+            },
+          } as OpencodeEvent,
+          "ws-a",
+        );
+
+        const assistantPartTrace = (traceWindow.__vesloSendWorkflowTrace ?? []).filter(
+          (entry) => entry.event === "session-sse:assistant-part-updated",
+        );
+        assert.deepEqual(assistantPartTrace, []);
+      } finally {
+        dispose();
+      }
+    });
+  }),
+);
 
 test("active session idle schedules local and engine transcript ingestion immediately", async () => {
   await createRoot(async (dispose) => {

@@ -164,6 +164,51 @@ test("stale MCP runtime status failures do not clear statuses for the current en
   ]);
 });
 
+test("current MCP runtime status failures keep last known statuses and record diagnostics", async () => {
+  const entries = [entry("alpha")];
+  const applied: McpStatusMap[] = [];
+  const events: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  let now = 1_000;
+
+  const refresher = createMcpRuntimeStatusRefresher({
+    activeWorkspaceId: () => "ws-1",
+    activeRuntimeActivityId: () => null,
+    activeWorkspaceRuntimeReady: () => true,
+    workspaceProjectDir: () => "/repo",
+    client: () => ({ mcp: { status: async () => ({}) } }),
+    currentEntries: () => entries,
+    loadStatus: async () => {
+      now = 1_042;
+      throw new Error("status socket closed");
+    },
+    setStatuses: (statuses) => {
+      applied.push(statuses);
+    },
+    recordEvent: (event, payload) => {
+      events.push({ event, payload });
+    },
+    now: () => now,
+  });
+
+  refresher.schedule("/repo", entries);
+  await tick();
+  await tick();
+
+  assert.deepEqual(applied, []);
+  assert.deepEqual(events, [
+    {
+      event: "runtime-status-error",
+      payload: {
+        activeWorkspaceId: "ws-1",
+        projectDir: "/repo",
+        entries: ["alpha"],
+        durationMs: 42,
+        error: "status socket closed",
+      },
+    },
+  ]);
+});
+
 test("MCP runtime status entries key reflects entry list changes", () => {
   assert.notEqual(
     mcpRuntimeStatusEntriesKey([entry("alpha")]),

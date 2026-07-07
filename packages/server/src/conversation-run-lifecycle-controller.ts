@@ -317,6 +317,20 @@ function reconcileDiagnosticsFromKeys(
   return sortReconcileDiagnostics(entries);
 }
 
+function lifecycleStatusTraceFields(
+  status: LifecycleRunStatusResult | null | undefined,
+): Record<string, unknown> {
+  return {
+    clientMessageId: status?.clientMessageId ?? null,
+    origin: status?.origin ?? null,
+    activityKind: status?.activityKind ?? null,
+    waitReason: status?.waitReason ?? null,
+    lastUsefulProgressAt: status?.lastUsefulProgressAt ?? null,
+    retrySince: status?.retrySince ?? null,
+    noProgressSeconds: status?.noProgressSeconds ?? null,
+  };
+}
+
 function createNoopRunTrace(): ConversationRunLifecycleTracer {
   const entries: Array<Record<string, unknown>> = [];
   return {
@@ -753,6 +767,7 @@ export function createConversationRunLifecycleController(
         abortRequested: input.abortRequested === true,
         status: status?.status ?? null,
         stale: status?.stale ?? null,
+        ...lifecycleStatusTraceFields(status),
         attempt,
       });
 
@@ -959,6 +974,7 @@ export function createConversationRunLifecycleController(
         runId: latest?.runId ?? null,
         status: latest?.status ?? null,
         stale: latest?.stale ?? null,
+        ...lifecycleStatusTraceFields(latest),
       });
       if (latest && !isActiveLifecycleStatus(latest.status)) {
         scheduleQueueDrain(input.workspace.id, conversationId, 0);
@@ -1187,6 +1203,15 @@ export function createConversationRunLifecycleController(
         throw new Error("OpenCode submit port is required for admitted conversation runs");
       }
       const upstream = await submitAcceptedRun(input, lifecycleOwner);
+      input.runTrace.record("server:conversation-run:submitted", {
+        workspaceId: input.workspace.id,
+        conversationId: input.target.conversationId,
+        opencodeSessionId: input.target.opencodeSessionId,
+        runId: input.runId,
+        kind: input.kind,
+        clientMessageId: input.clientMessageId,
+        origin: input.origin,
+      });
       return {
         httpStatus: 200,
         payload: {

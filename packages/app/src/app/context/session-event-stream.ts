@@ -504,6 +504,12 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           );
           if ((info as { role?: string }).role === "assistant") {
             deps.onAssistantResponseObserved?.(info.sessionID);
+            recordSendWorkflowTrace("session-sse", "session-sse:assistant-message-updated", {
+              workspaceId: sourceWsId || null,
+              sessionID: info.sessionID,
+              messageID: info.id,
+              role: "assistant",
+            });
           }
           deps.scheduleTranscriptIngestion(info.sessionID, sourceWsId, "message.updated");
         }
@@ -564,6 +570,9 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
 
           const delta = typeof record.delta === "string" ? record.delta : null;
           const partUpdatedStartedAt = perfNow();
+          const parentMessageRole =
+            deps.store.messages[part.sessionID]?.find((message) => message.id === part.messageID)
+              ?.role ?? null;
 
           deps.setStore(
             produce((draft: EventStreamStoreState) => {
@@ -591,20 +600,33 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           const resolvedPart =
             deps.store.parts[part.messageID]?.find((item) => item.id === part.id) ??
             part;
+          const resolvedTextLength =
+            resolvedPart.type === "text" && typeof (resolvedPart as { text?: unknown }).text === "string"
+              ? String((resolvedPart as { text?: string }).text).length
+              : null;
+          if (part.type === "text" && parentMessageRole === "assistant") {
+            recordSendWorkflowTrace("session-sse", "session-sse:assistant-part-updated", {
+              workspaceId: sourceWsId || null,
+              sessionID: part.sessionID,
+              messageID: part.messageID,
+              partID: part.id,
+              partType: part.type,
+              role: parentMessageRole,
+              deltaLength: delta?.length ?? 0,
+              textLength: resolvedTextLength,
+              hasText: (resolvedTextLength ?? 0) > 0,
+            });
+          }
           deps.recordSyntheticContinueDiagnostic(resolvedPart);
           const partUpdatedMs = Math.round((perfNow() - partUpdatedStartedAt) * 100) / 100;
           if (deps.sessionDebugEnabled() && (partUpdatedMs >= 8 || (delta?.length ?? 0) >= 120)) {
-            const textLength =
-              part.type === "text" && typeof (part as { text?: unknown }).text === "string"
-                ? String((part as { text?: string }).text).length
-                : null;
             recordPerfLog(true, "session.event", "message.part.updated", {
               sessionID: part.sessionID,
               messageID: part.messageID,
               partID: part.id,
               partType: part.type,
               deltaLength: delta?.length ?? 0,
-              textLength,
+              textLength: resolvedTextLength,
               ms: partUpdatedMs,
             });
           }

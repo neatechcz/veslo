@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER } from "../orchestrator-lifecycle-client.js";
@@ -75,6 +76,69 @@ const setEnvVarForTest = (name: string, value: string) => {
       process.env[name] = previous;
     }
   });
+};
+
+const seedLegacyOpenCodeDb = (
+  dbPath: string,
+  directory: string,
+  sessions: Array<{
+    id: string;
+    title?: string;
+    parentID?: string | null;
+    messageText?: string;
+  }>,
+) => {
+  const db = new Database(dbPath);
+  try {
+    db.exec(`
+      CREATE TABLE session (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        directory TEXT,
+        parent_id TEXT,
+        time_created INTEGER,
+        time_updated INTEGER
+      );
+      CREATE TABLE message (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        data TEXT NOT NULL
+      );
+      CREATE TABLE part (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        data TEXT NOT NULL
+      );
+    `);
+    const insertSession = db.query(
+      "INSERT INTO session (id, title, directory, parent_id, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    );
+    const insertMessage = db.query("INSERT INTO message (id, session_id, data) VALUES (?1, ?2, ?3)");
+    const insertPart = db.query("INSERT INTO part (id, session_id, message_id, data) VALUES (?1, ?2, ?3, ?4)");
+    for (const [index, session] of sessions.entries()) {
+      const created = 100 + index;
+      insertSession.run(session.id, session.title ?? session.id, directory, session.parentID ?? null, created, created + 10);
+      if (session.messageText) {
+        const messageId = `msg-${session.id}`;
+        const partId = `prt-${session.id}`;
+        insertMessage.run(messageId, session.id, JSON.stringify({
+          id: messageId,
+          sessionID: session.id,
+          role: "assistant",
+        }));
+        insertPart.run(partId, session.id, messageId, JSON.stringify({
+          id: partId,
+          sessionID: session.id,
+          messageID: messageId,
+          type: "text",
+          text: session.messageText,
+        }));
+      }
+    }
+  } finally {
+    db.close();
+  }
 };
 
 async function waitForCondition(
@@ -432,6 +496,7 @@ describe("conversation routes", () => {
       runId?: string;
       clientMessageId?: string;
       draftDisposition?: string;
+      debugTrace?: Array<{ event: string }>;
     };
     expect(payload.status).toBe("submitted");
     expect(payload.workspaceId).toBe("ws_1");
@@ -440,6 +505,10 @@ describe("conversation routes", () => {
     expect(payload.runId).toMatch(/^[a-z0-9_-]+$/i);
     expect(payload.clientMessageId).toBe("msg-submit-existing-run");
     expect(payload.draftDisposition).toBe("clear");
+    expect(payload.debugTrace?.some((entry) => entry.event === "server:conversation-run:opencode-submit"))
+      .toBe(true);
+    expect(payload.debugTrace?.some((entry) => entry.event === "server:conversation-run:submitted"))
+      .toBe(true);
     expect(upstreamRequests).toHaveLength(2);
     expect(upstreamRequests[1]?.path).toBe(
       `/session/sess-submit-existing/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`,
@@ -467,6 +536,147 @@ describe("conversation routes", () => {
     expect(retryResponse.status).toBe(200);
     expect(await retryResponse.json()).toEqual(payload);
     expect(upstreamRequests).toHaveLength(2);
+  });
+
+  test("POST /workspace/:id/conversations/submit imports verified legacy OpenCode session targets", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-legacy-import-"));
+    tempDirs.push(workspaceRoot);
+    const dbPath = join(workspaceRoot, "opencode.db");
+    seedLegacyOpenCodeDb(dbPath, workspaceRoot, [{
+      id: "sess-legacy-submit",
+      title: "Legacy Submit",
+    }]);
+    setEnvVarForTest("VESLO_OPENCODE_DB_PATH", dbPath);
+
+    const upstreamRequests: Array<{
+      path: string;
+      traceId: string | null;
+      body: Record<string, unknown> | null;
+    }> = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        upstreamRequests.push({
+          path: `${url.pathname}${url.search}`,
+          traceId: request.headers.get("x-veslo-send-trace-id"),
+          body,
+        });
+        if (request.method === "POST" && url.pathname === "/session/sess-legacy-submit/prompt_async") {
+          return Response.json({ ok: true });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 500 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+
+    const submitResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "x-veslo-send-trace-id": "submit-legacy-import-trace",
+        },
+        body: JSON.stringify({
+          clientMessageId: "msg-submit-legacy-import",
+          origin: "session:normal",
+          source: "enter",
+          target: { opencodeSessionId: "sess-legacy-submit", directory: workspaceRoot },
+          draft: {
+            mode: "prompt",
+            text: "Continue legacy session",
+            parts: [{ type: "text", text: "Continue legacy session" }],
+          },
+        }),
+      },
+    );
+
+    expect(submitResponse.status).toBe(200);
+    const payload = await submitResponse.json() as {
+      status?: string;
+      workspaceId?: string;
+      conversationId?: string;
+      opencodeSessionId?: string;
+      runId?: string;
+      clientMessageId?: string;
+      draftDisposition?: string;
+    };
+    expect(payload.status).toBe("submitted");
+    expect(payload.workspaceId).toBe("ws_1");
+    expect(payload.conversationId).toMatch(/^conv-/);
+    expect(payload.opencodeSessionId).toBe("sess-legacy-submit");
+    expect(payload.runId).toMatch(/^[a-z0-9_-]+$/i);
+    expect(payload.clientMessageId).toBe("msg-submit-legacy-import");
+    expect(payload.draftDisposition).toBe("clear");
+    expect(upstreamRequests).toHaveLength(1);
+    expect(upstreamRequests[0]?.path).toBe(
+      `/session/sess-legacy-submit/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`,
+    );
+    expect(upstreamRequests[0]?.traceId).toBe("submit-legacy-import-trace");
+    expect(upstreamRequests[0]?.body?.messageID).toBe("msg-submit-legacy-import");
+  });
+
+  test("GET /workspace/:id/sessions/:sessionId/transcript imports legacy OpenCode session identity", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-transcript-legacy-import-"));
+    tempDirs.push(workspaceRoot);
+    const dbPath = join(workspaceRoot, "opencode.db");
+    seedLegacyOpenCodeDb(dbPath, workspaceRoot, [{
+      id: "sess-legacy-read",
+      title: "Legacy Read",
+      messageText: "legacy transcript",
+    }]);
+    setEnvVarForTest("VESLO_OPENCODE_DB_PATH", dbPath);
+
+    let upstreamHits = 0;
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async () => {
+        upstreamHits += 1;
+        return new Response("passive transcript read must not hit upstream", { status: 500 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+
+    const transcriptResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/sess-legacy-read/transcript?limit=10&directory=${encodeURIComponent(workspaceRoot)}`,
+      {
+        headers: {
+          Authorization: "Bearer client-token",
+        },
+      },
+    );
+
+    expect(transcriptResponse.status).toBe(200);
+    const payload = await transcriptResponse.json() as {
+      sessionId?: string;
+      conversationId?: string;
+      opencodeSessionId?: string;
+      messages?: unknown[];
+      partsByMessageId?: Record<string, unknown[]>;
+      source?: string;
+    };
+    expect(payload.sessionId).toBe("sess-legacy-read");
+    expect(payload.conversationId).toMatch(/^conv-/);
+    expect(payload.opencodeSessionId).toBe("sess-legacy-read");
+    expect(payload.messages?.length).toBe(1);
+    expect(payload.partsByMessageId?.["msg-sess-legacy-read"]?.length).toBe(1);
+    expect(payload.source).toBe("sqlite");
+    expect(upstreamHits).toBe(0);
   });
 
   test("POST /workspace/:id/conversations/submit owns replacement revert before submit", async () => {

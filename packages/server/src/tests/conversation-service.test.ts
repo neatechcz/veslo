@@ -7,6 +7,7 @@ import { createConversationBindingStore } from "../conversation-binding-store.js
 import type { ConversationReadStore } from "../conversation-read-store.js";
 import { createConversationTranscriptStore } from "../conversation-transcript-store.js";
 import { createConversationService } from "../conversation-service.js";
+import { ApiError } from "../errors.js";
 import type { WorkspaceInfo } from "../types.js";
 
 const tempDirs: string[] = [];
@@ -408,6 +409,170 @@ describe("conversation service", () => {
     expect(listed.items.map((item) => item.id)).toEqual(["sess-child", "sess-parent"]);
   });
 
+  test("resolveOpenCodeSessionForRead imports an exact legacy OpenCode session from source rows", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-resolve-import-"));
+    tempDirs.push(dataDir);
+    const directory = join(dataDir, "workspace-a");
+    const bindingStore = createConversationBindingStore({ dataDir, now: () => 4_000 });
+    let sourceListReads = 0;
+    const service = createConversationService({
+      readStore: {
+        ...unavailableReadStore,
+        async listConversations(input) {
+          sourceListReads += 1;
+          return {
+            workspaceId: input.workspaceId,
+            source: "sqlite",
+            items: [{
+              id: "sess-legacy",
+              title: "Legacy",
+              slug: "Legacy",
+              directory,
+              parentID: null,
+              time: { created: 100, updated: 200 },
+            }],
+          };
+        },
+      },
+      bindingStore,
+      createOpenCodeSession: async () => ({ id: "unused" }),
+    });
+
+    const binding = await service.resolveOpenCodeSessionForRead({
+      workspaceId: "ws-a",
+      workspace: workspaceFor(directory),
+      directory,
+      sessionOrConversationId: "sess-legacy",
+    });
+
+    expect(sourceListReads).toBe(1);
+    expect(binding?.engineSessionId).toBe("sess-legacy");
+    expect(binding?.conversationId).toMatch(/^conv-/);
+
+    const persisted = await bindingStore.resolveOpenCodeSession({
+      workspaceId: "ws-a",
+      directory,
+      sessionOrConversationId: binding?.conversationId ?? "",
+    });
+    expect(persisted?.engineSessionId).toBe("sess-legacy");
+  });
+
+  test("loadTranscript returns Veslo identity after importing a legacy raw session", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-transcript-import-"));
+    tempDirs.push(dataDir);
+    const directory = join(dataDir, "workspace-a");
+    const bindingStore = createConversationBindingStore({ dataDir, now: () => 4_000 });
+    const transcriptStore = createConversationTranscriptStore({ dataDir, now: () => 5_000 });
+    const readStore: ConversationReadStore = {
+      async listConversations(input) {
+        return {
+          workspaceId: input.workspaceId,
+          source: "sqlite",
+          items: [{
+            id: "sess-legacy-read",
+            title: "Legacy Read",
+            slug: "Legacy Read",
+            directory,
+            parentID: null,
+            time: { created: 100, updated: 200 },
+          }],
+        };
+      },
+      async getTranscript(input) {
+        return {
+          workspaceId: input.workspaceId,
+          sessionId: input.sessionId,
+          limit: input.limit,
+          messages: [{ id: "msg-legacy", role: "assistant", time: { created: 10 } }],
+          partsByMessageId: {
+            "msg-legacy": [{ id: "prt-legacy", type: "text", text: "legacy" }],
+          },
+          fetchedAt: 100,
+          source: "sqlite",
+        };
+      },
+    };
+    const service = createConversationService({
+      readStore,
+      bindingStore,
+      transcriptStore,
+      createOpenCodeSession: async () => ({ id: "unused" }),
+    });
+
+    const snapshot = await service.loadTranscript({
+      workspace: workspaceFor(directory),
+      sessionId: "sess-legacy-read",
+      limit: 10,
+      directory,
+    });
+
+    expect(snapshot.sessionId).toBe("sess-legacy-read");
+    expect(snapshot.opencodeSessionId).toBe("sess-legacy-read");
+    expect(snapshot.conversationId).toMatch(/^conv-/);
+    expect(snapshot.messages.map((m) => (m as { id: string }).id)).toEqual(["msg-legacy"]);
+
+    const resolved = await bindingStore.resolveOpenCodeSession({
+      workspaceId: "ws-a",
+      directory,
+      sessionOrConversationId: snapshot.conversationId ?? "",
+    });
+    expect(resolved?.engineSessionId).toBe("sess-legacy-read");
+  });
+
+  test("appendTranscript imports a legacy raw session before persisting the host snapshot", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-append-import-"));
+    tempDirs.push(dataDir);
+    const directory = join(dataDir, "workspace-a");
+    const bindingStore = createConversationBindingStore({ dataDir, now: () => 4_000 });
+    const transcriptStore = createConversationTranscriptStore({ dataDir, now: () => 5_000 });
+    const service = createConversationService({
+      readStore: {
+        ...unavailableReadStore,
+        async listConversations(input) {
+          return {
+            workspaceId: input.workspaceId,
+            source: "sqlite",
+            items: [{
+              id: "sess-legacy-live",
+              title: "Legacy Live",
+              slug: "Legacy Live",
+              directory,
+              parentID: null,
+              time: { created: 100, updated: 200 },
+            }],
+          };
+        },
+      },
+      bindingStore,
+      transcriptStore,
+      createOpenCodeSession: async () => ({ id: "unused" }),
+      now: () => 6_000,
+    });
+
+    const appended = await service.appendTranscript({
+      workspace: workspaceFor(directory),
+      sessionId: "sess-legacy-live",
+      directory,
+      limit: 10,
+      messages: [{ id: "msg-live", sessionID: "sess-legacy-live", role: "assistant" }],
+      partsByMessageId: {
+        "msg-live": [{ id: "prt-live", type: "text", text: "live" }],
+      },
+    });
+
+    expect(appended.sessionId).toBe("sess-legacy-live");
+    expect(appended.conversationId).toMatch(/^conv-/);
+    expect(appended.opencodeSessionId).toBe("sess-legacy-live");
+
+    const loaded = await service.loadTranscript({
+      workspace: workspaceFor(directory),
+      sessionId: appended.conversationId ?? "",
+      limit: 10,
+      directory,
+    });
+    expect(loaded.messages.map((m) => (m as { id: string }).id)).toEqual(["msg-live"]);
+  });
+
   test("loadTranscript is host-first: seeds host from sandbox once, then serves host-only", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-transcript-"));
     tempDirs.push(dataDir);
@@ -537,6 +702,37 @@ describe("conversation service", () => {
     expect(loaded.sessionId).toBe("ses-live");
     expect(loaded.messages.map((m) => (m as { id: string }).id)).toEqual(["msg-1", "msg-2"]);
     expect((loaded.partsByMessageId["msg-2"]?.[0] as { text: string }).text).toBe("hello");
+  });
+
+  test("appendTranscript rejects unproven raw OpenCode session ids", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-legacy-append-reject-"));
+    tempDirs.push(dataDir);
+    const directory = join(dataDir, "workspace-a");
+    const bindingStore = createConversationBindingStore({ dataDir, now: () => 7_000 });
+    const transcriptStore = createConversationTranscriptStore({ dataDir, now: () => 8_000 });
+    const service = createConversationService({
+      readStore: unavailableReadStore,
+      bindingStore,
+      transcriptStore,
+      createOpenCodeSession: async () => ({ id: "unused" }),
+    });
+
+    let error: unknown;
+    try {
+      await service.appendTranscript({
+        workspace: workspaceFor(directory),
+        sessionId: "ses-unknown",
+        directory,
+        messages: [{ id: "msg-unknown", sessionID: "ses-unknown", role: "assistant" }],
+        partsByMessageId: {},
+      });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(404);
+    expect((error as ApiError).code).toBe("conversation_not_found");
   });
 
   test("appendTranscript persists an empty host transcript marker", async () => {

@@ -436,6 +436,24 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
     await deps.refreshMcpServers({ mode: "explicit", reason: "mcp-activate-installed-complete" });
   }
 
+  async function handleConfiguredMcpActivationError(
+    entry: McpDirectoryInfo,
+    entryType: string,
+    slug: string,
+    error: unknown,
+    startedAt: number,
+  ) {
+    const message = error instanceof Error ? error.message : deps.safeStringify(error);
+    await deps.refreshMcpServers({ mode: "explicit", reason: "mcp-configured-activation-error" });
+    deps.setMcpStatus(`MCP configured, but runtime activation failed: ${message || tr("mcp.connect_failed")}`);
+    deps.finishPerf(deps.developerMode(), "mcp.connect", "configured-activation-error", startedAt, {
+      name: entry.name,
+      type: entryType,
+      slug,
+      error: message,
+    });
+  }
+
   async function connectMcp(entry: McpDirectoryInfo) {
     const startedAt = deps.perfNow();
     const isRemoteWorkspace =
@@ -544,7 +562,12 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
         }
       }
 
-      await activateInstalledMcp(entry, slug);
+      try {
+        await activateInstalledMcp(entry, slug);
+      } catch (activationError) {
+        await handleConfiguredMcpActivationError(entry, entryType, slug, activationError, startedAt);
+        return;
+      }
       deps.finishPerf(deps.developerMode(), "mcp.connect", "done", startedAt, {
         name: entry.name,
         type: entryType,

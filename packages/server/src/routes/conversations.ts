@@ -6,6 +6,7 @@ import type {
 } from "../conversation-submit-service.js";
 import type {
   ConversationSubmitBlockedResult,
+  ConversationSubmitDebugTraceEntry,
   ConversationSubmitFailedResult,
   ConversationSubmitQueuedResult,
   ConversationSubmitRequest,
@@ -436,6 +437,15 @@ function requireNumberPayloadField(payload: Record<string, unknown>, field: stri
   throw new ApiError(502, "invalid_run_submit_result", `Run submit result is missing ${field}`);
 }
 
+function readSubmitDebugTrace(payload: Record<string, unknown>): ConversationSubmitDebugTraceEntry[] | undefined {
+  const trace = payload.debugTrace;
+  if (!Array.isArray(trace)) return undefined;
+  const entries = trace.filter((entry): entry is ConversationSubmitDebugTraceEntry =>
+    isRecordLike(entry) && typeof entry.event === "string" && entry.event.trim().length > 0
+  );
+  return entries.length > 0 ? entries : undefined;
+}
+
 function lifecycleRequestApiError(error: OrchestratorLifecycleRequestError): ApiError {
   const status = error.status === 401 || error.status === 403
     ? 503
@@ -627,6 +637,7 @@ export function registerConversationSessionRoutes(
               runId: requireStringPayloadField(payload, "runId"),
               clientMessageId: request.clientMessageId,
               draftDisposition: "clear",
+              debugTrace: readSubmitDebugTrace(payload),
             } satisfies ConversationSubmitSubmittedResult,
           };
         }
@@ -643,6 +654,7 @@ export function registerConversationSessionRoutes(
               queuePosition: requireNumberPayloadField(payload, "queuePosition"),
               clientMessageId: request.clientMessageId,
               draftDisposition: "clear",
+              debugTrace: readSubmitDebugTrace(payload),
             } satisfies ConversationSubmitQueuedResult,
           };
         }
@@ -1124,6 +1136,7 @@ export function registerConversationSessionRoutes(
     }
     const binding = await conversationService.resolveOpenCodeSessionForRead({
       workspaceId: workspace.id,
+      workspace,
       directory,
       sessionOrConversationId: sessionId,
     });
@@ -1207,12 +1220,14 @@ export function registerConversationSessionRoutes(
       transcript.partsByMessageId,
     );
 
-    return jsonResponse(
-      deriveLatestRunArtifactsResponse({
+    return jsonResponse({
+      ...deriveLatestRunArtifactsResponse({
         sessionId: transcript.opencodeSessionId,
         workspaceId: workspace.id,
         messages,
       }, { workspaceRoot: directory ?? workspace.path }),
-    );
+      ...(transcript.conversationId ? { conversationId: transcript.conversationId } : {}),
+      opencodeSessionId: transcript.opencodeSessionId,
+    });
   });
 }
