@@ -16,7 +16,7 @@ bsw05_server_runtime_admission_done: true
 bsw05a_remote_workspace_contract_done: true
 bsw06_server_attachment_policy_and_parts_done: true
 bsw07_server_compact_done: true
-bsw07b_server_replacement_followup_done: false
+bsw07b_server_replacement_followup_done: true
 bsw08_server_active_run_queue_admission_done: true
 bsw08a_server_queue_ui_api_migration_done: false
 bsw09_frontend_thin_submit_done: true
@@ -132,9 +132,11 @@ implementation decision explicitly promotes them:
 
 - BSW06B: full server-side raw attachment byte staging beyond existing
   file-session behavior,
-- BSW07B: edit-message replacement as a server-owned compensating workflow,
 - BSW08A: durable server APIs for the full app-local draft queue UI
   semantics.
+
+BSW07B was promoted after the normal submit path stabilized and is now covered
+by the BSW07 implementation notes and regression tests.
 
 Top-level `done` means the core gate is complete. Follow-up flags may remain
 `false` after the core gate if their current app-side behavior is preserved,
@@ -930,12 +932,14 @@ Progress:
   same server submit contract from `session-mutation-workflow`, using a compact
   draft and target conversation/session ids. The legacy direct summarize run
   fallback was removed from the compact action path.
-- BSW07 is complete for the core compact gate only. BSW07B replacement remains
-  an explicit follow-up and does not block this status.
+- 2026-07-07: BSW07B was promoted. Edit-message replacement now uses the
+  server submit route with `options.replaceMessageId`; the server owns the
+  abort, revert, submit, and restore-on-failure sequence. The app-side
+  replacement choreography remains only as a compatibility fallback when the
+  submit adapter or target directory is unavailable.
 
-Move `/compact` behind the server-owned submit workflow. Keep edit-message
-replacement as an explicit follow-up unless it is promoted after the normal
-submit path is stable.
+Move `/compact` behind the server-owned submit workflow. Edit-message
+replacement is also server-owned through promoted BSW07B.
 
 Implementation notes:
 
@@ -943,8 +947,7 @@ Implementation notes:
   the existing `kind: "summarize"` run.
 - BSW07A core is complete when input `/compact` and explicit compact actions no
   longer branch through app-side run submit logic.
-- BSW07B follow-up: replace-message submit should be a server-owned
-  compensating workflow:
+- BSW07B: replace-message submit is a server-owned compensating workflow:
   abort active run if needed, revert to the target message, submit the new
   draft, and restore the revert state on failure.
 - The BSW07B server response must distinguish:
@@ -961,11 +964,12 @@ Acceptance:
 - The app input submit path no longer branches locally on `/compact`.
 - `session-mutation-workflow` no longer calls `runConversationFromVesloWriteApi`
   directly for summarize.
-- Replacement can remain on the current app-side compatibility path after core
-  completion, but only with a tracked BSW07B follow-up and tests proving the
-  compatibility path still works.
-- When BSW07B is implemented, replacement failure restores the prior state
-  without app-side revert choreography.
+- The primary local replacement path calls the server submit route with
+  `options.replaceMessageId`.
+- The app-side replacement choreography remains only as a compatibility path
+  when the submit adapter or target directory is unavailable.
+- Replacement failure restores the prior state without app-side revert
+  choreography on the primary server-owned path.
 - The plan and tests do not call replacement an ACID transaction.
 
 Verification:
@@ -1140,9 +1144,7 @@ Implementation note 2026-07-07:
 - Missing submit-adapter results now block with restore behavior instead of
   silently falling through to the legacy app run path.
 - The old direct run helper remains in the app service for explicit
-  compatibility/test surfaces where the submit adapter is absent and for
-  follow-up areas outside the core gate, especially edit-message replacement.
-  `BSW07B` remains the tracked replacement migration.
+  compatibility/test surfaces where the submit adapter is absent.
 - Follow-up cleanup isolated the old direct-run path behind
   `createLegacyConversationRunFallback`. The main
   `createSessionSendWorkflow` dependency object no longer receives
@@ -1237,9 +1239,9 @@ pnpm test:e2e:ui:smoke
 Acceptance:
 
 - Top-level `done` is `true` because the core gate is complete:
-  BSW00 through BSW11, including BSW01A and BSW05A, but excluding explicit
-  follow-ups BSW06B, BSW07B, and BSW08A unless they were promoted before
-  implementation.
+  BSW00 through BSW11, including BSW01A, BSW05A, and promoted BSW07B, but
+  excluding explicit follow-ups BSW06B and BSW08A unless they were promoted
+  before implementation.
 - Any follow-up left incomplete has an implementation note explaining the
   retained compatibility path and the test coverage that protects it.
 - If E2E is skipped, record why and rely on the codebase gate only for that
@@ -1260,6 +1262,6 @@ After the core gate is complete:
 - There is no boolean send result masking server states.
 - The server conversation lifecycle controller remains the only run lifecycle
   owner.
-- Edit-message replacement and full queue UI persistence are either implemented
-  follow-ups or documented compatibility paths, not hidden requirements of the
-  core migration.
+- Edit-message replacement is server-owned; full queue UI persistence is either
+  an implemented follow-up or a documented compatibility path, not a hidden
+  requirement of the core migration.

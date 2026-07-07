@@ -96,15 +96,25 @@ test("replacement send path reverts to the original message before sending the e
     /const accepted = await \(options\.replaceMessageId\s*\? deps\.transport\.replaceUserMessageAsync\(options\.replaceMessageId, draft, replaceOptions\)\s*: deps\.transport\.sendPromptAsync\(draft, promptSendOptions\)\s*\);/s,
     "sendPromptImmediate should route replacement sends through replaceUserMessageAsync",
   );
+  const serverReplacementStart = mutationWorkflowSource.indexOf("const submitConversation = deps.submitConversationFromVesloWriteApi;");
+  const legacyReplacementStart = mutationWorkflowSource.indexOf("const replaceRuntimePreparation = await deps.prepareSendRuntimeForSend", serverReplacementStart);
+  assert.ok(serverReplacementStart >= 0, "mutation workflow should attempt server-owned replacement submit first");
+  assert.ok(legacyReplacementStart > serverReplacementStart, "legacy replacement fallback should remain after the server branch");
+  const serverReplacementBranch = mutationWorkflowSource.slice(serverReplacementStart, legacyReplacementStart);
   assert.match(
-    mutationWorkflowSource,
-    /async function replaceUserMessage\([\s\S]*messageID: string,[\s\S]*draft: ComposerDraft,[\s\S]*options: SessionMutationReplaceOptions,[\s\S]*\): Promise<boolean> \{[\s\S]*deps\.ensureSelectedSessionWorkspaceActiveForSend\(sessionID, sendTraceId\)[\s\S]*const sendTargetWorkspace = deps\.resolveSendTargetWorkspaceScope\(sessionID\);[\s\S]*replacePreflight\.targetWorkspace = sendTargetWorkspace;[\s\S]*deps\.prepareSendRuntimeForSend\("replaceUserMessage", replacePreflight\)[\s\S]*const c = deps\.routedClientForSendTarget\(sendTargetWorkspace\);[\s\S]*const next = await revertSession\(c, sessionID, messageID\);[\s\S]*const accepted = await deps\.sendPrompt\(draft, \{[\s\S]*targetSessionId: sessionID,[\s\S]*clientMessageId: sendCorrelation\.clientMessageId,[\s\S]*origin: sendCorrelation\.origin,[\s\S]*\}\);/,
-    "mutation workflow replacement API should scope runtime/client selection before revert and reuse the same send correlation for the edited draft",
+    serverReplacementBranch,
+    /submitConversation\(workspaceId, submitDirectory, \{[\s\S]*clientMessageId: sendCorrelation\.clientMessageId,[\s\S]*origin: sendCorrelation\.origin,[\s\S]*draft: conversationSubmitDraftFromComposerDraft\(draft\),[\s\S]*options: \{[\s\S]*replaceMessageId: messageID,[\s\S]*submitQueuePolicy: "normal",[\s\S]*\}[\s\S]*\}, replacePreflight\)/,
+    "mutation workflow replacement API should send one server-owned submit with the replacement message id",
+  );
+  assert.doesNotMatch(
+    serverReplacementBranch,
+    /revertSession|unrevertSession|deps\.sendPrompt|prepareSendRuntimeForSend/,
+    "server-owned replacement branch should not perform app-side revert/send/runtime-prep choreography",
   );
   assert.match(
     mutationWorkflowSource,
     /if \(!accepted\) \{[\s\S]*previousRevertMessageID\s*\? await revertSession\(c, sessionID, previousRevertMessageID\)\s*: await unrevertSession\(c, sessionID\)/,
-    "replacement API should restore the prior revert boundary if the edited send is rejected",
+    "legacy replacement fallback should still restore the prior revert boundary if the edited send is rejected",
   );
   assert.match(
     appSource,

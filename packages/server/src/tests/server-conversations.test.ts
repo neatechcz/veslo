@@ -469,6 +469,221 @@ describe("conversation routes", () => {
     expect(upstreamRequests).toHaveLength(2);
   });
 
+  test("POST /workspace/:id/conversations/submit owns replacement revert before submit", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-replace-run-"));
+    tempDirs.push(workspaceRoot);
+    const upstreamRequests: Array<{
+      path: string;
+      method: string;
+      body: Record<string, unknown> | null;
+    }> = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        upstreamRequests.push({
+          path: `${url.pathname}${url.search}`,
+          method: request.method,
+          body,
+        });
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({
+            id: "sess-submit-replace",
+            title: body?.title ?? "Replacement submit",
+            directory: body?.directory ?? workspaceRoot,
+            parentID: null,
+            time: { created: 100, updated: 100 },
+          });
+        }
+        if (request.method === "GET" && url.pathname === "/session/sess-submit-replace") {
+          return Response.json({ id: "sess-submit-replace", revert: { messageID: "msg_previous_revert" } });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-submit-replace/abort") {
+          return Response.json({ ok: true });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-submit-replace/revert") {
+          return Response.json({ id: "sess-submit-replace", revert: { messageID: body?.messageID } });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-submit-replace/prompt_async") {
+          return Response.json({ ok: true });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+
+    const createResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Replacement submit",
+        }),
+      },
+    );
+    expect(createResponse.status).toBe(201);
+    const created = await createResponse.json() as {
+      conversationId: string;
+      opencodeSessionId: string;
+    };
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "x-veslo-send-trace-id": "submit-replace-run-trace",
+        },
+        body: JSON.stringify({
+          clientMessageId: "msg-submit-replace-run",
+          origin: "session:replacement",
+          target: { conversationId: created.conversationId, directory: workspaceRoot },
+          draft: {
+            mode: "prompt",
+            text: "Edited replacement",
+            parts: [{ type: "text", text: "Edited replacement" }],
+          },
+          options: {
+            replaceMessageId: "msg_original",
+            model: { providerID: "openai", modelID: "gpt-5.5" },
+          },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as {
+      status?: string;
+      conversationId?: string;
+      opencodeSessionId?: string;
+      draftDisposition?: string;
+    };
+    expect(payload.status).toBe("submitted");
+    expect(payload.conversationId).toBe(created.conversationId);
+    expect(payload.opencodeSessionId).toBe("sess-submit-replace");
+    expect(payload.draftDisposition).toBe("clear");
+    expect(upstreamRequests.map((request) => request.path)).toEqual([
+      "/session",
+      `/session/sess-submit-replace?directory=${encodeURIComponent(workspaceRoot)}`,
+      `/session/sess-submit-replace/abort?directory=${encodeURIComponent(workspaceRoot)}`,
+      `/session/sess-submit-replace/revert?directory=${encodeURIComponent(workspaceRoot)}`,
+      `/session/sess-submit-replace/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`,
+    ]);
+    expect(upstreamRequests[3]?.body).toEqual({ messageID: "msg_original" });
+    expect(upstreamRequests[4]?.body?.messageID).toBe("msg-submit-replace-run");
+    expect(upstreamRequests[4]?.body?.parts).toEqual([{ type: "text", text: "Edited replacement" }]);
+  });
+
+  test("POST /workspace/:id/conversations/submit restores replacement revert when submit fails", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-replace-restore-"));
+    tempDirs.push(workspaceRoot);
+    const upstreamRequests: Array<{ path: string; method: string; body: Record<string, unknown> | null }> = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        upstreamRequests.push({ path: `${url.pathname}${url.search}`, method: request.method, body });
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({
+            id: "sess-submit-replace-restore",
+            title: body?.title ?? "Replacement restore",
+            directory: body?.directory ?? workspaceRoot,
+            parentID: null,
+            time: { created: 100, updated: 100 },
+          });
+        }
+        if (request.method === "GET" && url.pathname === "/session/sess-submit-replace-restore") {
+          return Response.json({ id: "sess-submit-replace-restore", revert: null });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-submit-replace-restore/abort") {
+          return Response.json({ ok: true });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-submit-replace-restore/revert") {
+          return Response.json({ id: "sess-submit-replace-restore", revert: { messageID: body?.messageID } });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-submit-replace-restore/prompt_async") {
+          return Response.json({ error: "submit failed" }, { status: 500 });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-submit-replace-restore/unrevert") {
+          return Response.json({ id: "sess-submit-replace-restore", revert: null });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({ workspaceRoot, upstreamPort: upstream.port });
+
+    const createResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ directory: workspaceRoot, title: "Replacement restore" }),
+      },
+    );
+    expect(createResponse.status).toBe(201);
+    const created = await createResponse.json() as { conversationId: string };
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          clientMessageId: "msg-submit-replace-restore",
+          origin: "session:replacement",
+          target: { conversationId: created.conversationId, directory: workspaceRoot },
+          draft: {
+            mode: "prompt",
+            text: "Edited replacement failure",
+            parts: [{ type: "text", text: "Edited replacement failure" }],
+          },
+          options: {
+            replaceMessageId: "msg_original",
+            model: { providerID: "openai", modelID: "gpt-5.5" },
+          },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as { status?: string; code?: string; draftDisposition?: string };
+    expect(payload.status).toBe("failed");
+    expect(payload.code).toBe("replacement_submit_failed_restore_succeeded");
+    expect(payload.draftDisposition).toBe("restore");
+    expect(upstreamRequests.map((request) => request.path)).toEqual([
+      "/session",
+      `/session/sess-submit-replace-restore?directory=${encodeURIComponent(workspaceRoot)}`,
+      `/session/sess-submit-replace-restore/abort?directory=${encodeURIComponent(workspaceRoot)}`,
+      `/session/sess-submit-replace-restore/revert?directory=${encodeURIComponent(workspaceRoot)}`,
+      `/session/sess-submit-replace-restore/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`,
+      `/session/sess-submit-replace-restore/unrevert?directory=${encodeURIComponent(workspaceRoot)}`,
+    ]);
+  });
+
   test("POST /workspace/:id/conversations/submit returns queued for send-now when lifecycle has an active run", async () => {
     await useTempVesloDataDir();
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-send-now-queued-"));

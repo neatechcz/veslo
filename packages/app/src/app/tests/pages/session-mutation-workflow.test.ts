@@ -313,6 +313,91 @@ test("session mutation workflow compact fails explicitly when server submit is u
   assert.ok(harness.calls.some((call) => call.name === "recordSendTrace" && call.args[0] === "compactSession:server-submit-unavailable"));
 });
 
+test("session mutation workflow replaces a user message through server-owned submit", async () => {
+  const submitCalls: Array<{ workspaceId: string; directory: string; input: Record<string, unknown>; traceId?: string | null }> = [];
+  const harness = createHarness({
+    prepareSendRuntimeForSend: async () => {
+      throw new Error("legacy runtime prep should not run for server-owned replacement");
+    },
+    revertSession: async () => {
+      throw new Error("legacy app revert should not run for server-owned replacement");
+    },
+    sendPrompt: async () => {
+      throw new Error("legacy app send should not run for server-owned replacement");
+    },
+    resolveSelectedSessionBrowseScope: () => ({
+      workspaceId: "ws_1",
+      workspaceRoot: "/repo",
+      directory: "/repo",
+      conversationId: "conv_1",
+      opencodeSessionId: "open_1",
+    }),
+    submitConversationFromVesloWriteApi: async (
+      workspaceId: string,
+      directory: string,
+      input: Record<string, unknown>,
+      preflight?: { traceId?: string | null },
+    ) => {
+      submitCalls.push({ workspaceId, directory, input, traceId: preflight?.traceId });
+      return {
+        status: "submitted",
+        workspaceId,
+        conversationId: "conv_1",
+        opencodeSessionId: "open_1",
+        runId: "run_replace",
+        clientMessageId: String(input.clientMessageId),
+        draftDisposition: "clear",
+      };
+    },
+  });
+
+  const accepted = await harness.workflow.replaceUserMessage("msg_1", {
+    mode: "prompt",
+    text: "edited prompt",
+    resolvedText: "edited prompt",
+    parts: [{ type: "text", text: "edited prompt" }],
+    attachments: [],
+  }, {
+    clientMessageId: "client_replace_1",
+    origin: "session:replacement",
+  });
+
+  assert.equal(accepted, true);
+  assert.equal(submitCalls.length, 1);
+  assert.deepEqual(submitCalls.map(({ workspaceId, directory, traceId }) => ({ workspaceId, directory, traceId })), [{
+    workspaceId: "ws_1",
+    directory: "/repo",
+    traceId: "trace_1",
+  }]);
+  assert.deepEqual(submitCalls[0]?.input, {
+    clientMessageId: "client_replace_1",
+    origin: "session:replacement",
+    source: null,
+    target: {
+      directory: "/repo",
+      conversationId: "conv_1",
+      opencodeSessionId: "open_1",
+    },
+    draft: {
+      mode: "prompt",
+      text: "edited prompt",
+      resolvedText: "edited prompt",
+      parts: [{ type: "text", text: "edited prompt" }],
+      command: null,
+      attachments: [],
+    },
+    options: {
+      replaceMessageId: "msg_1",
+      model: { providerID: "openai", modelID: "gpt-5" },
+      variant: null,
+      submitQueuePolicy: "normal",
+    },
+  });
+  assert.ok(harness.calls.some((call) => call.name === "recordSendTrace" && call.args[0] === "replaceUserMessage:server-submit-success"));
+  assert.equal(harness.calls.some((call) => call.name === "revertSession"), false);
+  assert.equal(harness.calls.some((call) => call.name === "sendPrompt"), false);
+});
+
 test("session mutation workflow lists the built-in compact command when backend commands omit it", async () => {
   const harness = createHarness();
   const commands = await harness.workflow.listCommands();
