@@ -45,6 +45,20 @@ test("desktop build workflow no longer runs Linux app builds", () => {
   assert.doesNotMatch(workflow, /Install Linux build dependencies/);
 });
 
+test("Windows document runtime resource is scoped to Windows release config", () => {
+  const baseTauriConfig = JSON.parse(readRepoFile("packages/desktop/src-tauri/tauri.conf.json"));
+  const windowsReleaseConfig = JSON.parse(readRepoFile("packages/desktop/src-tauri/tauri.windows.release.conf.json"));
+
+  assert.equal(
+    baseTauriConfig.bundle?.resources?.["resources/document-runtime/windows-native-x64"],
+    undefined,
+  );
+  assert.equal(
+    windowsReleaseConfig.bundle?.resources?.["resources/document-runtime/windows-native-x64"],
+    "document-runtime",
+  );
+});
+
 test("orchestrator release packaging only builds macOS and Windows sidecars", () => {
   const orchestratorPackage = JSON.parse(readRepoFile("packages/orchestrator/package.json"));
   const serverPackage = JSON.parse(readRepoFile("packages/server/package.json"));

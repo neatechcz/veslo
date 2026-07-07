@@ -86,7 +86,7 @@ test("release review verifies GlitchTip release monitoring wiring", () => {
   assert.match(reviewSource, /hasGlitchTipReleaseEnv\(prereleaseTauriJob,\s*\{\s*requireStrict:\s*true\s*\}\)/);
 });
 
-test("release review verifies the document runtime package gate", () => {
+test("release review verifies document runtime metadata preflight and Windows bundle gate", () => {
   const scriptPath = resolve(import.meta.dirname, "./review.mjs");
   const output = execFileSync("node", [scriptPath, "--json"], {
     cwd: resolve(import.meta.dirname, "../.."),
@@ -94,24 +94,33 @@ test("release review verifies the document runtime package gate", () => {
   });
 
   const report = JSON.parse(output);
-  const check = report.checks.find(
-    (entry) => entry.label === "Release workflow gates local document runtime packages",
+  const metadataCheck = report.checks.find(
+    (entry) => entry.label === "Release workflow validates document runtime metadata before build",
+  );
+  const windowsCheck = report.checks.find(
+    (entry) => entry.label === "Release workflow verifies Windows document runtime after assembly",
   );
 
-  assert.ok(check, "expected release review to report the document runtime package gate check");
-  assert.equal(check.ok, true);
+  assert.ok(metadataCheck, "expected release review to report the document runtime metadata check");
+  assert.equal(metadataCheck.ok, true);
+  assert.ok(windowsCheck, "expected release review to report the Windows document runtime bundle check");
+  assert.equal(windowsCheck.ok, true);
 
   const workflow = readFileSync(
     resolve(import.meta.dirname, "../../.github/workflows/release-macos-aarch64.yml"),
     "utf8",
   );
-  assert.match(workflow, /Verify document runtime packages/);
   assert.match(
     workflow,
-    /node scripts\/release\/verify-document-runtime-packages\.mjs --profile local-docs-required --json/,
+    /Verify document runtime package metadata[\s\S]*node scripts\/release\/verify-document-runtime-packages\.mjs --profile remote-docs-only --json/,
+  );
+  assert.match(
+    workflow,
+    /Assemble Windows document runtime[\s\S]*Verify Windows document runtime bundle[\s\S]*node scripts\/release\/verify-document-runtime-windows\.mjs --profile local-docs-required --json[\s\S]*Build Windows bundle/,
   );
 
   const reviewSource = readFileSync(scriptPath, "utf8");
   assert.match(reviewSource, /extractWorkflowJob\(releaseWorkflow,\s*"verify-release"\)/);
-  assert.match(reviewSource, /hasDocumentRuntimePackageGate\(releaseVerifyJob\)/);
+  assert.match(reviewSource, /hasDocumentRuntimeMetadataGate\(releaseVerifyJob\)/);
+  assert.match(reviewSource, /hasWindowsDocumentRuntimeBundleGate\(releaseWindowsTauriJob\)/);
 });

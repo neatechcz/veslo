@@ -12,6 +12,7 @@ The skill must resolve beta vs production, generate public-safe release notes fr
 
 - Sync the default branch (currently `main`).
 - Run `pnpm release:review` and fix any mismatches.
+- The release review validates document-runtime metadata before desktop builds. Local Windows document-runtime resources are assembled and verified inside the Windows release job before the Windows bundle build; do not require standalone macOS `.veslopkg` artifacts in the global preflight until that feed is shipped.
 - Every distributed macOS build must be signed with the Apple Developer ID Application certificate. Do not use `allow_unsigned_macos=true` or `ALLOW_UNSIGNED_MACOS=true` for production, beta, prerelease, staging, or tester-distributed macOS builds.
 - Every distributed macOS release must be notarized and stapled before upload. Do not ship signed-only macOS builds.
 - If you are building sidecar assets, set `SOURCE_DATE_EPOCH` to the tag timestamp for deterministic manifests.
