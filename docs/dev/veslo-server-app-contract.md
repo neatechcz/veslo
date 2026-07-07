@@ -379,6 +379,20 @@ When a local workspace has no explicit OpenCode `baseUrl`, a desktop-launched se
 
 Windows path checks must tolerate extended-length prefixes such as `\\?\` and compare normalized roots case-insensitively for authorization. The raw path should remain available for persistence and engine handoff; normalized paths are for comparison.
 
+### AI Gateway Authorization
+
+Provider routes under `/ai-gateway/providers/...` prefer the managed runtime
+authorization registered from `/ai-gateway/me/ai-access` or from the active
+run's runtime authorization actor hash. A legacy `x-veslo-gateway-token` header
+is only a compatibility fallback when there is no active run context and no
+runtime authorization entry. Redacted placeholder gateway tokens are rejected,
+and proxy traces expose the selected `gatewayAuthorizationSource` without
+logging token material.
+
+Each `startServer()` instance clears the module-scoped AI gateway runtime owner
+state before serving requests. Runtime auth, active run contexts, and active
+proxy request records must not leak across in-process server restarts or tests.
+
 ### Conversation and Transcript Reads
 
 `GET /workspace/:id/conversations` is host-first by default. When the host

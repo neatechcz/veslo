@@ -6,7 +6,7 @@ done: false
 plan_type: implementation
 audit_checkout: 86ec8979
 e2e_status: pending
-awf_01_gateway_auth_precedence_done: false
+awf_01_gateway_auth_precedence_done: true
 awf_02_queue_starting_recovery_done: true
 awf_03_submit_recoverable_replay_done: true
 awf_04_logical_submit_failure_contract_done: true
@@ -170,6 +170,24 @@ Validation:
   authorization.
 - Add a test for `[REDACTED]` or placeholder gateway-token rejection.
 - Run targeted AI gateway tests and `git diff --check`.
+
+Completed:
+
+- Provider authorization now resolves runtime/run-scoped authorization before
+  legacy `x-veslo-gateway-token`; legacy is only a compatibility fallback when
+  there is no active run context and no runtime authorization entry.
+- Redacted legacy gateway token placeholders are rejected instead of being
+  treated as usable credentials.
+- `startServer()` resets the module-scoped AI gateway runtime owner state so
+  runtime auth, active run contexts, and active proxy requests do not leak across
+  in-process server restarts or tests.
+- Server route tests now prove a stale legacy gateway token does not override a
+  primed runtime ai-access token, and owner tests cover runtime precedence,
+  run-scoped runtime auth, placeholder rejection, and active-run fallback
+  blocking.
+- Verified with `pnpm --filter veslo-server exec bun test
+  src/tests/ai-gateway-runtime-owner.test.ts src/tests/server.ai-gateway.test.ts`
+  and `pnpm --filter veslo-server typecheck`.
 
 ## Finding 02: Queued Runs Can Be Lost Forever In `starting`
 
