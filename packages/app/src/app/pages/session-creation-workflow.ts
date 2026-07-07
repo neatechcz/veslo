@@ -160,14 +160,20 @@ export function createSessionCreationWorkflow(
     result: VesloConversationSubmitResult | null | undefined,
   ): CreatedSession | null => {
     if (!result) return null;
-    if (result.status === "blocked" || result.status === "failed") {
-      throw new Error(result.message);
-    }
-    if (result.status !== "materialized" && result.status !== "submitted" && result.status !== "queued") {
+    if (
+      result.status !== "materialized" &&
+      result.status !== "submitted" &&
+      result.status !== "queued" &&
+      result.status !== "blocked" &&
+      result.status !== "failed"
+    ) {
       throw new Error(`Conversation submit returned ${result.status} before session materialization was complete.`);
     }
     const materialized = result.materializedSession;
     if (!materialized || typeof materialized !== "object" || Array.isArray(materialized)) {
+      if (result.status === "blocked" || result.status === "failed") {
+        throw new Error(result.message);
+      }
       throw new Error("Conversation submit did not return a materialized session.");
     }
     const session = materialized as CreatedSession;

@@ -107,7 +107,9 @@ function createHarness(overrides: Partial<SessionCreationWorkflowOptions> = {}):
     routedClientForSendTarget: () => ({}),
     safeStringify: (value) => JSON.stringify(value),
     sendTraceStep: async (_event, run) => run(),
-    setError: (message) => errors.push(message),
+    setError: (message) => {
+      if (message) errors.push(message);
+    },
     unknownErrorMessage: () => "app.unknown_error",
     workspace: {
       activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
@@ -229,6 +231,42 @@ test("session creation lets server submit own first-message runtime admission", 
   assert.ok(harness.events.includes("createSessionAndOpen:server-submit-runtime-admission-skip"));
   assert.ok(harness.events.includes("createSessionAndOpen:server-submit-managed-ai-admission-skip"));
   assert.doesNotMatch(harness.actions.join("\n"), /ensure-runtime|ensure-managed-ai|create-conversation/);
+});
+
+test("session creation opens a materialized session when first server submit failed after create", async () => {
+  const submitResults: unknown[] = [];
+  const harness = createHarness({
+    submitConversationFromVesloWriteApi: async () => ({
+      status: "failed",
+      code: "opencode_proxy_failed",
+      message: "OpenCode prompt failed",
+      workspaceId: "ws-main",
+      conversationId: "conv-failed-after-create",
+      opencodeSessionId: "open-failed-after-create",
+      clientMessageId: "client-failed-after-create",
+      pendingClientSessionId: "pending-failed-after-create",
+      materializedSession: {
+        ...session({ id: "sess-failed-after-create", title: "Failed after create" }),
+        conversationId: "conv-failed-after-create",
+        opencodeSessionId: "open-failed-after-create",
+      },
+      draftDisposition: "restore",
+      debugTrace: [{ source: "server", event: "run_submit_failed_after_materialization" }],
+    }),
+  });
+  const workflow = createSessionCreationWorkflow(harness.options);
+
+  const result = await workflow.createSessionAndOpen("hello", {
+    submitDraft: { text: "hello" },
+    clientMessageId: "client-failed-after-create",
+    onSubmitResult: (submitResult) => submitResults.push(submitResult),
+  });
+
+  assert.equal(result, "sess-failed-after-create");
+  assert.ok(harness.actions.includes("set-sessions"));
+  assert.ok(harness.actions.includes("select:sess-failed-after-create"));
+  assert.equal(submitResults.length, 1);
+  assert.deepEqual(harness.errors, []);
 });
 
 test("session creation passes the prepared create preflight to conversation creation", async () => {

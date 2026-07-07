@@ -1512,7 +1512,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         } satisfies ConversationSubmitOptionsInput
       : undefined;
     const serverFirstSubmitResultHolder: {
-      current: Extract<VesloConversationSubmitResult, { status: "submitted" | "queued" }> | null;
+      current: Extract<VesloConversationSubmitResult, { status: "submitted" | "queued" | "failed" | "blocked" }> | null;
     } = { current: null };
     if (!sessionID) {
       deps.recordSendTrace("sendPrompt:create-session-needed", {
@@ -1530,7 +1530,12 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           submitOrigin: sendCorrelation.origin,
           submitSource: sendCorrelation.source,
           onSubmitResult: (result) => {
-            if (result.status === "submitted" || result.status === "queued") {
+            if (
+              result.status === "submitted" ||
+              result.status === "queued" ||
+              result.status === "failed" ||
+              result.status === "blocked"
+            ) {
               serverFirstSubmitResultHolder.current = result;
             }
           },
@@ -1567,6 +1572,23 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
 
     const serverFirstSubmitResult = serverFirstSubmitResultHolder.current;
     if (serverFirstSubmitResult) {
+      if (serverFirstSubmitResult.status === "failed" || serverFirstSubmitResult.status === "blocked") {
+        const hintedMessage = deps.addOpencodeCacheHint(serverFirstSubmitResult.message);
+        deps.recordSendTrace("sendPrompt:server-submit-first-failed", {
+          traceId: sendTraceId,
+          sessionID,
+          clientMessageId: sendCorrelation.clientMessageId,
+          origin: sendCorrelation.origin,
+          status: serverFirstSubmitResult.status,
+          code: serverFirstSubmitResult.code,
+          draftDisposition: serverFirstSubmitResult.draftDisposition,
+        });
+        deps.setError(hintedMessage);
+        deps.sessionStoreAppendSessionErrorTurn(sessionID, hintedMessage);
+        cleanupPendingSidebarSession();
+        stopSendPromptBusy();
+        return false;
+      }
       if (serverFirstSubmitResult.draftDisposition === "clear") {
         deps.setLastPromptSent(initialContent);
         if (!hasExplicitDraft) {

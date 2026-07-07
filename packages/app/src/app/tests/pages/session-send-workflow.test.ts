@@ -1125,6 +1125,51 @@ test("session send workflow accepts first-session server submit results without 
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
 });
 
+test("session send workflow opens first materialized session and reports failed server submit", async () => {
+  const createOptions: Array<Parameters<SessionSendWorkflowOptions["createSessionAndOpen"]>[1]> = [];
+  const harness = createHarness({
+    addOpencodeCacheHint: (message) => `${message} Clear the OpenCode cache and retry.`,
+    createSessionAndOpen: async (_initialTitle, options) => {
+      createOptions.push(options);
+      options?.onSubmitResult?.({
+        status: "failed",
+        code: "opencode_proxy_failed",
+        message: "OpenCode prompt failed",
+        workspaceId: "ws-main",
+        conversationId: "conv-first-failed",
+        opencodeSessionId: "open-first-failed",
+        clientMessageId: "client-first-failed",
+        materializedSession: {
+          id: "sess-first-failed",
+          title: "hello",
+          conversationId: "conv-first-failed",
+          opencodeSessionId: "open-first-failed",
+        },
+        draftDisposition: "restore",
+        debugTrace: [{ source: "server", event: "run_submit_failed_after_materialization" }],
+      });
+      return "sess-first-failed";
+    },
+    sessionStoreAppendSessionErrorTurn: (sessionId, message) => {
+      harness.actions.push(`append-error:${sessionId}:${message}`);
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const accepted = await workflow.sendPrompt(promptDraft("hello"), {
+    clientMessageId: "client-first-failed",
+    origin: "session:normal",
+    source: "enter",
+  });
+
+  assert.equal(accepted, false);
+  assert.equal(createOptions.length, 1);
+  assert.ok(harness.events.includes("sendPrompt:server-submit-first-failed"));
+  assert.deepEqual(harness.errors, ["OpenCode prompt failed Clear the OpenCode cache and retry."]);
+  assert.ok(harness.actions.includes("append-error:sess-first-failed:OpenCode prompt failed Clear the OpenCode cache and retry."));
+  assert.doesNotMatch(harness.actions.join("\n"), /run:/);
+});
+
 test("abortSession blocks abort when workspace scope is missing", async () => {
   const abortCalls: string[] = [];
   const harness = createHarness({
