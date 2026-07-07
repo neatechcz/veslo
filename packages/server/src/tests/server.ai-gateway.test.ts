@@ -595,6 +595,62 @@ describe("ai gateway proxy routes", () => {
             model: "gpt-5.5",
           });
 
+          const clearResponse = await fetch(
+            `http://127.0.0.1:${server.port}/ai-gateway/me/runtime-authorization/clear`,
+            {
+              method: "POST",
+              headers: {
+                authorization: "Bearer client-token",
+              },
+            },
+          );
+          expect(clearResponse.status).toBe(200);
+
+          const blockedResponse = await fetch(
+            `http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`,
+            {
+              method: "POST",
+              headers: {
+                authorization: "Bearer client-token",
+                "content-type": "application/json",
+                "x-veslo-session-id": "session_runtime",
+              },
+              body: JSON.stringify({
+                model: "gpt-5.5",
+                messages: [{ role: "user", content: "Hello after logout" }],
+              }),
+            },
+          );
+          expect(blockedResponse.status).toBe(401);
+          expect((await blockedResponse.json() as { code?: string }).code).toBe(
+            "gateway_runtime_authorization_required",
+          );
+
+          const refreshedAccessResponse = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/me/ai-access`, {
+            headers: {
+              authorization: "Bearer client-token",
+              "x-veslo-gateway-authorization": "Bearer den-user-token",
+            },
+          });
+          expect(refreshedAccessResponse.status).toBe(200);
+
+          const restoredResponse = await fetch(
+            `http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`,
+            {
+              method: "POST",
+              headers: {
+                authorization: "Bearer client-token",
+                "content-type": "application/json",
+                "x-veslo-session-id": "session_runtime",
+              },
+              body: JSON.stringify({
+                model: "gpt-5.5",
+                messages: [{ role: "user", content: "Hello after refresh" }],
+              }),
+            },
+          );
+          expect(restoredResponse.status).toBe(200);
+
           expect(requests).toEqual([
             {
               method: "GET",
@@ -613,6 +669,25 @@ describe("ai gateway proxy routes", () => {
               body: {
                 model: "gpt-5.5",
                 messages: [{ role: "user", content: "Hello" }],
+              },
+            },
+            {
+              method: "GET",
+              pathname: "/api/me/ai-access",
+              authorization: "Bearer den-user-token",
+              gatewayToken: null,
+              sessionId: null,
+              body: null,
+            },
+            {
+              method: "POST",
+              pathname: "/providers/codex_oauth/v1/chat/completions",
+              authorization: "Bearer runtime-gateway-token",
+              gatewayToken: null,
+              sessionId: "session_runtime",
+              body: {
+                model: "gpt-5.5",
+                messages: [{ role: "user", content: "Hello after refresh" }],
               },
             },
           ]);

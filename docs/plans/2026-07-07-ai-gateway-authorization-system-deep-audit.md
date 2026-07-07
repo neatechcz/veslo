@@ -4,7 +4,7 @@ status: in_progress
 plan_type: implementation
 agw_l01_provider_start_session_scoped_done: true
 agw_l02_legacy_gateway_token_redaction_done: true
-agw_l03_runtime_authorization_logout_ttl_done: false
+agw_l03_runtime_authorization_logout_ttl_done: true
 agw_l04_runtime_auth_prime_singleflight_done: false
 agw_s01_gateway_auth_before_body_parse_done: true
 agw_s02_den_session_lookup_cache_done: false
@@ -868,17 +868,22 @@ runtime diagnostics and should be separate from AGW-L01/AGW-L02.
 
 #### AGW-L03: Runtime authorization clear on logout plus bounded age
 
-Status: ready after choosing the smallest app-to-server clear call.
-Done flag: `agw_l03_runtime_authorization_logout_ttl_done: false`.
+Status: implemented with the smallest app-to-server clear call.
+Done flag: `agw_l03_runtime_authorization_logout_ttl_done: true`.
 
 Owner files:
 
 - `packages/server/src/ai-gateway-runtime-owner.ts`
 - `packages/server/src/routes/ai-gateway.ts`
+- `packages/server/src/server.ts`
+- `packages/app/src/app/app.tsx`
 - `packages/app/src/app/context/den-desktop-auth-workflow.ts`
+- `packages/app/src/app/lib/veslo-server/client.ts`
 - `packages/server/src/tests/ai-gateway-runtime-owner.test.ts`
+- `packages/server/src/tests/server.ai-gateway.test.ts`
 - `packages/server/src/tests/server.ai-gateway-routes.test.ts`
 - `packages/app/src/app/tests/context/den-desktop-auth-workflow.test.ts`
+- `packages/app/src/app/tests/lib/veslo-server.test.ts`
 
 Implementation contract:
 
@@ -1162,6 +1167,15 @@ Implementation verification on 2026-07-07:
   passed with 22 tests.
 - Gateway typecheck: `pnpm --filter @neatech/ai-gateway exec tsc --noEmit`
   passed.
+- `AGW-L03`: `bun test packages/server/src/tests/ai-gateway-runtime-owner.test.ts packages/server/src/tests/server.ai-gateway-routes.test.ts packages/server/src/tests/server.ai-gateway.test.ts`
+  passed with 30 tests.
+- `AGW-L03`: `pnpm --filter @neatech/veslo-ui exec node --import=tsx/esm --test src/app/tests/context/den-desktop-auth-workflow.test.ts src/app/tests/lib/veslo-server.test.ts`
+  passed with 66 tests.
+- `AGW-L03`: `pnpm --filter veslo-server typecheck` passed.
+- `AGW-L03`: `pnpm --filter @neatech/veslo-ui typecheck` was attempted but
+  blocked by pre-existing unrelated session workflow test type errors in
+  `src/app/tests/pages/session-creation-workflow.test.ts` and
+  `src/app/tests/pages/session-send-workflow.test.ts`.
 
 The original audit was performed against the live checkout on branch
 `local/sandbox-merge...origin/local/sandbox-merge`. At that time, the worktree

@@ -6,6 +6,7 @@ export const AI_GATEWAY_REDACTED_SECRET_VALUE = "[REDACTED]";
 const OPENCODE_SESSION_ID_MARKER = "OPENCODE_SESSION_ID";
 const DEFAULT_SESSION_HIT_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_ACTIVE_RUN_TTL_MS = 10 * 60 * 1000;
+const DEFAULT_RUNTIME_AUTHORIZATION_MAX_AGE_MS = 60 * 60 * 1000;
 const DEFAULT_PROVIDER_START_TIMEOUT_MS = 30_000;
 
 export type ActiveAiGatewayRunContext = {
@@ -72,6 +73,7 @@ export type AiGatewayRuntimeAuthorizationEntry = {
 export type AiGatewayRuntimeOwnerOptions = {
   activeRunTtlMs?: number;
   sessionHitTtlMs?: number;
+  runtimeAuthorizationMaxAgeMs?: number;
   providerStartTimeoutMs?: () => number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -137,6 +139,10 @@ function activeRunContextKey(context: ActiveAiGatewayRunContext): string {
 export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOptions = {}) {
   const activeRunTtlMs = options.activeRunTtlMs ?? DEFAULT_ACTIVE_RUN_TTL_MS;
   const sessionHitTtlMs = options.sessionHitTtlMs ?? DEFAULT_SESSION_HIT_TTL_MS;
+  const runtimeAuthorizationMaxAgeMs = Math.max(
+    1,
+    options.runtimeAuthorizationMaxAgeMs ?? DEFAULT_RUNTIME_AUTHORIZATION_MAX_AGE_MS,
+  );
   const now = options.now ?? (() => Date.now());
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const providerStartTimeoutMs = options.providerStartTimeoutMs ?? (() => DEFAULT_PROVIDER_START_TIMEOUT_MS);
@@ -363,11 +369,34 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
         ? runtimeAuthorizationByActorToken.get(scopedKey)
         : undefined;
     const resolvedRuntime = runtime ?? scopedRuntime;
+    const resolvedRuntimeKey = runtime ? key : scopedRuntime ? scopedKey : "";
     if (resolvedRuntime?.authorization.trim()) {
-      return {
-        authorization: resolvedRuntime.authorization,
-        source: resolvedRuntime.source,
-      };
+      const at = now();
+      const ageMs = Math.max(0, at - resolvedRuntime.at);
+      if (ageMs > runtimeAuthorizationMaxAgeMs) {
+        if (resolvedRuntimeKey) {
+          runtimeAuthorizationByActorToken.delete(resolvedRuntimeKey);
+        }
+        recordTrace("server:ai-gateway-runtime-authorization:expired", {
+          ageMs: roundDiagnosticMs(ageMs),
+          maxAgeMs: runtimeAuthorizationMaxAgeMs,
+          source: resolvedRuntime.source,
+          runtimeAuthorizationActorTokenHashPresent: Boolean(scopedKey),
+        });
+      } else {
+        return {
+          authorization: resolvedRuntime.authorization,
+          source: resolvedRuntime.source,
+        };
+      }
+    }
+
+    if (resolvedRuntime?.authorization.trim()) {
+      throw new ApiError(
+        401,
+        "gateway_runtime_authorization_expired",
+        "Managed AI gateway authorization in this Veslo server runtime has expired",
+      );
     }
 
     throw new ApiError(

@@ -671,6 +671,11 @@ export default function App() {
   const clearManagedAiAccessCacheFromAuth = () => {
     lateManagedAiAccessStore.current()?.clearManagedAiAccessCache();
   };
+  const clearManagedAiRuntimeAuthorizationFromAuth = async () => {
+    const client = vesloServerClient();
+    if (!client || vesloServerStatus() === "disconnected") return;
+    await client.clearMyAiGatewayRuntimeAuthorization();
+  };
   const denDesktopAuthWorkflow = createDenDesktopAuthWorkflow({
     isTauriRuntime,
     workspace: {
@@ -685,6 +690,7 @@ export default function App() {
     },
     managedAi: {
       clearManagedAiAccessCache: clearManagedAiAccessCacheFromAuth,
+      clearRuntimeAuthorization: clearManagedAiRuntimeAuthorizationFromAuth,
       requestManagedAiAccessRefresh: requestManagedAiAccessRefreshFromAuth,
     },
     account: {

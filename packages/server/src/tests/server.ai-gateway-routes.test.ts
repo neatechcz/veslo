@@ -8,15 +8,17 @@ describe("AI gateway routes", () => {
     const routes: Route[] = [];
     const proxy = async () => new Response("{}");
     registerAiGatewayRoutes(routes, {
+      clearAiGatewayRuntimeAuthorization: () => undefined,
       proxyAiGatewayReadinessRequest: proxy,
       proxyAiGatewayRequest: proxy,
     });
 
-    expect(routes).toHaveLength(6);
+    expect(routes).toHaveLength(7);
 
     const expectedRoutes = [
       ["GET", "/ai-gateway/me/ai-access"],
       ["GET", "/ai-gateway/readiness"],
+      ["POST", "/ai-gateway/me/runtime-authorization/clear"],
       ["POST", "/ai-gateway/providers/openai/v1/chat/completions"],
       ["POST", "/ai-gateway/providers/anthropic/v1/messages"],
       ["POST", "/ai-gateway/providers/codex_oauth/v1/chat/completions"],

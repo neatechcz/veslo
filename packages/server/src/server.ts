@@ -3975,7 +3975,11 @@ function createRoutes(
   });
   registerSessionArchiveRoutes(routes, { resolveArchiveOwnerKey, sessionArchives });
 
-  registerAiGatewayRoutes(routes, { proxyAiGatewayReadinessRequest, proxyAiGatewayRequest });
+  registerAiGatewayRoutes(routes, {
+    clearAiGatewayRuntimeAuthorization,
+    proxyAiGatewayReadinessRequest,
+    proxyAiGatewayRequest,
+  });
 
   registerAdminRoutes(routes);
   registerConversationSessionRoutes(routes, {

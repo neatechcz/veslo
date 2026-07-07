@@ -1,4 +1,5 @@
 import { addRoute, type Route } from "../routing.js";
+import { jsonResponse } from "../route-helpers.js";
 import type { Actor } from "../types.js";
 
 type AiGatewayProxyRequestInput = {
@@ -19,6 +20,7 @@ type AiGatewayReadinessRequestInput = {
 export type AiGatewayRouteDependencies = {
   proxyAiGatewayRequest: (input: AiGatewayProxyRequestInput) => Promise<Response>;
   proxyAiGatewayReadinessRequest: (input: AiGatewayReadinessRequestInput) => Promise<Response>;
+  clearAiGatewayRuntimeAuthorization: (actor?: Actor) => void;
 };
 
 export function registerAiGatewayRoutes(routes: Route[], dependencies: AiGatewayRouteDependencies): void {
@@ -38,6 +40,11 @@ export function registerAiGatewayRoutes(routes: Route[], dependencies: AiGateway
       request: ctx.request,
       url: ctx.url,
     });
+  });
+
+  addRoute(routes, "POST", "/ai-gateway/me/runtime-authorization/clear", "client", async (ctx) => {
+    dependencies.clearAiGatewayRuntimeAuthorization(ctx.actor);
+    return jsonResponse({ ok: true });
   });
 
   addRoute(routes, "POST", "/ai-gateway/providers/openai/v1/chat/completions", "client", async (ctx) => {

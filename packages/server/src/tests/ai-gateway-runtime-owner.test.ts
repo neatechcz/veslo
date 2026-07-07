@@ -218,6 +218,74 @@ describe("createAiGatewayRuntimeOwner", () => {
     ).toThrow(ApiError);
   });
 
+  test("expires runtime authorization by age and accepts a fresh access prime", () => {
+    let now = 1_000;
+    const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+    const owner = createAiGatewayRuntimeOwner({
+      now: () => now,
+      runtimeAuthorizationMaxAgeMs: 1_000,
+      recordTrace: (event, payload) => traces.push({ event, payload }),
+    });
+
+    owner.syncRuntimeAuthorizationFromAccessBundle({
+      actor,
+      callerAuthorization: "Bearer den-caller-token",
+      value: {
+        aiAccess: { enabled: true },
+        accessToken: "runtime-token-1",
+      },
+    });
+
+    now = 1_500;
+    expect(owner.resolveProviderAuthorization({
+      actor,
+      request: new Request("http://localhost"),
+      accessTokenHeader: "x-veslo-gateway-token",
+    })).toEqual({
+      authorization: "Bearer runtime-token-1",
+      source: "ai-access-token",
+    });
+
+    now = 2_001;
+    expect(() =>
+      owner.resolveProviderAuthorization({
+        actor,
+        request: new Request("http://localhost"),
+        accessTokenHeader: "x-veslo-gateway-token",
+      })
+    ).toThrow(ApiError);
+
+    expect(traces).toEqual([
+      {
+        event: "server:ai-gateway-runtime-authorization:expired",
+        payload: {
+          ageMs: 1001,
+          maxAgeMs: 1000,
+          source: "ai-access-token",
+          runtimeAuthorizationActorTokenHashPresent: false,
+        },
+      },
+    ]);
+
+    owner.syncRuntimeAuthorizationFromAccessBundle({
+      actor,
+      callerAuthorization: "Bearer den-caller-token",
+      value: {
+        aiAccess: { enabled: true },
+        accessToken: "runtime-token-2",
+      },
+    });
+
+    expect(owner.resolveProviderAuthorization({
+      actor,
+      request: new Request("http://localhost"),
+      accessTokenHeader: "x-veslo-gateway-token",
+    })).toEqual({
+      authorization: "Bearer runtime-token-2",
+      source: "ai-access-token",
+    });
+  });
+
   test("aborts only matching active proxy requests and records trace metadata", () => {
     const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
     const owner = createAiGatewayRuntimeOwner({
