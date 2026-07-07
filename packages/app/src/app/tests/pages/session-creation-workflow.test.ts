@@ -108,7 +108,7 @@ function createHarness(overrides: Partial<SessionCreationWorkflowOptions> = {}):
     safeStringify: (value) => JSON.stringify(value),
     sendTraceStep: async (_event, run) => run(),
     setError: (message) => {
-      if (message) errors.push(message);
+      errors.push(message);
     },
     unknownErrorMessage: () => "app.unknown_error",
     workspace: {
@@ -266,7 +266,7 @@ test("session creation opens a materialized session when first server submit fai
   assert.ok(harness.actions.includes("set-sessions"));
   assert.ok(harness.actions.includes("select:sess-failed-after-create"));
   assert.equal(submitResults.length, 1);
-  assert.deepEqual(harness.errors, []);
+  assert.deepEqual(harness.errors, [null]);
 });
 
 test("session creation passes the prepared create preflight to conversation creation", async () => {

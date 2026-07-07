@@ -1127,7 +1127,12 @@ test("session send workflow accepts first-session server submit results without 
 
 test("session send workflow opens first materialized session and reports failed server submit", async () => {
   const createOptions: Array<Parameters<SessionSendWorkflowOptions["createSessionAndOpen"]>[1]> = [];
+  const pendingDraftMeta = { id: "pending-id-first-failed", title: "hello" };
+  let activePendingDraftKey = "pending-draft:first-failed";
+  let activePendingDraftMeta: typeof pendingDraftMeta | null = pendingDraftMeta;
   const harness = createHarness({
+    activePendingDraftKey: () => activePendingDraftKey,
+    activePendingDraftMeta: () => activePendingDraftMeta,
     addOpencodeCacheHint: (message) => `${message} Clear the OpenCode cache and retry.`,
     createSessionAndOpen: async (_initialTitle, options) => {
       createOptions.push(options);
@@ -1150,8 +1155,28 @@ test("session send workflow opens first materialized session and reports failed 
       });
       return "sess-first-failed";
     },
+    clearActivePendingDraftState: () => {
+      activePendingDraftKey = "";
+      activePendingDraftMeta = null;
+      harness.actions.push("clear-pending-draft");
+    },
     sessionStoreAppendSessionErrorTurn: (sessionId, message) => {
       harness.actions.push(`append-error:${sessionId}:${message}`);
+    },
+    setActivePendingDraftKey: (key) => {
+      activePendingDraftKey = key;
+      harness.actions.push(`set-active-pending-draft-key:${key}`);
+    },
+    setActivePendingDraftMeta: (meta) => {
+      activePendingDraftMeta = meta ?? null;
+      harness.actions.push(`set-active-pending-draft-meta:${meta?.id ?? "null"}`);
+    },
+    setComposerDraftBySessionId: (updater) => {
+      harness.actions.push("set-composer-draft-by-session");
+      updater({});
+    },
+    setView: (view) => {
+      harness.actions.push(`set-view:${view}`);
     },
   });
   const workflow = createSessionSendWorkflow(harness.options);
@@ -1167,6 +1192,12 @@ test("session send workflow opens first materialized session and reports failed 
   assert.ok(harness.events.includes("sendPrompt:server-submit-first-failed"));
   assert.deepEqual(harness.errors, ["OpenCode prompt failed Clear the OpenCode cache and retry."]);
   assert.ok(harness.actions.includes("append-error:sess-first-failed:OpenCode prompt failed Clear the OpenCode cache and retry."));
+  assert.equal(activePendingDraftKey, "pending-draft:first-failed");
+  assert.deepEqual(activePendingDraftMeta, pendingDraftMeta);
+  assert.doesNotMatch(
+    harness.actions.join("\n"),
+    /clear-pending-draft|refresh-pending-drafts|mark-consumed:|clear-consumed:|set-active-pending-draft-key:|set-active-pending-draft-meta:|set-composer-draft-by-session|set-view:/,
+  );
   assert.doesNotMatch(harness.actions.join("\n"), /run:/);
 });
 
