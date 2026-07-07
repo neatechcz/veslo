@@ -350,6 +350,92 @@ describe("conversation submit service", () => {
     expect(createConversationCalls).toBe(0);
   });
 
+  test("joins concurrent identical existing-target submits before upstream result is persisted", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-existing-run-concurrent-"));
+    tempDirs.push(workspaceRoot);
+    let createConversationCalls = 0;
+    let resolveDirectoryCalls = 0;
+    let submitRunCalls = 0;
+    let releaseSubmit: () => void = () => {
+      throw new Error("submit was released before the upstream call started");
+    };
+    const submitRelease = new Promise<void>((resolve) => {
+      releaseSubmit = resolve;
+    });
+    let markFirstSubmitStarted: () => void = () => undefined;
+    const firstSubmitStarted = new Promise<void>((resolve) => {
+      markFirstSubmitStarted = resolve;
+    });
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-existing-run-concurrent-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => {
+        createConversationCalls += 1;
+      }),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+    });
+    const body = {
+      clientMessageId: "msg-existing-submit-concurrent",
+      origin: "session:normal",
+      target: { conversationId: "conv-existing", directory: workspaceRoot },
+      draft: {
+        mode: "prompt",
+        text: "Submit existing concurrently",
+        parts: [{ type: "text", text: "Submit existing concurrently" }],
+      },
+    };
+    const submit = () => service.submit({
+      workspace: workspace(workspaceRoot),
+      body,
+      resolveDirectory: async () => {
+        resolveDirectoryCalls += 1;
+        return workspaceRoot;
+      },
+      submitResolvedRun: async (input) => {
+        submitRunCalls += 1;
+        const callNumber = submitRunCalls;
+        if (callNumber === 1) markFirstSubmitStarted();
+        await submitRelease;
+        return {
+          httpStatus: 200,
+          payload: {
+            status: "submitted",
+            workspaceId: "ws_1",
+            conversationId: "conv-existing",
+            opencodeSessionId: "sess-existing",
+            runId: `run-existing-${callNumber}`,
+            clientMessageId: input.request.clientMessageId,
+            draftDisposition: "clear",
+          },
+        };
+      },
+    });
+
+    const firstPromise = submit();
+    await firstSubmitStarted;
+    const secondPromise = submit();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseSubmit();
+
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+    expect(first.httpStatus).toBe(200);
+    expect(second.httpStatus).toBe(200);
+    expect(first.payload).toMatchObject({
+      status: "submitted",
+      conversationId: "conv-existing",
+      opencodeSessionId: "sess-existing",
+      runId: "run-existing-1",
+      clientMessageId: "msg-existing-submit-concurrent",
+      draftDisposition: "clear",
+    });
+    expect(second.payload).toEqual(first.payload);
+    expect(submitRunCalls).toBe(1);
+    expect(resolveDirectoryCalls).toBe(1);
+    expect(createConversationCalls).toBe(0);
+  });
+
   test("blocks prompt image attachments when model metadata says image input is unsupported", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-attachment-nonvision-"));
     tempDirs.push(workspaceRoot);

@@ -28,7 +28,12 @@ export type ConversationSubmitService = {
     runtimeAuthorizationActorTokenHash?: string | null;
     resolveDirectory: (requestedRaw: string | null) => Promise<string | null>;
     submitResolvedRun?: ConversationSubmitResolvedRunSubmitter | null;
-  }): Promise<{ payload: ConversationSubmitResult; httpStatus: number }>;
+  }): Promise<ConversationSubmitServiceResponse>;
+};
+
+export type ConversationSubmitServiceResponse = {
+  payload: ConversationSubmitResult;
+  httpStatus: number;
 };
 
 export type ConversationSubmitResolvedRunSubmitter = (input: {
@@ -54,6 +59,7 @@ export function createConversationSubmitService(input: {
   resolveSkillCommand?: ConversationSubmitSkillCommandResolver;
 }): ConversationSubmitService {
   const { attemptStore, conversationService, documentRuntimeStatus, resolveSkillCommand } = input;
+  const inFlightSubmitAttempts = new Map<string, Promise<ConversationSubmitServiceResponse>>();
 
   return {
     async submit({
@@ -133,6 +139,13 @@ export function createConversationSubmitService(input: {
         }
       }
 
+      const inFlightKey = conversationSubmitInFlightKey(workspace.id, request.clientMessageId, requestHash);
+      const existingInFlight = inFlightSubmitAttempts.get(inFlightKey);
+      if (existingInFlight) return await existingInFlight;
+
+      // The persisted store owns completed retry/conflict behavior; this
+      // joins same-process overlap before resultJson exists.
+      const inFlight = (async (): Promise<ConversationSubmitServiceResponse> => {
       if (conversationSubmitDraftIsEmpty(request)) {
         return {
           payload: completeAttempt({
@@ -359,8 +372,21 @@ export function createConversationSubmitService(input: {
           httpStatus: 200,
         };
       }
+      })();
+      inFlightSubmitAttempts.set(inFlightKey, inFlight);
+      try {
+        return await inFlight;
+      } finally {
+        if (inFlightSubmitAttempts.get(inFlightKey) === inFlight) {
+          inFlightSubmitAttempts.delete(inFlightKey);
+        }
+      }
     },
   };
+}
+
+function conversationSubmitInFlightKey(workspaceId: string, clientMessageId: string, requestHash: string): string {
+  return JSON.stringify([workspaceId, clientMessageId, requestHash]);
 }
 
 function deriveSubmitConversationTitle(request: ConversationSubmitRequest): string | null {
