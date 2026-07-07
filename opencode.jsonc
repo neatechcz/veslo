@@ -18,9 +18,6 @@
     }
   },
   "model": "codex_oauth/gpt-5.5",
-  "plugin": [
-    "opencode-scheduler"
-  ],
   "provider": {
     "codex_oauth": {
       "env": [
