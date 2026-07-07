@@ -361,6 +361,7 @@ const assertNoUnmanagedPersonalGlobalSkillConflicts = async (
   const conflicts = await findUnmanagedPersonalGlobalSkillConflicts(rootDir, skills, unmanagedSkillRoots);
   if (conflicts.length === 0) return;
   const conflict = conflicts[0];
+  if (!conflict) return;
   throw new ApiError(
     409,
     "managed_skill_name_conflict",

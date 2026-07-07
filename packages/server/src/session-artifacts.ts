@@ -461,6 +461,7 @@ function extractApplyPatchSummaryPaths(output: unknown): string[] {
 function sliceLatestRun(messages: SessionArtifactMessage[]): LatestRunSlice {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
+    if (!message) continue;
     if (resolveMessageRole(message) !== "user") continue;
     return {
       runId: resolveMessageId(message) || null,

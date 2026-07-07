@@ -36,9 +36,12 @@ export function matchRoute(routes: Route[], method: string, path: string): Match
     const match = path.match(route.regex);
     if (!match) continue;
     const params: Record<string, string> = {};
-    route.keys.forEach((key, index) => {
-      params[key] = decodeURIComponent(match[index + 1]);
-    });
+    for (let index = 0; index < route.keys.length; index += 1) {
+      const key = route.keys[index];
+      const value = match[index + 1];
+      if (!key || value === undefined) return null;
+      params[key] = decodeURIComponent(value);
+    }
     return { ...route, params };
   }
   return null;

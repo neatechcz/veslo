@@ -1,4 +1,4 @@
-import type { PluginPolicyOverride, PluginPolicyOverrideScope } from "./types.js";
+import type { PluginPolicyOverride, PluginPolicyOverrideScope } from "./plugin-policy-overrides.js";
 
 export type PluginOwnerKind = "platform" | "organization" | "user" | "project";
 export type PluginVisibility = "visible" | "hidden-debug-only";

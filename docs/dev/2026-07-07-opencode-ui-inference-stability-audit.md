@@ -330,4 +330,3 @@ For old conversations, also require:
 - exact OpenCode session id match,
 - Veslo conversation binding present or created by safe import,
 - no legacy frontend fallback used.
-

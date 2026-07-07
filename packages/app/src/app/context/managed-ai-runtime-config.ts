@@ -44,12 +44,18 @@ import {
 
 const RUNTIME_AUTH_PRIME_SUCCESS_TTL_MS = 15_000;
 
-type ManagedAiRuntimeAuthPrimeDiagnosticReason =
+export type ManagedAiRuntimeAuthPrimeDiagnosticReason =
   | "missing-user-token"
   | "non-local-workspace"
   | "provider-routing-target-missing"
   | "access-profile-unavailable"
   | "request-failed";
+
+export type ManagedAiRuntimeAuthPrimeDiagnostic = {
+  reason: ManagedAiRuntimeAuthPrimeDiagnosticReason;
+  supportMessage: string;
+  [key: string]: unknown;
+};
 
 const MANAGED_AI_RUNTIME_AUTH_PRIME_SUPPORT_MESSAGES: Record<
   ManagedAiRuntimeAuthPrimeDiagnosticReason,
@@ -65,7 +71,7 @@ const MANAGED_AI_RUNTIME_AUTH_PRIME_SUPPORT_MESSAGES: Record<
 function managedAiRuntimeAuthPrimeDiagnostic(
   reason: ManagedAiRuntimeAuthPrimeDiagnosticReason,
   extra: Record<string, unknown> = {},
-): Record<string, unknown> {
+): ManagedAiRuntimeAuthPrimeDiagnostic {
   return {
     reason,
     supportMessage: MANAGED_AI_RUNTIME_AUTH_PRIME_SUPPORT_MESSAGES[reason],
@@ -206,6 +212,7 @@ export type ManagedAiRuntimeConfigSync = {
   syncManagedAiRuntimeConfigForSend: (
     targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
   ) => Promise<void>;
+  lastManagedAiRuntimeAuthorizationPrimeDiagnostic: () => ManagedAiRuntimeAuthPrimeDiagnostic | null;
   healInactiveManagedAiWorkspaceConfigs: () => Promise<void>;
   rememberKnownConfigSnapshot: (key: string, content: string | null) => void;
   clearManagedConfigTracking: () => void;
@@ -301,6 +308,7 @@ export function createManagedAiRuntimeConfigSync(
   let runtimeAuthorizationPrimeSuccess:
     | { key: string; expiresAt: number }
     | null = null;
+  let lastRuntimeAuthorizationPrimeDiagnostic: ManagedAiRuntimeAuthPrimeDiagnostic | null = null;
   let managedAiConfigSyncGeneration = 0;
   let inactiveWorkspaceBaseUrlHealGeneration = 0;
   let lastManagedAiAccessResetKey = "";
@@ -318,7 +326,22 @@ export function createManagedAiRuntimeConfigSync(
   const clearManagedAiRuntimeAuthorizationPrimeCache = () => {
     runtimeAuthorizationPrimeSuccess = null;
     runtimeAuthorizationPrimeInFlight.clear();
+    lastRuntimeAuthorizationPrimeDiagnostic = null;
   };
+
+  const rememberRuntimeAuthorizationPrimeDiagnostic = (
+    diagnostic: ManagedAiRuntimeAuthPrimeDiagnostic,
+  ) => {
+    lastRuntimeAuthorizationPrimeDiagnostic = diagnostic;
+    return diagnostic;
+  };
+
+  const clearRuntimeAuthorizationPrimeDiagnostic = () => {
+    lastRuntimeAuthorizationPrimeDiagnostic = null;
+  };
+
+  const lastManagedAiRuntimeAuthorizationPrimeDiagnostic = () =>
+    lastRuntimeAuthorizationPrimeDiagnostic;
 
   const rememberKnownConfigSnapshot = (key: string, content: string | null) => {
     const normalizedKey = key.trim();
@@ -610,10 +633,15 @@ export function createManagedAiRuntimeConfigSync(
   const ensureManagedAiRuntimeAuthorizationForSend = async (
     targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
   ): Promise<boolean> => {
-    if (!deps.isTauriRuntime()) return true;
+    if (!deps.isTauriRuntime()) {
+      clearRuntimeAuthorizationPrimeDiagnostic();
+      return true;
+    }
     const userToken = deps.denGatewayAccessToken();
     if (!userToken) {
-      const diagnostic = managedAiRuntimeAuthPrimeDiagnostic("missing-user-token");
+      const diagnostic = rememberRuntimeAuthorizationPrimeDiagnostic(
+        managedAiRuntimeAuthPrimeDiagnostic("missing-user-token"),
+      );
       deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:skip", {
         ...diagnostic,
       });
@@ -627,6 +655,7 @@ export function createManagedAiRuntimeConfigSync(
       : undefined;
     const workspace = targetWorkspaceEntry || deps.activeWorkspaceDisplay();
     if (workspace.workspaceType !== "local") {
+      clearRuntimeAuthorizationPrimeDiagnostic();
       const diagnostic = managedAiRuntimeAuthPrimeDiagnostic("non-local-workspace", {
         targetWorkspaceId: targetWorkspaceId || null,
         workspaceType: workspace.workspaceType,
@@ -646,7 +675,9 @@ export function createManagedAiRuntimeConfigSync(
     const routing = buildProviderRoutingContext(workspace, targetWorkspaceId, targetWorkspaceRoot);
 
     if (!routing.providerRoutingTarget?.baseUrl || !routing.providerRoutingTarget.serverClientToken) {
-      const diagnostic = managedAiRuntimeAuthPrimeDiagnostic("provider-routing-target-missing", routing.tracePayload);
+      const diagnostic = rememberRuntimeAuthorizationPrimeDiagnostic(
+        managedAiRuntimeAuthPrimeDiagnostic("provider-routing-target-missing", routing.tracePayload),
+      );
       deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:skip", {
         ...diagnostic,
       });
@@ -669,6 +700,7 @@ export function createManagedAiRuntimeConfigSync(
       runtimeAuthorizationPrimeSuccess?.key === runtimeAuthorizationPrimeCacheKey &&
       runtimeAuthorizationPrimeSuccess.expiresAt > now()
     ) {
+      clearRuntimeAuthorizationPrimeDiagnostic();
       deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:cache-hit", {
         ...routing.tracePayload,
         expiresInMs: Math.max(0, runtimeAuthorizationPrimeSuccess.expiresAt - now()),
@@ -704,9 +736,11 @@ export function createManagedAiRuntimeConfigSync(
           requireGatewayAccessToken: false,
         });
         if (!profile) {
-          const diagnostic = managedAiRuntimeAuthPrimeDiagnostic("access-profile-unavailable", {
-            aiAccessReason: reason ?? null,
-          });
+          const diagnostic = rememberRuntimeAuthorizationPrimeDiagnostic(
+            managedAiRuntimeAuthPrimeDiagnostic("access-profile-unavailable", {
+              aiAccessReason: reason ?? null,
+            }),
+          );
           deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:result", {
             ...routing.tracePayload,
             ok: false,
@@ -723,6 +757,7 @@ export function createManagedAiRuntimeConfigSync(
             expiresAt: now() + runtimeAuthorizationPrimeSuccessTtlMs,
           };
         }
+        clearRuntimeAuthorizationPrimeDiagnostic();
         deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:result", {
           ...routing.tracePayload,
           ok: true,
@@ -732,11 +767,14 @@ export function createManagedAiRuntimeConfigSync(
         });
         return true;
       } catch (error) {
-        const diagnostic = managedAiRuntimeAuthPrimeDiagnostic("request-failed");
+        const diagnostic = rememberRuntimeAuthorizationPrimeDiagnostic(
+          managedAiRuntimeAuthPrimeDiagnostic("request-failed", {
+            message: error instanceof Error ? error.message : deps.safeStringify(error),
+          }),
+        );
         deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:error", {
           ...routing.tracePayload,
           ...diagnostic,
-          message: error instanceof Error ? error.message : deps.safeStringify(error),
         });
         deps.setManagedAiAccessError(String(diagnostic.supportMessage));
         return false;
@@ -1350,6 +1388,7 @@ export function createManagedAiRuntimeConfigSync(
     hasUsableManagedAiRuntimeConfigForSend,
     ensureManagedAiRuntimeAuthorizationForSend,
     syncManagedAiRuntimeConfigForSend,
+    lastManagedAiRuntimeAuthorizationPrimeDiagnostic,
     syncActiveWorkspaceManagedAiConfig: () => syncActiveWorkspaceManagedAiConfig(),
     healInactiveManagedAiWorkspaceConfigs: () => healInactiveManagedAiWorkspaceConfigs(),
     rememberKnownConfigSnapshot,

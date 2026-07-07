@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { CODEX_DEFAULT_MODEL } from "../providers/codex-model-catalog.js";
-import { resolveCodexCliCommand } from "../providers/codex-command.js";
+import { resolveCodexCliCommandSpec, type CodexCliCommandSpec } from "../providers/codex-command.js";
 import { materializeCodexAuthJson } from "../providers/codex-cli-worker-transport.js";
 
 export type CodexUsageStatusSource =
@@ -78,6 +78,7 @@ export type CachedCodexCredentialStatusProviderDeps = {
     authJson: string;
   }) => Promise<ProbeResult>;
   command?: string;
+  commandArgsPrefix?: string[];
   workDir?: string;
   timeoutMs?: number;
   ttlMs?: number;
@@ -111,13 +112,19 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
     this.probe =
       deps.probe ??
       ((input) =>
-        runCodexExecRateLimitProbe({
-          ...input,
-          command: resolveCodexCliCommand(deps.command ?? process.env.AI_GATEWAY_CODEX_COMMAND),
-          workDir: deps.workDir?.trim() || process.env.AI_GATEWAY_CODEX_WORKDIR?.trim() || tmpdir(),
-          timeoutMs: deps.timeoutMs ?? parseTimeoutMs(process.env.AI_GATEWAY_CODEX_TIMEOUT_MS, 120000),
-          now: this.now,
-        }));
+        {
+          const commandSpec = resolveCodexCliCommandSpec(deps.command ?? process.env.AI_GATEWAY_CODEX_COMMAND);
+          return runCodexExecRateLimitProbe({
+            ...input,
+            command: {
+              command: commandSpec.command,
+              argsPrefix: deps.commandArgsPrefix ?? commandSpec.argsPrefix,
+            },
+            workDir: deps.workDir?.trim() || process.env.AI_GATEWAY_CODEX_WORKDIR?.trim() || tmpdir(),
+            timeoutMs: deps.timeoutMs ?? parseTimeoutMs(process.env.AI_GATEWAY_CODEX_TIMEOUT_MS, 120000),
+            now: this.now,
+          });
+        });
   }
 
   async getStatus(input: CodexCredentialStatusInput): Promise<CodexUsageStatus> {
@@ -428,7 +435,7 @@ async function runCodexExecRateLimitProbe(input: {
   credentialId: string;
   credentialName: string;
   authJson: string;
-  command: string;
+  command: CodexCliCommandSpec;
   workDir: string;
   timeoutMs: number;
   now: () => Date;
@@ -445,8 +452,9 @@ async function runCodexExecRateLimitProbe(input: {
     });
 
     const result = await runProcess({
-      command: input.command,
+      command: input.command.command,
       args: [
+        ...input.command.argsPrefix,
         "--ask-for-approval",
         "never",
         "exec",

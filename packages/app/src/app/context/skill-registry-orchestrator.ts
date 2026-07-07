@@ -187,7 +187,6 @@ export function createSkillRegistryOrchestrator(deps: SkillRegistryOrchestratorD
 
   const handleSkillRegistryEventsUnauthorized = async (error: SkillRegistryEventsAuthError) => {
     stopSkillRegistryEventsListener();
-    skillRegistryEventsKey = "";
     deps.reportError(error, "skills.registry.events.auth");
     try {
       await deps.ensureLocalVesloServerRunning?.({ requireRuntimeChainReady: false });

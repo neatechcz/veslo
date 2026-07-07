@@ -3,6 +3,7 @@ import { minimatch } from "minimatch";
 import type { McpServerConfig, McpServerEntry } from "./types";
 import { readOpencodeConfig, writeOpencodeConfig } from "./lib/tauri";
 import type { McpDirectoryInfo } from "./constants";
+export { validateMcpServerName } from "./mcp-validation";
 
 type McpConfigValue = Record<string, unknown> | null | undefined;
 
@@ -83,20 +84,6 @@ export function parseLocalCommandInput(input: string): string[] {
     tokens.push(current);
   }
   return tokens;
-}
-
-export function validateMcpServerName(name: string): string {
-  const trimmed = name.trim();
-  if (!trimmed) {
-    throw new Error("server_name is required");
-  }
-  if (trimmed.startsWith("-")) {
-    throw new Error("server_name must not start with '-'");
-  }
-  if (!/^[A-Za-z0-9_-]+$/.test(trimmed)) {
-    throw new Error("server_name must be alphanumeric with '-' or '_'");
-  }
-  return trimmed;
 }
 
 export async function removeMcpFromConfig(

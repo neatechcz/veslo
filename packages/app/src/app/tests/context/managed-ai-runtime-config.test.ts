@@ -216,6 +216,65 @@ test("runtime auth prime is single-flight and cached for a short success window"
   assert.equal(accessCalls, 3);
 });
 
+test("runtime auth prime records request diagnostics after the success cache expires", async () => {
+  let now = 1_000;
+  let accessCalls = 0;
+  const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  const accessErrors: Array<string | null> = [];
+  const response = {
+    aiAccess: {
+      id: "access-1",
+      enabled: true,
+      userId: profile.userId,
+      provider: profile.providerId,
+      defaultModel: profile.defaultModel.modelID,
+      allowedModels: profile.allowedModels,
+      updatedAt: profile.updatedAt,
+    },
+    accessToken: "runtime-access-token",
+  };
+
+  const sync = createManagedAiRuntimeConfigSync(
+    createOptions({
+      now: () => now,
+      runtimeAuthorizationPrimeSuccessTtlMs: 5_000,
+      recordManagedAiWorkflowTrace: (event, payload) => {
+        traces.push({ event, payload });
+      },
+      setManagedAiAccessError: (message) => {
+        accessErrors.push(message);
+      },
+      createVesloServerClient: () => ({
+        baseUrl: "http://127.0.0.1:34115",
+        getMyAiAccess: async () => {
+          accessCalls += 1;
+          if (accessCalls === 1) return response;
+          throw new Error("connect ETIMEDOUT");
+        },
+      }),
+    }),
+  );
+
+  assert.equal(await sync.ensureManagedAiRuntimeAuthorizationForSend(), true);
+  assert.equal(sync.lastManagedAiRuntimeAuthorizationPrimeDiagnostic(), null);
+
+  now = 6_001;
+  assert.equal(await sync.ensureManagedAiRuntimeAuthorizationForSend(), false);
+  assert.equal(accessCalls, 2);
+  assert.deepEqual(sync.lastManagedAiRuntimeAuthorizationPrimeDiagnostic(), {
+    reason: "request-failed",
+    supportMessage: "Managed AI runtime authorization could not be refreshed. Check the local Veslo server connection and retry.",
+    message: "connect ETIMEDOUT",
+  });
+  assert.deepEqual(accessErrors, [
+    "Managed AI runtime authorization could not be refreshed. Check the local Veslo server connection and retry.",
+  ]);
+
+  const errorTrace = traces.find((entry) => entry.event === "managed-ai-runtime-auth-prime:error");
+  assert.equal(errorTrace?.payload.reason, "request-failed");
+  assert.equal(errorTrace?.payload.message, "connect ETIMEDOUT");
+});
+
 test("runtime auth prime reports stable support diagnostics for missing user token", async () => {
   const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
   const accessErrors: Array<string | null> = [];

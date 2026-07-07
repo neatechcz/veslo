@@ -98,4 +98,3 @@ UI tests:
 - organization admin sees trial access but not platform controls
 - organization admin can still start Stripe Checkout during trial
 - trial create is disabled or rejected for an organization with Stripe subscription configured
-

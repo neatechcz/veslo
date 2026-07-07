@@ -16,7 +16,7 @@ import {
   recordProviderProxyFailureAlert,
 } from "./proxy-failure-alert.js";
 import { normalizeGatewaySessionId } from "./session-id.js";
-import type { ProxyDependencies } from "../proxy.js";
+import type { ProxyDependencies } from "../proxy-dependencies.js";
 
 export function createOpenAiProxyRouter(
   deps: Pick<ProxyDependencies, "credentials" | "alertRepository" | "usageRepository" | "leaseBroker" | "tokenBroker" | "openAiTransport">,

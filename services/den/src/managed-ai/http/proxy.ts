@@ -1,53 +1,20 @@
 import { Router } from "express"
 
 import type { OrganizationBillingEntitlement } from "../../billing/organization-billing.js"
-import type { OrganizationBillingRepository } from "../../billing/repository.js"
 import { pickActiveOrganization } from "../../http/access.js"
 import {
   findUserOrganization,
   readRequestedOrganizationId,
   resolveActiveUserOrganizations,
-  type OrganizationSummary,
 } from "../../http/org-auth.js"
-import type { AiAccessRepository } from "../access/repository.js"
-import type { AutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js"
 import { readBearerToken } from "../auth/user-session.js"
-import type { GatewaySessionResolver } from "../auth/gateway-session.js"
-import type { CredentialRepository } from "../credentials/repository.js"
-import type { SecretStore } from "../credentials/secret-store.js"
-import type { TokenBroker } from "../credentials/token-broker.js"
-import type { LeaseBroker } from "../leases/lease-broker.js"
-import type {
-  AnthropicProviderTransport,
-  CodexOAuthProviderTransport,
-  OpenAiCompatibleProviderTransport,
-  OpenAiProviderTransport,
-} from "../providers/transport.js"
-import type { UsageRepository } from "../usage/repository.js"
 import { createAnthropicProxyRouter } from "./providers/anthropic.js"
 import { createCodexOAuthProxyRouter } from "./providers/codex-oauth.js"
 import { createOpenAiCompatibleProxyRouter } from "./providers/openai-compatible.js"
 import { createOpenAiProxyRouter } from "./providers/openai.js"
+import type { ProxyDependencies } from "./proxy-dependencies.js"
 
-export type ProxyDependencies = {
-  aiAccess?: AiAccessRepository
-  autoAssignedCodexCredentialRotation?: AutoAssignedCodexCredentialRotationService
-  gatewaySessions: GatewaySessionResolver
-  organizationAccess?: {
-    listUserOrganizations(userId: string): Promise<OrganizationSummary[]>
-    findUserOrganization?(userId: string, orgId: string): Promise<OrganizationSummary | null>
-  }
-  organizationBilling?: Pick<OrganizationBillingRepository, "deriveEntitlement">
-  credentials: CredentialRepository
-  secrets: SecretStore
-  usageRepository: UsageRepository
-  leaseBroker: LeaseBroker
-  tokenBroker: TokenBroker
-  openAiTransport: OpenAiProviderTransport
-  anthropicTransport: AnthropicProviderTransport
-  codexOAuthTransport: CodexOAuthProviderTransport
-  openAiCompatibleTransport: OpenAiCompatibleProviderTransport
-}
+export type { ProxyDependencies } from "./proxy-dependencies.js"
 
 const defaultOrganizationAccess = {
   listUserOrganizations: resolveActiveUserOrganizations,

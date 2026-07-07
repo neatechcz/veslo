@@ -1,9 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
-import { isTauriRuntime } from "../utils";
-import { validateMcpServerName } from "../mcp";
+import { validateMcpServerName } from "../mcp-validation";
+import { isTauriRuntime } from "../utils/paths";
 import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
 import type { ComposerAttachment, ComposerDraft, ComposerPart, ModelRef, SkillInventoryRegistryMetadata } from "../types";
+import type { OpencodeConfigFile, ScheduledJob, WorkspaceInfo } from "./tauri-types";
+
+export type { OpencodeConfigFile, ScheduledJob, ScheduledJobRun, WorkspaceInfo } from "./tauri-types";
 
 export const VESLO_SERVER_STATE_EVENT = "veslo://server-state";
 
@@ -174,23 +177,6 @@ export type EngineDoctorResult = {
   serveHelpStatus: number | null;
   serveHelpStdout: string | null;
   serveHelpStderr: string | null;
-};
-
-export type WorkspaceInfo = {
-  id: string;
-  name: string;
-  path: string;
-  preset: string;
-  workspaceType: "local" | "remote";
-  remoteType?: "veslo" | "opencode" | null;
-  baseUrl?: string | null;
-  directory?: string | null;
-  displayName?: string | null;
-  vesloHostUrl?: string | null;
-  vesloToken?: string | null;
-  vesloWorkspaceId?: string | null;
-  vesloWorkspaceName?: string | null;
-  missing?: boolean | null;
 };
 
 export type WorkspaceList = {
@@ -916,44 +902,6 @@ export type DesktopRuntimePreferences = {
   sharedUnsandboxedEngine: boolean;
 };
 
-export type ScheduledJobRun = {
-  prompt?: string;
-  command?: string;
-  arguments?: string;
-  files?: string[];
-  agent?: string;
-  model?: string;
-  variant?: string;
-  title?: string;
-  share?: boolean;
-  continue?: boolean;
-  session?: string;
-  runFormat?: string;
-  attachUrl?: string;
-  port?: number;
-};
-
-export type ScheduledJob = {
-  scopeId?: string;
-  timeoutSeconds?: number;
-  invocation?: { command: string; args: string[] };
-  slug: string;
-  name: string;
-  schedule: string;
-  prompt?: string;
-  attachUrl?: string;
-  run?: ScheduledJobRun;
-  source?: string;
-  workdir?: string;
-  createdAt: string;
-  updatedAt?: string;
-  lastRunAt?: string;
-  lastRunExitCode?: number;
-  lastRunError?: string;
-  lastRunSource?: string;
-  lastRunStatus?: string;
-};
-
 export async function engineInstall(): Promise<ExecResult> {
   return invoke<ExecResult>("engine_install");
 }
@@ -1093,12 +1041,6 @@ export async function uninstallSkill(projectDir: string, name: string): Promise<
 export async function uninstallSkillAtPath(projectDir: string, name: string, path: string): Promise<ExecResult> {
   return invoke<ExecResult>("uninstall_skill_at_path", { projectDir, name, path });
 }
-
-export type OpencodeConfigFile = {
-  path: string;
-  exists: boolean;
-  content: string | null;
-};
 
 export type UpdaterEnvironment = {
   supported: boolean;

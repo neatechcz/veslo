@@ -141,7 +141,7 @@ test("project managed AI config comparison is semantic, not only byte-exact", ()
 
   assert.match(
     syncSource,
-    /const managedConfigMatches =[\s\S]*exactContentMatches \|\| managedConfigContentsMatch\(configFile\.content, content\);/,
+    /const managedConfigMatches =[\s\S]*exactContentMatches \|\|[\s\S]*managedConfigContentsMatch\(\s*configFile\.content,\s*content,[\s\S]*?\);/,
     "project config should use the same normalized managed-config comparison as server config",
   );
   assert.match(

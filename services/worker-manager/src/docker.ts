@@ -219,16 +219,23 @@ export class DockerWorkerAdapter implements WorkerDockerAdapter {
   }
 
   private async createWorkerContainer(input: CreateWorkerInput) {
-    const payload = buildWorkerContainerCreatePayload({
+    const containerInput: Parameters<typeof buildWorkerContainerCreatePayload>[0] = {
       workerId: input.workerId,
       name: input.name,
       hostToken: input.hostToken,
       clientToken: input.clientToken,
       image: input.image,
       networkName: this.config.networkName,
-      memoryBytes: this.config.memoryBytes,
-      nanoCpus: this.config.nanoCpus,
-    })
+    }
+
+    if (this.config.memoryBytes !== undefined) {
+      containerInput.memoryBytes = this.config.memoryBytes
+    }
+    if (this.config.nanoCpus !== undefined) {
+      containerInput.nanoCpus = this.config.nanoCpus
+    }
+
+    const payload = buildWorkerContainerCreatePayload(containerInput)
 
     const query = new URLSearchParams({ name: workerContainerName(input.workerId) })
     await this.dockerRequest("POST", `/containers/create?${query.toString()}`, payload, [201, 409])

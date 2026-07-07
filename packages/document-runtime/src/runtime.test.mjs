@@ -601,4 +601,3 @@ test("package archive install rejects unsafe archive paths without activating", 
     rmSync(runtimeRoot, { recursive: true, force: true });
   }
 });
-

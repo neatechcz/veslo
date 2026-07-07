@@ -178,6 +178,7 @@ function resolveTargetConflicts(
 
     const ordered = [...group].sort((left, right) => targetConflictPriority(right) - targetConflictPriority(left));
     const winner = ordered[0];
+    if (!winner) continue;
     resolved.push(winner);
     for (const loser of ordered.slice(1)) {
       conflicts.push({

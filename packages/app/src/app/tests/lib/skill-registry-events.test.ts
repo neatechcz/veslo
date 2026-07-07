@@ -134,6 +134,49 @@ test("failed polls report errors without advancing the cursor", async () => {
   assert.equal(listener.getState().inFlight, false);
 });
 
+test("concurrent pollNow calls share one in-flight request on slow networks", async () => {
+  let fetchCalls = 0;
+  let resolveFetch: ((response: Response) => void) | null = null;
+  const delivered: string[] = [];
+  const listener = createSkillRegistryEventsListener({
+    registryBaseUrl: "https://registry.example",
+    initialCursor: "cursor_0",
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      return new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      });
+    },
+    onEvent: (event) => {
+      delivered.push(event.id);
+    },
+  });
+
+  const firstPoll = listener.pollNow();
+  const secondPoll = listener.pollNow();
+  await Promise.resolve();
+
+  assert.equal(fetchCalls, 1);
+  assert.equal(listener.getState().inFlight, true);
+  const settleFetch = resolveFetch as ((response: Response) => void) | null;
+  assert.ok(settleFetch);
+  settleFetch(jsonResponse({
+    events: [registryEvent({ id: "event_slow" })],
+    nextCursor: "cursor_1",
+    revision: "revision_1",
+  }));
+  await Promise.all([firstPoll, secondPoll]);
+
+  assert.deepEqual(delivered, ["event_slow"]);
+  assert.equal(fetchCalls, 1);
+  assert.deepEqual(listener.getState(), {
+    running: false,
+    cursor: "cursor_1",
+    revision: "revision_1",
+    inFlight: false,
+  });
+});
+
 test("auth failures stop polling, preserve cursor, and do not reschedule", async () => {
   let nextTimerId = 1;
   const timers = new Map<number, () => void>();

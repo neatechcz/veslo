@@ -10,7 +10,7 @@ import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js
 import type { ProviderTransportResponse } from "../../providers/transport.js"
 import { readAnthropicUsage } from "../../usage/token-accounting.js"
 import { applyAiAccessPolicy } from "./access-policy.js"
-import type { ProxyDependencies } from "../proxy.js"
+import type { ProxyDependencies } from "../proxy-dependencies.js"
 
 export function createAnthropicProxyRouter(
   deps: Pick<ProxyDependencies, "credentials" | "usageRepository" | "leaseBroker" | "tokenBroker" | "anthropicTransport">,

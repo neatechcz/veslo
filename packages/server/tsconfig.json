@@ -6,6 +6,8 @@
     "outDir": "dist",
     "rootDir": "src",
     "allowSyntheticDefaultImports": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
     "types": ["bun-types", "node"]
   },
   "include": ["src"]
