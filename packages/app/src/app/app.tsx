@@ -563,12 +563,6 @@ export default function App() {
     orchestratorStatusState,
     orchestratorEnginesState,
     readyEngineWorkspaceIds,
-    vesloAuditEntries,
-    setVesloAuditEntries,
-    vesloAuditStatus,
-    setVesloAuditStatus,
-    vesloAuditError,
-    setVesloAuditError,
     devtoolsWorkspaceId,
     setDevtoolsWorkspaceId,
     activeVesloServerHostInfo,
@@ -3095,47 +3089,6 @@ export default function App() {
   });
 
   createEffect(() => {
-    const client = vesloServerClient();
-    const workspaceId = vesloServerWorkspaceId();
-    if (!client || !workspaceId) {
-      setVesloAuditEntries([]);
-      setVesloAuditStatus("idle");
-      setVesloAuditError(null);
-      return;
-    }
-
-    let active = true;
-    let busy = false;
-
-    const run = async () => {
-      if (busy) return;
-      busy = true;
-      setVesloAuditStatus("loading");
-      setVesloAuditError(null);
-      try {
-        const result = await client.listAudit(workspaceId, 50);
-        if (!active) return;
-        setVesloAuditEntries(Array.isArray(result.items) ? result.items : []);
-        setVesloAuditStatus("idle");
-      } catch (error) {
-        if (!active) return;
-        setVesloAuditEntries([]);
-        setVesloAuditStatus("error");
-        setVesloAuditError(error instanceof Error ? error.message : "Failed to load audit log.");
-      } finally {
-        busy = false;
-      }
-    };
-
-    run();
-    const interval = window.setInterval(run, 15_000);
-    onCleanup(() => {
-      active = false;
-      window.clearInterval(interval);
-    });
-  });
-
-  createEffect(() => {
     const active = workspaceStore.activeWorkspaceDisplay();
     if (active.workspaceType !== "remote" || active.remoteType !== "veslo") {
       return;
@@ -4503,9 +4456,6 @@ export default function App() {
     vesloServerHostInfo,
     devtoolsCapabilities,
     resolvedDevtoolsWorkspaceId,
-    vesloAuditEntries,
-    vesloAuditStatus,
-    vesloAuditError,
     opencodeConnectStatus,
     orchestratorStatusState,
     opencodeRouterInfoState,

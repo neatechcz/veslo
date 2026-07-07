@@ -44,8 +44,8 @@ test("settings exposes archived tab and developer-only debug tab", () => {
     generalSection,
     /<Show when=\{showGeneralUpdateControls\(\)\}>[\s\S]*generalUpdateLabel\(\)[\s\S]*generalUpdateActionLabel\(\)[\s\S]*onClick=\{handleGeneralUpdateAction\}[\s\S]*translate\("settings\.appearance_title"\)/,
   );
-  assert.match(source, /const auditLogPanel = \(\) =>/);
-  assert.match(generalSection, /\{auditLogPanel\(\)\}/);
+  assert.doesNotMatch(source, /const auditLogPanel = \(\) =>/);
+  assert.doesNotMatch(generalSection, /\{auditLogPanel\(\)\}/);
   assert.match(generalSection, /translate\("settings\.appearance_title"\)/);
   assert.match(generalSection, /translate\("settings\.appearance_hint"\)/);
   assert.match(generalSection, /translate\("settings\.theme_system"\)/);
@@ -67,17 +67,13 @@ test("settings no longer offers a developer mode entry point", () => {
   assert.doesNotMatch(appSource, /veslo\.developerMode/);
 });
 
-test("settings audit panel is visible and loads outside developer mode", () => {
-  const auditEffect = appSource.match(
-    /createEffect\(\(\) => \{\s*const client = vesloServerClient\(\);\s*const workspaceId = vesloServerWorkspaceId\(\);[\s\S]*?client\.listAudit\(workspaceId, 50\);/,
-  )?.[0] ?? "";
-  assert.match(source, /data-testid="settings-audit-log"/);
-  assert.match(generalSection, /\{auditLogPanel\(\)\}/);
-  assert.match(auditEffect, /const client = vesloServerClient\(\);/);
-  assert.match(auditEffect, /const workspaceId = vesloServerWorkspaceId\(\);/);
-  assert.doesNotMatch(auditEffect, /devtoolsWorkspaceId\(\)/);
-  assert.doesNotMatch(auditEffect, /developerMode\(\)/);
-  assert.doesNotMatch(auditEffect, /documentVisible\(\)/);
+test("settings hides the audit panel from visible settings surfaces", () => {
+  const debugSection = source.match(/<Match when=\{activeTab\(\) === "debug"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
+  assert.doesNotMatch(source, /data-testid="settings-audit-log"/);
+  assert.doesNotMatch(source, /const auditLogPanel = \(\) =>/);
+  assert.doesNotMatch(generalSection, /\{auditLogPanel\(\)\}/);
+  assert.doesNotMatch(debugSection, /\{auditLogPanel\(\)\}/);
+  assert.doesNotMatch(appSource, /client\.listAudit\(workspaceId, 50\);/);
 });
 
 test("settings keeps compact update controls in general instead of a floating toolbar layout", () => {

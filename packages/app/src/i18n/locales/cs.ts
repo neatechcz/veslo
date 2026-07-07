@@ -2073,8 +2073,6 @@ export default {
   "ui.literal.file_tools_1lpb92": "Souborové nástroje:",
   "ui.literal.sandbox_a1meoq": "Sandbox:",
   "ui.literal.workspace_debug_events_g2kpm2": "Debug události pracovního prostoru",
-  "ui.literal.audit_log_1kguyf": "Auditní log",
-  "ui.literal.no_audit_entries_yet_m8w4dn": "Zatím žádné auditní záznamy.",
   "ui.literal.document_runtime_z4n8k2": "Dokumentový runtime",
   "ui.literal.desktop_app_only_m3v7qa": "Pouze v desktopové aplikaci",
   "ui.literal.performance_h8k2nm": "Výkon",

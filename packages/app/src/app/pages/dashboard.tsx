@@ -38,7 +38,6 @@ import {
 import { parseVesloWorkspaceIdFromUrl } from "../lib/veslo-server";
 import { reportError } from "../lib/error-reporter";
 import type {
-  VesloAuditEntry,
   VesloSoulAuthContext,
   VesloSoulOverviewResponse,
   VesloServerClient,
@@ -149,9 +148,6 @@ export type DashboardViewProps = {
   vesloServerCapabilities: VesloServerCapabilities | null;
   vesloServerDiagnostics: VesloServerDiagnostics | null;
   vesloServerWorkspaceId: string | null;
-  vesloAuditEntries: VesloAuditEntry[];
-  vesloAuditStatus: "idle" | "loading" | "error";
-  vesloAuditError: string | null;
   opencodeConnectStatus: OpencodeConnectStatus | null;
   engineInfo: EngineInfo | null;
   engineDoctorVersion: string | null;
@@ -1245,9 +1241,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   vesloServerDiagnostics={props.vesloServerDiagnostics}
                   vesloServerWorkspaceId={props.vesloServerWorkspaceId}
                   activeWorkspaceRoot={props.activeWorkspaceRoot}
-                  vesloAuditEntries={props.vesloAuditEntries}
-                  vesloAuditStatus={props.vesloAuditStatus}
-                  vesloAuditError={props.vesloAuditError}
                   opencodeConnectStatus={props.opencodeConnectStatus}
                   engineInfo={props.engineInfo}
                   orchestratorStatus={props.orchestratorStatus}
