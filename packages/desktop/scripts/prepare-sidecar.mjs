@@ -11,6 +11,7 @@ import {
   readSync,
   readdirSync,
   realpathSync,
+  rmSync,
   statSync,
   symlinkSync,
   unlinkSync,
@@ -22,6 +23,7 @@ import { tmpdir } from "os";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 const readArg = (name) => {
   const raw = process.argv.slice(2);
   const direct = raw.find((arg) => arg.startsWith(`${name}=`));
@@ -235,6 +237,12 @@ const chromeDevtoolsTargetName = chromeDevtoolsTargetTriple
   : null;
 const chromeDevtoolsTargetPath = chromeDevtoolsTargetName ? join(sidecarDir, chromeDevtoolsTargetName) : null;
 const chromeDevtoolsShimPath = resolve(__dirname, "chrome-devtools-mcp-shim.ts");
+const chromeDevtoolsPackageDirName = "chrome-devtools-mcp-package";
+const chromeDevtoolsPackagePath = join(sidecarDir, chromeDevtoolsPackageDirName);
+const chromeDevtoolsPackageEntryPath = join(chromeDevtoolsPackagePath, "build", "src", "index.js");
+const chromeDevtoolsPackageSourceRoot = realpathSync(
+  dirname(require.resolve("chrome-devtools-mcp/package.json")),
+);
 
 const managedDepsManifestBaseName = "opencode-managed-deps.json";
 const managedDepsManifestPath = join(sidecarDir, managedDepsManifestBaseName);
@@ -394,6 +402,64 @@ const sha256File = (filePath) => {
 };
 
 const readJsonFile = (filePath) => JSON.parse(readFileSync(filePath, "utf8"));
+
+const copyDirectorySync = (source, target) => {
+  mkdirSync(target, { recursive: true });
+  for (const entry of readdirSync(source, { withFileTypes: true })) {
+    const sourcePath = join(source, entry.name);
+    const targetPath = join(target, entry.name);
+
+    if (entry.isDirectory()) {
+      copyDirectorySync(sourcePath, targetPath);
+      continue;
+    }
+
+    if (entry.isFile()) {
+      copyFileSync(sourcePath, targetPath);
+      continue;
+    }
+
+    if (entry.isSymbolicLink()) {
+      const resolvedPath = realpathSync(sourcePath);
+      const resolvedStat = statSync(resolvedPath);
+      if (resolvedStat.isDirectory()) {
+        copyDirectorySync(resolvedPath, targetPath);
+      } else if (resolvedStat.isFile()) {
+        copyFileSync(resolvedPath, targetPath);
+      }
+    }
+  }
+};
+
+const readPackageVersion = (packageRoot) => {
+  try {
+    return String(readJsonFile(join(packageRoot, "package.json")).version ?? "").trim();
+  } catch {
+    return null;
+  }
+};
+
+const shouldCopyChromeDevtoolsMcpPackage = () => {
+  if (forceBuild) return true;
+  if (!existsSync(chromeDevtoolsPackageEntryPath)) return true;
+  return readPackageVersion(chromeDevtoolsPackagePath) !== chromeDevtoolsMcpVersion;
+};
+
+const copyChromeDevtoolsMcpPackage = () => {
+  const sourceVersion = readPackageVersion(chromeDevtoolsPackageSourceRoot);
+  if (sourceVersion !== chromeDevtoolsMcpVersion) {
+    throw new Error(
+      `Chrome DevTools MCP package version mismatch: expected ${chromeDevtoolsMcpVersion}, found ${sourceVersion ?? "(missing)"}`,
+    );
+  }
+
+  rmSync(chromeDevtoolsPackagePath, { recursive: true, force: true });
+  copyDirectorySync(chromeDevtoolsPackageSourceRoot, chromeDevtoolsPackagePath);
+
+  if (!existsSync(chromeDevtoolsPackageEntryPath)) {
+    throw new Error(`Chrome DevTools MCP entrypoint missing after copy: ${chromeDevtoolsPackageEntryPath}`);
+  }
+};
 
 const packagePathParts = (name) => name.split("/").filter(Boolean);
 
@@ -1050,6 +1116,15 @@ if (existsSync(orchestratorBuildPath)) {
       copyExecutableSync(orchestratorBuildPath, orchestratorTargetPath);
     }
   }
+}
+
+try {
+  if (shouldCopyChromeDevtoolsMcpPackage()) {
+    copyChromeDevtoolsMcpPackage();
+  }
+} catch (error) {
+  console.error(`Failed to vendor Chrome DevTools MCP package: ${error}`);
+  process.exit(1);
 }
 
 // Build chrome-devtools-mcp shim sidecar

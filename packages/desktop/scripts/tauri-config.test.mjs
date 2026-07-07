@@ -144,6 +144,11 @@ test("Windows MSI keeps managed WSL sandbox provisioning opt-in during installer
     "MSI must bundle the desktop package manifest so the installer wrapper passes the pinned OpenCode version",
   );
   assert.equal(
+    resources["sidecars/chrome-devtools-mcp-package"],
+    "chrome-devtools-mcp-package",
+    "MSI must bundle the vendored Chrome DevTools MCP runtime package beside the sidecar executable",
+  );
+  assert.equal(
     resources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"],
     "windows-wsl2-sandbox-provision.ps1",
     "MSI must bundle the managed WSL provisioning helper into the app resources directory",

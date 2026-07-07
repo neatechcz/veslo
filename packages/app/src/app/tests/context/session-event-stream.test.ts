@@ -89,6 +89,7 @@ function makeController(options: {
   routing?: any;
   client?: () => any;
   recoverWorkspaceRuntimeForEventStream?: (workspaceId: string) => Promise<boolean> | boolean;
+  sessionErrorTurns?: Array<{ sessionID: string; text: string }>;
 } = {}) {
   const [store, setStore] = makeStore();
   const workspaceSessionIds = options.workspaceSessionIds ?? new Set<string>();
@@ -133,7 +134,9 @@ function makeController(options: {
     workspaceSessionIds,
     applySessionDirectoryOverride: (session) => session,
     resolveSessionDirectory: (session) => session.directory ?? "",
-    appendSessionErrorTurn: () => {},
+    appendSessionErrorTurn: (sessionID, text) => {
+      options.sessionErrorTurns?.push({ sessionID, text });
+    },
     setCommandDisplay: () => {},
     recordSyntheticContinueDiagnostic: () => {},
     maybeMarkReloadRequired: () => {},
@@ -539,6 +542,73 @@ test("event stream runtime errors release the route and recover workspace runtim
     }
   });
 });
+
+test("local Veslo bearer session errors trace and recover workspace runtime", withSendWorkflowTraceWindow(async (target) => {
+  await createRoot(async (dispose) => {
+    try {
+      const released: string[] = [];
+      const recovered: string[] = [];
+      const statusTraces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+      const sessionErrorTurns: Array<{ sessionID: string; text: string }> = [];
+      const routing = {
+        activeWorkspaceId: () => "ws-a",
+        active: () => null,
+        client: () => null,
+        entry: () => null,
+        entryIds: () => ["ws-a"],
+        release: (workspaceId: string) => {
+          released.push(workspaceId);
+        },
+      };
+      const { controller } = makeController({
+        activeWorkspaceId: "ws-a",
+        routing,
+        statusTraces,
+        sessionErrorTurns,
+        recoverWorkspaceRuntimeForEventStream: async (workspaceId) => {
+          recovered.push(workspaceId);
+          return true;
+        },
+      });
+
+      await controller.applyEvent(
+        {
+          type: "session.error",
+          properties: {
+            sessionID: "sess-a",
+            error: {
+              name: "APIError",
+              message: "Unauthorized: Invalid bearer token",
+              data: {
+                statusCode: 401,
+                isRetryable: false,
+                responseBody: '{"code":"unauthorized","message":"Invalid bearer token"}',
+              },
+            },
+          },
+        } as OpencodeEvent,
+        "ws-a",
+      );
+
+      assert.deepEqual(released, ["ws-a"]);
+      assert.deepEqual(recovered, ["ws-a"]);
+      assert.equal(sessionErrorTurns[0]?.sessionID, "sess-a");
+      assert.match(sessionErrorTurns[0]?.text ?? "", /^Local runtime connection changed/);
+      assert.equal(
+        statusTraces.some((trace) => trace.event === "sse-session-error-local-runtime-invalid-bearer"),
+        true,
+      );
+      assert.equal(
+        target.__vesloSendWorkflowTrace?.some(
+          (trace) => trace.event === "session-sse:local-runtime-invalid-bearer",
+        ),
+        true,
+      );
+    } finally {
+      dispose();
+    }
+  });
+}));
 
 test("cleanup aborts the currently reconnected SSE controller", async () => {
   const realSetTimeout = globalThis.setTimeout;

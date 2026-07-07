@@ -2122,6 +2122,8 @@ export default {
   "ai_access.invalid": "Přiřazený přístup k AI není kompletní. Požádejte administrátora platformy o úpravu.",
   "ai_access.load_failed": "Nepodařilo se načíst přístup k AI",
   "errors.authentication_failed": "Ověření selhalo",
+  "errors.local_runtime_connection_changed": "Připojení lokálního runtime se změnilo",
+  "errors.local_runtime_invalid_bearer_detail": "Lokální OpenCode runtime použil starý token Veslo serveru. Veslo runtime znovu připojí; zkuste to znovu, až bude připravený.",
   "errors.rate_limit_exceeded": "Překročen limit požadavků",
   "errors.request_failed": "Požadavek selhal",
   "errors.invalid_file": "Neplatný soubor",

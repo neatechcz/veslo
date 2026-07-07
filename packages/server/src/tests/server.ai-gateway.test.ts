@@ -449,6 +449,64 @@ describe("ai gateway proxy routes", () => {
     }
   });
 
+  test("server traces AI gateway client auth failures before proxy handling", async () => {
+    const traceDir = mkdtempSync(join(tmpdir(), "veslo-ai-gateway-auth-trace-"));
+    const traceFile = join(traceDir, "send-workflow-trace.ndjson");
+
+    try {
+      await withEnvVar("VESLO_SEND_WORKFLOW_TRACE_FILE", traceFile, async () => {
+        const server = startServer(createTestConfig());
+
+        try {
+          const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
+            method: "POST",
+            headers: {
+              authorization: "Bearer stale-client-token",
+              "content-type": "application/json",
+              "x-veslo-session-id": "ses_1",
+              "x-veslo-workspace-id": "ws_1",
+              "x-veslo-send-trace-id": "trace-auth-failed",
+            },
+            body: JSON.stringify({
+              model: "gpt-5.5",
+              messages: [{ role: "user", content: "Hello" }],
+            }),
+          });
+
+          expect(response.status).toBe(401);
+          expect(await response.json()).toEqual({
+            code: "unauthorized",
+            message: "Invalid bearer token",
+          });
+
+          const entries = readFileSync(traceFile, "utf8")
+            .trim()
+            .split(/\r?\n/)
+            .map((line) => JSON.parse(line) as Record<string, unknown>);
+          const authFailed = entries.find((entry) => entry.event === "server:ai-gateway:auth-failed");
+          expect(Boolean(authFailed)).toBe(true);
+          if (!authFailed) throw new Error("missing auth-failed trace entry");
+
+          expect(authFailed.provider).toBe("codex_oauth");
+          expect(authFailed.gatewayPath).toBe("/providers/codex_oauth/v1/chat/completions");
+          expect(authFailed.status).toBe(401);
+          expect(authFailed.code).toBe("unauthorized");
+          expect(authFailed.traceId).toBe("trace-auth-failed");
+          expect(authFailed.sessionId).toBe("ses_1");
+          expect(authFailed.workspaceId).toBe("ws_1");
+          expect(authFailed.incomingHeaders).toContain("authorization");
+          expect(authFailed.incomingHeaders).toContain("x-veslo-send-trace-id");
+          expect(authFailed.incomingHeaders).toContain("x-veslo-session-id");
+          expect(authFailed.incomingHeaders).toContain("x-veslo-workspace-id");
+        } finally {
+          stopTestServer(server);
+        }
+      });
+    } finally {
+      rmSync(traceDir, { recursive: true, force: true });
+    }
+  });
+
   test("server uses runtime ai-access authorization for provider routes without gateway token headers", async () => {
     const requests: Array<{
       method: string;

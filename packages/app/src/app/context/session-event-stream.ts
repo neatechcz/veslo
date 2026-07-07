@@ -7,7 +7,7 @@ import { engineSseSubscribe, isEngineSseAvailable } from "../lib/engine-sse";
 import { unwrap, type OpencodeAuth } from "../lib/opencode";
 import { perfNow, recordPerfLog } from "../lib/perf-log";
 import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
-import { formatSessionError, truncateErrorField } from "../lib/session-error";
+import { formatSessionError, isLocalVesloServerInvalidBearerError, truncateErrorField } from "../lib/session-error";
 import type {
   MessageInfo,
   OpencodeEvent,
@@ -476,10 +476,58 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             }
             return;
           }
+          const formattedError = addOpencodeCacheHint(formatSessionError(errorObj));
+          const localInvalidBearer = isLocalVesloServerInvalidBearerError(errorObj);
           if (sessionID) {
-            deps.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(formatSessionError(errorObj)));
+            deps.appendSessionErrorTurn(sessionID, formattedError);
           } else {
-            deps.setError(addOpencodeCacheHint(formatSessionError(errorObj)));
+            deps.setError(formattedError);
+          }
+          if (localInvalidBearer) {
+            const recoveryAvailable = Boolean(sourceWsId && deps.recoverWorkspaceRuntimeForEventStream);
+            recordSendWorkflowTrace("session-sse", "session-sse:local-runtime-invalid-bearer", {
+              workspaceId: sourceWsId || null,
+              sessionID: sessionID || null,
+              recoveryAvailable,
+              errorName,
+              message: truncateErrorField(
+                typeof errorObj.message === "string" ? errorObj.message : null,
+              ),
+            });
+            deps.recordSessionStatusTrace("sse-session-error-local-runtime-invalid-bearer", {
+              sessionId: sessionID || null,
+              sourceWorkspaceId: sourceWsId || null,
+              recoveryAvailable,
+            });
+            if (sourceWsId && deps.recoverWorkspaceRuntimeForEventStream) {
+              deps.routing.release(sourceWsId);
+              deps.sessionWarn("session.error:recovering-runtime-route", {
+                workspaceId: sourceWsId,
+                sessionID: sessionID || null,
+                error: "local-veslo-server-invalid-bearer",
+              });
+              recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "session-error-runtime-route-recovery", {
+                workspaceId: sourceWsId,
+                sessionID: sessionID || null,
+                error: "local-veslo-server-invalid-bearer",
+              });
+              try {
+                const recovered = await deps.recoverWorkspaceRuntimeForEventStream(sourceWsId);
+                deps.recordSessionStatusTrace("sse-session-error-local-runtime-recovery-result", {
+                  sessionId: sessionID || null,
+                  sourceWorkspaceId: sourceWsId,
+                  recovered: Boolean(recovered),
+                });
+              } catch (recoveryError) {
+                deps.sessionWarn("session.error:runtime-route-recovery-failed", {
+                  workspaceId: sourceWsId,
+                  sessionID: sessionID || null,
+                  error: truncateErrorField(
+                    recoveryError instanceof Error ? recoveryError.message : String(recoveryError),
+                  ),
+                });
+              }
+            }
           }
           return;
         }

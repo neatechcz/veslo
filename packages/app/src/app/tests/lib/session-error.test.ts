@@ -38,6 +38,29 @@ test("non-file API errors retain standard API diagnostics", () => {
   assert.match(text, /Retryable: yes/);
 });
 
+test("local Veslo server bearer failures are not shown as provider authentication failures", () => {
+  const text = formatSessionError({
+    name: "APIError",
+    message: "Unauthorized: Invalid bearer token",
+    data: {
+      statusCode: 401,
+      isRetryable: false,
+      responseBody: '{"code":"unauthorized","message":"Invalid bearer token"}',
+    },
+  });
+
+  assert.equal(
+    text,
+    [
+      "Local runtime connection changed",
+      "The local OpenCode runtime used an old Veslo server token. Veslo will reconnect the runtime; retry after it is ready.",
+    ].join("\n"),
+  );
+  assert.equal(text.includes("Authentication failed"), false);
+  assert.equal(text.includes("Retryable:"), false);
+  assert.equal(text.includes("Response:"), false);
+});
+
 test("managed Codex credential failures are mapped to actionable AI access guidance", () => {
   const text = formatSessionError({
     name: "APIError",

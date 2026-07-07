@@ -1,13 +1,12 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
-const packageSpec =
-  process.env.VESLO_CHROME_DEVTOOLS_MCP_SPEC?.trim() ||
-  process.env.CHROME_DEVTOOLS_MCP_SPEC?.trim() ||
-  "chrome-devtools-mcp@0.17.0";
-
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const forwardedArgs = process.argv.slice(2);
+const require = createRequire(import.meta.url);
+const vendoredPackageDirName = "chrome-devtools-mcp-package";
 
 const hasArg = (name: string) =>
   forwardedArgs.some((value) => value === name || value.startsWith(`${name}=`));
@@ -26,34 +25,34 @@ const hasExplicitBrowserProfileConfig =
 const shouldInjectIsolated =
   process.env.VESLO_CHROME_DEVTOOLS_MCP_DEFAULT_ISOLATED !== "0" && !hasExplicitBrowserProfileConfig;
 
-const effectiveArgs = shouldInjectIsolated ? [...forwardedArgs, "--isolated"] : forwardedArgs;
+if (shouldInjectIsolated) {
+  process.argv.push("--isolated");
+}
 
-const args = ["exec", "--yes", packageSpec, "--", ...effectiveArgs];
-
-const child = spawn(npmCommand, args, {
-  stdio: "inherit",
-  env: {
-    ...process.env,
-    npm_config_yes: "true",
-  },
-});
-
-child.on("error", (error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  if (message.includes("ENOENT")) {
-    console.error(
-      "Control Chrome requires npm (Node.js). Install Node.js or configure mcp.chrome-devtools.command to a local chrome-devtools-mcp binary."
-    );
-  } else {
-    console.error(`Failed to start chrome-devtools-mcp via npm exec: ${message}`);
+const resolveChromeDevtoolsMcpEntrypoint = () => {
+  const sidecarEntrypoint = join(
+    dirname(process.execPath),
+    vendoredPackageDirName,
+    "build",
+    "src",
+    "index.js",
+  );
+  if (existsSync(sidecarEntrypoint)) {
+    return sidecarEntrypoint;
   }
+
+  try {
+    const packageJsonPath = require.resolve("chrome-devtools-mcp/package.json");
+    const localEntrypoint = join(dirname(packageJsonPath), "build", "src", "index.js");
+    if (existsSync(localEntrypoint)) {
+      return localEntrypoint;
+    }
+  } catch {
+    // Fall through to the explicit runtime error below.
+  }
+
+  console.error(`Chrome DevTools MCP runtime package not found at ${sidecarEntrypoint}.`);
   process.exit(1);
-});
+};
 
-child.on("exit", (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal);
-    return;
-  }
-  process.exit(code ?? 1);
-});
+await import(pathToFileURL(resolveChromeDevtoolsMcpEntrypoint()).href);

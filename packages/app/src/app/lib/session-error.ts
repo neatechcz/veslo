@@ -82,6 +82,11 @@ type ParsedApiErrorBody = {
   code: string | null;
 };
 
+type ParsedFlatErrorBody = {
+  message: string | null;
+  code: string | null;
+};
+
 const parseApiErrorBody = (responseBody: string | null): ParsedApiErrorBody | null => {
   if (!responseBody) return null;
   try {
@@ -100,6 +105,23 @@ const parseApiErrorBody = (responseBody: string | null): ParsedApiErrorBody | nu
       type: truncateErrorField(apiError.type, 200),
       param: truncateErrorField(apiError.param, 200),
       code: truncateErrorField(apiError.code, 200),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const parseFlatErrorBody = (responseBody: string | null): ParsedFlatErrorBody | null => {
+  if (!responseBody) return null;
+  try {
+    const parsed = JSON.parse(responseBody) as {
+      message?: unknown;
+      code?: unknown;
+    } | null;
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      message: truncateErrorField(parsed.message, 800),
+      code: truncateErrorField(parsed.code, 200),
     };
   } catch {
     return null;
@@ -131,9 +153,35 @@ const isInvalidFileInputError = (options: {
   return false;
 };
 
+export const isLocalVesloServerInvalidBearerError = (errorObj: Record<string, unknown>) => {
+  const records = getNestedRecords(errorObj);
+  const rawMessage = firstStringField(records, ["message", "detail", "reason"]);
+  const responseBody = firstStringField(records, ["responseBody", "body", "response"]);
+  const flatError = parseFlatErrorBody(responseBody);
+  const statusCode = firstNumberField(records, ["statusCode", "status"]);
+  const inferred = inferHttpStatus(rawMessage) ?? inferHttpStatus(responseBody);
+  const effectiveStatus = statusCode ?? inferred;
+  const code = (firstStringField(records, ["code", "errorCode"]) ?? flatError?.code ?? "").toLowerCase();
+  const flatMessage = (flatError?.message ?? "").toLowerCase();
+  const message = (rawMessage ?? "").toLowerCase();
+
+  return (
+    effectiveStatus === 401 &&
+    code === "unauthorized" &&
+    (flatMessage === "invalid bearer token" || message.includes("invalid bearer token"))
+  );
+};
+
 export const formatSessionError = (errorObj: Record<string, unknown>) => {
   const managedAiAccessError = formatManagedAiAccessError(errorObj);
   if (managedAiAccessError) return managedAiAccessError;
+
+  if (isLocalVesloServerInvalidBearerError(errorObj)) {
+    return [
+      tr("errors.local_runtime_connection_changed"),
+      tr("errors.local_runtime_invalid_bearer_detail"),
+    ].join("\n");
+  }
 
   const records = getNestedRecords(errorObj);
   const errorName = typeof errorObj.name === "string" ? errorObj.name : "UnknownError";

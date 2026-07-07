@@ -14,5 +14,8 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"
   },
-  "packageManager": "pnpm@10.27.0"
+  "packageManager": "pnpm@10.27.0",
+  "dependencies": {
+    "chrome-devtools-mcp": "0.17.0"
+  }
 }

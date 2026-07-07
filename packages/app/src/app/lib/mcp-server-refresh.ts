@@ -9,6 +9,7 @@ type McpRefreshMode = "auto" | "explicit";
 export type McpServersRefreshOptions = {
   mode?: McpRefreshMode;
   reason?: string | null;
+  probeRuntimeStatus?: boolean;
 };
 
 type McpRefreshInFlight = {
@@ -43,10 +44,18 @@ export function createMcpServersRefresher(options: McpServersRefresherOptions) {
     options.setMcpStatuses({});
   };
 
-  const applyEntries = (projectDir: string, entries: McpServerEntry[]) => {
+  const applyEntries = (projectDir: string, entries: McpServerEntry[], probeRuntimeStatus: boolean) => {
     options.setMcpServers(entries);
     options.setMcpLastUpdatedAt(Date.now());
-    options.scheduleRuntimeStatusRefresh(projectDir, entries);
+    if (probeRuntimeStatus) {
+      options.scheduleRuntimeStatusRefresh(projectDir, entries);
+    } else if (entries.length) {
+      recordPerfLog(options.developerMode(), "workspace.mcp", "runtime-status-skip-auto-refresh", {
+        activeWorkspaceId: options.activeWorkspaceId().trim(),
+        projectDir,
+        entries: entries.map((entry) => entry.name),
+      });
+    }
 
     if (!entries.length) {
       options.setMcpStatus("No MCP servers configured yet.");
@@ -66,6 +75,7 @@ export function createMcpServersRefresher(options: McpServersRefresherOptions) {
   return async function refreshMcpServers(refreshOptions: McpServersRefreshOptions = {}) {
     const refreshMode = refreshOptions.mode ?? "auto";
     const refreshReason = refreshOptions.reason?.trim() || refreshMode;
+    const probeRuntimeStatus = refreshOptions.probeRuntimeStatus ?? refreshMode === "explicit";
     const projectDir = options.projectDir().trim();
     const workspaceType = options.workspaceType();
     const isRemoteWorkspace = workspaceType === "remote";
@@ -133,7 +143,7 @@ export function createMcpServersRefresher(options: McpServersRefresherOptions) {
         return;
       }
       options.setMcpStatus(null);
-      applyEntries(projectDir, entries);
+      applyEntries(projectDir, entries, probeRuntimeStatus);
     };
     const existingRefresh = refreshInFlightByKey.get(refreshKey);
     if (existingRefresh) {

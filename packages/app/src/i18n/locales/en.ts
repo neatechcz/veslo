@@ -2126,6 +2126,8 @@ export default {
   "ai_access.invalid": "Assigned AI access is incomplete. Ask your platform admin to update it.",
   "ai_access.load_failed": "Failed to load AI access",
   "errors.authentication_failed": "Authentication failed",
+  "errors.local_runtime_connection_changed": "Local runtime connection changed",
+  "errors.local_runtime_invalid_bearer_detail": "The local OpenCode runtime used an old Veslo server token. Veslo will reconnect the runtime; retry after it is ready.",
   "errors.rate_limit_exceeded": "Rate limit exceeded",
   "errors.request_failed": "Request failed",
   "errors.invalid_file": "Invalid file",

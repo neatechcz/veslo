@@ -865,6 +865,7 @@ export function startServer(config: ServerConfig) {
         const apiError = error instanceof ApiError
           ? error
           : new ApiError(500, "internal_error", "Unexpected server error");
+        recordAiGatewayAuthFailureTrace(request, url, apiError);
         errorMessage = apiError.message;
         errorDetails = apiError.details;
         return finalize(jsonResponse(formatError(apiError), apiError.status));
@@ -1465,6 +1466,40 @@ function headerNamesForTrace(headers: Headers): string[] {
 function resolveAiGatewayProvider(gatewayPath: string): string | undefined {
   const match = gatewayPath.match(/^\/providers\/([^/]+)/);
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+}
+
+function resolveAiGatewayPathForTrace(pathname: string): string | null {
+  if (pathname === "/ai-gateway") return "/";
+  if (!pathname.startsWith("/ai-gateway/")) return null;
+  const gatewayPath = pathname.slice("/ai-gateway".length);
+  return gatewayPath || "/";
+}
+
+function recordAiGatewayAuthFailureTrace(request: Request, url: URL, error: ApiError): void {
+  if (error.status !== 401 && error.status !== 403) return;
+  const gatewayPath = resolveAiGatewayPathForTrace(url.pathname);
+  if (!gatewayPath) return;
+  recordSendWorkflowTrace("server", "server:ai-gateway:auth-failed", {
+    traceId: trimmedHeader(request, "x-veslo-send-trace-id") ?? null,
+    provider: resolveAiGatewayProvider(gatewayPath) ?? null,
+    gatewayPath,
+    sessionId: trimmedHeader(request, GATEWAY_SESSION_ID_HEADER) ?? null,
+    workspaceId: trimmedHeader(request, GATEWAY_WORKSPACE_ID_HEADER) ?? null,
+    status: error.status,
+    code: error.code,
+    incomingHeaders: headerNamesForTrace(request.headers),
+    incomingInternalHeaders: {
+      hasGatewayAccessToken: Boolean(trimmedHeader(request, GATEWAY_ACCESS_TOKEN_HEADER)),
+      hasGatewayCallerAuth: Boolean(trimmedHeader(request, GATEWAY_CALLER_AUTH_HEADER)),
+      hasWorkspaceId: Boolean(trimmedHeader(request, GATEWAY_WORKSPACE_ID_HEADER)),
+      hasSendTraceId: Boolean(trimmedHeader(request, "x-veslo-send-trace-id")),
+      hasSessionId: Boolean(trimmedHeader(request, GATEWAY_SESSION_ID_HEADER)),
+      hasOpenCodeSessionId: Boolean(trimmedHeader(request, "x-session-id")),
+      hasOpenCodeSessionAffinity: Boolean(trimmedHeader(request, "x-session-affinity")),
+      hasHostToken: Boolean(trimmedHeader(request, "x-veslo-host-token")),
+      hasClientId: Boolean(trimmedHeader(request, "x-veslo-client-id")),
+    },
+  });
 }
 
 function buildActiveAiGatewayResolutionDiagnostics(input: {
