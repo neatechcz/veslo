@@ -127,7 +127,36 @@ Document skills should call the Veslo runtime entrypoint or run with a `PATH`
 constructed by Veslo so they resolve managed tools first. Host tools may be
 reported by diagnostics, but they are not authoritative for correctness.
 
+## Scope Decision 2026-07-07 (inline bundle, reuse existing signing)
+
+Per explicit product direction, v1 of DRT03/DRT04 does not build a separately
+signed `.veslopkg` for the customer installer path. Instead:
+
+- The real document-runtime tree (LibreOffice headless components, Poppler,
+  Pandoc, QPDF, managed Python venv, managed Node modules, fonts) is assembled
+  by a CI-only script and wired into `packages/desktop/src-tauri/tauri.conf.json`
+  `bundle.resources`, so it is signed by the SAME existing pipeline that already
+  signs `veslo.exe`/the MSI (Authenticode via Azure Artifact Signing on
+  Windows) and the same pipeline that already codesigns/notarizes the macOS
+  `.app` bundle. No new signing secrets, certificates, or CI environments are
+  introduced.
+- `scripts/release/verify-document-runtime-*.mjs` are updated to check for the
+  bundled resource tree on disk (post-`tauri build`) instead of requiring a
+  standalone `.veslopkg` + `.sig` pair.
+- The separate updater package feed (`document-runtime-packages.json`,
+  independent runtime package download/verify/activate/rollback flow described
+  below) remains the target end-state for later, but is explicitly deferred.
+  Runtime updates ship with the normal app update for now.
+- This changes DRT03/DRT04 acceptance to: "the runtime ships inside the normal
+  signed installer/app bundle and passes `doctor --json` after a normal
+  install," not "a separately signed/distributed package exists."
+
 ## Package and Updater Contract
+
+Note: the standalone package/updater contract below remains the documented
+target end-state. The 2026-07-07 scope decision above ships DRT03/DRT04 via
+inline bundle resources signed by the existing installer pipeline first; the
+independent package-feed/updater flow is deferred, not abandoned.
 
 The document runtime is a first-class Veslo package, not loose installer files.
 The initial customer installer carries a bootstrap package so clean machines work
@@ -319,7 +348,7 @@ Rules for agents taking work from this plan:
 | --- | --- | --- | --- | --- |
 | DRT01 | dependency inventory and lockfiles | completed | codex-20260702-document-runtime-package-contract | true |
 | DRT02 | runtime CLI and doctor contract | completed | codex-20260702-document-runtime-cli | true |
-| DRT03 | Windows native sealed runtime package | in_progress | codex-20260702-windows-document-runtime-package-gate | false |
+| DRT03 | Windows native sealed runtime package | in_progress | claude-20260707-windows-inline-bundle | false |
 | DRT04 | macOS bundled document runtime package | in_progress | codex-20260702-macos-document-runtime-package-gate | false |
 | DRT05 | runtime package and Veslo updater integration | in_progress | codex-20260702-runtime-package-release-assets | false |
 | DRT06 | core skill command rewiring | completed | codex-20260702-core-skill-runtime-rewire | true |
@@ -533,6 +562,15 @@ Status 2026-07-02:
 - DRT03 remains `done: false` until the actual Windows native runtime package
   with portable LibreOffice/Python/Node/Poppler/Pandoc/fonts is produced,
   signed, and placed where the release gate expects it.
+
+Status 2026-07-07 (in progress, claude-20260707-windows-inline-bundle):
+
+- Adopting the "Scope Decision 2026-07-07" inline-bundle approach above:
+  assembling real Windows binaries via a CI-only script into
+  `packages/desktop/src-tauri` resources, signed by the existing Windows
+  Authenticode pipeline already in `build-windows-msi.yml` /
+  `release-macos-aarch64.yml`, instead of a standalone `.veslopkg`.
+- Work happening in worktree branch `docrt/windows-native-bundle`.
 
 ### DRT04: macOS Bundled Document Runtime Package
 
