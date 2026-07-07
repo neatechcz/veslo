@@ -1503,7 +1503,17 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           serverSubmit: true,
         });
       }
-      if (compactCommand) {
+      if (result.status === "queued") {
+        deps.emitLiveTranscriptPolicyEvent({
+          type: "conversation-run.queued",
+          reason: "sendPrompt:queued",
+          workspaceId,
+          sessionId: existingSessionId,
+          traceId: sendTraceId,
+          queueItemId: result.queueItemId,
+          reservedRunId: result.reservedRunId,
+        });
+      } else if (compactCommand) {
         deps.emitLiveTranscriptPolicyEvent({
           type: "conversation-compact.succeeded",
           reason: "sendPrompt:compact-success",
@@ -1707,13 +1717,25 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         queueItemId: serverFirstSubmitResult.status === "queued" ? serverFirstSubmitResult.queueItemId : null,
         draftDisposition: serverFirstSubmitResult.draftDisposition,
       });
-      deps.emitLiveTranscriptPolicyEvent({
-        type: "conversation-run.succeeded",
-        reason: "sendPrompt:success",
-        workspaceId: serverFirstSubmitResult.workspaceId,
-        sessionId: sessionID,
-        traceId: sendTraceId,
-      });
+      if (serverFirstSubmitResult.status === "queued") {
+        deps.emitLiveTranscriptPolicyEvent({
+          type: "conversation-run.queued",
+          reason: "sendPrompt:queued",
+          workspaceId: serverFirstSubmitResult.workspaceId,
+          sessionId: sessionID,
+          traceId: sendTraceId,
+          queueItemId: serverFirstSubmitResult.queueItemId,
+          reservedRunId: serverFirstSubmitResult.reservedRunId,
+        });
+      } else {
+        deps.emitLiveTranscriptPolicyEvent({
+          type: "conversation-run.succeeded",
+          reason: "sendPrompt:success",
+          workspaceId: serverFirstSubmitResult.workspaceId,
+          sessionId: sessionID,
+          traceId: sendTraceId,
+        });
+      }
       await consumePendingDraftAfterAcceptedSend(true);
       deps.holdVisibleRuntimeActivity(sessionID, "sendPrompt:server-submit-first-success");
       return sessionSubmitResultFromConversationSubmit(serverFirstSubmitResult);

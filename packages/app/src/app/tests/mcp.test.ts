@@ -111,6 +111,72 @@ test("buildEffectiveMcpServerEntriesFromContent uses server-equivalent glob patt
   assert.equal(result.find((entry) => entry.name === "food")?.disabledByTools, undefined);
 });
 
+test("buildEffectiveMcpServerEntriesFromContent honors official tools false globs", () => {
+  const result = buildEffectiveMcpServerEntriesFromContent(
+    JSON.stringify({
+      tools: { "mcp.global-disabled": false },
+      mcp: {
+        "global-disabled": { type: "remote", url: "https://global-disabled.example" },
+        shared: { type: "remote", url: "https://global-shared.example" },
+      },
+    }),
+    JSON.stringify({
+      tools: {
+        "mcp.shared": false,
+        "project-disabled": false,
+        "mcp.project-enabled": true,
+      },
+      mcp: {
+        shared: { type: "remote", url: "https://project-shared.example" },
+        "project-disabled": { type: "local", command: ["node", "server.js"] },
+        "project-enabled": { type: "remote", url: "https://project-enabled.example" },
+      },
+    }),
+  );
+
+  assert.equal(result.find((entry) => entry.name === "global-disabled")?.disabledByTools, true);
+  assert.equal(result.find((entry) => entry.name === "shared")?.disabledByTools, true);
+  assert.equal(result.find((entry) => entry.name === "project-disabled")?.disabledByTools, true);
+  assert.equal(result.find((entry) => entry.name === "project-enabled")?.disabledByTools, undefined);
+});
+
+test("buildEffectiveMcpServerEntriesFromContent turns project disabled sentinels into disabled inherited entries", () => {
+  const result = buildEffectiveMcpServerEntriesFromContent(
+    JSON.stringify({
+      mcp: {
+        github: { type: "remote", url: "https://global.example/mcp" },
+        browser: { type: "local", command: ["node", "browser.js"] },
+      },
+    }),
+    JSON.stringify({
+      mcp: {
+        github: { enabled: false },
+      },
+    }),
+  );
+
+  assert.deepEqual(result.map((entry) => `${entry.name}:${entry.source}:${entry.config.enabled}`), [
+    "browser:config.global:undefined",
+    "github:config.project:false",
+  ]);
+  assert.equal(result.find((entry) => entry.name === "github")?.config.type, "remote");
+  assert.equal(result.find((entry) => entry.name === "github")?.config.url, "https://global.example/mcp");
+});
+
+test("parseMcpServersFromContent ignores override-only disabled sentinels", () => {
+  const result = parseMcpServersFromContent(JSON.stringify({
+    mcp: {
+      github: { enabled: false },
+      playwright: {
+        type: "local",
+        command: ["bun", "x", "@playwright/mcp"],
+      },
+    },
+  }));
+
+  assert.deepEqual(result.map((entry) => entry.name), ["playwright"]);
+});
+
 test("parseMcpServersFromContent ignores future mcp.servers shape", () => {
   const result = parseMcpServersFromContent(JSON.stringify({
     mcp: {

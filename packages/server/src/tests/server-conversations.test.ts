@@ -408,7 +408,7 @@ describe("conversation routes", () => {
         return Response.json({ error: "not found" }, { status: 404 });
       },
     });
-    runningServers.push({ stop: () => upstream.stop(true) });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
     const server = startTestServer({
       workspaceRoot,
       upstreamPort: upstream.port,
@@ -458,9 +458,15 @@ describe("conversation routes", () => {
 
     const retryResponse = await submit();
     expect(retryResponse.status).toBe(200);
-    expect(await retryResponse.json()).toEqual(payload);
+    const retryPayload = await retryResponse.json() as typeof payload;
+    expect(retryPayload.status).toBe("failed");
+    expect(retryPayload.draftDisposition).toBe("restore");
+    expect(retryPayload.conversationId).toBe(payload.conversationId);
+    expect(retryPayload.opencodeSessionId).toBe("sess-submit-created-failed");
+    expect(retryPayload.pendingClientSessionId).toBe("pending-submit-materialized-failed");
     expect(upstreamRequests).toEqual([
       "/session",
+      "/session/sess-submit-created-failed/prompt_async",
       "/session/sess-submit-created-failed/prompt_async",
     ]);
   });

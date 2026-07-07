@@ -1533,6 +1533,7 @@ function resolveAiGatewayProviderAuthorization(input: {
   request: Request;
   actor?: Actor;
   runtimeAuthorizationActorTokenHash?: string | null;
+  activeRunContextPresent?: boolean;
 }): {
   authorization: string;
   source: "legacy-header" | AiGatewayRuntimeAuthorizationEntry["source"];
@@ -1934,6 +1935,7 @@ async function proxyAiGatewayRequest(input: {
         request: input.request,
         actor: input.actor,
         runtimeAuthorizationActorTokenHash: activeRunContext?.runtimeAuthorizationActorTokenHash ?? null,
+        activeRunContextPresent: Boolean(activeRunContext),
       })
     : null;
   const authorization = input.auth === "caller"

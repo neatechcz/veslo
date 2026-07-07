@@ -95,7 +95,6 @@ export type SessionCapabilitiesStoreDeps = {
   vesloServerWorkspaceId: Accessor<string | null | undefined>;
   vesloCapabilities: Accessor<VesloServerCapabilities | null | undefined>;
   skillInventory: Accessor<SkillInventoryItem[]>;
-  refreshSkillInventory: () => Promise<unknown> | unknown;
   readEffectiveMcpServerEntries?: (directory: string) => Promise<McpServerEntry[]>;
   recordPerfLog?: (
     enabled: boolean,
@@ -126,6 +125,13 @@ const workspaceLabelForSessionCapabilities = (workspace: WorkspaceInfo | null | 
 const filterSessionMcpStatuses = (status: McpStatusMap, entries: McpServerEntry[]) => {
   const configured = new Set(entries.map((entry) => entry.name));
   return Object.fromEntries(Object.entries(status).filter(([name]) => configured.has(name))) as McpStatusMap;
+};
+
+const failedSessionMcpStatuses = (entries: McpServerEntry[], error: unknown): McpStatusMap => {
+  const message = error instanceof Error ? error.message : safeStringify(error);
+  return Object.fromEntries(
+    entries.map((entry) => [entry.name, { status: "failed", error: message }]),
+  ) as McpStatusMap;
 };
 
 export function createSessionCapabilitiesStore(deps: SessionCapabilitiesStoreDeps): SessionCapabilitiesStore {
@@ -201,6 +207,14 @@ export function createSessionCapabilitiesStore(deps: SessionCapabilitiesStoreDep
     }];
   };
 
+  const localSessionSkillRows = (scope: SessionCapabilitiesScope) => {
+    const inventory = filterSessionSkillInventoryByScope(deps.skillInventory(), {
+      directory: scope.directory,
+      workspaceId: scope.workspaceId,
+    });
+    return buildSessionSkillRows(inventory);
+  };
+
   const matchingRuntimeClientForSessionCapabilities = (directory: string, workspace: WorkspaceInfo | null) => {
     const runtimeClient = deps.client();
     if (!runtimeClient) return null;
@@ -265,8 +279,15 @@ export function createSessionCapabilitiesStore(deps: SessionCapabilitiesStoreDep
         return {};
       }
       return filterSessionMcpStatuses(status as McpStatusMap, entries);
-    } catch {
-      return {};
+    } catch (error) {
+      recordPerfLog(deps.developerMode(), "workspace.mcp", "session-capabilities-status-error", {
+        activeWorkspaceId: deps.activeWorkspaceId().trim(),
+        directory,
+        workspaceId: workspace?.id ?? null,
+        entries: entries.map((entry) => entry.name),
+        error: error instanceof Error ? error.message : safeStringify(error),
+      });
+      return failedSessionMcpStatuses(entries, error);
     }
   };
 
@@ -297,18 +318,11 @@ export function createSessionCapabilitiesStore(deps: SessionCapabilitiesStoreDep
     workspace: WorkspaceInfo | null,
   ): Promise<Omit<SessionCapabilitiesSnapshot, "loadedAt">> => {
     const directory = scope.directory;
-    const [mcpEntries] = await Promise.all([
-      readEffectiveMcpServerEntries(directory),
-      deps.refreshSkillInventory(),
-    ]);
-    const inventory = filterSessionSkillInventoryByScope(deps.skillInventory(), {
-      directory,
-      workspaceId: scope.workspaceId,
-    });
+    const mcpEntries = await readEffectiveMcpServerEntries(directory);
     const statuses = await loadSessionMcpStatuses(directory, mcpEntries, workspace);
     return {
       directory,
-      skills: buildSessionSkillRows(inventory),
+      skills: localSessionSkillRows(scope),
       mcp: buildSessionMcpRows(mcpEntries, statuses),
     };
   };
@@ -382,41 +396,56 @@ export function createSessionCapabilitiesStore(deps: SessionCapabilitiesStoreDep
     return loadLocalSessionCapabilities(scope, workspace);
   });
   const sessionCapabilitiesLoadContextByDirectory = new Map<string, string>();
+  const sessionCapabilitiesDeferredRefreshByDirectory = new Set<string>();
   let sessionCapabilitiesRequestVersion = 0;
 
-  const sessionSkillInventoryContextForCapabilities = (scope: SessionCapabilitiesScope) =>
-    filterSessionSkillInventoryByScope(deps.skillInventory(), scope)
-      .flatMap((item) => [
-        item.globalInstance?.id ?? "",
-        ...item.workspaceInstances.map((instance) => instance.id),
-      ])
-      .filter(Boolean)
-      .join("|");
+  const sessionCapabilities = (): SessionCapabilitiesSnapshot | null => {
+    const snapshot = sessionCapabilitiesSnapshot();
+    if (!snapshot) return null;
+    const scope = selectedSessionCapabilitiesScope();
+    if (!scope || normalizeSessionCapabilityDirectory(scope.directory) !== snapshot.directory) return snapshot;
+    if (scope.workspaceType === "remote") return snapshot;
+    return {
+      ...snapshot,
+      skills: localSessionSkillRows(scope),
+    };
+  };
+
+  const sessionCapabilitiesLoadContext = (
+    scope: SessionCapabilitiesScope,
+    workspace: WorkspaceInfo | null,
+    serverCapabilities: VesloServerCapabilities | null | undefined,
+  ) => {
+    const common = {
+      directory: scope.directory,
+      workspaceId: scope.workspaceId ?? "",
+      workspaceType: scope.workspaceType ?? "",
+      runtimeBaseUrl: deps.baseUrl().trim(),
+      runtimeVersion: deps.connectedVersion() ?? "",
+      hasRuntimeClient: Boolean(deps.client()),
+      runtimeMatch: runtimeMatchContextForSessionCapabilities(),
+      matchedWorkspaceId: workspace?.id ?? "",
+    };
+
+    if (scope.workspaceType !== "remote") return JSON.stringify(common);
+
+    return JSON.stringify({
+      ...common,
+      remoteStatus: deps.vesloServerStatus(),
+      remoteBaseUrl: deps.vesloServerBaseUrl(),
+      remoteWorkspaceId: deps.vesloServerWorkspaceId() ?? "",
+      hasRemoteClient: Boolean(deps.vesloServerClient()),
+      remoteSkillsRead: Boolean(serverCapabilities?.skills?.read),
+      remoteMcpRead: Boolean(serverCapabilities?.mcp?.read),
+    });
+  };
 
   effect(() => {
     const scope = selectedSessionCapabilitiesScope();
     const workspace = selectedSessionCapabilityWorkspace();
-    const serverCapabilities = deps.vesloCapabilities();
-    const loadContext = scope
-      ? JSON.stringify({
-          directory: scope.directory,
-          workspaceId: scope.workspaceId ?? "",
-          workspaceType: scope.workspaceType ?? "",
-          remoteStatus: deps.vesloServerStatus(),
-          remoteBaseUrl: deps.vesloServerBaseUrl(),
-          remoteWorkspaceId: deps.vesloServerWorkspaceId() ?? "",
-          hasRemoteClient: Boolean(deps.vesloServerClient()),
-          remoteSkillsRead: Boolean(serverCapabilities?.skills?.read),
-          remoteMcpRead: Boolean(serverCapabilities?.mcp?.read),
-          runtimeBaseUrl: deps.baseUrl().trim(),
-          runtimeVersion: deps.connectedVersion() ?? "",
-          hasRuntimeClient: Boolean(deps.client()),
-          activeRuntimeActivityId: deps.activeVisibleRuntimeActivityId()?.trim() ?? "",
-          runtimeMatch: runtimeMatchContextForSessionCapabilities(),
-          matchedWorkspaceId: workspace?.id ?? "",
-          skillInventory: sessionSkillInventoryContextForCapabilities(scope),
-        })
-      : "";
+    const serverCapabilities = scope?.workspaceType === "remote" ? deps.vesloCapabilities() : null;
+    const activeRuntimeActivityId = deps.activeVisibleRuntimeActivityId()?.trim() ?? "";
+    const loadContext = scope ? sessionCapabilitiesLoadContext(scope, workspace, serverCapabilities) : "";
 
     const requestVersion = ++sessionCapabilitiesRequestVersion;
     if (!scope) {
@@ -426,11 +455,30 @@ export function createSessionCapabilitiesStore(deps: SessionCapabilitiesStoreDep
       return;
     }
 
+    if (activeRuntimeActivityId) {
+      sessionCapabilitiesDeferredRefreshByDirectory.add(scope.directory);
+      const cached = sessionCapabilitiesCache.peek(scope);
+      if (cached) {
+        setSessionCapabilitiesSnapshot(cached);
+        setSessionCapabilitiesStatus("ready");
+        setSessionCapabilitiesError(null);
+      } else if (sessionCapabilitiesSnapshot()?.directory === scope.directory) {
+        setSessionCapabilitiesStatus("ready");
+        setSessionCapabilitiesError(null);
+      } else {
+        setSessionCapabilitiesStatus("idle");
+        setSessionCapabilitiesError(null);
+      }
+      return;
+    }
+
     setSessionCapabilitiesStatus("loading");
     setSessionCapabilitiesError(null);
 
     const previousContext = scope.directory ? sessionCapabilitiesLoadContextByDirectory.get(scope.directory) : undefined;
-    const force = previousContext !== undefined && previousContext !== loadContext;
+    const force =
+      sessionCapabilitiesDeferredRefreshByDirectory.delete(scope.directory) ||
+      (previousContext !== undefined && previousContext !== loadContext);
     void sessionCapabilitiesCache
       .load(scope, { force })
       .then((snapshot) => {
@@ -449,7 +497,7 @@ export function createSessionCapabilitiesStore(deps: SessionCapabilitiesStoreDep
   });
 
   return {
-    sessionCapabilities: sessionCapabilitiesSnapshot,
+    sessionCapabilities,
     sessionCapabilitiesStatus,
     sessionCapabilitiesError,
     skillInventoryWorkspaces,

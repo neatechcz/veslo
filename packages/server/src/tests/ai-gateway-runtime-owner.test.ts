@@ -108,16 +108,16 @@ describe("createAiGatewayRuntimeOwner", () => {
       source: "ai-access-token",
     });
 
-    const legacy = owner.resolveProviderAuthorization({
+    const runtimeWithLegacyHeader = owner.resolveProviderAuthorization({
       actor,
       request: new Request("http://localhost", {
         headers: { "x-veslo-gateway-token": "legacy-token" },
       }),
       accessTokenHeader: "x-veslo-gateway-token",
     });
-    expect(legacy).toEqual({
-      authorization: "Bearer legacy-token",
-      source: "legacy-header",
+    expect(runtimeWithLegacyHeader).toEqual({
+      authorization: "Bearer runtime-token",
+      source: "ai-access-token",
     });
 
     const redactedLegacy = owner.resolveProviderAuthorization({
@@ -142,6 +142,16 @@ describe("createAiGatewayRuntimeOwner", () => {
       owner.resolveProviderAuthorization({
         actor,
         request: new Request("http://localhost"),
+        accessTokenHeader: "x-veslo-gateway-token",
+      })
+    ).toThrow(ApiError);
+
+    expect(() =>
+      owner.resolveProviderAuthorization({
+        actor,
+        request: new Request("http://localhost", {
+          headers: { "x-veslo-gateway-token": "[REDACTED]" },
+        }),
         accessTokenHeader: "x-veslo-gateway-token",
       })
     ).toThrow(ApiError);
@@ -173,6 +183,20 @@ describe("createAiGatewayRuntimeOwner", () => {
       runtimeAuthorizationActorTokenHash: actor.tokenHash,
     });
     expect(runtime).toEqual({
+      authorization: "Bearer runtime-token",
+      source: "ai-access-token",
+    });
+
+    const scopedRuntimeWithLegacyHeader = owner.resolveProviderAuthorization({
+      actor: opencodeActor,
+      request: new Request("http://localhost", {
+        headers: { "x-veslo-gateway-token": "legacy-token" },
+      }),
+      accessTokenHeader: "x-veslo-gateway-token",
+      runtimeAuthorizationActorTokenHash: actor.tokenHash,
+      activeRunContextPresent: true,
+    });
+    expect(scopedRuntimeWithLegacyHeader).toEqual({
       authorization: "Bearer runtime-token",
       source: "ai-access-token",
     });
@@ -214,6 +238,19 @@ describe("createAiGatewayRuntimeOwner", () => {
         request: new Request("http://localhost"),
         accessTokenHeader: "x-veslo-gateway-token",
         runtimeAuthorizationActorTokenHash: actor.tokenHash,
+        activeRunContextPresent: true,
+      })
+    ).toThrow(ApiError);
+
+    expect(() =>
+      owner.resolveProviderAuthorization({
+        actor: opencodeActor,
+        request: new Request("http://localhost", {
+          headers: { "x-veslo-gateway-token": "legacy-token" },
+        }),
+        accessTokenHeader: "x-veslo-gateway-token",
+        runtimeAuthorizationActorTokenHash: actor.tokenHash,
+        activeRunContextPresent: true,
       })
     ).toThrow(ApiError);
   });

@@ -3240,7 +3240,6 @@ export default function App() {
     vesloServerWorkspaceId,
     vesloCapabilities: resolvedVesloCapabilities,
     skillInventory,
-    refreshSkillInventory,
     recordPerfLog,
   });
   lateSessionCapabilitySkillInventoryWorkspaces.bind(sessionCapabilitiesStore.skillInventoryWorkspaces);

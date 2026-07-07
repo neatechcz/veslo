@@ -3,7 +3,7 @@ import test from "node:test";
 
 import type { Session } from "@opencode-ai/sdk/v2/client";
 
-import type { ComposerDraft, MessageWithParts } from "../../types.js";
+import type { ComposerDraft, ComposerPart, MessageWithParts } from "../../types.js";
 import { createSessionMutationWorkflow } from "../../pages/session-mutation-workflow.js";
 import {
   sessionSubmitAcceptedResult,
@@ -44,7 +44,7 @@ const replacementDraft: ComposerDraft = {
   mode: "prompt",
   text: "edited prompt",
   resolvedText: "edited prompt",
-  parts: [{ type: "text", text: "edited prompt" }],
+  parts: [{ type: "text", text: "edited prompt" } satisfies ComposerPart],
   attachments: [],
 };
 

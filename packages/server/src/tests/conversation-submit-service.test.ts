@@ -436,6 +436,76 @@ describe("conversation submit service", () => {
     expect(createConversationCalls).toBe(0);
   });
 
+  test("retries an existing-target submit after a failed replayable attempt", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-existing-run-retry-failed-"));
+    tempDirs.push(workspaceRoot);
+    let createConversationCalls = 0;
+    let submitRunCalls = 0;
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-existing-run-retry-failed-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => {
+        createConversationCalls += 1;
+      }),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+    });
+    const body = {
+      clientMessageId: "msg-existing-submit-retry-failed",
+      origin: "session:normal",
+      target: { conversationId: "conv-existing", directory: workspaceRoot },
+      draft: {
+        mode: "prompt",
+        text: "Submit existing after failure",
+        parts: [{ type: "text", text: "Submit existing after failure" }],
+      },
+    };
+    const submit = () => service.submit({
+      workspace: workspace(workspaceRoot),
+      body,
+      resolveDirectory: async () => workspaceRoot,
+      submitResolvedRun: async (input) => {
+        submitRunCalls += 1;
+        if (submitRunCalls === 1) {
+          throw new ApiError(502, "opencode_proxy_failed", "OpenCode prompt failed");
+        }
+        return {
+          httpStatus: 200,
+          payload: {
+            status: "submitted",
+            workspaceId: "ws_1",
+            conversationId: "conv-existing",
+            opencodeSessionId: "sess-existing",
+            runId: "run-existing-retry",
+            clientMessageId: input.request.clientMessageId,
+            draftDisposition: "clear",
+          },
+        };
+      },
+    });
+
+    const first = await submit();
+    expect(first.httpStatus).toBe(200);
+    expect(first.payload).toMatchObject({
+      status: "failed",
+      code: "opencode_proxy_failed",
+      draftDisposition: "restore",
+    });
+
+    const retry = await submit();
+    expect(retry.httpStatus).toBe(200);
+    expect(retry.payload).toMatchObject({
+      status: "submitted",
+      conversationId: "conv-existing",
+      opencodeSessionId: "sess-existing",
+      runId: "run-existing-retry",
+      clientMessageId: "msg-existing-submit-retry-failed",
+      draftDisposition: "clear",
+    });
+    expect(submitRunCalls).toBe(2);
+    expect(createConversationCalls).toBe(0);
+  });
+
   test("blocks prompt image attachments when model metadata says image input is unsupported", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-attachment-nonvision-"));
     tempDirs.push(workspaceRoot);
@@ -640,7 +710,7 @@ describe("conversation submit service", () => {
 
     expect(result.httpStatus).toBe(200);
     expect(result.payload.status).toBe("failed");
-    expect(result.payload.code).toBe("opencode_proxy_failed");
+    expect(result.payload.status === "failed" ? result.payload.code : null).toBe("opencode_proxy_failed");
     expect(result.payload.draftDisposition).toBe("restore");
     expect("materializedSession" in result.payload ? result.payload.materializedSession : null).toMatchObject({
       id: "sess_1",
@@ -657,6 +727,78 @@ describe("conversation submit service", () => {
       "pending-materialized",
     );
     expect(createConversationCalls).toBe(1);
+  });
+
+  test("retries a first-session failed submit using the already materialized conversation", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-materialized-failed-retry-"));
+    tempDirs.push(workspaceRoot);
+    let createConversationCalls = 0;
+    let submitRunCalls = 0;
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-materialized-failed-retry-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => {
+        createConversationCalls += 1;
+      }),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+    });
+    const body = {
+      clientMessageId: "msg-materialized-run-failed-retry",
+      origin: "session:normal",
+      target: { directory: workspaceRoot, pendingClientSessionId: "pending-materialized-retry" },
+      draft: {
+        mode: "prompt",
+        text: "Create then retry",
+        parts: [{ type: "text", text: "Create then retry" }],
+      },
+      options: {},
+    };
+    const submit = () => service.submit({
+      workspace: workspace(workspaceRoot),
+      body,
+      resolveDirectory: async () => workspaceRoot,
+      submitResolvedRun: async (input) => {
+        submitRunCalls += 1;
+        expect(input.request.target?.conversationId).toBe("conv_1");
+        expect(input.request.target?.opencodeSessionId).toBe("sess_1");
+        if (submitRunCalls === 1) {
+          throw new ApiError(502, "opencode_proxy_failed", "OpenCode prompt failed");
+        }
+        return {
+          httpStatus: 200,
+          payload: {
+            status: "submitted",
+            workspaceId: "ws_1",
+            conversationId: "conv_1",
+            opencodeSessionId: "sess_1",
+            runId: "run-materialized-retry",
+            clientMessageId: input.request.clientMessageId,
+            draftDisposition: "clear",
+          },
+        };
+      },
+    });
+
+    const first = await submit();
+    expect(first.payload).toMatchObject({
+      status: "failed",
+      code: "opencode_proxy_failed",
+      conversationId: "conv_1",
+      opencodeSessionId: "sess_1",
+    });
+
+    const retry = await submit();
+    expect(retry.payload).toMatchObject({
+      status: "submitted",
+      conversationId: "conv_1",
+      opencodeSessionId: "sess_1",
+      runId: "run-materialized-retry",
+      clientMessageId: "msg-materialized-run-failed-retry",
+      draftDisposition: "clear",
+    });
+    expect(createConversationCalls).toBe(1);
+    expect(submitRunCalls).toBe(2);
   });
 
   test("first-session blocked submit after materialization returns materialized session metadata", async () => {
@@ -701,7 +843,7 @@ describe("conversation submit service", () => {
 
     expect(result.httpStatus).toBe(200);
     expect(result.payload.status).toBe("blocked");
-    expect(result.payload.code).toBe("runtime_busy");
+    expect(result.payload.status === "blocked" ? result.payload.code : null).toBe("runtime_busy");
     expect(result.payload.draftDisposition).toBe("restore");
     expect("materializedSession" in result.payload ? result.payload.materializedSession : null).toMatchObject({
       id: "sess_1",

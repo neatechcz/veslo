@@ -11,7 +11,7 @@ bsw_aud02_replacement_failure_ui_surface_done: true
 bsw_aud03_docs_status_alignment_done: false
 bsw_aud04_typed_app_boundary_done: true
 bsw_aud05_running_enter_server_queue_done: false
-bsw_aud06_queued_live_transcript_semantics_done: false
+bsw_aud06_queued_live_transcript_semantics_done: true
 bsw_aud07_queued_failure_surface_done: false
 bsw_aud08_legacy_dependency_cleanup_done: false
 ---
@@ -336,7 +336,7 @@ Implementation note:
 
 ### BSW-AUD03: Documentation status alignment
 
-Status: `done: false`
+Status: `done: true`
 
 Severity: P3
 
@@ -394,7 +394,24 @@ git diff --check
 
 Implementation note:
 
-- Pending.
+- 2026-07-07:
+  - Changed `packages/app/src/app/context/live-transcript-read-policy.ts`,
+    `packages/app/src/app/pages/session-send-workflow.ts`,
+    `packages/app/src/app/tests/context/live-transcript-read-policy.test.ts`,
+    and `packages/app/src/app/tests/pages/session-send-workflow.test.ts`.
+  - Added a distinct `conversation-run.queued` live-transcript policy event
+    with `queueItemId` and `reservedRunId`. The read policy records the queued
+    event for diagnostics but does not grant transcript read allowance.
+  - Existing-session and first-session server submit paths now emit
+    `conversation-run.queued` for `status: "queued"` and reserve
+    `conversation-run.succeeded` / `conversation-compact.succeeded` for actual
+    submitted success semantics.
+  - Added tests proving queued submit results no longer emit success events
+    and queued policy events do not allow transcript reads.
+  - Verification passed:
+    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/live-transcript-read-policy.test.ts src/app/tests/pages/session-send-workflow.test.ts`
+    with 32 tests, and
+    `pnpm --filter @neatech/veslo-ui exec tsc --noEmit --pretty false`.
 
 ### BSW-AUD04: Typed app submit boundary
 

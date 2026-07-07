@@ -1,4 +1,7 @@
-import type { ConversationRunQueueStore } from "./conversation-run-queue-store.js";
+import {
+  ConversationRunQueueConflictError,
+  type ConversationRunQueueStore,
+} from "./conversation-run-queue-store.js";
 import { ApiError } from "./errors.js";
 import {
   OrchestratorLifecycleRequestError,
@@ -385,18 +388,30 @@ export function createConversationRunLifecycleController(
         ? { runtimeAuthorizationActorTokenHash: input.runtimeAuthorizationActorTokenHash }
         : {}),
     });
-    const queued = options.queueStore.enqueue({
-      workspaceId: input.workspace.id,
-      conversationId: input.target.conversationId,
-      opencodeSessionId: input.target.opencodeSessionId,
-      directory: input.target.directory,
-      reservedRunId: input.runId,
-      clientMessageId: input.clientMessageId,
-      origin: input.origin,
-      kind: input.kind,
-      bodyJson,
-      activeRunId,
-    });
+    let queued: ReturnType<ConversationRunQueueStore["enqueue"]>;
+    try {
+      queued = options.queueStore.enqueue({
+        workspaceId: input.workspace.id,
+        conversationId: input.target.conversationId,
+        opencodeSessionId: input.target.opencodeSessionId,
+        directory: input.target.directory,
+        reservedRunId: input.runId,
+        clientMessageId: input.clientMessageId,
+        origin: input.origin,
+        kind: input.kind,
+        bodyJson,
+        activeRunId,
+      });
+    } catch (error) {
+      if (error instanceof ConversationRunQueueConflictError) {
+        throw new ApiError(409, "idempotency_conflict", error.message, {
+          workspaceId: input.workspace.id,
+          conversationId: input.target.conversationId,
+          clientMessageId: input.clientMessageId,
+        });
+      }
+      throw error;
+    }
     input.runTrace.record("server:conversation-run:queued", {
       workspaceId: input.workspace.id,
       conversationId: input.target.conversationId,
@@ -1074,6 +1089,15 @@ export function createConversationRunLifecycleController(
   }
 
   function schedulePendingQueueDrains(): void {
+    const recoverStarting = options.queueStore?.recoverStarting;
+    if (typeof recoverStarting === "function") {
+      for (const recovered of recoverStarting.call(options.queueStore)) {
+        recordTrace("server:conversation-run:queue-starting-recovered", {
+          workspaceId: recovered.workspaceId,
+          conversationId: recovered.conversationId,
+        });
+      }
+    }
     const pendingConversationKeys = options.queueStore?.pendingConversationKeys;
     if (typeof pendingConversationKeys !== "function") return;
     for (const pending of pendingConversationKeys.call(options.queueStore)) {

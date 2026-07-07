@@ -507,7 +507,7 @@ describe("ai gateway proxy routes", () => {
     }
   });
 
-  test("server uses runtime ai-access authorization for provider routes without gateway token headers", async () => {
+  test("server uses runtime ai-access authorization for provider routes over stale gateway token headers", async () => {
     const requests: Array<{
       method: string;
       pathname: string;
@@ -579,6 +579,7 @@ describe("ai gateway proxy routes", () => {
               headers: {
                 authorization: "Bearer client-token",
                 "content-type": "application/json",
+                "x-veslo-gateway-token": "stale-legacy-gateway-token",
                 "x-veslo-session-id": "session_runtime",
               },
               body: JSON.stringify({
@@ -641,6 +642,7 @@ describe("ai gateway proxy routes", () => {
               headers: {
                 authorization: "Bearer client-token",
                 "content-type": "application/json",
+                "x-veslo-gateway-token": "stale-legacy-gateway-token",
                 "x-veslo-session-id": "session_runtime",
               },
               body: JSON.stringify({

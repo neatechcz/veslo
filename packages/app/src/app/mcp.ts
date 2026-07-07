@@ -152,18 +152,56 @@ export function parseMcpServersFromContent(content: string): McpServerEntry[] {
   });
 }
 
-function getDeniedToolPatterns(config: Record<string, unknown>): string[] {
+function parseDisabledMcpOverrideNamesFromContent(content: string): Set<string> {
+  const parsed = parseJsoncObject(content);
+  const mcp = parsed.mcp as McpConfigValue;
+  const disabled = new Set<string>();
+
+  if (!mcp || typeof mcp !== "object") {
+    return disabled;
+  }
+
+  for (const [name, value] of Object.entries(mcp)) {
+    if (name === "servers") continue;
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const config = value as McpServerConfig;
+    if ((config.type === "remote" || config.type === "local") || config.enabled !== false) continue;
+    disabled.add(name);
+  }
+
+  return disabled;
+}
+
+function getDisabledToolPatterns(config: Record<string, unknown>): string[] {
   const tools = config.tools;
   if (!tools || typeof tools !== "object" || Array.isArray(tools)) return [];
+  const patterns: string[] = [];
+  for (const [pattern, value] of Object.entries(tools)) {
+    if (pattern === "deny") continue;
+    if (value === false) patterns.push(pattern);
+  }
   const deny = (tools as { deny?: unknown }).deny;
-  if (!Array.isArray(deny)) return [];
-  return deny.filter((item): item is string => typeof item === "string");
+  if (Array.isArray(deny)) {
+    patterns.push(...deny.filter((item): item is string => typeof item === "string"));
+  }
+  return patterns;
 }
 
 function isMcpDisabledByTools(config: Record<string, unknown>, name: string): boolean {
-  const patterns = getDeniedToolPatterns(config);
+  const patterns = getDisabledToolPatterns(config);
   if (!patterns.length) return false;
-  const candidates = [`mcp.${name}`, `mcp.${name}.*`, `mcp:${name}`, `mcp:${name}:*`, "mcp.*", "mcp:*"];
+  const candidates = [
+    name,
+    `${name}.*`,
+    `${name}:*`,
+    `${name}-tool`,
+    `mcp.${name}`,
+    `mcp.${name}.*`,
+    `mcp:${name}`,
+    `mcp:${name}:*`,
+    "mcp.*",
+    "mcp:*",
+  ];
   return patterns.some((pattern) => candidates.some((candidate) => minimatch(candidate, pattern)));
 }
 
@@ -186,6 +224,7 @@ export function buildEffectiveMcpServerEntriesFromContent(
 ): McpServerEntry[] {
   const globalConfig = parseJsoncObject(globalContent);
   const projectConfig = parseJsoncObject(projectContent);
+  const projectDisabledOverrides = parseDisabledMcpOverrideNamesFromContent(projectContent);
   const globalEntries = parseMcpServersFromContent(globalContent).map((entry) => ({
     ...entry,
     source: "config.global" as const,
@@ -197,8 +236,19 @@ export function buildEffectiveMcpServerEntriesFromContent(
     source: "config.project" as const,
     disabledByTools: isMcpDisabledByTools(projectConfig, entry.name) || undefined,
   }));
+  const projectEntryNames = new Set(projectEntries.map((entry) => entry.name));
+  const disabledInheritedEntries = globalEntries
+    .filter((entry) => projectDisabledOverrides.has(entry.name) && !projectEntryNames.has(entry.name))
+    .map((entry) => ({
+      ...entry,
+      config: {
+        ...entry.config,
+        enabled: false,
+      },
+      source: "config.project" as const,
+    }));
 
-  return mergeMcpServerEntries(globalEntries, projectEntries);
+  return mergeMcpServerEntries(globalEntries, [...projectEntries, ...disabledInheritedEntries]);
 }
 
 export async function readEffectiveMcpServerEntries(projectDir: string): Promise<McpServerEntry[]> {

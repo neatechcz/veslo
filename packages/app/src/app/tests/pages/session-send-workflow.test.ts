@@ -774,8 +774,10 @@ test("session send workflow handles queued server submit results for send-now", 
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing-success"));
   assert.ok(harness.actions.includes("hold:sess-target:sendPrompt:server-submit-existing-success"));
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
-  assert.equal(harness.liveTranscriptPolicyEvents.at(-1)?.type, "conversation-run.succeeded");
-  assert.equal(harness.liveTranscriptPolicyEvents.at(-1)?.reason, "sendPrompt:success");
+  const queuedEvent = harness.liveTranscriptPolicyEvents.at(-1);
+  assert.equal(queuedEvent?.type, "conversation-run.queued");
+  assert.equal(queuedEvent?.reason, "sendPrompt:queued");
+  assert.equal(queuedEvent?.type === "conversation-run.queued" ? queuedEvent.queueItemId : null, "queue-submit");
 });
 
 test("session send workflow does not clear the active composer for explicit server submit drafts", async () => {
@@ -1125,6 +1127,55 @@ test("session send workflow accepts first-session server submit results without 
   assert.ok(harness.actions.includes("clear-pending-draft"));
   assert.ok(harness.actions.includes("refresh-pending-drafts"));
   assert.deepEqual(composerDraftCleanupCalls, ["cleanup"]);
+  assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
+});
+
+test("session send workflow emits queued event for first-session queued submit results", async () => {
+  const harness = createHarness({
+    createSessionAndOpen: async (_initialTitle, options) => {
+      options?.onSubmitResult?.({
+        status: "queued",
+        workspaceId: "ws-active",
+        conversationId: "conv-created",
+        opencodeSessionId: "sess-created",
+        queueItemId: "queue-created",
+        reservedRunId: "run-reserved-created",
+        queuePosition: 1,
+        clientMessageId: "client-first-server-queued",
+        materializedSession: {
+          id: "sess-created",
+          conversationId: "conv-created",
+          opencodeSessionId: "sess-created",
+        },
+        draftDisposition: "clear",
+      });
+      harness.actions.push("create-session");
+      return "sess-created";
+    },
+    prepareSendRuntimeForSend: async () => {
+      throw new Error("runtime prep should not run before first-session queued server submit");
+    },
+    runConversationFromVesloWriteApi: async () => {
+      throw new Error("legacy run should not run after first-session queued server submit");
+    },
+    selectedSessionId: () => null,
+    submitConversationFromVesloWriteApi: async () => null,
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("first server queued"), {
+    clientMessageId: "client-first-server-queued",
+    origin: "session:normal",
+    source: "enter",
+  });
+
+  assert.equal(sent.accepted, true);
+  assert.equal(sent.status, "queued");
+  assert.equal(sent.queueItemId, "queue-created");
+  const queuedEvent = harness.liveTranscriptPolicyEvents.at(-1);
+  assert.equal(queuedEvent?.type, "conversation-run.queued");
+  assert.equal(queuedEvent?.reason, "sendPrompt:queued");
+  assert.equal(queuedEvent?.type === "conversation-run.queued" ? queuedEvent.queueItemId : null, "queue-created");
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
 });
 

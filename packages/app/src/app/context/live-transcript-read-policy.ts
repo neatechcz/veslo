@@ -9,6 +9,15 @@ export type LiveTranscriptReadPolicyEvent =
       reason: "sendPrompt:success";
     }
   | {
+      type: "conversation-run.queued";
+      workspaceId?: string | null;
+      sessionId?: string | null;
+      traceId?: string | null;
+      reason: "sendPrompt:queued";
+      queueItemId?: string | null;
+      reservedRunId?: string | null;
+    }
+  | {
       type: "conversation-compact.succeeded";
       workspaceId?: string | null;
       sessionId?: string | null;
@@ -76,6 +85,18 @@ export function createLiveTranscriptReadPolicy(
 
   return {
     emit(event) {
+      if (event.type === "conversation-run.queued") {
+        options.record?.("live-transcript-read:queued", {
+          workspaceId: resolveWorkspaceId(event.workspaceId),
+          reason: event.reason,
+          eventType: event.type,
+          sessionId: event.sessionId?.trim() || null,
+          traceId: event.traceId?.trim() || null,
+          queueItemId: event.queueItemId?.trim() || null,
+          reservedRunId: event.reservedRunId?.trim() || null,
+        });
+        return;
+      }
       allow(event);
     },
     isAllowedForWorkspace(workspaceId) {

@@ -414,6 +414,22 @@ idle or the transcript probe shows a terminal assistant message, the
 orchestrator completes the stale run before the server decides whether to
 queue the new request.
 
+The durable run queue treats `clientMessageId` as an idempotency key for the
+same conversation. A retry with the same request fingerprint reuses the existing
+queued item and reserved run id; a retry with changed body, kind, directory,
+OpenCode session id, or origin is an idempotency conflict. If the server process
+stops after a queued row is marked `starting` but before it is submitted or
+failed, startup recovery moves that row back to `pending` before scheduling
+queue drains, so accepted sends are not lost across process restarts.
+
+The submit-attempt store also uses `clientMessageId` plus request hash for
+idempotency. Successful, queued, dry-run, and materialized outcomes are safe to
+replay. `blocked` and `failed` outcomes are re-evaluated on retry instead of
+being permanently replayed, because runtime, gateway, binding, or document
+runtime readiness may have changed. If a failed first-session submit already
+materialized a Veslo conversation/OpenCode session, a retry reuses that stored
+target rather than creating a second conversation.
+
 Conversation run lifecycle orchestration is a server-owned control-plane
 concern. The app talks to the conversation routes and should not duplicate
 server decisions about active lifecycle locks, durable queued sends, OpenCode

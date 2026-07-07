@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -46,6 +46,7 @@ export type ConversationRunQueueStore = {
   markPending(queueItemId: string, activeRunId?: string | null): ConversationRunQueueItem | null;
   markSubmitted(queueItemId: string): ConversationRunQueueItem | null;
   markFailed(queueItemId: string, error: string): ConversationRunQueueItem | null;
+  recoverStarting(): Array<{ workspaceId: string; conversationId: string }>;
   pendingConversationKeys(): Array<{ workspaceId: string; conversationId: string }>;
 };
 
@@ -60,6 +61,7 @@ type QueueRow = {
   origin: string | null;
   kind: string;
   body_json: string;
+  request_hash: string | null;
   state: string;
   active_run_id: string | null;
   attempts: number;
@@ -72,6 +74,15 @@ type QueueRow = {
 };
 
 const normalizeText = (value: string | null | undefined) => value?.trim() ?? "";
+
+export class ConversationRunQueueConflictError extends Error {
+  readonly code = "queue_idempotency_conflict";
+
+  constructor(message = "clientMessageId was already used for a different queued run request") {
+    super(message);
+    this.name = "ConversationRunQueueConflictError";
+  }
+}
 
 const expandHome = (input: string): string =>
   input === "~" || input.startsWith("~/") || input.startsWith("~\\")
@@ -105,6 +116,7 @@ function createDatabase(dbPath: string): Database {
       origin TEXT,
       kind TEXT NOT NULL,
       body_json TEXT NOT NULL,
+      request_hash TEXT,
       state TEXT NOT NULL,
       active_run_id TEXT,
       attempts INTEGER NOT NULL DEFAULT 0,
@@ -121,7 +133,32 @@ function createDatabase(dbPath: string): Database {
       ON conversation_run_queue (workspace_id, conversation_id, client_message_id)
       WHERE client_message_id IS NOT NULL AND client_message_id <> '';
   `);
+  ensureQueueSchema(db);
   return db;
+}
+
+function ensureQueueSchema(db: Database): void {
+  const columns = db.query<{ name: string }, []>("PRAGMA table_info(conversation_run_queue)").all();
+  if (!columns.some((column) => column.name === "request_hash")) {
+    db.exec("ALTER TABLE conversation_run_queue ADD COLUMN request_hash TEXT");
+  }
+  const legacyRows = db.query<QueueRow, []>(
+    `SELECT * FROM conversation_run_queue
+     WHERE request_hash IS NULL OR request_hash = ''`,
+  ).all();
+  if (legacyRows.length === 0) return;
+  const update = db.query(`UPDATE conversation_run_queue SET request_hash = ?1 WHERE queue_item_id = ?2`);
+  db.transaction(() => {
+    for (const row of legacyRows) {
+      update.run(queueRequestHash({
+        opencodeSessionId: row.opencode_session_id,
+        directory: row.directory,
+        kind: row.kind,
+        bodyJson: row.body_json,
+        origin: row.origin,
+      }), row.queue_item_id);
+    }
+  })();
 }
 
 function rowToItem(row: QueueRow): ConversationRunQueueItem {
@@ -153,6 +190,32 @@ function getSync(db: Database, queueItemId: string): ConversationRunQueueItem | 
     `SELECT * FROM conversation_run_queue WHERE queue_item_id = ?1 LIMIT 1`,
   ).get(queueItemId);
   return row ? rowToItem(row) : null;
+}
+
+function queueRequestHash(input: {
+  opencodeSessionId: string;
+  directory: string;
+  kind: string;
+  bodyJson: string;
+  origin?: string | null;
+}): string {
+  return createHash("sha256").update(JSON.stringify({
+    opencodeSessionId: normalizeText(input.opencodeSessionId),
+    directory: normalizeText(input.directory),
+    kind: normalizeText(input.kind),
+    bodyJson: normalizeText(input.bodyJson),
+    origin: normalizeText(input.origin) || null,
+  })).digest("hex");
+}
+
+function rowRequestHash(row: QueueRow): string {
+  return row.request_hash || queueRequestHash({
+    opencodeSessionId: row.opencode_session_id,
+    directory: row.directory,
+    kind: row.kind,
+    bodyJson: row.body_json,
+    origin: row.origin,
+  });
 }
 
 function queuePositionSync(db: Database, item: ConversationRunQueueItem): number {
@@ -196,6 +259,13 @@ export function createConversationRunQueueStore(options?: {
         if (!workspaceId || !conversationId || !opencodeSessionId || !directory || !reservedRunId || !kind || !bodyJson) {
           throw new Error("workspaceId, conversationId, opencodeSessionId, directory, reservedRunId, kind, and bodyJson are required");
         }
+        const requestHash = queueRequestHash({
+          opencodeSessionId,
+          directory,
+          kind,
+          bodyJson,
+          origin: input.origin,
+        });
 
         const clientMessageId = normalizeText(input.clientMessageId) || null;
         if (clientMessageId) {
@@ -205,6 +275,9 @@ export function createConversationRunQueueStore(options?: {
              LIMIT 1`,
           ).get(workspaceId, conversationId, clientMessageId);
           if (existing) {
+            if (rowRequestHash(existing) !== requestHash) {
+              throw new ConversationRunQueueConflictError();
+            }
             const item = rowToItem(existing);
             return { item, inserted: false, queuePosition: queuePositionSync(db, item) };
           }
@@ -224,6 +297,7 @@ export function createConversationRunQueueStore(options?: {
             origin,
             kind,
             body_json,
+            request_hash,
             state,
             active_run_id,
             attempts,
@@ -233,7 +307,7 @@ export function createConversationRunQueueStore(options?: {
             submitted_at,
             completed_at,
             error
-          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'pending', ?11, 0, ?12, ?12, NULL, NULL, NULL, NULL)`,
+          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'pending', ?12, 0, ?13, ?13, NULL, NULL, NULL, NULL)`,
         ).run(
           queueItemId,
           workspaceId,
@@ -245,6 +319,7 @@ export function createConversationRunQueueStore(options?: {
           normalizeText(input.origin) || null,
           kind,
           bodyJson,
+          requestHash,
           normalizeText(input.activeRunId) || null,
           timestamp,
         );
@@ -324,6 +399,30 @@ export function createConversationRunQueueStore(options?: {
            WHERE queue_item_id = ?1`,
         ).run(queueItemId, normalizeText(error) || "queued run failed", timestamp);
         return getSync(db, queueItemId);
+      });
+    },
+
+    recoverStarting() {
+      return withDb((db) => {
+        const timestamp = now();
+        const rows = db.query<{ workspace_id: string; conversation_id: string }, []>(
+          `SELECT DISTINCT workspace_id, conversation_id FROM conversation_run_queue
+           WHERE state = 'starting'
+           ORDER BY workspace_id ASC, conversation_id ASC`,
+        ).all();
+        if (rows.length === 0) return [];
+        db.query(
+          `UPDATE conversation_run_queue
+           SET state = 'pending',
+               active_run_id = NULL,
+               started_at = NULL,
+               updated_at = ?1
+           WHERE state = 'starting'`,
+        ).run(timestamp);
+        return rows.map((row) => ({
+          workspaceId: row.workspace_id,
+          conversationId: row.conversation_id,
+        }));
       });
     },
 

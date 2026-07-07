@@ -10,7 +10,10 @@ import {
   type ConversationSubmitResult,
   type ConversationSubmitSubmittedResult,
 } from "./conversation-submit-contract.js";
-import type { ConversationSubmitAttemptStore } from "./conversation-submit-attempt-store.js";
+import type {
+  ConversationSubmitAttempt,
+  ConversationSubmitAttemptStore,
+} from "./conversation-submit-attempt-store.js";
 import {
   resolveConversationSubmitDraft,
   type ConversationSubmitDocumentRuntimeStatusReader,
@@ -70,7 +73,7 @@ export function createConversationSubmitService(input: {
       resolveDirectory,
       submitResolvedRun,
     }) {
-      const request = parseConversationSubmitRequest(body);
+      let request = parseConversationSubmitRequest(body);
       const requestHash = createConversationSubmitRequestHash(request);
       const claimed = attemptStore.claim({
         workspaceId: workspace.id,
@@ -128,14 +131,30 @@ export function createConversationSubmitService(input: {
         materializedSession,
       });
 
+      const withExistingTarget = <T extends ConversationSubmitBlockedResult | ConversationSubmitFailedResult>(
+        payload: T,
+      ): T => ({
+        ...payload,
+        workspaceId: workspace.id,
+        ...(request.target?.conversationId ? { conversationId: request.target.conversationId } : {}),
+        ...(request.target?.opencodeSessionId ? { opencodeSessionId: request.target.opencodeSessionId } : {}),
+        clientMessageId: request.clientMessageId,
+        pendingClientSessionId: request.target?.pendingClientSessionId ?? null,
+      });
+
       if (claimed.attempt.resultJson) {
         try {
-          return {
-            payload: JSON.parse(claimed.attempt.resultJson) as ConversationSubmitResult,
-            httpStatus: 200,
-          };
+          const replayPayload = JSON.parse(claimed.attempt.resultJson) as ConversationSubmitResult;
+          if (conversationSubmitResultIsReplayable(replayPayload)) {
+            return {
+              payload: replayPayload,
+              httpStatus: 200,
+            };
+          }
+          request = conversationSubmitRequestWithAttemptTarget(request, claimed.attempt);
         } catch {
           // Fall through and rebuild the result from the current request.
+          request = conversationSubmitRequestWithAttemptTarget(request, claimed.attempt);
         }
       }
 
@@ -248,7 +267,7 @@ export function createConversationSubmitService(input: {
               httpStatus: result.httpStatus,
             };
           } catch (error) {
-            const payload: ConversationSubmitResult = {
+            const payload: ConversationSubmitResult = withExistingTarget({
               status: "failed",
               code: error instanceof ApiError ? error.code : "run_submit_failed",
               message: error instanceof Error ? error.message : "Run submit failed",
@@ -259,7 +278,7 @@ export function createConversationSubmitService(input: {
                 upstreamCode: error instanceof ApiError ? error.code : null,
                 upstreamStatus: error instanceof ApiError ? error.status : null,
               }],
-            };
+            });
             return {
               payload: completeAttempt(payload, "failed"),
               httpStatus: 200,
@@ -267,13 +286,13 @@ export function createConversationSubmitService(input: {
           }
         }
         return {
-          payload: completeAttempt({
+          payload: completeAttempt(withExistingTarget({
             status: "blocked",
             code: "run_submit_unavailable",
             message: "Server-owned run submit is not available yet",
             draftDisposition: "restore",
             recoverable: true,
-          }, "blocked"),
+          }), "blocked"),
           httpStatus: 200,
         };
       }
@@ -387,6 +406,26 @@ export function createConversationSubmitService(input: {
 
 function conversationSubmitInFlightKey(workspaceId: string, clientMessageId: string, requestHash: string): string {
   return JSON.stringify([workspaceId, clientMessageId, requestHash]);
+}
+
+function conversationSubmitResultIsReplayable(payload: ConversationSubmitResult): boolean {
+  return payload.status !== "blocked" && payload.status !== "failed";
+}
+
+function conversationSubmitRequestWithAttemptTarget(
+  request: ConversationSubmitRequest,
+  attempt: ConversationSubmitAttempt,
+): ConversationSubmitRequest {
+  if (!attempt.conversationId && !attempt.opencodeSessionId) return request;
+  if (request.target?.conversationId?.trim() || request.target?.opencodeSessionId?.trim()) return request;
+  return {
+    ...request,
+    target: {
+      ...request.target,
+      conversationId: attempt.conversationId,
+      opencodeSessionId: attempt.opencodeSessionId,
+    },
+  };
 }
 
 function deriveSubmitConversationTitle(request: ConversationSubmitRequest): string | null {
