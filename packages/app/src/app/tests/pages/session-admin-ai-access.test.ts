@@ -10,8 +10,8 @@ const flowSendImmediateEnd = conversationFlowSource.indexOf("export type RunBase
 const flowSendImmediateSource = conversationFlowSource.slice(flowSendImmediateStart, flowSendImmediateEnd);
 
 test("session blocks prompt sending when admin-managed ai access is unavailable", () => {
-  assert.match(conversationFlowSource, /if\s*\(aiAccessBlockedReason\)\s*\{/s);
-  assert.match(conversationFlowSource, /deps\.feedback\.setToastMessage\(aiAccessBlockedReason\)/);
+  assert.match(conversationFlowSource, /if\s*\(aiAccessSubmitBlockedReason\)\s*\{/s);
+  assert.match(conversationFlowSource, /deps\.feedback\.setToastMessage\(aiAccessSubmitBlockedReason\)/);
   assert.match(sessionSource, /Show when=\{props\.aiAccessBlockedReason\}/);
   assert.doesNotMatch(source, /ProviderAuthModal/);
 });
@@ -19,7 +19,7 @@ test("session blocks prompt sending when admin-managed ai access is unavailable"
 test("ai access blocking keeps the submitted draft as a failed pending message", () => {
   const handlerStart = 0;
   const pendingCreate = flowSendImmediateSource.indexOf("createPendingSubmittedDraft({", handlerStart);
-  const aiAccessBlock = flowSendImmediateSource.indexOf("if (aiAccessBlockedReason) {", handlerStart);
+  const aiAccessBlock = flowSendImmediateSource.indexOf("if (aiAccessSubmitBlockedReason) {", handlerStart);
   const aiAccessBranchEnd = flowSendImmediateSource.indexOf("return false;", aiAccessBlock);
   const aiAccessBranch = flowSendImmediateSource.slice(aiAccessBlock, aiAccessBranchEnd);
 
@@ -31,8 +31,26 @@ test("ai access blocking keeps the submitted draft as a failed pending message",
   );
   assert.match(
     aiAccessBranch,
-    /markMatchingPendingSubmitFailed\(aiAccessBlockedReason\);/,
+    /markMatchingPendingSubmitFailed\(aiAccessSubmitBlockedReason\);/,
     "ai access blocking should leave the submitted draft visible as a failed pending message",
+  );
+});
+
+test("transient ai access loading is not treated as a permanent submit blocker", () => {
+  assert.match(
+    conversationFlowSource,
+    /import\s+\{\s*AI_ACCESS_LOADING_MESSAGE\s*\}\s+from\s+"..\/lib\/ai-access";/,
+    "conversation flow should classify transient loading explicitly",
+  );
+  assert.match(
+    flowSendImmediateSource,
+    /const aiAccessSubmitBlockedReason = aiAccessBlockedReason === AI_ACCESS_LOADING_MESSAGE \? null : aiAccessBlockedReason;/,
+    "transient loading should not use the permanent ai access submit block",
+  );
+  assert.match(
+    flowSendImmediateSource,
+    /if \(aiAccessSubmitBlockedReason\) \{/,
+    "only permanent ai access failures should block submit inside the conversation flow",
   );
 });
 

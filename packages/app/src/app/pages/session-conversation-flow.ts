@@ -34,6 +34,7 @@ import {
   sessionSubmitQueuedResult,
   sessionSubmitWasAccepted,
 } from "../lib/session-send-contract";
+import { AI_ACCESS_LOADING_MESSAGE } from "../lib/ai-access";
 import {
   createUiConversationKey,
   parseUiConversationKey,
@@ -1100,25 +1101,26 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
       }
 
       const aiAccessBlockedReason = deps.runtime.aiAccessBlockedReason();
-      if (aiAccessBlockedReason) {
+      const aiAccessSubmitBlockedReason = aiAccessBlockedReason === AI_ACCESS_LOADING_MESSAGE ? null : aiAccessBlockedReason;
+      if (aiAccessSubmitBlockedReason) {
         deps.trace.recordSendTrace("sendPromptImmediate:blocked-ai-access", {
           clientMessageId,
           origin,
           source,
-          aiAccessBlockedReason,
+          aiAccessBlockedReason: aiAccessSubmitBlockedReason,
           expectedSessionKey: expectedSessionKey ?? null,
           targetSessionId,
           reason: options.reason ?? "normal",
         });
         if (showOptimisticSubmit) {
-          markMatchingPendingSubmitFailed(aiAccessBlockedReason);
+          markMatchingPendingSubmitFailed(aiAccessSubmitBlockedReason);
           deps.runState.resetRunState(runStateSessionKeyForHandoffFailure());
         }
         finishPendingSessionHandoffFailure();
-        deps.feedback.setToastMessage(aiAccessBlockedReason);
+        deps.feedback.setToastMessage(aiAccessSubmitBlockedReason);
         return sessionSubmitBlockedResult({
           code: "ai_access_blocked",
-          message: aiAccessBlockedReason,
+          message: aiAccessSubmitBlockedReason,
         });
       }
 
