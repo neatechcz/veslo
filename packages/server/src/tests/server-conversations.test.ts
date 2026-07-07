@@ -383,6 +383,88 @@ describe("conversation routes", () => {
     expect(upstreamRequests).toHaveLength(2);
   });
 
+  test("POST /workspace/:id/conversations/submit returns materialized session when first run submit fails", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-materialized-failed-"));
+    tempDirs.push(workspaceRoot);
+    const upstreamRequests: string[] = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        upstreamRequests.push(url.pathname);
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({
+            id: "sess-submit-created-failed",
+            title: "Create then fail",
+            time: { created: Date.now(), updated: Date.now() },
+            directory: workspaceRoot,
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-submit-created-failed/prompt_async") {
+          return Response.json({ error: "prompt failed" }, { status: 502 });
+        }
+        return Response.json({ error: "not found" }, { status: 404 });
+      },
+    });
+    runningServers.push({ stop: () => upstream.stop(true) });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+
+    const submit = () =>
+      fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer client-token",
+          "x-veslo-send-trace-id": "submit-materialized-failed-trace",
+        },
+        body: JSON.stringify({
+          clientMessageId: "msg-submit-materialized-failed",
+          origin: "session:normal",
+          source: "enter",
+          target: { directory: workspaceRoot, pendingClientSessionId: "pending-submit-materialized-failed" },
+          draft: {
+            mode: "prompt",
+            text: "Create then fail",
+            parts: [{ type: "text", text: "Create then fail" }],
+          },
+          options: { submitQueuePolicy: "normal" },
+        }),
+      });
+
+    const response = await submit();
+    expect(response.status).toBe(200);
+    const payload = await response.json() as {
+      status?: string;
+      code?: string;
+      conversationId?: string;
+      opencodeSessionId?: string;
+      pendingClientSessionId?: string | null;
+      materializedSession?: { id?: string; conversationId?: string; opencodeSessionId?: string };
+      draftDisposition?: string;
+    };
+    expect(payload.status).toBe("failed");
+    expect(payload.draftDisposition).toBe("restore");
+    expect(payload.conversationId).toBeTruthy();
+    expect(payload.opencodeSessionId).toBe("sess-submit-created-failed");
+    expect(payload.pendingClientSessionId).toBe("pending-submit-materialized-failed");
+    expect(payload.materializedSession?.id).toBe("sess-submit-created-failed");
+    expect(payload.materializedSession?.conversationId).toBe(payload.conversationId);
+    expect(payload.materializedSession?.opencodeSessionId).toBe("sess-submit-created-failed");
+
+    const retryResponse = await submit();
+    expect(retryResponse.status).toBe(200);
+    expect(await retryResponse.json()).toEqual(payload);
+    expect(upstreamRequests).toEqual([
+      "/session",
+      "/session/sess-submit-created-failed/prompt_async",
+    ]);
+  });
+
   test("POST /workspace/:id/conversations/submit submits an existing conversation through run admission", async () => {
     await useTempVesloDataDir();
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-existing-run-"));
