@@ -279,20 +279,24 @@ export function createConversationSubmitService(input: {
               runtimeAuthorizationActorTokenHash: runtimeAuthorizationActorTokenHash ?? null,
             });
             if (result.payload.status === "blocked" || result.payload.status === "failed") {
+              const payload = result.payload.status === "failed"
+                ? withSubmitResolutionDebugTrace(result.payload, debugTrace)
+                : result.payload;
               return {
                 payload: completeAttempt(
-                  result.payload,
-                  result.payload.status === "blocked" ? "blocked" : "failed",
+                  payload,
+                  payload.status === "blocked" ? "blocked" : "failed",
                 ),
                 httpStatus: result.httpStatus,
               };
             }
+            const payload = withSubmitResolutionDebugTrace(result.payload, debugTrace);
             return {
-              payload: completeAttempt(result.payload, "completed"),
+              payload: completeAttempt(payload, "completed"),
               httpStatus: result.httpStatus,
             };
           } catch (error) {
-            const payload: ConversationSubmitResult = withExistingTarget({
+            const payload: ConversationSubmitResult = withSubmitResolutionDebugTrace(withExistingTarget({
               status: "failed",
               code: error instanceof ApiError ? error.code : "run_submit_failed",
               message: error instanceof Error ? error.message : "Run submit failed",
@@ -303,7 +307,7 @@ export function createConversationSubmitService(input: {
                 upstreamCode: error instanceof ApiError ? error.code : null,
                 upstreamStatus: error instanceof ApiError ? error.status : null,
               }],
-            });
+            }), debugTrace);
             return {
               payload: completeAttempt(payload, "failed"),
               httpStatus: 200,
@@ -349,7 +353,10 @@ export function createConversationSubmitService(input: {
               runtimeAuthorizationActorTokenHash: runtimeAuthorizationActorTokenHash ?? null,
             });
             if (result.payload.status === "blocked" || result.payload.status === "failed") {
-              const materializedPayload = withMaterializedSession(result.payload, materializedSession);
+              const resultPayload = result.payload.status === "failed"
+                ? withSubmitResolutionDebugTrace(result.payload, debugTrace)
+                : result.payload;
+              const materializedPayload = withMaterializedSession(resultPayload, materializedSession);
               return {
                 payload: completeAttempt(
                   materializedPayload,
@@ -358,15 +365,16 @@ export function createConversationSubmitService(input: {
                 httpStatus: result.httpStatus,
               };
             }
+            const resultPayload = withSubmitResolutionDebugTrace(result.payload, debugTrace);
             return {
               payload: completeAttempt({
-                ...result.payload,
+                ...resultPayload,
                 materializedSession,
               }, "completed"),
               httpStatus: result.httpStatus,
             };
           } catch (error) {
-            const payload: ConversationSubmitResult = withMaterializedSession({
+            const payload: ConversationSubmitResult = withSubmitResolutionDebugTrace(withMaterializedSession({
               status: "failed",
               code: error instanceof ApiError ? error.code : "run_submit_failed",
               message: error instanceof Error ? error.message : "Run submit failed",
@@ -377,7 +385,7 @@ export function createConversationSubmitService(input: {
                 upstreamCode: error instanceof ApiError ? error.code : null,
                 upstreamStatus: error instanceof ApiError ? error.status : null,
               }],
-            }, materializedSession);
+            }, materializedSession), debugTrace);
             return {
               payload: completeAttempt(payload, "failed"),
               httpStatus: 200,
@@ -399,7 +407,7 @@ export function createConversationSubmitService(input: {
           httpStatus: 200,
         };
       } catch (error) {
-        const payload: ConversationSubmitResult = {
+        const payload: ConversationSubmitResult = withSubmitResolutionDebugTrace({
           status: "failed",
           code: "conversation_create_failed",
           message: error instanceof Error ? error.message : "Conversation creation failed",
@@ -410,7 +418,7 @@ export function createConversationSubmitService(input: {
             upstreamCode: error instanceof ApiError ? error.code : null,
             upstreamStatus: error instanceof ApiError ? error.status : null,
           }],
-        };
+        }, debugTrace);
         return {
           payload: completeAttempt(payload, "failed"),
           httpStatus: 200,
@@ -435,6 +443,22 @@ function conversationSubmitInFlightKey(workspaceId: string, clientMessageId: str
 
 function conversationSubmitResultIsReplayable(payload: ConversationSubmitResult): boolean {
   return payload.status !== "blocked" && payload.status !== "failed";
+}
+
+type ConversationSubmitDebugTracePayload =
+  | ConversationSubmitSubmittedResult
+  | ConversationSubmitQueuedResult
+  | ConversationSubmitFailedResult;
+
+function withSubmitResolutionDebugTrace<T extends ConversationSubmitDebugTracePayload>(
+  payload: T,
+  debugTrace: ConversationSubmitDebugTraceEntry[],
+): T {
+  if (!debugTrace.length) return payload;
+  return {
+    ...payload,
+    debugTrace: [...debugTrace, ...(payload.debugTrace ?? [])],
+  };
 }
 
 function resolveQueuedReplayFailure(

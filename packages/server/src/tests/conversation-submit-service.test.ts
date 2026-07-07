@@ -319,6 +319,61 @@ describe("conversation submit service", () => {
     });
   });
 
+  test("returns debug trace when implicit skill resolution fails before real submit", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-real-skill-fallback-"));
+    tempDirs.push(workspaceRoot);
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-real-skill-fallback-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => undefined),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+      resolveSkillCommand: async () => {
+        throw new Error("skill registry unavailable");
+      },
+    });
+
+    const result = await service.submit({
+      workspace: workspace(workspaceRoot),
+      body: {
+        clientMessageId: "msg-real-skill-fallback-trace",
+        origin: "session:normal",
+        target: { conversationId: "conv-existing", directory: workspaceRoot },
+        draft: {
+          mode: "prompt",
+          text: "plain prompt",
+          parts: [{ type: "text", text: "plain prompt" }],
+        },
+      },
+      resolveDirectory: async () => workspaceRoot,
+      submitResolvedRun: async (input) => ({
+        httpStatus: 200,
+        payload: {
+          status: "submitted",
+          workspaceId: input.workspace.id,
+          conversationId: input.request.target?.conversationId ?? "conv-existing",
+          opencodeSessionId: "sess-existing",
+          runId: "run-existing",
+          clientMessageId: input.request.clientMessageId,
+          draftDisposition: "clear",
+          debugTrace: [{ source: "runner", event: "server:conversation-run:submitted" }],
+        },
+      }),
+    });
+
+    expect(result.httpStatus).toBe(200);
+    expect(result.payload).toMatchObject({
+      status: "submitted",
+      debugTrace: [
+        {
+          event: "implicit_skill_resolution_failed",
+          message: "skill registry unavailable",
+        },
+        { event: "server:conversation-run:submitted" },
+      ],
+    });
+  });
+
   test("submits resolved existing targets through the injected run submitter idempotently", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-existing-run-"));
     tempDirs.push(workspaceRoot);
