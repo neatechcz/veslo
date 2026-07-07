@@ -7,7 +7,7 @@ agw_l02_legacy_gateway_token_redaction_done: true
 agw_l03_runtime_authorization_logout_ttl_done: true
 agw_l04_runtime_auth_prime_singleflight_done: true
 agw_s01_gateway_auth_before_body_parse_done: true
-agw_s02_den_session_lookup_cache_done: false
+agw_s02_den_session_lookup_cache_done: true
 agw_s03_gateway_async_error_boundary_done: true
 agw_d01_local_provider_route_scope_decision_done: false
 agw_d02_browser_gateway_token_cache_decision_done: false
@@ -1016,17 +1016,14 @@ Acceptance:
 
 #### AGW-S02: Bound DEN session lookup cost
 
-Status: conditional gateway hardening. Ready after choosing cache TTL, but not
-required for top-level `done` unless DEN lookup volume, latency, or lookup
-failure noise is an active operations problem. Implement after or alongside
-`AGW-S03`; lookup caching does not replace async error handling.
-Done flag: `agw_s02_den_session_lookup_cache_done: false`.
+Status: implemented after confirming `DenUserSessionResolver` performed a DEN
+`/v1/me` lookup for each session resolve.
+Done flag: `agw_s02_den_session_lookup_cache_done: true`.
 
 Owner files:
 
 - `services/ai-gateway/src/auth/user-session.ts`
 - `services/ai-gateway/src/auth/gateway-session.ts`
-- `services/ai-gateway/src/runtime/default-runtime.ts`
 - `services/ai-gateway/test/proxy-auth.test.ts`
 - `services/ai-gateway/test/user-credentials.test.ts`
 - `services/ai-gateway/test/gateway-session-cache.test.ts`
@@ -1181,6 +1178,9 @@ Implementation verification on 2026-07-07:
 - `AGW-L04`: `pnpm --filter @neatech/veslo-ui typecheck` was attempted after
   fixing the L04 type errors; it is currently blocked by unrelated dirty
   `src/app/tests/pages/session-send-workflow.test.ts` queue item type errors.
+- `AGW-S02`: `pnpm --filter @neatech/ai-gateway exec tsx --test test/proxy-auth.test.ts test/user-credentials.test.ts test/gateway-session-cache.test.ts`
+  passed with 12 tests.
+- `AGW-S02`: `pnpm --filter @neatech/ai-gateway exec tsc --noEmit` passed.
 
 The original audit was performed against the live checkout on branch
 `local/sandbox-merge...origin/local/sandbox-merge`. At that time, the worktree
