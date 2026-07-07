@@ -7,7 +7,7 @@ source_audit: chat:2026-07-07-server-owned-composer-send-workflow-deep-audit
 base_plan: docs/plans/2026-07-06-server-owned-composer-send-workflow-implementation-plan.md
 e2e_status: skipped
 bsw_aud01_concurrent_submit_idempotency_done: true
-bsw_aud02_replacement_failure_ui_surface_done: false
+bsw_aud02_replacement_failure_ui_surface_done: true
 bsw_aud03_docs_status_alignment_done: false
 bsw_aud04_typed_app_boundary_done: true
 bsw_aud05_running_enter_server_queue_done: false
@@ -230,7 +230,7 @@ Implementation note:
 
 ### BSW-AUD02: Replacement failure UI surface
 
-Status: `done: false`
+Status: `done: true`
 
 Severity: P2
 
@@ -308,7 +308,31 @@ pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/
 
 Implementation note:
 
-- Pending.
+- 2026-07-07:
+  - Changed `packages/app/src/app/tests/pages/session-mutation-workflow.test.ts`
+    and `packages/app/src/app/tests/pages/session-conversation-flow.test.ts`.
+  - BSW-AUD04 already changed the production replacement path to return
+    `SessionSubmitResult` through `SessionMutationWorkflow`,
+    `SessionConversationFlow`, and the composer boundary. This item adds the
+    missing regression coverage for that contract.
+  - Added mutation-workflow coverage for typed server replacement `blocked`
+    and `failed` results, including
+    `replacement_state_unavailable` and
+    `replacement_submit_failed_restore_failed`, and proved the legacy
+    abort/revert/send fallback is not entered for those server responses.
+  - Added conversation-flow coverage proving a replacement server failure
+    surfaces the server message in the toast instead of the generic
+    `session.connect_server_to_attach` fallback, while preserving
+    `draftDisposition`.
+  - Verification passed:
+    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-mutation-workflow.test.ts src/app/tests/pages/session-message-replacement.test.ts src/app/tests/pages/session-conversation-flow.test.ts`
+    with 60 tests, and
+    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-mutation-workflow.test.ts`
+    with 9 tests after fixture type cleanup.
+  - Additional check:
+    `pnpm --filter @neatech/veslo-ui exec tsc --noEmit --pretty false`
+    currently fails only on unrelated existing
+    `managed-ai-runtime-config`/test errors outside this item.
 
 ### BSW-AUD03: Documentation status alignment
 

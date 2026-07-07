@@ -890,6 +890,138 @@ test("conversation flow controller owns transcript edit recovery", () => {
   assert.deepEqual(composerDrafts, ["failed pending", "transcript edit"]);
 });
 
+test("conversation flow controller surfaces typed replacement server failures", async () => {
+  const toasts: string[] = [];
+  const replaceCalls: string[] = [];
+  let transcriptEditId: string | null = "message-1";
+
+  const controller = createSessionConversationFlow({
+    identity: {
+      createClientMessageId: () => "client-replace-failed",
+      createPendingSessionInstanceId: () => "pending-session:unused",
+      now: () => 123,
+    },
+    sessionKeys: {
+      activeUiConversationWorkspaceId: () => "workspace-1",
+      activeWorkspaceId: () => "workspace-1",
+      currentSessionQueueKey: () => "session-a",
+      pendingSessionQueueKey: () => "pending:base",
+      selectedSessionId: () => "session-a",
+      sessionIdForQueueKey: (sessionKey) => (sessionKey.startsWith("pending") ? null : sessionKey),
+      sessionQueueKeyForSessionId: (sessionId) => sessionId ?? "pending:base",
+      workspaceIdForQueueKey: () => "workspace-1",
+    },
+    runtime: {
+      activePendingDraftKey: () => null,
+      aiAccessBlockedReason: () => null,
+      busyHint: () => null,
+      busyLabel: () => null,
+      error: () => null,
+    },
+    transcript: {
+      messageCount: () => 1,
+      messageIds: () => ["message-1"],
+    },
+    pendingHandoff: {
+      clearPendingQueueKeyAwaitingSessionIdForBaseKey: () => undefined,
+      createPendingSidebarSessionWorkspaceId: () => "workspace-1",
+      createPendingSidebarSessionWorkspaceRoot: () => "/workspace",
+      remapPendingQueueToSession: () => undefined,
+      restoreMaterializedQueueToPending: () => undefined,
+      setPendingQueueKeyAwaitingSessionIdForBaseKey: () => undefined,
+    },
+    pendingSubmitted: {
+      optimisticSubmittedDraft: () => null,
+      setOptimisticSubmittedDraft: () => undefined,
+      updatePendingSubmittedDrafts: () => undefined,
+    },
+    queue: {
+      appendDraftToCurrentQueue: () => undefined,
+      editingQueuedDraftId: () => null,
+      queuePaused: () => false,
+      queuePausedForSessionKey: () => false,
+      queuedDrafts: () => [],
+      queuedDraftsBySessionKey: () => ({}),
+      resolveQueueKeyForQueuedDraft: (sessionKey) => sessionKey,
+      setEditingQueuedDraftId: () => undefined,
+      setQueuePausedForSessionKey: () => undefined,
+      updateCurrentQueue: () => undefined,
+      updateQueueForSessionKey: () => undefined,
+    },
+    composer: {
+      clearComposerDraftForSession: () => undefined,
+      currentDraftMode: () => "prompt",
+      setComposerDraft: () => undefined,
+    },
+    transcriptEdit: {
+      editableUserMessage: () => null,
+      editingTranscriptMessageId: () => transcriptEditId,
+      setEditingTranscriptMessageId: (id) => {
+        transcriptEditId = id;
+      },
+    },
+    runControl: {
+      abortBusy: () => false,
+      abortSession: async () => undefined,
+      lastPromptSent: () => "",
+      retryLastPrompt: () => undefined,
+      runPhase: () => "idle",
+      setAbortBusy: () => undefined,
+      setEscapeStopConfirmationPending: () => undefined,
+    },
+    runState: {
+      resetRunState: () => undefined,
+      showRunIndicator: () => false,
+      startRun: () => undefined,
+    },
+    viewport: {
+      scheduleScrollToLatest: () => undefined,
+      setStickToBottom: () => undefined,
+    },
+    transport: {
+      replaceUserMessageAsync: async (messageId) => {
+        replaceCalls.push(messageId);
+        return sessionSubmitBlockedResult({
+          code: "replacement_state_unavailable",
+          message: "Replacement state is unavailable.",
+          draftDisposition: "restore",
+        });
+      },
+      sendPromptAsync: async () => {
+        throw new Error("normal send should not run for replacement failure");
+      },
+    },
+    feedback: {
+      setToastMessage: (message) => {
+        toasts.push(message);
+      },
+      tr: (key) => key,
+    },
+    trace: {
+      markTempRuntimeUiRenderSource: () => undefined,
+      recordSendTrace: () => undefined,
+      reportError: () => undefined,
+    },
+    effects: {
+      batch: (fn) => fn(),
+    },
+  });
+
+  const result = await controller.handleSendPrompt(draft, {
+    sendTraceId: "trace-1",
+    source: "test",
+  });
+
+  assert.equal(result.accepted, false);
+  assert.equal(result.status, "blocked");
+  assert.equal(result.code, "replacement_state_unavailable");
+  assert.equal(result.message, "Replacement state is unavailable.");
+  assert.equal(result.draftDisposition, "restore");
+  assert.deepEqual(replaceCalls, ["message-1"]);
+  assert.deepEqual(toasts, ["Replacement state is unavailable."]);
+  assert.equal(transcriptEditId, null);
+});
+
 test("conversation flow controller pauses queues before cancelling active runs", async () => {
   let abortBusy = false;
   const events: string[] = [];
