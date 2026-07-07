@@ -519,6 +519,107 @@ describe("conversation service", () => {
     expect(resolved?.engineSessionId).toBe("sess-legacy-read");
   });
 
+  test("loadTranscript fails closed when binding resolution throws", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-binding-failure-"));
+    tempDirs.push(dataDir);
+    const directory = join(dataDir, "workspace-a");
+    const bindingStore = createConversationBindingStore({ dataDir, now: () => 4_000 });
+    let sandboxTranscriptReads = 0;
+    const service = createConversationService({
+      readStore: {
+        ...fakeReadStore(directory),
+        async getTranscript(input) {
+          sandboxTranscriptReads += 1;
+          return {
+            workspaceId: input.workspaceId,
+            sessionId: input.sessionId,
+            limit: input.limit,
+            messages: [],
+            partsByMessageId: {},
+            fetchedAt: 100,
+            source: "sqlite",
+          };
+        },
+      },
+      bindingStore: {
+        ...bindingStore,
+        async resolveOpenCodeSession() {
+          throw new Error("binding db unavailable");
+        },
+      },
+      transcriptStore: createConversationTranscriptStore({ dataDir, now: () => 5_000 }),
+      createOpenCodeSession: async () => ({ id: "unused" }),
+    });
+
+    let error: unknown;
+    try {
+      await service.loadTranscript({
+        workspace: workspaceFor(directory),
+        sessionId: "sess-raw",
+        limit: 10,
+        directory,
+      });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(503);
+    expect((error as ApiError).code).toBe("conversation_binding_unavailable");
+    expect(sandboxTranscriptReads).toBe(0);
+  });
+
+  test("loadTranscript rejects missing Veslo conversation bindings without raw fallback", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-missing-conv-"));
+    tempDirs.push(dataDir);
+    const directory = join(dataDir, "workspace-a");
+    const bindingStore = createConversationBindingStore({ dataDir, now: () => 4_000 });
+    let sourceListReads = 0;
+    let sandboxTranscriptReads = 0;
+    const service = createConversationService({
+      readStore: {
+        ...fakeReadStore(directory),
+        async listConversations(input) {
+          sourceListReads += 1;
+          return fakeReadStore(directory).listConversations(input);
+        },
+        async getTranscript(input) {
+          sandboxTranscriptReads += 1;
+          return {
+            workspaceId: input.workspaceId,
+            sessionId: input.sessionId,
+            limit: input.limit,
+            messages: [],
+            partsByMessageId: {},
+            fetchedAt: 100,
+            source: "sqlite",
+          };
+        },
+      },
+      bindingStore,
+      transcriptStore: createConversationTranscriptStore({ dataDir, now: () => 5_000 }),
+      createOpenCodeSession: async () => ({ id: "unused" }),
+    });
+
+    let error: unknown;
+    try {
+      await service.loadTranscript({
+        workspace: workspaceFor(directory),
+        sessionId: "conv-0123456789abcdef0123",
+        limit: 10,
+        directory,
+      });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(404);
+    expect((error as ApiError).code).toBe("conversation_not_found");
+    expect(sourceListReads).toBe(0);
+    expect(sandboxTranscriptReads).toBe(0);
+  });
+
   test("appendTranscript imports a legacy raw session before persisting the host snapshot", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-append-import-"));
     tempDirs.push(dataDir);
@@ -702,6 +803,71 @@ describe("conversation service", () => {
     expect(loaded.sessionId).toBe("ses-live");
     expect(loaded.messages.map((m) => (m as { id: string }).id)).toEqual(["msg-1", "msg-2"]);
     expect((loaded.partsByMessageId["msg-2"]?.[0] as { text: string }).text).toBe("hello");
+  });
+
+  test("host transcript snapshots stay scoped when engine session ids repeat across directories", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-transcript-scope-"));
+    tempDirs.push(dataDir);
+    const directoryA = join(dataDir, "workspace-a");
+    const directoryB = join(dataDir, "workspace-b");
+    const bindingStore = createConversationBindingStore({ dataDir, now: () => 1_000 });
+    const transcriptStore = createConversationTranscriptStore({ dataDir, now: () => 2_000 });
+    const bindingA = await bindingStore.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory: directoryA,
+      engineSessionId: "ses-repeat",
+      title: "A",
+      createdAt: 10,
+      updatedAt: 20,
+    });
+    const bindingB = await bindingStore.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory: directoryB,
+      engineSessionId: "ses-repeat",
+      title: "B",
+      createdAt: 30,
+      updatedAt: 40,
+    });
+    const service = createConversationService({
+      readStore: unavailableReadStore,
+      bindingStore,
+      transcriptStore,
+      createOpenCodeSession: async () => ({ id: "unused" }),
+      now: () => 3_000,
+    });
+
+    await service.appendTranscript({
+      workspace: workspaceFor(directoryA),
+      sessionId: bindingA.conversationId,
+      directory: directoryA,
+      messages: [{ id: "msg-a", sessionID: "ses-repeat", role: "assistant" }],
+      partsByMessageId: {},
+    });
+    await service.appendTranscript({
+      workspace: workspaceFor(directoryB),
+      sessionId: bindingB.conversationId,
+      directory: directoryB,
+      messages: [{ id: "msg-b", sessionID: "ses-repeat", role: "assistant" }],
+      partsByMessageId: {},
+    });
+
+    const loadedA = await service.loadTranscript({
+      workspace: workspaceFor(directoryA),
+      sessionId: bindingA.conversationId,
+      limit: 10,
+      directory: directoryA,
+    });
+    const loadedB = await service.loadTranscript({
+      workspace: workspaceFor(directoryB),
+      sessionId: bindingB.conversationId,
+      limit: 10,
+      directory: directoryB,
+    });
+
+    expect(loadedA.conversationId).toBe(bindingA.conversationId);
+    expect(loadedB.conversationId).toBe(bindingB.conversationId);
+    expect(loadedA.messages.map((m) => (m as { id: string }).id)).toEqual(["msg-a"]);
+    expect(loadedB.messages.map((m) => (m as { id: string }).id)).toEqual(["msg-b"]);
   });
 
   test("appendTranscript rejects unproven raw OpenCode session ids", async () => {

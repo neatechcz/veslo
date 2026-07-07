@@ -11,11 +11,11 @@ awf_02_queue_starting_recovery_done: true
 awf_03_submit_recoverable_replay_done: true
 awf_04_logical_submit_failure_contract_done: true
 awf_05_queue_duplicate_fingerprint_done: true
-awf_06_sse_delta_coalescing_done: false
-awf_07_unknown_session_sse_done: false
-awf_08_transcript_workspace_switch_done: false
-awf_09_transcript_read_fail_closed_done: false
-awf_10_transcript_store_scoped_key_done: false
+awf_06_sse_delta_coalescing_done: true
+awf_07_unknown_session_sse_done: true
+awf_08_transcript_workspace_switch_done: true
+awf_09_transcript_read_fail_closed_done: true
+awf_10_transcript_store_scoped_key_done: true
 awf_11_ambiguous_ui_scope_done: false
 awf_12_ui_conversation_key_scope_done: false
 awf_13_displayed_guard_directory_done: false
@@ -288,7 +288,7 @@ Completed:
 
 ## Finding 04: Logical Submit Failures Return HTTP 200
 
-done: false
+done: true
 
 Severity: High for observability, test correctness, and E2E failure detection;
 defer a transport-status change until app clients are updated.
@@ -408,7 +408,7 @@ Completed:
 
 ## Finding 06: SSE Coalescing Can Drop Incremental Text Deltas
 
-done: false
+done: true
 
 Severity: High
 
@@ -440,9 +440,23 @@ Validation:
   coalescing bug.
 - Add a full-snapshot test to preserve performance-safe coalescing behavior.
 
+Completed:
+
+- `message.part.updated` events that carry a string `delta` no longer receive a
+  coalescing key, so queued incremental text deltas for the same part are all
+  applied in order before flush.
+- Full-snapshot `message.part.updated` events without `delta` still coalesce by
+  `messageID:partID`, preserving the existing queue performance behavior.
+- Added app tests that drive events through `setupSseStream` queue/flush rather
+  than `applyEvent` directly, proving both delta preservation and snapshot
+  coalescing.
+- Verified with `pnpm --filter @neatech/veslo-ui exec node --test
+  --import=tsx/esm src/app/tests/context/session-event-stream.test.ts` and
+  `pnpm --filter @neatech/veslo-ui typecheck`.
+
 ## Finding 07: SSE Drops Events For Unknown Sessions
 
-done: false
+done: true
 
 Severity: High
 
@@ -478,9 +492,24 @@ Validation:
   persisted, not attached to the active workspace.
 - Add background workspace event tests.
 
+Completed:
+
+- Foreground SSE `message.updated` and `message.part.updated` events now accept
+  the routed active workspace as scope proof before the session list has
+  hydrated, seed `workspaceSessionIds`, and preserve the assistant message/part
+  in the live store instead of dropping it.
+- Ambiguous no-source events still fail closed. Background workspace events still
+  avoid mutating the active transcript and route message/part updates to durable
+  background transcript ingestion.
+- Added app tests for foreground pre-hydration message/part delivery and
+  background `message.part.updated` transcript ingestion.
+- Verified with `pnpm --filter @neatech/veslo-ui exec node --test
+  --import=tsx/esm src/app/tests/context/session-event-stream.test.ts` and
+  `pnpm --filter @neatech/veslo-ui typecheck`.
+
 ## Finding 08: Transcript Ingestion Drops On Workspace Switch
 
-done: false
+done: true
 
 Severity: High
 
@@ -514,9 +543,27 @@ Validation:
   flush time but the schedule-time scope/routing entry still provides the
   original directory.
 
+Completed:
+
+- Live transcript ingestion now captures the schedule-time directory scope and
+  uses the original `workspaceId/sessionID` at flush time instead of refusing to
+  write after an active workspace switch.
+- Flush payload building no longer falls back blindly to the current active
+  workspace root. Directory resolution is session directory, schedule-time
+  scope, routed workspace entry, then active root only when the target workspace
+  is still active.
+- Active workspace switches are recorded as diagnostics rather than write
+  blockers.
+- Added app tests for scheduled ingestion after workspace/root switch and for
+  routed directory resolution when the session is missing from the foreground
+  store at flush time.
+- Verified with `pnpm --filter @neatech/veslo-ui exec node --test
+  --import=tsx/esm src/app/tests/context/session-transcript-controller.test.ts`
+  and `pnpm --filter @neatech/veslo-ui typecheck`.
+
 ## Finding 09: Transcript Read Fails Open To Raw Session Id
 
-done: false
+done: true
 
 Severity: High
 
@@ -547,9 +594,30 @@ Validation:
 - Add conversation-service tests for binding-store throw versus binding-not-found.
 - Add route-level tests for old conversation ids and raw OpenCode ids.
 
+Completed:
+
+- Binding/read-store exceptions during `resolveOpenCodeSessionForRead` now throw
+  structured `conversation_binding_unavailable` `ApiError`s instead of returning
+  `null` and letting callers read the raw request id.
+- `loadTranscript` now rejects missing `conv-*` bindings with
+  `conversation_not_found` and only retains raw OpenCode fallback for scoped
+  non-Veslo session ids.
+- Added service tests proving binding-store failure does not hit sandbox
+  transcript reads and missing Veslo conversation ids do not fail open to raw
+  session reads.
+- Re-ran route-level transcript/prefetch tests covering raw legacy session ids
+  and bound conversation ids.
+- Verified with `pnpm --filter veslo-server exec bun test
+  src/tests/conversation-service.test.ts`,
+  `pnpm --filter veslo-server exec bun test
+  src/tests/server-session-transcript-prefetch.test.ts`,
+  `pnpm --filter veslo-server typecheck`,
+  `pnpm --filter veslo-server build:bin`, and forced
+  `VESLO_SIDECAR_FORCE_BUILD=1 pnpm --filter @neatech/veslo run prepare:sidecar`.
+
 ## Finding 10: Transcript Store Key Omits Directory
 
-done: false
+done: true
 
 Severity: High if engine session id collisions across directories are possible
 with current or imported OpenCode data; otherwise Medium contract hardening.
@@ -587,6 +655,28 @@ Validation:
 
 - Add transcript-store tests with same `engineSessionId` in two directories.
 - Add migration/backcompat tests for existing rows.
+
+Completed:
+
+- `conversation-transcript-store` now accepts optional `directory` on append/read
+  and keys `conversation_message`, `conversation_part`, and empty transcript
+  markers by `(workspace_id, directory, engine_session_id, ...)`.
+- Added SQLite migration from legacy unscoped transcript tables into
+  `directory = ""` rows, plus scoped reads that fall back to those legacy rows
+  only when no exact directory-scoped transcript exists.
+- `conversation-service` now passes the conversation directory into host
+  transcript read/write paths, so two bindings with the same OpenCode
+  `engineSessionId` in different directories no longer overwrite each other.
+- Added transcript-store tests for same engine session id across directories and
+  legacy unscoped fallback, plus a service-level collision test across two
+  directory-scoped bindings.
+- Verified with `pnpm --filter veslo-server exec bun test
+  src/tests/conversation-transcript-store.test.ts src/tests/conversation-service.test.ts`,
+  `pnpm --filter veslo-server exec bun test
+  src/tests/server-session-transcript-prefetch.test.ts`,
+  `pnpm --filter veslo-server typecheck`,
+  `pnpm --filter veslo-server build:bin`, and forced
+  `VESLO_SIDECAR_FORCE_BUILD=1 pnpm --filter @neatech/veslo run prepare:sidecar`.
 
 ## UI Scope Contract Slice For Findings 11-14
 
