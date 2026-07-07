@@ -85,3 +85,16 @@ test("staging app workflow bakes staging endpoints and never publishes public up
     assert.equal(workflow.includes(forbiddenText), false, `staging app workflow must not include ${forbiddenText}`);
   }
 });
+
+test("staging Windows build assembles document runtime before using Windows release config", () => {
+  const workflow = read(".github/workflows/build-staging-app.yml");
+
+  assert.match(
+    workflow,
+    /Assemble Windows staging document runtime[\s\S]*node scripts\/document-runtime\/assemble-windows\.mjs[\s\S]*Build Windows staging MSI/,
+  );
+  assert.match(
+    workflow,
+    /Build Windows staging MSI[\s\S]*--config src-tauri\/tauri\.windows\.release\.conf\.json/,
+  );
+});

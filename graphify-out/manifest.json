@@ -75,8 +75,8 @@
     "semantic_hash": ""
   },
   "packages/app/package.json": {
-    "mtime": 1783435518.2256532,
-    "ast_hash": "e47553d03bf93da7aa8d90059faca2bf",
+    "mtime": 1783448153.4938102,
+    "ast_hash": "a26913d08498bcfd0128eaba9b6cc34c",
     "semantic_hash": ""
   },
   "packages/app/progress.json": {
@@ -3830,8 +3830,8 @@
     "semantic_hash": ""
   },
   "packages/desktop/package.json": {
-    "mtime": 1783435518.274208,
-    "ast_hash": "ce99b7a56407e4d689ec8e0ed4cf39a3",
+    "mtime": 1783448153.4940388,
+    "ast_hash": "a7695df1f04755390b31ceeccfcd2ca8",
     "semantic_hash": ""
   },
   "packages/desktop/scripts/chrome-devtools-mcp-shim.ts": {
@@ -4240,8 +4240,8 @@
     "semantic_hash": ""
   },
   "packages/desktop/src-tauri/tauri.conf.json": {
-    "mtime": 1783435518.2810585,
-    "ast_hash": "573ae9d84c882ab890ac5d76bc3d1f2e",
+    "mtime": 1783448616.4617734,
+    "ast_hash": "5651cf517b141a3afa251c9ef3152bc9",
     "semantic_hash": ""
   },
   "packages/desktop/src-tauri/tauri.dev.conf.json": {
@@ -4255,8 +4255,8 @@
     "semantic_hash": ""
   },
   "packages/desktop/src-tauri/tauri.windows.release.conf.json": {
-    "mtime": 1783435517.0515175,
-    "ast_hash": "ea3aa4999a90e81261c3b471e8989640",
+    "mtime": 1783448616.4623656,
+    "ast_hash": "4203ff4cfd583983f963bb2dc3b6167c",
     "semantic_hash": ""
   },
   "packages/desktop/src-tauri/windows/wsl2-client-installer.ps1": {
@@ -4660,8 +4660,8 @@
     "semantic_hash": ""
   },
   "packages/opencode-router/package.json": {
-    "mtime": 1783435518.292547,
-    "ast_hash": "57b1d61aea434941fb77b2f437deb5f9",
+    "mtime": 1783448153.4946465,
+    "ast_hash": "0ce4d9264270a350650380e5b0db2c9b",
     "semantic_hash": ""
   },
   "packages/opencode-router/script/build.ts": {
@@ -4800,8 +4800,8 @@
     "semantic_hash": ""
   },
   "packages/orchestrator/package.json": {
-    "mtime": 1783435518.2932892,
-    "ast_hash": "109411053f52768b8fe5a340126df755",
+    "mtime": 1783448153.4942167,
+    "ast_hash": "137f212995c59ad713250b55451f4faa",
     "semantic_hash": ""
   },
   "packages/orchestrator/script/build.ts": {
@@ -5155,8 +5155,8 @@
     "semantic_hash": ""
   },
   "packages/server/package.json": {
-    "mtime": 1783435517.2606947,
-    "ast_hash": "c8b8da6ca91f47ce3659229fa3b9ce96",
+    "mtime": 1783448153.4944823,
+    "ast_hash": "6215e68d1da9027cabe7f9029cac7266",
     "semantic_hash": ""
   },
   "packages/server/script/build.ts": {
@@ -6520,8 +6520,8 @@
     "semantic_hash": ""
   },
   "scripts/release/release-platforms.test.mjs": {
-    "mtime": 1783435517.3952663,
-    "ast_hash": "0daf5f905086a9f1cb037e953fe8c487",
+    "mtime": 1783448544.257891,
+    "ast_hash": "057b891ad968459e1d17c64b116c2ca4",
     "semantic_hash": ""
   },
   "scripts/release/release-signing.mjs": {
@@ -6535,13 +6535,13 @@
     "semantic_hash": ""
   },
   "scripts/release/review.mjs": {
-    "mtime": 1783435517.3956616,
-    "ast_hash": "88ace8c2f183b37ac2daaaa019f41c50",
+    "mtime": 1783448616.4639866,
+    "ast_hash": "24a9b60e110a0c9a1d26c7f22ad79105",
     "semantic_hash": ""
   },
   "scripts/release/review.test.mjs": {
-    "mtime": 1783435517.3957875,
-    "ast_hash": "6437d3d6978e9314bcfb355b1b3677df",
+    "mtime": 1783448501.6307878,
+    "ast_hash": "b7aa3be1c6e4e9501aa31e19288b0fca",
     "semantic_hash": ""
   },
   "scripts/release/ship.mjs": {
@@ -6585,8 +6585,8 @@
     "semantic_hash": ""
   },
   "scripts/release/verify-document-runtime-windows.mjs": {
-    "mtime": 1783435518.317084,
-    "ast_hash": "e8d212103d7fb26b68895d35beac66a2",
+    "mtime": 1783448741.6807337,
+    "ast_hash": "c20fa0f9a6760ab4aaf7f48aceb29970",
     "semantic_hash": ""
   },
   "scripts/release/verify-document-runtime-windows.test.mjs": {
@@ -8640,8 +8640,8 @@
     "semantic_hash": ""
   },
   "scripts/release/staging-app-build.test.mjs": {
-    "mtime": 1783435518.3165214,
-    "ast_hash": "b2cff35a7b21073b379d4a37e60b7793",
+    "mtime": 1783448569.9563565,
+    "ast_hash": "58e3c57a7d72143e6d9457b27d011518",
     "semantic_hash": ""
   },
   "services/ai-gateway/src/deployment-endpoints.ts": {

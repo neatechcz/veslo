@@ -89,11 +89,16 @@ const commandExists = (binDir, command) => {
 
 const verifyWslPolicy = ({ repoRoot, checks }) => {
   const tauriConfigPath = resolve(repoRoot, "packages/desktop/src-tauri/tauri.conf.json");
+  const windowsReleaseConfigPath = resolve(repoRoot, "packages/desktop/src-tauri/tauri.windows.release.conf.json");
   const wxsPath = resolve(repoRoot, "packages/desktop/src-tauri/windows/wsl2-sandbox-installer.wxs");
   const nsisPath = resolve(repoRoot, "packages/desktop/src-tauri/windows/nsis-hooks.nsh");
 
   const tauriConfig = existsSync(tauriConfigPath) ? readJson(tauriConfigPath) : {};
-  const resources = tauriConfig.bundle?.resources ?? {};
+  const windowsReleaseConfig = existsSync(windowsReleaseConfigPath) ? readJson(windowsReleaseConfigPath) : {};
+  const resources = {
+    ...(tauriConfig.bundle?.resources ?? {}),
+    ...(windowsReleaseConfig.bundle?.resources ?? {}),
+  };
   const wxs = existsSync(wxsPath) ? readText(wxsPath) : "";
   const nsis = existsSync(nsisPath) ? readText(nsisPath) : "";
 
@@ -114,7 +119,7 @@ const verifyWslPolicy = ({ repoRoot, checks }) => {
       resources[WINDOWS_RUNTIME_RESOURCE_KEY] === WINDOWS_RUNTIME_RESOURCE_TARGET &&
       !/document-runtime/i.test(nsis) &&
       !/veslo-document-runtime/i.test(wxs),
-    tauriConfigPath,
+    `${tauriConfigPath}; ${windowsReleaseConfigPath}`,
   );
 };
 

@@ -171,6 +171,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
+      - name: Cache Windows staging document runtime downloads
+        if: matrix.os_type == 'windows'
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            packages/document-runtime/.cache/windows-native-x64
+            packages/document-runtime/manifests/sources/windows-native-x64.lock.json
+          key: windows-document-runtime-${{ hashFiles('packages/document-runtime/manifests/sources/windows-native-x64.json') }}
+          restore-keys: |
+            windows-document-runtime-
+
+      - name: Assemble Windows staging document runtime
+        if: matrix.os_type == 'windows'
+        shell: pwsh
+        run: node scripts/document-runtime/assemble-windows.mjs
+
       - name: Resolve Windows signing
         if: matrix.os_type == 'windows'
         id: signing

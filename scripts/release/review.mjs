@@ -123,9 +123,28 @@ const hasGlitchTipReleaseEnv = (text, options = {}) => {
   );
 };
 
-const hasDocumentRuntimePackageGate = (text) =>
-  /Verify document runtime packages/.test(text) &&
-  /verify-document-runtime-packages\.mjs\s+--profile\s+local-docs-required\s+--json/.test(text);
+const hasOrderedFragments = (text, fragments) => {
+  let cursor = 0;
+  for (const fragment of fragments) {
+    const index = text.indexOf(fragment, cursor);
+    if (index === -1) return false;
+    cursor = index + fragment.length;
+  }
+  return true;
+};
+
+const hasDocumentRuntimeMetadataGate = (text) =>
+  /Verify document runtime package metadata/.test(text) &&
+  /verify-document-runtime-packages\.mjs\s+--profile\s+remote-docs-only\s+--json/.test(text);
+
+const hasWindowsDocumentRuntimeBundleGate = (text) =>
+  hasOrderedFragments(text, [
+    "Assemble Windows document runtime",
+    "node scripts/document-runtime/assemble-windows.mjs",
+    "Verify Windows document runtime bundle",
+    "node scripts/release/verify-document-runtime-windows.mjs --profile local-docs-required --json",
+    "Build Windows bundle",
+  ]);
 
 const releaseDocsText = [releaseDoc, stateConfigDoc, applicationLogsDoc].join("\n");
 const releaseDocsDescribeGlitchTipDsn =
@@ -451,9 +470,14 @@ addCheck(
   "RELEASE.md + docs/dev",
 );
 addCheck(
-  "Release workflow gates local document runtime packages",
-  hasDocumentRuntimePackageGate(releaseVerifyJob),
+  "Release workflow validates document runtime metadata before build",
+  hasDocumentRuntimeMetadataGate(releaseVerifyJob),
   ".github/workflows/release-macos-aarch64.yml#verify-release",
+);
+addCheck(
+  "Release workflow verifies Windows document runtime after assembly",
+  hasWindowsDocumentRuntimeBundleGate(releaseWindowsTauriJob),
+  ".github/workflows/release-macos-aarch64.yml#publish-tauri-windows",
 );
 const wslInstallerFragmentPath = resolve(
   root,
