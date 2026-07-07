@@ -333,6 +333,31 @@ test("release checklist documents Windows signing timeout controls", () => {
   assert.match(checklist, /Azure Artifact Signing request/);
 });
 
+test("release docs require Developer ID certificate signing for every macOS release", () => {
+  const requiredText = [
+    "Every distributed macOS build must be signed with the Apple Developer ID Application certificate.",
+    "Do not use `allow_unsigned_macos=true` or `ALLOW_UNSIGNED_MACOS=true` for production, beta, prerelease, staging, or tester-distributed macOS builds.",
+    "Notarization can be disabled only when notarization credentials are unavailable; certificate signing must still remain enabled.",
+    "codesign --verify --deep --strict --verbose=2",
+    "Developer ID Application: Neatech s.r.o. (D7XT3SG9WA)",
+  ];
+  const docs = [
+    "../../RELEASE.md",
+    "../../docs/dev/release-skill.md",
+    "../../.opencode/commands/release.md",
+    "../../.opencode/skills/release/SKILL.md",
+    "../../.opencode/skills/veslo-release/SKILL.md",
+    "../../.claude/skills/veslo-release/SKILL.md",
+  ];
+
+  for (const docPath of docs) {
+    const doc = readFileSync(resolve(import.meta.dirname, docPath), "utf8");
+    for (const text of requiredText) {
+      assert.match(doc, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `${docPath} missing ${text}`);
+    }
+  }
+});
+
 test("Windows signing workflows allow slow Azure signing responses", () => {
   const workflowPaths = [
     {

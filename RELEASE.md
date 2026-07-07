@@ -12,6 +12,7 @@ The skill must resolve beta vs production, generate public-safe release notes fr
 
 - Sync the default branch (currently `main`).
 - Run `pnpm release:review` and fix any mismatches.
+- Every distributed macOS build must be signed with the Apple Developer ID Application certificate. Do not use `allow_unsigned_macos=true` or `ALLOW_UNSIGNED_MACOS=true` for production, beta, prerelease, staging, or tester-distributed macOS builds.
 - If you are building sidecar assets, set `SOURCE_DATE_EPOCH` to the tag timestamp for deterministic manifests.
 - Confirm the public, release-owned GitHub Actions variable `VESLO_GLITCHTIP_DSN` is configured before desktop release builds. It is intentionally public in the packaged app, but it is not user-configurable and must not be exposed as an application setting. Release and prerelease publish jobs set `VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV=1` so missing monitoring values fail closed; manual validation builds may warn instead.
 
@@ -36,7 +37,7 @@ Use this path for manual staging desktop builds that should be downloadable by t
    - `gh workflow run build-staging-app.yml --repo neatechcz/veslo --ref <branch> -f ref=<branch>`
 2. The workflow creates or updates a private prerelease in `neatechcz/veslo` named `staging-YYYY-MM-DD-<short-sha>`.
 3. The workflow uploads installable staging assets to that prerelease and also keeps GitHub Actions artifacts as a fallback.
-4. macOS staging builds are signed with the Apple Developer ID certificate, then `codesign` verifies both the `.app` bundle and `.dmg` before upload. This path does not require notarization unless explicitly requested.
+4. macOS staging builds are signed with the Apple Developer ID Application certificate, then `codesign --verify --deep --strict --verbose=2` verifies the `.app` bundle and `codesign --verify --verbose=2` verifies the `.dmg` before upload. The expected certificate identity is `Developer ID Application: Neatech s.r.o. (D7XT3SG9WA)`. Notarization can be disabled only when notarization credentials are unavailable; certificate signing must still remain enabled.
 5. Staging builds keep the updater disabled and must not publish to `neatechcz/veslo-updates`, generate `latest.json`, or become the production latest release.
 6. Verify:
    - `gh run list --repo neatechcz/veslo --workflow "Build Staging App" --limit 5`
@@ -55,9 +56,13 @@ Each Windows `signtool` invocation is bounded by `VESLO_WINDOWS_SIGNING_TIMEOUT_
 
 ## macOS signing and notarization
 
-macOS desktop builds use a Developer ID Application certificate for signing:
+Every distributed macOS build must be signed with the Apple Developer ID Application certificate. This applies to production releases, beta/prerelease workflows, staging/test app releases, and any tester-distributed manual build. Do not use `allow_unsigned_macos=true` or `ALLOW_UNSIGNED_MACOS=true` for production, beta, prerelease, staging, or tester-distributed macOS builds.
+
+macOS desktop builds use these GitHub Actions secrets for signing:
 
 - Secrets: `APPLE_SIGNING_IDENTITY`, `APPLE_CODESIGN_CERT_P12_BASE64`, `APPLE_CODESIGN_CERT_PASSWORD`
+
+The expected certificate identity is `Developer ID Application: Neatech s.r.o. (D7XT3SG9WA)`. The workflow must verify the signed `.app` with `codesign --verify --deep --strict --verbose=2` and the signed `.dmg` with `codesign --verify --verbose=2` before upload. Notarization can be disabled only when notarization credentials are unavailable; certificate signing must still remain enabled.
 
 For notarization, GitHub Actions supports either App Store Connect API key credentials:
 

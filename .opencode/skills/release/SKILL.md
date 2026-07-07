@@ -10,3 +10,5 @@ This is a compatibility entry point for generic release prompts. For Veslo app r
 Do not use historical OpenWork or `different-ai/openwork` release commands in this repository.
 
 At minimum, resolve beta vs production, generate public-safe notes from real git changes, use `pnpm release:review`, `pnpm release:prepare`, and `pnpm release:ship` for production, then verify both `neatechcz/veslo` and `neatechcz/veslo-updates`.
+
+Every distributed macOS build must be signed with the Apple Developer ID Application certificate. Do not use `allow_unsigned_macos=true` or `ALLOW_UNSIGNED_MACOS=true` for production, beta, prerelease, staging, or tester-distributed macOS builds. Verify the expected certificate identity, `Developer ID Application: Neatech s.r.o. (D7XT3SG9WA)`, with `codesign --verify --deep --strict --verbose=2` for the `.app` and `codesign --verify --verbose=2` for the `.dmg`. Notarization can be disabled only when notarization credentials are unavailable; certificate signing must still remain enabled.
