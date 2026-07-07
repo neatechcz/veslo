@@ -132,6 +132,9 @@ const normalizeNullableText = (value: unknown): string | null => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
+const errorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
 const normalizeTimestamp = (value: unknown, fallback: number) =>
   typeof value === "number" && Number.isFinite(value) && value > 0
     ? Math.floor(value)
@@ -187,6 +190,19 @@ export function createConversationService(options: {
 }): ConversationService {
   const now = options.now ?? (() => Date.now());
   const warn = options.warn ?? ((message, details) => console.warn(message, details));
+
+  const conversationBindingUnavailableError = (
+    workspaceId: string,
+    directory: string,
+    sessionOrConversationId: string,
+    error: unknown,
+  ) =>
+    new ApiError(503, "conversation_binding_unavailable", "Conversation binding is unavailable", {
+      workspaceId,
+      directory,
+      sessionOrConversationId,
+      error: errorMessage(error),
+    });
 
   const fallbackItems = (
     workspaceId: string,
@@ -306,9 +322,9 @@ export function createConversationService(options: {
     } catch (error) {
       warn("[veslo-server] conversation binding resolution failed", {
         workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
       });
-      return null;
+      throw conversationBindingUnavailableError(workspaceId, directory, sessionOrConversationId, error);
     }
   };
 
@@ -383,16 +399,17 @@ export function createConversationService(options: {
 
   const readPersistedTranscript = async (
     workspaceId: string,
+    directory: string | null,
     engineSessionId: string,
     limit: number,
   ) => {
     if (!options.transcriptStore) return null;
     try {
-      return await options.transcriptStore.getTranscript({ workspaceId, engineSessionId, limit });
+      return await options.transcriptStore.getTranscript({ workspaceId, directory, engineSessionId, limit });
     } catch (error) {
       warn("[veslo-server] conversation transcript read failed", {
         workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
       });
       return null;
     }
@@ -400,6 +417,7 @@ export function createConversationService(options: {
 
   const persistTranscriptSnapshot = async (
     workspaceId: string,
+    directory: string | null,
     engineSessionId: string,
     messages: unknown[],
     partsByMessageId: Record<string, unknown[]>,
@@ -408,13 +426,14 @@ export function createConversationService(options: {
     try {
       await options.transcriptStore.appendTranscript({
         workspaceId,
+        directory,
         engineSessionId,
         messages: snapshotToTranscriptMessages(messages, partsByMessageId),
       });
     } catch (error) {
       warn("[veslo-server] conversation transcript persist failed", {
         workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
       });
     }
   };
@@ -477,7 +496,15 @@ export function createConversationService(options: {
         directory: input.directory,
         sessionOrConversationId: input.sessionId,
       });
-      const opencodeSessionId = binding?.engineSessionId ?? input.sessionId;
+      const requestedSessionId = normalizeText(input.sessionId);
+      const directory = normalizeText(input.directory);
+      if (!binding && isVesloConversationId(requestedSessionId)) {
+        throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
+      }
+      if (!binding && !directory) {
+        throw new ApiError(400, "invalid_directory", "Conversation directory is required");
+      }
+      const opencodeSessionId = binding?.engineSessionId ?? requestedSessionId;
       const workspaceId = input.workspace.id;
       const conversationIdField = binding?.conversationId
         ? { conversationId: binding.conversationId }
@@ -487,7 +514,7 @@ export function createConversationService(options: {
       // the host has nothing for this session do we read the sandbox/engine
       // opencode.db, then tunnel what we find back into the host store so every
       // later read is host-only (survives sandbox reset and app restart).
-      const host = await readPersistedTranscript(workspaceId, opencodeSessionId, input.limit);
+      const host = await readPersistedTranscript(workspaceId, input.directory, opencodeSessionId, input.limit);
       if (host) {
         return {
           workspaceId,
@@ -512,6 +539,7 @@ export function createConversationService(options: {
       if (snapshot.source === "sqlite") {
         await persistTranscriptSnapshot(
           workspaceId,
+          input.directory,
           opencodeSessionId,
           snapshot.messages,
           snapshot.partsByMessageId,
@@ -566,13 +594,14 @@ export function createConversationService(options: {
 
       await options.transcriptStore.appendTranscript({
         workspaceId,
+        directory,
         engineSessionId: opencodeSessionId,
         messages: snapshotToTranscriptMessages(input.messages, input.partsByMessageId),
         deletedMessageIds,
         deletedPartsByMessageId,
       });
 
-      const host = await readPersistedTranscript(workspaceId, opencodeSessionId, limit);
+      const host = await readPersistedTranscript(workspaceId, directory, opencodeSessionId, limit);
       return {
         workspaceId,
         sessionId: opencodeSessionId,

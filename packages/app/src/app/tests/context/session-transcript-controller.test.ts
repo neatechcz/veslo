@@ -61,27 +61,40 @@ const makeTextPart = (id: string, messageID: string, sessionID = "sess-a", text 
   }) as Part;
 
 function makeController(options: {
-  activeWorkspaceId?: string;
+  activeWorkspaceId?: string | (() => string);
+  activeWorkspaceRoot?: string | (() => string);
   sessions?: Session[];
   appendTranscriptSnapshot?: (input: any) => Promise<void> | void;
   routingClient?: any;
+  routingEntryDirectory?: string | null | ((workspaceId: string) => string | null);
 } = {}) {
   const [store, setStore] = createStore({
     sessions: options.sessions ?? [],
     messages: {} as Record<string, MessageInfo[]>,
     parts: {} as Record<string, Part[]>,
   });
+  const readOption = (value: string | (() => string) | undefined, fallback: string) =>
+    typeof value === "function" ? value() : value ?? fallback;
+  const readEntryDirectory = (workspaceId: string) => {
+    const directory = options.routingEntryDirectory;
+    if (typeof directory === "function") return directory(workspaceId);
+    if (directory !== undefined) return directory;
+    return workspaceId === "ws-b" ? "/background" : "/repo";
+  };
   const routing = {
-    activeWorkspaceId: () => options.activeWorkspaceId ?? "ws-a",
+    activeWorkspaceId: () => readOption(options.activeWorkspaceId, "ws-a"),
     client: (workspaceId: string) => workspaceId === "ws-b" ? options.routingClient : null,
-    entry: (workspaceId: string) => ({ workspaceId, directory: "/background" }),
+    entry: (workspaceId: string) => {
+      const directory = readEntryDirectory(workspaceId);
+      return directory == null ? null : { workspaceId, directory };
+    },
   } as any;
 
   const controller = createSessionTranscriptController({
     store,
     setStore: setStore as any,
     routing,
-    activeWorkspaceRoot: () => "/repo",
+    activeWorkspaceRoot: () => readOption(options.activeWorkspaceRoot, "/repo"),
     appendTranscriptSnapshot: options.appendTranscriptSnapshot,
     applySessionDirectoryOverride: (session) => session,
     resolveSessionDirectory: (session) => session.directory ?? "",
@@ -207,6 +220,78 @@ test("live transcript ingestion carries pending deletions and clears them after 
 
       await controller.flushTranscriptIngestion("ws-a", "sess-a", "next");
       assert.deepEqual(writes[1].deletedMessageIds, []);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("scheduled live transcript ingestion survives active workspace switches", async () => {
+  const writes: any[] = [];
+  let activeWorkspaceId = "ws-a";
+  let activeWorkspaceRoot = "/repo-a";
+
+  await createRoot(async (dispose) => {
+    try {
+      const { controller } = makeController({
+        activeWorkspaceId: () => activeWorkspaceId,
+        activeWorkspaceRoot: () => activeWorkspaceRoot,
+        routingEntryDirectory: null,
+        appendTranscriptSnapshot: async (input) => {
+          writes.push(input);
+        },
+      });
+      controller.setMessagesForSession("sess-a", [
+        {
+          info: makeMessage("msg-a", 1),
+          parts: [makeTextPart("part-a", "msg-a")],
+        },
+      ]);
+
+      controller.scheduleTranscriptIngestion("sess-a", "ws-a", "message.part.updated", 0);
+      activeWorkspaceId = "ws-b";
+      activeWorkspaceRoot = "/repo-b";
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      assert.equal(writes.length, 1);
+      assert.equal(writes[0].workspaceId, "ws-a");
+      assert.equal(writes[0].sessionId, "sess-a");
+      assert.equal(writes[0].directory, "/repo-a");
+      assert.deepEqual(writes[0].messages.map((message: MessageInfo) => message.id), ["msg-a"]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("live transcript ingestion can use routing scope when session is missing at flush time", async () => {
+  const writes: any[] = [];
+  let activeWorkspaceId = "ws-b";
+  let activeWorkspaceRoot = "/repo-b";
+
+  await createRoot(async (dispose) => {
+    try {
+      const { controller } = makeController({
+        activeWorkspaceId: () => activeWorkspaceId,
+        activeWorkspaceRoot: () => activeWorkspaceRoot,
+        routingEntryDirectory: (workspaceId) => workspaceId === "ws-a" ? "/repo-a" : "/repo-b",
+        appendTranscriptSnapshot: async (input) => {
+          writes.push(input);
+        },
+      });
+      controller.setMessagesForSession("sess-a", [
+        {
+          info: makeMessage("msg-a", 1),
+          parts: [makeTextPart("part-a", "msg-a")],
+        },
+      ]);
+
+      await controller.flushTranscriptIngestion("ws-a", "sess-a", "session.idle");
+
+      assert.equal(writes.length, 1);
+      assert.equal(writes[0].workspaceId, "ws-a");
+      assert.equal(writes[0].directory, "/repo-a");
+      assert.deepEqual(writes[0].messages.map((message: MessageInfo) => message.id), ["msg-a"]);
     } finally {
       dispose();
     }
