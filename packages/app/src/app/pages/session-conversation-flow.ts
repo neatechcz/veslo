@@ -31,6 +31,7 @@ import type {
   SessionSubmitResult,
 } from "../lib/session-send-contract";
 import {
+  sessionSubmitNeedsImplicitSkillConfirmation,
   sessionSubmitBlockedResult,
   sessionSubmitQueuedResult,
   sessionSubmitWasAccepted,
@@ -488,12 +489,14 @@ export type SendPromptImmediateOptions = {
   restoreDraftOnFailure?: boolean;
   sendTraceId?: string | null;
   source?: string | null;
+  implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
 };
 
 export type HandleSendPromptOptions = {
   sendNow?: boolean;
   sendTraceId?: string | null;
   source?: string | null;
+  implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
 };
 
 export type SessionConversationFlowControllerDeps = {
@@ -611,6 +614,7 @@ export type SessionConversationFlowControllerDeps = {
         targetSessionId?: string | null;
         onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
         pendingSession?: PendingSidebarSessionMetadata | null;
+        implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
       },
     ) => Promise<SessionSubmitResult>;
   };
@@ -1196,12 +1200,16 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           targetSessionId?: string | null;
           onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
           pendingSession?: PendingSidebarSessionMetadata | null;
+          implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
         } = {
           clientMessageId,
           origin,
           source,
           ...(targetSessionId ? { targetSessionId } : {}),
           ...(options.sendTraceId ? { sendTraceId: options.sendTraceId } : {}),
+          ...(options.implicitSkillCommandPolicy
+            ? { implicitSkillCommandPolicy: options.implicitSkillCommandPolicy }
+            : {}),
           ...(pendingSessionKeyBeforeHandoff
             ? {
                 onMaterializedSessionId: handleMaterializedSessionId,
@@ -1235,6 +1243,14 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           reason: options.reason ?? "normal",
         });
         if (!submitResult.accepted) {
+          if (sessionSubmitNeedsImplicitSkillConfirmation(submitResult)) {
+            if (showOptimisticSubmit) {
+              clearMatchingPendingSubmit();
+              deps.runState.resetRunState(runStateSessionKeyForHandoffFailure());
+            }
+            finishPendingSessionHandoffFailure();
+            return submitResult;
+          }
           if (showOptimisticSubmit) {
             const errorMessage =
               submitResult.message ??
@@ -1370,6 +1386,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             restoreDraftOnFailure: false,
             sendTraceId: options.sendTraceId,
             source: options.source,
+            implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
           });
           const resultSessionKey = deps.queue.resolveQueueKeyForQueuedDraft(sessionKey, editingId);
           if (!sessionSubmitWasAccepted(submitResult)) {
@@ -1398,6 +1415,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             replaceMessageId: action.messageId,
             sendTraceId: options.sendTraceId,
             source: options.source,
+            implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
           });
           return submitResult;
         }
@@ -1421,12 +1439,9 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
 
         case "append-to-running-queue": {
           const sessionKey = deps.sessionKeys.currentSessionQueueKey();
-          return controller.sendPromptImmediate(draft, {
-            reason: "queue-drain",
-            expectedSessionKey: sessionKey,
-            sendTraceId: options.sendTraceId,
-            source: options.source,
-          });
+          deps.queue.appendDraftToCurrentQueue(draft);
+          void controller.drainNextQueuedDraft("queue-drain", sessionKey);
+          return localQueuedResult("local_queue_running_append");
         }
 
         case "send-now": {
@@ -1437,6 +1452,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             expectedSessionKey: sessionKey,
             sendTraceId: options.sendTraceId,
             source: options.source,
+            implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
           });
           if (sessionSubmitWasAccepted(submitResult) && wasPaused) {
             deps.queue.setQueuePausedForSessionKey(sessionKey, false);
@@ -1449,6 +1465,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             reason: "normal",
             sendTraceId: options.sendTraceId,
             source: options.source,
+            implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
           });
       }
     },

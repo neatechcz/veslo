@@ -20,6 +20,15 @@ export type SessionSubmitDraftDisposition = "clear" | "restore" | "keep" | "mark
 
 export type SessionSubmitStatus = "accepted" | "submitted" | "queued" | "blocked" | "failed";
 
+export type SessionSubmitImplicitSkillCommandConfirmation = {
+  type: "implicit_skill_command";
+  skillName: string;
+  arguments: string;
+};
+
+export type SessionSubmitConfirmation =
+  | SessionSubmitImplicitSkillCommandConfirmation;
+
 export type SessionSubmitResult = {
   accepted: boolean;
   status: SessionSubmitStatus;
@@ -34,6 +43,7 @@ export type SessionSubmitResult = {
   reservedRunId?: string | null;
   queuePosition?: number | null;
   clientMessageId?: string | null;
+  confirmation?: SessionSubmitConfirmation | null;
 };
 
 export type MaterializedSessionConversationScope = {
@@ -246,4 +256,12 @@ export function sessionSubmitCompatibilityResultFromAccepted(
 
 export function sessionSubmitWasAccepted(result: SessionSubmitResult): boolean {
   return result.accepted;
+}
+
+export function sessionSubmitNeedsImplicitSkillConfirmation(
+  result: SessionSubmitResult,
+): result is SessionSubmitResult & { confirmation: SessionSubmitImplicitSkillCommandConfirmation } {
+  return result.status === "blocked" &&
+    result.code === "implicit_skill_confirmation_required" &&
+    result.confirmation?.type === "implicit_skill_command";
 }

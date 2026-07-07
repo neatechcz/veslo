@@ -123,6 +123,21 @@ const normalizeText = (value: string | null | undefined) => value?.trim() ?? "";
 const isVesloConversationId = (value: string) =>
   /^conv-[0-9a-f]{20}$/i.test(value.trim());
 
+type ConversationReadTarget =
+  | { kind: "conversation"; conversationId: string }
+  | { kind: "engine-session"; engineSessionId: string };
+
+const conversationReadTarget = (value: string): ConversationReadTarget | null => {
+  const normalized = normalizeText(value);
+  if (!normalized) return null;
+  return isVesloConversationId(normalized)
+    ? { kind: "conversation", conversationId: normalized }
+    : { kind: "engine-session", engineSessionId: normalized };
+};
+
+const conversationReadTargetValue = (target: ConversationReadTarget): string =>
+  target.kind === "conversation" ? target.conversationId : target.engineSessionId;
+
 const normalizeNullableText = (value: unknown): string | null => {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
@@ -289,8 +304,9 @@ export function createConversationService(options: {
   }) => {
     const workspaceId = normalizeText(input.workspaceId);
     const directory = normalizeText(input.directory);
-    const sessionOrConversationId = normalizeText(input.sessionOrConversationId);
-    if (!workspaceId || !directory || !sessionOrConversationId) return null;
+    const target = conversationReadTarget(input.sessionOrConversationId);
+    if (!workspaceId || !directory || !target) return null;
+    const sessionOrConversationId = conversationReadTargetValue(target);
 
     try {
       const binding = await options.bindingStore.resolveOpenCodeSession({
@@ -298,7 +314,7 @@ export function createConversationService(options: {
         directory,
         sessionOrConversationId,
       });
-      if (binding || isVesloConversationId(sessionOrConversationId)) return binding;
+      if (binding || target.kind === "conversation") return binding;
 
       const source = await options.readStore.listConversations({
         workspaceId,
@@ -307,7 +323,7 @@ export function createConversationService(options: {
       });
       if (source.source !== "sqlite") return null;
 
-      const session = source.items.find((item) => normalizeText(item.id) === sessionOrConversationId);
+      const session = source.items.find((item) => normalizeText(item.id) === target.engineSessionId);
       if (!session) return null;
 
       return await options.bindingStore.bindOpenCodeSession({

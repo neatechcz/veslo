@@ -107,6 +107,7 @@ export function createWorkspaceSkillMaterializationGate(
         workspaceRegistryConfigured: status.workspaceRegistryConfigured ?? null,
         status: status.status,
         reloadRequired: status.reloadRequired ?? false,
+        registryError: status.registryError ?? null,
       });
       const workspaceRegistryUnavailable =
         !status.registryConfigured ||
@@ -165,6 +166,7 @@ export function createWorkspaceSkillMaterializationGate(
         reloadRequired: result.reloadRequired ?? false,
         materializedCount: result.materializedSkills.length,
         removedCount: result.removedSkillNames?.length ?? 0,
+        registryError: result.registryError ?? null,
       });
       deps.wsDebug("skills:materialization:synced", {
         workspaceId,

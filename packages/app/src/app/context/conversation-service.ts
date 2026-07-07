@@ -354,6 +354,77 @@ export function createConversationService<Client extends ConversationServiceClie
     return serverClient;
   };
 
+  const rememberConversationSubmitResultScope = (input: {
+    workspaceId: string;
+    workspaceRoot: string;
+    directory: string;
+    requestConversationId?: string | null;
+    requestOpencodeSessionId?: string | null;
+    requestPendingClientSessionId?: string | null;
+    result: Extract<VesloConversationSubmitResult, { status: "materialized" | "submitted" | "queued" }>;
+    traceId?: string | null;
+  }) => {
+    const workspaceId = input.workspaceId.trim();
+    if (!workspaceId) return;
+    const directory = input.directory.trim();
+    const workspaceRoot = input.workspaceRoot.trim() || directory;
+    const conversationId = input.result.conversationId?.trim() || input.requestConversationId?.trim() || "";
+    const opencodeSessionId = input.result.opencodeSessionId?.trim() || input.requestOpencodeSessionId?.trim() || "";
+    const resultPendingClientSessionId =
+      "pendingClientSessionId" in input.result ? input.result.pendingClientSessionId : null;
+    const aliases = [
+      input.requestPendingClientSessionId,
+      resultPendingClientSessionId,
+      input.requestOpencodeSessionId,
+      input.result.opencodeSessionId,
+      input.requestConversationId,
+      input.result.conversationId,
+    ]
+      .map((value) => value?.trim() ?? "")
+      .filter((value, index, all) => Boolean(value) && all.indexOf(value) === index);
+    if (aliases.length === 0 && conversationId) {
+      aliases.push(conversationId);
+    }
+
+    for (const sessionId of aliases) {
+      deps.rememberConversationScope({
+        sessionId,
+        workspaceId,
+        workspaceRoot,
+        directory: directory || workspaceRoot,
+        conversationId,
+        opencodeSessionId,
+      });
+    }
+
+    if (input.result.status === "submitted" || input.result.status === "queued") {
+      const runId = input.result.status === "submitted" ? input.result.runId : input.result.reservedRunId;
+      deps.rememberLatestConversationRunId({
+        workspaceId,
+        conversationId,
+        opencodeSessionId,
+        uiSessionId: input.requestOpencodeSessionId?.trim() || undefined,
+        runId,
+      });
+      deps.rememberLatestConversationLifecycleRunId({
+        workspaceId,
+        conversationId,
+        opencodeSessionId,
+        uiSessionId: input.requestOpencodeSessionId?.trim() || undefined,
+        runId,
+      });
+    }
+
+    deps.recordSendTrace("submitConversationFromVesloWriteApi:conversation-scope-remembered", {
+      ...(input.traceId ? { traceId: input.traceId } : {}),
+      workspaceId,
+      conversationId,
+      opencodeSessionId,
+      aliasCount: aliases.length,
+      status: input.result.status,
+    });
+  };
+
   const conversationWorkspaceRegistrationCacheFor = (serverClient: Client) => {
     const key = serverClient as object;
     let cache = conversationWorkspaceRegistrationCacheByClient.get(key);
@@ -795,13 +866,15 @@ export function createConversationService<Client extends ConversationServiceClie
       result.status === "queued"
     ) {
       const workspaceRoot = deps.resolveWorkspaceRootForConversationScope(workspaceId, directory);
-      deps.rememberConversationScope({
-        sessionId: result.opencodeSessionId,
+      rememberConversationSubmitResultScope({
         workspaceId,
         workspaceRoot,
         directory,
-        conversationId: result.conversationId,
-        opencodeSessionId: result.opencodeSessionId,
+        requestConversationId: input.target?.conversationId,
+        requestOpencodeSessionId: input.target?.opencodeSessionId,
+        requestPendingClientSessionId: input.target?.pendingClientSessionId,
+        result,
+        traceId: preflight?.traceId ?? null,
       });
     }
     return result;

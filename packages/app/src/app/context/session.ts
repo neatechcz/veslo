@@ -53,7 +53,7 @@ import {
   type SessionRunDiagnostic,
 } from "./session-lifecycle-recovery";
 import { createSessionWorkspaceCacheController } from "./session-workspace-cache";
-import type { ReconnectNotice } from "./session-reconnect";
+import type { ReconnectNotice, ReconnectState } from "./session-reconnect";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 export type SessionStore = ReturnType<typeof createSessionStore>;
@@ -132,6 +132,7 @@ export function createSessionStore(options: {
   setError: (message: string | null) => void;
   setSseConnected: (connected: boolean) => void;
   onReconnectNotice?: (notice: ReconnectNotice) => void;
+  onReconnectState?: (state: ReconnectState) => void;
   markReloadRequired?: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
   onHotReloadApplied?: () => void;
   onSessionLoadComplete?: () => void;
@@ -930,6 +931,7 @@ export function createSessionStore(options: {
     setSseConnected: options.setSseConnected,
     onHotReloadApplied: options.onHotReloadApplied,
     onReconnectNotice: options.onReconnectNotice,
+    onReconnectState: options.onReconnectState,
     onAssistantResponseObserved: options.onAssistantResponseObserved,
     sessionDebugEnabled,
     sessionWarn,

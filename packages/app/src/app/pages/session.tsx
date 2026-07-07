@@ -86,6 +86,7 @@ import {
 } from "../lib/folder-access-request";
 import {
   createSessionClientMessageId,
+  sessionSubmitNeedsImplicitSkillConfirmation,
   type MaterializedSessionHandoff,
   type SessionSendOptionsBase,
   type SessionSendOrigin,
@@ -144,6 +145,7 @@ import type { ArtifactFamily } from "../components/session/artifact-family-model
 import type { SessionCapabilitiesSnapshot } from "../lib/session-capabilities";
 import { openSessionWithWorkspaceActivation, type SessionBrowseScope } from "./session-navigation";
 import type { WorkspaceActivationOptions } from "../context/workspace-types";
+import type { ReconnectState } from "../context/session-reconnect";
 import { createSessionViewFlowFacade } from "../context/session-flow-facade";
 import { createSessionQueueDrainController } from "../context/session-queue-drain-controller";
 import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "./session-layout-width";
@@ -331,6 +333,7 @@ export type SessionViewProps = {
       targetSessionId?: string | null;
       onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
       pendingSession?: PendingSidebarSessionMetadata | null;
+      implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
     },
   ) => Promise<SessionSubmitResult>;
   replaceUserMessageAsync: (
@@ -409,6 +412,7 @@ export type SessionViewProps = {
   prompt: string;
   setPrompt: (value: string) => void;
   reconnectNotice: "reconnecting" | "reconnected" | null;
+  reconnectState: ReconnectState | null;
   clearReconnectNotice: () => void;
   activePermission: PendingPermission | null;
   showTryNotionPrompt: boolean;
@@ -455,10 +459,50 @@ const interpolate = (template: string, values: Record<string, string | number>) 
     template,
   );
 
+const reconnectStateLabelKey = (status: ReconnectState["status"]) => {
+  switch (status) {
+    case "reconnecting":
+      return "session.reconnect_state_reconnecting";
+    case "catching-up":
+      return "session.reconnect_state_catching_up";
+    case "runtime-recovering":
+      return "session.reconnect_state_runtime_recovering";
+    case "degraded":
+      return "session.reconnect_state_degraded";
+    case "live":
+    default:
+      return "session.reconnect_state_live";
+  }
+};
+
+type ImplicitSkillConfirmationRequest = {
+  draft: ComposerDraft;
+  options: ComposerSendOptions;
+  skillName: string;
+  arguments: string;
+};
+
 export default function SessionView(props: SessionViewProps) {
   const tr = (key: string) => t(key, currentLocale());
   const formatTr = (key: string, values: Record<string, string | number>) =>
     interpolate(tr(key), values);
+  const visibleReconnectState = createMemo(() => {
+    const state = props.reconnectState;
+    if (!state || state.status === "live") return null;
+    return state;
+  });
+  const reconnectStateDetail = (state: ReconnectState) => {
+    const details: string[] = [];
+    if (state.attempt) details.push(formatTr("session.reconnect_state_attempt", { attempt: state.attempt }));
+    if (state.delayMs) {
+      details.push(formatTr("session.reconnect_state_retry_seconds", {
+        seconds: Math.max(1, Math.ceil(state.delayMs / 1000)),
+      }));
+    }
+    if (state.messagesMayBeDelayed) details.push(tr("session.reconnect_state_messages_delayed"));
+    if (state.lastError) details.push(state.lastError);
+    return details.join(" · ");
+  };
   let messagesEndEl: HTMLDivElement | undefined;
   let bottomVisibilityEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
@@ -486,6 +530,8 @@ export default function SessionView(props: SessionViewProps) {
     sessionId: string;
     workspaceId: string | null;
   } | null>(null);
+  const [implicitSkillConfirmation, setImplicitSkillConfirmation] =
+    createSignal<ImplicitSkillConfirmationRequest | null>(null);
   const [historyActionBusy, setHistoryActionBusy] = createSignal<"undo" | "redo" | "compact" | null>(null);
 
   const [layoutRootWidth, setLayoutRootWidth] = createSignal(0);
@@ -2881,10 +2927,46 @@ export default function SessionView(props: SessionViewProps) {
     if (showComposerEntryState() || showFooterComposerTargetContext()) {
       dismissComposerEntryForSessionKey();
     }
-    return sessionFlowFacade.handleSendPrompt(draft, {
+    const result = await sessionFlowFacade.handleSendPrompt(draft, {
       sendNow: options.sendNow,
       sendTraceId: options.sendTraceId,
       source: options.source,
+      implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
+    });
+    if (sessionSubmitNeedsImplicitSkillConfirmation(result)) {
+      setImplicitSkillConfirmation({
+        draft,
+        options,
+        skillName: result.confirmation.skillName,
+        arguments: result.confirmation.arguments,
+      });
+    }
+    return result;
+  };
+
+  const sendImplicitSkillAsPrompt = async () => {
+    const pending = implicitSkillConfirmation();
+    if (!pending) return;
+    setImplicitSkillConfirmation(null);
+    await handleSendPrompt(pending.draft, {
+      ...pending.options,
+      implicitSkillCommandPolicy: "disable",
+    });
+  };
+
+  const runImplicitSkillCommand = async () => {
+    const pending = implicitSkillConfirmation();
+    if (!pending) return;
+    setImplicitSkillConfirmation(null);
+    await handleSendPrompt({
+      ...pending.draft,
+      command: {
+        name: pending.skillName,
+        arguments: pending.arguments,
+      },
+    }, {
+      ...pending.options,
+      implicitSkillCommandPolicy: "allow",
     });
   };
 
@@ -3446,58 +3528,75 @@ export default function SessionView(props: SessionViewProps) {
         </Show>
         )}
         reloadBanner={(
-        <Show when={props.showSkillReloadBanner}>
-          <div
-            class="border-b border-amber-6/50 bg-amber-2/70 px-6 py-3"
-            data-testid="session-reload-banner"
-            data-reload-blocked={props.reloadBannerBlocked ? "true" : "false"}
-          >
-            <div class={`mx-auto flex w-full ${searchBannerWidthClass()} flex-col gap-3 rounded-2xl border border-amber-6/60 bg-amber-1/80 px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between`}>
-              <div class="min-w-0">
-                <div class="text-sm font-medium text-amber-11">{props.reloadBannerTitle}</div>
-                <div class="mt-0.5 text-xs text-amber-11/80">
-                  {props.reloadBannerBody}
-                  <Show when={props.reloadBannerBlocked}>
-                    <span>
-                      {" "}
-                      {formatTr("reload.toast_warning_active", { count: props.reloadBannerActiveCount })}
-                    </span>
+        <>
+          <Show when={props.showSkillReloadBanner}>
+            <div
+              class="border-b border-amber-6/50 bg-amber-2/70 px-6 py-3"
+              data-testid="session-reload-banner"
+              data-reload-blocked={props.reloadBannerBlocked ? "true" : "false"}
+            >
+              <div class={`mx-auto flex w-full ${searchBannerWidthClass()} flex-col gap-3 rounded-2xl border border-amber-6/60 bg-amber-1/80 px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between`}>
+                <div class="min-w-0">
+                  <div class="text-sm font-medium text-amber-11">{props.reloadBannerTitle}</div>
+                  <div class="mt-0.5 text-xs text-amber-11/80">
+                    {props.reloadBannerBody}
+                    <Show when={props.reloadBannerBlocked}>
+                      <span>
+                        {" "}
+                        {formatTr("reload.toast_warning_active", { count: props.reloadBannerActiveCount })}
+                      </span>
+                    </Show>
+                  </div>
+                  <Show when={props.reloadError}>
+                    <div class="mt-1 text-xs text-red-11">{props.reloadError}</div>
                   </Show>
                 </div>
-                <Show when={props.reloadError}>
-                  <div class="mt-1 text-xs text-red-11">{props.reloadError}</div>
-                </Show>
-              </div>
 
-              <div class="flex items-center gap-2 sm:shrink-0">
-                <button
-                  type="button"
-                  data-testid="session-reload-action"
-                  class="rounded-xl border border-amber-7 bg-amber-4 px-3 py-2 text-xs font-medium text-amber-12 transition-colors hover:bg-amber-5 disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={!props.canReloadWorkspace || props.reloadBusy}
-                  onClick={() =>
-                    void (props.reloadBannerBlocked
-                      ? props.forceStopActiveConversations()
-                      : props.reloadWorkspaceEngine())
-                  }
-                >
-                  {props.reloadBusy
-                    ? tr("reload.toast_reloading")
-                    : props.reloadBannerBlocked
-                      ? tr("reload.toast_reload_stopped")
-                      : tr("reload.toast_reload")}
-                </button>
-                <button
-                  type="button"
-                  class="rounded-xl border border-amber-6/70 bg-transparent px-3 py-2 text-xs font-medium text-amber-11 transition-colors hover:bg-amber-3"
-                  onClick={props.dismissReloadBanner}
-                >
-                  {tr("reload.toast_dismiss")}
-                </button>
+                <div class="flex items-center gap-2 sm:shrink-0">
+                  <button
+                    type="button"
+                    data-testid="session-reload-action"
+                    class="rounded-xl border border-amber-7 bg-amber-4 px-3 py-2 text-xs font-medium text-amber-12 transition-colors hover:bg-amber-5 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={!props.canReloadWorkspace || props.reloadBusy}
+                    onClick={() =>
+                      void (props.reloadBannerBlocked
+                        ? props.forceStopActiveConversations()
+                        : props.reloadWorkspaceEngine())
+                    }
+                  >
+                    {props.reloadBusy
+                      ? tr("reload.toast_reloading")
+                      : props.reloadBannerBlocked
+                        ? tr("reload.toast_reload_stopped")
+                        : tr("reload.toast_reload")}
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-xl border border-amber-6/70 bg-transparent px-3 py-2 text-xs font-medium text-amber-11 transition-colors hover:bg-amber-3"
+                    onClick={props.dismissReloadBanner}
+                  >
+                    {tr("reload.toast_dismiss")}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        </Show>
+          </Show>
+          <Show when={visibleReconnectState()}>
+            {(state) => (
+              <div
+                class="border-b border-blue-6/50 bg-blue-2/70 px-6 py-2"
+                data-testid="session-reconnect-state"
+                data-reconnect-status={state().status}
+              >
+                <div class={`mx-auto flex w-full ${searchBannerWidthClass()} items-center gap-2 rounded-lg border border-blue-6/60 bg-blue-1/85 px-3 py-2 text-xs text-blue-11 shadow-sm`}>
+                  <Loader2 size={14} class="shrink-0 animate-spin" />
+                  <span class="shrink-0 font-medium">{tr(reconnectStateLabelKey(state().status))}</span>
+                  <span class="min-w-0 truncate text-blue-11/80">{reconnectStateDetail(state())}</span>
+                </div>
+              </div>
+            )}
+          </Show>
+        </>
         )}
         transcript={(
         <div class="flex-1 flex overflow-hidden">
@@ -4031,6 +4130,20 @@ export default function SessionView(props: SessionViewProps) {
         variant="danger"
         onConfirm={confirmDeleteSession}
         onCancel={closeDeleteSessionModal}
+      />
+
+      <ConfirmModal
+        open={Boolean(implicitSkillConfirmation())}
+        title={tr("session.implicit_skill_confirm_title")}
+        message={formatTr("session.implicit_skill_confirm_body", {
+          name: implicitSkillConfirmation()?.skillName ?? "",
+        })}
+        confirmLabel={tr("session.implicit_skill_confirm_run")}
+        cancelLabel={tr("session.implicit_skill_confirm_send_prompt")}
+        variant="warning"
+        onConfirm={() => void runImplicitSkillCommand()}
+        onCancel={() => void sendImplicitSkillAsPrompt()}
+        onClose={() => setImplicitSkillConfirmation(null)}
       />
 
       <ShareWorkspaceModal

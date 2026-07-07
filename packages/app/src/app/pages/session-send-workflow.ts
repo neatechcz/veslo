@@ -70,6 +70,7 @@ export type SessionSendWorkflowSendOptions = SessionSendOptionsBase & {
   targetSessionId?: string | null;
   onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
   pendingSession?: PendingSidebarSessionMetadata | null;
+  implicitSkillCommandPolicy?: ConversationSubmitOptionsInput["implicitSkillCommandPolicy"];
 };
 
 export type SessionSendWorkflowCommand = {
@@ -471,6 +472,7 @@ function sessionSubmitResultFromConversationSubmit(
       opencodeSessionId: result.opencodeSessionId,
       clientMessageId: result.clientMessageId,
       draftDisposition: result.draftDisposition,
+      confirmation: result.confirmation ?? null,
     });
   }
   const failedQueueItemId = "queueItemId" in result ? result.queueItemId : undefined;
@@ -486,6 +488,14 @@ function sessionSubmitResultFromConversationSubmit(
     clientMessageId: result.clientMessageId,
     draftDisposition: result.draftDisposition,
   });
+}
+
+function conversationSubmitNeedsImplicitSkillConfirmation(
+  result: ConversationSubmitTerminalResult,
+): boolean {
+  return result.status === "blocked" &&
+    result.code === "implicit_skill_confirmation_required" &&
+    result.confirmation?.type === "implicit_skill_command";
 }
 
 type SendBoundaryValidationRuntimeDeps = {
@@ -1508,6 +1518,9 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
             : sendCorrelation.origin === "session:queue-drain"
               ? "server-queue-only"
               : "normal",
+          ...(options.implicitSkillCommandPolicy
+            ? { implicitSkillCommandPolicy: options.implicitSkillCommandPolicy }
+            : {}),
         },
       };
       const submitRequestValidation = validateConversationSubmitRequest(submitRequest, sendBoundaryValidationOptions(deps, {
@@ -1637,6 +1650,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       result = resultValidation.value;
 
       if (result.status === "blocked" || result.status === "failed") {
+        const implicitSkillConfirmationRequired = conversationSubmitNeedsImplicitSkillConfirmation(result);
         if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
         deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
           sessionID: existingSessionId,
@@ -1658,7 +1672,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         });
         if (result.status === "failed") {
           reportServerSubmitError(result.message);
-        } else if (sendTargetStillDisplayed()) {
+        } else if (!implicitSkillConfirmationRequired && sendTargetStillDisplayed()) {
           deps.setError(result.message);
         }
         return sessionSubmitResultFromConversationSubmit(result);
@@ -1822,6 +1836,9 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           ),
           agent: sessionID ? (deps.agentForSession(sessionID) ?? null) : null,
           variant: deps.modelVariant() ?? null,
+          ...(options.implicitSkillCommandPolicy
+            ? { implicitSkillCommandPolicy: options.implicitSkillCommandPolicy }
+            : {}),
         } satisfies ConversationSubmitOptionsInput
       : undefined;
     const serverFirstSubmitResultHolder: {
@@ -1914,6 +1931,8 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       serverFirstSubmitResult &&
       (serverFirstSubmitResult.status === "failed" || serverFirstSubmitResult.status === "blocked")
     ) {
+      const implicitSkillConfirmationRequired =
+        conversationSubmitNeedsImplicitSkillConfirmation(serverFirstSubmitResult);
       const hintedMessage = deps.addOpencodeCacheHint(serverFirstSubmitResult.message);
       deps.recordSendTrace("sendPrompt:server-submit-first-failed", {
         traceId: sendTraceId,
@@ -1924,7 +1943,9 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         code: serverFirstSubmitResult.code,
         draftDisposition: serverFirstSubmitResult.draftDisposition,
       });
-      deps.setError(hintedMessage);
+      if (!implicitSkillConfirmationRequired) {
+        deps.setError(hintedMessage);
+      }
       cleanupPendingSidebarSession();
       stopSendPromptBusy();
       return sessionSubmitResultFromConversationSubmit(serverFirstSubmitResult);
@@ -1943,6 +1964,8 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
 
     if (serverFirstSubmitResult) {
       if (serverFirstSubmitResult.status === "failed" || serverFirstSubmitResult.status === "blocked") {
+        const implicitSkillConfirmationRequired =
+          conversationSubmitNeedsImplicitSkillConfirmation(serverFirstSubmitResult);
         const hintedMessage = deps.addOpencodeCacheHint(serverFirstSubmitResult.message);
         deps.recordSendTrace("sendPrompt:server-submit-first-failed", {
           traceId: sendTraceId,
@@ -1953,8 +1976,10 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           code: serverFirstSubmitResult.code,
           draftDisposition: serverFirstSubmitResult.draftDisposition,
         });
-        deps.setError(hintedMessage);
-        deps.sessionStoreAppendSessionErrorTurn(sessionID, hintedMessage);
+        if (!implicitSkillConfirmationRequired) {
+          deps.setError(hintedMessage);
+          deps.sessionStoreAppendSessionErrorTurn(sessionID, hintedMessage);
+        }
         cleanupPendingSidebarSession();
         stopSendPromptBusy();
         return sessionSubmitResultFromConversationSubmit(serverFirstSubmitResult);

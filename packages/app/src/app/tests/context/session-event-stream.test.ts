@@ -9,6 +9,7 @@ import {
   isPermissionRefreshEvent,
   isQuestionRefreshEvent,
 } from "../../context/session-event-stream.js";
+import type { ReconnectState } from "../../context/session-reconnect.js";
 import type { MessageInfo, OpencodeEvent, SessionErrorTurn, TodoItem } from "../../types";
 
 function makeStore() {
@@ -99,6 +100,8 @@ function makeController(options: {
   routing?: any;
   client?: () => any;
   recoverWorkspaceRuntimeForEventStream?: (workspaceId: string) => Promise<boolean> | boolean;
+  isWorkspaceRuntimeReady?: (workspaceId?: string | null) => boolean;
+  onReconnectState?: (state: ReconnectState) => void;
   sessionErrorTurns?: Array<{ sessionID: string; text: string }>;
 } = {}) {
   const [store, setStore] = makeStore();
@@ -126,6 +129,7 @@ function makeController(options: {
     developerMode: () => options.developerMode ?? false,
     setError: () => {},
     setSseConnected: options.setSseConnected ?? (() => {}),
+    onReconnectState: options.onReconnectState,
     onAssistantResponseObserved: options.observer,
     sessionDebugEnabled: () => options.developerMode ?? false,
     sessionWarn: () => {},
@@ -173,7 +177,7 @@ function makeController(options: {
       questionRefreshes.push("questions");
     },
     withTimeout: async (promise) => promise,
-    isWorkspaceRuntimeReady: () => true,
+    isWorkspaceRuntimeReady: options.isWorkspaceRuntimeReady ?? (() => true),
     isActiveWorkspaceRuntimeReady: () => true,
     recoverWorkspaceRuntimeForEventStream: options.recoverWorkspaceRuntimeForEventStream,
   });
@@ -677,11 +681,12 @@ test("scoped session idle does not refresh through the active fallback client", 
   });
 });
 
-test("event stream runtime errors release the route and recover workspace runtime", async () => {
+test("event stream socket close reconnects without route release when scoped runtime is ready", async () => {
   await createRoot(async (dispose) => {
     try {
       const released: string[] = [];
       const recovered: string[] = [];
+      const reconnectStates: ReconnectState[] = [];
       const streamClient = makeEventClient(async () => {
         throw new Error("opencode_proxy_failed: socket connection was closed unexpectedly");
       });
@@ -702,18 +707,111 @@ test("event stream runtime errors release the route and recover workspace runtim
           recovered.push(workspaceId);
           return true;
         },
+        onReconnectState: (state) => reconnectStates.push(state),
       });
 
-      controller.setupSseStream("ws-a", streamClient);
+      const cleanup = controller.setupSseStream("ws-a", streamClient);
       await tick(8);
+      cleanup();
 
-      assert.deepEqual(released, ["ws-a"]);
-      assert.deepEqual(recovered, ["ws-a"]);
+      assert.deepEqual(released, []);
+      assert.deepEqual(recovered, []);
+      assert.equal(reconnectStates.some((state) => state.status === "reconnecting"), true);
     } finally {
       dispose();
     }
   });
 });
+
+test("event stream runtime errors recover route when scoped runtime is not ready", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const released: string[] = [];
+      const recovered: string[] = [];
+      const reconnectStates: ReconnectState[] = [];
+      const streamClient = makeEventClient(async () => {
+        throw new Error("opencode_proxy_failed: socket connection was closed unexpectedly");
+      });
+      const routing = {
+        activeWorkspaceId: () => "ws-a",
+        active: () => null,
+        client: (workspaceId?: string) => (workspaceId === "ws-a" ? streamClient : null),
+        entry: () => null,
+        entryIds: () => ["ws-a"],
+        release: (workspaceId: string) => {
+          released.push(workspaceId);
+        },
+      };
+      const { controller } = makeController({
+        activeWorkspaceId: "ws-a",
+        routing,
+        isWorkspaceRuntimeReady: () => false,
+        recoverWorkspaceRuntimeForEventStream: async (workspaceId) => {
+          recovered.push(workspaceId);
+          return true;
+        },
+        onReconnectState: (state) => reconnectStates.push(state),
+      });
+
+      const cleanup = controller.setupSseStream("ws-a", streamClient);
+      await tick(8);
+      cleanup();
+
+      assert.deepEqual(released, ["ws-a"]);
+      assert.deepEqual(recovered, ["ws-a"]);
+      assert.equal(reconnectStates.some((state) => state.status === "runtime-recovering"), true);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("duplicate workspace SSE setup replaces the previous stream generation", withSendWorkflowTraceWindow(async (target) => {
+  await createRoot(async (dispose) => {
+    try {
+      const { controller } = makeController();
+      const signals: AbortSignal[] = [];
+      let firstCloseCount = 0;
+      let secondCloseCount = 0;
+      const makePersistentClient = (onClose: () => void) => ({
+        event: {
+          subscribe: (_input?: unknown, options?: { signal?: AbortSignal }) => {
+            signals.push(options?.signal ?? new AbortController().signal);
+            return Promise.resolve({
+              stream: (async function* () {
+                await new Promise<void>(() => {});
+              })(),
+              close: async () => {
+                onClose();
+              },
+            });
+          },
+        },
+      }) as any;
+
+      const cleanupFirst = controller.setupSseStream("ws-a", makePersistentClient(() => firstCloseCount++));
+      await tick(4);
+      const cleanupSecond = controller.setupSseStream("ws-a", makePersistentClient(() => secondCloseCount++));
+      await tick(4);
+
+      assert.equal(signals[0]?.aborted, true);
+      assert.equal(signals[1]?.aborted, false);
+      assert.equal(firstCloseCount, 1);
+      assert.equal(secondCloseCount, 0);
+      assert.equal(
+        target.__vesloSendWorkflowTrace?.some((entry) => entry.event === "session-sse:replaced-existing"),
+        true,
+      );
+
+      cleanupFirst();
+      cleanupSecond();
+      await tick(2);
+      assert.equal(secondCloseCount, 1);
+    } finally {
+      dispose();
+    }
+  });
+}));
 
 test("local Veslo bearer session errors trace and recover workspace runtime", withSendWorkflowTraceWindow(async (target) => {
   await createRoot(async (dispose) => {

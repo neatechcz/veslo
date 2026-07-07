@@ -498,7 +498,7 @@ export function createConversationRunLifecycleController(
   });
 
   const registerActiveAiGatewayRun = (input: ConversationRunLifecycleSubmitInput) => {
-    if (input.kind !== "prompt_async" || input.expectAiGatewayStart !== true || !options.aiGatewayActiveRun) {
+    if (input.expectAiGatewayStart !== true || !options.aiGatewayActiveRun) {
       return false;
     }
     options.aiGatewayActiveRun.register({
@@ -584,7 +584,7 @@ export function createConversationRunLifecycleController(
     lifecycleOwner: OrchestratorLifecycleClient | null,
     providerWatchStartedAt: number,
   ): boolean => {
-    if (!lifecycleOwner || input.kind !== "prompt_async" || input.expectAiGatewayStart !== true) return false;
+    if (!lifecycleOwner || input.expectAiGatewayStart !== true) return false;
 
     const tracePayload = {
       workspaceId: input.workspace.id,

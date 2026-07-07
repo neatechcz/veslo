@@ -19,6 +19,7 @@ const RETENTION_LOW_BYTES: u64 = 35 * 1024 * 1024; // truncate down to ~35 MB
 const MAX_EVENTS_PER_BATCH: usize = 500;
 const MAX_LOG_LINE_BYTES: usize = 64 * 1024;
 const MAX_DIAGNOSTIC_TEXT_BYTES: usize = 16 * 1024;
+const MAX_RESPONSE_BODY_EXCERPT_BYTES: usize = 1024;
 const MAX_BATCH_BODY_BYTES: usize = 224 * 1024;
 const BATCH_SIZE_PROBE_ID: &str = "00000000-0000-0000-0000-000000000000";
 const INSTALL_ID_FILE: &str = "install-id.txt";
@@ -83,7 +84,10 @@ pub struct DebugLogsForwarder {
 
 #[derive(Debug)]
 enum PostBatchError {
-    Status(u16),
+    Status {
+        status: u16,
+        body_excerpt: Option<String>,
+    },
     Transport(String),
 }
 
@@ -96,8 +100,26 @@ enum LocalPostResult {
 impl std::fmt::Display for PostBatchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PostBatchError::Status(status) => write!(f, "HTTP {status}"),
+            PostBatchError::Status {
+                status,
+                body_excerpt,
+            } => {
+                if let Some(excerpt) = body_excerpt {
+                    write!(f, "HTTP {status}: {excerpt}")
+                } else {
+                    write!(f, "HTTP {status}")
+                }
+            }
             PostBatchError::Transport(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl PostBatchError {
+    fn status_code(&self) -> Option<u16> {
+        match self {
+            PostBatchError::Status { status, .. } => Some(*status),
+            PostBatchError::Transport(_) => None,
         }
     }
 }
@@ -828,6 +850,33 @@ fn retain_direct_fallback_events_after_local_accept(
     Ok(Some(direct_events))
 }
 
+fn response_body_excerpt(body: &str) -> Option<String> {
+    let excerpt = truncate_utf8_to_bytes(
+        &sanitize_diagnostic_string(body, false),
+        MAX_RESPONSE_BODY_EXCERPT_BYTES,
+    );
+    let trimmed = excerpt.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn response_status_error(status: u16, response: Option<ureq::Response>) -> PostBatchError {
+    let body_excerpt = response
+        .and_then(|response| response.into_string().ok())
+        .and_then(|body| response_body_excerpt(&body));
+    PostBatchError::Status {
+        status,
+        body_excerpt,
+    }
+}
+
+fn is_invalid_direct_fallback_error(error: &PostBatchError) -> bool {
+    error.status_code() == Some(400)
+}
+
 fn post_batch(
     base_url: &str,
     host_token: &str,
@@ -850,12 +899,13 @@ fn post_batch(
         .set("x-veslo-host-token", host_token)
         .send_string(&payload.to_string())
         .map_err(|e| match e {
-            ureq::Error::Status(status, _) => PostBatchError::Status(status),
+            ureq::Error::Status(status, response) => response_status_error(status, Some(response)),
             other => PostBatchError::Transport(other.to_string()),
         })?;
 
     if !(200..300).contains(&response.status()) {
-        return Err(PostBatchError::Status(response.status()));
+        let status = response.status();
+        return Err(response_status_error(status, Some(response)));
     }
     let cloud_upload_enabled = response
         .into_string()
@@ -907,12 +957,13 @@ fn post_direct_den_batch(
         .set("Authorization", &format!("Bearer {}", context.token))
         .send_string(&payload.to_string())
         .map_err(|e| match e {
-            ureq::Error::Status(status, _) => PostBatchError::Status(status),
+            ureq::Error::Status(status, response) => response_status_error(status, Some(response)),
             other => PostBatchError::Transport(other.to_string()),
         })?;
 
     if !(200..300).contains(&response.status()) {
-        return Err(PostBatchError::Status(response.status()));
+        let status = response.status();
+        return Err(response_status_error(status, Some(response)));
     }
     Ok(())
 }
@@ -1059,6 +1110,7 @@ pub fn spawn_flush_task(
             }
 
             let mut direct_delivered = true;
+            let mut direct_invalid = false;
             for chunk_vec in batches {
                 let batch_id = Uuid::new_v4().to_string();
                 if let Err(error) = post_direct_den_batch(
@@ -1068,12 +1120,31 @@ pub fn spawn_flush_task(
                     forwarder.install_id(),
                     forwarder.boot_id(),
                 ) {
+                    if is_invalid_direct_fallback_error(&error) {
+                        eprintln!(
+                            "[debug-logs-forwarder] direct fallback delivery rejected as invalid payload: {error}"
+                        );
+                        forwarder.clear_direct_fallback_retry_file(&file);
+                        direct_invalid = true;
+                        break;
+                    }
                     eprintln!("[debug-logs-forwarder] direct fallback delivery failed: {error}");
                     forwarder.record_direct_fallback_failure(SystemTime::now());
                     forwarder.mark_direct_fallback_retry_file(&file);
                     direct_delivered = false;
                     break;
                 }
+            }
+
+            if direct_invalid {
+                if retained_events.is_empty() {
+                    let _ = fs::remove_file(&file);
+                } else if let Err(error) = write_events_file(&file, &retained_events) {
+                    eprintln!(
+                        "[debug-logs-forwarder] failed to retain non-direct debug log events after invalid direct fallback: {error}"
+                    );
+                }
+                continue;
             }
 
             if !direct_delivered {
@@ -1325,6 +1396,37 @@ mod tests {
 
         assert!(retained.is_none());
         assert!(!ordinary_only.exists());
+    }
+
+    #[test]
+    fn direct_fallback_error_excerpt_is_sanitized_and_truncated() {
+        let body = format!(
+            "invalid token=secret-token url=https://den.example.test/path?token=secret&workspace=abc {}",
+            "x".repeat(MAX_RESPONSE_BODY_EXCERPT_BYTES + 512)
+        );
+        let excerpt = response_body_excerpt(&body).unwrap();
+
+        assert!(excerpt.len() <= MAX_RESPONSE_BODY_EXCERPT_BYTES);
+        assert!(excerpt.contains("token=[redacted]"));
+        assert!(excerpt.contains("workspace=[redacted]"));
+        assert!(!excerpt.contains("secret-token"));
+        assert!(!excerpt.contains("token=secret&workspace=abc"));
+    }
+
+    #[test]
+    fn direct_fallback_status_400_is_invalid_payload() {
+        let invalid = PostBatchError::Status {
+            status: 400,
+            body_excerpt: Some("invalid schema".to_string()),
+        };
+        let retryable = PostBatchError::Status {
+            status: 502,
+            body_excerpt: Some("bad gateway".to_string()),
+        };
+
+        assert!(is_invalid_direct_fallback_error(&invalid));
+        assert!(!is_invalid_direct_fallback_error(&retryable));
+        assert_eq!(invalid.to_string(), "HTTP 400: invalid schema");
     }
 
     #[test]

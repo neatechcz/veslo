@@ -35,6 +35,7 @@
     "audit:imports": "node scripts/audit-import-boundaries.mjs",
     "audit:routes": "node scripts/audit-route-contracts.mjs",
     "audit:fallbacks": "node scripts/audit-fallback-risks.mjs",
+    "audit:client-logic": "node scripts/audit-client-logic.mjs",
     "audit:owners": "node scripts/audit-owner-hotspots.mjs",
     "audit:workflow-surfaces": "node scripts/audit-workflow-surfaces.mjs",
     "bump:calver": "pnpm --filter @neatech/veslo-ui bump:calver",

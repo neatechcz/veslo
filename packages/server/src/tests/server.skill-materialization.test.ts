@@ -2197,10 +2197,14 @@ test("exact skill reads allow managed materialized instances but exact deletes r
 });
 
 test("POST sync marks active runs pending without mutating managed files", async () => {
+  const registryCalls: string[] = [];
   const registry = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: async () => Response.json({ workspaceId: "ws_1", skills: [] }),
+    fetch: async (request) => {
+      registryCalls.push(new URL(request.url).pathname);
+      return Response.json({ workspaceId: "ws_1", skills: [] });
+    },
   });
   runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
   const { server, workspaceRoot } = await startFixture({ registryBaseUrl: `http://127.0.0.1:${registry.port}` });
@@ -2218,6 +2222,7 @@ test("POST sync marks active runs pending without mutating managed files", async
   expect(response.status).toBe(202);
   const payload = await response.json() as { status: string; reloadRequired: boolean; synced: boolean };
   expect(payload).toMatchObject({ status: "pending", reloadRequired: true, synced: false });
+  expect(registryCalls).toEqual([]);
   await expect(readFile(join(workspaceRoot, ".opencode", "skills", "veslo-managed", ".veslo-materialization.json"), "utf8"))
     .rejects.toThrow();
 });

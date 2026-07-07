@@ -228,7 +228,7 @@ const OPENCODE_JSON_DEFAULT_RESPONSE_MAX_BYTES = 1024 * 1024;
 const OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
 const OPENCODE_JSON_FETCH_DEFAULT_TIMEOUT_MS = 5_000;
 const OPENCODE_SESSION_CREATE_TIMEOUT_MS = 60_000;
-const OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS = 30_000;
+const OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS = 75_000;
 // Send-timeout fix 2026-06-10 - upper bound for the proxy's wait on upstream
 // response HEADERS (body streaming, e.g. SSE, is never cut). Must stay above
 // the orchestrator's 60s cold OpenCode health window so a legitimate POST that
@@ -2826,7 +2826,7 @@ function summarizeConversationRunBodyForTrace(body: Record<string, unknown>) {
   }, 0);
   return {
     fields: Object.keys(body).sort(),
-    messageID: typeof body.messageID === "string" ? body.messageID : null,
+    messageIDForwarded: Object.prototype.hasOwnProperty.call(body, "messageID"),
     agent: typeof body.agent === "string" ? body.agent : null,
     variant: typeof body.variant === "string" ? body.variant : null,
     model: modelSummary,

@@ -939,6 +939,45 @@ test("submitRun keeps active gateway context after provider start and clears it 
   });
 });
 
+test("submitRun tracks active gateway context for command runs when provider start is expected", async () => {
+  const { controller, activeGatewayCalls, providerWatchCalls, reconcileCalls } = controllerHarness();
+
+  const result = await controller.submitRun(submitInput({
+    kind: "command",
+    body: { kind: "command", command: "skills.run", arguments: "{}" },
+    expectAiGatewayStart: true,
+  }));
+
+  expect(result.httpStatus).toBe(200);
+  expect(result.payload.status).toBe("submitted");
+  await flushMicrotasks();
+  expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register"]);
+  expect(activeGatewayCalls[0]?.input).toMatchObject({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    opencodeSessionId: "sess-a",
+    clientMessageId: "msg-a",
+    origin: "composer",
+  });
+  expect(providerWatchCalls).toHaveLength(1);
+  expect(providerWatchCalls[0]).toMatchObject({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    opencodeSessionId: "sess-a",
+    clientMessageId: "msg-a",
+    origin: "composer",
+  });
+  expect(reconcileCalls).toEqual([{
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "accepted",
+    delayMs: 1_234,
+  }]);
+});
+
 test("queue drain keeps pending work blocked while latest lifecycle is active", async () => {
   const { controller, lifecycle, queue, submitCalls, timers } = controllerHarness();
   enqueuePendingRun(queue);

@@ -181,6 +181,7 @@ function blockedResult(input: {
   message: string;
   draftDisposition?: "restore" | "keep";
   recoverable?: boolean;
+  confirmation?: ConversationSubmitBlockedResult["confirmation"];
 }): { status: "blocked"; result: ConversationSubmitBlockedResult } {
   return {
     status: "blocked",
@@ -190,6 +191,7 @@ function blockedResult(input: {
       message: input.message,
       draftDisposition: input.draftDisposition ?? "restore",
       recoverable: input.recoverable ?? true,
+      ...(input.confirmation ? { confirmation: input.confirmation } : {}),
     },
   };
 }
@@ -415,7 +417,8 @@ async function resolveRunInput(input: {
   }
 
   const text = resolvedContent(request);
-  if (text && input.resolveSkillCommand) {
+  const implicitSkillCommandPolicy = request.options?.implicitSkillCommandPolicy ?? "confirm";
+  if (text && input.resolveSkillCommand && implicitSkillCommandPolicy !== "disable") {
     let skillCommandName: string | undefined;
     try {
       skillCommandName = (await input.resolveSkillCommand({
@@ -443,6 +446,19 @@ async function resolveRunInput(input: {
             resolvedRunInput: promptRunInput(request, text, attachmentParts, input.workspace),
           };
         }
+      }
+      if (implicitSkillCommandPolicy !== "allow") {
+        return blockedResult({
+          code: "implicit_skill_confirmation_required",
+          message: `Run ${skillCommandName} as a skill command?`,
+          draftDisposition: "keep",
+          recoverable: true,
+          confirmation: {
+            type: "implicit_skill_command",
+            skillName: skillCommandName,
+            arguments: appendLines(text, attachmentParts.pathLinesForPathBasedRuns),
+          },
+        });
       }
       return {
         status: "ok",

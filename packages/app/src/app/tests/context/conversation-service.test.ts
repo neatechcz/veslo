@@ -621,6 +621,72 @@ test("conversation run remembers submitted run ids under Veslo and UI identities
   assert.equal(rememberedScopes[1]?.conversationId, "conv-a");
 });
 
+test("conversation submit remembers queued run ids under request and result identities", async () => {
+  const { service, rememberedRuns, rememberedScopes, setSubmitConversationResult, sendTraces } = createService();
+  setSubmitConversationResult({
+    status: "queued",
+    workspaceId: "server-ws",
+    conversationId: "conv-submit",
+    opencodeSessionId: "open-submit",
+    queueItemId: "queue-submit",
+    reservedRunId: "run-submit-reserved",
+    queuePosition: 1,
+    clientMessageId: "msg-submit",
+    draftDisposition: "clear",
+  });
+
+  const result = await service.submitConversationFromVesloWriteApi(
+    "app-ws",
+    "/repo",
+    {
+      clientMessageId: "msg-submit",
+      origin: "session:queue-drain",
+      target: {
+        conversationId: "conv-request",
+        opencodeSessionId: "ui-session",
+        pendingClientSessionId: "pending-submit",
+      },
+      draft: {
+        mode: "prompt",
+        text: "queued submit",
+        parts: [{ type: "text", text: "queued submit" }],
+      },
+    },
+    {
+      traceId: "trace-submit",
+      targetWorkspace: {
+        workspaceId: "app-ws",
+        workspaceRoot: "/repo",
+        directory: "/repo",
+      },
+      conversationWorkspaceByDirectory: new Map(),
+    },
+  );
+
+  assert.equal(result?.status, "queued");
+  assert.deepEqual(rememberedScopes.map((scope) => scope.sessionId), [
+    "pending-submit",
+    "ui-session",
+    "open-submit",
+    "conv-request",
+    "conv-submit",
+  ]);
+  assert.ok(rememberedScopes.every((scope) => scope.workspaceId === "app-ws"));
+  assert.ok(rememberedScopes.every((scope) => scope.conversationId === "conv-submit"));
+  assert.ok(rememberedScopes.every((scope) => scope.opencodeSessionId === "open-submit"));
+  assert.deepEqual(rememberedRuns[0], {
+    workspaceId: "app-ws",
+    conversationId: "conv-submit",
+    opencodeSessionId: "open-submit",
+    uiSessionId: "ui-session",
+    runId: "run-submit-reserved",
+  });
+  assert.ok(sendTraces.some((entry) =>
+    entry.event === "submitConversationFromVesloWriteApi:conversation-scope-remembered" &&
+    entry.payload?.aliasCount === 5
+  ));
+});
+
 test("managed conversation runs prime runtime authorization before submit", async () => {
   const { service, calls, runtimeAuthorizationCalls } = createService({
     managedAiAccess: {

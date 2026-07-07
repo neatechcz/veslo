@@ -53,6 +53,7 @@ export type SkillRegistryEventScheduler<TTimer = ReturnType<typeof setTimeout>> 
 export type SkillRegistryEventsListenerOptions<TTimer = ReturnType<typeof setTimeout>> = {
   registryBaseUrl: string;
   token?: string | null;
+  extraHeaders?: Record<string, string> | null;
   orgId?: string | null;
   workspaceId?: string | null;
   initialCursor?: string | null;
@@ -129,7 +130,7 @@ export function createSkillRegistryEventsListener<TTimer = ReturnType<typeof set
     try {
       const response = await fetchImpl(buildRegistryEventsUrl(options, { cursor, limit }), {
         method: "GET",
-        headers: buildHeaders(options.token),
+        headers: buildHeaders(options.token, options.extraHeaders),
       });
       if (!response.ok) {
         if (response.status === 401 || response.status === 403) {
@@ -194,8 +195,16 @@ function buildRegistryEventsUrl(
   return url.toString();
 }
 
-function buildHeaders(token: string | null | undefined): Headers {
+function buildHeaders(
+  token: string | null | undefined,
+  extraHeaders?: Record<string, string> | null,
+): Headers {
   const headers = new Headers({ Accept: "application/json" });
+  for (const [name, value] of Object.entries(extraHeaders ?? {})) {
+    const normalizedName = name.trim();
+    const normalizedValue = value.trim();
+    if (normalizedName && normalizedValue) headers.set(normalizedName, normalizedValue);
+  }
   const normalizedToken = normalizeNullableString(token);
   if (normalizedToken) headers.set("Authorization", `Bearer ${normalizedToken}`);
   return headers;

@@ -4,7 +4,10 @@ import test from "node:test";
 import {
   beginOutageEpisode,
   clearOutageEpisode,
+  createReconnectState,
   isRunningStatus,
+  reconnectStateBlocksSend,
+  shouldRecoverEventStreamRuntime,
   shouldShowReconnected,
   shouldShowReconnecting,
 } from "../../context/session-reconnect.js";
@@ -70,4 +73,55 @@ test("clearOutageEpisode resets the tracker", () => {
   assert.deepEqual(state.runningSessionIds, []);
   assert.equal(state.shownReconnecting, false);
   assert.equal(state.shownReconnected, false);
+});
+
+test("reconnect state captures operational UI details without blocking sends", () => {
+  const state = createReconnectState({
+    status: "reconnecting",
+    workspaceId: " ws-a ",
+    sessionId: " sess-a ",
+    attempt: 2,
+    delayMs: 2000,
+    lastError: "socket closed",
+    now: () => 123,
+  });
+
+  assert.deepEqual(state, {
+    status: "reconnecting",
+    workspaceId: "ws-a",
+    sessionId: "sess-a",
+    attempt: 2,
+    delayMs: 2000,
+    lastError: "socket closed",
+    messagesMayBeDelayed: true,
+    updatedAt: 123,
+  });
+  assert.equal(reconnectStateBlocksSend(state), false);
+});
+
+test("event stream runtime recovery requires scoped runtime evidence", () => {
+  assert.equal(
+    shouldRecoverEventStreamRuntime({
+      recoveryAvailable: true,
+      textMatchedRuntimeError: true,
+      scopedRuntimeReady: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRecoverEventStreamRuntime({
+      recoveryAvailable: true,
+      textMatchedRuntimeError: true,
+      scopedRuntimeReady: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRecoverEventStreamRuntime({
+      recoveryAvailable: false,
+      textMatchedRuntimeError: true,
+      scopedRuntimeReady: false,
+    }),
+    false,
+  );
 });

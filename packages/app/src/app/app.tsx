@@ -272,7 +272,7 @@ import {
 import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./context/session";
-import type { ReconnectNotice } from "./context/session-reconnect";
+import type { ReconnectNotice, ReconnectState } from "./context/session-reconnect";
 import { createSidebarWorkspaceSessions } from "./context/sidebar-workspace-sessions";
 import { createWorkspaceSessionSnapshots } from "./context/workspace-session-snapshots";
 import { createExtensionsStore } from "./context/extensions";
@@ -632,6 +632,7 @@ export default function App() {
   );
   const [sseConnected, setSseConnected] = createSignal(false);
   const [sessionReconnectNotice, setSessionReconnectNotice] = createSignal<ReconnectNotice | null>(null);
+  const [sessionReconnectState, setSessionReconnectState] = createSignal<ReconnectState | null>(null);
 
   const [busy, setBusy] = createSignal(false);
   const [busyLabel, setBusyLabel] = createSignal<string | null>(null);
@@ -1029,6 +1030,7 @@ export default function App() {
     setError,
     setSseConnected,
     onReconnectNotice: (notice) => setSessionReconnectNotice(notice),
+    onReconnectState: (state) => setSessionReconnectState(state),
     markReloadRequired,
     onHotReloadApplied: () => {
       lateOnHotReloadApplied.current()?.();
@@ -4751,6 +4753,7 @@ export default function App() {
     renameSessionTitle,
     sessionReconnectNotice,
     setSessionReconnectNotice,
+    sessionReconnectState,
   });
 
   appRouteSync.startHashRouteSync();

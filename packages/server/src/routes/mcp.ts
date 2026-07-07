@@ -106,10 +106,7 @@ export function registerMcpRoutes(routes: Route[], dependencies: McpRouteDepende
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, requireRouteParam(ctx.params, "id", "workspace id"));
-    const catalogName = String(ctx.params.name ?? "").trim();
-    if (!catalogName) {
-      throw new ApiError(400, "invalid_mcp_name", "MCP name is required");
-    }
+    const catalogName = requireRouteParam(ctx.params, "name", "MCP name");
 
     const { denApiBase, denOrgId, denToken } = requireDenCatalogContext(ctx);
     const items = await fetchOrgMcpCatalog({
@@ -172,7 +169,7 @@ export function registerMcpRoutes(routes: Route[], dependencies: McpRouteDepende
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, requireRouteParam(ctx.params, "id", "workspace id"));
-    const name = String(ctx.params.name ?? "").trim();
+    const name = requireRouteParam(ctx.params, "name", "MCP name");
     validateMcpName(name);
 
     const { denApiBase, denOrgId, denToken } = requireDenCatalogContext(ctx);
@@ -295,7 +292,7 @@ export function registerMcpRoutes(routes: Route[], dependencies: McpRouteDepende
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, requireRouteParam(ctx.params, "id", "workspace id"));
-    const name = String(ctx.params.name ?? "").trim();
+    const name = requireRouteParam(ctx.params, "name", "MCP name");
     validateMcpName(name);
 
     const authStorePath = join(homedir(), ".config", "opencode", "mcp-auth.json");

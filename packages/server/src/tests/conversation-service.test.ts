@@ -988,6 +988,56 @@ describe("conversation service", () => {
     expect(result.messages).toEqual([]);
   });
 
+  test("loads an existing conversation id through its persisted engine session binding", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-bound-resume-"));
+    tempDirs.push(dataDir);
+    const directory = join(dataDir, "workspace-a");
+    const bindingStore = createConversationBindingStore({ dataDir, now: () => 2_000 });
+    const binding = await bindingStore.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory,
+      engineSessionId: "sess-old-engine",
+      title: "Old conversation",
+      createdAt: 1_000,
+      updatedAt: 1_500,
+    });
+    const transcriptReads: string[] = [];
+    const service = createConversationService({
+      readStore: {
+        ...fakeReadStore(directory),
+        async getTranscript(input) {
+          transcriptReads.push(input.sessionId);
+          return {
+            workspaceId: input.workspaceId,
+            sessionId: input.sessionId,
+            limit: input.limit,
+            messages: [{ id: "msg-old", role: "assistant" }],
+            partsByMessageId: {},
+            fetchedAt: 1_700,
+            source: "sqlite",
+          };
+        },
+      },
+      bindingStore,
+      createOpenCodeSession: async () => {
+        throw new Error("createOpenCodeSession should not be called for existing conversation ids");
+      },
+    });
+
+    const result = await service.loadTranscript({
+      workspace: workspaceFor(directory),
+      sessionId: binding.conversationId,
+      limit: 140,
+      directory,
+    });
+
+    expect(transcriptReads).toEqual(["sess-old-engine"]);
+    expect(result.sessionId).toBe("sess-old-engine");
+    expect(result.opencodeSessionId).toBe("sess-old-engine");
+    expect(result.conversationId).toBe(binding.conversationId);
+    expect((result.messages as Array<{ id: string }>).map((message) => message.id)).toEqual(["msg-old"]);
+  });
+
   test("creates an OpenCode session and persists the binding before returning", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-create-"));
     tempDirs.push(dataDir);

@@ -35,6 +35,17 @@ describe("MCP routes", () => {
     expect(matchRoute(routes, "GET", "/workspace/demo/extensions/mcp")).toBeNull();
   });
 
+  test("auth and runtime-token routes require an explicit MCP route name", async () => {
+    const source = await readFile(new URL("../routes/mcp.ts", import.meta.url), "utf8");
+
+    expect(source).toMatch(
+      /"\/workspace\/:id\/mcp\/:name\/runtime-token\/refresh"[\s\S]*const name = requireRouteParam\(ctx\.params, "name", "MCP name"\);[\s\S]*validateMcpName\(name\);/,
+    );
+    expect(source).toMatch(
+      /"\/workspace\/:id\/mcp\/:name\/auth"[\s\S]*const name = requireRouteParam\(ctx\.params, "name", "MCP name"\);[\s\S]*validateMcpName\(name\);/,
+    );
+  });
+
   test("listMcp ignores future mcp.servers shape instead of listing a fake servers entry", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-mcp-servers-shape-"));
     try {

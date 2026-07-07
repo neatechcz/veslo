@@ -339,6 +339,24 @@ test("session reconnect notice maps to one-shot localized reconnect toasts", () 
   );
 });
 
+test("session reconnect state renders a persistent operational banner", () => {
+  assert.match(
+    sessionSource,
+    /reconnectState: ReconnectState \| null;/,
+    "SessionView props should include the persistent reconnect state",
+  );
+  assert.match(
+    sessionSource,
+    /data-testid="session-reconnect-state"/,
+    "session view should render a visible reconnect state banner",
+  );
+  assert.match(
+    sessionSource,
+    /data-reconnect-status=\{state\(\)\.status\}/,
+    "reconnect state banner should expose the current state for tests and diagnostics",
+  );
+});
+
 test("session toast messages stay visible for at least four seconds", () => {
   assert.match(
     source,

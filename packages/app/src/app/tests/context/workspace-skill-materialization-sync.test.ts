@@ -48,6 +48,19 @@ test("workspace materialization sync forwards the signed-in Den API base", () =>
   );
 });
 
+test("workspace materialization trace carries registry errors for degraded diagnostics", () => {
+  assert.match(
+    source,
+    /trace\("status",\s*\{[\s\S]*registryError:\s*status\.registryError\s*\?\?\s*null/s,
+    "status trace should include the registry error that explains degraded materialization",
+  );
+  assert.match(
+    source,
+    /trace\("synced",\s*\{[\s\S]*registryError:\s*result\.registryError\s*\?\?\s*null/s,
+    "sync trace should include registry errors returned by the sync endpoint",
+  );
+});
+
 test("local materialization sync starts the managed server before using the fallback client", () => {
   const ensureIdx = source.indexOf("await deps.ensureLocalVesloServerRunning?.({ requireRuntimeChainReady: false })");
   const clientIdx = source.indexOf("const client = deps.vesloServerClient?.()");

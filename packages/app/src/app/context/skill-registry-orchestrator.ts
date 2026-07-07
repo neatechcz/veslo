@@ -13,6 +13,7 @@ import type {
   VesloServerStatus,
   VesloSkillRegistryAuthContext,
 } from "../lib/veslo-server";
+import { buildDenContextHeaders } from "../lib/veslo-server/transport";
 import type { ReloadReason, ReloadTrigger } from "../types";
 import type { WorkspaceBusyMap } from "./workspace-debug";
 
@@ -58,6 +59,9 @@ export function createSkillRegistryEventsKey(input: {
   baseUrl: string;
   orgId: string;
   token: string;
+  denApiBase?: string;
+  denToken?: string;
+  denUserId?: string;
   workspaceId: string;
   status: VesloServerStatus;
 }): string {
@@ -65,6 +69,9 @@ export function createSkillRegistryEventsKey(input: {
     baseUrl: input.baseUrl,
     orgId: input.orgId,
     token: createTokenFingerprint(input.token),
+    denApiBase: input.denApiBase ?? "",
+    denToken: createTokenFingerprint(input.denToken ?? ""),
+    denUserId: input.denUserId ?? "",
     workspaceId: input.workspaceId,
     status: input.status,
   });
@@ -83,6 +90,7 @@ export function createSkillRegistryOrchestrator(deps: SkillRegistryOrchestratorD
   let skillRegistryGlobalReplayInFlight = false;
   let skillRegistryEventsKey = "";
   let skillRegistryEventsListener: SkillRegistryEventsListener | null = null;
+  let skillRegistryEventsUnauthorizedRetryKey = "";
 
   const materializationAuthContext = (): VesloSkillRegistryAuthContext => {
     deps.denAuthRevision();
@@ -186,10 +194,19 @@ export function createSkillRegistryOrchestrator(deps: SkillRegistryOrchestratorD
   };
 
   const handleSkillRegistryEventsUnauthorized = async (error: SkillRegistryEventsAuthError) => {
+    const failedKey = skillRegistryEventsKey;
     stopSkillRegistryEventsListener();
     deps.reportError(error, "skills.registry.events.auth");
     try {
       await deps.ensureLocalVesloServerRunning?.({ requireRuntimeChainReady: false });
+      if (failedKey && skillRegistryEventsKey !== failedKey) {
+        skillRegistryEventsUnauthorizedRetryKey = "";
+        return;
+      }
+      if (failedKey && skillRegistryEventsUnauthorizedRetryKey !== failedKey) {
+        skillRegistryEventsUnauthorizedRetryKey = failedKey;
+        skillRegistryEventsKey = "";
+      }
       syncSkillRegistryEventListener();
     } catch (reacquireError) {
       deps.reportError(reacquireError, "skills.registry.events.auth.reacquire");
@@ -199,15 +216,27 @@ export function createSkillRegistryOrchestrator(deps: SkillRegistryOrchestratorD
   const syncSkillRegistryEventListener = () => {
     deps.denAuthRevision();
     const client = deps.vesloServerClient();
-    const auth = deps.readDenAuth();
-    const orgId = auth?.orgId?.trim() ?? "";
+    const authContext = materializationAuthContext();
+    const orgId = authContext.denOrgId?.trim() ?? "";
     const baseUrl = client?.baseUrl?.trim() ?? "";
     const workspaceId = deps.activeWorkspaceId().trim();
     const token = client?.token?.trim() ?? "";
     const status = deps.vesloServerStatus();
-    const nextKey = createSkillRegistryEventsKey({ baseUrl, orgId, token, workspaceId, status });
+    const nextKey = createSkillRegistryEventsKey({
+      baseUrl,
+      orgId,
+      token,
+      denApiBase: authContext.denApiBase?.trim() ?? "",
+      denToken: authContext.denToken?.trim() ?? "",
+      denUserId: authContext.denUserId?.trim() ?? "",
+      workspaceId,
+      status,
+    });
     if (nextKey === skillRegistryEventsKey) return;
     skillRegistryEventsKey = nextKey;
+    if (nextKey !== skillRegistryEventsUnauthorizedRetryKey) {
+      skillRegistryEventsUnauthorizedRetryKey = "";
+    }
     stopSkillRegistryEventsListener();
 
     if (!client || status !== "connected") return;
@@ -215,6 +244,7 @@ export function createSkillRegistryOrchestrator(deps: SkillRegistryOrchestratorD
     const listener = createListener({
       registryBaseUrl: client.baseUrl,
       token: client.token,
+      extraHeaders: buildDenContextHeaders(authContext),
       orgId,
       workspaceId: workspaceId || undefined,
       getActiveWorkspaceId: () => deps.activeWorkspaceId(),

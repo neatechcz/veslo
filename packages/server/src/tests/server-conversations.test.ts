@@ -880,6 +880,7 @@ describe("conversation routes", () => {
             },
             agent: "build",
             variant: "xhigh",
+            implicitSkillCommandPolicy: "allow",
           },
         }),
       },

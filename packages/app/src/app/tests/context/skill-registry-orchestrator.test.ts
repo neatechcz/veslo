@@ -154,6 +154,12 @@ test("workspace update during active run queues replay and marks reload", async 
       });
 
       await flushEffects();
+      assert.deepEqual(listener.options.extraHeaders, {
+        "x-veslo-den-api-base": "https://den.test",
+        "x-veslo-den-token": "den-token",
+        "x-veslo-den-org-id": "org-1",
+        "x-veslo-den-user-id": "user-1",
+      });
       await listener.options.onWorkspaceUpdatePending?.({
         workspaceId: "workspace-1",
         status: "pending",
@@ -358,21 +364,28 @@ test("event listener key changes when the Veslo client token rotates", () => {
     createSkillRegistryEventsKey({ ...base, token: "server-token-1" }),
     createSkillRegistryEventsKey({ ...base, token: "server-token-2" }),
   );
+
+  assert.notEqual(
+    createSkillRegistryEventsKey({ ...base, token: "server-token-1", denToken: "den-token-1" }),
+    createSkillRegistryEventsKey({ ...base, token: "server-token-1", denToken: "den-token-2" }),
+  );
 });
 
-test("event listener key does not expose the raw Veslo client token", () => {
+test("event listener key does not expose raw auth tokens", () => {
   const key = createSkillRegistryEventsKey({
     baseUrl: "http://127.0.0.1:8787",
     orgId: "org-1",
     token: "server-token-super-secret",
+    denToken: "den-token-super-secret",
     workspaceId: "workspace-1",
     status: "connected",
   });
 
   assert.equal(key.includes("server-token-super-secret"), false);
+  assert.equal(key.includes("den-token-super-secret"), false);
 });
 
-test("event listener auth failure stays stopped when reacquire leaves the same server client", async () => {
+test("event listener auth failure retries the same key once after reacquire", async () => {
   await createRoot(async (dispose) => {
     try {
       const calls: MaterializationCall[] = [];
@@ -412,7 +425,20 @@ test("event listener auth failure stays stopped when reacquire leaves the same s
       assert.equal(listener.stopped, 1);
       assert.deepEqual(errors, [{ scope: "skills.registry.events.auth", status: 401 }]);
       assert.deepEqual(ensures, [{ requireRuntimeChainReady: false }]);
-      assert.equal(listener.started, 1);
+      assert.equal(listener.started, 2);
+
+      await listener.options.onUnauthorized?.(new SkillRegistryEventsAuthError(401));
+
+      assert.equal(listener.stopped, 2);
+      assert.deepEqual(errors, [
+        { scope: "skills.registry.events.auth", status: 401 },
+        { scope: "skills.registry.events.auth", status: 401 },
+      ]);
+      assert.deepEqual(ensures, [
+        { requireRuntimeChainReady: false },
+        { requireRuntimeChainReady: false },
+      ]);
+      assert.equal(listener.started, 2);
     } finally {
       dispose();
     }

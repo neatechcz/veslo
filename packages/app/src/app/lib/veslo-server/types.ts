@@ -1391,6 +1391,7 @@ export type VesloConversationSubmitRequest = {
     variant?: string | null;
     expectAiGatewayStart?: boolean;
     dryRun?: boolean;
+    implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
   };
 };
 
@@ -1419,6 +1420,15 @@ export type VesloConversationSubmitResolvedRunInput =
   | {
       kind: "summarize";
     };
+
+export type VesloConversationSubmitImplicitSkillCommandConfirmation = {
+  type: "implicit_skill_command";
+  skillName: string;
+  arguments: string;
+};
+
+export type VesloConversationSubmitConfirmation =
+  | VesloConversationSubmitImplicitSkillCommandConfirmation;
 
 export type VesloConversationSubmitResult =
   | {
@@ -1482,6 +1492,7 @@ export type VesloConversationSubmitResult =
       materializedSession?: unknown | null;
       draftDisposition: "restore" | "keep";
       recoverable: boolean;
+      confirmation?: VesloConversationSubmitConfirmation;
     }
   | {
       status: "failed";

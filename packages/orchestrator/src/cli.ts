@@ -34,6 +34,7 @@ import { resolveOpencodeProxyTarget } from "./opencode-proxy-target.js";
 import { deploymentServiceUrl } from "./deployment-endpoints.js";
 import { probeOpenCodeProjectApi } from "./opencode-project-api.js";
 import { proxyToEngine } from "./router-proxy.js";
+import { classifySharedProxyUpstreamError } from "./proxy-upstream-health-policy.js";
 import { createRunStore, type RunEngineOwner, type RunKind, type RunRecord } from "./run-store.js";
 import { createOrchestratorShutdown } from "./shutdown.js";
 import {
@@ -4587,6 +4588,8 @@ async function runRouterDaemon(args: ParsedArgs) {
     return { reason, caller };
   };
 
+  let routerShutdownStarted = false;
+
   const server = createHttpServer(async (req, res) => {
     const startedAt = Date.now();
     const method = req.method ?? "GET";
@@ -5448,18 +5451,35 @@ async function runRouterDaemon(args: ParsedArgs) {
             persistEnginesSnapshot();
           },
           onError: (err) => {
+            const healthPolicy = classifySharedProxyUpstreamError({
+              method: req.method,
+              requestPath: url.pathname,
+              targetPath: restPath,
+              errorMessage: err.message,
+              isShuttingDown: routerShutdownStarted,
+            });
             finishUpstreamTrace("orchestrator:proxy-upstream:error", {
               statusCode: res.statusCode,
               error: err.message,
+              eventStream: healthPolicy.eventStream,
+              shutdown: healthPolicy.shutdown,
+              nonFatalEngineError: healthPolicy.nonFatalEngineError,
             });
-            if (engineTopology.mode === "shared-unsandboxed") {
+            if (engineTopology.mode === "shared-unsandboxed" && healthPolicy.markSharedEngineUnhealthy) {
               void sharedOpenCodeEngine?.markUnhealthy("proxy-upstream-error", err);
             }
-            logger.warn(
-              "engine proxy error",
-              { workspaceId: ws.id, error: err.message },
-              "engine-pool",
-            );
+            const logAttrs = {
+              workspaceId: ws.id,
+              error: err.message,
+              eventStream: healthPolicy.eventStream,
+              shutdown: healthPolicy.shutdown,
+              nonFatalEngineError: healthPolicy.nonFatalEngineError,
+            };
+            if (healthPolicy.nonFatalEngineError) {
+              logger.info("engine event stream proxy closed", logAttrs, "engine-pool");
+            } else {
+              logger.warn("engine proxy error", logAttrs, "engine-pool");
+            }
           },
           // Routine client disconnects (SSE teardown on workspace switch,
           // app reload) must not count as upstream failures — marking the
@@ -5482,6 +5502,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           caller: "http",
         });
         send(200, { ok: true });
+        routerShutdownStarted = true;
         void shutdown(attribution);
         return;
       }
@@ -5529,8 +5550,14 @@ async function runRouterDaemon(args: ParsedArgs) {
     }
   });
 
-  process.on("SIGINT", () => void shutdown({ reason: "signal:SIGINT", caller: "process" }));
-  process.on("SIGTERM", () => void shutdown({ reason: "signal:SIGTERM", caller: "process" }));
+  process.on("SIGINT", () => {
+    routerShutdownStarted = true;
+    void shutdown({ reason: "signal:SIGINT", caller: "process" });
+  });
+  process.on("SIGTERM", () => {
+    routerShutdownStarted = true;
+    void shutdown({ reason: "signal:SIGTERM", caller: "process" });
+  });
   await new Promise(() => undefined);
 }
 

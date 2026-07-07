@@ -36,6 +36,12 @@ test("pollNow fetches from the current cursor, delivers events, and tracks curso
   const listener = createSkillRegistryEventsListener({
     registryBaseUrl: "https://registry.example/api",
     token: "token_1",
+    extraHeaders: {
+      "x-veslo-den-api-base": "https://den.test",
+      "x-veslo-den-token": "den-token",
+      "x-veslo-den-org-id": "org_1",
+      "x-veslo-den-user-id": "user_1",
+    },
     orgId: "org_1",
     initialCursor: "cursor_0",
     initialRevision: "revision_0",
@@ -64,6 +70,10 @@ test("pollNow fetches from the current cursor, delivers events, and tracks curso
   assert.equal(url.searchParams.get("orgId"), "org_1");
   assert.equal(url.searchParams.get("limit"), "100");
   assert.equal(calls[0]!.headers.get("authorization"), "Bearer token_1");
+  assert.equal(calls[0]!.headers.get("x-veslo-den-api-base"), "https://den.test");
+  assert.equal(calls[0]!.headers.get("x-veslo-den-token"), "den-token");
+  assert.equal(calls[0]!.headers.get("x-veslo-den-org-id"), "org_1");
+  assert.equal(calls[0]!.headers.get("x-veslo-den-user-id"), "user_1");
   assert.deepEqual(delivered.map((event) => event.id), ["event_1"]);
   assert.deepEqual(invalidated, ["event_1"]);
   assert.deepEqual(listener.getState(), {

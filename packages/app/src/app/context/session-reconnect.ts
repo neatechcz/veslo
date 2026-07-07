@@ -1,5 +1,55 @@
 export type ReconnectNotice = "reconnecting" | "reconnected";
 
+export type ReconnectStateStatus =
+  | "live"
+  | "reconnecting"
+  | "catching-up"
+  | "degraded"
+  | "runtime-recovering";
+
+export type ReconnectState = {
+  status: ReconnectStateStatus;
+  workspaceId: string | null;
+  sessionId: string | null;
+  attempt: number | null;
+  delayMs: number | null;
+  lastError: string | null;
+  messagesMayBeDelayed: boolean;
+  updatedAt: number;
+};
+
+export function createReconnectState(input: {
+  status: ReconnectStateStatus;
+  workspaceId?: string | null;
+  sessionId?: string | null;
+  attempt?: number | null;
+  delayMs?: number | null;
+  lastError?: string | null;
+  messagesMayBeDelayed?: boolean;
+  now?: () => number;
+}): ReconnectState {
+  return {
+    status: input.status,
+    workspaceId: input.workspaceId?.trim() || null,
+    sessionId: input.sessionId?.trim() || null,
+    attempt: input.attempt ?? null,
+    delayMs: input.delayMs ?? null,
+    lastError: input.lastError?.trim() || null,
+    messagesMayBeDelayed: input.messagesMayBeDelayed ?? input.status !== "live",
+    updatedAt: input.now?.() ?? Date.now(),
+  };
+}
+
+export const reconnectStateBlocksSend = (_state: ReconnectState | null | undefined): boolean => false;
+
+export function shouldRecoverEventStreamRuntime(input: {
+  recoveryAvailable: boolean;
+  textMatchedRuntimeError: boolean;
+  scopedRuntimeReady: boolean;
+}): boolean {
+  return input.recoveryAvailable && input.textMatchedRuntimeError && !input.scopedRuntimeReady;
+}
+
 export type OutageEpisode = {
   active: boolean;
   hadRunningSessions: boolean;

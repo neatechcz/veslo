@@ -16,6 +16,7 @@ export type ConfirmModalProps = {
   variant?: "danger" | "warning";
   onConfirm: () => void;
   onCancel: () => void;
+  onClose?: () => void;
 };
 
 export default function ConfirmModal(props: ConfirmModalProps) {
@@ -34,7 +35,7 @@ export default function ConfirmModal(props: ConfirmModalProps) {
   );
 
   return (
-    <ModalShell open={props.open} onClose={props.onCancel} layer="elevated" backdrop="medium" size="sm">
+    <ModalShell open={props.open} onClose={props.onClose ?? props.onCancel} layer="elevated" backdrop="medium" size="sm">
       <div class="p-6">
         <ModalHeader
           title={props.title}

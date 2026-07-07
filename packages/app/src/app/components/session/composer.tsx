@@ -32,6 +32,7 @@ export type ComposerSendOptions = {
   sendNow?: boolean;
   source?: "button" | "enter" | "ctrl-enter";
   sendTraceId?: string;
+  implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
 };
 
 export type ComposerSendResult = SessionSubmitResult;

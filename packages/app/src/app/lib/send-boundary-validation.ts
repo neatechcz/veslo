@@ -175,6 +175,7 @@ const conversationSubmitOptionsSchema = z.object({
   variant: nullableStringSchema,
   expectAiGatewayStart: z.boolean().optional(),
   dryRun: z.boolean().optional(),
+  implicitSkillCommandPolicy: z.enum(["confirm", "allow", "disable"]).optional(),
 }).optional();
 
 const conversationSubmitRequestSchema = z.object({
@@ -217,6 +218,12 @@ const queuedResultSchema = z.object({
   debugTrace: z.array(debugTraceEntrySchema).optional(),
 });
 
+const conversationSubmitConfirmationSchema = z.object({
+  type: z.literal("implicit_skill_command"),
+  skillName: nonEmptyStringSchema,
+  arguments: z.string(),
+});
+
 const blockedResultSchema = z.object({
   status: z.literal("blocked"),
   code: nonEmptyStringSchema,
@@ -229,6 +236,7 @@ const blockedResultSchema = z.object({
   materializedSession: z.unknown().nullable().optional(),
   draftDisposition: z.enum(["restore", "keep"]),
   recoverable: z.boolean(),
+  confirmation: conversationSubmitConfirmationSchema.optional(),
 });
 
 const failedResultSchema = z.object({

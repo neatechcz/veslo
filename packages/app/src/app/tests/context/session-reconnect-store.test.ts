@@ -11,6 +11,11 @@ test("session store exposes reconnect notice callback and outage episode tracker
     /onReconnectNotice\?: \(notice: ReconnectNotice\) => void;/,
     "createSessionStore should accept a reconnect notice callback",
   );
+  assert.match(
+    sessionFacadeSource,
+    /onReconnectState\?: \(state: ReconnectState\) => void;/,
+    "createSessionStore should accept a reconnect state callback",
+  );
 
   assert.match(
     eventStreamSource,

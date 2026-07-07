@@ -84,7 +84,7 @@ describe("conversation submit draft resolution", () => {
     });
   });
 
-  test("resolves implicit skill prompts into command run input", async () => {
+  test("blocks implicit skill prompts for confirmation by default", async () => {
     const result = await resolveConversationSubmitDraft({
       request: request({
         mode: "prompt",
@@ -98,11 +98,68 @@ describe("conversation submit draft resolution", () => {
     });
 
     expect(result).toMatchObject({
+      status: "blocked",
+      result: {
+        status: "blocked",
+        code: "implicit_skill_confirmation_required",
+        draftDisposition: "keep",
+        recoverable: true,
+        confirmation: {
+          type: "implicit_skill_command",
+          skillName: "company-research-czech",
+          arguments: "use company research skill for this site",
+        },
+      },
+    });
+  });
+
+  test("resolves implicit skill prompts into command run input when allowed", async () => {
+    const result = await resolveConversationSubmitDraft({
+      request: request({
+        mode: "prompt",
+        text: "use company research skill for this site",
+        parts: [{ type: "text", text: "use company research skill for this site" }],
+      }, {
+        options: { implicitSkillCommandPolicy: "allow" },
+      }),
+      resolveSkillCommand: async ({ text }) => {
+        expect(text).toBe("use company research skill for this site");
+        return "company-research-czech";
+      },
+    });
+
+    expect(result).toMatchObject({
       status: "ok",
       resolvedRunInput: {
         kind: "command",
         command: "company-research-czech",
         arguments: "use company research skill for this site",
+      },
+    });
+  });
+
+  test("skips implicit skill resolution when disabled", async () => {
+    let resolveCalls = 0;
+    const result = await resolveConversationSubmitDraft({
+      request: request({
+        mode: "prompt",
+        text: "use company research skill for this site",
+        parts: [{ type: "text", text: "use company research skill for this site" }],
+      }, {
+        options: { implicitSkillCommandPolicy: "disable" },
+      }),
+      resolveSkillCommand: async () => {
+        resolveCalls += 1;
+        return "company-research-czech";
+      },
+    });
+
+    expect(resolveCalls).toBe(0);
+    expect(result).toMatchObject({
+      status: "ok",
+      resolvedRunInput: {
+        kind: "prompt_async",
+        text: "use company research skill for this site",
       },
     });
   });

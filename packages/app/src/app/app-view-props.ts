@@ -449,6 +449,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     renameSessionTitle,
     sessionReconnectNotice,
     setSessionReconnectNotice,
+    sessionReconnectState,
   } = deps;
 
   const headerConnectedVersion = createMemo(() =>
@@ -1079,6 +1080,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     prompt: prompt(),
     setPrompt: setPrompt,
     reconnectNotice: sessionReconnectNotice(),
+    reconnectState: sessionReconnectState?.() ?? null,
     clearReconnectNotice: () => setSessionReconnectNotice(null),
     composerDraft: composerDraft(),
     setComposerDraft: setComposerDraft,

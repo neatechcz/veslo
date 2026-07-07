@@ -37,7 +37,10 @@ import {
 import {
   beginOutageEpisode,
   clearOutageEpisode,
+  createReconnectState,
+  type ReconnectState,
   type ReconnectNotice,
+  shouldRecoverEventStreamRuntime,
   shouldShowReconnected,
   shouldShowReconnecting,
 } from "./session-reconnect";
@@ -101,6 +104,7 @@ export type SessionEventStreamControllerDeps = {
   setSseConnected: (connected: boolean) => void;
   onHotReloadApplied?: () => void;
   onReconnectNotice?: (notice: ReconnectNotice) => void;
+  onReconnectState?: (state: ReconnectState) => void;
   onAssistantResponseObserved?: (sessionId: string) => void;
   sessionDebugEnabled: () => boolean;
   sessionWarn: (label: string, payload?: unknown) => void;
@@ -173,8 +177,22 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
   let lastPartDebugEventAt = 0;
   let suppressedPartDebugEvents = 0;
   const sseConnectedByStream = new Map<string, boolean>();
+  const activeSseStreamsByWorkspace = new Map<
+    string,
+    { generation: number; cleanup: () => void; startedAt: number }
+  >();
+  const sseStreamReplacementCountsByWorkspace = new Map<string, number>();
+  let nextSseStreamGeneration = 0;
 
   const sseConnectionKey = (sourceWsId: string) => sourceWsId.trim() || "__active__";
+
+  const activeEventStreamsSnapshot = () =>
+    Object.fromEntries(
+      Array.from(activeSseStreamsByWorkspace.entries()).map(([workspaceId, stream]) => [
+        workspaceId,
+        stream.generation,
+      ]),
+    );
 
   const publishSseConnected = () => {
     deps.setSseConnected(Array.from(sseConnectedByStream.values()).some(Boolean));
@@ -751,7 +769,11 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     }
   };
 
-  const setupSseStream = (sourceWsId: string, c: RoutingClient): (() => void) => {
+  const createSseStream = (
+    sourceWsId: string,
+    c: RoutingClient,
+    generation: number,
+  ): (() => void) => {
     const streamConnectionKey = sseConnectionKey(sourceWsId);
     let cancelled = false;
     let reconnectAttempt = 0;
@@ -760,6 +782,23 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     let outageEpisode = clearOutageEpisode();
     let currentController: AbortController | null = null;
     const activeSubscriptions = new Set<SseSubscription>();
+
+    const emitReconnectState = (
+      status: ReconnectState["status"],
+      input: Partial<Omit<ReconnectState, "status" | "workspaceId" | "sessionId" | "updatedAt">> = {},
+    ) => {
+      deps.onReconnectState?.(
+        createReconnectState({
+          status,
+          workspaceId: sourceWsId,
+          sessionId: deps.selectedSessionId(),
+          attempt: input.attempt,
+          delayMs: input.delayMs,
+          lastError: input.lastError,
+          messagesMayBeDelayed: input.messagesMayBeDelayed,
+        }),
+      );
+    };
 
     let queue: Array<OpencodeEvent | undefined> = [];
     const coalesced = new Map<string, number>();
@@ -869,12 +908,15 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       if (!outageEpisode.active) return;
       if (!outageEpisode.hadRunningSessions) {
         outageEpisode = clearOutageEpisode();
+        emitReconnectState("live", { messagesMayBeDelayed: false });
         return;
       }
 
       const sessionIds = outageEpisode.runningSessionIds.slice();
+      emitReconnectState("catching-up", { messagesMayBeDelayed: true });
       recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "catchup-start", {
         sessions: sessionIds.length,
+        generation,
       });
 
       const isBackgroundCatchup = Boolean(sourceWsId && sourceWsId !== deps.routing.activeWorkspaceId());
@@ -942,8 +984,10 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
 
       recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "catchup-complete", {
         sessions: sessionIds.length,
+        generation,
       });
       outageEpisode = clearOutageEpisode();
+      emitReconnectState("live", { messagesMayBeDelayed: false });
     };
 
     const connectSse = async (controller: AbortController) => {
@@ -964,6 +1008,8 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
                 : "engine_sse_unavailable",
             hasRoute: Boolean(entry),
             hasBaseUrl: Boolean(entry?.baseUrl),
+            generation,
+            activeEventStreamsByWorkspace: activeEventStreamsSnapshot(),
           },
         );
         const sub = await (useRustSse
@@ -987,10 +1033,12 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         const isReconnection = wasConnected;
         wasConnected = true;
         reconnectAttempt = 0;
-        recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "connected");
+        recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "connected", { generation });
 
         if (isReconnection) {
           await runReconnectCatchup();
+        } else {
+          emitReconnectState("live", { messagesMayBeDelayed: false });
         }
 
         try {
@@ -1048,7 +1096,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
 
         if (!cancelled) {
           setStreamSseConnected(streamConnectionKey, false);
-          recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "stream-ended");
+          recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "stream-ended", { generation });
           scheduleReconnect(controller);
         }
       } catch (e) {
@@ -1057,21 +1105,34 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
 
         const message = e instanceof Error ? e.message : String(e);
         const activeWs = deps.routing.activeWorkspaceId();
+        const textMatchedRuntimeError = shouldRecoverLocalRuntimeFromHealthError(e, String);
+        const scopedRuntimeReady = sourceWsId
+          ? deps.isWorkspaceRuntimeReady(sourceWsId)
+          : deps.isActiveWorkspaceRuntimeReady();
         const shouldRecoverRoute = Boolean(
           sourceWsId &&
-            deps.recoverWorkspaceRuntimeForEventStream &&
-            shouldRecoverLocalRuntimeFromHealthError(e, String),
+            shouldRecoverEventStreamRuntime({
+              recoveryAvailable: Boolean(deps.recoverWorkspaceRuntimeForEventStream),
+              textMatchedRuntimeError,
+              scopedRuntimeReady,
+            }),
         );
         if (shouldRecoverRoute) {
           setStreamSseConnected(streamConnectionKey, false);
           deps.routing.release(sourceWsId);
+          emitReconnectState("runtime-recovering", {
+            lastError: truncateErrorField(message),
+            messagesMayBeDelayed: true,
+          });
           deps.sessionWarn("sse:recovering-runtime-route", {
             workspaceId: sourceWsId,
             error: truncateErrorField(message),
+            scopedRuntimeReady,
           });
           recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "recovering-runtime-route", {
             workspaceId: sourceWsId,
             error: truncateErrorField(message),
+            scopedRuntimeReady,
           });
           try {
             const recovered = await deps.recoverWorkspaceRuntimeForEventStream?.(sourceWsId);
@@ -1079,13 +1140,29 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
               workspaceId: sourceWsId,
               recovered: Boolean(recovered),
             });
+            if (!recovered) {
+              emitReconnectState("degraded", {
+                lastError: truncateErrorField(message),
+                messagesMayBeDelayed: true,
+              });
+            }
           } catch (recoveryError) {
+            emitReconnectState("degraded", {
+              lastError: truncateErrorField(recoveryError instanceof Error ? recoveryError.message : String(recoveryError)),
+              messagesMayBeDelayed: true,
+            });
             deps.sessionWarn("sse:runtime-route-recovery-failed", {
               workspaceId: sourceWsId,
               error: truncateErrorField(recoveryError instanceof Error ? recoveryError.message : String(recoveryError)),
             });
           }
           return;
+        }
+        if (textMatchedRuntimeError && scopedRuntimeReady) {
+          recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "runtime-recovery-skipped-runtime-ready", {
+            workspaceId: sourceWsId || null,
+            error: truncateErrorField(message),
+          });
         }
 
         if (shouldReleaseStaleWorkspaceRoute(sourceWsId, activeWs, message)) {
@@ -1105,6 +1182,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         setStreamSseConnected(streamConnectionKey, false);
         recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "stream-error", {
           error: message,
+          generation,
         });
         scheduleReconnect(controller);
       }
@@ -1118,9 +1196,15 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
 
       reconnectAttempt++;
       const delay = Math.min(1000 * Math.pow(2, reconnectAttempt - 1), 30000);
+      emitReconnectState("reconnecting", {
+        attempt: reconnectAttempt,
+        delayMs: delay,
+        messagesMayBeDelayed: true,
+      });
       recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "reconnect-scheduled", {
         attempt: reconnectAttempt,
         delayMs: delay,
+        generation,
       });
 
       reconnectTimer = setTimeout(() => {
@@ -1147,6 +1231,61 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     };
   };
 
+  const setupSseStream = (
+    sourceWsId: string,
+    c: RoutingClient,
+    reason = "start",
+  ): (() => void) => {
+    const streamConnectionKey = sseConnectionKey(sourceWsId);
+    const previous = activeSseStreamsByWorkspace.get(streamConnectionKey);
+    const generation = ++nextSseStreamGeneration;
+    if (previous) {
+      const replacementCount = (sseStreamReplacementCountsByWorkspace.get(streamConnectionKey) ?? 0) + 1;
+      sseStreamReplacementCountsByWorkspace.set(streamConnectionKey, replacementCount);
+      recordSendWorkflowTrace("session-sse", "session-sse:replaced-existing", {
+        workspaceId: sourceWsId || null,
+        previousGeneration: previous.generation,
+        generation,
+        reason: "replaced-existing",
+        requestedReason: reason,
+        replacementCount,
+        activeEventStreamsByWorkspace: activeEventStreamsSnapshot(),
+      });
+      previous.cleanup();
+    }
+
+    recordSendWorkflowTrace("session-sse", "session-sse:stream-start", {
+      workspaceId: sourceWsId || null,
+      generation,
+      reason,
+      activeEventStreamsByWorkspace: activeEventStreamsSnapshot(),
+    });
+
+    const innerCleanup = createSseStream(sourceWsId, c, generation);
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      const current = activeSseStreamsByWorkspace.get(streamConnectionKey);
+      if (current?.generation === generation) {
+        activeSseStreamsByWorkspace.delete(streamConnectionKey);
+      }
+      recordSendWorkflowTrace("session-sse", "session-sse:stream-cleanup", {
+        workspaceId: sourceWsId || null,
+        generation,
+        staleGeneration: current ? current.generation !== generation : true,
+        activeEventStreamsByWorkspace: activeEventStreamsSnapshot(),
+      });
+      innerCleanup();
+    };
+    activeSseStreamsByWorkspace.set(streamConnectionKey, {
+      generation,
+      cleanup,
+      startedAt: Date.now(),
+    });
+    return cleanup;
+  };
+
   const startEventStreams = () => {
     createEffect(() => {
       const entryIds = deps.routing.entryIds();
@@ -1168,7 +1307,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
 
       const cleanups: Array<() => void> = [];
       for (const target of targets) {
-        cleanups.push(setupSseStream(target.wsId, target.client));
+        cleanups.push(setupSseStream(target.wsId, target.client, "routing-entry"));
       }
 
       onCleanup(() => {
