@@ -8,6 +8,7 @@ import {
   createConversationSubmitService,
 } from "../conversation-submit-service.js";
 import type { ConversationService } from "../conversation-service.js";
+import { ApiError } from "../errors.js";
 import { createDocumentRuntimeStatusPayload } from "../routes/document-runtime.js";
 import type { WorkspaceInfo } from "../types.js";
 
@@ -516,6 +517,60 @@ describe("conversation submit service", () => {
       },
     });
     expect(createConversationCalls).toBe(0);
+  });
+
+  test("first-session submit failure after materialization returns materialized session metadata", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-materialized-failed-"));
+    tempDirs.push(workspaceRoot);
+    let createConversationCalls = 0;
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-materialized-failed-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => {
+        createConversationCalls += 1;
+      }),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+    });
+
+    const result = await service.submit({
+      workspace: workspace(workspaceRoot),
+      body: {
+        clientMessageId: "msg-materialized-run-failed",
+        origin: "session:normal",
+        target: { directory: workspaceRoot, pendingClientSessionId: "pending-materialized" },
+        draft: {
+          mode: "prompt",
+          text: "Create then fail",
+          parts: [{ type: "text", text: "Create then fail" }],
+        },
+        options: {},
+      },
+      resolveDirectory: async () => workspaceRoot,
+      submitResolvedRun: async () => {
+        throw new ApiError(502, "opencode_proxy_failed", "OpenCode prompt failed");
+      },
+    });
+
+    expect(result.httpStatus).toBe(200);
+    expect(result.payload.status).toBe("failed");
+    expect(result.payload.code).toBe("opencode_proxy_failed");
+    expect(result.payload.draftDisposition).toBe("restore");
+    expect("materializedSession" in result.payload ? result.payload.materializedSession : null).toMatchObject({
+      id: "sess_1",
+      conversationId: "conv_1",
+      opencodeSessionId: "sess_1",
+    });
+    expect("workspaceId" in result.payload ? result.payload.workspaceId : null).toBe("ws_1");
+    expect("conversationId" in result.payload ? result.payload.conversationId : null).toBe("conv_1");
+    expect("opencodeSessionId" in result.payload ? result.payload.opencodeSessionId : null).toBe("sess_1");
+    expect("clientMessageId" in result.payload ? result.payload.clientMessageId : null).toBe(
+      "msg-materialized-run-failed",
+    );
+    expect("pendingClientSessionId" in result.payload ? result.payload.pendingClientSessionId : null).toBe(
+      "pending-materialized",
+    );
+    expect(createConversationCalls).toBe(1);
   });
 
   test("blocks remote workspace submit before local resolution or materialization", async () => {

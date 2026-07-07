@@ -125,6 +125,12 @@ export type ConversationSubmitBlockedResult = {
   status: "blocked";
   code: string;
   message: string;
+  workspaceId?: string;
+  conversationId?: string;
+  opencodeSessionId?: string;
+  clientMessageId?: string;
+  pendingClientSessionId?: string | null;
+  materializedSession?: unknown | null;
   draftDisposition: "restore" | "keep";
   recoverable: boolean;
 };
@@ -133,6 +139,12 @@ export type ConversationSubmitFailedResult = {
   status: "failed";
   code: string;
   message: string;
+  workspaceId?: string;
+  conversationId?: string;
+  opencodeSessionId?: string;
+  clientMessageId?: string;
+  pendingClientSessionId?: string | null;
+  materializedSession?: unknown | null;
   draftDisposition: "restore" | "mark-failed";
   debugTrace?: ConversationSubmitDebugTraceEntry[];
 };

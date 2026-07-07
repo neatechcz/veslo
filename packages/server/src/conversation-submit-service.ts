@@ -109,6 +109,19 @@ export function createConversationSubmitService(input: {
         return payload;
       };
 
+      const withMaterializedSession = <T extends ConversationSubmitBlockedResult | ConversationSubmitFailedResult>(
+        payload: T,
+        materializedSession: Awaited<ReturnType<typeof conversationService.createConversation>>,
+      ): T => ({
+        ...payload,
+        workspaceId: workspace.id,
+        conversationId: materializedSession.conversationId,
+        opencodeSessionId: materializedSession.opencodeSessionId,
+        clientMessageId: request.clientMessageId,
+        pendingClientSessionId: request.target?.pendingClientSessionId ?? null,
+        materializedSession,
+      });
+
       if (claimed.attempt.resultJson) {
         try {
           return {
@@ -279,9 +292,10 @@ export function createConversationSubmitService(input: {
               runtimeAuthorizationActorTokenHash: runtimeAuthorizationActorTokenHash ?? null,
             });
             if (result.payload.status === "blocked" || result.payload.status === "failed") {
+              const materializedPayload = withMaterializedSession(result.payload, materializedSession);
               return {
                 payload: completeAttempt(
-                  result.payload,
+                  materializedPayload,
                   result.payload.status === "blocked" ? "blocked" : "failed",
                 ),
                 httpStatus: result.httpStatus,
@@ -295,7 +309,7 @@ export function createConversationSubmitService(input: {
               httpStatus: result.httpStatus,
             };
           } catch (error) {
-            const payload: ConversationSubmitResult = {
+            const payload: ConversationSubmitResult = withMaterializedSession({
               status: "failed",
               code: error instanceof ApiError ? error.code : "run_submit_failed",
               message: error instanceof Error ? error.message : "Run submit failed",
@@ -306,7 +320,7 @@ export function createConversationSubmitService(input: {
                 upstreamCode: error instanceof ApiError ? error.code : null,
                 upstreamStatus: error instanceof ApiError ? error.status : null,
               }],
-            };
+            }, materializedSession);
             return {
               payload: completeAttempt(payload, "failed"),
               httpStatus: 200,
