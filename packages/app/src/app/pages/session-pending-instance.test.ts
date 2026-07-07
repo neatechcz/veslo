@@ -199,14 +199,14 @@ test("sendPromptImmediate starts run UI state by captured key and resets failure
 });
 
 test("failed first-send run reset uses the handoff-aware key in every failure branch", () => {
-  const aiAccessStart = flowSendImmediateSource.indexOf("if (aiAccessBlockedReason) {");
+  const aiAccessStart = flowSendImmediateSource.indexOf("if (aiAccessSubmitBlockedReason) {");
   const tryStart = flowSendImmediateSource.indexOf("try {", aiAccessStart);
   assert.notEqual(aiAccessStart, -1, "AI access failure branch should exist");
   assert.notEqual(tryStart, -1, "send try block should follow AI access branch");
   const aiAccessFailure = flowSendImmediateSource.slice(aiAccessStart, tryStart);
   assert.match(
     aiAccessFailure,
-    /markMatchingPendingSubmitFailed\(aiAccessBlockedReason\);[\s\S]*deps\.runState\.resetRunState\(runStateSessionKeyForHandoffFailure\(\)\);/,
+    /markMatchingPendingSubmitFailed\(aiAccessSubmitBlockedReason\);[\s\S]*deps\.runState\.resetRunState\(runStateSessionKeyForHandoffFailure\(\)\);/,
     "AI-access failures should reset the pending or materialized handoff run key",
   );
 
@@ -363,12 +363,12 @@ test("failed first-send optimistic drafts keep the captured pending instance sel
     "conversation flow should wire handoff failure cleanup through the conversation-flow action",
   );
 
-  const aiAccessStart = flowSendImmediateSource.indexOf("if (aiAccessBlockedReason) {");
+  const aiAccessStart = flowSendImmediateSource.indexOf("if (aiAccessSubmitBlockedReason) {");
   const tryStart = flowSendImmediateSource.indexOf("try {", aiAccessStart);
   assert.notEqual(aiAccessStart, -1, "AI access failure branch should exist");
   assert.notEqual(tryStart, -1, "send try block should follow AI access branch");
   const aiAccessFailure = flowSendImmediateSource.slice(aiAccessStart, tryStart);
-  assert.match(aiAccessFailure, /markMatchingPendingSubmitFailed\(aiAccessBlockedReason\);/);
+  assert.match(aiAccessFailure, /markMatchingPendingSubmitFailed\(aiAccessSubmitBlockedReason\);/);
   assert.match(aiAccessFailure, /finishPendingSessionHandoffFailure\(\);/);
   assert.doesNotMatch(aiAccessFailure, /setPendingQueueKeyAwaitingSessionId\(null\);/);
 

@@ -100,4 +100,3 @@ Core scenarios:
 - remote workspaces do not offer local folder access
 
 Lower-level tests can cover path containment, nearest-existing-parent selection, localization key presence, and sandbox mount translation.
-
