@@ -2094,8 +2094,6 @@ export default {
   "ui.literal.file_tools_1lpb92": "File tools:",
   "ui.literal.sandbox_a1meoq": "Sandbox:",
   "ui.literal.workspace_debug_events_g2kpm2": "Workspace debug events",
-  "ui.literal.audit_log_1kguyf": "Audit log",
-  "ui.literal.no_audit_entries_yet_m8w4dn": "No audit entries yet.",
   "ui.literal.document_runtime_z4n8k2": "Document runtime",
   "ui.literal.desktop_app_only_m3v7qa": "Desktop app only",
   "ui.literal.performance_h8k2nm": "Performance",
