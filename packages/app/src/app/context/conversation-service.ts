@@ -981,14 +981,29 @@ export function createConversationService<Client extends ConversationServiceClie
       existingScope?.workspaceRoot?.trim() ||
       deps.resolveWorkspaceRootForConversationScope(workspaceId, directory) ||
       deps.activeWorkspaceRoot().trim();
+    const targetConversationId = target?.conversationId?.trim() || "";
+    const targetOpenCodeSessionId = target?.opencodeSessionId?.trim() || "";
+    const existingConversationId = existingScope?.conversationId?.trim() || "";
+    const existingOpenCodeSessionId = existingScope?.opencodeSessionId?.trim() || "";
+    const sessionOrConversationId =
+      targetConversationId ||
+      existingConversationId ||
+      targetOpenCodeSessionId ||
+      existingOpenCodeSessionId ||
+      normalizedSessionId;
     return {
       sessionId: normalizedSessionId,
       workspaceId,
       workspaceRoot,
       directory: directory || workspaceRoot,
-      hasConversationScope: Boolean(target?.conversationId?.trim() || existingScope?.conversationId?.trim()),
-      conversationId: target?.conversationId?.trim() || existingScope?.conversationId?.trim() || normalizedSessionId,
-      opencodeSessionId: target?.opencodeSessionId?.trim() || existingScope?.opencodeSessionId?.trim() || normalizedSessionId,
+      hasConversationScope: Boolean(
+        targetConversationId ||
+        existingConversationId ||
+        targetOpenCodeSessionId ||
+        existingOpenCodeSessionId
+      ),
+      conversationId: sessionOrConversationId,
+      opencodeSessionId: targetOpenCodeSessionId || existingOpenCodeSessionId || normalizedSessionId,
     };
   };
 

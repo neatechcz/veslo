@@ -697,6 +697,50 @@ describe("ai gateway proxy routes", () => {
     }
   });
 
+  test("server mirrors send workflow traces when a mirror file is configured", async () => {
+    const traceDir = mkdtempSync(join(tmpdir(), "veslo-ai-gateway-trace-mirror-"));
+    const traceFile = join(traceDir, "send-workflow-trace.ndjson");
+    const mirrorFile = join(traceDir, "send-workflow-trace-mirror.ndjson");
+
+    try {
+      await withEnvVar("VESLO_SEND_WORKFLOW_TRACE_FILE", traceFile, async () => {
+        await withEnvVar("VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE", mirrorFile, async () => {
+          const server = startServer(createTestConfig());
+
+          try {
+            const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
+              method: "POST",
+              headers: {
+                authorization: "Bearer stale-client-token",
+                "content-type": "application/json",
+                "x-veslo-session-id": "ses_1",
+                "x-veslo-workspace-id": "ws_1",
+                "x-veslo-send-trace-id": "trace-mirror-auth-failed",
+              },
+              body: JSON.stringify({
+                model: "gpt-5.5",
+                messages: [{ role: "user", content: "Hello" }],
+              }),
+            });
+
+            expect(response.status).toBe(401);
+            const primaryLines = readFileSync(traceFile, "utf8").trim().split(/\r?\n/);
+            const mirrorLines = readFileSync(mirrorFile, "utf8").trim().split(/\r?\n/);
+            expect(mirrorLines).toEqual(primaryLines);
+            expect(primaryLines.some((line) =>
+              line.includes("server:ai-gateway:auth-failed") &&
+              line.includes("trace-mirror-auth-failed")
+            )).toBe(true);
+          } finally {
+            stopTestServer(server);
+          }
+        });
+      });
+    } finally {
+      rmSync(traceDir, { recursive: true, force: true });
+    }
+  });
+
   test("server uses runtime ai-access authorization for provider routes over stale gateway token headers", async () => {
     const requests: Array<{
       method: string;

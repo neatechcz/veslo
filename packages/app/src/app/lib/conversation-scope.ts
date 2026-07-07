@@ -47,6 +47,24 @@ const matchesScopeIdentity = (left: UiConversationScope, right: UiConversationSc
   return false;
 };
 
+const mergeSelectedScopeWithRememberedScope = (
+  selected: UiConversationScope,
+  candidates: UiConversationScope[],
+) => {
+  const matches = candidates.filter((scope) => matchesScopeIdentity(scope, selected));
+  if (matches.length !== 1) return selected;
+  const remembered = matches[0];
+  return {
+    ...remembered,
+    ...selected,
+    workspaceRoot: selected.workspaceRoot || remembered.workspaceRoot,
+    directory: selected.directory || remembered.directory,
+    conversationId: selected.conversationId ?? remembered.conversationId,
+    opencodeSessionId: selected.opencodeSessionId ?? remembered.opencodeSessionId,
+    updatedAt: Math.max(remembered.updatedAt, selected.updatedAt),
+  };
+};
+
 export function normalizeUiConversationScope(
   input: UiConversationScopeInput,
 ): UiConversationScope | null {
@@ -134,13 +152,15 @@ export function resolveUiConversationScope(
   const id = normalizeText(sessionId);
   if (!id) return null;
 
+  const candidates = current[id] ?? [];
   const selected = normalizeUiConversationScope(options?.selectedScope ?? {});
-  if (selected?.sessionId === id) return selected;
+  if (selected?.sessionId === id) {
+    return mergeSelectedScopeWithRememberedScope(selected, candidates);
+  }
   if (selected?.opencodeSessionId === id || selected?.conversationId === id) {
-    return { ...selected, sessionId: id };
+    return mergeSelectedScopeWithRememberedScope({ ...selected, sessionId: id }, candidates);
   }
 
-  const candidates = current[id] ?? [];
   if (candidates.length === 0) return null;
 
   const activeWorkspaceId = normalizeText(options?.activeWorkspaceId);

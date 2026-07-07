@@ -36,15 +36,87 @@ export type SessionSubmitResult = {
   clientMessageId?: string | null;
 };
 
-export type MaterializedSessionHandoff = {
+export type MaterializedSessionConversationScope = {
+  kind: "conversation";
   workspaceId: string;
+  conversationId: string;
+  opencodeSessionId: string;
+};
+
+export type MaterializedSessionWorkspaceScope = {
+  kind: "workspace";
+  workspaceId: string;
+};
+
+export type MaterializedSessionScope =
+  | MaterializedSessionConversationScope
+  | MaterializedSessionWorkspaceScope;
+
+type MaterializedSessionHandoffBase = {
+  workspaceId: string;
+  workspaceRoot?: string | null;
+  directory?: string | null;
   pendingSessionKey?: string | null;
   sessionId: string;
   clientMessageId: string;
   sendTraceId?: string | null;
+};
+
+export type MaterializedSessionHandoff =
+  | (MaterializedSessionHandoffBase & {
+      scope: MaterializedSessionConversationScope;
+      conversationId: string;
+      opencodeSessionId: string;
+    })
+  | (MaterializedSessionHandoffBase & {
+      scope: MaterializedSessionWorkspaceScope;
+      conversationId?: null;
+      opencodeSessionId?: null;
+    });
+
+export type CreateMaterializedSessionHandoffInput = MaterializedSessionHandoffBase & {
   conversationId?: string | null;
   opencodeSessionId?: string | null;
 };
+
+export function createMaterializedSessionHandoff(
+  input: CreateMaterializedSessionHandoffInput,
+): MaterializedSessionHandoff {
+  const workspaceId = input.workspaceId.trim();
+  const conversationId = input.conversationId?.trim() || "";
+  const opencodeSessionId = input.opencodeSessionId?.trim() || "";
+  const base: MaterializedSessionHandoffBase = {
+    workspaceId,
+    workspaceRoot: input.workspaceRoot?.trim() || null,
+    directory: input.directory?.trim() || input.workspaceRoot?.trim() || null,
+    pendingSessionKey: input.pendingSessionKey ?? null,
+    sessionId: input.sessionId.trim(),
+    clientMessageId: input.clientMessageId.trim(),
+    sendTraceId: input.sendTraceId?.trim() || null,
+  };
+  if (conversationId && opencodeSessionId) {
+    return {
+      ...base,
+      scope: {
+        kind: "conversation",
+        workspaceId,
+        conversationId,
+        opencodeSessionId,
+      },
+      conversationId,
+      opencodeSessionId,
+    };
+  }
+  return {
+    ...base,
+    scope: {
+      kind: "workspace",
+      workspaceId,
+    },
+    conversationId: null,
+    opencodeSessionId: null,
+  };
+}
 
 export function createSessionClientMessageId(): string {
   const suffix =

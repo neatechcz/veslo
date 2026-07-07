@@ -2,6 +2,7 @@ import { join } from "node:path";
 
 import { recordAudit } from "../audit.js";
 import { deleteCommand, listCommands, upsertCommand } from "../commands.js";
+import { ApiError } from "../errors.js";
 import { workspaceResourceOwner } from "../resource-owner.js";
 import { addRoute, type Route } from "../routing.js";
 import {
@@ -24,6 +25,14 @@ export type CommandRouteDependencies = {
   requireHost: RequireHost;
 };
 
+function requireRouteParam(params: Record<string, string>, field: string, label = field): string {
+  const value = params[field]?.trim() ?? "";
+  if (!value) {
+    throw new ApiError(400, "invalid_payload", `${label} is required`);
+  }
+  return value;
+}
+
 const ownerForWorkspace = (workspace: WorkspaceInfo) =>
   workspaceResourceOwner({ workspaceId: workspace.id, root: workspace.path, label: workspace.name });
 
@@ -34,7 +43,7 @@ export function registerCommandRoutes(routes: Route[], dependencies: CommandRout
     if (scope === "global") {
       await dependencies.requireHost(ctx.request, config, ctx.tokens);
     }
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspace(config, requireRouteParam(ctx.params, "id", "workspace id"));
     const items = await listCommands(workspace.path, scope, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse({ items });
   });
@@ -43,7 +52,7 @@ export function registerCommandRoutes(routes: Route[], dependencies: CommandRout
     const config = ctx.config;
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspace(config, requireRouteParam(ctx.params, "id", "workspace id"));
     const body = await readJsonBody(ctx.request);
     const name = String(body.name ?? "");
     const template = String(body.template ?? "");
@@ -53,14 +62,18 @@ export function registerCommandRoutes(routes: Route[], dependencies: CommandRout
       summary: `Upsert command ${name}`,
       paths: [join(workspace.path, ".opencode", "commands", `${sanitizeCommandName(name)}.md`)],
     });
-    const path = await upsertCommand(workspace.path, {
+    const commandPayload: Parameters<typeof upsertCommand>[1] = {
       name,
-      description: body.description ? String(body.description) : undefined,
       template,
-      agent: body.agent ? String(body.agent) : undefined,
-      model: body.model ? String(body.model) : undefined,
-      subtask: typeof body.subtask === "boolean" ? body.subtask : undefined,
-    });
+    };
+    const description = body.description ? String(body.description) : undefined;
+    if (description) commandPayload.description = description;
+    const agent = body.agent ? String(body.agent) : undefined;
+    if (agent) commandPayload.agent = agent;
+    const model = body.model ? String(body.model) : undefined;
+    if (model) commandPayload.model = model;
+    if (typeof body.subtask === "boolean") commandPayload.subtask = body.subtask;
+    const path = await upsertCommand(workspace.path, commandPayload);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -85,8 +98,8 @@ export function registerCommandRoutes(routes: Route[], dependencies: CommandRout
     const config = ctx.config;
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const name = ctx.params.name ?? "";
+    const workspace = await resolveWorkspace(config, requireRouteParam(ctx.params, "id", "workspace id"));
+    const name = requireRouteParam(ctx.params, "name", "command name");
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "commands.delete",

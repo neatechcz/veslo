@@ -168,6 +168,7 @@ function createHarness(overrides: Record<string, unknown> = {}) {
     activeWorkspaceId: () => "ws_1",
     workspaces: () => [{ id: "ws_1", workspaceType: "local", path: "/repo" }],
     activeWorkspaceRoot: () => "/repo",
+    workspaceRootForId: () => "/repo",
     sessionDirectoryOverride: () => ({}),
     persistSessionDirectoryOverride: (...args: unknown[]) => {
       calls.push({ name: "persistSessionDirectoryOverride", args });
@@ -485,6 +486,77 @@ test("session mutation workflow returns typed replacement server blocked and fai
     assert.equal(harness.calls.some((call) => call.name === "revertSession"), false);
     assert.equal(harness.calls.some((call) => call.name === "sendPrompt"), false);
   }
+});
+
+test("session mutation workflow strict validation blocks malformed replacement server result", async () => {
+  const harness = createHarness({
+    prepareSendRuntimeForSend: async () => {
+      throw new Error("legacy runtime prep should not run for malformed server result");
+    },
+    revertSession: async () => {
+      throw new Error("legacy app revert should not run for malformed server result");
+    },
+    sendBoundaryValidationMode: () => "strict",
+    sendPrompt: async () => {
+      throw new Error("legacy app send should not run for malformed server result");
+    },
+    resolveSelectedSessionBrowseScope: () => ({
+      workspaceId: "ws_1",
+      workspaceRoot: "/repo",
+      directory: "/repo",
+      conversationId: "conv_1",
+      opencodeSessionId: "open_1",
+    }),
+    submitConversationFromVesloWriteApi: async () => ({
+      status: "submitted",
+      workspaceId: "ws_1",
+      conversationId: "conv_1",
+      opencodeSessionId: "open_1",
+      clientMessageId: "client_replace_1",
+      draftDisposition: "clear",
+    }),
+  });
+
+  const result = await harness.workflow.replaceUserMessage("msg_1", replacementDraft, {
+    clientMessageId: "client_replace_1",
+    origin: "session:replacement",
+  });
+
+  assert.equal(result.accepted, false);
+  assert.equal(result.status, "failed");
+  assert.equal(result.code, "replacement_submit_invalid_result");
+  assert.match(result.message ?? "", /conversation-submit-terminal-result/);
+  assert.ok(
+    harness.calls.some((call) =>
+      call.name === "recordSendTrace" && call.args[0] === "replaceUserMessage:server-submit-result:validation-failed"
+    ),
+  );
+  assert.equal(harness.calls.some((call) => call.name === "revertSession"), false);
+  assert.equal(harness.calls.some((call) => call.name === "sendPrompt"), false);
+});
+
+test("session mutation workflow strict validation blocks malformed legacy replacement runtime preflight", async () => {
+  const harness = createHarness({
+    sendBoundaryValidationMode: () => "strict",
+    submitConversationFromVesloWriteApi: undefined,
+    prepareSendRuntimeForSend: async () => ({ ok: true }),
+  });
+
+  const result = await harness.workflow.replaceUserMessage("msg_1", replacementDraft, {
+    clientMessageId: "client_replace_1",
+    origin: "session:replacement",
+  });
+
+  assert.equal(result.accepted, false);
+  assert.equal(result.status, "blocked");
+  assert.equal(result.code, "replacement_runtime_invalid_contract");
+  assert.match(result.message ?? "", /send-runtime-preparation-result/);
+  assert.ok(
+    harness.calls.some((call) =>
+      call.name === "recordSendTrace" && call.args[0] === "replaceUserMessage:runtime-preflight:validation-failed"
+    ),
+  );
+  assert.equal(harness.calls.some((call) => call.name === "revertSession"), false);
 });
 
 test("session mutation workflow lists the built-in compact command when backend commands omit it", async () => {

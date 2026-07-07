@@ -122,6 +122,99 @@ test("configured pending materialization sync failure reports but does not block
   ]);
 });
 
+test("configured skill registry not found degrades without setting workspace error", async () => {
+  const debugLabels: string[] = [];
+  const errors: Array<string | null> = [];
+  const states: Array<{ workspaceId: string; next: unknown }> = [];
+  const gate = createGate({
+    client: {
+      getWorkspaceSkillMaterializationStatus: async () => ({
+        registryConfigured: true,
+        status: "pending",
+        reloadRequired: true,
+      }),
+      syncWorkspaceSkillMaterialization: async () => {
+        throw new VesloServerError(404, "skill_registry_not_found", "Skill registry resource was not found");
+      },
+    },
+    setError: (value) => errors.push(value),
+    updateWorkspaceConnectionState: (workspaceId, next) => states.push({ workspaceId, next }),
+    wsDebug: (label) => debugLabels.push(label),
+  });
+
+  const ready = await gate.syncWorkspaceSkillMaterializationBeforeRuntime(
+    { id: "workspace-1", workspaceType: "local", path: "/repo" } as any,
+    { reason: "send-preflight" },
+  );
+
+  assert.equal(ready, true);
+  assert.deepEqual(debugLabels, ["skills:materialization:degraded"]);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(states, []);
+});
+
+test("workspace registry not configured status skips sync without blocking runtime", async () => {
+  const debugLabels: string[] = [];
+  let syncCalled = false;
+  const gate = createGate({
+    client: {
+      getWorkspaceSkillMaterializationStatus: async () => ({
+        registryConfigured: true,
+        workspaceRegistryConfigured: false,
+        status: "not-configured",
+        reloadRequired: false,
+      }),
+      syncWorkspaceSkillMaterialization: async () => {
+        syncCalled = true;
+        throw new Error("sync should not be called");
+      },
+    },
+    wsDebug: (label) => debugLabels.push(label),
+  });
+
+  const ready = await gate.syncWorkspaceSkillMaterializationBeforeRuntime(
+    { id: "workspace-1", workspaceType: "local", path: "/repo" } as any,
+    { reason: "send-preflight" },
+  );
+
+  assert.equal(ready, true);
+  assert.equal(syncCalled, false);
+  assert.deepEqual(debugLabels, ["skills:materialization:skip:not-configured"]);
+});
+
+test("degraded workspace materialization status skips sync without blocking runtime", async () => {
+  const debugLabels: string[] = [];
+  let syncCalled = false;
+  const gate = createGate({
+    client: {
+      getWorkspaceSkillMaterializationStatus: async () => ({
+        registryConfigured: true,
+        status: "degraded",
+        reloadRequired: false,
+        registryError: {
+          code: "skill_registry_fetch_failed",
+          message: "Failed to fetch skill registry",
+          status: 502,
+        },
+      }),
+      syncWorkspaceSkillMaterialization: async () => {
+        syncCalled = true;
+        throw new Error("sync should not be called");
+      },
+    },
+    wsDebug: (label) => debugLabels.push(label),
+  });
+
+  const ready = await gate.syncWorkspaceSkillMaterializationBeforeRuntime(
+    { id: "workspace-1", workspaceType: "local", path: "/repo" } as any,
+    { reason: "send-preflight" },
+  );
+
+  assert.equal(ready, true);
+  assert.equal(syncCalled, false);
+  assert.deepEqual(debugLabels, ["skills:materialization:degraded"]);
+});
+
 test("missing materialization status route remains an unsupported older server skip", async () => {
   const debugLabels: string[] = [];
   const gate = createGate({

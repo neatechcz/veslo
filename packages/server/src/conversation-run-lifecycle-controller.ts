@@ -119,6 +119,7 @@ export type ConversationRunLifecycleScheduleReconcileInput = {
   workspace: WorkspaceInfo;
   conversationId: string;
   runId: string;
+  opencodeSessionId?: string | null;
   reason: string;
   abortRequested?: boolean;
   delayMs?: number;
@@ -522,6 +523,27 @@ export function createConversationRunLifecycleController(
     });
   };
 
+  const unregisterScheduledAiGatewayRun = (
+    input: ConversationRunLifecycleScheduleReconcileInput,
+    opencodeSessionId?: string | null,
+  ) => {
+    const normalizedOpencodeSessionId = opencodeSessionId?.trim() || input.opencodeSessionId?.trim() || "";
+    if (!normalizedOpencodeSessionId) return;
+    options.aiGatewayActiveRun?.unregister({
+      workspaceId: input.workspace.id,
+      conversationId: input.conversationId,
+      runId: input.runId,
+      opencodeSessionId: normalizedOpencodeSessionId,
+    });
+    recordTrace("server:ai-gateway-active-run:unregister", {
+      workspaceId: input.workspace.id,
+      conversationId: input.conversationId,
+      runId: input.runId,
+      opencodeSessionId: normalizedOpencodeSessionId,
+      reason: input.reason,
+    });
+  };
+
   const scheduleAcceptedRunReconcile = (
     input: ConversationRunLifecycleSubmitInput,
     reason: string,
@@ -531,6 +553,7 @@ export function createConversationRunLifecycleController(
       workspace: input.workspace,
       conversationId: input.target.conversationId,
       runId: input.runId,
+      opencodeSessionId: input.target.opencodeSessionId,
       reason,
       delayMs,
     });
@@ -560,7 +583,6 @@ export function createConversationRunLifecycleController(
     input: ConversationRunLifecycleSubmitInput,
     lifecycleOwner: OrchestratorLifecycleClient | null,
     providerWatchStartedAt: number,
-    unregisterRegisteredAiGatewayRun: () => void,
   ): boolean => {
     if (!lifecycleOwner || input.kind !== "prompt_async" || input.expectAiGatewayStart !== true) return false;
 
@@ -608,8 +630,6 @@ export function createConversationRunLifecycleController(
           message: error instanceof Error ? error.message : String(error),
         });
         scheduleAcceptedRunReconcile(input, "ai-gateway-provider-start-watch-error", 0);
-      } finally {
-        unregisterRegisteredAiGatewayRun();
       }
     })();
     return true;
@@ -658,7 +678,6 @@ export function createConversationRunLifecycleController(
       input,
       lifecycleOwner,
       providerWatchStartedAt,
-      unregisterRegisteredAiGatewayRun,
     );
     if (!providerWatchOwnsGatewayRun) {
       unregisterRegisteredAiGatewayRun();
@@ -744,6 +763,7 @@ export function createConversationRunLifecycleController(
       workspaceId: input.workspace.id,
       conversationId,
       runId,
+      opencodeSessionId: input.opencodeSessionId?.trim() || null,
       reason: input.reason,
       abortRequested: input.abortRequested === true,
       attempt: input.attempt ?? 0,
@@ -801,6 +821,7 @@ export function createConversationRunLifecycleController(
               stale: status?.stale ?? null,
               ...lifecycleStatusTraceFields(status),
             });
+            unregisterScheduledAiGatewayRun(input);
             scheduleQueueDrain(input.workspace.id, conversationId, 0);
           }).catch((error) => {
             recordTrace("server:conversation-run:lifecycle-mark-failed-error", {
@@ -839,6 +860,7 @@ export function createConversationRunLifecycleController(
       });
 
       if (!status) {
+        unregisterScheduledAiGatewayRun(input);
         if (input.abortRequested === true) {
           await lifecycleOwner.markAborted(
             input.workspace.id,
@@ -873,6 +895,7 @@ export function createConversationRunLifecycleController(
       }
 
       if (!isActiveLifecycleStatus(status.status)) {
+        unregisterScheduledAiGatewayRun(input);
         if (input.abortRequested === true && status.status !== "aborted") {
           await lifecycleOwner.markAborted(
             input.workspace.id,
@@ -1120,6 +1143,7 @@ export function createConversationRunLifecycleController(
         workspace: input.workspace,
         conversationId: input.target.conversationId,
         runId: input.runId,
+        opencodeSessionId: input.target.opencodeSessionId,
         reason: "abort-requested",
         abortRequested: true,
         delayMs: 0,

@@ -93,7 +93,10 @@ export async function getOrCacheSkillPackageArchive(
   if (cached) return cached;
 
   const fetched = validateArchiveForCache(await input.fetchPackage(), input.packageSha256);
-  await cacheSkillPackageArchive({ dataDir: input.dataDir, archive: fetched });
+  await cacheSkillPackageArchive({
+    archive: fetched,
+    ...(input.dataDir !== undefined ? { dataDir: input.dataDir } : {}),
+  });
   return fetched;
 }
 

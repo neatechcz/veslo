@@ -1027,4 +1027,37 @@ describe("conversation service", () => {
     });
     expect(resolved?.engineSessionId).toBe("sess-created");
   });
+
+  test("rejects a created OpenCode session without a string id", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-create-invalid-id-"));
+    tempDirs.push(dataDir);
+    const directory = join(dataDir, "workspace-a");
+    const bindingStore = createConversationBindingStore({ dataDir, now: () => 2_000 });
+    const service = createConversationService({
+      readStore: fakeReadStore(directory),
+      bindingStore,
+      createOpenCodeSession: async () => ({ id: 123 }),
+    });
+
+    let error: unknown;
+    try {
+      await service.createConversation({
+        workspace: workspaceFor(directory),
+        directory,
+        title: "Invalid",
+      });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(502);
+    expect((error as ApiError).code).toBe("opencode_failed");
+
+    const bindings = await bindingStore.listOpenCodeSessions({
+      workspaceId: "ws-a",
+      directory,
+    });
+    expect(bindings).toEqual([]);
+  });
 });

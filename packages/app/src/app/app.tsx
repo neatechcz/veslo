@@ -1720,6 +1720,8 @@ export default function App() {
     normalizeSendCorrelation: normalizeSessionSendCorrelation,
     createSendPreflightContext,
     recordSendTrace,
+    sendBoundaryValidationMode: () =>
+      resolveSendBoundaryValidationMode(import.meta.env as Record<string, string | boolean | undefined>),
     sendTraceStep,
     resolveSendTargetWorkspaceScope: (sessionId) => resolveSendTargetWorkspaceScope(sessionId),
     prepareSendRuntimeForSend: (event, preflight) => prepareSendRuntimeForSend(event, preflight as SendRuntimePreflightContext),

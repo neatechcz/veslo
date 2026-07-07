@@ -445,6 +445,10 @@ export type SessionViewProps = {
 const SESSION_TOAST_DISMISS_DELAY_MS = 4_000;
 const MAIN_THREAD_LAG_INTERVAL_MS = 200;
 const MAIN_THREAD_LAG_WARN_MS = 180;
+const SESSION_DEFAULT_SIDEBAR_DOCKED_VISIBILITY = {
+  left: true,
+  right: true,
+};
 const interpolate = (template: string, values: Record<string, string | number>) =>
   Object.entries(values).reduce(
     (result, [key, value]) => result.replaceAll(`{${key}}`, String(value)),
@@ -488,7 +492,11 @@ export default function SessionView(props: SessionViewProps) {
   const [leftSidebarWidth, setLeftSidebarWidth] = createSignal(readLeftSidebarWidth());
   const [leftSidebarResizing, setLeftSidebarResizing] = createSignal(false);
   const [sidebarLayoutState, setSidebarLayoutState] = createSignal<SidebarLayoutState>(
-    createInitialSidebarLayoutState(readGlobalSidebarDockedPrefs()),
+    createInitialSidebarLayoutState(
+      readGlobalSidebarDockedPrefs(undefined, {
+        defaultVisibility: SESSION_DEFAULT_SIDEBAR_DOCKED_VISIBILITY,
+      }),
+    ),
   );
   const selectedSessionSidebarItem = createMemo(() => {
     const id = props.selectedSessionId?.trim() ?? "";
@@ -1258,8 +1266,12 @@ export default function SessionView(props: SessionViewProps) {
   const setRunLastProgressAtForSessionKey = (sessionKey: string, lastProgressAt: number | null) => {
     updateRunStateForSessionKey(sessionKey, (current) => ({ ...current, lastProgressAt }));
   };
-  const remapPendingRunStateToSession = (pendingKey: string, sessionId: string) => {
-    const sessionKey = sessionQueueKeyForSessionId(sessionId);
+  const remapPendingRunStateToSession = (
+    pendingKey: string,
+    sessionId: string,
+    sessionKeyOverride?: string | null,
+  ) => {
+    const sessionKey = sessionKeyOverride?.trim() || sessionQueueKeyForSessionId(sessionId);
     if (!pendingKey || pendingKey === sessionKey) return;
     const pendingRun = untrack(runStateBySessionKey)[pendingKey];
     recordSendTrace("run-state:remap-pending-to-session", {
@@ -1709,8 +1721,12 @@ export default function SessionView(props: SessionViewProps) {
     setQueuePausedForSessionKey(currentSessionQueueKey(), paused);
   };
 
-  const remapPendingQueueToSession = (pendingKey: string, sessionId: string) => {
-    const sessionKey = sessionQueueKeyForSessionId(sessionId);
+  const remapPendingQueueToSession = (
+    pendingKey: string,
+    sessionId: string,
+    sessionKeyOverride?: string | null,
+  ) => {
+    const sessionKey = sessionKeyOverride?.trim() || sessionQueueKeyForSessionId(sessionId);
     if (!pendingKey || pendingKey === sessionKey) return;
 
     setQueuedDraftsBySessionKey((current) =>
@@ -1721,7 +1737,7 @@ export default function SessionView(props: SessionViewProps) {
       remapQueuePausedToSession(current, pendingKey, sessionKey),
     );
 
-    remapPendingRunStateToSession(pendingKey, sessionId);
+    remapPendingRunStateToSession(pendingKey, sessionId, sessionKey);
 
     setPendingSubmittedDraftBySessionKey((current) => {
       // materializePendingSessionInstance preserves the former remapPendingSubmittedSession behavior for keyed drafts.
@@ -1756,10 +1772,14 @@ export default function SessionView(props: SessionViewProps) {
     return workspaceRootForPendingSidebarSession(workspaceId) || props.activeWorkspaceRoot;
   };
 
-  const restoreMaterializedQueueToPending = (pendingKey: string, sessionId: string | null | undefined) => {
+  const restoreMaterializedQueueToPending = (
+    pendingKey: string,
+    sessionId: string | null | undefined,
+    sessionKeyOverride?: string | null,
+  ) => {
     const materializedSessionId = sessionId?.trim();
     if (!pendingKey || !materializedSessionId) return;
-    const sessionKey = sessionQueueKeyForSessionId(materializedSessionId);
+    const sessionKey = sessionKeyOverride?.trim() || sessionQueueKeyForSessionId(materializedSessionId);
     if (pendingKey === sessionKey) return;
 
     setQueuedDraftsBySessionKey((current) =>

@@ -1,5 +1,5 @@
-import { batch, createEffect, onCleanup } from "solid-js";
-import { produce } from "solid-js/store";
+import { batch, createEffect, onCleanup, type Setter } from "solid-js";
+import { produce, type SetStoreFunction } from "solid-js/store";
 
 import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client";
 
@@ -59,6 +59,12 @@ type EventStreamStoreState = {
   events: Array<{ type: string; properties?: unknown }>;
 };
 
+type SseSubscription = {
+  stream: AsyncIterable<unknown>;
+  close?: () => Promise<void> | void;
+  [Symbol.asyncDispose]?: () => Promise<void> | void;
+};
+
 const PERMISSION_REFRESH_EVENT_TYPES = new Set([
   "permission.asked",
   "permission.replied",
@@ -85,7 +91,7 @@ export function isQuestionRefreshEvent(type: string): boolean {
 
 export type SessionEventStreamControllerDeps = {
   store: EventStreamStoreState;
-  setStore: (...args: any[]) => void;
+  setStore: SetStoreFunction<EventStreamStoreState>;
   routing: WorkspaceRouting;
   client: () => RoutingClient | null;
   activeWorkspaceRoot: () => string;
@@ -142,8 +148,8 @@ export type SessionEventStreamControllerDeps = {
   ) => void;
   messageLimitBySession: () => Record<string, number>;
   setMessagesForSession: (sessionID: string, list: Array<{ info: MessageInfo; parts: Part[] }>) => void;
-  setMessageLimitBySession: (value: any) => void;
-  setMessageCompleteBySession: (value: any) => void;
+  setMessageLimitBySession: Setter<Record<string, number>>;
+  setMessageCompleteBySession: Setter<Record<string, boolean>>;
   refreshPendingPermissions: () => Promise<void>;
   refreshPendingQuestions: () => Promise<void>;
   withTimeout: <T>(promise: Promise<T>, ms: number, label: string) => Promise<T>;
@@ -753,6 +759,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     let wasConnected = false;
     let outageEpisode = clearOutageEpisode();
     let currentController: AbortController | null = null;
+    const activeSubscriptions = new Set<SseSubscription>();
 
     let queue: Array<OpencodeEvent | undefined> = [];
     const coalesced = new Map<string, number>();
@@ -967,7 +974,13 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
               ...engineSseAuthOptions(entry?.auth),
               signal: controller.signal,
             })
-          : c.event.subscribe(undefined, { signal: controller.signal }));
+          : c.event.subscribe(undefined, { signal: controller.signal })) as SseSubscription;
+        activeSubscriptions.add(sub);
+        if (cancelled || controller.signal.aborted) {
+          await closeSseSubscription(sub);
+          activeSubscriptions.delete(sub);
+          return;
+        }
         let yielded = Date.now();
         let lastArrivalAt = Date.now();
 
@@ -980,52 +993,57 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           await runReconnectCatchup();
         }
 
-        for await (const raw of sub.stream) {
-          if (cancelled) break;
+        try {
+          for await (const raw of sub.stream) {
+            if (cancelled) break;
 
-          const event = normalizeEvent(raw);
-          if (!event) continue;
-          if (event.type === "server.connected") {
-            setStreamSseConnected(streamConnectionKey, true);
-          }
-
-          const arrivedAt = Date.now();
-          const arrivalGapMs = arrivedAt - lastArrivalAt;
-          lastArrivalAt = arrivedAt;
-          if (deps.sessionDebugEnabled() && arrivalGapMs >= 220) {
-            recordPerfLog(true, "session.sse", "arrival-gap", {
-              ms: arrivalGapMs,
-              type: event.type,
-            });
-          }
-
-          const key = keyForEvent(event);
-          if (key) {
-            const existing = coalesced.get(key);
-            if (existing !== undefined) {
-              if (queue[existing] !== undefined) {
-                coalescedReplaced += 1;
-              }
-              queue[existing] = undefined;
+            const event = normalizeEvent(raw);
+            if (!event) continue;
+            if (event.type === "server.connected") {
+              setStreamSseConnected(streamConnectionKey, true);
             }
-            coalesced.set(key, queue.length);
-          }
 
-          if (queue.length === 0) {
-            queueStartedAt = Date.now();
-          }
-          if (event.type === "message.part.updated") {
-            queueHasPartUpdates = true;
-          }
-          queue.push(event);
-          if (queue.length > peakQueueDepth) {
-            peakQueueDepth = queue.length;
-          }
-          schedule();
+            const arrivedAt = Date.now();
+            const arrivalGapMs = arrivedAt - lastArrivalAt;
+            lastArrivalAt = arrivedAt;
+            if (deps.sessionDebugEnabled() && arrivalGapMs >= 220) {
+              recordPerfLog(true, "session.sse", "arrival-gap", {
+                ms: arrivalGapMs,
+                type: event.type,
+              });
+            }
 
-          if (Date.now() - yielded < 8) continue;
-          yielded = Date.now();
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+            const key = keyForEvent(event);
+            if (key) {
+              const existing = coalesced.get(key);
+              if (existing !== undefined) {
+                if (queue[existing] !== undefined) {
+                  coalescedReplaced += 1;
+                }
+                queue[existing] = undefined;
+              }
+              coalesced.set(key, queue.length);
+            }
+
+            if (queue.length === 0) {
+              queueStartedAt = Date.now();
+            }
+            if (event.type === "message.part.updated") {
+              queueHasPartUpdates = true;
+            }
+            queue.push(event);
+            if (queue.length > peakQueueDepth) {
+              peakQueueDepth = queue.length;
+            }
+            schedule();
+
+            if (Date.now() - yielded < 8) continue;
+            yielded = Date.now();
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          }
+        } finally {
+          activeSubscriptions.delete(sub);
+          await closeSseSubscription(sub);
         }
 
         if (!cancelled) {
@@ -1119,6 +1137,10 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     return () => {
       cancelled = true;
       currentController?.abort();
+      for (const subscription of Array.from(activeSubscriptions)) {
+        activeSubscriptions.delete(subscription);
+        void closeSseSubscription(subscription);
+      }
       if (reconnectTimer) clearTimeout(reconnectTimer);
       forgetStreamSseConnected(streamConnectionKey);
       flush();
@@ -1161,4 +1183,19 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     setupSseStream,
     startEventStreams,
   };
+}
+
+async function closeSseSubscription(subscription: SseSubscription): Promise<void> {
+  try {
+    if (typeof subscription.close === "function") {
+      await subscription.close();
+      return;
+    }
+    const dispose = subscription[Symbol.asyncDispose];
+    if (typeof dispose === "function") {
+      await dispose.call(subscription);
+    }
+  } catch {
+    // Stream teardown is best-effort; callers already move to reconnect or cleanup.
+  }
 }

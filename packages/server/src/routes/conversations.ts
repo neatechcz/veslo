@@ -420,11 +420,9 @@ function buildConversationSubmitRunBody(input: {
 
   switch (resolvedRunInput.kind) {
     case "prompt_async":
-      body.messageID = request.clientMessageId;
       body.parts = promptPartsFromResolvedRunInput(resolvedRunInput);
       break;
     case "command":
-      body.messageID = request.clientMessageId;
       body.command = resolvedRunInput.command;
       body.arguments = resolvedRunInput.arguments;
       if (resolvedRunInput.parts?.length) body.parts = resolvedRunInput.parts;

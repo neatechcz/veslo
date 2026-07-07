@@ -226,8 +226,18 @@ async function engineSseSubscribeWithRuntime(
     throw err;
   }
 
+  let abortListener: (() => void) | null = null;
+
   const close = async () => {
     closeStream(closeReason ?? "client-close");
+    if (options.signal && abortListener) {
+      try {
+        options.signal.removeEventListener("abort", abortListener);
+      } catch {
+        // ignore
+      }
+      abortListener = null;
+    }
     if (unlisten) {
       try {
         unlisten();
@@ -247,9 +257,10 @@ async function engineSseSubscribeWithRuntime(
     if (options.signal.aborted) {
       void close();
     } else {
-      options.signal.addEventListener("abort", () => {
+      abortListener = () => {
         void close();
-      });
+      };
+      options.signal.addEventListener("abort", abortListener, { once: true });
     }
   }
 

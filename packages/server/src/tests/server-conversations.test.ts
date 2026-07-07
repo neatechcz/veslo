@@ -489,7 +489,7 @@ describe("conversation routes", () => {
     });
     expect(upstreamRequests[1]?.path).toBe("/session/sess-submit-created/prompt_async");
     expect(upstreamRequests[1]?.traceId).toBe("submit-materialize-trace");
-    expect(upstreamRequests[1]?.body?.messageID).toBe("msg-submit-materialize");
+    expect(upstreamRequests[1]?.body?.messageID).toBeUndefined();
     expect(upstreamRequests[1]?.body?.parts).toEqual([{ type: "text", text: "Create from submit" }]);
 
     const retryResponse = await submit();
@@ -734,7 +734,7 @@ describe("conversation routes", () => {
       "/session/sess-submit-slow/prompt_async",
     ]);
     expect(upstreamRequests.every((entry) => entry.traceId === "submit-slow-trace")).toBe(true);
-    expect(upstreamRequests[1]?.body?.messageID).toBe("msg-submit-slow");
+    expect(upstreamRequests[1]?.body?.messageID).toBeUndefined();
   });
 
   test("POST /workspace/:id/conversations/submit resolves implicit skills from a large workspace inventory with MCP config present", async () => {
@@ -898,13 +898,13 @@ describe("conversation routes", () => {
       `/session/sess-many-skills/command?directory=${encodeURIComponent(workspaceRoot)}`,
     ]);
     expect(upstreamRequests[1]?.body).toMatchObject({
-      messageID: "msg-submit-many-skills",
       command: "company-research-czech",
       arguments: "https://example.test use company search skill for this",
       agent: "build",
       model: "openai/gpt-5.5",
       variant: "xhigh",
     });
+    expect(upstreamRequests[1]?.body?.messageID).toBeUndefined();
     expect(upstreamRequests[1]?.body?.parts).toBeUndefined();
     expect(payload.debugTrace?.some((entry) => entry.event === "server:conversation-run:opencode-submit"))
       .toBe(true);
@@ -1005,9 +1005,9 @@ describe("conversation routes", () => {
       `/session/sess-ambiguous-skills/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`,
     ]);
     expect(upstreamRequests[1]?.body).toMatchObject({
-      messageID: "msg-submit-ambiguous-skills",
       parts: [{ type: "text", text: "Please use company research skill for this website" }],
     });
+    expect(upstreamRequests[1]?.body?.messageID).toBeUndefined();
     expect(upstreamRequests[1]?.body?.command).toBeUndefined();
   });
 
@@ -1086,9 +1086,9 @@ describe("conversation routes", () => {
       `/session/sess-no-skills/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`,
     ]);
     expect(upstreamRequests[1]?.body).toMatchObject({
-      messageID: "msg-submit-no-skills",
       parts: [{ type: "text", text: "Please inspect this repository" }],
     });
+    expect(upstreamRequests[1]?.body?.messageID).toBeUndefined();
     expect(upstreamRequests[1]?.body?.command).toBeUndefined();
   });
 
@@ -1516,7 +1516,7 @@ describe("conversation routes", () => {
         mime: "text/plain",
       },
     ]);
-    expect(upstreamRequests[1]?.body?.messageID).toBe("msg-submit-existing-run");
+    expect(upstreamRequests[1]?.body?.messageID).toBeUndefined();
     expect(upstreamRequests[1]?.body?.model).toEqual({ providerID: "openai", modelID: "gpt-5.5" });
     expect(upstreamRequests[1]?.body?.agent).toBe("build");
     expect(upstreamRequests[1]?.body?.variant).toBe("xhigh");
@@ -1615,7 +1615,7 @@ describe("conversation routes", () => {
       `/session/sess-legacy-submit/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`,
     );
     expect(upstreamRequests[0]?.traceId).toBe("submit-legacy-import-trace");
-    expect(upstreamRequests[0]?.body?.messageID).toBe("msg-submit-legacy-import");
+    expect(upstreamRequests[0]?.body?.messageID).toBeUndefined();
   });
 
   test("GET /workspace/:id/sessions/:sessionId/transcript imports legacy OpenCode session identity", async () => {
@@ -1787,7 +1787,7 @@ describe("conversation routes", () => {
       `/session/sess-submit-replace/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`,
     ]);
     expect(upstreamRequests[3]?.body).toEqual({ messageID: "msg_original" });
-    expect(upstreamRequests[4]?.body?.messageID).toBe("msg-submit-replace-run");
+    expect(upstreamRequests[4]?.body?.messageID).toBeUndefined();
     expect(upstreamRequests[4]?.body?.parts).toEqual([{ type: "text", text: "Edited replacement" }]);
   });
 
@@ -3815,7 +3815,7 @@ describe("conversation routes", () => {
     expect(receivedRunPaths[0]).toBe(`/session/sess-created/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`);
     expect(receivedRunDirectories[0]).toBe(workspaceRoot);
     expect(receivedBodies[1]?.parts).toEqual([{ type: "text", text: "Hello" }]);
-    expect(receivedBodies[1]?.messageID).toBe("msg-client-1");
+    expect(receivedBodies[1]?.messageID).toBeUndefined();
     expect(receivedBodies[1]?.model).toEqual({ providerID: "openai", modelID: "gpt-5.5" });
     expect(receivedBodies[1]?.agent).toBe("build");
     expect(receivedBodies[1]?.system).toBe("system prompt");

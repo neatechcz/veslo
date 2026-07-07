@@ -18,6 +18,12 @@ import {
   type SessionSubmitResult,
 } from "../lib/session-send-contract";
 import {
+  validateConversationSubmitRequest,
+  validateConversationSubmitTerminalResult,
+  validateSendRuntimePreparationResult,
+  type SendBoundaryValidationMode,
+} from "../lib/send-boundary-validation";
+import {
   deleteSessionComposerDraft as defaultDeleteSessionComposerDraft,
 } from "./session-composer-drafts";
 import { withoutSessionStatus as defaultWithoutSessionStatus } from "../lib/scoped-session-status";
@@ -100,6 +106,7 @@ export type SessionMutationWorkflowDeps = {
   normalizeSendCorrelation?: typeof normalizeSessionSendCorrelation;
   createSendPreflightContext: (sendTraceId?: string | null) => SendPreflightContextLike;
   recordSendTrace: (event: string, payload?: Record<string, unknown>) => void;
+  sendBoundaryValidationMode?: () => SendBoundaryValidationMode;
   sendTraceStep: (
     event: string,
     run: () => Promise<boolean>,
@@ -173,6 +180,28 @@ type TerminalReplacementSubmitResult = Extract<
   VesloConversationSubmitResult,
   { status: "submitted" | "queued" | "blocked" | "failed" }
 >;
+
+type SendBoundaryValidationRuntimeDeps = {
+  recordSendTrace: (event: string, payload?: Record<string, unknown>) => void;
+  sendBoundaryValidationMode?: () => SendBoundaryValidationMode;
+};
+
+type SendBoundaryValidationRuntimeOptions = {
+  context?: Record<string, unknown>;
+  event: string;
+  traceId?: string | null;
+};
+
+function sendBoundaryValidationOptions(
+  deps: SendBoundaryValidationRuntimeDeps,
+  options: SendBoundaryValidationRuntimeOptions,
+) {
+  return {
+    ...options,
+    mode: deps.sendBoundaryValidationMode?.(),
+    recordSendTrace: deps.recordSendTrace,
+  };
+}
 
 function sessionSubmitResultFromReplacementSubmit(
   result: TerminalReplacementSubmitResult,
@@ -353,7 +382,7 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
         opencodeSessionId: scope?.opencodeSessionId ?? sessionID,
         clientMessageId,
       });
-      const result = await submitConversation(workspaceId, submitDirectory, {
+      const submitRequest: VesloConversationSubmitRequest = {
         clientMessageId,
         origin: "app:compact-session",
         target: {
@@ -374,7 +403,48 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
           variant: deps.modelVariant() ?? null,
           submitQueuePolicy: "normal",
         },
-      }, preflight);
+      };
+      const submitRequestValidation = validateConversationSubmitRequest(submitRequest, sendBoundaryValidationOptions(deps, {
+        event: "compactSession:server-submit-request:validation-failed",
+        traceId: preflight.traceId,
+        context: {
+          phase: "compact-server-submit",
+          sessionID,
+          workspaceId,
+          directory: submitDirectory,
+          clientMessageId,
+        },
+      }));
+      if (!submitRequestValidation.ok) {
+        throw new Error(submitRequestValidation.message);
+      }
+      let result = await submitConversation(
+        workspaceId,
+        submitDirectory,
+        submitRequestValidation.value,
+        preflight,
+      );
+      if (
+        result?.status === "submitted" ||
+        result?.status === "queued" ||
+        result?.status === "blocked" ||
+        result?.status === "failed"
+      ) {
+        const resultValidation = validateConversationSubmitTerminalResult(result, sendBoundaryValidationOptions(deps, {
+          event: "compactSession:server-submit-result:validation-failed",
+          traceId: preflight.traceId,
+          context: {
+            phase: "compact-server-submit",
+            sessionID,
+            workspaceId,
+            clientMessageId,
+          },
+        }));
+        if (!resultValidation.ok) {
+          throw new Error(resultValidation.message);
+        }
+        result = resultValidation.value;
+      }
       if (result?.status === "submitted" || result?.status === "queued") {
         deps.recordSendTrace("compactSession:server-submit-success", {
           traceId: preflight.traceId,
@@ -517,7 +587,7 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
         clientMessageId: sendCorrelation.clientMessageId,
         origin: sendCorrelation.origin,
       });
-      const result = await submitConversation(workspaceId, submitDirectory, {
+      const submitRequest: VesloConversationSubmitRequest = {
         clientMessageId: sendCorrelation.clientMessageId,
         origin: sendCorrelation.origin,
         source: sendCorrelation.source ?? null,
@@ -533,7 +603,57 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
           variant: deps.modelVariant() ?? null,
           submitQueuePolicy: "normal",
         },
-      }, replacePreflight);
+      };
+      const submitRequestValidation = validateConversationSubmitRequest(submitRequest, sendBoundaryValidationOptions(deps, {
+        event: "replaceUserMessage:server-submit-request:validation-failed",
+        traceId: sendTraceId,
+        context: {
+          phase: "replace-server-submit",
+          sessionID,
+          workspaceId,
+          replaceMessageId: messageID,
+          clientMessageId: sendCorrelation.clientMessageId,
+          origin: sendCorrelation.origin,
+        },
+      }));
+      if (!submitRequestValidation.ok) {
+        return sessionSubmitFailedResult({
+          code: "replacement_submit_invalid_request",
+          message: submitRequestValidation.message,
+        });
+      }
+      let result = await submitConversation(
+        workspaceId,
+        submitDirectory,
+        submitRequestValidation.value,
+        replacePreflight,
+      );
+      if (
+        result?.status === "submitted" ||
+        result?.status === "queued" ||
+        result?.status === "blocked" ||
+        result?.status === "failed"
+      ) {
+        const resultValidation = validateConversationSubmitTerminalResult(result, sendBoundaryValidationOptions(deps, {
+          event: "replaceUserMessage:server-submit-result:validation-failed",
+          traceId: sendTraceId,
+          context: {
+            phase: "replace-server-submit",
+            sessionID,
+            workspaceId,
+            replaceMessageId: messageID,
+            clientMessageId: sendCorrelation.clientMessageId,
+            origin: sendCorrelation.origin,
+          },
+        }));
+        if (!resultValidation.ok) {
+          return sessionSubmitFailedResult({
+            code: "replacement_submit_invalid_result",
+            message: resultValidation.message,
+          });
+        }
+        result = resultValidation.value;
+      }
       if (result?.status === "submitted" || result?.status === "queued") {
         deps.recordSendTrace("replaceUserMessage:server-submit-success", {
           traceId: sendTraceId,
@@ -576,6 +696,26 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
       hasDirectory: Boolean(submitDirectory),
     });
     const replaceRuntimePreparation = await deps.prepareSendRuntimeForSend("replaceUserMessage", replacePreflight);
+    const replaceRuntimePreparationValidation = validateSendRuntimePreparationResult(
+      replaceRuntimePreparation,
+      sendBoundaryValidationOptions(deps, {
+        event: "replaceUserMessage:runtime-preflight:validation-failed",
+        traceId: sendTraceId,
+        context: {
+          phase: "replace-runtime-preflight",
+          sessionID,
+          workspaceId: workspaceId || null,
+          clientMessageId: sendCorrelation.clientMessageId,
+          origin: sendCorrelation.origin,
+        },
+      }),
+    );
+    if (!replaceRuntimePreparationValidation.ok) {
+      return sessionSubmitBlockedResult({
+        code: "replacement_runtime_invalid_contract",
+        message: replaceRuntimePreparationValidation.message,
+      });
+    }
     if (!replaceRuntimePreparation.ok) {
       return sessionSubmitBlockedResult({
         code: "replacement_runtime_unavailable",

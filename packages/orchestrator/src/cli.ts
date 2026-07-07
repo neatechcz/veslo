@@ -2268,8 +2268,20 @@ function resolveSendWorkflowTraceFile(): string {
   return join(dataDir, "send-workflow-trace.ndjson");
 }
 
+function resolveSendWorkflowTraceMirrorFile(): string | null {
+  const mirror = process.env.VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE?.trim();
+  return mirror || null;
+}
+
 function sendWorkflowTraceEnabled(): boolean {
-  return truthyEnv("VESLO_SEND_WORKFLOW_TRACE") || Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_FILE?.trim());
+  return truthyEnv("VESLO_SEND_WORKFLOW_TRACE") ||
+    Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_FILE?.trim()) ||
+    Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE?.trim());
+}
+
+function appendSendWorkflowTraceFile(file: string, line: string): void {
+  mkdirSync(dirname(file), { recursive: true });
+  appendFileSync(file, line, "utf8");
 }
 
 function writeSendWorkflowTrace(event: string, payload: LogAttributes = {}): void {
@@ -2286,8 +2298,12 @@ function writeSendWorkflowTrace(event: string, payload: LogAttributes = {}): voi
   };
   try {
     const file = resolveSendWorkflowTraceFile();
-    mkdirSync(dirname(file), { recursive: true });
-    appendFileSync(file, `${JSON.stringify(entry)}\n`, "utf8");
+    const line = `${JSON.stringify(entry)}\n`;
+    appendSendWorkflowTraceFile(file, line);
+    const mirrorFile = resolveSendWorkflowTraceMirrorFile();
+    if (mirrorFile && mirrorFile !== file) {
+      appendSendWorkflowTraceFile(mirrorFile, line);
+    }
   } catch {
     // Diagnostics must never affect runtime behavior.
   }

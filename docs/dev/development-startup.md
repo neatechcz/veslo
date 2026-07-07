@@ -101,20 +101,24 @@ App-side send boundary validation is controlled by
 - `strict` records and fails closed. Use this only for focused debugging or
   tests.
 
-During `pnpm dev`, validation failures are written to the existing send trace:
+During `pnpm dev`, validation events are written to the existing send trace:
 
 - A stable gitignored mirror is written to `.tmp/send-workflow-trace.ndjson`.
+  It includes app-forwarded events plus server and orchestrator send trace
+  events when those processes inherit the trace environment.
 - The timestamped dev runtime archive is printed at startup as
   `sendWorkflowTrace=.../send-workflow-trace.ndjson`.
 - WebView DevTools console shows `[SENDTRACE] app:<event>`.
 - The Tauri dev terminal receives `[ui:send-trace] <event> <json>`.
 - The current WebView keeps recent entries in `window.__vesloSendTrace`.
+- Successful checks use `validation-checked`; malformed payloads use
+  `validation-failed`.
 
-From DevTools, filter validation failures with:
+From DevTools, filter validation events with:
 
 ```js
 window.__vesloSendTrace?.filter((entry) =>
-  String(entry.event ?? "").includes("validation-failed")
+  String(entry.event ?? "").includes("validation-")
 )
 ```
 

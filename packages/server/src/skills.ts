@@ -3,7 +3,13 @@ import type { Dirent } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { TextDecoder } from "node:util";
 import { localUserResourceOwner, workspaceResourceOwner } from "./resource-owner.js";
-import type { DisabledSkillRecord, ResourceOwner, SkillItem } from "./types.js";
+import type {
+  DisabledSkillRecord,
+  ManagedSkillSource,
+  ResourceOwner,
+  SkillItem,
+  WorkspaceSkillRolloutRemovalPolicy,
+} from "./types.js";
 import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
 import { exists } from "./utils.js";
 import { validateDescription, validateSkillName } from "./validators.js";
@@ -173,10 +179,10 @@ const markerString = (value: unknown, key: string): string | undefined => {
 const markerSource = (
   marker: unknown,
   fallbackScope: "project" | "global",
-): NonNullable<SkillItem["registry"]>["source"] | undefined => {
+): ManagedSkillSource => {
   const source = markerString(marker, "source");
   if (source && MANAGED_SKILL_SOURCES.has(source)) {
-    return source as NonNullable<SkillItem["registry"]>["source"];
+    return source as ManagedSkillSource;
   }
   const target = markerString(marker, "target");
   if (target === "workspace") return "workspace";
@@ -184,10 +190,10 @@ const markerSource = (
   return fallbackScope === "project" ? "workspace" : "personal";
 };
 
-const markerRemovalPolicy = (marker: unknown): NonNullable<SkillItem["registry"]>["removalPolicy"] | undefined => {
+const markerRemovalPolicy = (marker: unknown): WorkspaceSkillRolloutRemovalPolicy => {
   const removalPolicy = markerString(marker, "removalPolicy");
   if (removalPolicy && SKILL_REMOVAL_POLICIES.has(removalPolicy)) {
-    return removalPolicy as NonNullable<SkillItem["registry"]>["removalPolicy"];
+    return removalPolicy as WorkspaceSkillRolloutRemovalPolicy;
   }
   return "user_removable";
 };
@@ -205,10 +211,13 @@ async function registryMetadataFromManagedMarker(
 
   const rawInstallationId = markerString(marker, "installationId");
   if (!rawInstallationId) return undefined;
+  const skillId = markerString(marker, "skillId");
+  const versionId = markerString(marker, "versionId");
+  const packageSha256 = markerString(marker, "packageSha256");
   const registry: NonNullable<SkillItem["registry"]> = {
-    ...(markerString(marker, "skillId") ? { skillId: markerString(marker, "skillId") } : {}),
-    ...(markerString(marker, "versionId") ? { versionId: markerString(marker, "versionId") } : {}),
-    ...(markerString(marker, "packageSha256") ? { packageSha256: markerString(marker, "packageSha256") } : {}),
+    ...(skillId ? { skillId } : {}),
+    ...(versionId ? { versionId } : {}),
+    ...(packageSha256 ? { packageSha256 } : {}),
     source: markerSource(marker, scope),
     removalPolicy: markerRemovalPolicy(marker),
   };
@@ -242,19 +251,20 @@ async function parseSkillEntry(
   } catch {
     return null;
   }
+  const registry = await registryMetadataFromManagedMarker(dirname(skillPath), scope);
   return {
     name: metadata.name,
     description: metadata.description ?? "",
     path: skillPath,
     scope,
     owner,
-    trigger: metadata.trigger,
-    disableModelInvocation: metadata.disableModelInvocation,
-    userInvocable: metadata.userInvocable,
-    aliases: metadata.aliases,
-    whenToUse: metadata.whenToUse,
-    paths: metadata.paths,
-    registry: await registryMetadataFromManagedMarker(dirname(skillPath), scope),
+    ...(metadata.trigger !== undefined ? { trigger: metadata.trigger } : {}),
+    ...(metadata.disableModelInvocation !== undefined ? { disableModelInvocation: metadata.disableModelInvocation } : {}),
+    ...(metadata.userInvocable !== undefined ? { userInvocable: metadata.userInvocable } : {}),
+    ...(metadata.aliases !== undefined ? { aliases: metadata.aliases } : {}),
+    ...(metadata.whenToUse !== undefined ? { whenToUse: metadata.whenToUse } : {}),
+    ...(metadata.paths !== undefined ? { paths: metadata.paths } : {}),
+    ...(registry !== undefined ? { registry } : {}),
   };
 }
 
@@ -399,9 +409,13 @@ async function resolveExistingUserGlobalSkillTarget(
 ): Promise<{ skillPath: string; skillRoot: string }> {
   validateSkillName(name);
   const roots = userGlobalSkillRootsForMutation().map((root) => resolve(root));
+  const defaultRoot = roots[0];
+  if (!defaultRoot) {
+    throw new ApiError(500, "skill_roots_unavailable", "No user-global skill root is available");
+  }
   const target = instancePath?.trim()
     ? resolve(instancePath.trim())
-    : join(roots[0], name, SKILL_ENTRYPOINT);
+    : join(defaultRoot, name, SKILL_ENTRYPOINT);
   if (basename(target) !== SKILL_ENTRYPOINT) {
     throw new ApiError(400, "invalid_skill_path", "Skill instance path must point to SKILL.md");
   }
@@ -453,7 +467,11 @@ export async function updateSkillAtPath(
 ): Promise<{ path: string; action: "updated" }> {
   const name = payload.name.trim();
   const skillPath = await resolveExistingWorkspaceSkillPath(workspaceRoot, name, payload.path);
-  const content = prepareSkillContent({ name, content: payload.content, description: payload.description });
+  const content = prepareSkillContent({
+    name,
+    content: payload.content,
+    ...(payload.description !== undefined ? { description: payload.description } : {}),
+  });
   await writeFile(skillPath, content, "utf8");
   return { path: skillPath, action: "updated" };
 }
@@ -534,16 +552,17 @@ export async function deleteSkillRecoverable(
   if (!(await exists(skillPath))) {
     throw new ApiError(404, "skill_not_found", `Skill not found: ${trimmed}`);
   }
+  const source = {
+    scope: "workspace" as const,
+    ...(journal.workspaceId !== undefined ? { workspaceId: journal.workspaceId } : {}),
+    rootDir: baseDir,
+    skillPath,
+  };
   const record = await removeSkillWithSnapshot({
-    dataDir: journal.dataDir,
     actor: journal.actor,
-    reason: journal.reason,
-    source: {
-      scope: "workspace",
-      workspaceId: journal.workspaceId,
-      rootDir: baseDir,
-      skillPath,
-    },
+    source,
+    ...(journal.dataDir !== undefined ? { dataDir: journal.dataDir } : {}),
+    ...(journal.reason !== undefined ? { reason: journal.reason } : {}),
   });
   return { path: record.originalDir, removalId: record.id };
 }
@@ -557,14 +576,14 @@ export async function deleteGlobalSkillRecoverable(
   validateSkillName(trimmed);
   const target = await resolveExistingUserGlobalSkillTarget(trimmed, options?.path);
   const record = await removeSkillWithSnapshot({
-    dataDir: journal.dataDir,
     actor: journal.actor,
-    reason: journal.reason,
     source: {
       scope: "user-global",
       rootDir: target.skillRoot,
       skillPath: target.skillPath,
     },
+    ...(journal.dataDir !== undefined ? { dataDir: journal.dataDir } : {}),
+    ...(journal.reason !== undefined ? { reason: journal.reason } : {}),
   });
   return { path: record.originalDir, removalId: record.id };
 }
@@ -585,16 +604,17 @@ export async function deleteSkillAtPathRecoverable(
   journal: SkillRemovalJournalContext,
 ): Promise<{ path: string; removalId: string }> {
   const target = await resolveExistingWorkspaceSkillTarget(workspaceRoot, payload.name.trim(), payload.path);
+  const source = {
+    scope: "workspace" as const,
+    ...(journal.workspaceId !== undefined ? { workspaceId: journal.workspaceId } : {}),
+    rootDir: target.skillRoot,
+    skillPath: target.skillPath,
+  };
   const record = await removeSkillWithSnapshot({
-    dataDir: journal.dataDir,
     actor: journal.actor,
-    reason: journal.reason,
-    source: {
-      scope: "workspace",
-      workspaceId: journal.workspaceId,
-      rootDir: target.skillRoot,
-      skillPath: target.skillPath,
-    },
+    source,
+    ...(journal.dataDir !== undefined ? { dataDir: journal.dataDir } : {}),
+    ...(journal.reason !== undefined ? { reason: journal.reason } : {}),
   });
   return { path: record.originalDir, removalId: record.id };
 }

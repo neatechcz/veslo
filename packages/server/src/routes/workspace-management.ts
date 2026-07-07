@@ -65,6 +65,14 @@ function parseInteger(value: string | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function requireRouteParam(params: Record<string, string>, field: string, label = field): string {
+  const value = params[field]?.trim() ?? "";
+  if (!value) {
+    throw new ApiError(400, "invalid_payload", `${label} is required`);
+  }
+  return value;
+}
+
 export function registerWorkspaceManagementRoutes(
   routes: Route[],
   dependencies: WorkspaceManagementRouteDependencies,
@@ -188,7 +196,7 @@ export function registerWorkspaceManagementRoutes(
 
   addRoute(routes, "PATCH", "/workspaces/:id", "host", async (ctx) => {
     ensureWritable(ctx.config);
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const body = await readJsonBody(ctx.request);
     const nextName = typeof body.name === "string" && body.name.trim()
       ? body.name.trim()
@@ -210,7 +218,7 @@ export function registerWorkspaceManagementRoutes(
   });
 
   addRoute(routes, "POST", "/workspaces/:id/activate", "host", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     ctx.config.workspaces = [
       workspace,
       ...ctx.config.workspaces.filter((entry) => entry.id !== workspace.id),
@@ -267,7 +275,7 @@ export function registerWorkspaceManagementRoutes(
   addRoute(routes, "DELETE", "/workspaces/:id", "host", async (ctx) => {
     ensureWritable(ctx.config);
 
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
 
     const configPath = ctx.config.configPath?.trim() ?? "";
     const persisted = configPath
@@ -304,7 +312,7 @@ export function registerWorkspaceManagementRoutes(
   });
 
   addRoute(routes, "GET", "/workspace/:id/config", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const opencode = redactSensitiveConfig(await readOpencodeConfig(workspace.path));
     const veslo = redactSensitiveConfig(await readVesloConfig(workspace.path));
     const lastAudit = await readLastAudit(workspace.path, workspace.id);
@@ -314,7 +322,7 @@ export function registerWorkspaceManagementRoutes(
   addRoute(routes, "POST", "/workspace/:id/system/provision", "client", async (ctx) => {
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
 
     const soulMaterialization = await materializeSoulForWorkspace(serverDataDir, ctx, workspace);
     const result = await provisionWorkspaceInternalSystem(workspace.path, resolveVesloAppDataDir());
@@ -370,7 +378,7 @@ export function registerWorkspaceManagementRoutes(
   });
 
   addRoute(routes, "GET", "/workspace/:id/audit", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const limitParam = ctx.url.searchParams.get("limit");
     const parsed = limitParam ? Number(limitParam) : NaN;
     const limit = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 200) : 50;
@@ -381,7 +389,7 @@ export function registerWorkspaceManagementRoutes(
   addRoute(routes, "PATCH", "/workspace/:id/config", "client", async (ctx) => {
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const body = await readJsonBody(ctx.request);
     const opencode = body.opencode as Record<string, unknown> | undefined;
     const veslo = body.veslo as Record<string, unknown> | undefined;
@@ -422,7 +430,7 @@ export function registerWorkspaceManagementRoutes(
   });
 
   addRoute(routes, "GET", "/workspace/:id/events", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const since = parseInteger(trimmedSearchParam(ctx.url.searchParams, "since"));
     return jsonResponse({
       items: ctx.reloadEvents.list(workspace.id, since ?? undefined),
@@ -432,7 +440,7 @@ export function registerWorkspaceManagementRoutes(
   });
 
   addRoute(routes, "POST", "/workspace/:id/engine/reload", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     requireClientScope(ctx, "collaborator");
 
     await reloadOpencodeEngine(workspace);
@@ -451,7 +459,7 @@ export function registerWorkspaceManagementRoutes(
   });
 
   addRoute(routes, "GET", "/workspace/:id/export", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const exportPayload = await exportWorkspace(workspace);
     return jsonResponse(exportPayload);
   });
@@ -459,7 +467,7 @@ export function registerWorkspaceManagementRoutes(
   addRoute(routes, "POST", "/workspace/:id/import", "client", async (ctx) => {
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const body = await readJsonBody(ctx.request);
     await requireApproval(ctx, {
       workspaceId: workspace.id,

@@ -442,6 +442,10 @@ OpenCode session id, or origin is an idempotency conflict. If the server process
 stops after a queued row is marked `starting` but before it is submitted or
 failed, startup recovery moves that row back to `pending` before scheduling
 queue drains, so accepted sends are not lost across process restarts.
+`clientMessageId` is not an OpenCode prompt identity. Fresh `prompt_async` and
+`command` admissions omit upstream `messageID` so OpenCode can allocate the
+message id for the bound session. Revert is the exception: it sends the existing
+OpenCode `messageID` that is being reverted.
 Clients may read a queued send with
 `GET /workspace/:id/conversations/:conversationId/queue/:queueItemId`. The
 response is scoped to the resolved workspace and conversation and includes the

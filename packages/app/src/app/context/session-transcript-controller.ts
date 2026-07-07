@@ -1,4 +1,5 @@
 import { batch, createSignal, onCleanup } from "solid-js";
+import type { SetStoreFunction } from "solid-js/store";
 
 import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 
@@ -49,7 +50,7 @@ type TranscriptIngestScope = {
 
 export type SessionTranscriptControllerDeps = {
   store: TranscriptStoreState;
-  setStore: (...args: any[]) => void;
+  setStore: SetStoreFunction<TranscriptStoreState>;
   routing: WorkspaceRouting;
   activeWorkspaceRoot: () => string;
   appendTranscriptSnapshot?: AppendTranscriptSnapshot;

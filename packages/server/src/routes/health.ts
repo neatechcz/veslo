@@ -109,6 +109,14 @@ function isSharedEngineReady(shared: RuntimeChainPayload["sharedEngine"]): boole
   return shared.running === true && (shared.engineState === "ready" || shared.engineState === "process_ready");
 }
 
+function requireRouteParam(params: Record<string, string>, field: string, label = field): string {
+  const value = params[field]?.trim() ?? "";
+  if (!value) {
+    throw new ApiError(400, "invalid_payload", `${label} is required`);
+  }
+  return value;
+}
+
 export async function resolveRuntimeChainPayload(
   config: ServerConfig,
   workspace: WorkspaceInfo | null,
@@ -281,7 +289,7 @@ export function registerHealthStatusRoutes(
   });
 
   addRoute(routes, "GET", "/w/:id/status", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     return jsonResponse(await statusPayload(ctx, dependencies, workspace, 1));
   });
 
@@ -290,7 +298,7 @@ export function registerHealthStatusRoutes(
   });
 
   addRoute(routes, "GET", "/w/:id/workspaces", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     return jsonResponse({ items: [serializeWorkspaceForResponse(workspace)], activeId: workspace.id });
   });
 

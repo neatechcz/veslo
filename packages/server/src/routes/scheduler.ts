@@ -15,9 +15,17 @@ import {
 } from "../route-helpers.js";
 import { shortId } from "../utils.js";
 
+function requireRouteParam(params: Record<string, string>, field: string, label = field): string {
+  const value = params[field]?.trim() ?? "";
+  if (!value) {
+    throw new ApiError(400, "invalid_payload", `${label} is required`);
+  }
+  return value;
+}
+
 export function registerSchedulerRoutes(routes: Route[]): void {
   addRoute(routes, "GET", "/workspace/:id/scheduler/jobs", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const items = await listScheduledJobs(workspace.path);
     return jsonResponse({ items });
   });
@@ -26,7 +34,7 @@ export function registerSchedulerRoutes(routes: Route[]): void {
     const config = ctx.config;
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspace(config, requireRouteParam(ctx.params, "id", "workspace id"));
     const name = ctx.params.name;
     if (!name) {
       throw new ApiError(400, "job_name_required", "name is required");

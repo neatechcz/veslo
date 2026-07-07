@@ -42,6 +42,14 @@ export type McpRouteDependencies = {
 const ownerForWorkspace = (workspace: WorkspaceInfo) =>
   workspaceResourceOwner({ workspaceId: workspace.id, root: workspace.path, label: workspace.name });
 
+function requireRouteParam(params: Record<string, string>, field: string, label = field): string {
+  const value = params[field]?.trim() ?? "";
+  if (!value) {
+    throw new ApiError(400, "invalid_payload", `${label} is required`);
+  }
+  return value;
+}
+
 const requireDenCatalogContext = (ctx: Parameters<Route["handler"]>[0]) => {
   const denToken = ctx.request.headers.get("x-veslo-den-token")?.trim() || "";
   if (!denToken) {
@@ -88,7 +96,7 @@ export function registerMcpRoutes(routes: Route[], dependencies: McpRouteDepende
   });
 
   addRoute(routes, "GET", "/workspace/:id/mcp", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const items = await listMcp(workspace.path, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse({ items });
   });
@@ -97,7 +105,7 @@ export function registerMcpRoutes(routes: Route[], dependencies: McpRouteDepende
     const config = ctx.config;
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspace(config, requireRouteParam(ctx.params, "id", "workspace id"));
     const catalogName = String(ctx.params.name ?? "").trim();
     if (!catalogName) {
       throw new ApiError(400, "invalid_mcp_name", "MCP name is required");
@@ -163,7 +171,7 @@ export function registerMcpRoutes(routes: Route[], dependencies: McpRouteDepende
     const config = ctx.config;
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspace(config, requireRouteParam(ctx.params, "id", "workspace id"));
     const name = String(ctx.params.name ?? "").trim();
     validateMcpName(name);
 
@@ -217,7 +225,7 @@ export function registerMcpRoutes(routes: Route[], dependencies: McpRouteDepende
     const config = ctx.config;
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspace(config, requireRouteParam(ctx.params, "id", "workspace id"));
     const body = await readJsonBody(ctx.request);
     const name = String(body.name ?? "");
     const configPayload = body.config as Record<string, unknown> | undefined;
@@ -253,7 +261,7 @@ export function registerMcpRoutes(routes: Route[], dependencies: McpRouteDepende
     const config = ctx.config;
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspace(config, requireRouteParam(ctx.params, "id", "workspace id"));
     const name = ctx.params.name ?? "";
     await requireApproval(ctx, {
       workspaceId: workspace.id,
@@ -286,7 +294,7 @@ export function registerMcpRoutes(routes: Route[], dependencies: McpRouteDepende
     const config = ctx.config;
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspace(config, requireRouteParam(ctx.params, "id", "workspace id"));
     const name = String(ctx.params.name ?? "").trim();
     validateMcpName(name);
 

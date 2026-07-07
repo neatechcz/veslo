@@ -5,6 +5,10 @@ export type SidebarPrefsStorage = {
   setItem: (key: string, value: string) => void;
 };
 
+export type ReadGlobalSidebarDockedPrefsOptions = {
+  defaultVisibility?: GlobalSidebarDockedVisibility;
+};
+
 export const GLOBAL_SIDEBAR_DOCKED_PREF_KEY = "veslo.global.sidebar.docked.v1";
 export const LEGACY_SESSION_SIDEBAR_DOCKED_PREF_KEY = "veslo.session.sidebar.docked.v1";
 
@@ -38,11 +42,19 @@ const resolveStorage = (storage?: SidebarPrefsStorage | null): SidebarPrefsStora
   return window.localStorage;
 };
 
+const resolveDefaultVisibility = (
+  options?: ReadGlobalSidebarDockedPrefsOptions,
+): GlobalSidebarDockedVisibility => {
+  const customDefault = normalizeDockedVisibility(options?.defaultVisibility);
+  return customDefault ?? { ...DEFAULT_GLOBAL_SIDEBAR_DOCKED_VISIBILITY };
+};
+
 export const readGlobalSidebarDockedPrefs = (
   storage?: SidebarPrefsStorage | null,
+  options?: ReadGlobalSidebarDockedPrefsOptions,
 ): GlobalSidebarDockedVisibility => {
   const resolvedStorage = resolveStorage(storage);
-  if (!resolvedStorage) return { ...DEFAULT_GLOBAL_SIDEBAR_DOCKED_VISIBILITY };
+  if (!resolvedStorage) return resolveDefaultVisibility(options);
 
   const direct = parseDockedVisibility(resolvedStorage.getItem(GLOBAL_SIDEBAR_DOCKED_PREF_KEY));
   if (direct) return direct;
@@ -59,7 +71,7 @@ export const readGlobalSidebarDockedPrefs = (
     return legacy;
   }
 
-  return { ...DEFAULT_GLOBAL_SIDEBAR_DOCKED_VISIBILITY };
+  return resolveDefaultVisibility(options);
 };
 
 export const writeGlobalSidebarDockedPrefs = (

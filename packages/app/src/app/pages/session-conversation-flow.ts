@@ -25,6 +25,7 @@ import {
 import type { ComposerDraft, PendingSidebarSessionMetadata } from "../types";
 import type {
   MaterializedSessionHandoff,
+  MaterializedSessionScope,
   SessionSendOptionsBase,
   SessionSendOrigin,
   SessionSubmitResult,
@@ -529,8 +530,16 @@ export type SessionConversationFlowControllerDeps = {
     ) => void;
     createPendingSidebarSessionWorkspaceId: () => string;
     createPendingSidebarSessionWorkspaceRoot: (workspaceId: string) => string;
-    remapPendingQueueToSession: (pendingKey: string, sessionId: string) => void;
-    restoreMaterializedQueueToPending: (pendingKey: string, sessionId: string | null | undefined) => void;
+    remapPendingQueueToSession: (
+      pendingKey: string,
+      sessionId: string,
+      sessionKey?: string | null,
+    ) => void;
+    restoreMaterializedQueueToPending: (
+      pendingKey: string,
+      sessionId: string | null | undefined,
+      sessionKey?: string | null,
+    ) => void;
     setPendingQueueKeyAwaitingSessionIdForBaseKey: (baseKey: string, pendingKey: string) => void;
   };
   pendingSubmitted: {
@@ -621,6 +630,39 @@ export type SessionConversationFlowControllerDeps = {
   effects: {
     batch: (fn: () => void) => void;
   };
+};
+
+export type MaterializedPendingSessionTarget = {
+  sessionId: string;
+  sessionKey: string;
+  scope: MaterializedSessionScope;
+  workspaceRoot: string | null;
+  directory: string | null;
+  sendTraceId: string | null;
+};
+
+export const materializedSessionKeyFromHandoff = (
+  handoff: MaterializedSessionHandoff,
+  sessionId: string,
+) => {
+  if (handoff.scope.kind === "conversation") {
+    return createUiConversationKey({
+      workspaceId: handoff.scope.workspaceId,
+      workspaceRoot: handoff.workspaceRoot,
+      directory: handoff.directory ?? handoff.workspaceRoot,
+      conversationId: handoff.scope.conversationId,
+      opencodeSessionId: handoff.scope.opencodeSessionId,
+      kind: "session",
+      id: sessionId,
+    });
+  }
+  return createUiConversationKey({
+    workspaceId: handoff.scope.workspaceId,
+    workspaceRoot: handoff.workspaceRoot,
+    directory: handoff.directory ?? handoff.workspaceRoot,
+    kind: "session",
+    id: sessionId,
+  });
 };
 
 export type SessionConversationFlowController = {
@@ -958,9 +1000,15 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
       const pendingSubmitId = clientMessageId;
       let materializedSessionIdFromHandoff: string | null = null;
       let materializedSessionIdForRunStateReset: string | null = null;
+      const materializedPendingSessionTarget: {
+        current: MaterializedPendingSessionTarget | null;
+      } = { current: null };
       const runStateSessionKeyForHandoffFailure = () => {
         const materializedSessionId =
           materializedSessionIdForRunStateReset ?? materializedSessionIdFromHandoff;
+        if (materializedPendingSessionTarget.current?.sessionId === materializedSessionId) {
+          return materializedPendingSessionTarget.current.sessionKey;
+        }
         return materializedSessionId
           ? deps.sessionKeys.sessionQueueKeyForSessionId(materializedSessionId)
           : sessionKey;
@@ -975,6 +1023,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           handoff,
         });
         if (materialization.kind === "skip") return;
+        if (!handoff) return;
         const {
           pendingSessionBaseKey,
           pendingSessionKey,
@@ -983,9 +1032,17 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         } = materialization;
         materializedSessionIdFromHandoff = materializedSessionId;
         materializedSessionIdForRunStateReset = materializedSessionId;
-        const materializedSessionKey = deps.sessionKeys.sessionQueueKeyForSessionId(materializedSessionId);
+        const materializedSessionKey = materializedSessionKeyFromHandoff(handoff, materializedSessionId);
+        materializedPendingSessionTarget.current = {
+          sessionId: materializedSessionId,
+          sessionKey: materializedSessionKey,
+          scope: handoff.scope,
+          workspaceRoot: handoff.workspaceRoot?.trim() || null,
+          directory: handoff.directory?.trim() || handoff.workspaceRoot?.trim() || null,
+          sendTraceId: handoff.sendTraceId ?? options.sendTraceId ?? null,
+        };
         deps.trace.recordSendTrace("sendPromptImmediate:pending-handoff-materialize", {
-          sendTraceId: handoff?.sendTraceId ?? options.sendTraceId ?? null,
+          sendTraceId: materializedPendingSessionTarget.current.sendTraceId,
           clientMessageId,
           origin,
           pendingSessionBaseKeyBeforeHandoff: pendingSessionBaseKey,
@@ -993,16 +1050,25 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           materializedPendingKey,
           materializedSessionId,
           materializedSessionKey,
-          handoffWorkspaceId: handoff?.workspaceId ?? null,
-          conversationId: handoff?.conversationId ?? null,
-          opencodeSessionId: handoff?.opencodeSessionId ?? null,
+          handoffScopeKind: handoff.scope.kind,
+          handoffWorkspaceId: handoff.scope.workspaceId,
+          handoffWorkspaceRoot: handoff.workspaceRoot ?? null,
+          handoffDirectory: handoff.directory ?? null,
+          conversationId:
+            handoff.scope.kind === "conversation" ? handoff.scope.conversationId : null,
+          opencodeSessionId:
+            handoff.scope.kind === "conversation" ? handoff.scope.opencodeSessionId : null,
         });
         deps.effects.batch(() => {
           deps.pendingHandoff.setPendingQueueKeyAwaitingSessionIdForBaseKey(
             pendingSessionBaseKey,
             materializedSessionKey,
           );
-          deps.pendingHandoff.remapPendingQueueToSession(pendingSessionKey, materializedSessionId);
+          deps.pendingHandoff.remapPendingQueueToSession(
+            pendingSessionKey,
+            materializedSessionId,
+            materializedSessionKey,
+          );
         });
       };
       const handleMaterializedSessionId = (handoff: MaterializedSessionHandoff) => {
@@ -1043,6 +1109,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           deps.pendingHandoff.restoreMaterializedQueueToPending(
             pendingSessionKeyBeforeHandoff,
             materializedSessionIdToRestore,
+            materializedPendingSessionTarget.current?.sessionKey,
           );
         }
       };
@@ -1193,14 +1260,36 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             detail: `sessionKey=${sessionKey}`,
           },
         );
-        if (pendingSessionKeyBeforeHandoff && materializedSessionIdFromHandoff) {
-          materializePendingHandoffToSession({
-            workspaceId:
-              expectedWorkspaceId || deps.sessionKeys.activeUiConversationWorkspaceId(),
-            pendingSessionKey: pendingSessionKeyBeforeHandoff,
-            sessionId: materializedSessionIdFromHandoff,
+        if (
+          pendingSessionBaseKeyBeforeHandoff &&
+          pendingSessionKeyBeforeHandoff &&
+          materializedPendingSessionTarget.current
+        ) {
+          const target = materializedPendingSessionTarget.current;
+          deps.pendingHandoff.setPendingQueueKeyAwaitingSessionIdForBaseKey(
+            pendingSessionBaseKeyBeforeHandoff,
+            target.sessionKey,
+          );
+          deps.trace.recordSendTrace("sendPromptImmediate:pending-handoff-accepted", {
+            sendTraceId: target.sendTraceId,
             clientMessageId,
-            sendTraceId: options.sendTraceId ?? null,
+            origin,
+            pendingSessionBaseKeyBeforeHandoff,
+            pendingSessionKeyBeforeHandoff,
+            materializedSessionId: target.sessionId,
+            materializedSessionKey: target.sessionKey,
+            handoffScopeKind: target.scope.kind,
+            handoffWorkspaceId: target.scope.workspaceId,
+            handoffWorkspaceRoot: target.workspaceRoot,
+            handoffDirectory: target.directory,
+            conversationId:
+              target.scope.kind === "conversation"
+                ? target.scope.conversationId
+                : null,
+            opencodeSessionId:
+              target.scope.kind === "conversation"
+                ? target.scope.opencodeSessionId
+                : null,
           });
         }
         if (
@@ -1214,11 +1303,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         }
         deps.viewport.setStickToBottom(true);
         deps.viewport.scheduleScrollToLatest("auto");
-        deps.runState.startRun(
-          materializedSessionIdFromHandoff
-            ? deps.sessionKeys.sessionQueueKeyForSessionId(materializedSessionIdFromHandoff)
-            : sessionKey,
-        );
+        deps.runState.startRun(materializedPendingSessionTarget.current?.sessionKey ?? sessionKey);
         return submitResult;
       } catch (error) {
         if (showOptimisticSubmit) {

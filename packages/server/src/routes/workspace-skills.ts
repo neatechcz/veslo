@@ -43,6 +43,14 @@ const trimmedSearchParam = (params: URLSearchParams, key: string): string | unde
   return value || undefined;
 };
 
+function requireRouteParam(params: Record<string, string>, field: string, label = field): string {
+  const value = params[field]?.trim() ?? "";
+  if (!value) {
+    throw new ApiError(400, "invalid_payload", `${label} is required`);
+  }
+  return value;
+}
+
 export function registerWorkspaceSkillRoutes(
   routes: Route[],
   dependencies: WorkspaceSkillRouteDependencies,
@@ -60,10 +68,10 @@ export function registerWorkspaceSkillRoutes(
     });
     return listSkills(workspace.path, {
       includeGlobal: options.includeGlobal,
-      includeDisabled: options.includeDisabled,
       disabledSkills,
       workspaceId: workspace.id,
       workspaceOwner: ownerForWorkspace(workspace),
+      ...(options.includeDisabled !== undefined ? { includeDisabled: options.includeDisabled } : {}),
     });
   };
 
@@ -93,7 +101,7 @@ export function registerWorkspaceSkillRoutes(
   });
 
   addRoute(routes, "GET", "/workspace/:id/skills", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
     const includeDisabled = ctx.url.searchParams.get("includeDisabled") === "true";
     const items = await listWorkspaceRuntimeSkills(workspace, { includeGlobal, includeDisabled });
@@ -101,7 +109,7 @@ export function registerWorkspaceSkillRoutes(
   });
 
   addRoute(routes, "POST", "/workspace/:id/skills/resolve", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const body = await readJsonBody(ctx.request);
     const text = typeof body.text === "string" ? body.text : "";
     const includeGlobal = body?.includeGlobal === true || ctx.url.searchParams.get("includeGlobal") === "true";
@@ -112,9 +120,9 @@ export function registerWorkspaceSkillRoutes(
     const result = resolveSkillMatch({
       text,
       skills,
-      threshold,
-      ambiguityDelta,
-      maxCandidates,
+      ...(threshold !== undefined ? { threshold } : {}),
+      ...(ambiguityDelta !== undefined ? { ambiguityDelta } : {}),
+      ...(maxCandidates !== undefined ? { maxCandidates } : {}),
     });
     return jsonResponse(result);
   });
@@ -122,7 +130,7 @@ export function registerWorkspaceSkillRoutes(
   addRoute(routes, "POST", "/workspace/:id/skills/hub/:name", "client", async (ctx) => {
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const name = String(ctx.params.name ?? "").trim();
     if (!name) {
       throw new ApiError(400, "invalid_skill_name", "Skill name is required");
@@ -132,9 +140,9 @@ export function registerWorkspaceSkillRoutes(
     const repoPayload = body?.repo && typeof body.repo === "object" ? (body.repo as Record<string, unknown>) : undefined;
     const repo = repoPayload
       ? {
-          owner: typeof repoPayload.owner === "string" ? repoPayload.owner : undefined,
-          repo: typeof repoPayload.repo === "string" ? repoPayload.repo : undefined,
-          ref: typeof repoPayload.ref === "string" ? repoPayload.ref : undefined,
+          ...(typeof repoPayload.owner === "string" ? { owner: repoPayload.owner } : {}),
+          ...(typeof repoPayload.repo === "string" ? { repo: repoPayload.repo } : {}),
+          ...(typeof repoPayload.ref === "string" ? { ref: repoPayload.ref } : {}),
         }
       : undefined;
 
@@ -145,7 +153,11 @@ export function registerWorkspaceSkillRoutes(
       paths: [join(workspace.path, ".opencode", "skills", name)],
     });
 
-    const result = await installHubSkill(workspace.path, { name, overwrite, repo });
+    const result = await installHubSkill(workspace.path, {
+      name,
+      overwrite,
+      ...(repo ? { repo } : {}),
+    });
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -166,7 +178,7 @@ export function registerWorkspaceSkillRoutes(
   });
 
   addRoute(routes, "GET", "/workspace/:id/skills/:name", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
     const includeDisabled = ctx.url.searchParams.get("includeDisabled") === "true";
     const name = String(ctx.params.name ?? "").trim();
@@ -195,7 +207,7 @@ export function registerWorkspaceSkillRoutes(
   });
 
   addRoute(routes, "GET", "/workspace/:id/skills/:name/files", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
     const includeDisabled = ctx.url.searchParams.get("includeDisabled") === "true";
     const name = String(ctx.params.name ?? "").trim();
@@ -226,7 +238,7 @@ export function registerWorkspaceSkillRoutes(
   addRoute(routes, "POST", "/workspace/:id/skills", "client", async (ctx) => {
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const body = await readJsonBody(ctx.request);
     const name = String(body.name ?? "");
     const content = String(body.content ?? "");
@@ -238,9 +250,14 @@ export function registerWorkspaceSkillRoutes(
       summary: `Upsert skill ${name}`,
       paths: [instancePath || join(workspace.path, ".opencode", "skills", name, "SKILL.md")],
     });
+    const skillPayload = {
+      name,
+      content,
+      ...(description !== undefined ? { description } : {}),
+    };
     const result = instancePath
-      ? await updateSkillAtPath(workspace.path, { name, path: instancePath, content, description })
-      : await upsertSkill(workspace.path, { name, content, description });
+      ? await updateSkillAtPath(workspace.path, { ...skillPayload, path: instancePath })
+      : await upsertSkill(workspace.path, skillPayload);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -262,12 +279,19 @@ export function registerWorkspaceSkillRoutes(
   addRoute(routes, "DELETE", "/workspace/:id/skills/:name", "client", async (ctx) => {
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const name = String(ctx.params.name ?? "").trim();
     if (!name) {
       throw new ApiError(400, "invalid_skill_name", "Skill name is required");
     }
     const instancePath = ctx.url.searchParams.get("path")?.trim() ?? "";
+    const removalReason = trimmedSearchParam(ctx.url.searchParams, "reason");
+    const removalJournal = {
+      dataDir: serverDataDir,
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      ...(removalReason !== undefined ? { reason: removalReason } : {}),
+    };
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "skills.delete",
@@ -275,18 +299,8 @@ export function registerWorkspaceSkillRoutes(
       paths: [instancePath || join(workspace.path, ".opencode", "skills", name)],
     });
     const result = instancePath
-      ? await deleteSkillAtPathRecoverable(workspace.path, { name, path: instancePath }, {
-          dataDir: serverDataDir,
-          workspaceId: workspace.id,
-          actor: ctx.actor ?? { type: "remote" },
-          reason: trimmedSearchParam(ctx.url.searchParams, "reason"),
-        })
-      : await deleteSkillRecoverable(workspace.path, name, {
-          dataDir: serverDataDir,
-          workspaceId: workspace.id,
-          actor: ctx.actor ?? { type: "remote" },
-          reason: trimmedSearchParam(ctx.url.searchParams, "reason"),
-        });
+      ? await deleteSkillAtPathRecoverable(workspace.path, { name, path: instancePath }, removalJournal)
+      : await deleteSkillRecoverable(workspace.path, name, removalJournal);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,

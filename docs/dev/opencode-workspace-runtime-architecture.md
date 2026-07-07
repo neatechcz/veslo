@@ -80,21 +80,24 @@ the send result, and `strict` fails closed. The default is `report` so release
 builds keep sending even when a malformed background diagnostic payload is
 observed.
 
-Validation uses Zod `safeParse`; failures are converted to send trace payloads
+Validation uses Zod `safeParse`; successful checks are recorded as
+`validation-checked` events, and failures are converted to send trace payloads
 with `schema`, `validationMode`, `blocking`, `issueCount`, `issues`, and a small
 redacted payload summary. The validator must not throw directly.
 
 When running `pnpm dev`, validation output is visible through the existing send
 trace surfaces:
 
-- stable gitignored mirror: `.tmp/send-workflow-trace.ndjson`
+- stable gitignored mirror: `.tmp/send-workflow-trace.ndjson`, including
+  app-forwarded events plus server and orchestrator send trace events when
+  those processes inherit the trace environment
 - timestamped runtime archive printed by startup:
   `sendWorkflowTrace=.../send-workflow-trace.ndjson`
 - webview DevTools console: `[SENDTRACE] app:<event>`
 - Tauri dev terminal/stderr: `[ui:send-trace] <event> <json>`
 - in-memory webview buffer: `window.__vesloSendTrace`
 
-Useful validation events include:
+Useful validation failure events include:
 
 - `sendPrompt:runtime-preflight:validation-failed`
 - `sendPrompt:runtime-recovery:validation-failed`
@@ -106,7 +109,7 @@ To inspect the buffer from DevTools:
 
 ```js
 window.__vesloSendTrace?.filter((entry) =>
-  String(entry.event ?? "").includes("validation-failed")
+  String(entry.event ?? "").includes("validation-")
 )
 ```
 
@@ -152,6 +155,15 @@ The server route shape should remain workspace-scoped:
 - `POST /workspace/:id/conversations/:conversationId/runs`
 - `POST /workspace/:id/conversations/:conversationId/abort`
 - `GET /workspace/:id/conversations/:conversationId/runs/latest`
+
+For accepted local runs, the server registers active AI gateway run context
+before OpenCode submission and keeps that context until lifecycle reconciliation
+observes a terminal or missing run state, or until submit fails before the run
+can proceed. The provider-start watchdog records diagnostics only; it must not
+clear active gateway context while the run may still make later provider
+requests. This keeps `traceId`, `runId`, `workspaceId`, conversation id, and
+OpenCode session id attached to AI gateway proxy events through the whole send
+workflow.
 
 Server-controlled writes must remain expressible through Veslo server APIs.
 Avoid adding Tauri-only filesystem mutations for behavior that changes
@@ -265,7 +277,9 @@ Do not build a separate conversation model only for sandboxed execution.
 7. Veslo server creates or resolves the bound OpenCode session.
 8. Veslo server creates the run record.
 9. The orchestrator resolves the execution target.
-10. OpenCode receives the prompt for the bound session and directory.
+10. OpenCode receives the prompt for the bound session and directory. Fresh
+    prompt and command submits omit caller-provided `messageID`; Veslo
+    `clientMessageId` remains only the app/server idempotency key.
 11. Events and transcript data are mirrored back to the conversation and run.
 
 If any step fails, store the failure at the narrowest correct level:

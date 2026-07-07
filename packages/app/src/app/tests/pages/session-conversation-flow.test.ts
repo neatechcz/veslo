@@ -42,6 +42,7 @@ import {
   parseUiConversationKey,
 } from "../../lib/ui-conversation-scope.js";
 import {
+  createMaterializedSessionHandoff,
   sessionSubmitAcceptedResult,
   sessionSubmitBlockedResult,
   sessionSubmitFailedResult,
@@ -275,6 +276,156 @@ test("conversation flow controller blocks before transport while preserving opti
   assert.deepEqual(toasts, ["AI access blocked"]);
   assert.equal(pendingDrafts["pending-session:generated"]?.state, "error");
   assert.equal(pendingDrafts["pending-session:generated"]?.error, "AI access blocked");
+});
+
+test("conversation flow starts materialized first sends on the captured scoped session key", async () => {
+  const mappings: Array<[string, string]> = [];
+  const remaps: Array<{ pendingKey: string; sessionId: string; sessionKey: string | null | undefined }> = [];
+  const startedRuns: string[] = [];
+  let materializedSessionKeyCalls = 0;
+
+  const controller = createSessionConversationFlow({
+    identity: {
+      createClientMessageId: () => "submit-materialized",
+      createPendingSessionInstanceId: () => "pending-session:generated",
+      now: () => 123,
+    },
+    sessionKeys: {
+      activeUiConversationWorkspaceId: () => "workspace-1",
+      activeWorkspaceId: () => "workspace-1",
+      currentSessionQueueKey: () => "pending:base",
+      pendingSessionQueueKey: () => "pending:base",
+      selectedSessionId: () => null,
+      sessionIdForQueueKey: () => null,
+      sessionQueueKeyForSessionId: (sessionId) => {
+        if (sessionId === "sess-real") {
+          materializedSessionKeyCalls += 1;
+          return materializedSessionKeyCalls === 1
+            ? "ws2:workspace-1:session:sess-real:/repo:/repo:conv-real:sess-real"
+            : "ws2:workspace-1:session:sess-real:/repo:/repo::";
+        }
+        return `session:${sessionId ?? ""}`;
+      },
+      workspaceIdForQueueKey: () => "workspace-1",
+    },
+    runtime: {
+      activePendingDraftKey: () => "draft-1",
+      aiAccessBlockedReason: () => null,
+      busyHint: () => null,
+      busyLabel: () => null,
+      error: () => null,
+    },
+    transcript: {
+      messageCount: () => 0,
+      messageIds: () => [],
+    },
+    pendingHandoff: {
+      clearPendingQueueKeyAwaitingSessionIdForBaseKey: () => undefined,
+      createPendingSidebarSessionWorkspaceId: () => "workspace-1",
+      createPendingSidebarSessionWorkspaceRoot: () => "/repo",
+      remapPendingQueueToSession: (pendingKey, sessionId, sessionKey) => {
+        remaps.push({ pendingKey, sessionId, sessionKey });
+      },
+      restoreMaterializedQueueToPending: () => undefined,
+      setPendingQueueKeyAwaitingSessionIdForBaseKey: (baseKey, pendingKey) => {
+        mappings.push([baseKey, pendingKey]);
+      },
+    },
+    pendingSubmitted: {
+      optimisticSubmittedDraft: () => null,
+      setOptimisticSubmittedDraft: () => undefined,
+      updatePendingSubmittedDrafts: () => undefined,
+    },
+    queue: {
+      appendDraftToCurrentQueue: () => undefined,
+      editingQueuedDraftId: () => null,
+      queuePaused: () => false,
+      queuePausedForSessionKey: () => false,
+      queuedDrafts: () => [],
+      queuedDraftsBySessionKey: () => ({}),
+      resolveQueueKeyForQueuedDraft: (sessionKey) => sessionKey,
+      setEditingQueuedDraftId: () => undefined,
+      setQueuePausedForSessionKey: () => undefined,
+      updateCurrentQueue: () => undefined,
+      updateQueueForSessionKey: () => undefined,
+    },
+    composer: {
+      clearComposerDraftForSession: () => undefined,
+      currentDraftMode: () => "prompt",
+      setComposerDraft: () => undefined,
+    },
+    transcriptEdit: {
+      editableUserMessage: () => null,
+      editingTranscriptMessageId: () => null,
+      setEditingTranscriptMessageId: () => undefined,
+    },
+    runControl: {
+      abortBusy: () => false,
+      abortSession: async () => undefined,
+      lastPromptSent: () => "",
+      retryLastPrompt: () => undefined,
+      runPhase: () => "idle",
+      setAbortBusy: () => undefined,
+      setEscapeStopConfirmationPending: () => undefined,
+    },
+    runState: {
+      resetRunState: () => undefined,
+      showRunIndicator: () => false,
+      startRun: (sessionKey) => {
+        startedRuns.push(sessionKey);
+      },
+    },
+    viewport: {
+      scheduleScrollToLatest: () => undefined,
+      setStickToBottom: () => undefined,
+    },
+    transport: {
+      replaceUserMessageAsync: async () => {
+        throw new Error("replacement should not run for a first send");
+      },
+      sendPromptAsync: async (_sentDraft, options) => {
+        options.onMaterializedSessionId?.(createMaterializedSessionHandoff({
+          workspaceId: "workspace-1",
+          workspaceRoot: "/repo",
+          directory: "/repo",
+          pendingSessionKey: "pending-session:generated",
+          sessionId: "sess-real",
+          clientMessageId: options.clientMessageId,
+          sendTraceId: options.sendTraceId ?? null,
+          conversationId: "conv-real",
+          opencodeSessionId: "sess-real",
+        }));
+        return acceptedSubmitResult();
+      },
+    },
+    feedback: {
+      setToastMessage: () => undefined,
+      tr: (key) => key,
+    },
+    trace: {
+      markTempRuntimeUiRenderSource: () => undefined,
+      recordSendTrace: () => undefined,
+      reportError: () => undefined,
+    },
+    effects: {
+      batch: (fn) => fn(),
+    },
+  });
+
+  const result = await controller.sendPromptImmediate(draft);
+
+  const scopedSessionKey = "ws2:workspace-1:session:sess-real:%2Frepo:%2Frepo:conv-real:sess-real";
+  assert.equal(result.accepted, true);
+  assert.deepEqual(startedRuns, ["pending-session:generated", scopedSessionKey]);
+  assert.deepEqual(remaps, [
+    {
+      pendingKey: "pending-session:generated",
+      sessionId: "sess-real",
+      sessionKey: scopedSessionKey,
+    },
+  ]);
+  assert.equal(materializedSessionKeyCalls, 0);
+  assert.equal(mappings.at(-1)?.[1], scopedSessionKey);
 });
 
 test("conversation flow controller submits running Enter to the server queue", async () => {

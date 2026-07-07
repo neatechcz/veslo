@@ -1717,11 +1717,15 @@ test("POST workspace materialization sync skips out-of-scope user rollout packag
   }
 });
 
-test("GET workspace materialization status stays pending when registry is configured and only a local manifest exists", async () => {
+test("GET workspace materialization status stays pending when registry exposes the workspace skill set", async () => {
+  const registryCalls: string[] = [];
   const registry = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: async () => Response.json({ workspaceId: "ws_1", skills: [] }),
+    fetch: async (request) => {
+      registryCalls.push(new URL(request.url).pathname);
+      return Response.json({ workspaceId: "ws_1", skills: [] });
+    },
   });
   runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
   const { server, workspaceRoot } = await startFixture({ registryBaseUrl: `http://127.0.0.1:${registry.port}` });
@@ -1742,9 +1746,140 @@ test("GET workspace materialization status stays pending when registry is config
   });
 
   expect(response.status).toBe(200);
-  const payload = await response.json() as { status: string; registryConfigured: boolean };
+  const payload = await response.json() as {
+    status: string;
+    registryConfigured: boolean;
+    workspaceRegistryConfigured: boolean;
+    reloadRequired: boolean;
+  };
   expect(payload.registryConfigured).toBe(true);
+  expect(payload.workspaceRegistryConfigured).toBe(true);
   expect(payload.status).toBe("pending");
+  expect(payload.reloadRequired).toBe(true);
+  expect(registryCalls).toEqual(["/v1/workspaces/ws_1/skill-set"]);
+});
+
+test("GET workspace materialization status does not require sync when registry has no workspace skill set", async () => {
+  const registryCalls: string[] = [];
+  const registry = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      registryCalls.push(new URL(request.url).pathname);
+      return Response.json({ error: "not_found" }, { status: 404 });
+    },
+  });
+  runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
+  const { server } = await startFixture({ registryBaseUrl: `http://127.0.0.1:${registry.port}` });
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/skills/materialization`, {
+    headers: {
+      Authorization: "Bearer client-token",
+      "x-veslo-den-org-id": "org_1",
+      "x-veslo-den-user-id": "user_1",
+    },
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as {
+    status: string;
+    registryConfigured: boolean;
+    workspaceRegistryConfigured: boolean;
+    reloadRequired: boolean;
+    registryError?: { code?: string; status?: number };
+  };
+  expect(payload).toMatchObject({
+    status: "not-configured",
+    registryConfigured: true,
+    workspaceRegistryConfigured: false,
+    reloadRequired: false,
+    registryError: {
+      code: "skill_registry_not_found",
+      status: 404,
+    },
+  });
+  expect(registryCalls).toEqual(["/v1/workspaces/ws_1/skill-set"]);
+});
+
+test("GET workspace materialization status degrades when registry lookup fails", async () => {
+  const registryCalls: string[] = [];
+  const registry = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      registryCalls.push(new URL(request.url).pathname);
+      return Response.json({ error: "temporary" }, { status: 500 });
+    },
+  });
+  runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
+  const { server } = await startFixture({ registryBaseUrl: `http://127.0.0.1:${registry.port}` });
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/skills/materialization`, {
+    headers: { Authorization: "Bearer client-token" },
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as {
+    status: string;
+    registryConfigured: boolean;
+    reloadRequired: boolean;
+    registryError?: { code?: string; status?: number };
+  };
+  expect(payload).toMatchObject({
+    status: "degraded",
+    registryConfigured: true,
+    reloadRequired: false,
+    registryError: {
+      code: "skill_registry_fetch_failed",
+      status: 502,
+    },
+  });
+  expect(registryCalls).toEqual(["/v1/workspaces/ws_1/skill-set"]);
+});
+
+test("POST workspace materialization sync degrades when configured registry does not expose the workspace resource", async () => {
+  const registryCalls: string[] = [];
+  const registry = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      registryCalls.push(new URL(request.url).pathname);
+      return Response.json({ error: "not_found" }, { status: 404 });
+    },
+  });
+  runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
+  const { server } = await startFixture({ registryBaseUrl: `http://127.0.0.1:${registry.port}` });
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/skills/materialization/sync`, {
+    method: "POST",
+    headers: {
+      "x-veslo-host-token": "host-token",
+      "x-veslo-den-org-id": "org_1",
+      "x-veslo-den-user-id": "user_1",
+    },
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as {
+    status: string;
+    synced: boolean;
+    reloadRequired: boolean;
+    registryConfigured: boolean;
+    workspaceRegistryConfigured: boolean;
+    registryError?: { code?: string; status?: number };
+  };
+  expect(payload).toMatchObject({
+    status: "degraded",
+    synced: false,
+    reloadRequired: false,
+    registryConfigured: true,
+    workspaceRegistryConfigured: false,
+    registryError: {
+      code: "skill_registry_not_found",
+      status: 404,
+    },
+  });
+  expect(registryCalls).toEqual(["/v1/workspaces/ws_1/skill-set"]);
 });
 
 test("POST workspace materialization sync resolves org skill sets, writes lockfile, and blocks personal global shadows", async () => {

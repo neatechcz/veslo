@@ -48,6 +48,7 @@ export function createWorkspaceSkillMaterializationGate(
     if (!workspaceId) return true;
     let observedMaterializationStatus: {
       registryConfigured: boolean;
+      workspaceRegistryConfigured?: boolean;
       status?: string | null;
       reloadRequired?: boolean | null;
     } | null = null;
@@ -94,22 +95,46 @@ export function createWorkspaceSkillMaterializationGate(
         denUserId: denAuth?.user?.id?.trim() || undefined,
       };
 
-      const status = await client.getWorkspaceSkillMaterializationStatus(workspaceId);
+      const status = await client.getWorkspaceSkillMaterializationStatus(workspaceId, materializationAuth);
       observedMaterializationStatus = {
         registryConfigured: status.registryConfigured,
+        workspaceRegistryConfigured: status.workspaceRegistryConfigured,
         status: status.status,
         reloadRequired: status.reloadRequired ?? false,
       };
       trace("status", {
         registryConfigured: status.registryConfigured,
+        workspaceRegistryConfigured: status.workspaceRegistryConfigured ?? null,
         status: status.status,
         reloadRequired: status.reloadRequired ?? false,
       });
-      if (!status.registryConfigured) {
+      const workspaceRegistryUnavailable =
+        !status.registryConfigured ||
+        status.workspaceRegistryConfigured === false ||
+        status.status === "not-configured";
+      if (workspaceRegistryUnavailable) {
         deps.wsDebug("skills:materialization:skip:not-configured", {
           workspaceId,
           reason: context?.reason ?? null,
         });
+        return true;
+      }
+      if (status.status === "degraded" && status.reloadRequired !== true) {
+        deps.wsDebug("skills:materialization:degraded", {
+          workspaceId,
+          reason: context?.reason ?? null,
+          registryError: status.registryError ?? null,
+        });
+        if (status.registryError) {
+          reportError(
+            new VesloServerError(
+              status.registryError.status ?? 0,
+              status.registryError.code,
+              status.registryError.message,
+            ),
+            "workspace.skillMaterialization",
+          );
+        }
         return true;
       }
 
@@ -160,6 +185,20 @@ export function createWorkspaceSkillMaterializationGate(
         observedMaterializationStatus?.registryConfigured === true &&
         (observedMaterializationStatus.status !== "current" ||
           observedMaterializationStatus.reloadRequired === true);
+      if (isSkillRegistryMaterializationError(error)) {
+        trace("degraded", {
+          message,
+          code: error instanceof VesloServerError ? error.code : null,
+          status: error instanceof VesloServerError ? error.status : null,
+        });
+        deps.wsDebug("skills:materialization:degraded", {
+          workspaceId,
+          reason: context?.reason ?? null,
+          message,
+        });
+        reportError(error, "workspace.skillMaterialization");
+        return true;
+      }
       const configuredSyncAuthOrRouteFailure =
         configuredSyncRequired &&
         error instanceof VesloServerError &&
@@ -188,20 +227,6 @@ export function createWorkspaceSkillMaterializationGate(
           workspaceId,
           reason: context?.reason ?? null,
         });
-        return true;
-      }
-      if (isSkillRegistryMaterializationError(error)) {
-        trace("degraded", {
-          message,
-          code: error instanceof VesloServerError ? error.code : null,
-          status: error instanceof VesloServerError ? error.status : null,
-        });
-        deps.wsDebug("skills:materialization:degraded", {
-          workspaceId,
-          reason: context?.reason ?? null,
-          message,
-        });
-        reportError(error, "workspace.skillMaterialization");
         return true;
       }
       trace("failed", {

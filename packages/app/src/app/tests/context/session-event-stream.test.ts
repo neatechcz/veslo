@@ -446,6 +446,44 @@ test("queued SSE full part snapshots for the same part are still coalesced", asy
   });
 });
 
+test("session SSE cleanup closes the active subscription handle", async () => {
+  const { controller } = makeController();
+  const closes: string[] = [];
+  const client = makeEventClient(async () => ({
+    stream: (async function* () {
+      yield { type: "server.connected" } as OpencodeEvent;
+      await new Promise<void>(() => {});
+    })(),
+    close: async () => {
+      closes.push("closed");
+    },
+  } as any));
+
+  const cleanup = controller.setupSseStream("ws-a", client);
+  await tick(4);
+  cleanup();
+  await tick(4);
+
+  assert.deepEqual(closes, ["closed"]);
+});
+
+test("session SSE closes a subscription handle after stream end before reconnect", async () => {
+  const { controller } = makeController();
+  let closeCount = 0;
+  const client = makeEventClient(async () => ({
+    stream: (async function* () {})(),
+    close: async () => {
+      closeCount += 1;
+    },
+  } as any));
+
+  const cleanup = controller.setupSseStream("ws-a", client);
+  await tick(4);
+
+  assert.equal(closeCount, 1);
+  cleanup();
+});
+
 test(
   "text part trace records assistant updates only for assistant messages",
   withSendWorkflowTraceWindow(async (traceWindow) => {

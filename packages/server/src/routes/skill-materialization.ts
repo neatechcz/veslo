@@ -55,6 +55,30 @@ export type SkillMaterializationRouteDependencies = {
   serverDataDir: string;
 };
 
+type WorkspaceSkillMaterializationStatusOptions = {
+  registryConfigured?: boolean;
+  workspaceRegistryConfigured?: boolean;
+  status?: string;
+  reloadRequired?: boolean;
+  registryError?: ApiError;
+};
+
+type SkillRegistryRequestInput = {
+  baseUrl: string;
+  token?: string;
+  denToken?: string;
+  orgId?: string;
+  userId?: string;
+};
+
+function requireRouteParam(params: Record<string, string>, field: string, label = field): string {
+  const value = params[field]?.trim() ?? "";
+  if (!value) {
+    throw new ApiError(400, "invalid_payload", `${label} is required`);
+  }
+  return value;
+}
+
 function skillRegistryBaseUrl(config: ServerConfig): string {
   return config.skillRegistryBaseUrl?.trim() || "";
 }
@@ -70,17 +94,30 @@ function skillRegistryRequestBaseUrl(ctx: RequestContext): string {
   );
 }
 
-function skillRegistryRequestInput(ctx: RequestContext) {
+function skillRegistryRequestInput(ctx: RequestContext): SkillRegistryRequestInput {
+  const token = ctx.config.skillRegistryToken?.trim() || undefined;
+  const denToken = ctx.request.headers.get("x-veslo-den-token")?.trim() || undefined;
+  const orgId = ctx.request.headers.get("x-veslo-den-org-id")?.trim() || undefined;
   const userId = ctx.request.headers.get("x-veslo-den-user-id")?.trim() ||
     ctx.request.headers.get("x-veslo-user-id")?.trim() ||
     ctx.request.headers.get("x-veslo-account-id")?.trim() ||
     undefined;
   return {
     baseUrl: skillRegistryRequestBaseUrl(ctx),
-    token: ctx.config.skillRegistryToken?.trim() || undefined,
-    denToken: ctx.request.headers.get("x-veslo-den-token")?.trim() || undefined,
-    orgId: ctx.request.headers.get("x-veslo-den-org-id")?.trim() || undefined,
-    userId,
+    ...(token !== undefined ? { token } : {}),
+    ...(denToken !== undefined ? { denToken } : {}),
+    ...(orgId !== undefined ? { orgId } : {}),
+    ...(userId !== undefined ? { userId } : {}),
+  };
+}
+
+function registryIdentityPayload(input: Pick<SkillRegistryRequestInput, "orgId" | "userId">): {
+  orgId?: string;
+  userId?: string;
+} {
+  return {
+    ...(input.orgId !== undefined ? { orgId: input.orgId } : {}),
+    ...(input.userId !== undefined ? { userId: input.userId } : {}),
   };
 }
 
@@ -115,6 +152,14 @@ function materializationSummaryPayload(entry: WorkspaceSkillMaterialization) {
   };
 }
 
+function skillRegistryErrorPayload(error: ApiError) {
+  return {
+    code: error.code,
+    message: error.message,
+    status: error.status,
+  };
+}
+
 const materializationMatchesDesired = (
   entry: WorkspaceSkillMaterialization,
   desired: WorkspaceSkillMaterialization,
@@ -128,18 +173,99 @@ const materializationMatchesDesired = (
   entry.removalPolicy === desired.removalPolicy &&
   entry.target === desired.target;
 
-async function buildWorkspaceSkillMaterializationStatus(config: ServerConfig, workspace: WorkspaceInfo) {
+async function buildWorkspaceSkillMaterializationStatus(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  options: WorkspaceSkillMaterializationStatusOptions = {},
+) {
   const rootDir = workspaceManagedSkillsRoot(workspace.path);
   const manifest = await readSkillMaterializationManifest(rootDir);
-  const registryConfigured = Boolean(skillRegistryBaseUrl(config));
+  const registryConfigured = options.registryConfigured ?? Boolean(skillRegistryBaseUrl(config));
+  const workspaceRegistryConfigured = options.workspaceRegistryConfigured ?? registryConfigured;
+  const reloadRequired = options.reloadRequired ?? (registryConfigured && workspaceRegistryConfigured);
   return {
     workspaceId: workspace.id,
-    status: registryConfigured ? "pending" : "not-configured",
+    status: options.status ?? (reloadRequired ? "pending" : "not-configured"),
     registryConfigured,
+    workspaceRegistryConfigured,
     rootDir,
     materializedSkills: manifest?.entries.map(materializationEntryPayload) ?? [],
-    reloadRequired: registryConfigured,
+    reloadRequired,
+    ...(options.registryError ? { registryError: skillRegistryErrorPayload(options.registryError) } : {}),
   };
+}
+
+async function buildWorkspaceSkillRegistryUnavailableStatus(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  error: ApiError,
+) {
+  const base = await buildWorkspaceSkillMaterializationStatus(config, workspace, {
+    workspaceRegistryConfigured: false,
+    status: "degraded",
+    reloadRequired: false,
+    registryError: error,
+  });
+  return {
+    ...base,
+    synced: false,
+    conflicts: [],
+  };
+}
+
+function isWorkspaceSkillRegistryNotFound(error: unknown): error is ApiError {
+  return error instanceof ApiError &&
+    error.status === 404 &&
+    error.code === "skill_registry_not_found";
+}
+
+function isSkillRegistryApiError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.code.startsWith("skill_registry_");
+}
+
+async function buildWorkspaceSkillMaterializationStatusForRequest(ctx: RequestContext, workspace: WorkspaceInfo) {
+  const baseUrl = skillRegistryRequestBaseUrl(ctx);
+  const registryConfigured = Boolean(baseUrl);
+  if (!registryConfigured) {
+    return buildWorkspaceSkillMaterializationStatus(ctx.config, workspace, {
+      registryConfigured: false,
+      workspaceRegistryConfigured: false,
+      status: "not-configured",
+      reloadRequired: false,
+    });
+  }
+
+  try {
+    await getWorkspaceSkillSetFromRegistry({
+      ...skillRegistryRequestInput(ctx),
+      workspaceId: workspace.id,
+    });
+    return buildWorkspaceSkillMaterializationStatus(ctx.config, workspace, {
+      registryConfigured: true,
+      workspaceRegistryConfigured: true,
+      status: "pending",
+      reloadRequired: true,
+    });
+  } catch (error) {
+    if (isWorkspaceSkillRegistryNotFound(error)) {
+      return buildWorkspaceSkillMaterializationStatus(ctx.config, workspace, {
+        registryConfigured: true,
+        workspaceRegistryConfigured: false,
+        status: "not-configured",
+        reloadRequired: false,
+        registryError: error,
+      });
+    }
+    if (isSkillRegistryApiError(error)) {
+      return buildWorkspaceSkillMaterializationStatus(ctx.config, workspace, {
+        registryConfigured: true,
+        status: "degraded",
+        reloadRequired: false,
+        registryError: error,
+      });
+    }
+    throw error;
+  }
 }
 
 async function buildGlobalSkillMaterializationStatus(config: ServerConfig) {
@@ -190,6 +316,10 @@ function registryInstallationToWorkspaceInstallation(input: {
   userId?: string;
 }): WorkspaceSkillRegistryInstallation {
   const { installation, workspace, packageResponse, orgId, userId } = input;
+  const ownerUserId = installation.ownerUserId ?? (installation.source === "personal" ? userId : undefined);
+  const installationOrgId = installation.orgId ?? (installation.source === "organization" ? orgId : undefined);
+  const workspaceId = installation.workspaceId ?? (installation.source === "workspace" ? workspace.id : undefined);
+  const approved = installation.approved ?? (installation.source === "personal" ? undefined : true);
   return {
     installationId: installation.installationId,
     skillId: installation.skillId,
@@ -199,10 +329,10 @@ function registryInstallationToWorkspaceInstallation(input: {
     enabled: installation.enabled,
     source: installation.source,
     installedAt: installation.installedAt,
-    ownerUserId: installation.ownerUserId ?? (installation.source === "personal" ? userId : undefined),
-    orgId: installation.orgId ?? (installation.source === "organization" ? orgId : undefined),
-    workspaceId: installation.workspaceId ?? (installation.source === "workspace" ? workspace.id : undefined),
-    approved: installation.approved ?? (installation.source === "personal" ? undefined : true),
+    ...(ownerUserId !== undefined ? { ownerUserId } : {}),
+    ...(installationOrgId !== undefined ? { orgId: installationOrgId } : {}),
+    ...(workspaceId !== undefined ? { workspaceId } : {}),
+    ...(approved !== undefined ? { approved } : {}),
     desiredVersionId: installation.desiredVersionId ?? null,
     desiredPackageSha256: installation.desiredPackageSha256 ?? null,
   };
@@ -225,6 +355,7 @@ function registryRolloutPolicyToWorkspacePolicy(input: {
   orgId?: string;
 }): WorkspaceSkillRolloutPolicy {
   const { policy, packageResponse, orgId } = input;
+  const policyOrgId = policy.orgId ?? (policy.catalogScope === "organization" ? orgId : undefined);
   return {
     id: policy.id,
     skillId: policy.skillId,
@@ -235,9 +366,9 @@ function registryRolloutPolicyToWorkspacePolicy(input: {
     source: policy.catalogScope === "organization" ? "organization" : "platform",
     target: policy.target === "user-global" ? "personal-global" : "workspace",
     audience: policy.audience,
-    orgId: policy.orgId ?? (policy.catalogScope === "organization" ? orgId : undefined),
-    userId: policy.userId ?? undefined,
-    workspaceId: policy.workspaceId ?? undefined,
+    ...(policyOrgId !== undefined ? { orgId: policyOrgId } : {}),
+    ...(policy.userId !== undefined ? { userId: policy.userId } : {}),
+    ...(policy.workspaceId !== undefined ? { workspaceId: policy.workspaceId } : {}),
     removalPolicy: policy.removalPolicy,
     updatePolicy: policy.updatePolicy,
     releaseChannel: policy.releaseChannel ?? null,
@@ -337,8 +468,7 @@ async function fetchRegistryWorkspaceMaterializations(
       installation,
       workspace: targetWorkspace,
       packageResponse,
-      orgId: registryInput.orgId,
-      userId: registryInput.userId,
+      ...registryIdentityPayload(registryInput),
     });
     registryInstallations.push(workspaceInstallation);
     packagesByInstallationId.set(workspaceInstallation.installationId, packageResponse.package);
@@ -372,9 +502,8 @@ async function fetchRegistryWorkspaceMaterializations(
     for (const policy of rolloutPoliciesResponse.policies) {
       if (!registryRolloutPolicyAppliesToMaterialization({
         policy,
-        userId: registryInput.userId,
-        orgId: registryInput.orgId,
         workspaceId: workspace.id,
+        ...registryIdentityPayload(registryInput),
       })) {
         continue;
       }
@@ -388,7 +517,7 @@ async function fetchRegistryWorkspaceMaterializations(
       const workspacePolicy = registryRolloutPolicyToWorkspacePolicy({
         policy,
         packageResponse,
-        orgId: registryInput.orgId,
+        ...(registryInput.orgId !== undefined ? { orgId: registryInput.orgId } : {}),
       });
       rolloutPolicies.push(workspacePolicy);
       packagesByInstallationId.set(`rollout:${workspacePolicy.id}`, packageResponse.package);
@@ -399,11 +528,11 @@ async function fetchRegistryWorkspaceMaterializations(
     workspace: {
       id: workspace.id,
       scope: registryInput.orgId ? "organization" : "personal",
-      orgId: registryInput.orgId,
+      ...(registryInput.orgId !== undefined ? { orgId: registryInput.orgId } : {}),
     },
     user: {
       id: registryInput.userId ?? "local-user",
-      orgId: registryInput.orgId,
+      ...(registryInput.orgId !== undefined ? { orgId: registryInput.orgId } : {}),
     },
     registryInstallations,
     rolloutPolicies,
@@ -474,8 +603,7 @@ async function fetchRegistryPersonalGlobalMaterializations(
       installation,
       workspace: personalGlobalWorkspace,
       packageResponse,
-      orgId: registryInput.orgId,
-      userId: registryInput.userId,
+      ...registryIdentityPayload(registryInput),
     });
     registryInstallations.push(workspaceInstallation);
     packagesByInstallationId.set(workspaceInstallation.installationId, packageResponse.package);
@@ -489,8 +617,7 @@ async function fetchRegistryPersonalGlobalMaterializations(
   for (const policy of rolloutPoliciesResponse.policies) {
     if (!registryRolloutPolicyAppliesToMaterialization({
       policy,
-      userId: registryInput.userId,
-      orgId: registryInput.orgId,
+      ...registryIdentityPayload(registryInput),
     })) {
       continue;
     }
@@ -501,7 +628,7 @@ async function fetchRegistryPersonalGlobalMaterializations(
     const workspacePolicy = registryRolloutPolicyToWorkspacePolicy({
       policy,
       packageResponse,
-      orgId: registryInput.orgId,
+      ...(registryInput.orgId !== undefined ? { orgId: registryInput.orgId } : {}),
     });
     rolloutPolicies.push(workspacePolicy);
     packagesByInstallationId.set(`rollout:${workspacePolicy.id}`, packageResponse.package);
@@ -511,11 +638,11 @@ async function fetchRegistryPersonalGlobalMaterializations(
     workspace: {
       id: personalGlobalWorkspace.id,
       scope: registryInput.orgId ? "organization" : "personal",
-      orgId: registryInput.orgId,
+      ...(registryInput.orgId !== undefined ? { orgId: registryInput.orgId } : {}),
     },
     user: {
       id: registryInput.userId ?? "local-user",
-      orgId: registryInput.orgId,
+      ...(registryInput.orgId !== undefined ? { orgId: registryInput.orgId } : {}),
     },
     registryInstallations,
     rolloutPolicies,
@@ -603,14 +730,14 @@ export function registerSkillMaterializationRoutes(
   });
 
   addRoute(routes, "GET", "/workspace/:id/skills/materialization", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
-    return jsonResponse(await buildWorkspaceSkillMaterializationStatus(ctx.config, workspace));
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
+    return jsonResponse(await buildWorkspaceSkillMaterializationStatusForRequest(ctx, workspace));
   });
 
   addRoute(routes, "POST", "/workspace/:id/skills/user-global-store/sync", "client", async (ctx) => {
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "skills.user_global_store.sync",
@@ -648,19 +775,33 @@ export function registerSkillMaterializationRoutes(
 
   addRoute(routes, "POST", "/workspace/:id/skills/materialization/sync", "host", async (ctx) => {
     ensureWritable(ctx.config);
-    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const body = await readOptionalJsonBody(ctx.request);
     if (body.activeRun === true) {
-      const status = await buildWorkspaceSkillMaterializationStatus(ctx.config, workspace);
+      const registryConfigured = Boolean(skillRegistryRequestBaseUrl(ctx));
+      const status = await buildWorkspaceSkillMaterializationStatus(ctx.config, workspace, {
+        registryConfigured,
+        workspaceRegistryConfigured: registryConfigured,
+        reloadRequired: registryConfigured,
+      });
       return jsonResponse({
         ...status,
-        status: "pending",
+        status: registryConfigured ? "pending" : status.status,
         synced: false,
-        reloadRequired: true,
+        reloadRequired: registryConfigured,
         conflicts: [],
-      }, 202);
+      }, registryConfigured ? 202 : 200);
     }
 
+    let materializationInput: Awaited<ReturnType<typeof fetchRegistryWorkspaceMaterializations>>;
+    try {
+      materializationInput = await fetchRegistryWorkspaceMaterializations(ctx, workspace);
+    } catch (error) {
+      if (isWorkspaceSkillRegistryNotFound(error)) {
+        return jsonResponse(await buildWorkspaceSkillRegistryUnavailableStatus(ctx.config, workspace, error));
+      }
+      throw error;
+    }
     const {
       materializations,
       conflicts,
@@ -668,7 +809,7 @@ export function registerSkillMaterializationRoutes(
       personalGlobalSyncRequired,
       skillSetId,
       skillSetRevision,
-    } = await fetchRegistryWorkspaceMaterializations(ctx, workspace);
+    } = materializationInput;
     const workspaceMaterializations = materializations.filter((skill) => skill.target === "workspace");
     const personalGlobalMaterializations = materializations.filter((skill) => skill.target === "personal-global");
     const loadPackage = async (skill: WorkspaceSkillMaterialization) => {

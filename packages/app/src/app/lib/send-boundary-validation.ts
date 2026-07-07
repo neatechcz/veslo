@@ -46,6 +46,7 @@ export type SendBoundaryValidationEnv = Record<string, string | boolean | undefi
 
 export type SendBoundaryFailurePhase =
   | "app-runtime-preflight"
+  | "managed-ai-auth-prime"
   | "server-session-create"
   | "server-run-submit"
   | "queued-run-drain"
@@ -65,6 +66,7 @@ export type SendBoundaryFailureClassifierInput = {
 
 const nullableStringSchema = z.string().nullable().optional();
 const nonEmptyStringSchema = z.string().min(1);
+const promptModeSchema = z.enum(["prompt", "shell"]);
 
 const debugTraceEntrySchema = z.object({
   event: z.string().optional(),
@@ -81,7 +83,7 @@ const conversationSubmitAttachmentSchema = z.object({
 });
 
 const conversationSubmitDraftSchema = z.object({
-  mode: z.enum(["prompt", "shell"]),
+  mode: promptModeSchema,
   text: z.string(),
   resolvedText: nullableStringSchema,
   parts: z.array(z.unknown()),
@@ -90,6 +92,78 @@ const conversationSubmitDraftSchema = z.object({
     arguments: z.string(),
   }).nullable().optional(),
   attachments: z.array(conversationSubmitAttachmentSchema).optional(),
+});
+
+const composerAttachmentSchema = z.object({
+  id: z.string().optional(),
+  name: nonEmptyStringSchema,
+  mimeType: z.string(),
+  size: z.number().nonnegative().optional(),
+  kind: z.enum(["image", "file"]),
+  dataUrl: z.string().optional(),
+}).passthrough();
+
+const composerDraftSchema = z.object({
+  mode: promptModeSchema,
+  text: z.string(),
+  resolvedText: nullableStringSchema,
+  parts: z.array(z.unknown()),
+  command: z.object({
+    name: nonEmptyStringSchema,
+    arguments: z.string(),
+  }).nullable().optional(),
+  attachments: z.array(composerAttachmentSchema),
+}).passthrough();
+
+const sendTargetWorkspaceSchema = z.object({
+  workspaceId: nonEmptyStringSchema,
+  workspaceRoot: z.string(),
+  directory: z.string(),
+}).passthrough();
+
+const sendPreflightContextSummarySchema = z.object({
+  traceId: nonEmptyStringSchema,
+  targetWorkspace: sendTargetWorkspaceSchema.nullable().optional(),
+}).passthrough();
+
+const legacyFallbackPrepareInputSchema = z.object({
+  traceId: nonEmptyStringSchema,
+  targetWorkspaceId: nonEmptyStringSchema,
+  sendPreflight: sendPreflightContextSummarySchema,
+  sendTargetWorkspace: sendTargetWorkspaceSchema.nullable().optional(),
+});
+
+const sendCorrelationSchema = z.object({
+  clientMessageId: nonEmptyStringSchema,
+  origin: nonEmptyStringSchema,
+  source: nullableStringSchema,
+}).passthrough();
+
+const legacyFallbackSubmitInputSchema = z.object({
+  traceId: nonEmptyStringSchema,
+  sessionID: nonEmptyStringSchema,
+  targetWorkspaceId: nonEmptyStringSchema,
+  commandName: nullableStringSchema,
+  compactCommand: z.boolean(),
+  hasExplicitDraft: z.boolean(),
+  draft: composerDraftSchema,
+  sendCorrelation: sendCorrelationSchema,
+  sendPreflight: sendPreflightContextSummarySchema,
+  sendTargetWorkspace: sendTargetWorkspaceSchema.nullable().optional(),
+});
+
+const stagedSessionAttachmentSchema = z.object({
+  name: nonEmptyStringSchema,
+  kind: z.enum(["image", "file"]),
+  mimeType: z.string(),
+  relativePath: nonEmptyStringSchema,
+  absolutePath: nonEmptyStringSchema,
+});
+
+const routedComposerDraftResultSchema = z.object({
+  draft: composerDraftSchema,
+  system: z.string().optional(),
+  error: z.string().optional(),
 });
 
 const conversationSubmitOptionsSchema = z.object({
@@ -248,10 +322,17 @@ export function classifySendBoundaryFailurePhase(
   const text = textFromClassifierInput(input);
   if (!text) return "unknown";
   if (
+    text.includes("managed-ai-runtime-auth-prime") ||
+    text.includes("managed ai gateway authorization") ||
+    text.includes("managed-ai-auth-prime") ||
+    text.includes("auth-prime")
+  ) {
+    return "managed-ai-auth-prime";
+  }
+  if (
     text.includes("runtime-preflight") ||
     text.includes("send-runtime-preparation") ||
-    text.includes("runtime preparation") ||
-    text.includes("auth-prime")
+    text.includes("runtime preparation")
   ) {
     return "app-runtime-preflight";
   }
@@ -315,6 +396,13 @@ function validateSendBoundary<T>(
 
   const result = schema.safeParse(value);
   if (result.success) {
+    options.recordSendTrace(options.event.replace(/validation-failed$/, "validation-checked"), {
+      ...(options.traceId ? { traceId: options.traceId } : {}),
+      ...(options.context ?? {}),
+      schema: options.schema,
+      validationMode: mode,
+      payload: summarizeValue(value),
+    });
     return { ok: true, value: value as T };
   }
 
@@ -345,6 +433,46 @@ export function validateConversationSubmitRequest(
   return validateSendBoundary(conversationSubmitRequestSchema, value, {
     ...options,
     schema: "conversation-submit-request",
+  });
+}
+
+export function validateLegacyFallbackPrepareInput<T>(
+  value: T,
+  options: Omit<SendBoundaryValidationOptions, "schema">,
+): SendBoundaryValidationResult<T> {
+  return validateSendBoundary(legacyFallbackPrepareInputSchema, value, {
+    ...options,
+    schema: "legacy-fallback-prepare-input",
+  });
+}
+
+export function validateLegacyFallbackSubmitInput<T>(
+  value: T,
+  options: Omit<SendBoundaryValidationOptions, "schema">,
+): SendBoundaryValidationResult<T> {
+  return validateSendBoundary(legacyFallbackSubmitInputSchema, value, {
+    ...options,
+    schema: "legacy-fallback-submit-input",
+  });
+}
+
+export function validateStagedSessionAttachments<T>(
+  value: T,
+  options: Omit<SendBoundaryValidationOptions, "schema">,
+): SendBoundaryValidationResult<T> {
+  return validateSendBoundary(z.array(stagedSessionAttachmentSchema), value, {
+    ...options,
+    schema: "staged-session-attachments",
+  });
+}
+
+export function validateRoutedComposerDraftResult<T>(
+  value: T,
+  options: Omit<SendBoundaryValidationOptions, "schema">,
+): SendBoundaryValidationResult<T> {
+  return validateSendBoundary(routedComposerDraftResultSchema, value, {
+    ...options,
+    schema: "routed-composer-draft-result",
   });
 }
 

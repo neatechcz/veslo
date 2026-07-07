@@ -6,6 +6,14 @@ import {
 } from "../route-helpers.js";
 import { addRoute, type Route } from "../routing.js";
 
+function requireRouteParam(params: Record<string, string>, field: string, label = field): string {
+  const value = params[field]?.trim() ?? "";
+  if (!value) {
+    throw new ApiError(400, "invalid_payload", `${label} is required`);
+  }
+  return value;
+}
+
 export function registerAdminRoutes(routes: Route[]): void {
   addRoute(routes, "GET", "/tokens", "host", async (ctx) => {
     const items = await ctx.tokens.list();
@@ -21,13 +29,14 @@ export function registerAdminRoutes(routes: Route[]): void {
       throw new ApiError(400, "invalid_scope", "Token scope must be owner, collaborator, or viewer");
     }
     const label = typeof body.label === "string" ? body.label.trim() : undefined;
-    const issued = await ctx.tokens.create(scope, { label });
+    const issued = await ctx.tokens.create(scope, label ? { label } : undefined);
     return jsonResponse(issued, 201);
   });
 
   addRoute(routes, "DELETE", "/tokens/:id", "host", async (ctx) => {
     ensureWritable(ctx.config);
-    const ok = await ctx.tokens.revoke(ctx.params.id);
+    const id = requireRouteParam(ctx.params, "id", "token id");
+    const ok = await ctx.tokens.revoke(id);
     if (!ok) {
       throw new ApiError(404, "token_not_found", "Token not found");
     }
@@ -45,7 +54,8 @@ export function registerAdminRoutes(routes: Route[]): void {
   addRoute(routes, "POST", "/approvals/:id", "host", async (ctx) => {
     const body = await readJsonBody(ctx.request);
     const reply = body.reply === "allow" ? "allow" : "deny";
-    const result = ctx.approvals.respond(ctx.params.id, reply);
+    const id = requireRouteParam(ctx.params, "id", "approval id");
+    const result = ctx.approvals.respond(id, reply);
     if (!result) {
       throw new ApiError(404, "approval_not_found", "Approval request not found");
     }

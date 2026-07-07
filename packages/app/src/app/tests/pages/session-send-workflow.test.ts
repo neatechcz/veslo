@@ -22,6 +22,7 @@ import type {
 import {
   classifySendBoundaryFailurePhase,
   resolveSendBoundaryValidationMode,
+  validateSendRuntimePreparationResult,
 } from "../../lib/send-boundary-validation.js";
 import type { Client, ComposerDraft, ModelRef } from "../../types.js";
 
@@ -33,6 +34,23 @@ const promptDraft = (text = "hello"): ComposerDraft => ({
   resolvedText: text,
   parts: [{ type: "text", text }],
   attachments: [],
+});
+
+const attachmentDraft = (text = "with attachment"): ComposerDraft => ({
+  mode: "prompt",
+  text,
+  resolvedText: text,
+  parts: [{ type: "text", text }],
+  attachments: [
+    {
+      id: "att-1",
+      name: "note.txt",
+      kind: "file",
+      mimeType: "text/plain",
+      size: 4,
+      dataUrl: "data:text/plain;base64,dGVzdA==",
+    },
+  ],
 });
 
 const compactDraft = (): ComposerDraft => ({
@@ -448,10 +466,63 @@ test("send boundary validation mode is report-only unless explicitly strict or o
   assert.equal(resolveSendBoundaryValidationMode({ VITE_VESLO_SEND_BOUNDARY_VALIDATION: "enabled" }), "report");
 });
 
+test("send boundary validation reports successful Zod checks without blocking send", () => {
+  const traces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+  const value = {
+    ok: true,
+    runtimeReady: true,
+    managedAiReady: true,
+    workspaceId: "ws-active",
+    activeWorkspace: true,
+    recoveryAttempted: false,
+    reason: "runtime-health-ok",
+  };
+
+  const checked = validateSendRuntimePreparationResult(value, {
+    context: { phase: "runtime-preflight" },
+    event: "sendPrompt:runtime-preflight:validation-failed",
+    mode: "report",
+    recordSendTrace: (event, payload) => traces.push({ event, payload }),
+    traceId: "trace-zod-ok",
+  });
+
+  assert.equal(checked.ok, true);
+  assert.deepEqual(traces.map((trace) => trace.event), ["sendPrompt:runtime-preflight:validation-checked"]);
+  assert.equal(traces[0]?.payload?.schema, "send-runtime-preparation-result");
+  assert.equal(traces[0]?.payload?.validationMode, "report");
+  assert.equal(traces[0]?.payload?.traceId, "trace-zod-ok");
+  assert.deepEqual((traces[0]?.payload?.payload as { keys?: string[] }).keys, [
+    "ok",
+    "runtimeReady",
+    "managedAiReady",
+    "workspaceId",
+    "activeWorkspace",
+    "recoveryAttempted",
+    "reason",
+  ]);
+
+  traces.length = 0;
+  const disabled = validateSendRuntimePreparationResult(value, {
+    event: "sendPrompt:runtime-preflight:validation-failed",
+    mode: "off",
+    recordSendTrace: (event, payload) => traces.push({ event, payload }),
+  });
+
+  assert.equal(disabled.ok, true);
+  assert.deepEqual(traces, []);
+});
+
 test("send boundary classifier preserves the failing submit layer", () => {
   assert.equal(
     classifySendBoundaryFailurePhase({ schema: "send-runtime-preparation-result", phase: "runtime-preflight" }),
     "app-runtime-preflight",
+  );
+  assert.equal(
+    classifySendBoundaryFailurePhase({
+      event: "submitConversationFromVesloWriteApi:managed-ai-runtime-auth-prime:result",
+      message: "Managed AI gateway authorization is not ready for this runtime.",
+    }),
+    "managed-ai-auth-prime",
   );
   assert.equal(
     classifySendBoundaryFailurePhase({
@@ -545,6 +616,112 @@ test("session send workflow can disable boundary validation reporting", async ()
 
   assert.equal(sent.accepted, true);
   assert.equal(harness.events.includes("sendPrompt:runtime-preflight:validation-failed"), false);
+  assert.ok(harness.actions.includes("run:sess-target"));
+});
+
+test("session send workflow strict validation blocks legacy prepare with missing workspace scope", async () => {
+  const targetlessWorkspace = {
+    activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
+    activeWorkspaceId: () => "",
+    activeWorkspaceRoot: () => "",
+    workspaces: () => [],
+  };
+  const harness = createHarness({
+    resolveSendTargetWorkspaceScope: () => null,
+    workspace: targetlessWorkspace,
+    runConversationFromVesloWriteApi: async () => {
+      throw new Error("legacy run should not run with invalid prepare scope");
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("missing workspace scope"), {
+    clientMessageId: "client-missing-workspace-scope",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent.accepted, false);
+  assert.equal(sent.status, "blocked");
+  assert.equal(sent.code, "legacy_prepare_blocked");
+  assert.ok(harness.events.includes("sendPrompt:legacy-fallback-prepare-input:validation-failed"));
+  assert.match(harness.errors.at(-1) ?? "", /legacy-fallback-prepare-input/);
+  assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
+});
+
+test("session send workflow report validation logs legacy prepare scope without blocking send", async () => {
+  const targetlessWorkspace = {
+    activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
+    activeWorkspaceId: () => "",
+    activeWorkspaceRoot: () => "",
+    workspaces: () => [],
+  };
+  const harness = createHarness({
+    resolveSendTargetWorkspaceScope: () => null,
+    sendBoundaryValidationMode: () => "report",
+    workspace: targetlessWorkspace,
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("report missing workspace scope"), {
+    clientMessageId: "client-report-missing-workspace-scope",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent.accepted, true);
+  assert.ok(harness.events.includes("sendPrompt:legacy-fallback-prepare-input:validation-failed"));
+  assert.ok(harness.actions.includes("run:sess-target"));
+});
+
+test("session send workflow validates staged attachment shape before routing in strict mode", async () => {
+  const harness = createHarness({
+    routeStagedAttachmentsForModel: () => {
+      throw new Error("routing should not run with invalid staged attachments");
+    },
+    stageAttachmentsIntoSessionDirectory: async () => [{
+      name: "note.txt",
+      kind: "file" as const,
+      mimeType: "text/plain",
+      relativePath: "",
+      absolutePath: "",
+    }],
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(attachmentDraft("invalid staged attachment"), {
+    clientMessageId: "client-invalid-staged-attachment",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent.accepted, false);
+  assert.equal(sent.status, "blocked");
+  assert.ok(harness.events.includes("sendPrompt:stage-attachments-result:validation-failed"));
+  assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
+});
+
+test("session send workflow can report malformed staged attachments without blocking routing", async () => {
+  const harness = createHarness({
+    sendBoundaryValidationMode: () => "report",
+    stageAttachmentsIntoSessionDirectory: async () => [{
+      name: "note.txt",
+      kind: "file" as const,
+      mimeType: "text/plain",
+      relativePath: "",
+      absolutePath: "",
+    }],
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(attachmentDraft("report staged attachment"), {
+    clientMessageId: "client-report-staged-attachment",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent.accepted, true);
+  assert.ok(harness.events.includes("sendPrompt:stage-attachments-result:validation-failed"));
   assert.ok(harness.actions.includes("run:sess-target"));
 });
 
@@ -1561,6 +1738,39 @@ test("abortSession blocks abort when workspace scope is missing", async () => {
   assert.deepEqual(abortCalls, []);
   assert.ok(harness.events.includes("abortSession:abort-blocked-missing-workspace-scope"));
   assert.match(harness.errors.at(-1) ?? "", /workspace scope is missing/);
+});
+
+test("abortSession preserves a resolved scoped abort when selected scope lookup is missing", async () => {
+  const abortCalls: Array<{ sessionId: string; target?: unknown }> = [];
+  const harness = createHarness({
+    abortConversationFromVesloWriteApi: async (sessionId, target) => {
+      abortCalls.push({ sessionId, target });
+      return null;
+    },
+    abortSessionTyped: async () => {
+      throw new Error("legacy abort should not run for scoped server abort");
+    },
+    routedClient: () => ({} as Client),
+    resolveSelectedSessionBrowseScope: () => null,
+    resolveConversationAbortScope: (sessionId) => ({
+      sessionId,
+      workspaceId: "ws-active",
+      workspaceRoot: "/active",
+      directory: "/active",
+      hasConversationScope: true,
+      conversationId: "conv-scoped",
+      opencodeSessionId: "open-scoped",
+    }),
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  await workflow.abortSession("open-scoped");
+
+  assert.deepEqual(abortCalls.map((call) => call.sessionId), ["open-scoped"]);
+  assert.equal(harness.events.includes("abortSession:abort-blocked-missing-workspace-scope"), false);
+  assert.ok(harness.events.includes("abortSession:conversation-abort-unavailable"));
+  assert.ok(harness.events.includes("abortSession:conversation-abort-blocked-unavailable"));
+  assert.match(harness.errors.at(-1) ?? "", /Conversation service is unavailable/);
 });
 
 test("abortSession blocks abort for foreign workspace scope", async () => {

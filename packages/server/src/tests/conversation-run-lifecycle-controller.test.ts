@@ -856,7 +856,7 @@ test("submitRun marks lifecycle failed, schedules reconcile, and clears active g
   expect(providerWatchCalls).toEqual([]);
 });
 
-test("submitRun provider-start timeout records diagnostics without failing or aborting OpenCode", async () => {
+test("submitRun provider-start timeout records diagnostics without failing, aborting, or clearing active gateway context", async () => {
   const {
     controller,
     behavior,
@@ -890,12 +890,14 @@ test("submitRun provider-start timeout records diagnostics without failing or ab
   expect(providerWatchCalls).toHaveLength(1);
   expect(typeof (providerWatchCalls[0] as { startedAt?: unknown }).startedAt).toBe("number");
   expect(abortCalls).toEqual([]);
-  expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
+  expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register"]);
 });
 
-test("submitRun provider-start success clears active gateway context without aborting", async () => {
+test("submitRun keeps active gateway context after provider start and clears it on terminal lifecycle reconcile", async () => {
   const {
     controller,
+    lifecycle,
+    timers,
     activeGatewayCalls,
     providerWatchCalls,
     abortCalls,
@@ -912,7 +914,7 @@ test("submitRun provider-start success clears active gateway context without abo
   await flushMicrotasks();
   expect(providerWatchCalls).toHaveLength(1);
   expect(abortCalls).toEqual([]);
-  expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
+  expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register"]);
   expect(activeGatewayCalls[0]?.input).toMatchObject({
     runtimeAuthorizationActorTokenHash: "request-actor-hash",
   });
@@ -923,6 +925,18 @@ test("submitRun provider-start success clears active gateway context without abo
     reason: "accepted",
     delayMs: 1_234,
   }]);
+
+  lifecycle.statusResult = { runId: "run-reserved", status: "completed", stale: false };
+  timers.fire(timers.activeTimers()[0]!.id);
+  await flushMicrotasks();
+
+  expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
+  expect(activeGatewayCalls[1]?.input).toEqual({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    opencodeSessionId: "sess-a",
+  });
 });
 
 test("queue drain keeps pending work blocked while latest lifecycle is active", async () => {

@@ -843,6 +843,12 @@ export type VesloSkillMaterializationStatus = {
   workspaceId: string;
   status: "not-configured" | "pending" | "current" | "synced" | string;
   registryConfigured: boolean;
+  workspaceRegistryConfigured?: boolean;
+  registryError?: {
+    code: string;
+    message: string;
+    status?: number;
+  };
   rootDir?: string;
   materializedSkills: VesloSkillMaterializationEntry[];
   conflicts?: VesloSkillMaterializationConflict[];

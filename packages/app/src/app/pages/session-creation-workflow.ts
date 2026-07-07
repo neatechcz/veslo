@@ -9,7 +9,10 @@ import {
 } from "../controllers/send-orchestration-controller";
 import type { SessionFlowProgressEvent } from "../context/session-flow-progress-presenter";
 import type { SendRuntimePreflightContext, SendRuntimePreflightTargetWorkspace } from "../context/send-runtime-readiness";
-import type { MaterializedSessionHandoff } from "../lib/session-send-contract";
+import {
+  createMaterializedSessionHandoff,
+  type MaterializedSessionHandoff,
+} from "../lib/session-send-contract";
 import type {
   VesloConversationSubmitRequest,
   VesloConversationSubmitResult,
@@ -472,15 +475,17 @@ export function createSessionCreationWorkflow(
         ? deps.resolveWorkspaceRootForConversationScope(createdWorkspaceId, sessionDirectory)
         : sessionDirectory;
       const handoff: MaterializedSessionHandoff | null = clientMessageId
-        ? {
-          workspaceId: createdWorkspaceId || targetWorkspace?.workspaceId || deps.workspace.activeWorkspaceId().trim(),
-          pendingSessionKey: pendingSidebarSession?.id ?? null,
-          sessionId: createdSession.id,
-          clientMessageId,
-          sendTraceId: sendTraceId || null,
-          conversationId: createdSession.conversationId ?? null,
-          opencodeSessionId: createdSession.opencodeSessionId ?? createdSession.id,
-        }
+        ? createMaterializedSessionHandoff({
+            workspaceId: createdWorkspaceId || targetWorkspace?.workspaceId || deps.workspace.activeWorkspaceId().trim(),
+            workspaceRoot: createdWorkspaceRoot,
+            directory: sessionDirectory,
+            pendingSessionKey: pendingSidebarSession?.id ?? null,
+            sessionId: createdSession.id,
+            clientMessageId,
+            sendTraceId: sendTraceId || null,
+            conversationId: createdSession.conversationId ?? null,
+            opencodeSessionId: createdSession.opencodeSessionId ?? createdSession.id,
+          })
         : null;
       const creationResult: SessionCreationResult = {
         session: createdSession,

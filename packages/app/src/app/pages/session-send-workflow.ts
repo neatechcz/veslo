@@ -15,7 +15,11 @@ import {
 import {
   validateConversationSubmitRequest,
   validateConversationSubmitTerminalResult,
+  validateLegacyFallbackPrepareInput,
+  validateLegacyFallbackSubmitInput,
+  validateRoutedComposerDraftResult,
   validateSendRuntimePreparationResult,
+  validateStagedSessionAttachments,
   type ConversationSubmitTerminalResult,
   type SendBoundaryValidationMode,
 } from "../lib/send-boundary-validation";
@@ -511,6 +515,25 @@ export function createLegacyConversationRunFallback(
 ): LegacyConversationRunFallback {
   const prepare = async (input: LegacyConversationRunFallbackPrepareInput): Promise<boolean> => {
     const sendRuntimeWorkspaceId = input.sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim();
+    const prepareInputValidation = validateLegacyFallbackPrepareInput({
+      traceId: input.traceId,
+      targetWorkspaceId: sendRuntimeWorkspaceId,
+      sendPreflight: input.sendPreflight,
+      sendTargetWorkspace: input.sendTargetWorkspace ?? null,
+    }, sendBoundaryValidationOptions(deps, {
+      event: "sendPrompt:legacy-fallback-prepare-input:validation-failed",
+      traceId: input.traceId,
+      context: {
+        phase: "legacy-prepare",
+        targetWorkspaceId: sendRuntimeWorkspaceId || null,
+      },
+    }));
+    if (!prepareInputValidation.ok) {
+      input.cleanupPendingSidebarSession();
+      input.stopSendPromptBusy();
+      deps.setError(prepareInputValidation.message);
+      return false;
+    }
     const sendRuntimeReady = deps.isWorkspaceRuntimeReady(sendRuntimeWorkspaceId);
     if (!sendRuntimeReady) {
       input.startSendPromptBusy({ type: "runtime.connecting" });
@@ -555,11 +578,42 @@ export function createLegacyConversationRunFallback(
     let resolvedDraft = input.draft;
     const sessionID = input.sessionID;
     const materializedSessionID = input.sessionID;
+    const submitTargetWorkspaceId = input.sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim();
+    const submitInputValidation = validateLegacyFallbackSubmitInput({
+      traceId: input.traceId,
+      sessionID,
+      targetWorkspaceId: submitTargetWorkspaceId,
+      commandName: input.commandName,
+      compactCommand: input.compactCommand,
+      hasExplicitDraft: input.hasExplicitDraft,
+      draft: input.draft,
+      sendCorrelation: input.sendCorrelation,
+      sendPreflight: input.sendPreflight,
+      sendTargetWorkspace: input.sendTargetWorkspace ?? null,
+    }, sendBoundaryValidationOptions(deps, {
+      event: "sendPrompt:legacy-fallback-submit-input:validation-failed",
+      traceId: input.traceId,
+      context: {
+        phase: "legacy-submit",
+        sessionID,
+        targetWorkspaceId: submitTargetWorkspaceId || null,
+        clientMessageId: input.sendCorrelation.clientMessageId,
+        origin: input.sendCorrelation.origin,
+      },
+    }));
+    if (!submitInputValidation.ok) {
+      input.restorePendingDraftAfterSendFailure();
+      if (input.sendTargetStillDisplayed()) {
+        deps.setError(submitInputValidation.message);
+      }
+      input.stopSendPromptBusy();
+      return false;
+    }
     const model = deps.modelForSession(materializedSessionID);
     let promptSystem: string | undefined;
 
     try {
-      const stagedAttachments = await deps.sendTraceStep(
+      let stagedAttachments = await deps.sendTraceStep(
         "sendPrompt:stage-attachments",
         () => deps.stageAttachmentsIntoSessionDirectory(resolvedDraft, materializedSessionID, input.sendPreflight),
         {
@@ -568,12 +622,40 @@ export function createLegacyConversationRunFallback(
           attachmentCount: resolvedDraft.attachments.length,
         },
       );
-      const routedDraft = deps.routeStagedAttachmentsForModel({
+      const stagedAttachmentsValidation = validateStagedSessionAttachments(stagedAttachments, sendBoundaryValidationOptions(deps, {
+        event: "sendPrompt:stage-attachments-result:validation-failed",
+        traceId: input.traceId,
+        context: {
+          phase: "legacy-attachment-staging",
+          sessionID,
+          attachmentCount: resolvedDraft.attachments.length,
+          stagedAttachmentCount: stagedAttachments.length,
+        },
+      }));
+      if (!stagedAttachmentsValidation.ok) {
+        throw new Error(stagedAttachmentsValidation.message);
+      }
+      stagedAttachments = stagedAttachmentsValidation.value;
+      let routedDraft = deps.routeStagedAttachmentsForModel({
         draft: resolvedDraft,
         stagedAttachments,
         model,
         providers: deps.providers(),
       });
+      const routedDraftValidation = validateRoutedComposerDraftResult(routedDraft, sendBoundaryValidationOptions(deps, {
+        event: "sendPrompt:staged-attachment-routing-result:validation-failed",
+        traceId: input.traceId,
+        context: {
+          phase: "legacy-attachment-routing",
+          sessionID,
+          attachmentCount: resolvedDraft.attachments.length,
+          stagedAttachmentCount: stagedAttachments.length,
+        },
+      }));
+      if (!routedDraftValidation.ok) {
+        throw new Error(routedDraftValidation.message);
+      }
+      routedDraft = routedDraftValidation.value;
       if (routedDraft.error) {
         deps.recordSendTrace("sendPrompt:staged-attachment-routing-error", {
           traceId: input.traceId,
@@ -1330,6 +1412,22 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
               attachmentCount: resolvedDraft.attachments.length,
             },
           );
+          const stagedAttachmentsValidation = validateStagedSessionAttachments(stagedAttachments, sendBoundaryValidationOptions(deps, {
+            event: "sendPrompt:server-submit-existing-stage-attachments-result:validation-failed",
+            traceId: sendTraceId,
+            context: {
+              phase: "server-submit-existing-attachment-staging",
+              sessionID: existingSessionId,
+              clientMessageId: sendCorrelation.clientMessageId,
+              origin: sendCorrelation.origin,
+              attachmentCount: resolvedDraft.attachments.length,
+              stagedAttachmentCount: stagedAttachments.length,
+            },
+          }));
+          if (!stagedAttachmentsValidation.ok) {
+            throw new Error(stagedAttachmentsValidation.message);
+          }
+          stagedAttachments = stagedAttachmentsValidation.value;
           deps.recordSendTrace("sendPrompt:server-submit-existing-stage-attachments-done", {
             traceId: sendTraceId,
             sessionID: existingSessionId,
@@ -1989,9 +2087,11 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
     const id = (sessionID ?? deps.selectedSessionId() ?? "").trim();
     if (!id) return;
     const scope = deps.resolveConversationAbortScope(id, target);
+    const selectedAbortScope = deps.resolveSelectedSessionBrowseScope(id);
     const explicitAbortWorkspaceId =
       target?.workspaceId?.trim() ||
-      deps.resolveSelectedSessionBrowseScope(id)?.workspaceId?.trim() ||
+      selectedAbortScope?.workspaceId?.trim() ||
+      (scope.hasConversationScope ? scope.workspaceId?.trim() : "") ||
       "";
     const activeAbortWorkspaceId = deps.workspace.activeWorkspaceId().trim();
     deps.recordSendTrace("abortSession:start", {

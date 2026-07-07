@@ -629,9 +629,7 @@ export function createConversationService(options: {
         sendTraceId: input.sendTraceId ?? null,
       });
       const record = isRecord(created) ? created : {};
-      const engineSessionId = normalizeText(
-        typeof record.id === "string" ? record.id : String(record.id ?? ""),
-      );
+      const engineSessionId = normalizeText(typeof record.id === "string" ? record.id : "");
       if (!engineSessionId) {
         throw new ApiError(502, "opencode_failed", "OpenCode session did not return an id");
       }

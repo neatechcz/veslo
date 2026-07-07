@@ -430,9 +430,9 @@ const materializeSkillSetToRoot = async (
   for (const skill of desiredSkills) {
     const result = await materializeSkillPackageToRoot({
       rootDir,
-      dataDir: input.dataDir,
       skill,
       archive: await input.loadPackage(skill),
+      ...(input.dataDir !== undefined ? { dataDir: input.dataDir } : {}),
     });
     materializedSkills.push(result);
     if (result.backupDir) backupDirs.push(result.backupDir);

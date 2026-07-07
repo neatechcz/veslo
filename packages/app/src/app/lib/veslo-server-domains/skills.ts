@@ -503,13 +503,14 @@ export function createSkillsClient(context: SkillsClientContext) {
         },
       ),
 
-    getWorkspaceMaterializationStatus: (workspaceId: string) =>
+    getWorkspaceMaterializationStatus: (workspaceId: string, options?: VesloSkillRegistryAuthContext) =>
       requestJson<VesloSkillMaterializationStatus>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/skills/materialization`,
         {
           token,
           hostToken,
+          extraHeaders: buildDenContextHeaders(options),
           timeoutMs: timeouts.skillMaterialization,
         },
       ),

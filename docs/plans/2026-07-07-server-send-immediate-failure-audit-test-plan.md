@@ -1,17 +1,19 @@
 ---
 title: Server Send Immediate Failure Audit And Test Plan
 date: 2026-07-07
-status: partially-implemented
-done: false
+status: implemented
+done: true
 source_audit: chat:2026-07-07-server-send-immediate-failure-deep-audit
 related_finding: docs/testing/findings/2026-07-07-server-send-composer-production-parity.md
 base_plan: docs/plans/2026-07-07-server-owned-composer-send-workflow-deep-audit-followups.md
-e2e_status: targeted-tests-pass
+e2e_status: targeted-tests-pass-runtime-smoke-pass
 ssif00_submit_boundary_classifier_test_done: true
 ssif01_workspace_identity_registration_test_done: true
 ssif02_zombie_run_queue_test_done: true
-ssif03_message_id_contract_test_done: false
-ssif04_packaged_desktop_smoke_done: false
+ssif03_message_id_contract_test_done: true
+ssif04_non_pilot_runtime_smoke_done: true
+ssif04_skill_registry_404_residual_fixed: true
+ssif04_sse_listener_warning_residual_fixed: true
 ---
 
 # Server Send Immediate Failure Audit And Test Plan
@@ -32,7 +34,7 @@ that reproduce the failure classes before any broad workflow rewrite.
 
 ## Implementation Update 2026-07-07
 
-Implemented SSIF00-SSIF02 in `veslo-main`:
+Implemented SSIF00-SSIF04 in `veslo-main`:
 
 - SSIF00: added a small send-boundary failure phase classifier in
   `packages/app/src/app/lib/send-boundary-validation.ts`. The classifier keeps
@@ -46,6 +48,15 @@ Implemented SSIF00-SSIF02 in `veslo-main`:
   fails a latest active run when lifecycle status is stale or beyond the
   no-progress budget, then wakes the queue. Lifecycle reconcile does the same
   after exhausting its polling budget.
+- SSIF03: separated Veslo submit idempotency from OpenCode prompt identity.
+  `clientMessageId` remains the app/server idempotency key, but fresh
+  `prompt_async` and `command` submissions no longer forward it as upstream
+  `messageID`; OpenCode allocates the fresh prompt id. Revert still sends the
+  existing OpenCode `messageID`.
+- SSIF04: replaced the planned Tauri Pilot smoke with a KISS non-Pilot runtime
+  smoke by request. The smoke used the real `pnpm dev` Tauri runtime with
+  rebuilt sidecars, `VESLO_TAURI_PILOT=0`, and explicit runtime/send trace
+  files.
 
 Targeted verification passed:
 
@@ -61,15 +72,66 @@ Targeted verification passed:
   - passed.
 - `pnpm --filter veslo-server build:bin`
   - passed; rebuilt `packages/server/dist/bin/veslo-server.exe`.
+- `$env:VESLO_SIDECAR_FORCE_BUILD='1'; pnpm --filter @neatech/veslo run prepare:sidecar`
+  - passed; rebuilt the desktop server sidecar.
+- Non-Pilot runtime smoke:
+  - evidence directory:
+    `.tmp/ssif04-runtime-smoke-20260707-230800/`;
+  - `pnpm dev` reached `Running target\debug\veslo.exe`;
+  - orchestrator reconciled 3 workspaces and served workspace
+    `ws-8df10915b772`;
+  - managed OpenCode dependencies were vendored and present:
+    `@opencode-ai/plugin` 1.17.13, `zod` 4.1.8,
+    `@ai-sdk/openai-compatible` 3.0.5;
+  - shared OpenCode health became `200` with version 1.17.13;
+  - five real send traces were accepted/submitted through the rebuilt runtime;
+  - first session create went through
+    `/workspace/ws-8df10915b772/opencode/session` with upstream status `200`;
+  - subsequent `prompt_async` submits went through
+    `/workspace/ws-8df10915b772/opencode/session/:id/prompt_async` with
+    upstream status `204`;
+  - every captured `server:conversation-run:opencode-submit-body` had
+    `messageID: null`;
+  - no workspace/session `404`, validation failure, `zod` resolution failure,
+    or zombie queue loop appeared in the runtime/send traces.
 
-Still open:
+Runtime smoke residual observations before follow-up patch:
 
-- SSIF03 `clientMessageId` -> OpenCode `messageID` contract remains unfixed in
-  this KISS slice. It is still a contract risk, but the immediate new-chat 404
-  and zombie-queue blockers are now addressed first.
-- SSIF04 packaged desktop smoke is still pending. Because `packages/server/src`
-  changed, rebuild the server binary before relying on a desktop/manual
-  orchestrator validation.
+- The smoke did not use Tauri Pilot and therefore did not assert the visible
+  composer-clears-only-after-acceptance UI detail. This was intentionally
+  skipped because Pilot is currently too slow for this fix path.
+- One non-causal `workspace-skill-materialization failed:configured-sync`
+  event remained: `skill_registry_not_found`, status `404`.
+- OpenCode stderr emitted an EventEmitter listener warning during the long
+  live run. It did not block submit, provider proxying, transcript ingestion,
+  or OpenCode health.
+
+Follow-up residual fixes on 2026-07-07:
+
+- `skill_registry_not_found` during configured workspace materialization sync
+  is now handled server-side as a degraded workspace materialization result
+  (`status: degraded`, `synced: false`, `reloadRequired: false`) instead of
+  throwing into the app gate as `failed:configured-sync`. This keeps local
+  runtime/send usable when Den/registry is configured but the registry does not
+  expose the workspace skill-set resource.
+- Session SSE cleanup now explicitly closes active subscription handles on
+  cleanup and after stream end before reconnect. The Rust SSE wrapper also uses
+  a one-shot abort listener and removes it on close. This targets the repeated
+  `/event` subscriptions that can accumulate upstream OpenCode listeners during
+  route/effect churn.
+- Targeted verification for the residual fixes:
+  - `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/session-event-stream.test.ts src/app/tests/lib/engine-sse.test.ts`
+    - 20 pass, 0 fail.
+  - `bun test packages/server/src/tests/server.skill-materialization.test.ts --timeout 30000`
+    - 26 pass, 0 fail.
+  - `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/workspace-skill-materialization-sync.test.ts src/app/tests/context/session-routing-runtime.test.ts src/app/tests/context/session-unread-events.test.ts`
+    - 18 pass, 0 fail.
+  - `pnpm --filter @neatech/veslo-ui typecheck`
+    - passed.
+  - `pnpm --filter veslo-server typecheck`
+    - passed.
+  - `git diff --check`
+    - passed; only existing LF-to-CRLF warnings were reported.
 
 ## Current Evidence Boundary
 
@@ -408,7 +470,7 @@ Important constraint:
 
 ### SSIF03: OpenCode `messageID` contract test
 
-Status: `todo`
+Status: `done`
 
 Owner: server conversation submit payload
 
@@ -424,16 +486,16 @@ Primary test shape:
    - same `clientMessageId` retry of the same prompt.
 3. Assert the intended contract explicitly.
 
-Candidate GREEN contract:
+Implemented GREEN contract:
 
 - Veslo keeps `clientMessageId` as the server/app idempotency key.
 - OpenCode `messageID` is omitted for fresh user prompts so OpenCode can
   allocate the upstream message id.
 - If a same-fingerprint retry must reuse an upstream id, it uses a durable
   upstream/OpenCode message id, not a fresh UI-generated UUID.
-- Direct run-route compatibility is handled intentionally: either it follows
-  the same omission rule for fresh prompt/command sends, or tests document why
-  that lower-level route still accepts explicit `messageID`.
+- Direct run-route compatibility follows the same omission rule for fresh
+  prompt/command sends, while retaining
+  `messageID` only as a legacy fallback input for Veslo `clientMessageId`.
 
 Why this needs a test:
 
@@ -450,38 +512,48 @@ Why this needs a test:
 - Do not change only `buildConversationSubmitRunBody(...)` while leaving the
   direct run route to forward the same ambiguous identity under another path.
 
-### SSIF04: Packaged desktop smoke after source fixes
+### SSIF04: Non-Pilot runtime smoke after source fixes
 
-Status: `todo`
+Status: `done`
 
-Owner: desktop E2E / tauri-pilot
+Owner: desktop runtime smoke without Tauri Pilot
 
-Run this only after SSIF00-SSIF03 source-level tests and fixes land, and after
-server/sidecar rebuild.
+Tauri Pilot was intentionally skipped for this plan because it is currently too
+slow for this fix path. The replacement smoke keeps the useful production
+signals: rebuilt sidecars, real Tauri dev runtime, real local server, real
+orchestrator, real OpenCode sidecar, and real send traces.
 
 Smoke scenario:
 
 1. Clean repo-owned Veslo dev/test processes.
 2. Rebuild `veslo-server` binary and desktop sidecars.
-3. Launch the real Tauri desktop runtime.
-4. Create a new private/local workspace from the composer flow.
-5. Send a first message and assert:
+3. Launch the real Tauri desktop runtime with `VESLO_TAURI_PILOT=0` and
+   explicit runtime/send trace files.
+4. Send a first message and assert from traces:
    - orchestrator registration happens before first OpenCode workspace call,
    - no immediate `workspace not found` `404` appears,
-   - the visible composer clears only after accepted submit.
-6. Send a second message in the same conversation and assert:
+   - `/workspace/:id/opencode/session` returns upstream status `200`,
+   - `sendPromptImmediate:result` is `accepted: true`,
+   - `status` is `submitted`.
+5. Send at least one second message in the same conversation and assert:
    - no random upstream `messageID` rejection,
    - no permanent queued state behind a stale previous run,
-   - visible failure, if any, includes a typed root cause.
+   - `prompt_async` returns upstream status `204`,
+   - OpenCode provider proxying returns status `200`.
 
-Suggested commands after implementation:
+Commands used:
 
 ```powershell
 pnpm --filter veslo-server exec bun test src/tests/server-conversations.test.ts src/tests/conversation-run-lifecycle-controller.test.ts
 pnpm --filter veslo-server typecheck
 pnpm --filter veslo-server build:bin
 $env:VESLO_SIDECAR_FORCE_BUILD = "1"; pnpm --filter @neatech/veslo run prepare:sidecar; Remove-Item Env:\VESLO_SIDECAR_FORCE_BUILD
-pnpm --filter @neatech/veslo-e2e exec node --import=tsx/esm ./helpers/pilot-runner.ts --scenario <new-server-send-immediate-failure-smoke>
+$env:VESLO_TAURI_PILOT = "0"
+$env:VESLO_RUNTIME_TRACE = "1"
+$env:VESLO_SEND_WORKFLOW_TRACE = "1"
+$env:VITE_VESLO_SEND_WORKFLOW_TRACE = "1"
+pnpm dev
+pnpm --filter @neatech/veslo dev:cleanup
 git diff --check
 git diff --cached --check
 ```
@@ -516,12 +588,10 @@ The fixes should produce typed, searchable diagnostics instead of only generic
 5. Add SSIF03 for both server-owned submit and direct run routes, then settle
    the `messageID` contract. Keep this after workspace/session 404 and zombie
    queue fixes unless fresh OpenCode error evidence reprioritizes it.
-6. Run SSIF04 as the only packaged desktop smoke for this issue family.
+6. Run SSIF04 as the only live desktop runtime smoke for this issue family.
 
-Do not start with the `messageID` change unless a fresh repro captures an
-OpenCode error body proving it. The workspace-registration bug explains the
-immediate new-chat failure by itself, and the stale-run bug explains the
-existing-chat queued failure by itself.
+This order was followed: SSIF01 and SSIF02 fixed the strongest causal blockers
+first, then SSIF03 removed the remaining prompt-identity contract risk.
 
 ## Out Of Scope
 
@@ -532,6 +602,7 @@ existing-chat queued failure by itself.
   causes without a confirming test.
 - Starting a new manual desktop runtime before the source-level contracts are
   pinned.
+- Restoring Tauri Pilot coverage for this issue family in this KISS pass.
 
 ## Done Criteria
 
@@ -547,8 +618,10 @@ Set the front matter flags to `true` only when:
   no-progress runs become terminal and queue drain resumes.
 - `ssif03_message_id_contract_test_done`: outbound OpenCode prompt identity is
   explicitly tested and matches the chosen contract.
-- `ssif04_packaged_desktop_smoke_done`: one rebuilt desktop/Pilot smoke proves
-  the real app no longer hits immediate workspace `404` or permanent queue
-  blockage in the covered flow.
+- `ssif04_non_pilot_runtime_smoke_done`: one rebuilt non-Pilot desktop runtime
+  smoke proves the real runtime no longer hits immediate workspace `404`, random
+  upstream `messageID` rejection, or permanent queue blockage in the covered
+  flow.
 
-Do not set top-level `done: true` until all four flags are true.
+Top-level `done: true` means the revised KISS plan is complete. Tauri Pilot UI
+coverage is intentionally skipped here and is not a blocker for this plan.

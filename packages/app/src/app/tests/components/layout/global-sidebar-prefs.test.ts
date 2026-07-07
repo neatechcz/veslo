@@ -35,6 +35,15 @@ test("defaults to left-visible and right-collapsed global prefs when storage is 
   assert.deepEqual(DEFAULT_GLOBAL_SIDEBAR_DOCKED_VISIBILITY, { left: true, right: false });
 });
 
+test("supports route-specific first-run defaults without writing prefs", () => {
+  const storage = createMemoryStorage();
+  const value = readGlobalSidebarDockedPrefs(storage, {
+    defaultVisibility: { left: true, right: true },
+  });
+  assert.deepEqual(value, { left: true, right: true });
+  assert.deepEqual(storage.snapshot(), {});
+});
+
 test("reads global prefs directly when present", () => {
   const storage = createMemoryStorage({
     [GLOBAL_SIDEBAR_DOCKED_PREF_KEY]: JSON.stringify({ left: false, right: true }),
@@ -96,4 +105,22 @@ test("dashboard and session views use shared global sidebar prefs", () => {
       `${name} view should not keep a duplicate sidebar preference reader`,
     );
   }
+});
+
+test("session view opens right sidebar on first launch while dashboard keeps global default", () => {
+  assert.match(
+    sessionSource,
+    /SESSION_DEFAULT_SIDEBAR_DOCKED_VISIBILITY[\s\S]*right:\s*true/,
+    "session view should request a right-visible first-run default for capabilities",
+  );
+  assert.match(
+    sessionSource,
+    /readGlobalSidebarDockedPrefs\(\s*undefined,\s*\{\s*defaultVisibility:\s*SESSION_DEFAULT_SIDEBAR_DOCKED_VISIBILITY/s,
+    "session view should pass its first-run default through the shared preference helper",
+  );
+  assert.match(
+    dashboardSource,
+    /readGlobalSidebarDockedPrefs\(\s*\)/,
+    "dashboard should keep the global first-run default",
+  );
 });

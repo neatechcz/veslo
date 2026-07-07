@@ -1897,7 +1897,11 @@ test("skill materialization helpers call workspace and global status and sync en
       denOrgId: "org_123",
       denUserId: "user_123",
     });
-    const status = await client.getWorkspaceSkillMaterializationStatus("workspace-a");
+    const status = await client.getWorkspaceSkillMaterializationStatus("workspace-a", {
+      denToken: "den-token",
+      denOrgId: "org_123",
+      denUserId: "user_123",
+    });
     const sync = await client.syncWorkspaceSkillMaterialization("workspace-a", {
       activeRun: true,
       denToken: "den-token",
@@ -1974,6 +1978,9 @@ test("skill materialization helpers call workspace and global status and sync en
     assert.equal(calls[1]?.headers.get("x-veslo-den-token"), "den-token");
     assert.equal(calls[1]?.headers.get("x-veslo-den-org-id"), "org_123");
     assert.equal(calls[1]?.headers.get("x-veslo-den-user-id"), "user_123");
+    assert.equal(calls[2]?.headers.get("x-veslo-den-token"), "den-token");
+    assert.equal(calls[2]?.headers.get("x-veslo-den-org-id"), "org_123");
+    assert.equal(calls[2]?.headers.get("x-veslo-den-user-id"), "user_123");
     assert.equal(calls[3]?.headers.get("x-veslo-den-token"), "den-token");
     assert.equal(calls[3]?.headers.get("x-veslo-den-org-id"), "org_123");
     assert.equal(calls[3]?.headers.get("x-veslo-den-user-id"), "user_123");
