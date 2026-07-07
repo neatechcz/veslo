@@ -102,6 +102,7 @@ gh release view <tag> --repo neatechcz/veslo-updates
 Use beta when the user wants a prerelease/internal validation build instead of the stable updater path.
 - Prefer the repository's existing prerelease workflow for branch/SHA prereleases when that matches the request.
 - For a staging/test desktop app release, use the manual `Build Staging App` workflow. It must create a private prerelease in `neatechcz/veslo` and upload the installable staging assets there; GitHub Actions artifacts are only a fallback, not the primary distribution surface.
+- macOS staging/test app builds must use the Apple Developer ID signing certificate and verify `codesign` output for the `.app` and `.dmg`. The staging macOS path is fail-closed when Apple signing secrets are absent; do not require notarization unless the user explicitly asks and notarization credentials are confirmed.
 - If using the production workflow manually for a beta-style release, set the GitHub Release as prerelease and do not mark it latest.
 - Make release notes public-safe, but label the release as beta/prerelease and describe expected validation scope.
 - Do not publish a beta as the production latest update unless the user explicitly asks and the workflow supports that safely.

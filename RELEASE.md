@@ -36,8 +36,9 @@ Use this path for manual staging desktop builds that should be downloadable by t
    - `gh workflow run build-staging-app.yml --repo neatechcz/veslo --ref <branch> -f ref=<branch>`
 2. The workflow creates or updates a private prerelease in `neatechcz/veslo` named `staging-YYYY-MM-DD-<short-sha>`.
 3. The workflow uploads installable staging assets to that prerelease and also keeps GitHub Actions artifacts as a fallback.
-4. Staging builds keep the updater disabled and must not publish to `neatechcz/veslo-updates`, generate `latest.json`, or become the production latest release.
-5. Verify:
+4. macOS staging builds are signed with the Apple Developer ID certificate, then `codesign` verifies both the `.app` bundle and `.dmg` before upload. This path does not require notarization unless explicitly requested.
+5. Staging builds keep the updater disabled and must not publish to `neatechcz/veslo-updates`, generate `latest.json`, or become the production latest release.
+6. Verify:
    - `gh run list --repo neatechcz/veslo --workflow "Build Staging App" --limit 5`
    - `gh release view <staging-tag> --repo neatechcz/veslo`
 

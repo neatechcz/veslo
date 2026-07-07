@@ -56,6 +56,7 @@ jobs:
             printf 'Private staging prerelease from `%s` (`%s`).\n\n' "$REQUESTED_REF" "$release_target"
             printf -- '- Built by the manual Build Staging App workflow.\n'
             printf -- '- Staging endpoints are baked into the app.\n'
+            printf -- '- macOS artifacts are signed with the Apple Developer ID certificate.\n'
             printf -- '- Updater publishing is disabled; this release is not mirrored to the public updater repository.\n'
           } > "$body_file"
 
@@ -219,15 +220,100 @@ jobs:
           Set-Content -Path $metadataPath -Value $metadata -Encoding utf8NoBOM
           "VESLO_WINDOWS_SIGNING_METADATA_PATH=$metadataPath" >> $env:GITHUB_ENV
 
+      - name: Resolve macOS staging signing
+        if: matrix.os_type == 'macos'
+        id: macos_signing
+        shell: bash
+        env:
+          OS_TYPE: macos
+          MACOS_NOTARIZE: false
+          ALLOW_UNSIGNED_MACOS: false
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+        run: node scripts/release/release-signing.mjs
+
       - name: Build macOS staging app
         if: matrix.os_type == 'macos'
         shell: bash
+        env:
+          CI: true
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
         run: |
           set -euo pipefail
           pnpm --filter @neatech/veslo exec tauri build \
             --config src-tauri/tauri.staging.conf.json \
             --target "$TARGET_TRIPLE" \
             --bundles "$BUNDLES"
+
+      - name: Sign and verify macOS staging assets
+        if: matrix.os_type == 'macos'
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          app_path="packages/desktop/src-tauri/target/$TARGET_TRIPLE/release/bundle/macos/Veslo Staging.app"
+          dmg_dir="packages/desktop/src-tauri/target/$TARGET_TRIPLE/release/bundle/dmg"
+          app_signature="$RUNNER_TEMP/staging-app-codesign.txt"
+
+          test -d "$app_path"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          codesign -dv --verbose=4 "$app_path" 2>&1 | tee "$app_signature"
+          grep -F "Authority=Developer ID Application:" "$app_signature"
+          grep -F "TeamIdentifier=" "$app_signature"
+
+          cert_path="$RUNNER_TEMP/apple-codesign.p12"
+          keychain_path="$RUNNER_TEMP/veslo-staging-signing.keychain-db"
+          keychain_password="$(openssl rand -base64 24)"
+          cleanup() {
+            security delete-keychain "$keychain_path" >/dev/null 2>&1 || true
+            rm -f "$cert_path"
+          }
+          trap cleanup EXIT
+
+          printf "%s" "$APPLE_CERTIFICATE" | base64 --decode > "$cert_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$cert_path" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain_path"
+
+          existing_keychains="$(security list-keychains -d user | tr -d ' "')"
+          # shellcheck disable=SC2086
+          security list-keychains -d user -s "$keychain_path" $existing_keychains
+
+          test -d "$dmg_dir"
+          dmg_count=0
+          while IFS= read -r dmg_path; do
+            dmg_count=$((dmg_count + 1))
+            dmg_signature="$RUNNER_TEMP/$(basename "$dmg_path").codesign.txt"
+
+            codesign --force --sign "$APPLE_SIGNING_IDENTITY" "$dmg_path"
+            codesign --verify --verbose=2 "$dmg_path"
+            codesign -dv --verbose=4 "$dmg_path" 2>&1 | tee "$dmg_signature"
+            grep -F "Authority=Developer ID Application:" "$dmg_signature"
+            grep -F "TeamIdentifier=" "$dmg_signature"
+          done < <(find "$dmg_dir" -type f -name '*.dmg' -print | sort)
+
+          if [ "$dmg_count" -eq 0 ]; then
+            echo "No macOS staging DMG found in $dmg_dir" >&2
+            exit 1
+          fi
 
       - name: Build Windows staging MSI
         if: matrix.os_type == 'windows'
