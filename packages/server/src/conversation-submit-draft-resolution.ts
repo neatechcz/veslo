@@ -358,6 +358,7 @@ function resolveAttachmentRunParts(input: {
 
 async function resolveRunInput(input: {
   request: ConversationSubmitRequest;
+  documentRuntimeStatus?: ConversationSubmitDocumentRuntimeStatusReader;
   resolveSkillCommand?: ConversationSubmitSkillCommandResolver;
   workspace?: WorkspaceInfo | null;
   includeGlobal?: boolean;

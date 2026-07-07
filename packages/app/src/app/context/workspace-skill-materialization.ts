@@ -180,7 +180,7 @@ export function createWorkspaceSkillMaterializationGate(
         });
         deps.setError(addOpencodeCacheHint(message));
         deps.updateWorkspaceConnectionState(workspaceId, { status: "error", message });
-        return false;
+        return true;
       }
       if (error instanceof VesloServerError && error.status === 404) {
         trace("skip:unsupported-server");

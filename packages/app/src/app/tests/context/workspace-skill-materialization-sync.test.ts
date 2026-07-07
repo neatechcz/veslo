@@ -86,7 +86,7 @@ test("workspace activation local restart is gated behind skill materialization s
   assert.ok(syncIdx < restartIdx, "sync must happen before local-to-local runtime restart");
 });
 
-test("configured pending materialization sync failure blocks runtime readiness", async () => {
+test("configured pending materialization sync failure reports but does not block runtime readiness", async () => {
   const debugLabels: string[] = [];
   const errors: Array<string | null> = [];
   const states: Array<{ workspaceId: string; next: unknown }> = [];
@@ -111,7 +111,7 @@ test("configured pending materialization sync failure blocks runtime readiness",
     { reason: "send-preflight" },
   );
 
-  assert.equal(ready, false);
+  assert.equal(ready, true);
   assert.deepEqual(debugLabels, ["skills:materialization:failed:configured-sync"]);
   assert.deepEqual(errors, ["Materialization sync route was not found"]);
   assert.deepEqual(states, [

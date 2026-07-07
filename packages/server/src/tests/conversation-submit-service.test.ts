@@ -218,7 +218,7 @@ describe("conversation submit service", () => {
     expect(resolveDirectoryCalls).toBe(0);
   });
 
-  test("blocks implicit document-runtime skill matches before session materialization", async () => {
+  test("falls back to prompt when implicit document-runtime skill is unavailable", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-implicit-doc-runtime-"));
     tempDirs.push(workspaceRoot);
     let createConversationCalls = 0;
@@ -265,14 +265,16 @@ describe("conversation submit service", () => {
 
     expect(result.httpStatus).toBe(200);
     expect(result.payload).toMatchObject({
-      status: "blocked",
-      code: "document_runtime_blocked",
-      draftDisposition: "restore",
-      recoverable: true,
+      status: "dry_run",
+      draftDisposition: "keep",
+      resolvedRunInput: {
+        kind: "prompt_async",
+        text: "pouzij MS Word skill a priprav upravu brief.docx",
+      },
     });
     expect(skillResolveCalls).toBe(1);
     expect(createConversationCalls).toBe(0);
-    expect(resolveDirectoryCalls).toBe(0);
+    expect(resolveDirectoryCalls).toBe(1);
   });
 
   test("submits resolved existing targets through the injected run submitter idempotently", async () => {

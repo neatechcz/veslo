@@ -6,6 +6,7 @@ import {
   resolveConversationSubmitDraft,
 } from "../conversation-submit-draft-resolution.js";
 import type { ConversationSubmitRequest } from "../conversation-submit-contract.js";
+import { createDocumentRuntimeStatusPayload } from "../routes/document-runtime.js";
 
 const request = (
   draft: ConversationSubmitRequest["draft"],
@@ -135,7 +136,7 @@ describe("conversation submit draft resolution", () => {
         parts: [{ type: "text", text: "create a docx summary" }],
       }),
       resolveSkillCommand: async () => "veslo-docx",
-      documentRuntimeStatus: () => ({ status: "missing" }),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "missing" }),
     });
 
     expect(result).toMatchObject({
