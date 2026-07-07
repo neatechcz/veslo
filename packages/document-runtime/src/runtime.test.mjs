@@ -12,6 +12,7 @@ import {
   packExpandedPackage,
   pathInfo,
   repairHeadless,
+  resolveActiveRuntime,
   resolveManagedCommand,
   stageExpandedPackage,
 } from "./runtime.mjs";
@@ -249,6 +250,47 @@ test("headless repair activates a ready staged package when active pointer is mi
   }
 });
 
+
+test("resolveActiveRuntime falls back to bundled resource runtime when active pointer is missing", async () => {
+  const bundled = createRuntimeFixture({ writeActivePointer: false });
+  const runtimeRoot = mkdtempSync(join(tmpdir(), "veslo-document-runtime-empty-root-"));
+  try {
+    const result = await resolveActiveRuntime({
+      env: {
+        VESLO_DOCUMENT_RUNTIME_ROOT: runtimeRoot,
+        VESLO_DOCUMENT_RUNTIME_BUNDLED_DIR: bundled.active,
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.source, "bundled-resource");
+    assert.equal(result.activePath, bundled.active);
+    assert.equal(result.runtimeRoot, runtimeRoot);
+  } finally {
+    rmSync(bundled.root, { recursive: true, force: true });
+    rmSync(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test("resolveActiveRuntime keeps staged active pointer ahead of bundled resource fallback", async () => {
+  const active = createRuntimeFixture();
+  const bundled = createRuntimeFixture({ writeActivePointer: false });
+  try {
+    const result = await resolveActiveRuntime({
+      env: {
+        VESLO_DOCUMENT_RUNTIME_ROOT: active.root,
+        VESLO_DOCUMENT_RUNTIME_BUNDLED_DIR: bundled.active,
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.source, "active.json");
+    assert.equal(result.activePath, active.active);
+  } finally {
+    rmSync(active.root, { recursive: true, force: true });
+    rmSync(bundled.root, { recursive: true, force: true });
+  }
+});
 test("stageExpandedPackage copies, doctors, and activates an expanded package", async () => {
   const source = createRuntimeFixture();
   const runtimeRoot = mkdtempSync(join(tmpdir(), "veslo-document-runtime-stage-target-"));

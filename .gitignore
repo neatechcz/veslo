@@ -16,7 +16,11 @@ _worktrees/
 # Tauri/Rust
 packages/desktop/src-tauri/target/
 packages/desktop/src-tauri/sidecars/
+packages/desktop/src-tauri/resources/document-runtime/windows-native-x64/
 
+# Generated document runtime downloads and TOFU hashes
+packages/document-runtime/.cache/
+packages/document-runtime/manifests/sources/windows-native-x64.lock.json
 # Env
 .env
 .env.*

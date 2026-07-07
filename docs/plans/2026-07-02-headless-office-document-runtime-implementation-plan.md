@@ -572,6 +572,20 @@ Status 2026-07-07 (in progress, claude-20260707-windows-inline-bundle):
   `release-macos-aarch64.yml`, instead of a standalone `.veslopkg`.
 - Work happening in worktree branch `docrt/windows-native-bundle`.
 
+- Codex follow-up wires the Windows inline resource path into Tauri resources,
+  adds the Windows assembler with preverified source facts and a generated
+  trust-on-first-use SHA-256 lock, and updates the Windows release gate to
+  require the bundled resource tree instead of a standalone `.veslopkg`/`.sig`.
+- Liberation fonts are deferred for this Windows v1 because upstream releases do
+  not provide a reliable prebuilt binary asset; DejaVu and Noto Sans
+  latin/greek/cyrillic ship first, with Liberation kept as a target dependency.
+- Expected download footprint before Python/Node package installs and before any
+  LibreOffice trimming is roughly 635 MB. The assembler keeps the full
+  LibreOffice administrative-install output until a network-capable end-to-end
+  doctor run proves a smaller trimmed tree is safe.
+- DRT03 remains `done: false` until the real network-capable assembly, generated
+  source lock, `veslo-document-runtime doctor --json`, and signed MSI build pass.
+
 ### DRT04: macOS Bundled Document Runtime Package
 
 Cause:

@@ -89,6 +89,44 @@ const defaultDataRoot = (env = process.env) => {
   return resolve(base, "Veslo", "document-runtime");
 };
 
+const bundledRuntimeCandidates = (env = process.env) => {
+  const candidates = [];
+  const add = (value) => {
+    if (typeof value === "string" && value.trim()) candidates.push(resolve(value));
+  };
+  add(env.VESLO_DOCUMENT_RUNTIME_BUNDLED_DIR);
+
+  for (const key of ["VESLO_RESOURCE_DIR", "TAURI_RESOURCE_DIR", "RESOURCE_DIR"]) {
+    const base = env[key];
+    if (!base) continue;
+    add(join(base, "document-runtime"));
+    add(join(base, "resources", "document-runtime"));
+  }
+
+  const exeDir = dirname(process.execPath || ".");
+  add(join(exeDir, "document-runtime"));
+  add(join(exeDir, "resources", "document-runtime"));
+  add(join(exeDir, "..", "resources", "document-runtime"));
+
+  const cwd = process.cwd();
+  add(join(cwd, "resources", "document-runtime"));
+  add(join(cwd, "packages", "desktop", "src-tauri", "resources", "document-runtime", "windows-native-x64"));
+  add(join(cwd, "..", "src-tauri", "resources", "document-runtime", "windows-native-x64"));
+
+  return [...new Set(candidates)];
+};
+
+async function resolveBundledRuntime(env = process.env) {
+  for (const activePath of bundledRuntimeCandidates(env)) {
+    try {
+      await loadActiveManifest(activePath);
+      return { activePath, source: "bundled-resource" };
+    } catch {
+      // Continue through known Tauri/resource-dir candidates only.
+    }
+  }
+  return null;
+}
 const windowsProcessEnv = (env) => {
   if (!isWindows()) return {};
   const preserved = {};
@@ -202,6 +240,15 @@ export async function resolveActiveRuntime({ env = process.env, runtimeRoot } = 
 
   const pointerPath = join(root, "active.json");
   if (!(await fileExists(pointerPath))) {
+    const bundled = await resolveBundledRuntime(env);
+    if (bundled) {
+      return {
+        ok: true,
+        runtimeRoot: root,
+        activePath: bundled.activePath,
+        source: bundled.source,
+      };
+    }
     return {
       ok: false,
       status: "missing",

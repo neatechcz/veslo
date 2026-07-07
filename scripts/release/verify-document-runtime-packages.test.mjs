@@ -9,6 +9,7 @@ import {
   documentRuntimePackageAssetName,
   documentRuntimePackageSignatureName,
 } from "../../packages/document-runtime/src/index.mjs";
+import { assembleWindowsDocumentRuntime } from "../document-runtime/assemble-windows.mjs";
 import { verifyDocumentRuntime } from "./verify-document-runtime.mjs";
 import { verifyDocumentRuntimePackages } from "./verify-document-runtime-packages.mjs";
 import { verifyDocumentRuntimePolicy } from "./verify-document-runtime-policy.mjs";
@@ -28,12 +29,12 @@ const writePackagePair = (dir, platform) => {
   writeText(join(dir, signature), `${platform} signature`);
 };
 
-test("aggregate package gate passes only when all local runtime artifacts are present", () => {
+test("aggregate package gate passes only when all local runtime artifacts are present", async () => {
   const root = mkdtempSync(join(tmpdir(), "veslo-doc-runtime-aggregate-"));
   try {
-    const windowsPackageDir = join(root, "windows");
+    const windowsPackageDir = join(root, "windows-resource");
     const macosPackageDir = join(root, "macos");
-    writePackagePair(windowsPackageDir, "windows-native-x64");
+    await assembleWindowsDocumentRuntime({ targetDir: windowsPackageDir, dryRun: true });
     writePackagePair(macosPackageDir, "macos-arm64");
     writePackagePair(macosPackageDir, "macos-x64");
 
@@ -52,12 +53,12 @@ test("aggregate package gate passes only when all local runtime artifacts are pr
   }
 });
 
-test("aggregate package gate fails normal releases when any platform artifact is missing", () => {
+test("aggregate package gate fails normal releases when any platform artifact is missing", async () => {
   const root = mkdtempSync(join(tmpdir(), "veslo-doc-runtime-aggregate-missing-"));
   try {
-    const windowsPackageDir = join(root, "windows");
+    const windowsPackageDir = join(root, "windows-resource");
     const macosPackageDir = join(root, "macos");
-    writePackagePair(windowsPackageDir, "windows-native-x64");
+    await assembleWindowsDocumentRuntime({ targetDir: windowsPackageDir, dryRun: true });
     writePackagePair(macosPackageDir, "macos-arm64");
 
     const report = verifyDocumentRuntimePackages({

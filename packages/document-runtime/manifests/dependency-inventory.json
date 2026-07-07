@@ -51,5 +51,8 @@
     "macos-arm64",
     "macos-x64",
     "linux-x64"
-  ]
+  ],
+  "notes": {
+    "fonts": "Windows native inline bundle v1 ships DejaVu and Noto Sans latin/greek/cyrillic. Liberation remains listed as the target dependency but is deferred until a reliable upstream prebuilt binary asset or a managed FontForge build step is available."
+  }
 }

@@ -511,6 +511,10 @@ pub fn spawn_orchestrator_daemon(
     let mut command = command.args(args);
 
     let resource_dir = app.path().resource_dir().ok();
+    if let Some(resource_dir) = resource_dir.as_ref() {
+        command = command.env("VESLO_RESOURCE_DIR", resource_dir);
+        command = command.env("TAURI_RESOURCE_DIR", resource_dir);
+    }
     let current_bin_dir = tauri::process::current_binary(&app.env())
         .ok()
         .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
