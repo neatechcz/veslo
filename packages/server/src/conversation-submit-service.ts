@@ -20,6 +20,7 @@ import {
   type ConversationSubmitSkillCommandResolver,
 } from "./conversation-submit-draft-resolution.js";
 import type { ConversationService } from "./conversation-service.js";
+import type { ConversationRunQueueItem } from "./conversation-run-queue-store.js";
 import { ApiError } from "./errors.js";
 import type { WorkspaceInfo } from "./types.js";
 
@@ -55,13 +56,24 @@ export type ConversationSubmitResolvedRunSubmitter = (input: {
   httpStatus: number;
 }>;
 
+export type ConversationSubmitQueueStatusReader = (
+  payload: ConversationSubmitQueuedResult,
+) => ConversationRunQueueItem | null;
+
 export function createConversationSubmitService(input: {
   attemptStore: ConversationSubmitAttemptStore;
   conversationService: ConversationService;
   documentRuntimeStatus?: ConversationSubmitDocumentRuntimeStatusReader;
   resolveSkillCommand?: ConversationSubmitSkillCommandResolver;
+  queueStatusReader?: ConversationSubmitQueueStatusReader;
 }): ConversationSubmitService {
-  const { attemptStore, conversationService, documentRuntimeStatus, resolveSkillCommand } = input;
+  const {
+    attemptStore,
+    conversationService,
+    documentRuntimeStatus,
+    resolveSkillCommand,
+    queueStatusReader,
+  } = input;
   const inFlightSubmitAttempts = new Map<string, Promise<ConversationSubmitServiceResponse>>();
 
   return {
@@ -145,6 +157,13 @@ export function createConversationSubmitService(input: {
       if (claimed.attempt.resultJson) {
         try {
           const replayPayload = JSON.parse(claimed.attempt.resultJson) as ConversationSubmitResult;
+          const terminalQueueFailure = resolveQueuedReplayFailure(replayPayload, queueStatusReader);
+          if (terminalQueueFailure) {
+            return {
+              payload: terminalQueueFailure,
+              httpStatus: 200,
+            };
+          }
           if (conversationSubmitResultIsReplayable(replayPayload)) {
             return {
               payload: replayPayload,
@@ -410,6 +429,33 @@ function conversationSubmitInFlightKey(workspaceId: string, clientMessageId: str
 
 function conversationSubmitResultIsReplayable(payload: ConversationSubmitResult): boolean {
   return payload.status !== "blocked" && payload.status !== "failed";
+}
+
+function resolveQueuedReplayFailure(
+  payload: ConversationSubmitResult,
+  queueStatusReader: ConversationSubmitQueueStatusReader | undefined,
+): ConversationSubmitFailedResult | null {
+  if (!queueStatusReader || payload.status !== "queued") return null;
+  const queueItem = queueStatusReader(payload);
+  if (!queueItem || queueItem.state !== "failed") return null;
+  return {
+    status: "failed",
+    code: "queued_run_failed",
+    message: queueItem.error?.trim() || "Queued run failed",
+    workspaceId: payload.workspaceId,
+    conversationId: payload.conversationId,
+    opencodeSessionId: payload.opencodeSessionId,
+    queueItemId: queueItem.queueItemId,
+    reservedRunId: queueItem.reservedRunId,
+    clientMessageId: payload.clientMessageId,
+    draftDisposition: "restore",
+    debugTrace: [{
+      source: "server",
+      event: "queued_run_failed",
+      queueItemId: queueItem.queueItemId,
+      queueState: queueItem.state,
+    }],
+  };
 }
 
 function conversationSubmitRequestWithAttemptTarget(

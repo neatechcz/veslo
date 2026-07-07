@@ -44,6 +44,7 @@ import {
 import {
   sessionSubmitAcceptedResult,
   sessionSubmitBlockedResult,
+  sessionSubmitFailedResult,
   sessionSubmitQueuedResult,
   type SessionSubmitResult,
 } from "../../lib/session-send-contract.js";
@@ -718,6 +719,154 @@ test("conversation flow controller drains one queued draft per captured session 
     ["queued-2:queued"],
   );
   assert.deepEqual(Object.keys(pendingDrafts), []);
+});
+
+test("conversation flow controller surfaces terminal server queue failure on queued draft rows", async () => {
+  const sessionAKey = createUiConversationKey({
+    workspaceId: "workspace-1",
+    kind: "session",
+    id: "session-a",
+  });
+  let queues: Record<string, QueuedDraft[]> = {
+    [sessionAKey]: [
+      { id: "queued-1", draft, createdAt: 1, updatedAt: 1, state: "queued" },
+    ],
+  };
+  const updates: Array<{ sessionKey: string; states: string[] }> = [];
+
+  const controller = createSessionConversationFlow({
+    identity: {
+      createClientMessageId: () => "msg-queued-failed",
+      createPendingSessionInstanceId: () => "pending-session:unused",
+      now: () => 123,
+    },
+    sessionKeys: {
+      activeUiConversationWorkspaceId: () => "workspace-1",
+      activeWorkspaceId: () => "workspace-1",
+      currentSessionQueueKey: () => sessionAKey,
+      pendingSessionQueueKey: () => "pending:base",
+      selectedSessionId: () => "session-a",
+      sessionIdForQueueKey: resolveSessionIdForQueueKey,
+      sessionQueueKeyForSessionId: (sessionId) => sessionId ? sessionAKey : "pending:base",
+      workspaceIdForQueueKey: () => "workspace-1",
+    },
+    runtime: {
+      activePendingDraftKey: () => null,
+      aiAccessBlockedReason: () => null,
+      busyHint: () => null,
+      busyLabel: () => null,
+      error: () => null,
+    },
+    transcript: {
+      messageCount: () => 0,
+      messageIds: () => [],
+    },
+    pendingHandoff: {
+      clearPendingQueueKeyAwaitingSessionIdForBaseKey: () => undefined,
+      createPendingSidebarSessionWorkspaceId: () => "workspace-1",
+      createPendingSidebarSessionWorkspaceRoot: () => "/workspace",
+      remapPendingQueueToSession: () => undefined,
+      restoreMaterializedQueueToPending: () => undefined,
+      setPendingQueueKeyAwaitingSessionIdForBaseKey: () => undefined,
+    },
+    pendingSubmitted: {
+      optimisticSubmittedDraft: () => null,
+      setOptimisticSubmittedDraft: () => undefined,
+      updatePendingSubmittedDrafts: () => undefined,
+    },
+    queue: {
+      appendDraftToCurrentQueue: () => undefined,
+      editingQueuedDraftId: () => null,
+      queuePaused: () => false,
+      queuePausedForSessionKey: () => false,
+      queuedDrafts: () => queues[sessionAKey] ?? [],
+      queuedDraftsBySessionKey: () => queues,
+      resolveQueueKeyForQueuedDraft: (originalSessionKey, draftId) => {
+        const entry = Object.entries(queues).find(([, queue]) =>
+          queue.some((item) => item.id === draftId),
+        );
+        return entry?.[0] ?? originalSessionKey;
+      },
+      setEditingQueuedDraftId: () => undefined,
+      setQueuePausedForSessionKey: () => undefined,
+      updateCurrentQueue: (updater) => {
+        queues = { ...queues, [sessionAKey]: updater(queues[sessionAKey] ?? []) };
+      },
+      updateQueueForSessionKey: (sessionKey, updater) => {
+        queues = {
+          ...queues,
+          [sessionKey]: updater(queues[sessionKey] ?? []),
+        };
+        updates.push({
+          sessionKey,
+          states: (queues[sessionKey] ?? []).map((item) => `${item.id}:${item.state}:${item.error ?? ""}`),
+        });
+      },
+    },
+    composer: {
+      clearComposerDraftForSession: () => undefined,
+      currentDraftMode: () => "prompt",
+      setComposerDraft: () => undefined,
+    },
+    transcriptEdit: {
+      editableUserMessage: () => null,
+      editingTranscriptMessageId: () => null,
+      setEditingTranscriptMessageId: () => undefined,
+    },
+    runControl: {
+      abortBusy: () => false,
+      abortSession: async () => undefined,
+      lastPromptSent: () => "",
+      retryLastPrompt: () => undefined,
+      runPhase: () => "idle",
+      setAbortBusy: () => undefined,
+      setEscapeStopConfirmationPending: () => undefined,
+    },
+    runState: {
+      resetRunState: () => undefined,
+      showRunIndicator: () => false,
+      startRun: () => undefined,
+    },
+    viewport: {
+      scheduleScrollToLatest: () => undefined,
+      setStickToBottom: () => undefined,
+    },
+    transport: {
+      replaceUserMessageAsync: async () => acceptedSubmitResult(),
+      sendPromptAsync: async () =>
+        sessionSubmitFailedResult({
+          code: "queued_run_failed",
+          message: "queued drain failed",
+          queueItemId: "queue-1",
+          reservedRunId: "run-1",
+          clientMessageId: "msg-queued-failed",
+          draftDisposition: "restore",
+        }),
+    },
+    feedback: {
+      setToastMessage: () => undefined,
+      tr: (key) => key,
+    },
+    trace: {
+      markTempRuntimeUiRenderSource: () => undefined,
+      recordSendTrace: () => undefined,
+      reportError: () => undefined,
+    },
+    effects: {
+      batch: (fn) => fn(),
+    },
+  });
+
+  await controller.drainNextQueuedDraft("queue-drain", sessionAKey);
+
+  assert.deepEqual(updates[0], {
+    sessionKey: sessionAKey,
+    states: ["queued-1:sending:"],
+  });
+  assert.deepEqual(updates.at(-1), {
+    sessionKey: sessionAKey,
+    states: ["queued-1:error:queued drain failed"],
+  });
 });
 
 test("conversation flow controller sends edited queued drafts now with remap-aware rejection", async () => {
@@ -1882,6 +2031,10 @@ test("session queue keys distinguish real scoped sessions from pending identitie
 
   assert.deepEqual(parseUiConversationKey(resolveSessionQueueKeyForSessionId(context, "conversation-1")), {
     workspaceId: "workspace-visible",
+    workspaceRoot: "",
+    directory: "",
+    conversationId: "conversation-1",
+    opencodeSessionId: "opencode-1",
     kind: "session",
     id: "conversation-1",
   });
@@ -1891,6 +2044,46 @@ test("session queue keys distinguish real scoped sessions from pending identitie
     id: "pending:legacy",
   });
   assert.equal(resolveSessionQueueKeyForSessionId(context, null), resolvePendingSessionQueueKey(context));
+});
+
+test("session queue keys distinguish same session id in different directories", () => {
+  const left = resolveSessionQueueKeyForSessionId(
+    queueContext({
+      activeUiConversationRef: {
+        workspaceId: "workspace-visible",
+        workspaceRoot: "/repo",
+        directory: "/repo/packages/a",
+        sessionId: "same-session",
+        conversationId: "conv-a",
+        opencodeSessionId: "same-session",
+      } as any,
+    }),
+    "same-session",
+  );
+  const right = resolveSessionQueueKeyForSessionId(
+    queueContext({
+      activeUiConversationRef: {
+        workspaceId: "workspace-visible",
+        workspaceRoot: "/repo",
+        directory: "/repo/packages/b",
+        sessionId: "same-session",
+        conversationId: "conv-b",
+        opencodeSessionId: "same-session",
+      } as any,
+    }),
+    "same-session",
+  );
+
+  assert.notEqual(left, right);
+  assert.deepEqual(parseUiConversationKey(left), {
+    workspaceId: "workspace-visible",
+    workspaceRoot: "/repo",
+    directory: "/repo/packages/a",
+    conversationId: "conv-a",
+    opencodeSessionId: "same-session",
+    kind: "session",
+    id: "same-session",
+  });
 });
 
 test("queue key parsing preserves scoped and legacy session identities", () => {

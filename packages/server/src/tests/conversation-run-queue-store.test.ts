@@ -126,4 +126,29 @@ describe("conversation run queue store", () => {
     expect(submitted?.state).toBe("submitted");
     expect(store.nextPending("ws-a", "conv-a")).toBeNull();
   });
+
+  test("reads queue item status only inside its workspace and conversation", async () => {
+    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 2_000 });
+    const queued = store.enqueue({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "sess-a",
+      directory: "/tmp/workspace-a",
+      reservedRunId: "run-a",
+      clientMessageId: "msg-a",
+      kind: "prompt_async",
+      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] }),
+      activeRunId: "run-active",
+    });
+
+    store.markFailed(queued.item.queueItemId, "engine rejected queued run");
+
+    const status = store.getForConversation("ws-a", "conv-a", queued.item.queueItemId);
+
+    expect(status?.queueItemId).toBe(queued.item.queueItemId);
+    expect(status?.state).toBe("failed");
+    expect(status?.error).toBe("engine rejected queued run");
+    expect(store.getForConversation("ws-other", "conv-a", queued.item.queueItemId)).toBeNull();
+    expect(store.getForConversation("ws-a", "conv-other", queued.item.queueItemId)).toBeNull();
+  });
 });

@@ -361,11 +361,13 @@ function normalizeConfigForServerPatchComparison(value: unknown): unknown {
 export function managedConfigContentsMatchForServerPatch(
   currentContent: string | null | undefined,
   desiredContent: string | null | undefined,
+  traceContext: Record<string, unknown> = {},
 ): boolean {
   const current = normalizeConfigForServerPatchComparison(parseConfigContent(currentContent));
   const desired = normalizeConfigForServerPatchComparison(parseConfigContent(desiredContent));
   const matches = JSON.stringify(current) === JSON.stringify(desired);
   recordOpencodeConfigTrace("managed-config-compare", {
+    ...traceContext,
     matches,
     currentBytes: currentContent?.length ?? 0,
     desiredBytes: desiredContent?.length ?? 0,

@@ -56,6 +56,11 @@ function runPowerShell(command) {
   return result.stdout ?? "";
 }
 
+function sleepMs(ms) {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 export function isPathInside(path, root) {
   if (!path || !root) return false;
   const child = resolve(path);
@@ -73,10 +78,18 @@ export function looksLikeVesloServerWatcher(commandLine) {
   );
 }
 
+function commandLineReferencesPath(commandLine, root) {
+  if (!commandLine || !root) return false;
+  const normalizedCommandLine = String(commandLine).replace(/\\/g, "/").toLowerCase();
+  const normalizedRoot = resolve(root).replace(/\\/g, "/").toLowerCase();
+  return normalizedCommandLine.includes(normalizedRoot);
+}
+
 export function classifyDevProcess(processInfo, context) {
   const pid = Number(processInfo.ProcessId ?? processInfo.processId ?? 0);
   const name = String(processInfo.Name ?? processInfo.name ?? "").toLowerCase();
   const executablePath = String(processInfo.ExecutablePath ?? processInfo.executablePath ?? "");
+  const commandLine = String(processInfo.CommandLine ?? processInfo.commandLine ?? "");
 
   if (pid <= 0 || pid === process.pid) return null;
 
@@ -87,7 +100,16 @@ export function classifyDevProcess(processInfo, context) {
     return "repo sidecar executable";
   }
 
-  if (context.vesloServerWatcherPids?.has(pid) && looksLikeVesloServerWatcher(processInfo.CommandLine ?? processInfo.commandLine)) {
+  if (
+    name === "chrome-devtools-mcp.exe" &&
+    commandLine.includes("chrome-devtools-mcp-package") &&
+    (commandLineReferencesPath(commandLine, context.targetDebugDir) ||
+      commandLineReferencesPath(commandLine, context.sidecarsDir))
+  ) {
+    return "repo Chrome DevTools MCP package command line";
+  }
+
+  if (context.vesloServerWatcherPids?.has(pid) && looksLikeVesloServerWatcher(commandLine)) {
     return "veslo-server dev watcher";
   }
 
@@ -221,6 +243,59 @@ export function findStaleDevProcesses(processes, listeningPorts, context) {
     .sort((a, b) => a.pid - b.pid);
 }
 
+export function cleanupStaleDevProcesses(options = {}) {
+  const {
+    dryRun = false,
+    quiet = false,
+    quietEmpty = false,
+    targetDebugDir: scopedTargetDebugDir = targetDebugDir,
+    sidecarsDir: scopedSidecarsDir = sidecarsDir,
+    processReader = readProcesses,
+    listeningPortReader = readListeningPorts,
+    stopper = stopProcesses,
+    sleep = sleepMs,
+    log = console.log,
+    warn = console.warn,
+  } = options;
+  const maxPasses = Math.max(1, Number.parseInt(String(options.maxPasses ?? process.env.VESLO_DEV_CLEANUP_PASSES ?? "8"), 10) || 8);
+  const settleMs = Math.max(0, Number.parseInt(String(options.settleMs ?? process.env.VESLO_DEV_CLEANUP_SETTLE_MS ?? "250"), 10) || 0);
+
+  let sawStale = false;
+  let lastStale = [];
+
+  for (let pass = 0; pass < maxPasses; pass += 1) {
+    const processes = processReader();
+    const listeningPorts = listeningPortReader();
+    const stale = findStaleDevProcesses(processes, listeningPorts, {
+      targetDebugDir: scopedTargetDebugDir,
+      sidecarsDir: scopedSidecarsDir,
+    });
+    lastStale = stale;
+
+    if (stale.length === 0) {
+      if (!sawStale && !quietEmpty) log("[veslo] No stale Windows dev processes found.");
+      return 0;
+    }
+
+    sawStale = true;
+    const passSuffix = pass === 0 ? "" : ` (cleanup pass ${pass + 1})`;
+    for (const item of stale) {
+      if (!quiet) log(`[veslo] ${dryRun ? "Would stop" : "Stopping"} stale ${item.name} pid=${item.pid} (${item.reason})${passSuffix}`);
+    }
+
+    if (dryRun) return 0;
+
+    stopper(stale.map((item) => item.pid));
+    if (pass < maxPasses - 1) sleep(settleMs);
+  }
+
+  if (!quiet) {
+    const remaining = lastStale.map((item) => `${item.name} pid=${item.pid}`).join(", ");
+    warn(`[veslo] Stale Windows dev processes remain after ${maxPasses} cleanup pass(es): ${remaining}`);
+  }
+  return 1;
+}
+
 export function main(argv = process.argv.slice(2)) {
   const dryRun = argv.includes("--dry-run");
   const quiet = argv.includes("--quiet");
@@ -231,23 +306,7 @@ export function main(argv = process.argv.slice(2)) {
     return 0;
   }
 
-  const processes = readProcesses();
-  const listeningPorts = readListeningPorts();
-  const stale = findStaleDevProcesses(processes, listeningPorts, { targetDebugDir, sidecarsDir });
-
-  if (stale.length === 0) {
-    if (!quietEmpty) console.log("[veslo] No stale Windows dev processes found.");
-    return 0;
-  }
-
-  for (const item of stale) {
-    if (!quiet) console.log(`[veslo] ${dryRun ? "Would stop" : "Stopping"} stale ${item.name} pid=${item.pid} (${item.reason})`);
-  }
-
-  if (!dryRun) {
-    stopProcesses(stale.map((item) => item.pid));
-  }
-  return 0;
+  return cleanupStaleDevProcesses({ dryRun, quiet, quietEmpty });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -296,7 +296,7 @@ test("app activates selected session workspace at send time, not browse time", (
   );
   assert.match(
     sendPromptSource,
-    /const scopedSessionID = sessionID\?\.trim\(\) \|\| "";[\s\S]*if \([\s\S]*scopedSessionID &&[\s\S]*deps\.sendTraceStep\(\s*"sendPrompt:ensure-scoped-workspace-active",[\s\S]*deps\.ensureSelectedSessionWorkspaceActiveForSend\(scopedSessionID, sendTraceId\)[\s\S]*deps\.recordSendTrace\("sendPrompt:blocked-scoped-workspace",[\s\S]*?\);[\s\S]*return false;[\s\S]*\}[\s\S]*const skillResolution = await deps\.sendTraceStep\(\s*"sendPrompt:maybe-resolve-skill-command"/s,
+    /const scopedSessionID = sessionID\?\.trim\(\) \|\| "";[\s\S]*if \([\s\S]*scopedSessionID &&[\s\S]*deps\.sendTraceStep\(\s*"sendPrompt:ensure-scoped-workspace-active",[\s\S]*deps\.ensureSelectedSessionWorkspaceActiveForSend\(scopedSessionID, sendTraceId\)[\s\S]*deps\.recordSendTrace\("sendPrompt:blocked-scoped-workspace",[\s\S]*?\);[\s\S]*return sessionSubmitBlockedResult\(\{[\s\S]*code: "workspace_scope_unavailable",[\s\S]*\}\);[\s\S]*const shouldUseServerSubmitBeforeFrontendSkillResolution = Boolean\(/s,
     "scoped workspace activation should run during send before workspace-sensitive prompt routing",
   );
 });

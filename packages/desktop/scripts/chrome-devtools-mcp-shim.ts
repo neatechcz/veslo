@@ -4,41 +4,21 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const forwardedArgs = process.argv.slice(2);
+import { resolveChromeDevtoolsMcpShimInvocation } from "./chrome-devtools-mcp-shim-invocation.mjs";
+
 const require = createRequire(import.meta.url);
 const vendoredPackageDirName = "chrome-devtools-mcp-package";
 
-const hasArg = (name: string) =>
-  forwardedArgs.some((value) => value === name || value.startsWith(`${name}=`));
-
-const hasExplicitBrowserProfileConfig =
-  hasArg("--isolated") ||
-  hasArg("--user-data-dir") ||
-  hasArg("--userDataDir") ||
-  hasArg("--browser-url") ||
-  hasArg("--browserUrl") ||
-  hasArg("--ws-endpoint") ||
-  hasArg("--wsEndpoint") ||
-  hasArg("--auto-connect") ||
-  hasArg("--autoConnect");
-
-const shouldInjectIsolated =
-  process.env.VESLO_CHROME_DEVTOOLS_MCP_DEFAULT_ISOLATED !== "0" && !hasExplicitBrowserProfileConfig;
-
-if (shouldInjectIsolated) {
-  process.argv.push("--isolated");
-}
+const invocation = resolveChromeDevtoolsMcpShimInvocation({
+  argv: process.argv,
+  execPath: process.execPath,
+  env: process.env,
+  existsSync,
+});
 
 const resolveChromeDevtoolsMcpEntrypoint = () => {
-  const sidecarEntrypoint = join(
-    dirname(process.execPath),
-    vendoredPackageDirName,
-    "build",
-    "src",
-    "index.js",
-  );
-  if (existsSync(sidecarEntrypoint)) {
-    return sidecarEntrypoint;
+  if (existsSync(invocation.entrypoint)) {
+    return invocation.entrypoint;
   }
 
   try {
@@ -51,8 +31,16 @@ const resolveChromeDevtoolsMcpEntrypoint = () => {
     // Fall through to the explicit runtime error below.
   }
 
+  const sidecarEntrypoint = join(
+    dirname(process.execPath),
+    vendoredPackageDirName,
+    "build",
+    "src",
+    "index.js",
+  );
   console.error(`Chrome DevTools MCP runtime package not found at ${sidecarEntrypoint}.`);
   process.exit(1);
 };
 
+process.argv.splice(0, process.argv.length, ...invocation.argvForImportedEntrypoint);
 await import(pathToFileURL(resolveChromeDevtoolsMcpEntrypoint()).href);

@@ -80,6 +80,25 @@ export function documentRuntimeFormatForSubmitCommand(skillName: string): Docume
     : null;
 }
 
+function promptRunInput(
+  request: ConversationSubmitRequest,
+  text: string,
+  attachmentParts: AttachmentRunParts,
+  workspace?: WorkspaceInfo | null,
+): ConversationSubmitResolvedRunInput {
+  const finalText = appendLines(text, attachmentParts.pathLinesForPrompt);
+  return {
+    kind: "prompt_async",
+    text: finalText,
+    parts: promptParts({
+      text: finalText,
+      draftParts: request.draft.parts,
+      attachmentParts: attachmentParts.inlineFileParts,
+      workspace,
+    }),
+  };
+}
+
 function documentRuntimeSkillReady(
   status: DocumentRuntimeStatusPayload | null | undefined,
   format: DocumentRuntimeFormat,
@@ -394,13 +413,29 @@ async function resolveRunInput(input: {
 
   const text = resolvedContent(request);
   if (text && input.resolveSkillCommand) {
-    const skillCommandName = (await input.resolveSkillCommand({
-      request,
-      text,
-      workspace: input.workspace ?? null,
-      includeGlobal: input.includeGlobal === true,
-    }))?.trim();
+    let skillCommandName: string | undefined;
+    try {
+      skillCommandName = (await input.resolveSkillCommand({
+        request,
+        text,
+        workspace: input.workspace ?? null,
+        includeGlobal: input.includeGlobal === true,
+      }))?.trim();
+    } catch {
+      skillCommandName = undefined;
+    }
     if (skillCommandName) {
+      const documentRuntimeFormat = documentRuntimeFormatForSubmitCommand(skillCommandName);
+      if (documentRuntimeFormat) {
+        const status = await input.documentRuntimeStatus?.();
+        const message = documentRuntimeBlockReasonForSubmitCommand(status, documentRuntimeFormat);
+        if (message) {
+          return {
+            status: "ok",
+            resolvedRunInput: promptRunInput(request, text, attachmentParts, input.workspace),
+          };
+        }
+      }
       return {
         status: "ok",
         resolvedRunInput: {
@@ -419,19 +454,9 @@ async function resolveRunInput(input: {
     }
   }
 
-  const finalText = appendLines(text, attachmentParts.pathLinesForPrompt);
   return {
     status: "ok",
-    resolvedRunInput: {
-      kind: "prompt_async",
-      text: finalText,
-      parts: promptParts({
-        text: finalText,
-        draftParts: request.draft.parts,
-        attachmentParts: attachmentParts.inlineFileParts,
-        workspace: input.workspace,
-      }),
-    },
+    resolvedRunInput: promptRunInput(request, text, attachmentParts, input.workspace),
   };
 }
 

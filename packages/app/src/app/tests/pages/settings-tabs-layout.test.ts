@@ -69,7 +69,7 @@ test("settings no longer offers a developer mode entry point", () => {
 
 test("settings audit panel is visible and loads outside developer mode", () => {
   const auditEffect = appSource.match(
-    /createEffect\(\(\) => \{\n    const client = vesloServerClient\(\);\n    const workspaceId = vesloServerWorkspaceId\(\);[\s\S]*?client\.listAudit\(workspaceId, 50\);/,
+    /createEffect\(\(\) => \{\s*const client = vesloServerClient\(\);\s*const workspaceId = vesloServerWorkspaceId\(\);[\s\S]*?client\.listAudit\(workspaceId, 50\);/,
   )?.[0] ?? "";
   assert.match(source, /data-testid="settings-audit-log"/);
   assert.match(generalSection, /\{auditLogPanel\(\)\}/);

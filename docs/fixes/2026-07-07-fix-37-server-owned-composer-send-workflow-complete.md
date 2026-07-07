@@ -20,8 +20,9 @@ The implementation plan is complete by its own criteria:
 - Top-level plan status is `implemented` and `done: true`.
 - BSW00 through BSW11 are marked done for the core gate.
 - BSW01A and BSW05A are included in the completed gate.
-- BSW07B and BSW08A remain explicit follow-ups and are allowed to stay
-  `done: false`.
+- BSW07B was promoted after the core gate and is now implemented as a
+  server-owned replacement workflow; BSW08A remains an explicit follow-up and
+  is allowed to stay `done: false`.
 - BSW06B remains a documented follow-up for full raw attachment byte staging.
 
 This is not a claim that every possible follow-up in the document is finished.
@@ -78,8 +79,11 @@ The following remain outside this completed core gate:
 
 - BSW06B: full server-side raw attachment byte staging beyond existing
   file-session references and bounded inline payloads.
-- BSW07B: edit-message replacement as a server-owned compensating workflow.
 - BSW08A: durable server queue APIs for the full app-local draft queue UI.
+
+BSW07B is no longer an outside follow-up: edit-message replacement uses the
+server-owned compensating workflow. Replacement failure surfacing is tracked
+and closed by the follow-up audit plan rather than by the core gate record.
 
 The app may keep compatibility or test-only paths for missing submit adapters
 and explicit follow-up workflows, but the wired production composer input send

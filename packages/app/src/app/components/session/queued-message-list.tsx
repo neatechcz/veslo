@@ -101,8 +101,15 @@ export default function QueuedMessageList(props: QueuedMessageListProps) {
                 <GripVertical size={14} />
               </button>
 
-              <div class="min-w-0 flex-1 truncate text-xs leading-5 text-gray-11" title={draftPreview(item)}>
-                {draftPreview(item)}
+              <div class="min-w-0 flex-1">
+                <div class="truncate text-xs leading-5 text-gray-11" title={draftPreview(item)}>
+                  {draftPreview(item)}
+                </div>
+                <Show when={item.state === "error" && item.error}>
+                  <div class="truncate text-[11px] leading-4 text-red-11" title={item.error}>
+                    {item.error}
+                  </div>
+                </Show>
               </div>
 
               <Show

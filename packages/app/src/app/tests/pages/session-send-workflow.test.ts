@@ -17,6 +17,7 @@ import type { DocumentRuntimeStatusPayload } from "../../lib/document-runtime.js
 import type {
   VesloConversationRunInput,
   VesloConversationSubmitRequest,
+  VesloConversationSubmitResult,
 } from "../../lib/veslo-server.js";
 import type { Client, ComposerDraft, ModelRef } from "../../types.js";
 
@@ -262,10 +263,15 @@ function createHarness(
     ...optionOverrides,
   } as SessionSendWorkflowOptions & LegacyConversationRunFallbackOptions;
 
+  const hasExplicitLegacyFallback = Object.prototype.hasOwnProperty.call(
+    optionsWithLegacy,
+    "legacyConversationRunFallback",
+  );
   const options: SessionSendWorkflowOptions = {
     ...optionsWithLegacy,
-    legacyConversationRunFallback:
-      optionsWithLegacy.legacyConversationRunFallback ?? createLegacyConversationRunFallback(optionsWithLegacy),
+    legacyConversationRunFallback: hasExplicitLegacyFallback
+      ? optionsWithLegacy.legacyConversationRunFallback
+      : createLegacyConversationRunFallback(optionsWithLegacy),
     stageServerSubmitAttachments:
       optionsWithLegacy.stageServerSubmitAttachments ?? optionsWithLegacy.stageAttachmentsIntoSessionDirectory,
   };
@@ -321,6 +327,44 @@ test("session send workflow blocks sends without a client message id", async () 
   assert.equal(sent.accepted, false);
   assert.deepEqual(harness.actions, []);
   assert.ok(harness.events.includes("sendPrompt:blocked-missing-client-message-id"));
+});
+
+test("app wiring keeps the normal send workflow free of legacy run fallback dependency", () => {
+  const workflowStart = appSource.indexOf("const sessionSendWorkflow = createSessionSendWorkflow({");
+  const workflowEnd = appSource.indexOf("\n  });", workflowStart);
+
+  assert.notEqual(workflowStart, -1, "app.tsx should wire createSessionSendWorkflow");
+  assert.ok(workflowEnd > workflowStart, "session send workflow dependency object should be bounded");
+  const workflowDeps = appSource.slice(workflowStart, workflowEnd);
+
+  assert.doesNotMatch(
+    workflowDeps,
+    /\blegacyConversationRunFallback\b/,
+    "normal production send wiring must not inject the legacy conversation-run fallback",
+  );
+});
+
+test("session send workflow blocks compatibility fallback when it is not configured", async () => {
+  const harness = createHarness({
+    legacyConversationRunFallback: null as never,
+    submitConversationFromVesloWriteApi: undefined,
+    runConversationFromVesloWriteApi: async () => {
+      throw new Error("legacy run should not run when fallback is disabled");
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("compat disabled"), {
+    clientMessageId: "client-compat-disabled",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent.accepted, false);
+  assert.equal(sent.status, "blocked");
+  assert.equal(sent.code, "legacy_fallback_disabled");
+  assert.ok(harness.events.includes("sendPrompt:blocked-legacy-fallback-disabled"));
+  assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
 });
 
 test("document runtime helpers map only Veslo document skills", () => {
@@ -864,6 +908,8 @@ test("session send workflow reports failed server submit into the visible transc
       status: "failed",
       code: "run_submit_failed",
       message: `Submit failed for ${input.clientMessageId}`,
+      queueItemId: "queue-failed",
+      reservedRunId: "run-failed",
       draftDisposition: "restore",
       debugTrace: [{ source: "server", event: "run_submit_failed" }],
     }),
@@ -877,6 +923,8 @@ test("session send workflow reports failed server submit into the visible transc
   });
 
   assert.equal(sent.accepted, false);
+  assert.equal(sent.queueItemId, "queue-failed");
+  assert.equal(sent.reservedRunId, "run-failed");
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing-failed"));
   assert.match(harness.errors.at(-1) ?? "", /Clear the OpenCode cache/);
   assert.deepEqual(appendedErrors, [{
@@ -1177,6 +1225,74 @@ test("session send workflow emits queued event for first-session queued submit r
   assert.equal(queuedEvent?.reason, "sendPrompt:queued");
   assert.equal(queuedEvent?.type === "conversation-run.queued" ? queuedEvent.queueItemId : null, "queue-created");
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
+});
+
+test("session send workflow preserves pre-materialized first-session terminal submit results", async () => {
+  const scenarios: Array<{
+    name: string;
+    result: Extract<VesloConversationSubmitResult, { status: "blocked" | "failed" }>;
+  }> = [
+    {
+      name: "blocked",
+      result: {
+        status: "blocked",
+        code: "remote_submit_unavailable",
+        message: "Server-owned submit is not available for remote workspaces yet",
+        workspaceId: "ws-remote",
+        clientMessageId: "client-first-blocked",
+        draftDisposition: "restore",
+        recoverable: true,
+      },
+    },
+    {
+      name: "failed",
+      result: {
+        status: "failed",
+        code: "conversation_create_failed",
+        message: "Conversation creation failed",
+        clientMessageId: "client-first-failed-before-session",
+        draftDisposition: "restore",
+        debugTrace: [{ source: "server", event: "conversation_create_failed" }],
+      },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const createOptions: Array<Parameters<SessionSendWorkflowOptions["createSessionAndOpen"]>[1]> = [];
+    const harness = createHarness({
+      createSessionAndOpen: async (_initialTitle, options) => {
+        createOptions.push(options);
+        options?.onSubmitResult?.(scenario.result);
+        harness.actions.push(`create-session:${scenario.name}`);
+        return undefined;
+      },
+      prepareSendRuntimeForSend: async () => {
+        throw new Error("runtime prep should not run before first-session terminal server submit");
+      },
+      runConversationFromVesloWriteApi: async () => {
+        throw new Error("legacy run should not run after first-session terminal server submit");
+      },
+      selectedSessionId: () => null,
+      submitConversationFromVesloWriteApi: async () => null,
+    });
+    const workflow = createSessionSendWorkflow(harness.options);
+
+    const sent = await workflow.sendPrompt(promptDraft(`first server ${scenario.name}`), {
+      clientMessageId: scenario.result.clientMessageId ?? `client-first-${scenario.name}`,
+      origin: "session:normal",
+      source: "enter",
+    });
+
+    assert.equal(createOptions.length, 1);
+    assert.equal(sent.accepted, false);
+    assert.equal(sent.status, scenario.result.status);
+    assert.equal(sent.code, scenario.result.code);
+    assert.equal(sent.message, scenario.result.message);
+    assert.equal(sent.draftDisposition, scenario.result.draftDisposition);
+    assert.ok(harness.events.includes("sendPrompt:server-submit-first-failed"));
+    assert.equal(harness.events.includes("sendPrompt:blocked-no-session"), false);
+    assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
+  }
 });
 
 test("session send workflow opens first materialized session and reports failed server submit", async () => {

@@ -62,8 +62,8 @@ test("managed AI runtime config sync executes controller decisions", () => {
   );
   assert.match(
     syncSource,
-    /const providerRoutingReady = Boolean\(\s*routing\.providerRoutingTarget\?\.serverClientToken && gatewayAccessToken,\s*\);/,
-    "managed provider routing should not depend on a workspace correlation header",
+    /const providerRoutingReady = Boolean\(routing\.providerRoutingTarget\?\.serverClientToken\);/,
+    "managed provider routing should depend on the local server client token, not the cloud gateway bearer",
   );
   assert.match(
     syncSource,

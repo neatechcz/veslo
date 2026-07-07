@@ -1,5 +1,6 @@
 import type { ConversationService, ConversationTranscriptResult } from "../conversation-service.js";
 import type { ConversationRunLifecycleController } from "../conversation-run-lifecycle-controller.js";
+import type { ConversationRunQueueItem, ConversationRunQueueStore } from "../conversation-run-queue-store.js";
 import type {
   ConversationSubmitResolvedRunSubmitter,
   ConversationSubmitService,
@@ -91,6 +92,7 @@ export type ConversationSessionRouteDependencies = {
   conversationService: ConversationService;
   sessionTranscriptPrefetch: SessionTranscriptPrefetchPort;
   conversationRunLifecycleController: ConversationRunLifecycleController;
+  conversationRunQueueStore: ConversationRunQueueStore;
   conversationSubmitService: ConversationSubmitService;
   lifecycleClient: OrchestratorLifecycleClient | null;
   resolveConversationReadDirectory: ResolveConversationReadDirectory;
@@ -446,6 +448,28 @@ function readSubmitDebugTrace(payload: Record<string, unknown>): ConversationSub
   return entries.length > 0 ? entries : undefined;
 }
 
+function serializeConversationRunQueueStatus(item: ConversationRunQueueItem): Record<string, unknown> {
+  return {
+    ok: true,
+    workspaceId: item.workspaceId,
+    conversationId: item.conversationId,
+    opencodeSessionId: item.opencodeSessionId,
+    queueItemId: item.queueItemId,
+    reservedRunId: item.reservedRunId,
+    clientMessageId: item.clientMessageId,
+    origin: item.origin,
+    status: item.state,
+    activeRunId: item.activeRunId,
+    attempts: item.attempts,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    startedAt: item.startedAt,
+    submittedAt: item.submittedAt,
+    completedAt: item.completedAt,
+    error: item.error,
+  };
+}
+
 function lifecycleRequestApiError(error: OrchestratorLifecycleRequestError): ApiError {
   const status = error.status === 401 || error.status === 403
     ? 503
@@ -478,6 +502,7 @@ export function registerConversationSessionRoutes(
     conversationService,
     sessionTranscriptPrefetch,
     conversationRunLifecycleController,
+    conversationRunQueueStore,
     conversationSubmitService,
     lifecycleClient,
     resolveConversationReadDirectory,
@@ -973,6 +998,25 @@ export function registerConversationSessionRoutes(
       runtimeAuthorizationActorTokenHash,
     });
     return jsonResponse(result.payload, result.httpStatus);
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/conversations/:conversationId/queue/:queueItemId", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(ctx.config, ctx.params.id);
+    const conversationId = (ctx.params.conversationId ?? "").trim();
+    const queueItemId = (ctx.params.queueItemId ?? "").trim();
+    if (!conversationId || !queueItemId) {
+      throw new ApiError(400, "invalid_payload", "conversationId and queueItemId are required");
+    }
+    const item = conversationRunQueueStore.getForConversation(
+      workspace.id,
+      conversationId,
+      queueItemId,
+    );
+    if (!item) {
+      throw new ApiError(404, "queue_item_not_found", "Queued run was not found for this conversation");
+    }
+    return jsonResponse(serializeConversationRunQueueStatus(item));
   });
 
   addRoute(routes, "POST", "/workspace/:id/conversations/:conversationId/abort", "client", async (ctx) => {

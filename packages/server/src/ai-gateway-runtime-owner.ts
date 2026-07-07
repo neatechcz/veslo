@@ -352,7 +352,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     activeRunContextPresent?: boolean;
   }): {
     authorization: string;
-    source: "legacy-header" | AiGatewayRuntimeAuthorizationEntry["source"];
+    source: AiGatewayRuntimeAuthorizationEntry["source"];
   } {
     const key = actorRuntimeTokenKey(input.actor);
     const scopedKey = input.runtimeAuthorizationActorTokenHash?.trim() ?? "";
@@ -364,30 +364,35 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
       ...(scopedKey ? [{ key: scopedKey, entry: runtimeAuthorizationByActorToken.get(scopedKey), scoped: true }] : []),
       ...(key && key !== scopedKey ? [{ key, entry: runtimeAuthorizationByActorToken.get(key), scoped: false }] : []),
     ];
-    const resolvedRuntimeCandidate = runtimeCandidates.find((candidate) => candidate.entry?.authorization.trim());
-    if (resolvedRuntimeCandidate?.entry?.authorization.trim()) {
-      const resolvedRuntime = resolvedRuntimeCandidate.entry;
-      const at = now();
+    let expiredRuntimeAuthorization = false;
+    const at = now();
+    for (const runtimeCandidate of runtimeCandidates) {
+      if (!runtimeCandidate.entry?.authorization.trim()) continue;
+      const resolvedRuntime = runtimeCandidate.entry;
       const ageMs = Math.max(0, at - resolvedRuntime.at);
       if (ageMs > runtimeAuthorizationMaxAgeMs) {
-        runtimeAuthorizationByActorToken.delete(resolvedRuntimeCandidate.key);
+        expiredRuntimeAuthorization = true;
+        runtimeAuthorizationByActorToken.delete(runtimeCandidate.key);
         recordTrace("server:ai-gateway-runtime-authorization:expired", {
           ageMs: roundDiagnosticMs(ageMs),
           maxAgeMs: runtimeAuthorizationMaxAgeMs,
           source: resolvedRuntime.source,
-          runtimeAuthorizationActorTokenHashPresent: resolvedRuntimeCandidate.scoped,
+          runtimeAuthorizationActorTokenHashPresent: runtimeCandidate.scoped,
         });
-        throw new ApiError(
-          401,
-          "gateway_runtime_authorization_expired",
-          "Managed AI gateway authorization in this Veslo server runtime has expired",
-        );
-      } else {
-        return {
-          authorization: resolvedRuntime.authorization,
-          source: resolvedRuntime.source,
-        };
+        continue;
       }
+      return {
+        authorization: resolvedRuntime.authorization,
+        source: resolvedRuntime.source,
+      };
+    }
+
+    if (expiredRuntimeAuthorization) {
+      throw new ApiError(
+        401,
+        "gateway_runtime_authorization_expired",
+        "Managed AI gateway authorization in this Veslo server runtime has expired",
+      );
     }
 
     const legacyAccessToken = input.request.headers.get(input.accessTokenHeader)?.trim() ?? "";
@@ -399,12 +404,9 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
           "Legacy AI gateway token is redacted or unavailable",
         );
       }
-      if (!input.activeRunContextPresent) {
-        return {
-          authorization: `Bearer ${legacyAccessToken}`,
-          source: "legacy-header",
-        };
-      }
+      recordTrace("server:ai-gateway-legacy-token:ignored", {
+        activeRunContextPresent: Boolean(input.activeRunContextPresent),
+      });
     }
 
     throw new ApiError(

@@ -201,17 +201,15 @@ describe("createAiGatewayRuntimeOwner", () => {
       source: "ai-access-token",
     });
 
-    const legacy = owner.resolveProviderAuthorization({
-      actor: opencodeActor,
-      request: new Request("http://localhost", {
-        headers: { "x-veslo-gateway-token": "legacy-token" },
-      }),
-      accessTokenHeader: "x-veslo-gateway-token",
-    });
-    expect(legacy).toEqual({
-      authorization: "Bearer legacy-token",
-      source: "legacy-header",
-    });
+    expect(() =>
+      owner.resolveProviderAuthorization({
+        actor: opencodeActor,
+        request: new Request("http://localhost", {
+          headers: { "x-veslo-gateway-token": "legacy-token" },
+        }),
+        accessTokenHeader: "x-veslo-gateway-token",
+      })
+    ).toThrow(ApiError);
 
     const redactedLegacy = owner.resolveProviderAuthorization({
       actor: opencodeActor,
@@ -321,6 +319,58 @@ describe("createAiGatewayRuntimeOwner", () => {
       authorization: "Bearer runtime-token-2",
       source: "ai-access-token",
     });
+  });
+
+  test("falls back to fresh actor runtime authorization when scoped run authorization expired", () => {
+    let now = 1_000;
+    const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+    const owner = createAiGatewayRuntimeOwner({
+      now: () => now,
+      runtimeAuthorizationMaxAgeMs: 1_000,
+      recordTrace: (event, payload) => traces.push({ event, payload }),
+    });
+
+    owner.syncRuntimeAuthorizationFromAccessBundle({
+      actor,
+      callerAuthorization: "Bearer stale-den-caller-token",
+      value: {
+        aiAccess: { enabled: true },
+        accessToken: "stale-scoped-runtime-token",
+      },
+    });
+
+    now = 2_500;
+    owner.syncRuntimeAuthorizationFromAccessBundle({
+      actor: opencodeActor,
+      callerAuthorization: "Bearer fresh-den-caller-token",
+      value: {
+        aiAccess: { enabled: true },
+        accessToken: "fresh-actor-runtime-token",
+      },
+    });
+
+    expect(owner.resolveProviderAuthorization({
+      actor: opencodeActor,
+      request: new Request("http://localhost"),
+      accessTokenHeader: "x-veslo-gateway-token",
+      runtimeAuthorizationActorTokenHash: actor.tokenHash,
+      activeRunContextPresent: true,
+    })).toEqual({
+      authorization: "Bearer fresh-actor-runtime-token",
+      source: "ai-access-token",
+    });
+
+    expect(traces).toEqual([
+      {
+        event: "server:ai-gateway-runtime-authorization:expired",
+        payload: {
+          ageMs: 1500,
+          maxAgeMs: 1000,
+          source: "ai-access-token",
+          runtimeAuthorizationActorTokenHashPresent: true,
+        },
+      },
+    ]);
   });
 
   test("aborts only matching active proxy requests and records trace metadata", () => {

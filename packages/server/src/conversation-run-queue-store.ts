@@ -46,6 +46,11 @@ export type ConversationRunQueueStore = {
   markPending(queueItemId: string, activeRunId?: string | null): ConversationRunQueueItem | null;
   markSubmitted(queueItemId: string): ConversationRunQueueItem | null;
   markFailed(queueItemId: string, error: string): ConversationRunQueueItem | null;
+  getForConversation(
+    workspaceId: string,
+    conversationId: string,
+    queueItemId: string,
+  ): ConversationRunQueueItem | null;
   recoverStarting(): Array<{ workspaceId: string; conversationId: string }>;
   pendingConversationKeys(): Array<{ workspaceId: string; conversationId: string }>;
 };
@@ -399,6 +404,23 @@ export function createConversationRunQueueStore(options?: {
            WHERE queue_item_id = ?1`,
         ).run(queueItemId, normalizeText(error) || "queued run failed", timestamp);
         return getSync(db, queueItemId);
+      });
+    },
+
+    getForConversation(workspaceId, conversationId, queueItemId) {
+      return withDb((db) => {
+        const row = db.query<QueueRow, [string, string, string]>(
+          `SELECT * FROM conversation_run_queue
+           WHERE workspace_id = ?1
+             AND conversation_id = ?2
+             AND queue_item_id = ?3
+           LIMIT 1`,
+        ).get(
+          normalizeText(workspaceId),
+          normalizeText(conversationId),
+          normalizeText(queueItemId),
+        );
+        return row ? rowToItem(row) : null;
       });
     },
 

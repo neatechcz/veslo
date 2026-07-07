@@ -138,7 +138,7 @@ import {
   type SessionCreationResult,
   type SessionCreationWorkflowCreateOptions,
 } from "./pages/session-creation-workflow";
-import { createLegacyConversationRunFallback, createSessionSendWorkflow } from "./pages/session-send-workflow";
+import { createSessionSendWorkflow } from "./pages/session-send-workflow";
 import { createSessionMutationWorkflow } from "./pages/session-mutation-workflow";
 import { createSoulDataStore } from "./pages/soul-data-store";
 import { isPendingSessionInstanceId } from "./components/session/pending-session-instance-model";
@@ -1009,15 +1009,14 @@ export default function App() {
       const id = sessionId.trim();
       const scope = id ? resolveSelectedSessionBrowseScope(id) : null;
       const workspaceId = scope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
-      const scopedId = [
-        id,
-        scope?.conversationId?.trim() ?? "",
-        scope?.opencodeSessionId?.trim() ?? "",
-      ].filter(Boolean).join("\0") || id;
       return createUiConversationKey({
         workspaceId,
+        workspaceRoot: scope?.workspaceRoot,
+        directory: scope?.directory,
+        conversationId: scope?.conversationId,
+        opencodeSessionId: scope?.opencodeSessionId,
         kind: "session",
-        id: scopedId,
+        id,
       });
     },
     resolveSessionWorkspaceId: (sessionId) =>
@@ -1598,8 +1597,6 @@ export default function App() {
   });
   const {
     stageAttachmentsIntoSessionDirectory,
-    buildPromptParts,
-    buildCommandFileParts,
   } = sessionAttachmentStaging;
 
   const [sendPromptInFlightCount, setSendPromptInFlightCount] = createSignal(0);
@@ -1613,49 +1610,6 @@ export default function App() {
       setSendPromptInFlightCount((count) => Math.max(0, count - 1));
     };
   };
-
-  const legacyConversationRunFallback = createLegacyConversationRunFallback({
-    agentForSession: (sessionId) => agentForSession(sessionId),
-    buildCommandFileParts,
-    buildPromptParts,
-    compactCurrentSession: (sessionId) => compactCurrentSession(sessionId),
-    developerMode,
-    emitLiveTranscriptPolicyEvent: (event) => liveTranscriptReadPolicy.emit(event),
-    finishPerf,
-    holdVisibleRuntimeActivity,
-    isWorkspaceClientStaleError,
-    isWorkspaceRuntimeReady,
-    messageFromUnknownError: (error) => messageFromUnknownError(error),
-    messages,
-    modelForSession: (sessionId) => modelForSession(sessionId),
-    modelVariant: () => modelVariant(),
-    perfNow,
-    prepareSendRuntimeForSend: (event, preflight) => prepareSendRuntimeForSend(event, preflight),
-    providers: () => providers(),
-    recordPerfLog,
-    recordSendTrace,
-    resolveRuntimeSandboxStateForTarget: (target) =>
-      resolveRuntimeSandboxStateForTarget(target as SendRuntimePreflightTargetWorkspace | null),
-    resolveSelectedSessionBrowseScope,
-    routeStagedAttachmentsForModel,
-    routedClientForSendTarget: (target) => routedClientForSendTarget(target),
-    runConversationFromVesloWriteApi,
-    safeStringify,
-    sendTraceStep,
-    sessionDirectoryOverrideById,
-    sessionStoreClearCommandDisplay: (messageId) => sessionStore.clearCommandDisplay(messageId),
-    sessionStoreSetCommandDisplay: (messageId, command, args) => sessionStore.setCommandDisplay(messageId, command, args),
-    setError,
-    setLastPromptSent,
-    setPrompt,
-    stageAttachmentsIntoSessionDirectory,
-    workspace: {
-      activeWorkspaceDisplay: () => workspaceStore.activeWorkspaceDisplay(),
-      activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
-      activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
-      workspaces: () => workspaceStore.workspaces() as WorkspaceDisplay[],
-    },
-  });
 
   const sessionSendWorkflow = createSessionSendWorkflow({
     abortConversationFromVesloWriteApi,
@@ -1711,7 +1665,6 @@ export default function App() {
     resolveSendTargetWorkspaceScope: (sessionId) => resolveSendTargetWorkspaceScope(sessionId),
     resolvedDevtoolsWorkspaceId: () => resolvedDevtoolsWorkspaceId() ?? "",
     routedClient: (workspaceId) => routedClient(workspaceId ?? undefined),
-    legacyConversationRunFallback,
     submitConversationFromVesloWriteApi,
     safeStringify,
     selectedSessionId,
@@ -2869,6 +2822,7 @@ export default function App() {
     invalidateSkillRegistryInventory: () => extensionsStore.invalidateSkillRegistryInventory(),
     markReloadRequired,
     reportError,
+    ensureLocalVesloServerRunning: (options) => ensureLocalVesloServerRunning(options),
   });
   const skillRegistryMaterializationAuthContext = skillRegistryOrchestrator.materializationAuthContext;
 

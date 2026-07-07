@@ -435,6 +435,14 @@ OpenCode session id, or origin is an idempotency conflict. If the server process
 stops after a queued row is marked `starting` but before it is submitted or
 failed, startup recovery moves that row back to `pending` before scheduling
 queue drains, so accepted sends are not lost across process restarts.
+Clients may read a queued send with
+`GET /workspace/:id/conversations/:conversationId/queue/:queueItemId`. The
+response is scoped to the resolved workspace and conversation and includes the
+durable queue `status`, `reservedRunId`, `clientMessageId`, timestamps, and any
+terminal `error`. If a previously replayable submit-attempt result points at a
+queued item that has since reached `failed`, a same-fingerprint retry returns
+`status: "failed"` with `code: "queued_run_failed"` and
+`draftDisposition: "restore"` instead of replaying stale `queued`.
 
 The submit-attempt store also uses `clientMessageId` plus request hash for
 idempotency. Successful, queued, dry-run, and materialized outcomes are safe to

@@ -106,6 +106,47 @@ describe("conversation submit draft resolution", () => {
     });
   });
 
+  test("falls back to prompt when implicit skill resolution fails", async () => {
+    const result = await resolveConversationSubmitDraft({
+      request: request({
+        mode: "prompt",
+        text: "plain prompt should still send",
+        parts: [{ type: "text", text: "plain prompt should still send" }],
+      }),
+      resolveSkillCommand: async () => {
+        throw new Error("skill registry unavailable");
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "ok",
+      resolvedRunInput: {
+        kind: "prompt_async",
+        text: "plain prompt should still send",
+      },
+    });
+  });
+
+  test("falls back to prompt when implicit document skill lacks runtime", async () => {
+    const result = await resolveConversationSubmitDraft({
+      request: request({
+        mode: "prompt",
+        text: "create a docx summary",
+        parts: [{ type: "text", text: "create a docx summary" }],
+      }),
+      resolveSkillCommand: async () => "veslo-docx",
+      documentRuntimeStatus: () => ({ status: "missing" }),
+    });
+
+    expect(result).toMatchObject({
+      status: "ok",
+      resolvedRunInput: {
+        kind: "prompt_async",
+        text: "create a docx summary",
+      },
+    });
+  });
+
   test("resolves workspace file draft parts and ignores paths outside the workspace", async () => {
     const root = process.cwd();
     const result = await resolveConversationSubmitDraft({

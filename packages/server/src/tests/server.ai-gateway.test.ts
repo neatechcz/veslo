@@ -113,6 +113,40 @@ function stopTestServer(server: ReturnType<typeof startServer>): void {
   (server as unknown as { stop: (closeActiveConnections?: boolean) => void }).stop(true);
 }
 
+function isManagedAiAccessRequest(req: { method?: string; url?: string | null }): boolean {
+  return req.method === "GET" && (req.url ?? "").startsWith("/api/me/ai-access");
+}
+
+function writeManagedAiAccessBundle(
+  res: { statusCode: number; setHeader: (name: string, value: string) => void; end: (body: string) => void },
+  accessToken = "gateway-access-token",
+): void {
+  res.statusCode = 200;
+  res.setHeader("content-type", "application/json");
+  res.end(JSON.stringify({
+    accessToken,
+    aiAccess: {
+      id: "ai_access_test",
+      userId: "user_123",
+      enabled: true,
+      provider: "codex_oauth",
+      defaultModel: "gpt-5.5",
+      allowedModels: ["gpt-5.5"],
+      updatedAt: "2026-04-08T10:00:00.000Z",
+    },
+  }));
+}
+
+async function primeAiGatewayRuntimeAuthorization(server: ReturnType<typeof startServer>): Promise<void> {
+  const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/me/ai-access`, {
+    headers: {
+      authorization: "Bearer client-token",
+      "x-veslo-gateway-authorization": "Bearer den-user-token",
+    },
+  });
+  expect(response.status).toBe(200);
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -137,6 +171,10 @@ describe("ai gateway proxy routes", () => {
     }> = [];
 
     const upstream = createServer(async (req, res) => {
+      if (isManagedAiAccessRequest(req)) {
+        writeManagedAiAccessBundle(res);
+        return;
+      }
       const chunks: Uint8Array[] = [];
       for await (const chunk of req) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -184,6 +222,7 @@ describe("ai gateway proxy routes", () => {
           const server = startServer(createTestConfig());
 
           try {
+            await primeAiGatewayRuntimeAuthorization(server);
             const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/openai/v1/chat/completions`, {
               method: "POST",
               headers: {
@@ -318,6 +357,10 @@ describe("ai gateway proxy routes", () => {
     }> = [];
 
     const upstream = createServer(async (req, res) => {
+      if (isManagedAiAccessRequest(req)) {
+        writeManagedAiAccessBundle(res);
+        return;
+      }
       const chunks: Uint8Array[] = [];
       for await (const chunk of req) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -351,6 +394,7 @@ describe("ai gateway proxy routes", () => {
           const server = startServer(createTestConfig());
 
           try {
+            await primeAiGatewayRuntimeAuthorization(server);
             const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
               method: "POST",
               headers: {
@@ -391,7 +435,7 @@ describe("ai gateway proxy routes", () => {
     }
   });
 
-  test("server forwards placeholder session ids for sessionless managed calls", async () => {
+  test("server rejects unresolved placeholder session ids before provider proxying", async () => {
     const traceDir = mkdtempSync(join(tmpdir(), "veslo-ai-gateway-trace-"));
     const traceFile = join(traceDir, "send-workflow-trace.ndjson");
     const requests: Array<{
@@ -405,6 +449,10 @@ describe("ai gateway proxy routes", () => {
     }> = [];
 
     const upstream = createServer(async (req, res) => {
+      if (isManagedAiAccessRequest(req)) {
+        writeManagedAiAccessBundle(res);
+        return;
+      }
       const chunks: Uint8Array[] = [];
       for await (const chunk of req) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -441,6 +489,7 @@ describe("ai gateway proxy routes", () => {
             const server = startServer(createTestConfig());
 
             try {
+              await primeAiGatewayRuntimeAuthorization(server);
               const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
                 method: "POST",
                 headers: {
@@ -457,50 +506,39 @@ describe("ai gateway proxy routes", () => {
                 }),
               });
 
-              expect(response.status).toBe(200);
-              expect(await response.json()).toEqual({
-                id: "chatcmpl_sessionless",
-                object: "chat.completion",
-                model: "gpt-5.5",
+              expect(response.status).toBe(400);
+              expect(await response.json()).toMatchObject({
+                code: "gateway_session_unresolved",
               });
-              expect(requests).toEqual([
-                {
-                  authorization: "Bearer gateway-access-token",
-                  sessionId: "${OPENCODE_SESSION_ID}",
-                  openCodeSessionId: null,
-                  workspaceId: null,
-                  sendTraceId: null,
-                  gatewayToken: null,
-                  body: {
-                    model: "gpt-5.5",
-                    messages: [{ role: "user", content: "Hello" }],
-                  },
-                },
-              ]);
+              expect(requests).toEqual([]);
 
               const entries = readFileSync(traceFile, "utf8")
                 .trim()
                 .split(/\r?\n/)
                 .map((line) => JSON.parse(line) as Record<string, unknown>);
-              const sessionless = entries.find((entry) => entry.event === "server:ai-gateway:sessionless-forward");
-              expect(Boolean(sessionless)).toBe(true);
-              if (!sessionless) throw new Error("missing sessionless-forward trace entry");
+              const unresolved = entries.find((entry) => entry.event === "server:ai-gateway:session-unresolved");
+              expect(Boolean(unresolved)).toBe(true);
+              if (!unresolved) throw new Error("missing session-unresolved trace entry");
 
-              expect(sessionless.provider).toBe("codex_oauth");
-              expect(sessionless.incomingSessionId).toBe("${OPENCODE_SESSION_ID}");
-              expect(sessionless.normalizedIncomingSessionId).toBe(null);
-              expect(sessionless.workspaceId).toBe("ws-missing-context");
-              expect(sessionless.sessionResolutionSource).toBe("sessionless-fallback");
-              expect(sessionless.forwardedSessionHeaderMode).toBe("incoming-placeholder");
-              const internalHeaders = sessionless.incomingInternalHeaders as Record<string, unknown>;
+              expect(unresolved.provider).toBe("codex_oauth");
+              expect(unresolved.incomingSessionId).toBe("${OPENCODE_SESSION_ID}");
+              expect(unresolved.normalizedIncomingSessionId).toBe(null);
+              expect(unresolved.workspaceId).toBe("ws-missing-context");
+              expect(unresolved.sessionResolutionSource).toBe("sessionless-fallback");
+              const internalHeaders = unresolved.incomingInternalHeaders as Record<string, unknown>;
               expect(internalHeaders.hasWorkspaceId).toBe(true);
               expect(internalHeaders.hasSessionId).toBe(true);
               expect(internalHeaders.hasSendTraceId).toBe(true);
 
-              const providerHit = entries.find((entry) => entry.event === "server:ai-gateway:provider-hit");
-              expect(providerHit?.sessionResolutionSource).toBe("sessionless-fallback");
-              expect(providerHit?.watchdogHitRecorded).toBe(false);
-              expect(entries.some((entry) => entry.event === "server:ai-gateway:session-unresolved")).toBe(false);
+              expect(entries.some((entry) => entry.event === "server:ai-gateway:sessionless-forward")).toBe(false);
+              expect(entries.some((entry) =>
+                entry.event === "server:ai-gateway:provider-hit" &&
+                entry.gatewayPath === "/providers/codex_oauth/v1/chat/completions"
+              )).toBe(false);
+              expect(entries.some((entry) =>
+                entry.event === "server:ai-gateway:upstream-headers" &&
+                entry.gatewayPath === "/providers/codex_oauth/v1/chat/completions"
+              )).toBe(false);
             } finally {
               stopTestServer(server);
             }
@@ -511,6 +549,93 @@ describe("ai gateway proxy routes", () => {
       upstream.close();
       await once(upstream, "close");
       rmSync(traceDir, { recursive: true, force: true });
+    }
+  });
+
+  test("server keeps sessionless fallback scoped away from non-chat provider routes", async () => {
+    const requests: Array<{
+      authorization: string | null;
+      sessionId: string | null;
+      workspaceId: string | null;
+      gatewayToken: string | null;
+      body: unknown;
+    }> = [];
+
+    const upstream = createServer(async (req, res) => {
+      if (isManagedAiAccessRequest(req)) {
+        writeManagedAiAccessBundle(res);
+        return;
+      }
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const rawBody = Buffer.concat(chunks).toString("utf8");
+      requests.push({
+        authorization: req.headers.authorization ?? null,
+        sessionId: typeof req.headers["x-veslo-session-id"] === "string" ? req.headers["x-veslo-session-id"] : null,
+        workspaceId: typeof req.headers["x-veslo-workspace-id"] === "string" ? req.headers["x-veslo-workspace-id"] : null,
+        gatewayToken: typeof req.headers["x-veslo-gateway-token"] === "string" ? req.headers["x-veslo-gateway-token"] : null,
+        body: rawBody ? JSON.parse(rawBody) : null,
+      });
+
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({
+        id: "msg_sessionless",
+        type: "message",
+        model: "claude-sonnet-4",
+      }));
+    });
+    const upstreamPort = await listenTestServer(upstream);
+
+    try {
+      await withManagedAiEnv(
+        {
+          managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}`,
+          legacyAiGatewayBaseUrl: undefined,
+        },
+        async () => {
+          const server = startServer(createTestConfig());
+
+          try {
+            await primeAiGatewayRuntimeAuthorization(server);
+            const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/anthropic/v1/messages`, {
+              method: "POST",
+              headers: {
+                authorization: "Bearer client-token",
+                "content-type": "application/json",
+                "x-veslo-gateway-token": "gateway-access-token",
+                "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
+                "x-veslo-workspace-id": "ws-missing-context",
+              },
+              body: JSON.stringify({
+                model: "claude-sonnet-4",
+                messages: [{ role: "user", content: "Hello" }],
+              }),
+            });
+
+            expect(response.status).toBe(200);
+            expect(requests).toEqual([
+              {
+                authorization: "Bearer gateway-access-token",
+                sessionId: "${OPENCODE_SESSION_ID}",
+                workspaceId: null,
+                gatewayToken: null,
+                body: {
+                  model: "claude-sonnet-4",
+                  messages: [{ role: "user", content: "Hello" }],
+                },
+              },
+            ]);
+          } finally {
+            stopTestServer(server);
+          }
+        },
+      );
+    } finally {
+      upstream.close();
+      await once(upstream, "close");
     }
   });
 
@@ -768,6 +893,119 @@ describe("ai gateway proxy routes", () => {
     }
   });
 
+  test("server falls back to caller authorization when ai-access bundle has no access token", async () => {
+    const requests: Array<{
+      method: string;
+      pathname: string;
+      authorization: string | null;
+      gatewayToken: string | null;
+      sessionId: string | null;
+      body: unknown;
+    }> = [];
+
+    const upstream = createServer(async (req, res) => {
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const rawBody = Buffer.concat(chunks).toString("utf8");
+      requests.push({
+        method: req.method ?? "GET",
+        pathname: req.url ?? "/",
+        authorization: req.headers.authorization ?? null,
+        gatewayToken: typeof req.headers["x-veslo-gateway-token"] === "string" ? req.headers["x-veslo-gateway-token"] : null,
+        sessionId: typeof req.headers["x-veslo-session-id"] === "string" ? req.headers["x-veslo-session-id"] : null,
+        body: rawBody ? JSON.parse(rawBody) : null,
+      });
+
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      if (req.url === "/api/me/ai-access") {
+        res.end(JSON.stringify({
+          aiAccess: {
+            id: "ai_access_user_123",
+            userId: "user_123",
+            enabled: true,
+            provider: "codex_oauth",
+            defaultModel: "gpt-5.5",
+            allowedModels: ["gpt-5.5"],
+            updatedAt: "2026-04-08T10:00:00.000Z",
+          },
+        }));
+        return;
+      }
+
+      res.end(JSON.stringify({
+        id: "chatcmpl_caller_fallback_123",
+        object: "chat.completion",
+        model: "gpt-5.5",
+      }));
+    });
+    const upstreamPort = await listenTestServer(upstream);
+
+    try {
+      await withManagedAiEnv({ managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}` }, async () => {
+        const server = startServer(createTestConfig());
+
+        try {
+          const accessResponse = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/me/ai-access`, {
+            headers: {
+              authorization: "Bearer client-token",
+              "x-veslo-gateway-authorization": "Bearer den-user-token",
+            },
+          });
+          expect(accessResponse.status).toBe(200);
+          expect((await accessResponse.json() as { accessToken?: string }).accessToken).toBeUndefined();
+
+          const response = await fetch(
+            `http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`,
+            {
+              method: "POST",
+              headers: {
+                authorization: "Bearer client-token",
+                "content-type": "application/json",
+                "x-veslo-gateway-token": "stale-legacy-gateway-token",
+                "x-veslo-session-id": "session_caller_fallback",
+              },
+              body: JSON.stringify({
+                model: "gpt-5.5",
+                messages: [{ role: "user", content: "Hello" }],
+              }),
+            },
+          );
+
+          expect(response.status).toBe(200);
+          expect(requests).toEqual([
+            {
+              method: "GET",
+              pathname: "/api/me/ai-access",
+              authorization: "Bearer den-user-token",
+              gatewayToken: null,
+              sessionId: null,
+              body: null,
+            },
+            {
+              method: "POST",
+              pathname: "/providers/codex_oauth/v1/chat/completions",
+              authorization: "Bearer den-user-token",
+              gatewayToken: null,
+              sessionId: "session_caller_fallback",
+              body: {
+                model: "gpt-5.5",
+                messages: [{ role: "user", content: "Hello" }],
+              },
+            },
+          ]);
+        } finally {
+          stopTestServer(server);
+        }
+      });
+    } finally {
+      upstream.close();
+      await once(upstream, "close");
+    }
+  });
+
   test("server proxies ai-gateway codex_oauth chat completions route", async () => {
     const requests: Array<{
       method: string;
@@ -779,6 +1017,10 @@ describe("ai gateway proxy routes", () => {
     }> = [];
 
     const upstream = createServer(async (req, res) => {
+      if (isManagedAiAccessRequest(req)) {
+        writeManagedAiAccessBundle(res);
+        return;
+      }
       const chunks: Uint8Array[] = [];
       for await (const chunk of req) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -812,6 +1054,7 @@ describe("ai gateway proxy routes", () => {
           const server = startServer(createTestConfig());
 
           try {
+            await primeAiGatewayRuntimeAuthorization(server);
             const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
               method: "POST",
               headers: {
@@ -858,7 +1101,11 @@ describe("ai gateway proxy routes", () => {
   });
 
   test("server reports upstream codex_oauth html blocks as gateway diagnostics", async () => {
-    const upstream = createServer((_req, res) => {
+    const upstream = createServer((req, res) => {
+      if (isManagedAiAccessRequest(req)) {
+        writeManagedAiAccessBundle(res);
+        return;
+      }
       res.statusCode = 403;
       res.statusMessage = "Forbidden";
       res.setHeader("content-type", "text/html; charset=utf-8");
@@ -876,6 +1123,7 @@ describe("ai gateway proxy routes", () => {
           const server = startServer(createTestConfig());
 
           try {
+            await primeAiGatewayRuntimeAuthorization(server);
             const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
               method: "POST",
               headers: {
@@ -941,7 +1189,11 @@ describe("ai gateway proxy routes", () => {
   test("server reports truncated diagnostics for oversized upstream ai-gateway errors", async () => {
     const oversizedMarker = "tail-marker-should-not-be-read";
     const oversizedBody = `${"blocked ".repeat(20_000)}${oversizedMarker}`;
-    const upstream = createServer((_req, res) => {
+    const upstream = createServer((req, res) => {
+      if (isManagedAiAccessRequest(req)) {
+        writeManagedAiAccessBundle(res);
+        return;
+      }
       res.statusCode = 502;
       res.statusMessage = "Bad Gateway";
       res.setHeader("content-type", "text/plain; charset=utf-8");
@@ -959,6 +1211,7 @@ describe("ai gateway proxy routes", () => {
           const server = startServer(createTestConfig());
 
           try {
+            await primeAiGatewayRuntimeAuthorization(server);
             const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
               method: "POST",
               headers: {
@@ -1007,7 +1260,11 @@ describe("ai gateway proxy routes", () => {
         },
       ],
     });
-    const upstream = createServer((_req, res) => {
+    const upstream = createServer((req, res) => {
+      if (isManagedAiAccessRequest(req)) {
+        writeManagedAiAccessBundle(res);
+        return;
+      }
       res.statusCode = 200;
       res.setHeader("content-type", "application/json");
       res.setHeader("content-length", String(Buffer.byteLength(body, "utf8")));
@@ -1025,6 +1282,7 @@ describe("ai gateway proxy routes", () => {
           const server = startServer(createTestConfig());
 
           try {
+            await primeAiGatewayRuntimeAuthorization(server);
             const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
               method: "POST",
               headers: {
@@ -1061,6 +1319,10 @@ describe("ai gateway proxy routes", () => {
     const compressedEventStream = brotliCompressSync(Buffer.from(eventStream, "utf8"));
 
     const upstream = createServer(async (req, res) => {
+      if (isManagedAiAccessRequest(req)) {
+        writeManagedAiAccessBundle(res);
+        return;
+      }
       requests.push({
         acceptEncoding: typeof req.headers["accept-encoding"] === "string" ? req.headers["accept-encoding"] : null,
       });
@@ -1082,6 +1344,7 @@ describe("ai gateway proxy routes", () => {
           const server = startServer(createTestConfig());
 
           try {
+            await primeAiGatewayRuntimeAuthorization(server);
             const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
               method: "POST",
               headers: {
@@ -1121,6 +1384,10 @@ describe("ai gateway proxy routes", () => {
     });
 
     const upstream = createServer(async (req, res) => {
+      if (isManagedAiAccessRequest(req)) {
+        writeManagedAiAccessBundle(res);
+        return;
+      }
       const chunks: Buffer[] = [];
       req.once("data", () => {
         resolveUpstreamReceivedFirstChunk();
@@ -1157,6 +1424,7 @@ describe("ai gateway proxy routes", () => {
           });
 
           try {
+            await primeAiGatewayRuntimeAuthorization(server);
             const responsePromise = fetch(
               `http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`,
               {
@@ -1210,6 +1478,10 @@ describe("ai gateway proxy routes", () => {
     }> = [];
 
     const upstream = createServer(async (req, res) => {
+      if (isManagedAiAccessRequest(req)) {
+        writeManagedAiAccessBundle(res);
+        return;
+      }
       const chunks: Uint8Array[] = [];
       for await (const chunk of req) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -1243,6 +1515,7 @@ describe("ai gateway proxy routes", () => {
           const server = startServer(createTestConfig());
 
           try {
+            await primeAiGatewayRuntimeAuthorization(server);
             const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/openai_compatible/v1/chat/completions`, {
               method: "POST",
               headers: {
@@ -1299,6 +1572,10 @@ describe("ai gateway proxy routes", () => {
     }> = [];
 
     const upstream = createServer(async (req, res) => {
+      if (isManagedAiAccessRequest(req)) {
+        writeManagedAiAccessBundle(res);
+        return;
+      }
       const chunks: Uint8Array[] = [];
       for await (const chunk of req) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -1332,6 +1609,7 @@ describe("ai gateway proxy routes", () => {
           const server = startServer(createTestConfig());
 
           try {
+            await primeAiGatewayRuntimeAuthorization(server);
             const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
               method: "POST",
               headers: {
@@ -1388,6 +1666,10 @@ describe("ai gateway proxy routes", () => {
     }> = [];
 
     const upstream = createServer(async (req, res) => {
+      if (isManagedAiAccessRequest(req)) {
+        writeManagedAiAccessBundle(res);
+        return;
+      }
       const chunks: Uint8Array[] = [];
       for await (const chunk of req) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -1431,6 +1713,7 @@ describe("ai gateway proxy routes", () => {
           });
 
           try {
+            await primeAiGatewayRuntimeAuthorization(server);
             const response = await fetch(
               `http://127.0.0.1:${server.port}/w/ws_1/ai-gateway/providers/codex_oauth/v1/chat/completions`,
               {
@@ -1832,7 +2115,11 @@ describe("ai gateway proxy routes", () => {
 
   test("server returns 504 when ai gateway upstream never sends response headers", async () => {
     await withEnvVar(AI_GATEWAY_HEADERS_TIMEOUT_ENV, "300", async () => {
-      const upstream = createServer((_req, _res) => {
+      const upstream = createServer((req, res) => {
+        if (isManagedAiAccessRequest(req)) {
+          writeManagedAiAccessBundle(res);
+          return;
+        }
         // Keep the socket open without response headers to simulate a wedged
         // managed AI gateway/provider before the streaming response starts.
       });
@@ -1842,6 +2129,7 @@ describe("ai gateway proxy routes", () => {
         const server = startServer(createTestConfig());
 
         try {
+          await primeAiGatewayRuntimeAuthorization(server);
           const start = Date.now();
           const response = await fetch(
             `http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`,
@@ -1876,6 +2164,10 @@ describe("ai gateway proxy routes", () => {
   test("ai gateway headers timeout does not cut streaming response bodies", async () => {
     await withEnvVar(AI_GATEWAY_HEADERS_TIMEOUT_ENV, "300", async () => {
       const upstream = createServer((req, res) => {
+        if (isManagedAiAccessRequest(req)) {
+          writeManagedAiAccessBundle(res);
+          return;
+        }
         req.resume();
         res.writeHead(200, { "content-type": "text/event-stream" });
         res.write("data: one\n\n");
@@ -1889,6 +2181,7 @@ describe("ai gateway proxy routes", () => {
         const server = startServer(createTestConfig());
 
         try {
+          await primeAiGatewayRuntimeAuthorization(server);
           const response = await fetch(
             `http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`,
             {

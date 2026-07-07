@@ -35,6 +35,16 @@ export type SkillRegistryEventListenerState = {
   inFlight: boolean;
 };
 
+export class SkillRegistryEventsAuthError extends Error {
+  readonly status: number;
+
+  constructor(status: number) {
+    super(`HTTP ${status}`);
+    this.name = "SkillRegistryEventsAuthError";
+    this.status = status;
+  }
+}
+
 export type SkillRegistryEventScheduler<TTimer = ReturnType<typeof setTimeout>> = {
   setTimeout: (callback: () => void, delayMs: number) => TTimer;
   clearTimeout: (timer: TTimer) => void;
@@ -57,6 +67,7 @@ export type SkillRegistryEventsListenerOptions<TTimer = ReturnType<typeof setTim
   onGlobalUpdate?: (update: SkillRegistryGlobalUpdate) => Awaitable<void>;
   onWorkspaceUpdatePending?: (update: SkillRegistryPendingWorkspaceUpdate) => Awaitable<void>;
   onIdleWorkspaceUpdate?: (update: SkillRegistryWorkspaceUpdate) => Awaitable<void>;
+  onUnauthorized?: (error: SkillRegistryEventsAuthError) => Awaitable<void>;
   onError?: (error: Error) => Awaitable<void>;
 };
 
@@ -87,6 +98,7 @@ export function createSkillRegistryEventsListener<TTimer = ReturnType<typeof set
   let running = false;
   let timer: TTimer | null = null;
   let inFlight: Promise<void> | null = null;
+  let authInvalid = false;
 
   const clearScheduledTimer = () => {
     if (timer === null) return;
@@ -95,7 +107,7 @@ export function createSkillRegistryEventsListener<TTimer = ReturnType<typeof set
   };
 
   const schedulePoll = (delayMs: number) => {
-    if (!running || timer !== null) return;
+    if (!running || authInvalid || timer !== null) return;
     timer = scheduler.setTimeout(() => {
       timer = null;
       void pollNow().finally(() => {
@@ -105,6 +117,7 @@ export function createSkillRegistryEventsListener<TTimer = ReturnType<typeof set
   };
 
   const pollNow = async (): Promise<void> => {
+    if (authInvalid) return;
     if (inFlight) return inFlight;
     inFlight = pollOnce().finally(() => {
       inFlight = null;
@@ -119,6 +132,14 @@ export function createSkillRegistryEventsListener<TTimer = ReturnType<typeof set
         headers: buildHeaders(options.token),
       });
       if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          const error = new SkillRegistryEventsAuthError(response.status);
+          authInvalid = true;
+          running = false;
+          clearScheduledTimer();
+          await options.onUnauthorized?.(error);
+          return;
+        }
         throw new Error(`HTTP ${response.status}`);
       }
 
@@ -135,7 +156,7 @@ export function createSkillRegistryEventsListener<TTimer = ReturnType<typeof set
 
   return {
     start() {
-      if (running) return;
+      if (running || authInvalid) return;
       running = true;
       schedulePoll(0);
     },

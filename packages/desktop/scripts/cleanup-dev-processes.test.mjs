@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  cleanupStaleDevProcesses,
   findStaleDevProcesses,
   isPathInside,
   looksLikeVesloServerWatcher,
@@ -67,6 +68,33 @@ test("findStaleDevProcesses includes repo sidecars and related Bun watcher famil
   );
 });
 
+test("findStaleDevProcesses includes recursive Chrome MCP children by vendored package command line", () => {
+  const processes = [
+    {
+      ProcessId: 40,
+      ParentProcessId: 10,
+      Name: "chrome-devtools-mcp.exe",
+      ExecutablePath: "",
+      CommandLine: `"${targetDebugDir}\\chrome-devtools-mcp.exe" "${targetDebugDir}\\chrome-devtools-mcp-package\\build\\src\\telemetry\\watchdog\\main.js" --parent-pid=10`,
+    },
+    {
+      ProcessId: 41,
+      ParentProcessId: 1,
+      Name: "chrome-devtools-mcp.exe",
+      ExecutablePath: "",
+      CommandLine: '"C:\\other\\chrome-devtools-mcp.exe" "C:\\other\\chrome-devtools-mcp-package\\build\\src\\telemetry\\watchdog\\main.js"',
+    },
+  ];
+
+  const stale = findStaleDevProcesses(processes, [], {
+    targetDebugDir,
+    sidecarsDir,
+  });
+
+  assert.deepEqual(stale.map((item) => item.pid), [40]);
+  assert.equal(stale[0]?.reason, "repo Chrome DevTools MCP package command line");
+});
+
 test("stopProcesses tolerates Windows process cleanup races", () => {
   const commands = [];
   const warnings = [];
@@ -91,4 +119,49 @@ test("stopProcesses tolerates Windows process cleanup races", () => {
   ]);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /Failed to stop stale process pid=10/);
+});
+
+test("cleanupStaleDevProcesses rescans for respawned stale sidecars", () => {
+  const snapshots = [
+    [
+      {
+        ProcessId: 10,
+        ParentProcessId: 1,
+        Name: "chrome-devtools-mcp.exe",
+        ExecutablePath: `${targetDebugDir}\\chrome-devtools-mcp.exe`,
+        CommandLine: `"${targetDebugDir}\\chrome-devtools-mcp.exe" watchdog`,
+      },
+    ],
+    [
+      {
+        ProcessId: 20,
+        ParentProcessId: 10,
+        Name: "chrome-devtools-mcp.exe",
+        ExecutablePath: `${targetDebugDir}\\chrome-devtools-mcp.exe`,
+        CommandLine: `"${targetDebugDir}\\chrome-devtools-mcp.exe" watchdog`,
+      },
+    ],
+    [],
+  ];
+  const stopped = [];
+  const sleeps = [];
+  const logs = [];
+
+  const result = cleanupStaleDevProcesses({
+    targetDebugDir,
+    sidecarsDir,
+    processReader: () => snapshots.shift() ?? [],
+    listeningPortReader: () => [],
+    stopper: (pids) => stopped.push(pids),
+    sleep: (ms) => sleeps.push(ms),
+    log: (message) => logs.push(message),
+    warn: (message) => logs.push(message),
+    maxPasses: 4,
+    settleMs: 25,
+  });
+
+  assert.equal(result, 0);
+  assert.deepEqual(stopped, [[10], [20]]);
+  assert.deepEqual(sleeps, [25, 25]);
+  assert.match(logs.join("\n"), /cleanup pass 2/);
 });

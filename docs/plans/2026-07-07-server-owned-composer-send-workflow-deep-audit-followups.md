@@ -1,19 +1,19 @@
 ---
 title: Server-Owned Composer Send Workflow Follow-up Implementation Plan
 date: 2026-07-07
-status: planned
-done: false
+status: implemented
+done: true
 source_audit: chat:2026-07-07-server-owned-composer-send-workflow-deep-audit
 base_plan: docs/plans/2026-07-06-server-owned-composer-send-workflow-implementation-plan.md
 e2e_status: skipped
 bsw_aud01_concurrent_submit_idempotency_done: true
 bsw_aud02_replacement_failure_ui_surface_done: true
-bsw_aud03_docs_status_alignment_done: false
+bsw_aud03_docs_status_alignment_done: true
 bsw_aud04_typed_app_boundary_done: true
 bsw_aud05_running_enter_server_queue_done: true
 bsw_aud06_queued_live_transcript_semantics_done: true
-bsw_aud07_queued_failure_surface_done: false
-bsw_aud08_legacy_dependency_cleanup_done: false
+bsw_aud07_queued_failure_surface_done: true
+bsw_aud08_legacy_dependency_cleanup_done: true
 ---
 
 # Server-Owned Composer Send Workflow Follow-up Implementation Plan
@@ -21,10 +21,10 @@ bsw_aud08_legacy_dependency_cleanup_done: false
 ## Goal
 
 Close the remaining non-E2E gaps found after the server-owned composer send
-workflow rollout. The core migration is implemented, but this follow-up plan is
-not complete. Each item below starts as `done: false`; implementation agents
-must land the code/tests/docs for one item and then flip only that item's flag
-to `true`.
+workflow rollout. The core migration is implemented, and this follow-up plan is
+now complete after BSW-AUD01 through BSW-AUD08 were closed. Each item below
+started as `done: false`; implementation agents landed the code/tests/docs for
+one item and then flipped only that item's flag to `true`.
 
 This plan is intentionally narrower than the original workflow migration. It
 does not reopen the full architecture, and it does not require tauri-pilot or
@@ -349,14 +349,14 @@ Problem:
 The implementation plan marks the replacement follow-up as complete, but some
 supporting docs still describe replacement as outside the completed gate.
 
-Evidence:
+Baseline evidence before the fix:
 
 - `docs/plans/2026-07-06-server-owned-composer-send-workflow-implementation-plan.md`
   has `bsw07b_server_replacement_followup_done: true`.
 - `docs/fixes/2026-07-07-fix-37-server-owned-composer-send-workflow-complete.md`
-  still says BSW07B remains a follow-up outside the core gate.
+  said BSW07B remained a follow-up outside the core gate.
 - `docs/dev/server-owned-composer-submit.md` still says edit-message
-  replacement remains a separate follow-up.
+  replacement remained a separate follow-up.
 
 Why this matters:
 
@@ -395,23 +395,16 @@ git diff --check
 Implementation note:
 
 - 2026-07-07:
-  - Changed `packages/app/src/app/context/live-transcript-read-policy.ts`,
-    `packages/app/src/app/pages/session-send-workflow.ts`,
-    `packages/app/src/app/tests/context/live-transcript-read-policy.test.ts`,
-    and `packages/app/src/app/tests/pages/session-send-workflow.test.ts`.
-  - Added a distinct `conversation-run.queued` live-transcript policy event
-    with `queueItemId` and `reservedRunId`. The read policy records the queued
-    event for diagnostics but does not grant transcript read allowance.
-  - Existing-session and first-session server submit paths now emit
-    `conversation-run.queued` for `status: "queued"` and reserve
-    `conversation-run.succeeded` / `conversation-compact.succeeded` for actual
-    submitted success semantics.
-  - Added tests proving queued submit results no longer emit success events
-    and queued policy events do not allow transcript reads.
-  - Verification passed:
-    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/live-transcript-read-policy.test.ts src/app/tests/pages/session-send-workflow.test.ts`
-    with 32 tests, and
-    `pnpm --filter @neatech/veslo-ui exec tsc --noEmit --pretty false`.
+  - Updated the fix/dev docs so promoted BSW07B is not described as only an
+    outside follow-up. The docs now state that edit-message replacement is
+    server-owned, while replacement failure surfacing is owned by this
+    follow-up audit plan.
+  - Kept BSW06B raw attachment byte staging and BSW08A full queue UI API
+    migration explicitly marked as separate follow-ups.
+  - Verification:
+    `rg -n "BSW07B|edit-message replacement|replacement remains|server-owned replacement" docs`
+    was re-run and now reports BSW07B as promoted/implemented rather than as
+    a replacement-only follow-up in the canonical implementation/dev docs.
 
 ### BSW-AUD04: Typed app submit boundary
 
@@ -661,7 +654,7 @@ Implementation note:
 
 ### BSW-AUD06: Queued live-transcript semantics
 
-Status: `done: false`
+Status: `done: true`
 
 Severity: P2/P3
 
@@ -728,11 +721,27 @@ git diff --check
 
 Implementation note:
 
-- Pending.
+- 2026-07-07:
+  - Changed `packages/app/src/app/context/live-transcript-read-policy.ts`,
+    `packages/app/src/app/pages/session-send-workflow.ts`,
+    `packages/app/src/app/tests/context/live-transcript-read-policy.test.ts`,
+    and `packages/app/src/app/tests/pages/session-send-workflow.test.ts`.
+  - Added a distinct `conversation-run.queued` live-transcript policy event
+    with `queueItemId` and `reservedRunId`. The read policy records the queued
+    event for diagnostics but does not grant transcript read allowance.
+  - Existing-session and first-session server submit paths now emit
+    `conversation-run.queued` for `status: "queued"` and reserve
+    `conversation-run.succeeded` / `conversation-compact.succeeded` for actual
+    submitted success semantics.
+  - Added tests proving queued submit results no longer emit success events
+    and queued policy events do not allow transcript reads.
+  - Verification:
+    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/live-transcript-read-policy.test.ts src/app/tests/pages/session-send-workflow.test.ts`
+    passed with 34 tests.
 
 ### BSW-AUD07: Queued failure surface
 
-Status: `done: false`
+Status: `done: true`
 
 Severity: P2/P3
 
@@ -822,11 +831,69 @@ git diff --check
 
 Implementation note:
 
-- Pending.
+- 2026-07-07 BSW-AUD07A server status slice:
+  - Changed `packages/server/src/conversation-run-queue-store.ts`,
+    `packages/server/src/conversation-submit-contract.ts`,
+    `packages/server/src/conversation-submit-service.ts`,
+    `packages/server/src/routes/conversations.ts`,
+    `packages/server/src/server.ts`,
+    `packages/server/src/tests/conversation-run-queue-store.test.ts`,
+    `packages/server/src/tests/conversation-run-lifecycle-controller.test.ts`,
+    `packages/server/src/tests/server-conversations.test.ts`,
+    `packages/server/src/tests/server.conversation-session-routes.test.ts`,
+    and `docs/dev/veslo-server-app-contract.md`.
+  - Added a workspace/conversation-scoped queue item status read contract:
+    `GET /workspace/:id/conversations/:conversationId/queue/:queueItemId`.
+    The response exposes durable queue state, run/client identity, timestamps,
+    and terminal error text.
+  - Added submit-attempt replay protection for queued results whose durable
+    queue item later reaches `failed`: a same-fingerprint retry now returns a
+    typed `status: "failed"`, `code: "queued_run_failed"`, and
+    `draftDisposition: "restore"` instead of replaying stale `queued`.
+  - The new RED checks failed before the fix with missing
+    `getForConversation` on the store and 404 for the queue status route.
+  - Verification passed:
+    `pnpm --filter veslo-server exec bun test src/tests/conversation-run-queue-store.test.ts`,
+    `pnpm --filter veslo-server exec bun test src/tests/server.conversation-session-routes.test.ts`,
+    `pnpm --filter veslo-server exec bun test src/tests/server-conversations.test.ts --test-name-pattern "returns queued for send-now"`,
+    `pnpm --filter veslo-server exec bun test src/tests/conversation-submit-service.test.ts src/tests/conversation-run-lifecycle-controller.test.ts`,
+    `pnpm --filter veslo-server typecheck`,
+    `pnpm --filter veslo-server build:bin`, and `git diff --check`.
+  - Full `pnpm --filter veslo-server exec bun test src/tests/server-conversations.test.ts`
+    remains blocked by four managed AI gateway watchdog tests unrelated to this
+    queue-status slice; the queue/lifecycle cases in that run passed.
+- 2026-07-07 BSW-AUD07B app visible failure slice:
+  - Changed `packages/app/src/app/lib/veslo-server/types.ts`,
+    `packages/app/src/app/pages/session-send-workflow.ts`,
+    `packages/app/src/app/pages/session-conversation-flow.ts`,
+    `packages/app/src/app/components/session/queued-message-list.tsx`,
+    `packages/app/src/app/tests/pages/session-send-workflow.test.ts`,
+    `packages/app/src/app/tests/pages/session-conversation-flow.test.ts`, and
+    `packages/app/src/app/tests/components/session/queued-message-list.test.ts`.
+  - App submit DTOs and `SessionSubmitResult` mapping now preserve
+    `queueItemId` and `reservedRunId` on typed failed submit results, including
+    `queued_run_failed`.
+  - Queue drain rejection now marks the queued draft with the concrete server
+    failure message before falling back to runtime/connect-copy text.
+  - `QueuedMessageList` renders queued draft error text visibly under the draft
+    preview, so terminal server queue failure is visible in the session queue
+    surface without starting the full BSW08A durable queue UI migration.
+  - The new RED checks failed before the fix with the queue row showing
+    `session.connect_server_to_attach`, the queued message list not rendering
+    `item.error`, and failed submit mapping dropping `queueItemId`.
+  - Verification passed:
+    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-conversation-flow.test.ts`,
+    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/components/session/queued-message-list.test.ts`,
+    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-message-queue.test.ts`,
+    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-send-workflow.test.ts`,
+    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/lib/veslo-server.test.ts`,
+    the combined app queue/send command covering 180 tests, and
+    `pnpm --filter @neatech/veslo-ui typecheck`.
+  - Deferred: full durable queue polling/edit/cancel/move UI remains BSW08A.
 
 ### BSW-AUD08: Legacy dependency cleanup
 
-Status: `done: false`
+Status: `done: true`
 
 Severity: P3
 
@@ -908,7 +975,49 @@ git diff --check
 
 Implementation note:
 
-- Pending.
+- 2026-07-07:
+  - Baseline `legacy-symbol-audit.mjs --limit=40` reported four
+    dependency-object matches:
+    `createSessionSendWorkflow.isWorkspaceClientStaleError`,
+    `createSessionSendWorkflow.legacyConversationRunFallback`,
+    `createSessionMutationWorkflow.prepareSendRuntimeForSend`, and
+    `createSessionCreationWorkflow.isWorkspaceClientStaleError`.
+  - Changed the normal app composition root so it no longer creates or injects
+    `legacyConversationRunFallback` into `createSessionSendWorkflow`.
+    `SessionSendWorkflowOptions.legacyConversationRunFallback` is now an
+    optional explicit compatibility hook. If server submit is unavailable and
+    the compat hook is not configured, the workflow fails closed with
+    `legacy_fallback_disabled` instead of silently entering the old frontend
+    run submit path.
+  - Added source/runtime contracts proving production send wiring does not
+    inject the legacy fallback and that a disabled compat fallback blocks
+    without calling the old run submit helper.
+  - Updated `docs/dev/server-owned-composer-submit.md` to record that the
+    app composition root does not wire the legacy conversation-run fallback into
+    the normal send workflow.
+  - Post-change `legacy-symbol-audit.mjs --limit=40` reports three
+    dependency-object matches:
+    - `createSessionSendWorkflow.isWorkspaceClientStaleError`: owner is send
+      workflow stale-client diagnostics; removal rule is to delete it when the
+      workflow no longer supports stale routed-client compatibility errors.
+    - `createSessionMutationWorkflow.prepareSendRuntimeForSend`: owner is the
+      remaining app-side replacement compatibility path; removal rule is to
+      delete it when replacement no longer needs the compatibility choreography
+      outside the primary server-owned replacement path.
+    - `createSessionCreationWorkflow.isWorkspaceClientStaleError`: owner is
+      creation-flow stale-client diagnostics; removal rule is to delete it when
+      creation no longer catches stale routed-client compatibility errors.
+  - The normal composer input path is clean of the high-signal legacy fallback
+    dependency injection. Replacement compatibility remains explicitly owned by
+    the mutation workflow; full durable queue UI API migration remains BSW08A.
+  - Verification:
+    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-send-workflow.test.ts`
+    passed with 30 tests.
+    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-send-workflow.test.ts src/app/tests/pages/session-mutation-workflow.test.ts src/app/tests/pages/session-message-replacement.test.ts src/app/tests/pages/session-message-queue.test.ts`
+    passed with 63 tests.
+    `pnpm --filter @neatech/veslo-ui exec node scripts/legacy-symbol-audit.mjs --limit=40`
+    reports three documented dependency-object matches.
+    `pnpm --filter @neatech/veslo-ui typecheck` passed.
 
 ## Non-Findings And Explicit Boundaries
 
@@ -959,3 +1068,26 @@ This follow-up plan can be marked `done: true` only when:
 - `git diff --check` passes.
 - E2E remains either intentionally skipped here or is recorded separately if a
   later decision changes that scope.
+
+Final gate note:
+
+- 2026-07-07:
+  - All `bsw_aud*_done` flags are `true`; E2E remains intentionally skipped for
+    this plan.
+  - Focused app verification passed:
+    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/live-transcript-read-policy.test.ts src/app/tests/pages/session-send-workflow.test.ts`
+    with 34 tests,
+    `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-send-workflow.test.ts src/app/tests/pages/session-mutation-workflow.test.ts src/app/tests/pages/session-message-replacement.test.ts src/app/tests/pages/session-message-queue.test.ts`
+    with 63 tests, and
+    `pnpm --filter @neatech/veslo-ui typecheck`.
+  - Focused server verification passed:
+    `pnpm --filter veslo-server exec bun test src/tests/conversation-run-queue-store.test.ts src/tests/server.conversation-session-routes.test.ts src/tests/conversation-submit-service.test.ts src/tests/conversation-run-lifecycle-controller.test.ts`
+    with 54 tests,
+    `pnpm --filter veslo-server exec bun test src/tests/server-conversations.test.ts --test-name-pattern "returns queued for send-now"`
+    with 1 test, and
+    `pnpm --filter veslo-server typecheck`.
+  - `pnpm --filter veslo-server build:bin` passed after server source changes.
+  - `pnpm --filter @neatech/veslo-ui exec node scripts/legacy-symbol-audit.mjs --limit=40`
+    reports three documented dependency-object matches and no unexplained
+    high-signal normal composer input dependency-object match.
+  - `git diff --check` passed with LF/CRLF warnings only.

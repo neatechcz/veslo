@@ -18,13 +18,6 @@ function sendPromptSource(): string {
   return sendWorkflowSource.slice(start, end);
 }
 
-function legacyConversationRunFallbackSource(): string {
-  const start = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
-  const end = sendWorkflowSource.indexOf("export function createSessionSendWorkflow", start);
-  assert.ok(start >= 0 && end > start, "legacy conversation run fallback source should be present");
-  return sendWorkflowSource.slice(start, end);
-}
-
 function createSessionAndOpenSource(): string {
   const start = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
   const end = createWorkflowSource.indexOf("  const createSession = (", start);
@@ -62,32 +55,25 @@ test("sendPrompt keeps the session id returned by createSessionAndOpen before pr
   );
 });
 
-test("sendPrompt skips first-session creation when a browsed session is the explicit target", () => {
+test("sendPrompt submits a browsed explicit target before first-session creation", () => {
   const source = sendPromptSource();
 
   const explicitTargetIndex = source.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceId(options.targetSessionId)");
   const sessionAssignmentIndex = source.indexOf("let sessionID = explicitTargetSessionId || selectedRealSessionId;", explicitTargetIndex);
   const scopedActivationIndex = source.indexOf('"sendPrompt:ensure-scoped-workspace-active"', sessionAssignmentIndex);
+  const existingSubmitIndex = source.indexOf("const serverSubmitExistingSessionResult = await submitExistingSessionWithServer();", scopedActivationIndex);
+  const existingSubmitReturnIndex = source.indexOf("return serverSubmitExistingSessionResult;", existingSubmitIndex);
   const createGuardIndex = source.indexOf("if (!sessionID) {", scopedActivationIndex);
   const createNeededIndex = source.indexOf('recordSendTrace("sendPrompt:create-session-needed"', createGuardIndex);
-  const fallbackSubmitIndex = source.indexOf("return await legacyConversationRunFallback.submit({", createGuardIndex);
 
   assert.ok(explicitTargetIndex >= 0, "sendPrompt should normalize an explicit target session id");
   assert.ok(sessionAssignmentIndex > explicitTargetIndex, "explicit target should become the send session id before create checks");
   assert.ok(scopedActivationIndex > sessionAssignmentIndex, "explicit target should activate its scoped workspace before sending");
+  assert.ok(existingSubmitIndex > scopedActivationIndex, "explicit targets should attempt server-owned existing-session submit");
+  assert.ok(existingSubmitIndex < createGuardIndex, "existing-session submit should run before first-session creation checks");
+  assert.ok(existingSubmitReturnIndex > existingSubmitIndex, "accepted existing-session submit results should return before creation");
   assert.ok(createGuardIndex > scopedActivationIndex, "first-session creation should be guarded by the resolved session id");
   assert.ok(createNeededIndex > createGuardIndex, "new-session creation should stay inside the missing-session branch");
-  assert.ok(fallbackSubmitIndex > createGuardIndex, "prompt sends should hand the resolved session to the legacy run fallback");
-  assert.match(
-    source.slice(fallbackSubmitIndex),
-    /sessionID: materializedSessionID,/,
-    "prompt sends should delegate the materialized session id to the fallback submit adapter",
-  );
-  assert.match(
-    legacyConversationRunFallbackSource(),
-    /deps\.runConversationFromVesloWriteApi\(\s*materializedSessionID/,
-    "legacy fallback should route the materialized session through the conversation run API",
-  );
 });
 
 test("sendPrompt passes the first draft to server-owned submit materialization", () => {

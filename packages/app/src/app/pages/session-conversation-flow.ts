@@ -42,6 +42,8 @@ import {
 
 export type SessionQueueConversationRef = {
   workspaceId?: string | null;
+  workspaceRoot?: string | null;
+  directory?: string | null;
   sessionId?: string | null;
   conversationId?: string | null;
   opencodeSessionId?: string | null;
@@ -131,10 +133,28 @@ export const resolveSessionQueueKeyForSessionId = (
   const id = sessionId?.trim() ?? "";
   if (!id) return resolvePendingSessionQueueKey(context);
   const pending = isLegacyPendingSessionKey(id);
+  const ref = context.activeUiConversationRef;
+  const refMatches = Boolean(
+    !pending &&
+    ref &&
+    [
+      ref.sessionId?.trim() ?? "",
+      ref.conversationId?.trim() ?? "",
+      ref.opencodeSessionId?.trim() ?? "",
+    ].includes(id),
+  );
   return createUiConversationKey({
     workspaceId: pending
       ? resolvePendingDraftWorkspaceId(context)
       : resolveWorkspaceIdForSessionQueue(context, id),
+    ...(refMatches
+      ? {
+          workspaceRoot: ref?.workspaceRoot,
+          directory: ref?.directory,
+          conversationId: ref?.conversationId,
+          opencodeSessionId: ref?.opencodeSessionId,
+        }
+      : {}),
     kind: pending ? "pending-session" : "session",
     id,
   });
@@ -1411,7 +1431,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
               markQueuedDraftError(
                 queue,
                 start.item.id,
-                deps.runtime.error() ?? deps.feedback.tr("session.connect_server_to_attach"),
+                submitResult.message ?? deps.runtime.error() ?? deps.feedback.tr("session.connect_server_to_attach"),
               ),
           );
         }

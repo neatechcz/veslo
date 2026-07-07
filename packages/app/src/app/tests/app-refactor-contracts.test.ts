@@ -245,10 +245,20 @@ test("session flow owners keep UI progress state behind narrow app adapters", ()
     /const sessionFlowProgressPresenter = createSessionFlowProgressPresenter\(\{[\s\S]*setBusy,[\s\S]*setBusyLabel,[\s\S]*setBusyStartedAt,[\s\S]*setCreatingSession,[\s\S]*\}\);/s,
     "app.tsx should adapt UI busy signals through the session flow progress presenter",
   );
+  const sendWorkflowStart = source.indexOf("const sessionSendWorkflow = createSessionSendWorkflow({");
+  const sendWorkflowEnd = source.indexOf("\n  });", sendWorkflowStart);
+  assert.notEqual(sendWorkflowStart, -1, "app.tsx should wire createSessionSendWorkflow");
+  assert.ok(sendWorkflowEnd > sendWorkflowStart, "send workflow dependency object should be bounded");
+  const sendWorkflowDeps = source.slice(sendWorkflowStart, sendWorkflowEnd);
   assert.match(
-    source,
-    /const legacyConversationRunFallback = createLegacyConversationRunFallback\(\{[\s\S]*prepareSendRuntimeForSend: \(event, preflight\) => prepareSendRuntimeForSend\(event, preflight\),[\s\S]*\}\);[\s\S]*createSessionSendWorkflow\(\{[\s\S]*emitFlowProgress: \(event\) => sessionFlowProgressPresenter\.emit\(event\),[\s\S]*legacyConversationRunFallback,[\s\S]*\}\);/s,
-    "send workflow should receive progress adapters while runtime preparation stays behind the legacy fallback adapter",
+    sendWorkflowDeps,
+    /emitFlowProgress: \(event\) => sessionFlowProgressPresenter\.emit\(event\),[\s\S]*submitConversationFromVesloWriteApi,/s,
+    "send workflow should receive progress adapters and the server-owned submit adapter",
+  );
+  assert.doesNotMatch(
+    sendWorkflowDeps,
+    /\blegacyConversationRunFallback\b|\bprepareSendRuntimeForSend\b/,
+    "normal send workflow wiring must not receive legacy run fallback or frontend runtime preparation",
   );
   assert.match(
     source,

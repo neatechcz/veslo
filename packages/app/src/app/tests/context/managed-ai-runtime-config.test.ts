@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ManagedAiAccessProfile } from "../../lib/ai-access.js";
+import {
+  hasUsableManagedAiRuntimeConfig,
+  type ManagedAiAccessProfile,
+} from "../../lib/ai-access.js";
 import { VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE } from "../../lib/opencode.js";
 import type { ModelRef } from "../../types.js";
 import {
@@ -30,12 +33,15 @@ function createVesloClient(): ManagedAiRuntimeConfigVesloClient & {
 } {
   const patched: Array<{ workspaceId: string; payload: { opencode?: Record<string, unknown> } }> = [];
   const getConfigCalls: string[] = [];
+  let listCalls = 0;
   return {
     baseUrl: "http://127.0.0.1:34115",
     token: "veslo-token",
     patched,
     getConfigCalls,
-    listCalls: 0,
+    get listCalls() {
+      return listCalls;
+    },
     getConfig: async (workspaceId) => {
       getConfigCalls.push(workspaceId);
       if (workspaceId === "ws-private") {
@@ -48,6 +54,7 @@ function createVesloClient(): ManagedAiRuntimeConfigVesloClient & {
       return { ok: true };
     },
     listWorkspaces: async () => {
+      listCalls += 1;
       return {
         items: [
           { id: "ws-active", workspaceType: "local" },
@@ -209,6 +216,32 @@ test("runtime auth prime is single-flight and cached for a short success window"
   assert.equal(accessCalls, 3);
 });
 
+test("runtime auth prime reports stable support diagnostics for missing user token", async () => {
+  const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  const accessErrors: Array<string | null> = [];
+  const sync = createManagedAiRuntimeConfigSync(
+    createOptions({
+      denGatewayAccessToken: () => "",
+      recordManagedAiWorkflowTrace: (event, payload) => {
+        traces.push({ event, payload });
+      },
+      setManagedAiAccessError: (message) => {
+        accessErrors.push(message);
+      },
+    }),
+  );
+
+  assert.equal(await sync.ensureManagedAiRuntimeAuthorizationForSend(), false);
+  assert.deepEqual(traces, [{
+    event: "managed-ai-runtime-auth-prime:skip",
+    payload: {
+      reason: "missing-user-token",
+      supportMessage: "Sign in again to refresh managed AI authorization before sending.",
+    },
+  }]);
+  assert.deepEqual(accessErrors, ["Sign in again to refresh managed AI authorization before sending."]);
+});
+
 test("runtime config sync writes managed provider config through project file path without reloading", async () => {
   const writes: Array<{ scope: string; root: string; content: string }> = [];
   const reloads: string[] = [];
@@ -264,6 +297,41 @@ test("runtime config sync writes managed provider config through Veslo server co
   assert.deepEqual(client.getConfigCalls, ["ws-active"]);
   assert.equal(client.patched.length, 1);
   assert.equal(client.patched[0]?.workspaceId, "ws-active");
+  assert.equal(
+    (((client.patched[0]?.payload.opencode?.provider as Record<string, unknown>)?.codex_oauth as Record<string, unknown>)
+      ?.options as Record<string, unknown>)?.apiKey,
+    VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE,
+  );
+});
+
+test("runtime config sync does not require a gateway bearer to write local provider routing", async () => {
+  const client = createVesloClient();
+  const sync = createManagedAiRuntimeConfigSync(
+    createOptions({
+      vesloServerClient: () => client,
+      managedAiGatewayAccessToken: () => "",
+      denGatewayAccessToken: () => "",
+      vesloServerWorkspaceId: () => "ws-active",
+      resolveConversationServerWorkspaceId: () => "ws-active",
+    }),
+  );
+
+  await sync.syncActiveWorkspaceManagedAiConfig();
+
+  assert.deepEqual(client.getConfigCalls, ["ws-active"]);
+  assert.equal(client.patched.length, 1);
+  const content = JSON.stringify(client.patched[0]?.payload.opencode ?? {});
+  assert.equal(content.includes("x-veslo-gateway-token"), false);
+  assert.equal(
+    hasUsableManagedAiRuntimeConfig({
+      content,
+      providerId: profile.providerId,
+      gatewayBaseUrl: "http://127.0.0.1:34116",
+      serverClientToken: "local-client-token",
+      workspaceId: "ws-active",
+    }),
+    true,
+  );
   assert.equal(
     (((client.patched[0]?.payload.opencode?.provider as Record<string, unknown>)?.codex_oauth as Record<string, unknown>)
       ?.options as Record<string, unknown>)?.apiKey,
@@ -456,4 +524,155 @@ test("inactive workspace heal marks unauthorized workspaces for the current toke
   assert.deepEqual(errors, []);
   assert.deepEqual(client.getConfigCalls, ["ws-private"]);
   assert.deepEqual(client.patched, []);
+});
+
+test("inactive workspace heal skips server scans while a send or run is active", async () => {
+  for (const scenario of [
+    { name: "send", anyActiveRuns: false, sendPromptInFlight: true },
+    { name: "run", anyActiveRuns: true, sendPromptInFlight: false },
+  ]) {
+    const client = createVesloClient();
+    const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+    const sync = createManagedAiRuntimeConfigSync(
+      createOptions({
+        vesloServerClient: () => client,
+        anyActiveRuns: () => scenario.anyActiveRuns,
+        sendPromptInFlight: () => scenario.sendPromptInFlight,
+        recordManagedAiWorkflowTrace: (event, payload) => traces.push({ event, payload }),
+      }),
+    );
+
+    await sync.healInactiveManagedAiWorkspaceConfigs();
+
+    assert.equal(client.listCalls, 0, `${scenario.name} must not list workspaces`);
+    assert.deepEqual(client.getConfigCalls, [], `${scenario.name} must not read inactive configs`);
+    assert.deepEqual(client.patched, [], `${scenario.name} must not patch inactive configs`);
+    assert.deepEqual(traces, [{
+      event: "managed-baseurl.heal:skip",
+      payload: {
+        reason: "active-send-or-run",
+        anyActiveRuns: scenario.anyActiveRuns,
+        sendPromptInFlight: scenario.sendPromptInFlight,
+      },
+    }]);
+  }
+});
+
+test("server config sync does not churn after a write when the next server read is stale", async () => {
+  const client = createVesloClient();
+  const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  const readTime = Date.parse("2026-07-07T08:00:00.000Z");
+  const sync = createManagedAiRuntimeConfigSync(
+    createOptions({
+      vesloServerClient: () => client,
+      vesloServerWorkspaceId: () => "ws-active",
+      resolveConversationServerWorkspaceId: () => "ws-active",
+      now: () => readTime,
+      recordManagedAiWorkflowTrace: (event, payload) => traces.push({ event, payload }),
+    }),
+  );
+
+  await sync.syncActiveWorkspaceManagedAiConfig();
+  await sync.syncActiveWorkspaceManagedAiConfig();
+
+  assert.equal(client.patched.length, 1);
+  assert.deepEqual(client.getConfigCalls, ["ws-active", "ws-active"]);
+  const decisions = traces.filter((entry) => entry.event === "managed-ai-config-sync:managed-decision");
+  assert.equal(decisions.length, 2);
+  assert.equal(decisions[0]?.payload.decision, "write-managed-config");
+  assert.equal(decisions[0]?.payload.configSource, "veslo-server-config");
+  assert.equal(decisions[0]?.payload.vesloWorkspaceId, "ws-active");
+  assert.equal(decisions[0]?.payload.readTimestamp, "2026-07-07T08:00:00.000Z");
+  assert.equal(decisions[0]?.payload.cachedSnapshotMatches, false);
+  assert.equal(decisions[0]?.payload.redactedServerConfigMatches, false);
+
+  assert.equal(decisions[1]?.payload.decision, "skip");
+  assert.equal(decisions[1]?.payload.reason, "managed-config-current");
+  assert.equal(decisions[1]?.payload.configSource, "veslo-server-config");
+  assert.equal(decisions[1]?.payload.vesloWorkspaceId, "ws-active");
+  assert.equal(decisions[1]?.payload.readTimestamp, "2026-07-07T08:00:00.000Z");
+  assert.equal(decisions[1]?.payload.cachedSnapshotMatches, true);
+  assert.equal(decisions[1]?.payload.redactedServerConfigMatches, true);
+  assert.equal(decisions[1]?.payload.compareSource, "last-known-snapshot");
+});
+
+test("inactive workspace heal does not require a gateway bearer to write local provider routing", async () => {
+  const patched: Array<{ workspaceId: string; payload: { opencode?: Record<string, unknown> } }> = [];
+  const getConfigCalls: string[] = [];
+  const client: ManagedAiRuntimeConfigVesloClient = {
+    baseUrl: "http://127.0.0.1:34115",
+    token: "veslo-token",
+    getConfig: async (workspaceId) => {
+      getConfigCalls.push(workspaceId);
+      return { opencode: {} };
+    },
+    patchConfig: async (workspaceId, payload) => {
+      patched.push({ workspaceId, payload });
+      return { ok: true };
+    },
+    listWorkspaces: async () => ({
+      items: [
+        { id: "ws-active", workspaceType: "local" },
+        { id: "ws-inactive", workspaceType: "local" },
+      ],
+    }),
+  };
+  const sync = createManagedAiRuntimeConfigSync(
+    createOptions({
+      vesloServerClient: () => client,
+      managedAiGatewayAccessToken: () => "",
+      denGatewayAccessToken: () => "",
+      vesloServerWorkspaceId: () => "ws-active",
+      resolveConversationServerWorkspaceId: () => "ws-active",
+    }),
+  );
+
+  await sync.healInactiveManagedAiWorkspaceConfigs();
+
+  assert.deepEqual(getConfigCalls, ["ws-inactive"]);
+  assert.equal(patched.length, 1);
+  assert.equal(patched[0]?.workspaceId, "ws-inactive");
+  assert.equal(
+    (((patched[0]?.payload.opencode?.provider as Record<string, unknown>)?.codex_oauth as Record<string, unknown>)
+      ?.options as Record<string, unknown>)?.apiKey,
+    VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE,
+  );
+});
+
+test("inactive workspace heal does not apply active WSL bridge routing to other workspaces", async () => {
+  const client = createVesloClient();
+  const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  const sync = createManagedAiRuntimeConfigSync(
+    createOptions({
+      vesloServerClient: () => client,
+      resolvedVesloCapabilities: () => ({
+        config: { read: true, write: true },
+        sandbox: { enabled: true, backend: "windows-wsl2" },
+      }),
+      activeVesloServerRoutingInfo: () => ({
+        baseUrl: "http://127.0.0.1:34115",
+        engineUrl: "http://172.20.0.1:34116",
+        clientToken: "local-client-token",
+        hostToken: "local-host-token",
+      }),
+      engine: () => ({ running: true, runtime: "direct", childKind: "wsl", projectDir: "/repo" }),
+      recordManagedAiWorkflowTrace: (event, payload) => traces.push({ event, payload }),
+    }),
+  );
+
+  await sync.healInactiveManagedAiWorkspaceConfigs();
+
+  assert.deepEqual(client.getConfigCalls, []);
+  assert.deepEqual(client.patched, []);
+  assert.deepEqual(traces, [
+    {
+      event: "managed-baseurl.heal:skip",
+      payload: {
+        reason: "workspace-scoped-engine-routing",
+        activeWorkspaceId: "ws-active",
+        resolvedBaseUrl: "http://127.0.0.1:34115",
+        resolvedEngineBaseUrl: "http://172.20.0.1:34116",
+      },
+    },
+  ]);
 });

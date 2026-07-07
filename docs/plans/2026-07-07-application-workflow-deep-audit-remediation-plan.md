@@ -16,10 +16,10 @@ awf_07_unknown_session_sse_done: true
 awf_08_transcript_workspace_switch_done: true
 awf_09_transcript_read_fail_closed_done: true
 awf_10_transcript_store_scoped_key_done: true
-awf_11_ambiguous_ui_scope_done: false
-awf_12_ui_conversation_key_scope_done: false
-awf_13_displayed_guard_directory_done: false
-awf_14_last_session_storage_v2_done: false
+awf_11_ambiguous_ui_scope_done: true
+awf_12_ui_conversation_key_scope_done: true
+awf_13_displayed_guard_directory_done: true
+awf_14_last_session_storage_v2_done: true
 awf_15_legacy_opencode_submit_acceptance_done: false
 ---
 
@@ -705,7 +705,7 @@ is the caller fallback from unresolved scope to the active workspace.
 
 ## Finding 11: Ambiguous UI Scope Falls Back To Active Workspace
 
-done: false
+done: true
 
 Severity: High
 
@@ -733,9 +733,20 @@ Validation:
 - Add unit tests for multiple scope candidates and send target resolution.
 - Verify send refuses to continue without a resolved scope.
 
+Completed:
+
+- `resolveUiConversationScope` now treats multiple same-workspace scoped
+  candidates as ambiguous instead of letting active workspace identity select an
+  arbitrary directory.
+- `resolveSendTargetWorkspaceScope` now fails closed for scoped session sends
+  when a requested session id cannot be resolved, so ambiguous UI scope no
+  longer falls back to the active workspace.
+- Verified by app tests for same-workspace ambiguous candidates and send-target
+  refusal.
+
 ## Finding 12: UI Conversation Key Loses Directory And Conversation Identity
 
-done: false
+done: true
 
 Severity: High
 
@@ -765,9 +776,19 @@ Validation:
 - Add key parser/serializer tests.
 - Add queue remap tests for same session id in different directories.
 
+Completed:
+
+- Added scoped `ws2:` UI conversation keys that preserve `workspaceRoot`,
+  `directory`, Veslo `conversationId`, and OpenCode `opencodeSessionId` while
+  retaining compatibility parsing for legacy `ws:` keys.
+- Routed active UI conversation refs, session-store scope keys, queue keys, and
+  run UI keys through the scoped key shape.
+- Verified by serializer/parser tests and queue-key tests for the same session
+  id in different directories.
+
 ## Finding 13: Displayed Conversation Guard Ignores Directory
 
-done: false
+done: true
 
 Severity: High
 
@@ -794,9 +815,18 @@ Validation:
 - Add tests where same session/opencode id appears in two directories and stale
   result is rejected.
 
+Completed:
+
+- `DisplayedConversationGuard` now captures `workspaceRoot` and `directory` in
+  addition to workspace/conversation/OpenCode ids.
+- `displayedConversationStillMatches` rejects stale async results when the
+  displayed scope has drifted to a different directory, and fails closed when a
+  scoped guard cannot be resolved.
+- Verified by a workspace-session-selection test that rejects directory drift.
+
 ## Finding 14: Last Session Storage Is Workspace-Only
 
-done: false
+done: true
 
 Severity: High
 
@@ -827,6 +857,21 @@ Validation:
   directory-scoped sessions.
 - Add a compatibility test proving v1 raw ids are not auto-selected when more
   than one scoped candidate exists after hydration.
+
+Completed:
+
+- Added `veslo.workspace-last-session.v2` storage entries with session id,
+  workspace id, workspace root, directory, Veslo conversation id, and OpenCode
+  session id.
+- Scoped v2 last-session entries now seed the UI conversation scope map during
+  selection-store initialization, so restart/dashboard return flows can resolve
+  directory and conversation identity before sidebar hydration arrives.
+- Kept read compatibility for `veslo.workspace-last-session.v1`, but legacy raw
+  ids remain untrusted when hydrated scope candidates are ambiguous.
+- Last-session clear/move/persist paths now update scoped v2 entries alongside
+  v1 compatibility storage.
+- Verified by v2 persistence, v2 restart hydration, and v1 ambiguity
+  compatibility tests.
 
 ## Finding 15: Legacy OpenCode Submit Import Needs Route And E2E Acceptance
 

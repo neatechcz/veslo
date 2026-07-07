@@ -3,6 +3,7 @@ import { createEffect, createSignal, onCleanup, type Accessor } from "solid-js";
 import type { DenAuthState } from "../lib/den-auth";
 import {
   createSkillRegistryEventsListener,
+  SkillRegistryEventsAuthError,
   type SkillRegistryEvent,
   type SkillRegistryEventsListener,
   type SkillRegistryEventsListenerOptions,
@@ -39,6 +40,7 @@ export type SkillRegistryOrchestratorDeps = {
   invalidateSkillRegistryInventory: () => Promise<void>;
   markReloadRequired: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
   reportError: (error: unknown, scope: string) => void;
+  ensureLocalVesloServerRunning?: (options?: { requireRuntimeChainReady?: boolean }) => Promise<boolean>;
   createListener?: SkillRegistryOrchestratorListenerFactory;
 };
 
@@ -183,6 +185,18 @@ export function createSkillRegistryOrchestrator(deps: SkillRegistryOrchestratorD
     skillRegistryEventsListener = null;
   };
 
+  const handleSkillRegistryEventsUnauthorized = async (error: SkillRegistryEventsAuthError) => {
+    stopSkillRegistryEventsListener();
+    skillRegistryEventsKey = "";
+    deps.reportError(error, "skills.registry.events.auth");
+    try {
+      await deps.ensureLocalVesloServerRunning?.({ requireRuntimeChainReady: false });
+      syncSkillRegistryEventListener();
+    } catch (reacquireError) {
+      deps.reportError(reacquireError, "skills.registry.events.auth.reacquire");
+    }
+  };
+
   const syncSkillRegistryEventListener = () => {
     deps.denAuthRevision();
     const client = deps.vesloServerClient();
@@ -245,6 +259,7 @@ export function createSkillRegistryOrchestrator(deps: SkillRegistryOrchestratorD
         const result = await client.syncGlobalSkillMaterialization(materializationAuthContext());
         await refreshAfterSkillRegistryMaterialization(result);
       },
+      onUnauthorized: handleSkillRegistryEventsUnauthorized,
       onError: (error) => deps.reportError(error, "skills.registry.events"),
     });
 

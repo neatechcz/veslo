@@ -250,6 +250,18 @@ class QueueHarness implements ConversationRunQueueStore {
     return item;
   }
 
+  getForConversation(
+    workspaceId: string,
+    conversationId: string,
+    queueItemId: string,
+  ): ConversationRunQueueItem | null {
+    return this.items.find((item) =>
+      item.workspaceId === workspaceId &&
+      item.conversationId === conversationId &&
+      item.queueItemId === queueItemId
+    ) ?? null;
+  }
+
   recoverStarting(): Array<{ workspaceId: string; conversationId: string }> {
     const keys = new Map<string, { workspaceId: string; conversationId: string }>();
     const now = Date.now();

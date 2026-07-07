@@ -381,7 +381,7 @@ export type SessionSendWorkflowOptions = {
   resolveSendTargetWorkspaceScope: (sessionId?: string | null) => SendTargetWorkspaceScope | null;
   resolvedDevtoolsWorkspaceId: () => string;
   routedClient: (workspaceId?: string | null) => Client | null;
-  legacyConversationRunFallback: LegacyConversationRunFallback;
+  legacyConversationRunFallback?: LegacyConversationRunFallback | null;
   submitConversationFromVesloWriteApi?: (
     workspaceId: string,
     directory: string,
@@ -465,12 +465,16 @@ function sessionSubmitResultFromConversationSubmit(
       draftDisposition: result.draftDisposition,
     });
   }
+  const failedQueueItemId = "queueItemId" in result ? result.queueItemId : undefined;
+  const failedReservedRunId = "reservedRunId" in result ? result.reservedRunId : undefined;
   return sessionSubmitFailedResult({
     code: result.code,
     message: result.message,
     workspaceId: result.workspaceId,
     conversationId: result.conversationId,
     opencodeSessionId: result.opencodeSessionId,
+    queueItemId: failedQueueItemId,
+    reservedRunId: failedReservedRunId,
     clientMessageId: result.clientMessageId,
     draftDisposition: result.draftDisposition,
   });
@@ -806,7 +810,7 @@ export function createLegacyConversationRunFallback(
 }
 
 export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): SessionSendWorkflow {
-  const legacyConversationRunFallback = deps.legacyConversationRunFallback;
+  const legacyConversationRunFallback = deps.legacyConversationRunFallback ?? null;
 
   async function maybeResolveSkillCommand(
     draft: ComposerDraft,
@@ -1551,6 +1555,19 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
       });
     } else {
+      if (!legacyConversationRunFallback) {
+        deps.recordSendTrace("sendPrompt:blocked-legacy-fallback-disabled", {
+          traceId: sendTraceId,
+          targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
+          hasServerSubmit: Boolean(deps.submitConversationFromVesloWriteApi),
+        });
+        cleanupPendingSidebarSession();
+        stopSendPromptBusy();
+        return sessionSubmitBlockedResult({
+          code: "legacy_fallback_disabled",
+          message: "Server-owned conversation submit is required for this send path.",
+        });
+      }
       if (!(await legacyConversationRunFallback.prepare({
         cleanupPendingSidebarSession,
         sendPreflight,
@@ -1668,6 +1685,27 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         sessionID = null;
       }
     }
+    const serverFirstSubmitResult = serverFirstSubmitResultHolder.current;
+    if (
+      !sessionID &&
+      serverFirstSubmitResult &&
+      (serverFirstSubmitResult.status === "failed" || serverFirstSubmitResult.status === "blocked")
+    ) {
+      const hintedMessage = deps.addOpencodeCacheHint(serverFirstSubmitResult.message);
+      deps.recordSendTrace("sendPrompt:server-submit-first-failed", {
+        traceId: sendTraceId,
+        sessionID: null,
+        clientMessageId: sendCorrelation.clientMessageId,
+        origin: sendCorrelation.origin,
+        status: serverFirstSubmitResult.status,
+        code: serverFirstSubmitResult.code,
+        draftDisposition: serverFirstSubmitResult.draftDisposition,
+      });
+      deps.setError(hintedMessage);
+      cleanupPendingSidebarSession();
+      stopSendPromptBusy();
+      return sessionSubmitResultFromConversationSubmit(serverFirstSubmitResult);
+    }
     if (!sessionID) {
       deps.recordSendTrace("sendPrompt:blocked-no-session", {
         traceId: sendTraceId,
@@ -1680,7 +1718,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       });
     }
 
-    const serverFirstSubmitResult = serverFirstSubmitResultHolder.current;
     if (serverFirstSubmitResult) {
       if (serverFirstSubmitResult.status === "failed" || serverFirstSubmitResult.status === "blocked") {
         const hintedMessage = deps.addOpencodeCacheHint(serverFirstSubmitResult.message);
@@ -1758,6 +1795,21 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
     }
 
     const materializedSessionID: string = sessionID;
+
+    if (!legacyConversationRunFallback) {
+      deps.recordSendTrace("sendPrompt:blocked-legacy-fallback-disabled", {
+        traceId: sendTraceId,
+        sessionID: materializedSessionID,
+        targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
+        hasServerSubmit: Boolean(deps.submitConversationFromVesloWriteApi),
+      });
+      cleanupPendingSidebarSession();
+      stopSendPromptBusy();
+      return sessionSubmitBlockedResult({
+        code: "legacy_fallback_disabled",
+        message: "Server-owned conversation submit is required for this send path.",
+      });
+    }
 
     const displayedConversationGuard = deps.captureDisplayedConversationGuard(materializedSessionID);
     const displayedUiScopeToken = deps.activeUiScopeToken();

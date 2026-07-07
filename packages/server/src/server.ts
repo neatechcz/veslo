@@ -1471,6 +1471,10 @@ function resolveAiGatewayProvider(gatewayPath: string): string | undefined {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
+function isAiGatewayChatCompletionsPath(gatewayPath: string): boolean {
+  return /^\/providers\/[^/]+\/v1\/chat\/completions\/?$/.test(gatewayPath);
+}
+
 function resolveAiGatewayPathForTrace(pathname: string): string | null {
   if (pathname === "/ai-gateway") return "/";
   if (!pathname.startsWith("/ai-gateway/")) return null;
@@ -1539,7 +1543,7 @@ function resolveAiGatewayProviderAuthorization(input: {
   activeRunContextPresent?: boolean;
 }): {
   authorization: string;
-  source: "legacy-header" | AiGatewayRuntimeAuthorizationEntry["source"];
+  source: AiGatewayRuntimeAuthorizationEntry["source"];
 } {
   return aiGatewayRuntimeOwner.resolveProviderAuthorization({
     ...input,
@@ -1946,7 +1950,7 @@ async function proxyAiGatewayRequest(input: {
     : providerAuthorization?.authorization ?? "";
   const incomingInternalHeaderSummary = {
     hasGatewayAccessToken: Boolean(gatewayAccessToken),
-    hasRuntimeGatewayAuthorization: Boolean(providerAuthorization && providerAuthorization.source !== "legacy-header"),
+    hasRuntimeGatewayAuthorization: Boolean(providerAuthorization),
     gatewayAuthorizationSource: providerAuthorization?.source ?? (input.auth === "caller" ? "caller" : "missing"),
     hasGatewayCallerAuth: Boolean(gatewayCallerAuth),
     hasWorkspaceId: Boolean(incomingWorkspaceId),
@@ -1970,11 +1974,34 @@ async function proxyAiGatewayRequest(input: {
       ? "incoming-placeholder"
       : "resolved"
     : "not-required";
-  if (input.requireSessionId && !sessionId && !isSessionlessFallback) {
-    const activeContextDiagnostics = buildActiveAiGatewayResolutionDiagnostics({
+  let activeContextDiagnosticsForUnresolved: Record<string, unknown> | null = null;
+  const getActiveContextDiagnosticsForUnresolved = () => {
+    activeContextDiagnosticsForUnresolved ??= buildActiveAiGatewayResolutionDiagnostics({
       incomingSessionId,
       workspaceId: incomingWorkspaceId,
     });
+    return activeContextDiagnosticsForUnresolved;
+  };
+  const hasActiveGatewayResolutionContext = () => {
+    const diagnostics = getActiveContextDiagnosticsForUnresolved();
+    return (
+      Number(diagnostics.totalSessionContextKeys ?? 0) > 0 ||
+      Number(diagnostics.totalWorkspaceContextKeys ?? 0) > 0 ||
+      Number(diagnostics.activeProxyRequestCount ?? 0) > 0
+    );
+  };
+  const rejectUnresolvedSession =
+    input.requireSessionId &&
+    !sessionId &&
+    (
+      !isSessionlessFallback ||
+      (
+        isAiGatewayChatCompletionsPath(input.gatewayPath) &&
+        !hasActiveGatewayResolutionContext()
+      )
+    );
+  if (rejectUnresolvedSession) {
+    const activeContextDiagnostics = getActiveContextDiagnosticsForUnresolved();
     const unresolvedTrace = {
       requestId,
       provider,
@@ -2055,6 +2082,7 @@ async function proxyAiGatewayRequest(input: {
     });
   }
   recordSendWorkflowTrace("server", "server:ai-gateway:provider-hit", {
+    evidenceLayer: "local-proxy-hit",
     traceId: activeRunContext?.traceId ?? null,
     requestId,
     provider,
@@ -2277,6 +2305,36 @@ async function proxyAiGatewayRequest(input: {
       signal: controller.signal,
     });
     upstreamHeadersReceivedAt = perfMs();
+    recordSendWorkflowTrace("server", "server:ai-gateway:upstream-headers", {
+      evidenceLayer: "upstream-headers",
+      traceId: activeRunContext?.traceId ?? null,
+      requestId,
+      method,
+      provider,
+      gatewayPath: input.gatewayPath,
+      sessionId: sessionId ?? null,
+      incomingSessionId: incomingSessionIdForTrace,
+      incomingOpenCodeSessionId: incomingOpenCodeSessionIdForTrace,
+      workspaceId: workspaceId ?? null,
+      incomingWorkspaceId: incomingWorkspaceId ?? null,
+      conversationId: activeRunContext?.conversationId ?? null,
+      runId: activeRunContext?.runId ?? null,
+      opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
+      clientMessageId: activeRunContext?.clientMessageId ?? null,
+      origin: activeRunContext?.origin ?? null,
+      targetOrigin: target.origin,
+      targetPath: target.pathname,
+      sessionResolutionSource: sessionResolution?.source ?? null,
+      sessionResolvedFromActiveRunContext,
+      watchdogHitRecorded,
+      forwardedSessionHeaderMode,
+      status: response.status,
+      upstreamHeadersMs:
+        upstreamFetchStartedAt !== undefined
+          ? roundTraceMs(upstreamHeadersReceivedAt - upstreamFetchStartedAt)
+          : undefined,
+      upstreamContentType: response.headers.get("content-type") || undefined,
+    });
   } catch (error) {
     const diagnosticModel = model ?? await modelDiagnosticPromise;
     if (activeProxyRequest.abortReason) {
@@ -3699,6 +3757,12 @@ function createRoutes(
       ? await documentRuntimeDependencies.readStatus({} as RequestContext)
       : createDocumentRuntimeStatusPayload(documentRuntimeDependencies),
     resolveSkillCommand: createConversationSubmitSkillCommandResolver({ dataDir: serverDataDir }),
+    queueStatusReader: (payload) =>
+      conversationRunQueueStore.getForConversation(
+        payload.workspaceId,
+        payload.conversationId,
+        payload.queueItemId,
+      ),
   });
 
   const sessionTranscriptPrefetch = createSessionTranscriptPrefetchStore({
@@ -3991,6 +4055,7 @@ function createRoutes(
     conversationService,
     sessionTranscriptPrefetch,
     conversationRunLifecycleController,
+    conversationRunQueueStore,
     conversationSubmitService,
     lifecycleClient,
     resolveConversationReadDirectory,
