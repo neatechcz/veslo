@@ -101,9 +101,25 @@ gh release view <tag> --repo neatechcz/veslo-updates
 
 Use beta when the user wants a prerelease/internal validation build instead of the stable updater path.
 - Prefer the repository's existing prerelease workflow for branch/SHA prereleases when that matches the request.
+- For a staging/test desktop app release, use the manual `Build Staging App` workflow. It must create a private prerelease in `neatechcz/veslo` and upload the installable staging assets there; GitHub Actions artifacts are only a fallback, not the primary distribution surface.
 - If using the production workflow manually for a beta-style release, set the GitHub Release as prerelease and do not mark it latest.
 - Make release notes public-safe, but label the release as beta/prerelease and describe expected validation scope.
 - Do not publish a beta as the production latest update unless the user explicitly asks and the workflow supports that safely.
+- Do not mirror staging/test app releases to `neatechcz/veslo-updates`, generate `latest.json`, or enable the desktop updater for staging builds unless the user explicitly changes the staging release policy.
+
+For staging/test app releases from a branch such as `dev_vaclav`, dispatch:
+
+```bash
+gh workflow run build-staging-app.yml --repo neatechcz/veslo --ref <branch> -f ref=<branch>
+```
+
+Then verify the workflow run and resulting private prerelease:
+
+```bash
+gh run list --repo neatechcz/veslo --workflow "Build Staging App" --limit 5
+gh release list --repo neatechcz/veslo --limit 10
+gh release view <staging-tag> --repo neatechcz/veslo
+```
 
 ## Failure Handling
 

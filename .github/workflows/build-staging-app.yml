@@ -10,7 +10,7 @@ on:
         default: ""
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 concurrency:
@@ -18,12 +18,76 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  prepare-staging-release:
+    name: Prepare staging prerelease
+    runs-on: ubuntu-latest
+
+    outputs:
+      release_tag: ${{ steps.staging-release-meta.outputs.release_tag }}
+      release_name: ${{ steps.staging-release-meta.outputs.release_name }}
+      release_target: ${{ steps.staging-release-meta.outputs.release_target }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set staging prerelease metadata
+        id: staging-release-meta
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_REF: ${{ inputs.ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          release_target=$(git rev-parse HEAD)
+          short_sha=$(git rev-parse --short=12 HEAD)
+          release_date=$(date -u +%Y-%m-%d)
+          tag="staging-${release_date}-${short_sha}"
+          name="Veslo Staging ${release_date} (${short_sha})"
+          RELEASE_TAG="$tag"
+          RELEASE_NAME="$name"
+          RELEASE_TARGET="$release_target"
+
+          body_file="$RUNNER_TEMP/staging_release_body.md"
+          {
+            printf 'Private staging prerelease from `%s` (`%s`).\n\n' "$REQUESTED_REF" "$release_target"
+            printf -- '- Built by the manual Build Staging App workflow.\n'
+            printf -- '- Staging endpoints are baked into the app.\n'
+            printf -- '- Updater publishing is disabled; this release is not mirrored to the public updater repository.\n'
+          } > "$body_file"
+
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$RELEASE_NAME" \
+              --notes-file "$body_file" \
+              --prerelease
+          else
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$RELEASE_TARGET" \
+              --title "$RELEASE_NAME" \
+              --notes-file "$body_file" \
+              --prerelease
+          fi
+
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "release_name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
+          echo "release_target=$RELEASE_TARGET" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build staging app (${{ matrix.target }})
+    needs: prepare-staging-release
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 360
     environment: release-signing
     env:
+      RELEASE_TAG: ${{ needs.prepare-staging-release.outputs.release_tag }}
+      RELEASE_NAME: ${{ needs.prepare-staging-release.outputs.release_name }}
+      RELEASE_TARGET: ${{ needs.prepare-staging-release.outputs.release_target }}
       OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
       OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
       TARGET_TRIPLE: ${{ matrix.target }}
@@ -68,7 +132,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ needs.prepare-staging-release.outputs.release_target }}
 
       - name: Resolve artifact commit
         id: artifact-meta
@@ -194,3 +258,36 @@ jobs:
           name: veslo-staging-${{ matrix.target }}-${{ steps.artifact-meta.outputs.sha }}
           path: ${{ env.STAGING_ARTIFACT_PATH }}
           if-no-files-found: error
+
+      - name: Collect staging release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_dir="$RUNNER_TEMP/staging-release-assets"
+          rm -rf "$release_dir"
+          mkdir -p "$release_dir"
+
+          while IFS= read -r file; do
+            cp "$file" "$release_dir/$(basename "$file")"
+          done < <(find "$STAGING_ARTIFACT_PATH" -type f \( -name '*.dmg' -o -name '*.msi' \) -print | sort)
+
+          asset_count=$(find "$release_dir" -type f | wc -l | tr -d ' ')
+          if [ "$asset_count" -eq 0 ]; then
+            echo "No staging release assets found in $STAGING_ARTIFACT_PATH" >&2
+            exit 1
+          fi
+
+          find "$release_dir" -type f -print | sort
+          echo "STAGING_RELEASE_ASSET_PATH=$release_dir" >> "$GITHUB_ENV"
+
+      - name: Upload staging assets to private prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          gh release upload "$RELEASE_TAG" "$STAGING_RELEASE_ASSET_PATH"/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber

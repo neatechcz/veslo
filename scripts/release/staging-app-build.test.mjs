@@ -29,6 +29,12 @@ test("staging app workflow bakes staging endpoints and never publishes public up
   for (const requiredText of [
     "name: Build Staging App",
     "workflow_dispatch",
+    "contents: write",
+    "prepare-staging-release:",
+    "release_tag: ${{ steps.staging-release-meta.outputs.release_tag }}",
+    "gh release create \"$RELEASE_TAG\"",
+    "--prerelease",
+    "--target \"$RELEASE_TARGET\"",
     "VESLO_DEPLOYMENT_DOMAIN: ${{ vars.VESLO_STAGING_DEPLOYMENT_DOMAIN || 'staging.veslo.work' }}",
     "VITE_VESLO_DEPLOYMENT_DOMAIN: ${{ vars.VESLO_STAGING_DEPLOYMENT_DOMAIN || 'staging.veslo.work' }}",
     "VITE_VESLO_UPDATER_ENABLED: false",
@@ -37,6 +43,7 @@ test("staging app workflow bakes staging endpoints and never publishes public up
     "tauri.staging.conf.json",
     "tauri.windows.staging.conf.json",
     "actions/upload-artifact",
+    "gh release upload \"$RELEASE_TAG\"",
   ]) {
     assert.match(workflow, new RegExp(requiredText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }

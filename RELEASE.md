@@ -28,6 +28,19 @@ The skill must resolve beta vs production, generate public-safe release notes fr
    - `git tag vYYYY.M.P`
    - `git push origin vYYYY.M.P`
 
+## Staging/test app release
+
+Use this path for manual staging desktop builds that should be downloadable by testers but must not update production users.
+
+1. Dispatch the manual staging build workflow from the source branch or commit:
+   - `gh workflow run build-staging-app.yml --repo neatechcz/veslo --ref <branch> -f ref=<branch>`
+2. The workflow creates or updates a private prerelease in `neatechcz/veslo` named `staging-YYYY-MM-DD-<short-sha>`.
+3. The workflow uploads installable staging assets to that prerelease and also keeps GitHub Actions artifacts as a fallback.
+4. Staging builds keep the updater disabled and must not publish to `neatechcz/veslo-updates`, generate `latest.json`, or become the production latest release.
+5. Verify:
+   - `gh run list --repo neatechcz/veslo --workflow "Build Staging App" --limit 5`
+   - `gh release view <staging-tag> --repo neatechcz/veslo`
+
 ## Windows signing
 
 Windows desktop builds are signed in GitHub Actions through Azure Artifact Signing. The `release-signing` GitHub environment must provide:
