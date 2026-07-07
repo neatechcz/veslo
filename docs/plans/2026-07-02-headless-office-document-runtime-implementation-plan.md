@@ -572,6 +572,59 @@ Status 2026-07-07 (in progress, claude-20260707-windows-inline-bundle):
   `release-macos-aarch64.yml`, instead of a standalone `.veslopkg`.
 - Work happening in worktree branch `docrt/windows-native-bundle`.
 
+- Codex follow-up wires the Windows inline resource path into Tauri resources,
+  adds the Windows assembler with preverified source facts and a generated
+  trust-on-first-use SHA-256 lock, and updates the Windows release gate to
+  require the bundled resource tree instead of a standalone `.veslopkg`/`.sig`.
+- Liberation fonts are deferred for this Windows v1 because upstream releases do
+  not provide a reliable prebuilt binary asset; DejaVu and Noto Sans
+  latin/greek/cyrillic ship first, with Liberation kept as a target dependency.
+- Expected download footprint before Python/Node package installs and before any
+  LibreOffice trimming is roughly 635 MB. The assembler keeps the full
+  LibreOffice administrative-install output until a network-capable end-to-end
+  doctor run proves a smaller trimmed tree is safe.
+- DRT03 remains `done: false` until the real network-capable assembly, generated
+  source lock, `veslo-document-runtime doctor --json`, and signed MSI build pass.
+- Real Windows assembly found a LibreOffice MSI administrative-install MAX_PATH
+  failure when staging under the deep repo resource path. The assembler now
+  runs MSI extraction under a short OS temp path, preferring `RUNNER_TEMP` on
+  GitHub Actions, writes verbose MSI logs there, and surfaces a UTF-16LE log
+  tail on failure so nested checkout path regressions are diagnosable.
+- Real Windows assembly also found a Git/MSYS `tar.exe` PATH collision:
+  GNU tar treats `C:\...` archive arguments as remote `host:path` specs.
+  Archive extraction now explicitly prefers `%SystemRoot%\System32\tar.exe`
+  and falls back to bare `tar` only when that built-in bsdtar is absent.
+- Follow-up real assembly isolated the `python.exe -m venv` failure to file
+  resolution, not AV timing: the previous depth-first lookup selected
+  `python/Lib/venv/scripts/nt/python.exe`, CPython's venv launcher template,
+  before the shallower standalone `python/python.exe`. File lookup now prefers
+  the shallowest matching executable so vendored archive decoys cannot win.
+- The earlier Defender/AV timing suspicion was a red herring for this specific
+  failure. The bounded retry-with-backoff around Python and Node install
+  commands remains as defense-in-depth for real Windows runners under heavy
+  file-system scanning, but it is not the fix for the `pyvenv.cfg` error.
+- The final Node install step exposed a deterministic Windows `.cmd` launch
+  boundary: `child_process.spawn()` cannot execute `npm.cmd` directly without
+  a shell. The assembler now invokes the copied `node.exe` with
+  `node_modules/npm/bin/npm-cli.js` as the npm entrypoint, leaving the bundled
+  `bin/npm.cmd` wrapper only for external shell/user invocation.
+- Final real assembly also confirmed Python venvs are not relocatable by
+  default: `pyvenv.cfg` recorded the temporary staging path for the base
+  interpreter. After the final staging-to-target rename, the assembler rewrites
+  the venv config's staging path prefix to the permanent bundled target path so
+  `bin/python.cmd` and Python-package launchers resolve the managed interpreter.
+- LibreOffice managed `soffice` now uses explicit user-profile bootstrapping.
+   The runtime prepends `-env:UserInstallation=file:///...` profile URL to managed `soffice` command args
+   in both `doctor` and `exec --` flows, using `pathToFileURL`-style URLs; this keeps the runtime
+   fully functional without elevated MSI `/i` installs, `Program Files` installs, or WSL, and without
+   host-system Office installers.
+- `doctor` still uses exit-code-only success for soffice checks because this LibreOffice build
+   prints no output for `--headless --version` even on success.
+
+
+- soffice has inherent cold-start cost on first run (~6.1s observed on a fresh profile, ~3.9s warm).
+  The doctor check now needs a longer per-tool default timeout for soffice (15000ms) while other tool checks remain at 5000ms.
+
 ### DRT04: macOS Bundled Document Runtime Package
 
 Cause:

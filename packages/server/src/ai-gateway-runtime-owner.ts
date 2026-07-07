@@ -6,6 +6,7 @@ export const AI_GATEWAY_REDACTED_SECRET_VALUE = "[REDACTED]";
 const OPENCODE_SESSION_ID_MARKER = "OPENCODE_SESSION_ID";
 const DEFAULT_SESSION_HIT_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_ACTIVE_RUN_TTL_MS = 10 * 60 * 1000;
+const DEFAULT_RUNTIME_AUTHORIZATION_MAX_AGE_MS = 60 * 60 * 1000;
 const DEFAULT_PROVIDER_START_TIMEOUT_MS = 30_000;
 
 export type ActiveAiGatewayRunContext = {
@@ -72,6 +73,7 @@ export type AiGatewayRuntimeAuthorizationEntry = {
 export type AiGatewayRuntimeOwnerOptions = {
   activeRunTtlMs?: number;
   sessionHitTtlMs?: number;
+  runtimeAuthorizationMaxAgeMs?: number;
   providerStartTimeoutMs?: () => number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -91,6 +93,13 @@ export function normalizeAiGatewaySessionId(sessionId?: string | null): string {
 
 export function containsUnresolvedOpenCodeSessionId(value?: string | null): boolean {
   return (value?.trim() ?? "").includes(OPENCODE_SESSION_ID_MARKER);
+}
+
+function isRedactedGatewayTokenPlaceholder(value: string): boolean {
+  const normalized = value.trim();
+  if (!normalized) return false;
+  const token = normalized.replace(/^Bearer\s+/i, "").trim().toLowerCase();
+  return token === AI_GATEWAY_REDACTED_SECRET_VALUE.toLowerCase() || token === "[redacted]" || token === "redacted";
 }
 
 function actorRuntimeTokenKey(actor?: Actor): string {
@@ -130,6 +139,10 @@ function activeRunContextKey(context: ActiveAiGatewayRunContext): string {
 export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOptions = {}) {
   const activeRunTtlMs = options.activeRunTtlMs ?? DEFAULT_ACTIVE_RUN_TTL_MS;
   const sessionHitTtlMs = options.sessionHitTtlMs ?? DEFAULT_SESSION_HIT_TTL_MS;
+  const runtimeAuthorizationMaxAgeMs = Math.max(
+    1,
+    options.runtimeAuthorizationMaxAgeMs ?? DEFAULT_RUNTIME_AUTHORIZATION_MAX_AGE_MS,
+  );
   const now = options.now ?? (() => Date.now());
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const providerStartTimeoutMs = options.providerStartTimeoutMs ?? (() => DEFAULT_PROVIDER_START_TIMEOUT_MS);
@@ -336,31 +349,64 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     actor?: Actor;
     accessTokenHeader: string;
     runtimeAuthorizationActorTokenHash?: string | null;
+    activeRunContextPresent?: boolean;
   }): {
     authorization: string;
-    source: "legacy-header" | AiGatewayRuntimeAuthorizationEntry["source"];
+    source: AiGatewayRuntimeAuthorizationEntry["source"];
   } {
-    const legacyAccessToken = input.request.headers.get(input.accessTokenHeader)?.trim() ?? "";
-    if (legacyAccessToken) {
-      return {
-        authorization: `Bearer ${legacyAccessToken}`,
-        source: "legacy-header",
-      };
-    }
-
     const key = actorRuntimeTokenKey(input.actor);
     const scopedKey = input.runtimeAuthorizationActorTokenHash?.trim() ?? "";
-    const runtime = key ? runtimeAuthorizationByActorToken.get(key) : undefined;
-    const scopedRuntime =
-      scopedKey && scopedKey !== key
-        ? runtimeAuthorizationByActorToken.get(scopedKey)
-        : undefined;
-    const resolvedRuntime = runtime ?? scopedRuntime;
-    if (resolvedRuntime?.authorization.trim()) {
+    const runtimeCandidates: Array<{
+      key: string;
+      entry: AiGatewayRuntimeAuthorizationEntry | undefined;
+      scoped: boolean;
+    }> = [
+      ...(scopedKey ? [{ key: scopedKey, entry: runtimeAuthorizationByActorToken.get(scopedKey), scoped: true }] : []),
+      ...(key && key !== scopedKey ? [{ key, entry: runtimeAuthorizationByActorToken.get(key), scoped: false }] : []),
+    ];
+    let expiredRuntimeAuthorization = false;
+    const at = now();
+    for (const runtimeCandidate of runtimeCandidates) {
+      if (!runtimeCandidate.entry?.authorization.trim()) continue;
+      const resolvedRuntime = runtimeCandidate.entry;
+      const ageMs = Math.max(0, at - resolvedRuntime.at);
+      if (ageMs > runtimeAuthorizationMaxAgeMs) {
+        expiredRuntimeAuthorization = true;
+        runtimeAuthorizationByActorToken.delete(runtimeCandidate.key);
+        recordTrace("server:ai-gateway-runtime-authorization:expired", {
+          ageMs: roundDiagnosticMs(ageMs),
+          maxAgeMs: runtimeAuthorizationMaxAgeMs,
+          source: resolvedRuntime.source,
+          runtimeAuthorizationActorTokenHashPresent: runtimeCandidate.scoped,
+        });
+        continue;
+      }
       return {
         authorization: resolvedRuntime.authorization,
         source: resolvedRuntime.source,
       };
+    }
+
+    if (expiredRuntimeAuthorization) {
+      throw new ApiError(
+        401,
+        "gateway_runtime_authorization_expired",
+        "Managed AI gateway authorization in this Veslo server runtime has expired",
+      );
+    }
+
+    const legacyAccessToken = input.request.headers.get(input.accessTokenHeader)?.trim() ?? "";
+    if (legacyAccessToken) {
+      if (isRedactedGatewayTokenPlaceholder(legacyAccessToken)) {
+        throw new ApiError(
+          401,
+          "gateway_legacy_token_unavailable",
+          "Legacy AI gateway token is redacted or unavailable",
+        );
+      }
+      recordTrace("server:ai-gateway-legacy-token:ignored", {
+        activeRunContextPresent: Boolean(input.activeRunContextPresent),
+      });
     }
 
     throw new ApiError(
@@ -592,6 +638,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     ) {
       return true;
     }
+    if (normalizedSessionId) return false;
     if (
       normalizedWorkspaceId &&
       (workspaceHits.get(normalizedWorkspaceId) ?? []).some((hit) => hit.at >= input.startedAt)

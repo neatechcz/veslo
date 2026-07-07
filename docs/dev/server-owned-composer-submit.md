@@ -68,5 +68,10 @@ typed SessionSubmitResult / draftDisposition handling
 
 The old direct run helper remains in the app service for explicit compatibility
 surfaces and tests where the submit adapter is unavailable. It is not the
-normal wired input-submit path. Edit-message replacement and full queue UI API
-migration remain separate follow-ups.
+normal wired input-submit path. The app composition root does not create or
+inject the legacy conversation-run fallback into `createSessionSendWorkflow`;
+compatibility tests may still construct that fallback explicitly.
+Edit-message replacement is server-owned through the replacement mutation
+workflow; replacement failure surfacing is tracked and closed by
+`docs/plans/2026-07-07-server-owned-composer-send-workflow-deep-audit-followups.md`.
+Full queue UI API migration remains a separate follow-up.

@@ -42,6 +42,7 @@ function createBinding(overrides: Partial<CredentialBinding> = {}): CredentialBi
 
 function createProxyApp(input: {
   binding?: CredentialBinding | null;
+  bindingLookupError?: Error;
   secret?: StoredSecret | null;
   transport?: { chatCompletions(transportInput: unknown): Promise<{ status: number; body: unknown; headers?: Record<string, string> }> };
   transportCalls?: unknown[];
@@ -93,6 +94,9 @@ function createProxyApp(input: {
         },
         async getBindingByCredentialId(credentialId: string) {
           assert.equal(credentialId, "cred_custom_1");
+          if (input.bindingLookupError) {
+            throw input.bindingLookupError;
+          }
           return binding;
         },
         async getCredentialRecordByBindingId(bindingId: string) {
@@ -294,6 +298,36 @@ test("openai-compatible proxy records alert when assigned credential binding is 
         reason: "assigned_credential_unavailable",
       },
     ]);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("openai-compatible proxy returns structured failure when assigned binding lookup throws", async () => {
+  const app = createProxyApp({
+    bindingLookupError: new Error("binding lookup failed"),
+  });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/providers/openai_compatible/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        ...GATEWAY_AUTH_HEADER,
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_custom_lookup_throw",
+      },
+      body: JSON.stringify({
+        model: "custom-model",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), { error: "proxy_request_failed" });
   } finally {
     server.close();
     await once(server, "close");

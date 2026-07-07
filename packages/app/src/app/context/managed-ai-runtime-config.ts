@@ -6,6 +6,7 @@ import {
   resolveManagedAiConfigWriteDecision,
 } from "../controllers/managed-ai-config-sync";
 import {
+  describeManagedAiRuntimeConfigCredentialState,
   extractManagedApiKey,
   formatManagedAiAccessConfig,
   hasUsableManagedAiRuntimeConfig,
@@ -40,6 +41,37 @@ import {
   normalizeDirectoryPath,
   parseModelRef,
 } from "../utils";
+
+const RUNTIME_AUTH_PRIME_SUCCESS_TTL_MS = 15_000;
+
+type ManagedAiRuntimeAuthPrimeDiagnosticReason =
+  | "missing-user-token"
+  | "non-local-workspace"
+  | "provider-routing-target-missing"
+  | "access-profile-unavailable"
+  | "request-failed";
+
+const MANAGED_AI_RUNTIME_AUTH_PRIME_SUPPORT_MESSAGES: Record<
+  ManagedAiRuntimeAuthPrimeDiagnosticReason,
+  string
+> = {
+  "missing-user-token": "Sign in again to refresh managed AI authorization before sending.",
+  "non-local-workspace": "Managed AI runtime authorization is only required for local workspaces.",
+  "provider-routing-target-missing": "Local Veslo server routing is not ready for managed AI authorization.",
+  "access-profile-unavailable": "Managed AI access is unavailable for this account. Ask an admin to verify the assignment.",
+  "request-failed": "Managed AI runtime authorization could not be refreshed. Check the local Veslo server connection and retry.",
+};
+
+function managedAiRuntimeAuthPrimeDiagnostic(
+  reason: ManagedAiRuntimeAuthPrimeDiagnosticReason,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    reason,
+    supportMessage: MANAGED_AI_RUNTIME_AUTH_PRIME_SUPPORT_MESSAGES[reason],
+    ...extra,
+  };
+}
 
 export type ManagedAiRuntimeWorkspace = {
   id?: string | null;
@@ -156,6 +188,8 @@ export type ManagedAiRuntimeConfigSyncOptions = {
   shouldRetryManagedAiConfigReadForSend?: (error: unknown, baseUrl: string) => boolean;
   delay?: (ms: number) => Promise<void>;
   random?: () => number;
+  now?: () => number;
+  runtimeAuthorizationPrimeSuccessTtlMs?: number;
 };
 
 export type ManagedAiRuntimeConfigSync = {
@@ -175,10 +209,22 @@ export type ManagedAiRuntimeConfigSync = {
   healInactiveManagedAiWorkspaceConfigs: () => Promise<void>;
   rememberKnownConfigSnapshot: (key: string, content: string | null) => void;
   clearManagedConfigTracking: () => void;
+  clearManagedAiRuntimeAuthorizationPrimeCache: () => void;
 };
 
 function defaultDelay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function hashRuntimeAuthorizationCachePart(value?: string | null): string {
+  const input = value?.trim() ?? "";
+  if (!input) return "";
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
 }
 
 function summarizeUrlForManagedAiTrace(value: string | null | undefined): Record<string, unknown> {
@@ -244,8 +290,17 @@ export function createManagedAiRuntimeConfigSync(
   const effect = deps.effect ?? ((fn: () => void) => createEffect(fn));
   const delay = deps.delay ?? defaultDelay;
   const random = deps.random ?? Math.random;
+  const now = deps.now ?? (() => Date.now());
+  const runtimeAuthorizationPrimeSuccessTtlMs = Math.max(
+    0,
+    deps.runtimeAuthorizationPrimeSuccessTtlMs ?? RUNTIME_AUTH_PRIME_SUCCESS_TTL_MS,
+  );
   const lastKnownConfigSnapshotByWs = new Map<string, string>();
   const inactiveWorkspaceBaseUrlHealedFor = new Map<string, string>();
+  const runtimeAuthorizationPrimeInFlight = new Map<string, Promise<boolean>>();
+  let runtimeAuthorizationPrimeSuccess:
+    | { key: string; expiresAt: number }
+    | null = null;
   let managedAiConfigSyncGeneration = 0;
   let inactiveWorkspaceBaseUrlHealGeneration = 0;
   let lastManagedAiAccessResetKey = "";
@@ -258,6 +313,11 @@ export function createManagedAiRuntimeConfigSync(
     setLastManagedAiConfigAppliedForServerToken("");
     lastKnownConfigSnapshotByWs.clear();
     inactiveWorkspaceBaseUrlHealedFor.clear();
+  };
+
+  const clearManagedAiRuntimeAuthorizationPrimeCache = () => {
+    runtimeAuthorizationPrimeSuccess = null;
+    runtimeAuthorizationPrimeInFlight.clear();
   };
 
   const rememberKnownConfigSnapshot = (key: string, content: string | null) => {
@@ -481,6 +541,13 @@ export function createManagedAiRuntimeConfigSync(
           vesloClient.baseUrl,
           routing.tracePayload,
         );
+        const credentialMetadata = describeManagedAiRuntimeConfigCredentialState({
+          content: JSON.stringify(config.opencode ?? {}, null, 2),
+          providerId,
+          gatewayBaseUrl: routing.providerRoutingTarget.engineBaseUrl,
+          serverClientToken: routing.providerRoutingTarget.serverClientToken,
+          workspaceId: vesloWorkspaceId,
+        });
         const ok = hasUsableManagedAiRuntimeConfig({
           content: JSON.stringify(config.opencode ?? {}, null, 2),
           providerId,
@@ -492,6 +559,7 @@ export function createManagedAiRuntimeConfigSync(
           ...routing.tracePayload,
           configSource: "veslo-server-config",
           vesloWorkspaceId,
+          credentialMetadata,
           ok,
         });
         return ok;
@@ -508,6 +576,13 @@ export function createManagedAiRuntimeConfigSync(
         return false;
       }
       const configFile = await deps.readOpencodeConfig("project", root);
+      const credentialMetadata = describeManagedAiRuntimeConfigCredentialState({
+        content: configFile.content,
+        providerId,
+        gatewayBaseUrl: routing.providerRoutingTarget.engineBaseUrl,
+        serverClientToken: routing.providerRoutingTarget.serverClientToken,
+        workspaceId: vesloWorkspaceId,
+      });
       const ok = hasUsableManagedAiRuntimeConfig({
         content: configFile.content,
         providerId,
@@ -519,6 +594,7 @@ export function createManagedAiRuntimeConfigSync(
         ...routing.tracePayload,
         configSource: "project-config-file",
         root,
+        credentialMetadata,
         ok,
       });
       return ok;
@@ -537,9 +613,11 @@ export function createManagedAiRuntimeConfigSync(
     if (!deps.isTauriRuntime()) return true;
     const userToken = deps.denGatewayAccessToken();
     if (!userToken) {
+      const diagnostic = managedAiRuntimeAuthPrimeDiagnostic("missing-user-token");
       deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:skip", {
-        reason: "missing-user-token",
+        ...diagnostic,
       });
+      deps.setManagedAiAccessError(String(diagnostic.supportMessage));
       return false;
     }
 
@@ -549,10 +627,12 @@ export function createManagedAiRuntimeConfigSync(
       : undefined;
     const workspace = targetWorkspaceEntry || deps.activeWorkspaceDisplay();
     if (workspace.workspaceType !== "local") {
-      deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:skip", {
-        reason: "non-local-workspace",
+      const diagnostic = managedAiRuntimeAuthPrimeDiagnostic("non-local-workspace", {
         targetWorkspaceId: targetWorkspaceId || null,
         workspaceType: workspace.workspaceType,
+      });
+      deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:skip", {
+        ...diagnostic,
       });
       return true;
     }
@@ -566,52 +646,109 @@ export function createManagedAiRuntimeConfigSync(
     const routing = buildProviderRoutingContext(workspace, targetWorkspaceId, targetWorkspaceRoot);
 
     if (!routing.providerRoutingTarget?.baseUrl || !routing.providerRoutingTarget.serverClientToken) {
+      const diagnostic = managedAiRuntimeAuthPrimeDiagnostic("provider-routing-target-missing", routing.tracePayload);
       deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:skip", {
-        ...routing.tracePayload,
-        reason: "provider-routing-target-missing",
+        ...diagnostic,
       });
+      deps.setManagedAiAccessError(String(diagnostic.supportMessage));
       return false;
     }
+    const providerRoutingTarget = routing.providerRoutingTarget;
+    const providerRoutingLocalHost = routing.providerRoutingLocalHost;
 
-    deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:start", routing.tracePayload);
-    try {
-      const runtimeClient = deps.createVesloServerClient({
-        baseUrl: routing.providerRoutingTarget.baseUrl,
-        token: routing.providerRoutingTarget.serverClientToken,
-        hostToken: routing.providerRoutingLocalHost?.hostToken || undefined,
-      });
-      const response = await runtimeClient.getMyAiAccess(userToken);
-      const { profile, gatewayAccessToken, reason } = resolveManagedAiAccessBundleState({
-        aiAccess: response.aiAccess,
-        accessToken: response.accessToken,
-        fallbackAccessToken: userToken,
-        requireGatewayAccessToken: false,
-      });
-      if (!profile) {
-        deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:result", {
-          ...routing.tracePayload,
-          ok: false,
-          reason,
-        });
-        if (reason) deps.setManagedAiAccessError(reason);
-        return false;
-      }
+    const runtimeAuthorizationPrimeCacheKey = [
+      providerRoutingTarget.baseUrl.trim().replace(/\/+$/, ""),
+      targetWorkspaceId || workspace.id?.trim() || "",
+      hashRuntimeAuthorizationCachePart(providerRoutingTarget.serverClientToken),
+      hashRuntimeAuthorizationCachePart(providerRoutingLocalHost?.hostToken),
+      hashRuntimeAuthorizationCachePart(userToken),
+      String(deps.denAuthRevision()),
+    ].join("|");
 
-      deps.applyManagedAiAccessProfile(profile, gatewayAccessToken, { writeCache: true });
-      deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:result", {
+    if (
+      runtimeAuthorizationPrimeSuccess?.key === runtimeAuthorizationPrimeCacheKey &&
+      runtimeAuthorizationPrimeSuccess.expiresAt > now()
+    ) {
+      deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:cache-hit", {
         ...routing.tracePayload,
-        ok: true,
-        providerId: profile.providerId,
-        defaultModelId: profile.defaultModel.modelID,
-        gatewayAccessTokenPresent: Boolean(gatewayAccessToken),
+        expiresInMs: Math.max(0, runtimeAuthorizationPrimeSuccess.expiresAt - now()),
       });
       return true;
-    } catch (error) {
-      deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:error", {
-        ...routing.tracePayload,
-        message: error instanceof Error ? error.message : deps.safeStringify(error),
-      });
-      return false;
+    }
+    if (
+      runtimeAuthorizationPrimeSuccess?.key === runtimeAuthorizationPrimeCacheKey &&
+      runtimeAuthorizationPrimeSuccess.expiresAt <= now()
+    ) {
+      runtimeAuthorizationPrimeSuccess = null;
+    }
+
+    const inFlight = runtimeAuthorizationPrimeInFlight.get(runtimeAuthorizationPrimeCacheKey);
+    if (inFlight) {
+      deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:join", routing.tracePayload);
+      return inFlight;
+    }
+
+    const prime = (async (): Promise<boolean> => {
+      deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:start", routing.tracePayload);
+      try {
+        const runtimeClient = deps.createVesloServerClient({
+          baseUrl: providerRoutingTarget.baseUrl,
+          token: providerRoutingTarget.serverClientToken,
+          hostToken: providerRoutingLocalHost?.hostToken || undefined,
+        });
+        const response = await runtimeClient.getMyAiAccess(userToken);
+        const { profile, gatewayAccessToken, reason } = resolveManagedAiAccessBundleState({
+          aiAccess: response.aiAccess,
+          accessToken: response.accessToken,
+          fallbackAccessToken: userToken,
+          requireGatewayAccessToken: false,
+        });
+        if (!profile) {
+          const diagnostic = managedAiRuntimeAuthPrimeDiagnostic("access-profile-unavailable", {
+            aiAccessReason: reason ?? null,
+          });
+          deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:result", {
+            ...routing.tracePayload,
+            ok: false,
+            ...diagnostic,
+          });
+          deps.setManagedAiAccessError(String(diagnostic.supportMessage));
+          return false;
+        }
+
+        deps.applyManagedAiAccessProfile(profile, gatewayAccessToken, { writeCache: true });
+        if (runtimeAuthorizationPrimeSuccessTtlMs > 0) {
+          runtimeAuthorizationPrimeSuccess = {
+            key: runtimeAuthorizationPrimeCacheKey,
+            expiresAt: now() + runtimeAuthorizationPrimeSuccessTtlMs,
+          };
+        }
+        deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:result", {
+          ...routing.tracePayload,
+          ok: true,
+          providerId: profile.providerId,
+          defaultModelId: profile.defaultModel.modelID,
+          gatewayAccessTokenPresent: Boolean(gatewayAccessToken),
+        });
+        return true;
+      } catch (error) {
+        const diagnostic = managedAiRuntimeAuthPrimeDiagnostic("request-failed");
+        deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:error", {
+          ...routing.tracePayload,
+          ...diagnostic,
+          message: error instanceof Error ? error.message : deps.safeStringify(error),
+        });
+        deps.setManagedAiAccessError(String(diagnostic.supportMessage));
+        return false;
+      }
+    })();
+    runtimeAuthorizationPrimeInFlight.set(runtimeAuthorizationPrimeCacheKey, prime);
+    try {
+      return await prime;
+    } finally {
+      if (runtimeAuthorizationPrimeInFlight.get(runtimeAuthorizationPrimeCacheKey) === prime) {
+        runtimeAuthorizationPrimeInFlight.delete(runtimeAuthorizationPrimeCacheKey);
+      }
     }
   };
 
@@ -669,9 +806,7 @@ export function createManagedAiRuntimeConfigSync(
       deps.vesloServerStatus() === "connected" &&
       vesloClient &&
       vesloCapabilities?.config?.write;
-    const providerRoutingReady = Boolean(
-      routing.providerRoutingTarget?.serverClientToken && gatewayAccessToken,
-    );
+    const providerRoutingReady = Boolean(routing.providerRoutingTarget?.serverClientToken);
     const providerRoutingReloadKey = routing.providerRoutingTarget
       ? `${routing.providerRoutingTarget.serverClientToken}@${routing.providerRoutingTarget.engineBaseUrl}`
       : "";
@@ -840,14 +975,16 @@ export function createManagedAiRuntimeConfigSync(
   }) {
     const config = await input.vesloClient.getConfig(input.vesloWorkspaceId);
     if (!input.isCurrentManagedAiConfigSync()) return;
+    const readTimestamp = new Date(now()).toISOString();
     const currentOpencodeContent = JSON.stringify(config.opencode ?? {}, null, 2);
     deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:read-current", {
       ...input.configSyncTracePayload,
       configSource: "veslo-server-config",
+      readTimestamp,
       currentBytes: currentOpencodeContent.length,
     });
 
-    if (input.managedProfile && input.providerRoutingTarget && input.gatewayAccessToken) {
+    if (input.managedProfile && input.providerRoutingTarget) {
       const content = formatManagedAiAccessConfig(currentOpencodeContent, {
         profile: input.managedProfile,
         serverBaseUrl: input.providerRoutingTarget.baseUrl,
@@ -863,10 +1000,19 @@ export function createManagedAiRuntimeConfigSync(
         lastKnownConfigSnapshotByWs.delete(wsKey);
       }
       const cachedSnapshotMatches = lastKnownConfigSnapshotByWs.get(wsKey) === desiredSnapshot;
-      const redactedServerConfigMatches = managedConfigContentsMatch(
-        currentOpencodeContent,
-        content,
-      );
+      const compareSource = cachedSnapshotMatches ? "last-known-snapshot" : "server-read";
+      const redactedServerConfigMatches = cachedSnapshotMatches
+        ? true
+        : managedConfigContentsMatch(
+          currentOpencodeContent,
+          content,
+          {
+            ...input.configSyncTracePayload,
+            configSource: "veslo-server-config",
+            readTimestamp,
+            vesloWorkspaceId: input.vesloWorkspaceId,
+          },
+        );
       const currentApiKeyMatches = currentApiKey
         ? currentApiKey === input.providerRoutingTarget.serverClientToken
         : null;
@@ -885,8 +1031,10 @@ export function createManagedAiRuntimeConfigSync(
         reason: managedDecisionReason,
         cachedSnapshotMatches,
         redactedServerConfigMatches,
+        compareSource,
         currentApiKeyPresent: Boolean(currentApiKey),
         currentApiKeyMatches,
+        readTimestamp,
         desiredBytes: content.length,
       });
       if (managedDecision.type === "skip") {
@@ -956,12 +1104,14 @@ export function createManagedAiRuntimeConfigSync(
   }) {
     const configFile = await deps.readOpencodeConfig("project", input.root);
     if (!input.isCurrentManagedAiConfigSync()) return;
+    const readTimestamp = new Date(now()).toISOString();
     deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:read-current", {
       ...input.configSyncTracePayload,
       configSource: "project-config-file",
+      readTimestamp,
       currentBytes: configFile.content?.length ?? 0,
     });
-    if (input.managedProfile && input.providerRoutingTarget && input.gatewayAccessToken) {
+    if (input.managedProfile && input.providerRoutingTarget) {
       const content = formatManagedAiAccessConfig(configFile.content, {
         profile: input.managedProfile,
         serverBaseUrl: input.providerRoutingTarget.baseUrl,
@@ -972,7 +1122,13 @@ export function createManagedAiRuntimeConfigSync(
       });
       const exactContentMatches = (configFile.content ?? "").trim() === content.trim();
       const managedConfigMatches =
-        exactContentMatches || managedConfigContentsMatch(configFile.content, content);
+        exactContentMatches ||
+        managedConfigContentsMatch(configFile.content, content, {
+          ...input.configSyncTracePayload,
+          configSource: "project-config-file",
+          readTimestamp,
+          vesloWorkspaceId: input.vesloWorkspaceId,
+        });
       const fileDecision = resolveManagedAiConfigWriteDecision({
         managedProfilePresent: Boolean(input.managedProfile),
         providerRoutingReady: input.providerRoutingReady,
@@ -988,6 +1144,7 @@ export function createManagedAiRuntimeConfigSync(
         reason: fileDecisionReason,
         exactContentMatches,
         managedConfigMatches,
+        readTimestamp,
         desiredBytes: content.length,
       });
       if (fileDecision.type !== "write-managed-config") return;
@@ -1036,8 +1193,12 @@ export function createManagedAiRuntimeConfigSync(
     deps.markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
   }
 
-  function managedConfigContentsMatch(current: string | null | undefined, desired: string): boolean {
-    return managedConfigContentsMatchForServerPatch(current, desired);
+  function managedConfigContentsMatch(
+    current: string | null | undefined,
+    desired: string,
+    traceContext?: Record<string, unknown>,
+  ): boolean {
+    return managedConfigContentsMatchForServerPatch(current, desired, traceContext);
   }
 
   const healInactiveManagedAiWorkspaceConfigs = async (
@@ -1051,6 +1212,16 @@ export function createManagedAiRuntimeConfigSync(
     if (!vesloCapabilities?.config?.write) return;
     const managedProfile = deps.managedAiAccess();
     if (!managedProfile) return;
+    const sendPromptInFlight = deps.sendPromptInFlight();
+    const anyActiveRuns = deps.anyActiveRuns();
+    if (sendPromptInFlight || anyActiveRuns) {
+      deps.recordManagedAiWorkflowTrace("managed-baseurl.heal:skip", {
+        reason: "active-send-or-run",
+        anyActiveRuns,
+        sendPromptInFlight,
+      });
+      return;
+    }
     const providerRoutingLocalHost = deps.activeVesloServerRoutingInfo();
     if (!providerRoutingLocalHost?.baseUrl) return;
     const gatewayClient = deps.gatewayVesloServerClient();
@@ -1079,15 +1250,24 @@ export function createManagedAiRuntimeConfigSync(
     });
     if (!providerRoutingTarget?.serverClientToken) return;
     const gatewayAccessToken = deps.managedAiGatewayAccessToken() || deps.denGatewayAccessToken();
-    if (!gatewayAccessToken) return;
 
-    const sessionToken = `${providerRoutingTarget.serverClientToken}@${providerRoutingTarget.engineBaseUrl}`;
     const activeWorkspace = deps.activeWorkspaceDisplay();
     const activeWorkspaceAppId = activeWorkspace.id?.trim() || deps.activeWorkspaceId().trim();
     const activeWorkspaceId =
       (deps.vesloServerWorkspaceId() ?? "").trim() ||
       deps.resolveConversationServerWorkspaceId(activeWorkspaceAppId) ||
       "";
+    if (providerRoutingRequiresEngineBaseUrl) {
+      deps.recordManagedAiWorkflowTrace("managed-baseurl.heal:skip", {
+        reason: "workspace-scoped-engine-routing",
+        activeWorkspaceId: activeWorkspaceId || activeWorkspaceAppId || null,
+        resolvedBaseUrl: providerRoutingTarget.baseUrl,
+        resolvedEngineBaseUrl: providerRoutingTarget.engineBaseUrl,
+      });
+      return;
+    }
+
+    const sessionToken = `${providerRoutingTarget.serverClientToken}@${providerRoutingTarget.engineBaseUrl}`;
     const healGeneration = ++inactiveWorkspaceBaseUrlHealGeneration;
     const isCurrentInactiveWorkspaceHeal = () =>
       !(options?.isCancelled?.() ?? false) &&
@@ -1146,6 +1326,7 @@ export function createManagedAiRuntimeConfigSync(
     if (nextKey === lastManagedAiAccessResetKey) return;
     lastManagedAiAccessResetKey = nextKey;
     clearManagedConfigTracking();
+    clearManagedAiRuntimeAuthorizationPrimeCache();
   });
 
   effect(() => {
@@ -1173,5 +1354,6 @@ export function createManagedAiRuntimeConfigSync(
     healInactiveManagedAiWorkspaceConfigs: () => healInactiveManagedAiWorkspaceConfigs(),
     rememberKnownConfigSnapshot,
     clearManagedConfigTracking,
+    clearManagedAiRuntimeAuthorizationPrimeCache,
   };
 }

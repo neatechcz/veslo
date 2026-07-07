@@ -146,7 +146,6 @@ function baseDeps(overrides: Record<string, unknown> = {}) {
     vesloServerWorkspaceId: () => null,
     vesloCapabilities: () => null,
     skillInventory: () => localInventory(),
-    refreshSkillInventory: async () => {},
     readEffectiveMcpServerEntries: async () => [] as McpServerEntry[],
     recordPerfLog: () => {},
     ...overrides,
@@ -162,7 +161,6 @@ test("session capabilities store loads local skills and MCP statuses for the sel
         { name: "local-tools", config: { type: "local", command: ["node", "server.js"] }, source: "config.project" },
       ];
       const runtimeCalls: string[] = [];
-      let refreshCalls = 0;
       const store = createSessionCapabilitiesStore(baseDeps({
         client: () => ({
           mcp: {
@@ -173,9 +171,6 @@ test("session capabilities store loads local skills and MCP statuses for the sel
           },
         }),
         activeWorkspaceRuntimeReady: () => true,
-        refreshSkillInventory: async () => {
-          refreshCalls += 1;
-        },
         readEffectiveMcpServerEntries: async (directory: string) => {
           assert.equal(directory, "/workspaces/local");
           return entries;
@@ -196,7 +191,6 @@ test("session capabilities store loads local skills and MCP statuses for the sel
         "local-tools:disconnected",
       ]);
       assert.deepEqual(runtimeCalls, ["/workspaces/local"]);
-      assert.equal(refreshCalls, 1);
       assert.deepEqual(store.skillInventoryWorkspaces(), [
         { id: "ws-local", label: "Local Workspace", path: "/workspaces/local" },
       ]);
@@ -279,12 +273,12 @@ test("session capabilities store loads remote Veslo workspace skills and MCP ent
   });
 });
 
-test("session capabilities store skips runtime MCP status while an active send owns the runtime", async () => {
+test("session capabilities store defers fresh local capability loads while an active send owns the runtime", async () => {
   await createRoot(async (dispose) => {
     try {
       const effects = createManualEffectRunner();
-      const perfEvents: string[] = [];
       let runtimeCalls = 0;
+      let mcpReads = 0;
       const store = createSessionCapabilitiesStore(baseDeps({
         client: () => ({
           mcp: {
@@ -296,6 +290,143 @@ test("session capabilities store skips runtime MCP status while an active send o
         }),
         activeWorkspaceRuntimeReady: () => true,
         activeVisibleRuntimeActivityId: () => "send-trace-1",
+        readEffectiveMcpServerEntries: async () => {
+          mcpReads += 1;
+          return [
+            { name: "browser", config: { type: "remote", url: "https://mcp.example" }, source: "config.global" },
+          ];
+        },
+        effect: effects.effect,
+      }));
+
+      await effects.flush();
+
+      assert.equal(store.sessionCapabilitiesStatus(), "idle");
+      assert.equal(store.sessionCapabilities(), null);
+      assert.equal(mcpReads, 0);
+      assert.equal(runtimeCalls, 0);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("session capabilities store keeps cached capabilities during active send and refreshes after it finishes", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const effects = createManualEffectRunner();
+      const [activeRuntimeActivityId, setActiveRuntimeActivityId] = createSignal<string | null>(null);
+      let runtimeCalls = 0;
+      let mcpReads = 0;
+      const store = createSessionCapabilitiesStore(baseDeps({
+        client: () => ({
+          mcp: {
+            status: async () => {
+              runtimeCalls += 1;
+              return { data: { browser: { status: "connected" } } satisfies McpStatusMap };
+            },
+          },
+        }),
+        activeWorkspaceRuntimeReady: () => true,
+        activeVisibleRuntimeActivityId: activeRuntimeActivityId,
+        readEffectiveMcpServerEntries: async () => {
+          mcpReads += 1;
+          return [
+            { name: "browser", config: { type: "remote", url: "https://mcp.example" }, source: "config.global" },
+          ];
+        },
+        effect: effects.effect,
+      }));
+
+      await effects.flush();
+
+      assert.equal(mcpReads, 1);
+      assert.equal(runtimeCalls, 1);
+      assert.deepEqual(store.sessionCapabilities()?.mcp.map((row) => `${row.name}:${row.status}`), [
+        "browser:connected",
+      ]);
+
+      setActiveRuntimeActivityId("send-trace-1");
+      await effects.flush();
+
+      assert.equal(mcpReads, 1);
+      assert.equal(runtimeCalls, 1);
+      assert.deepEqual(store.sessionCapabilities()?.mcp.map((row) => `${row.name}:${row.status}`), [
+        "browser:connected",
+      ]);
+
+      setActiveRuntimeActivityId(null);
+      await effects.flush();
+
+      assert.equal(mcpReads, 2);
+      assert.equal(runtimeCalls, 2);
+      assert.deepEqual(store.sessionCapabilities()?.mcp.map((row) => `${row.name}:${row.status}`), [
+        "browser:connected",
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("session capabilities store defers remote Veslo capability loads while an active send owns the runtime", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const effects = createManualEffectRunner();
+      const workspace = remoteWorkspace();
+      const calls: string[] = [];
+      const store = createSessionCapabilitiesStore(baseDeps({
+        sidebarWorkspaceGroups: () => [workspaceGroup(workspace)],
+        workspaces: () => [workspace],
+        activeWorkspaceId: () => "ws-remote-ui",
+        activeWorkspaceDisplay: () => workspace,
+        activeWorkspaceRoot: () => "/workspaces/remote",
+        workspaceProjectDir: () => "/workspaces/remote",
+        activeVisibleRuntimeActivityId: () => "send-trace-1",
+        vesloServerStatus: () => "connected",
+        vesloServerBaseUrl: () => "https://veslo.example",
+        vesloServerWorkspaceId: () => "server-ws",
+        vesloCapabilities: () => capabilities(),
+        vesloServerClient: () => ({
+          listSkills: async (workspaceId: string) => {
+            calls.push(`skills:${workspaceId}`);
+            return { items: [] };
+          },
+          mcp: {
+            list: async (workspaceId: string) => {
+              calls.push(`mcp:${workspaceId}`);
+              return { items: [] };
+            },
+          },
+        }),
+        effect: effects.effect,
+      }));
+
+      await effects.flush();
+
+      assert.equal(store.sessionCapabilitiesStatus(), "idle");
+      assert.equal(store.sessionCapabilities(), null);
+      assert.deepEqual(calls, []);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("session capabilities store marks MCP runtime status failures as failed rows", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const effects = createManualEffectRunner();
+      const perfEvents: string[] = [];
+      const store = createSessionCapabilitiesStore(baseDeps({
+        client: () => ({
+          mcp: {
+            status: async () => {
+              throw new Error("mcp status timeout");
+            },
+          },
+        }),
+        activeWorkspaceRuntimeReady: () => true,
         readEffectiveMcpServerEntries: async () => [
           { name: "browser", config: { type: "remote", url: "https://mcp.example" }, source: "config.global" },
         ],
@@ -308,61 +439,17 @@ test("session capabilities store skips runtime MCP status while an active send o
       await effects.flush();
 
       assert.equal(store.sessionCapabilitiesStatus(), "ready");
-      assert.equal(runtimeCalls, 0);
-      assert.deepEqual(store.sessionCapabilities()?.mcp.map((row) => `${row.name}:${row.status}`), [
-        "browser:disconnected",
+      assert.deepEqual(store.sessionCapabilities()?.mcp.map((row) => `${row.name}:${row.status}:${row.statusDetail}`), [
+        "browser:failed:mcp status timeout",
       ]);
-      assert.deepEqual(perfEvents, ["workspace.mcp:session-capabilities-skip-active-send"]);
+      assert.deepEqual(perfEvents, ["workspace.mcp:session-capabilities-status-error"]);
     } finally {
       dispose();
     }
   });
 });
 
-test("session capabilities store refreshes skipped MCP statuses after active send finishes", async () => {
-  await createRoot(async (dispose) => {
-    try {
-      const effects = createManualEffectRunner();
-      const [activeRuntimeActivityId, setActiveRuntimeActivityId] = createSignal<string | null>("send-trace-1");
-      let runtimeCalls = 0;
-      const store = createSessionCapabilitiesStore(baseDeps({
-        client: () => ({
-          mcp: {
-            status: async () => {
-              runtimeCalls += 1;
-              return { data: { browser: { status: "connected" } } satisfies McpStatusMap };
-            },
-          },
-        }),
-        activeWorkspaceRuntimeReady: () => true,
-        activeVisibleRuntimeActivityId: activeRuntimeActivityId,
-        readEffectiveMcpServerEntries: async () => [
-          { name: "browser", config: { type: "remote", url: "https://mcp.example" }, source: "config.global" },
-        ],
-        effect: effects.effect,
-      }));
-
-      await effects.flush();
-
-      assert.equal(runtimeCalls, 0);
-      assert.deepEqual(store.sessionCapabilities()?.mcp.map((row) => `${row.name}:${row.status}`), [
-        "browser:disconnected",
-      ]);
-
-      setActiveRuntimeActivityId(null);
-      await effects.flush();
-
-      assert.equal(runtimeCalls, 1);
-      assert.deepEqual(store.sessionCapabilities()?.mcp.map((row) => `${row.name}:${row.status}`), [
-        "browser:connected",
-      ]);
-    } finally {
-      dispose();
-    }
-  });
-});
-
-test("session capabilities store force reloads when inventory or remote context changes", async () => {
+test("session capabilities store updates local skills without reloading MCP or reacting to remote context changes", async () => {
   await createRoot(async (dispose) => {
     try {
       const effects = createManualEffectRunner();
@@ -399,12 +486,12 @@ test("session capabilities store force reloads when inventory or remote context 
       };
       setInventory(nextInventory);
       await effects.flush();
-      assert.equal(mcpReads, 2);
+      assert.equal(mcpReads, 1);
       assert.equal(store.sessionCapabilities()?.skills.find((row) => row.name === "research")?.description, "second");
 
       setServerStatus("limited");
       await effects.flush();
-      assert.equal(mcpReads, 3);
+      assert.equal(mcpReads, 1);
     } finally {
       dispose();
     }

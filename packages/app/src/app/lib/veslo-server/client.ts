@@ -509,6 +509,13 @@ export function createVesloServerClient(options: {
         timeoutMs: timeouts.aiAccess,
         extraHeaders: buildGatewayCallerHeaders(userToken),
       }),
+    clearMyAiGatewayRuntimeAuthorization: () =>
+      requestJson<{ ok: true }>(baseUrl, "/ai-gateway/me/runtime-authorization/clear", {
+        method: "POST",
+        token,
+        hostToken,
+        timeoutMs: timeouts.aiAccess,
+      }),
     opencodeRouterTelegramIdentities: identities.telegramIdentities,
     opencodeRouterSlackIdentities: identities.slackIdentities,
     listWorkspaces: workspace.list,

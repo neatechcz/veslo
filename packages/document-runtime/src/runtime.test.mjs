@@ -12,7 +12,9 @@ import {
   packExpandedPackage,
   pathInfo,
   repairHeadless,
+  resolveActiveRuntime,
   resolveManagedCommand,
+  runtimeFileUrl,
   stageExpandedPackage,
 } from "./runtime.mjs";
 
@@ -62,6 +64,38 @@ const writeFakeTool = (binDir, name, output = `${name} ok`) => {
   return path;
 };
 
+const writeSofficeProbe = (binDir, { outputPath = null, exitCode = 0, delayMs = 0, captureArgs = false } = {}) => {
+  if (process.platform === "win32") {
+    const scriptPath = join(binDir, "soffice.cmd");
+    const lines = ["@echo off"];
+    if (captureArgs && outputPath) {
+      const safeOutputPath = outputPath.replace(/"/g, '""');
+      lines.push(`set "SOFFICE_ARGS_PATH=${safeOutputPath}"`);
+      lines.push('> "%SOFFICE_ARGS_PATH%" echo %*');
+    }
+    if (delayMs > 0) {
+      const seconds = Math.max(1, Math.ceil(delayMs / 1000));
+      lines.push(`"%SystemRoot%\\System32\\ping.exe" -n ${seconds + 1} 127.0.0.1 > NUL`);
+    }
+    lines.push(`exit /b ${exitCode}`);
+    writeText(scriptPath, `${lines.join("\r\n")}\r\n`);
+    return;
+  }
+
+  const scriptPath = join(binDir, "soffice");
+  const lines = ["#!/bin/sh"];
+  if (captureArgs && outputPath) {
+    const safeOutputPath = outputPath.replace(/"/g, '\"');
+    lines.push(`printf '%s' "$*" > "${safeOutputPath}"`);
+  }
+  if (delayMs > 0) {
+    const seconds = Math.max(1, Math.ceil(delayMs / 1000));
+    lines.push(`sleep ${seconds}`);
+  }
+  lines.push(`exit ${exitCode}`);
+  writeText(scriptPath, `${lines.join("\n")}\n`);
+  chmodSync(scriptPath, 0o755);
+};
 const createRuntimeFixture = (options = {}) => {
   const root = mkdtempSync(join(tmpdir(), "veslo-document-runtime-"));
   const activeRelative = options.activeRelative ?? "2026.7.0";
@@ -115,6 +149,99 @@ test("doctor returns ready JSON for a complete managed runtime package", async (
   }
 });
 
+test("doctor prepends managed soffice profile arg", async () => {
+  const fixture = createRuntimeFixture();
+  const argsPath = join(fixture.active, "soffice-args.txt");
+  try {
+    const sofficeName = process.platform === "win32" ? "soffice.cmd" : "soffice";
+    rmSync(join(fixture.bin, sofficeName), { force: true });
+    writeSofficeProbe(fixture.bin, {
+      outputPath: argsPath,
+      captureArgs: true,
+      exitCode: 0,
+    });
+
+    const result = await doctor({
+      env: { VESLO_DOCUMENT_RUNTIME_ROOT: fixture.root },
+      timeoutMs: 1000,
+    });
+
+    assert.equal(result.ok, true);
+    const sofficeCheck = result.checks.find((check) => check.id === "soffice");
+    assert.equal(sofficeCheck.ok, true);
+
+    const expectedArg = `-env:UserInstallation=${runtimeFileUrl(join(fixture.active, "data", "libreoffice-profile"))}`;
+    const args = readFileSync(argsPath, "utf8").trim().split(/\s+/);
+    assert.equal(args[0], expectedArg);
+    assert.equal(args[1], "--headless");
+    assert.equal(args[2], "--version");
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("doctor treats a silent successful soffice probe as healthy", async () => {
+  const fixture = createRuntimeFixture();
+  try {
+    const sofficeName = process.platform === "win32" ? "soffice.cmd" : "soffice";
+    rmSync(join(fixture.bin, sofficeName), { force: true });
+    writeSofficeProbe(fixture.bin, { exitCode: 0 });
+
+    const result = await doctor({
+      env: { VESLO_DOCUMENT_RUNTIME_ROOT: fixture.root },
+      timeoutMs: 1000,
+    });
+
+    assert.equal(result.ok, true);
+    const sofficeCheck = result.checks.find((check) => check.id === "soffice");
+    assert.equal(sofficeCheck.ok, true);
+    assert.equal(sofficeCheck.version, undefined);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("doctor fails when soffice exits non-zero", async () => {
+  const fixture = createRuntimeFixture();
+  try {
+    const sofficeName = process.platform === "win32" ? "soffice.cmd" : "soffice";
+    rmSync(join(fixture.bin, sofficeName), { force: true });
+    writeSofficeProbe(fixture.bin, { exitCode: 1 });
+
+    const result = await doctor({
+      env: { VESLO_DOCUMENT_RUNTIME_ROOT: fixture.root },
+      timeoutMs: 1000,
+    });
+
+    assert.equal(result.ok, false);
+    const sofficeCheck = result.checks.find((check) => check.id === "soffice");
+    assert.equal(sofficeCheck.ok, false);
+    assert.match(sofficeCheck.error, /Exited with code 1/);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("doctor fails when soffice times out", async () => {
+  const fixture = createRuntimeFixture();
+  try {
+    const sofficeName = process.platform === "win32" ? "soffice.cmd" : "soffice";
+    rmSync(join(fixture.bin, sofficeName), { force: true });
+    writeSofficeProbe(fixture.bin, { delayMs: 1000, exitCode: 0 });
+
+    const result = await doctor({
+      env: { VESLO_DOCUMENT_RUNTIME_ROOT: fixture.root },
+      timeoutMs: 100,
+    });
+
+    assert.equal(result.ok, false);
+    const sofficeCheck = result.checks.find((check) => check.id === "soffice");
+    assert.equal(sofficeCheck.ok, false);
+    assert.match(sofficeCheck.error, /Timed out after 100ms/);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
 test("doctor reports missing instead of falling back to host PATH", async () => {
   const fixture = createRuntimeFixture();
   try {
@@ -249,6 +376,47 @@ test("headless repair activates a ready staged package when active pointer is mi
   }
 });
 
+
+test("resolveActiveRuntime falls back to bundled resource runtime when active pointer is missing", async () => {
+  const bundled = createRuntimeFixture({ writeActivePointer: false });
+  const runtimeRoot = mkdtempSync(join(tmpdir(), "veslo-document-runtime-empty-root-"));
+  try {
+    const result = await resolveActiveRuntime({
+      env: {
+        VESLO_DOCUMENT_RUNTIME_ROOT: runtimeRoot,
+        VESLO_DOCUMENT_RUNTIME_BUNDLED_DIR: bundled.active,
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.source, "bundled-resource");
+    assert.equal(result.activePath, bundled.active);
+    assert.equal(result.runtimeRoot, runtimeRoot);
+  } finally {
+    rmSync(bundled.root, { recursive: true, force: true });
+    rmSync(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test("resolveActiveRuntime keeps staged active pointer ahead of bundled resource fallback", async () => {
+  const active = createRuntimeFixture();
+  const bundled = createRuntimeFixture({ writeActivePointer: false });
+  try {
+    const result = await resolveActiveRuntime({
+      env: {
+        VESLO_DOCUMENT_RUNTIME_ROOT: active.root,
+        VESLO_DOCUMENT_RUNTIME_BUNDLED_DIR: bundled.active,
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.source, "active.json");
+    assert.equal(result.activePath, active.active);
+  } finally {
+    rmSync(active.root, { recursive: true, force: true });
+    rmSync(bundled.root, { recursive: true, force: true });
+  }
+});
 test("stageExpandedPackage copies, doctors, and activates an expanded package", async () => {
   const source = createRuntimeFixture();
   const runtimeRoot = mkdtempSync(join(tmpdir(), "veslo-document-runtime-stage-target-"));
@@ -433,3 +601,4 @@ test("package archive install rejects unsafe archive paths without activating", 
     rmSync(runtimeRoot, { recursive: true, force: true });
   }
 });
+

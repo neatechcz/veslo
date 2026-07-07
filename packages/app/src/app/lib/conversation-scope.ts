@@ -144,10 +144,10 @@ export function resolveUiConversationScope(
   if (candidates.length === 0) return null;
 
   const activeWorkspaceId = normalizeText(options?.activeWorkspaceId);
-  const activeMatch = activeWorkspaceId
-    ? candidates.find((scope) => scope.workspaceId === activeWorkspaceId)
-    : null;
-  if (activeMatch) return activeMatch;
+  const activeMatches = activeWorkspaceId
+    ? candidates.filter((scope) => scope.workspaceId === activeWorkspaceId)
+    : [];
+  if (activeMatches.length === 1) return activeMatches[0] ?? null;
   if (candidates.length === 1) return candidates[0] ?? null;
 
   return null;

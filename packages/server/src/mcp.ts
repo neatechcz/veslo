@@ -1,11 +1,11 @@
 import { minimatch } from "minimatch";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { localUserResourceOwner, workspaceResourceOwner } from "./resource-owner.js";
 import type { HubMcpItem, McpItem, ResourceOwner } from "./types.js";
 import { readJsoncFile, updateJsoncTopLevel } from "./jsonc.js";
 import { opencodeConfigPath } from "./workspace-files.js";
+import { userConfigHomeDir } from "./skill-roots.js";
 import { ApiError } from "./errors.js";
 import { validateMcpConfig, validateMcpName, type ValidateMcpConfigOptions } from "./validators.js";
 
@@ -15,7 +15,7 @@ export type ListMcpOptions = {
 };
 
 function globalOpenCodeConfigPath(): string {
-  const base = join(homedir(), ".config", "opencode");
+  const base = join(userConfigHomeDir(), "opencode");
   const jsonc = join(base, "opencode.jsonc");
   const json = join(base, "opencode.json");
   if (existsSync(jsonc)) return jsonc;
@@ -37,6 +37,24 @@ function getMcpConfig(config: Record<string, unknown>): Record<string, Record<st
     result[name] = entry;
   }
   return result;
+}
+
+function getMcpServerConfig(config: Record<string, unknown>): Record<string, Record<string, unknown>> {
+  const result: Record<string, Record<string, unknown>> = {};
+  for (const [name, entry] of Object.entries(getMcpConfig(config))) {
+    if (entry.type !== "remote" && entry.type !== "local") continue;
+    result[name] = entry;
+  }
+  return result;
+}
+
+function getDisabledMcpOverrideNames(config: Record<string, unknown>): Set<string> {
+  const disabled = new Set<string>();
+  for (const [name, entry] of Object.entries(getMcpConfig(config))) {
+    if ((entry.type === "remote" || entry.type === "local") || entry.enabled !== false) continue;
+    disabled.add(name);
+  }
+  return disabled;
 }
 
 function getMcpObject(config: Record<string, unknown>): Record<string, unknown> {
@@ -83,8 +101,9 @@ export async function listMcp(workspaceRoot: string, options: ListMcpOptions = {
   const { data: config } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
   const { data: globalConfig } = await readJsoncFile(globalOpenCodeConfigPath(), {} as Record<string, unknown>);
 
-  const projectMcpMap = getMcpConfig(config);
-  const globalMcpMap = getMcpConfig(globalConfig);
+  const projectMcpMap = getMcpServerConfig(config);
+  const globalMcpMap = getMcpServerConfig(globalConfig);
+  const projectDisabledOverrides = getDisabledMcpOverrideNames(config);
   const workspaceOwner = options.workspaceOwner ?? workspaceResourceOwner({ root: workspaceRoot });
   const globalOwner = options.globalOwner ?? localUserResourceOwner();
 
@@ -93,6 +112,7 @@ export async function listMcp(workspaceRoot: string, options: ListMcpOptions = {
   // Global MCPs first; project-level entries override global ones with the same name.
   for (const [name, entry] of Object.entries(globalMcpMap)) {
     if (Object.prototype.hasOwnProperty.call(projectMcpMap, name)) continue;
+    if (projectDisabledOverrides.has(name)) continue;
     items.push({
       name,
       config: entry,
@@ -108,6 +128,21 @@ export async function listMcp(workspaceRoot: string, options: ListMcpOptions = {
     items.push({
       name,
       config: entry,
+      source: "config.project",
+      owner: workspaceOwner,
+      disabledByTools: isMcpDisabledByTools(config, name) || undefined,
+    });
+  }
+
+  for (const name of projectDisabledOverrides) {
+    const inherited = globalMcpMap[name];
+    if (!inherited) continue;
+    items.push({
+      name,
+      config: {
+        ...inherited,
+        enabled: false,
+      },
       source: "config.project",
       owner: workspaceOwner,
       disabledByTools: isMcpDisabledByTools(config, name) || undefined,

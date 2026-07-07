@@ -102,6 +102,7 @@ export type DenDesktopAuthWorkflowOptions = {
   ui: UiDeps;
   managedAi: {
     clearManagedAiAccessCache: () => void;
+    clearRuntimeAuthorization?: () => Promise<unknown> | unknown;
     requestManagedAiAccessRefresh: () => void;
   };
   account?: {
@@ -259,6 +260,25 @@ export function createDenDesktopAuthWorkflow(
     options.account?.setAuthenticatedAccountId?.(accountId);
   };
 
+  const recordRuntimeAuthorizationClearFailure = (error: unknown) => {
+    if (!options.isTauriRuntime()) return;
+    const message = error instanceof Error ? error.message : options.safeStringify(error);
+    void options.diagnostics.recordBootstrapDiagnostic("desktop-auth:ai-gateway-runtime-auth-clear-failed", {
+      message,
+    });
+  };
+
+  const clearManagedAiRuntimeAuthorizationForLogout = () => {
+    const clearRuntimeAuthorization = options.managedAi.clearRuntimeAuthorization;
+    if (!clearRuntimeAuthorization) return;
+    try {
+      const result = clearRuntimeAuthorization();
+      void Promise.resolve(result).catch(recordRuntimeAuthorizationClearFailure);
+    } catch (error) {
+      recordRuntimeAuthorizationClearFailure(error);
+    }
+  };
+
   const logout = async () => {
     auth.clearDenAuth();
     if (options.isTauriRuntime()) {
@@ -266,6 +286,7 @@ export function createDenDesktopAuthWorkflow(
       await options.diagnostics.clearBootstrapDiagnosticsCloudContext();
     }
     options.managedAi.clearManagedAiAccessCache();
+    clearManagedAiRuntimeAuthorizationForLogout();
     options.ui.setOnboardingStep("auth");
     options.ui.setView("onboarding");
     await auth.flushPendingDesktopSnapshotWrite();

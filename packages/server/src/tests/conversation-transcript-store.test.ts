@@ -262,4 +262,45 @@ describe("conversation transcript store", () => {
     const other = await store.getTranscript({ workspaceId: "ws-a", engineSessionId: "ses-2" });
     expect(other).toBeNull();
   });
+
+  test("scopes the same engine session id by directory", async () => {
+    const store = await newStore();
+    await store.appendTranscript({
+      workspaceId: "ws-a",
+      directory: "/repo/a",
+      engineSessionId: "ses-1",
+      messages: [{ id: "msg-a", payload: { id: "msg-a", text: "a" }, parts: [] }],
+    });
+    await store.appendTranscript({
+      workspaceId: "ws-a",
+      directory: "/repo/b",
+      engineSessionId: "ses-1",
+      messages: [{ id: "msg-b", payload: { id: "msg-b", text: "b" }, parts: [] }],
+    });
+
+    const a = await store.getTranscript({ workspaceId: "ws-a", directory: "/repo/a", engineSessionId: "ses-1" });
+    const b = await store.getTranscript({ workspaceId: "ws-a", directory: "/repo/b", engineSessionId: "ses-1" });
+    const unscoped = await store.getTranscript({ workspaceId: "ws-a", engineSessionId: "ses-1" });
+
+    expect(a!.messages.map((message) => (message as { id: string }).id)).toEqual(["msg-a"]);
+    expect(b!.messages.map((message) => (message as { id: string }).id)).toEqual(["msg-b"]);
+    expect(unscoped).toBeNull();
+  });
+
+  test("directory-scoped reads can fall back to legacy unscoped transcript rows", async () => {
+    const store = await newStore();
+    await store.appendTranscript({
+      workspaceId: "ws-a",
+      engineSessionId: "ses-legacy",
+      messages: [{ id: "msg-legacy", payload: { id: "msg-legacy" }, parts: [] }],
+    });
+
+    const result = await store.getTranscript({
+      workspaceId: "ws-a",
+      directory: "/repo/a",
+      engineSessionId: "ses-legacy",
+    });
+
+    expect(result!.messages.map((message) => (message as { id: string }).id)).toEqual(["msg-legacy"]);
+  });
 });

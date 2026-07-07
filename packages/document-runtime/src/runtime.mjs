@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { constants as fsConstants, createReadStream, createWriteStream } from "node:fs";
 import { access, chmod, cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
@@ -34,7 +34,7 @@ const MANAGED_BINARIES = {
 };
 
 export const REQUIRED_MANAGED_COMMANDS = [
-  { id: "soffice", command: "soffice", args: ["--headless", "--version"] },
+  { id: "soffice", command: "soffice", args: ["--headless", "--version"], timeoutMs: 15000 },
   { id: "pandoc", command: "pandoc", args: ["--version"] },
   { id: "poppler-pdftoppm", command: "pdftoppm", args: ["-v"] },
   { id: "poppler-pdftotext", command: "pdftotext", args: ["-v"] },
@@ -89,6 +89,44 @@ const defaultDataRoot = (env = process.env) => {
   return resolve(base, "Veslo", "document-runtime");
 };
 
+const bundledRuntimeCandidates = (env = process.env) => {
+  const candidates = [];
+  const add = (value) => {
+    if (typeof value === "string" && value.trim()) candidates.push(resolve(value));
+  };
+  add(env.VESLO_DOCUMENT_RUNTIME_BUNDLED_DIR);
+
+  for (const key of ["VESLO_RESOURCE_DIR", "TAURI_RESOURCE_DIR", "RESOURCE_DIR"]) {
+    const base = env[key];
+    if (!base) continue;
+    add(join(base, "document-runtime"));
+    add(join(base, "resources", "document-runtime"));
+  }
+
+  const exeDir = dirname(process.execPath || ".");
+  add(join(exeDir, "document-runtime"));
+  add(join(exeDir, "resources", "document-runtime"));
+  add(join(exeDir, "..", "resources", "document-runtime"));
+
+  const cwd = process.cwd();
+  add(join(cwd, "resources", "document-runtime"));
+  add(join(cwd, "packages", "desktop", "src-tauri", "resources", "document-runtime", "windows-native-x64"));
+  add(join(cwd, "..", "src-tauri", "resources", "document-runtime", "windows-native-x64"));
+
+  return [...new Set(candidates)];
+};
+
+async function resolveBundledRuntime(env = process.env) {
+  for (const activePath of bundledRuntimeCandidates(env)) {
+    try {
+      await loadActiveManifest(activePath);
+      return { activePath, source: "bundled-resource" };
+    } catch {
+      // Continue through known Tauri/resource-dir candidates only.
+    }
+  }
+  return null;
+}
 const windowsProcessEnv = (env) => {
   if (!isWindows()) return {};
   const preserved = {};
@@ -187,6 +225,21 @@ const spawnSpec = (commandPath, args, env) => {
   return { command: commandPath, args };
 };
 
+const managedSofficeArgs = (commandPath, args, activePath) => {
+  const commandName = basename(commandPath, extname(commandPath)).toLowerCase();
+  if (commandName !== "soffice") {
+    return args;
+  }
+  const libreOfficeProfile = join(activePath, "data", "libreoffice-profile");
+  const profileArg = `-env:UserInstallation=${runtimeFileUrl(libreOfficeProfile)}`;
+  return [profileArg, ...args];
+};
+
+const ensureManagedRuntimeDirs = async (activePath) => {
+  await mkdir(join(activePath, "tmp"), { recursive: true });
+  await mkdir(join(activePath, "data", "libreoffice-profile"), { recursive: true });
+};
+
 export async function resolveActiveRuntime({ env = process.env, runtimeRoot } = {}) {
   const root = resolve(runtimeRoot || defaultDataRoot(env));
   const override = env.VESLO_DOCUMENT_RUNTIME_ACTIVE_DIR;
@@ -202,6 +255,15 @@ export async function resolveActiveRuntime({ env = process.env, runtimeRoot } = 
 
   const pointerPath = join(root, "active.json");
   if (!(await fileExists(pointerPath))) {
+    const bundled = await resolveBundledRuntime(env);
+    if (bundled) {
+      return {
+        ok: true,
+        runtimeRoot: root,
+        activePath: bundled.activePath,
+        source: bundled.source,
+      };
+    }
     return {
       ok: false,
       status: "missing",
@@ -306,11 +368,11 @@ export async function resolveManagedCommand(activePath, command) {
 
 async function runManaged(activePath, command, args, { env = process.env, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   const commandPath = await resolveManagedCommand(activePath, command);
-  await mkdir(join(activePath, "tmp"), { recursive: true });
-  await mkdir(join(activePath, "data", "libreoffice-profile"), { recursive: true });
+  await ensureManagedRuntimeDirs(activePath);
 
   const childEnv = buildManagedEnv(activePath, { env });
-  const spec = spawnSpec(commandPath, args, childEnv);
+  const managedArgs = managedSofficeArgs(commandPath, args, activePath);
+  const spec = spawnSpec(commandPath, managedArgs, childEnv);
 
   return await new Promise((resolvePromise) => {
     const child = spawn(spec.command, spec.args, {
@@ -485,7 +547,7 @@ async function collectArchiveFiles(sourcePath) {
   };
 }
 
-export async function doctor({ env = process.env, runtimeRoot, activePath, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+export async function doctor({ env = process.env, runtimeRoot, activePath, timeoutMs } = {}) {
   const resolved = activePath
     ? { ok: true, runtimeRoot: resolve(runtimeRoot || defaultDataRoot(env)), activePath: resolve(activePath), source: "argument" }
     : await resolveActiveRuntime({ env, runtimeRoot });
@@ -542,7 +604,8 @@ export async function doctor({ env = process.env, runtimeRoot, activePath, timeo
 
   for (const check of DOCTOR_TOOL_CHECKS) {
     try {
-      const result = await runManaged(resolved.activePath, check.command, check.args, { env, timeoutMs });
+      const checkTimeoutMs = typeof timeoutMs === "number" ? timeoutMs : (check.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+      const result = await runManaged(resolved.activePath, check.command, check.args, { env, timeoutMs: checkTimeoutMs });
       checks.push({
         id: check.id,
         ok: result.ok,
@@ -1085,8 +1148,10 @@ export async function execManaged(argv, { env = process.env, runtimeRoot } = {})
   }
   const [command, ...args] = argv;
   const commandPath = await resolveManagedCommand(resolved.activePath, command);
+  await ensureManagedRuntimeDirs(resolved.activePath);
   const childEnv = buildManagedEnv(resolved.activePath, { env });
-  const spec = spawnSpec(commandPath, args, childEnv);
+  const managedArgs = managedSofficeArgs(commandPath, args, resolved.activePath);
+  const spec = spawnSpec(commandPath, managedArgs, childEnv);
   return await new Promise((resolvePromise, reject) => {
     const child = spawn(spec.command, spec.args, {
       env: childEnv,

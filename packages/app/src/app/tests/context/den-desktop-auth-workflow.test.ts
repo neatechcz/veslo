@@ -74,6 +74,7 @@ test("den desktop auth workflow dedupes auth-complete deep links and bootstraps 
       },
       managedAi: {
         clearManagedAiAccessCache: () => events.push("clear-managed-cache"),
+        clearRuntimeAuthorization: () => events.push("clear-runtime-auth"),
         requestManagedAiAccessRefresh: () => events.push("managed-refresh"),
       },
       diagnostics: {
@@ -161,6 +162,7 @@ test("den desktop auth workflow logout clears auth, cloud context, cache, and re
       },
       managedAi: {
         clearManagedAiAccessCache: () => events.push("clear-managed-cache"),
+        clearRuntimeAuthorization: () => events.push("clear-runtime-auth"),
         requestManagedAiAccessRefresh: () => events.push("managed-refresh"),
       },
       diagnostics: {
@@ -189,11 +191,95 @@ test("den desktop auth workflow logout clears auth, cloud context, cache, and re
       "clear-auth",
       "clear-cloud",
       "clear-managed-cache",
+      "clear-runtime-auth",
       "step:auth",
       "view:onboarding",
       "flush-snapshot",
       "managed-refresh",
     ]);
+
+    dispose();
+  });
+});
+
+test("den desktop auth workflow ignores runtime authorization clear failures during logout", async () => {
+  await createRoot(async (dispose) => {
+    const events: string[] = [];
+    const workflow = createDenDesktopAuthWorkflow({
+      isTauriRuntime: () => true,
+      workspace: {
+        activeWorkspaceId: () => "workspace-1",
+        bootstrapOnboarding: async () => undefined,
+      },
+      auth: {
+        clearDenAuth: () => events.push("clear-auth"),
+        readDenAuth: () => null,
+        writeDenAuth: () => undefined,
+        flushPendingDesktopSnapshotWrite: async () => {
+          events.push("flush-snapshot");
+        },
+        subscribeDenAuthChanges: () => () => undefined,
+      },
+      desktopAuth: {
+        parseAuthCompleteDeepLink: () => null,
+        readDesktopAuthExchangeProof: () => null,
+        clearDesktopAuthExchangeProof: () => undefined,
+        exchangeHandoffCode: async () => ({ ok: false, error: "unused" }),
+        readPendingDesktopAuthSession: () => null,
+        startDesktopBrowserAuth: async () => ({ ok: false, error: "unused" }),
+        getDesktopBrowserAuthStatus: async () => ({ ok: false, error: "unused", statusCode: null }),
+        getDenApiBase: () => "https://api.veslo.work",
+      },
+      ui: {
+        setError: (message) => events.push(`error:${message ?? ""}`),
+        setOnboardingStep: (step) => events.push(`step:${step}`),
+        setView: (view) => events.push(`view:${view}`),
+        setBooting: (booting) => events.push(`booting:${booting}`),
+      },
+      managedAi: {
+        clearManagedAiAccessCache: () => events.push("clear-managed-cache"),
+        clearRuntimeAuthorization: async () => {
+          events.push("clear-runtime-auth");
+          throw new Error("local server unavailable");
+        },
+        requestManagedAiAccessRefresh: () => events.push("managed-refresh"),
+      },
+      diagnostics: {
+        setBootstrapDiagnosticsCloudContext: async () => undefined,
+        clearBootstrapDiagnosticsCloudContext: async () => {
+          events.push("clear-cloud");
+        },
+        recordBootstrapDiagnostic: async (event, payload) => {
+          events.push(`diagnostic:${event}:${String(payload?.message ?? "")}`);
+        },
+      },
+      profile: {
+        resolveAuthenticatedDenUserLabel: () => null,
+        resolvePreferredDenUserLabel: () => null,
+        fetchUserProfile: async () => null,
+      },
+      browser: {
+        openDesktopAuthUrl: async () => undefined,
+      },
+      safeStringify: String,
+    });
+
+    await workflow.logout();
+    await flush();
+
+    assert.deepEqual(events.slice(0, 7), [
+      "clear-auth",
+      "clear-cloud",
+      "clear-managed-cache",
+      "clear-runtime-auth",
+      "step:auth",
+      "view:onboarding",
+      "flush-snapshot",
+    ]);
+    assert.ok(events.includes("managed-refresh"));
+    assert.ok(
+      events.includes("diagnostic:desktop-auth:ai-gateway-runtime-auth-clear-failed:local server unavailable"),
+    );
 
     dispose();
   });

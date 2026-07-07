@@ -16,7 +16,7 @@ test("session store exposes assistant response observation callback", () => {
 test("message updated events report only assistant responses after accepting the session", () => {
   assert.match(
     eventStreamSource,
-    /if \(event\.type === "message\.updated"\) \{[\s\S]*const info = record\.info as Message;[\s\S]*if \(!isKnownSessionId\(info\.sessionID\)\) return;[\s\S]*deps\.setStore\("messages", info\.sessionID,[\s\S]*upsertMessageInfo\(current, info as MessageInfo\)[\s\S]*if \(\(info as \{ role\?: string \}\)\.role === "assistant"\) \{[\s\S]*deps\.onAssistantResponseObserved\?\.\(info\.sessionID\);[\s\S]*\}/,
+    /if \(event\.type === "message\.updated"\) \{[\s\S]*const info = record\.info as Message;[\s\S]*if \(!isKnownOrForegroundStreamSessionId\(info\.sessionID, sourceWsId\)\) return;[\s\S]*deps\.setStore\("messages", info\.sessionID,[\s\S]*upsertMessageInfo\(current, info as MessageInfo\)[\s\S]*if \(\(info as \{ role\?: string \}\)\.role === "assistant"\) \{[\s\S]*deps\.onAssistantResponseObserved\?\.\(info\.sessionID\);[\s\S]*\}/,
     "assistant response observation should be scoped to accepted message.updated events",
   );
 });

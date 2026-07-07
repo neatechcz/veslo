@@ -3,6 +3,7 @@ import {
   createConversationSubmitRequestHash,
   parseConversationSubmitRequest,
   type ConversationSubmitBlockedResult,
+  type ConversationSubmitDebugTraceEntry,
   type ConversationSubmitFailedResult,
   type ConversationSubmitRequest,
   type ConversationSubmitQueuedResult,
@@ -10,13 +11,17 @@ import {
   type ConversationSubmitResult,
   type ConversationSubmitSubmittedResult,
 } from "./conversation-submit-contract.js";
-import type { ConversationSubmitAttemptStore } from "./conversation-submit-attempt-store.js";
+import type {
+  ConversationSubmitAttempt,
+  ConversationSubmitAttemptStore,
+} from "./conversation-submit-attempt-store.js";
 import {
   resolveConversationSubmitDraft,
   type ConversationSubmitDocumentRuntimeStatusReader,
   type ConversationSubmitSkillCommandResolver,
 } from "./conversation-submit-draft-resolution.js";
 import type { ConversationService } from "./conversation-service.js";
+import type { ConversationRunQueueItem } from "./conversation-run-queue-store.js";
 import { ApiError } from "./errors.js";
 import type { WorkspaceInfo } from "./types.js";
 
@@ -28,7 +33,12 @@ export type ConversationSubmitService = {
     runtimeAuthorizationActorTokenHash?: string | null;
     resolveDirectory: (requestedRaw: string | null) => Promise<string | null>;
     submitResolvedRun?: ConversationSubmitResolvedRunSubmitter | null;
-  }): Promise<{ payload: ConversationSubmitResult; httpStatus: number }>;
+  }): Promise<ConversationSubmitServiceResponse>;
+};
+
+export type ConversationSubmitServiceResponse = {
+  payload: ConversationSubmitResult;
+  httpStatus: number;
 };
 
 export type ConversationSubmitResolvedRunSubmitter = (input: {
@@ -47,13 +57,25 @@ export type ConversationSubmitResolvedRunSubmitter = (input: {
   httpStatus: number;
 }>;
 
+export type ConversationSubmitQueueStatusReader = (
+  payload: ConversationSubmitQueuedResult,
+) => ConversationRunQueueItem | null;
+
 export function createConversationSubmitService(input: {
   attemptStore: ConversationSubmitAttemptStore;
   conversationService: ConversationService;
   documentRuntimeStatus?: ConversationSubmitDocumentRuntimeStatusReader;
   resolveSkillCommand?: ConversationSubmitSkillCommandResolver;
+  queueStatusReader?: ConversationSubmitQueueStatusReader;
 }): ConversationSubmitService {
-  const { attemptStore, conversationService, documentRuntimeStatus, resolveSkillCommand } = input;
+  const {
+    attemptStore,
+    conversationService,
+    documentRuntimeStatus,
+    resolveSkillCommand,
+    queueStatusReader,
+  } = input;
+  const inFlightSubmitAttempts = new Map<string, Promise<ConversationSubmitServiceResponse>>();
 
   return {
     async submit({
@@ -64,7 +86,7 @@ export function createConversationSubmitService(input: {
       resolveDirectory,
       submitResolvedRun,
     }) {
-      const request = parseConversationSubmitRequest(body);
+      let request = parseConversationSubmitRequest(body);
       const requestHash = createConversationSubmitRequestHash(request);
       const claimed = attemptStore.claim({
         workspaceId: workspace.id,
@@ -122,17 +144,47 @@ export function createConversationSubmitService(input: {
         materializedSession,
       });
 
+      const withExistingTarget = <T extends ConversationSubmitBlockedResult | ConversationSubmitFailedResult>(
+        payload: T,
+      ): T => ({
+        ...payload,
+        workspaceId: workspace.id,
+        ...(request.target?.conversationId ? { conversationId: request.target.conversationId } : {}),
+        ...(request.target?.opencodeSessionId ? { opencodeSessionId: request.target.opencodeSessionId } : {}),
+        clientMessageId: request.clientMessageId,
+        pendingClientSessionId: request.target?.pendingClientSessionId ?? null,
+      });
+
       if (claimed.attempt.resultJson) {
         try {
-          return {
-            payload: JSON.parse(claimed.attempt.resultJson) as ConversationSubmitResult,
-            httpStatus: 200,
-          };
+          const replayPayload = JSON.parse(claimed.attempt.resultJson) as ConversationSubmitResult;
+          const terminalQueueFailure = resolveQueuedReplayFailure(replayPayload, queueStatusReader);
+          if (terminalQueueFailure) {
+            return {
+              payload: terminalQueueFailure,
+              httpStatus: 200,
+            };
+          }
+          if (conversationSubmitResultIsReplayable(replayPayload)) {
+            return {
+              payload: replayPayload,
+              httpStatus: 200,
+            };
+          }
+          request = conversationSubmitRequestWithAttemptTarget(request, claimed.attempt);
         } catch {
           // Fall through and rebuild the result from the current request.
+          request = conversationSubmitRequestWithAttemptTarget(request, claimed.attempt);
         }
       }
 
+      const inFlightKey = conversationSubmitInFlightKey(workspace.id, request.clientMessageId, requestHash);
+      const existingInFlight = inFlightSubmitAttempts.get(inFlightKey);
+      if (existingInFlight) return await existingInFlight;
+
+      // The persisted store owns completed retry/conflict behavior; this
+      // joins same-process overlap before resultJson exists.
+      const inFlight = (async (): Promise<ConversationSubmitServiceResponse> => {
       if (conversationSubmitDraftIsEmpty(request)) {
         return {
           payload: completeAttempt({
@@ -159,10 +211,14 @@ export function createConversationSubmitService(input: {
         };
       }
 
+      const debugTrace: ConversationSubmitDebugTraceEntry[] = [];
       const draftResolution = await resolveConversationSubmitDraft({
         request,
         documentRuntimeStatus,
         resolveSkillCommand,
+        recordDebugTrace: (entry) => {
+          debugTrace.push(entry);
+        },
         workspace,
         includeGlobal: workspace.workspaceType === "local",
       });
@@ -203,6 +259,7 @@ export function createConversationSubmitService(input: {
             opencodeSessionId: request.target?.opencodeSessionId ?? null,
             pendingClientSessionId: request.target?.pendingClientSessionId ?? null,
           },
+          ...(debugTrace.length ? { debugTrace } : {}),
         };
         return {
           payload: completeAttempt(payload, "completed"),
@@ -222,20 +279,24 @@ export function createConversationSubmitService(input: {
               runtimeAuthorizationActorTokenHash: runtimeAuthorizationActorTokenHash ?? null,
             });
             if (result.payload.status === "blocked" || result.payload.status === "failed") {
+              const payload = result.payload.status === "failed"
+                ? withSubmitResolutionDebugTrace(result.payload, debugTrace)
+                : result.payload;
               return {
                 payload: completeAttempt(
-                  result.payload,
-                  result.payload.status === "blocked" ? "blocked" : "failed",
+                  payload,
+                  payload.status === "blocked" ? "blocked" : "failed",
                 ),
                 httpStatus: result.httpStatus,
               };
             }
+            const payload = withSubmitResolutionDebugTrace(result.payload, debugTrace);
             return {
-              payload: completeAttempt(result.payload, "completed"),
+              payload: completeAttempt(payload, "completed"),
               httpStatus: result.httpStatus,
             };
           } catch (error) {
-            const payload: ConversationSubmitResult = {
+            const payload: ConversationSubmitResult = withSubmitResolutionDebugTrace(withExistingTarget({
               status: "failed",
               code: error instanceof ApiError ? error.code : "run_submit_failed",
               message: error instanceof Error ? error.message : "Run submit failed",
@@ -246,7 +307,7 @@ export function createConversationSubmitService(input: {
                 upstreamCode: error instanceof ApiError ? error.code : null,
                 upstreamStatus: error instanceof ApiError ? error.status : null,
               }],
-            };
+            }), debugTrace);
             return {
               payload: completeAttempt(payload, "failed"),
               httpStatus: 200,
@@ -254,13 +315,13 @@ export function createConversationSubmitService(input: {
           }
         }
         return {
-          payload: completeAttempt({
+          payload: completeAttempt(withExistingTarget({
             status: "blocked",
             code: "run_submit_unavailable",
             message: "Server-owned run submit is not available yet",
             draftDisposition: "restore",
             recoverable: true,
-          }, "blocked"),
+          }), "blocked"),
           httpStatus: 200,
         };
       }
@@ -292,7 +353,10 @@ export function createConversationSubmitService(input: {
               runtimeAuthorizationActorTokenHash: runtimeAuthorizationActorTokenHash ?? null,
             });
             if (result.payload.status === "blocked" || result.payload.status === "failed") {
-              const materializedPayload = withMaterializedSession(result.payload, materializedSession);
+              const resultPayload = result.payload.status === "failed"
+                ? withSubmitResolutionDebugTrace(result.payload, debugTrace)
+                : result.payload;
+              const materializedPayload = withMaterializedSession(resultPayload, materializedSession);
               return {
                 payload: completeAttempt(
                   materializedPayload,
@@ -301,15 +365,16 @@ export function createConversationSubmitService(input: {
                 httpStatus: result.httpStatus,
               };
             }
+            const resultPayload = withSubmitResolutionDebugTrace(result.payload, debugTrace);
             return {
               payload: completeAttempt({
-                ...result.payload,
+                ...resultPayload,
                 materializedSession,
               }, "completed"),
               httpStatus: result.httpStatus,
             };
           } catch (error) {
-            const payload: ConversationSubmitResult = withMaterializedSession({
+            const payload: ConversationSubmitResult = withSubmitResolutionDebugTrace(withMaterializedSession({
               status: "failed",
               code: error instanceof ApiError ? error.code : "run_submit_failed",
               message: error instanceof Error ? error.message : "Run submit failed",
@@ -320,7 +385,7 @@ export function createConversationSubmitService(input: {
                 upstreamCode: error instanceof ApiError ? error.code : null,
                 upstreamStatus: error instanceof ApiError ? error.status : null,
               }],
-            }, materializedSession);
+            }, materializedSession), debugTrace);
             return {
               payload: completeAttempt(payload, "failed"),
               httpStatus: 200,
@@ -342,7 +407,7 @@ export function createConversationSubmitService(input: {
           httpStatus: 200,
         };
       } catch (error) {
-        const payload: ConversationSubmitResult = {
+        const payload: ConversationSubmitResult = withSubmitResolutionDebugTrace({
           status: "failed",
           code: "conversation_create_failed",
           message: error instanceof Error ? error.message : "Conversation creation failed",
@@ -353,12 +418,88 @@ export function createConversationSubmitService(input: {
             upstreamCode: error instanceof ApiError ? error.code : null,
             upstreamStatus: error instanceof ApiError ? error.status : null,
           }],
-        };
+        }, debugTrace);
         return {
           payload: completeAttempt(payload, "failed"),
           httpStatus: 200,
         };
       }
+      })();
+      inFlightSubmitAttempts.set(inFlightKey, inFlight);
+      try {
+        return await inFlight;
+      } finally {
+        if (inFlightSubmitAttempts.get(inFlightKey) === inFlight) {
+          inFlightSubmitAttempts.delete(inFlightKey);
+        }
+      }
+    },
+  };
+}
+
+function conversationSubmitInFlightKey(workspaceId: string, clientMessageId: string, requestHash: string): string {
+  return JSON.stringify([workspaceId, clientMessageId, requestHash]);
+}
+
+function conversationSubmitResultIsReplayable(payload: ConversationSubmitResult): boolean {
+  return payload.status !== "blocked" && payload.status !== "failed";
+}
+
+type ConversationSubmitDebugTracePayload =
+  | ConversationSubmitSubmittedResult
+  | ConversationSubmitQueuedResult
+  | ConversationSubmitFailedResult;
+
+function withSubmitResolutionDebugTrace<T extends ConversationSubmitDebugTracePayload>(
+  payload: T,
+  debugTrace: ConversationSubmitDebugTraceEntry[],
+): T {
+  if (!debugTrace.length) return payload;
+  return {
+    ...payload,
+    debugTrace: [...debugTrace, ...(payload.debugTrace ?? [])],
+  };
+}
+
+function resolveQueuedReplayFailure(
+  payload: ConversationSubmitResult,
+  queueStatusReader: ConversationSubmitQueueStatusReader | undefined,
+): ConversationSubmitFailedResult | null {
+  if (!queueStatusReader || payload.status !== "queued") return null;
+  const queueItem = queueStatusReader(payload);
+  if (!queueItem || queueItem.state !== "failed") return null;
+  return {
+    status: "failed",
+    code: "queued_run_failed",
+    message: queueItem.error?.trim() || "Queued run failed",
+    workspaceId: payload.workspaceId,
+    conversationId: payload.conversationId,
+    opencodeSessionId: payload.opencodeSessionId,
+    queueItemId: queueItem.queueItemId,
+    reservedRunId: queueItem.reservedRunId,
+    clientMessageId: payload.clientMessageId,
+    draftDisposition: "restore",
+    debugTrace: [{
+      source: "server",
+      event: "queued_run_failed",
+      queueItemId: queueItem.queueItemId,
+      queueState: queueItem.state,
+    }],
+  };
+}
+
+function conversationSubmitRequestWithAttemptTarget(
+  request: ConversationSubmitRequest,
+  attempt: ConversationSubmitAttempt,
+): ConversationSubmitRequest {
+  if (!attempt.conversationId && !attempt.opencodeSessionId) return request;
+  if (request.target?.conversationId?.trim() || request.target?.opencodeSessionId?.trim()) return request;
+  return {
+    ...request,
+    target: {
+      ...request.target,
+      conversationId: attempt.conversationId,
+      opencodeSessionId: attempt.opencodeSessionId,
     },
   };
 }

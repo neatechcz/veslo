@@ -62,6 +62,43 @@ test("live transcript read policy records why a workspace became allowed", () =>
   ]);
 });
 
+test("live transcript read policy records queued events without allowing reads", () => {
+  const records: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+  const policy = createLiveTranscriptReadPolicy({
+    activeWorkspaceId: () => "ws-active",
+    now: () => 100,
+    record: (event, payload) => records.push({ event, payload }),
+  });
+
+  policy.emit({
+    type: "conversation-run.queued",
+    reason: "sendPrompt:queued",
+    workspaceId: " ws-target ",
+    sessionId: " sess-a ",
+    traceId: " trace-a ",
+    queueItemId: " queue-a ",
+    reservedRunId: " run-a ",
+  });
+
+  assert.equal(policy.isAllowedForWorkspace("ws-target"), false);
+  assert.equal(policy.allowanceForWorkspace("ws-target"), null);
+  assert.deepEqual([...policy.allowedWorkspaceIds()], []);
+  assert.deepEqual(records, [
+    {
+      event: "live-transcript-read:queued",
+      payload: {
+        workspaceId: "ws-target",
+        reason: "sendPrompt:queued",
+        eventType: "conversation-run.queued",
+        sessionId: "sess-a",
+        traceId: "trace-a",
+        queueItemId: "queue-a",
+        reservedRunId: "run-a",
+      },
+    },
+  ]);
+});
+
 test("live transcript read policy falls back to the active workspace and scopes by workspace", () => {
   let activeWorkspaceId = "ws-a";
   const policy = createLiveTranscriptReadPolicy({

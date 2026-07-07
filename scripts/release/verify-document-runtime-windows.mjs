@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
   DOCUMENT_RUNTIME_PACKAGE_ID,
-  documentRuntimePackageAssetName,
-  documentRuntimePackageSignatureName,
   validateDocumentRuntimeManifest,
   validatePackageFeed,
 } from "../../packages/document-runtime/src/index.mjs";
@@ -15,6 +13,9 @@ import {
 const WINDOWS_PLATFORM = "windows-native-x64";
 const LOCAL_DOCS_REQUIRED = "local-docs-required";
 const REMOTE_DOCS_ONLY = "remote-docs-only";
+const WINDOWS_RUNTIME_RESOURCE_KEY = "resources/document-runtime/windows-native-x64";
+const WINDOWS_RUNTIME_RESOURCE_TARGET = "document-runtime";
+const REQUIRED_BINARIES = ["soffice", "pandoc", "pdftoppm", "pdftotext", "pdfimages", "qpdf", "python", "node", "weasyprint"];
 
 const readText = (filePath) => readFileSync(filePath, "utf8");
 const readJson = (filePath) => JSON.parse(readText(filePath));
@@ -28,9 +29,9 @@ const parseArgs = (argv) => {
   const options = {
     repoRoot,
     profile: process.env.VESLO_DOCUMENT_RUNTIME_RELEASE_PROFILE || LOCAL_DOCS_REQUIRED,
-    packageDir:
-      process.env.VESLO_DOCUMENT_RUNTIME_PACKAGE_DIR ||
-      resolve(repoRoot, "packages/document-runtime/packages/windows-native-x64"),
+    resourceDir:
+      process.env.VESLO_DOCUMENT_RUNTIME_WINDOWS_RESOURCE_DIR ||
+      resolve(repoRoot, "packages/desktop/src-tauri/resources/document-runtime/windows-native-x64"),
     feedPath:
       process.env.VESLO_DOCUMENT_RUNTIME_PACKAGE_FEED ||
       resolve(repoRoot, "packages/document-runtime/manifests/package-feed.example.json"),
@@ -49,8 +50,13 @@ const parseArgs = (argv) => {
       index += 1;
       continue;
     }
+    if (arg === "--resource-dir") {
+      options.resourceDir = resolve(argv[index + 1] || options.resourceDir);
+      index += 1;
+      continue;
+    }
     if (arg === "--package-dir") {
-      options.packageDir = resolve(argv[index + 1] || options.packageDir);
+      options.resourceDir = resolve(argv[index + 1] || options.resourceDir);
       index += 1;
       continue;
     }
@@ -72,6 +78,13 @@ const parseArgs = (argv) => {
 
 const findWindowsPackage = (feed) => {
   return feed.packages.find((entry) => entry.packageId === DOCUMENT_RUNTIME_PACKAGE_ID && entry.platform === WINDOWS_PLATFORM);
+};
+
+const commandExists = (binDir, command) => {
+  return [".exe", ".cmd", ".bat", ""].some((suffix) => {
+    const path = join(binDir, `${command}${suffix}`);
+    return existsSync(path) && statSync(path).isFile() && statSync(path).size > 0;
+  });
 };
 
 const verifyWslPolicy = ({ repoRoot, checks }) => {
@@ -98,10 +111,49 @@ const verifyWslPolicy = ({ repoRoot, checks }) => {
     checks,
     "Windows document runtime does not use WSL scripts as package readiness",
     resources["windows/wsl2-client-installer.ps1"] === "wsl2-client-installer.ps1" &&
+      resources[WINDOWS_RUNTIME_RESOURCE_KEY] === WINDOWS_RUNTIME_RESOURCE_TARGET &&
       !/document-runtime/i.test(nsis) &&
       !/veslo-document-runtime/i.test(wxs),
     tauriConfigPath,
   );
+};
+
+const verifyBundledResourceTree = ({ checks, resourceDir, targetManifest }) => {
+  const manifestPath = join(resourceDir, "manifest.json");
+  add(
+    checks,
+    "Windows native document runtime bundled resource directory exists",
+    existsSync(resourceDir) && statSync(resourceDir).isDirectory(),
+    resourceDir,
+  );
+  if (!existsSync(resourceDir) || !statSync(resourceDir).isDirectory()) return;
+
+  let bundledManifest = null;
+  try {
+    bundledManifest = validateDocumentRuntimeManifest(readJson(manifestPath), { label: manifestPath });
+    add(checks, "Windows native bundled document runtime manifest is valid", bundledManifest.platform === WINDOWS_PLATFORM, manifestPath);
+  } catch (error) {
+    add(checks, "Windows native bundled document runtime manifest is valid", false, error.message);
+  }
+
+  if (targetManifest && bundledManifest) {
+    add(
+      checks,
+      "Windows native bundled document runtime version matches target manifest",
+      bundledManifest.packageVersion === targetManifest.packageVersion && bundledManifest.version === targetManifest.version,
+      `${bundledManifest.packageVersion}/${bundledManifest.version}`,
+    );
+  }
+
+  const binDir = join(resourceDir, "bin");
+  add(checks, "Windows native bundled document runtime bin directory exists", existsSync(binDir) && statSync(binDir).isDirectory(), binDir);
+  for (const command of REQUIRED_BINARIES) {
+    add(checks, `Windows native bundled document runtime includes ${command}`, commandExists(binDir, command), binDir);
+  }
+  for (const directory of ["fonts", "python", "node_modules"]) {
+    const path = join(resourceDir, directory);
+    add(checks, `Windows native bundled document runtime includes ${directory} directory`, existsSync(path) && statSync(path).isDirectory(), path);
+  }
 };
 
 export function verifyDocumentRuntimeWindows(options = {}) {
@@ -110,16 +162,16 @@ export function verifyDocumentRuntimeWindows(options = {}) {
   const repoRoot = options.repoRoot || resolve(import.meta.dirname, "../..");
   const manifestPath = options.manifestPath || resolve(repoRoot, "packages/document-runtime/manifests/targets/windows-native-x64.json");
   const feedPath = options.feedPath || resolve(repoRoot, "packages/document-runtime/manifests/package-feed.example.json");
-  const packageDir = options.packageDir || resolve(repoRoot, "packages/document-runtime/packages/windows-native-x64");
+  const resourceDir = options.resourceDir || options.packageDir || resolve(repoRoot, "packages/desktop/src-tauri/resources/document-runtime/windows-native-x64");
 
   verifyWslPolicy({ repoRoot, checks });
 
-  let manifest = null;
+  let targetManifest = null;
   try {
-    manifest = validateDocumentRuntimeManifest(readJson(manifestPath), { label: manifestPath });
-    add(checks, "Windows native document runtime manifest is valid", manifest.platform === WINDOWS_PLATFORM, manifestPath);
+    targetManifest = validateDocumentRuntimeManifest(readJson(manifestPath), { label: manifestPath });
+    add(checks, "Windows native document runtime target manifest is valid", targetManifest.platform === WINDOWS_PLATFORM, manifestPath);
   } catch (error) {
-    add(checks, "Windows native document runtime manifest is valid", false, error.message);
+    add(checks, "Windows native document runtime target manifest is valid", false, error.message);
   }
 
   let feed = null;
@@ -133,46 +185,18 @@ export function verifyDocumentRuntimeWindows(options = {}) {
   }
 
   if (profile === REMOTE_DOCS_ONLY) {
-    add(checks, "Remote-docs-only profile does not require local Windows package artifact", true, profile);
+    add(checks, "Remote-docs-only profile does not require local Windows bundled runtime", true, profile);
   } else if (profile !== LOCAL_DOCS_REQUIRED) {
     add(checks, "Document runtime release profile is recognized", false, profile);
-  } else if (manifest && windowsEntry) {
-    const expectedName = documentRuntimePackageAssetName({
-      platform: WINDOWS_PLATFORM,
-      packageVersion: manifest.packageVersion,
-    });
-    const expectedSignature = documentRuntimePackageSignatureName({
-      platform: WINDOWS_PLATFORM,
-      packageVersion: manifest.packageVersion,
-    });
-    const packagePath = resolve(packageDir, expectedName);
-    const signaturePath = resolve(packageDir, expectedSignature);
-
-    add(
-      checks,
-      "Windows native document runtime package name matches manifest",
-      windowsEntry.artifactName === expectedName && basename(packagePath) === expectedName,
-      expectedName,
-    );
-    add(
-      checks,
-      "Windows native document runtime package artifact exists",
-      existsSync(packagePath) && statSync(packagePath).isFile() && statSync(packagePath).size > 0,
-      packagePath,
-    );
-    add(
-      checks,
-      "Windows native document runtime package signature exists",
-      existsSync(signaturePath) && statSync(signaturePath).isFile() && statSync(signaturePath).size > 0,
-      signaturePath,
-    );
+  } else {
+    verifyBundledResourceTree({ checks, resourceDir, targetManifest });
   }
 
   return {
     ok: checks.every((check) => check.ok),
     profile,
     platform: WINDOWS_PLATFORM,
-    packageDir,
+    resourceDir,
     feedPath,
     manifestPath,
     checks,

@@ -130,6 +130,21 @@ test("workspace materialization can request server-only local Veslo startup", ()
   );
 });
 
+test("skill registry auth reacquire uses the managed server ensure callback", () => {
+  const orchestratorStart = source.indexOf("const skillRegistryOrchestrator = createSkillRegistryOrchestrator({");
+  assert.notStrictEqual(orchestratorStart, -1, "skill registry orchestrator wiring is missing");
+
+  const orchestratorEnd = source.indexOf("});", orchestratorStart);
+  assert.notStrictEqual(orchestratorEnd, -1, "skill registry orchestrator wiring end marker is missing");
+  const orchestratorSource = source.slice(orchestratorStart, orchestratorEnd);
+
+  assert.match(
+    orchestratorSource,
+    /ensureLocalVesloServerRunning:\s*\(options\) => ensureLocalVesloServerRunning\(options\)/,
+    "skill registry 401/403 reacquire should use the existing managed server ensure callback",
+  );
+});
+
 test("local Veslo workspace readiness uses the stable local workspace id", () => {
   const resolutionEffectStart = source.indexOf("const active = workspaceStore.activeWorkspaceDisplay();");
   assert.notStrictEqual(resolutionEffectStart, -1, "Veslo workspace resolution effect is missing");

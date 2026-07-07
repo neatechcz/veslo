@@ -5,6 +5,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER } from "../orchestrator-lifecycle-client.js";
+import { createConversationRunQueueStore } from "../conversation-run-queue-store.js";
 import { startServer } from "../server.js";
 
 const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void }> = [];
@@ -153,6 +154,31 @@ async function waitForCondition(
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   throw new Error(options.message ?? "condition was not met before timeout");
+}
+
+function managedAiAccessBundleResponse(accessToken = "gateway-access-token"): Response {
+  return Response.json({
+    accessToken,
+    aiAccess: {
+      id: "ai_access_test",
+      userId: "user_123",
+      enabled: true,
+      provider: "codex_oauth",
+      defaultModel: "gpt-5.5",
+      allowedModels: ["gpt-5.5"],
+      updatedAt: "2026-04-08T10:00:00.000Z",
+    },
+  });
+}
+
+async function primeAiGatewayRuntimeAuthorization(server: { port: number }): Promise<void> {
+  const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/me/ai-access`, {
+    headers: {
+      Authorization: "Bearer client-token",
+      "x-veslo-gateway-authorization": "Bearer den-user-token",
+    },
+  });
+  expect(response.status).toBe(200);
 }
 
 const startTestServer = (input: {
@@ -408,7 +434,7 @@ describe("conversation routes", () => {
         return Response.json({ error: "not found" }, { status: 404 });
       },
     });
-    runningServers.push({ stop: () => upstream.stop(true) });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
     const server = startTestServer({
       workspaceRoot,
       upstreamPort: upstream.port,
@@ -458,9 +484,15 @@ describe("conversation routes", () => {
 
     const retryResponse = await submit();
     expect(retryResponse.status).toBe(200);
-    expect(await retryResponse.json()).toEqual(payload);
+    const retryPayload = await retryResponse.json() as typeof payload;
+    expect(retryPayload.status).toBe("failed");
+    expect(retryPayload.draftDisposition).toBe("restore");
+    expect(retryPayload.conversationId).toBe(payload.conversationId);
+    expect(retryPayload.opencodeSessionId).toBe("sess-submit-created-failed");
+    expect(retryPayload.pendingClientSessionId).toBe("pending-submit-materialized-failed");
     expect(upstreamRequests).toEqual([
       "/session",
+      "/session/sess-submit-created-failed/prompt_async",
       "/session/sess-submit-created-failed/prompt_async",
     ]);
   });
@@ -977,7 +1009,7 @@ describe("conversation routes", () => {
   });
 
   test("POST /workspace/:id/conversations/submit returns queued for send-now when lifecycle has an active run", async () => {
-    await useTempVesloDataDir();
+    const vesloDataDir = await useTempVesloDataDir();
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-send-now-queued-"));
     tempDirs.push(workspaceRoot);
     const upstreamRequests: Array<{
@@ -1173,11 +1205,68 @@ describe("conversation routes", () => {
     expect(serverQueueOnlyPayload.draftDisposition).toBe("clear");
     expect(engineSubmits).toEqual([]);
 
+    const queueStatusResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${created.conversationId}/queue/${payload.queueItemId}`,
+      {
+        headers: {
+          Authorization: "Bearer client-token",
+        },
+      },
+    );
+    expect(queueStatusResponse.status).toBe(200);
+    const queueStatusPayload = await queueStatusResponse.json() as {
+      status?: string;
+      workspaceId?: string;
+      conversationId?: string;
+      queueItemId?: string;
+      reservedRunId?: string;
+      clientMessageId?: string;
+      error?: string | null;
+    };
+    expect(queueStatusPayload).toMatchObject({
+      status: "pending",
+      workspaceId: "ws_1",
+      conversationId: created.conversationId,
+      queueItemId: payload.queueItemId,
+      reservedRunId: payload.reservedRunId,
+      clientMessageId: "msg-submit-send-now-queued",
+      error: null,
+    });
+
+    createConversationRunQueueStore({ dataDir: vesloDataDir })
+      .markFailed(payload.queueItemId!, "queued drain failed");
+    const failedQueueStatusResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${created.conversationId}/queue/${payload.queueItemId}`,
+      {
+        headers: {
+          Authorization: "Bearer client-token",
+        },
+      },
+    );
+    expect(failedQueueStatusResponse.status).toBe(200);
+    const failedQueueStatusPayload = await failedQueueStatusResponse.json() as {
+      status?: string;
+      error?: string | null;
+    };
+    expect(failedQueueStatusPayload.status).toBe("failed");
+    expect(failedQueueStatusPayload.error).toBe("queued drain failed");
+
     const activeRequestsAfterFirstSubmit = activeRequests;
     const latestRequestsAfterFirstSubmit = latestRequests;
     const retryResponse = await submit();
     expect(retryResponse.status).toBe(200);
-    expect(await retryResponse.json()).toEqual(payload);
+    expect(await retryResponse.json()).toMatchObject({
+      status: "failed",
+      code: "queued_run_failed",
+      message: "queued drain failed",
+      workspaceId: "ws_1",
+      conversationId: created.conversationId,
+      opencodeSessionId: "sess-submit-send-now-queued",
+      queueItemId: payload.queueItemId,
+      reservedRunId: payload.reservedRunId,
+      clientMessageId: "msg-submit-send-now-queued",
+      draftDisposition: "restore",
+    });
     expect(activeRequests).toBe(activeRequestsAfterFirstSubmit);
     expect(latestRequests).toBe(latestRequestsAfterFirstSubmit);
     expect(registerRequests).toEqual([]);
@@ -3504,6 +3593,9 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
+        if (request.method === "GET" && url.pathname === "/api/me/ai-access") {
+          return managedAiAccessBundleResponse();
+        }
         if (request.method === "POST" && url.pathname === "/providers/codex_oauth/v1/chat/completions") {
           const requestBody = await request.json().catch(() => null) as unknown;
           providerRequests.push({
@@ -3640,6 +3732,7 @@ describe("conversation routes", () => {
     expect(createResponse.status).toBe(201);
     const created = await createResponse.json() as { conversationId: string };
     serverPort = server.port;
+    await primeAiGatewayRuntimeAuthorization(server);
 
     const runResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
@@ -3706,6 +3799,9 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
+        if (request.method === "GET" && url.pathname === "/api/me/ai-access") {
+          return managedAiAccessBundleResponse();
+        }
         if (request.method === "POST" && url.pathname === "/providers/codex_oauth/v1/chat/completions") {
           const requestBody = await request.json().catch(() => null) as unknown;
           providerRequests.push({
@@ -3815,6 +3911,7 @@ describe("conversation routes", () => {
       orchestratorLifecycleToken: "lifecycle-token",
     });
     serverPort = server.port;
+    await primeAiGatewayRuntimeAuthorization(server);
 
     const createConversation = async (title: string) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
@@ -3923,6 +4020,9 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
+        if (request.method === "GET" && url.pathname === "/api/me/ai-access") {
+          return managedAiAccessBundleResponse();
+        }
         if (request.method === "POST" && url.pathname === "/providers/codex_oauth/v1/chat/completions") {
           const requestBody = await request.json().catch(() => null) as unknown;
           providerRequests.push({
@@ -4048,6 +4148,7 @@ describe("conversation routes", () => {
       orchestratorLifecycleToken: "lifecycle-token",
     });
     serverPort = server.port;
+    await primeAiGatewayRuntimeAuthorization(server);
 
     const createResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
@@ -4129,6 +4230,9 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
+        if (request.method === "GET" && url.pathname === "/api/me/ai-access") {
+          return managedAiAccessBundleResponse();
+        }
         if (request.method === "POST" && url.pathname === "/providers/codex_oauth/v1/chat/completions") {
           const requestBody = await request.json().catch(() => null) as unknown;
           providerRequests.push({
@@ -4295,6 +4399,7 @@ describe("conversation routes", () => {
       orchestratorLifecycleToken: "lifecycle-token",
     });
     serverPort = server.port;
+    await primeAiGatewayRuntimeAuthorization(server);
 
     const createConversation = async (workspaceId: string, directory: string, title: string) => {
       const response = await fetch(

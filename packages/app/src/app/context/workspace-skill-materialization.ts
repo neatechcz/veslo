@@ -46,6 +46,11 @@ export function createWorkspaceSkillMaterializationGate(
   ) {
     const workspaceId = workspace.id?.trim() ?? "";
     if (!workspaceId) return true;
+    let observedMaterializationStatus: {
+      registryConfigured: boolean;
+      status?: string | null;
+      reloadRequired?: boolean | null;
+    } | null = null;
     const trace = (event: string, payload?: Record<string, unknown>) => {
       recordSendWorkflowTrace("workspace-skill-materialization", event, {
         workspaceId,
@@ -90,6 +95,11 @@ export function createWorkspaceSkillMaterializationGate(
       };
 
       const status = await client.getWorkspaceSkillMaterializationStatus(workspaceId);
+      observedMaterializationStatus = {
+        registryConfigured: status.registryConfigured,
+        status: status.status,
+        reloadRequired: status.reloadRequired ?? false,
+      };
       trace("status", {
         registryConfigured: status.registryConfigured,
         status: status.status,
@@ -145,6 +155,33 @@ export function createWorkspaceSkillMaterializationGate(
       }
       return true;
     } catch (error) {
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      const configuredSyncRequired =
+        observedMaterializationStatus?.registryConfigured === true &&
+        (observedMaterializationStatus.status !== "current" ||
+          observedMaterializationStatus.reloadRequired === true);
+      const configuredSyncAuthOrRouteFailure =
+        configuredSyncRequired &&
+        error instanceof VesloServerError &&
+        (error.status === 401 || error.status === 403 || error.status === 404);
+      if (configuredSyncAuthOrRouteFailure) {
+        trace("failed:configured-sync", {
+          message,
+          code: error.code,
+          status: error.status,
+          observedStatus: observedMaterializationStatus,
+        });
+        deps.wsDebug("skills:materialization:failed:configured-sync", {
+          workspaceId,
+          reason: context?.reason ?? null,
+          message,
+          status: error.status,
+          observedStatus: observedMaterializationStatus,
+        });
+        deps.setError(addOpencodeCacheHint(message));
+        deps.updateWorkspaceConnectionState(workspaceId, { status: "error", message });
+        return true;
+      }
       if (error instanceof VesloServerError && error.status === 404) {
         trace("skip:unsupported-server");
         deps.wsDebug("skills:materialization:skip:unsupported-server", {
@@ -153,7 +190,6 @@ export function createWorkspaceSkillMaterializationGate(
         });
         return true;
       }
-      const message = error instanceof Error ? error.message : safeStringify(error);
       if (isSkillRegistryMaterializationError(error)) {
         trace("degraded", {
           message,

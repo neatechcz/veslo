@@ -386,6 +386,20 @@ When a local workspace has no explicit OpenCode `baseUrl`, a desktop-launched se
 
 Windows path checks must tolerate extended-length prefixes such as `\\?\` and compare normalized roots case-insensitively for authorization. The raw path should remain available for persistence and engine handoff; normalized paths are for comparison.
 
+### AI Gateway Authorization
+
+Provider routes under `/ai-gateway/providers/...` prefer the managed runtime
+authorization registered from `/ai-gateway/me/ai-access` or from the active
+run's runtime authorization actor hash. A legacy `x-veslo-gateway-token` header
+is only a compatibility fallback when there is no active run context and no
+runtime authorization entry. Redacted placeholder gateway tokens are rejected,
+and proxy traces expose the selected `gatewayAuthorizationSource` without
+logging token material.
+
+Each `startServer()` instance clears the module-scoped AI gateway runtime owner
+state before serving requests. Runtime auth, active run contexts, and active
+proxy request records must not leak across in-process server restarts or tests.
+
 ### Conversation and Transcript Reads
 
 `GET /workspace/:id/conversations` is host-first by default. When the host
@@ -420,6 +434,30 @@ reconciled read, not a raw active-row lookup: if OpenCode reports the session
 idle or the transcript probe shows a terminal assistant message, the
 orchestrator completes the stale run before the server decides whether to
 queue the new request.
+
+The durable run queue treats `clientMessageId` as an idempotency key for the
+same conversation. A retry with the same request fingerprint reuses the existing
+queued item and reserved run id; a retry with changed body, kind, directory,
+OpenCode session id, or origin is an idempotency conflict. If the server process
+stops after a queued row is marked `starting` but before it is submitted or
+failed, startup recovery moves that row back to `pending` before scheduling
+queue drains, so accepted sends are not lost across process restarts.
+Clients may read a queued send with
+`GET /workspace/:id/conversations/:conversationId/queue/:queueItemId`. The
+response is scoped to the resolved workspace and conversation and includes the
+durable queue `status`, `reservedRunId`, `clientMessageId`, timestamps, and any
+terminal `error`. If a previously replayable submit-attempt result points at a
+queued item that has since reached `failed`, a same-fingerprint retry returns
+`status: "failed"` with `code: "queued_run_failed"` and
+`draftDisposition: "restore"` instead of replaying stale `queued`.
+
+The submit-attempt store also uses `clientMessageId` plus request hash for
+idempotency. Successful, queued, dry-run, and materialized outcomes are safe to
+replay. `blocked` and `failed` outcomes are re-evaluated on retry instead of
+being permanently replayed, because runtime, gateway, binding, or document
+runtime readiness may have changed. If a failed first-session submit already
+materialized a Veslo conversation/OpenCode session, a retry reuses that stored
+target rather than creating a second conversation.
 
 Conversation run lifecycle orchestration is a server-owned control-plane
 concern. The app talks to the conversation routes and should not duplicate

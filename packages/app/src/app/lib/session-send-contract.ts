@@ -18,12 +18,22 @@ export type SessionSendOptionsBase = SessionSendCorrelation & {
 
 export type SessionSubmitDraftDisposition = "clear" | "restore" | "keep" | "mark-failed";
 
+export type SessionSubmitStatus = "accepted" | "submitted" | "queued" | "blocked" | "failed";
+
 export type SessionSubmitResult = {
   accepted: boolean;
-  status: "accepted" | "blocked" | "failed";
+  status: SessionSubmitStatus;
   draftDisposition: SessionSubmitDraftDisposition;
   code?: string | null;
   message?: string | null;
+  workspaceId?: string | null;
+  conversationId?: string | null;
+  opencodeSessionId?: string | null;
+  runId?: string | null;
+  queueItemId?: string | null;
+  reservedRunId?: string | null;
+  queuePosition?: number | null;
+  clientMessageId?: string | null;
 };
 
 export type MaterializedSessionHandoff = {
@@ -70,4 +80,98 @@ export function sessionSubmitResultFromAccepted(
         code: "send_rejected",
         message: message ?? null,
       };
+}
+
+type SessionSubmitSuccessInput = Omit<
+  SessionSubmitResult,
+  "accepted" | "status" | "draftDisposition"
+> & {
+  draftDisposition?: SessionSubmitDraftDisposition;
+};
+
+type SessionSubmitFailureInput = Omit<
+  SessionSubmitResult,
+  "accepted" | "status" | "draftDisposition"
+> & {
+  draftDisposition?: SessionSubmitDraftDisposition;
+};
+
+export function sessionSubmitAcceptedResult(input: SessionSubmitSuccessInput = {}): SessionSubmitResult {
+  const { draftDisposition = "clear", ...rest } = input;
+  return {
+    accepted: true,
+    status: "accepted",
+    draftDisposition,
+    ...rest,
+  };
+}
+
+export function sessionSubmitSubmittedResult(input: SessionSubmitSuccessInput = {}): SessionSubmitResult {
+  const { draftDisposition = "clear", ...rest } = input;
+  return {
+    accepted: true,
+    status: "submitted",
+    draftDisposition,
+    ...rest,
+  };
+}
+
+export function sessionSubmitQueuedResult(input: SessionSubmitSuccessInput = {}): SessionSubmitResult {
+  const { draftDisposition = "clear", ...rest } = input;
+  return {
+    accepted: true,
+    status: "queued",
+    draftDisposition,
+    ...rest,
+  };
+}
+
+export function sessionSubmitBlockedResult(input: SessionSubmitFailureInput = {}): SessionSubmitResult {
+  const {
+    draftDisposition = "restore",
+    code = "send_blocked",
+    message = null,
+    ...rest
+  } = input;
+  return {
+    accepted: false,
+    status: "blocked",
+    draftDisposition,
+    code,
+    message,
+    ...rest,
+  };
+}
+
+export function sessionSubmitFailedResult(input: SessionSubmitFailureInput = {}): SessionSubmitResult {
+  const {
+    draftDisposition = "restore",
+    code = "send_failed",
+    message = null,
+    ...rest
+  } = input;
+  return {
+    accepted: false,
+    status: "failed",
+    draftDisposition,
+    code,
+    message,
+    ...rest,
+  };
+}
+
+export function sessionSubmitCompatibilityResultFromAccepted(
+  accepted: boolean,
+  message?: string | null,
+): SessionSubmitResult {
+  return accepted
+    ? sessionSubmitAcceptedResult()
+    : sessionSubmitBlockedResult({
+        code: "send_rejected",
+        message: message ?? null,
+      });
+}
+
+export function sessionSubmitWasAccepted(result: SessionSubmitResult): boolean {
+  return result.accepted;
 }

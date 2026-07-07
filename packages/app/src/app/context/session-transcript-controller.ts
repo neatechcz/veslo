@@ -43,6 +43,10 @@ type AppendTranscriptSnapshot = (input: {
   reason?: string;
 }) => Promise<void> | void;
 
+type TranscriptIngestScope = {
+  directory?: string | null;
+};
+
 export type SessionTranscriptControllerDeps = {
   store: TranscriptStoreState;
   setStore: (...args: any[]) => void;
@@ -238,20 +242,44 @@ export function createSessionTranscriptController(deps: SessionTranscriptControl
     }
   };
 
+  const resolveTranscriptIngestDirectory = (
+    workspaceId: string,
+    sessionID: string,
+    scope?: TranscriptIngestScope,
+  ) => {
+    const session = deps.store.sessions.find((candidate) => candidate.id === sessionID) ?? null;
+    if (session) return normalizeDirectoryPath(deps.resolveSessionDirectory(session));
+    const scopedDirectory = normalizeDirectoryPath(scope?.directory ?? "");
+    if (scopedDirectory) return scopedDirectory;
+    const entryDirectory = normalizeDirectoryPath(deps.routing.entry(workspaceId)?.directory ?? "");
+    if (entryDirectory) return entryDirectory;
+    const activeWorkspaceId = deps.routing.activeWorkspaceId().trim();
+    return activeWorkspaceId === workspaceId ? normalizeDirectoryPath(deps.activeWorkspaceRoot()) : "";
+  };
+
+  const captureTranscriptIngestScope = (workspaceId: string, sessionID: string): TranscriptIngestScope => ({
+    directory: resolveTranscriptIngestDirectory(workspaceId, sessionID),
+  });
+
   const buildTranscriptIngestPayload = (
     workspaceId: string,
     sessionID: string,
     reason: string,
+    scope?: TranscriptIngestScope,
   ) => {
-    const activeWorkspaceId = deps.routing.activeWorkspaceId().trim();
-    if (activeWorkspaceId && activeWorkspaceId !== workspaceId) return null;
     const key = transcriptIngestKey(workspaceId, sessionID);
     const pendingDeletions = pendingTranscriptDeletionsForKey(key);
 
-    const session = deps.store.sessions.find((candidate) => candidate.id === sessionID) ?? null;
-    const directory = session
-      ? deps.resolveSessionDirectory(session)
-      : normalizeDirectoryPath(deps.activeWorkspaceRoot());
+    const activeWorkspaceId = deps.routing.activeWorkspaceId().trim();
+    if (activeWorkspaceId && activeWorkspaceId !== workspaceId) {
+      recordSendWorkflowTrace("session-transcript", "session-transcript:ingest-active-workspace-switched", {
+        workspaceId,
+        sessionID,
+        reason,
+        activeWorkspaceId,
+      });
+    }
+    const directory = resolveTranscriptIngestDirectory(workspaceId, sessionID, scope);
     if (!workspaceId || !sessionID || !directory) return null;
 
     const messagesForSession = sortMessagesByActivity(
@@ -282,7 +310,12 @@ export function createSessionTranscriptController(deps: SessionTranscriptControl
     };
   };
 
-  const flushTranscriptIngestion = (workspaceId: string, sessionID: string, reason: string) => {
+  const flushTranscriptIngestion = (
+    workspaceId: string,
+    sessionID: string,
+    reason: string,
+    scope?: TranscriptIngestScope,
+  ) => {
     const key = transcriptIngestKey(workspaceId, sessionID);
     const timer = transcriptIngestTimers.get(key);
     if (timer) {
@@ -292,7 +325,7 @@ export function createSessionTranscriptController(deps: SessionTranscriptControl
 
     const writer = deps.appendTranscriptSnapshot;
     if (!writer) return undefined;
-    const payload = buildTranscriptIngestPayload(workspaceId, sessionID, reason);
+    const payload = buildTranscriptIngestPayload(workspaceId, sessionID, reason, scope);
     if (!payload) return undefined;
     const messageCount = payload.messages.length;
     const partCount = countPartsByMessageId(payload.partsByMessageId);
@@ -364,17 +397,19 @@ export function createSessionTranscriptController(deps: SessionTranscriptControl
     const key = transcriptIngestKey(workspaceId, sessionID);
     const existing = transcriptIngestTimers.get(key);
     if (existing) clearTimeout(existing);
+    const scope = captureTranscriptIngestScope(workspaceId, sessionID);
     recordSendWorkflowTrace("session-transcript", "session-transcript:ingest-scheduled", {
       workspaceId,
       sessionID,
       reason,
       delayMs,
       replacedExistingTimer: Boolean(existing),
+      directoryCaptured: Boolean(scope.directory),
     });
     transcriptIngestTimers.set(
       key,
       setTimeout(() => {
-        void flushTranscriptIngestion(workspaceId, sessionID, reason);
+        void flushTranscriptIngestion(workspaceId, sessionID, reason, scope);
       }, delayMs),
     );
   };

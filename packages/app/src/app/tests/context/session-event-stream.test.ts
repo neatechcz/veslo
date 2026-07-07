@@ -43,6 +43,16 @@ function makeMessage(sessionID: string, id = "msg-a", role = "assistant") {
   } as unknown as MessageInfo;
 }
 
+function makeTextPart(sessionID: string, messageID = "msg-a", id = "part-a", text = "") {
+  return {
+    id,
+    sessionID,
+    messageID,
+    type: "text",
+    text,
+  };
+}
+
 type SendWorkflowTraceTestWindow = {
   __vesloSendWorkflowTraceEnabled?: boolean;
   __vesloSendWorkflowTrace?: Array<Record<string, unknown>>;
@@ -244,6 +254,13 @@ test("background events update scoped runtime state without mutating active mess
         } as OpencodeEvent,
         "ws-b",
       );
+      await controller.applyEvent(
+        {
+          type: "message.part.updated",
+          properties: { part: makeTextPart("sess-b", "msg-b", "part-b", "background") },
+        } as OpencodeEvent,
+        "ws-b",
+      );
       await controller.applyEvent({ type: "permission.asked", properties: {} } as OpencodeEvent, "ws-b");
       await controller.applyEvent({ type: "question.asked", properties: {} } as OpencodeEvent, "ws-b");
       await controller.applyEvent({ type: "permission.v2.asked", properties: {} } as OpencodeEvent, "ws-b");
@@ -259,9 +276,56 @@ test("background events update scoped runtime state without mutating active mess
           reason: "background message.updated",
           delayMs: undefined,
         },
+        {
+          sessionID: "sess-b",
+          workspaceId: "ws-b",
+          reason: "background message.part.updated",
+          delayMs: undefined,
+        },
       ]);
       assert.deepEqual(permissionRefreshes, ["permissions", "permissions"]);
       assert.deepEqual(questionRefreshes, ["questions", "questions"]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("foreground stream accepts message and part events before session list hydration", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const observed: string[] = [];
+      const transcriptIngest: Array<Record<string, unknown>> = [];
+      const { controller, store, workspaceSessionIds } = makeController({
+        activeWorkspaceId: "ws-a",
+        selectedSessionId: "sess-other",
+        observer: (sessionID) => observed.push(sessionID),
+        transcriptIngest,
+      });
+
+      await controller.applyEvent(
+        {
+          type: "message.updated",
+          properties: { info: makeMessage("sess-late", "msg-late") },
+        } as OpencodeEvent,
+        "ws-a",
+      );
+      await controller.applyEvent(
+        {
+          type: "message.part.updated",
+          properties: { part: makeTextPart("sess-late", "msg-late", "part-late", "late text") },
+        } as OpencodeEvent,
+        "ws-a",
+      );
+
+      assert.equal(workspaceSessionIds.has("sess-late"), true);
+      assert.deepEqual(store.messages["sess-late"].map((message) => message.id), ["msg-late"]);
+      assert.equal(store.parts["msg-late"]?.find((part) => part.id === "part-late")?.text, "late text");
+      assert.deepEqual(observed, ["sess-late"]);
+      assert.deepEqual(
+        transcriptIngest.map((entry) => entry.reason),
+        ["message.updated", "message.part.updated"],
+      );
     } finally {
       dispose();
     }
@@ -306,6 +370,76 @@ test("active message updates report assistant responses only after accepting the
 
       assert.deepEqual(store.messages["sess-a"].map((message) => message.id), ["msg-a"]);
       assert.deepEqual(observed, ["sess-a"]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("queued SSE text deltas for the same part are not coalesced before flush", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const { controller, setStore, store } = makeController({
+        workspaceSessionIds: new Set(["sess-a"]),
+      });
+      setStore("messages", "sess-a", [makeMessage("sess-a", "msg-a")]);
+      setStore("parts", "msg-a", [makeTextPart("sess-a")]);
+
+      const events: OpencodeEvent[] = ["Hel", "lo", "!"].map((delta) => ({
+        type: "message.part.updated",
+        properties: {
+          delta,
+          part: makeTextPart("sess-a", "msg-a", "part-a", delta),
+        },
+      } as OpencodeEvent));
+      const client = makeEventClient(async () => ({
+        stream: (async function* () {
+          for (const event of events) yield event;
+          await new Promise<void>(() => {});
+        })(),
+      }));
+
+      const cleanup = controller.setupSseStream("ws-a", client);
+      await tick(8);
+      cleanup();
+
+      assert.equal(store.parts["msg-a"]?.find((part) => part.id === "part-a")?.text, "Hello!");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("queued SSE full part snapshots for the same part are still coalesced", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const transcriptIngest: Array<Record<string, unknown>> = [];
+      const { controller, setStore, store } = makeController({
+        workspaceSessionIds: new Set(["sess-a"]),
+        transcriptIngest,
+      });
+      setStore("messages", "sess-a", [makeMessage("sess-a", "msg-a")]);
+
+      const events: OpencodeEvent[] = ["partial", "complete"].map((text) => ({
+        type: "message.part.updated",
+        properties: {
+          part: makeTextPart("sess-a", "msg-a", "part-a", text),
+        },
+      } as OpencodeEvent));
+      const client = makeEventClient(async () => ({
+        stream: (async function* () {
+          for (const event of events) yield event;
+          await new Promise<void>(() => {});
+        })(),
+      }));
+
+      const cleanup = controller.setupSseStream("ws-a", client);
+      await tick(8);
+      cleanup();
+
+      assert.equal(store.parts["msg-a"]?.find((part) => part.id === "part-a")?.text, "complete");
+      assert.equal(transcriptIngest.length, 1);
+      assert.equal(transcriptIngest[0]?.reason, "message.part.updated");
     } finally {
       dispose();
     }

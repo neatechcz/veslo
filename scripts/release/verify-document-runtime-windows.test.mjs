@@ -5,10 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
-import {
-  documentRuntimePackageAssetName,
-  documentRuntimePackageSignatureName,
-} from "../../packages/document-runtime/src/index.mjs";
+import { assembleWindowsDocumentRuntime } from "../document-runtime/assemble-windows.mjs";
 import { verifyDocumentRuntimeWindows } from "./verify-document-runtime-windows.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
@@ -65,78 +62,67 @@ const windowsEntry = {
   sizeBytes: 12,
 };
 
-test("passes when local-docs-required Windows package and signature are present", () => {
-  const root = mkdtempSync(join(tmpdir(), "veslo-doc-runtime-win-"));
+const writeManifestAndFeed = (root) => {
+  const manifestPath = join(root, "windows-native-x64.json");
+  const feedPath = join(root, "document-runtime-packages.json");
+  writeText(manifestPath, JSON.stringify(manifest, null, 2));
+  writeText(feedPath, JSON.stringify(feedFor(windowsEntry), null, 2));
+  return { manifestPath, feedPath };
+};
+
+test("passes local-docs-required Windows release when bundled resource tree has a valid manifest", async () => {
+  const root = mkdtempSync(join(tmpdir(), "veslo-doc-runtime-win-resource-"));
   try {
-    const manifestPath = join(root, "windows-native-x64.json");
-    const feedPath = join(root, "document-runtime-packages.json");
-    const packageDir = join(root, "packages");
-    const packageName = documentRuntimePackageAssetName({
-      platform: "windows-native-x64",
-      packageVersion: "2026.7.0",
-    });
-    const sigName = documentRuntimePackageSignatureName({
-      platform: "windows-native-x64",
-      packageVersion: "2026.7.0",
-    });
-    writeText(manifestPath, JSON.stringify(manifest, null, 2));
-    writeText(feedPath, JSON.stringify(feedFor(windowsEntry), null, 2));
-    writeText(join(packageDir, packageName), "package-bytes");
-    writeText(join(packageDir, sigName), "signature");
+    const { manifestPath, feedPath } = writeManifestAndFeed(root);
+    const resourceDir = join(root, "resources", "document-runtime", "windows-native-x64");
+    await assembleWindowsDocumentRuntime({ targetDir: resourceDir, dryRun: true });
 
     const report = verifyDocumentRuntimeWindows({
       repoRoot,
       manifestPath,
       feedPath,
-      packageDir,
+      resourceDir,
       profile: "local-docs-required",
     });
 
     assert.equal(report.ok, true);
-    assert.equal(report.checks.find((check) => check.label === "Windows native document runtime package artifact exists")?.ok, true);
+    assert.equal(report.checks.find((check) => check.label === "Windows native bundled document runtime manifest is valid")?.ok, true);
+    assert.equal(report.checks.find((check) => check.label === "Windows native bundled document runtime includes soffice")?.ok, true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("fails local-docs-required Windows release when package artifact is missing", () => {
-  const root = mkdtempSync(join(tmpdir(), "veslo-doc-runtime-win-missing-"));
+test("fails local-docs-required Windows release when bundled resource tree is missing", () => {
+  const root = mkdtempSync(join(tmpdir(), "veslo-doc-runtime-win-missing-resource-"));
   try {
-    const manifestPath = join(root, "windows-native-x64.json");
-    const feedPath = join(root, "document-runtime-packages.json");
-    const packageDir = join(root, "packages");
-    writeText(manifestPath, JSON.stringify(manifest, null, 2));
-    writeText(feedPath, JSON.stringify(feedFor(windowsEntry), null, 2));
+    const { manifestPath, feedPath } = writeManifestAndFeed(root);
 
     const report = verifyDocumentRuntimeWindows({
       repoRoot,
       manifestPath,
       feedPath,
-      packageDir,
+      resourceDir: join(root, "missing"),
       profile: "local-docs-required",
     });
 
     assert.equal(report.ok, false);
-    assert.equal(report.checks.find((check) => check.label === "Windows native document runtime package artifact exists")?.ok, false);
-    assert.equal(report.checks.find((check) => check.label === "Windows native document runtime package signature exists")?.ok, false);
+    assert.equal(report.checks.find((check) => check.label === "Windows native document runtime bundled resource directory exists")?.ok, false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("allows explicit remote-docs-only profile without local package artifact", () => {
+test("allows explicit remote-docs-only profile without local bundled runtime", () => {
   const root = mkdtempSync(join(tmpdir(), "veslo-doc-runtime-win-remote-"));
   try {
-    const manifestPath = join(root, "windows-native-x64.json");
-    const feedPath = join(root, "document-runtime-packages.json");
-    writeText(manifestPath, JSON.stringify(manifest, null, 2));
-    writeText(feedPath, JSON.stringify(feedFor(windowsEntry), null, 2));
+    const { manifestPath, feedPath } = writeManifestAndFeed(root);
 
     const report = verifyDocumentRuntimeWindows({
       repoRoot,
       manifestPath,
       feedPath,
-      packageDir: join(root, "missing"),
+      resourceDir: join(root, "missing"),
       profile: "remote-docs-only",
     });
 

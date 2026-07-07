@@ -19,8 +19,18 @@ import type { VesloSessionTranscriptSnapshot } from "../lib/veslo-server";
 import type { SidebarSessionItem } from "../types";
 
 export const SESSION_BY_WORKSPACE_KEY = "veslo.workspace-last-session.v1";
+export const SESSION_BY_WORKSPACE_KEY_V2 = "veslo.workspace-last-session.v2";
 
 type WorkspaceSessionSelectionStorage = Pick<Storage, "getItem" | "setItem">;
+
+export type WorkspaceLastSessionEntry = {
+  sessionId: string;
+  workspaceId: string;
+  workspaceRoot: string;
+  directory: string;
+  conversationId: string | null;
+  opencodeSessionId: string | null;
+};
 
 type WorkspaceSessionSelectionWorkspace = {
   id: string;
@@ -38,6 +48,8 @@ export type SendTargetWorkspaceScope = {
 export type DisplayedConversationGuard = {
   sessionId: string;
   workspaceId: string;
+  workspaceRoot: string;
+  directory: string;
   conversationId: string;
   opencodeSessionId: string;
 };
@@ -60,6 +72,31 @@ const browserStorage = (): WorkspaceSessionSelectionStorage | null => {
 };
 
 const normalize = (value: string | null | undefined) => value?.trim() ?? "";
+
+const normalizeWorkspaceLastSessionEntry = (
+  workspaceId: string,
+  value: unknown,
+): WorkspaceLastSessionEntry | null => {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const sessionId = typeof record.sessionId === "string" ? normalize(record.sessionId) : "";
+  const entryWorkspaceId =
+    typeof record.workspaceId === "string" ? normalize(record.workspaceId) : normalize(workspaceId);
+  if (!sessionId || !entryWorkspaceId) return null;
+  const workspaceRoot = typeof record.workspaceRoot === "string" ? normalize(record.workspaceRoot) : "";
+  const directory =
+    (typeof record.directory === "string" ? normalize(record.directory) : "") ||
+    workspaceRoot;
+  return {
+    sessionId,
+    workspaceId: entryWorkspaceId,
+    workspaceRoot,
+    directory,
+    conversationId: typeof record.conversationId === "string" ? normalize(record.conversationId) || null : null,
+    opencodeSessionId:
+      typeof record.opencodeSessionId === "string" ? normalize(record.opencodeSessionId) || null : null,
+  };
+};
 
 export const readSessionByWorkspaceFromStorage = (
   storage: WorkspaceSessionSelectionStorage | null | undefined,
@@ -88,6 +125,56 @@ export const writeSessionByWorkspaceToStorage = (
   }
 };
 
+export const readScopedSessionByWorkspaceFromStorage = (
+  storage: WorkspaceSessionSelectionStorage | null | undefined,
+) => {
+  if (!storage) return {} as Record<string, WorkspaceLastSessionEntry>;
+  try {
+    const raw = storage.getItem(SESSION_BY_WORKSPACE_KEY_V2);
+    if (!raw) return {} as Record<string, WorkspaceLastSessionEntry>;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {} as Record<string, WorkspaceLastSessionEntry>;
+    const next: Record<string, WorkspaceLastSessionEntry> = {};
+    for (const [workspaceId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const entry = normalizeWorkspaceLastSessionEntry(workspaceId, value);
+      if (entry) next[workspaceId] = entry;
+    }
+    return next;
+  } catch {
+    return {} as Record<string, WorkspaceLastSessionEntry>;
+  }
+};
+
+export const writeScopedSessionByWorkspaceToStorage = (
+  storage: WorkspaceSessionSelectionStorage | null | undefined,
+  map: Record<string, WorkspaceLastSessionEntry>,
+) => {
+  if (!storage) return;
+  try {
+    storage.setItem(SESSION_BY_WORKSPACE_KEY_V2, JSON.stringify(map));
+  } catch {
+    // ignore persistence failures
+  }
+};
+
+const conversationScopesFromStoredLastSessions = (
+  entries: Record<string, WorkspaceLastSessionEntry>,
+) => {
+  let next: Record<string, UiConversationScope[]> = {};
+  for (const entry of Object.values(entries)) {
+    next = upsertUiConversationScope(next, {
+      sessionId: entry.sessionId,
+      workspaceId: entry.workspaceId,
+      workspaceRoot: entry.workspaceRoot,
+      directory: entry.directory,
+      conversationId: entry.conversationId,
+      opencodeSessionId: entry.opencodeSessionId,
+      updatedAt: 0,
+    });
+  }
+  return next;
+};
+
 const makeSendTargetWorkspaceScope = (
   workspaceId: string,
   workspaceRoot: string,
@@ -102,11 +189,11 @@ const makeSendTargetWorkspaceScope = (
 
 export function createWorkspaceSessionSelection(options: WorkspaceSessionSelectionOptions) {
   const storage = () => options.storage ?? browserStorage();
-  const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
+  const [selectedSessionId, setSelectedSessionIdSignal] = createSignal<string | null>(null);
   const [selectedSessionBrowseScope, setSelectedSessionBrowseScope] = createSignal<SessionBrowseScope | null>(null);
   const [conversationScopeBySessionId, setConversationScopeBySessionId] = createSignal<
     Record<string, UiConversationScope[]>
-  >({});
+  >(conversationScopesFromStoredLastSessions(readScopedSessionByWorkspaceFromStorage(storage())));
 
   const rememberConversationScope = (scope: UiConversationScopeInput) => {
     setConversationScopeBySessionId((current) => upsertUiConversationScope(current, scope));
@@ -134,12 +221,39 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
     });
   };
 
+  const scopeCandidateCount = (sessionId: string) =>
+    conversationScopeBySessionId()[sessionId.trim()]?.length ?? 0;
+
+  const lastSessionEntryFromScope = (
+    workspaceId: string,
+    sessionId: string,
+    scope: UiConversationScopeInput,
+  ): WorkspaceLastSessionEntry | null => {
+    const normalizedSessionId = normalize(sessionId);
+    const normalizedWorkspaceId = normalize(scope.workspaceId) || normalize(workspaceId);
+    const workspaceRoot = normalize(scope.workspaceRoot) || normalize(scope.directory);
+    const directory = normalize(scope.directory) || workspaceRoot;
+    if (!normalizedSessionId || !normalizedWorkspaceId || !workspaceRoot || !directory) return null;
+    return {
+      sessionId: normalizedSessionId,
+      workspaceId: normalizedWorkspaceId,
+      workspaceRoot,
+      directory,
+      conversationId: normalize(scope.conversationId) || null,
+      opencodeSessionId: normalize(scope.opencodeSessionId) || null,
+    };
+  };
+
   const captureDisplayedConversationGuard = (sessionId: string): DisplayedConversationGuard => {
     const id = sessionId.trim();
     const scope = id ? resolveSelectedSessionBrowseScope(id) : null;
+    const workspaceRoot = scope?.workspaceRoot?.trim() || "";
+    const directory = scope?.directory?.trim() || workspaceRoot;
     return {
       sessionId: id,
       workspaceId: scope?.workspaceId?.trim() || options.activeWorkspaceId().trim() || "",
+      workspaceRoot,
+      directory,
       conversationId: scope?.conversationId?.trim() || "",
       opencodeSessionId: scope?.opencodeSessionId?.trim() || id,
     };
@@ -151,6 +265,13 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
     const currentScope = resolveSelectedSessionBrowseScope(currentSessionId);
     const currentWorkspaceId = currentScope?.workspaceId?.trim() || options.activeWorkspaceId().trim() || "";
     if (guard.workspaceId && currentWorkspaceId && guard.workspaceId !== currentWorkspaceId) return false;
+    if (guard.workspaceRoot || guard.directory) {
+      if (!currentScope) return false;
+      const currentWorkspaceRoot = currentScope.workspaceRoot?.trim() || "";
+      const currentDirectory = currentScope.directory?.trim() || currentWorkspaceRoot;
+      if (guard.workspaceRoot && currentWorkspaceRoot !== guard.workspaceRoot) return false;
+      if (guard.directory && currentDirectory !== guard.directory) return false;
+    }
     if (guard.conversationId) {
       return currentSessionId === guard.conversationId || currentScope?.conversationId?.trim() === guard.conversationId;
     }
@@ -277,16 +398,49 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
   const readSessionByWorkspace = () => readSessionByWorkspaceFromStorage(storage());
   const writeSessionByWorkspace = (map: Record<string, string>) =>
     writeSessionByWorkspaceToStorage(storage(), map);
+  const readScopedSessionByWorkspace = () => readScopedSessionByWorkspaceFromStorage(storage());
+  const writeScopedSessionByWorkspace = (map: Record<string, WorkspaceLastSessionEntry>) =>
+    writeScopedSessionByWorkspaceToStorage(storage(), map);
+
+  const persistSelectedSessionId = (sessionIdRaw: string | null | undefined) => {
+    const sessionId = normalize(sessionIdRaw);
+    const workspaceId =
+      (sessionId ? resolveSelectedSessionBrowseScope(sessionId)?.workspaceId : null) ??
+      options.activeWorkspaceId();
+    if (!workspaceId || !sessionId) return;
+    const map = readSessionByWorkspace();
+    if (map[workspaceId] !== sessionId) {
+      map[workspaceId] = sessionId;
+      writeSessionByWorkspace(map);
+    }
+    const scope = resolveSelectedSessionBrowseScope(sessionId);
+    const scopedEntry = scope ? lastSessionEntryFromScope(workspaceId, sessionId, scope) : null;
+    if (!scopedEntry) return;
+    const scopedMap = readScopedSessionByWorkspace();
+    if (JSON.stringify(scopedMap[workspaceId] ?? null) === JSON.stringify(scopedEntry)) return;
+    writeScopedSessionByWorkspace({ ...scopedMap, [workspaceId]: scopedEntry });
+  };
+
+  const setSelectedSessionId = (sessionId: string | null) => {
+    setSelectedSessionIdSignal(sessionId);
+    persistSelectedSessionId(sessionId);
+  };
 
   const clearWorkspaceLastSessionIfSelected = (workspaceId: string, sessionId: string) => {
     const normalizedWorkspaceId = workspaceId.trim();
     const normalizedSessionId = sessionId.trim();
     if (!normalizedWorkspaceId || !normalizedSessionId) return;
     const map = readSessionByWorkspace();
-    if (map[normalizedWorkspaceId] !== normalizedSessionId) return;
-    const next = { ...map };
-    delete next[normalizedWorkspaceId];
-    writeSessionByWorkspace(next);
+    if (map[normalizedWorkspaceId] === normalizedSessionId) {
+      const next = { ...map };
+      delete next[normalizedWorkspaceId];
+      writeSessionByWorkspace(next);
+    }
+    const scopedMap = readScopedSessionByWorkspace();
+    if (scopedMap[normalizedWorkspaceId]?.sessionId !== normalizedSessionId) return;
+    const nextScoped = { ...scopedMap };
+    delete nextScoped[normalizedWorkspaceId];
+    writeScopedSessionByWorkspace(nextScoped);
   };
 
   const moveWorkspaceLastSession = (input: {
@@ -304,18 +458,24 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
       delete next[sourceWorkspaceId];
     }
     writeSessionByWorkspace(next);
+
+    const scopedMap = readScopedSessionByWorkspace();
+    const nextScoped = { ...scopedMap };
+    if (sourceWorkspaceId) {
+      delete nextScoped[sourceWorkspaceId];
+    }
+    const scope = resolveSelectedSessionBrowseScope(sessionId);
+    const entry = scope ? lastSessionEntryFromScope(targetWorkspaceId, sessionId, scope) : null;
+    if (entry && entry.workspaceId === targetWorkspaceId) {
+      nextScoped[targetWorkspaceId] = entry;
+    } else {
+      delete nextScoped[targetWorkspaceId];
+    }
+    writeScopedSessionByWorkspace(nextScoped);
   };
 
   createEffect(() => {
-    const sessionId = selectedSessionId();
-    const workspaceId =
-      (sessionId ? resolveSelectedSessionBrowseScope(sessionId)?.workspaceId : null) ??
-      options.activeWorkspaceId();
-    if (!workspaceId || !sessionId) return;
-    const map = readSessionByWorkspace();
-    if (map[workspaceId] === sessionId) return;
-    map[workspaceId] = sessionId;
-    writeSessionByWorkspace(map);
+    persistSelectedSessionId(selectedSessionId());
   });
 
   const activeWorkspaceLastSessionId = () => {
@@ -323,11 +483,15 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
     const selected = selectedSessionId()?.trim() ?? "";
     if (!workspaceId) return selected || null;
     const selectedScope = selected ? resolveSelectedSessionBrowseScope(selected) : null;
-    if (selected && (!selectedScope || selectedScope.workspaceId === workspaceId)) return selected;
+    if (selected && selectedScope?.workspaceId === workspaceId) return selected;
+    if (selected && !selectedScope && scopeCandidateCount(selected) === 0) return selected;
+    const scopedStored = readScopedSessionByWorkspace()[workspaceId] ?? null;
+    if (scopedStored?.workspaceId === workspaceId && scopedStored.sessionId) return scopedStored.sessionId;
     const stored = readSessionByWorkspace()[workspaceId]?.trim() ?? "";
     if (!stored) return null;
     const storedScope = resolveSelectedSessionBrowseScope(stored);
     if (storedScope?.workspaceId && storedScope.workspaceId !== workspaceId) return null;
+    if (!storedScope && scopeCandidateCount(stored) > 1) return null;
     return stored;
   };
 
@@ -369,6 +533,10 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
       opencodeSessionId: selectedScope?.opencodeSessionId?.trim() || null,
       key: createUiConversationKey({
         workspaceId,
+        workspaceRoot,
+        directory,
+        conversationId: selectedScope?.conversationId,
+        opencodeSessionId: selectedScope?.opencodeSessionId,
         kind: selected ? "session" : "pending-workspace",
         id: selected || "active",
       }),
@@ -415,6 +583,7 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
           scope.directory,
         );
       }
+      return null;
     }
 
     const activeRoot = options.activeWorkspaceRoot?.().trim() ?? "";

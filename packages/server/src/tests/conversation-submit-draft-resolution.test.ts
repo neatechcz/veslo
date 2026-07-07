@@ -6,6 +6,7 @@ import {
   resolveConversationSubmitDraft,
 } from "../conversation-submit-draft-resolution.js";
 import type { ConversationSubmitRequest } from "../conversation-submit-contract.js";
+import { createDocumentRuntimeStatusPayload } from "../routes/document-runtime.js";
 
 const request = (
   draft: ConversationSubmitRequest["draft"],
@@ -102,6 +103,55 @@ describe("conversation submit draft resolution", () => {
         kind: "command",
         command: "company-research-czech",
         arguments: "use company research skill for this site",
+      },
+    });
+  });
+
+  test("falls back to prompt when implicit skill resolution fails", async () => {
+    const debugTrace: Array<Record<string, unknown>> = [];
+    const result = await resolveConversationSubmitDraft({
+      request: request({
+        mode: "prompt",
+        text: "plain prompt should still send",
+        parts: [{ type: "text", text: "plain prompt should still send" }],
+      }),
+      resolveSkillCommand: async () => {
+        throw new Error("skill registry unavailable");
+      },
+      recordDebugTrace: (entry) => debugTrace.push(entry),
+    });
+
+    expect(result).toMatchObject({
+      status: "ok",
+      resolvedRunInput: {
+        kind: "prompt_async",
+        text: "plain prompt should still send",
+      },
+    });
+    expect(debugTrace).toMatchObject([
+      {
+        event: "implicit_skill_resolution_failed",
+        message: "skill registry unavailable",
+      },
+    ]);
+  });
+
+  test("falls back to prompt when implicit document skill lacks runtime", async () => {
+    const result = await resolveConversationSubmitDraft({
+      request: request({
+        mode: "prompt",
+        text: "create a docx summary",
+        parts: [{ type: "text", text: "create a docx summary" }],
+      }),
+      resolveSkillCommand: async () => "veslo-docx",
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "missing" }),
+    });
+
+    expect(result).toMatchObject({
+      status: "ok",
+      resolvedRunInput: {
+        kind: "prompt_async",
+        text: "create a docx summary",
       },
     });
   });

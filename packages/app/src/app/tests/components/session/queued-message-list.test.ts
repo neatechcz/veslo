@@ -86,6 +86,14 @@ test("queued message list renders compact icon controls and sending state", () =
   );
 });
 
+test("queued message list renders queued draft errors visibly", () => {
+  assert.match(
+    source,
+    /<Show when=\{item\.state === "error" && item\.error\}>[\s\S]*\{item\.error\}/,
+    "error queue rows should render the concrete queue failure message",
+  );
+});
+
 test("queued message list guards sending items and wires drag/drop callbacks", () => {
   assert.match(
     source,

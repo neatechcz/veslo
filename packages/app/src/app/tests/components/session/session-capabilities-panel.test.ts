@@ -17,3 +17,8 @@ test("session capabilities panel renders Skills and MCP sections with test ids",
   assert.match(source, /aria-controls="session-capabilities-mcp-content"/);
   assert.match(source, /id="session-capabilities-mcp-content"/);
 });
+
+test("session capabilities panel exposes disabled skill state", () => {
+  assert.match(source, /skill\.enabled === false/);
+  assert.match(source, /skills\.disabled_status/);
+});

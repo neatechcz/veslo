@@ -232,6 +232,18 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     return false;
   };
 
+  const isKnownOrForegroundStreamSessionId = (sessionID: string, sourceWsId: string): boolean => {
+    const normalizedSessionId = sessionID.trim();
+    if (!normalizedSessionId) return false;
+    if (isKnownSessionId(normalizedSessionId)) return true;
+    const activeWsId = deps.routing.activeWorkspaceId();
+    if (sourceWsId && activeWsId && sourceWsId === activeWsId) {
+      deps.workspaceSessionIds.add(normalizedSessionId);
+      return true;
+    }
+    return false;
+  };
+
   const applyBackgroundWorkspaceEvent = (event: OpencodeEvent, workspaceId: string) => {
     if (!workspaceId || !event.properties || typeof event.properties !== "object") return;
     const record = event.properties as Record<string, unknown>;
@@ -546,7 +558,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         const record = event.properties as Record<string, unknown>;
         if (record.info && typeof record.info === "object") {
           const info = record.info as Message;
-          if (!isKnownSessionId(info.sessionID)) return;
+          if (!isKnownOrForegroundStreamSessionId(info.sessionID, sourceWsId)) return;
           deps.setStore("messages", info.sessionID, (current: MessageInfo[] = []) =>
             upsertMessageInfo(current, info as MessageInfo),
           );
@@ -607,7 +619,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         if (record.part && typeof record.part === "object") {
           const part = record.part as Part;
 
-          if (!isKnownSessionId(part.sessionID)) {
+          if (!isKnownOrForegroundStreamSessionId(part.sessionID, sourceWsId)) {
             deps.sessionWarn("message.part.updated:ignored:unknown-session", {
               sessionID: part.sessionID,
               messageID: part.messageID,
@@ -759,6 +771,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       }
       if (event.type === "message.part.updated") {
         const record = event.properties as Record<string, unknown> | undefined;
+        if (typeof record?.delta === "string") return undefined;
         const part = record?.part as Part | undefined;
         if (part?.messageID && part.id) {
           return `message.part.updated:${part.messageID}:${part.id}`;

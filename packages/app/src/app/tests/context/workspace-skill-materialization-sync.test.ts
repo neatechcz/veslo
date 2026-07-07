@@ -1,11 +1,30 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createWorkspaceSkillMaterializationGate } from "../../context/workspace-skill-materialization.js";
+import { VesloServerError } from "../../lib/veslo-server.js";
 import { readContextSource, readWorkspaceBehaviorSources } from "./workspace-source";
 
 const behaviorSource = readWorkspaceBehaviorSources();
 const source = readContextSource("workspace-skill-materialization.ts");
 const runtimeSource = readContextSource("workspace-runtime-controller.ts");
+
+function createGate(overrides: {
+  client: unknown;
+  workspaceBusy?: () => Record<string, Record<string, { startedAt: number }>>;
+  setError?: (value: string | null) => void;
+  updateWorkspaceConnectionState?: (workspaceId: string, next: unknown) => void;
+  wsDebug?: (label: string, payload?: unknown) => void;
+}) {
+  return createWorkspaceSkillMaterializationGate({
+    workspaceBusy: overrides.workspaceBusy ?? (() => ({})),
+    vesloServerClient: () => overrides.client as any,
+    refreshSkills: async () => undefined,
+    setError: overrides.setError ?? (() => undefined),
+    updateWorkspaceConnectionState: overrides.updateWorkspaceConnectionState as any ?? (() => undefined),
+    wsDebug: overrides.wsDebug ?? (() => undefined),
+  });
+}
 
 test("workspace store defines a server-backed skill materialization sync gate", () => {
   assert.match(
@@ -65,6 +84,62 @@ test("workspace activation local restart is gated behind skill materialization s
 
   assert.notStrictEqual(syncIdx, -1, "activateWorkspace should sync skills before local runtime restart");
   assert.ok(syncIdx < restartIdx, "sync must happen before local-to-local runtime restart");
+});
+
+test("configured pending materialization sync failure reports but does not block runtime readiness", async () => {
+  const debugLabels: string[] = [];
+  const errors: Array<string | null> = [];
+  const states: Array<{ workspaceId: string; next: unknown }> = [];
+  const gate = createGate({
+    client: {
+      getWorkspaceSkillMaterializationStatus: async () => ({
+        registryConfigured: true,
+        status: "pending",
+        reloadRequired: true,
+      }),
+      syncWorkspaceSkillMaterialization: async () => {
+        throw new VesloServerError(404, "not_found", "Materialization sync route was not found");
+      },
+    },
+    setError: (value) => errors.push(value),
+    updateWorkspaceConnectionState: (workspaceId, next) => states.push({ workspaceId, next }),
+    wsDebug: (label) => debugLabels.push(label),
+  });
+
+  const ready = await gate.syncWorkspaceSkillMaterializationBeforeRuntime(
+    { id: "workspace-1", workspaceType: "local", path: "/repo" } as any,
+    { reason: "send-preflight" },
+  );
+
+  assert.equal(ready, true);
+  assert.deepEqual(debugLabels, ["skills:materialization:failed:configured-sync"]);
+  assert.deepEqual(errors, ["Materialization sync route was not found"]);
+  assert.deepEqual(states, [
+    {
+      workspaceId: "workspace-1",
+      next: { status: "error", message: "Materialization sync route was not found" },
+    },
+  ]);
+});
+
+test("missing materialization status route remains an unsupported older server skip", async () => {
+  const debugLabels: string[] = [];
+  const gate = createGate({
+    client: {
+      getWorkspaceSkillMaterializationStatus: async () => {
+        throw new VesloServerError(404, "not_found", "Not found");
+      },
+    },
+    wsDebug: (label) => debugLabels.push(label),
+  });
+
+  const ready = await gate.syncWorkspaceSkillMaterializationBeforeRuntime(
+    { id: "workspace-1", workspaceType: "local", path: "/repo" } as any,
+    { reason: "activation" },
+  );
+
+  assert.equal(ready, true);
+  assert.deepEqual(debugLabels, ["skills:materialization:skip:unsupported-server"]);
 });
 
 test("skill registry materialization outages degrade without blocking runtime start", () => {

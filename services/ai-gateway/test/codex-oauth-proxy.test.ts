@@ -876,6 +876,115 @@ test("codex_oauth proxy preserves transport failures with colliding exhaustion m
   }
 })
 
+test("codex_oauth proxy returns structured failure when assigned binding lookup throws", async () => {
+  const app = createApp({
+    proxy: {
+      gatewaySessions: {
+        async resolveSession(token: string) {
+          assert.equal(token, "gateway-access-token")
+          return {
+            token,
+            user: {
+              id: "user_gateway",
+              email: "gateway@example.test",
+            },
+          }
+        },
+      },
+      aiAccess: {
+        async getUserAiAccess(userId: string) {
+          assert.equal(userId, "user_gateway")
+          return createAiAccess()
+        },
+        async upsertUserAiAccess() {
+          throw new Error("unused")
+        },
+      },
+      credentials: {
+        async getCredentialRecordById() {
+          return null
+        },
+        async listHealthyCredentialRecordIds() {
+          return []
+        },
+        async getCredentialRecordByBindingId() {
+          assert.fail("credential lookup should not run when assigned binding lookup throws")
+        },
+        async getBindingByCredentialId(credentialId: string) {
+          assert.equal(credentialId, "cred_codex_1")
+          throw new Error("binding lookup failed")
+        },
+        async markCredentialState() {},
+      },
+      secrets: {
+        async get() {
+          assert.fail("secret lookup should not run when assigned binding lookup throws")
+        },
+      },
+      usageRepository: {
+        async recordUsage() {
+          assert.fail("usage should not be recorded when assigned binding lookup throws")
+        },
+      },
+      leaseBroker: {
+        async getOrCreateActiveLease() {
+          assert.fail("lease broker should not run when assigned binding lookup throws")
+        },
+        async handleUpstreamFailure() {
+          assert.fail("failure handler should not be reached in codex proxy test")
+        },
+      } as never,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          assert.fail("token broker should not run for codex worker route")
+        },
+      },
+      openAiTransport: {
+        async chatCompletions() {
+          assert.fail("openai transport should not be reached in codex proxy test")
+        },
+      },
+      anthropicTransport: {
+        async messages() {
+          assert.fail("anthropic transport should not be reached in codex proxy test")
+        },
+      },
+      codexOAuthTransport: {
+        async chatCompletions() {
+          assert.fail("codex transport should not run when assigned binding lookup throws")
+        },
+      },
+    } as never,
+  })
+
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await withMutedConsoleError(async () =>
+      fetch(`http://127.0.0.1:${port}/providers/codex_oauth/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer gateway-access-token",
+          "content-type": "application/json",
+          "x-veslo-session-id": "session_codex_lookup_throw",
+        },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          messages: [{ role: "user", content: "hello" }],
+        }),
+      }),
+    )
+
+    assert.equal(response.status, 502)
+    assert.deepEqual(await response.json(), { error: "proxy_request_failed" })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("codex_oauth proxy returns no eligible credential when the assigned credential is exhausted", async () => {
   const app = createApp({
     proxy: {

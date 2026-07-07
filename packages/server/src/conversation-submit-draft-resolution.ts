@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import type {
   ConversationSubmitBlockedResult,
   ConversationSubmitAttachment,
+  ConversationSubmitDebugTraceEntry,
   ConversationSubmitRequest,
   ConversationSubmitResolvedRunInput,
 } from "./conversation-submit-contract.js";
@@ -78,6 +79,25 @@ export function documentRuntimeFormatForSubmitCommand(skillName: string): Docume
   return Object.prototype.hasOwnProperty.call(DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME, key)
     ? DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME[key as keyof typeof DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME]
     : null;
+}
+
+function promptRunInput(
+  request: ConversationSubmitRequest,
+  text: string,
+  attachmentParts: AttachmentRunParts,
+  workspace?: WorkspaceInfo | null,
+): ConversationSubmitResolvedRunInput {
+  const finalText = appendLines(text, attachmentParts.pathLinesForPrompt);
+  return {
+    kind: "prompt_async",
+    text: finalText,
+    parts: promptParts({
+      text: finalText,
+      draftParts: request.draft.parts,
+      attachmentParts: attachmentParts.inlineFileParts,
+      workspace,
+    }),
+  };
 }
 
 function documentRuntimeSkillReady(
@@ -339,7 +359,9 @@ function resolveAttachmentRunParts(input: {
 
 async function resolveRunInput(input: {
   request: ConversationSubmitRequest;
+  documentRuntimeStatus?: ConversationSubmitDocumentRuntimeStatusReader;
   resolveSkillCommand?: ConversationSubmitSkillCommandResolver;
+  recordDebugTrace?: (entry: ConversationSubmitDebugTraceEntry) => void;
   workspace?: WorkspaceInfo | null;
   includeGlobal?: boolean;
 }): Promise<ConversationSubmitRunInputResolution> {
@@ -394,13 +416,34 @@ async function resolveRunInput(input: {
 
   const text = resolvedContent(request);
   if (text && input.resolveSkillCommand) {
-    const skillCommandName = (await input.resolveSkillCommand({
-      request,
-      text,
-      workspace: input.workspace ?? null,
-      includeGlobal: input.includeGlobal === true,
-    }))?.trim();
+    let skillCommandName: string | undefined;
+    try {
+      skillCommandName = (await input.resolveSkillCommand({
+        request,
+        text,
+        workspace: input.workspace ?? null,
+        includeGlobal: input.includeGlobal === true,
+      }))?.trim();
+    } catch (error) {
+      input.recordDebugTrace?.({
+        source: "conversation-submit-draft-resolution",
+        event: "implicit_skill_resolution_failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      skillCommandName = undefined;
+    }
     if (skillCommandName) {
+      const documentRuntimeFormat = documentRuntimeFormatForSubmitCommand(skillCommandName);
+      if (documentRuntimeFormat) {
+        const status = await input.documentRuntimeStatus?.();
+        const message = documentRuntimeBlockReasonForSubmitCommand(status, documentRuntimeFormat);
+        if (message) {
+          return {
+            status: "ok",
+            resolvedRunInput: promptRunInput(request, text, attachmentParts, input.workspace),
+          };
+        }
+      }
       return {
         status: "ok",
         resolvedRunInput: {
@@ -419,19 +462,9 @@ async function resolveRunInput(input: {
     }
   }
 
-  const finalText = appendLines(text, attachmentParts.pathLinesForPrompt);
   return {
     status: "ok",
-    resolvedRunInput: {
-      kind: "prompt_async",
-      text: finalText,
-      parts: promptParts({
-        text: finalText,
-        draftParts: request.draft.parts,
-        attachmentParts: attachmentParts.inlineFileParts,
-        workspace: input.workspace,
-      }),
-    },
+    resolvedRunInput: promptRunInput(request, text, attachmentParts, input.workspace),
   };
 }
 
@@ -439,6 +472,7 @@ export async function resolveConversationSubmitDraft(input: {
   request: ConversationSubmitRequest;
   documentRuntimeStatus?: ConversationSubmitDocumentRuntimeStatusReader;
   resolveSkillCommand?: ConversationSubmitSkillCommandResolver;
+  recordDebugTrace?: (entry: ConversationSubmitDebugTraceEntry) => void;
   workspace?: WorkspaceInfo | null;
   includeGlobal?: boolean;
 }): Promise<ConversationSubmitDraftResolution> {

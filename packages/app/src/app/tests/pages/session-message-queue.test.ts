@@ -73,8 +73,13 @@ test("session page owns session-local queue state and handleSendPrompt accepts s
   );
   assert.match(
     sessionSource,
-    /const sessionFlowFacade = createSessionViewFlowFacade\(\{ conversationFlow \}\);[\s\S]*const accepted = await sessionFlowFacade\.handleSendPrompt\(draft, \{\s*sendNow: options\.sendNow,\s*sendTraceId: options\.sendTraceId,\s*source: options\.source,\s*\}\);[\s\S]*return sessionSubmitResultFromAccepted\(accepted, props\.error\);/s,
-    "session send handler should delegate queue/send branching and wrap the boolean facade result for the composer",
+    /const sessionFlowFacade = createSessionViewFlowFacade\(\{ conversationFlow \}\);[\s\S]*return sessionFlowFacade\.handleSendPrompt\(draft, \{\s*sendNow: options\.sendNow,\s*sendTraceId: options\.sendTraceId,\s*source: options\.source,\s*\}\);/s,
+    "session send handler should delegate queue/send branching and return the typed facade result for the composer",
+  );
+  assert.doesNotMatch(
+    sessionSource,
+    /sessionSubmitResultFromAccepted/,
+    "session send handler must not rebuild typed composer results from a boolean facade result",
   );
   assert.match(
     flowHandleSendSource,
@@ -83,20 +88,22 @@ test("session page owns session-local queue state and handleSendPrompt accepts s
   );
 });
 
-test("running non-sendNow sends append to the queue before any immediate send path", () => {
+test("running non-sendNow sends use server queue admission", () => {
   const resolverBranch = conversationFlowSource.indexOf("if (runVisible && !sendNow)");
   const handlerStart = flowHandleSendSource.indexOf("handleSendPrompt: async (");
   const runningCase = flowHandleSendSource.indexOf('case "append-to-running-queue"', handlerStart);
-  const appendCall = flowHandleSendSource.indexOf("deps.queue.appendDraftToCurrentQueue(draft);", runningCase);
-  const returnTrue = flowHandleSendSource.indexOf("return true;", appendCall);
-  const sendNormalCase = flowHandleSendSource.indexOf('case "send-normal"', returnTrue);
+  const sendImmediateCall = flowHandleSendSource.indexOf("return controller.sendPromptImmediate(draft, {", runningCase);
+  const queueDrainReason = flowHandleSendSource.indexOf('reason: "queue-drain"', sendImmediateCall);
+  const expectedSessionKey = flowHandleSendSource.indexOf("expectedSessionKey: sessionKey", sendImmediateCall);
+  const sendNormalCase = flowHandleSendSource.indexOf('case "send-normal"', sendImmediateCall);
 
   assert.notEqual(resolverBranch, -1, "conversation-flow resolver should classify running non-sendNow sends");
   assert.notEqual(handlerStart, -1, "conversation-flow send handler should exist");
   assert.ok(runningCase > handlerStart, "handler should have a running-queue action branch");
-  assert.ok(appendCall > runningCase, "running Enter sends should append to the session queue");
-  assert.ok(returnTrue > appendCall, "queued sends should return true so the composer clears");
-  assert.ok(sendNormalCase > returnTrue, "running queued sends should return before the normal immediate send branch");
+  assert.ok(sendImmediateCall > runningCase, "running Enter sends should call the immediate submit path");
+  assert.ok(queueDrainReason > sendImmediateCall, "running Enter sends should request server queue admission");
+  assert.ok(expectedSessionKey > sendImmediateCall, "running Enter sends should target the current session queue key");
+  assert.ok(sendNormalCase > sendImmediateCall, "running queued sends should return before the normal immediate send branch");
 });
 
 test("paused queue Enter append unpauses and starts the first drain-eligible queued draft", () => {
@@ -107,7 +114,7 @@ test("paused queue Enter append unpauses and starts the first drain-eligible que
   );
   assert.match(
     flowHandleSendSource,
-    /case "append-to-paused-queue-and-drain": \{\s*const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*deps\.queue\.appendDraftToCurrentQueue\(draft\);\s*deps\.queue\.setQueuePausedForSessionKey\(sessionKey, false\);\s*void controller\.drainNextQueuedDraft\("normal", sessionKey\);\s*return true;\s*\}/s,
+    /case "append-to-paused-queue-and-drain": \{\s*const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*deps\.queue\.appendDraftToCurrentQueue\(draft\);\s*deps\.queue\.setQueuePausedForSessionKey\(sessionKey, false\);\s*void controller\.drainNextQueuedDraft\("normal", sessionKey\);\s*return localQueuedResult\("local_queue_paused_append"\);\s*\}/s,
     "plain Enter while paused should append, unpause, and start draining the first queued item in the flow controller",
   );
 });
@@ -118,24 +125,24 @@ test("idle Enter appends behind an existing queue instead of sending immediately
   const queuedCase = flowHandleSendSource.indexOf('case "append-to-existing-queue-and-drain-if-idle"', handlerStart);
   const appendCall = flowHandleSendSource.indexOf("deps.queue.appendDraftToCurrentQueue(draft);", queuedCase);
   const drainCall = flowHandleSendSource.indexOf('void controller.drainNextQueuedDraft("normal", sessionKey);', appendCall);
-  const returnTrue = flowHandleSendSource.indexOf("return true;", drainCall);
-  const sendNowBranch = flowHandleSendSource.indexOf('case "send-now"', returnTrue);
-  const immediateNormal = flowHandleSendSource.indexOf('case "send-normal"', returnTrue);
+  const returnQueued = flowHandleSendSource.indexOf('return localQueuedResult("local_queue_existing_append");', drainCall);
+  const sendNowBranch = flowHandleSendSource.indexOf('case "send-now"', returnQueued);
+  const immediateNormal = flowHandleSendSource.indexOf('case "send-normal"', returnQueued);
 
   assert.notEqual(resolverBranch, -1, "conversation-flow resolver should classify existing queued sends");
   assert.notEqual(handlerStart, -1, "conversation-flow send handler should exist");
   assert.ok(queuedCase > handlerStart, "plain Enter should branch when the queue already has drafts");
   assert.ok(appendCall > queuedCase, "idle queued Enter should append the new draft behind the existing queue");
   assert.ok(drainCall > appendCall, "idle queued Enter should make sure the first queued item starts draining");
-  assert.ok(returnTrue > drainCall, "idle queued Enter should clear the composer without sending the new draft immediately");
-  assert.ok(sendNowBranch > returnTrue, "send-now should still bypass the queue after the plain Enter queue branch");
-  assert.ok(immediateNormal > returnTrue, "normal immediate send should only be reached after the existing-queue branch");
+  assert.ok(returnQueued > drainCall, "idle queued Enter should return a typed queued result without sending the new draft immediately");
+  assert.ok(sendNowBranch > returnQueued, "send-now should still bypass the queue after the plain Enter queue branch");
+  assert.ok(immediateNormal > returnQueued, "normal immediate send should only be reached after the existing-queue branch");
 });
 
 test("paused send-now unpauses only after accepted immediate send", () => {
   assert.match(
     flowHandleSendSource,
-    /const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*const wasPaused = deps\.queue\.queuePausedForSessionKey\(sessionKey\);\s*const accepted = await controller\.sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*sendTraceId: options\.sendTraceId,\s*source: options\.source,\s*\}\);\s*if \(accepted && wasPaused\) \{\s*deps\.queue\.setQueuePausedForSessionKey\(sessionKey, false\);\s*\}\s*return accepted;/s,
+    /const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*const wasPaused = deps\.queue\.queuePausedForSessionKey\(sessionKey\);\s*const submitResult = await controller\.sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*sendTraceId: options\.sendTraceId,\s*source: options\.source,\s*\}\);\s*if \(sessionSubmitWasAccepted\(submitResult\) && wasPaused\) \{\s*deps\.queue\.setQueuePausedForSessionKey\(sessionKey, false\);\s*\}\s*return submitResult;/s,
     "send-now while paused should unpause only after the immediate send is accepted and should preserve composer source",
   );
 });
@@ -193,7 +200,7 @@ test("queued drain uses a stable session key and guards stale navigation", () =>
 
   assert.match(
     flowDrainSource,
-    /const accepted = await controller\.sendPromptImmediate\(start\.item\.draft, \{[\s\S]*reason,[\s\S]*expectedSessionKey: drainSessionKey,[\s\S]*\}\);/,
+    /const submitResult = await controller\.sendPromptImmediate\(start\.item\.draft, \{[\s\S]*reason,[\s\S]*expectedSessionKey: drainSessionKey,[\s\S]*\}\);/,
     "queue drains should pass their captured session key to the immediate send path",
   );
 
@@ -205,7 +212,7 @@ test("queued drain uses a stable session key and guards stale navigation", () =>
 
   assert.match(
     flowSendImmediateSource,
-    /if \([\s\S]*options\.expectedSessionKey &&[\s\S]*deps\.sessionKeys\.currentSessionQueueKey\(\) !== options\.expectedSessionKey[\s\S]*\) \{\s*if \(showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}\s*return accepted;\s*\}/,
+    /if \([\s\S]*options\.expectedSessionKey &&[\s\S]*deps\.sessionKeys\.currentSessionQueueKey\(\) !== options\.expectedSessionKey[\s\S]*\) \{\s*if \(showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}\s*return submitResult;\s*\}/,
     "stale queue sends should not start run UI for the newly selected session",
   );
 });
@@ -301,7 +308,7 @@ test("accepted first pending submit captures and remaps the pending queue key", 
 
   assert.match(
     flowSendImmediateSource,
-    /const handoffScope = resolvePendingSessionHandoffScope\(\{[\s\S]*baseSessionKey,[\s\S]*targetSessionId,[\s\S]*pendingSessionQueueKey: deps\.sessionKeys\.pendingSessionQueueKey\(\),[\s\S]*createPendingSessionInstanceId: deps\.identity\.createPendingSessionInstanceId,[\s\S]*\}\);[\s\S]*pendingSessionBaseKeyBeforeHandoff,[\s\S]*sessionKey,[\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*= handoffScope;[\s\S]*deps\.pendingHandoff\.setPendingQueueKeyAwaitingSessionIdForBaseKey\([\s\S]*pendingSessionBaseKeyBeforeHandoff,[\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*\);[\s\S]*const accepted = await \(options\.replaceMessageId[\s\S]*if \(accepted && pendingSessionKeyBeforeHandoff && materializedSessionIdFromHandoff\) \{[\s\S]*materializePendingHandoffToSession\(\{[\s\S]*pendingSessionKey: pendingSessionKeyBeforeHandoff,[\s\S]*sessionId: materializedSessionIdFromHandoff,[\s\S]*clientMessageId,[\s\S]*\}\);/s,
+    /const handoffScope = resolvePendingSessionHandoffScope\(\{[\s\S]*baseSessionKey,[\s\S]*targetSessionId,[\s\S]*pendingSessionQueueKey: deps\.sessionKeys\.pendingSessionQueueKey\(\),[\s\S]*createPendingSessionInstanceId: deps\.identity\.createPendingSessionInstanceId,[\s\S]*\}\);[\s\S]*pendingSessionBaseKeyBeforeHandoff,[\s\S]*sessionKey,[\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*= handoffScope;[\s\S]*deps\.pendingHandoff\.setPendingQueueKeyAwaitingSessionIdForBaseKey\([\s\S]*pendingSessionBaseKeyBeforeHandoff,[\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*\);[\s\S]*const submitResult = await \(options\.replaceMessageId[\s\S]*if \(pendingSessionKeyBeforeHandoff && materializedSessionIdFromHandoff\) \{[\s\S]*materializePendingHandoffToSession\(\{[\s\S]*pendingSessionKey: pendingSessionKeyBeforeHandoff,[\s\S]*sessionId: materializedSessionIdFromHandoff,[\s\S]*clientMessageId,[\s\S]*\}\);/s,
     "sendPromptImmediate should capture the pending queue key before await and remap it after an accepted first submit only from the captured handoff",
   );
   assert.doesNotMatch(
@@ -468,7 +475,7 @@ test("queued edit lifecycle restores editing items and drains idle saves", () =>
 test("edited queued send-now marks the edited item sending before awaiting handoff", () => {
   assert.match(
     flowHandleSendSource,
-    /const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*const wasPaused = deps\.queue\.queuePausedForSessionKey\(sessionKey\);\s*deps\.queue\.updateQueueForSessionKey\(sessionKey, \(queue\) =>\s*markQueuedDraftSending\(updateQueuedDraft\(queue, editingId, draft\), editingId\),\s*\);\s*if \(deps\.sessionKeys\.currentSessionQueueKey\(\) === sessionKey\) \{\s*deps\.queue\.setEditingQueuedDraftId\(null\);\s*deps\.composer\.setComposerDraft\(createEmptyComposerDraft\(draft\.mode\)\);\s*\}\s*const accepted = await controller\.sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*restoreDraftOnFailure: false,\s*sendTraceId: options\.sendTraceId,\s*source: options\.source,\s*\}\);/s,
+    /const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*const wasPaused = deps\.queue\.queuePausedForSessionKey\(sessionKey\);\s*deps\.queue\.updateQueueForSessionKey\(sessionKey, \(queue\) =>\s*markQueuedDraftSending\(updateQueuedDraft\(queue, editingId, draft\), editingId\),\s*\);\s*if \(deps\.sessionKeys\.currentSessionQueueKey\(\) === sessionKey\) \{\s*deps\.queue\.setEditingQueuedDraftId\(null\);\s*deps\.composer\.setComposerDraft\(createEmptyComposerDraft\(draft\.mode\)\);\s*\}\s*const submitResult = await controller\.sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*restoreDraftOnFailure: false,\s*sendTraceId: options\.sendTraceId,\s*source: options\.source,\s*\}\);/s,
     "edited queued send-now should persist the edited draft into a sending queue item and release the composer before awaiting handoff",
   );
 });
@@ -476,7 +483,7 @@ test("edited queued send-now marks the edited item sending before awaiting hando
 test("edited queued send-now marks the edited item error when handoff is rejected", () => {
   assert.match(
     flowHandleSendSource,
-    /const accepted = await controller\.sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*restoreDraftOnFailure: false,\s*sendTraceId: options\.sendTraceId,\s*source: options\.source,\s*\}\);\s*const resultSessionKey = deps\.queue\.resolveQueueKeyForQueuedDraft\(sessionKey, editingId\);\s*if \(!accepted\) \{\s*deps\.queue\.updateQueueForSessionKey\(resultSessionKey, \(queue\) =>\s*markQueuedDraftError\(\s*queue,\s*editingId,\s*deps\.runtime\.error\(\) \?\? deps\.feedback\.tr\("session\.connect_server_to_attach"\),\s*\),\s*\);\s*return false;\s*\}\s*deps\.queue\.updateQueueForSessionKey\(resultSessionKey, \(queue\) => removeQueuedDraft\(queue, editingId\)\);[\s\S]*if \(accepted && wasPaused\) \{\s*deps\.queue\.setQueuePausedForSessionKey\(sessionKey, false\);\s*\}/s,
+    /const submitResult = await controller\.sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*restoreDraftOnFailure: false,\s*sendTraceId: options\.sendTraceId,\s*source: options\.source,\s*\}\);\s*const resultSessionKey = deps\.queue\.resolveQueueKeyForQueuedDraft\(sessionKey, editingId\);\s*if \(!sessionSubmitWasAccepted\(submitResult\)\) \{\s*deps\.queue\.updateQueueForSessionKey\(resultSessionKey, \(queue\) =>\s*markQueuedDraftError\(\s*queue,\s*editingId,\s*submitResult\.message \?\? deps\.runtime\.error\(\) \?\? deps\.feedback\.tr\("session\.connect_server_to_attach"\),\s*\),\s*\);\s*return submitResult;\s*\}\s*deps\.queue\.updateQueueForSessionKey\(resultSessionKey, \(queue\) => removeQueuedDraft\(queue, editingId\)\);[\s\S]*if \(wasPaused\) \{\s*deps\.queue\.setQueuePausedForSessionKey\(sessionKey, false\);\s*\}/s,
     "edited queued send-now should update whichever queue contains the edited item after a pending remap",
   );
 });

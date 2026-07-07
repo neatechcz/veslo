@@ -69,11 +69,11 @@ test("sendPrompt blocks when managed bootstrap readiness is unavailable before r
   );
 });
 
-test("managed AI bootstrap waits for runtime gateway authorization before writing managed config", () => {
+test("managed AI bootstrap writes config once local provider routing is available", () => {
   assert.match(
     runtimeConfigSource,
-    /const managedProfile = deps\.managedAiAccess\(\);[\s\S]*?const routing = buildProviderRoutingContext\(workspace, workspaceId, root\);[\s\S]*?const gatewayAccessToken = deps\.managedAiGatewayAccessToken\(\) \|\| deps\.denGatewayAccessToken\(\);[\s\S]*?const providerRoutingReady = Boolean\(\s*routing\.providerRoutingTarget\?\.serverClientToken && gatewayAccessToken,\s*\);/s,
-    "managed AI config writes should wait for the managed gateway token or DEN fallback before treating provider routing as ready",
+    /const managedProfile = deps\.managedAiAccess\(\);[\s\S]*?const routing = buildProviderRoutingContext\(workspace, workspaceId, root\);[\s\S]*?const gatewayAccessToken = deps\.managedAiGatewayAccessToken\(\) \|\| deps\.denGatewayAccessToken\(\);[\s\S]*?const providerRoutingReady = Boolean\(routing\.providerRoutingTarget\?\.serverClientToken\);/s,
+    "managed AI config writes should require local provider routing, while runtime authorization is handled by send preflight",
   );
 });
 
@@ -182,7 +182,7 @@ test("managed AI bootstrap primes runtime authorization after config validation"
   );
   assert.match(
     runtimeConfigSource,
-    /const ensureManagedAiRuntimeAuthorizationForSend = async[\s\S]*deps\.createVesloServerClient\(\{[\s\S]*baseUrl: routing\.providerRoutingTarget\.baseUrl,[\s\S]*token: routing\.providerRoutingTarget\.serverClientToken,[\s\S]*\}\);[\s\S]*runtimeClient\.getMyAiAccess\(userToken\)/,
+    /const ensureManagedAiRuntimeAuthorizationForSend = async[\s\S]*const routing = buildProviderRoutingContext[\s\S]*const providerRoutingTarget = routing\.providerRoutingTarget;[\s\S]*deps\.createVesloServerClient\(\{[\s\S]*baseUrl: providerRoutingTarget\.baseUrl,[\s\S]*token: providerRoutingTarget\.serverClientToken,[\s\S]*\}\);[\s\S]*runtimeClient\.getMyAiAccess\(userToken\)/,
     "app should prime the same local Veslo server runtime used by managed provider routing",
   );
   assert.match(

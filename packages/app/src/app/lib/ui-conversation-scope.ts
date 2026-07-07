@@ -8,6 +8,10 @@ export type UiConversationKeyParts = {
   workspaceId: string;
   kind: UiConversationKeyKind;
   id: string;
+  workspaceRoot?: string;
+  directory?: string;
+  conversationId?: string;
+  opencodeSessionId?: string;
 };
 
 export type UiConversationRef = {
@@ -25,6 +29,7 @@ export type UiScopeToken = UiConversationRef & {
 };
 
 const KEY_PREFIX = "ws";
+const SCOPED_KEY_PREFIX = "ws2";
 const DEFAULT_WORKSPACE_ID = "default";
 const DEFAULT_PENDING_ID = "active";
 
@@ -42,11 +47,31 @@ const decodeKeyPart = (value: string) => {
 
 export function createUiConversationKey(input: {
   workspaceId?: string | null;
+  workspaceRoot?: string | null;
+  directory?: string | null;
+  conversationId?: string | null;
+  opencodeSessionId?: string | null;
   kind: UiConversationKeyKind;
   id?: string | null;
 }) {
   const workspaceId = normalize(input.workspaceId) || DEFAULT_WORKSPACE_ID;
   const id = normalize(input.id) || DEFAULT_PENDING_ID;
+  const workspaceRoot = normalize(input.workspaceRoot);
+  const directory = normalize(input.directory);
+  const conversationId = normalize(input.conversationId);
+  const opencodeSessionId = normalize(input.opencodeSessionId);
+  if (workspaceRoot || directory || conversationId || opencodeSessionId) {
+    return [
+      SCOPED_KEY_PREFIX,
+      encodeKeyPart(workspaceId),
+      input.kind,
+      encodeKeyPart(id),
+      encodeKeyPart(workspaceRoot),
+      encodeKeyPart(directory),
+      encodeKeyPart(conversationId),
+      encodeKeyPart(opencodeSessionId),
+    ].join(":");
+  }
   return [
     KEY_PREFIX,
     encodeKeyPart(workspaceId),
@@ -59,7 +84,9 @@ export function parseUiConversationKey(value: string | null | undefined): UiConv
   const key = normalize(value);
   if (!key) return null;
   const parts = key.split(":");
-  if (parts.length !== 4 || parts[0] !== KEY_PREFIX) return null;
+  if (parts[0] !== KEY_PREFIX && parts[0] !== SCOPED_KEY_PREFIX) return null;
+  if (parts[0] === KEY_PREFIX && parts.length !== 4) return null;
+  if (parts[0] === SCOPED_KEY_PREFIX && parts.length !== 8) return null;
   const kind = parts[2] as UiConversationKeyKind;
   if (
     kind !== "session" &&
@@ -73,6 +100,14 @@ export function parseUiConversationKey(value: string | null | undefined): UiConv
     workspaceId: decodeKeyPart(parts[1] ?? ""),
     kind,
     id: decodeKeyPart(parts[3] ?? ""),
+    ...(parts[0] === SCOPED_KEY_PREFIX
+      ? {
+          workspaceRoot: decodeKeyPart(parts[4] ?? ""),
+          directory: decodeKeyPart(parts[5] ?? ""),
+          conversationId: decodeKeyPart(parts[6] ?? ""),
+          opencodeSessionId: decodeKeyPart(parts[7] ?? ""),
+        }
+      : {}),
   };
 }
 
@@ -97,6 +132,10 @@ export function createUiScopeToken(
     normalize(ref.key) ||
     createUiConversationKey({
       workspaceId,
+      workspaceRoot: ref.workspaceRoot,
+      directory: ref.directory,
+      conversationId: ref.conversationId,
+      opencodeSessionId: ref.opencodeSessionId,
       kind: sessionId ? "session" : "pending-workspace",
       id: sessionId || DEFAULT_PENDING_ID,
     });

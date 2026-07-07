@@ -65,7 +65,7 @@ test("successful pending draft sends consume the pending draft only after the pr
   );
   assert.match(
     source,
-    /deps\.emitLiveTranscriptPolicyEvent\(\{[\s\S]*reason: "sendPrompt:success",[\s\S]*\}\);\s*await consumePendingDraftAfterAcceptedSend\(true\);[\s\S]*return true;/s,
+    /deps\.recordSendTrace\("sendPrompt:server-submit-first-success"[\s\S]*deps\.emitLiveTranscriptPolicyEvent\(\{[\s\S]*reason: "sendPrompt:success",[\s\S]*await consumePendingDraftAfterAcceptedSend\(true\);[\s\S]*return sessionSubmitResultFromConversationSubmit\(serverFirstSubmitResult\);/s,
     "first-session server submit success should consume pending drafts after the typed success result",
   );
 });

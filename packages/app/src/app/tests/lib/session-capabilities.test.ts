@@ -61,8 +61,33 @@ test("buildSessionSkillRows shows the effective workspace skill over the global 
     },
   ]);
 
-  assert.deepEqual(rows.map((row) => `${row.name}:${row.scope}:${row.description}`), [
-    "research:workspace:Workspace research",
+  assert.deepEqual(rows.map((row) => `${row.name}:${row.scope}:${row.description}:${row.enabled}`), [
+    "research:workspace:Workspace research:true",
+  ]);
+});
+
+test("buildSessionSkillRows preserves disabled skill state and inherited scopes", () => {
+  const rows = buildSessionSkillRows([
+    {
+      name: "veslo-automations",
+      status: "global",
+      globalInstance: {
+        id: "platform:veslo-automations",
+        name: "veslo-automations",
+        scope: "platform",
+        path: "/managed/veslo-automations/SKILL.md",
+        source: "opencode",
+        enabled: false,
+        disabledReason: "user",
+        readable: false,
+        writable: false,
+      },
+      workspaceInstances: [],
+    },
+  ]);
+
+  assert.deepEqual(rows.map((row) => `${row.name}:${row.scope}:${row.enabled}:${row.disabledReason}`), [
+    "veslo-automations:global:false:user",
   ]);
 });
 
@@ -200,11 +225,11 @@ test("resolveSessionCapabilitySessionSource can use a selected id with a persist
   assert.deepEqual(source?.session, { id: "sess-a", directory: "/workspaces/a" });
 });
 
-test("app session capabilities load local skills from the shared inventory surface", () => {
+test("app session capabilities project local skills from the shared inventory surface without refreshing it", () => {
   const source = readFileSync(new URL("../../context/session-capabilities-store.ts", import.meta.url), "utf8");
 
-  assert.match(source, /deps\.refreshSkillInventory\(\)/);
   assert.match(source, /filterSessionSkillInventoryByScope\(deps\.skillInventory\(\),/);
+  assert.doesNotMatch(source, /refreshSkillInventory/);
   assert.doesNotMatch(source, /listLocalSkillsScoped\(directory,\s*"workspace"\)/);
 });
 
@@ -220,6 +245,7 @@ test("session capabilities cache loads by selected chat directory", async () => 
           name: `skill:${scope.directory}`,
           scope: "workspace",
           path: `${scope.directory}/SKILL.md`,
+          enabled: true,
         },
       ],
       mcp: [
@@ -269,6 +295,7 @@ test("session capabilities cache supports force reload and clear", async () => {
           name: `skill:${calls}`,
           scope: "workspace",
           path: `${scope.directory}/SKILL.md`,
+          enabled: true,
         },
       ],
       mcp: [],
@@ -297,6 +324,7 @@ test("session capabilities cache ignores stale same-directory writes", async () 
                 name: `skill:${index}`,
                 scope: "workspace",
                 path: `${scope.directory}/SKILL.md`,
+                enabled: true,
               },
             ],
             mcp: [],

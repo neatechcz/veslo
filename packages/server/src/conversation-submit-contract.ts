@@ -82,6 +82,7 @@ export type ConversationSubmitDryRunResult = {
     opencodeSessionId?: string | null;
     pendingClientSessionId?: string | null;
   };
+  debugTrace?: ConversationSubmitDebugTraceEntry[];
 };
 
 export type ConversationSubmitMaterializedResult = {
@@ -142,6 +143,8 @@ export type ConversationSubmitFailedResult = {
   workspaceId?: string;
   conversationId?: string;
   opencodeSessionId?: string;
+  queueItemId?: string;
+  reservedRunId?: string;
   clientMessageId?: string;
   pendingClientSessionId?: string | null;
   materializedSession?: unknown | null;

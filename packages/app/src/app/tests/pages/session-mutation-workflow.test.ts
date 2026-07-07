@@ -3,8 +3,12 @@ import test from "node:test";
 
 import type { Session } from "@opencode-ai/sdk/v2/client";
 
-import type { MessageWithParts } from "../../types.js";
+import type { ComposerDraft, ComposerPart, MessageWithParts } from "../../types.js";
 import { createSessionMutationWorkflow } from "../../pages/session-mutation-workflow.js";
+import {
+  sessionSubmitAcceptedResult,
+  type SessionSubmitResult,
+} from "../../lib/session-send-contract.js";
 
 function userMessage(id: string, text: string): MessageWithParts {
   return {
@@ -36,6 +40,33 @@ function assistantMessage(id: string): MessageWithParts {
   };
 }
 
+const replacementDraft: ComposerDraft = {
+  mode: "prompt",
+  text: "edited prompt",
+  resolvedText: "edited prompt",
+  parts: [{ type: "text", text: "edited prompt" } satisfies ComposerPart],
+  attachments: [],
+};
+
+function terminalReplacementResult(
+  status: "blocked" | "failed",
+  code: string,
+  message: string,
+  draftDisposition: "restore" | "keep" | "mark-failed",
+) {
+  return {
+    status,
+    code,
+    message,
+    workspaceId: "ws_1",
+    conversationId: "conv_1",
+    opencodeSessionId: "open_1",
+    clientMessageId: "client_replace_1",
+    draftDisposition,
+    recoverable: status === "blocked",
+  };
+}
+
 function createHarness(overrides: Record<string, unknown> = {}) {
   let selectedSessionId: string | null = "ses_1";
   let sessions: Session[] = [{ id: "ses_1", title: "Session", revert: null } as never];
@@ -46,7 +77,7 @@ function createHarness(overrides: Record<string, unknown> = {}) {
     lastPromptSent: () => "retry prompt",
     sendPrompt: async (...args: unknown[]) => {
       calls.push({ name: "sendPrompt", args });
-      return true;
+      return sessionSubmitAcceptedResult();
     },
     createClientMessageId: () => "client_msg_1",
     selectedSessionId: () => selectedSessionId,
@@ -351,18 +382,14 @@ test("session mutation workflow replaces a user message through server-owned sub
     },
   });
 
-  const accepted = await harness.workflow.replaceUserMessage("msg_1", {
-    mode: "prompt",
-    text: "edited prompt",
-    resolvedText: "edited prompt",
-    parts: [{ type: "text", text: "edited prompt" }],
-    attachments: [],
-  }, {
+  const accepted = await harness.workflow.replaceUserMessage("msg_1", replacementDraft, {
     clientMessageId: "client_replace_1",
     origin: "session:replacement",
   });
 
-  assert.equal(accepted, true);
+  assert.equal(accepted.accepted, true);
+  assert.equal(accepted.status, "submitted");
+  assert.equal(accepted.runId, "run_replace");
   assert.equal(submitCalls.length, 1);
   assert.deepEqual(submitCalls.map(({ workspaceId, directory, traceId }) => ({ workspaceId, directory, traceId })), [{
     workspaceId: "ws_1",
@@ -396,6 +423,68 @@ test("session mutation workflow replaces a user message through server-owned sub
   assert.ok(harness.calls.some((call) => call.name === "recordSendTrace" && call.args[0] === "replaceUserMessage:server-submit-success"));
   assert.equal(harness.calls.some((call) => call.name === "revertSession"), false);
   assert.equal(harness.calls.some((call) => call.name === "sendPrompt"), false);
+});
+
+test("session mutation workflow returns typed replacement server blocked and failed states", async () => {
+  const cases: Array<{
+    status: "blocked" | "failed";
+    code: string;
+    message: string;
+    draftDisposition: "restore" | "keep" | "mark-failed";
+  }> = [
+    {
+      status: "blocked",
+      code: "replacement_state_unavailable",
+      message: "Replacement state is unavailable.",
+      draftDisposition: "restore",
+    },
+    {
+      status: "failed",
+      code: "replacement_submit_failed_restore_failed",
+      message: "Replacement submit failed and restore failed.",
+      draftDisposition: "mark-failed",
+    },
+  ];
+
+  for (const item of cases) {
+    const harness = createHarness({
+      prepareSendRuntimeForSend: async () => {
+        throw new Error("legacy runtime prep should not run for typed server replacement result");
+      },
+      revertSession: async () => {
+        throw new Error("legacy app revert should not run for typed server replacement result");
+      },
+      sendPrompt: async () => {
+        throw new Error("legacy app send should not run for typed server replacement result");
+      },
+      resolveSelectedSessionBrowseScope: () => ({
+        workspaceId: "ws_1",
+        workspaceRoot: "/repo",
+        directory: "/repo",
+        conversationId: "conv_1",
+        opencodeSessionId: "open_1",
+      }),
+      submitConversationFromVesloWriteApi: async () =>
+        terminalReplacementResult(item.status, item.code, item.message, item.draftDisposition),
+    });
+
+    const result: SessionSubmitResult = await harness.workflow.replaceUserMessage("msg_1", replacementDraft, {
+      clientMessageId: "client_replace_1",
+      origin: "session:replacement",
+    });
+
+    assert.equal(result.accepted, false);
+    assert.equal(result.status, item.status);
+    assert.equal(result.code, item.code);
+    assert.equal(result.message, item.message);
+    assert.equal(result.draftDisposition, item.draftDisposition);
+    assert.equal(result.conversationId, "conv_1");
+    assert.ok(
+      harness.calls.some((call) => call.name === "recordSendTrace" && call.args[0] === `replaceUserMessage:server-submit-${item.status}`),
+    );
+    assert.equal(harness.calls.some((call) => call.name === "revertSession"), false);
+    assert.equal(harness.calls.some((call) => call.name === "sendPrompt"), false);
+  }
 });
 
 test("session mutation workflow lists the built-in compact command when backend commands omit it", async () => {

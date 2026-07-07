@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "packageId": "veslo-document-runtime",
+  "platform": "windows-native-x64",
+  "source": "preverified-network-facts-2026-07-07",
+  "lockFile": "windows-native-x64.lock.json",
+  "notes": [
+    "Download URLs and pinned byte sizes were verified outside the Codex exec sandbox on 2026-07-07.",
+    "SHA-256 values are generated trust-on-first-use into windows-native-x64.lock.json on the first network-capable assemble run, then verified on later runs.",
+    "Liberation fonts are deferred because the upstream GitHub releases do not publish a reliable prebuilt binary font asset."
+  ],
+  "sources": [
+    {
+      "id": "libreoffice",
+      "version": "26.2.4",
+      "url": "https://download.documentfoundation.org/libreoffice/stable/26.2.4/win/x86_64/LibreOffice_26.2.4_Win_x86-64.msi",
+      "sizeBytes": 372539392,
+      "license": "MPL-2.0",
+      "kind": "msi"
+    },
+    {
+      "id": "poppler",
+      "version": "v26.02.0-0",
+      "url": "https://github.com/oschwartz10612/poppler-windows/releases/download/v26.02.0-0/Release-26.02.0-0.zip",
+      "sizeBytes": 16107283,
+      "license": "GPL-2.0-or-later",
+      "kind": "zip"
+    },
+    {
+      "id": "pandoc",
+      "version": "3.10",
+      "url": "https://github.com/jgm/pandoc/releases/download/3.10/pandoc-3.10-windows-x86_64.zip",
+      "sizeBytes": null,
+      "license": "GPL-2.0-or-later",
+      "kind": "zip"
+    },
+    {
+      "id": "qpdf",
+      "version": "v12.3.2",
+      "url": "https://github.com/qpdf/qpdf/releases/download/v12.3.2/qpdf-12.3.2-msvc64.zip",
+      "sizeBytes": null,
+      "license": "Apache-2.0",
+      "kind": "zip"
+    },
+    {
+      "id": "python",
+      "version": "cpython-3.11.15+20260623",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260623/cpython-3.11.15%2B20260623-x86_64-pc-windows-msvc-install_only.tar.gz",
+      "sizeBytes": 48412195,
+      "license": "Python-2.0",
+      "kind": "tar.gz"
+    },
+    {
+      "id": "node",
+      "version": "v22.23.1",
+      "url": "https://nodejs.org/dist/v22.23.1/node-v22.23.1-win-x64.zip",
+      "sizeBytes": 35682836,
+      "license": "MIT",
+      "kind": "zip"
+    },
+    {
+      "id": "dejavu-fonts",
+      "version": "version_2_37",
+      "url": "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.zip",
+      "sizeBytes": 5522795,
+      "license": "Bitstream-Vera AND LicenseRef-DejaVu",
+      "kind": "zip"
+    },
+    {
+      "id": "noto-sans",
+      "version": "NotoSans-v2.015",
+      "url": "https://github.com/notofonts/latin-greek-cyrillic/releases/download/NotoSans-v2.015/NotoSans-v2.015.zip",
+      "sizeBytes": 117491253,
+      "license": "OFL-1.1",
+      "kind": "zip"
+    },
+    {
+      "id": "liberation-fonts",
+      "version": null,
+      "url": null,
+      "sizeBytes": null,
+      "license": "OFL-1.1",
+      "kind": "deferred",
+      "status": "deferred",
+      "reason": "Upstream GitHub releases do not publish a reliable prebuilt binary font asset; building from .sfd source would require adding FontForge to this runtime assembly pipeline."
+    }
+  ]
+}

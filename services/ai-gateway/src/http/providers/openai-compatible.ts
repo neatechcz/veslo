@@ -17,6 +17,7 @@ import {
   recordProviderProxyFailureAlert,
 } from "./proxy-failure-alert.js";
 import { normalizeGatewaySessionId } from "./session-id.js";
+import { asyncHandler } from "../async-handler.js";
 import type { ProxyDependencies } from "../proxy.js";
 
 export function createOpenAiCompatibleProxyRouter(
@@ -27,7 +28,7 @@ export function createOpenAiCompatibleProxyRouter(
 ) {
   const router = Router();
 
-  router.post("/v1/chat/completions", async (req, res) => {
+  router.post("/v1/chat/completions", asyncHandler(async (req, res) => {
     const rawSessionId = getHeaderAsString(req.header("x-veslo-session-id"));
     if (!rawSessionId) {
       res.status(400).json({ error: "missing_session_id" });
@@ -129,7 +130,7 @@ export function createOpenAiCompatibleProxyRouter(
       console.error("proxy_request_failed", error);
       res.status(502).json({ error: "proxy_request_failed" });
     }
-  });
+  }));
 
   return router;
 

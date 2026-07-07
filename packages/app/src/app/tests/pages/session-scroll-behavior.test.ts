@@ -43,7 +43,7 @@ test("session send flow starts optimistic run UI before prompt handoff resolves"
   const optimisticSet = flowSendImmediateSource.indexOf("createPendingSubmittedDraft({");
   const startRun = flowSendImmediateSource.indexOf("deps.runState.startRun(sessionKey);", optimisticSet);
   const sendCall = flowSendImmediateSource.indexOf("deps.transport.sendPromptAsync(draft, promptSendOptions)", startRun);
-  const rejectedBranch = flowSendImmediateSource.indexOf("if (!accepted) {", sendCall);
+  const rejectedBranch = flowSendImmediateSource.indexOf("if (!submitResult.accepted) {", sendCall);
   const markFailed = flowSendImmediateSource.indexOf("markMatchingPendingSubmitFailed(errorMessage);", rejectedBranch);
   const resetRun = flowSendImmediateSource.indexOf("deps.runState.resetRunState(runStateSessionKeyForHandoffFailure());", rejectedBranch);
   const failedBranchEnd = flowSendImmediateSource.indexOf("deps.feedback.setToastMessage(deps.runtime.error() ?? deps.feedback.tr(\"session.connect_server_to_attach\"));", rejectedBranch);
@@ -178,7 +178,7 @@ test("accepted handoff does not clear unrelated failed pending submitted message
 
   assert.match(
     acceptedBranch,
-    /if \(showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}\s*return accepted;/,
+    /if \(showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}\s*return submitResult;/,
     "accepted stale-navigation handoff should only clear this send's pending submit",
   );
 

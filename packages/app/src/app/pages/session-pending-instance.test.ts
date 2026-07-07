@@ -210,9 +210,9 @@ test("failed first-send run reset uses the handoff-aware key in every failure br
     "AI-access failures should reset the pending or materialized handoff run key",
   );
 
-  const rejectedStart = flowSendImmediateSource.indexOf("if (!accepted) {", tryStart);
+  const rejectedStart = flowSendImmediateSource.indexOf("if (!submitResult.accepted) {", tryStart);
   const acceptedStart = flowSendImmediateSource.indexOf(
-    "if (accepted && pendingSessionKeyBeforeHandoff && materializedSessionIdFromHandoff)",
+    "if (pendingSessionKeyBeforeHandoff && materializedSessionIdFromHandoff)",
     rejectedStart,
   );
   assert.notEqual(rejectedStart, -1, "rejected send branch should exist");
@@ -372,9 +372,9 @@ test("failed first-send optimistic drafts keep the captured pending instance sel
   assert.match(aiAccessFailure, /finishPendingSessionHandoffFailure\(\);/);
   assert.doesNotMatch(aiAccessFailure, /setPendingQueueKeyAwaitingSessionId\(null\);/);
 
-  const rejectedStart = flowSendImmediateSource.indexOf("if (!accepted) {", tryStart);
+  const rejectedStart = flowSendImmediateSource.indexOf("if (!submitResult.accepted) {", tryStart);
   const acceptedStart = flowSendImmediateSource.indexOf(
-    "if (accepted && pendingSessionKeyBeforeHandoff && materializedSessionIdFromHandoff)",
+    "if (pendingSessionKeyBeforeHandoff && materializedSessionIdFromHandoff)",
     rejectedStart,
   );
   assert.notEqual(rejectedStart, -1, "rejected send branch should exist");
@@ -452,7 +452,7 @@ test("pending handoffs materialize from the app callback with captured keys", ()
 
   assert.match(
     source,
-    /sendPromptAsync: \(\s*draft: ComposerDraft,\s*options: SessionSendOptionsBase & \{[\s\S]*targetSessionId\?: string \| null;[\s\S]*onMaterializedSessionId\?: \(handoff: MaterializedSessionHandoff\) => void;[\s\S]*pendingSession\?: PendingSidebarSessionMetadata \| null;[\s\S]*\},\s*\) => Promise<boolean>;/,
+    /sendPromptAsync: \(\s*draft: ComposerDraft,\s*options: SessionSendOptionsBase & \{[\s\S]*targetSessionId\?: string \| null;[\s\S]*onMaterializedSessionId\?: \(handoff: MaterializedSessionHandoff\) => void;[\s\S]*pendingSession\?: PendingSidebarSessionMetadata \| null;[\s\S]*\},\s*\) => Promise<SessionSubmitResult>;/,
     "session props should let app prompt sends report the scoped materialized session handoff",
   );
   assert.match(
@@ -477,7 +477,7 @@ test("pending handoffs materialize from the app callback with captured keys", ()
   );
   assert.match(
     sendImmediateSource,
-    /if \(accepted && pendingSessionKeyBeforeHandoff && materializedSessionIdFromHandoff\) \{[\s\S]*sessionId: materializedSessionIdFromHandoff,/,
+    /if \(pendingSessionKeyBeforeHandoff && materializedSessionIdFromHandoff\) \{[\s\S]*sessionId: materializedSessionIdFromHandoff,/,
     "accepted first-send materialization should only use the materialized id reported by the app handoff",
   );
   assert.doesNotMatch(

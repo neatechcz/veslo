@@ -9,6 +9,8 @@ export type SessionSkillCapabilityRow = {
   description?: string;
   trigger?: string;
   path: string;
+  enabled: boolean;
+  disabledReason?: SkillInstance["disabledReason"];
 };
 
 export type SessionMcpCapabilityRow = {
@@ -121,6 +123,10 @@ export function createSessionCapabilitiesCache(
       generations.clear();
       nextGeneration += 1;
     },
+    peek(scope: SessionCapabilitiesScope) {
+      const directory = normalizeSessionCapabilityDirectory(scope.directory);
+      return directory ? cache.get(directory) ?? null : null;
+    },
     async load(scope: SessionCapabilitiesScope, options?: { force?: boolean }) {
       const directory = normalizeSessionCapabilityDirectory(scope.directory);
       if (!directory) {
@@ -148,10 +154,12 @@ function rowFromSkillInstance(instance: SkillInstance): SessionSkillCapabilityRo
   return {
     id: instance.id,
     name: instance.name,
-    scope: instance.scope === "user-global" ? "global" : "workspace",
+    scope: instance.scope === "workspace" ? "workspace" : "global",
     description: instance.description,
     trigger: instance.trigger,
     path: instance.path,
+    enabled: instance.enabled !== false,
+    disabledReason: instance.disabledReason,
   };
 }
 

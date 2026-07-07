@@ -5,6 +5,7 @@ import {
   AI_ACCESS_INVALID_MESSAGE,
   AI_ACCESS_NOT_CONFIGURED_MESSAGE,
   DEFAULT_MANAGED_AI_GATEWAY_BASE_URL,
+  describeManagedAiRuntimeConfigCredentialState,
   extractManagedApiKey,
   formatManagedAiAccessConfig,
   hasUsableManagedAiRuntimeConfig,
@@ -1162,4 +1163,36 @@ test("hasUsableManagedAiRuntimeConfig treats server-redacted apiKey as usable wh
     }),
     true,
   );
+});
+
+test("describeManagedAiRuntimeConfigCredentialState reports redacted credentials without secrets", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: managedCodexProfile,
+    serverBaseUrl: "http://127.0.0.1:8787",
+    engineBaseUrl: "http://172.29.64.1:8787",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "gateway-access-token",
+  });
+  const parsed = JSON.parse(content) as {
+    provider?: { codex_oauth?: { options?: { apiKey?: string } } };
+  };
+  if (parsed.provider?.codex_oauth?.options) {
+    parsed.provider.codex_oauth.options.apiKey = "[REDACTED]";
+  }
+
+  const metadata = describeManagedAiRuntimeConfigCredentialState({
+    content: JSON.stringify(parsed),
+    providerId: "codex_oauth",
+    gatewayBaseUrl: "http://172.29.64.1:8787",
+    serverClientToken: "veslo-client-token",
+  });
+
+  assert.equal(metadata.routingMatches, true);
+  assert.equal(metadata.credentialState, "redacted-unverified");
+  assert.equal(metadata.authMode, "redacted-server-client-token");
+  assert.equal(metadata.credentialSource, "provider-api-key");
+  assert.match(metadata.credentialFingerprint ?? "", /^[a-f0-9]{8}$/);
+  const serialized = JSON.stringify(metadata);
+  assert.equal(serialized.includes("veslo-client-token"), false);
+  assert.equal(serialized.includes("gateway-access-token"), false);
 });

@@ -3,8 +3,14 @@ import {
 } from "../lib/pending-session-drafts";
 import {
   normalizeSessionSendCorrelation,
+  sessionSubmitBlockedResult,
+  sessionSubmitCompatibilityResultFromAccepted,
+  sessionSubmitFailedResult,
+  sessionSubmitQueuedResult,
+  sessionSubmitSubmittedResult,
   type MaterializedSessionHandoff,
   type SessionSendOptionsBase,
+  type SessionSubmitResult,
 } from "../lib/session-send-contract";
 import type {
   StagedSessionAttachment,
@@ -375,7 +381,7 @@ export type SessionSendWorkflowOptions = {
   resolveSendTargetWorkspaceScope: (sessionId?: string | null) => SendTargetWorkspaceScope | null;
   resolvedDevtoolsWorkspaceId: () => string;
   routedClient: (workspaceId?: string | null) => Client | null;
-  legacyConversationRunFallback: LegacyConversationRunFallback;
+  legacyConversationRunFallback?: LegacyConversationRunFallback | null;
   submitConversationFromVesloWriteApi?: (
     workspaceId: string,
     directory: string,
@@ -414,9 +420,65 @@ export type SessionSendWorkflowOptions = {
 };
 
 export type SessionSendWorkflow = {
-  sendPrompt: (draft: ComposerDraft, options: SessionSendWorkflowSendOptions) => Promise<boolean>;
+  sendPrompt: (draft: ComposerDraft, options: SessionSendWorkflowSendOptions) => Promise<SessionSubmitResult>;
   abortSession: (sessionId?: string, target?: ConversationAbortTarget) => Promise<void>;
 };
+
+type TerminalConversationSubmitResult = Extract<
+  VesloConversationSubmitResult,
+  { status: "submitted" | "queued" | "blocked" | "failed" }
+>;
+
+function sessionSubmitResultFromConversationSubmit(
+  result: TerminalConversationSubmitResult,
+): SessionSubmitResult {
+  if (result.status === "submitted") {
+    return sessionSubmitSubmittedResult({
+      workspaceId: result.workspaceId,
+      conversationId: result.conversationId,
+      opencodeSessionId: result.opencodeSessionId,
+      runId: result.runId,
+      clientMessageId: result.clientMessageId,
+      draftDisposition: result.draftDisposition,
+    });
+  }
+  if (result.status === "queued") {
+    return sessionSubmitQueuedResult({
+      workspaceId: result.workspaceId,
+      conversationId: result.conversationId,
+      opencodeSessionId: result.opencodeSessionId,
+      queueItemId: result.queueItemId,
+      reservedRunId: result.reservedRunId,
+      queuePosition: result.queuePosition,
+      clientMessageId: result.clientMessageId,
+      draftDisposition: result.draftDisposition,
+    });
+  }
+  if (result.status === "blocked") {
+    return sessionSubmitBlockedResult({
+      code: result.code,
+      message: result.message,
+      workspaceId: result.workspaceId,
+      conversationId: result.conversationId,
+      opencodeSessionId: result.opencodeSessionId,
+      clientMessageId: result.clientMessageId,
+      draftDisposition: result.draftDisposition,
+    });
+  }
+  const failedQueueItemId = "queueItemId" in result ? result.queueItemId : undefined;
+  const failedReservedRunId = "reservedRunId" in result ? result.reservedRunId : undefined;
+  return sessionSubmitFailedResult({
+    code: result.code,
+    message: result.message,
+    workspaceId: result.workspaceId,
+    conversationId: result.conversationId,
+    opencodeSessionId: result.opencodeSessionId,
+    queueItemId: failedQueueItemId,
+    reservedRunId: failedReservedRunId,
+    clientMessageId: result.clientMessageId,
+    draftDisposition: result.draftDisposition,
+  });
+}
 
 export function createLegacyConversationRunFallback(
   deps: LegacyConversationRunFallbackOptions,
@@ -748,7 +810,7 @@ export function createLegacyConversationRunFallback(
 }
 
 export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): SessionSendWorkflow {
-  const legacyConversationRunFallback = deps.legacyConversationRunFallback;
+  const legacyConversationRunFallback = deps.legacyConversationRunFallback ?? null;
 
   async function maybeResolveSkillCommand(
     draft: ComposerDraft,
@@ -902,13 +964,16 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
   async function sendPrompt(
     draft: ComposerDraft,
     options: SessionSendWorkflowSendOptions,
-  ): Promise<boolean> {
+  ): Promise<SessionSubmitResult> {
     const sendCorrelation = normalizeSessionSendCorrelation(options);
     if (!sendCorrelation.clientMessageId) {
       deps.recordSendTrace("sendPrompt:blocked-missing-client-message-id", {
         origin: sendCorrelation.origin,
       });
-      return false;
+      return sessionSubmitBlockedResult({
+        code: "missing_client_message_id",
+        message: "Cannot send this prompt because its client message id is missing.",
+      });
     }
     const sendPreflight = deps.createSendPreflightContext(options.sendTraceId);
     const sendTraceId = sendPreflight.traceId;
@@ -1026,7 +1091,10 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         traceId: sendTraceId,
         phase: "initial-preflight",
       });
-      return false;
+      return sessionSubmitBlockedResult({
+        code: "empty_prompt",
+        message: "Cannot send an empty prompt.",
+      });
     }
 
     const scopedSessionID = sessionID?.trim() || "";
@@ -1046,7 +1114,10 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         sessionID: scopedSessionID,
       });
       stopSendPromptBusy();
-      return false;
+      return sessionSubmitBlockedResult({
+        code: "workspace_scope_unavailable",
+        message: "The selected session workspace is not ready for sending.",
+      });
     }
     if (scopedSessionID) {
       sendTargetWorkspace = deps.resolveSendTargetWorkspaceScope(scopedSessionID) ?? sendTargetWorkspace;
@@ -1079,7 +1150,10 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           traceId: sendTraceId,
           reason: skillResolution.blockedReason,
         });
-        return false;
+        return sessionSubmitBlockedResult({
+          code: "document_runtime_blocked",
+          message: skillResolution.blockedReason,
+        });
       }
       resolvedDraft = skillResolution.draft;
     }
@@ -1091,7 +1165,10 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         traceId: sendTraceId,
         phase: "after-skill-resolution",
       });
-      return false;
+      return sessionSubmitBlockedResult({
+        code: "empty_prompt",
+        message: "Cannot send an empty prompt.",
+      });
     }
     if (!sessionID && pendingSidebarSession) {
       deps.registerPendingSidebarSession(pendingSidebarSession);
@@ -1107,11 +1184,14 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       });
       deps.setError("Select a session with messages before running /compact.");
       cleanupPendingSidebarSession();
-      return false;
+      return sessionSubmitBlockedResult({
+        code: "compact_requires_session",
+        message: "Select a session with messages before running /compact.",
+      });
     }
 
     const hadExistingSessionBeforeMaterialization = Boolean(sessionID?.trim());
-    const submitExistingSessionWithServer = async (): Promise<boolean | null> => {
+    const submitExistingSessionWithServer = async (): Promise<SessionSubmitResult | null> => {
       const submitConversation = deps.submitConversationFromVesloWriteApi;
       const existingSessionId = sessionID?.trim() || "";
       if (!submitConversation || !existingSessionId || !hadExistingSessionBeforeMaterialization) return null;
@@ -1141,7 +1221,10 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           directory: directory || null,
         });
         reportServerSubmitError(message);
-        return false;
+        return sessionSubmitBlockedResult({
+          code: "server_submit_missing_target",
+          message,
+        });
       }
 
       const scope = deps.resolveSelectedSessionBrowseScope(existingSessionId);
@@ -1166,7 +1249,10 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           sessionID: existingSessionId,
         });
         deps.setError("Nothing to compact yet.");
-        return false;
+        return sessionSubmitBlockedResult({
+          code: "compact_empty_session",
+          message: "Nothing to compact yet.",
+        });
       }
       const visibleParts = visible.reduce((total, message) => total + message.parts.length, 0);
       startSendPromptBusy({ type: "conversation.running" });
@@ -1216,7 +1302,10 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
             message,
           });
           reportServerSubmitError(message);
-          return false;
+          return sessionSubmitFailedResult({
+            code: "stage_attachments_failed",
+            message,
+          });
         }
       }
       const submitModel = conversationSubmitModelForAttachments(
@@ -1305,7 +1394,10 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           message,
         });
         reportServerSubmitError(message);
-        return false;
+        return sessionSubmitFailedResult({
+          code: "server_submit_failed",
+          message,
+        });
       }
 
       if (!result) {
@@ -1327,7 +1419,10 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           origin: sendCorrelation.origin,
         });
         reportServerSubmitError(message);
-        return false;
+        return sessionSubmitFailedResult({
+          code: "server_submit_unavailable",
+          message,
+        });
       }
 
       if (result.status === "blocked" || result.status === "failed") {
@@ -1355,7 +1450,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         } else if (sendTargetStillDisplayed()) {
           deps.setError(result.message);
         }
-        return false;
+        return sessionSubmitResultFromConversationSubmit(result);
       }
 
       if (result.status !== "submitted" && result.status !== "queued") {
@@ -1374,7 +1469,10 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           status: result.status,
         });
         reportServerSubmitError(message);
-        return false;
+        return sessionSubmitFailedResult({
+          code: "server_submit_unexpected_result",
+          message,
+        });
       }
 
       if (result.draftDisposition === "clear") {
@@ -1409,7 +1507,17 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           serverSubmit: true,
         });
       }
-      if (compactCommand) {
+      if (result.status === "queued") {
+        deps.emitLiveTranscriptPolicyEvent({
+          type: "conversation-run.queued",
+          reason: "sendPrompt:queued",
+          workspaceId,
+          sessionId: existingSessionId,
+          traceId: sendTraceId,
+          queueItemId: result.queueItemId,
+          reservedRunId: result.reservedRunId,
+        });
+      } else if (compactCommand) {
         deps.emitLiveTranscriptPolicyEvent({
           type: "conversation-compact.succeeded",
           reason: "sendPrompt:compact-success",
@@ -1430,7 +1538,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         existingSessionId,
         compactCommand ? "sendPrompt:server-submit-existing-compact-success" : "sendPrompt:server-submit-existing-success",
       );
-      return true;
+      return sessionSubmitResultFromConversationSubmit(result);
     };
     const serverSubmitExistingSessionResult = await submitExistingSessionWithServer();
     if (serverSubmitExistingSessionResult !== null) {
@@ -1447,6 +1555,19 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
       });
     } else {
+      if (!legacyConversationRunFallback) {
+        deps.recordSendTrace("sendPrompt:blocked-legacy-fallback-disabled", {
+          traceId: sendTraceId,
+          targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
+          hasServerSubmit: Boolean(deps.submitConversationFromVesloWriteApi),
+        });
+        cleanupPendingSidebarSession();
+        stopSendPromptBusy();
+        return sessionSubmitBlockedResult({
+          code: "legacy_fallback_disabled",
+          message: "Server-owned conversation submit is required for this send path.",
+        });
+      }
       if (!(await legacyConversationRunFallback.prepare({
         cleanupPendingSidebarSession,
         sendPreflight,
@@ -1455,7 +1576,10 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         stopSendPromptBusy,
         traceId: sendTraceId,
       }))) {
-        return false;
+        return sessionSubmitBlockedResult({
+          code: "legacy_prepare_blocked",
+          message: "The runtime is not ready for sending.",
+        });
       }
     }
 
@@ -1561,16 +1685,39 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         sessionID = null;
       }
     }
+    const serverFirstSubmitResult = serverFirstSubmitResultHolder.current;
+    if (
+      !sessionID &&
+      serverFirstSubmitResult &&
+      (serverFirstSubmitResult.status === "failed" || serverFirstSubmitResult.status === "blocked")
+    ) {
+      const hintedMessage = deps.addOpencodeCacheHint(serverFirstSubmitResult.message);
+      deps.recordSendTrace("sendPrompt:server-submit-first-failed", {
+        traceId: sendTraceId,
+        sessionID: null,
+        clientMessageId: sendCorrelation.clientMessageId,
+        origin: sendCorrelation.origin,
+        status: serverFirstSubmitResult.status,
+        code: serverFirstSubmitResult.code,
+        draftDisposition: serverFirstSubmitResult.draftDisposition,
+      });
+      deps.setError(hintedMessage);
+      cleanupPendingSidebarSession();
+      stopSendPromptBusy();
+      return sessionSubmitResultFromConversationSubmit(serverFirstSubmitResult);
+    }
     if (!sessionID) {
       deps.recordSendTrace("sendPrompt:blocked-no-session", {
         traceId: sendTraceId,
       });
       cleanupPendingSidebarSession();
       stopSendPromptBusy();
-      return false;
+      return sessionSubmitBlockedResult({
+        code: "session_creation_failed",
+        message: "Could not create or select a session for this prompt.",
+      });
     }
 
-    const serverFirstSubmitResult = serverFirstSubmitResultHolder.current;
     if (serverFirstSubmitResult) {
       if (serverFirstSubmitResult.status === "failed" || serverFirstSubmitResult.status === "blocked") {
         const hintedMessage = deps.addOpencodeCacheHint(serverFirstSubmitResult.message);
@@ -1587,7 +1734,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         deps.sessionStoreAppendSessionErrorTurn(sessionID, hintedMessage);
         cleanupPendingSidebarSession();
         stopSendPromptBusy();
-        return false;
+        return sessionSubmitResultFromConversationSubmit(serverFirstSubmitResult);
       }
       if (serverFirstSubmitResult.draftDisposition === "clear") {
         deps.setLastPromptSent(initialContent);
@@ -1607,16 +1754,28 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         queueItemId: serverFirstSubmitResult.status === "queued" ? serverFirstSubmitResult.queueItemId : null,
         draftDisposition: serverFirstSubmitResult.draftDisposition,
       });
-      deps.emitLiveTranscriptPolicyEvent({
-        type: "conversation-run.succeeded",
-        reason: "sendPrompt:success",
-        workspaceId: serverFirstSubmitResult.workspaceId,
-        sessionId: sessionID,
-        traceId: sendTraceId,
-      });
+      if (serverFirstSubmitResult.status === "queued") {
+        deps.emitLiveTranscriptPolicyEvent({
+          type: "conversation-run.queued",
+          reason: "sendPrompt:queued",
+          workspaceId: serverFirstSubmitResult.workspaceId,
+          sessionId: sessionID,
+          traceId: sendTraceId,
+          queueItemId: serverFirstSubmitResult.queueItemId,
+          reservedRunId: serverFirstSubmitResult.reservedRunId,
+        });
+      } else {
+        deps.emitLiveTranscriptPolicyEvent({
+          type: "conversation-run.succeeded",
+          reason: "sendPrompt:success",
+          workspaceId: serverFirstSubmitResult.workspaceId,
+          sessionId: sessionID,
+          traceId: sendTraceId,
+        });
+      }
       await consumePendingDraftAfterAcceptedSend(true);
       deps.holdVisibleRuntimeActivity(sessionID, "sendPrompt:server-submit-first-success");
-      return true;
+      return sessionSubmitResultFromConversationSubmit(serverFirstSubmitResult);
     }
 
     if (shouldUseServerSubmitForFirstSession) {
@@ -1629,10 +1788,28 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       });
       deps.setError(message);
       stopSendPromptBusy();
-      return false;
+      return sessionSubmitFailedResult({
+        code: "server_submit_missing_result",
+        message,
+      });
     }
 
     const materializedSessionID: string = sessionID;
+
+    if (!legacyConversationRunFallback) {
+      deps.recordSendTrace("sendPrompt:blocked-legacy-fallback-disabled", {
+        traceId: sendTraceId,
+        sessionID: materializedSessionID,
+        targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
+        hasServerSubmit: Boolean(deps.submitConversationFromVesloWriteApi),
+      });
+      cleanupPendingSidebarSession();
+      stopSendPromptBusy();
+      return sessionSubmitBlockedResult({
+        code: "legacy_fallback_disabled",
+        message: "Server-owned conversation submit is required for this send path.",
+      });
+    }
 
     const displayedConversationGuard = deps.captureDisplayedConversationGuard(materializedSessionID);
     const displayedUiScopeToken = deps.activeUiScopeToken();
@@ -1660,7 +1837,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       }
     };
 
-    return await legacyConversationRunFallback.submit({
+    const legacyAccepted = await legacyConversationRunFallback.submit({
       commandName,
       compactCommand,
       consumePendingDraftAfterAcceptedSend,
@@ -1677,6 +1854,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       stopSendPromptBusy,
       traceId: sendTraceId,
     });
+    return sessionSubmitCompatibilityResultFromAccepted(legacyAccepted, null);
     } finally {
       stopSendPromptBusy();
     }

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   createSkillRegistryEventsListener,
+  SkillRegistryEventsAuthError,
   type SkillRegistryEvent,
   type SkillRegistryEventScheduler,
 } from "../../lib/skill-registry-events.js";
@@ -131,6 +132,61 @@ test("failed polls report errors without advancing the cursor", async () => {
   assert.match(errors[0] ?? "", /HTTP 503/);
   assert.equal(listener.getState().cursor, "cursor_0");
   assert.equal(listener.getState().inFlight, false);
+});
+
+test("auth failures stop polling, preserve cursor, and do not reschedule", async () => {
+  let nextTimerId = 1;
+  const timers = new Map<number, () => void>();
+  const scheduler: SkillRegistryEventScheduler<number> = {
+    setTimeout: (callback) => {
+      const id = nextTimerId++;
+      timers.set(id, callback);
+      return id;
+    },
+    clearTimeout: (id) => {
+      timers.delete(id);
+    },
+  };
+  let fetchCalls = 0;
+  const errors: string[] = [];
+  const authFailures: number[] = [];
+  const listener = createSkillRegistryEventsListener({
+    registryBaseUrl: "https://registry.example",
+    initialCursor: "cursor_0",
+    pollIntervalMs: 25,
+    scheduler,
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      return new Response(JSON.stringify({ code: "unauthorized" }), { status: 401 });
+    },
+    onUnauthorized: (error) => {
+      assert.ok(error instanceof SkillRegistryEventsAuthError);
+      authFailures.push(error.status);
+    },
+    onError: (error) => {
+      errors.push(error.message);
+    },
+  });
+
+  listener.start();
+  assert.equal(timers.size, 1);
+  await listener.pollNow();
+
+  assert.deepEqual(authFailures, [401]);
+  assert.deepEqual(errors, []);
+  assert.equal(fetchCalls, 1);
+  assert.deepEqual(listener.getState(), {
+    running: false,
+    cursor: "cursor_0",
+    revision: null,
+    inFlight: false,
+  });
+  assert.equal(timers.size, 0);
+
+  await listener.pollNow();
+  listener.start();
+  assert.equal(fetchCalls, 1);
+  assert.equal(timers.size, 0);
 });
 
 test("start and stop are idempotent and do not leak scheduled polling timers", async () => {

@@ -35,6 +35,30 @@ const AI_ACCESS_MESSAGE_KEY_BY_TEXT = new Map<string, string>([
   [AI_ACCESS_LOAD_FAILED_MESSAGE, AI_ACCESS_LOAD_FAILED_MESSAGE_KEY],
 ]);
 
+export type ManagedAiRuntimeConfigCredentialState =
+  | "verified"
+  | "redacted-unverified"
+  | "missing";
+
+export type ManagedAiRuntimeConfigAuthMode =
+  | "server-client-token"
+  | "redacted-server-client-token"
+  | "missing";
+
+export type ManagedAiRuntimeConfigCredentialSource =
+  | "provider-api-key"
+  | "provider-authorization-header"
+  | "model-authorization-header";
+
+export type ManagedAiRuntimeConfigCredentialMetadata = {
+  providerId: string | null;
+  routingMatches: boolean;
+  credentialState: ManagedAiRuntimeConfigCredentialState;
+  authMode: ManagedAiRuntimeConfigAuthMode;
+  credentialSource: ManagedAiRuntimeConfigCredentialSource | null;
+  credentialFingerprint: string | null;
+};
+
 export function resolveManagedAiAccessMessageKey(message: string | null | undefined): string | null {
   const trimmed = message?.trim() ?? "";
   return trimmed ? AI_ACCESS_MESSAGE_KEY_BY_TEXT.get(trimmed) ?? null : null;
@@ -230,8 +254,71 @@ function hasUsableServerClientCredential(
   providerConfig: Record<string, unknown>,
   serverClientToken?: string | null,
 ): boolean {
+  return analyzeServerClientCredential(providerId, providerConfig, serverClientToken).credentialState !== "missing";
+}
+
+function credentialFingerprint(input: {
+  providerId: string;
+  gatewayBaseUrl?: string | null;
+  workspaceId?: string | null;
+  credentialSource: ManagedAiRuntimeConfigCredentialSource;
+  credentialState: ManagedAiRuntimeConfigCredentialState;
+}): string {
+  const text = [
+    input.providerId.trim().toLowerCase(),
+    normalizeHttpUrl(input.gatewayBaseUrl),
+    input.workspaceId?.trim() ?? "",
+    input.credentialSource,
+    input.credentialState,
+  ].join("|");
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+function credentialAuthMode(
+  credentialState: ManagedAiRuntimeConfigCredentialState,
+): ManagedAiRuntimeConfigAuthMode {
+  if (credentialState === "verified") return "server-client-token";
+  if (credentialState === "redacted-unverified") return "redacted-server-client-token";
+  return "missing";
+}
+
+function credentialResult(
+  credentialState: ManagedAiRuntimeConfigCredentialState,
+  credentialSource: ManagedAiRuntimeConfigCredentialSource | null,
+): Pick<ManagedAiRuntimeConfigCredentialMetadata, "credentialState" | "authMode" | "credentialSource"> {
+  return {
+    credentialState,
+    authMode: credentialAuthMode(credentialState),
+    credentialSource,
+  };
+}
+
+function analyzeCredentialValue(input: {
+  value: string;
+  expectedValues: string[];
+  redactedValue: string;
+  source: ManagedAiRuntimeConfigCredentialSource;
+}): Pick<ManagedAiRuntimeConfigCredentialMetadata, "credentialState" | "authMode" | "credentialSource"> | null {
+  if (input.expectedValues.includes(input.value)) {
+    return credentialResult("verified", input.source);
+  }
+  if (input.value === input.redactedValue) {
+    return credentialResult("redacted-unverified", input.source);
+  }
+  return null;
+}
+
+function analyzeServerClientCredential(
+  providerId: string,
+  providerConfig: Record<string, unknown>,
+  serverClientToken?: string | null,
+): Pick<ManagedAiRuntimeConfigCredentialMetadata, "credentialState" | "authMode" | "credentialSource"> {
   const expectedToken = serverClientToken?.trim() ?? "";
-  if (!expectedToken) return false;
+  if (!expectedToken) return credentialResult("missing", null);
 
   const options = readConfigObject(providerConfig.options);
   const isOpenAiCompatibleGatewayProvider = providerId === "codex_oauth" || providerId === "openai_compatible";
@@ -243,26 +330,41 @@ function hasUsableServerClientCredential(
       : typeof headers.authorization === "string"
         ? headers.authorization.trim()
         : "";
-    return apiKey === VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE ||
-      apiKey === expectedToken ||
-      apiKey === REDACTED_SECRET_VALUE ||
-      authorization === `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}` ||
-      authorization === `Bearer ${expectedToken}` ||
-      authorization === REDACTED_SECRET_VALUE;
+    return analyzeCredentialValue({
+      value: apiKey,
+      expectedValues: [VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE, expectedToken],
+      redactedValue: REDACTED_SECRET_VALUE,
+      source: "provider-api-key",
+    }) ?? analyzeCredentialValue({
+      value: authorization,
+      expectedValues: [`Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`, `Bearer ${expectedToken}`],
+      redactedValue: REDACTED_SECRET_VALUE,
+      source: "provider-authorization-header",
+    }) ?? credentialResult("missing", null);
   }
 
   const models = readConfigObject(providerConfig.models);
-  return Object.values(models).some((model) => {
+  let redacted: Pick<
+    ManagedAiRuntimeConfigCredentialMetadata,
+    "credentialState" | "authMode" | "credentialSource"
+  > | null = null;
+  for (const model of Object.values(models)) {
     const headers = readConfigObject(readConfigObject(model).headers);
     const authorization = typeof headers.Authorization === "string"
       ? headers.Authorization.trim()
       : typeof headers.authorization === "string"
         ? headers.authorization.trim()
         : "";
-    return authorization === `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}` ||
-      authorization === `Bearer ${expectedToken}` ||
-      authorization === REDACTED_SECRET_VALUE;
-  });
+    const result = analyzeCredentialValue({
+      value: authorization,
+      expectedValues: [`Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`, `Bearer ${expectedToken}`],
+      redactedValue: REDACTED_SECRET_VALUE,
+      source: "model-authorization-header",
+    });
+    if (result?.credentialState === "verified") return result;
+    if (result?.credentialState === "redacted-unverified") redacted = result;
+  }
+  return redacted ?? credentialResult("missing", null);
 }
 
 function hasManagedGatewayProviderRouting(
@@ -331,6 +433,67 @@ export function hasUsableManagedAiRuntimeConfig(input: {
     }
     return hasUsableServerClientCredential(normalizedId, providerConfig, input.serverClientToken);
   });
+}
+
+export function describeManagedAiRuntimeConfigCredentialState(input: {
+  content: string | null | undefined;
+  providerId?: string | null;
+  gatewayBaseUrl?: string | null;
+  serverClientToken?: string | null;
+  workspaceId?: string | null;
+}): ManagedAiRuntimeConfigCredentialMetadata {
+  const parsed = parseConfigObject(input.content);
+  const providers = readConfigObject(parsed.provider);
+  const targetProviderId = input.providerId?.trim().toLowerCase() ?? "";
+
+  for (const [candidateId, rawConfig] of Object.entries(providers)) {
+    const normalizedId = candidateId.trim().toLowerCase();
+    if (!isGatewayOwnedProvider(normalizedId)) continue;
+    if (targetProviderId && normalizedId !== targetProviderId) continue;
+
+    const providerConfig = readConfigObject(rawConfig);
+    const routingMatches = hasManagedGatewayProviderRouting(
+      normalizedId,
+      providerConfig,
+      input.gatewayBaseUrl,
+      input.workspaceId,
+    );
+    if (!routingMatches) {
+      return {
+        providerId: normalizedId,
+        routingMatches: false,
+        credentialState: "missing",
+        authMode: "missing",
+        credentialSource: null,
+        credentialFingerprint: null,
+      };
+    }
+
+    const credential = analyzeServerClientCredential(normalizedId, providerConfig, input.serverClientToken);
+    return {
+      providerId: normalizedId,
+      routingMatches: true,
+      ...credential,
+      credentialFingerprint: credential.credentialSource
+        ? credentialFingerprint({
+          providerId: normalizedId,
+          gatewayBaseUrl: input.gatewayBaseUrl,
+          workspaceId: input.workspaceId,
+          credentialSource: credential.credentialSource,
+          credentialState: credential.credentialState,
+        })
+        : null,
+    };
+  }
+
+  return {
+    providerId: targetProviderId || null,
+    routingMatches: false,
+    credentialState: "missing",
+    authMode: "missing",
+    credentialSource: null,
+    credentialFingerprint: null,
+  };
 }
 
 export function shouldDeferManagedAiAccessRefresh(input: {

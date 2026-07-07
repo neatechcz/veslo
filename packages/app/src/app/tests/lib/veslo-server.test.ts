@@ -435,6 +435,7 @@ test("submitConversation posts to the server-owned submit endpoint", async () =>
         requestHash: "a".repeat(64),
         draftDisposition: "keep",
         target: { directory: "src" },
+        debugTrace: [{ source: "server", event: "implicit_skill_resolution_failed" }],
       }),
       {
         status: 200,
@@ -471,6 +472,7 @@ test("submitConversation posts to the server-owned submit endpoint", async () =>
     );
 
     assert.equal(result.status, "dry_run");
+    assert.deepEqual(result.debugTrace, [{ source: "server", event: "implicit_skill_resolution_failed" }]);
     assert.equal(calls.length, 1);
     assert.equal(calls[0]?.url, "https://veslo.example/workspace/ws_1/conversations/submit");
     assert.equal(calls[0]?.method, "POST");
@@ -3618,6 +3620,13 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
       );
     }
 
+    if (url.endsWith("/ai-gateway/me/runtime-authorization/clear")) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
     if (url.endsWith("/ai-gateway/providers/anthropic/credentials/cred_anthropic")) {
       return new Response(JSON.stringify({ credential: { id: "cred_anthropic", state: "revoked" } }), {
         status: 200,
@@ -3640,8 +3649,10 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
     });
 
     assert.equal(typeof client.getMyAiAccess, "function");
+    assert.equal(typeof client.clearMyAiGatewayRuntimeAuthorization, "function");
 
     const response = await client.getMyAiAccess("den-user-token");
+    const clearResponse = await client.clearMyAiGatewayRuntimeAuthorization();
 
     assert.deepEqual(response, {
       accessToken: "managed-gateway-token",
@@ -3655,6 +3666,7 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
         updatedAt: "2026-04-08T12:00:00.000Z",
       },
     });
+    assert.deepEqual(clearResponse, { ok: true });
 
     assert.deepEqual(calls, [
       {
@@ -3664,6 +3676,16 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
           authorization: "Bearer veslo-server-token",
           "content-type": "application/json",
           "x-veslo-gateway-authorization": "Bearer den-user-token",
+          "x-veslo-host-token": "veslo-host-token",
+        },
+        body: null,
+      },
+      {
+        url: "http://127.0.0.1:8787/ai-gateway/me/runtime-authorization/clear",
+        method: "POST",
+        headers: {
+          authorization: "Bearer veslo-server-token",
+          "content-type": "application/json",
           "x-veslo-host-token": "veslo-host-token",
         },
         body: null,

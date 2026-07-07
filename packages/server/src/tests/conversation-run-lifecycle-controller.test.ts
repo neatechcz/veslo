@@ -250,6 +250,33 @@ class QueueHarness implements ConversationRunQueueStore {
     return item;
   }
 
+  getForConversation(
+    workspaceId: string,
+    conversationId: string,
+    queueItemId: string,
+  ): ConversationRunQueueItem | null {
+    return this.items.find((item) =>
+      item.workspaceId === workspaceId &&
+      item.conversationId === conversationId &&
+      item.queueItemId === queueItemId
+    ) ?? null;
+  }
+
+  recoverStarting(): Array<{ workspaceId: string; conversationId: string }> {
+    const keys = new Map<string, { workspaceId: string; conversationId: string }>();
+    const now = Date.now();
+    for (const item of this.items) {
+      if (item.state !== "starting") continue;
+      const key = `${item.workspaceId}\0${item.conversationId}`;
+      keys.set(key, { workspaceId: item.workspaceId, conversationId: item.conversationId });
+      item.state = "pending";
+      item.activeRunId = null;
+      item.startedAt = null;
+      item.updatedAt = now;
+    }
+    return [...keys.values()];
+  }
+
   pendingConversationKeys(): Array<{ workspaceId: string; conversationId: string }> {
     const keys = new Map<string, { workspaceId: string; conversationId: string }>();
     for (const item of this.items) {
@@ -1170,6 +1197,23 @@ test("startup schedules queue drains for pending conversation keys", () => {
   controller.start();
 
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500, 1_500]);
+});
+
+test("startup recovers starting queue rows before scheduling drains", () => {
+  const { controller, queue, timers, traceEntries } = controllerHarness();
+  const item = enqueuePendingRun(queue, { conversationId: "conv-a", reservedRunId: "run-a" });
+  queue.markStarting(item.queueItemId);
+
+  controller.start();
+
+  expect(queue.items[0]?.state).toBe("pending");
+  expect(queue.items[0]?.startedAt).toBeNull();
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500]);
+  expect(traceEntries).toContainEqual({
+    event: "server:conversation-run:queue-starting-recovered",
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+  });
 });
 
 test("abortRun aborts gateway requests, calls OpenCode abort, marks requested, and schedules reconcile", async () => {
