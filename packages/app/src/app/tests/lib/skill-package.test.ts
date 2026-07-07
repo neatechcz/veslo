@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildSkillPackageArchive,
   buildSkillPackageManifest,
   normalizeSkillPackageFiles,
   validateSkillPackageManifest,
@@ -143,4 +144,33 @@ test("manifest validation rejects embedded text tampering", async () => {
       }),
     /packageSha256/,
   );
+});
+
+test("buildSkillPackageArchive embeds base64 content and hashes file text", async () => {
+  const archive = await buildSkillPackageArchive({
+    metadata: { name: "research", description: "Research skill", trigger: "When researching" },
+    files: [
+      {
+        path: "SKILL.md",
+        sizeBytes: 0,
+        mediaType: "text/markdown",
+        text: "# Research\n",
+      },
+      {
+        path: "scripts/run.sh",
+        sizeBytes: 0,
+        mediaType: "text/x-shellscript",
+        executable: true,
+        text: "#!/bin/sh\n",
+      },
+    ],
+  });
+
+  assert.equal(archive.entrypoint, "SKILL.md");
+  assert.equal(archive.files[0]?.path, "SKILL.md");
+  assert.equal(archive.files[0]?.sizeBytes, new TextEncoder().encode("# Research\n").byteLength);
+  assert.equal(archive.files[0]?.contentBase64, "IyBSZXNlYXJjaAo=");
+  assert.match(archive.files[0]?.sha256 ?? "", /^[a-f0-9]{64}$/);
+  assert.equal(archive.files[1]?.executable, true);
+  await validateSkillPackageManifest(archive);
 });

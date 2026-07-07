@@ -5,6 +5,25 @@ export type BuildSkillPackageManifestInput = {
   files: SkillPackageFile[];
 };
 
+export type SkillPackageArchiveFile = SkillPackageFile & {
+  contentBase64: string;
+};
+
+export type SkillPackageArchive = Omit<SkillPackageManifest, "files"> & {
+  files: SkillPackageArchiveFile[];
+};
+
+export type BuildSkillPackageArchiveInput = {
+  metadata: SkillPackageManifest["metadata"];
+  files: Array<{
+    path: string;
+    sizeBytes: number;
+    mediaType: string;
+    executable?: boolean;
+    text?: string;
+  }>;
+};
+
 const ENTRYPOINT = "SKILL.md";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
 const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[a-zA-Z]:[\\/]/;
@@ -139,12 +158,35 @@ const stableStringify = (value: unknown): string => {
   return `{${entries.map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`).join(",")}}`;
 };
 
-const sha256Hex = async (value: string): Promise<string> => {
+const bytesToHex = (bytes: Uint8Array) =>
+  Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+
+const sha256BytesHex = async (bytes: Uint8Array): Promise<string> => {
   if (!globalThis.crypto?.subtle) {
     throw new Error("Web Crypto SHA-256 support is required to build skill package manifests");
   }
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const digestInput = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", digestInput);
+  return bytesToHex(new Uint8Array(digest));
+};
+
+const sha256Hex = async (value: string): Promise<string> => {
+  return sha256BytesHex(new TextEncoder().encode(value));
+};
+
+const bytesToBase64 = (bytes: Uint8Array): string => {
+  const bufferCtor = (globalThis as unknown as {
+    Buffer?: { from(input: Uint8Array): { toString(encoding: "base64"): string } };
+  }).Buffer;
+  if (bufferCtor) {
+    return bufferCtor.from(bytes).toString("base64");
+  }
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
 };
 
 export async function computeSkillPackageSha256(
@@ -204,5 +246,46 @@ export async function buildSkillPackageManifest(
   return {
     ...manifestWithoutHash,
     packageSha256: await computeSkillPackageSha256(manifestWithoutHash),
+  };
+}
+
+export async function buildSkillPackageArchive(input: BuildSkillPackageArchiveInput): Promise<SkillPackageArchive> {
+  const encoder = new TextEncoder();
+  const filesWithContent: SkillPackageArchiveFile[] = [];
+  for (const file of input.files) {
+    const path = normalizeSkillPackagePath(file.path);
+    if (file.text === undefined) {
+      throw new Error(`Skill package archive file text is required: ${path}`);
+    }
+    const bytes = encoder.encode(file.text);
+    filesWithContent.push({
+      path,
+      sha256: await sha256BytesHex(bytes),
+      sizeBytes: bytes.byteLength,
+      mediaType: file.mediaType,
+      ...(file.executable !== undefined ? { executable: file.executable } : {}),
+      text: file.text,
+      contentBase64: bytesToBase64(bytes),
+    });
+  }
+
+  const manifest = await buildSkillPackageManifest({
+    metadata: input.metadata,
+    files: filesWithContent,
+  });
+  const contentByPath = new Map(filesWithContent.map((file) => [file.path, file.contentBase64]));
+
+  return {
+    ...manifest,
+    files: manifest.files.map((file) => {
+      const contentBase64 = contentByPath.get(file.path);
+      if (contentBase64 === undefined) {
+        throw new Error(`Skill package archive is missing content for file: ${file.path}`);
+      }
+      return {
+        ...file,
+        contentBase64,
+      };
+    }),
   };
 }

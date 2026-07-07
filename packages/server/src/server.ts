@@ -2472,7 +2472,7 @@ export function resolveArchiveOwnerKey(request: Request): string {
   return accountId;
 }
 
-function buildCapabilities(config: ServerConfig): Capabilities {
+export function buildCapabilities(config: ServerConfig): Capabilities {
   const writeEnabled = !config.readOnly;
   const schemaVersion = 1;
   const inboxEnabled = resolveInboxEnabled();
@@ -2486,6 +2486,9 @@ function buildCapabilities(config: ServerConfig): Capabilities {
     schemaVersion,
     serverVersion: SERVER_VERSION,
     skills: { read: true, write: writeEnabled, source: "veslo" },
+    skillRegistry: {
+      configured: Boolean(skillRegistryBaseUrl(config)),
+    },
     hub: {
       skills: {
         read: true,

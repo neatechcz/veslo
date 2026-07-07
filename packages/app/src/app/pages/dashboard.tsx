@@ -47,6 +47,7 @@ import type {
   VesloServerSettings,
   VesloServerStatus,
   VesloSkillImportCandidate,
+  VesloSkillRegistryAuthContext,
 } from "../lib/veslo-server";
 import {
   type EngineInfo,
@@ -137,6 +138,8 @@ export type DashboardViewProps = {
   headerStatus: string;
   error: string | null;
   vesloServerStatus: VesloServerStatus;
+  vesloServerCanWriteSkills: boolean;
+  vesloServerSkillRegistryAvailable: boolean;
   vesloServerUrl: string;
   vesloServerClient: VesloServerClient | null;
   vesloReconnectBusy: boolean;
@@ -216,6 +219,7 @@ export type DashboardViewProps = {
   soulClient: VesloServerClient | null;
   soulServerConnected: boolean;
   soulAuthContext: VesloSoulAuthContext;
+  skillRegistryAuthContext: VesloSkillRegistryAuthContext;
   soulWorkspaceMap: Record<string, string>;
   soulError: string | null;
   refreshSoulData: (options?: { force?: boolean }) => void;
@@ -1103,6 +1107,11 @@ export default function DashboardView(props: DashboardViewProps) {
                 isRemoteWorkspace={props.isRemoteWorkspace}
                 isPrivateWorkspacePath={props.isPrivateWorkspacePath}
                 busy={props.busy}
+                vesloServerStatus={props.vesloServerStatus}
+                vesloServerClient={props.vesloServerClient}
+                vesloServerCanWriteSkills={props.vesloServerCanWriteSkills}
+                vesloServerSkillRegistryAvailable={props.vesloServerSkillRegistryAvailable}
+                skillRegistryAuthContext={props.skillRegistryAuthContext}
                 canInstallSkillCreator={props.canInstallSkillCreator}
                 canUseDesktopTools={props.canUseDesktopTools}
                 accessHint={props.skillsAccessHint}

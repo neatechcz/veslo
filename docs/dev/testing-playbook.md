@@ -124,11 +124,30 @@ cd ../e2e
 pnpm test:pilot:core-platform-skills
 ```
 
+For the verified skill publish request flow, use the same pilot-enabled desktop
+build and run:
+
+```bash
+# First run the Desktop Test Runtime Preflight above.
+
+cd packages/e2e
+pnpm test:pilot:skill-publish
+```
+
+This scenario lives in `packages/e2e/specs/skill-publish-request.pilot.ts`. It
+drives the Skills page bulk Publish button, opens the review dialog in request
+mode, submits an organization publish request, and verifies the registry fixture
+recorded `POST /v1/skills`, `POST /v1/skills/:skillId/versions`, and
+`POST /v1/skills/:skillId/review-requests`. The fixture mutation endpoints are
+implemented by the E2E skill registry fixture so the desktop app exercises the
+real Tauri runtime and local server proxy without depending on a live registry.
+
 The pilot config uses the isolated `com.neatech.veslo.e2e` app identifier and enables `pilot:default` only for the E2E build. Do not add pilot permissions to the default desktop capability.
 
 Focused pilot scenarios can be run from `packages/e2e`:
 
 ```bash
+pnpm test:pilot:skill-publish
 pnpm test:pilot:smoke
 pnpm test:pilot:navigation
 pnpm test:pilot:google-mcp

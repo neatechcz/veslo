@@ -242,6 +242,13 @@ Veslo server also exposes a local proxy for registry search, registry events, an
 - `PATCH /v1/workspaces/:workspaceId/skill-set`
   Requires host or owner auth. Replaces the desired registry-backed skill set for a workspace.
 
+The app-side publish request path is package-first and registry-proxied through
+the local server. A review dialog submit for organization publication or system
+catalog approval builds the local skill package, calls `POST /v1/skills`, calls
+`POST /v1/skills/:skillId/versions`, then calls
+`POST /v1/skills/:skillId/review-requests` with `scope: "org"` or
+`scope: "system"`. The dialog closes only after the full sequence succeeds.
+
 Organization and other managed skill removals stay on these registry mutation
 surfaces. Installation-backed removals delete or restore the installation.
 Rollout-backed removals disable or re-enable the rollout policy. Locked rollout
@@ -445,6 +452,15 @@ The app relies on `/capabilities` and workspace capability data to decide whethe
 - backed by browser/file tools or sandbox support
 
 When adding a new app surface, prefer extending capability reporting instead of hard-coding UI assumptions.
+
+`/capabilities` includes `skillRegistry: { configured: boolean }`.
+`configured` is true when the local server resolves a registry base URL from
+`VESLO_SKILL_REGISTRY_BASE_URL`, `skillRegistryBaseUrl` in server config, or
+the Den API base fallback (`denApiBase`/`VESLO_DEN_API_BASE`). Registry write
+affordances should require both this flag and the relevant `skills.write`
+capability; an unavailable local runtime chain is diagnostic state and must not
+be treated as a disconnected Veslo server when `/health` and authenticated
+`/capabilities` succeed.
 
 ## Import and Export Contract
 

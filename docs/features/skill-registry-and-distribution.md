@@ -85,6 +85,13 @@ Registry event polling returns ordered mutation events visible to the caller and
 
 The Veslo app should call the cloud registry for discovery, review, search, and desired skill-set sync. The local Veslo server should validate registry responses before installing or activating anything locally.
 
+The local Veslo server reports registry availability through `/capabilities` as
+`skillRegistry: { configured: boolean }`. `configured` is true when the server
+resolves a skill registry base URL from `VESLO_SKILL_REGISTRY_BASE_URL`,
+`skillRegistryBaseUrl` in config, or the Den API base fallback
+(`denApiBase`/`VESLO_DEN_API_BASE`). App registry write controls should require
+this flag in addition to the normal skills write capability.
+
 Local validators are intentionally narrow. They check only response shapes consumed by Veslo today:
 
 - skill list and search responses
@@ -122,7 +129,29 @@ return a target conflict and avoid materializing both variants.
 
 Registry search is server-side. The registry indexes package metadata plus searchable text/code files under the configured size limit. Query handling can expand localized terms, starting with Czech-to-English skill discovery terms such as meeting-minutes searches, so the app should pass the UI language instead of trying to implement semantic search locally.
 
-The local Skills UI can show filterable inventory rows, bulk selection, detail tabs, locations, version history, and review evidence using local inventory plus registry metadata when available. Clicking an inventory card or row toggles its bulk selection state; the skill detail drawer opens from the row edit affordance so selection and inspection remain separate. Detail drawer tabs, location labels, version history, action labels, unavailable reasons, and review text are resolved through runtime localization. The detail drawer Files tab lists every file in the selected skill package and previews readable text files, including the skill `SKILL.md` entrypoint by default. Local copy and move actions transfer writable local workspace skills into the user skill root, including homogeneous selections from more than one local workspace. A user skill can also be installed into a selected local workspace, which creates a workspace-local copy without removing the user-skill source. In the default all-scope inventory view, a skill that has both a user-global instance and workspace-local copies is shown once in the all-workspaces group; the workspace copies remain available through workspace scope filtering and the location-aware detail actions. Private app-created workspaces may appear in the workspace-skill inventory when they already contain skills, but they are not valid install targets and must be omitted from install target pickers. The bulk toolbar should show the same transfer actions that are relevant to the selected inventory scope: user-skill selections can install to workspace through the workspace picker, workspace-skill selections can copy or move to user skills, and mixed user/workspace selections should not expose transfer actions. Registry-backed install and publish preparation packages a local skill and submits the registry create-skill, create-version, and create-installation sequence through the local server while leaving existing filesystem files in place until materialization policy explicitly installs the registry-backed version. Registry actions beyond local install preparation should call the local proxy only when the UI has concrete registry ids for the selected version, installation, review request, or workspace skill-set change, then refresh registry metadata and local inventory after success.
+The local Skills UI can show filterable inventory rows, bulk selection, detail tabs, locations, version history, and review evidence using local inventory plus registry metadata when available. Clicking an inventory card or row toggles its bulk selection state; the skill detail drawer opens from the row edit affordance so selection and inspection remain separate. Detail drawer tabs, location labels, version history, action labels, unavailable reasons, and review text are resolved through runtime localization. The detail drawer Files tab lists every file in the selected skill package and previews readable text files, including the skill `SKILL.md` entrypoint by default. Local copy and move actions transfer writable local workspace skills into the user skill root, including homogeneous selections from more than one local workspace. A user skill can also be installed into a selected local workspace, which creates a workspace-local copy without removing the user-skill source. In the default all-scope inventory view, a skill that has both a user-global instance and workspace-local copies is shown once in the all-workspaces group; the workspace copies remain available through workspace scope filtering and the location-aware detail actions. Private app-created workspaces may appear in the workspace-skill inventory when they already contain skills, but they are not valid install targets and must be omitted from install target pickers. The bulk toolbar should show the same transfer actions that are relevant to the selected inventory scope: user-skill selections can install to workspace through the workspace picker, workspace-skill selections can copy or move to user skills, and mixed user/workspace selections should not expose transfer actions.
+
+The bulk toolbar also exposes a localized Publish action (`skills.bulk_publish`,
+Czech `Publikovat`) for registry review requests. It is enabled only when
+exactly one publishable skill is selected, the Veslo server is connected,
+`skills.write` is available, and `/capabilities.skillRegistry.configured` is
+true. A publishable skill is active, readable, and scoped as user-global or
+workspace. Disabled states must provide a specific localized tooltip through
+the `skills.bulk_publish_*` keys, including no selection, multiple selection,
+not publishable, registry not configured, server read-only, and server
+unavailable. Clicking an enabled Publish action opens the skill review dialog in
+request mode.
+
+In request mode, submitting an organization publish request or system approval
+request builds a local skill package, creates the registry skill record with
+`POST /v1/skills`, uploads the immutable version with
+`POST /v1/skills/:skillId/versions`, then creates the review request with
+`POST /v1/skills/:skillId/review-requests` using `scope: "org"` or
+`scope: "system"`. Success shows the appropriate publish-request toast and
+closes the review dialog. Failure shows an error toast and keeps the dialog open
+so the user can retry or edit the request.
+
+Registry-backed install preparation packages a local skill and submits the registry create-skill, create-version, and create-installation sequence through the local server while leaving existing filesystem files in place until materialization policy explicitly installs the registry-backed version. Registry actions beyond local install preparation should call the local proxy only when the UI has concrete registry ids for the selected version, installation, review request, or workspace skill-set change, then refresh registry metadata and local inventory after success.
 
 Local workspace and user skills can be removed from the global Skills inventory when the target path is known and writable, including local workspace skills from a non-active workspace. Removal is recoverable: Veslo server snapshots the skill directory, removes the original directory, and stores a removal journal record under the Veslo data directory. The removed/deleted skills filter shows journaled removals with restore actions. Restoring a local removal copies the verified snapshot back to its original location and marks the removal record restored. Bulk removal uses the server-backed `POST /skills/batch-remove` route so mixed selections can return per-item success and failure details without the app guessing which backend mutation path applies.
 

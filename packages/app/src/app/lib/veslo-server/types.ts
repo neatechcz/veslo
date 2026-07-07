@@ -13,6 +13,9 @@ import type { ScheduledJob } from "../tauri";
 
 export type VesloServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "veslo" | "opencode" };
+  skillRegistry?: {
+    configured: boolean;
+  };
   hub?: {
     skills?: {
       read: boolean;

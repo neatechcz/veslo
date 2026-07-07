@@ -37,6 +37,41 @@ type FixtureSkill = {
   archive: PackageArchive;
 };
 
+type RecordedCreateSkillRequest = {
+  path: string;
+  body: {
+    scope?: unknown;
+    name?: unknown;
+    displayName?: unknown;
+    description?: unknown;
+    orgId?: unknown;
+    workspaceId?: unknown;
+  };
+  responseSkillId: string;
+};
+
+type RecordedCreateVersionRequest = {
+  path: string;
+  skillId: string;
+  body: {
+    package?: PackageArchive;
+  };
+  responseVersionId: string;
+};
+
+type RecordedReviewRequest = {
+  path: string;
+  skillId: string;
+  body: {
+    scope?: unknown;
+    versionId?: unknown;
+    orgId?: unknown;
+    reason?: unknown;
+    releaseChannel?: unknown;
+  };
+  responseRequestId: string;
+};
+
 type RegistryEventFixtureMode = 'none' | 'workspace-update-repeat';
 
 const DEFAULT_E2E_DEPLOYMENT_DOMAIN = 'veslo.work';
@@ -251,6 +286,68 @@ function stableStringify(value: unknown): string {
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`)
     .join(',')}}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function slugFromName(value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  const slug = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'skill';
+}
+
+function registryVisibilityForScope(scope: unknown): 'personal' | 'workspace' | 'organization' | 'platform' {
+  if (scope === 'workspace') return 'workspace';
+  if (scope === 'org' || scope === 'organization') return 'organization';
+  if (scope === 'platform' || scope === 'system') return 'platform';
+  return 'personal';
+}
+
+function publishSkillIdForName(name: unknown): string {
+  return `skill_publish_${slugFromName(name).replace(/-/g, '_')}`;
+}
+
+function packageArchiveFrom(value: unknown): PackageArchive | null {
+  if (!isRecord(value) || !Array.isArray(value.files) || !isRecord(value.metadata)) return null;
+  return value as PackageArchive;
+}
+
+function publishSkillSummary(input: {
+  skillId: string;
+  body: RecordedCreateSkillRequest['body'];
+  latestVersion?: PackageArchive;
+}) {
+  const name = typeof input.body.name === 'string' && input.body.name.trim()
+    ? input.body.name.trim()
+    : slugFromName(input.skillId);
+  const description = typeof input.body.description === 'string' && input.body.description.trim()
+    ? input.body.description.trim()
+    : undefined;
+  const latestVersion = input.latestVersion
+    ? {
+        id: `version_${input.skillId}_1`,
+        version: '1.0.0',
+        packageSha256: input.latestVersion.packageSha256,
+        createdAt: '2026-07-06T00:00:00.000Z',
+      }
+    : undefined;
+
+  return {
+    id: input.skillId,
+    slug: slugFromName(name),
+    name,
+    ...(description ? { description } : {}),
+    visibility: registryVisibilityForScope(input.body.scope),
+    reviewStatus: 'draft',
+    createdAt: '2026-07-06T00:00:00.000Z',
+    updatedAt: '2026-07-06T00:00:00.000Z',
+    ...(latestVersion ? { latestVersion } : {}),
+  };
 }
 
 function textForFile(bytes: Buffer, mediaType: string): string | undefined {
@@ -588,6 +685,9 @@ let deletedInstallationIds = new Set<string>();
 let deletedInstallationCalls: string[] = [];
 let disabledRolloutPolicyIds = new Set<string>();
 let updatedRolloutPolicyCalls: Array<{ policyId: string; enabled: boolean | null }> = [];
+let createSkillRequests: RecordedCreateSkillRequest[] = [];
+let createVersionRequests: RecordedCreateVersionRequest[] = [];
+let reviewRequestRequests: RecordedReviewRequest[] = [];
 let soulVersionSeq = 1;
 let soulDocuments = createDefaultSoulDocuments();
 
@@ -882,6 +982,9 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
     deletedInstallationCalls = [];
     disabledRolloutPolicyIds = new Set();
     updatedRolloutPolicyCalls = [];
+    createSkillRequests = [];
+    createVersionRequests = [];
+    reviewRequestRequests = [];
     soulDocuments = createDefaultSoulDocuments();
     json(res, 200, { ok: true, mode: 'initial' });
     return;
@@ -892,7 +995,13 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
     return;
   }
   if (req.method === 'GET' && url.pathname === '/__e2e/events') {
-    json(res, 200, { deletedInstallationCalls, updatedRolloutPolicyCalls });
+    json(res, 200, {
+      deletedInstallationCalls,
+      updatedRolloutPolicyCalls,
+      createSkillRequests,
+      createVersionRequests,
+      reviewRequestRequests,
+    });
     return;
   }
 
@@ -1134,6 +1243,90 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/v1/skills') {
+    readJsonBody(req, (body) => {
+      const skillId = publishSkillIdForName(body.name);
+      const record: RecordedCreateSkillRequest = {
+        path: url.pathname,
+        body: {
+          scope: body.scope,
+          name: body.name,
+          displayName: body.displayName,
+          description: body.description,
+          orgId: body.orgId,
+          workspaceId: body.workspaceId,
+        },
+        responseSkillId: skillId,
+      };
+      createSkillRequests.push(record);
+      json(res, 200, {
+        skill: publishSkillSummary({
+          skillId,
+          body: record.body,
+        }),
+      });
+    });
+    return;
+  }
+
+  const createVersionMatch = /^\/v1\/skills\/([^/]+)\/versions$/.exec(url.pathname);
+  if (req.method === 'POST' && createVersionMatch?.[1]) {
+    const skillId = decodeURIComponent(createVersionMatch[1]);
+    readJsonBody(req, (body) => {
+      const archive = packageArchiveFrom(body.package);
+      if (!archive) {
+        json(res, 400, { code: 'invalid_package', message: 'Expected skill package archive' });
+        return;
+      }
+      const versionNumber = createVersionRequests.filter((request) => request.skillId === skillId).length + 1;
+      const versionId = `version_${skillId}_${versionNumber}`;
+      createVersionRequests.push({
+        path: url.pathname,
+        skillId,
+        body: { package: archive },
+        responseVersionId: versionId,
+      });
+      json(res, 200, {
+        version: {
+          id: versionId,
+          version: `1.0.${versionNumber - 1}`,
+          packageSha256: archive.packageSha256,
+          createdAt: '2026-07-06T00:00:00.000Z',
+        },
+      });
+    });
+    return;
+  }
+
+  const createReviewRequestMatch = /^\/v1\/skills\/([^/]+)\/review-requests$/.exec(url.pathname);
+  if (req.method === 'POST' && createReviewRequestMatch?.[1]) {
+    const skillId = decodeURIComponent(createReviewRequestMatch[1]);
+    readJsonBody(req, (body) => {
+      const requestNumber = reviewRequestRequests.filter((request) => request.skillId === skillId).length + 1;
+      const requestId = `review_${skillId}_${requestNumber}`;
+      reviewRequestRequests.push({
+        path: url.pathname,
+        skillId,
+        body: {
+          scope: body.scope,
+          versionId: body.versionId,
+          orgId: body.orgId,
+          reason: body.reason,
+          releaseChannel: body.releaseChannel,
+        },
+        responseRequestId: requestId,
+      });
+      json(res, 200, {
+        requestId,
+        skillId,
+        status: 'pending_review',
+        createdAt: '2026-07-06T00:00:00.000Z',
+        updatedAt: '2026-07-06T00:00:00.000Z',
+      });
+    });
+    return;
+  }
+
   const packageMatch = /^\/v1\/skill-versions\/([^/]+)\/package$/.exec(url.pathname);
   if (packageMatch?.[1]) {
     const versionId = decodeURIComponent(packageMatch[1]);
@@ -1257,6 +1450,9 @@ export async function stopSkillRegistryFixture(): Promise<void> {
   deletedInstallationCalls = [];
   disabledRolloutPolicyIds = new Set();
   updatedRolloutPolicyCalls = [];
+  createSkillRequests = [];
+  createVersionRequests = [];
+  reviewRequestRequests = [];
   soulDocuments = createDefaultSoulDocuments();
   rmSync(fixtureInfoPath(), { force: true });
   if (!server) return;
@@ -1296,6 +1492,9 @@ export async function useUpdatedRuntimeSkillVersion(): Promise<void> {
 export async function readSkillRegistryFixtureEvents(): Promise<{
   deletedInstallationCalls: string[];
   updatedRolloutPolicyCalls: Array<{ policyId: string; enabled: boolean | null }>;
+  createSkillRequests: RecordedCreateSkillRequest[];
+  createVersionRequests: RecordedCreateVersionRequest[];
+  reviewRequestRequests: RecordedReviewRequest[];
 }> {
   const response = await fetch(`${readSkillRegistryFixtureBaseUrl()}/__e2e/events`);
   if (!response.ok) {
@@ -1304,5 +1503,8 @@ export async function readSkillRegistryFixtureEvents(): Promise<{
   return (await response.json()) as {
     deletedInstallationCalls: string[];
     updatedRolloutPolicyCalls: Array<{ policyId: string; enabled: boolean | null }>;
+    createSkillRequests: RecordedCreateSkillRequest[];
+    createVersionRequests: RecordedCreateVersionRequest[];
+    reviewRequestRequests: RecordedReviewRequest[];
   };
 }

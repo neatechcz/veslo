@@ -11,9 +11,12 @@ import type {
 } from "../types";
 import type { WorkspaceInfo } from "../lib/tauri";
 import type {
+  VesloServerClient,
+  VesloServerStatus,
   VesloSkillImportCandidate,
   VesloSkillImportSourceAgent,
   VesloSkillImportStatus,
+  VesloSkillRegistryAuthContext,
 } from "../lib/veslo-server";
 
 import Button from "../components/button";
@@ -49,6 +52,8 @@ import { currentLocale, t } from "../../i18n";
 import { buildSkillInstallTargetWorkspaces } from "../lib/skill-install-targets";
 import { skillMutationTargetFromInstance } from "../lib/skill-inventory";
 import type { SkillMutationTarget } from "../lib/skill-inventory";
+import { buildSkillPackageArchive } from "../lib/skill-package";
+import { resolveSkillsBulkPublishDisabledReasonKey } from "./skills-bulk-publish-gate";
 import {
   filterSkillInventoryItems,
   skillInventoryInstanceId,
@@ -116,6 +121,11 @@ export type SkillsViewProps = {
   isRemoteWorkspace: boolean;
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
   busy: boolean;
+  vesloServerStatus: VesloServerStatus;
+  vesloServerClient: VesloServerClient | null;
+  vesloServerCanWriteSkills: boolean;
+  vesloServerSkillRegistryAvailable: boolean;
+  skillRegistryAuthContext: VesloSkillRegistryAuthContext;
   canInstallSkillCreator: boolean;
   canUseDesktopTools: boolean;
   accessHint?: string | null;
@@ -263,9 +273,12 @@ export default function SkillsView(props: SkillsViewProps) {
     mode: "request" | "review";
     targetScope: SkillReviewTargetScope;
     action: SkillDetailActionInput;
+    item: SkillInventoryItem;
+    instance: SkillInstance;
   } | null>(null);
   const [reviewReason, setReviewReason] = createSignal("");
   const [reviewDrafts, setReviewDrafts] = createSignal<Record<string, string>>({});
+  const [publishRequestPending, setPublishRequestPending] = createSignal(false);
 
   const [toast, setToast] = createSignal<string | null>(null);
   const [installingHubSkill, setInstallingHubSkill] = createSignal<string | null>(null);
@@ -355,6 +368,12 @@ export default function SkillsView(props: SkillsViewProps) {
 
   const inventoryInstanceLifecycle = (instance: SkillInstance) =>
     instance.lifecycle === "removed" ? "removed" : "active";
+
+  const isPublishableInventoryInstance = (instance: SkillInstance) => {
+    if (inventoryInstanceLifecycle(instance) !== "active") return false;
+    if (instance.readable === false) return false;
+    return instance.scope === "user-global" || instance.scope === "workspace";
+  };
 
   const resolveSelectedDetailFromInventory = (
     detail: { item: SkillInventoryItem; instance: SkillInstance },
@@ -752,6 +771,18 @@ export default function SkillsView(props: SkillsViewProps) {
     if (selectedWorkspaceInstallTargets().length !== selectedRows.length) return translate("skills.copy_to_workspace_unavailable");
     return null;
   });
+  const bulkPublishDisabledReason = createMemo(() => {
+    const selectedRows = selectedInventoryRows();
+    const row = selectedRows[0];
+    const reasonKey = resolveSkillsBulkPublishDisabledReasonKey({
+      selectedCount: selectedRows.length,
+      selectedPublishable: Boolean(row && isPublishableInventoryInstance(row.instance)),
+      vesloServerStatus: props.vesloServerStatus,
+      vesloServerCanWriteSkills: props.vesloServerCanWriteSkills,
+      vesloServerSkillRegistryAvailable: props.vesloServerSkillRegistryAvailable,
+    });
+    return reasonKey ? translate(reasonKey) : null;
+  });
   const selectedInventoryShowsWorkspaceInstallAction = createMemo(() =>
     selectedInventoryRows().length > 0 &&
     selectedInventoryRows().every((row) => inventoryInstanceLifecycle(row.instance) === "active") &&
@@ -817,6 +848,17 @@ export default function SkillsView(props: SkillsViewProps) {
       return;
     }
     setBulkRemoveTargets(targets);
+  };
+
+  const openSelectedBulkPublish = () => {
+    const disabledReason = bulkPublishDisabledReason();
+    if (disabledReason) {
+      setToast(disabledReason);
+      return;
+    }
+    const row = selectedInventoryRows()[0];
+    if (!row) return;
+    openSkillReviewDialog("organization", skillDetailActionForInventoryRow(row), row);
   };
 
   const activeWorkspaceInstalledNames = createMemo(() =>
@@ -1086,10 +1128,7 @@ export default function SkillsView(props: SkillsViewProps) {
 
   const selectedDetailCanPublishFromLocal = createMemo(() => {
     const detail = selectedDetail();
-    if (!detail) return false;
-    if (inventoryInstanceLifecycle(detail.instance) !== "active") return false;
-    if (detail.instance.readable === false) return false;
-    return detail.instance.scope === "user-global" || detail.instance.scope === "workspace";
+    return detail ? isPublishableInventoryInstance(detail.instance) : false;
   });
 
   const selectedDetailCanDeactivate = createMemo(() => {
@@ -1255,15 +1294,44 @@ export default function SkillsView(props: SkillsViewProps) {
     void openSkill(skill);
   };
 
+  const skillDetailMetadataForInventoryRow = (input: { item: SkillInventoryItem; instance: SkillInstance }): SkillDetailMetadata => ({
+    id: input.instance.id,
+    name: input.item.name,
+    description: input.instance.description ?? input.item.description ?? null,
+    trigger: input.instance.trigger ?? input.item.trigger ?? null,
+    status: inventoryInstanceLifecycle(input.instance) === "removed" ? translate("skills.removed_status") : input.item.status,
+    source: input.instance.source,
+    approvalStatus: "approved",
+    updatedAt: null,
+  });
+
+  const skillDetailActionForInventoryRow = (input: { item: SkillInventoryItem; instance: SkillInstance }): SkillDetailActionInput => ({
+    skill: skillDetailMetadataForInventoryRow(input),
+    location: skillDetailLocationFromInstance(input.instance),
+  });
+
   const skillReviewDraftKey = (targetScope: SkillReviewTargetScope, action: SkillDetailActionInput) =>
     `${targetScope}:${action.skill.id}:${action.skill.currentVersionId ?? action.skill.id}`;
 
-  const openSkillReviewDialog = (targetScope: SkillReviewTargetScope, action: SkillDetailActionInput) => {
+  const openSkillReviewDialog = (
+    targetScope: SkillReviewTargetScope,
+    action: SkillDetailActionInput,
+    explicitTarget?: { item: SkillInventoryItem; instance: SkillInstance },
+  ) => {
+    const detail = selectedDetail();
+    const instance = explicitTarget?.instance ?? detailInstanceForAction(action);
+    const item = explicitTarget?.item ?? detail?.item;
+    if (!item || !instance) {
+      setToast(translate("skills.bulk_publish_not_publishable"));
+      return;
+    }
     setReviewReason(reviewDrafts()[skillReviewDraftKey(targetScope, action)] ?? "");
     setReviewDialog({
       mode: "request",
       targetScope,
       action,
+      item,
+      instance,
     });
   };
 
@@ -1283,8 +1351,88 @@ export default function SkillsView(props: SkillsViewProps) {
     closeSkillReviewDialog();
   };
 
+  const canSubmitRegistryPublishRequest = createMemo(() =>
+    Boolean(props.vesloServerClient) &&
+    props.vesloServerCanWriteSkills &&
+    props.vesloServerSkillRegistryAvailable
+  );
+
+  const reviewRequestScope = (targetScope: SkillReviewTargetScope): "org" | "system" =>
+    targetScope === "organization" ? "org" : "system";
+
+  const registrySkillScopeForInstance = (instance: SkillInstance): "user" | "workspace" =>
+    instance.scope === "workspace" ? "workspace" : "user";
+
+  const requestSkillRegistryPublish = async (input: SkillReviewActionInput) => {
+    const dialog = reviewDialog();
+    const client = props.vesloServerClient;
+    if (!dialog || publishRequestPending()) return;
+    if (!client || !canSubmitRegistryPublishRequest()) {
+      setToast(bulkPublishDisabledReason() ?? translate("skills.review_service_unavailable_body"));
+      return;
+    }
+    if (!isPublishableInventoryInstance(dialog.instance)) {
+      setToast(translate("skills.bulk_publish_not_publishable"));
+      return;
+    }
+
+    const target = skillMutationTargetFromInstance(dialog.instance);
+    setPublishRequestPending(true);
+    try {
+      const filesResult = await props.readSkillInstanceFiles(target);
+      if (!filesResult || filesResult.files.length === 0) {
+        throw new Error(translate("skills.publish_request_files_unavailable"));
+      }
+      const missingTextFile = filesResult.files.find((file) => file.text === undefined);
+      if (missingTextFile) {
+        throw new Error(translate("skills.publish_request_missing_file_content", { path: missingTextFile.path }));
+      }
+      const archive = await buildSkillPackageArchive({
+        metadata: {
+          name: dialog.item.name,
+          description: dialog.instance.description ?? dialog.item.description,
+          trigger: dialog.instance.trigger ?? dialog.item.trigger,
+        },
+        files: filesResult.files,
+      });
+      const auth = props.skillRegistryAuthContext;
+      const skillResponse = await client.createRegistrySkill({
+        ...auth,
+        scope: registrySkillScopeForInstance(dialog.instance),
+        name: dialog.item.name,
+        displayName: dialog.item.name,
+        description: dialog.instance.description ?? dialog.item.description,
+        workspaceId: dialog.instance.scope === "workspace"
+          ? dialog.instance.workspaceId?.trim() || props.activeWorkspaceId
+          : undefined,
+      });
+      const skillId = skillResponse.skill.id;
+      const versionResponse = await client.createRegistrySkillVersion(skillId, {
+        ...auth,
+        package: archive as unknown as Record<string, unknown>,
+      });
+      await client.createRegistrySkillReviewRequest(skillId, {
+        ...auth,
+        scope: reviewRequestScope(input.targetScope),
+        versionId: versionResponse.version.id,
+        orgId: input.targetScope === "organization" ? auth.denOrgId : undefined,
+        reason: input.reason || undefined,
+      });
+
+      setToast(translate(input.targetScope === "organization"
+        ? "skills.publish_request_org_success"
+        : "skills.publish_request_system_success"));
+      props.refreshSkillInventory({ force: true });
+      closeSkillReviewDialog();
+    } catch (e) {
+      setToast(translate("skills.publish_request_failed", { error: maskError(e) }));
+    } finally {
+      setPublishRequestPending(false);
+    }
+  };
+
   const selectedReviewMetadataDiff = createMemo(() => {
-    const detail = selectedDetail();
+    const detail = reviewDialog();
     if (!detail) return [];
     return [
       {
@@ -1306,7 +1454,7 @@ export default function SkillsView(props: SkillsViewProps) {
   });
 
   const selectedReviewFileDiffs = createMemo(() => {
-    const detail = selectedDetail();
+    const detail = reviewDialog();
     if (!detail) return [];
     const reviewFilePath = detail.instance.path
       ? `${detail.instance.path.replace(/\/$/, "")}/SKILL.md`
@@ -2025,7 +2173,14 @@ export default function SkillsView(props: SkillsViewProps) {
                 {translate("skills.move_to_global")}
               </Button>
             </Show>
-            <Button variant="outline" class="h-8 px-2 type-ui-xs" disabled title={translate("skills.registry_action_pending")} onClick={showRegistryActionPending}>
+            <Button
+              variant="outline"
+              class="h-8 px-2 type-ui-xs"
+              data-testid="skills-bulk-publish-button"
+              title={bulkPublishDisabledReason() ?? translate("skills.bulk_publish")}
+              disabled={Boolean(bulkPublishDisabledReason())}
+              onClick={openSelectedBulkPublish}
+            >
               <Upload size={13} />
               {translate("skills.bulk_publish")}
             </Button>
@@ -2997,9 +3152,12 @@ export default function SkillsView(props: SkillsViewProps) {
             metadataDiff={selectedReviewMetadataDiff()}
             fileDiffs={selectedReviewFileDiffs()}
             reason={reviewReason()}
+            pending={publishRequestPending()}
             onReasonChange={setReviewReason}
             onClose={closeSkillReviewDialog}
             onSaveDraft={saveSkillReviewDraft}
+            onRequestOrganizationPublish={canSubmitRegistryPublishRequest() ? (input) => void requestSkillRegistryPublish(input) : undefined}
+            onRequestSystemApproval={canSubmitRegistryPublishRequest() ? (input) => void requestSkillRegistryPublish(input) : undefined}
           />
         )}
       </Show>

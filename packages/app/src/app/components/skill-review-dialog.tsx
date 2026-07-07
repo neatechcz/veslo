@@ -479,7 +479,13 @@ export default function SkillReviewDialog(props: SkillReviewDialogProps) {
                   {translate("skills.review_save_draft")}
                 </Button>
               </Show>
-              <Button variant="primary" class="h-10 px-4 type-ui-md" disabled={requestDisabled()} onClick={submitRequest}>
+              <Button
+                variant="primary"
+                class="h-10 px-4 type-ui-md"
+                data-testid="skill-review-submit-button"
+                disabled={requestDisabled()}
+                onClick={submitRequest}
+              >
                 <Send size={14} />
                 {requestLabel()}
               </Button>

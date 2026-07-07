@@ -3202,6 +3202,12 @@ export default function App() {
       vesloServerWorkspaceReady() &&
       (resolvedVesloCapabilities()?.skills?.write ?? false),
   );
+  const vesloServerSkillRegistryAvailable = createMemo(
+    () =>
+      vesloServerReady() &&
+      vesloServerWorkspaceReady() &&
+      (resolvedVesloCapabilities()?.skillRegistry?.configured ?? false),
+  );
   const vesloServerCanWritePlugins = createMemo(
     () =>
       vesloServerReady() &&
@@ -4518,6 +4524,8 @@ export default function App() {
     activeWorkspaceDisplay,
     vesloServerStatus,
     vesloServerCanWriteSkills,
+    vesloServerSkillRegistryAvailable,
+    skillRegistryMaterializationAuthContext,
     vesloServerCanWritePlugins,
     tab,
     settingsTab,

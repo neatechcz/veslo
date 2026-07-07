@@ -9,6 +9,7 @@
     "test": "node --import=tsx/esm ./helpers/pilot-runner.ts --suite current-gate",
     "test:pilot": "node --import=tsx/esm ./helpers/pilot-runner.ts",
     "test:pilot:core-platform-skills": "node --import=tsx/esm ./specs/core-platform-skills.pilot.ts",
+    "test:pilot:skill-publish": "node --import=tsx/esm ./specs/skill-publish-request.pilot.ts",
     "test:pilot:smoke": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario smoke",
     "test:pilot:folder-access-consent": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario folder-access-consent",
     "test:pilot:navigation": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario navigation",

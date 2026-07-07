@@ -126,6 +126,9 @@ export interface Capabilities {
   schemaVersion: number;
   serverVersion: string;
   skills: { read: boolean; write: boolean; source: "veslo" | "opencode" };
+  skillRegistry: {
+    configured: boolean;
+  };
   hub: {
     skills: {
       read: boolean;

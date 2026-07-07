@@ -9,16 +9,23 @@
   "mcp": {
     "control-chrome": {
       "command": [
-        "chrome-devtools-mcp",
+        "npx",
+        "-y",
+        "chrome-devtools-mcp@latest",
         "--isolated"
       ],
       "type": "local"
     }
   },
   "model": "codex_oauth/gpt-5.5",
+  "plugin": [
+    "opencode-scheduler"
+  ],
   "provider": {
     "codex_oauth": {
-      "env": [],
+      "env": [
+        "VESLO_OPENCODE_SERVER_CLIENT_TOKEN"
+      ],
       "models": {
         "gpt-5.5": {
           "name": "gpt-5.5",
@@ -26,10 +33,15 @@
           "reasoning": true,
           "options": {
             "reasoningEffort": "high",
-            "textVerbosity": "low",
-            "reasoningSummary": "auto"
+            "reasoningSummary": "auto",
+            "textVerbosity": "low"
           },
           "variants": {
+            "high": {
+              "reasoningEffort": "high",
+              "reasoningSummary": "auto",
+              "textVerbosity": "low"
+            },
             "low": {
               "reasoningEffort": "low",
               "reasoningSummary": "auto",
@@ -37,11 +49,6 @@
             },
             "medium": {
               "reasoningEffort": "medium",
-              "reasoningSummary": "auto",
-              "textVerbosity": "low"
-            },
-            "high": {
-              "reasoningEffort": "high",
               "reasoningSummary": "auto",
               "textVerbosity": "low"
             },
@@ -60,6 +67,7 @@
       "npm": "@ai-sdk/openai-compatible",
       "options": {
         "baseURL": "http://127.0.0.1:8787/ai-gateway/providers/codex_oauth/v1",
+        "headers": {},
         "apiKey": "{env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}"
       }
     }

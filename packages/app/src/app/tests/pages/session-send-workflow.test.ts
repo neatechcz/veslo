@@ -1128,8 +1128,8 @@ test("session send workflow accepts first-session server submit results without 
 test("session send workflow opens first materialized session and reports failed server submit", async () => {
   const createOptions: Array<Parameters<SessionSendWorkflowOptions["createSessionAndOpen"]>[1]> = [];
   const pendingDraftMeta = { id: "pending-id-first-failed", title: "hello" };
-  let activePendingDraftKey = "pending-draft:first-failed";
-  let activePendingDraftMeta: typeof pendingDraftMeta | null = pendingDraftMeta;
+  let activePendingDraftKey: string | null = "pending-draft:first-failed";
+  let activePendingDraftMeta: { id?: string | null; title?: string | null } | null = pendingDraftMeta;
   const harness = createHarness({
     activePendingDraftKey: () => activePendingDraftKey,
     activePendingDraftMeta: () => activePendingDraftMeta,
@@ -1169,7 +1169,7 @@ test("session send workflow opens first materialized session and reports failed 
     },
     setActivePendingDraftMeta: (meta) => {
       activePendingDraftMeta = meta ?? null;
-      harness.actions.push(`set-active-pending-draft-meta:${meta?.id ?? "null"}`);
+      harness.actions.push(`set-active-pending-draft-meta:${activePendingDraftMeta?.id ?? "null"}`);
     },
     setComposerDraftBySessionId: (updater) => {
       harness.actions.push("set-composer-draft-by-session");
