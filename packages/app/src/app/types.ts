@@ -812,6 +812,16 @@ export type WorkspaceDisplay = WorkspaceInfo & {
   name: string;
 };
 
+export type UpdateDownloadEvent = {
+  event: "Started" | "Progress" | "Finished" | string;
+  data?: {
+    contentLength?: number;
+    chunkLength?: number;
+    [key: string]: unknown;
+  } | null;
+  [key: string]: unknown;
+};
+
 export type UpdateHandle = {
   available: boolean;
   currentVersion: string;
@@ -820,7 +830,7 @@ export type UpdateHandle = {
   body?: string;
   rawJson: Record<string, unknown>;
   close: () => Promise<void>;
-  download: (onEvent?: (event: any) => void) => Promise<void>;
+  download: (onEvent?: (event: UpdateDownloadEvent) => void) => Promise<void>;
   install: () => Promise<void>;
-  downloadAndInstall: (onEvent?: (event: any) => void) => Promise<void>;
+  downloadAndInstall: (onEvent?: (event: UpdateDownloadEvent) => void) => Promise<void>;
 };

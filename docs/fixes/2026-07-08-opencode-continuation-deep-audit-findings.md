@@ -462,3 +462,51 @@ Results:
 - app session send workflow suite: 44 passed,
 - app session mutation workflow suite: 11 passed,
 - server skill registry/CORS suite: 11 passed.
+
+## Main Workflow Typing Follow-up
+
+The app package already has TypeScript `strict: true`, so the useful next step
+was not another broad compiler switch. The live weak spots were explicit `any`
+and overly broad callback types around the main session/send surfaces.
+
+### Tightened without blocking file sends
+
+Changes applied:
+
+- OpenCode runtime `Part` reads in session status/error handling now go through
+  a small typed helper that returns strings or `Record<string, unknown>` instead
+  of casting parts to `any`.
+- Legacy send workflow dependencies now type `buildPromptParts(...)` and
+  `buildCommandFileParts(...)` as OpenCode attachment part inputs rather than
+  `unknown[]`.
+- Composer and conversation-submit attachment kinds are named unions:
+  `"image" | "file"`.
+- Server submit parsing now rejects unexpected attachment kinds before upstream
+  OpenCode contact.
+- Update download callback events use a tolerant `UpdateDownloadEvent` shape
+  instead of `any`; unknown event fields remain allowed as `unknown`.
+
+This preserves the existing file attachment path: composer attachments are still
+accepted as data URLs, staged into the active session directory, and submitted
+with `fileSessionPath` where applicable.
+
+### Remaining deliberate `any`
+
+Some `setStore as any` adapters remain in `context/session.ts`. Those are Solid
+store adapter boundaries between the facade and extracted controllers. They are
+not part of the send/file shape change and should be cleaned in a separate
+controller-typing pass to avoid a broad refactor.
+
+### Verification
+
+```powershell
+pnpm --filter @neatech/veslo-ui typecheck
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-send-workflow.test.ts src/app/tests/pages/session-mutation-workflow.test.ts src/app/tests/pages/session-attachment-staging.test.ts src/app/tests/lib/attachment-prompt-routing.test.ts src/app/tests/system-state-updater-retry.test.ts
+pnpm --filter veslo-server exec bun test src/tests/server-conversations.test.ts src/tests/conversation-submit-service.test.ts
+```
+
+Results:
+
+- app typecheck: passed,
+- app focused workflow/files/updater tests: 76 passed,
+- server conversation submit tests: 57 passed.

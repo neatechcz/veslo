@@ -14,6 +14,7 @@ import type {
   ReloadReason,
   ReloadTrigger,
   ResetVesloMode,
+  UpdateDownloadEvent,
   UpdateHandle,
 } from "./types";
 import type { WorkspaceBusyMap } from "./context/workspace-debug";
@@ -40,15 +41,15 @@ import { unwrap, waitForHealthy } from "./lib/opencode";
 import type { WorkspaceRouting } from "./context/workspace-routing";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../i18n";
 
-function throttle<T extends (...args: any[]) => any>(
-  fn: T,
+function throttle<Args extends unknown[]>(
+  fn: (...args: Args) => unknown,
   delayMs: number
-): (...args: Parameters<T>) => void {
+): (...args: Args) => void {
   let lastCall = 0;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  let lastArgs: Parameters<T> | null = null;
+  let lastArgs: Args | null = null;
 
-  return (...args: Parameters<T>) => {
+  return (...args: Args) => {
     const now = Date.now();
     lastArgs = args;
 
@@ -645,14 +646,11 @@ export function createSystemState(options: {
         });
       }, 100);
 
-      await downloadPending.update.download((event: any) => {
-        if (!event || typeof event !== "object") return;
-        const record = event as Record<string, any>;
-
-        if (record.event === "Started") {
+      await downloadPending.update.download((event: UpdateDownloadEvent) => {
+        if (event.event === "Started") {
           const newTotal =
-            record.data && typeof record.data.contentLength === "number"
-              ? record.data.contentLength
+            event.data && typeof event.data.contentLength === "number"
+              ? event.data.contentLength
               : null;
           totalBytes = newTotal;
           recordPerfLog(true, "workspace.updater", "download-progress", {
@@ -664,10 +662,10 @@ export function createSystemState(options: {
           throttledUpdateProgress();
         }
 
-        if (record.event === "Progress") {
+        if (event.event === "Progress") {
           const chunk =
-            record.data && typeof record.data.chunkLength === "number"
-              ? record.data.chunkLength
+            event.data && typeof event.data.chunkLength === "number"
+              ? event.data.chunkLength
               : 0;
           accumulatedBytes += chunk;
           const nowMs = Date.now();
