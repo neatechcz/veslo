@@ -5,10 +5,10 @@ import type { Session } from "@opencode-ai/sdk/v2/client";
 
 import {
   createSessionCreationWorkflow,
+  type SessionCreationPreflightContext,
   type SessionCreationWorkflowOptions,
 } from "../../pages/session-creation-workflow.js";
 import type { SessionFlowProgressEvent } from "../../context/session-flow-progress-presenter.js";
-import type { SendRuntimePreflightContext } from "../../context/send-runtime-readiness.js";
 import type { MaterializedSessionHandoff } from "../../lib/session-send-contract.js";
 import type { PendingSidebarSessionMetadata } from "../../types.js";
 
@@ -39,6 +39,19 @@ function session(overrides: Partial<Session> = {}): Session {
   } as Session;
 }
 
+function sessionPreflight(overrides: Partial<SessionCreationPreflightContext> = {}): SessionCreationPreflightContext {
+  return {
+    traceId: "trace-test",
+    managedAiReady: false,
+    runtimeHealthOk: false,
+    enginePrepared: false,
+    effectiveSandbox: null,
+    targetWorkspace: null,
+    conversationWorkspaceByDirectory: new Map(),
+    ...overrides,
+  };
+}
+
 function createHarness(overrides: Partial<SessionCreationWorkflowOptions> = {}): Harness {
   const actions: string[] = [];
   const progressEvents: SessionFlowProgressEvent["type"][] = [];
@@ -53,6 +66,9 @@ function createHarness(overrides: Partial<SessionCreationWorkflowOptions> = {}):
     baseUrl: () => "http://127.0.0.1:4096",
     currentView: () => "session",
     developerMode: () => false,
+    createSendPreflightContext: (sendTraceId) => sessionPreflight({
+      traceId: sendTraceId?.trim() || "trace-created",
+    }),
     ensureLocalRuntimeReachableForSend: async () => {
       actions.push("ensure-runtime");
       return true;
@@ -153,13 +169,13 @@ test("session creation blocks while the target workspace is still connecting", a
 });
 
 test("session creation reuses send preflight readiness without rerunning runtime gates", async () => {
-  const preflight: SendRuntimePreflightContext = {
+  const preflight = sessionPreflight({
     traceId: "trace-send",
     targetWorkspace,
     enginePrepared: true,
     runtimeHealthOk: false,
     managedAiReady: true,
-  };
+  });
   const harness = createHarness();
   const workflow = createSessionCreationWorkflow(harness.options);
 
@@ -176,7 +192,7 @@ test("session creation reuses send preflight readiness without rerunning runtime
 });
 
 test("session creation lets server submit own first-message runtime admission", async () => {
-  const observedPreflights: Array<SendRuntimePreflightContext | undefined> = [];
+  const observedPreflights: Array<SessionCreationPreflightContext | undefined> = [];
   const harness = createHarness({
     ensureLocalRuntimeReachableForSend: async () => {
       throw new Error("runtime gate should not run before server submit materialization");
@@ -217,17 +233,17 @@ test("session creation lets server submit own first-message runtime admission", 
       command: null,
       attachments: [],
     },
-    preflight: {
+    preflight: sessionPreflight({
       traceId: "trace-submit",
       targetWorkspace,
       runtimeHealthOk: false,
-    },
+    }),
   });
 
   assert.equal(result, "sess-submit");
   assert.equal(observedPreflights.length, 1);
-  assert.equal(observedPreflights[0]?.enginePrepared, undefined);
-  assert.equal(observedPreflights[0]?.managedAiReady, undefined);
+  assert.equal(observedPreflights[0]?.enginePrepared, false);
+  assert.equal(observedPreflights[0]?.managedAiReady, false);
   assert.ok(harness.events.includes("createSessionAndOpen:server-submit-runtime-admission-skip"));
   assert.ok(harness.events.includes("createSessionAndOpen:server-submit-managed-ai-admission-skip"));
   assert.doesNotMatch(harness.actions.join("\n"), /ensure-runtime|ensure-managed-ai|create-conversation/);
@@ -275,7 +291,7 @@ test("session creation opens a materialized session when first server submit fai
 });
 
 test("session creation passes the prepared create preflight to conversation creation", async () => {
-  let observedPreflight: SendRuntimePreflightContext | undefined;
+  let observedPreflight: SessionCreationPreflightContext | undefined;
   const harness = createHarness({
     ensureLocalRuntimeReachableForSend: async (_reason, preflight) => {
       preflight.runtimeHealthOk = true;
@@ -306,6 +322,7 @@ test("session creation passes the prepared create preflight to conversation crea
   assert.equal(observedPreflight?.managedAiReady, true);
   assert.deepEqual(observedPreflight?.targetWorkspace, targetWorkspace);
   assert.deepEqual(observedPreflight?.effectiveSandbox, { mode: "test" });
+  assert.equal(observedPreflight?.conversationWorkspaceByDirectory instanceof Map, true);
 });
 
 test("session creation can return a backend result without route or sidebar effects", async () => {

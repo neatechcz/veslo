@@ -17,6 +17,7 @@ export type WorkspaceBusyMap = Record<string, WorkspaceBusySessions>;
 type WorkspaceBusyTraceRoot = typeof window & {
   __vesloWorkspaceBusyTrace?: Array<Record<string, unknown>>;
   __vesloWorkspaceBusySnapshot?: WorkspaceBusyMap;
+  __wsActivateLog?: string;
 };
 
 export function recordWorkspaceBusyTrace(
@@ -51,7 +52,8 @@ export function wsLog(msg: string, data?: unknown) {
   }`;
   console.log(line);
   try {
-    (window as any).__wsActivateLog = ((window as any).__wsActivateLog || "") + line + "\n";
+    const root = window as WorkspaceBusyTraceRoot;
+    root.__wsActivateLog = `${root.__wsActivateLog ?? ""}${line}\n`;
   } catch {
     // ignore
   }

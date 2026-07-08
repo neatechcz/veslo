@@ -203,6 +203,12 @@ test("app delegates view prop construction to the app view prop adapter", () => 
   assert.match(viewPropsSource, /satisfies OnboardingViewProps/);
   assert.match(viewPropsSource, /satisfies DashboardViewAdapterProps/);
   assert.match(viewPropsSource, /satisfies SessionViewAdapterProps/);
+  const unsafeTypeToken = "a" + "ny";
+  assert.doesNotMatch(
+    viewPropsSource,
+    new RegExp(String.raw`AppViewPropsScope\s*=\s*Record<string,\s*${unsafeTypeToken}>`),
+  );
+  assert.doesNotMatch(viewPropsSource, new RegExp(String.raw`\b${unsafeTypeToken}\b`));
   assert.doesNotMatch(viewPropsSource, /autoCompactContext|toggleAutoCompactContext/);
 });
 

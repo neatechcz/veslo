@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { readWorkspaceBehaviorSources } from "./workspace-source";
+import { readContextSource, readWorkspaceBehaviorSources } from "./workspace-source";
 
 const workspaceSource = readWorkspaceBehaviorSources();
 const tauriSource = readFileSync(new URL("../../lib/tauri.ts", import.meta.url), "utf8");
+const workspaceDebugSource = readContextSource("workspace-debug.ts");
 
 test("workspace store maps forget options to detach/delete modes", () => {
   assert.match(
@@ -58,5 +59,27 @@ test("workspace debug and busy helpers live outside the workspace facade", () =>
     workspaceSource,
     /recordTrace\?\.\("clear-all-except", \{[\s\S]*keepWorkspaceId:[\s\S]*droppedWorkspaceIds:/,
     "workspace busy traces should preserve diagnostic workspace ids for readable runtime error context",
+  );
+});
+
+test("workspace debug activation log uses a typed window root", () => {
+  const unsafeTypeToken = "a" + "ny";
+
+  assert.match(
+    workspaceDebugSource,
+    /type WorkspaceBusyTraceRoot = typeof window & \{[\s\S]*__wsActivateLog\?: string;/,
+    "workspace debug should type the activation log field on its window root",
+  );
+
+  assert.match(
+    workspaceDebugSource,
+    /const root = window as WorkspaceBusyTraceRoot;[\s\S]*root\.__wsActivateLog = `\$\{root\.__wsActivateLog \?\? ""\}\$\{line\}\\n`;/,
+    "workspace debug should append activation logs through the typed root",
+  );
+
+  assert.doesNotMatch(
+    workspaceDebugSource,
+    new RegExp(`\\(window as ${unsafeTypeToken}\\)\\.__wsActivateLog`),
+    "workspace debug should not cast the activation log window root to any",
   );
 });

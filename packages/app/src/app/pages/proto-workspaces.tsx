@@ -1,4 +1,5 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
+import type { Component } from "solid-js";
 import {
   ArrowLeft,
   ChevronDown,
@@ -16,6 +17,7 @@ import VesloLogo from "../components/veslo-logo";
 import WorkspaceChip from "../components/workspace-chip";
 
 type ProtoView = "onboarding" | "dashboard" | "session";
+type IconComponent = Component<{ size?: number; class?: string }>;
 
 type SessionProto = {
   id: string;
@@ -93,7 +95,7 @@ const viewLabels: Record<ProtoView, string> = {
 const navItems: Array<{
   id: string;
   label: string;
-  icon: any;
+  icon: IconComponent;
 }> = [
   { id: "scheduled", label: "Schedule", icon: Command },
   { id: "sessions", label: "Sessions", icon: Play },

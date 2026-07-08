@@ -122,6 +122,28 @@ jobs:
           root_response="$(curl -fsS "$api_url/")"
           printf '%s\n' "$root_response" | grep -F '"service":"veslo-den"' >/dev/null
 
+          assert_unauthenticated_json_route() {
+            path="$1"
+            body="$(mktemp)"
+            status="$(curl -sS -o "$body" -w '%{http_code}' "$api_url$path")"
+            if [ "$status" != "401" ]; then
+              echo "::error::$api_url$path expected 401 JSON unauthorized, got HTTP $status"
+              cat "$body"
+              rm -f "$body"
+              exit 1
+            fi
+            if ! grep -F '"error":"unauthorized"' "$body" >/dev/null; then
+              echo "::error::$api_url$path did not return the expected unauthorized JSON payload"
+              cat "$body"
+              rm -f "$body"
+              exit 1
+            fi
+            rm -f "$body"
+          }
+
+          assert_unauthenticated_json_route "/v1/soul/user"
+          assert_unauthenticated_json_route "/v1/soul/organization"
+
           for forbidden in \
             "Den Control Plane Demo" \
             "Create account" \

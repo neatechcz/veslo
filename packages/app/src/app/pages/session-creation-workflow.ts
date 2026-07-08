@@ -7,8 +7,10 @@ import {
   resolveCreateSessionManagedAiPreflightDecision,
   resolveCreateSessionRuntimeHealthPreflightDecision,
 } from "../controllers/send-orchestration-controller";
+import type { ConversationSendPreflightContext } from "../context/conversation-service";
 import type { SessionFlowProgressEvent } from "../context/session-flow-progress-presenter";
 import type { SendRuntimePreflightContext, SendRuntimePreflightTargetWorkspace } from "../context/send-runtime-readiness";
+import type { SendTargetWorkspaceScope } from "../context/workspace-session-selection";
 import {
   createMaterializedSessionHandoff,
   type MaterializedSessionHandoff,
@@ -16,8 +18,13 @@ import {
 import type {
   VesloConversationSubmitRequest,
   VesloConversationSubmitResult,
+  VesloServerClient,
 } from "../lib/veslo-server";
 import type { PendingSidebarSessionMetadata, View } from "../types";
+
+export type SessionCreationPreflightContext =
+  SendRuntimePreflightContext &
+  ConversationSendPreflightContext<VesloServerClient>;
 
 export type SessionCreationWorkflowCreateOptions = {
   blockAppDuringCreate?: boolean;
@@ -30,7 +37,7 @@ export type SessionCreationWorkflowCreateOptions = {
   submitSource?: string | null;
   onSubmitResult?: (result: VesloConversationSubmitResult) => void;
   onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
-  preflight?: SendRuntimePreflightContext;
+  preflight?: SessionCreationPreflightContext;
 };
 
 type SessionCreationWorkspaceAccess = {
@@ -69,6 +76,7 @@ export type SessionCreationWorkflowOptions = {
   baseUrl: () => string;
   currentView: () => View;
   developerMode: () => boolean;
+  createSendPreflightContext: (sendTraceId?: string | null) => SessionCreationPreflightContext;
   ensureLocalRuntimeReachableForSend: (
     reason: "createSessionAndOpen",
     preflight: SendRuntimePreflightContext,
@@ -106,7 +114,7 @@ export type SessionCreationWorkflowOptions = {
   ) => unknown;
   resolveSendTargetWorkspaceScope: (
     scope: null,
-  ) => SendRuntimePreflightTargetWorkspace | null;
+  ) => SendTargetWorkspaceScope | null;
   resolveWorkspaceRootForConversationScope: (workspaceId: string, directory: string) => string;
   routedClient: (workspaceId?: string | null) => unknown;
   routedClientForSendTarget: (targetWorkspace?: SendRuntimePreflightTargetWorkspace | null) => unknown;
@@ -124,13 +132,13 @@ export type SessionCreationWorkflowOptions = {
     workspaceId: string,
     directory: string,
     title?: string,
-    preflight?: SendRuntimePreflightContext,
+    preflight?: SessionCreationPreflightContext,
   ) => Promise<CreatedSession | null | undefined>;
   submitConversationFromVesloWriteApi?: (
     workspaceId: string,
     directory: string,
     input: VesloConversationSubmitRequest,
-    preflight?: SendRuntimePreflightContext,
+    preflight?: SessionCreationPreflightContext,
   ) => Promise<VesloConversationSubmitResult | null | undefined>;
   warn?: (message: string, payload?: Record<string, unknown>) => void;
 };
@@ -251,12 +259,11 @@ export function createSessionCreationWorkflow(
       });
     }
 
-    const createPreflight: SendRuntimePreflightContext = preflight ?? {
-      traceId: sendTraceId?.trim() ?? "",
-      targetWorkspace,
-      runtimeHealthOk: false,
-    };
+    const createPreflight = preflight ?? deps.createSendPreflightContext(sendTraceId);
     createPreflight.targetWorkspace = createPreflight.targetWorkspace ?? targetWorkspace;
+    if (!(createPreflight.conversationWorkspaceByDirectory instanceof Map)) {
+      createPreflight.conversationWorkspaceByDirectory = new Map();
+    }
     createPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(targetWorkspace);
     let createRuntimeReady = true;
     const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision({

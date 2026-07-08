@@ -16,7 +16,7 @@
 // stays free for short requests.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use futures_util::StreamExt;
@@ -35,20 +35,89 @@ enum SseParseStep {
     InvalidUtf8,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct EngineSseRegistry {
-    inner: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
+    inner: Arc<Mutex<EngineSseRegistryInner>>,
+}
+
+#[derive(Default)]
+struct EngineSseRegistryInner {
+    by_subscription: HashMap<String, EngineSseRegistration>,
+    by_connection: HashMap<String, String>,
+}
+
+struct EngineSseRegistration {
+    cancel: tokio::sync::oneshot::Sender<()>,
+    connection_key: Option<String>,
 }
 
 impl EngineSseRegistry {
-    fn insert(&self, id: String, sender: tokio::sync::oneshot::Sender<()>) {
-        if let Ok(mut map) = self.inner.lock() {
-            map.insert(id, sender);
+    fn insert(
+        &self,
+        id: String,
+        connection_key: Option<String>,
+        sender: tokio::sync::oneshot::Sender<()>,
+    ) -> Vec<tokio::sync::oneshot::Sender<()>> {
+        let mut replaced = Vec::new();
+        if let Ok(mut inner) = self.inner.lock() {
+            if let Some(existing) = inner.by_subscription.remove(&id) {
+                remove_connection_if_current(&mut inner, existing.connection_key.as_deref(), &id);
+                replaced.push(existing.cancel);
+            }
+
+            if let Some(key) = connection_key.as_deref() {
+                if let Some(previous_id) = inner.by_connection.insert(key.to_owned(), id.clone()) {
+                    if previous_id != id {
+                        if let Some(existing) = inner.by_subscription.remove(&previous_id) {
+                            replaced.push(existing.cancel);
+                        }
+                    }
+                }
+            }
+
+            inner.by_subscription.insert(
+                id,
+                EngineSseRegistration {
+                    cancel: sender,
+                    connection_key,
+                },
+            );
         }
+        replaced
     }
 
     fn remove(&self, id: &str) -> Option<tokio::sync::oneshot::Sender<()>> {
-        self.inner.lock().ok().and_then(|mut map| map.remove(id))
+        self.inner.lock().ok().and_then(|mut inner| {
+            let existing = inner.by_subscription.remove(id)?;
+            remove_connection_if_current(&mut inner, existing.connection_key.as_deref(), id);
+            Some(existing.cancel)
+        })
+    }
+
+    fn finish(&self, id: &str) {
+        if let Ok(mut inner) = self.inner.lock() {
+            if let Some(existing) = inner.by_subscription.remove(id) {
+                remove_connection_if_current(&mut inner, existing.connection_key.as_deref(), id);
+            }
+        }
+    }
+}
+
+fn remove_connection_if_current(
+    inner: &mut EngineSseRegistryInner,
+    connection_key: Option<&str>,
+    subscription_id: &str,
+) {
+    let Some(key) = connection_key else {
+        return;
+    };
+    if inner
+        .by_connection
+        .get(key)
+        .map(|current| current == subscription_id)
+        .unwrap_or(false)
+    {
+        inner.by_connection.remove(key);
     }
 }
 
@@ -97,6 +166,9 @@ pub struct EngineSseSubscribeOptions {
     /// query through.
     pub base_url: String,
     pub directory: Option<String>,
+    /// Stable owner key. A new subscription with the same key replaces the
+    /// previous live stream before it can accumulate another upstream listener.
+    pub connection_key: Option<String>,
     /// Optional Basic auth (engine + orchestrator daemon both expect
     /// `Authorization: Basic <b64>`).
     pub username: Option<String>,
@@ -114,6 +186,7 @@ pub struct EngineSseSubscribeOptions {
 #[serde(rename_all = "camelCase")]
 pub struct EngineSseSubscribeResult {
     pub subscription_id: String,
+    pub replaced_existing: bool,
 }
 
 #[tauri::command]
@@ -124,9 +197,17 @@ pub async fn engine_sse_subscribe(
 ) -> Result<EngineSseSubscribeResult, String> {
     let subscription_id = resolve_subscription_id(options.subscription_id.as_deref());
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
-    registry.insert(subscription_id.clone(), cancel_tx);
+    let connection_key = normalize_connection_key(options.connection_key.as_deref());
+    let replaced = registry.insert(subscription_id.clone(), connection_key, cancel_tx);
+    let replaced_existing = !replaced.is_empty();
+    for cancel_tx in replaced {
+        let _ = cancel_tx.send(());
+    }
 
     let app_handle = app.clone();
+    let registry_handle = EngineSseRegistry {
+        inner: registry.inner.clone(),
+    };
     let sub_id = subscription_id.clone();
     let workspace_id = options.workspace_id.clone();
     let base_url = options.base_url.clone();
@@ -146,6 +227,7 @@ pub async fn engine_sse_subscribe(
     tauri::async_runtime::spawn(async move {
         run_subscription(
             app_handle,
+            registry_handle,
             sub_id,
             workspace_id,
             base_url,
@@ -157,7 +239,10 @@ pub async fn engine_sse_subscribe(
         .await;
     });
 
-    Ok(EngineSseSubscribeResult { subscription_id })
+    Ok(EngineSseSubscribeResult {
+        subscription_id,
+        replaced_existing,
+    })
 }
 
 #[tauri::command]
@@ -192,6 +277,13 @@ fn resolve_subscription_id(subscription_id: Option<&str>) -> String {
         .filter(|id| !id.is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| Uuid::new_v4().to_string())
+}
+
+fn normalize_connection_key(connection_key: Option<&str>) -> Option<String> {
+    connection_key
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn build_event_url(base_url: &str, directory: &Option<String>) -> String {
@@ -276,6 +368,7 @@ fn ingest_sse_byte(
 #[allow(clippy::too_many_arguments)]
 async fn run_subscription(
     app: AppHandle,
+    registry: EngineSseRegistry,
     subscription_id: String,
     workspace_id: String,
     base_url: String,
@@ -302,6 +395,7 @@ async fn run_subscription(
                 workspace_id: workspace_id.clone(),
                 message: format!("client build failed: {}", err),
             });
+            registry.finish(&subscription_id);
             emit(EngineSseEvent::Closed {
                 subscription_id,
                 workspace_id,
@@ -324,6 +418,7 @@ async fn run_subscription(
                 workspace_id: workspace_id.clone(),
                 message: format!("connect failed: {}", err),
             });
+            registry.finish(&subscription_id);
             emit(EngineSseEvent::Closed {
                 subscription_id,
                 workspace_id,
@@ -339,6 +434,7 @@ async fn run_subscription(
             workspace_id: workspace_id.clone(),
             message: format!("upstream status {}", response.status()),
         });
+        registry.finish(&subscription_id);
         emit(EngineSseEvent::Closed {
             subscription_id,
             workspace_id,
@@ -409,6 +505,7 @@ async fn run_subscription(
         }
     };
 
+    registry.finish(&subscription_id);
     emit(EngineSseEvent::Closed {
         subscription_id,
         workspace_id,
@@ -463,6 +560,50 @@ mod tests {
         assert_eq!(resolve_subscription_id(Some(" client-sub ")), "client-sub");
         assert!(!resolve_subscription_id(Some("   ")).is_empty());
         assert!(!resolve_subscription_id(None).is_empty());
+    }
+
+    #[test]
+    fn normalizes_connection_key() {
+        assert_eq!(
+            normalize_connection_key(Some(" session-workspace:ws-a ")).as_deref(),
+            Some("session-workspace:ws-a")
+        );
+        assert_eq!(normalize_connection_key(Some("   ")), None);
+        assert_eq!(normalize_connection_key(None), None);
+    }
+
+    #[test]
+    fn registry_replaces_existing_connection_key() {
+        let registry = EngineSseRegistry::default();
+        let (first_tx, mut first_rx) = tokio::sync::oneshot::channel::<()>();
+        let replaced = registry.insert("sub-a".into(), Some("key-a".into()), first_tx);
+        assert!(replaced.is_empty());
+
+        let (second_tx, _second_rx) = tokio::sync::oneshot::channel::<()>();
+        let replaced = registry.insert("sub-b".into(), Some("key-a".into()), second_tx);
+        assert_eq!(replaced.len(), 1);
+        for cancel_tx in replaced {
+            let _ = cancel_tx.send(());
+        }
+
+        assert!(first_rx.try_recv().is_ok());
+        assert!(registry.remove("sub-a").is_none());
+        assert!(registry.remove("sub-b").is_some());
+    }
+
+    #[test]
+    fn registry_finish_old_subscription_does_not_remove_replacement() {
+        let registry = EngineSseRegistry::default();
+        let (first_tx, _first_rx) = tokio::sync::oneshot::channel::<()>();
+        registry.insert("sub-a".into(), Some("key-a".into()), first_tx);
+
+        let (second_tx, _second_rx) = tokio::sync::oneshot::channel::<()>();
+        let replaced = registry.insert("sub-b".into(), Some("key-a".into()), second_tx);
+        assert_eq!(replaced.len(), 1);
+
+        registry.finish("sub-a");
+
+        assert!(registry.remove("sub-b").is_some());
     }
 
     #[test]

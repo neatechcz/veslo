@@ -219,6 +219,18 @@ test("ScheduledTasksView uses server readiness fallback instead of Scheduler fal
   assert.doesNotMatch(gate[0], /scheduled\.install_scheduler|scheduler|opencode-scheduler/i);
 });
 
+test("ScheduledTasksView keeps scheduled page typing explicit", () => {
+  const source = scheduledSource();
+  const unsafeTypeToken = "a" + "ny";
+
+  assert.doesNotMatch(source, new RegExp(String.raw`:\s*${unsafeTypeToken}\b`));
+  assert.doesNotMatch(source, new RegExp(String.raw`${unsafeTypeToken}\[\]`));
+  assert.doesNotMatch(source, new RegExp(String.raw`as\s+${unsafeTypeToken}\b`));
+  assert.doesNotMatch(source, new RegExp(String.raw`Record<string,\s*${unsafeTypeToken}>`));
+  assert.match(source, /type Language/);
+  assert.match(source, /Component<\{ size\?: number; class\?: string \}>/);
+});
+
 test("buildSchedule preserves local timezone for recurring wall-clock schedules", () => {
   const baseOptions = {
     timeValue: "09:00",

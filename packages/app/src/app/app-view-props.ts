@@ -1,23 +1,155 @@
-import { createMemo } from "solid-js";
+import { createMemo, type Accessor, type Setter } from "solid-js";
 
-import { currentLocale, t } from "../i18n";
+import type { Agent, OpencodeClient, Part, Session } from "@opencode-ai/sdk/v2/client";
+
+import { currentLocale, t, type Language } from "../i18n";
 import { CLOUD_ONLY_MODE } from "./lib/cloud-policy";
 import { unwrap } from "./lib/opencode";
 import { normalizeModelVariant } from "./lib/model-variant";
 import { isTauriRuntime, isWindowsPlatform, preferredSessionWorkspaceRoot } from "./utils";
+import type { ErrorSeverity } from "./lib/error-reporter";
 import type { EngineSourcePreference } from "./lib/engine-source";
-import type { PluginScope } from "./types";
+import type { ManagedAiAccessProfile } from "./lib/ai-access";
+import type { DocumentRuntimeStatusPayload } from "./lib/document-runtime";
+import type { McpServersRefreshOptions } from "./lib/mcp-server-refresh";
+import type { SessionSubmitResult } from "./lib/session-send-contract";
+import type { SkillMutationTarget } from "./lib/skill-inventory";
+import type { SessionCapabilitiesSnapshot } from "./lib/session-capabilities";
+import type { UiConversationRef } from "./lib/ui-conversation-scope";
+import type { OpencodeConfigFile } from "./lib/tauri-types";
+import type {
+  EngineDoctorResult,
+  EngineInfo,
+  OpenCodeRouterInfo,
+  OrchestratorStatus,
+  PendingSessionDraftSummary,
+  UpdaterEnvironment,
+  VesloServerInfo,
+  WorkspaceInfo,
+} from "./lib/tauri";
+import type {
+  VesloAuditEntry,
+  VesloServerCapabilities,
+  VesloServerClient,
+  VesloServerDiagnostics,
+  VesloServerSettings,
+  VesloServerStatus,
+  VesloSkillImportCandidate,
+  VesloSkillRegistryAuthContext,
+} from "./lib/veslo-server";
+import type {
+  ArtifactItem,
+  ComposerDraft,
+  ComposerTargetOption,
+  ComposerTargetSwitchResult,
+  DashboardTab,
+  EngineRuntime,
+  HubMcpCard,
+  HubSkillCard,
+  HubSkillInstallTarget,
+  McpServerEntry,
+  McpStatusMap,
+  MessageGroup,
+  MessageWithParts,
+  OnboardingStep,
+  OpencodeConnectStatus,
+  OpencodeEvent,
+  PendingPermission,
+  PendingQuestion,
+  PluginScope,
+  ReloadTrigger,
+  ResetVesloMode,
+  SessionArchiveItem,
+  SessionErrorTurn,
+  SettingsTab,
+  SidebarSubagentDecoration,
+  SkillCard,
+  SkillFileEntry,
+  SkillInstance,
+  SkillInventoryItem,
+  SkillSaveResult,
+  StartupPreference,
+  SuggestedPlugin,
+  TodoItem,
+  View,
+  WorkspaceDisplay,
+  WorkspaceSessionGroup,
+} from "./types";
+import type { ThemeMode } from "./theme";
 import type { OnboardingViewProps } from "./pages/onboarding";
 import type { DashboardViewProps } from "./pages/dashboard";
 import type { SessionViewProps } from "./pages/session";
-import type { VesloServerStatus } from "./lib/veslo-server";
+import type { ArtifactFamily } from "./components/session/artifact-family-model";
+import type { UnreadSessionMap } from "./components/session/session-unread-model";
 import type { SidebarSessionOpenTarget } from "./components/session/workspace-session-list-model";
+import type { McpDirectoryInfo } from "./constants";
+import type { ConversationAbortTarget } from "./context/conversation-service";
+import type { createComposerTargetController } from "./context/composer-target-controller";
+import type { SessionArchiveTarget } from "./context/session-archive-store";
+import type { SessionCapabilitiesLoadStatus } from "./context/session-capabilities-store";
+import type { SessionRunDiagnostic } from "./context/session-lifecycle-recovery";
+import type { ReconnectNotice, ReconnectState } from "./context/session-reconnect";
+import type { SelectedSessionHistoryUnavailable } from "./context/session-selection-controller";
+import type { SessionStore } from "./context/session";
+import type { WorkspaceBusyMap } from "./context/workspace-debug";
+import type { WorkspaceActivationOptions } from "./context/workspace-types";
+import type { WorkspaceStore } from "./context/workspace";
+import type { createPendingSessionDraftController } from "./context/pending-session-draft-controller";
+import type { createScheduledAutomationStore } from "./pages/scheduled-automation-store";
+import type { SessionCreationWorkflowCreateOptions } from "./pages/session-creation-workflow";
+import type { SessionBrowseScope } from "./pages/session-navigation";
+import type {
+  SessionMutationCommand,
+  SessionMutationCommandListScope,
+  SessionMutationReplaceOptions,
+} from "./pages/session-mutation-workflow";
+import type { SessionSendWorkflowSendOptions } from "./pages/session-send-workflow";
+import type { createSoulDataStore } from "./pages/soul-data-store";
 
 export type DashboardViewAdapterProps = Omit<DashboardViewProps, "onOpenFeedback">;
 export type SessionViewAdapterProps = Omit<SessionViewProps, "onOpenFeedback">;
 
 type DashboardWorkspaceType = "local" | "remote" | string | null | undefined;
 const STATUS_SEPARATOR = ` ${String.fromCharCode(183)} `;
+
+type RefreshOptions = { force?: boolean };
+type RefreshAction = (optionsOverride?: RefreshOptions) => Promise<void>;
+type ScheduledAutomationStore = ReturnType<typeof createScheduledAutomationStore>;
+type SoulDataStore = ReturnType<typeof createSoulDataStore>;
+type PendingSessionDraftController = ReturnType<typeof createPendingSessionDraftController>;
+type ComposerTargetController = ReturnType<typeof createComposerTargetController>;
+type ManagedSkillMutationTarget = SkillMutationTarget & {
+  registry?: SkillInstance["registry"];
+  restoreTarget?: SkillInstance["restoreTarget"];
+};
+type McpInstallResult = {
+  ok: boolean;
+  message: string;
+  entry?: HubMcpCard | null;
+};
+type DownloadUpdateOptions = {
+  automatic?: boolean;
+  retryAttempt?: number;
+  refreshBeforeDownload?: boolean;
+};
+type ActiveReloadBlockingSession = {
+  id: string;
+  title: string;
+  workspaceId?: string | null;
+  workspaceRoot?: string | null;
+  directory?: string | null;
+  conversationId?: string | null;
+  opencodeSessionId?: string | null;
+};
+type SidebarSectionsState = {
+  progress: boolean;
+  artifacts: boolean;
+  context: boolean;
+  plugins: boolean;
+  mcp: boolean;
+  skills: boolean;
+  authorizedFolders: boolean;
+};
 
 export type HeaderConnectedVersionInput = {
   connectedVersion?: string | null;
@@ -141,7 +273,347 @@ export function resolveDashboardViewAccess(input: DashboardViewAccessInput): Das
   };
 }
 
-export type AppViewPropsScope = Record<string, any>;
+export type AppViewPropsScope = {
+  connectedVersion: Accessor<string | null>;
+  developerMode: () => boolean;
+  appVersion: Accessor<string | null>;
+  vesloServerDiagnostics: Accessor<VesloServerDiagnostics | null>;
+  routedClient: (workspaceId?: string) => OpencodeClient | null;
+  sseConnected: Accessor<boolean>;
+  busy: Accessor<boolean>;
+  busyLabel: Accessor<string | null>;
+  busySeconds: Accessor<number>;
+  engine: Accessor<EngineInfo | null>;
+  baseUrl: Accessor<string>;
+  startupPreference: Accessor<StartupPreference | null>;
+  onboardingStep: Accessor<OnboardingStep>;
+  rememberStartupChoice: Accessor<boolean>;
+  clientDirectory: Accessor<string>;
+  vesloServerSettings: Accessor<VesloServerSettings>;
+  newAuthorizedDir: Accessor<string>;
+  workspaceStore: WorkspaceStore;
+  engineDoctorResult: Accessor<EngineDoctorResult | null>;
+  engineDoctorCheckedAt: Accessor<number | null>;
+  engineInstallLogs: Accessor<string | null>;
+  error: Accessor<string | null>;
+  migrationRepairUnavailableReason: Accessor<string | null>;
+  showRemoteActions: Accessor<boolean>;
+  setClientDirectory: Setter<string>;
+  updateVesloServerSettings: (next: VesloServerSettings) => void;
+  setLocale: (newLocale: Language) => void;
+  setTab: (nextTab: DashboardTab) => void;
+  setView: (next: View, sessionId?: string) => void;
+  setThemeMode: Setter<ThemeMode>;
+  startDesktopBrowserSignIn: () => Promise<void>;
+  resumeDesktopBrowserSignIn: () => Promise<void>;
+  authCompleteExchangeBusy: () => boolean;
+  denKeepSignedIn: Accessor<boolean>;
+  setDenKeepSignedInPreference: (value: boolean) => void;
+  themeMode: Accessor<ThemeMode>;
+  activeWorkspaceDisplay: Accessor<WorkspaceDisplay>;
+  vesloServerStatus: Accessor<VesloServerStatus>;
+  vesloServerCanWriteSkills: Accessor<boolean>;
+  vesloServerSkillRegistryAvailable: Accessor<boolean>;
+  skillRegistryMaterializationAuthContext: () => VesloSkillRegistryAuthContext;
+  vesloServerCanWritePlugins: Accessor<boolean>;
+  tab: Accessor<DashboardTab>;
+  settingsTab: Accessor<SettingsTab>;
+  setSettingsTab: Setter<SettingsTab>;
+  currentView: Accessor<View>;
+  setSessionBrowseScope: (scope: SessionBrowseScope) => void;
+  authenticatedUser: () => string | null;
+  logoutLocalDenAuth: () => Promise<void>;
+  newTaskDisabled: Accessor<boolean>;
+  sessionStore: SessionStore;
+  vesloServerUrl: Accessor<string>;
+  hydratedVesloServerClient: Accessor<VesloServerClient | null>;
+  vesloReconnectBusy: Accessor<boolean>;
+  reconnectVesloServer: () => Promise<boolean>;
+  vesloServerHostInfo: Accessor<VesloServerInfo | null>;
+  devtoolsCapabilities: Accessor<VesloServerCapabilities | null>;
+  resolvedDevtoolsWorkspaceId: Accessor<string | null>;
+  vesloAuditEntries: Accessor<VesloAuditEntry[]>;
+  vesloAuditStatus: Accessor<"idle" | "loading" | "error">;
+  vesloAuditError: Accessor<string | null>;
+  opencodeConnectStatus: Accessor<OpencodeConnectStatus | null>;
+  orchestratorStatusState: Accessor<OrchestratorStatus | null>;
+  opencodeRouterInfoState: Accessor<OpenCodeRouterInfo | null>;
+  resetVesloServerSettings: () => void;
+  testVesloServerConnection: (next: VesloServerSettings) => Promise<boolean>;
+  canReloadWorkspace: Accessor<boolean>;
+  reloadWorkspaceEngine: () => Promise<boolean>;
+  refreshWorkspaceConfigForPath: (workspacePath?: string) => Promise<void>;
+  scheduledAutomationStore: ScheduledAutomationStore;
+  soulDataStore: SoulDataStore;
+  reloadBusy: Accessor<boolean>;
+  reloadError: Accessor<string | null>;
+  readyEngineWorkspaceIds: Accessor<Set<string>>;
+  handleActivateWorkspace: (
+    workspaceId: string | undefined,
+    activationOptions: WorkspaceActivationOptions,
+  ) => Promise<boolean>;
+  openCreateRemoteWorkspace: () => void;
+  openNewSessionWithDirectory: () => Promise<boolean>;
+  pendingSessionDraftController: PendingSessionDraftController;
+  sidebarWorkspaceGroups: Accessor<WorkspaceSessionGroup[]>;
+  unreadSessionIds: Accessor<UnreadSessionMap>;
+  workspaceSessionPagingById: Accessor<Record<string, { hasMore: boolean; loadingMore: boolean }>>;
+  subagentDecorationsBySessionId: () => Record<string, SidebarSubagentDecoration>;
+  archivedSessionIds: Accessor<string[]>;
+  activeSessionStatusById: Accessor<Record<string, string>>;
+  conversationRunDiagnosticsBySessionKey: () => Record<string, SessionRunDiagnostic>;
+  busySessionByWorkspaceId: Accessor<WorkspaceBusyMap>;
+  archiveSidebarSessionAndClearActive: (
+    workspaceId: string,
+    sessionId: string,
+    target?: SidebarSessionOpenTarget | null,
+  ) => Promise<void>;
+  reportError: (error: unknown, context: string, severity?: ErrorSeverity) => void;
+  setError: Setter<string | null>;
+  safeStringify: (value: unknown) => string;
+  unarchiveSession: (
+    workspaceId: string,
+    sessionId: string,
+    workspaceIdentityHint?: string | null,
+    target?: SessionArchiveTarget | null,
+  ) => Promise<void>;
+  loadMoreWorkspaceSidebarSessions: (workspaceId: string) => Promise<void>;
+  activeSessionId: Accessor<string | null>;
+  activeWorkspaceLastSessionId: () => string | null;
+  openRenameWorkspace: (workspaceId: string) => void;
+  openWorkspaceConnectionSettings: (workspaceId: string) => void;
+  refreshSkills: RefreshAction;
+  refreshSkillInventory: RefreshAction;
+  refreshSkillImportCandidates: RefreshAction;
+  refreshHubSkills: RefreshAction;
+  refreshPlugins: (scopeOverride?: PluginScope, optionsOverride?: { debug?: boolean }) => Promise<void>;
+  skills: Accessor<SkillCard[]>;
+  skillsStatus: Accessor<string | null>;
+  skillInventory: Accessor<SkillInventoryItem[]>;
+  skillInventoryStatus: Accessor<string | null>;
+  skillImportCandidates: Accessor<VesloSkillImportCandidate[]>;
+  skillImportStatus: Accessor<string | null>;
+  hubSkills: Accessor<HubSkillCard[]>;
+  hubSkillsStatus: Accessor<string | null>;
+  installSkillCreator: () => Promise<{ ok: boolean; message: string }>;
+  installHubSkill: (name: string, target: HubSkillInstallTarget) => Promise<{ ok: boolean; message: string }>;
+  uninstallSkill: (name: string) => Promise<void>;
+  readSkill: (name: string, instancePath?: string) => Promise<{ name: string; path: string; content: string } | null>;
+  saveSkill: (input: { name: string; path?: string; content: string; description?: string }) => Promise<SkillSaveResult>;
+  readSkillInstanceFiles: (target: SkillMutationTarget) => Promise<{ files: SkillFileEntry[] } | null>;
+  readSkillInstance: (target: SkillMutationTarget) => Promise<{ name: string; path: string; content: string } | null>;
+  saveSkillInstance: (target: SkillMutationTarget, content: string) => Promise<SkillSaveResult>;
+  setSkillInstanceEnabled: (target: SkillMutationTarget, enabled: boolean) => Promise<SkillSaveResult>;
+  deleteSkillInstance: (target: SkillMutationTarget) => Promise<void>;
+  removeSkillInstance: (target: ManagedSkillMutationTarget) => Promise<SkillSaveResult>;
+  batchRemoveSkillInstances: (targets: ManagedSkillMutationTarget[]) => Promise<SkillSaveResult>;
+  restoreSkillInstance: (target: ManagedSkillMutationTarget) => Promise<SkillSaveResult>;
+  copySkillInstanceToGlobal: (
+    target: SkillMutationTarget,
+    optionsOverride?: { deleteSource?: boolean },
+  ) => Promise<SkillSaveResult>;
+  copySkillInstanceToWorkspace: (target: SkillMutationTarget, workspaceId: string) => Promise<SkillSaveResult>;
+  importSkillCandidates: (candidateIds: string[]) => Promise<SkillSaveResult>;
+  pluginScope: Accessor<PluginScope>;
+  setPluginScope: Setter<PluginScope>;
+  pluginConfigPath: Accessor<string | null>;
+  pluginConfig: Accessor<OpencodeConfigFile | null>;
+  pluginList: Accessor<string[]>;
+  pluginInput: Accessor<string>;
+  setPluginInput: Setter<string>;
+  pluginStatus: Accessor<string | null>;
+  activePluginGuide: Accessor<string | null>;
+  setActivePluginGuide: Setter<string | null>;
+  isPluginInstalledByName: (pluginName: string, aliases?: string[]) => boolean;
+  localizedSuggestedPlugins: Accessor<SuggestedPlugin[]>;
+  addPlugin: (pluginNameOverride?: string) => Promise<void>;
+  removePlugin: (pluginName: string) => Promise<void>;
+  createSessionAndOpen: (
+    initialTitle?: string,
+    options?: SessionCreationWorkflowCreateOptions,
+  ) => Promise<string | undefined>;
+  setPrompt: (value: string) => void;
+  selectSession: (sessionID: string) => Promise<void>;
+  managedAiAccessBusy: Accessor<boolean>;
+  managedAiAccess: Accessor<ManagedAiAccessProfile | null>;
+  managedAiAccessMessage: Accessor<string>;
+  managedAiAccessProviderLabel: Accessor<string | null>;
+  managedAiAccessDefaultModelLabel: Accessor<string | null>;
+  showThinking: Accessor<boolean>;
+  setShowThinking: Setter<boolean>;
+  hideTitlebar: Accessor<boolean>;
+  setHideTitlebar: Setter<boolean>;
+  maxEngines: Accessor<number>;
+  setMaxEngines: Setter<number>;
+  idleSuspendMs: Accessor<number>;
+  setIdleSuspendMs: Setter<number>;
+  formatModelVariantLabel: (value: string | null) => string;
+  modelVariant: Accessor<string | null>;
+  setModelVariant: Setter<string | null>;
+  updateAutoDownload: Accessor<boolean>;
+  setUpdateAutoDownload: Setter<boolean>;
+  setUpdateAutoCheck: Setter<boolean>;
+  updateStatus: Accessor<DashboardViewProps["updateStatus"]>;
+  updateEnv: Accessor<UpdaterEnvironment | null>;
+  checkForUpdates: (optionsCheck?: { quiet?: boolean }) => Promise<void>;
+  downloadUpdate: (optionsDownload?: DownloadUpdateOptions) => Promise<void>;
+  retryUpdateDownload: () => Promise<void>;
+  installUpdateAndRestart: () => Promise<void>;
+  documentRuntimeStatus: Accessor<DocumentRuntimeStatusPayload | null>;
+  documentRuntimeRepairBusy: Accessor<boolean>;
+  repairDocumentRuntime: () => Promise<void>;
+  anyActiveRuns: Accessor<boolean>;
+  engineSource: Accessor<EngineSourcePreference>;
+  updateEngineSource: (value: EngineSourcePreference, options?: { explicit?: boolean }) => void;
+  engineCustomBinPath: Accessor<string>;
+  setEngineCustomBinPath: Setter<string>;
+  engineRuntime: Accessor<EngineRuntime>;
+  setEngineRuntime: Setter<EngineRuntime>;
+  stopHost: () => Promise<void>;
+  restartLocalServer: () => Promise<boolean>;
+  openResetModal: (mode: ResetVesloMode) => void;
+  resetModalBusy: Accessor<boolean>;
+  clearStartupPreference: () => void;
+  setStartupPreference: Setter<StartupPreference | null>;
+  setRememberStartupChoice: Setter<boolean>;
+  toggleDenKeepSignedIn: () => void;
+  pendingPermissions: () => PendingPermission[];
+  events: () => OpencodeEvent[];
+  repairOpencodeCache: () => Promise<void>;
+  cacheRepairBusy: Accessor<boolean>;
+  cacheRepairResult: Accessor<string | null>;
+  cleanupVesloDockerContainers: () => Promise<void>;
+  dockerCleanupBusy: () => boolean;
+  dockerCleanupResult: () => string | null;
+  resetAppConfigDefaults: () => Promise<{ ok: boolean; message: string }>;
+  notionStatus: Accessor<"connected" | "disconnected" | "error" | "connecting">;
+  notionStatusDetail: Accessor<string | null>;
+  notionError: Accessor<string | null>;
+  notionBusy: Accessor<boolean>;
+  connectNotion: () => Promise<void>;
+  sessionArchives: Accessor<SessionArchiveItem[]>;
+  mcpServers: Accessor<McpServerEntry[]>;
+  mcpStatus: Accessor<string | null>;
+  mcpLastUpdatedAt: Accessor<number | null>;
+  mcpStatuses: Accessor<McpStatusMap>;
+  mcpConnectingName: Accessor<string | null>;
+  selectedMcp: Accessor<string | null>;
+  setSelectedMcp: Setter<string | null>;
+  localizedMcpQuickConnect: Accessor<McpDirectoryInfo[]>;
+  hubMcpCards: Accessor<HubMcpCard[]>;
+  hubMcpStatus: Accessor<string | null>;
+  refreshHubMcp: RefreshAction;
+  installHubMcpAndActivate: (name: string) => Promise<McpInstallResult>;
+  connectMcp: (entry: McpDirectoryInfo) => Promise<void>;
+  authorizeMcp: (entry: McpServerEntry) => Promise<void>;
+  logoutMcpAuth: (name: string) => Promise<void>;
+  removeMcp: (name: string) => Promise<void>;
+  refreshMcpServers: (refreshOptions?: McpServersRefreshOptions) => Promise<void>;
+  activePendingDraftKey: Accessor<string | null>;
+  activePendingDraftMeta: Accessor<PendingSessionDraftSummary | null>;
+  composerTargetController: ComposerTargetController;
+  resolveSelectedSessionBrowseScope: (sessionId: string) => SessionBrowseScope | null;
+  resolveSessionDirectory: (session: Pick<Session, "id" | "directory">) => string;
+  selectedSession: () => Session | null;
+  activeUiConversationRef: Accessor<UiConversationRef>;
+  activeWorkspaceHasRoutingEntry: () => boolean;
+  sessionsLoadedForActiveWorkspace: () => boolean;
+  chooseFolderForCurrentSession: () => Promise<boolean>;
+  engineReady: Accessor<boolean>;
+  vesloServerWorkspaceId: Accessor<string | null>;
+  sidebarPluginList: Accessor<string[]>;
+  sidebarPluginStatus: Accessor<string | null>;
+  sessionCapabilitiesSnapshot: Accessor<SessionCapabilitiesSnapshot | null>;
+  sessionCapabilitiesStatus: Accessor<SessionCapabilitiesLoadStatus>;
+  sessionCapabilitiesError: Accessor<string | null>;
+  reloadRequired: Accessor<boolean>;
+  reloadTrigger: Accessor<ReloadTrigger | null>;
+  reloadCopy: Accessor<{ title: string; body: string }>;
+  activeReloadBlockingSessions: Accessor<ActiveReloadBlockingSession[]>;
+  forceStopActiveSessionsAndReload: () => Promise<void>;
+  clearReloadRequired: () => void;
+  sendPrompt: (draft: ComposerDraft, options: SessionSendWorkflowSendOptions) => Promise<SessionSubmitResult>;
+  replaceUserMessage: (
+    messageID: string,
+    draft: ComposerDraft,
+    options: SessionMutationReplaceOptions,
+  ) => Promise<SessionSubmitResult>;
+  clearComposerDraftForSession: (sessionId: string | null | undefined) => void;
+  abortSession: (sessionId?: string, target?: ConversationAbortTarget) => Promise<void>;
+  undoLastUserMessage: () => Promise<void>;
+  redoLastUserMessage: () => Promise<void>;
+  compactCurrentSession: (sessionIdOverride?: string) => Promise<void>;
+  lastPromptSent: Accessor<string>;
+  retryLastPrompt: () => void;
+  selectedSessionDisplayTitle: Accessor<string | null>;
+  visibleMessages: Accessor<MessageWithParts[]>;
+  activeTodos: Accessor<TodoItem[]>;
+  groupMessageParts: (
+    parts: Part[],
+    messageId: string,
+    options?: { showThinking?: boolean },
+  ) => MessageGroup[];
+  summarizeStep: (part: Part) => {
+    title: string;
+    detail?: string;
+    isSkill?: boolean;
+    skillName?: string;
+    toolCategory?: string;
+    status?: string;
+  };
+  expandedStepIds: Accessor<Set<string>>;
+  setExpandedStepIds: Setter<Set<string>>;
+  expandedTimelineSectionIds: Accessor<Set<string>>;
+  setExpandedTimelineSectionIds: Setter<Set<string>>;
+  expandedTimelineDetailIds: Accessor<Set<string>>;
+  setExpandedTimelineDetailIds: Setter<Set<string>>;
+  expandedSidebarSections: Accessor<SidebarSectionsState>;
+  setExpandedSidebarSections: Setter<SidebarSectionsState>;
+  activeArtifacts: Accessor<ArtifactItem[]>;
+  activeArtifactFamilies: Accessor<ArtifactFamily[]>;
+  activeWorkingFiles: Accessor<string[]>;
+  activeAuthorizedDirs: Accessor<string[]>;
+  activeComposerBusy: Accessor<boolean>;
+  prompt: Accessor<string>;
+  composerDraft: Accessor<ComposerDraft>;
+  setComposerDraft: (draft: ComposerDraft) => void;
+  activePermissionMemo: Accessor<PendingPermission | null>;
+  permissionReplyBusy: Accessor<boolean>;
+  respondPermissionForAppViewProps: (
+    requestID: string,
+    reply: "once" | "always" | "reject",
+  ) => Promise<void>;
+  respondPermissionAndRemember: (
+    requestID: string,
+    reply: "once" | "always" | "reject",
+  ) => Promise<void>;
+  activeQuestion: () => PendingQuestion | null;
+  questionReplyBusy: Accessor<boolean>;
+  respondQuestion: (requestID: string, answers: string[][]) => Promise<void>;
+  tryNotionPromptVisible: Accessor<boolean>;
+  notionIsActive: Accessor<boolean>;
+  managedAiAccessBlockedReason: Accessor<string | null>;
+  listAgents: () => Promise<Agent[]>;
+  listCommands: (scope?: SessionMutationCommandListScope) => Promise<SessionMutationCommand[]>;
+  selectedSessionAgent: Accessor<string | null>;
+  setSessionAgent: (sessionID: string, agent: string | null) => void;
+  saveSessionExport: (sessionID: string) => Promise<string>;
+  selectedSessionHistoryUnavailable: () => SelectedSessionHistoryUnavailable | null;
+  selectedSessionHistoryRetrying: () => boolean;
+  retryUnavailableHistory: (sessionId: string) => Promise<void>;
+  selectedSessionHasEarlierMessages: () => boolean;
+  selectedSessionLoadingEarlierMessages: () => boolean;
+  loadEarlierMessages: (sessionID: string, chunk?: number) => Promise<void>;
+  workspaceProjectDir: Accessor<string>;
+  deleteSessionById: (sessionID: string, workspaceID?: string) => Promise<void>;
+  setTryNotionPromptVisible: Setter<boolean>;
+  setNotionSkillInstalled: Setter<boolean>;
+  visibleSelectedSessionStatus: Accessor<string>;
+  renameSessionTitle: (sessionID: string, title: string) => Promise<void>;
+  sessionReconnectNotice: Accessor<ReconnectNotice | null>;
+  setSessionReconnectNotice: Setter<ReconnectNotice | null>;
+  sessionReconnectState: Accessor<ReconnectState | null>;
+};
 
 export type AppViewPropsAdapter = {
   onboardingProps: () => OnboardingViewProps;
@@ -641,7 +1113,9 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
       resetVesloServerSettings,
       testVesloServerConnection,
       canReloadWorkspace: canReloadWorkspace(),
-      reloadWorkspaceEngine,
+      reloadWorkspaceEngine: async () => {
+        await reloadWorkspaceEngine();
+      },
       reloadScheduledAutomationsSource: scheduledAutomationStore.reloadScheduledJobsSource,
       reloadBusy: reloadBusy(),
       reloadError: reloadError(),
@@ -1028,7 +1502,9 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     reloadBannerBlocked: activeReloadBlockingSessions().length > 0,
     reloadBannerActiveCount: activeReloadBlockingSessions().length,
     canReloadWorkspace: canReloadWorkspace(),
-    reloadWorkspaceEngine,
+    reloadWorkspaceEngine: async () => {
+      await reloadWorkspaceEngine();
+    },
     refreshWorkspaceConfig: refreshWorkspaceConfigForPath,
     forceStopActiveConversations: forceStopActiveSessionsAndReload,
     dismissReloadBanner: clearReloadRequired,

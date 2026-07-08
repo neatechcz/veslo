@@ -4209,6 +4209,7 @@ export default function App() {
     baseUrl,
     currentView,
     developerMode,
+    createSendPreflightContext,
     ensureLocalRuntimeReachableForSend,
     ensureManagedAiBootstrapReady,
     isWorkspaceClientStaleError,
@@ -4237,20 +4238,8 @@ export default function App() {
       connectingWorkspaceId: () => workspaceStore.connectingWorkspaceId(),
     },
     abortRefreshes,
-    createConversationFromVesloWriteApi: (workspaceId, directory, title, preflight) =>
-      createConversationFromVesloWriteApi(
-        workspaceId,
-        directory,
-        title,
-        preflight as Parameters<typeof createConversationFromVesloWriteApi>[3],
-      ),
-    submitConversationFromVesloWriteApi: (workspaceId, directory, input, preflight) =>
-      submitConversationFromVesloWriteApi(
-        workspaceId,
-        directory,
-        input,
-        preflight as Parameters<typeof submitConversationFromVesloWriteApi>[3],
-      ),
+    createConversationFromVesloWriteApi,
+    submitConversationFromVesloWriteApi,
   });
 
   async function createSessionAndOpen(

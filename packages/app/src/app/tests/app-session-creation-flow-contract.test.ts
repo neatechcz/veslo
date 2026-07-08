@@ -42,8 +42,8 @@ test("app delegates created session materialization decisions to session creatio
   );
   assert.match(
     source,
-    /const sessionCreationWorkflow = createSessionCreationWorkflow\(\{[\s\S]*applyCreatedSessionState,[\s\S]*applyCreatedSessionTransition,[\s\S]*createConversationFromVesloWriteApi:[\s\S]*submitConversationFromVesloWriteApi:[\s\S]*\}\);/,
-    "app.tsx should wire app state effects and Veslo conversation creation into the workflow",
+    /const sessionCreationWorkflow = createSessionCreationWorkflow\(\{[\s\S]*createSendPreflightContext,[\s\S]*applyCreatedSessionState,[\s\S]*applyCreatedSessionTransition,[\s\S]*createConversationFromVesloWriteApi,[\s\S]*submitConversationFromVesloWriteApi,[\s\S]*\}\);/,
+    "app.tsx should wire app state effects, canonical send preflight, and Veslo conversation creation into the workflow",
   );
 });
 

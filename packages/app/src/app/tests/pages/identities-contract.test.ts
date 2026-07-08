@@ -29,3 +29,14 @@ test("identities page uses the messaging identities domain facade for router req
     false,
   );
 });
+
+test("identities page narrows router payloads without explicit any", () => {
+  const unsafeTypeToken = "a" + "ny";
+
+  assert.doesNotMatch(identitiesSource, new RegExp(String.raw`:\s*${unsafeTypeToken}\b`));
+  assert.doesNotMatch(identitiesSource, new RegExp(String.raw`${unsafeTypeToken}\[\]`));
+  assert.doesNotMatch(identitiesSource, new RegExp(String.raw`as\s+${unsafeTypeToken}\b`));
+  assert.doesNotMatch(identitiesSource, new RegExp(String.raw`Record<string,\s*${unsafeTypeToken}>`));
+  assert.match(identitiesSource, /stringField\(healthRes\.json, "message"\)/);
+  assert.match(identitiesSource, /getTelegramUsernameFromResult\(result\.telegram\)/);
+});

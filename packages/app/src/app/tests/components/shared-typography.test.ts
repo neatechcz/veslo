@@ -11,6 +11,16 @@ test("markdown editor no longer hard-codes the Inter stack", () => {
   assert.match(editor, /var\(--veslo-font-reading\)/);
 });
 
+test("markdown live preview decorations stay explicitly typed", () => {
+  const unsafeTypeToken = "a" + "ny";
+
+  assert.match(editor, /type Range } from "@codemirror\/state"/);
+  assert.match(editor, /const ranges: Range<Decoration>\[\] = \[\];/);
+  assert.doesNotMatch(editor, new RegExp(`:\\s*${unsafeTypeToken}\\b`));
+  assert.doesNotMatch(editor, new RegExp(`${unsafeTypeToken}\\[\\]`));
+  assert.doesNotMatch(editor, new RegExp(`as ${unsafeTypeToken}`));
+});
+
 test("shared button uses product font semantics", () => {
   assert.match(button, /font-product/);
   assert.match(button, /type-ui-md/);

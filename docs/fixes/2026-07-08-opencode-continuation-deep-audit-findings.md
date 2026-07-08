@@ -889,11 +889,13 @@ Changed surfaces:
 
 This removed all explicit `any` occurrences from `context/extensions.ts`.
 
-The remaining broad app-level typing blocker is
-`AppViewPropsScope = Record<string, any>` in `app-view-props.ts`. That should be
-handled as a separate slice by extracting a real deps interface from the
-`createAppViewProps(...)` call site in `app.tsx`; a direct replacement with
-`Record<string, unknown>` would create noise rather than a meaningful contract.
+The broad app-level typing blocker in `app-view-props.ts` has now been handled
+as a separate slice by extracting an explicit deps interface for the
+`createAppViewProps(...)` adapter. The fix avoided replacing the old broad
+scope alias with `Record<string, unknown>` and exposed two previously masked
+adapter contract mismatches: reload callbacks passed to view props now discard
+their internal boolean result, and unread session ids keep the stricter
+`Record<string, true>` shape.
 
 ### Verification
 
@@ -909,6 +911,138 @@ Results:
 - extensions skill inventory/import/transfer/registry invalidation tests: 44
   passed,
 - scoped `any` scan: no matches in `context/extensions.ts`.
+
+Follow-up app-view props verification:
+
+```powershell
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/app-view-props.test.ts
+pnpm --filter @neatech/veslo-ui typecheck
+rg -n "\bany\b|Record<string, any>|as any|Promise<any>" packages/app/src/app/app-view-props.ts packages/app/src/app/tests/app-view-props.test.ts
+```
+
+Results:
+
+- app view props contract tests: 6 passed,
+- app typecheck: passed,
+- scoped `any` scan: no matches in app view props source or its contract test.
+
+## Scheduled Page Typing Follow-up
+
+The next app typing pass covered `pages/scheduled.tsx`, focusing on the local
+automation template icon and locale helper casts.
+
+Changed surfaces:
+
+- automation template icons now use a local Solid component type for the
+  lucide icon props used by this page,
+- schedule/relative-time/status helpers now accept `Language` instead of
+  casting optional locale strings through `any`,
+- the scheduled automation contract test now guards the page against explicit
+  `any` returning in those local helper surfaces.
+
+### Verification
+
+```powershell
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/pages/scheduled-automations.test.ts
+pnpm --filter @neatech/veslo-ui typecheck
+rg -n "Record<string, any>|as any|Promise<any>|:\s*any\b|any\[\]" packages/app/src/app/pages/scheduled.tsx packages/app/src/app/pages/scheduled-automations.test.ts
+```
+
+Results:
+
+- scheduled automations contract tests: 17 passed,
+- app typecheck: passed,
+- scoped explicit `any` scan: no matches in scheduled page source or its
+  contract test.
+
+## Identities Page Typing Follow-up
+
+The next app typing pass covered `pages/identities.tsx`, focusing on router
+health JSON and Telegram identity mutation responses.
+
+Changed surfaces:
+
+- router health error messages now read through a small string-field narrowing
+  helper instead of casting `healthRes.json` through `any`,
+- Telegram bot usernames returned from identity upsert now reuse the existing
+  `getTelegramUsernameFromResult(...)` narrowing helper,
+- the identities contract test now guards the page against explicit `any`
+  returning in these router payload paths.
+
+### Verification
+
+```powershell
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/identities-contract.test.ts
+pnpm --filter @neatech/veslo-ui typecheck
+rg -n "Record<string, any>|as any|Promise<any>|:\s*any\b|any\[\]" packages/app/src/app/pages/identities.tsx packages/app/src/app/tests/pages/identities-contract.test.ts
+```
+
+Results:
+
+- identities contract tests: 3 passed,
+- app typecheck: passed,
+- scoped explicit `any` scan: no matches in identities page source or its
+  contract test.
+
+## Workspace Debug Typing Follow-up
+
+The next app typing pass covered `context/workspace-debug.ts`, focusing on the
+activation log field written onto `window`.
+
+Changed surfaces:
+
+- the existing workspace debug window-root type now also owns
+  `__wsActivateLog`,
+- `wsLog(...)` appends through that typed root instead of casting `window`
+  through `any`,
+- the workspace source contract test now guards that activation-log writes stay
+  typed.
+
+### Verification
+
+```powershell
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/workspace-forget-mode.test.ts
+pnpm --filter @neatech/veslo-ui typecheck
+rg -n "Record<string, any>|as any|Promise<any>|:\s*any\b|any\[\]" packages/app/src/app/context/workspace-debug.ts packages/app/src/app/tests/context/workspace-forget-mode.test.ts
+```
+
+Results:
+
+- workspace source contract tests: 4 passed,
+- app typecheck: passed,
+- scoped explicit `any` scan: no matches in workspace debug source or its
+  contract test.
+
+## App Explicit Any Close-out Follow-up
+
+The final app typing pass removed the remaining production lexical explicit
+`any` hits from app sources.
+
+Changed surfaces:
+
+- `components/live-markdown-editor.tsx` now uses CodeMirror's
+  `Range<Decoration>[]` for live-preview decoration ranges,
+- `pages/proto-v1-ux.tsx` and `pages/proto-workspaces.tsx` now type mock
+  lucide icons with a local Solid component type,
+- the proto folder mock now types `children` as `JSX.Element`,
+- the OpenCode session helper comment no longer creates a false positive in the
+  lexical explicit-`any` audit,
+- targeted source tests now guard the editor and proto pages against these
+  casts and type holes returning.
+
+### Verification
+
+```powershell
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/components/shared-typography.test.ts src/app/tests/pages/proto-pages-contract.test.ts src/app/tests/app-view-props.test.ts src/app/pages/scheduled-automations.test.ts src/app/tests/pages/identities-contract.test.ts src/app/tests/context/workspace-forget-mode.test.ts
+pnpm --filter @neatech/veslo-ui typecheck
+rg -n "Record<string, any>|as any|Promise<any>|:\s*any\b|any\[\]" packages/app/src/app --glob "*.ts" --glob "*.tsx" --glob "!**/*.test.ts" --glob "!**/*.test.tsx" --glob "!**/tests/**"
+```
+
+Results:
+
+- combined app source/contract tests: 35 passed,
+- app typecheck: passed,
+- production explicit `any` scan: no matches.
 
 ## Session and Workspace Controller Typing Follow-up
 

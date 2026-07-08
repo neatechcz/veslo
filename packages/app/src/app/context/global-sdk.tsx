@@ -188,6 +188,7 @@ export function GlobalSDKProvider(props: ParentProps) {
         rustSubscription = await engineSseSubscribe({
           workspaceId: "__global__",
           baseUrl,
+          connectionKey: `global:${baseUrl.trim() || "__global__"}`,
           bearerToken: bearerToken || null,
           signal: abort.signal,
         });

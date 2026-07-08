@@ -55,6 +55,8 @@ export type EngineSseSubscribeOptions = {
   baseUrl: string;
   /** Optional `directory` query for engine-side filtering. */
   directory?: string | null;
+  /** Stable owner key used by the desktop bridge to replace older duplicate streams. */
+  connectionKey?: string | null;
   username?: string | null;
   password?: string | null;
   /** Veslo-server bearer token. Takes precedence over username/password when set. */
@@ -206,6 +208,7 @@ async function engineSseSubscribeWithRuntime(
         workspaceId: options.workspaceId,
         baseUrl: options.baseUrl,
         directory: options.directory ?? null,
+        connectionKey: options.connectionKey ?? null,
         username: options.username ?? null,
         password: options.password ?? null,
         bearerToken: options.bearerToken ?? null,
