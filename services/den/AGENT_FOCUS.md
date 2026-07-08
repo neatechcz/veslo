@@ -63,9 +63,9 @@ Expected: worker creation `201` with Render-backed instance.
 
 Den control-plane deploys are explicit. Pushes and merges to `main` or `dev` must not deploy this service by themselves. Workflow:
 
-- `.github/workflows/deploy-den.yml`
+- `.github/workflows/deploy-owned-server.yml`
 
-It is manually dispatched from GitHub Actions. It updates Render env vars, forces the configured Render service to `autoDeploy: no`, and triggers a deploy for the configured service ID.
+It is manually dispatched from GitHub Actions. It builds and restarts the owned-server Compose stack, runs Den migrations, and verifies the public production endpoints.
 
 The canonical operator procedure is `docs/dev/cloud-deployments.md`.
 
