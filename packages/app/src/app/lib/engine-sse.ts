@@ -67,10 +67,16 @@ export type EngineSseSubscribeOptions = {
 
 export type EngineSseSubscription = {
   subscriptionId: string;
+  replacedExisting: boolean;
   /** Async iterable of parsed event payloads, matching SDK `subscription.stream` shape. */
   stream: AsyncIterable<unknown>;
   /** Tear down the Rust-side task and remove the listener. Idempotent. */
   close: () => Promise<void>;
+};
+
+type EngineSseSubscribeResult = {
+  subscriptionId: string;
+  replacedExisting?: boolean;
 };
 
 export function isEngineSseAvailable(): boolean {
@@ -159,6 +165,7 @@ async function engineSseSubscribeWithRuntime(
   };
 
   let unlisten: UnlistenFn | null = null;
+  let replacedExisting = false;
   try {
     unlisten = await runtime.listen<SsePayload>(SSE_EVENT_NAME, (event) => {
       const payload = event.payload;
@@ -202,7 +209,7 @@ async function engineSseSubscribeWithRuntime(
       }
     });
 
-    await runtime.invoke<{ subscriptionId: string }>("engine_sse_subscribe", {
+    const subscribeResult = await runtime.invoke<EngineSseSubscribeResult>("engine_sse_subscribe", {
       options: {
         subscriptionId,
         workspaceId: options.workspaceId,
@@ -214,6 +221,7 @@ async function engineSseSubscribeWithRuntime(
         bearerToken: options.bearerToken ?? null,
       },
     });
+    replacedExisting = subscribeResult.replacedExisting === true;
     await ready;
   } catch (err) {
     // Couldn't register listener — try to clean up Rust subscription.
@@ -294,6 +302,7 @@ async function engineSseSubscribeWithRuntime(
 
   return {
     subscriptionId,
+    replacedExisting,
     stream,
     close,
   };

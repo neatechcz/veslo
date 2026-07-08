@@ -286,6 +286,12 @@ fn truthy_env(name: &str) -> bool {
 }
 
 fn resolve_send_workflow_trace_file() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("VESLO_SEND_WORKFLOW_TRACE_UI_FILE") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed));
+        }
+    }
     if let Ok(path) = std::env::var("VESLO_SEND_WORKFLOW_TRACE_FILE") {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
@@ -298,14 +304,14 @@ fn resolve_send_workflow_trace_file() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("TAURI_PILOT_LOG_DIR") {
         let trimmed = dir.trim();
         if !trimmed.is_empty() {
-            return Some(PathBuf::from(trimmed).join("send-workflow-trace.ndjson"));
+            return Some(PathBuf::from(trimmed).join("send-workflow-trace.ui.ndjson"));
         }
     }
     if let Ok(runtime_trace) = std::env::var("VESLO_RUNTIME_TRACE_FILE") {
         let trimmed = runtime_trace.trim();
         if !trimmed.is_empty() {
             if let Some(parent) = PathBuf::from(trimmed).parent() {
-                return Some(parent.join("send-workflow-trace.ndjson"));
+                return Some(parent.join("send-workflow-trace.ui.ndjson"));
             }
         }
     }
@@ -313,6 +319,12 @@ fn resolve_send_workflow_trace_file() -> Option<PathBuf> {
 }
 
 fn resolve_send_workflow_trace_mirror_file() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("VESLO_SEND_WORKFLOW_TRACE_UI_MIRROR_FILE") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed));
+        }
+    }
     if let Ok(path) = std::env::var("VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE") {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
@@ -346,7 +358,10 @@ fn append_send_workflow_trace_event(message: &str, payload: Option<&str>) {
         append_send_workflow_trace_line(path, &line);
     }
     if let Some(path) = mirror.as_deref() {
-        if primary.as_ref().is_some_and(|primary_path| primary_path == path) {
+        if primary
+            .as_ref()
+            .is_some_and(|primary_path| primary_path == path)
+        {
             return;
         }
         append_send_workflow_trace_line(path, &line);

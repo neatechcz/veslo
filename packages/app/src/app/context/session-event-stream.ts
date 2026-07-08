@@ -63,6 +63,8 @@ type EventStreamStoreState = {
 };
 
 type SseSubscription = {
+  subscriptionId?: string;
+  replacedExisting?: boolean;
   stream: AsyncIterable<unknown>;
   close?: () => Promise<void> | void;
   [Symbol.asyncDispose]?: () => Promise<void> | void;
@@ -1071,6 +1073,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       try {
         const entry = sourceWsId ? deps.routing.entry(sourceWsId) : null;
         const useRustSse = Boolean(isEngineSseAvailable() && entry?.baseUrl);
+        const bridgeConnectionKey = sseBridgeConnectionKey(sourceWsId);
         recordSendWorkflowTrace(
           "session-sse",
           useRustSse ? "session-sse:rust-proxy" : "session-sse:sdk-fallback",
@@ -1084,6 +1087,8 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
                 : "engine_sse_unavailable",
             hasRoute: Boolean(entry),
             hasBaseUrl: Boolean(entry?.baseUrl),
+            connectionKey: useRustSse ? bridgeConnectionKey : null,
+            directory: entry?.directory ?? null,
             generation,
             activeEventStreamsByWorkspace: activeEventStreamsSnapshot(),
           },
@@ -1093,12 +1098,22 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
               workspaceId: sourceWsId,
               baseUrl: entry?.baseUrl ?? "",
               directory: entry?.directory ?? null,
-              connectionKey: sseBridgeConnectionKey(sourceWsId),
+              connectionKey: bridgeConnectionKey,
               ...engineSseAuthOptions(entry?.auth),
               signal: controller.signal,
             })
           : c.event.subscribe(undefined, { signal: controller.signal })) as SseSubscription;
         activeSubscriptions.add(sub);
+        if (useRustSse) {
+          recordSendWorkflowTrace("session-sse", "session-sse:rust-proxy-subscribed", {
+            workspaceId: sourceWsId || null,
+            generation,
+            subscriptionId: sub.subscriptionId ?? null,
+            replacedExisting: sub.replacedExisting === true,
+            connectionKey: bridgeConnectionKey,
+            activeEventStreamsByWorkspace: activeEventStreamsSnapshot(),
+          });
+        }
         if (cancelled || controller.signal.aborted) {
           await closeSseSubscription(sub);
           activeSubscriptions.delete(sub);

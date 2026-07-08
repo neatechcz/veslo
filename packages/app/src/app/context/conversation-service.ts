@@ -138,6 +138,43 @@ export type ConversationSendPreflightContext<Client extends ConversationServiceC
   conversationWorkspaceByDirectory: Map<string, Promise<ConversationWorkspaceResolution<Client> | null>>;
 };
 
+function conversationPreflightContractDiagnostics(preflight: unknown): Record<string, unknown> {
+  if (!preflight || typeof preflight !== "object" || Array.isArray(preflight)) {
+    return {
+      hasPreflight: Boolean(preflight),
+      preflightType: preflight === null ? "null" : typeof preflight,
+    };
+  }
+
+  const record = preflight as Record<string, unknown>;
+  const cache = record.conversationWorkspaceByDirectory;
+  const targetWorkspace = record.targetWorkspace;
+  const targetWorkspaceRecord =
+    targetWorkspace && typeof targetWorkspace === "object" && !Array.isArray(targetWorkspace)
+      ? targetWorkspace as Record<string, unknown>
+      : null;
+
+  return {
+    hasPreflight: true,
+    preflightKeys: Object.keys(record).sort(),
+    hasConversationWorkspaceByDirectory: cache !== undefined && cache !== null,
+    conversationWorkspaceByDirectoryType:
+      cache instanceof Map
+        ? "Map"
+        : Array.isArray(cache)
+          ? "array"
+          : cache === null
+            ? "null"
+            : typeof cache,
+    targetWorkspaceId:
+      typeof targetWorkspaceRecord?.workspaceId === "string"
+        ? targetWorkspaceRecord.workspaceId
+        : null,
+    runtimeHealthOk: typeof record.runtimeHealthOk === "boolean" ? record.runtimeHealthOk : null,
+    managedAiReady: typeof record.managedAiReady === "boolean" ? record.managedAiReady : null,
+  };
+}
+
 export type ConversationServiceRunOptions<Client extends ConversationServiceClient = ConversationServiceClient> = {
   sendTraceId?: string | null;
   preflight?: ConversationSendPreflightContext<Client>;
@@ -584,7 +621,21 @@ export function createConversationService<Client extends ConversationServiceClie
     }
 
     const cacheKey = conversationWorkspaceCacheKey(normalizedWorkspaceId, normalizedDirectory);
-    const cached = preflight?.conversationWorkspaceByDirectory.get(cacheKey);
+    const conversationWorkspaceCache = preflight?.conversationWorkspaceByDirectory;
+    const hasConversationWorkspaceCache = conversationWorkspaceCache instanceof Map;
+    if (preflight && !hasConversationWorkspaceCache) {
+      deps.recordSendTrace(`${reason}:conversation-preflight-contract:validation-failed`, {
+        ...(tracePayload ?? {}),
+        workspaceId: normalizedWorkspaceId,
+        directory: normalizedDirectory,
+        validator: "explicit-guard",
+        schema: "conversation-send-preflight-context",
+        ...conversationPreflightContractDiagnostics(preflight),
+      });
+    }
+    const cached = hasConversationWorkspaceCache
+      ? conversationWorkspaceCache.get(cacheKey)
+      : undefined;
     if (cached) {
       deps.recordSendTrace(`${reason}:conversation-workspace-cache-hit`, {
         ...(tracePayload ?? {}),
@@ -658,7 +709,9 @@ export function createConversationService<Client extends ConversationServiceClie
       },
     );
 
-    preflight?.conversationWorkspaceByDirectory.set(cacheKey, promise);
+    if (hasConversationWorkspaceCache) {
+      conversationWorkspaceCache.set(cacheKey, promise);
+    }
     return await promise;
   };
 
@@ -741,6 +794,7 @@ export function createConversationService<Client extends ConversationServiceClie
       workspaceId,
       directory,
       hasTitle: Boolean(title?.trim()),
+      ...conversationPreflightContractDiagnostics(preflight),
     });
     const resolution = await resolveConversationServerWorkspaceForSend(
       workspaceId,

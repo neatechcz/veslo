@@ -2304,23 +2304,29 @@ function truthyEnv(name: string): boolean {
 }
 
 function resolveSendWorkflowTraceFile(): string {
+  const sourceOverride = process.env.VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_FILE?.trim();
+  if (sourceOverride) return sourceOverride;
   const override = process.env.VESLO_SEND_WORKFLOW_TRACE_FILE?.trim();
   if (override) return override;
   const pilotDir = process.env.TAURI_PILOT_LOG_DIR?.trim();
-  if (pilotDir) return join(pilotDir, "send-workflow-trace.ndjson");
+  if (pilotDir) return join(pilotDir, "send-workflow-trace.orchestrator.ndjson");
   const runtimeTraceFile = process.env.VESLO_RUNTIME_TRACE_FILE?.trim();
-  if (runtimeTraceFile) return join(dirname(runtimeTraceFile), "send-workflow-trace.ndjson");
+  if (runtimeTraceFile) return join(dirname(runtimeTraceFile), "send-workflow-trace.orchestrator.ndjson");
   const dataDir = process.env.VESLO_DATA_DIR?.trim() || join(homedir(), ".veslo", "veslo-orchestrator");
-  return join(dataDir, "send-workflow-trace.ndjson");
+  return join(dataDir, "send-workflow-trace.orchestrator.ndjson");
 }
 
 function resolveSendWorkflowTraceMirrorFile(): string | null {
+  const sourceMirror = process.env.VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_MIRROR_FILE?.trim();
+  if (sourceMirror) return sourceMirror;
   const mirror = process.env.VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE?.trim();
   return mirror || null;
 }
 
 function sendWorkflowTraceEnabled(): boolean {
   return truthyEnv("VESLO_SEND_WORKFLOW_TRACE") ||
+    Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_FILE?.trim()) ||
+    Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_MIRROR_FILE?.trim()) ||
     Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_FILE?.trim()) ||
     Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE?.trim());
 }

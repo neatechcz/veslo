@@ -411,6 +411,24 @@ test("mapped local workspace id is used for server calls while app scopes stay l
   assert.equal(rememberedScopes[0]?.conversationId, "conv-created");
 });
 
+test("conversation create reports malformed preflight cache instead of throwing", async () => {
+  const { service, sendTraces } = createService();
+
+  const result = await service.createConversationFromVesloWriteApi("app-ws", "/repo", "Legacy", {
+    traceId: "trace-legacy",
+    targetWorkspace: null,
+  } as any);
+
+  assert.equal(result?.id, "sess-created");
+  const validation = sendTraces.find((entry) =>
+    entry.event === "createConversationFromVesloWriteApi:conversation-preflight-contract:validation-failed"
+  );
+  assert.ok(validation, "malformed preflight should be diagnosed at the service boundary");
+  assert.equal(validation.payload?.schema, "conversation-send-preflight-context");
+  assert.equal(validation.payload?.hasConversationWorkspaceByDirectory, false);
+  assert.equal(validation.payload?.conversationWorkspaceByDirectoryType, "undefined");
+});
+
 test("unmapped local workspace id is not treated as a server workspace id", () => {
   const { service } = createService();
 

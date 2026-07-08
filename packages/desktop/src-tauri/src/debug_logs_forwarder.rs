@@ -1386,9 +1386,9 @@ mod tests {
         assert!(!forwarder.record_missing_direct_fallback_context(
             now + DIRECT_FALLBACK_FAILURE_BACKOFF - Duration::from_secs(1)
         ));
-        assert!(forwarder.record_missing_direct_fallback_context(
-            now + DIRECT_FALLBACK_FAILURE_BACKOFF
-        ));
+        assert!(
+            forwarder.record_missing_direct_fallback_context(now + DIRECT_FALLBACK_FAILURE_BACKOFF)
+        );
     }
 
     #[test]
@@ -1401,9 +1401,7 @@ mod tests {
         assert!(!forwarder.record_local_cloud_upload_disabled(
             now + DIRECT_FALLBACK_FAILURE_BACKOFF - Duration::from_secs(1)
         ));
-        assert!(forwarder.record_local_cloud_upload_disabled(
-            now + DIRECT_FALLBACK_FAILURE_BACKOFF
-        ));
+        assert!(forwarder.record_local_cloud_upload_disabled(now + DIRECT_FALLBACK_FAILURE_BACKOFF));
     }
 
     #[test]

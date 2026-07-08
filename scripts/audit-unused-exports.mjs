@@ -1,10 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const require = createRequire(import.meta.url);
 const userArgs = process.argv.slice(2);
 const strict = userArgs.includes("--strict");
 const help = userArgs.includes("--help") || userArgs.includes("-h");
@@ -34,15 +36,11 @@ const hasNoProgress = forwardedArgs.includes("--no-progress");
 const hasExports = forwardedArgs.includes("--exports");
 const hasNoExitCode = forwardedArgs.includes("--no-exit-code");
 
-const knipBin = join(
-  repoRoot,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "knip.CMD" : "knip",
-);
+const knipPackageEntry = require.resolve("knip");
+const knipCli = resolve(dirname(knipPackageEntry), "..", "bin", "knip.js");
 
-if (!existsSync(knipBin)) {
-  console.error("Knip binary was not found in node_modules/.bin. Run pnpm install first.");
+if (!existsSync(knipCli)) {
+  console.error("Knip CLI was not found. Run pnpm install first.");
   process.exit(1);
 }
 
@@ -54,7 +52,7 @@ const knipArgs = [
   ...forwardedArgs,
 ];
 
-const result = spawnSync(knipBin, knipArgs, {
+const result = spawnSync(process.execPath, [knipCli, ...knipArgs], {
   cwd: repoRoot,
   env: process.env,
   stdio: "inherit",
