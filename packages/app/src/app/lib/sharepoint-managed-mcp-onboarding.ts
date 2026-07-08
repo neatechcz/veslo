@@ -2,7 +2,7 @@ export const SHAREPOINT_MCP_ID = "microsoft-sharepoint";
 
 const SHAREPOINT_MCP_PROMPT_STORAGE_PREFIX = "veslo.mcp.sharepoint.prompt.v1";
 
-type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+type StorageLike = Pick<Storage, "getItem" | "setItem">;
 
 type HubMcpLike = {
   id?: string;
