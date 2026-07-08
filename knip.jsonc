@@ -1,0 +1,172 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreBinaries": [
+    "codex",
+    "gh",
+    "launchctl",
+    "pkg-config",
+    "powershell",
+    "powershell.exe",
+    "ps",
+    "systemctl",
+    "taskkill",
+    "tauri",
+    "wsl.exe"
+  ],
+  "workspaces": {
+    ".": {
+      "entry": [
+        "scripts/**/*.{js,mjs,ts}",
+        ".github/workflows/*.{yml,yaml}"
+      ],
+      "project": [
+        "scripts/**/*.{js,mjs,ts}"
+      ]
+    },
+    "packages/app": {
+      "entry": [
+        "src/app/entry.tsx!",
+        "src/app/app.tsx!",
+        "src/**/*.test.{ts,tsx}",
+        "scripts/**/*.{js,mjs,ts}"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}!",
+        "scripts/**/*.{js,mjs,ts}"
+      ]
+    },
+    "packages/server": {
+      "entry": [
+        "src/**/*.test.ts",
+        "script/**/*.{js,mjs,ts}"
+      ],
+      "project": [
+        "src/**/*.ts!",
+        "script/**/*.{js,mjs,ts}"
+      ]
+    },
+    "packages/orchestrator": {
+      "entry": [
+        "src/tui/app.tsx!",
+        "src/**/*.test.ts",
+        "scripts/**/*.{js,mjs,ts}",
+        "script/**/*.{js,mjs,ts}"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}!",
+        "scripts/**/*.{js,mjs,ts}",
+        "script/**/*.{js,mjs,ts}"
+      ]
+    },
+    "packages/opencode-router": {
+      "entry": [
+        "test/**/*.{js,ts}",
+        "scripts/**/*.{js,mjs,ts}"
+      ],
+      "project": [
+        "src/**/*.ts!",
+        "test/**/*.{js,ts}",
+        "scripts/**/*.{js,mjs,ts}"
+      ]
+    },
+    "packages/desktop": {
+      "entry": [
+        "*.test.mjs",
+        "tests/**/*.test.mjs",
+        "scripts/**/*.{js,mjs,ts}"
+      ],
+      "project": [
+        "*.mjs",
+        "tests/**/*.mjs",
+        "scripts/**/*.{js,mjs,ts}"
+      ]
+    },
+    "packages/e2e": {
+      "entry": [
+        "helpers/**/*.test.ts",
+        "specs/**/*.{test,spec,pilot}.{ts,tsx}",
+        "scripts/**/*.ts"
+      ],
+      "project": [
+        "helpers/**/*.ts",
+        "specs/**/*.{ts,tsx}",
+        "scripts/**/*.ts"
+      ]
+    },
+    "packages/document-runtime": {
+      "entry": [
+        "src/**/*.test.mjs",
+        "scripts/**/*.mjs"
+      ],
+      "project": [
+        "src/**/*.mjs!",
+        "scripts/**/*.mjs"
+      ]
+    },
+    "packages/landing": {
+      "entry": [
+        "app/**/*.{ts,tsx}",
+        "components/**/*.{ts,tsx}",
+        "lib/**/*.{ts,tsx}"
+      ],
+      "project": [
+        "app/**/*.{ts,tsx}!",
+        "components/**/*.{ts,tsx}!",
+        "lib/**/*.{ts,tsx}!",
+        "*.js"
+      ]
+    },
+    "packages/web": {
+      "entry": [
+        "app/**/*.{ts,tsx}",
+        "components/**/*.{ts,tsx}",
+        "lib/**/*.{ts,tsx}",
+        "scripts/**/*.{js,mjs,ts}"
+      ],
+      "project": [
+        "app/**/*.{ts,tsx}!",
+        "components/**/*.{ts,tsx}!",
+        "lib/**/*.{ts,tsx}!",
+        "scripts/**/*.{js,mjs,ts}",
+        "*.js"
+      ]
+    },
+    "services/ai-gateway": {
+      "entry": [
+        "test/**/*.test.ts"
+      ],
+      "project": [
+        "src/**/*.ts!",
+        "test/**/*.ts"
+      ]
+    },
+    "services/den": {
+      "entry": [
+        "test/**/*.test.ts",
+        "scripts/**/*.{js,mjs,ts}"
+      ],
+      "project": [
+        "src/**/*.ts!",
+        "test/**/*.ts",
+        "scripts/**/*.{js,mjs,ts}"
+      ]
+    },
+    "services/worker-manager": {
+      "entry": [
+        "test/**/*.test.ts"
+      ],
+      "project": [
+        "src/**/*.ts!",
+        "test/**/*.ts"
+      ]
+    },
+    "services/openwork-share": {
+      "entry": [
+        "api/**/*.js"
+      ],
+      "project": [
+        "api/**/*.js!"
+      ]
+    }
+  }
+}

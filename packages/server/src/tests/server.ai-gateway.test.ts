@@ -697,6 +697,67 @@ describe("ai gateway proxy routes", () => {
     }
   });
 
+  test("server traces unresolved OpenCode placeholder auth failures without workspace context", async () => {
+    const traceDir = mkdtempSync(join(tmpdir(), "veslo-ai-gateway-placeholder-auth-trace-"));
+    const traceFile = join(traceDir, "send-workflow-trace.ndjson");
+
+    try {
+      await withEnvVar("VESLO_SEND_WORKFLOW_TRACE_FILE", traceFile, async () => {
+        const server = startServer(createTestConfig());
+
+        try {
+          const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
+            method: "POST",
+            headers: {
+              authorization: "Bearer client-token",
+              "content-type": "application/json",
+              "x-session-affinity": "session",
+              "x-session-id": "${OPENCODE_SESSION_ID}",
+              "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
+            },
+            body: JSON.stringify({
+              model: "gpt-5.5",
+              messages: [{ role: "user", content: "Hello" }],
+            }),
+          });
+
+          expect(response.status).toBe(401);
+          expect(await response.json()).toMatchObject({
+            code: "gateway_runtime_authorization_required",
+          });
+
+          const entries = readFileSync(traceFile, "utf8")
+            .trim()
+            .split(/\r?\n/)
+            .map((line) => JSON.parse(line) as Record<string, unknown>);
+          const authFailed = entries.find((entry) => entry.event === "server:ai-gateway:auth-failed");
+          expect(Boolean(authFailed)).toBe(true);
+          if (!authFailed) throw new Error("missing auth-failed trace entry");
+
+          expect(authFailed.provider).toBe("codex_oauth");
+          expect(authFailed.gatewayPath).toBe("/providers/codex_oauth/v1/chat/completions");
+          expect(authFailed.status).toBe(401);
+          expect(authFailed.code).toBe("gateway_runtime_authorization_required");
+          expect(authFailed.traceId).toBeNull();
+          expect(authFailed.sessionId).toBe("${OPENCODE_SESSION_ID}");
+          expect(authFailed.workspaceId).toBeNull();
+          const internalHeaders = authFailed.incomingInternalHeaders as Record<string, unknown>;
+          expect(internalHeaders.hasGatewayAccessToken).toBe(false);
+          expect(internalHeaders.hasGatewayCallerAuth).toBe(false);
+          expect(internalHeaders.hasWorkspaceId).toBe(false);
+          expect(internalHeaders.hasSendTraceId).toBe(false);
+          expect(internalHeaders.hasSessionId).toBe(true);
+          expect(internalHeaders.hasOpenCodeSessionId).toBe(true);
+          expect(internalHeaders.hasOpenCodeSessionAffinity).toBe(true);
+        } finally {
+          stopTestServer(server);
+        }
+      });
+    } finally {
+      rmSync(traceDir, { recursive: true, force: true });
+    }
+  });
+
   test("server mirrors send workflow traces when a mirror file is configured", async () => {
     const traceDir = mkdtempSync(join(tmpdir(), "veslo-ai-gateway-trace-mirror-"));
     const traceFile = join(traceDir, "send-workflow-trace.ndjson");

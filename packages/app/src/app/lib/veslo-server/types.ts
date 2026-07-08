@@ -1355,9 +1355,11 @@ export type VesloConversationRunLifecycleStatus =
   | "failed"
   | "aborted";
 
+export type VesloConversationSubmitAttachmentKind = "image" | "file";
+
 export type VesloConversationSubmitAttachment = {
   name: string;
-  kind: string;
+  kind: VesloConversationSubmitAttachmentKind;
   mimeType: string;
   dataUrl?: string | null;
   contentBase64?: string | null;

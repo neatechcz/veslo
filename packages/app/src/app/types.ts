@@ -278,12 +278,14 @@ export type ComposerPart =
   | { type: "file"; path: string; label?: string }
   | { type: "paste"; id: string; label: string; text: string; lines: number };
 
+export type ComposerAttachmentKind = "image" | "file";
+
 export type ComposerAttachment = {
   id: string;
   name: string;
   mimeType: string;
   size: number;
-  kind: "image" | "file";
+  kind: ComposerAttachmentKind;
   dataUrl: string;
 };
 

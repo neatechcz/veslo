@@ -4,10 +4,11 @@ import { ApiError } from "./errors.js";
 
 export type ConversationSubmitDraftMode = "prompt" | "shell";
 export type ConversationSubmitImplicitSkillCommandPolicy = "confirm" | "allow" | "disable";
+export type ConversationSubmitAttachmentKind = "image" | "file";
 
 export type ConversationSubmitAttachment = {
   name: string;
-  kind: string;
+  kind: ConversationSubmitAttachmentKind;
   mimeType: string;
   dataUrl?: string | null;
   contentBase64?: string | null;
@@ -237,14 +238,17 @@ function parseAttachments(value: unknown): ConversationSubmitAttachment[] | unde
       throw new ApiError(400, "invalid_payload", `draft.attachments[${index}] must be an object`);
     }
     const name = bodyString(item, "name");
-    const kind = bodyString(item, "kind");
+    const kindInput = bodyString(item, "kind");
     const mimeType = bodyString(item, "mimeType");
-    if (!name || !kind || !mimeType) {
+    if (!name || !kindInput || !mimeType) {
       throw new ApiError(400, "invalid_payload", `draft.attachments[${index}] requires name, kind, and mimeType`);
+    }
+    if (kindInput !== "image" && kindInput !== "file") {
+      throw new ApiError(400, "invalid_payload", `draft.attachments[${index}].kind must be image or file`);
     }
     const attachment: ConversationSubmitAttachment = {
       name,
-      kind,
+      kind: kindInput,
       mimeType,
     };
     const dataUrl = optionalBodyString(item, "dataUrl");

@@ -489,7 +489,9 @@ test("send boundary validation reports successful Zod checks without blocking se
   assert.equal(checked.ok, true);
   assert.deepEqual(traces.map((trace) => trace.event), ["sendPrompt:runtime-preflight:validation-checked"]);
   assert.equal(traces[0]?.payload?.schema, "send-runtime-preparation-result");
+  assert.equal(traces[0]?.payload?.validator, "zod");
   assert.equal(traces[0]?.payload?.validationMode, "report");
+  assert.equal(traces[0]?.payload?.strict, false);
   assert.equal(traces[0]?.payload?.traceId, "trace-zod-ok");
   assert.deepEqual((traces[0]?.payload?.payload as { keys?: string[] }).keys, [
     "ok",
@@ -510,6 +512,49 @@ test("send boundary validation reports successful Zod checks without blocking se
 
   assert.equal(disabled.ok, true);
   assert.deepEqual(traces, []);
+});
+
+test("send boundary validation traces strict Zod issue diagnostics without raw payloads", () => {
+  const traces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+  const value = {
+    ok: true,
+    runtimeReady: true,
+    managedAiReady: true,
+  };
+
+  const checked = validateSendRuntimePreparationResult(value, {
+    context: { phase: "runtime-preflight" },
+    event: "sendPrompt:runtime-preflight:validation-failed",
+    mode: "strict",
+    recordSendTrace: (event, payload) => traces.push({ event, payload }),
+    traceId: "trace-zod-failed",
+  });
+
+  assert.equal(checked.ok, false);
+  assert.equal(traces[0]?.event, "sendPrompt:runtime-preflight:validation-failed");
+  const payload = traces[0]?.payload ?? {};
+  assert.equal(payload.schema, "send-runtime-preparation-result");
+  assert.equal(payload.validator, "zod");
+  assert.equal(payload.validationMode, "strict");
+  assert.equal(payload.strict, true);
+  assert.equal(payload.blocking, true);
+  assert.equal(payload.traceId, "trace-zod-failed");
+  assert.equal(payload.issueCount, 4);
+  assert.deepEqual(payload.issueCodeCounts, { invalid_type: 3, invalid_value: 1 });
+  assert.deepEqual(payload.issuePaths, ["workspaceId", "activeWorkspace", "recoveryAttempted", "reason"]);
+  assert.deepEqual(payload.primaryIssue, {
+    code: "invalid_type",
+    expected: "string",
+    received: null,
+    message: "Invalid input: expected string, received undefined",
+    path: "workspaceId",
+  });
+  assert.deepEqual((payload.payload as { keys?: string[]; keyCount?: number }), {
+    valueType: "object",
+    status: null,
+    keys: ["ok", "runtimeReady", "managedAiReady"],
+    keyCount: 3,
+  });
 });
 
 test("send boundary classifier preserves the failing submit layer", () => {

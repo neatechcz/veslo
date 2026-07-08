@@ -13,6 +13,8 @@ export type ConversationSubmitTerminalResult = Extract<
 
 export type SendBoundaryValidationIssue = {
   code: string;
+  expected?: string | null;
+  received?: string | null;
   message: string;
   path: string;
 };
@@ -285,15 +287,52 @@ function issuePath(path: PropertyKey[]): string {
 }
 
 function validationIssues(error: z.ZodError): SendBoundaryValidationIssue[] {
-  return error.issues.slice(0, 10).map((issue) => ({
-    code: issue.code,
-    message: issue.message,
-    path: issuePath(issue.path),
-  }));
+  return error.issues.slice(0, 10).map((issue) => {
+    const detail = issue as z.ZodIssue & {
+      expected?: unknown;
+      received?: unknown;
+    };
+    return {
+      code: issue.code,
+      expected: typeof detail.expected === "string" ? detail.expected : null,
+      received: typeof detail.received === "string" ? detail.received : null,
+      message: issue.message,
+      path: issuePath(issue.path),
+    };
+  });
+}
+
+function issueCodeCounts(error: z.ZodError): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const issue of error.issues) {
+    counts[issue.code] = (counts[issue.code] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function issuePathPreview(error: z.ZodError): string[] {
+  return error.issues.slice(0, 10).map((issue) => issuePath(issue.path));
+}
+
+function firstIssue(error: z.ZodError): SendBoundaryValidationIssue | null {
+  return validationIssues(error)[0] ?? null;
+}
+
+function summarizeArray(value: unknown[]): Record<string, unknown> {
+  return {
+    valueType: "array",
+    length: value.length,
+    itemTypes: value
+      .slice(0, 8)
+      .map((item) => item === null ? "null" : Array.isArray(item) ? "array" : typeof item),
+  };
 }
 
 function summarizeValue(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (Array.isArray(value)) {
+    return summarizeArray(value);
+  }
+  if (!value || typeof value !== "object") {
     return { valueType: value === null ? "null" : typeof value };
   }
   const record = value as Record<string, unknown>;
@@ -301,6 +340,7 @@ function summarizeValue(value: unknown): Record<string, unknown> {
     valueType: "object",
     status: typeof record.status === "string" ? record.status : null,
     keys: Object.keys(record).slice(0, 12),
+    keyCount: Object.keys(record).length,
   };
 }
 
@@ -408,13 +448,16 @@ function validateSendBoundary<T>(
       ...(options.traceId ? { traceId: options.traceId } : {}),
       ...(options.context ?? {}),
       schema: options.schema,
+      validator: "zod",
       validationMode: mode,
+      strict: mode === "strict",
       payload: summarizeValue(value),
     });
     return { ok: true, value: value as T };
   }
 
   const issues = validationIssues(result.error);
+  const primaryIssue = firstIssue(result.error);
   const message = `Invalid ${options.schema} send contract: ${issues
     .map((issue) => `${issue.path}: ${issue.message}`)
     .join("; ")}`;
@@ -422,9 +465,14 @@ function validateSendBoundary<T>(
     ...(options.traceId ? { traceId: options.traceId } : {}),
     ...(options.context ?? {}),
     schema: options.schema,
+    validator: "zod",
     validationMode: mode,
+    strict: mode === "strict",
     blocking: mode === "strict",
     issueCount: result.error.issues.length,
+    issueCodeCounts: issueCodeCounts(result.error),
+    issuePaths: issuePathPreview(result.error),
+    primaryIssue,
     issues,
     payload: summarizeValue(value),
   });

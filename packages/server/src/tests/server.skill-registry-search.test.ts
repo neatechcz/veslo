@@ -151,6 +151,71 @@ test("GET /v1/skills/search proxies registry search through server validation", 
   ]);
 });
 
+test("skill registry routes allow Den override headers in CORS preflight", async () => {
+  const server = await startFixture();
+
+  const response = await fetch(
+    `http://127.0.0.1:${server.port}/v1/skill-registry-events?limit=100&orgId=org_1&workspaceId=ws_1`,
+    {
+      method: "OPTIONS",
+      headers: {
+        Origin: "http://localhost:1420",
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "authorization,x-veslo-den-api-base,x-veslo-den-token,x-veslo-den-org-id",
+      },
+    },
+  );
+
+  expect(response.status).toBe(204);
+  expect(response.headers.get("access-control-allow-origin")).toBe("*");
+  const allowedHeaders = response.headers.get("access-control-allow-headers")?.toLowerCase() ?? "";
+  expect(allowedHeaders).toContain("authorization");
+  expect(allowedHeaders).toContain("x-veslo-den-api-base");
+  expect(allowedHeaders).toContain("x-veslo-den-token");
+  expect(allowedHeaders).toContain("x-veslo-den-org-id");
+});
+
+test("CORS preflight allows browser-facing Veslo custom headers", async () => {
+  const server = await startFixture();
+  const requestedHeaders = [
+    "authorization",
+    "content-type",
+    "x-veslo-host-token",
+    "x-veslo-client-id",
+    "x-veslo-send-trace-id",
+    "x-veslo-account-id",
+    "x-veslo-user-id",
+    "x-veslo-den-user-id",
+    "x-veslo-org-id",
+    "x-veslo-den-org-id",
+    "x-veslo-den-api-base",
+    "x-veslo-den-token",
+    "x-veslo-gateway-authorization",
+    "x-veslo-gateway-token",
+    "x-veslo-session-id",
+    "x-veslo-workspace-id",
+    "x-opencode-directory",
+  ];
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/capabilities`, {
+    method: "OPTIONS",
+    headers: {
+      Origin: "http://localhost:1420",
+      "Access-Control-Request-Method": "GET",
+      "Access-Control-Request-Headers": requestedHeaders.join(","),
+      "Access-Control-Request-Private-Network": "true",
+    },
+  });
+
+  expect(response.status).toBe(204);
+  expect(response.headers.get("access-control-allow-origin")).toBe("*");
+  expect(response.headers.get("access-control-allow-private-network")).toBe("true");
+  const allowedHeaders = response.headers.get("access-control-allow-headers")?.toLowerCase() ?? "";
+  for (const header of requestedHeaders) {
+    expect(allowedHeaders).toContain(header);
+  }
+});
+
 test("GET /v1/skills/search returns an empty result when registry is not configured", async () => {
   const server = await startFixture();
 

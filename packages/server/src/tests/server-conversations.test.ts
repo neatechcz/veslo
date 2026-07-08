@@ -353,6 +353,28 @@ describe("conversation routes", () => {
       },
       {
         body: {
+          clientMessageId: "msg-invalid-attachment-kind",
+          origin: "session:normal",
+          source: "enter",
+          target,
+          draft: {
+            mode: "prompt",
+            text: "Hello",
+            parts: [],
+            attachments: [
+              {
+                name: "payload.bin",
+                kind: "binary",
+                mimeType: "application/octet-stream",
+                dataUrl: "data:application/octet-stream;base64,AA==",
+              },
+            ],
+          },
+        },
+        message: "draft.attachments[0].kind must be image or file",
+      },
+      {
+        body: {
           clientMessageId: "msg-invalid-queue-policy",
           origin: "session:normal",
           source: "enter",

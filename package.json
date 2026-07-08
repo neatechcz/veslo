@@ -31,7 +31,12 @@
     "test:e2e:feedback-youtrack-live": "pnpm --filter @neatech/veslo-e2e test:pilot:feedback-youtrack-live",
     "test:e2e:ui:update-baselines": "pnpm --filter @neatech/veslo-e2e test:update-baselines",
     "test:orchestrator": "pnpm --filter veslo-orchestrator test:router",
+    "audit:static": "pnpm audit:cycles && pnpm audit:knip",
     "audit:cycles": "node scripts/audit-cycles.mjs",
+    "audit:knip": "knip --no-progress --dependencies --files --max-show-issues 80 --no-exit-code",
+    "audit:knip:strict": "knip --no-progress --dependencies --files --max-show-issues 80",
+    "audit:knip:exports": "knip --no-progress --exports --max-show-issues 80 --no-exit-code",
+    "audit:knip:exports:strict": "knip --no-progress --exports --max-show-issues 80",
     "audit:imports": "node scripts/audit-import-boundaries.mjs",
     "audit:routes": "node scripts/audit-route-contracts.mjs",
     "audit:fallbacks": "node scripts/audit-fallback-risks.mjs",
@@ -66,6 +71,7 @@
   },
   "packageManager": "pnpm@10.27.0",
   "devDependencies": {
+    "knip": "^6.25.0",
     "madge": "8.0.0"
   }
 }

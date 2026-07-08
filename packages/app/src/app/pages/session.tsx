@@ -81,6 +81,12 @@ import {
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
 import {
+  partText,
+  toolNameFromPart,
+  toolOutputSizeFromPart,
+  toolStateFromPart,
+} from "../lib/opencode-part-access";
+import {
   resolveFolderAccessRequestFromPermission,
   selectedFolderContainsRequestedPath,
 } from "../lib/folder-access-request";
@@ -2021,8 +2027,7 @@ export default function SessionView(props: SessionViewProps) {
   const computeStatusFromPart = (part: Part | null) => {
     if (!part) return null;
     if (part.type === "tool") {
-      const record = part as any;
-      const tool = typeof record.tool === "string" ? record.tool : "";
+      const tool = toolNameFromPart(part);
       switch (tool) {
         case "task":
           return tr("session.status_delegating");
@@ -2048,7 +2053,7 @@ export default function SessionView(props: SessionViewProps) {
       }
     }
     if (part.type === "reasoning") {
-      const text = cleanReasoning(typeof (part as any).text === "string" ? (part as any).text : "");
+      const text = cleanReasoning(partText(part));
       const first = text
         .split(/\r?\n/)
         .map((line) => line.trim())
@@ -2081,19 +2086,14 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     if (part.type === "reasoning" || part.type === "text") {
-      const text = typeof (part as any).text === "string" ? (part as any).text : "";
+      const text = partText(part);
       return `${part.type}:${text.length}:${text.slice(-48)}:parts:${partTotal}:todos:${props.todos.length}`;
     }
 
     if (part.type === "tool") {
-      const state = (part as any).state ?? {};
+      const state = toolStateFromPart(part);
       const status = typeof state.status === "string" ? state.status : "";
-      const outputSize =
-        typeof state.output === "string"
-          ? state.output.length
-          : Array.isArray(state.output)
-            ? state.output.length
-            : 0;
+      const outputSize = toolOutputSizeFromPart(part);
       return `tool:${status}:${outputSize}:parts:${partTotal}:todos:${props.todos.length}`;
     }
 

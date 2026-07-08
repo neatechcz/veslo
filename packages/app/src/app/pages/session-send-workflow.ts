@@ -27,6 +27,10 @@ import type {
   StagedSessionAttachment,
 } from "../lib/attachment-prompt-routing";
 import type {
+  SessionAttachmentFilePartInput,
+  SessionAttachmentPartInput,
+} from "./session-attachment-staging";
+import type {
   VesloConversationRunInput,
   VesloConversationSubmitRequest,
   VesloConversationSubmitResult,
@@ -196,8 +200,8 @@ export type LegacyConversationRunFallback = {
 
 export type LegacyConversationRunFallbackOptions = {
   agentForSession: (sessionId: string | null | undefined) => string | null | undefined;
-  buildCommandFileParts: (draft: ComposerDraft) => unknown[];
-  buildPromptParts: (draft: ComposerDraft) => unknown[];
+  buildCommandFileParts: (draft: ComposerDraft) => SessionAttachmentFilePartInput[];
+  buildPromptParts: (draft: ComposerDraft) => SessionAttachmentPartInput[];
   compactCurrentSession: (sessionId?: string) => Promise<unknown>;
   developerMode: () => boolean;
   emitLiveTranscriptPolicyEvent: (event: LiveTranscriptReadPolicyEvent) => void;
