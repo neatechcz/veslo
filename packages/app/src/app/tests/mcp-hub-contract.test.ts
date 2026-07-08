@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const extensionsSource = readFileSync(new URL("../context/extensions.ts", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const mcpSource = readFileSync(new URL("../pages/mcp.tsx", import.meta.url), "utf8");
 const workflowSource = readFileSync(new URL("../context/mcp-connection-workflow.ts", import.meta.url), "utf8");
 const mcpRefreshSource = readFileSync(new URL("../lib/mcp-server-refresh.ts", import.meta.url), "utf8");
@@ -174,6 +175,19 @@ test("mcp page exposes sign-in for installed server-managed hub connectors", () 
   assert.match(mcpSource, /supportsOauth\(entry\) && status\(\) !== "connected"/);
   assert.equal(microsoftSharePointCatalogItem.oauth, false);
   assert.equal(microsoftSharePointCatalogItem.authorization.type, "veslo-server-oauth");
+});
+
+test("app prompts once to install the managed SharePoint MCP from the Den catalog", () => {
+  assert.match(appSource, /sharepoint-managed-mcp-onboarding/);
+  assert.match(appSource, /shouldPromptSharePointMcpInstall/);
+  assert.match(appSource, /setSharePointMcpInstallPromptOpen\(true\)/);
+  assert.match(appSource, /installHubMcpAndActivate\(SHAREPOINT_MCP_ID\)/);
+  assert.match(appSource, /markSharePointMcpPromptDismissed/);
+  assert.match(appSource, /markSharePointMcpPromptAccepted/);
+  assert.match(appSource, /await reloadWorkspaceEngine\(\)/);
+  assert.match(appSource, /markReloadRequired\("mcp", \{ type: "mcp", name: SHAREPOINT_MCP_ID, action: "added" \}\)/);
+  assert.match(appSource, /setMcpStatus\(t\("mcp\.sharepoint_prompt_reload_required"/);
+  assert.match(appSource, /data-testid="sharepoint-mcp-install-prompt"/);
 });
 
 test("hub mcp cards label shared provider context without merging card installs", () => {

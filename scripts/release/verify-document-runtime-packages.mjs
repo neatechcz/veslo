@@ -17,6 +17,7 @@ const parseArgs = (argv) => {
     manifestRoot: "",
     windowsPackageDir: process.env.VESLO_DOCUMENT_RUNTIME_WINDOWS_PACKAGE_DIR || "",
     macosPackageDir: process.env.VESLO_DOCUMENT_RUNTIME_MACOS_PACKAGE_DIR || "",
+    macosResourceRoot: process.env.VESLO_DOCUMENT_RUNTIME_MACOS_RESOURCE_ROOT || "",
     json: false,
   };
 
@@ -56,6 +57,11 @@ const parseArgs = (argv) => {
       index += 1;
       continue;
     }
+    if (arg === "--macos-resource-root") {
+      options.macosResourceRoot = resolve(argv[index + 1] || options.macosResourceRoot);
+      index += 1;
+      continue;
+    }
     throw new Error(`Unknown argument: ${arg}`);
   }
 
@@ -83,6 +89,7 @@ export function verifyDocumentRuntimePackages(options = {}) {
     feedPath,
     manifestRoot,
     packageDir: options.macosPackageDir,
+    resourceRoot: options.macosResourceRoot,
   });
 
   const checks = [

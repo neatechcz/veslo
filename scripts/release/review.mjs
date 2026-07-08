@@ -137,6 +137,20 @@ const hasDocumentRuntimeMetadataGate = (text) =>
   /Verify document runtime package metadata/.test(text) &&
   /verify-document-runtime-packages\.mjs\s+--profile\s+remote-docs-only\s+--json/.test(text);
 
+const hasMacosDocumentRuntimeBundleGate = (text) =>
+  ["pnpm exec tauri -vvv build", "tauri-apps/tauri-action"].some((buildFragment) =>
+    hasOrderedFragments(text, [
+      "Install macOS document runtime resource",
+      "node scripts/document-runtime/install-package-resource.mjs",
+      "--platform \"${{ matrix.doc_runtime_platform }}\"",
+      "Verify macOS document runtime bundle",
+      "node scripts/release/verify-document-runtime-macos.mjs",
+      "--profile local-docs-required",
+      "--platform \"${{ matrix.doc_runtime_platform }}\"",
+      buildFragment,
+    ]),
+  );
+
 const hasWindowsDocumentRuntimeBundleGate = (text) =>
   hasOrderedFragments(text, [
     "Assemble Windows document runtime",
@@ -475,9 +489,19 @@ addCheck(
   ".github/workflows/release-macos-aarch64.yml#verify-release",
 );
 addCheck(
+  "Release workflow verifies macOS document runtime before Tauri build",
+  hasMacosDocumentRuntimeBundleGate(releaseMacosTauriJob),
+  ".github/workflows/release-macos-aarch64.yml#publish-tauri",
+);
+addCheck(
   "Release workflow verifies Windows document runtime after assembly",
   hasWindowsDocumentRuntimeBundleGate(releaseWindowsTauriJob),
   ".github/workflows/release-macos-aarch64.yml#publish-tauri-windows",
+);
+addCheck(
+  "Prerelease workflow verifies macOS document runtime before Tauri build",
+  hasMacosDocumentRuntimeBundleGate(prereleaseTauriJob),
+  ".github/workflows/prerelease.yml#publish-tauri",
 );
 const wslInstallerFragmentPath = resolve(
   root,

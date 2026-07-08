@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "resources/document-runtime/macos-arm64": "document-runtime"
+    }
+  }
+}

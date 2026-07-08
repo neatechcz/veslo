@@ -91,6 +91,10 @@ jobs:
         shell: pwsh
         run: node scripts/document-runtime/assemble-windows.mjs
 
+      - name: Verify Windows document runtime bundle
+        shell: pwsh
+        run: node scripts/release/verify-document-runtime-windows.mjs --profile local-docs-required --json
+
       - name: Resolve Windows signing
         id: signing
         shell: bash

@@ -86,7 +86,7 @@ test("release review verifies GlitchTip release monitoring wiring", () => {
   assert.match(reviewSource, /hasGlitchTipReleaseEnv\(prereleaseTauriJob,\s*\{\s*requireStrict:\s*true\s*\}\)/);
 });
 
-test("release review verifies document runtime metadata preflight and Windows bundle gate", () => {
+test("release review verifies document runtime metadata preflight and desktop bundle gates", () => {
   const scriptPath = resolve(import.meta.dirname, "./review.mjs");
   const output = execFileSync("node", [scriptPath, "--json"], {
     cwd: resolve(import.meta.dirname, "../.."),
@@ -100,11 +100,21 @@ test("release review verifies document runtime metadata preflight and Windows bu
   const windowsCheck = report.checks.find(
     (entry) => entry.label === "Release workflow verifies Windows document runtime after assembly",
   );
+  const macosCheck = report.checks.find(
+    (entry) => entry.label === "Release workflow verifies macOS document runtime before Tauri build",
+  );
+  const prereleaseMacosCheck = report.checks.find(
+    (entry) => entry.label === "Prerelease workflow verifies macOS document runtime before Tauri build",
+  );
 
   assert.ok(metadataCheck, "expected release review to report the document runtime metadata check");
   assert.equal(metadataCheck.ok, true);
+  assert.ok(macosCheck, "expected release review to report the macOS document runtime bundle check");
+  assert.equal(macosCheck.ok, true);
   assert.ok(windowsCheck, "expected release review to report the Windows document runtime bundle check");
   assert.equal(windowsCheck.ok, true);
+  assert.ok(prereleaseMacosCheck, "expected release review to report the prerelease macOS document runtime bundle check");
+  assert.equal(prereleaseMacosCheck.ok, true);
 
   const workflow = readFileSync(
     resolve(import.meta.dirname, "../../.github/workflows/release-macos-aarch64.yml"),
@@ -116,11 +126,25 @@ test("release review verifies document runtime metadata preflight and Windows bu
   );
   assert.match(
     workflow,
+    /Install macOS document runtime resource[\s\S]*install-package-resource\.mjs[\s\S]*Verify macOS document runtime bundle[\s\S]*verify-document-runtime-macos\.mjs[\s\S]*--profile local-docs-required[\s\S]*pnpm exec tauri -vvv build/,
+  );
+  assert.match(
+    workflow,
     /Assemble Windows document runtime[\s\S]*Verify Windows document runtime bundle[\s\S]*node scripts\/release\/verify-document-runtime-windows\.mjs --profile local-docs-required --json[\s\S]*Build Windows bundle/,
+  );
+  const prereleaseWorkflow = readFileSync(
+    resolve(import.meta.dirname, "../../.github/workflows/prerelease.yml"),
+    "utf8",
+  );
+  assert.match(
+    prereleaseWorkflow,
+    /Install macOS document runtime resource[\s\S]*install-package-resource\.mjs[\s\S]*Verify macOS document runtime bundle[\s\S]*verify-document-runtime-macos\.mjs[\s\S]*--profile local-docs-required[\s\S]*tauri-apps\/tauri-action/,
   );
 
   const reviewSource = readFileSync(scriptPath, "utf8");
   assert.match(reviewSource, /extractWorkflowJob\(releaseWorkflow,\s*"verify-release"\)/);
   assert.match(reviewSource, /hasDocumentRuntimeMetadataGate\(releaseVerifyJob\)/);
+  assert.match(reviewSource, /hasMacosDocumentRuntimeBundleGate\(releaseMacosTauriJob\)/);
   assert.match(reviewSource, /hasWindowsDocumentRuntimeBundleGate\(releaseWindowsTauriJob\)/);
+  assert.match(reviewSource, /hasMacosDocumentRuntimeBundleGate\(prereleaseTauriJob\)/);
 });

@@ -252,11 +252,15 @@ jobs:
           - platform: macos-14
             os_type: macos
             target: aarch64-apple-darwin
-            args: "--target aarch64-apple-darwin --bundles dmg,app"
+            doc_runtime_platform: macos-arm64
+            doc_runtime_config: src-tauri/tauri.macos.aarch64.release.conf.json
+            args: "--config src-tauri/tauri.macos.aarch64.release.conf.json --target aarch64-apple-darwin --bundles dmg,app"
           - platform: macos-14
             os_type: macos
             target: x86_64-apple-darwin
-            args: "--target x86_64-apple-darwin --bundles dmg,app"
+            doc_runtime_platform: macos-x64
+            doc_runtime_config: src-tauri/tauri.macos.x64.release.conf.json
+            args: "--config src-tauri/tauri.macos.x64.release.conf.json --target x86_64-apple-darwin --bundles dmg,app"
 
     steps:
       - name: Checkout
@@ -316,6 +320,32 @@ jobs:
       - name: Install OpenTUI x64 core (macOS x86_64)
         if: matrix.os_type == 'macos' && matrix.target == 'x86_64-apple-darwin'
         run: pnpm add -w --ignore-workspace-root-check @opentui/core-darwin-x64@0.1.77
+
+      - name: Install macOS document runtime resource
+        if: matrix.os_type == 'macos'
+        shell: bash
+        env:
+          PUBLIC_RELEASE_REPO: ${{ vars.RELEASE_UPDATES_REPO || vars.VESLO_UPDATES_REPO || 'neatechcz/veslo-updates' }}
+          DOCUMENT_RUNTIME_PACKAGE_FEED_URL: ${{ vars.VESLO_DOCUMENT_RUNTIME_PACKAGE_FEED_URL }}
+        run: |
+          set -euo pipefail
+          feed_url="${DOCUMENT_RUNTIME_PACKAGE_FEED_URL:-https://github.com/${PUBLIC_RELEASE_REPO}/releases/latest/download/document-runtime-packages.json}"
+          feed_path="$RUNNER_TEMP/document-runtime-packages.json"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$feed_path" "$feed_url"
+          echo "VESLO_DOCUMENT_RUNTIME_PACKAGE_FEED=$feed_path" >> "$GITHUB_ENV"
+          node scripts/document-runtime/install-package-resource.mjs \
+            --platform "${{ matrix.doc_runtime_platform }}" \
+            --feed "$feed_path" \
+            --output-dir "packages/desktop/src-tauri/resources/document-runtime/${{ matrix.doc_runtime_platform }}"
+
+      - name: Verify macOS document runtime bundle
+        if: matrix.os_type == 'macos'
+        shell: bash
+        run: |
+          node scripts/release/verify-document-runtime-macos.mjs \
+            --profile local-docs-required \
+            --json \
+            --platform "${{ matrix.doc_runtime_platform }}"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

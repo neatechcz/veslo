@@ -176,6 +176,12 @@ import {
   createPermissionPollingScheduler,
 } from "./lib/workspace-runtime-schedulers";
 import { createMcpServersRefresher } from "./lib/mcp-server-refresh";
+import {
+  SHAREPOINT_MCP_ID,
+  markSharePointMcpPromptAccepted,
+  markSharePointMcpPromptDismissed,
+  shouldPromptSharePointMcpInstall,
+} from "./lib/sharepoint-managed-mcp-onboarding";
 import { createSkillReloadGuard } from "./lib/skill-reload-guard";
 import { createSkillRegistryOrchestrator } from "./context/skill-registry-orchestrator";
 import {
@@ -3442,6 +3448,9 @@ export default function App() {
     removeMcp,
   } = mcpConnectionWorkflow;
 
+  const [sharePointMcpInstallPromptOpen, setSharePointMcpInstallPromptOpen] = createSignal(false);
+  const [sharePointMcpInstallBusy, setSharePointMcpInstallBusy] = createSignal(false);
+
   refreshMcpServers = createMcpServersRefresher({
     projectDir: () => workspaceProjectDir(),
     workspaceType: () => workspaceStore.activeWorkspaceDisplay().workspaceType,
@@ -3459,6 +3468,56 @@ export default function App() {
     setMcpLastUpdatedAt,
     scheduleRuntimeStatusRefresh: mcpConnectionWorkflow.scheduleMcpRuntimeStatusRefresh,
   });
+
+  const sharePointMcpPromptStorage = () => typeof window === "undefined" ? null : window.localStorage;
+  const sharePointMcpPromptOrgId = () => readDenAuth()?.orgId?.trim() ?? "";
+
+  createEffect(() => {
+    if (sharePointMcpInstallPromptOpen() || sharePointMcpInstallBusy()) return;
+    if (!mcpLastUpdatedAt()) return;
+    if (shouldPromptSharePointMcpInstall({
+      denOrgId: sharePointMcpPromptOrgId(),
+      hubMcpCards: hubMcpCards(),
+      mcpServers: mcpServers(),
+      storage: sharePointMcpPromptStorage(),
+    })) {
+      setSharePointMcpInstallPromptOpen(true);
+    }
+  });
+
+  const dismissSharePointMcpInstallPrompt = () => {
+    markSharePointMcpPromptDismissed(sharePointMcpPromptStorage(), sharePointMcpPromptOrgId());
+    setSharePointMcpInstallPromptOpen(false);
+  };
+
+  const confirmSharePointMcpInstallPrompt = async () => {
+    if (sharePointMcpInstallBusy()) return;
+    setSharePointMcpInstallBusy(true);
+    try {
+      const result = await installHubMcpAndActivate(SHAREPOINT_MCP_ID);
+      if (!result.ok) {
+        setMcpStatus(result.message);
+        return;
+      }
+      markSharePointMcpPromptAccepted(sharePointMcpPromptStorage(), sharePointMcpPromptOrgId());
+      setSharePointMcpInstallPromptOpen(false);
+      await refreshMcpServers({ mode: "explicit", reason: "sharepoint-mcp-installed" });
+      if (anyActiveRuns()) {
+        markReloadRequired("mcp", { type: "mcp", name: SHAREPOINT_MCP_ID, action: "added" });
+        setMcpStatus(t("mcp.sharepoint_prompt_reload_required", currentLocale()));
+        return;
+      }
+      const reloaded = await reloadWorkspaceEngine();
+      if (!reloaded) {
+        markReloadRequired("mcp", { type: "mcp", name: SHAREPOINT_MCP_ID, action: "added" });
+        setMcpStatus(t("mcp.sharepoint_prompt_reload_required", currentLocale()));
+      }
+    } catch (error) {
+      setMcpStatus(error instanceof Error ? error.message : safeStringify(error));
+    } finally {
+      setSharePointMcpInstallBusy(false);
+    }
+  };
 
   const reloadWorkspaceEngineFromUi = async () => {
     if (canReloadLocalEngine()) {
@@ -4862,6 +4921,24 @@ export default function App() {
           await reloadWorkspaceEngine();
         }}
       />
+
+      <Show when={sharePointMcpInstallPromptOpen()}>
+        <div data-testid="sharepoint-mcp-install-prompt">
+          <ConfirmModal
+            open={sharePointMcpInstallPromptOpen()}
+            title={t("mcp.sharepoint_prompt_title", currentLocale())}
+            message={t("mcp.sharepoint_prompt_message", currentLocale())}
+            confirmLabel={sharePointMcpInstallBusy()
+              ? t("mcp.installing_button", currentLocale())
+              : t("mcp.sharepoint_prompt_install", currentLocale())}
+            cancelLabel={t("mcp.sharepoint_prompt_later", currentLocale())}
+            onConfirm={() => {
+              void confirmSharePointMcpInstallPrompt();
+            }}
+            onCancel={dismissSharePointMcpInstallPrompt}
+          />
+        </div>
+      </Show>
 
       <CreateWorkspaceModal
         open={workspaceStore.createWorkspaceOpen()}
