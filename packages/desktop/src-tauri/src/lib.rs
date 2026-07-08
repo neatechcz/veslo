@@ -38,6 +38,7 @@ use commands::config::{read_opencode_config, write_opencode_config};
 use commands::den_auth::{den_auth_snapshot_read, den_auth_snapshot_write};
 use commands::engine::{
     engine_doctor, engine_info, engine_install, engine_restart, engine_start, engine_stop,
+    runtime_prepare_workspace,
 };
 use commands::engine_sse::{engine_sse_subscribe, engine_sse_unsubscribe, EngineSseRegistry};
 use commands::misc::{
@@ -296,6 +297,7 @@ pub fn run() {
             engine_doctor,
             engine_install,
             engine_restart,
+            runtime_prepare_workspace,
             access_proof_ai_read,
             access_proof_ai_write,
             access_proof_ai_clear,

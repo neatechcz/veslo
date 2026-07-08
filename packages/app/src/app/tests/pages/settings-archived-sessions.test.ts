@@ -55,3 +55,11 @@ test("settings archived sessions expose stable row and unarchive selectors", () 
   assert.match(archivedSection, /data-session-id=\{item\.sessionId\}/);
   assert.match(archivedSection, /data-workspace-id=\{item\.workspaceId\}/);
 });
+
+test("settings unarchive preserves archived session directory scope", () => {
+  assert.match(
+    source,
+    /props\.onUnarchiveSession\?\.\(item\.workspaceId, item\.sessionId, item\.workspaceIdentity, item\.resolvedDirectory\)/,
+    "settings archived-session unarchive should pass directory scope so duplicate raw session ids are not removed together",
+  );
+});

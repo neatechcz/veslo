@@ -1,5 +1,5 @@
-import { createSignal } from "solid-js";
-import { reconcile } from "solid-js/store";
+import { createSignal, type Setter } from "solid-js";
+import { reconcile, type SetStoreFunction } from "solid-js/store";
 
 import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 
@@ -93,7 +93,7 @@ export type SessionOfflineTranscriptLoadResult =
 
 export type SessionSelectionControllerDeps = {
   store: SelectionStoreState;
-  setStore: (...args: any[]) => void;
+  setStore: SetStoreFunction<SelectionStoreState>;
   routing: WorkspaceRouting;
   selectedSessionId: () => string | null;
   setSelectedSessionId: (id: string | null) => void;
@@ -122,11 +122,11 @@ export type SessionSelectionControllerDeps = {
   setMessagesForSession: (sessionID: string, list: MessageWithParts[]) => void;
   hydrateTranscriptSnapshot: (snapshot: VesloSessionTranscriptSnapshot) => void;
   messageLimitBySession: () => Record<string, number>;
-  setMessageLimitBySession: (value: any) => void;
+  setMessageLimitBySession: Setter<Record<string, number>>;
   messageCompleteBySession: () => Record<string, boolean>;
-  setMessageCompleteBySession: (value: any) => void;
+  setMessageCompleteBySession: Setter<Record<string, boolean>>;
   messageLoadBusyBySession: () => Record<string, boolean>;
-  setMessageLoadBusyBySession: (value: any) => void;
+  setMessageLoadBusyBySession: Setter<Record<string, boolean>>;
   refreshPendingPermissions: () => Promise<void>;
 };
 

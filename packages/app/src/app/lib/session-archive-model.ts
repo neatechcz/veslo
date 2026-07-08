@@ -66,12 +66,16 @@ export function buildArchivedSidebarSessionKey(input: {
 }
 
 export function archivedSidebarSessionKeyFromRecord(
-  record: Pick<VesloSessionArchiveRecord, "sessionId" | "workspaceIdAtArchive" | "workspaceIdentity">,
+  record: Pick<
+    VesloSessionArchiveRecord,
+    "sessionId" | "workspaceIdAtArchive" | "workspaceIdentity" | "resolvedDirectoryAtArchive" | "projectRootAtArchive"
+  >,
 ) {
   return buildArchivedSidebarSessionKey({
     workspaceId: record.workspaceIdAtArchive,
     workspaceIdentity: record.workspaceIdentity,
     sessionId: record.sessionId,
+    directory: record.resolvedDirectoryAtArchive ?? record.projectRootAtArchive,
   });
 }
 

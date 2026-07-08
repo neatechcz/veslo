@@ -367,7 +367,7 @@ export type SessionViewProps = {
   subagentDecorationsBySessionId: Record<string, SidebarSubagentDecoration>;
   archivedSessionIds: string[];
   archiveSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => Promise<void> | void;
-  unarchiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
+  unarchiveSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => Promise<void> | void;
   loadMoreWorkspaceSidebarSessions: (workspaceId: string) => Promise<void> | void;
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
   openRenameWorkspace: (workspaceId: string) => void;

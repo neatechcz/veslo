@@ -150,7 +150,7 @@ type Props = {
   onLoadMoreWorkspaceSessions?: (workspaceId: string) => Promise<boolean> | boolean | Promise<void> | void;
   archivedSessionIds?: string[];
   onArchiveSession?: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => Promise<void> | void;
-  onUnarchiveSession?: (workspaceId: string, sessionId: string) => Promise<void> | void;
+  onUnarchiveSession?: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => Promise<void> | void;
   onLoadedSessionPrefetchInterestChange?: LoadedSessionPrefetchInterestChangeHandler;
 };
 
@@ -1194,7 +1194,7 @@ export default function WorkspaceSessionList(props: Props) {
     const archived = isSessionArchived(targetWorkspaceId, id, target);
 
     if (archived) {
-      await Promise.resolve(props.onUnarchiveSession?.(targetWorkspaceId, id));
+      await Promise.resolve(props.onUnarchiveSession?.(targetWorkspaceId, id, target ?? undefined));
       return;
     }
 
@@ -1896,7 +1896,7 @@ export default function WorkspaceSessionList(props: Props) {
     if (!targetWorkspaceId || !id) return;
     setPendingArchiveConfirmationSessionId(null);
     if (isSessionArchived(targetWorkspaceId, id, target)) {
-      void Promise.resolve(props.onUnarchiveSession?.(targetWorkspaceId, id));
+      void Promise.resolve(props.onUnarchiveSession?.(targetWorkspaceId, id, target ?? undefined));
       return;
     }
     void Promise.resolve(props.onArchiveSession?.(targetWorkspaceId, id, target ?? undefined));

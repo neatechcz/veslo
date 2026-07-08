@@ -1,12 +1,18 @@
 import { batch, createEffect, createMemo, createSignal } from "solid-js";
 import type {
   Client,
+  DashboardTab,
   StartupPreference,
   OnboardingStep,
   WorkspaceDisplay,
   WorkspaceVesloConfig,
   WorkspacePreset,
   EngineRuntime,
+  MessageWithParts,
+  ModelRef,
+  PendingPermission,
+  TodoItem,
+  View,
 } from "../types";
 import {
   addOpencodeCacheHint,
@@ -32,6 +38,7 @@ import {
   engineStop,
   orchestratorInstanceDispose,
   orchestratorWorkspaceActivate,
+  runtimePrepareWorkspace,
   workspaceBootstrap,
   workspaceForget,
   workspaceSetActive,
@@ -48,9 +55,14 @@ import { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecycle";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { createWorkspaceActivateGuard } from "./workspace-activate-guard";
 import { createOnboardingLanguageGate } from "./onboarding-language-gate";
-import { createConfigStore } from "../stores/config-store";
+import { createConfigStore, type MigrationRepairResult } from "../stores/config-store";
 import { createEngineStore } from "../stores/engine-store";
-import { createRemoteStore } from "../stores/remote-store";
+import {
+  createRemoteStore,
+  type CreateRemoteWorkspaceFlowInput,
+  type ResolveVesloHostInput,
+  type ResolveVesloHostResult,
+} from "../stores/remote-store";
 import { shouldAutoBootstrapRemoteServer } from "../utils/startup-server-bootstrap";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 import type {
@@ -149,11 +161,11 @@ export function createWorkspaceStore(options: {
   selectedSessionId: () => string | null;
   selectSession: (id: string) => Promise<void>;
   setSelectedSessionId: (value: string | null) => void;
-  setMessages: (value: any[]) => void;
-  setTodos: (value: any[]) => void;
-  setPendingPermissions: (value: any[]) => void;
+  setMessages: (value: MessageWithParts[]) => void;
+  setTodos: (value: TodoItem[]) => void;
+  setPendingPermissions: (value: PendingPermission[]) => void;
   setSessionStatusById: (value: Record<string, string>) => void;
-  defaultModel: () => any;
+  defaultModel: () => ModelRef;
   modelVariant: () => string | null;
   refreshSkills: (options?: { force?: boolean }) => Promise<void>;
   refreshPlugins: () => Promise<void>;
@@ -163,8 +175,8 @@ export function createWorkspaceStore(options: {
   maxEngines?: () => number | null;
   idleSuspendMs?: () => number | null;
   setEngineSource: (value: "path" | "sidecar" | "custom") => void;
-  setView: (value: any) => void;
-  setTab: (value: any) => void;
+  setView: (value: View) => void;
+  setTab: (value: DashboardTab) => void;
   isWindowsPlatform: () => boolean;
   vesloServerSettings: () => VesloServerSettings;
   updateVesloServerSettings: (next: VesloServerSettings) => void;
@@ -212,8 +224,8 @@ export function createWorkspaceStore(options: {
 
   // Late-bound reference for the remote store — populated after createRemoteStore().
   const remoteStoreRef: {
-    resolveVesloHost: (...args: any[]) => Promise<any>;
-    createRemoteWorkspaceFlow: (...args: any[]) => Promise<boolean>;
+    resolveVesloHost: (input: ResolveVesloHostInput) => Promise<ResolveVesloHostResult>;
+    createRemoteWorkspaceFlow: (input: CreateRemoteWorkspaceFlowInput) => Promise<boolean>;
   } = {
     resolveVesloHost: () => { throw new Error("remoteStore not initialized"); },
     createRemoteWorkspaceFlow: () => { throw new Error("remoteStore not initialized"); },
@@ -944,12 +956,12 @@ export function createWorkspaceStore(options: {
     blockLocalAction,
     markOnboardingComplete,
     resolveWelcomeOnboardingStep,
-    setMigrationRepairResult: (value: any) => configStoreRef.setMigrationRepairResult(value),
+    setMigrationRepairResult: (value: MigrationRepairResult | null) => configStoreRef.setMigrationRepairResult(value),
   });
 
   // Use a ref object so the engine store can call configStore methods that
   // are only available after configStore is created (avoids temporal dead zone).
-  const configStoreRef: { setMigrationRepairResult: (value: any) => void } = {
+  const configStoreRef: { setMigrationRepairResult: (value: MigrationRepairResult | null) => void } = {
     setMigrationRepairResult: () => {},
   };
 
@@ -1672,7 +1684,9 @@ export function createWorkspaceStore(options: {
     startEngine: engineStart,
     stopEngine: engineStop,
     readEngineInfo: engineInfo,
+    prepareWorkspaceRuntime: runtimePrepareWorkspace,
     activateOrchestratorWorkspace,
+    disposeOrchestratorWorkspace: orchestratorInstanceDispose,
     activateVesloHostWorkspace,
     connectToServer,
     connectQuiet: connectToEngineQuiet,

@@ -4,15 +4,33 @@ import test from "node:test";
 import { createWorkspaceConnectionController } from "../../context/workspace-connection-controller";
 
 const normalize = (value?: string | null) => (value ?? "").trim().replaceAll("\\", "/").toLowerCase();
+type WorkspaceConnectionDeps = Parameters<typeof createWorkspaceConnectionController>[0];
+type TestClient = ReturnType<WorkspaceConnectionDeps["client"]>;
+type TestRoutingClient = NonNullable<TestClient>;
+type TestClientEntry = NonNullable<Awaited<ReturnType<WorkspaceConnectionDeps["routing"]["ensure"]>>>;
 
-function createDeps(overrides: Partial<Parameters<typeof createWorkspaceConnectionController>[0]> = {}) {
+const fakeClient = (id: string): TestRoutingClient => ({ id }) as unknown as TestRoutingClient;
+const fakeEntry = (input: {
+  workspaceId: string;
+  clientId: string;
+  baseUrl: string;
+  directory?: string;
+}): TestClientEntry => ({
+  workspaceId: input.workspaceId,
+  client: fakeClient(input.clientId),
+  baseUrl: input.baseUrl,
+  directory: input.directory,
+  lastUsed: Date.now(),
+});
+
+function createDeps(overrides: Partial<WorkspaceConnectionDeps> = {}) {
   const calls: string[] = [];
   const state = {
     activeWorkspaceId: "ws-a",
     activeWorkspaceRoot: "/a",
     activeWorkspaceType: "local" as const,
     baseUrl: "",
-    client: null as unknown,
+    client: null as TestClient,
     clientDirectory: "",
     selectedSessionId: null as string | null,
   };
@@ -22,9 +40,14 @@ function createDeps(overrides: Partial<Parameters<typeof createWorkspaceConnecti
       activeWorkspaceId: () => state.activeWorkspaceId,
       client: () => null,
       entry: () => null,
-      ensure: async () => {
+      ensure: async (workspaceId, baseUrl, options) => {
         calls.push("routing.ensure");
-        return { client: { id: "client" }, directory: "/a" } as any;
+        return fakeEntry({
+          workspaceId,
+          clientId: "client",
+          baseUrl,
+          directory: options?.directory ?? "/a",
+        });
       },
       release: () => undefined,
       lastEnsureError: () => null,
@@ -80,11 +103,16 @@ test("stale local connect after routing ensure does not publish global UI state"
     ...harness.deps,
     routing: {
       ...harness.deps.routing,
-      ensure: async () => {
+      ensure: async (workspaceId, baseUrl, options) => {
         harness.calls.push("routing.ensure");
         harness.state.activeWorkspaceId = "ws-b";
         harness.state.activeWorkspaceRoot = "/b";
-        return { client: { id: "client-a" }, directory: "/a" } as any;
+        return fakeEntry({
+          workspaceId,
+          clientId: "client-a",
+          baseUrl,
+          directory: options?.directory ?? "/a",
+        });
       },
     },
   });
@@ -130,8 +158,8 @@ test("quiet port rotation only binds the routed proxy client without global disc
 });
 
 test("idempotent connect rebinds the global client to the target workspace route", async () => {
-  const clientA = { id: "client-a" };
-  const clientB = { id: "client-b" };
+  const clientA = fakeClient("client-a");
+  const clientB = fakeClient("client-b");
   const harness = createDeps();
   harness.state.activeWorkspaceId = "ws-b";
   harness.state.activeWorkspaceRoot = "/b";
@@ -142,7 +170,7 @@ test("idempotent connect rebinds the global client to the target workspace route
     ...harness.deps,
     routing: {
       ...harness.deps.routing,
-      client: (workspaceId?: string) => workspaceId === "ws-b" ? clientB as any : null,
+      client: (workspaceId?: string) => workspaceId === "ws-b" ? clientB : null,
     },
   });
 

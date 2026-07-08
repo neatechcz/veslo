@@ -506,6 +506,43 @@ export async function engineStart(
   });
 }
 
+export type WorkspaceRuntimePrepareAction = "fresh_start" | "orchestrator_activate";
+
+export type WorkspaceRuntimePrepareResult = {
+  ok: boolean;
+  action: WorkspaceRuntimePrepareAction;
+  reason: string;
+  engine: EngineInfo;
+};
+
+export async function runtimePrepareWorkspace(input: {
+  projectDir: string;
+  workspaceId?: string | null;
+  workspaceName?: string | null;
+  reason?: string | null;
+  forceFreshRuntime?: boolean;
+  preferSidecar?: boolean;
+  runtime?: "direct" | "veslo-orchestrator";
+  workspacePaths?: string[];
+  opencodeBinPath?: string | null;
+  maxEngines?: number | null;
+  idleSuspendMs?: number | null;
+}): Promise<WorkspaceRuntimePrepareResult> {
+  return invoke<WorkspaceRuntimePrepareResult>("runtime_prepare_workspace", {
+    projectDir: input.projectDir,
+    workspaceId: input.workspaceId ?? null,
+    workspaceName: input.workspaceName ?? null,
+    reason: input.reason ?? null,
+    forceFreshRuntime: input.forceFreshRuntime ?? false,
+    preferSidecar: input.preferSidecar ?? false,
+    opencodeBinPath: input.opencodeBinPath ?? null,
+    runtime: input.runtime ?? null,
+    workspacePaths: input.workspacePaths ?? null,
+    maxEngines: input.maxEngines ?? null,
+    idleSuspendMs: input.idleSuspendMs ?? null,
+  });
+}
+
 export async function workspaceBootstrap(): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_bootstrap");
 }

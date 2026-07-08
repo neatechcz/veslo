@@ -23,6 +23,7 @@ use crate::veslo_server::{
     manager::VesloServerManager, persisted_veslo_server_plugin_state_path, start_veslo_server,
 };
 use crate::workspace::server_client::reconcile_server_workspaces;
+use serde::Serialize;
 use serde_json::json;
 use std::time::Duration;
 use uuid::Uuid;
@@ -30,6 +31,65 @@ use uuid::Uuid;
 const DEFAULT_OPENCODE_BIND_HOST: &str = "127.0.0.1";
 const VESLO_OPENCODE_BIND_HOST_ENV: &str = "VESLO_OPENCODE_BIND_HOST";
 const VESLO_DISABLE_DEV_AUTOSTART_ENV: &str = "VESLO_DISABLE_DEV_AUTOSTART";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkspaceRuntimePrepareAction {
+    FreshStart,
+    OrchestratorActivate,
+}
+
+impl WorkspaceRuntimePrepareAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::FreshStart => "fresh_start",
+            Self::OrchestratorActivate => "orchestrator_activate",
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRuntimePrepareResult {
+    pub ok: bool,
+    pub action: String,
+    pub reason: String,
+    pub engine: EngineInfo,
+}
+
+fn workspace_runtime_prepare_action(
+    runtime: &EngineRuntime,
+    reason: &str,
+    force_fresh_runtime: bool,
+) -> WorkspaceRuntimePrepareAction {
+    if runtime != &EngineRuntime::Orchestrator {
+        return WorkspaceRuntimePrepareAction::FreshStart;
+    }
+
+    let normalized_reason = reason.trim().to_ascii_lowercase();
+    if force_fresh_runtime
+        || normalized_reason.contains("runtime-recovery")
+        || normalized_reason.contains("cold-start")
+        || normalized_reason.contains("host-start")
+        || normalized_reason.contains("engine-reload")
+    {
+        return WorkspaceRuntimePrepareAction::FreshStart;
+    }
+
+    WorkspaceRuntimePrepareAction::OrchestratorActivate
+}
+
+fn workspace_runtime_prepare_result(
+    action: WorkspaceRuntimePrepareAction,
+    reason: &str,
+    engine: EngineInfo,
+) -> WorkspaceRuntimePrepareResult {
+    WorkspaceRuntimePrepareResult {
+        ok: true,
+        action: action.as_str().to_string(),
+        reason: reason.to_string(),
+        engine,
+    }
+}
 
 fn current_or_new_veslo_client_token(manager: &VesloServerManager) -> String {
     manager
@@ -546,6 +606,94 @@ pub fn engine_info(
         last_stdout: orchestrator_stdout,
         last_stderr: orchestrator_stderr,
     }
+}
+
+#[tauri::command]
+pub async fn runtime_prepare_workspace(
+    app: AppHandle,
+    project_dir: String,
+    workspace_id: Option<String>,
+    workspace_name: Option<String>,
+    reason: Option<String>,
+    force_fresh_runtime: Option<bool>,
+    prefer_sidecar: Option<bool>,
+    opencode_bin_path: Option<String>,
+    runtime: Option<EngineRuntime>,
+    workspace_paths: Option<Vec<String>>,
+    max_engines: Option<u32>,
+    idle_suspend_ms: Option<u64>,
+) -> Result<WorkspaceRuntimePrepareResult, String> {
+    let project_dir = project_dir.trim().to_string();
+    if project_dir.is_empty() {
+        return Err("projectDir is required".to_string());
+    }
+
+    let reason = reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("workspace-runtime-prepare")
+        .to_string();
+    let runtime = runtime.unwrap_or(EngineRuntime::Orchestrator);
+    let requested_action =
+        workspace_runtime_prepare_action(&runtime, &reason, force_fresh_runtime.unwrap_or(false));
+    let mut action = requested_action;
+
+    if action == WorkspaceRuntimePrepareAction::OrchestratorActivate {
+        match crate::commands::orchestrator::orchestrator_workspace_activate(
+            app.clone(),
+            app.state::<OrchestratorManager>(),
+            project_dir.clone(),
+            workspace_id.clone(),
+            workspace_name.clone(),
+        )
+        .await
+        {
+            Ok(_) => {
+                let engine = engine_info(
+                    app.state::<EngineManager>(),
+                    app.state::<OrchestratorManager>(),
+                    workspace_id.clone(),
+                    Some(project_dir),
+                );
+                return Ok(workspace_runtime_prepare_result(action, &reason, engine));
+            }
+            Err(error) => {
+                eprintln!(
+                    "[runtime_prepare_workspace] orchestrator activate failed, falling back to fresh start: {error}"
+                );
+                action = WorkspaceRuntimePrepareAction::FreshStart;
+            }
+        }
+    }
+
+    let engine = engine_start(
+        app.clone(),
+        app.state::<EngineManager>(),
+        app.state::<OrchestratorManager>(),
+        app.state::<VesloServerManager>(),
+        app.state::<OpenCodeRouterManager>(),
+        project_dir.clone(),
+        prefer_sidecar,
+        opencode_bin_path,
+        Some(runtime.clone()),
+        workspace_paths,
+        max_engines,
+        idle_suspend_ms,
+    )?;
+
+    let engine = if runtime == EngineRuntime::Orchestrator {
+        engine_info(
+            app.state::<EngineManager>(),
+            app.state::<OrchestratorManager>(),
+            workspace_id.clone(),
+            Some(project_dir),
+        )
+    } else {
+        engine
+    };
+
+    Ok(workspace_runtime_prepare_result(action, &reason, engine))
 }
 
 #[tauri::command]
@@ -1429,9 +1577,10 @@ mod tests {
         dev_autostart_disabled_from_env, format_orchestrator_start_error,
         orchestrator_opencode_base_url, resolve_opencode_bind_host_from_env,
         resolve_orchestrator_proxy_workspace_id, should_retry_orchestrator_start,
+        workspace_runtime_prepare_action, WorkspaceRuntimePrepareAction,
     };
     use crate::types::{
-        OrchestratorSharedEngineSnapshot, OrchestratorStatus, OrchestratorWorkspace,
+        EngineRuntime, OrchestratorSharedEngineSnapshot, OrchestratorStatus, OrchestratorWorkspace,
         RuntimeEngineState,
     };
 
@@ -1597,6 +1746,38 @@ mod tests {
         assert!(!should_retry_orchestrator_start(2, 2, true));
         assert!(!should_retry_orchestrator_start(1, 2, false));
         assert!(!should_retry_orchestrator_start(1, 1, true));
+    }
+
+    #[test]
+    fn workspace_runtime_prepare_keeps_process_lifecycle_decisions_backend_owned() {
+        assert_eq!(
+            workspace_runtime_prepare_action(&EngineRuntime::Direct, "browse-attach-direct", false),
+            WorkspaceRuntimePrepareAction::FreshStart,
+        );
+        assert_eq!(
+            workspace_runtime_prepare_action(
+                &EngineRuntime::Orchestrator,
+                "browse-attach-orchestrator",
+                false,
+            ),
+            WorkspaceRuntimePrepareAction::OrchestratorActivate,
+        );
+        assert_eq!(
+            workspace_runtime_prepare_action(
+                &EngineRuntime::Orchestrator,
+                "sendPrompt-runtime-recovery",
+                false,
+            ),
+            WorkspaceRuntimePrepareAction::FreshStart,
+        );
+        assert_eq!(
+            workspace_runtime_prepare_action(
+                &EngineRuntime::Orchestrator,
+                "workspace-orchestrator-switch",
+                true,
+            ),
+            WorkspaceRuntimePrepareAction::FreshStart,
+        );
     }
 
     #[test]

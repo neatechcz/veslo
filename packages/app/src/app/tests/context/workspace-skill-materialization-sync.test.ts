@@ -81,12 +81,11 @@ test("local runtime starts are gated behind skill materialization sync", () => {
 
   const ensureSource = runtimeSource.slice(ensureStart);
   const syncIdx = ensureSource.indexOf(helperCall);
-  const restartIdx = ensureSource.indexOf("deps.localRuntimeLifecycle.restartWorkspaceRuntime({");
-  const coldStartIdx = ensureSource.indexOf("deps.localRuntimeLifecycle.startHost({");
+  const prepareIdx = ensureSource.indexOf("deps.localRuntimeLifecycle.prepareWorkspaceRuntime({");
 
   assert.notStrictEqual(syncIdx, -1, "ensureEngineForWorkspace should sync skills before runtime start");
-  assert.ok(syncIdx < restartIdx, "sync must happen before browsing-mode runtime restart");
-  assert.ok(syncIdx < coldStartIdx, "sync must happen before browsing-mode cold start fallback");
+  assert.notStrictEqual(prepareIdx, -1, "ensureEngineForWorkspace should delegate runtime preparation");
+  assert.ok(syncIdx < prepareIdx, "sync must happen before backend runtime preparation");
 });
 
 test("workspace activation local restart is gated behind skill materialization sync", () => {

@@ -1134,6 +1134,7 @@ export default function App() {
       workspaceStore.ensureEngineForWorkspace(workspaceId, {
         reason: "event-stream-runtime-recovery",
         loadSessions: false,
+        forceFreshRuntime: true,
       }),
     onSessionBusyChange: (sessionId, busy, sourceWorkspaceId) => {
       const wsId = sourceWorkspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();

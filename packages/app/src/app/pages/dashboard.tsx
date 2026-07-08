@@ -197,7 +197,7 @@ export type DashboardViewProps = {
   sessionStatusById: Record<string, string>;
   busySessionByWorkspaceId?: WorkspaceBusyMap;
   archiveSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => Promise<void> | void;
-  unarchiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
+  unarchiveSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => Promise<void> | void;
   loadMoreWorkspaceSidebarSessions: (workspaceId: string) => Promise<void> | void;
   selectedSessionId: string | null;
   lastWorkspaceSessionId: string | null;
@@ -403,7 +403,12 @@ export type DashboardViewProps = {
   notionBusy: boolean;
   connectNotion: () => void;
   sessionArchives: SessionArchiveItem[];
-  onUnarchiveArchivedSession: (workspaceId: string, sessionId: string, workspaceIdentity?: string | null) => Promise<void> | void;
+  onUnarchiveArchivedSession: (
+    workspaceId: string,
+    sessionId: string,
+    workspaceIdentity?: string | null,
+    directory?: string | null,
+  ) => Promise<void> | void;
 };
 
 export default function DashboardView(props: DashboardViewProps) {

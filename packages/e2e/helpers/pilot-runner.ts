@@ -19,6 +19,7 @@ const DEFAULT_PILOT_SCENARIO_NAMES = ['smoke', 'navigation'] as const;
 const MANAGED_AI_INFERENCE_SCENARIO_NAMES = [
   'global-unpublished-draft',
   'message-send-registry-degraded',
+  'live-skills-finder-roundtrip',
   'model-stream-retry-no-progress',
   'pending-session-instance-isolation',
   'runtime-cold-start-session-handoff',

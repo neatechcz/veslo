@@ -686,8 +686,8 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
           reportError(error, "sessionArchives.archiveSidebar");
           setError(error instanceof Error ? error.message : safeStringify(error));
         }),
-      unarchiveSession: (workspaceId: string, sessionId: string) =>
-        unarchiveSession(workspaceId, sessionId).catch((error: unknown) => {
+      unarchiveSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) =>
+        unarchiveSession(workspaceId, sessionId, undefined, target).catch((error: unknown) => {
           reportError(error, "sessionArchives.unarchiveSidebar");
           setError(error instanceof Error ? error.message : safeStringify(error));
         }),
@@ -860,11 +860,18 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
       notionBusy: notionBusy(),
       connectNotion,
       sessionArchives: sessionArchives(),
-      onUnarchiveArchivedSession: (workspaceId: string, sessionId: string, workspaceIdentity?: string | null) =>
-        unarchiveSession(workspaceId, sessionId, workspaceIdentity).catch((error: unknown) => {
+      onUnarchiveArchivedSession: (
+        workspaceId: string,
+        sessionId: string,
+        workspaceIdentity?: string | null,
+        directory?: string | null,
+      ) => {
+        const target = directory?.trim() ? { directory } : undefined;
+        return unarchiveSession(workspaceId, sessionId, workspaceIdentity, target).catch((error: unknown) => {
           reportError(error, "sessionArchives.unarchiveSettings");
           setError(error instanceof Error ? error.message : safeStringify(error));
-        }),
+        });
+      },
       mcpServers: mcpServers(),
       mcpStatus: mcpStatus(),
       mcpLastUpdatedAt: mcpLastUpdatedAt(),
@@ -1050,8 +1057,8 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
         reportError(error, "sessionArchives.archiveSidebar");
         setError(error instanceof Error ? error.message : safeStringify(error));
       }),
-    unarchiveSession: (workspaceId: string, sessionId: string) =>
-      unarchiveSession(workspaceId, sessionId).catch((error: unknown) => {
+    unarchiveSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) =>
+      unarchiveSession(workspaceId, sessionId, undefined, target).catch((error: unknown) => {
         reportError(error, "sessionArchives.unarchiveSidebar");
         setError(error instanceof Error ? error.message : safeStringify(error));
       }),

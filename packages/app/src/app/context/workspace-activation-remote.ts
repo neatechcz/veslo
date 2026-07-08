@@ -10,6 +10,9 @@ import {
   workspaceUpdateRemote,
 } from "../lib/tauri";
 import { isTauriRuntime } from "../utils";
+import type { ResolveVesloHostInput, ResolveVesloHostResult } from "../stores/remote-store";
+import type { StartupPreference, WorkspaceConnectionState, WorkspaceVesloConfig } from "../types";
+import type { Language } from "../../i18n";
 import type { ConnectToServer, WorkspaceActivationOptions } from "./workspace-types";
 
 function normalizeVesloHostForTokenFallback(value: string | null | undefined) {
@@ -17,34 +20,29 @@ function normalizeVesloHostForTokenFallback(value: string | null | undefined) {
 }
 
 export type WorkspaceRemoteActivationDeps = {
-  setStartupPreference: (value: any) => void;
+  setStartupPreference: (value: StartupPreference | null) => void;
   vesloServerSettings: () => VesloServerSettings;
   soulAuthContext?: () => VesloSoulAuthContext;
   updateVesloServerSettings: (next: VesloServerSettings) => void;
-  resolveVesloHost: (input: {
-    hostUrl: string;
-    token?: string | null;
-    workspaceId?: string | null;
-    directoryHint?: string | null;
-  }) => Promise<any>;
+  resolveVesloHost: (input: ResolveVesloHostInput) => Promise<ResolveVesloHostResult>;
   connectToServer: ConnectToServer;
   setWorkspaces: (value: WorkspaceInfo[] | ((prev: WorkspaceInfo[]) => WorkspaceInfo[])) => void;
   syncActiveWorkspaceId: (id?: string) => void;
   setProjectDir: (value: string) => void;
-  setWorkspaceConfig: (value: any) => void;
+  setWorkspaceConfig: (value: WorkspaceVesloConfig | null) => void;
   setWorkspaceConfigLoaded: (value: boolean) => void;
   setAuthorizedDirs: (value: string[]) => void;
-  updateWorkspaceConnectionState: (workspaceId: string, next: any) => void;
+  updateWorkspaceConnectionState: (workspaceId: string, next: Partial<WorkspaceConnectionState>) => void;
   setError: (value: string | null) => void;
   isSuperseded: () => boolean;
   activationOptions: WorkspaceActivationOptions;
   activateStart: number;
   workspaceSetActiveTimeoutMs: number;
   withTimeoutOrThrow: typeof import("../utils/promise-timeout").withTimeoutOrThrow;
-  t: (key: string, locale?: any) => string;
-  currentLocale: () => any;
-  indirectT: (key: string, locale?: any) => string;
-  indirectLocale: () => any;
+  t: (key: string, locale?: Language) => string;
+  currentLocale: () => Language;
+  indirectT: (key: string, locale?: Language) => string;
+  indirectLocale: () => Language;
   safeStringify: (value: unknown) => string;
   addOpencodeCacheHint: (message: string) => string;
   wsDebug: (label: string, payload?: unknown) => void;

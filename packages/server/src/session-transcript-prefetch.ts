@@ -35,11 +35,20 @@ export type SessionTranscriptPrefetchInterest = {
   workspaceId: string;
   clickedSessionId?: string | null;
   selectedSessionId?: string | null;
+  clickedSession?: SessionTranscriptPrefetchSessionRef | null;
+  selectedSession?: SessionTranscriptPrefetchSessionRef | null;
   loadedTopLevelSessionIds: string[];
   expandedSubagentSessionIds: string[];
+  loadedTopLevelSessions?: SessionTranscriptPrefetchSessionRef[];
+  expandedSubagentSessions?: SessionTranscriptPrefetchSessionRef[];
   directory?: string | null;
   sessionDirectoriesById?: Record<string, string | null | undefined>;
   limit?: number;
+};
+
+export type SessionTranscriptPrefetchSessionRef = {
+  sessionId: string;
+  directory?: string | null;
 };
 
 export type SessionTranscriptPrefetchResult = {
@@ -260,22 +269,32 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
     const ordered: QueueItem[] = [];
     const seen = new Set<string>();
     const { defaultDirectory, directories } = normalizeSessionDirectories(input);
-    const push = (value: string | null | undefined) => {
-      const sessionId = normalizeId(value);
-      if (!sessionId) return;
-      const item = {
-        sessionId,
-        directory: directories.get(sessionId) ?? defaultDirectory,
-      };
+    const pushItem = (sessionId: string, directory: string) => {
+      const item = { sessionId, directory };
       const key = queueItemKey(item);
       if (seen.has(key)) return;
       seen.add(key);
       ordered.push(item);
     };
+    const push = (value: string | null | undefined) => {
+      const sessionId = normalizeId(value);
+      if (!sessionId) return;
+      pushItem(sessionId, directories.get(sessionId) ?? defaultDirectory);
+    };
+    const pushRef = (ref: SessionTranscriptPrefetchSessionRef | null | undefined) => {
+      if (!ref || typeof ref !== "object") return;
+      const sessionId = normalizeId(ref.sessionId);
+      if (!sessionId) return;
+      pushItem(sessionId, normalizeDirectory(ref.directory) || directories.get(sessionId) || defaultDirectory);
+    };
 
+    pushRef(input.clickedSession);
     push(input.clickedSessionId);
+    pushRef(input.selectedSession);
     push(input.selectedSessionId);
+    for (const value of input.expandedSubagentSessions ?? []) pushRef(value);
     for (const value of input.expandedSubagentSessionIds) push(value);
+    for (const value of input.loadedTopLevelSessions ?? []) pushRef(value);
     for (const value of input.loadedTopLevelSessionIds) push(value);
 
     return ordered;

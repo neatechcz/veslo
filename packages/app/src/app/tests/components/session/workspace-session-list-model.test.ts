@@ -20,6 +20,8 @@ import {
   splitProjectGroupsForSidebar,
   requiredVisibleCountForExpandedSession,
   rowVisibleByExpansion,
+  sidebarSessionMatchesOpenTarget,
+  sidebarSessionOpenTargetForRow,
   shouldShowNewSessionLabelText,
   shouldUseExpandedNewSessionLabel,
   toggleProjectCollapsed,
@@ -200,6 +202,28 @@ test("buildRecentRows keeps duplicate session ids from the same workspace visibl
     ],
   );
   assert.equal(new Set(rows.map((row) => row.rowKey)).size, 2);
+
+  const projectA = rows.find((row) => row.session.title === "A");
+  const projectB = rows.find((row) => row.session.title === "B");
+  assert.ok(projectA);
+  assert.ok(projectB);
+  const targetA = sidebarSessionOpenTargetForRow(projectA);
+  assert.deepEqual(
+    {
+      sessionId: targetA.sessionId,
+      directory: targetA.directory,
+      conversationId: targetA.conversationId,
+      opencodeSessionId: targetA.opencodeSessionId,
+    },
+    {
+      sessionId: "same-session",
+      directory: "/tmp/workspace-a/project-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "same-session",
+    },
+  );
+  assert.equal(sidebarSessionMatchesOpenTarget(projectA.session, targetA), true);
+  assert.equal(sidebarSessionMatchesOpenTarget(projectB.session, targetA), false);
 });
 
 test("buildProjectGroups keeps same-workspace duplicate session ids in their directory groups", () => {
@@ -908,6 +932,22 @@ test("selected parent session navigation clicks can open without expanding subag
     clickedSessionId: "root-parent",
     hasChildren: true,
     allowSelectedParentExpansion: false,
+  });
+
+  assert.deepEqual(action, {
+    openSession: true,
+    toggleExpandedParent: false,
+  });
+});
+
+test("same raw selected session id does not expand a different scoped row", () => {
+  const action = resolveSessionRowClickAction({
+    selectedSessionId: "root-parent",
+    clickedSessionId: "root-parent",
+    selectedRowKey: "row-a",
+    clickedRowKey: "row-b",
+    hasChildren: true,
+    allowSelectedParentExpansion: true,
   });
 
   assert.deepEqual(action, {

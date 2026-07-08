@@ -1,9 +1,9 @@
 import type { Accessor } from "solid-js";
 
 import type { OpencodeAuth } from "../lib/opencode";
-import type { OpencodeConnectStatus } from "../types";
+import type { Client, DashboardTab, OpencodeConnectStatus, View } from "../types";
 import type { WorkspaceInfo } from "../lib/tauri";
-import type { WorkspaceRouting } from "./workspace-routing";
+import type { ClientEntry, WorkspaceRouting } from "./workspace-routing";
 import type {
   WorkspaceConnectContext,
   WorkspaceConnectOptions,
@@ -15,14 +15,14 @@ export type WorkspaceConnectionControllerDeps = {
   activeWorkspaceRoot: Accessor<string>;
   activeWorkspaceType: Accessor<WorkspaceInfo["workspaceType"] | null>;
   baseUrl: Accessor<string>;
-  client: Accessor<unknown>;
+  client: Accessor<Client | null>;
   clientDirectory: Accessor<string>;
   selectedSessionId: Accessor<string | null>;
   normalizeWorkspaceScopePath: (
     value?: string | null,
     workspaceType?: WorkspaceInfo["workspaceType"] | null,
   ) => string;
-  setClient: (value: any) => void;
+  setClient: (value: Client | null) => void;
   setConnectedVersion: (value: string | null) => void;
   setBaseUrl: (value: string) => void;
   setClientDirectory: (value: string) => void;
@@ -31,8 +31,8 @@ export type WorkspaceConnectionControllerDeps = {
   setBusyLabel: (value: string | null) => void;
   setBusyStartedAt: (value: number | null) => void;
   setSseConnected: (value: boolean) => void;
-  setTab: (value: any) => void;
-  setView: (value: any) => void;
+  setTab: (value: DashboardTab) => void;
+  setView: (value: View) => void;
   setOpencodeConnectStatus?: (status: OpencodeConnectStatus | null) => void;
   loadSessions: (scopeRoot?: string) => Promise<void>;
   refreshPendingPermissions: () => Promise<void>;
@@ -66,7 +66,7 @@ export function createWorkspaceConnectionController(
   const connectInFlightByKey = new Map<string, Promise<boolean>>();
 
   const commitRoutedClient = (
-    entry: { client: unknown; directory?: string | null },
+    entry: Pick<ClientEntry, "client" | "directory">,
     nextBaseUrl: string,
     incomingDirectory: string,
   ) => {

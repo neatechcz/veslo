@@ -143,8 +143,8 @@ test("app wires runtime recovery options through the workspace runtime owner", (
   );
   assert.match(
     appSource,
-    /recoverWorkspaceRuntimeForEventStream: \(workspaceId\) =>[\s\S]*workspaceStore\.ensureEngineForWorkspace\(workspaceId, \{[\s\S]*reason: "event-stream-runtime-recovery",[\s\S]*loadSessions: false,/,
-    "event stream recovery should reuse the same runtime owner without forcing session-list UI side effects",
+    /recoverWorkspaceRuntimeForEventStream: \(workspaceId\) =>[\s\S]*workspaceStore\.ensureEngineForWorkspace\(workspaceId, \{[\s\S]*reason: "event-stream-runtime-recovery",[\s\S]*loadSessions: false,[\s\S]*forceFreshRuntime: true,/,
+    "event stream recovery should reuse the runtime owner, skip session-list side effects, and force a fresh local runtime",
   );
 });
 

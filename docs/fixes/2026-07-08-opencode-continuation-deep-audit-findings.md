@@ -812,3 +812,251 @@ pnpm --filter @neatech/veslo-ui typecheck
 Results:
 
 - app typecheck: passed.
+
+## App Store and Archive Contract Typing Follow-up
+
+The next app pass covered the main workflow stores and the archive/sidebar
+contract that surfaced once the app typecheck was run against the current dirty
+workspace.
+
+Changed surfaces:
+
+- `config-store.ts` now types startup preference and onboarding setters with
+  the app-level `StartupPreference` and `OnboardingStep` contracts.
+- `remote-store.ts` now types workspace config, startup preference, and client
+  setters with concrete app/runtime types and no longer casts workspace list
+  entries through `any`.
+- `engine-store.ts` now types the main setter dependency surface with concrete
+  `Client`, message, todo, permission, view, startup, and migration result
+  types instead of `any`.
+- `session-archive-store.ts` now accepts an optional archive target
+  (`directory`, `conversationId`, `opencodeSessionId`) and uses it to select the
+  exact sidebar session row before archiving.
+- `buildArchivedSidebarSessionKey(...)` and
+  `archivedSidebarSessionKeyFromRecord(...)` now include the resolved directory
+  when one is available, while preserving the legacy workspace/session key for
+  compatibility.
+- archived sidebar filtering now publishes both the legacy
+  `workspaceId + sessionId` key and the directory-scoped key, so old archive
+  rows continue to hide while duplicate raw session ids can be distinguished.
+- unarchive now sends `directory` only when present instead of serializing an
+  explicit `directory: undefined` field into the owner API options.
+
+The useful blocker caught here was a real contract mismatch: current sidebar
+code already passes a directory-aware archive target, but the archive store and
+key helper still only accepted workspace/session identity. That meant duplicate
+raw OpenCode session ids across directories could collapse into the same
+sidebar archive key or delete scope.
+
+The targeted regression now creates two sidebar sessions with the same
+`sessionId` in different directories, archives both, and then unarchives only
+one directory. The remaining archive row must stay visible and the delete call
+must include the scoped directory.
+
+### Verification
+
+```powershell
+pnpm --filter @neatech/veslo-ui typecheck
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/stores/engine-store-start-host-reset.test.ts src/app/tests/context/session-archive-store.test.ts src/app/tests/lib/session-archive-model.test.ts
+rg -n "\bany\b|as any|Record<string, any>|Promise<any>" packages/app/src/app/stores/config-store.ts packages/app/src/app/stores/remote-store.ts packages/app/src/app/stores/engine-store.ts packages/app/src/app/context/session-archive-store.ts packages/app/src/app/lib/session-archive-model.ts
+```
+
+Results:
+
+- app typecheck: passed,
+- engine store, session archive store, and session archive model tests: 19
+  passed,
+- scoped `any` scan: no explicit `any` types or casts remain in those files;
+  only a plain-English comment in `engine-store.ts` contains the word `any`.
+
+## Extensions Store Client Capability Typing Follow-up
+
+The next app pass covered `context/extensions.ts`, focusing on skill and hub
+runtime paths that were still using `as any` around Veslo server client
+capabilities and raw OpenCode skill responses.
+
+Changed surfaces:
+
+- hub skill refresh now uses the typed `vesloClient.listHubSkills(...)`
+  capability instead of `(vesloClient as any).listHubSkills(...)`.
+- hub skill install now narrows the install-capable client before calling
+  `installHubSkill(...)`.
+- OpenCode `/skill` refresh now treats the raw `_client.get(...)` response as
+  `unknown` data and maps only record-like entries with string `name` and
+  `location` fields.
+- skill read and skill-file read paths now call typed `getSkill(...)`,
+  `getSkillFiles(...)`, and `getGlobalSkillFiles(...)` methods directly.
+
+This removed all explicit `any` occurrences from `context/extensions.ts`.
+
+The remaining broad app-level typing blocker is
+`AppViewPropsScope = Record<string, any>` in `app-view-props.ts`. That should be
+handled as a separate slice by extracting a real deps interface from the
+`createAppViewProps(...)` call site in `app.tsx`; a direct replacement with
+`Record<string, unknown>` would create noise rather than a meaningful contract.
+
+### Verification
+
+```powershell
+pnpm --filter @neatech/veslo-ui typecheck
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/extensions-skill-inventory.test.ts src/app/tests/context/extensions-skill-imports.test.ts src/app/tests/context/extensions-skill-transfer-exclusivity.test.ts src/app/tests/context/extensions-skill-registry-invalidation.test.ts
+rg -n "\bany\b|as any|Record<string, any>|Promise<any>" packages/app/src/app/context/extensions.ts
+```
+
+Results:
+
+- app typecheck: passed,
+- extensions skill inventory/import/transfer/registry invalidation tests: 44
+  passed,
+- scoped `any` scan: no matches in `context/extensions.ts`.
+
+## Session and Workspace Controller Typing Follow-up
+
+The next app pass covered the main session runtime controllers and workspace
+activation/connect workflow.
+
+Changed session surfaces:
+
+- `session-runtime-prompts.ts`, `session-selection-controller.ts`, and
+  `session-workspace-cache.ts` now use Solid `SetStoreFunction<...>` for their
+  store setters instead of variadic `any[]`.
+- `session.ts` now passes the typed `setStore` directly into transcript,
+  prompts, selection, event-stream, and workspace-cache controllers instead of
+  casting it through `any`.
+- the session permission/question v2 fallback path now describes the optional
+  v2 prompt APIs explicitly instead of casting the whole client to `any`.
+
+Changed workspace surfaces:
+
+- `remote-store.ts` exports explicit `ResolveVesloHostInput`,
+  `ResolveVesloHostResult`, and `CreateRemoteWorkspaceFlowInput` contracts.
+- `workspace-activation-local.ts`, `workspace-activation-remote.ts`, and
+  `workspace-activation-controller.ts` now use concrete startup preference,
+  workspace config, workspace connection state, and locale types.
+- `workspace-connection-controller.ts` now commits routed clients through the
+  typed `ClientEntry` contract and uses concrete app `Client`, `DashboardTab`,
+  and `View` types for its deps.
+- `workspace-local-workspaces.ts` now types UI navigation and connection-state
+  updates with app contracts.
+- `workspace.ts` now types the main message/todo/pending-permission setters,
+  default model accessor, view/tab setters, remote-store late-bound ref, and
+  migration repair bridge without `any`.
+- the workspace connection controller fixture now builds typed fake routed
+  `ClientEntry` objects instead of returning partial entries through `as any`.
+
+This keeps the strictness pragmatic: dynamic SDK/test doubles still cross a
+single explicit `unknown` boundary in the fixture helper, while production
+controller deps no longer erase the store, routing, and activation contracts.
+
+### Verification
+
+```powershell
+pnpm --filter @neatech/veslo-ui typecheck
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/session-runtime-prompts.test.ts src/app/tests/context/session-selection-controller.test.ts src/app/tests/context/session-workspace-cache.test.ts src/app/tests/context/session-event-stream.test.ts src/app/tests/context/session-transcript-controller.test.ts src/app/tests/context/workspace-connection-controller-behavior.test.ts src/app/tests/context/workspace-activate-guard.test.ts src/app/tests/context/workspace-skill-materialization-sync.test.ts src/app/tests/context/workspace-runtime-controller-source.test.ts src/app/tests/context/workspace-switch-overlay-state.test.ts
+rg -n "\bany\b|as any|Record<string, any>|Promise<any>" packages/app/src/app/context/session-runtime-prompts.ts packages/app/src/app/context/session-selection-controller.ts packages/app/src/app/context/session-workspace-cache.ts packages/app/src/app/context/session-transcript-controller.ts packages/app/src/app/context/session-event-stream.ts packages/app/src/app/context/session.ts packages/app/src/app/context/workspace.ts packages/app/src/app/context/workspace-activation-local.ts packages/app/src/app/context/workspace-activation-remote.ts packages/app/src/app/context/workspace-activation-controller.ts packages/app/src/app/context/workspace-connection-controller.ts packages/app/src/app/context/workspace-local-workspaces.ts packages/app/src/app/stores/remote-store.ts packages/app/src/app/tests/context/workspace-connection-controller-behavior.test.ts
+```
+
+Results:
+
+- app typecheck: passed,
+- session runtime/selection/cache/event/transcript and workspace
+  activation/connection/materialization/overlay tests: 92 passed,
+- scoped `any` scan: no explicit `any` types or casts remain in those files;
+  only a plain-English comment in `workspace.ts` contains the word `any`.
+
+## Scoped Archive and Transcript Prefetch Follow-up
+
+The follow-up pass extended the same directory-scoped identity fix through the
+transcript prefetch path, avoiding a split where archive/unarchive could target
+duplicate raw session ids by directory but sidebar transcript warming still
+collapsed those ids.
+
+Changed surfaces:
+
+- `WorkspaceSessionList` now passes the scoped sidebar target through
+  unarchive actions, matching archive actions.
+- `SessionArchiveStore` and the server archive delete route accept directory as
+  part of the delete scope, preserving other archive rows that share the same
+  raw `sessionId`.
+- `VesloSessionTranscriptPrefetchInput` and the conversations route accept
+  scoped session refs (`clickedSession`, `selectedSession`,
+  `loadedTopLevelSessions`, `expandedSubagentSessions`) in addition to legacy
+  raw id arrays.
+- `session-transcript-prefetch` queues duplicate raw ids independently when
+  their directories differ.
+
+### Verification
+
+```powershell
+node --import=tsx/esm --test src/app/tests/context/session-archive-store.test.ts src/app/tests/lib/session-archive-model.test.ts src/app/tests/components/session/workspace-session-list-prefetch-interest.test.ts src/app/tests/lib/veslo-server-session-prefetch.test.ts
+bun test packages/server/src/tests/session-transcript-prefetch.test.ts packages/server/src/tests/server-session-transcript-prefetch.test.ts packages/server/src/tests/session-archives.test.ts packages/server/src/tests/server.session-archives-routes.test.ts packages/server/src/tests/server-session-archives-mounted-route.test.ts
+pnpm --filter @neatech/veslo-ui typecheck
+pnpm --filter veslo-server typecheck
+git diff --check
+```
+
+Results:
+
+- app archive/prefetch targeted tests: 22 passed,
+- server archive/prefetch targeted tests: 29 passed,
+- app typecheck: passed,
+- server typecheck: passed,
+- diff check: passed with CRLF warnings only.
+
+## Local Veslo Server / OpenCode Runtime Auth Reconnect Follow-up
+
+The next audit looked at a Mac-reported runtime failure where the first
+assistant handshake stopped with local Veslo server auth rejecting the runtime
+bearer. The important distinction was that UI/server auth and the pilot pipe
+were live; the failing boundary was the OpenCode runtime process talking back
+to the local Veslo server.
+
+### Causal Finding
+
+For the orchestrator runtime, `restartWorkspaceRuntime(...)` was not a process
+restart. It activated or reattached the orchestrator workspace and then
+reconnected the UI route. That is correct for normal browsing attach, but it is
+not enough for an auth desync.
+
+The Veslo client token is injected into OpenCode/orchestrator process state at
+spawn time through `VESLO_OPENCODE_SERVER_CLIENT_TOKEN` and orchestrator
+`--veslo-token`. If the local Veslo server token/auth state changes while an
+OpenCode/orchestrator process stays alive, a route-only recovery can report the
+runtime as recovered even though the OpenCode process still holds the old
+bearer. The next provider/runtime handshake can then fail with
+`Invalid bearer token`.
+
+### Fix
+
+`ensureEngineForWorkspace(...)` now treats orchestrator `*-runtime-recovery`
+reasons differently from normal browse attach:
+
+- normal orchestrator attach still uses `restartWorkspaceRuntime(...)`, which is
+  the cheap activate/reattach path,
+- orchestrator runtime recovery now uses `startHost(...)`, forcing a fresh
+  `engine_start` and token/env injection before reconnecting the route,
+- the existing reattach fallback remains for cases where `startHost(...)`
+  starts the daemon but does not publish a route yet.
+
+### Reproduction Test
+
+The new regression test imitates the bug by running
+`ensureEngineForWorkspace("ws-a", { reason: "sendPrompt-runtime-recovery",
+loadSessions: false })` with `runtime = "veslo-orchestrator"`.
+
+Before the fix, that path called `restartWorkspaceRuntime(...)`, meaning only
+workspace activation/reattach. After the fix, it calls
+`startHost:runtime-recovery-fresh-start` and does not call
+`restartWorkspaceRuntime(...)`.
+
+### Verification
+
+```powershell
+cd packages/app
+node --import=tsx/esm --test src/app/tests/context/workspace-runtime-controller-source.test.ts src/app/tests/context/workspace-runtime-controller-folder-access.test.ts src/app/tests/context/send-runtime-readiness.test.ts
+```
+
+Results:
+
+- workspace runtime controller and send-runtime readiness targeted tests: 33
+  passed.

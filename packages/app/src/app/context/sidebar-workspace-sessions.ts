@@ -6,6 +6,10 @@ import { promoteStoredProjectOrderKey } from "../components/session/workspace-se
 import { createClient, unwrap, type OpencodeAuth } from "../lib/opencode";
 import { recordPerfLog } from "../lib/perf-log";
 import {
+  findSidebarSessionItemMergeIndex,
+  sidebarSessionIdentityKey,
+} from "../lib/sidebar-session-identity";
+import {
   shouldPreserveSidebarRowsOnRead,
   shouldSyncSidebarFromSessionStore,
 } from "../lib/sidebar-session-sync-guard";
@@ -134,6 +138,11 @@ const sidebarSessionItemsEqual = (left: SidebarSessionItem[], right: SidebarSess
       a.slug !== b.slug ||
       a.parentID !== b.parentID ||
       a.directory !== b.directory ||
+      a.conversationId !== b.conversationId ||
+      a.opencodeSessionId !== b.opencodeSessionId ||
+      a.parentConversationId !== b.parentConversationId ||
+      a.branchId !== b.branchId ||
+      a.pendingSessionInstanceId !== b.pendingSessionInstanceId ||
       (a.time?.created ?? 0) !== (b.time?.created ?? 0) ||
       (a.time?.updated ?? 0) !== (b.time?.updated ?? 0)
     ) {
@@ -185,21 +194,27 @@ export const mergeSidebarSessionItemsByActivity = (
   primary: SidebarSessionItem[],
   secondary: SidebarSessionItem[],
 ): SidebarSessionItem[] => {
-  const byId = new Map<string, SidebarSessionItem>();
+  const items: SidebarSessionItem[] = [];
   const upsert = (item: SidebarSessionItem) => {
     const id = item.id.trim();
     if (!id) return;
-    const existing = byId.get(id);
-    byId.set(id, existing ? mergeSidebarSessionItem(existing, item) : item);
+    const existingIndex = findSidebarSessionItemMergeIndex(items, item);
+    if (existingIndex === -1) {
+      items.push(item);
+      return;
+    }
+    const existing = items[existingIndex];
+    if (!existing) return;
+    items[existingIndex] = mergeSidebarSessionItem(existing, item);
   };
 
   secondary.forEach(upsert);
   primary.forEach(upsert);
 
-  return Array.from(byId.values()).sort((a, b) => {
+  return items.sort((a, b) => {
     const delta = sidebarItemActivity(b) - sidebarItemActivity(a);
     if (delta !== 0) return delta;
-    return a.id.localeCompare(b.id);
+    return sidebarSessionIdentityKey(a).localeCompare(sidebarSessionIdentityKey(b));
   });
 };
 

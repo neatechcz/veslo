@@ -25,6 +25,7 @@ function makeEngineInfo(overrides: Partial<EngineInfo> = {}): EngineInfo {
 function createHarness(options?: {
   runtime?: EngineInfo["runtime"];
   startInfo?: EngineInfo;
+  prepareInfo?: EngineInfo;
   stopInfo?: EngineInfo;
   infoSnapshot?: EngineInfo;
   infoSnapshots?: EngineInfo[];
@@ -72,6 +73,7 @@ function createHarness(options?: {
       pid: null,
     });
   const startInfo = options?.startInfo ?? makeEngineInfo({ runtime, projectDir: "/tmp/demo" });
+  const prepareInfo = options?.prepareInfo ?? startInfo;
   const infoSnapshot = options?.infoSnapshot ?? makeEngineInfo({ runtime, projectDir: "/tmp/demo" });
   const infoSnapshots = [...(options?.infoSnapshots ?? [])];
 
@@ -101,9 +103,26 @@ function createHarness(options?: {
       readInfoRequests.push({ workspaceId, workspacePath });
       return infoSnapshots.shift() ?? infoSnapshot;
     },
+    prepareWorkspaceRuntime: async (input) => {
+      calls.push(
+        `prepareRuntime:${input.projectDir}:${input.runtime}:${input.workspaceId ?? ""}:${input.reason ?? ""}:${input.forceFreshRuntime === true}`,
+      );
+      return {
+        ok: true,
+        action: input.forceFreshRuntime === true || input.runtime === "direct"
+          ? "fresh_start"
+          : "orchestrator_activate",
+        reason: input.reason ?? "",
+        engine: prepareInfo,
+      };
+    },
     activateOrchestratorWorkspace: async ({ workspacePath, workspaceId, name }) => {
       calls.push(`activateOrchestrator:${workspacePath}:${workspaceId ?? ""}:${name ?? ""}`);
       return null;
+    },
+    disposeOrchestratorWorkspace: async (workspacePath) => {
+      calls.push(`disposeOrchestrator:${workspacePath}`);
+      return true;
     },
     activateVesloHostWorkspace: async (workspacePath) => {
       calls.push(`activateHost:${workspacePath}`);
@@ -147,7 +166,7 @@ test("startHost starts the engine once, derives auth, and reconnects through the
 
   assert.equal(ok, true);
   assert.deepEqual(harness.calls, [
-    "startEngine:/tmp/demo:direct",
+    "prepareRuntime:/tmp/demo:direct:ws-demo:host-start:true",
     "setEngine:/tmp/demo",
     "setEngineAuth:demo-user",
     "connectToServer:host-start",
@@ -171,14 +190,14 @@ test("startHost starts the engine once, derives auth, and reconnects through the
 test("orchestrator quiet reconnect waits through starting engine info state", async () => {
   const harness = createHarness({
     runtime: "veslo-orchestrator",
+    prepareInfo: makeEngineInfo({
+      running: false,
+      runtime: "veslo-orchestrator",
+      engineState: "starting",
+      baseUrl: "http://127.0.0.1:7777/workspace/ws-a/opencode",
+      projectDir: "/tmp/demo",
+    }),
     infoSnapshots: [
-      makeEngineInfo({
-        running: false,
-        runtime: "veslo-orchestrator",
-        engineState: "starting",
-        baseUrl: "http://127.0.0.1:7777/workspace/ws-a/opencode",
-        projectDir: "/tmp/demo",
-      }),
       makeEngineInfo({
         running: true,
         runtime: "veslo-orchestrator",
@@ -197,7 +216,7 @@ test("orchestrator quiet reconnect waits through starting engine info state", as
   });
 
   assert.equal(ok, true);
-  assert.equal(harness.readInfoRequests.length, 2);
+  assert.equal(harness.readInfoRequests.length, 1);
   assert.equal(harness.quietConnections.length, 1);
   assert.equal(harness.quietConnections[0]?.baseUrl, "http://127.0.0.1:7777/workspace/ws-a/opencode");
   assert.deepEqual(
@@ -209,7 +228,7 @@ test("orchestrator quiet reconnect waits through starting engine info state", as
 test("orchestrator quiet reconnect skips absent engine proxy health check", async () => {
   const harness = createHarness({
     runtime: "veslo-orchestrator",
-    infoSnapshot: makeEngineInfo({
+    prepareInfo: makeEngineInfo({
       running: false,
       runtime: "veslo-orchestrator",
       engineState: "absent",
@@ -226,7 +245,7 @@ test("orchestrator quiet reconnect skips absent engine proxy health check", asyn
   });
 
   assert.equal(ok, false);
-  assert.equal(harness.readInfoRequests.length, 1);
+  assert.equal(harness.readInfoRequests.length, 0);
   assert.equal(harness.quietConnections.length, 0);
 });
 
@@ -243,7 +262,7 @@ test("startHost can reconnect quietly without routing through the shared server 
 
   assert.equal(ok, true);
   assert.deepEqual(harness.calls, [
-    "startEngine:/tmp/demo:direct",
+    "prepareRuntime:/tmp/demo:direct:ws-demo:browse-cold-start:true",
     "setEngine:/tmp/demo",
     "setEngineAuth:demo-user",
     "connectQuiet:/tmp/demo",
@@ -267,7 +286,7 @@ test("startHost can reconnect quietly without routing through the shared server 
 test("startHost reconnects through workspace-scoped engine info for orchestrator runtime", async () => {
   const harness = createHarness({
     runtime: "veslo-orchestrator",
-    startInfo: makeEngineInfo({
+    prepareInfo: makeEngineInfo({
       runtime: "veslo-orchestrator",
       baseUrl: "http://127.0.0.1:57871/workspace/ws-old/opencode",
       projectDir: "/tmp/old",
@@ -288,7 +307,8 @@ test("startHost reconnects through workspace-scoped engine info for orchestrator
 
   assert.equal(ok, true);
   assert.deepEqual(harness.calls, [
-    "startEngine:/tmp/new:veslo-orchestrator",
+    "prepareRuntime:/tmp/new:veslo-orchestrator:ws-new:browse-cold-start:true",
+    "activateHost:/tmp/new",
     "readEngineInfo",
     "setEngine:/tmp/new",
     "setEngineAuth:demo-user",
@@ -312,7 +332,7 @@ test("startHost reconnects through workspace-scoped engine info for orchestrator
 test("restartWorkspaceRuntime uses the shared stop/start reconnect flow for direct runtime", async () => {
   const harness = createHarness({
     runtime: "direct",
-    startInfo: makeEngineInfo({
+    prepareInfo: makeEngineInfo({
       runtime: "direct",
       projectDir: "/tmp/new-workspace",
       baseUrl: "http://127.0.0.1:5000",
@@ -330,9 +350,7 @@ test("restartWorkspaceRuntime uses the shared stop/start reconnect flow for dire
 
   assert.equal(ok, true);
   assert.deepEqual(harness.calls, [
-    "stopEngine",
-    "startEngine:/tmp/new-workspace:direct",
-    "setEngine:/tmp/old",
+    "prepareRuntime:/tmp/new-workspace:direct:ws-next:workspace-restart:false",
     "setEngine:/tmp/new-workspace",
     "setEngineAuth:demo-user",
     "connectToServer:workspace-restart",
@@ -348,7 +366,7 @@ test("restartWorkspaceRuntime uses the shared stop/start reconnect flow for dire
 test("restartWorkspaceRuntime can reconnect quietly after orchestrator workspace activation", async () => {
   const harness = createHarness({
     runtime: "veslo-orchestrator",
-    infoSnapshot: makeEngineInfo({
+    prepareInfo: makeEngineInfo({
       runtime: "veslo-orchestrator",
       projectDir: "/tmp/orchestrated",
       baseUrl: "http://127.0.0.1:6100",
@@ -365,9 +383,8 @@ test("restartWorkspaceRuntime can reconnect quietly after orchestrator workspace
 
   assert.equal(ok, true);
   assert.deepEqual(harness.calls, [
-    "activateOrchestrator:/tmp/orchestrated:ws-orch:Orchestrated",
+    "prepareRuntime:/tmp/orchestrated:veslo-orchestrator:ws-orch:ensure-engine:false",
     "activateHost:/tmp/orchestrated",
-    "readEngineInfo",
     "setEngine:/tmp/orchestrated",
     "setEngineAuth:demo-user",
     "connectQuiet:/tmp/orchestrated",
@@ -388,10 +405,39 @@ test("restartWorkspaceRuntime can reconnect quietly after orchestrator workspace
   ]);
 });
 
+test("restartWorkspaceRuntime forceFreshRuntime is passed to the backend prepare owner", async () => {
+  const harness = createHarness({
+    runtime: "veslo-orchestrator",
+    prepareInfo: makeEngineInfo({
+      runtime: "veslo-orchestrator",
+      projectDir: "/tmp/fresh",
+      baseUrl: "http://127.0.0.1:6300",
+    }),
+  });
+
+  const ok = await harness.lifecycle.restartWorkspaceRuntime({
+    workspacePath: "/tmp/fresh",
+    workspaceId: "ws-fresh",
+    workspaceName: "Fresh",
+    reason: "event-stream-runtime-recovery",
+    connectMode: "quiet",
+    forceFreshRuntime: true,
+  });
+
+  assert.equal(ok, true);
+  assert.deepEqual(harness.calls, [
+    "prepareRuntime:/tmp/fresh:veslo-orchestrator:ws-fresh:event-stream-runtime-recovery:true",
+    "activateHost:/tmp/fresh",
+    "setEngine:/tmp/fresh",
+    "setEngineAuth:demo-user",
+    "connectQuiet:/tmp/fresh",
+  ]);
+});
+
 test("restartWorkspaceRuntime activates orchestrator with the requested workspace id", async () => {
   const harness = createHarness({
     runtime: "veslo-orchestrator",
-    infoSnapshot: makeEngineInfo({
+    prepareInfo: makeEngineInfo({
       runtime: "veslo-orchestrator",
       projectDir: "/tmp/private-profile",
       baseUrl: "http://127.0.0.1:6100/workspace/ws-target/opencode",
@@ -407,17 +453,15 @@ test("restartWorkspaceRuntime activates orchestrator with the requested workspac
   });
 
   assert.equal(ok, true);
-  assert.equal(harness.calls[0], "activateOrchestrator:/tmp/private-profile:ws-target:Private");
-  assert.deepEqual(harness.readInfoRequests, [
-    { workspaceId: "ws-target", workspacePath: "/tmp/private-profile" },
-  ]);
+  assert.equal(harness.calls[0], "prepareRuntime:/tmp/private-profile:veslo-orchestrator:ws-target:ensure-engine:false");
+  assert.deepEqual(harness.readInfoRequests, []);
   assert.equal(harness.quietConnections[0]?.context?.workspaceId, "ws-target");
 });
 
 test("reattachOrchestratorWorkspace reuses the shared engine snapshot flow without a stop/start cycle", async () => {
   const harness = createHarness({
     runtime: "veslo-orchestrator",
-    infoSnapshot: makeEngineInfo({
+    prepareInfo: makeEngineInfo({
       runtime: "veslo-orchestrator",
       projectDir: "/tmp/reused",
       baseUrl: "http://127.0.0.1:6200",
@@ -434,9 +478,8 @@ test("reattachOrchestratorWorkspace reuses the shared engine snapshot flow witho
 
   assert.equal(ok, true);
   assert.deepEqual(harness.calls, [
-    "activateOrchestrator:/tmp/reused:ws-reused:Reused",
+    "prepareRuntime:/tmp/reused:veslo-orchestrator:ws-reused:workspace-attach-local:false",
     "activateHost:/tmp/reused",
-    "readEngineInfo",
     "setEngine:/tmp/reused",
     "setEngineAuth:demo-user",
     "connectToServer:workspace-attach-local",

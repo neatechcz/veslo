@@ -485,8 +485,8 @@ test("workspace activation delegates local runtime reuse and restart flows to th
 
   assert.match(
     source,
-    /ok = await deps\.localRuntimeLifecycle\.restartWorkspaceRuntime\(\{[\s\S]*connectMode: "quiet"/s,
-    "browsing-mode engine attach should use the shared helper's quiet reconnect path",
+    /const ok = await deps\.localRuntimeLifecycle\.prepareWorkspaceRuntime\(\{[\s\S]*connectMode: "quiet"/s,
+    "browsing-mode engine attach should use the shared backend prepare helper's quiet reconnect path",
   );
 });
 

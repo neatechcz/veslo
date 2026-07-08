@@ -32,10 +32,7 @@ function makeController(input: {
     },
     resolveEngineRuntime: () => "direct",
     localRuntimeLifecycle: {
-      restartWorkspaceRuntime: async () => {
-        throw input.runtimeError;
-      },
-      startHost: async () => {
+      prepareWorkspaceRuntime: async () => {
         throw input.runtimeError;
       },
     } as never,

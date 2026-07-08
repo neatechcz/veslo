@@ -41,14 +41,34 @@ test("buildArchivedSidebarSessionKey scopes archived sidebar filtering by worksp
     buildArchivedSidebarSessionKey({ workspaceId: "workspace-a", sessionId: "shared" }),
     buildArchivedSidebarSessionKey({ workspaceId: "workspace-b", sessionId: "shared" }),
   );
+  assert.notEqual(
+    buildArchivedSidebarSessionKey({ workspaceId: "workspace-a", sessionId: "shared", directory: "/repo/a" }),
+    buildArchivedSidebarSessionKey({ workspaceId: "workspace-a", sessionId: "shared", directory: "/repo/b" }),
+  );
   assert.equal(
     archivedSidebarSessionKeyFromRecord({
       workspaceIdAtArchive: "workspace-a",
       sessionId: "shared",
+      resolvedDirectoryAtArchive: "/repo/a",
     }),
-    buildArchivedSidebarSessionKey({ workspaceId: "workspace-a", sessionId: "shared" }),
+    buildArchivedSidebarSessionKey({ workspaceId: "workspace-a", sessionId: "shared", directory: "/repo/a" }),
   );
   assert.equal(buildArchivedSidebarSessionKey({ workspaceId: "", sessionId: "legacy" }), "legacy");
+});
+
+test("buildArchivedSidebarSessionKey scopes duplicate workspace sessions by directory", () => {
+  assert.notEqual(
+    buildArchivedSidebarSessionKey({ workspaceId: "workspace-a", sessionId: "shared", directory: "/work/a" }),
+    buildArchivedSidebarSessionKey({ workspaceId: "workspace-a", sessionId: "shared", directory: "/work/b" }),
+  );
+  assert.equal(
+    archivedSidebarSessionKeyFromRecord({
+      workspaceIdAtArchive: "workspace-a",
+      sessionId: "shared",
+      resolvedDirectoryAtArchive: "/work/a",
+    }),
+    buildArchivedSidebarSessionKey({ workspaceId: "workspace-a", sessionId: "shared", directory: "/work/a" }),
+  );
 });
 
 test("archived sidebar keys can scope identity-only archive records", () => {

@@ -101,7 +101,7 @@ export type SendRuntimeReadinessDeps<Client extends SendRuntimeClient = SendRunt
   releaseWorkspaceRoute?: (workspaceId: string) => void;
   ensureEngineForWorkspace: (
     workspaceId?: string,
-    options?: { reason?: string; loadSessions?: boolean },
+    options?: { reason?: string; loadSessions?: boolean; forceFreshRuntime?: boolean },
   ) => Promise<boolean>;
   connectToServer: (
     baseUrl: string,

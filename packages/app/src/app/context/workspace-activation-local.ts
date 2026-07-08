@@ -7,6 +7,8 @@ import {
 import { isTauriRuntime } from "../utils";
 import type { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecycle";
 import { isPassiveLocalBrowseActivationOrigin } from "./workspace-activation-controller";
+import type { StartupPreference, WorkspaceConnectionState, WorkspaceVesloConfig } from "../types";
+import type { Language } from "../../i18n";
 import type { WorkspaceActivationOptions } from "./workspace-types";
 
 export type LocalActivationSelection = {
@@ -26,8 +28,8 @@ export type LocalActivationSelection = {
 
 export type WorkspaceLocalActivationDeps = {
   routingActive: () => unknown;
-  startupPreference: () => unknown;
-  setStartupPreference: (value: any) => void;
+  startupPreference: () => StartupPreference | null;
+  setStartupPreference: (value: StartupPreference | null) => void;
   projectDir: () => string;
   activeWorkspaceRoot: () => string;
   setProjectDir: (value: string) => void;
@@ -67,8 +69,8 @@ export type WorkspaceLocalActivationDeps = {
       clearPendingPermissions?: boolean;
     },
   ) => void;
-  updateWorkspaceConnectionState: (workspaceId: string, next: any) => void;
-  setWorkspaceConfig: (value: any) => void;
+  updateWorkspaceConnectionState: (workspaceId: string, next: Partial<WorkspaceConnectionState>) => void;
+  setWorkspaceConfig: (value: WorkspaceVesloConfig | null) => void;
   setWorkspaceConfigLoaded: (value: boolean) => void;
   setEngineReady?: (value: boolean) => void;
   isWorkspaceRuntimeReady?: (workspaceId: string) => boolean;
@@ -89,8 +91,8 @@ export type WorkspaceLocalActivationDeps = {
   workspaceSetActiveTimeoutMs: number;
   startHostTimeoutMs: number;
   withTimeoutOrThrow: typeof import("../utils/promise-timeout").withTimeoutOrThrow;
-  indirectT: (key: string, locale?: any) => string;
-  indirectLocale: () => any;
+  indirectT: (key: string, locale?: Language) => string;
+  indirectLocale: () => Language;
   safeStringify: (value: unknown) => string;
   addOpencodeCacheHint: (message: string) => string;
   wsDebug: (label: string, payload?: unknown) => void;

@@ -1,9 +1,7 @@
 import type { OpencodeAuth } from "../lib/opencode";
-import type { EngineInfo, WorkspaceInfo } from "../lib/tauri";
-import { withTimeoutOrThrow } from "./promise-timeout";
+import type { EngineInfo, WorkspaceInfo, WorkspaceRuntimePrepareResult } from "../lib/tauri";
 import {
   activateVesloHostWorkspaceWithTimeout,
-  runWorkspaceEngineRestartWithTimeouts,
 } from "./workspace-switch-timeouts";
 
 export type LocalRuntimeStartOptions = {
@@ -26,6 +24,7 @@ export type LocalRuntimeReconnectOptions = {
   connectMode?: LocalRuntimeConnectMode;
   navigate?: boolean;
   quiet?: boolean;
+  forceFreshRuntime?: boolean;
   beforeOrchestratorReconnect?: () => Promise<void>;
 };
 
@@ -42,11 +41,19 @@ export interface LocalRuntimeLifecycleDeps {
   startEngine: (workspacePath: string, options: LocalRuntimeStartOptions) => Promise<EngineInfo>;
   stopEngine: () => Promise<EngineInfo>;
   readEngineInfo: (workspaceId?: string, workspacePath?: string) => Promise<EngineInfo>;
+  prepareWorkspaceRuntime: (input: LocalRuntimeStartOptions & {
+    projectDir: string;
+    workspaceId?: string | null;
+    workspaceName?: string | null;
+    reason?: string | null;
+    forceFreshRuntime?: boolean;
+  }) => Promise<WorkspaceRuntimePrepareResult>;
   activateOrchestratorWorkspace: (input: {
     workspacePath: string;
     workspaceId?: string | null;
     name?: string | null;
   }) => Promise<unknown>;
+  disposeOrchestratorWorkspace?: (workspacePath: string) => Promise<boolean>;
   activateVesloHostWorkspace: (workspacePath: string) => Promise<unknown>;
   connectToServer: (
     nextBaseUrl: string,
@@ -211,19 +218,25 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
     );
   };
 
-  const activateOrchestratorWorkspace = async (options: Pick<
-    LocalRuntimeReconnectOptions,
-    "workspacePath" | "workspaceId" | "workspaceName"
-  >) => {
-    await deps.activateOrchestratorWorkspace({
-      workspacePath: options.workspacePath,
+  async function prepareWorkspaceRuntime(options: LocalRuntimeReconnectOptions) {
+    const runtime = deps.resolveEngineRuntime();
+    const result = await deps.prepareWorkspaceRuntime({
+      ...buildStartOptions(runtime),
+      projectDir: options.workspacePath,
       workspaceId: options.workspaceId?.trim() || null,
-      name: options.workspaceName?.trim() || null,
+      workspaceName: options.workspaceName?.trim() || null,
+      reason: options.reason,
+      forceFreshRuntime: options.forceFreshRuntime === true,
     });
-    await activateVesloHostWorkspaceWithTimeout(
-      () => deps.activateVesloHostWorkspace(options.workspacePath),
-    );
-  };
+
+    if (result.engine.runtime === "veslo-orchestrator") {
+      await activateVesloHostWorkspaceWithTimeout(
+        () => deps.activateVesloHostWorkspace(options.workspacePath),
+      );
+    }
+
+    return await reconnectFromEngineSnapshot(result.engine, options);
+  }
 
   async function startHost(
     options: Pick<
@@ -231,35 +244,14 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
       "workspacePath" | "workspaceId" | "reason" | "connectMode" | "navigate"
     >,
   ) {
-    const runtime = deps.resolveEngineRuntime();
-    const info = await deps.startEngine(options.workspacePath, buildStartOptions(runtime));
-    return await reconnectFromEngineSnapshot(info, options);
+    return await prepareWorkspaceRuntime({
+      ...options,
+      forceFreshRuntime: true,
+    });
   }
 
   async function restartWorkspaceRuntime(options: LocalRuntimeReconnectOptions) {
-    const runtime = deps.resolveEngineRuntime();
-    if (runtime === "veslo-orchestrator") {
-      if (options.beforeOrchestratorReconnect) {
-        await options.beforeOrchestratorReconnect();
-      }
-      await activateOrchestratorWorkspace(options);
-      const nextInfo = await withTimeoutOrThrow(
-        deps.readEngineInfo(options.workspaceId, options.workspacePath),
-        // VSLO-86 — widened from 12s to 30s. After the orchestrator HTTP
-        // POSTs return, the engine itself still has to finish spawning
-        // (sandbox-exec + opencode serve), and the polling for the per-
-        // workspace baseUrl can run past 12s on cold start.
-        { timeoutMs: 30_000, label: "engine_info" },
-      );
-      return await reconnectFromEngineSnapshot(nextInfo, options);
-    }
-
-    const { stopResult, startResult } = await runWorkspaceEngineRestartWithTimeouts({
-      stop: () => deps.stopEngine(),
-      start: () => deps.startEngine(options.workspacePath, buildStartOptions(runtime)),
-    });
-    deps.setEngine(stopResult);
-    return await reconnectFromEngineSnapshot(startResult, options);
+    return await prepareWorkspaceRuntime(options);
   }
 
   async function reattachOrchestratorWorkspace(
@@ -268,15 +260,11 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
       "workspacePath" | "workspaceId" | "workspaceName" | "reason" | "connectMode" | "navigate"
     >,
   ) {
-    await activateOrchestratorWorkspace(options);
-    const nextInfo = await withTimeoutOrThrow(
-      deps.readEngineInfo(options.workspaceId, options.workspacePath),
-      { timeoutMs: 12_000, label: "engine_info" },
-    );
-    return await reconnectFromEngineSnapshot(nextInfo, options);
+    return await prepareWorkspaceRuntime(options);
   }
 
   return {
+    prepareWorkspaceRuntime,
     startHost,
     restartWorkspaceRuntime,
     reattachOrchestratorWorkspace,

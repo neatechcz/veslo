@@ -89,6 +89,20 @@ const USER_GLOBAL_SKILL_STORE_PATH_PREFIX = "veslo-user-store://";
 const vesloServerClientIdentities = new WeakMap<object, string>();
 let nextVesloServerClientIdentity = 1;
 
+type OpenCodeClientGetResult = {
+  data?: unknown;
+  error?: unknown;
+};
+
+function isRecordLike(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function stringField(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  return typeof value === "string" ? value : "";
+}
+
 function resolveVesloServerClientIdentity(client: VesloServerClient | null) {
   if (!client || (typeof client !== "object" && typeof client !== "function")) return "none";
   const key = client as object;
@@ -567,17 +581,20 @@ export function createExtensionsStore(options: {
     const root = options.activeWorkspaceRoot().trim();
     const vesloClient = options.vesloServerClient();
     const vesloCapabilities = options.vesloServerCapabilities();
-    const canUseVesloServer =
+    const hubSkillsClient =
       options.vesloServerStatus() === "connected" &&
       vesloClient &&
       vesloCapabilities?.hub?.skills?.read &&
-      typeof (vesloClient as any).listHubSkills === "function";
+      typeof vesloClient.listHubSkills === "function"
+        ? vesloClient
+        : null;
+    const canUseVesloServer = Boolean(hubSkillsClient);
     const denAuth = readDenAuth();
     const denToken = denAuth?.token?.trim() ?? "";
     const denOrgId = denAuth?.orgId?.trim() ?? "";
     const denApiBase = denAuth?.denApiBase?.trim() ?? "";
     const denUserId = denAuth?.user?.id?.trim() ?? "";
-    const vesloServerClientIdentity = canUseVesloServer ? resolveVesloServerClientIdentity(vesloClient) : "none";
+    const vesloServerClientIdentity = hubSkillsClient ? resolveVesloServerClientIdentity(hubSkillsClient) : "none";
     const contextKey = JSON.stringify({
       root,
       canUseVesloServer,
@@ -591,7 +608,7 @@ export function createExtensionsStore(options: {
 
     return {
       root,
-      vesloClient,
+      vesloClient: hubSkillsClient,
       canUseVesloServer,
       denToken,
       denOrgId,
@@ -625,7 +642,7 @@ export function createExtensionsStore(options: {
         setHubSkillsStatus(null);
         const orgCatalogPlaceholder = translate("skills.org_catalog_placeholder");
 
-        if (canUseVesloServer) {
+        if (canUseVesloServer && vesloClient) {
           if (!denToken || !denOrgId) {
             setHubSkills([]);
             setHubSkillsStatus(orgCatalogPlaceholder);
@@ -636,19 +653,17 @@ export function createExtensionsStore(options: {
             return;
           }
 
-          const response = await (vesloClient as any).listHubSkills({
+          const response = await vesloClient.listHubSkills({
             denToken,
             denOrgId,
           });
           if (refreshHubSkillsAborted) return;
-          const next: HubSkillCard[] = Array.isArray(response?.items)
-            ? response.items.map((entry: any) => ({
-                name: String(entry.name ?? ""),
-                description: typeof entry.description === "string" ? entry.description : undefined,
-                trigger: typeof entry.trigger === "string" ? entry.trigger : undefined,
-                source: entry.source,
-              }))
-            : [];
+          const next: HubSkillCard[] = response.items.map((entry) => ({
+            name: entry.name,
+            description: entry.description,
+            trigger: entry.trigger,
+            source: entry.source,
+          }));
           setHubSkills(next);
           if (!next.length) setHubSkillsStatus(orgCatalogPlaceholder);
           hubSkillsLoaded = true;
@@ -1419,14 +1434,16 @@ export function createExtensionsStore(options: {
     const vesloClient = options.vesloServerClient();
     const vesloWorkspaceId = options.vesloServerWorkspaceId();
     const vesloCapabilities = options.vesloServerCapabilities();
-    const canUseVesloServer =
+    const hubSkillInstallClient =
       options.vesloServerStatus() === "connected" &&
       vesloClient &&
       vesloWorkspaceId &&
       vesloCapabilities?.hub?.skills?.install &&
-      typeof (vesloClient as any).installHubSkill === "function";
+      typeof vesloClient.installHubSkill === "function"
+        ? vesloClient
+        : null;
 
-    if (!canUseVesloServer) {
+    if (!hubSkillInstallClient || !vesloWorkspaceId) {
       if (isRemoteWorkspace) {
         return { ok: false, message: __vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_install_sk_7q26rj", __vesloIndirectLocale()) };
       }
@@ -1438,7 +1455,7 @@ export function createExtensionsStore(options: {
     setSkillsStatus(null);
 
     try {
-      const result = await (vesloClient as any).installHubSkill(vesloWorkspaceId, trimmed);
+      const result = await hubSkillInstallClient.installHubSkill(vesloWorkspaceId, trimmed);
       await refreshSkills({ force: true });
       await refreshHubSkills({ force: true });
       if (!result?.ok) {
@@ -1689,7 +1706,7 @@ export function createExtensionsStore(options: {
 
       if (refreshSkillsAborted) return;
 
-      const rawClient = c as unknown as { _client?: { get: (input: { url: string }) => Promise<any> } };
+      const rawClient = c as unknown as { _client?: { get: (input: { url: string }) => Promise<OpenCodeClientGetResult> } };
       if (!rawClient._client) {
         throw new Error("OpenCode client unavailable.");
       }
@@ -1701,20 +1718,19 @@ export function createExtensionsStore(options: {
           err instanceof Error ? err.message : typeof err === "string" ? err : translate("skills.failed_to_load");
         throw new Error(message);
       }
-      const data = result.data as Array<{
-        name: string;
-        description: string;
-        location: string;
-      }>;
+      const data = result.data;
 
       if (refreshSkillsAborted) return;
 
       const next: SkillCard[] = Array.isArray(data)
-        ? data.map((entry) => ({
-            name: entry.name,
-            description: entry.description,
-            path: formatSkillPath(entry.location),
-          }))
+        ? data
+            .filter(isRecordLike)
+            .map((entry) => ({
+              name: stringField(entry, "name"),
+              description: stringField(entry, "description"),
+              path: formatSkillPath(stringField(entry, "location")),
+            }))
+            .filter((entry) => Boolean(entry.name && entry.path))
         : [];
 
       setSkills(next);
@@ -2437,17 +2453,19 @@ export function createExtensionsStore(options: {
     const vesloClient = options.vesloServerClient();
     const vesloWorkspaceId = options.vesloServerWorkspaceId();
     const vesloCapabilities = options.vesloServerCapabilities();
-    const canUseVesloServer =
+    const skillReadClient =
       options.vesloServerStatus() === "connected" &&
       vesloClient &&
       vesloWorkspaceId &&
       vesloCapabilities?.skills?.read &&
-      typeof (vesloClient as any).getSkill === "function";
+      typeof vesloClient.getSkill === "function"
+        ? vesloClient
+        : null;
 
-    if (canUseVesloServer) {
+    if (skillReadClient && vesloWorkspaceId) {
       try {
         setSkillsStatus(null);
-        const result = await (vesloClient as VesloServerClient & { getSkill: any }).getSkill(
+        const result = await skillReadClient.getSkill(
           vesloWorkspaceId,
           trimmed,
           { includeGlobal: isLocalWorkspace, ...(instancePath?.trim() ? { path: instancePath.trim() } : {}) },
@@ -2609,24 +2627,16 @@ export function createExtensionsStore(options: {
       vesloClient &&
       vesloCapabilities?.skills?.read;
 
-    if (canUseVesloServer) {
+    if (canUseVesloServer && vesloClient) {
       try {
         setSkillsStatus(null);
-        if (target.scope === "user-global" && typeof (vesloClient as any).getGlobalSkillFiles === "function") {
-          const result = await (vesloClient as VesloServerClient & {
-            getGlobalSkillFiles: (skillName: string, options: { path: string; includeDisabled?: boolean }) => Promise<VesloSkillFilesContent>;
-          }).getGlobalSkillFiles(name, { path: entryFilePath, includeDisabled: true });
+        if (target.scope === "user-global" && typeof vesloClient.getGlobalSkillFiles === "function") {
+          const result = await vesloClient.getGlobalSkillFiles(name, { path: entryFilePath, includeDisabled: true });
           return { files: result.files };
         }
-        if (vesloWorkspaceId && typeof (vesloClient as any).getSkillFiles === "function") {
+        if (vesloWorkspaceId && typeof vesloClient.getSkillFiles === "function") {
           const workspaceId = target.workspaceId?.trim() || vesloWorkspaceId;
-          const result = await (vesloClient as VesloServerClient & {
-            getSkillFiles: (
-              workspaceId: string,
-              skillName: string,
-              options?: { includeGlobal?: boolean; includeDisabled?: boolean; path?: string },
-            ) => Promise<VesloSkillFilesContent>;
-          }).getSkillFiles(workspaceId, name, {
+          const result = await vesloClient.getSkillFiles(workspaceId, name, {
             includeGlobal: isLocalWorkspace,
             includeDisabled: true,
             path: entryFilePath,

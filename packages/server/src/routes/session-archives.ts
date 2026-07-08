@@ -12,7 +12,7 @@ type SessionArchiveStore = {
   delete: (
     ownerKey: string,
     sessionId: string,
-    options?: { workspaceId?: string | null; workspaceIdentity?: string | null },
+    options?: { workspaceId?: string | null; workspaceIdentity?: string | null; directory?: string | null },
   ) => Promise<SessionArchiveRecord[]>;
 };
 
@@ -72,10 +72,12 @@ export function registerSessionArchiveRoutes(routes: Route[], dependencies: Sess
     const ownerKey = dependencies.resolveArchiveOwnerKey(ctx.request);
     const workspaceId = ctx.url.searchParams.get("workspaceId")?.trim() || undefined;
     const workspaceIdentity = ctx.url.searchParams.get("workspaceIdentity")?.trim() || undefined;
+    const directory = ctx.url.searchParams.get("directory")?.trim() || undefined;
     return jsonResponse({
       items: await dependencies.sessionArchives.delete(ownerKey, ctx.params.sessionId, {
         workspaceId,
         workspaceIdentity,
+        directory,
       }),
     });
   });

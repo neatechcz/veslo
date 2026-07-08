@@ -77,12 +77,17 @@ export function createConversationsClient(context: ConversationsClientContext) {
         },
       ),
 
-    deleteArchive: (sessionId: string, options?: { workspaceId?: string | null; workspaceIdentity?: string | null }) => {
+    deleteArchive: (
+      sessionId: string,
+      options?: { workspaceId?: string | null; workspaceIdentity?: string | null; directory?: string | null },
+    ) => {
       const workspaceId = options?.workspaceId?.trim() ?? "";
       const workspaceIdentity = options?.workspaceIdentity?.trim() ?? "";
+      const directory = options?.directory?.trim() ?? "";
       const search = new URLSearchParams();
       if (workspaceId) search.set("workspaceId", workspaceId);
       if (workspaceIdentity) search.set("workspaceIdentity", workspaceIdentity);
+      if (directory) search.set("directory", directory);
       const query = search.size > 0 ? `?${search.toString()}` : "";
       return requestJson<{ items: VesloSessionArchiveRecord[] }>(
         baseUrl,

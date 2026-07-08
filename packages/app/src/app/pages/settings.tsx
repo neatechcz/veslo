@@ -166,7 +166,12 @@ export type SettingsViewProps = {
   connectNotion: () => void;
   engineDoctorVersion: string | null;
   sessionArchives?: SessionArchiveItem[];
-  onUnarchiveSession?: (workspaceId: string, sessionId: string, workspaceIdentity?: string | null) => Promise<void> | void;
+  onUnarchiveSession?: (
+    workspaceId: string,
+    sessionId: string,
+    workspaceIdentity?: string | null,
+    directory?: string | null,
+  ) => Promise<void> | void;
 };
 
 export default function SettingsView(props: SettingsViewProps) {
@@ -795,7 +800,9 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const handleUnarchiveArchivedSession = async (item: SessionArchiveItem) => {
-    await Promise.resolve(props.onUnarchiveSession?.(item.workspaceId, item.sessionId, item.workspaceIdentity));
+    await Promise.resolve(
+      props.onUnarchiveSession?.(item.workspaceId, item.sessionId, item.workspaceIdentity, item.resolvedDirectory),
+    );
   };
 
   const [debugReportStatus, setDebugReportStatus] = createSignal<string | null>(null);

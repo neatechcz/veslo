@@ -1,0 +1,533 @@
+[scenario]
+name = "live-skills-finder-roundtrip"
+fail_fast = true
+global_timeout_ms = 900000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "start live skills finder roundtrip"
+action = "eval"
+timeout_ms = 840000
+script = '''
+const completeSelector = '[data-testid="live-skills-finder-roundtrip-complete"]';
+const errorSelector = '[data-testid="live-skills-finder-roundtrip-error"]';
+const progressSelector = '[data-testid="live-skills-finder-roundtrip-progress"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+document.querySelector(progressSelector)?.remove();
+
+const progressMarker = document.createElement("pre");
+progressMarker.dataset.testid = "live-skills-finder-roundtrip-progress";
+progressMarker.style.display = "none";
+progressMarker.textContent = "starting";
+document.body.append(progressMarker);
+
+const setProgress = (stage, detail = null) => {
+  const timeline = Array.isArray(window.__vesloLiveSkillsFinderRoundtripTimeline)
+    ? window.__vesloLiveSkillsFinderRoundtripTimeline
+    : [];
+  const entry = {
+    stage,
+    detail,
+    at: new Date().toISOString(),
+    elapsedMs: timeline.length > 0 ? Date.now() - timeline[0].ts : 0,
+    ts: Date.now(),
+  };
+  timeline.push(entry);
+  if (timeline.length > 200) timeline.splice(0, timeline.length - 200);
+  window.__vesloLiveSkillsFinderRoundtripTimeline = timeline;
+  window.__vesloLiveSkillsFinderRoundtripProgress = entry;
+  progressMarker.textContent = JSON.stringify(entry);
+};
+
+const appendMarker = (selector, payload) => {
+  if (document.querySelector(completeSelector) || document.querySelector(errorSelector)) return;
+  const marker = document.createElement("pre");
+  marker.dataset.testid = selector === completeSelector
+    ? "live-skills-finder-roundtrip-complete"
+    : "live-skills-finder-roundtrip-error";
+  marker.textContent = JSON.stringify(payload, null, 2);
+  document.body.append(marker);
+};
+
+if (!window.__vesloLiveSkillsFinderRoundtripStarted) {
+  window.__vesloLiveSkillsFinderRoundtripStarted = true;
+  window.__vesloLiveSkillsFinderRoundtripPromise = (async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const normalize = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
+    const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+    const assert = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+    const withTimeout = async (promise, timeout, message) => {
+      let timeoutId;
+      try {
+        return await Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error(message)), timeout);
+          }),
+        ]);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+    };
+    const waitUntil = async (predicate, options = {}) => {
+      const timeout = options.timeout ?? 10000;
+      const interval = options.interval ?? 250;
+      const message = options.message ?? "Condition was not met";
+      const deadline = Date.now() + timeout;
+      let latest;
+      while (Date.now() < deadline) {
+        latest = await predicate();
+        if (latest) return latest;
+        await sleep(interval);
+      }
+      throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
+    };
+    const tauriInvoke = async (command, payload = {}, timeout = 90000) => {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+      return await withTimeout(
+        invoke(command, payload),
+        timeout,
+        `Tauri command ${command} did not resolve within ${timeout}ms`,
+      );
+    };
+    const workflowTrace = () =>
+      Array.isArray(window.__vesloSendWorkflowTrace) ? window.__vesloSendWorkflowTrace.slice(-200) : [];
+    const isVisibleElement = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return Boolean(element.offsetParent) && rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+    };
+    const conversationPane = () =>
+      document.querySelector('[data-testid="session-conversation-pane"]') ??
+      document.querySelector("main") ??
+      document.body;
+    const visibleBodyText = () => normalize((document.querySelector("main") ?? document.body).innerText || "");
+    const visibleTranscriptText = () => normalize(conversationPane().innerText || conversationPane().textContent || "");
+    const visibleMessageTexts = (role) =>
+      Array.from(conversationPane().querySelectorAll(`[data-message-role="${role}"]`))
+        .filter(isVisibleElement)
+        .map((element) => normalize(element.textContent));
+    const messageRoleCount = (role) => visibleMessageTexts(role).length;
+    const runIndicatorVisible = () =>
+      Array.from(document.querySelectorAll('[data-testid="session-run-indicator"]')).some(isVisibleElement);
+    const buttonValues = (button) => [
+      normalize(button.textContent),
+      normalize(button.title),
+      normalize(button.getAttribute("aria-label")),
+    ].filter(Boolean);
+    const buttonMatchesLabel = (button, labels) => {
+      if (!isVisibleElement(button) || button.disabled) return false;
+      const values = buttonValues(button);
+      return labels.some((label) => values.some((value) => value === label || value.includes(label)));
+    };
+    const findButton = (labels, root = document) =>
+      Array.from(root.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+    const findComposerSendButton = (textbox) => {
+      const labels = [
+        "Send now",
+        "Steer agent now",
+        "Queue message",
+        "Send",
+        "Poslat hned",
+        "Nasměrovat agenta teď",
+        "Zařadit zprávu",
+        "Odeslat",
+      ];
+      let current = textbox;
+      const containers = [];
+      for (let depth = 0; depth < 10 && current instanceof HTMLElement; depth += 1) {
+        containers.push(current);
+        current = current.parentElement;
+      }
+      for (const container of containers) {
+        const matching = Array.from(container.querySelectorAll("button"))
+          .find((button) => buttonMatchesLabel(button, labels));
+        if (matching) return matching;
+      }
+      return findButton(labels);
+    };
+    const dispatchClickSequence = (element) => {
+      element.focus?.();
+      const base = {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        view: window,
+        button: 0,
+      };
+      if (typeof PointerEvent === "function") {
+        element.dispatchEvent(new PointerEvent("pointerdown", {
+          ...base,
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          buttons: 1,
+        }));
+        element.dispatchEvent(new PointerEvent("pointerup", {
+          ...base,
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          buttons: 0,
+        }));
+      }
+      element.dispatchEvent(new MouseEvent("mousedown", { ...base, buttons: 1 }));
+      element.dispatchEvent(new MouseEvent("mouseup", { ...base, buttons: 0 }));
+      element.dispatchEvent(new MouseEvent("click", { ...base, buttons: 0 }));
+    };
+    const waitForComposer = async () => {
+      return await waitUntil(() => {
+        const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], textarea, [role="textbox"]');
+        return candidate instanceof HTMLElement && isVisibleElement(candidate) ? candidate : false;
+      }, {
+        timeout: 60000,
+        interval: 250,
+        message: `Composer did not appear. Body=${visibleBodyText().slice(0, 2500)}`,
+      });
+    };
+    const setComposerText = (textbox, text) => {
+      textbox.focus();
+      if (textbox.isContentEditable) {
+        textbox.replaceChildren(document.createTextNode(text));
+      } else {
+        textbox.value = text;
+      }
+      textbox.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        data: text,
+        inputType: "insertText",
+      }));
+    };
+    const waitForLocalVesloServerReady = async () => {
+      let latest = null;
+      setProgress("waiting-local-veslo-server");
+      return await waitUntil(async () => {
+        latest = await tauriInvoke("veslo_server_info").catch(() => null);
+        const baseUrl = trimBaseUrl(latest?.baseUrl);
+        const clientToken = normalize(latest?.clientToken);
+        const hostToken = normalize(latest?.hostToken);
+        if (!latest?.running || !baseUrl || !clientToken || !hostToken) return false;
+        const response = await fetch(`${baseUrl}/health`).catch(() => null);
+        if (!response?.ok) return false;
+        const payload = await response.json().catch(() => null);
+        return payload?.ok === true ? { baseUrl, clientToken, hostToken } : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `Local Veslo server did not become ready. Server info=${JSON.stringify(latest)}`,
+      });
+    };
+    const parseDenAuth = (raw) => {
+      if (!raw || typeof raw !== "string") return null;
+      try {
+        const parsed = JSON.parse(raw);
+        const token = normalize(parsed?.token);
+        if (!token) return null;
+        return {
+          token,
+          email: normalize(parsed?.user?.email),
+          userId: normalize(parsed?.user?.id),
+          orgId: normalize(parsed?.orgId || parsed?.org?.id),
+          denApiBase: trimBaseUrl(parsed?.denApiBase),
+        };
+      } catch {
+        return null;
+      }
+    };
+    const readDenAuthForAiAccess = async () => {
+      const storageAuth = parseDenAuth(
+        window.localStorage.getItem("veslo.den.auth") ||
+        window.sessionStorage.getItem("veslo.den.auth"),
+      );
+      if (storageAuth) return storageAuth;
+      const snapshot = await tauriInvoke("den_auth_snapshot_read", {}, 15000).catch(() => null);
+      return parseDenAuth(snapshot?.authJson);
+    };
+    const waitForAiAccessReady = async (connection) => {
+      let latest = null;
+      setProgress("waiting-ai-access");
+      await waitUntil(async () => {
+        const auth = await readDenAuthForAiAccess();
+        if (!auth?.token || !auth.email || auth.email.endsWith("@example.test")) {
+          latest = { auth: auth ? { email: auth.email, userId: auth.userId, orgId: auth.orgId, denApiBase: auth.denApiBase, hasToken: Boolean(auth.token) } : null };
+          return false;
+        }
+        const response = await fetch(`${connection.baseUrl}/ai-gateway/me/ai-access`, {
+          headers: {
+            authorization: `Bearer ${connection.clientToken}`,
+            "x-veslo-gateway-authorization": `Bearer ${auth.token}`,
+            accept: "application/json",
+          },
+        }).catch((error) => {
+          latest = { error: error?.message || String(error) };
+          return null;
+        });
+        if (!response) return false;
+        const text = await response.text();
+        latest = { status: response.status, body: text.slice(0, 500) };
+        if (!response.ok) return false;
+        const payload = text.trim() ? JSON.parse(text) : null;
+        return payload?.aiAccess?.enabled === true ? payload : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `AI access endpoint did not become ready. Latest=${JSON.stringify(latest)}`,
+      });
+    };
+    const waitForActiveLocalWorkspace = async () => {
+      setProgress("waiting-workspace-bootstrap");
+      const bootstrap = await waitUntil(async () => {
+        const info = await tauriInvoke("workspace_bootstrap").catch(() => null);
+        return Array.isArray(info?.workspaces) && info.workspaces.length > 0 ? info : false;
+      }, {
+        timeout: 45000,
+        interval: 500,
+        message: "Workspace bootstrap did not expose a local workspace",
+      });
+      const workspace = bootstrap.workspaces.find((entry) => entry.id === bootstrap.activeId) ?? bootstrap.workspaces[0];
+      assert(workspace?.id, `Active local workspace is unavailable: ${JSON.stringify(bootstrap)}`);
+      return workspace;
+    };
+    const waitForActiveManagedConfigReady = async (workspace) => {
+      setProgress("waiting-active-managed-ai-config", { workspaceId: workspace.id });
+      return await waitUntil(() =>
+        workflowTrace().find((entry) =>
+          entry?.source === "opencode-config" &&
+          entry?.event === "apply-gateway-provider-routing:done" &&
+          entry?.workspaceId === workspace.id),
+      {
+        timeout: 90000,
+        interval: 500,
+        message: `Managed AI routing config did not settle for ${workspace.id}. Workflow=${JSON.stringify(workflowTrace())}`,
+      });
+    };
+    const waitForBootWarmup = async (workspace) => {
+      setProgress("waiting-boot-warmup", { workspaceId: workspace.id });
+      return await waitUntil(() =>
+        workflowTrace().find((entry) =>
+          entry?.source === "workspace-runtime" &&
+          entry?.event === "ensure-engine:success" &&
+          entry?.reason === "boot-warmup" &&
+          (!entry?.workspaceId || entry.workspaceId === workspace.id)),
+      {
+        timeout: 180000,
+        interval: 500,
+        message: `Boot warmup did not complete. Workflow=${JSON.stringify(workflowTrace())}`,
+      });
+    };
+    const waitForAiAccessUiSettle = async () => {
+      setProgress("waiting-ai-access-ui-settle");
+      await waitUntil(() => {
+        const body = visibleBodyText();
+        return !/Loading AI access|Getting things ready|Failed to load AI access|Načítám konfiguraci přístupu k AI/i.test(body);
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `AI access UI did not settle. Body=${visibleBodyText().slice(0, 3000)}`,
+      });
+    };
+    const assertNoSendFailed = () => {
+      const body = visibleBodyText();
+      assert(!/Send failed|Odeslání selhalo/i.test(body), `Send failed appeared. Body=${body.slice(0, 3000)}`);
+    };
+    const waitForAssistantSettle = async (assistantBefore, prompt, timeout = 210000) => {
+      let latest = null;
+      const assistantTexts = await waitUntil(() => {
+        assertNoSendFailed();
+        const texts = visibleMessageTexts("assistant");
+        latest = {
+          assistantBefore,
+          assistantAfter: texts.length,
+          runIndicator: runIndicatorVisible(),
+          promptVisible: visibleTranscriptText().includes(prompt),
+          tail: visibleTranscriptText().slice(-1500),
+        };
+        return texts.length > assistantBefore ? texts : false;
+      }, {
+        timeout,
+        interval: 1000,
+        message: `Assistant response did not appear for prompt ${prompt}`,
+      });
+      await waitUntil(() => {
+        assertNoSendFailed();
+        latest = {
+          assistantBefore,
+          assistantAfter: messageRoleCount("assistant"),
+          runIndicator: runIndicatorVisible(),
+          tail: visibleTranscriptText().slice(-1500),
+        };
+        return !runIndicatorVisible() ? true : false;
+      }, {
+        timeout: Math.min(timeout, 210000),
+        interval: 1000,
+        message: `Assistant run did not settle for prompt ${prompt}. Latest=${JSON.stringify(latest)}`,
+      });
+      return visibleMessageTexts("assistant").slice(assistantBefore);
+    };
+    const retryableRuntimeResponse = (text) =>
+      /local OpenCode runtime used an old Veslo server token|Lokální OpenCode runtime použil starý token Veslo serveru|runtime se změnilo|runtime connection changed/i.test(text);
+    const sendPromptAndWait = async ({ name, prompt, expectText = null, timeout = 210000, connection = null, workspace = null }) => {
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        setProgress(`waiting-idle-before-${name}`, { attempt });
+        await waitUntil(() => !runIndicatorVisible(), {
+          timeout: 60000,
+          interval: 500,
+          message: `Previous run did not settle before ${name}`,
+        });
+        const textbox = await waitForComposer();
+        const assistantBefore = messageRoleCount("assistant");
+        setProgress(`filling-${name}`, { prompt, attempt });
+        setComposerText(textbox, prompt);
+        await waitUntil(() => normalize(textbox.textContent || textbox.value).includes(prompt), {
+          timeout: 10000,
+          message: `Composer did not retain prompt for ${name}`,
+        });
+        const sendButton = await waitUntil(() => findComposerSendButton(textbox), {
+          timeout: 20000,
+          interval: 250,
+          message: `Send button did not become enabled for ${name}. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).map(buttonValues))}`,
+        });
+        setProgress(`sending-${name}`, { prompt, attempt });
+        dispatchClickSequence(sendButton);
+        await waitUntil(() => visibleTranscriptText().includes(prompt), {
+          timeout: 45000,
+          interval: 500,
+          message: `User prompt did not render for ${name}`,
+        });
+        setProgress(`waiting-assistant-${name}`, { prompt, attempt });
+        const responses = await waitForAssistantSettle(assistantBefore, prompt, timeout);
+        const responseText = normalize(responses.join(" "));
+        assert(responseText.length > 0, `Assistant response for ${name} was empty.`);
+        if (attempt < 2 && retryableRuntimeResponse(responseText) && connection && workspace) {
+          setProgress(`retrying-${name}-after-runtime-reconnect`, { attempt, response: responseText.slice(0, 1000) });
+          await waitForBootWarmup(workspace);
+          await sleep(5000);
+          continue;
+        }
+        if (expectText) {
+          assert(responseText.includes(expectText), `Assistant response for ${name} did not include ${expectText}. Response=${responseText.slice(0, 3000)}`);
+        }
+        return {
+          name,
+          prompt,
+          attempt,
+          assistantResponse: responseText.slice(0, 12000),
+        };
+      }
+      throw new Error(`Assistant response for ${name} did not produce a non-retryable result.`);
+    };
+
+    const watchdog = setTimeout(() => {
+      appendMarker(errorSelector, {
+        message: "Live skills finder roundtrip watchdog timed out before the task settled.",
+        progress: window.__vesloLiveSkillsFinderRoundtripProgress ?? null,
+        timeline: window.__vesloLiveSkillsFinderRoundtripTimeline ?? [],
+        body: visibleBodyText().slice(0, 5000),
+      });
+    }, 820000);
+
+    try {
+      window.__vesloSendWorkflowTraceEnabled = true;
+      window.localStorage.setItem("veslo.sendWorkflowTrace", "1");
+      window.localStorage.setItem("veslo.onboardingComplete", "1");
+      window.localStorage.setItem("veslo.language", "cs");
+
+      await waitUntil(() => document.querySelector("#root")?.children.length > 0, {
+        timeout: 30000,
+        message: "Veslo root did not render child UI",
+      });
+      const connection = await waitForLocalVesloServerReady();
+      await waitForAiAccessReady(connection);
+      const workspace = await waitForActiveLocalWorkspace();
+      await waitForBootWarmup(workspace);
+      await waitForActiveManagedConfigReady(workspace);
+      await waitForAiAccessUiSettle();
+
+      setProgress("navigating-session", { workspaceId: workspace.id });
+      const oldUrl = window.location.href;
+      window.location.hash = "/session";
+      window.dispatchEvent(new HashChangeEvent("hashchange", {
+        oldURL: oldUrl,
+        newURL: window.location.href,
+      }));
+      await waitUntil(() => window.location.hash.includes("/session"), {
+        timeout: 10000,
+        message: "Session route did not become active",
+      });
+      await waitForComposer();
+
+      const token = `skills-roundtrip-${Date.now()}`;
+      const turns = [];
+      turns.push(await sendPromptAndWait({
+        name: "handshake",
+        prompt: `Odpověz přesně: ${token}. Bez dalších slov.`,
+        expectText: token,
+        connection,
+        workspace,
+      }));
+      turns.push(await sendPromptAndWait({
+        name: "list-skills",
+        prompt: "listni zde všechny své skills",
+        timeout: 240000,
+        connection,
+        workspace,
+      }));
+      turns.push(await sendPromptAndWait({
+        name: "skills-finder-content",
+        prompt: 'napiš zde obsah skillu "skills-finder"',
+        timeout: 300000,
+        connection,
+        workspace,
+      }));
+
+      appendMarker(completeSelector, {
+        ok: true,
+        token,
+        workspaceId: workspace.id,
+        turns,
+        timeline: window.__vesloLiveSkillsFinderRoundtripTimeline ?? [],
+      });
+    } catch (error) {
+      appendMarker(errorSelector, {
+        message: error?.message || String(error),
+        stack: error?.stack || null,
+        progress: window.__vesloLiveSkillsFinderRoundtripProgress ?? null,
+        timeline: window.__vesloLiveSkillsFinderRoundtripTimeline ?? [],
+        body: visibleBodyText().slice(0, 5000),
+        transcript: visibleTranscriptText().slice(-12000),
+      });
+    } finally {
+      clearTimeout(watchdog);
+    }
+  })();
+}
+
+true;
+'''
+
+[[step]]
+name = "live skills finder roundtrip finished"
+action = "wait"
+target = "[data-testid=\"live-skills-finder-roundtrip-complete\"], [data-testid=\"live-skills-finder-roundtrip-error\"]"
+timeout_ms = 850000
+
+[[step]]
+name = "live skills finder roundtrip succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="live-skills-finder-roundtrip-error"]');
+if (error) {
+  throw new Error(`Live skills finder roundtrip failed: ${(error.textContent || "").slice(0, 20000)}`);
+}
+true;
+'''

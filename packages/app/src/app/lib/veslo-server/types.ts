@@ -1301,8 +1301,12 @@ export type VesloSessionTranscriptSnapshot = {
 export type VesloSessionTranscriptPrefetchInput = {
   clickedSessionId?: string | null;
   selectedSessionId?: string | null;
+  clickedSession?: { sessionId: string; directory?: string | null } | null;
+  selectedSession?: { sessionId: string; directory?: string | null } | null;
   loadedTopLevelSessionIds: string[];
   expandedSubagentSessionIds: string[];
+  loadedTopLevelSessions?: Array<{ sessionId: string; directory?: string | null }>;
+  expandedSubagentSessions?: Array<{ sessionId: string; directory?: string | null }>;
   directory?: string | null;
   sessionDirectoriesById?: Record<string, string | null | undefined>;
   limit?: number;

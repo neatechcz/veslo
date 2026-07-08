@@ -28,6 +28,34 @@ import {
   type WorkspaceInfo,
 } from "../lib/tauri";
 
+export type ResolveVesloHostInput = {
+  hostUrl: string;
+  token?: string | null;
+  workspaceId?: string | null;
+  directoryHint?: string | null;
+};
+
+export type ResolveVesloHostResult =
+  | { kind: "fallback" }
+  | {
+      kind: "veslo";
+      hostUrl: string;
+      workspace: VesloWorkspaceInfo | null;
+      opencodeBaseUrl: string;
+      directory: string;
+      auth: OpencodeAuth | undefined;
+    };
+
+export type CreateRemoteWorkspaceFlowInput = {
+  vesloHostUrl?: string | null;
+  vesloToken?: string | null;
+  vesloWorkspaceId?: string | null;
+  directory?: string | null;
+  displayName?: string | null;
+  manageBusy?: boolean;
+  closeModal?: boolean;
+};
+
 export interface RemoteStoreDeps {
   // Workspace state accessors
   getWorkspaces: () => WorkspaceInfo[];
@@ -101,12 +129,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
   // ---------------------------------------------------------------------------
   // resolveVesloHost
   // ---------------------------------------------------------------------------
-  const resolveVesloHost = async (input: {
-    hostUrl: string;
-    token?: string | null;
-    workspaceId?: string | null;
-    directoryHint?: string | null;
-  }) => {
+  const resolveVesloHost = async (input: ResolveVesloHostInput): Promise<ResolveVesloHostResult> => {
     let normalizedHostUrl = normalizeVesloServerUrl(input.hostUrl) ?? "";
     if (!normalizedHostUrl) {
       return { kind: "fallback" as const };
@@ -247,15 +270,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
   // ---------------------------------------------------------------------------
   // createRemoteWorkspaceFlow
   // ---------------------------------------------------------------------------
-  async function createRemoteWorkspaceFlow(input: {
-    vesloHostUrl?: string | null;
-    vesloToken?: string | null;
-    vesloWorkspaceId?: string | null;
-    directory?: string | null;
-    displayName?: string | null;
-    manageBusy?: boolean;
-    closeModal?: boolean;
-  }) {
+  async function createRemoteWorkspaceFlow(input: CreateRemoteWorkspaceFlowInput) {
     if (createRemoteInFlight) {
       deps.wsDebug("create-remote:dedupe", {
         hostUrl: input.vesloHostUrl ?? null,

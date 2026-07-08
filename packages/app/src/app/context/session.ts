@@ -699,7 +699,7 @@ export function createSessionStore(options: {
 
   const transcriptController = createSessionTranscriptController({
     store,
-    setStore: setStore as (...args: any[]) => void,
+    setStore,
     routing: options.routing,
     activeWorkspaceRoot: options.activeWorkspaceRoot,
     appendTranscriptSnapshot: options.appendTranscriptSnapshot,
@@ -765,7 +765,7 @@ export function createSessionStore(options: {
 
   const runtimePrompts = createSessionRuntimePrompts({
     store,
-    setStore: setStore as any,
+    setStore,
     routing: options.routing,
     selectedSessionId: options.selectedSessionId,
     isWorkspaceRuntimeReady,
@@ -799,7 +799,7 @@ export function createSessionStore(options: {
 
   const selectionController = createSessionSelectionController({
     store,
-    setStore: setStore as any,
+    setStore,
     routing: options.routing,
     selectedSessionId: options.selectedSessionId,
     setSelectedSessionId: options.setSelectedSessionId,
@@ -923,7 +923,7 @@ export function createSessionStore(options: {
 
   const eventStreamController = createSessionEventStreamController({
     store,
-    setStore: setStore as any,
+    setStore,
     routing: options.routing,
     client: options.client,
     activeWorkspaceRoot: options.activeWorkspaceRoot,
@@ -971,7 +971,7 @@ export function createSessionStore(options: {
 
   const workspaceCacheController = createSessionWorkspaceCacheController({
     store,
-    setStore: setStore as any,
+    setStore,
     routing: options.routing,
     selectedSessionId: options.selectedSessionId,
     setSelectedSessionId: options.setSelectedSessionId,

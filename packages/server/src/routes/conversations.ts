@@ -60,13 +60,22 @@ type SessionTranscriptPrefetchPort = {
     workspaceId: string;
     clickedSessionId?: string | null;
     selectedSessionId?: string | null;
+    clickedSession?: SessionTranscriptPrefetchSessionRef | null;
+    selectedSession?: SessionTranscriptPrefetchSessionRef | null;
     loadedTopLevelSessionIds: string[];
     expandedSubagentSessionIds: string[];
+    loadedTopLevelSessions?: SessionTranscriptPrefetchSessionRef[];
+    expandedSubagentSessions?: SessionTranscriptPrefetchSessionRef[];
     directory?: string | null;
     sessionDirectoriesById?: Record<string, string | null | undefined>;
     limit?: number;
   }): Promise<unknown>;
   invalidate(input: { workspaceId: string; sessionId: string; directory?: string | null }): void;
+};
+
+type SessionTranscriptPrefetchSessionRef = {
+  sessionId: string;
+  directory?: string | null;
 };
 
 type ResolveConversationReadDirectory = (
@@ -335,6 +344,35 @@ function parseSessionDirectoryMap(input: unknown): Record<string, string> {
     result[sessionId] = directory;
   }
   return result;
+}
+
+function parseSessionPrefetchRef(input: unknown, fieldName: string): SessionTranscriptPrefetchSessionRef | null {
+  if (input === undefined || input === null) return null;
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", `${fieldName} must be an object`);
+  }
+
+  const raw = input as Record<string, unknown>;
+  if (typeof raw.sessionId !== "string") {
+    throw new ApiError(400, "invalid_payload", `${fieldName}.sessionId must be a string`);
+  }
+  const sessionId = raw.sessionId.trim();
+  if (!sessionId) return null;
+  if (raw.directory !== undefined && raw.directory !== null && typeof raw.directory !== "string") {
+    throw new ApiError(400, "invalid_payload", `${fieldName}.directory must be a string`);
+  }
+  const directory = typeof raw.directory === "string" ? raw.directory.trim() : "";
+  return directory ? { sessionId, directory } : { sessionId };
+}
+
+function parseSessionPrefetchRefs(input: unknown, fieldName: string): SessionTranscriptPrefetchSessionRef[] {
+  if (input === undefined || input === null) return [];
+  if (!Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", `${fieldName} must be an array`);
+  }
+  return input
+    .map((value, index) => parseSessionPrefetchRef(value, `${fieldName}[${index}]`))
+    .filter((value): value is SessionTranscriptPrefetchSessionRef => Boolean(value));
 }
 
 function parseConversationRunKind(input: unknown): ConversationRunKind {
@@ -1147,10 +1185,17 @@ export function registerConversationSessionRoutes(
     const payload = body as Record<string, unknown>;
     const clickedSessionId = parseOptionalSessionId(payload.clickedSessionId);
     const selectedSessionId = parseOptionalSessionId(payload.selectedSessionId);
+    const clickedSessionRaw = parseSessionPrefetchRef(payload.clickedSession, "clickedSession");
+    const selectedSessionRaw = parseSessionPrefetchRef(payload.selectedSession, "selectedSession");
     const loadedTopLevelSessionIds = parseSessionIdArray(payload.loadedTopLevelSessionIds, "loadedTopLevelSessionIds");
     const expandedSubagentSessionIds = parseSessionIdArray(
       payload.expandedSubagentSessionIds,
       "expandedSubagentSessionIds",
+    );
+    const loadedTopLevelSessionsRaw = parseSessionPrefetchRefs(payload.loadedTopLevelSessions, "loadedTopLevelSessions");
+    const expandedSubagentSessionsRaw = parseSessionPrefetchRefs(
+      payload.expandedSubagentSessions,
+      "expandedSubagentSessions",
     );
     const limit = parseSessionTranscriptLimit(body.limit);
     const directory = await resolveConversationReadDirectory(
@@ -1166,15 +1211,38 @@ export function registerConversationSessionRoutes(
       }
       sessionDirectoriesById[sessionId] = resolvedSessionDirectory;
     }
+    const resolveSessionPrefetchRef = async (
+      ref: SessionTranscriptPrefetchSessionRef | null,
+    ): Promise<SessionTranscriptPrefetchSessionRef | null> => {
+      if (!ref) return null;
+      if (!ref.directory) return ref;
+      const resolvedDirectory = await resolveConversationReadDirectory(workspace, ref.directory);
+      if (!resolvedDirectory) {
+        throw new ApiError(400, "invalid_directory", "Session directory is required");
+      }
+      return { ...ref, directory: resolvedDirectory };
+    };
+    const clickedSession = await resolveSessionPrefetchRef(clickedSessionRaw);
+    const selectedSession = await resolveSessionPrefetchRef(selectedSessionRaw);
+    const loadedTopLevelSessions = (
+      await Promise.all(loadedTopLevelSessionsRaw.map((ref) => resolveSessionPrefetchRef(ref)))
+    ).filter((ref): ref is SessionTranscriptPrefetchSessionRef => Boolean(ref));
+    const expandedSubagentSessions = (
+      await Promise.all(expandedSubagentSessionsRaw.map((ref) => resolveSessionPrefetchRef(ref)))
+    ).filter((ref): ref is SessionTranscriptPrefetchSessionRef => Boolean(ref));
     const result = await sessionTranscriptPrefetch.updateInterest({
       workspaceId: workspace.id,
       loadedTopLevelSessionIds,
       expandedSubagentSessionIds,
+      loadedTopLevelSessions,
+      expandedSubagentSessions,
       directory,
       sessionDirectoriesById,
       limit,
       ...(clickedSessionId ? { clickedSessionId } : {}),
       ...(selectedSessionId ? { selectedSessionId } : {}),
+      ...(clickedSession ? { clickedSession } : {}),
+      ...(selectedSession ? { selectedSession } : {}),
     });
     return jsonResponse(result);
   });
