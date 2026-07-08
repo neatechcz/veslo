@@ -10,7 +10,7 @@ export function opencodeConfigPath(workspaceRoot: string): string {
   return jsoncPath;
 }
 
-export function opencodeConfigPathInDir(configDir: string): string {
+function opencodeConfigPathInDir(configDir: string): string {
   const jsoncPath = join(configDir, "opencode.jsonc");
   const jsonPath = join(configDir, "opencode.json");
   if (existsSync(jsoncPath)) return jsoncPath;
@@ -18,7 +18,7 @@ export function opencodeConfigPathInDir(configDir: string): string {
   return jsoncPath;
 }
 
-export function userOpencodeConfigDir(configDir?: string): string {
+function userOpencodeConfigDir(configDir?: string): string {
   const trimmed = configDir?.trim();
   return trimmed ? trimmed : join(homedir(), ".config", "opencode");
 }

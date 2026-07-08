@@ -146,7 +146,7 @@ export class MySqlAlertRepository implements AlertRepository {
   }
 }
 
-export function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
+function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
   const reason = (input.reason ?? "").toLowerCase()
   const status = input.toState === "healthy" ? "resolved" : "active"
 

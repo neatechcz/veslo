@@ -1,5 +1,5 @@
 export type SoulScope = "organization" | "user" | "workspace";
-export type SoulVersionSource = "manual" | "api" | "heartbeat" | "restore" | "system";
+type SoulVersionSource = "manual" | "api" | "heartbeat" | "restore" | "system";
 
 export interface SoulVersion {
   id: string;

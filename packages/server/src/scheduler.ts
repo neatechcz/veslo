@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { ApiError } from "./errors.js";
 import { exists, readJsonFile } from "./utils.js";
 
-export type ScheduledJobRun = {
+type ScheduledJobRun = {
   prompt?: string;
   command?: string;
   arguments?: string;

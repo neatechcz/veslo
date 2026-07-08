@@ -57,7 +57,7 @@ export type OpenCodeRouterConfigFile = {
   };
 };
 
-export type ModelRef = {
+type ModelRef = {
   providerID: string;
   modelID: string;
 };

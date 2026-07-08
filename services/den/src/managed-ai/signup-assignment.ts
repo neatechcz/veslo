@@ -11,7 +11,7 @@ import {
 
 export const DEFAULT_CODEX_AUTO_ASSIGN_MODEL = "gpt-5.5"
 
-export type ManagedAiSignupAssignmentCredential = {
+type ManagedAiSignupAssignmentCredential = {
   credentialId: string
   name: string
   activeLeases: number
@@ -112,7 +112,7 @@ export function createManagedAiSignupAssignmentService(
   return service
 }
 
-export async function getDefaultManagedAiSignupAssignmentService(): Promise<ManagedAiSignupAssignmentService | null> {
+async function getDefaultManagedAiSignupAssignmentService(): Promise<ManagedAiSignupAssignmentService | null> {
   if (!defaultServicePromise) {
     defaultServicePromise = (async () => {
       const [{ env }, { managedAiDb }] = await Promise.all([

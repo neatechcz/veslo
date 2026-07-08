@@ -41,7 +41,7 @@ export function selectedFolderContainsRequestedPath(
   return requested.key.startsWith(`${selected.key}/`);
 }
 
-export type FolderAccessPermission = {
+type FolderAccessPermission = {
   id?: string;
   workspaceId?: string;
   permission?: string;
@@ -49,7 +49,7 @@ export type FolderAccessPermission = {
   metadata?: unknown;
 };
 
-export type FolderAccessWorkspace = {
+type FolderAccessWorkspace = {
   id?: string;
   path?: string;
   directory?: string | null;

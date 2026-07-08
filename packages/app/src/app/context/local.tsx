@@ -56,7 +56,7 @@ export function LocalProvider(props: ParentProps) {
   return <LocalContext.Provider value={value}>{props.children}</LocalContext.Provider>;
 }
 
-export function useLocal() {
+function useLocal() {
   const context = useContext(LocalContext);
   if (!context) {
     throw new Error("Local context is missing");

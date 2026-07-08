@@ -7,9 +7,9 @@ export type SidebarMenuItem = {
   onSelect: () => void;
 };
 
-export type SidebarMenuSeparator = { kind: "separator" };
+type SidebarMenuSeparator = { kind: "separator" };
 
-export type SidebarMenuLabel = { kind: "label"; label: string };
+type SidebarMenuLabel = { kind: "label"; label: string };
 
 export type SidebarMenuEntry = SidebarMenuItem | SidebarMenuSeparator | SidebarMenuLabel;
 

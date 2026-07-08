@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { resolve, win32 } from "node:path";
 
-export function stripExtendedWindowsPathPrefix(input: string): string {
+function stripExtendedWindowsPathPrefix(input: string): string {
   if (/^\\\\\?\\UNC\\/i.test(input)) return `\\\\${input.slice("\\\\?\\UNC\\".length)}`;
   if (/^\/\/\?\/UNC\//i.test(input)) return `//${input.slice("//?/UNC/".length)}`;
   if (/^\\\\\?\\/i.test(input)) return input.slice("\\\\?\\".length);

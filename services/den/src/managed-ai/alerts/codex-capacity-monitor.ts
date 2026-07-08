@@ -16,7 +16,7 @@ const LEGACY_EMAIL_SENT_ENTITY_TYPE = "codex_capacity_alert"
 const EMAIL_DEDUPE_EVENT_LIMIT = 5000
 const EMAIL_DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1000
 
-export type CodexCapacityAlertEmailInput = {
+type CodexCapacityAlertEmailInput = {
   to: string
   subject: string
   html: string
@@ -32,7 +32,7 @@ export type CodexCapacityAlertMonitorDeps = {
   state?: CodexCapacityAlertMonitorState
 }
 
-export type CodexCapacityAlertMonitorState = {
+type CodexCapacityAlertMonitorState = {
   sentEmailKeys: Set<string>
 }
 

@@ -13,7 +13,7 @@ export type RecordUsageInput = {
   totalTokens?: number
 }
 
-export type UsageGroupBy = "total" | "credential" | "user" | "org"
+type UsageGroupBy = "total" | "credential" | "user" | "org"
 
 export type AggregateUsageInput = {
   groupBy: UsageGroupBy
@@ -22,7 +22,7 @@ export type AggregateUsageInput = {
   orgId: string | null
 }
 
-export type UsageAggregateSummary = {
+type UsageAggregateSummary = {
   totalTokens: number
   totalRequests: number
 }

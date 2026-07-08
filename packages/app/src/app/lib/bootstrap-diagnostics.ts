@@ -13,7 +13,7 @@ export type DiagnosticsLane =
   | "veslo-server-supervised-output"
   | "delivery-state";
 
-export type DiagnosticsDeliveryPath = "local-server" | "desktop-direct-fallback";
+type DiagnosticsDeliveryPath = "local-server" | "desktop-direct-fallback";
 
 export type NewSessionDisabledReasonInput = {
   runtimeConnecting?: boolean;
@@ -24,7 +24,7 @@ export type NewSessionDisabledReasonInput = {
   hasQuickChatHandler?: boolean;
 };
 
-export type NewSessionDisabledInput = NewSessionDisabledReasonInput;
+type NewSessionDisabledInput = NewSessionDisabledReasonInput;
 
 export type BootstrapDiagnosticsCloudContext = {
   denApiBase?: string | null;

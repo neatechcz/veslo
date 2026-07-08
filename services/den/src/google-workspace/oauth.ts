@@ -7,7 +7,7 @@ export type StartGoogleWorkspaceAuthorizationInput = {
   connectorId: GoogleWorkspaceConnectorId
 }
 
-export type StartGoogleWorkspaceAuthorizationResult = {
+type StartGoogleWorkspaceAuthorizationResult = {
   authorizeUrl: string
 }
 

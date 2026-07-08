@@ -6,11 +6,11 @@ export type WorkspaceDebugEvent = {
   payload?: unknown;
 };
 
-export type WorkspaceBusyEntry = {
+type WorkspaceBusyEntry = {
   startedAt: number;
 };
 
-export type WorkspaceBusySessions = Record<string, WorkspaceBusyEntry>;
+type WorkspaceBusySessions = Record<string, WorkspaceBusyEntry>;
 
 export type WorkspaceBusyMap = Record<string, WorkspaceBusySessions>;
 

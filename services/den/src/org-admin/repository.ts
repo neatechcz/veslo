@@ -306,7 +306,7 @@ export function createOrganizationAdminRepository(
   }
 }
 
-export function createDrizzleOrganizationAdminStore(database: any): OrganizationAdminDataStore {
+function createDrizzleOrganizationAdminStore(database: any): OrganizationAdminDataStore {
   const store: OrganizationAdminDataStore = {
     async findOrganizationById(orgId) {
       const rows = await database
@@ -520,15 +520,15 @@ export async function acceptOrganizationInvite(input: AcceptOrganizationInviteIn
   return (await getDefaultRepository()).acceptOrganizationInvite(input)
 }
 
-export async function listOrganizationMembers(orgId: string) {
+async function listOrganizationMembers(orgId: string) {
   return (await getDefaultRepository()).listOrganizationMembers(orgId)
 }
 
-export async function listOrganizationInvites(orgId: string) {
+async function listOrganizationInvites(orgId: string) {
   return (await getDefaultRepository()).listOrganizationInvites(orgId)
 }
 
-export async function listOrganizationDomains(orgId: string) {
+async function listOrganizationDomains(orgId: string) {
   return (await getDefaultRepository()).listOrganizationDomains(orgId)
 }
 

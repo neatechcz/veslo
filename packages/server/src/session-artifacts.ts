@@ -106,7 +106,7 @@ export function deriveLatestRunArtifacts(source: SessionArtifactSource, options:
   return items;
 }
 
-export function deriveLatestRunArtifactsFromMessages(
+function deriveLatestRunArtifactsFromMessages(
   messages: SessionArtifactMessage[],
   options: DeriveArtifactsOptions = {},
 ): SessionLatestRunArtifactsResponse {
@@ -132,7 +132,7 @@ export function deriveLatestRunArtifactsResponse(
   };
 }
 
-export function hasSoulArtifacts(items: SessionArtifactItem[]): boolean {
+function hasSoulArtifacts(items: SessionArtifactItem[]): boolean {
   return items.some((item) => item.family === "soul");
 }
 

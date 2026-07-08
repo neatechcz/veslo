@@ -1,4 +1,4 @@
-export type PerfLogRecord = {
+type PerfLogRecord = {
   id: number;
   at: string;
   ts: number;

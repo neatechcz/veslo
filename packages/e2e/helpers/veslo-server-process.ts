@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export type WorkspaceSkillLockfile = {
+type WorkspaceSkillLockfile = {
   schemaVersion: 1;
   workspaceId: string;
   skillSetId: string;
@@ -248,7 +248,7 @@ export async function startStandaloneVesloServerProfile(
   };
 }
 
-export async function syncStandaloneWorkspaceSkillMaterialization(
+async function syncStandaloneWorkspaceSkillMaterialization(
   input: SyncStandaloneWorkspaceInput,
 ): Promise<unknown> {
   const response = await fetch(
@@ -274,7 +274,7 @@ export async function syncStandaloneWorkspaceSkillMaterialization(
   return response.json();
 }
 
-export function readStandaloneWorkspaceLockfile(profile: StandaloneVesloServerProfile): WorkspaceSkillLockfile {
+function readStandaloneWorkspaceLockfile(profile: StandaloneVesloServerProfile): WorkspaceSkillLockfile {
   if (!existsSync(profile.lockfilePath)) {
     throw new Error(`Standalone workspace lockfile is missing at ${profile.lockfilePath}`);
   }

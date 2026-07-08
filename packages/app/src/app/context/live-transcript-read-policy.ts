@@ -25,7 +25,7 @@ export type LiveTranscriptReadPolicyEvent =
       reason: "sendPrompt:compact-success";
     };
 
-export type LiveTranscriptReadAllowance = {
+type LiveTranscriptReadAllowance = {
   workspaceId: string;
   reason: LiveTranscriptReadPolicyEvent["reason"];
   eventType: LiveTranscriptReadPolicyEvent["type"];

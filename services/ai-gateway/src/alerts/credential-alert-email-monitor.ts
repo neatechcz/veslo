@@ -11,13 +11,13 @@ const EMAIL_DEDUPE_EVENT_LIMIT = 5000;
 const DEFAULT_THROTTLE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MAX_AUDIT_ENTITY_ID_LENGTH = 64;
 
-export type CredentialAlertRecipient = {
+type CredentialAlertRecipient = {
   userId?: string | null;
   email: string;
   name?: string | null;
 };
 
-export type CredentialAlertEmailInput = {
+type CredentialAlertEmailInput = {
   to: string;
   subject: string;
   html: string;
@@ -117,7 +117,7 @@ export function shouldEmailCredentialAlert(alert: AlertRecord): boolean {
   return isFaultReason(readAlertReason(alert) ?? alert.title);
 }
 
-export function buildCredentialAlertEmail(alert: AlertRecord) {
+function buildCredentialAlertEmail(alert: AlertRecord) {
   const severity = alert.severity.toUpperCase();
   const subject = `[${severity}] Veslo credential alert: ${alert.title}`;
   const reason = readAlertReason(alert);

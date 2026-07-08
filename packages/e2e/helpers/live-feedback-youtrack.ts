@@ -18,7 +18,7 @@ export type YouTrackIssue = {
   description?: string | null;
 };
 
-export type LiveFeedbackArtifact = {
+type LiveFeedbackArtifact = {
   runId: string;
   title: string;
   expectedSummary: string;
@@ -93,13 +93,13 @@ export function resolveLiveFeedbackYouTrackConfig(
   };
 }
 
-export function assertYouTrackRestConfigAvailable(config: Pick<LiveFeedbackYouTrackConfig, "baseUrl" | "token">) {
+function assertYouTrackRestConfigAvailable(config: Pick<LiveFeedbackYouTrackConfig, "baseUrl" | "token">) {
   if (!config.baseUrl || !config.token) {
     throw new Error("YouTrack REST config is missing. Set E2E_YOUTRACK_URL and E2E_YOUTRACK_TOKEN for the live feedback smoke.");
   }
 }
 
-export async function searchYouTrackFeedbackIssue(config: LiveFeedbackYouTrackConfig, title: string) {
+async function searchYouTrackFeedbackIssue(config: LiveFeedbackYouTrackConfig, title: string) {
   assertYouTrackRestConfigAvailable(config);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
@@ -128,7 +128,7 @@ export async function searchYouTrackFeedbackIssue(config: LiveFeedbackYouTrackCo
   }
 }
 
-export async function waitForYouTrackFeedbackIssue(config: LiveFeedbackYouTrackConfig, title: string) {
+async function waitForYouTrackFeedbackIssue(config: LiveFeedbackYouTrackConfig, title: string) {
   const deadline = Date.now() + config.pollTimeoutMs;
   let lastError: string | null = null;
 
@@ -148,7 +148,7 @@ export async function waitForYouTrackFeedbackIssue(config: LiveFeedbackYouTrackC
   throw new Error(`Timed out waiting for a YouTrack issue for feedback title "${title}".${suffix}`);
 }
 
-export function writeLiveFeedbackArtifact(artifact: LiveFeedbackArtifact) {
+function writeLiveFeedbackArtifact(artifact: LiveFeedbackArtifact) {
   const outputDir = join(process.cwd(), ".tmp-live-feedback-youtrack");
   mkdirSync(outputDir, { recursive: true });
   const outputPath = join(outputDir, "latest.json");

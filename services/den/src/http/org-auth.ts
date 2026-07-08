@@ -6,8 +6,8 @@ import { ensureDefaultOrg } from "../orgs.js"
 import { hasRequiredOrgRole, pickActiveOrganization, toCurrentOrgRole, type OrganizationAccessSummary } from "./access.js"
 import { requireSession, type SessionContext } from "./session.js"
 
-export const ORG_HEADER_NAME = "x-veslo-org-id"
-export const DEN_ORG_HEADER_NAME = "x-veslo-den-org-id"
+const ORG_HEADER_NAME = "x-veslo-org-id"
+const DEN_ORG_HEADER_NAME = "x-veslo-den-org-id"
 
 export type OrganizationSummary = OrganizationAccessSummary
 
@@ -146,7 +146,7 @@ export async function isPlatformAdmin(userId: string) {
   return rows.length > 0
 }
 
-export async function findOrganizationById(orgId: string) {
+async function findOrganizationById(orgId: string) {
   const rows = await db
     .select({
       id: OrgTable.id,
@@ -161,7 +161,7 @@ export async function findOrganizationById(orgId: string) {
   return rows[0] ?? null
 }
 
-export async function resolveRequestedOrganization(req: express.Request, session: SessionContext) {
+async function resolveRequestedOrganization(req: express.Request, session: SessionContext) {
   const organizations = await resolveMembershipOrganizations(session)
   const requestedOrgId = readRequestedOrganizationId(req)
   const picked = pickActiveOrganization(organizations, requestedOrgId)

@@ -1,5 +1,5 @@
 export type GlobalSidebarSide = "left" | "right";
-export type GlobalSidebarLayoutMode = "wide" | "narrow";
+type GlobalSidebarLayoutMode = "wide" | "narrow";
 
 export type GlobalSidebarDockedVisibility = {
   left: boolean;
@@ -13,8 +13,8 @@ export type GlobalSidebarLayoutState = {
   overlay: GlobalSidebarSide | null;
 };
 
-export const GLOBAL_LEFT_SIDEBAR_DOCKED_WIDTH = 260;
-export const GLOBAL_RIGHT_SIDEBAR_DOCKED_WIDTH = 280;
+const GLOBAL_LEFT_SIDEBAR_DOCKED_WIDTH = 260;
+const GLOBAL_RIGHT_SIDEBAR_DOCKED_WIDTH = 280;
 export const GLOBAL_CENTER_MIN_INTERACTIVE_WIDTH = 360;
 export const GLOBAL_CENTER_MIN_INTERACTIVE_WIDTH_EXIT = 392;
 
@@ -55,7 +55,7 @@ export const createInitialGlobalSidebarState = (
   };
 };
 
-export const deriveGlobalSidebarLayoutMode = (
+const deriveGlobalSidebarLayoutMode = (
   currentMode: GlobalSidebarLayoutMode,
   availableCenterWidth: number,
 ): GlobalSidebarLayoutMode => {

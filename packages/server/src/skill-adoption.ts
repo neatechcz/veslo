@@ -6,7 +6,7 @@ import { packSkillDirectory } from "./skill-packages.js";
 import { exists } from "./utils.js";
 import { validateSkillName } from "./validators.js";
 
-export type SkillAdoptionScope = "personal-global" | "workspace";
+type SkillAdoptionScope = "personal-global" | "workspace";
 
 export type SkillAdoptionTarget = {
   scope: SkillAdoptionScope;
@@ -19,7 +19,7 @@ export type SkillAdoptionRequest = {
   package: SkillPackageArchive;
 };
 
-export type SkillAdoptionRegistryScope = "user" | "workspace";
+type SkillAdoptionRegistryScope = "user" | "workspace";
 
 export type SkillAdoptionRegistryClient = {
   createSkill(input: {

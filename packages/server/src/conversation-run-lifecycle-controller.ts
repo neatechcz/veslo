@@ -12,33 +12,33 @@ import {
 } from "./orchestrator-lifecycle-client.js";
 import type { WorkspaceInfo } from "./types.js";
 
-export type ConversationRunLifecycleKind = "prompt_async" | "command" | "shell" | "summarize";
+type ConversationRunLifecycleKind = "prompt_async" | "command" | "shell" | "summarize";
 
-export type ConversationRunLifecycleTracer = {
+type ConversationRunLifecycleTracer = {
   entries: Array<Record<string, unknown>>;
   traceId: string | null;
   record(event: string, payload?: Record<string, unknown>): void;
   step<T>(event: string, fn: () => Promise<T>, payload?: Record<string, unknown>): Promise<T>;
 };
 
-export type ConversationRunLifecycleTarget = {
+type ConversationRunLifecycleTarget = {
   directory: string;
   binding?: unknown | null;
   opencodeSessionId: string;
   conversationId: string;
 };
 
-export type ConversationRunLifecycleTimerPort = {
+type ConversationRunLifecycleTimerPort = {
   setTimeout(callback: () => void, delayMs: number): unknown;
   clearTimeout(handle: unknown): void;
   unref?(handle: unknown): void;
 };
 
-export type ConversationRunLifecycleTracePort = {
+type ConversationRunLifecycleTracePort = {
   record(event: string, payload?: Record<string, unknown>): void;
 };
 
-export type ConversationRunLifecycleSubmitOpenCodeInput = {
+type ConversationRunLifecycleSubmitOpenCodeInput = {
   runTrace: ConversationRunLifecycleTracer;
   workspace: WorkspaceInfo;
   target: ConversationRunLifecycleTarget;
@@ -49,11 +49,11 @@ export type ConversationRunLifecycleSubmitOpenCodeInput = {
   origin: string | null;
 };
 
-export type ConversationRunLifecycleSubmitOpenCodePort = (
+type ConversationRunLifecycleSubmitOpenCodePort = (
   input: ConversationRunLifecycleSubmitOpenCodeInput,
 ) => Promise<unknown>;
 
-export type ConversationRunLifecycleAiGatewayActiveRunInput = {
+type ConversationRunLifecycleAiGatewayActiveRunInput = {
   traceId: string | null;
   workspaceId: string;
   conversationId: string;
@@ -64,7 +64,7 @@ export type ConversationRunLifecycleAiGatewayActiveRunInput = {
   runtimeAuthorizationActorTokenHash: string | null;
 };
 
-export type ConversationRunLifecycleAiGatewayActiveRunPort = {
+type ConversationRunLifecycleAiGatewayActiveRunPort = {
   register(input: ConversationRunLifecycleAiGatewayActiveRunInput): void;
   unregister(input: Omit<
     ConversationRunLifecycleAiGatewayActiveRunInput,
@@ -72,7 +72,7 @@ export type ConversationRunLifecycleAiGatewayActiveRunPort = {
   >): void;
 };
 
-export type ConversationRunLifecycleProviderStartWatchInput = {
+type ConversationRunLifecycleProviderStartWatchInput = {
   workspaceId: string;
   conversationId: string;
   runId: string;
@@ -82,40 +82,40 @@ export type ConversationRunLifecycleProviderStartWatchInput = {
   startedAt: number;
 };
 
-export type ConversationRunLifecycleProviderStartWatchResult = {
+type ConversationRunLifecycleProviderStartWatchResult = {
   started: boolean;
   timeoutMs: number;
 };
 
-export type ConversationRunLifecycleAiGatewayProviderWatchPort = {
+type ConversationRunLifecycleAiGatewayProviderWatchPort = {
   waitForProviderStart(
     input: ConversationRunLifecycleProviderStartWatchInput,
   ): Promise<ConversationRunLifecycleProviderStartWatchResult>;
 };
 
-export type ConversationRunLifecycleAbortOpenCodeInput = {
+type ConversationRunLifecycleAbortOpenCodeInput = {
   runTrace: ConversationRunLifecycleTracer;
   workspace: WorkspaceInfo;
   target: ConversationRunLifecycleTarget;
   runId: string;
 };
 
-export type ConversationRunLifecycleAbortOpenCodePort = (
+type ConversationRunLifecycleAbortOpenCodePort = (
   input: ConversationRunLifecycleAbortOpenCodeInput,
 ) => Promise<unknown>;
 
-export type ConversationRunLifecycleAbortActiveGatewayProxyRequestsInput = {
+type ConversationRunLifecycleAbortActiveGatewayProxyRequestsInput = {
   workspaceId: string;
   runId: string;
   sessionId: string;
   reason: string;
 };
 
-export type ConversationRunLifecycleAbortActiveGatewayProxyRequestsPort = (
+type ConversationRunLifecycleAbortActiveGatewayProxyRequestsPort = (
   input: ConversationRunLifecycleAbortActiveGatewayProxyRequestsInput,
 ) => unknown[];
 
-export type ConversationRunLifecycleScheduleReconcileInput = {
+type ConversationRunLifecycleScheduleReconcileInput = {
   workspace: WorkspaceInfo;
   conversationId: string;
   runId: string;
@@ -126,7 +126,7 @@ export type ConversationRunLifecycleScheduleReconcileInput = {
   attempt?: number;
 };
 
-export type ConversationRunLifecycleSubmitQueuePolicy = "normal" | "send-now" | "server-queue-only";
+type ConversationRunLifecycleSubmitQueuePolicy = "normal" | "send-now" | "server-queue-only";
 
 export type ConversationRunLifecycleSubmitInput = {
   runTrace: ConversationRunLifecycleTracer;
@@ -142,12 +142,12 @@ export type ConversationRunLifecycleSubmitInput = {
   runtimeAuthorizationActorTokenHash?: string | null;
 };
 
-export type ConversationRunLifecycleSubmitResult = {
+type ConversationRunLifecycleSubmitResult = {
   httpStatus: number;
   payload: Record<string, unknown>;
 };
 
-export type ConversationRunLifecycleTranscriptAppendInput = {
+type ConversationRunLifecycleTranscriptAppendInput = {
   workspace: WorkspaceInfo;
   conversationId: string;
   sessionId: string;
@@ -155,13 +155,13 @@ export type ConversationRunLifecycleTranscriptAppendInput = {
   shouldReconcile: boolean;
 };
 
-export type ConversationRunLifecycleAbortInput = {
+type ConversationRunLifecycleAbortInput = {
   workspace: WorkspaceInfo;
   target: ConversationRunLifecycleTarget;
   runId: string;
 };
 
-export type ConversationRunLifecycleAbortResult = {
+type ConversationRunLifecycleAbortResult = {
   upstream: unknown;
   abortedGatewayRequestCount: number;
 };

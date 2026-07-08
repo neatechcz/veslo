@@ -32,7 +32,7 @@ export const clearLegacySessionModelPersistence = (storage: StorageKeyStore) => 
   return keys;
 };
 
-export const parseSessionModelOverrides = (raw: string | null) => {
+const parseSessionModelOverrides = (raw: string | null) => {
   if (!raw) return {} as Record<string, ModelRef>;
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
@@ -61,7 +61,7 @@ export const parseSessionModelOverrides = (raw: string | null) => {
   }
 };
 
-export const serializeSessionModelOverrides = (overrides: Record<string, ModelRef>) => {
+const serializeSessionModelOverrides = (overrides: Record<string, ModelRef>) => {
   const entries = Object.entries(overrides);
   if (!entries.length) return null;
   const payload: Record<string, string> = {};

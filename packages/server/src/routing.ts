@@ -53,7 +53,7 @@ export function addRoute(routes: Route[], method: string, path: string, auth: Au
   routes.push({ method, regex, keys, auth, handler });
 }
 
-export function pathToRegex(path: string, keys: string[]): RegExp {
+function pathToRegex(path: string, keys: string[]): RegExp {
   const pattern = path.replace(/:([A-Za-z0-9_]+)/g, (_, key) => {
     keys.push(key);
     return "([^/]+)";

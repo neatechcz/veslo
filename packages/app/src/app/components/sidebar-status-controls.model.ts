@@ -3,7 +3,7 @@ import { currentLocale, t } from "../../i18n";
 
 const tr = (key: string) => t(key, currentLocale());
 
-export function getOpencodeStatusMeta(clientConnected: boolean) {
+function getOpencodeStatusMeta(clientConnected: boolean) {
   return clientConnected
     ? { text: "text-green-11", label: tr("status.connected") }
     : { text: "text-gray-10", label: tr("status.offline") };

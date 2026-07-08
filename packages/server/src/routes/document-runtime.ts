@@ -1,9 +1,9 @@
 import { jsonResponse } from "../route-helpers.js";
 import { addRoute, type RequestContext, type Route } from "../routing.js";
 
-export const DOCUMENT_RUNTIME_ID = "veslo-document-runtime";
+const DOCUMENT_RUNTIME_ID = "veslo-document-runtime";
 
-export const DOCUMENT_RUNTIME_STATUS_VALUES = [
+const DOCUMENT_RUNTIME_STATUS_VALUES = [
   "ready",
   "missing",
   "repairing",
@@ -19,7 +19,7 @@ export const DOCUMENT_RUNTIME_STATUS_VALUES = [
 
 export type DocumentRuntimeStatus = typeof DOCUMENT_RUNTIME_STATUS_VALUES[number];
 
-export type DocumentRuntimeSkillReadiness = {
+type DocumentRuntimeSkillReadiness = {
   id: "veslo-docx" | "veslo-xlsx" | "veslo-pdf" | "veslo-pptx";
   format: "docx" | "xlsx" | "pdf" | "pptx";
   ready: boolean;

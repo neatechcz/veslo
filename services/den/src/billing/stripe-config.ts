@@ -1,6 +1,6 @@
 export type OrganizationBillingTier = "basic" | "extended"
 export type OrganizationBillingInterval = "monthly" | "annual"
-export type OrganizationBillingTaxMode = "manual" | "stripe_tax"
+type OrganizationBillingTaxMode = "manual" | "stripe_tax"
 
 export interface StripeOrganizationBillingConfig {
   enabled: boolean

@@ -1,7 +1,7 @@
 import type { ModelRef, ProviderListItem, MessageWithParts } from "../types";
 
 /** Fraction of context window that triggers auto-compaction. */
-export const COMPACTION_THRESHOLD_RATIO = 0.90;
+const COMPACTION_THRESHOLD_RATIO = 0.90;
 
 /**
  * Model-specific overrides for the compaction context limit.
@@ -13,7 +13,7 @@ const COMPACTION_TOKEN_OVERRIDES: Array<{ prefix: string; limit: number }> = [
   { prefix: "gpt-5.4", limit: 128_000 },
 ];
 
-export function resolveCompactionThreshold(
+function resolveCompactionThreshold(
   model: ModelRef,
   allProviders: ProviderListItem[],
 ): number | null {

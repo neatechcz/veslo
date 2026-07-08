@@ -43,7 +43,7 @@ export type LiveDesktopAuthSeedResult = {
 export const DEFAULT_DEN_API_BASE = 'https://den-control-plane-veslo.onrender.com';
 export const DEFAULT_DESKTOP_AUTH_REDIRECT_URI = 'veslo://auth-complete';
 export const DEFAULT_DESKTOP_AUTH_TIMEOUT_MS = 5 * 60 * 1000;
-export const DEFAULT_DESKTOP_AUTH_POLL_INTERVAL_MS = 1250;
+const DEFAULT_DESKTOP_AUTH_POLL_INTERVAL_MS = 1250;
 
 function normalizeOptionalText(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;

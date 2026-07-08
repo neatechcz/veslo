@@ -1,4 +1,4 @@
-export const DEFAULT_MANAGED_AI_BOOTSTRAP_TIMEOUT_MS = 180_000;
+const DEFAULT_MANAGED_AI_BOOTSTRAP_TIMEOUT_MS = 180_000;
 
 export async function waitForManagedAiBootstrapReady(input: {
   hasManagedProfile: boolean;

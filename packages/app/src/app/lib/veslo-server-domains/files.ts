@@ -268,4 +268,4 @@ export function createFilesClient(context: FilesClientContext) {
   };
 }
 
-export type FilesClient = ReturnType<typeof createFilesClient>;
+type FilesClient = ReturnType<typeof createFilesClient>;

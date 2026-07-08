@@ -3,7 +3,7 @@ import http from "node:http"
 import { z } from "zod"
 import { DockerWorkerAdapter, type DockerWorkerAdapterConfig, type WorkerDockerAdapter } from "./docker.js"
 
-export type WorkerManagerConfig = {
+type WorkerManagerConfig = {
   token: string
   publicDomainSuffix: string
   workerImage: string

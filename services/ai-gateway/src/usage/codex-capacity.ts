@@ -14,7 +14,7 @@ export type CodexCapacityWindow = {
   measurableCredentials: number;
 };
 
-export type CodexCapacityCredentialRecord = {
+type CodexCapacityCredentialRecord = {
   id: string;
   name: string;
   state: CredentialState | null;

@@ -14,7 +14,7 @@ export class OpenAiOAuthRefreshError extends Error {
   }
 }
 
-export type RefreshOpenAiOAuthInput = {
+type RefreshOpenAiOAuthInput = {
   bindingId: string;
   credential: CredentialRecord;
   secret: OpenAiOAuthSecret;

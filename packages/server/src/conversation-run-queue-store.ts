@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Database } from "bun:sqlite";
 
-export type ConversationRunQueueState = "pending" | "starting" | "submitted" | "failed" | "cancelled";
+type ConversationRunQueueState = "pending" | "starting" | "submitted" | "failed" | "cancelled";
 
 export type ConversationRunQueueItem = {
   queueItemId: string;
@@ -94,7 +94,7 @@ const expandHome = (input: string): string =>
     ? join(homedir(), input.slice(2))
     : input;
 
-export function resolveConversationRunQueueDbPath(options?: { dbPath?: string; dataDir?: string }): string {
+function resolveConversationRunQueueDbPath(options?: { dbPath?: string; dataDir?: string }): string {
   const explicitDb = normalizeText(options?.dbPath) || normalizeText(process.env.VESLO_CONVERSATION_RUN_QUEUE_DB_PATH);
   if (explicitDb) return resolve(expandHome(explicitDb));
   const explicitDir =

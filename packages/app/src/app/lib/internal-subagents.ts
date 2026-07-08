@@ -1,6 +1,6 @@
 import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 
-export const VESLO_INTERNAL_SUBAGENT_PREFIX = "veslo-internal-";
+const VESLO_INTERNAL_SUBAGENT_PREFIX = "veslo-internal-";
 
 export function isVesloInternalSubagentType(value: unknown): boolean {
   if (typeof value !== "string") return false;

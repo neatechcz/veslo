@@ -26,5 +26,5 @@ export function createDb(databaseUrl: string) {
   };
 }
 
-export type AiGatewayDbHandle = ReturnType<typeof createDb>;
+type AiGatewayDbHandle = ReturnType<typeof createDb>;
 export type AiGatewayDb = AiGatewayDbHandle["db"];

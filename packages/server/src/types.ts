@@ -7,13 +7,13 @@ import type {
   PluginVisibility,
 } from "./plugin-policy.js";
 
-export type WorkspaceType = "local" | "remote";
+type WorkspaceType = "local" | "remote";
 
 export type ApprovalMode = "manual" | "auto";
 
 export type TokenScope = "owner" | "collaborator" | "viewer";
 
-export type ProviderPlacement = "in-sandbox" | "host-machine" | "client-machine" | "external";
+type ProviderPlacement = "in-sandbox" | "host-machine" | "client-machine" | "external";
 
 export type LogFormat = "pretty" | "json";
 
@@ -192,7 +192,7 @@ export interface ApiErrorBody {
   details?: unknown;
 }
 
-export type ResourceOwnerKind = "workspace" | "user" | "organization" | "platform";
+type ResourceOwnerKind = "workspace" | "user" | "organization" | "platform";
 
 export interface ResourceOwner {
   kind: ResourceOwnerKind;
@@ -263,9 +263,9 @@ export interface SkillItem {
 
 export type ManagedSkillSource = "personal" | "workspace" | "organization" | "platform";
 
-export type WorkspaceSkillWorkspaceScope = "personal" | "organization";
+type WorkspaceSkillWorkspaceScope = "personal" | "organization";
 
-export type SkillItemRegistryMetadata = {
+type SkillItemRegistryMetadata = {
   skillId?: string;
   installationId?: string;
   policyId?: string;
@@ -287,7 +287,7 @@ export type WorkspaceSkillSetUser = {
   orgId?: string | null;
 };
 
-export type WorkspaceSkillSetUpdatePolicy = "pinned" | "latest_user" | "latest_approved" | "release_channel";
+type WorkspaceSkillSetUpdatePolicy = "pinned" | "latest_user" | "latest_approved" | "release_channel";
 
 export type WorkspaceSkillRolloutRemovalPolicy = "user_removable" | "admin_removable" | "locked";
 
@@ -413,7 +413,7 @@ export interface HubSkillItem {
   };
 }
 
-export type HubMcpOAuthConfig =
+type HubMcpOAuthConfig =
   | boolean
   | {
       clientId: string;

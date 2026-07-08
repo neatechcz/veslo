@@ -92,7 +92,7 @@ async function resolveWslConnectIp(distro: string): Promise<{ ip: string; detail
   return { ip, detail };
 }
 
-export function resolveWslExe(): string {
+function resolveWslExe(): string {
   const override = process.env.VESLO_WSL_EXE?.trim();
   if (override) return override;
   const systemRoot = process.env.SystemRoot?.trim() || process.env.SYSTEMROOT?.trim();
@@ -103,7 +103,7 @@ export function resolveWslExe(): string {
   return "wsl.exe";
 }
 
-export function isWslStatusAvailableSync(): boolean {
+function isWslStatusAvailableSync(): boolean {
   if (process.platform !== "win32") return false;
   const result = spawnSync(resolveWslExe(), ["--status"], {
     encoding: "utf8",
@@ -113,7 +113,7 @@ export function isWslStatusAvailableSync(): boolean {
   return !result.error && result.status === 0;
 }
 
-export function runWsl(args: string[], timeoutMs = 15_000): Promise<WslCommandResult> {
+function runWsl(args: string[], timeoutMs = 15_000): Promise<WslCommandResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(resolveWslExe(), args, {
       stdio: ["ignore", "pipe", "pipe"],
@@ -185,7 +185,7 @@ export async function requireWslInDistro(
   return result.stdout.trim();
 }
 
-export async function listWslDistributions(): Promise<WslDistro[]> {
+async function listWslDistributions(): Promise<WslDistro[]> {
   const result = await runWsl(["-l", "-v"], 5000);
   if (result.code !== 0) {
     const detail = (result.stderr || result.stdout).trim();

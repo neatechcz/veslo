@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 
 export type SoulScope = "organization" | "user"
-export type SoulVersionSource = "manual" | "api" | "heartbeat" | "restore" | "system"
+type SoulVersionSource = "manual" | "api" | "heartbeat" | "restore" | "system"
 
 export type SoulVersion = {
   id: string

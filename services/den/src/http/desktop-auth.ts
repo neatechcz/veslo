@@ -19,7 +19,7 @@ import {
   type HandoffRecord,
 } from "./desktop-auth-helpers.js"
 
-export { createHandoffCode, consumeHandoffCode, type HandoffRecord } from "./desktop-auth-helpers.js"
+
 
 export const desktopAuthRouter = express.Router()
 const CONSUMED_HANDOFF_RETENTION_MS = 24 * 60 * 60 * 1000

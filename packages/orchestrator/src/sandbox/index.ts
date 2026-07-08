@@ -10,15 +10,8 @@ import { MacSandboxExec } from "./mac-sandbox-exec.js";
 import { WindowsWsl2 } from "./windows-wsl2/index.js";
 import { WindowsJobObject } from "./windows-stubs.js";
 
-export type {
-  SandboxCommand,
-  SandboxLaunch,
-  SandboxMount,
-  SandboxSpawnOptions,
-  WorkerSandbox,
-} from "./types.js";
-export { MacSandboxExec, WindowsWsl2, WindowsJobObject };
-export { defaultBlockedReadPaths } from "./blocked-defaults.js";
+export type { SandboxLaunch, WorkerSandbox } from "./types.js";
+export { MacSandboxExec };
 
 export function resolveSandbox(): WorkerSandbox {
   if (process.platform === "darwin") return MacSandboxExec;

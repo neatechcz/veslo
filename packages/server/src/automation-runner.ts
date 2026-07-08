@@ -22,7 +22,7 @@ export type AutomationExecutionInput = {
 
 export type AutomationExecutionResult = { sessionId: string; createdSession: boolean };
 
-export type WorkspaceRef = { id: string; path: string };
+type WorkspaceRef = { id: string; path: string };
 
 export type AutomationRunner = {
   start(): Promise<void>;

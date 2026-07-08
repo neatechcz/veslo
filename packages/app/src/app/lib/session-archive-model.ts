@@ -111,7 +111,7 @@ export function buildArchivedSessionDisplayLabel(
   return parts.length > 0 ? parts.join(" · ") : item.sessionId;
 }
 
-export function matchArchiveAvailability(
+function matchArchiveAvailability(
   record: VesloSessionArchiveRecord,
   workspaces: WorkspaceInfo[],
 ): { availableOnThisDevice: boolean; workspace: WorkspaceInfo | null } {

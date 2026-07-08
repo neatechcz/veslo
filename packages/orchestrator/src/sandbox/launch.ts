@@ -9,7 +9,7 @@ export function commandToShellString(command: SandboxCommand): string {
   return [command.program, ...command.args].map(shellQuote).join(" ");
 }
 
-export function directLaunch(command: SandboxCommand): SandboxLaunch {
+function directLaunch(command: SandboxCommand): SandboxLaunch {
   return {
     command: command.program,
     args: command.args,

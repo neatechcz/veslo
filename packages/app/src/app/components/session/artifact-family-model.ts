@@ -9,7 +9,7 @@ import {
 
 export type ArtifactFamilyId = "files" | "skills" | "mcp" | "soul";
 
-export type ArtifactFileInteraction = "modified" | "opened";
+type ArtifactFileInteraction = "modified" | "opened";
 
 export type ArtifactFamilyItem = {
   id: string;
@@ -125,7 +125,7 @@ function isTechnicalArtifactPath(path: string | undefined, workspaceRoot?: strin
   return false;
 }
 
-export function isUserRelevantArtifactPath(path: string | undefined, workspaceRoot?: string): boolean {
+function isUserRelevantArtifactPath(path: string | undefined, workspaceRoot?: string): boolean {
   const normalized = normalizePath(path ?? "");
   return Boolean(normalized) && !isTechnicalArtifactPath(normalized, workspaceRoot);
 }

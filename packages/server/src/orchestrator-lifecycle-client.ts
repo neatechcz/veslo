@@ -1,6 +1,6 @@
 export type LifecycleRunStatus = "submitted" | "running" | "blocked" | "completed" | "failed" | "aborted";
-export type LifecycleRunActivityKind = "local_tool" | "assistant_output" | "model_retry" | "idle" | "unknown";
-export type LifecycleRunWaitReason =
+type LifecycleRunActivityKind = "local_tool" | "assistant_output" | "model_retry" | "idle" | "unknown";
+type LifecycleRunWaitReason =
   | "running_tool"
   | "model_retry_no_output"
   | "assistant_message_open"
@@ -23,7 +23,7 @@ export type LifecycleRunStatusResult = {
   noProgressSeconds?: number | null;
 };
 
-export const ORCHESTRATOR_LIFECYCLE_REQUEST_TIMEOUT_MS = 5_000;
+const ORCHESTRATOR_LIFECYCLE_REQUEST_TIMEOUT_MS = 5_000;
 
 const ACTIVITY_KINDS = new Set<LifecycleRunActivityKind>([
   "local_tool",

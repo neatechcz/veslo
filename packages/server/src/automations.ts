@@ -149,7 +149,7 @@ export function isValidIsoInstant(value: string): boolean {
   return Number.isFinite(date.getTime()) && date.toISOString() === value;
 }
 
-export function normalizeTimezone(value: unknown): string | undefined {
+function normalizeTimezone(value: unknown): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }

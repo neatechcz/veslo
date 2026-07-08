@@ -11,7 +11,7 @@ export type ConversationSubmitTerminalResult = Extract<
   { status: "submitted" | "queued" | "blocked" | "failed" }
 >;
 
-export type SendBoundaryValidationIssue = {
+type SendBoundaryValidationIssue = {
   code: string;
   expected?: string | null;
   received?: string | null;
@@ -19,7 +19,7 @@ export type SendBoundaryValidationIssue = {
   path: string;
 };
 
-export type SendBoundaryValidationFailure = {
+type SendBoundaryValidationFailure = {
   ok: false;
   message: string;
   issues: SendBoundaryValidationIssue[];

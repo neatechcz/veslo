@@ -13,7 +13,7 @@ export async function openExternalUrl(url: string): Promise<void> {
   }
 }
 
-export async function resolveFetchImpl(): Promise<typeof globalThis.fetch> {
+async function resolveFetchImpl(): Promise<typeof globalThis.fetch> {
   if (isTauriRuntime()) {
     const { fetch: tauriFetch } = await import("@tauri-apps/plugin-http");
     return wrapStartupRequestAuditFetch(

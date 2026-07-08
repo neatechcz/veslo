@@ -1,8 +1,8 @@
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { getBasename as basename, normalizePath, workspaceArtifactPathToRelative } from "../../utils/workspace-path";
 
-export type MediaEvidenceKind = "analyzed" | "created";
-export type MediaEvidenceStatus = "available" | "missing" | "tooLarge" | "unsupported" | "redacted";
+type MediaEvidenceKind = "analyzed" | "created";
+type MediaEvidenceStatus = "available" | "missing" | "tooLarge" | "unsupported" | "redacted";
 
 export type MediaEvidence = {
   id: string;

@@ -42,7 +42,7 @@ export type SubagentDecorationSession = {
   occurrenceIndex?: number;
 };
 
-export type SubagentDecoration = {
+type SubagentDecoration = {
   sessionId: string;
   parentSessionId: string;
   roleKey: string;

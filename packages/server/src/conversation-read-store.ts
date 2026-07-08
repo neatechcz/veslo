@@ -19,7 +19,7 @@ export type ConversationSummary = {
   };
 };
 
-export type ConversationTranscriptSnapshot = {
+type ConversationTranscriptSnapshot = {
   workspaceId: string;
   sessionId: string;
   limit: number;
@@ -43,7 +43,7 @@ export type ConversationReadStore = {
   }): Promise<ConversationTranscriptSnapshot & { source: "sqlite" | "unavailable" }>;
 };
 
-export type ConversationReadWorkspace = {
+type ConversationReadWorkspace = {
   id?: string;
   path?: string;
   directory?: string;

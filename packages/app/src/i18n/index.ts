@@ -8,12 +8,12 @@ import { LANGUAGE_PREF_KEY } from "../app/constants";
  * Supported runtime languages. Chinese remains available for compatibility.
  */
 export type Language = "en" | "zh" | "cs";
-export type Locale = Language;
+type Locale = Language;
 
 /**
  * All supported languages - single source of truth
  */
-export const LANGUAGES: Language[] = ["en", "zh", "cs"];
+const LANGUAGES: Language[] = ["en", "zh", "cs"];
 
 /**
  * Language options shown in the UI.

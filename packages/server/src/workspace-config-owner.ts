@@ -92,7 +92,7 @@ export async function readVesloConfig(workspaceRoot: string): Promise<Record<str
   }
 }
 
-export function resolveOpencodeDirectory(workspace: WorkspaceInfo): string | null {
+function resolveOpencodeDirectory(workspace: WorkspaceInfo): string | null {
   const explicit = workspace.directory?.trim() ?? "";
   if (explicit) return normalizeOpencodeDirectory(explicit);
   if (workspace.workspaceType === "local") return normalizeOpencodeDirectory(workspace.path);
@@ -174,7 +174,7 @@ export function buildOpencodeAuthHeader(workspace: WorkspaceInfo): string | null
   return `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
 }
 
-export function parseOpencodeErrorBody(input: string): unknown {
+function parseOpencodeErrorBody(input: string): unknown {
   const trimmed = input.trim();
   if (!trimmed) return null;
   try {
@@ -184,7 +184,7 @@ export function parseOpencodeErrorBody(input: string): unknown {
   }
 }
 
-export async function reloadOpencodeEngine(workspace: WorkspaceInfo): Promise<void> {
+async function reloadOpencodeEngine(workspace: WorkspaceInfo): Promise<void> {
   const baseUrl = workspace.baseUrl?.trim() ?? "";
   if (!baseUrl) {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
@@ -275,7 +275,7 @@ async function exportWorkspace(
   };
 }
 
-export async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string, unknown>): Promise<void> {
+async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string, unknown>): Promise<void> {
   const modes = (payload.mode as Record<string, string> | undefined) ?? {};
   const opencode = payload.opencode as Record<string, unknown> | undefined;
   const veslo = payload.veslo as Record<string, unknown> | undefined;
@@ -369,4 +369,4 @@ export function createWorkspaceConfigOwner(dependencies: WorkspaceConfigOwnerDep
   };
 }
 
-export type WorkspaceConfigOwner = ReturnType<typeof createWorkspaceConfigOwner>;
+type WorkspaceConfigOwner = ReturnType<typeof createWorkspaceConfigOwner>;

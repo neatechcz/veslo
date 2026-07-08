@@ -12,7 +12,7 @@ export type WslOpencodeRuntime = {
 
 const WSL_OPENCODE_PROBE_TIMEOUT_MS = 30_000;
 
-export function opencodeAssetForWslArch(arch: string): string | null {
+function opencodeAssetForWslArch(arch: string): string | null {
   if (arch === "x86_64" || arch === "amd64") return "opencode-linux-x64-baseline.tar.gz";
   if (arch === "aarch64" || arch === "arm64") return "opencode-linux-arm64.tar.gz";
   return null;

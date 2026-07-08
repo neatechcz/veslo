@@ -2,7 +2,7 @@ import { basename } from "node:path";
 
 export type MediaKind = "image" | "audio" | "file";
 
-export type InboundMediaAttachment = {
+type InboundMediaAttachment = {
   id: string;
   kind: MediaKind;
   source: "telegram" | "slack";

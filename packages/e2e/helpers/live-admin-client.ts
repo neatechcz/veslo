@@ -1,6 +1,6 @@
 type FetchLike = typeof fetch;
 
-export type AdminBrowserIntent = 'signin' | 'signup';
+type AdminBrowserIntent = 'signin' | 'signup';
 
 export type AdminBrowserStartInput = {
   intent: AdminBrowserIntent;

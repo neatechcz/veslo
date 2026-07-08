@@ -1,4 +1,4 @@
-export type DeliveryErrorCode =
+type DeliveryErrorCode =
   | "auth"
   | "forbidden"
   | "not_found"

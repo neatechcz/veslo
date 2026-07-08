@@ -13,7 +13,7 @@ type StartupRequestAuditInternalEntry = {
   sources: Set<string>;
 };
 
-export type StartupRequestAuditEntry = Omit<StartupRequestAuditInternalEntry, "sources"> & {
+type StartupRequestAuditEntry = Omit<StartupRequestAuditInternalEntry, "sources"> & {
   sources: string[];
 };
 
@@ -27,7 +27,7 @@ export type StartupRequestAuditSummary = {
   requests: StartupRequestAuditEntry[];
 };
 
-export type StartupRequestAuditLog = (
+type StartupRequestAuditLog = (
   event: "startup-monitor-start" | "startup-summary",
   payload: Record<string, unknown>,
 ) => void;
@@ -48,7 +48,7 @@ export type StartupRequestAuditFetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-export const STARTUP_REQUEST_AUDIT_WINDOW_MS = 30_000;
+const STARTUP_REQUEST_AUDIT_WINDOW_MS = 30_000;
 const DEFAULT_MAX_SUMMARY_ENTRIES = 200;
 const MAX_STARTUP_REQUEST_AUDIT_WINDOW_MS = 30 * 60_000;
 
@@ -83,7 +83,7 @@ function requestInputMethod(input: RequestInfo | URL): string | null {
   return null;
 }
 
-export function resolveStartupRequestAuditMethod(
+function resolveStartupRequestAuditMethod(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): string {
@@ -265,7 +265,7 @@ export function createStartupRequestAudit(options: {
   };
 }
 
-export type StartupRequestAudit = ReturnType<typeof createStartupRequestAudit>;
+type StartupRequestAudit = ReturnType<typeof createStartupRequestAudit>;
 
 function activeAudit(): StartupRequestAudit | undefined {
   return (globalThis as StartupRequestAuditRoot).__vesloStartupRequestAudit;

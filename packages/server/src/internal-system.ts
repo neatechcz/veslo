@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { SOUL_INSTRUCTIONS } from "./soul-runtime.js";
 import { exists, ensureDir } from "./utils.js";
 
-export const INTERNAL_SYSTEM_VERSION = "2026-06-06.1";
+const INTERNAL_SYSTEM_VERSION = "2026-06-06.1";
 const INTERNAL_SYSTEM_SOURCE = "openwork-snapshot";
 
 const DELEGATE_PLUGIN_FILE = "veslo-delegate.js";
@@ -1029,7 +1029,7 @@ async function disableAutomationsPlugin(pluginsDir: string, stats: ProvisionStat
  * Server-side internal pack provisioning has been removed; the returned path is
  * the legacy location shape only and is not created.
  */
-export async function provisionCentralPacks(appDataDir: string): Promise<string> {
+async function provisionCentralPacks(appDataDir: string): Promise<string> {
   const centralRoot = join(appDataDir, "internal-packs", INTERNAL_SYSTEM_VERSION);
   const marker = join(centralRoot, ".provisioned");
 

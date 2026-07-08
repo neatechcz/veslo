@@ -177,7 +177,7 @@ const serverEnvSchema = z.object({
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
 
-export class ServerEnvValidationError extends Error {
+class ServerEnvValidationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ServerEnvValidationError";

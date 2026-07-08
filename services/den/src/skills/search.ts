@@ -5,7 +5,7 @@ export function normalizeSkillRegistrySearchQuery(value: unknown): string {
   return value.trim()
 }
 
-export function queryMatchesSkillText(query: string, values: readonly (string | null | undefined)[]) {
+function queryMatchesSkillText(query: string, values: readonly (string | null | undefined)[]) {
   const normalized = query.trim().toLowerCase()
   if (!normalized) {
     return true

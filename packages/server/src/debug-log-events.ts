@@ -1,4 +1,4 @@
-export type DebugLogLevel = "info" | "warn" | "error";
+type DebugLogLevel = "info" | "warn" | "error";
 
 export interface DebugLogEvent {
   id: string;
@@ -72,7 +72,7 @@ function isOptionalString(value: unknown, max = 1024): boolean {
   return value === undefined || value === null || (typeof value === "string" && value.length <= max);
 }
 
-export function validateDebugLogEvent(value: unknown, path = "event"): DebugLogValidationIssue[] {
+function validateDebugLogEvent(value: unknown, path = "event"): DebugLogValidationIssue[] {
   const issues: DebugLogValidationIssue[] = [];
   if (!isPlainObject(value)) {
     issues.push({ path, message: "must be an object" });

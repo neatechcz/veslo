@@ -19,7 +19,7 @@ export type SessionTranscriptLoadInput = {
   directory?: string | null;
 };
 
-export type SessionTranscriptLoadResult = {
+type SessionTranscriptLoadResult = {
   workspaceId?: string;
   sessionId?: string;
   conversationId?: string;

@@ -13,7 +13,7 @@ export type RunWaitReason =
   | "engine_unreachable"
   | "none";
 
-export const ACTIVE_RUN_STATUSES = ["submitted", "running", "blocked"] as const satisfies readonly RunStatus[];
+const ACTIVE_RUN_STATUSES = ["submitted", "running", "blocked"] as const satisfies readonly RunStatus[];
 
 export type RunEngineOwner = {
   engineOwnerId: string | null;
@@ -66,7 +66,7 @@ export type RunStore = {
   hasActiveForWorkspace(workspaceId: string, createdSince: number): boolean;
 };
 
-export type RunStoreWorkspaceMigrationResult = {
+type RunStoreWorkspaceMigrationResult = {
   migrated: boolean;
   sourceWorkspaceId: string;
   targetWorkspaceId: string;

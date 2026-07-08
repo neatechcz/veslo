@@ -47,7 +47,7 @@ export class MySqlAuditRepository implements AuditRepository {
   }
 }
 
-export function createAuditEventId(_input: RecordAuditEventInput) {
+function createAuditEventId(_input: RecordAuditEventInput) {
   return `audit_${randomUUID()}`
 }
 

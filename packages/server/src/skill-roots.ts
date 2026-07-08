@@ -5,7 +5,7 @@ import { exists } from "./utils.js";
 import { projectSkillsDir } from "./workspace-files.js";
 
 export const SKILL_ENTRYPOINT = "SKILL.md";
-export const VESLO_MANAGED_SKILL_CATEGORY = "veslo-managed";
+const VESLO_MANAGED_SKILL_CATEGORY = "veslo-managed";
 
 const uniquePaths = (paths: string[]): string[] =>
   Array.from(new Set(paths.map((path) => path.trim()).filter(Boolean)));

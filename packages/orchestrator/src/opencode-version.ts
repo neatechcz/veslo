@@ -1,4 +1,4 @@
-export type OpencodeBinarySource = "bundled" | "external" | "downloaded";
+type OpencodeBinarySource = "bundled" | "external" | "downloaded";
 
 export type OpencodeVersionBinary = {
   bin: string;

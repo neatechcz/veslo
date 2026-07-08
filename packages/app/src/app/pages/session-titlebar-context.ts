@@ -1,6 +1,6 @@
 import { resolveComposerWorkspaceLabel } from "../components/session/composer-workspace-label";
 
-export type SessionTitlebarWorkspaceType = "local" | "remote";
+type SessionTitlebarWorkspaceType = "local" | "remote";
 
 export type SessionTitlebarContextInput = {
   selectedSessionId: string | null | undefined;

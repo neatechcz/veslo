@@ -6,7 +6,7 @@ import { GoogleWorkspaceConnectionTable } from "../db/schema.js"
 import type { GoogleWorkspaceConnectorId } from "./connectors.js"
 import type { GoogleWorkspaceOAuthGrant } from "./oauth.js"
 
-export type GoogleWorkspaceConnectionState = "connected" | "revoked" | "error"
+type GoogleWorkspaceConnectionState = "connected" | "revoked" | "error"
 
 export type GoogleWorkspaceConnection = {
   id: string

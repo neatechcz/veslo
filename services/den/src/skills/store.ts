@@ -42,8 +42,8 @@ export type SkillRegistryRouteContext = {
 }
 
 export type RegistrySkillVisibility = "personal" | "workspace" | "organization" | "platform"
-export type RegistrySkillReviewStatus = "draft" | "pending_review" | "approved" | "rejected"
-export type RegistrySkillInstallationSource = "personal" | "workspace" | "organization"
+type RegistrySkillReviewStatus = "draft" | "pending_review" | "approved" | "rejected"
+type RegistrySkillInstallationSource = "personal" | "workspace" | "organization"
 
 export type RegistrySkillVersionSummary = {
   id: string
@@ -75,10 +75,10 @@ export type RegistrySkillInstallation = {
   updatedAt?: string
 }
 
-export type RegistrySkillRolloutCatalogScope = SkillRolloutCatalogScope
-export type RegistrySkillRolloutTarget = SkillRolloutTarget
-export type RegistrySkillRolloutAudience = SkillRolloutAudience
-export type RegistrySkillRolloutRemovalPolicy = SkillRolloutRemovalPolicy
+type RegistrySkillRolloutCatalogScope = SkillRolloutCatalogScope
+type RegistrySkillRolloutTarget = SkillRolloutTarget
+type RegistrySkillRolloutAudience = SkillRolloutAudience
+type RegistrySkillRolloutRemovalPolicy = SkillRolloutRemovalPolicy
 
 export type RegistrySkillRolloutPolicy = {
   id: string
@@ -98,11 +98,11 @@ export type RegistrySkillRolloutPolicy = {
   updatedAt?: string
 }
 
-export type RegistrySkillRolloutPolicyResponse = {
+type RegistrySkillRolloutPolicyResponse = {
   policy: RegistrySkillRolloutPolicy
 }
 
-export type RegistrySkillRolloutPoliciesResponse = {
+type RegistrySkillRolloutPoliciesResponse = {
   policies: RegistrySkillRolloutPolicy[]
   nextCursor?: string | null
 }

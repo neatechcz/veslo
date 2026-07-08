@@ -12,7 +12,7 @@ import type { Actor } from "./types.js";
 import { exists } from "./utils.js";
 
 export type SkillRemovalScope = "workspace" | "user-global";
-export type SkillRemovalStatus = "pending" | "removed" | "restored";
+type SkillRemovalStatus = "pending" | "removed" | "restored";
 
 export interface SkillRemovalRecord {
   id: string;

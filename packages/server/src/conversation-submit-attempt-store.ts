@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 
 import { resolveVesloDataDir } from "./audit.js";
 
-export type ConversationSubmitAttemptStatus =
+type ConversationSubmitAttemptStatus =
   | "started"
   | "materialized"
   | "completed"
@@ -26,7 +26,7 @@ export type ConversationSubmitAttempt = {
   updatedAt: number;
 };
 
-export type ConversationSubmitAttemptClaimResult = {
+type ConversationSubmitAttemptClaimResult = {
   attempt: ConversationSubmitAttempt;
   inserted: boolean;
   conflict: boolean;

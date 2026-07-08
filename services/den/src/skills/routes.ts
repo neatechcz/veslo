@@ -16,7 +16,7 @@ import {
   type SkillRegistryStore,
 } from "./store.js"
 
-export type SkillRegistryResolveContext = (
+type SkillRegistryResolveContext = (
   req: express.Request,
   res: express.Response,
 ) => Promise<SkillRegistryRouteContext | null>

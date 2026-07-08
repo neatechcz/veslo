@@ -124,8 +124,8 @@ type SoulDocument = {
 export const E2E_SKILL_REGISTRY_ORG_ID = 'org_veslo_e2e_default';
 export const E2E_SKILL_REGISTRY_USER_ID = 'user_veslo_e2e_default';
 export const E2E_SKILL_REGISTRY_TOKEN = 'veslo-e2e-default-token';
-export const E2E_SKILL_REGISTRY_WORKSPACE_ID = 'e2e-visual-workspace';
-export const E2E_GOOGLE_MCP_CATALOG_USER_ID = 'user_veslo_google_mcp_e2e';
+const E2E_SKILL_REGISTRY_WORKSPACE_ID = 'e2e-visual-workspace';
+const E2E_GOOGLE_MCP_CATALOG_USER_ID = 'user_veslo_google_mcp_e2e';
 
 const E2E_SHAREPOINT_MCP_CONNECTOR_ID = 'microsoft-sharepoint';
 
@@ -234,7 +234,7 @@ export function buildE2ESharePointMcpConnectors(baseUrl: string, orgId = E2E_SKI
   ];
 }
 
-export const E2E_GOOGLE_MCP_CONNECTORS = buildE2EGoogleMcpConnectors(defaultE2EDenApiBase());
+const E2E_GOOGLE_MCP_CONNECTORS = buildE2EGoogleMcpConnectors(defaultE2EDenApiBase());
 
 export function shouldUseGoogleMcpCatalogFixture(
   env: Record<string, string | undefined> = process.env,
@@ -1461,7 +1461,7 @@ export async function stopSkillRegistryFixture(): Promise<void> {
   });
 }
 
-export function readSkillRegistryFixtureBaseUrl(): string {
+function readSkillRegistryFixtureBaseUrl(): string {
   const path = fixtureInfoPath();
   if (!existsSync(path)) {
     throw new Error(`Skill registry fixture info is missing at ${path}`);
@@ -1485,7 +1485,7 @@ export async function resetSkillRegistryFixtureState(): Promise<void> {
   await postFixtureControl('/__e2e/reset');
 }
 
-export async function useUpdatedRuntimeSkillVersion(): Promise<void> {
+async function useUpdatedRuntimeSkillVersion(): Promise<void> {
   await postFixtureControl('/__e2e/use-updated-runtime-version');
 }
 

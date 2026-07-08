@@ -21,7 +21,7 @@ import type {
 import { exists } from "./utils.js";
 import { validateSkillName } from "./validators.js";
 
-export type SkillMaterializationManifestEntry = WorkspaceSkillMaterialization & {
+type SkillMaterializationManifestEntry = WorkspaceSkillMaterialization & {
   skillDir: string;
   materializedAt: string;
 };
@@ -110,7 +110,7 @@ const compareEntries = (left: SkillMaterializationManifestEntry, right: SkillMat
 
 const dataDir = (override?: string) => override?.trim() || resolveVesloDataDir();
 
-export function skillMaterializationManifestPath(rootDir: string): string {
+function skillMaterializationManifestPath(rootDir: string): string {
   return join(rootDir, ROOT_MARKER_FILE);
 }
 
@@ -143,7 +143,7 @@ const validateManifestEntry = (value: unknown): SkillMaterializationManifestEntr
   };
 };
 
-export function validateSkillMaterializationManifest(value: unknown): SkillMaterializationManifest {
+function validateSkillMaterializationManifest(value: unknown): SkillMaterializationManifest {
   if (!value || typeof value !== "object") {
     throw new Error("Skill materialization manifest must be an object");
   }
@@ -482,7 +482,7 @@ export async function materializePersonalGlobalSkillSet(
   });
 }
 
-export const __skillMaterializerTestHooks = {
+const __skillMaterializerTestHooks = {
   markerFileNames: {
     root: ROOT_MARKER_FILE,
     skill: SKILL_MARKER_FILE,

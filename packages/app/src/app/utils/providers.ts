@@ -3,11 +3,11 @@ import type { ProviderListItem, ProviderListModel } from "../types";
 
 type ProviderConnectionItem = Pick<ProviderListItem, "id" | "env">;
 
-export const LM_STUDIO_PROVIDER_ID = "lmstudio";
-export const LM_STUDIO_PROVIDER_NAME = "LM Studio (local)";
-export const LM_STUDIO_PROVIDER_NPM = "@ai-sdk/openai-compatible";
-export const LM_STUDIO_DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1";
-export const GATEWAY_OWNED_PROVIDER_IDS = ["openai", "anthropic", "codex_oauth", "openai_compatible"] as const;
+const LM_STUDIO_PROVIDER_ID = "lmstudio";
+const LM_STUDIO_PROVIDER_NAME = "LM Studio (local)";
+const LM_STUDIO_PROVIDER_NPM = "@ai-sdk/openai-compatible";
+const LM_STUDIO_DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1";
+const GATEWAY_OWNED_PROVIDER_IDS = ["openai", "anthropic", "codex_oauth", "openai_compatible"] as const;
 
 export type GatewayOwnedProviderId = (typeof GATEWAY_OWNED_PROVIDER_IDS)[number];
 
@@ -34,10 +34,10 @@ export const isGatewayOwnedProvider = (
   providerId?: string | null,
 ): providerId is GatewayOwnedProviderId => GATEWAY_OWNED_PROVIDER_SET.has(providerId?.trim().toLowerCase() ?? "");
 
-export const isGatewayOAuthProvider = (providerId?: string | null) =>
+const isGatewayOAuthProvider = (providerId?: string | null) =>
   (providerId?.trim().toLowerCase() ?? "") === "openai";
 
-export const isGatewayApiKeyProvider = (providerId?: string | null) =>
+const isGatewayApiKeyProvider = (providerId?: string | null) =>
   (providerId?.trim().toLowerCase() ?? "") === "anthropic";
 
 export const isApiCredentialRequired = (providerId?: string | null) =>

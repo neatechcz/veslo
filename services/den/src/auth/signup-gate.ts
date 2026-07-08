@@ -12,7 +12,7 @@ const SIGNUP_DOMAIN_GATE_TEMPORARILY_DISABLED = true
 
 export type SignupAccessError = "domain_not_allowed" | "seat_limit_reached"
 
-export type SignupGateDomain = {
+type SignupGateDomain = {
   organizationId: string
   selfSignupEnabled: boolean
 }

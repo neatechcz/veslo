@@ -40,4 +40,4 @@ export function createExtensionsInventoryClient(context: ExtensionsInventoryClie
   };
 }
 
-export type ExtensionsInventoryClient = ReturnType<typeof createExtensionsInventoryClient>;
+type ExtensionsInventoryClient = ReturnType<typeof createExtensionsInventoryClient>;

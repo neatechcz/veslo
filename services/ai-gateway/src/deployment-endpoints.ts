@@ -1,6 +1,6 @@
 export type VesloDeploymentService = "api" | "ai" | "app" | "admin" | "workers";
 
-export const DEFAULT_VESLO_DEPLOYMENT_DOMAIN = "veslo.work";
+const DEFAULT_VESLO_DEPLOYMENT_DOMAIN = "veslo.work";
 
 const SERVICE_PREFIXES = new Set<VesloDeploymentService>(["api", "ai", "app", "admin", "workers"]);
 
@@ -20,7 +20,7 @@ function hostFromDeploymentValue(value: string): string {
   }
 }
 
-export function normalizeVesloDeploymentDomain(value: string | null | undefined): string {
+function normalizeVesloDeploymentDomain(value: string | null | undefined): string {
   const host = hostFromDeploymentValue(value ?? "");
   if (!host) return DEFAULT_VESLO_DEPLOYMENT_DOMAIN;
 

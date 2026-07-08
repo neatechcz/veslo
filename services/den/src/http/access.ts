@@ -1,7 +1,7 @@
 import type { OrgRole, OrganizationMembershipStatus } from "../db/schema.js"
 
 export type CurrentOrgRole = (typeof OrgRole)[number]
-export type LegacyOrgRole = "owner"
+type LegacyOrgRole = "owner"
 export type CompatibleOrgRole = CurrentOrgRole | LegacyOrgRole
 
 export type OrganizationAccessSummary = {

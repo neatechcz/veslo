@@ -21,7 +21,7 @@ export type ConversationSubmitDocumentRuntimeStatusReader = () =>
   | undefined
   | Promise<DocumentRuntimeStatusPayload | null | undefined>;
 
-export type ConversationSubmitSkillCommandResolverInput = {
+type ConversationSubmitSkillCommandResolverInput = {
   request: ConversationSubmitRequest;
   text: string;
   workspace: WorkspaceInfo | null;
@@ -74,7 +74,7 @@ const DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME = {
   "veslo-pptx": "pptx",
 } satisfies Record<string, DocumentRuntimeFormat>;
 
-export function documentRuntimeFormatForSubmitCommand(skillName: string): DocumentRuntimeFormat | null {
+function documentRuntimeFormatForSubmitCommand(skillName: string): DocumentRuntimeFormat | null {
   const key = skillName.trim();
   return Object.prototype.hasOwnProperty.call(DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME, key)
     ? DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME[key as keyof typeof DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME]
@@ -108,7 +108,7 @@ function documentRuntimeSkillReady(
   return status.skills.some((skill) => skill.format === format && skill.ready);
 }
 
-export function documentRuntimeBlockReasonForSubmitCommand(
+function documentRuntimeBlockReasonForSubmitCommand(
   status: DocumentRuntimeStatusPayload | null | undefined,
   format: DocumentRuntimeFormat,
 ): string | null {

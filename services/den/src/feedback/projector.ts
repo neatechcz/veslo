@@ -4,7 +4,7 @@ import { db } from "../db/index.js"
 import { FeedbackProjectorAttemptTable, FeedbackReportTable } from "../db/schema.js"
 
 export const FEEDBACK_PROJECTOR_RETRY_DELAYS_MS = [30_000, 5 * 60_000, 30 * 60_000] as const
-export const FEEDBACK_PROJECTOR_DUE_RETRY_LIMIT = 20
+const FEEDBACK_PROJECTOR_DUE_RETRY_LIMIT = 20
 
 export type FeedbackProjectionRecord = {
   id: string
@@ -79,7 +79,7 @@ export type FeedbackProjectorDueRetryResult = {
   projected: number
 }
 
-export type FeedbackIssueClient = {
+type FeedbackIssueClient = {
   createIssue: (input: {
     project: string
     summary: string
@@ -123,11 +123,11 @@ function buildScreenshotReference(feedback: FeedbackProjectionRecord) {
   return `Den feedback record (captured, ${mimeType}, ${byteCount})`
 }
 
-export function buildFeedbackIssueSummary(feedback: FeedbackProjectionRecord) {
+function buildFeedbackIssueSummary(feedback: FeedbackProjectionRecord) {
   return `[Bug] ${feedback.title}`
 }
 
-export function buildFeedbackIssueDescription(feedback: FeedbackProjectionRecord) {
+function buildFeedbackIssueDescription(feedback: FeedbackProjectionRecord) {
   const lines = [
     "User report",
     feedback.description,

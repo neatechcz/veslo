@@ -6,7 +6,7 @@ import { validateSkillPackageManifest } from "./skill-package-model.js";
 import type { SkillPackageArchive } from "./skill-packages.js";
 import { exists } from "./utils.js";
 
-export type SkillPackageCacheInput = {
+type SkillPackageCacheInput = {
   dataDir?: string;
 };
 
