@@ -2,8 +2,13 @@ import { createHash } from "node:crypto";
 
 import { recordAudit } from "../audit.js";
 import { ApiError } from "../errors.js";
-import { normalizeDenApiBaseUrl } from "../den-api-base.js";
 import { getPlatformManagedPersonalGlobalSkillSet } from "../platform-managed-skills.js";
+import {
+  readSkillRegistryRequestInput as skillRegistryRequestInput,
+  skillRegistryConfiguredBaseUrl,
+  skillRegistryRequestBaseUrl,
+  type SkillRegistryRequestInput,
+} from "../request-headers.js";
 import {
   emitReloadEvent,
   ensureWritable,
@@ -63,14 +68,6 @@ type WorkspaceSkillMaterializationStatusOptions = {
   registryError?: ApiError;
 };
 
-type SkillRegistryRequestInput = {
-  baseUrl: string;
-  token?: string;
-  denToken?: string;
-  orgId?: string;
-  userId?: string;
-};
-
 function requireRouteParam(params: Record<string, string>, field: string, label = field): string {
   const value = params[field]?.trim() ?? "";
   if (!value) {
@@ -80,35 +77,7 @@ function requireRouteParam(params: Record<string, string>, field: string, label 
 }
 
 function skillRegistryBaseUrl(config: ServerConfig): string {
-  return config.skillRegistryBaseUrl?.trim() || "";
-}
-
-function normalizeSkillRegistryBaseUrl(value: string | null | undefined): string {
-  return normalizeDenApiBaseUrl(value) ?? "";
-}
-
-function skillRegistryRequestBaseUrl(ctx: RequestContext): string {
-  return (
-    skillRegistryBaseUrl(ctx.config) ||
-    normalizeSkillRegistryBaseUrl(ctx.request.headers.get("x-veslo-den-api-base"))
-  );
-}
-
-function skillRegistryRequestInput(ctx: RequestContext): SkillRegistryRequestInput {
-  const token = ctx.config.skillRegistryToken?.trim() || undefined;
-  const denToken = ctx.request.headers.get("x-veslo-den-token")?.trim() || undefined;
-  const orgId = ctx.request.headers.get("x-veslo-den-org-id")?.trim() || undefined;
-  const userId = ctx.request.headers.get("x-veslo-den-user-id")?.trim() ||
-    ctx.request.headers.get("x-veslo-user-id")?.trim() ||
-    ctx.request.headers.get("x-veslo-account-id")?.trim() ||
-    undefined;
-  return {
-    baseUrl: skillRegistryRequestBaseUrl(ctx),
-    ...(token !== undefined ? { token } : {}),
-    ...(denToken !== undefined ? { denToken } : {}),
-    ...(orgId !== undefined ? { orgId } : {}),
-    ...(userId !== undefined ? { userId } : {}),
-  };
+  return skillRegistryConfiguredBaseUrl(config);
 }
 
 function registryIdentityPayload(input: Pick<SkillRegistryRequestInput, "orgId" | "userId">): {

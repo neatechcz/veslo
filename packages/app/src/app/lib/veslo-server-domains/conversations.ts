@@ -17,6 +17,7 @@ import type {
   VesloSessionTranscriptPrefetchResult,
   VesloSessionTranscriptSnapshot,
 } from "../veslo-server/types";
+import { VESLO_ACCOUNT_ID_HEADER, VESLO_SEND_TRACE_ID_HEADER } from "../veslo-server/header-profiles";
 
 type RequestJsonOptions = {
   method?: string;
@@ -50,11 +51,11 @@ type TranscriptOptions = {
 };
 
 const sendTraceHeaders = (options?: { sendTraceId?: string | null }) =>
-  options?.sendTraceId?.trim() ? { "X-Veslo-Send-Trace-Id": options.sendTraceId.trim() } : undefined;
+  options?.sendTraceId?.trim() ? { [VESLO_SEND_TRACE_ID_HEADER]: options.sendTraceId.trim() } : undefined;
 
 export function createConversationsClient(context: ConversationsClientContext) {
   const { baseUrl, token, hostToken, accountId, requestJson, timeouts } = context;
-  const archiveHeaders = accountId ? { "X-Veslo-Account-Id": accountId } : undefined;
+  const archiveHeaders = accountId ? { [VESLO_ACCOUNT_ID_HEADER]: accountId } : undefined;
 
   return {
     listArchives: () =>

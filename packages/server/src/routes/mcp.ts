@@ -8,9 +8,13 @@ import {
   fetchOrgMcpCatalog,
   fetchOrgMcpConnectionStatuses,
 } from "../den-catalog.js";
-import { normalizeDenApiBaseUrl } from "../den-api-base.js";
 import { ApiError } from "../errors.js";
 import { addMcp, installHubMcp, listMcp, refreshMcpRuntimeToken, removeMcp } from "../mcp.js";
+import {
+  readOptionalRequestOverrideDenCatalogContext,
+  readRequestOverrideDenCatalogContext,
+  requireRequestOverrideDenCatalogContext,
+} from "../request-headers.js";
 import { workspaceResourceOwner } from "../resource-owner.js";
 import { addRoute, type Route } from "../routing.js";
 import {
@@ -55,49 +59,8 @@ function requireRouteParam(params: Record<string, string>, field: string, label 
   return value;
 }
 
-const resolveDenApiBaseForRequest = (ctx: Parameters<Route["handler"]>[0]) => {
-  const rawRequestBase = ctx.request.headers.get("x-veslo-den-api-base")?.trim() || "";
-  if (rawRequestBase) {
-    const normalized = normalizeDenApiBaseUrl(rawRequestBase);
-    if (!normalized) {
-      throw new ApiError(400, "den_api_base_invalid", "Invalid Den API base header (x-veslo-den-api-base)");
-    }
-    return normalized;
-  }
-  return normalizeDenApiBaseUrl(ctx.config.denApiBase) ?? "";
-};
-
-const requireDenCatalogContext = (ctx: Parameters<Route["handler"]>[0]) => {
-  const denToken = ctx.request.headers.get("x-veslo-den-token")?.trim() || "";
-  if (!denToken) {
-    throw new ApiError(401, "den_token_required", "Missing Den token header (x-veslo-den-token)");
-  }
-
-  const denOrgId = ctx.request.headers.get("x-veslo-den-org-id")?.trim() || "";
-  if (!denOrgId) {
-    throw new ApiError(400, "den_org_required", "Missing Den org header (x-veslo-den-org-id)");
-  }
-
-  const denApiBase = resolveDenApiBaseForRequest(ctx);
-  if (!denApiBase) {
-    throw new ApiError(503, "den_catalog_misconfigured", "Den catalog base URL is missing");
-  }
-
-  return { denToken, denOrgId, denApiBase };
-};
-
-const readOptionalDenCatalogContext = (ctx: Parameters<Route["handler"]>[0]) => {
-  const denToken = ctx.request.headers.get("x-veslo-den-token")?.trim() || "";
-  const denOrgId = ctx.request.headers.get("x-veslo-den-org-id")?.trim() || "";
-  const denApiBaseHeader = ctx.request.headers.get("x-veslo-den-api-base")?.trim() || "";
-  if (!denToken && !denOrgId && !denApiBaseHeader) {
-    return null;
-  }
-  return requireDenCatalogContext(ctx);
-};
-
 async function disconnectServerManagedMcpAuth(ctx: Parameters<Route["handler"]>[0], name: string) {
-  const denContext = readOptionalDenCatalogContext(ctx);
+  const denContext = readOptionalRequestOverrideDenCatalogContext(ctx);
   if (!denContext) return;
 
   const items = await fetchOrgMcpCatalog({
@@ -149,17 +112,7 @@ async function attachServerManagedMcpConnectionStatuses(input: {
 
 export function registerMcpRoutes(routes: Route[], dependencies: McpRouteDependencies): void {
   addRoute(routes, "GET", "/hub/mcp", "client", async (ctx) => {
-    const denToken = ctx.request.headers.get("x-veslo-den-token")?.trim() || "";
-    if (!denToken) {
-      throw new ApiError(401, "den_token_required", "Missing Den token header (x-veslo-den-token)");
-    }
-
-    const denOrgId = ctx.request.headers.get("x-veslo-den-org-id")?.trim() || "";
-    if (!denOrgId) {
-      throw new ApiError(400, "den_org_required", "Missing Den org header (x-veslo-den-org-id)");
-    }
-
-    const denApiBase = resolveDenApiBaseForRequest(ctx);
+    const { denApiBase, denOrgId, denToken } = readRequestOverrideDenCatalogContext(ctx);
     if (!denApiBase) {
       return jsonResponse({ items: [] });
     }
@@ -191,7 +144,7 @@ export function registerMcpRoutes(routes: Route[], dependencies: McpRouteDepende
     const workspace = await resolveWorkspace(config, requireRouteParam(ctx.params, "id", "workspace id"));
     const catalogName = requireRouteParam(ctx.params, "name", "MCP name");
 
-    const { denApiBase, denOrgId, denToken } = requireDenCatalogContext(ctx);
+    const { denApiBase, denOrgId, denToken } = requireRequestOverrideDenCatalogContext(ctx);
     const items = await fetchOrgMcpCatalog({
       baseUrl: denApiBase,
       orgId: denOrgId,
@@ -255,7 +208,7 @@ export function registerMcpRoutes(routes: Route[], dependencies: McpRouteDepende
     const name = requireRouteParam(ctx.params, "name", "MCP name");
     validateMcpName(name);
 
-    const { denApiBase, denOrgId, denToken } = requireDenCatalogContext(ctx);
+    const { denApiBase, denOrgId, denToken } = requireRequestOverrideDenCatalogContext(ctx);
     const items = await fetchOrgMcpCatalog({
       baseUrl: denApiBase,
       orgId: denOrgId,

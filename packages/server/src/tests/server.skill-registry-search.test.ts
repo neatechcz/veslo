@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "bun:test";
 
+import { VESLO_ALLOWED_CORS_HEADERS } from "../request-headers.js";
 import { startServer } from "../server.js";
 
 const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void }> = [];
@@ -177,25 +178,7 @@ test("skill registry routes allow Den override headers in CORS preflight", async
 
 test("CORS preflight allows browser-facing Veslo custom headers", async () => {
   const server = await startFixture();
-  const requestedHeaders = [
-    "authorization",
-    "content-type",
-    "x-veslo-host-token",
-    "x-veslo-client-id",
-    "x-veslo-send-trace-id",
-    "x-veslo-account-id",
-    "x-veslo-user-id",
-    "x-veslo-den-user-id",
-    "x-veslo-org-id",
-    "x-veslo-den-org-id",
-    "x-veslo-den-api-base",
-    "x-veslo-den-token",
-    "x-veslo-gateway-authorization",
-    "x-veslo-gateway-token",
-    "x-veslo-session-id",
-    "x-veslo-workspace-id",
-    "x-opencode-directory",
-  ];
+  const requestedHeaders = VESLO_ALLOWED_CORS_HEADERS.map((header) => header.toLowerCase());
 
   const response = await fetch(`http://127.0.0.1:${server.port}/capabilities`, {
     method: "OPTIONS",
@@ -210,10 +193,8 @@ test("CORS preflight allows browser-facing Veslo custom headers", async () => {
   expect(response.status).toBe(204);
   expect(response.headers.get("access-control-allow-origin")).toBe("*");
   expect(response.headers.get("access-control-allow-private-network")).toBe("true");
-  const allowedHeaders = response.headers.get("access-control-allow-headers")?.toLowerCase() ?? "";
-  for (const header of requestedHeaders) {
-    expect(allowedHeaders).toContain(header);
-  }
+  const allowedHeaders = response.headers.get("access-control-allow-headers") ?? "";
+  expect(allowedHeaders.split(",").map((header) => header.trim())).toEqual([...VESLO_ALLOWED_CORS_HEADERS]);
 });
 
 test("GET /v1/skills/search returns an empty result when registry is not configured", async () => {

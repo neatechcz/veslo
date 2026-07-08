@@ -225,3 +225,23 @@ test("sidebar unavailable fallback preserves rows and exposes unavailable state"
   assert.match(block, /setSidebarSessionLoadingMoreByWorkspaceId\(\(prev\) => \(\{ \.\.\.prev, \[id\]: false \}\)\)/);
   assert.doesNotMatch(block, /setSidebarSessionsByWorkspaceId/, "unavailable runtime must not wipe existing sidebar rows");
 });
+
+test("live sidebar list denial clears stale read errors instead of exposing unavailable state", () => {
+  const start = sidebarWorkspaceSessionsSource.indexOf("  const skipLiveSidebarSessionList = ");
+  const end = sidebarWorkspaceSessionsSource.indexOf("  const refreshSidebarWorkspaceSessions = ", start);
+  assert.notEqual(start, -1, "skipLiveSidebarSessionList should exist");
+  assert.notEqual(end, -1, "skipLiveSidebarSessionList block should end before refreshSidebarWorkspaceSessions");
+  const block = sidebarWorkspaceSessionsSource.slice(start, end);
+
+  assert.match(block, /\[id\]: "ready" as const/);
+  assert.match(block, /\[id\]: null/);
+  assert.match(block, /\[id\]: false/);
+  assert.match(block, /sidebar:live-session-list:skipped/);
+  assert.doesNotMatch(block, /sidebarReadUnavailableMessage/);
+  assert.doesNotMatch(block, /setSidebarSessionsByWorkspaceId/, "live-list denial must not wipe existing sidebar rows");
+  assert.match(
+    sidebarWorkspaceSessionsSource,
+    /if \(hostReadDirectory && options\.allowLiveWorkspaceSessionList\?\.\(id\) !== true\) \{[\s\S]*skipLiveSidebarSessionList\(id, "live-session-list-not-allowed"\);[\s\S]*return;[\s\S]*\}/,
+    "live-list denial should use the soft-skip helper",
+  );
+});

@@ -26,7 +26,6 @@ function createHarness(options?: {
   runtime?: EngineInfo["runtime"];
   startInfo?: EngineInfo;
   prepareInfo?: EngineInfo;
-  stopInfo?: EngineInfo;
   infoSnapshot?: EngineInfo;
   infoSnapshots?: EngineInfo[];
   serverConnectResult?: boolean;
@@ -61,17 +60,6 @@ function createHarness(options?: {
   }> = [];
 
   const runtime = options?.runtime ?? "direct";
-  const stopInfo =
-    options?.stopInfo ??
-    makeEngineInfo({
-      running: false,
-      runtime,
-      baseUrl: null,
-      projectDir: "/tmp/old",
-      opencodeUsername: null,
-      opencodePassword: null,
-      pid: null,
-    });
   const startInfo = options?.startInfo ?? makeEngineInfo({ runtime, projectDir: "/tmp/demo" });
   const prepareInfo = options?.prepareInfo ?? startInfo;
   const infoSnapshot = options?.infoSnapshot ?? makeEngineInfo({ runtime, projectDir: "/tmp/demo" });
@@ -90,14 +78,6 @@ function createHarness(options?: {
       calls.push(`setEngineAuth:${auth?.username ?? auth?.mode ?? "none"}`);
       authSnapshots.push(auth ?? null);
     },
-    startEngine: async (workspacePath, startOptions) => {
-      calls.push(`startEngine:${workspacePath}:${startOptions.runtime}`);
-      return startInfo;
-    },
-    stopEngine: async () => {
-      calls.push("stopEngine");
-      return stopInfo;
-    },
     readEngineInfo: async (workspaceId, workspacePath) => {
       calls.push("readEngineInfo");
       readInfoRequests.push({ workspaceId, workspacePath });
@@ -115,14 +95,6 @@ function createHarness(options?: {
         reason: input.reason ?? "",
         engine: prepareInfo,
       };
-    },
-    activateOrchestratorWorkspace: async ({ workspacePath, workspaceId, name }) => {
-      calls.push(`activateOrchestrator:${workspacePath}:${workspaceId ?? ""}:${name ?? ""}`);
-      return null;
-    },
-    disposeOrchestratorWorkspace: async (workspacePath) => {
-      calls.push(`disposeOrchestrator:${workspacePath}`);
-      return true;
     },
     activateVesloHostWorkspace: async (workspacePath) => {
       calls.push(`activateHost:${workspacePath}`);
@@ -149,12 +121,11 @@ function createHarness(options?: {
     serverConnections,
     quietConnections,
     startInfo,
-    stopInfo,
     infoSnapshot,
   };
 }
 
-test("startHost starts the engine once, derives auth, and reconnects through the shared lifecycle", async () => {
+test("startHost delegates runtime process preparation to the backend and reconnects", async () => {
   const harness = createHarness();
 
   const ok = await harness.lifecycle.startHost({
@@ -329,7 +300,7 @@ test("startHost reconnects through workspace-scoped engine info for orchestrator
   });
 });
 
-test("restartWorkspaceRuntime uses the shared stop/start reconnect flow for direct runtime", async () => {
+test("restartWorkspaceRuntime delegates direct runtime preparation to the backend", async () => {
   const harness = createHarness({
     runtime: "direct",
     prepareInfo: makeEngineInfo({
@@ -363,7 +334,7 @@ test("restartWorkspaceRuntime uses the shared stop/start reconnect flow for dire
   });
 });
 
-test("restartWorkspaceRuntime can reconnect quietly after orchestrator workspace activation", async () => {
+test("restartWorkspaceRuntime can reconnect quietly after backend orchestrator preparation", async () => {
   const harness = createHarness({
     runtime: "veslo-orchestrator",
     prepareInfo: makeEngineInfo({
@@ -458,7 +429,7 @@ test("restartWorkspaceRuntime activates orchestrator with the requested workspac
   assert.equal(harness.quietConnections[0]?.context?.workspaceId, "ws-target");
 });
 
-test("reattachOrchestratorWorkspace reuses the shared engine snapshot flow without a stop/start cycle", async () => {
+test("reattachOrchestratorWorkspace delegates to backend prepare and reuses snapshot reconnect", async () => {
   const harness = createHarness({
     runtime: "veslo-orchestrator",
     prepareInfo: makeEngineInfo({

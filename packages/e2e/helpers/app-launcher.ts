@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join, resolve, dirname, win32, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,6 +53,8 @@ const MANAGED_CHILD_PROCESS_NAMES = [
 
 let appProcess: ChildProcess | null = null;
 let appProcessOwnedByHarness = false;
+let lastOwnedAppProcessPid: number | null = null;
+let managedChildCleanupPromise: Promise<number> | null = null;
 let managedAiGatewayFixture: ManagedAiGatewayFixture | null = null;
 let fixtureCleanupPromise: Promise<void> | null = null;
 let appProcessExitPromise: Promise<AppProcessExit> | null = null;
@@ -212,6 +214,41 @@ async function stopManagedChildProcessesForParent(parentProcessId: number | unde
       resolveCleanup(Number.isFinite(count) ? count : 0);
     });
   });
+}
+
+async function cleanupManagedChildProcessesForLastOwnedApp(reason: string): Promise<number> {
+  const parentProcessId = lastOwnedAppProcessPid ?? undefined;
+  if (!parentProcessId) return 0;
+
+  let cleanupPromise: Promise<number>;
+  let startedCleanup = false;
+  if (managedChildCleanupPromise) {
+    cleanupPromise = managedChildCleanupPromise;
+  } else {
+    startedCleanup = true;
+    cleanupPromise = stopManagedChildProcessesForParent(parentProcessId).finally(() => {
+      managedChildCleanupPromise = null;
+      if (lastOwnedAppProcessPid === parentProcessId) {
+        lastOwnedAppProcessPid = null;
+      }
+    });
+    managedChildCleanupPromise = cleanupPromise;
+  }
+
+  const stoppedChildren = await cleanupPromise;
+  if (startedCleanup && stoppedChildren > 0) {
+    console.log(
+      `[e2e] Stopped ${stoppedChildren} managed child process${stoppedChildren === 1 ? '' : 'es'} from app PID ${parentProcessId} (${reason}).`,
+    );
+  }
+  return stoppedChildren;
+}
+
+function rotateExistingLogFile(path: string): void {
+  if (!existsSync(path)) return;
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  renameSync(path, `${path}.${stamp}`);
 }
 
 export async function terminateAppProcess(
@@ -760,6 +797,8 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
   if (appLogRoot) {
     mkdirSync(appLogRoot, { recursive: true });
     const header = `[e2e] started=${new Date().toISOString()} binary=${binaryPath}\n`;
+    rotateExistingLogFile(appStdoutLog);
+    rotateExistingLogFile(appStderrLog);
     writeFileSync(appStdoutLog, header, 'utf8');
     writeFileSync(appStderrLog, header, 'utf8');
     console.log(`[e2e] Capturing app logs: ${appLogRoot}`);
@@ -788,6 +827,8 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   appProcessOwnedByHarness = true;
+  lastOwnedAppProcessPid = appProcess.pid ?? null;
+  managedChildCleanupPromise = null;
   appProcessExitPromise = new Promise<AppProcessExit>((resolveExit) => {
     resolveAppProcessExit = resolveExit;
   });
@@ -803,12 +844,17 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
 
   appProcess.on('exit', (code, signal) => {
     console.log(`[e2e] App process exited with code ${code}${signal ? ` signal ${signal}` : ''}`);
+    const exitedPid = appProcess?.pid ?? lastOwnedAppProcessPid;
+    lastOwnedAppProcessPid = exitedPid ?? null;
     appProcess = null;
     appProcessOwnedByHarness = false;
     resolveAppProcessExit?.({ code, signal });
     resolveAppProcessExit = null;
-    void cleanupStartedFixtures().catch((error) => {
-      console.warn(`[e2e] Failed to clean up fixtures after app exit: ${error instanceof Error ? error.message : String(error)}`);
+    void (async () => {
+      await cleanupManagedChildProcessesForLastOwnedApp('app exit');
+      await cleanupStartedFixtures();
+    })().catch((error) => {
+      console.warn(`[e2e] Failed to clean up after app exit: ${error instanceof Error ? error.message : String(error)}`);
     });
   });
 }
@@ -819,6 +865,7 @@ export async function waitForAppExit(): Promise<AppProcessExit | null> {
 
 export async function stopApp(): Promise<void> {
   if (!appProcessOwnedByHarness || !appProcess) {
+    await cleanupManagedChildProcessesForLastOwnedApp('stop fallback');
     await cleanupStartedFixtures();
     return;
   }
@@ -834,9 +881,7 @@ export async function stopApp(): Promise<void> {
   if (!result.exited) {
     console.warn(`[e2e] App process PID ${processToStop.pid} did not exit after termination request.`);
   }
-  const stoppedChildren = await stopManagedChildProcessesForParent(processToStopPid);
-  if (stoppedChildren > 0) {
-    console.log(`[e2e] Stopped ${stoppedChildren} managed child process${stoppedChildren === 1 ? '' : 'es'} from app PID ${processToStopPid}.`);
-  }
+  lastOwnedAppProcessPid = processToStopPid ?? lastOwnedAppProcessPid;
+  await cleanupManagedChildProcessesForLastOwnedApp('stopApp');
   await cleanupStartedFixtures();
 }

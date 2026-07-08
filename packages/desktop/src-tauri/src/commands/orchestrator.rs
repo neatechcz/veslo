@@ -16,6 +16,7 @@ use crate::types::{OrchestratorEngineSnapshot, OrchestratorStatus, OrchestratorW
 use crate::workspace::validation::{validate_workspace_path, ValidationMode};
 
 const DEFAULT_DETACHED_VESLO_HOST: &str = "127.0.0.1";
+const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS: u64 = 10_000;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -521,8 +522,14 @@ pub async fn orchestrator_workspace_activate(
             "[veslo:http] OUT POST {activate_url} (orchestrator.activate) wsId={:?}",
             added.id
         );
+        let agent = ureq::AgentBuilder::new()
+            .timeout(Duration::from_millis(
+                ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS,
+            ))
+            .build();
         let started = Instant::now();
-        match ureq::post(&activate_url)
+        match agent
+            .post(&activate_url)
             .set("Content-Type", "application/json")
             .send_string("")
         {

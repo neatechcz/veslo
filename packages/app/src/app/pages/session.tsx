@@ -1310,11 +1310,14 @@ export default function SessionView(props: SessionViewProps) {
     }));
   };
   const setRunHasBegunForSessionKey = (sessionKey: string, hasBegun: boolean) => {
+    const key = sessionKey.trim();
+    if (!key) return;
+    if (untrack(runStateBySessionKey)[key]?.hasBegun === hasBegun) return;
     recordSendTrace("run-state:has-begun", {
-      sessionKey,
+      sessionKey: key,
       hasBegun,
     });
-    updateRunStateForSessionKey(sessionKey, (current) => ({ ...current, hasBegun }));
+    updateRunStateForSessionKey(key, (current) => ({ ...current, hasBegun }));
   };
   const setRunTickForSessionKey = (sessionKey: string, tick: number) => {
     updateRunStateForSessionKey(sessionKey, (current) => ({ ...current, tick }));

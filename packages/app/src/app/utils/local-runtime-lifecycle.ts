@@ -25,7 +25,6 @@ export type LocalRuntimeReconnectOptions = {
   navigate?: boolean;
   quiet?: boolean;
   forceFreshRuntime?: boolean;
-  beforeOrchestratorReconnect?: () => Promise<void>;
 };
 
 export interface LocalRuntimeLifecycleDeps {
@@ -38,8 +37,6 @@ export interface LocalRuntimeLifecycleDeps {
   idleSuspendMs?: () => number | null;
   setEngine: (info: EngineInfo) => void;
   setEngineAuth: (auth: OpencodeAuth | null) => void;
-  startEngine: (workspacePath: string, options: LocalRuntimeStartOptions) => Promise<EngineInfo>;
-  stopEngine: () => Promise<EngineInfo>;
   readEngineInfo: (workspaceId?: string, workspacePath?: string) => Promise<EngineInfo>;
   prepareWorkspaceRuntime: (input: LocalRuntimeStartOptions & {
     projectDir: string;
@@ -48,12 +45,6 @@ export interface LocalRuntimeLifecycleDeps {
     reason?: string | null;
     forceFreshRuntime?: boolean;
   }) => Promise<WorkspaceRuntimePrepareResult>;
-  activateOrchestratorWorkspace: (input: {
-    workspacePath: string;
-    workspaceId?: string | null;
-    name?: string | null;
-  }) => Promise<unknown>;
-  disposeOrchestratorWorkspace?: (workspacePath: string) => Promise<boolean>;
   activateVesloHostWorkspace: (workspacePath: string) => Promise<unknown>;
   connectToServer: (
     nextBaseUrl: string,

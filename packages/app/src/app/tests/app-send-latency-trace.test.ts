@@ -306,8 +306,8 @@ test("sidebar conversation read sync follows warm workspace readiness", () => {
   );
   assert.match(
     sidebarWorkspaceSessionsSource,
-    /const hostFirstResult = await refreshFromHostReadApi\("host-first"\);[\s\S]*if \(hostFirstResult\) return;[\s\S]*const activeWorkspaceId = options\.workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*if \(hostReadDirectory && options\.allowLiveWorkspaceSessionList\?\.\(id\) !== true\) \{[\s\S]*markSidebarRefreshUnavailable\(id, "live-session-list-not-allowed"\);[\s\S]*return;[\s\S]*\}[\s\S]*if \(activeWorkspaceId === id && !options\.activeWorkspaceRuntimeReady\(\)\) \{[\s\S]*markSidebarRefreshUnavailable\(id, "active-runtime-not-ready"\);[\s\S]*return;[\s\S]*\}[\s\S]*if \(!config\.baseUrl\)/,
-    "normal local sidebar refresh should prefer host conversation reads and skip live OpenCode session listing until send flow explicitly allows live reads",
+    /const hostFirstResult = await refreshFromHostReadApi\("host-first"\);[\s\S]*if \(hostFirstResult\) return;[\s\S]*const activeWorkspaceId = options\.workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*if \(hostReadDirectory && options\.allowLiveWorkspaceSessionList\?\.\(id\) !== true\) \{[\s\S]*skipLiveSidebarSessionList\(id, "live-session-list-not-allowed"\);[\s\S]*return;[\s\S]*\}[\s\S]*if \(activeWorkspaceId === id && !options\.activeWorkspaceRuntimeReady\(\)\) \{[\s\S]*markSidebarRefreshUnavailable\(id, "active-runtime-not-ready"\);[\s\S]*return;[\s\S]*\}[\s\S]*if \(!config\.baseUrl\)/,
+    "normal local sidebar refresh should prefer host conversation reads and soft-skip live OpenCode session listing until send flow explicitly allows live reads",
   );
   assert.match(
     source,

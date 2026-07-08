@@ -1028,8 +1028,8 @@ bearer. The next provider/runtime handshake can then fail with
 
 ### Fix
 
-`ensureEngineForWorkspace(...)` now treats orchestrator `*-runtime-recovery`
-reasons differently from normal browse attach:
+The initial tactical fix treated orchestrator `*-runtime-recovery` reasons
+differently from normal browse attach:
 
 - normal orchestrator attach still uses `restartWorkspaceRuntime(...)`, which is
   the cheap activate/reattach path,
@@ -1038,16 +1038,22 @@ reasons differently from normal browse attach:
 - the existing reattach fallback remains for cases where `startHost(...)`
   starts the daemon but does not publish a route yet.
 
+That tactical frontend-side choice is superseded by the backend-owned runtime
+prepare follow-up below. The final contract is that
+`ensureEngineForWorkspace(...)` passes the original recovery reason to
+`runtime_prepare_workspace`, and Rust decides whether to activate/reattach or
+fresh-start the runtime.
+
 ### Reproduction Test
 
 The new regression test imitates the bug by running
 `ensureEngineForWorkspace("ws-a", { reason: "sendPrompt-runtime-recovery",
 loadSessions: false })` with `runtime = "veslo-orchestrator"`.
 
-Before the fix, that path called `restartWorkspaceRuntime(...)`, meaning only
-workspace activation/reattach. After the fix, it calls
-`startHost:runtime-recovery-fresh-start` and does not call
-`restartWorkspaceRuntime(...)`.
+Before the tactical fix, that path called `restartWorkspaceRuntime(...)`,
+meaning only workspace activation/reattach. The final regression now expects a
+single backend prepare intent with the original `sendPrompt-runtime-recovery`
+reason, so the backend can classify it as a fresh runtime start.
 
 ### Verification
 
@@ -1060,3 +1066,142 @@ Results:
 
 - workspace runtime controller and send-runtime readiness targeted tests: 33
   passed.
+
+## Backend-Owned Runtime Prepare Follow-up
+
+The reconnect/auth failure class should not be fixed by having the frontend
+choose which engine lifecycle primitive to run. The latest change moves that
+decision behind a Rust Tauri command:
+
+- `runtime_prepare_workspace` owns the process decision in
+  `packages/desktop/src-tauri/src/commands/engine.rs`.
+- Direct runtime always resolves to a fresh backend start.
+- Orchestrator `runtime-recovery`, cold-start, host-start, reload, or explicit
+  fresh intent resolve to a fresh backend start.
+- Normal orchestrator workspace attach first tries
+  `orchestrator_workspace_activate`; if that fails, the Rust command falls back
+  to `engine_start` inside the backend.
+- App-side runtime code now sends a prepare intent and then only synchronizes
+  the returned `EngineInfo`/auth/client route.
+
+Important app-side boundaries after the refactor:
+
+- `workspace-runtime-controller.ts` uses one
+  `localRuntimeLifecycle.prepareWorkspaceRuntime(...)` call for boot warmup,
+  first-send recovery, and runtime recovery.
+- `workspace-activation-local.ts` also delegates remote-to-local and
+  local-to-local runtime preparation to the same prepare helper.
+- `local-runtime-lifecycle.ts` no longer depends on `startEngine`,
+  `stopEngine`, `activateOrchestratorWorkspace`, or
+  `disposeOrchestratorWorkspace`.
+
+This preserves file/send behavior because the change is below prompt assembly
+and attachment staging. The UI still performs client route binding after the
+backend returns the prepared engine snapshot.
+
+### Verification
+
+```powershell
+node --import=tsx/esm --test src/app/tests/context/workspace-runtime-controller-source.test.ts src/app/tests/context/workspace-runtime-controller-folder-access.test.ts src/app/tests/utils/local-runtime-lifecycle.test.ts src/app/context/workspace-browse-cold-start.test.ts src/app/tests/context/workspace-skill-materialization-sync.test.ts src/app/tests/context/workspace-activate-order-sync.test.ts src/app/tests/context/workspace-engine-warmup.test.ts src/app/tests/stores/engine-store-start-host-reset.test.ts
+pnpm --filter @neatech/veslo-ui typecheck
+cargo test workspace_runtime_prepare_keeps_process_lifecycle_decisions_backend_owned --manifest-path packages\desktop\src-tauri\Cargo.toml
+```
+
+Results:
+
+- app targeted runtime/activation/source suites: 62 passed,
+- app typecheck: passed,
+- Rust runtime prepare decision test: passed.
+
+## Live Sidebar List Guard Follow-up
+
+The sidebar had one remaining confusing degraded path: after a host-first
+conversation read returned unavailable, the local workspace sidebar attempted to
+fall through to the live OpenCode session list. That live list is intentionally
+gated until the send flow has explicitly allowed live reads, but the guard wrote
+`live-session-list-not-allowed` as a visible sidebar load error.
+
+That was too strict for a passive sidebar refresh. Browse-only conversation
+reads are allowed to be unavailable during cold start, and the live SDK list
+must remain gated, but the UI should not end in an error state just because a
+passive sidebar refresh skipped the unsafe live path.
+
+The fix keeps the safety boundary and changes only the UI impact:
+
+- live OpenCode sidebar listing is still not enabled broadly,
+- the denied live-list path now uses `skipLiveSidebarSessionList(...)`,
+- existing rows are preserved,
+- stale sidebar read errors are cleared,
+- the sidebar records `sidebar:live-session-list:skipped` instead of exposing
+  `Sidebar conversation read unavailable: live-session-list-not-allowed`.
+
+### Verification
+
+```powershell
+node --import=tsx/esm --test src/app/tests/context/sidebar-workspace-live-list-policy.test.ts src/app/tests/context/sidebar-workspace-history-retry.test.ts src/app/tests/lib/sidebar-session-sync-guard.test.ts src/app/tests/app-send-latency-trace.test.ts
+
+node --import=tsx/esm --test src/app/tests/context/workspace-runtime-controller-source.test.ts src/app/tests/context/workspace-runtime-controller-folder-access.test.ts src/app/tests/utils/local-runtime-lifecycle.test.ts src/app/context/workspace-browse-cold-start.test.ts src/app/tests/context/workspace-skill-materialization-sync.test.ts src/app/tests/context/workspace-activate-order-sync.test.ts src/app/tests/context/workspace-engine-warmup.test.ts src/app/tests/stores/engine-store-start-host-reset.test.ts src/app/tests/context/sidebar-workspace-live-list-policy.test.ts src/app/tests/context/sidebar-workspace-history-retry.test.ts src/app/tests/lib/sidebar-session-sync-guard.test.ts src/app/tests/app-send-latency-trace.test.ts
+
+pnpm --filter @neatech/veslo-ui typecheck
+git diff --check -- packages/app/src/app/context/sidebar-workspace-sessions.ts packages/app/src/app/tests/context/sidebar-workspace-live-list-policy.test.ts packages/app/src/app/tests/lib/sidebar-session-sync-guard.test.ts packages/app/src/app/tests/app-send-latency-trace.test.ts
+```
+
+Results:
+
+- sidebar/live-list targeted suites: 43 passed,
+- broader app runtime/sidebar workflow suites: 105 passed,
+- app typecheck: passed,
+- diff check: passed with CRLF warnings only.
+
+## E2E AppHang Code Audit Follow-up
+
+The E2E evidence points to a Windows `AppHangB1`, not a captured Rust panic or
+frontend exception. The runtime accepted `prompt_async` and continued serving
+session/transcript reads; the failure window was during live assistant/SSE
+activity and trace forwarding.
+
+Current source can still plausibly produce hangs or apparent hangs in two
+places:
+
+- `orchestrator_workspace_activate` used an unbounded native HTTP POST to the
+  orchestrator daemon during backend-owned runtime prepare. If the orchestrator
+  status file says the daemon is running but the daemon accepts a connection and
+  never responds, `runtime_prepare_workspace` can wait on activation instead of
+  falling back to `engine_start`.
+- `setRunHasBegunForSessionKey(...)` emitted `run-state:has-begun` even when
+  the stored per-session state was already `true`. With workflow tracing
+  enabled by the live-skills E2E scenario, every duplicate update becomes a
+  `log_ui_event` IPC, a `stderr` line, a send-workflow trace append, and a debug
+  spool append.
+
+Data entering the observed path:
+
+- workspace id: `ws-9dfacb4d8c2a`
+- workspace path: `packages/e2e/.tmp-veslo-home/workspaces/visual-workspace`
+- OpenCode session id: `ses_0bc7efa20ffeUr2uBi6jSDu07z`
+- conversation id: `conv-1ddce6c96e4c4f11968e`
+- runtime topology: `shared-unsandboxed`
+- engine base url: `http://127.0.0.1:51841`
+- Veslo server origin observed by gateway config trace:
+  `http://127.0.0.1:56583`
+- send path: server-owned submit to
+  `/workspace/{workspaceId}/opencode/session/{sessionId}/prompt_async`
+
+The first hardening slice is intentionally small:
+
+- orchestrator workspace activation now uses an explicit native HTTP timeout
+  before runtime prepare falls back to fresh backend start,
+- duplicate `run-state:has-begun` trace events are suppressed when the state did
+  not change.
+
+### Verification
+
+```powershell
+pnpm --filter @neatech/veslo-ui exec node --import=tsx/esm --test src/app/tests/pages/session-inline-loading.test.ts src/app/tests/context/workspace-activate-order-sync.test.ts
+cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml workspace_runtime_prepare_keeps_process_lifecycle_decisions_backend_owned -- --nocapture
+```
+
+Results:
+
+- app source-level session/runtime tests: 40 passed,
+- Rust runtime prepare decision test: passed.

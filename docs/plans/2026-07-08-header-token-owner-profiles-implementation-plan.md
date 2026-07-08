@@ -1,26 +1,26 @@
 ---
 title: Header Token Owner Profiles Implementation Plan
 date: 2026-07-08
-status: draft
-done: false
+status: complete
+done: true
 issue: unlinked
 source_audit: chat:2026-07-08-header-token-owner-deep-audit
 repo: veslo-main
-htp00_contract_snapshot_done: false
-htp01_app_header_profiles_done: false
-htp02_app_domain_dedupe_done: false
-htp03_server_request_headers_owner_done: false
-htp04_cors_allowlist_owner_done: false
-htp05_gateway_proxy_strip_profile_done: false
-htp06_orchestrator_boundary_inventory_done: false
-htp07_verification_done: false
+htp00_contract_snapshot_done: true
+htp01_app_header_profiles_done: true
+htp02_app_domain_dedupe_done: true
+htp03_server_request_headers_owner_done: true
+htp04_cors_allowlist_owner_done: true
+htp05_gateway_proxy_strip_profile_done: true
+htp06_orchestrator_boundary_inventory_done: true
+htp07_verification_done: true
 ---
 
 # Header Token Owner Profiles Implementation Plan
 
 ## Goal
 
-done: false
+done: true
 
 Make Veslo-owned request headers and token handoff rules changeable from a
 small number of explicit owners without blurring trust boundaries.
@@ -36,12 +36,13 @@ requirement is:
   upstream calls,
 - OpenCode generated provider routing keeps runtime-only gateway authorization
   and never persists live gateway credentials,
-- changing a Veslo-owned header name does not require grepping unrelated
-  business logic.
+- changing a Veslo-owned header name in the audited first-slice surfaces does
+  not require grepping unrelated business logic. Any live legacy surface that
+  remains outside the first slice must be named explicitly as a follow-up.
 
 ## Current Audit Snapshot
 
-done: false
+done: true
 
 Targeted audit and tests were run on 2026-07-08 in `veslo-main`.
 
@@ -65,9 +66,199 @@ The contracts are currently working. This plan exists because the ownership is
 too scattered and header-name drift can reintroduce auth bugs without changing
 business logic.
 
+## Implementation Update 2026-07-08
+
+done: true
+
+HTP00-HTP07 are implemented and verified in the current dirty worktree.
+
+What changed:
+
+- HTP01/HTP02 were already partially present before this implementation pass:
+  `packages/app/src/app/lib/veslo-server/header-profiles.ts` existed and the
+  app Veslo server domain clients were already using shared Den header
+  builders.
+- Added `packages/server/src/request-headers.ts` as the server-owned request
+  header owner.
+- Moved Den catalog, Soul, and skill-registry request header reads from route
+  files into that owner while preserving route-specific Den API base behavior:
+  `/hub/mcp` still accepts request override, `/hub/skills` still uses only
+  configured Den base, Soul still accepts request override then falls back to
+  config, and skill-registry still uses configured registry base before Den
+  header fallback.
+- Moved `Access-Control-Allow-Headers` to the server-owned
+  `VESLO_ALLOWED_CORS_HEADERS` constant and updated the existing broad CORS
+  preflight test to assert against that constant.
+- Replaced live conversation-route `x-veslo-send-trace-id` literals with the
+  server-owned send-trace header constant.
+- Added `packages/server/src/ai-gateway-proxy-headers.ts` as the dedicated AI
+  gateway proxy strip profile.
+- Recorded the orchestrator boundary inventory without changing orchestrator
+  code.
+
+Verification:
+
+```powershell
+git status --short --branch
+git diff --name-only
+git diff --cached --name-only
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/lib/veslo-server.test.ts src/app/tests/lib/skill-registry-events.test.ts src/app/tests/context/skill-registry-orchestrator.test.ts src/app/tests/lib/provider-routing.test.ts src/app/tests/lib/ai-access.test.ts src/app/tests/context/managed-ai-runtime-config.test.ts
+corepack pnpm@10.27.0 --filter veslo-server exec bun test src/tests/server.skill-registry-search.test.ts src/tests/server.hub-mcp.test.ts src/tests/server.hub-skills.test.ts src/tests/server.mcp-routes.test.ts src/tests/server.skill-registry-routes.test.ts src/tests/server.skill-materialization-routes.test.ts src/tests/server.skill-removal-routes.test.ts src/tests/soul-controller.test.ts src/tests/soul-routes.test.ts src/tests/server.ai-gateway.test.ts src/tests/ai-gateway-runtime-owner.test.ts
+corepack pnpm@10.27.0 --filter veslo-server typecheck
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui typecheck
+git diff --check
+```
+
+Results:
+
+- baseline app focused tests: 143 passed,
+- baseline server focused tests: 69 passed,
+- server HTP03/HTP04 route-owner focused tests: 37 passed,
+- server Soul focused tests: 24 passed,
+- server AI gateway focused tests: 35 passed,
+- final app focused tests: 143 passed,
+- final server focused bundle with route owner, Soul, and AI gateway tests:
+  96 passed,
+- server typecheck: passed,
+- app typecheck: passed,
+- diff check: passed with CRLF warnings only,
+- untracked helper trailing-whitespace check: passed.
+
+## Continuation Update 2026-07-08 - HTP05 And HTP06
+
+done: true
+
+HTP05 and HTP06 are implemented and verified in the current dirty worktree.
+
+What changed:
+
+- Added `packages/server/src/ai-gateway-proxy-headers.ts` as the dedicated AI
+  gateway proxy header profile.
+- The profile names the internal headers, local-only OpenCode session headers,
+  and transport headers stripped before upstream AI gateway requests.
+- `packages/server/src/server.ts` now reads incoming gateway auth, legacy
+  gateway token, session, workspace, host/client, and send-trace diagnostics
+  before calling `stripAiGatewayProxyRequestHeaders(headers)`.
+- Upstream provider `Authorization`, forwarded `x-veslo-session-id`, and
+  `x-veslo-request-id` are set before stripping; local-only/internal headers
+  are stripped afterward.
+- The final KISS self-review kept generic OpenCode/server proxy transport
+  constants local to `server.ts`. `request-headers.ts` owns Veslo inbound
+  request headers/readers only, and the AI gateway strip profile owns its own
+  transport strip list.
+
+HTP06 orchestrator inventory:
+
+- `packages/orchestrator/src/cli.ts` owns
+  `X-Veslo-Orchestrator-Token` / lower-case lifecycle token matching near the
+  router lifecycle constants.
+- It owns `x-veslo-conversation-run-id` for OpenCode proxy conversation-run
+  correlation.
+- It uses `Authorization` for Veslo/OpenCodeRouter bearer calls and OpenCode
+  Basic auth forwarding.
+- It uses `X-Veslo-Host-Token` for Veslo server host-authorized router and
+  app integration calls.
+- It injects `x-opencode-directory` and `x-veslo-workspace-id` into proxied
+  engine requests.
+- It reads `x-veslo-send-trace-id` from incoming proxy requests for workflow
+  trace correlation.
+- No orchestrator code changed in this slice, so `test:router` was not run per
+  HTP06 verification guidance.
+
+Verification:
+
+```powershell
+corepack pnpm@10.27.0 --filter veslo-server exec bun test src/tests/server.ai-gateway.test.ts src/tests/ai-gateway-runtime-owner.test.ts
+corepack pnpm@10.27.0 --filter veslo-server typecheck
+rg -n "x-veslo|X-Veslo|Authorization|authorization|x-opencode-directory" packages/orchestrator/src/cli.ts
+```
+
+Results:
+
+- server AI gateway focused tests: 35 passed,
+- server typecheck: passed,
+- orchestrator header inventory command: completed,
+- orchestrator router tests: skipped because no orchestrator code changed.
+
+Final HTP07 verification after the continuation:
+
+```powershell
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/lib/veslo-server.test.ts src/app/tests/lib/skill-registry-events.test.ts src/app/tests/context/skill-registry-orchestrator.test.ts src/app/tests/lib/provider-routing.test.ts src/app/tests/lib/ai-access.test.ts src/app/tests/context/managed-ai-runtime-config.test.ts
+corepack pnpm@10.27.0 --filter veslo-server exec bun test src/tests/server.skill-registry-search.test.ts src/tests/server.hub-mcp.test.ts src/tests/server.hub-skills.test.ts src/tests/server.mcp-routes.test.ts src/tests/server.skill-registry-routes.test.ts src/tests/server.skill-materialization-routes.test.ts src/tests/server.skill-removal-routes.test.ts src/tests/soul-controller.test.ts src/tests/soul-routes.test.ts src/tests/server.ai-gateway.test.ts src/tests/ai-gateway-runtime-owner.test.ts
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui typecheck
+corepack pnpm@10.27.0 --filter veslo-server typecheck
+git diff --check -- packages/app/src/app/lib/veslo-server packages/app/src/app/lib/veslo-server-domains packages/server/src docs/plans/2026-07-08-header-token-owner-profiles-implementation-plan.md
+rg -n "[ \t]+$" packages/server/src/request-headers.ts packages/server/src/ai-gateway-proxy-headers.ts packages/app/src/app/lib/veslo-server/header-profiles.ts docs/plans/2026-07-08-header-token-owner-profiles-implementation-plan.md
+```
+
+Final results:
+
+- final app focused tests: 143 passed,
+- final server focused bundle: 96 passed,
+- final app typecheck: passed,
+- final server typecheck: passed,
+- final diff check: passed with CRLF warnings only,
+- final untracked helper trailing-whitespace check: passed.
+
+## Self-Review Update 2026-07-08
+
+done: true
+
+A final KISS review found one scope leak in the HTP05 continuation: generic
+OpenCode/server proxy transport names had drifted into
+`packages/server/src/request-headers.ts`. That made the server request-header
+owner too broad and blurred the boundary between Veslo inbound request parsing
+and local proxy transport mechanics.
+
+Follow-up changes:
+
+- Removed generic transport exports from
+  `packages/server/src/request-headers.ts`; it now owns Veslo inbound request
+  headers/readers only.
+- Kept generic OpenCode/server proxy transport constants local to
+  `packages/server/src/server.ts`.
+- Updated `packages/server/src/ai-gateway-proxy-headers.ts` so its AI gateway
+  strip profile owns its own internal/local-only/transport strip groups.
+- Replaced app-side conversation `X-Veslo-Send-Trace-Id` and
+  `X-Veslo-Account-Id` literals with constants in
+  `packages/app/src/app/lib/veslo-server/header-profiles.ts`.
+- Added `packages/server/src/tests/ai-gateway-proxy-headers.test.ts` to assert
+  that the AI gateway strip profile removes local/internal/transport headers
+  while preserving upstream `Authorization`, forwarded `x-veslo-session-id`,
+  `content-type`, and `x-veslo-request-id`.
+
+Verification:
+
+```powershell
+corepack pnpm@10.27.0 --filter veslo-server typecheck
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui typecheck
+corepack pnpm@10.27.0 --filter veslo-server exec bun test src/tests/ai-gateway-proxy-headers.test.ts src/tests/server.conversation-session-routes.test.ts
+corepack pnpm@10.27.0 --filter veslo-server exec bun test src/tests/server.skill-registry-search.test.ts src/tests/server.hub-mcp.test.ts src/tests/server.hub-skills.test.ts src/tests/server.mcp-routes.test.ts src/tests/server.skill-registry-routes.test.ts src/tests/server.skill-materialization-routes.test.ts src/tests/server.skill-removal-routes.test.ts src/tests/soul-controller.test.ts src/tests/soul-routes.test.ts src/tests/server.ai-gateway.test.ts src/tests/ai-gateway-runtime-owner.test.ts src/tests/ai-gateway-proxy-headers.test.ts
+corepack pnpm@10.27.0 --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/lib/veslo-server.test.ts
+rg -n "export const ACCEPT_ENCODING_HEADER|export const CONTENT_LENGTH_HEADER|export const HOST_HEADER|export const ORIGIN_HEADER|export const HOP_BY_HOP_REQUEST_HEADERS" packages\server\src\request-headers.ts
+rg -n "ACCEPT_ENCODING_HEADER|CONTENT_LENGTH_HEADER|HOST_HEADER|ORIGIN_HEADER|HOP_BY_HOP_REQUEST_HEADERS" packages\server\src\request-headers.ts packages\server\src\server.ts packages\server\src\ai-gateway-proxy-headers.ts
+rg -n --fixed-strings -e "x-veslo-" -e "X-Veslo-" -e "x-opencode-" -e "X-OpenCode-" -e "X-Opencode-" -e "x-session-id" -e "x-session-affinity" .\packages\app\src\app --glob "*.ts" --glob "*.tsx" --glob "!**/tests/**"
+```
+
+Results:
+
+- AI gateway strip and conversation route smoke tests: 2 passed,
+- broader server route/Soul/AI gateway focused bundle: 97 passed earlier,
+- final server AI gateway/runtime/CORS focused bundle: 47 passed,
+- app Veslo server client tests: 62 passed,
+- server typecheck: passed,
+- app typecheck: passed,
+- transport owner audit: `request-headers.ts` has no generic transport
+  exports; transport names remain local to `server.ts` and the AI gateway
+  strip profile,
+- app literal audit: conversation send-trace/account headers no longer appear
+  outside `header-profiles.ts`; remaining app literals are local/external
+  owners such as OpenCode provider config, MCP connector headers, feedback,
+  and publisher headers.
+
 ## Review Update 2026-07-08
 
-done: false
+done: true
 
 A follow-up review found the first draft directionally correct but too broad for
 an implementation handoff. This revision narrows the KISS first slice:
@@ -85,9 +276,26 @@ an implementation handoff. This revision narrows the KISS first slice:
 - HTP00 must record dirty worktree context before the first edit and must keep
   header-owner work separate from unrelated modified files.
 
+Second review refinement:
+
+- HTP03 must inventory all live server Den parsing, including
+  `packages/server/src/soul-controller.ts` and the legacy-but-live
+  skill-registry materialization helpers in `packages/server/src/server.ts`.
+- The server request-header owner must preserve different Den API base
+  semantics. `/hub/mcp` accepts a request override via
+  `x-veslo-den-api-base`, while `/hub/skills` uses only
+  `ctx.config.denApiBase` and returns `{ items: [] }` when it is not
+  configured.
+- HTP04 should update the existing broad CORS preflight test in
+  `packages/server/src/tests/server.skill-registry-search.test.ts`, not add a
+  duplicate test.
+- App-side `x-veslo-gateway-token` / `VESLO_GATEWAY_TOKEN_HEADER` is legacy or
+  internal migration surface only. It must not become part of the normal app
+  Veslo server header profile.
+
 ## Existing Ownership To Preserve
 
-done: false
+done: true
 
 Do not collapse all headers into one universal helper. The current system has
 several separate trust boundaries and the implementation must keep them
@@ -123,7 +331,7 @@ Preserve these existing boundaries:
 
 ## Current Duplication And Risk
 
-done: false
+done: true
 
 The audit found these concrete duplication points:
 
@@ -139,7 +347,10 @@ The audit found these concrete duplication points:
   - `packages/server/src/routes/skill-materialization.ts`
   - `packages/server/src/routes/skill-removals.ts`
   - `packages/server/src/routes/workspace-skills.ts`
-  - legacy route bodies still present in `packages/server/src/server.ts`.
+  - `packages/server/src/soul-controller.ts`
+  - legacy route bodies still present in `packages/server/src/server.ts`,
+    including materialization flow that still calls
+    `skillRegistryRequestInput(ctx)`.
 - CORS allow headers are a manually maintained string in
   `packages/server/src/server.ts`.
 - AI gateway proxy strips internal headers correctly today, but the strip list
@@ -152,7 +363,7 @@ The audit found these concrete duplication points:
 
 ## Non-Goals
 
-done: false
+done: true
 
 - Do not create a monorepo shared protocol package in the first slice.
 - Do not rewrite Veslo server transport, OpenCode SDK creation, or AI gateway
@@ -169,7 +380,7 @@ done: false
 
 ## Header Profile Model
 
-done: false
+done: true
 
 Use small profile builders by boundary:
 
@@ -196,14 +407,14 @@ Use small profile builders by boundary:
    - remains owned by `packages/app/src/app/lib/opencode.ts` and
      `packages/app/src/app/lib/ai-access.ts`,
    - keeps first-slice ownership of `x-veslo-session-id`,
-     `x-veslo-workspace-id`, generated provider auth, and provider config
-     sanitization,
+     `x-veslo-workspace-id`, legacy `x-veslo-gateway-token`, generated
+     provider auth, and provider config sanitization,
    - can import neutral header-name constants in a later slice, but should keep
      routing and config sanitization logic local.
 
 ## HTP00 - Baseline Contract Snapshot
 
-done: false
+done: true
 
 ### Problem
 
@@ -246,7 +457,7 @@ corepack pnpm@10.27.0 --filter veslo-server exec bun test src/tests/server.skill
 
 ## HTP01 - Add App Header Profiles
 
-done: false
+done: true
 
 ### Problem
 
@@ -273,6 +484,9 @@ duplicated in domain clients.
   - `x-veslo-workspace-id`
   - `x-veslo-gateway-token`
   - `x-veslo-send-trace-id`
+- If `x-veslo-gateway-token` is named in app code during this work, keep it in
+  the OpenCode/provider routing owner and mark it as legacy/internal migration
+  input. It is not a normal Veslo server request header profile.
 - Move or delegate these helpers from `transport.ts`:
   - `normalizeBearerToken`
   - `buildGatewayCallerHeaders`
@@ -309,7 +523,7 @@ corepack pnpm@10.27.0 --filter @neatech/veslo-ui typecheck
 
 ## HTP02 - Deduplicate App Domain Den Headers
 
-done: false
+done: true
 
 ### Problem
 
@@ -350,13 +564,25 @@ corepack pnpm@10.27.0 --filter @neatech/veslo-ui typecheck
 
 ## HTP03 - Add Server Request Header Owner
 
-done: false
+done: true
 
 ### Problem
 
-Server routes parse the same Den/catalog and skill-registry identity headers
+Server routes parse Den/catalog, Soul, and skill-registry identity headers
 manually in several files. This is drift-prone and makes error message
 consistency accidental.
+
+The reader must not flatten different route semantics into one universal Den
+context:
+
+- `/hub/mcp` accepts a request Den API base override from
+  `x-veslo-den-api-base`,
+- `/hub/skills` uses only `ctx.config.denApiBase` and returns
+  `{ items: [] }` when it is not configured,
+- Soul currently accepts a request Den API base override and falls back to
+  `ctx.config.denApiBase`,
+- skill-registry routes normalize the request Den API base as the registry
+  base.
 
 ### Implementation
 
@@ -368,9 +594,13 @@ consistency accidental.
   - `readVesloClientId(request)`
   - `readVesloHostToken(request)`
   - `readDenContextHeaders(ctx)`
-  - `requireDenCatalogContext(ctx)`
-  - `readOptionalDenCatalogContext(ctx)`
+  - `requireRequestOverrideDenCatalogContext(ctx)`
+  - `readOptionalRequestOverrideDenCatalogContext(ctx)`
+  - `requireConfiguredDenCatalogContext(ctx)`
+  - `readSoulDenContext(ctx)`
   - `readSkillRegistryIdentityHeaders(ctx)`
+- Name the reader by behavior rather than by a vague generic "Den context" if
+  the route semantics differ.
 - Do not add `readArchiveOwnerAccountId` in this phase unless
   `resolveArchiveOwnerKey` in `packages/server/src/server.ts` is changed in
   the same patch and covered by archive tests.
@@ -382,8 +612,12 @@ consistency accidental.
   - `packages/server/src/routes/skill-materialization.ts`
   - `packages/server/src/routes/skill-removals.ts`
   - `packages/server/src/routes/workspace-skills.ts`
-- Leave large `server.ts` auth-gate extraction as a follow-up unless the
-  helper is already needed for CORS or AI gateway proxy work.
+  - `packages/server/src/soul-controller.ts`
+  - the live skill-registry materialization helpers in
+    `packages/server/src/server.ts`.
+- Leave large `server.ts` auth-gate extraction as a follow-up unless the helper
+  is already needed for CORS or AI gateway proxy work. Do not describe the
+  legacy `server.ts` skill-registry input as dead code.
 
 ### Acceptance
 
@@ -392,6 +626,14 @@ consistency accidental.
   - missing Den org remains `400 den_org_required`,
   - invalid Den API base remains `400 den_api_base_invalid`,
   - missing skill registry base remains `503 skill_registry_misconfigured`.
+- Den API base behavior stays route-specific:
+  - `/hub/mcp` request override still wins over server config,
+  - `/hub/skills` still ignores request `x-veslo-den-api-base` and uses
+    `ctx.config.denApiBase`,
+  - `/hub/skills` still returns `{ items: [] }` when server Den base is not
+    configured,
+  - Soul still accepts request override and otherwise falls back to server
+    config.
 - Tests that assert Den headers and CORS continue to pass.
 - The helper has no dependency on app-side code.
 - No unused "future helper" exports are introduced.
@@ -399,13 +641,13 @@ consistency accidental.
 ### Verification
 
 ```powershell
-corepack pnpm@10.27.0 --filter veslo-server exec bun test src/tests/server.skill-registry-search.test.ts src/tests/server.hub-mcp.test.ts src/tests/server.hub-skills.test.ts src/tests/server.mcp-routes.test.ts
+corepack pnpm@10.27.0 --filter veslo-server exec bun test src/tests/server.skill-registry-search.test.ts src/tests/server.hub-mcp.test.ts src/tests/server.hub-skills.test.ts src/tests/server.mcp-routes.test.ts src/tests/soul-controller.test.ts src/tests/soul-routes.test.ts
 corepack pnpm@10.27.0 --filter veslo-server typecheck
 ```
 
 ## HTP04 - Derive Server CORS Allowlist From Header Names
 
-done: false
+done: true
 
 ### Problem
 
@@ -428,8 +670,10 @@ updated.
   - send trace header.
 - Preserve existing mixed-case compatibility where tests or clients depend on
   it.
-- Add or update a server-owned CORS allowlist test in
+- Update the existing broad server-owned CORS allowlist test in
   `packages/server/src/tests/server.skill-registry-search.test.ts`.
+- Assert that the expected browser-facing Veslo header list matches the
+  server-owned allowlist constant rather than duplicating a second ad hoc list.
 - Do not import app header profiles into server tests just to prove allowlist
   coverage.
 
@@ -449,7 +693,7 @@ corepack pnpm@10.27.0 --filter veslo-server typecheck
 
 ## HTP05 - Name The AI Gateway Proxy Strip Profile
 
-done: false
+done: true
 
 ### Problem
 
@@ -519,7 +763,7 @@ corepack pnpm@10.27.0 --filter veslo-server typecheck
 
 ## HTP06 - Orchestrator Boundary Inventory
 
-done: false
+done: true
 
 ### Problem
 
@@ -543,6 +787,35 @@ shared constants are not introduced blindly.
   inside the orchestrator package only.
 - Do not make the orchestrator depend on app code.
 
+### Inventory Update 2026-07-08
+
+done: true
+
+Orchestrator was inventoried without code changes. It remains a separate
+boundary from app/server header ownership:
+
+- `packages/orchestrator/src/cli.ts:271` owns the lifecycle daemon
+  `X-Veslo-Orchestrator-Token` header locally.
+- `packages/orchestrator/src/cli.ts:273` names
+  `x-veslo-conversation-run-id`; router proxy tests assert it is stripped from
+  upstream engine requests.
+- `Authorization` / `authorization` in `cli.ts` is used for separate bearer and
+  basic-auth boundaries: orchestrator lifecycle, router health/API calls,
+  OpenCode basic auth, and Veslo server calls.
+- `X-Veslo-Host-Token` in `cli.ts` is used for Veslo server host-level calls,
+  not app/browser request profiles.
+- `x-opencode-directory` and `x-veslo-workspace-id` are injected into
+  orchestrator-managed engine proxy requests and explicitly stripped from
+  inbound spoofed headers before upstream forwarding.
+- `x-veslo-send-trace-id` is read by the orchestrator proxy for send-flow trace
+  continuity.
+- Existing orchestrator tests cover the proxy boundary in
+  `packages/orchestrator/src/tests/router-proxy.test.ts` and
+  `packages/orchestrator/src/tests/exit-gate.test.ts`.
+
+No orchestrator code changed in this plan, so `test:router` was not required
+for HTP06.
+
 ### Acceptance
 
 - The inventory is recorded in this plan or in a follow-up note.
@@ -560,7 +833,7 @@ Run the orchestrator test only if the implementation changes orchestrator code.
 
 ## HTP07 - Final Verification And Plan Sync
 
-done: false
+done: true
 
 ### Problem
 
@@ -598,9 +871,11 @@ git diff --check -- packages/app/src/app/lib/veslo-server packages/app/src/app/l
 
 ## Later Follow-Ups
 
-done: false
+done: true
 
-These are intentionally not part of the first implementation:
+This section is complete as a non-blocking inventory. These items are
+intentionally outside the HTP00-HTP07 implementation and must not block this
+plan's `done: true` state:
 
 - Decide whether `extraHeaders` should be prevented from overriding
   `Authorization`, `X-Veslo-Host-Token`, or gateway caller auth.
@@ -614,7 +889,7 @@ These are intentionally not part of the first implementation:
 
 ## Completion Rules
 
-done: false
+done: true
 
 - Do not mark top-level `done: true` while any `htp*_done` flag remains false.
 - Do not mark a task done after code edits without the task-specific

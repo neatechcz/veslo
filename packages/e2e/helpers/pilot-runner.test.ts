@@ -15,6 +15,7 @@ import {
   pilotReadinessProbeCommands,
   resolvePilotBinary,
   resolvePilotDenAuthJson,
+  resolvePilotScenarioCommandTimeoutMs,
   resolvePilotScenarioSelection,
   sanitizePilotArtifactName,
   scenarioSelectionNeedsSkillEnableInventoryFixture,
@@ -62,6 +63,23 @@ test('buildPilotCommand passes the deterministic socket before pilot subcommands
       args: ['--socket', '/tmp/veslo.sock', 'run', './pilot-scenarios/smoke.toml'],
     },
   );
+});
+
+test('resolvePilotScenarioCommandTimeoutMs bounds tauri-pilot scenario runs while allowing live overrides', () => {
+  assert.equal(resolvePilotScenarioCommandTimeoutMs({}), 1_200_000);
+  assert.equal(resolvePilotScenarioCommandTimeoutMs({ E2E_PILOT_SCENARIO_TIMEOUT_MS: '900000' }), 900_000);
+  assert.throws(
+    () => resolvePilotScenarioCommandTimeoutMs({ E2E_PILOT_SCENARIO_TIMEOUT_MS: '999' }),
+    /Invalid E2E_PILOT_SCENARIO_TIMEOUT_MS/,
+  );
+});
+
+test('runPilotScenarios passes an explicit timeout to tauri-pilot run commands', () => {
+  const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
+
+  assert.match(source, /const scenarioCommandTimeoutMs = resolvePilotScenarioCommandTimeoutMs\(\)/);
+  assert.match(source, /args: \['run', scenario\],[\s\S]*timeoutMs: scenarioCommandTimeoutMs/);
+  assert.match(source, /args: \['run', reconnectScenario\],[\s\S]*timeoutMs: scenarioCommandTimeoutMs/);
 });
 
 test('sanitizePilotArtifactName creates stable filesystem-safe scenario names', () => {
@@ -422,6 +440,18 @@ test('runtime cold-start handoff pilot scenario disables debug dev autostart', (
     scenarioSelectionDisablesDevAutostart(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
     false,
   );
+});
+
+test('managed AI inference pilot scenarios disable debug dev autostart for production-path runtime startup', () => {
+  const e2eRoot = '/repo/packages/e2e';
+
+  for (const scenarioName of MANAGED_AI_INFERENCE_SCENARIOS) {
+    assert.equal(
+      scenarioSelectionDisablesDevAutostart(resolvePilotScenarioSelection({ scenario: [scenarioName] }, e2eRoot)),
+      true,
+      scenarioName,
+    );
+  }
 });
 
 test('model stream retry pilot scenario is focused-only because it enables a global probe fixture', () => {

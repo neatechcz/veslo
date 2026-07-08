@@ -1,9 +1,22 @@
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+
+const resolvePnpmInvocation = () => {
+  if (process.platform === "win32") {
+    const corepackPnpm = resolve(dirname(process.execPath), "node_modules", "corepack", "dist", "pnpm.js");
+    if (existsSync(corepackPnpm)) {
+      return { command: process.execPath, prefixArgs: [corepackPnpm] };
+    }
+    return { command: "cmd.exe", prefixArgs: ["/d", "/s", "/c", "pnpm.cmd"] };
+  }
+  return { command: "pnpm", prefixArgs: [] };
+};
+
+const pnpm = resolvePnpmInvocation();
 
 const withDefaultEnv = (defaults) => {
   const env = { ...process.env };
@@ -25,7 +38,7 @@ const runtimeLoggingEnv = withDefaultEnv({
 });
 
 const run = (args, env = process.env) => {
-  const result = spawnSync(pnpm, args, {
+  const result = spawnSync(pnpm.command, [...pnpm.prefixArgs, ...args], {
     cwd: repoRoot,
     stdio: "inherit",
     env,

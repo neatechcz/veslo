@@ -214,6 +214,24 @@ test('Windows managed child cleanup is scoped to the launched app PID and known 
   assert.doesNotMatch(script, /Stop-Process -Name/);
 });
 
+test('startApp retains the launched PID for child cleanup even after unexpected app exit', () => {
+  const source = readFileSync(new URL('./app-launcher.ts', import.meta.url), 'utf8');
+
+  assert.match(source, /let lastOwnedAppProcessPid: number \| null = null/);
+  assert.match(source, /lastOwnedAppProcessPid = appProcess\.pid \?\? null/);
+  assert.match(source, /appProcess\.on\('exit'[\s\S]*cleanupManagedChildProcessesForLastOwnedApp\('app exit'\)/);
+  assert.match(source, /if \(!appProcessOwnedByHarness \|\| !appProcess\) \{[\s\S]*cleanupManagedChildProcessesForLastOwnedApp\('stop fallback'\)/);
+});
+
+test('startApp rotates previous app logs before writing the latest E2E capture', () => {
+  const source = readFileSync(new URL('./app-launcher.ts', import.meta.url), 'utf8');
+
+  assert.match(source, /function rotateExistingLogFile\(path: string\): void/);
+  assert.match(source, /renameSync\(path, `\$\{path\}\.\$\{stamp\}`\)/);
+  assert.match(source, /rotateExistingLogFile\(appStdoutLog\)/);
+  assert.match(source, /rotateExistingLogFile\(appStderrLog\)/);
+});
+
 test('seedDefaultWorkspaceState skips network-backed enterprise creators for deterministic E2E fixtures', () => {
   const root = mkdtempSync(join(tmpdir(), 'veslo-e2e-home-'));
   try {

@@ -624,6 +624,24 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     });
   };
 
+  const skipLiveSidebarSessionList = (id: string, reason: string) => {
+    const existingCount = untrack(() => sidebarSessionsByWorkspaceId()[id]?.length ?? 0);
+    setSidebarSessionStatusByWorkspaceId((prev) =>
+      prev[id] === "ready" ? prev : { ...prev, [id]: "ready" as const },
+    );
+    setSidebarSessionErrorByWorkspaceId((prev) =>
+      prev[id] == null ? prev : { ...prev, [id]: null },
+    );
+    setSidebarSessionLoadingMoreByWorkspaceId((prev) =>
+      prev[id] === false ? prev : { ...prev, [id]: false },
+    );
+    options.wsDebug("sidebar:live-session-list:skipped", {
+      id,
+      reason,
+      existingCount,
+    });
+  };
+
   const refreshSidebarWorkspaceSessions = async (workspaceId: string) => {
     const id = workspaceId.trim();
     if (!id) return;
@@ -661,7 +679,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
 
     const activeWorkspaceId = options.workspaceStore.activeWorkspaceId().trim();
     if (hostReadDirectory && options.allowLiveWorkspaceSessionList?.(id) !== true) {
-      markSidebarRefreshUnavailable(id, "live-session-list-not-allowed");
+      skipLiveSidebarSessionList(id, "live-session-list-not-allowed");
       return;
     }
 

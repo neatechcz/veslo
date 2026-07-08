@@ -11,6 +11,14 @@ import {
 const source = readWorkspaceBehaviorSources();
 const connectionControllerSource = readContextSource("workspace-connection-controller.ts");
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
+const engineCommandSource = readFileSync(
+  new URL("../../../../../desktop/src-tauri/src/commands/engine.rs", import.meta.url),
+  "utf8",
+);
+const orchestratorCommandSource = readFileSync(
+  new URL("../../../../../desktop/src-tauri/src/commands/orchestrator.rs", import.meta.url),
+  "utf8",
+);
 
 test("local activation path applies workspace_set_active response back into the workspace list", () => {
   assert.match(
@@ -256,8 +264,8 @@ test("passive browse path is non-spawning and title-only", () => {
   );
   assert.doesNotMatch(
     browseSource,
-    /activateVesloHostWorkspace|orchestratorWorkspaceActivate|ensureEngineForWorkspace|restartWorkspaceRuntime|workspaceRouting\.ensure|hydrateLatestSessionFromDb|setConnectingWorkspaceId|status: "connecting"/,
-    "passive browse must not call server/orchestrator activate, runtime ensure/restart, transcript hydration, or connecting state",
+    /activateVesloHostWorkspace|orchestratorWorkspaceActivate|ensureEngineForWorkspace|prepareWorkspaceRuntime|restartWorkspaceRuntime|workspaceRouting\.ensure|hydrateLatestSessionFromDb|setConnectingWorkspaceId|status: "connecting"/,
+    "passive browse must not call server/orchestrator activate, runtime prepare/restart, transcript hydration, or connecting state",
   );
 });
 
@@ -452,16 +460,23 @@ test("quiet port-rotation only binds the workspace proxy client without reading 
   );
 });
 
-test("orchestrator activation timeout covers cold engine spawn", () => {
-  const raw = source.match(/const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS = ([\d_]+);/)?.[1];
-  assert.ok(raw, "ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS constant missing");
-  const timeoutMs = Number(raw.replaceAll("_", ""));
-
-  assert.ok(
-    timeoutMs >= 75_000,
-    "orchestrator activation timeout must stay above the daemon's 60s cold OpenCode health window",
+test("backend runtime prepare owns orchestrator attach fallback decisions", () => {
+  assert.match(engineCommandSource, /pub async fn runtime_prepare_workspace\(/);
+  assert.match(
+    engineCommandSource,
+    /workspace_runtime_prepare_action[\s\S]*runtime-recovery[\s\S]*WorkspaceRuntimePrepareAction::FreshStart/s,
+    "runtime recovery should become a fresh backend start decision before the UI reconnects",
   );
-  assert.match(source, /default health window is 60s on cold dev starts/);
+  assert.match(
+    engineCommandSource,
+    /orchestrator_workspace_activate[\s\S]*falling back to fresh start[\s\S]*engine_start/s,
+    "backend prepare should fall back from orchestrator attach to fresh start inside Rust",
+  );
+  assert.match(
+    orchestratorCommandSource,
+    /ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS[\s\S]*AgentBuilder::new\(\)[\s\S]*\.timeout\(Duration::from_millis\(\s*ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS,?\s*\)\)[\s\S]*\.post\(&activate_url\)/s,
+    "orchestrator workspace activation must have a native HTTP timeout so runtime prepare cannot hang indefinitely",
+  );
 });
 
 test("workspace activation delegates local runtime reuse and restart flows to the shared lifecycle helper", () => {
@@ -473,14 +488,14 @@ test("workspace activation delegates local runtime reuse and restart flows to th
 
   assert.match(
     source,
-    /connectedToLocalHost = await deps\.localRuntimeLifecycle\.reattachOrchestratorWorkspace\(\{/,
-    "remote-to-local reuse should delegate to the shared helper",
+    /connectedToLocalHost = await deps\.localRuntimeLifecycle\.prepareWorkspaceRuntime\(\{/,
+    "remote-to-local reuse should delegate to the backend-owned prepare helper",
   );
 
   assert.match(
     source,
-    /const ok = await deps\.localRuntimeLifecycle\.restartWorkspaceRuntime\(\{/,
-    "local-to-local engine switching should delegate to the shared helper",
+    /const ok = await deps\.localRuntimeLifecycle\.prepareWorkspaceRuntime\(\{/,
+    "local-to-local engine switching should delegate to the backend-owned prepare helper",
   );
 
   assert.match(

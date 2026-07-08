@@ -41,7 +41,33 @@ import {
   setSkillEnabledState,
 } from "./skill-enabled-overrides.js";
 import { fetchOrgSkillsCatalog } from "./den-catalog.js";
-import { normalizeDenApiBaseUrl } from "./den-api-base.js";
+import {
+  ACCEPT_ENCODING_HEADER,
+  AUTHORIZATION_HEADER,
+  CONTENT_LENGTH_HEADER,
+  CONTENT_TYPE_HEADER,
+  HOP_BY_HOP_REQUEST_HEADERS,
+  HOST_HEADER,
+  OPENCODE_DIRECTORY_HEADER,
+  ORIGIN_HEADER,
+  readSkillRegistryRequestInput as skillRegistryRequestInput,
+  skillRegistryConfiguredBaseUrl as skillRegistryBaseUrl,
+  skillRegistryRequestBaseUrl,
+  trimmedHeader,
+  VESLO_ALLOWED_CORS_HEADERS_VALUE,
+  VESLO_ACCOUNT_ID_HEADER,
+  VESLO_CLIENT_ID_HEADER,
+  VESLO_DEN_ORG_ID_HEADER,
+  VESLO_DEN_USER_ID_HEADER,
+  VESLO_GATEWAY_AUTHORIZATION_HEADER as GATEWAY_CALLER_AUTH_HEADER,
+  VESLO_GATEWAY_TOKEN_HEADER as GATEWAY_ACCESS_TOKEN_HEADER,
+  VESLO_HOST_TOKEN_HEADER,
+  VESLO_ORG_ID_HEADER,
+  VESLO_SEND_TRACE_ID_HEADER,
+  VESLO_SESSION_ID_HEADER as GATEWAY_SESSION_ID_HEADER,
+  VESLO_USER_ID_HEADER,
+  VESLO_WORKSPACE_ID_HEADER as GATEWAY_WORKSPACE_ID_HEADER,
+} from "./request-headers.js";
 import { deploymentServiceUrl } from "./deployment-endpoints.js";
 import type { SoulPendingEdit } from "./soul-cache.js";
 import type { SoulDocument, SoulScope, SoulVersion } from "./soul-memory.js";
@@ -120,6 +146,14 @@ import {
   type AiGatewayRuntimeAuthorizationEntry,
   type AiGatewaySessionResolution,
 } from "./ai-gateway-runtime-owner.js";
+import {
+  AI_GATEWAY_INTERNAL_REQUEST_HEADERS,
+  AI_GATEWAY_LOCAL_ONLY_REQUEST_HEADERS,
+  AI_GATEWAY_TRANSPORT_REQUEST_HEADERS,
+  OPENCODE_SESSION_AFFINITY_HEADER,
+  OPENCODE_SESSION_ID_HEADER,
+  stripAiGatewayProxyRequestHeaders,
+} from "./ai-gateway-proxy-headers.js";
 import { createWorkspaceConfigOwner } from "./workspace-config-owner.js";
 import { recordAudit, readAuditEntries, readLastAudit, resolveVesloDataDir, setAuditDebugLogPipeline } from "./audit.js";
 import { createDebugLogPipeline, type DebugLogPipeline } from "./debug-log-pipeline.js";
@@ -241,15 +275,10 @@ const CONVERSATION_RUN_LIFECYCLE_RECONCILE_POLL_DEFAULT_MS = 1_000;
 const CONVERSATION_RUN_LIFECYCLE_RECONCILE_MAX_ATTEMPTS_DEFAULT = 600;
 const AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS = 30_000;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
-const GATEWAY_CALLER_AUTH_HEADER = "x-veslo-gateway-authorization";
-const GATEWAY_ACCESS_TOKEN_HEADER = "x-veslo-gateway-token";
-const GATEWAY_SESSION_ID_HEADER = "x-veslo-session-id";
-const GATEWAY_WORKSPACE_ID_HEADER = "x-veslo-workspace-id";
 const OPENCODE_SESSION_ID_TEMPLATE = "${OPENCODE_SESSION_ID}";
 const AI_GATEWAY_MODEL_DIAGNOSTIC_MAX_REQUEST_BYTES = 64 * 1024;
 const AI_GATEWAY_JSON_REDACTION_MAX_RESPONSE_BYTES = 64 * 1024;
 const AI_GATEWAY_ERROR_DIAGNOSTIC_MAX_RESPONSE_BYTES = 64 * 1024;
-
 const REDACTED_CONFIG_KEYS = [
   "password",
   "token",
@@ -945,23 +974,7 @@ export function startServer(config: ServerConfig) {
   return server;
 }
 
-const HOP_BY_HOP_REQUEST_HEADERS = [
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailer",
-  "trailers",
-  "transfer-encoding",
-  "upgrade",
-];
-const ACCEPT_ENCODING_HEADER = "accept-encoding";
 const ACCEPT_ENCODING_IDENTITY = "identity";
-const AI_GATEWAY_LOCAL_ONLY_REQUEST_HEADERS = [
-  "x-session-affinity",
-  "x-session-id",
-];
 const VESLO_CONVERSATION_RUN_ID_HEADER = "x-veslo-conversation-run-id";
 
 function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string, workspaceId?: string) {
@@ -1017,10 +1030,10 @@ async function fetchOpencodeJson(
   ));
 
   const headers = new Headers();
-  headers.set("Content-Type", "application/json");
+  headers.set(CONTENT_TYPE_HEADER, "application/json");
   const sendTraceId = init.sendTraceId?.trim() ?? "";
   if (sendTraceId) {
-    headers.set("x-veslo-send-trace-id", sendTraceId);
+    headers.set(VESLO_SEND_TRACE_ID_HEADER, sendTraceId);
   }
   const conversationRunId = init.conversationRunId?.trim() ?? "";
   const shouldSendConversationRunId = Boolean(conversationRunId && isWorkspaceOpencodeProxyUrl(url, workspace.id));
@@ -1033,12 +1046,12 @@ async function fetchOpencodeJson(
     ? normalizeOpencodeDirectory(directoryOverride)
     : resolveOpencodeDirectory(workspace);
   if (directory) {
-    headers.set("x-opencode-directory", directory);
+    headers.set(OPENCODE_DIRECTORY_HEADER, directory);
   }
 
   const auth = buildOpencodeAuthHeader(workspace);
   if (auth) {
-    headers.set("Authorization", auth);
+    headers.set(AUTHORIZATION_HEADER, auth);
   }
 
   const timeoutMs = init.timeoutMs ?? resolveOpenCodeJsonFetchTimeoutMs();
@@ -1227,7 +1240,7 @@ async function ensureOrchestratorWorkspaceRegistered(
   try {
     const response = await fetch(targetUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { [CONTENT_TYPE_HEADER]: "application/json" },
       body: JSON.stringify({
         id: workspaceId,
         serverWorkspaceId: workspaceId,
@@ -1415,12 +1428,12 @@ async function proxyOpencodeRequest(input: {
   const proxyPath = input.proxyPath ?? input.url.pathname;
   const targetUrl = buildOpencodeProxyUrl(baseUrl, proxyPath, input.url.search, workspace?.id);
   const headers = new Headers(input.request.headers);
-  headers.delete("authorization");
-  headers.delete("x-veslo-host-token");
-  headers.delete("x-veslo-client-id");
-  headers.delete("host");
-  headers.delete("origin");
-  headers.delete("content-length");
+  headers.delete(AUTHORIZATION_HEADER);
+  headers.delete(VESLO_HOST_TOKEN_HEADER);
+  headers.delete(VESLO_CLIENT_ID_HEADER);
+  headers.delete(HOST_HEADER);
+  headers.delete(ORIGIN_HEADER);
+  headers.delete(CONTENT_LENGTH_HEADER);
   for (const header of HOP_BY_HOP_REQUEST_HEADERS) {
     headers.delete(header);
   }
@@ -1428,19 +1441,19 @@ async function proxyOpencodeRequest(input: {
 
   // Per-request directory override (e.g. from sessions moved via "Choose folder")
   // takes priority over the workspace-level default.
-  // Always strip a client-supplied `x-opencode-directory` header first so the
+  // Always strip a client-supplied OpenCode directory header first so the
   // engine cannot be redirected to an attacker-chosen path by spoofing this
   // header through the proxy.
-  headers.delete("x-opencode-directory");
+  headers.delete(OPENCODE_DIRECTORY_HEADER);
   const queryDir = input.url.searchParams.get("directory")?.trim() || null;
   const directory = queryDir ?? (workspace ? resolveOpencodeDirectory(workspace) : null);
   if (directory) {
-    headers.set("x-opencode-directory", directory);
+    headers.set(OPENCODE_DIRECTORY_HEADER, directory);
   }
 
   const auth = workspace ? buildOpencodeAuthHeader(workspace) : null;
   if (auth) {
-    headers.set("Authorization", auth);
+    headers.set(AUTHORIZATION_HEADER, auth);
   }
 
   const method = input.request.method.toUpperCase();
@@ -1496,7 +1509,7 @@ export function sanitizeProxyResponse(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.delete("content-encoding");
   headers.delete("transfer-encoding");
-  headers.delete("content-length");
+  headers.delete(CONTENT_LENGTH_HEADER);
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -1521,11 +1534,11 @@ async function proxyOpenCodeRouterRequest(input: {
   const proxyPath = input.proxyPath ?? input.url.pathname;
   const targetUrl = buildOpenCodeRouterProxyUrl(baseUrl, proxyPath, input.url.search);
   const headers = new Headers(input.request.headers);
-  headers.delete("authorization");
-  headers.delete("x-veslo-host-token");
-  headers.delete("x-veslo-client-id");
-  headers.delete("host");
-  headers.delete("origin");
+  headers.delete(AUTHORIZATION_HEADER);
+  headers.delete(VESLO_HOST_TOKEN_HEADER);
+  headers.delete(VESLO_CLIENT_ID_HEADER);
+  headers.delete(HOST_HEADER);
+  headers.delete(ORIGIN_HEADER);
 
   const method = input.request.method.toUpperCase();
   const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
@@ -1577,11 +1590,6 @@ function requireAiGatewaySessionId(request: Request): string {
   return sessionId;
 }
 
-function trimmedHeader(request: Request, name: string): string | undefined {
-  const value = request.headers.get(name)?.trim() ?? "";
-  return value || undefined;
-}
-
 function headerNamesForTrace(headers: Headers): string[] {
   return Array.from(headers.keys()).sort((a, b) => a.localeCompare(b));
 }
@@ -1607,7 +1615,7 @@ function recordAiGatewayAuthFailureTrace(request: Request, url: URL, error: ApiE
   const gatewayPath = resolveAiGatewayPathForTrace(url.pathname);
   if (!gatewayPath) return;
   recordSendWorkflowTrace("server", "server:ai-gateway:auth-failed", {
-    traceId: trimmedHeader(request, "x-veslo-send-trace-id") ?? null,
+    traceId: trimmedHeader(request, VESLO_SEND_TRACE_ID_HEADER) ?? null,
     provider: resolveAiGatewayProvider(gatewayPath) ?? null,
     gatewayPath,
     sessionId: trimmedHeader(request, GATEWAY_SESSION_ID_HEADER) ?? null,
@@ -1619,12 +1627,12 @@ function recordAiGatewayAuthFailureTrace(request: Request, url: URL, error: ApiE
       hasGatewayAccessToken: Boolean(trimmedHeader(request, GATEWAY_ACCESS_TOKEN_HEADER)),
       hasGatewayCallerAuth: Boolean(trimmedHeader(request, GATEWAY_CALLER_AUTH_HEADER)),
       hasWorkspaceId: Boolean(trimmedHeader(request, GATEWAY_WORKSPACE_ID_HEADER)),
-      hasSendTraceId: Boolean(trimmedHeader(request, "x-veslo-send-trace-id")),
+      hasSendTraceId: Boolean(trimmedHeader(request, VESLO_SEND_TRACE_ID_HEADER)),
       hasSessionId: Boolean(trimmedHeader(request, GATEWAY_SESSION_ID_HEADER)),
-      hasOpenCodeSessionId: Boolean(trimmedHeader(request, "x-session-id")),
-      hasOpenCodeSessionAffinity: Boolean(trimmedHeader(request, "x-session-affinity")),
-      hasHostToken: Boolean(trimmedHeader(request, "x-veslo-host-token")),
-      hasClientId: Boolean(trimmedHeader(request, "x-veslo-client-id")),
+      hasOpenCodeSessionId: Boolean(trimmedHeader(request, OPENCODE_SESSION_ID_HEADER)),
+      hasOpenCodeSessionAffinity: Boolean(trimmedHeader(request, OPENCODE_SESSION_AFFINITY_HEADER)),
+      hasHostToken: Boolean(trimmedHeader(request, VESLO_HOST_TOKEN_HEADER)),
+      hasClientId: Boolean(trimmedHeader(request, VESLO_CLIENT_ID_HEADER)),
     },
   });
 }
@@ -1813,12 +1821,12 @@ function summarizeChatCompletionBody(json: Record<string, unknown>, text: string
 }
 
 async function readAiGatewayRequestDiagnostic(request: Request): Promise<AiGatewayRequestDiagnostic> {
-  const contentType = request.headers.get("content-type") ?? "";
+  const contentType = request.headers.get(CONTENT_TYPE_HEADER) ?? "";
   if (!contentType.toLowerCase().includes("application/json")) {
     return { contentType: contentType || null, contentLength: null, skipped: "non-json" };
   }
 
-  const contentLength = Number(request.headers.get("content-length") ?? NaN);
+  const contentLength = Number(request.headers.get(CONTENT_LENGTH_HEADER) ?? NaN);
   if (!Number.isFinite(contentLength) || contentLength < 0) {
     return { contentType: contentType || null, contentLength: null, skipped: "unknown-content-length" };
   }
@@ -1906,7 +1914,7 @@ function buildAiGatewayUpstreamSnippet(input: {
 }
 
 async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
-  const contentLength = Number(response.headers.get("content-length") ?? NaN);
+  const contentLength = Number(response.headers.get(CONTENT_LENGTH_HEADER) ?? NaN);
   if (Number.isFinite(contentLength) && contentLength > maxBytes) {
     await response.body?.cancel().catch(() => undefined);
     throw new ApiError(502, "upstream_payload_too_large", "Upstream response body exceeds local parsing limit", {
@@ -1943,14 +1951,14 @@ function buildAiGatewayFailureDetails(input: {
   responseTextTruncated?: boolean;
   knownSecrets: Array<string | undefined>;
 }) {
-  const contentType = input.response.headers.get("content-type") ?? "";
+  const contentType = input.response.headers.get(CONTENT_TYPE_HEADER) ?? "";
   const userId =
-    trimmedHeader(input.request, "x-veslo-account-id") ??
-    trimmedHeader(input.request, "x-veslo-user-id") ??
-    trimmedHeader(input.request, "x-veslo-den-user-id");
+    trimmedHeader(input.request, VESLO_ACCOUNT_ID_HEADER) ??
+    trimmedHeader(input.request, VESLO_USER_ID_HEADER) ??
+    trimmedHeader(input.request, VESLO_DEN_USER_ID_HEADER);
   const orgId =
-    trimmedHeader(input.request, "x-veslo-den-org-id") ??
-    trimmedHeader(input.request, "x-veslo-org-id");
+    trimmedHeader(input.request, VESLO_DEN_ORG_ID_HEADER) ??
+    trimmedHeader(input.request, VESLO_ORG_ID_HEADER);
 
   const upstreamSnippet = buildAiGatewayUpstreamSnippet({
     text: input.responseText,
@@ -1992,10 +2000,10 @@ async function proxyAiGatewayReadinessRequest(input: {
 
   const requestId = randomUUID();
   const headers = new Headers();
-  headers.set("Authorization", requireAiGatewayCallerAuth(input.request));
+  headers.set(AUTHORIZATION_HEADER, requireAiGatewayCallerAuth(input.request));
   headers.set("accept", input.request.headers.get("accept") ?? "application/json");
   headers.set("x-veslo-request-id", requestId);
-  headers.set("accept-encoding", "identity");
+  headers.set(ACCEPT_ENCODING_HEADER, ACCEPT_ENCODING_IDENTITY);
 
   let response: Response;
   try {
@@ -2046,7 +2054,9 @@ async function proxyAiGatewayRequest(input: {
   const gatewayAccessToken = input.request.headers.get(GATEWAY_ACCESS_TOKEN_HEADER)?.trim() ?? "";
   const gatewayCallerAuth = input.request.headers.get(GATEWAY_CALLER_AUTH_HEADER)?.trim() ?? "";
   const incomingSessionId = input.requireSessionId ? requireAiGatewaySessionId(input.request) : undefined;
-  const incomingOpenCodeSessionId = input.requireSessionId ? trimmedHeader(input.request, "x-session-id") : undefined;
+  const incomingOpenCodeSessionId = input.requireSessionId
+    ? trimmedHeader(input.request, OPENCODE_SESSION_ID_HEADER)
+    : undefined;
   const incomingWorkspaceId = trimmedHeader(input.request, GATEWAY_WORKSPACE_ID_HEADER);
   const provider = resolveAiGatewayProvider(input.gatewayPath) ?? null;
   const incomingHeaderNames = headerNamesForTrace(input.request.headers);
@@ -2080,12 +2090,12 @@ async function proxyAiGatewayRequest(input: {
     gatewayAuthorizationSource: providerAuthorization?.source ?? (input.auth === "caller" ? "caller" : "missing"),
     hasGatewayCallerAuth: Boolean(gatewayCallerAuth),
     hasWorkspaceId: Boolean(incomingWorkspaceId),
-    hasSendTraceId: Boolean(trimmedHeader(input.request, "x-veslo-send-trace-id")),
+    hasSendTraceId: Boolean(trimmedHeader(input.request, VESLO_SEND_TRACE_ID_HEADER)),
     hasSessionId: Boolean(incomingSessionId),
     hasOpenCodeSessionId: Boolean(incomingOpenCodeSessionId),
-    hasOpenCodeSessionAffinity: Boolean(trimmedHeader(input.request, "x-session-affinity")),
-    hasHostToken: Boolean(trimmedHeader(input.request, "x-veslo-host-token")),
-    hasClientId: Boolean(trimmedHeader(input.request, "x-veslo-client-id")),
+    hasOpenCodeSessionAffinity: Boolean(trimmedHeader(input.request, OPENCODE_SESSION_AFFINITY_HEADER)),
+    hasHostToken: Boolean(trimmedHeader(input.request, VESLO_HOST_TOKEN_HEADER)),
+    hasClientId: Boolean(trimmedHeader(input.request, VESLO_CLIENT_ID_HEADER)),
     activeRunRuntimeAuthorizationActorTokenHashPresent: Boolean(
       activeRunContext?.runtimeAuthorizationActorTokenHash,
     ),
@@ -2261,27 +2271,13 @@ async function proxyAiGatewayRequest(input: {
       modelDiagnosticFinishedAt = perfMs();
     });
 
-  headers.set("Authorization", authorization);
+  headers.set(AUTHORIZATION_HEADER, authorization);
   if (input.requireSessionId) {
     headers.set(GATEWAY_SESSION_ID_HEADER, forwardedSessionId ?? "");
   }
   headers.set("x-veslo-request-id", requestId);
-  headers.delete(GATEWAY_CALLER_AUTH_HEADER);
-  headers.delete(GATEWAY_ACCESS_TOKEN_HEADER);
-  headers.delete("x-veslo-host-token");
-  headers.delete("x-veslo-client-id");
-  headers.delete(GATEWAY_WORKSPACE_ID_HEADER);
-  headers.delete("x-veslo-send-trace-id");
-  for (const name of AI_GATEWAY_LOCAL_ONLY_REQUEST_HEADERS) {
-    headers.delete(name);
-  }
-  for (const name of HOP_BY_HOP_REQUEST_HEADERS) {
-    headers.delete(name);
-  }
-  headers.delete("host");
-  headers.delete("origin");
-  headers.delete("content-length");
-  headers.set("accept-encoding", "identity");
+  stripAiGatewayProxyRequestHeaders(headers);
+  headers.set(ACCEPT_ENCODING_HEADER, ACCEPT_ENCODING_IDENTITY);
   const forwardedHeaderNames = headerNamesForTrace(headers);
 
   const method = input.request.method.toUpperCase();
@@ -2314,21 +2310,9 @@ async function proxyAiGatewayRequest(input: {
       incomingHeaders: incomingHeaderNames,
       forwardedHeaders: forwardedHeaderNames,
       incomingInternalHeaders: incomingInternalHeaderSummary,
-      strippedInternalHeaders: [
-        GATEWAY_CALLER_AUTH_HEADER,
-        GATEWAY_ACCESS_TOKEN_HEADER,
-        "x-veslo-host-token",
-        "x-veslo-client-id",
-        GATEWAY_WORKSPACE_ID_HEADER,
-        "x-veslo-send-trace-id",
-      ],
+      strippedInternalHeaders: AI_GATEWAY_INTERNAL_REQUEST_HEADERS,
       strippedLocalOnlyHeaders: AI_GATEWAY_LOCAL_ONLY_REQUEST_HEADERS,
-      strippedTransportHeaders: [
-        ...HOP_BY_HOP_REQUEST_HEADERS,
-        "host",
-        "origin",
-        "content-length",
-      ],
+      strippedTransportHeaders: AI_GATEWAY_TRANSPORT_REQUEST_HEADERS,
       ...extra,
     };
     recordSendWorkflowTrace("server", `server:ai-gateway:proxy-${event}`, attributes);
@@ -2460,7 +2444,7 @@ async function proxyAiGatewayRequest(input: {
         upstreamFetchStartedAt !== undefined
           ? roundTraceMs(upstreamHeadersReceivedAt - upstreamFetchStartedAt)
           : undefined,
-      upstreamContentType: response.headers.get("content-type") || undefined,
+      upstreamContentType: response.headers.get(CONTENT_TYPE_HEADER) || undefined,
     });
   } catch (error) {
     const diagnosticModel = model ?? await modelDiagnosticPromise;
@@ -2512,7 +2496,7 @@ async function proxyAiGatewayRequest(input: {
     unregisterActiveAiGatewayProxyRequest(requestId);
   }
 
-  const contentType = response.headers.get("content-type") ?? "";
+  const contentType = response.headers.get(CONTENT_TYPE_HEADER) ?? "";
   if (!response.ok) {
     const diagnostic = await readTextPreview(response.body, AI_GATEWAY_ERROR_DIAGNOSTIC_MAX_RESPONSE_BYTES);
     upstreamBodyDoneAt = perfMs();
@@ -2560,7 +2544,7 @@ async function proxyAiGatewayRequest(input: {
     });
     return new Response(text, {
       status: response.status,
-      ...(contentType ? { headers: { "Content-Type": contentType } } : {}),
+      ...(contentType ? { headers: { [CONTENT_TYPE_HEADER]: contentType } } : {}),
     });
   }
 
@@ -2586,12 +2570,12 @@ async function proxyAiGatewayRequest(input: {
 function sanitizeDecodedProxyResponseHeaders(headers: Headers): Headers {
   const sanitized = new Headers(headers);
   sanitized.delete("content-encoding");
-  sanitized.delete("content-length");
+  sanitized.delete(CONTENT_LENGTH_HEADER);
   return sanitized;
 }
 
 function withCors(response: Response, request: Request, config: ServerConfig) {
-  const origin = request.headers.get("origin");
+  const origin = request.headers.get(ORIGIN_HEADER);
   const allowedOrigins = config.corsOrigins;
   let allowOrigin: string | null = null;
   if (allowedOrigins.includes("*")) {
@@ -2605,7 +2589,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   headers.set("Access-Control-Allow-Origin", allowOrigin);
   headers.set(
     "Access-Control-Allow-Headers",
-    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, X-Veslo-Send-Trace-Id, x-veslo-account-id, X-Veslo-User-Id, X-Veslo-Den-User-Id, X-Veslo-Org-Id, X-Veslo-Den-Org-Id, X-Veslo-Den-Api-Base, X-Veslo-Den-Token, X-Veslo-Gateway-Authorization, X-Veslo-Gateway-Token, X-Veslo-Session-Id, X-Veslo-Workspace-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
+    VESLO_ALLOWED_CORS_HEADERS_VALUE,
   );
   headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   if (request.headers.get("access-control-request-private-network") === "true") {
@@ -2616,7 +2600,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
 }
 
 async function requireClient(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
-  const header = request.headers.get("authorization") ?? "";
+  const header = request.headers.get(AUTHORIZATION_HEADER) ?? "";
   const match = header.match(/^Bearer\s+(.+)$/i);
   const token = match?.[1];
   if (!token) {
@@ -2626,17 +2610,17 @@ async function requireClient(request: Request, config: ServerConfig, tokens: Tok
   if (!scope) {
     throw new ApiError(401, "unauthorized", "Invalid bearer token");
   }
-  const clientId = request.headers.get("x-veslo-client-id") ?? undefined;
+  const clientId = request.headers.get(VESLO_CLIENT_ID_HEADER) ?? undefined;
   return { type: "remote", clientId, tokenHash: hashToken(token), scope };
 }
 
 async function requireHost(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
-  const hostToken = request.headers.get("x-veslo-host-token");
+  const hostToken = request.headers.get(VESLO_HOST_TOKEN_HEADER);
   if (hostToken && hostToken === config.hostToken) {
     return { type: "host", tokenHash: hashToken(hostToken), scope: "owner" };
   }
 
-  const header = request.headers.get("authorization") ?? "";
+  const header = request.headers.get(AUTHORIZATION_HEADER) ?? "";
   const match = header.match(/^Bearer\s+(.+)$/i);
   const bearer = match?.[1];
   if (!bearer) {
@@ -2646,19 +2630,19 @@ async function requireHost(request: Request, config: ServerConfig, tokens: Token
   if (scope !== "owner") {
     throw new ApiError(401, "unauthorized", "Invalid host token");
   }
-  const clientId = request.headers.get("x-veslo-client-id") ?? undefined;
+  const clientId = request.headers.get(VESLO_CLIENT_ID_HEADER) ?? undefined;
   return { type: "remote", clientId, tokenHash: hashToken(bearer), scope };
 }
 
 async function requireHostOrClient(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
-  if (request.headers.get("x-veslo-host-token")) {
+  if (request.headers.get(VESLO_HOST_TOKEN_HEADER)) {
     return requireHost(request, config, tokens);
   }
   return requireClient(request, config, tokens);
 }
 
 export function resolveArchiveOwnerKey(request: Request): string {
-  const accountId = request.headers.get("x-veslo-account-id")?.trim() ?? "";
+  const accountId = request.headers.get(VESLO_ACCOUNT_ID_HEADER)?.trim() ?? "";
   if (!accountId) {
     throw new ApiError(400, "account_id_required", "A stable cloud account id is required for session archive sync.");
   }
@@ -2881,7 +2865,7 @@ const perfMs = () =>
     : Date.now();
 
 function createConversationRunTracer(request: Request) {
-  const traceId = request.headers.get("x-veslo-send-trace-id")?.trim() || "";
+  const traceId = request.headers.get(VESLO_SEND_TRACE_ID_HEADER)?.trim() || "";
   const enabled = Boolean(traceId) || ["1", "true", "yes"].includes((process.env.VESLO_FLOW_LOG ?? "").toLowerCase());
   const entries: ConversationRunDebugTraceEntry[] = [];
 
@@ -3018,41 +3002,6 @@ export function serializeWorkspace(workspace: ServerConfig["workspaces"][number]
     ...rest,
     ...(baseUrl !== undefined ? { baseUrl } : {}),
     opencode,
-  };
-}
-
-function skillRegistryBaseUrl(config: ServerConfig): string {
-  return config.skillRegistryBaseUrl?.trim() || "";
-}
-
-function normalizeSkillRegistryBaseUrl(value: string | null | undefined): string {
-  return normalizeDenApiBaseUrl(value) ?? "";
-}
-
-function skillRegistryRequestBaseUrl(ctx: RequestContext): string {
-  return (
-    skillRegistryBaseUrl(ctx.config) ||
-    normalizeSkillRegistryBaseUrl(ctx.request.headers.get("x-veslo-den-api-base"))
-  );
-}
-
-function requireSkillRegistryRequestBaseUrl(ctx: RequestContext): void {
-  if (!skillRegistryRequestBaseUrl(ctx)) {
-    throw new ApiError(503, "skill_registry_misconfigured", "Skill registry base URL is missing");
-  }
-}
-
-function skillRegistryRequestInput(ctx: RequestContext) {
-  const userId = ctx.request.headers.get("x-veslo-den-user-id")?.trim() ||
-    ctx.request.headers.get("x-veslo-user-id")?.trim() ||
-    ctx.request.headers.get("x-veslo-account-id")?.trim() ||
-    undefined;
-  return {
-    baseUrl: skillRegistryRequestBaseUrl(ctx),
-    token: ctx.config.skillRegistryToken?.trim() || undefined,
-    denToken: ctx.request.headers.get("x-veslo-den-token")?.trim() || undefined,
-    orgId: ctx.request.headers.get("x-veslo-den-org-id")?.trim() || undefined,
-    userId,
   };
 }
 

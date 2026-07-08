@@ -10,6 +10,7 @@ import type {
   VesloWorkspaceList,
   VesloWorkspaceSystemProvisionResult,
 } from "../veslo-server/types";
+import { buildDenContextHeaders } from "../veslo-server/header-profiles";
 import { workspacePath } from "./path";
 
 type RequestJsonOptions = {
@@ -40,20 +41,6 @@ export type WorkspaceClientContext = {
     workspaceProvision: number;
   };
 };
-
-function buildDenContextHeaders(options?: VesloSoulAuthContext): Record<string, string> | undefined {
-  const denApiBase = options?.denApiBase?.trim() ?? "";
-  const denToken = options?.denToken?.trim() ?? "";
-  const denOrgId = options?.denOrgId?.trim() ?? "";
-  const denUserId = options?.denUserId?.trim() ?? "";
-  const headers = {
-    ...(denApiBase ? { "x-veslo-den-api-base": denApiBase } : {}),
-    ...(denToken ? { "x-veslo-den-token": denToken } : {}),
-    ...(denOrgId ? { "x-veslo-den-org-id": denOrgId } : {}),
-    ...(denUserId ? { "x-veslo-den-user-id": denUserId } : {}),
-  };
-  return Object.keys(headers).length > 0 ? headers : undefined;
-}
 
 export function createWorkspaceClient(context: WorkspaceClientContext) {
   const { baseUrl, token, hostToken, requestJson, timeouts } = context;

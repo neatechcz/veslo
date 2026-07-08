@@ -1,4 +1,5 @@
 import type { VesloHubMcpItem, VesloMcpItem } from "../veslo-server/types";
+import { buildDenContextHeaders } from "../veslo-server/header-profiles";
 import { workspacePath } from "./path";
 
 type RequestJsonOptions = {
@@ -23,18 +24,6 @@ type DenContextOptions = {
   denOrgId?: string;
 };
 
-const buildDenHeaders = (options?: DenContextOptions) => {
-  const denApiBase = options?.denApiBase?.trim() ?? "";
-  const denToken = options?.denToken?.trim() ?? "";
-  const denOrgId = options?.denOrgId?.trim() ?? "";
-  const extraHeaders = {
-    ...(denApiBase ? { "x-veslo-den-api-base": denApiBase } : {}),
-    ...(denToken ? { "x-veslo-den-token": denToken } : {}),
-    ...(denOrgId ? { "x-veslo-den-org-id": denOrgId } : {}),
-  };
-  return Object.keys(extraHeaders).length > 0 ? extraHeaders : undefined;
-};
-
 const workspaceMcpPath = (workspaceId: string) => `${workspacePath(workspaceId)}/mcp`;
 
 export function createMcpClient(context: McpClientContext) {
@@ -45,7 +34,7 @@ export function createMcpClient(context: McpClientContext) {
       requestJson<{ items: VesloHubMcpItem[] }>(baseUrl, "/hub/mcp", {
         token,
         hostToken,
-        extraHeaders: buildDenHeaders(options),
+        extraHeaders: buildDenContextHeaders(options),
       }),
 
     installHub: (workspaceId: string, name: string, options?: DenContextOptions) =>
@@ -56,7 +45,7 @@ export function createMcpClient(context: McpClientContext) {
           token,
           hostToken,
           method: "POST",
-          extraHeaders: buildDenHeaders(options),
+          extraHeaders: buildDenContextHeaders(options),
         },
       ),
 
@@ -86,7 +75,7 @@ export function createMcpClient(context: McpClientContext) {
           token,
           hostToken,
           method: "POST",
-          extraHeaders: buildDenHeaders(options),
+          extraHeaders: buildDenContextHeaders(options),
         },
       ),
 
@@ -95,7 +84,7 @@ export function createMcpClient(context: McpClientContext) {
         token,
         hostToken,
         method: "DELETE",
-        extraHeaders: buildDenHeaders(options),
+        extraHeaders: buildDenContextHeaders(options),
       }),
   };
 }

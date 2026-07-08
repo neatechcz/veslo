@@ -25,9 +25,7 @@ import {
   engineDoctor,
   engineInfo,
   engineInstall,
-  engineStart,
   engineStop,
-  orchestratorInstanceDispose,
   runtimePrepareWorkspace,
   type EngineDoctorResult,
   type EngineInfo,
@@ -94,11 +92,6 @@ export interface EngineStoreDeps {
   // Orchestrator / runtime helpers
   resolveEngineRuntime: () => EngineRuntime;
   resolveWorkspacePaths: () => string[];
-  activateOrchestratorWorkspace: (input: {
-    workspacePath: string;
-    workspaceId?: string | null;
-    name?: string | null;
-  }) => Promise<unknown>;
   activateVesloHostWorkspace: (workspacePath: string) => Promise<unknown>;
 
   // Workspace-level helpers
@@ -131,12 +124,8 @@ export function createEngineStore(deps: EngineStoreDeps) {
     idleSuspendMs: deps.idleSuspendMs,
     setEngine,
     setEngineAuth,
-    startEngine: engineStart,
-    stopEngine: engineStop,
     readEngineInfo: engineInfo,
     prepareWorkspaceRuntime: runtimePrepareWorkspace,
-    activateOrchestratorWorkspace: deps.activateOrchestratorWorkspace,
-    disposeOrchestratorWorkspace: orchestratorInstanceDispose,
     activateVesloHostWorkspace: deps.activateVesloHostWorkspace,
     connectToServer: deps.connectToServer,
     connectQuiet: async (baseUrl, directory, auth, context) =>
@@ -381,12 +370,7 @@ export function createEngineStore(deps: EngineStoreDeps) {
         workspaceId: activeLocalWorkspaceId,
         workspaceName: deps.activeWorkspaceInfo()?.displayName?.trim() || deps.activeWorkspaceInfo()?.name?.trim() || null,
         reason: runtime === "veslo-orchestrator" ? "engine-reload-orchestrator" : "engine-reload",
-        beforeOrchestratorReconnect:
-          runtime === "veslo-orchestrator"
-            ? async () => {
-                await orchestratorInstanceDispose(root);
-              }
-            : undefined,
+        forceFreshRuntime: true,
       });
       if (!ok) {
         deps.setError("Failed to reconnect after reload");

@@ -166,6 +166,20 @@ test("materializing a pending submitted draft preserves the visible run indicato
   );
 });
 
+test("run begun trace is emitted only when the per-session state changes", () => {
+  const start = sessionSource.indexOf("  const setRunHasBegunForSessionKey = ");
+  const end = sessionSource.indexOf("  const setRunTickForSessionKey = ", start);
+  assert.notEqual(start, -1, "setRunHasBegunForSessionKey should exist");
+  assert.notEqual(end, -1, "setRunHasBegunForSessionKey block should end before setRunTickForSessionKey");
+  const block = sessionSource.slice(start, end);
+
+  assert.match(
+    block,
+    /const key = sessionKey\.trim\(\);[\s\S]*if \(!key\) return;[\s\S]*if \(untrack\(runStateBySessionKey\)\[key\]\?\.hasBegun === hasBegun\) return;[\s\S]*recordSendTrace\("run-state:has-begun"/,
+    "repeated true->true run-state updates should not emit another native trace event",
+  );
+});
+
 test("materializing a pending submitted draft does not hide the optimistic transcript for initial anchoring", () => {
   assert.match(
     conversationFlowSource,

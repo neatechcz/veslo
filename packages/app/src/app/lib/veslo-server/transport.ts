@@ -2,8 +2,18 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../../utils";
 import { fetchWithTimeout } from "../http";
 import { wrapStartupRequestAuditFetch } from "../startup-request-audit";
+import {
+  buildVesloServerAuthHeaders as buildAuthHeaders,
+  buildVesloServerJsonHeaders as buildHeaders,
+} from "./header-profiles";
 import { runVesloJsonRequestWithBroker } from "./request-broker";
-import type { VesloServerStatus, VesloSkillRegistryAuthContext } from "./types";
+import type { VesloServerStatus } from "./types";
+
+export {
+  buildDenContextHeaders,
+  buildGatewayCallerHeaders,
+  normalizeBearerToken,
+} from "./header-profiles";
 
 type RawJsonResponse<T> = {
   ok: boolean;
@@ -39,66 +49,6 @@ export function resolveVesloServerAuthFailureStatus(
   }
   const hasCredential = Boolean(credentials.token?.trim() || credentials.hostToken?.trim());
   return hasCredential ? "auth_desync" : "limited";
-}
-
-function buildHeaders(
-  token?: string,
-  hostToken?: string,
-  extra?: Record<string, string>,
-) {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-  if (hostToken) {
-    headers["X-Veslo-Host-Token"] = hostToken;
-  }
-  if (extra) {
-    Object.assign(headers, extra);
-  }
-  return headers;
-}
-
-function buildAuthHeaders(token?: string, hostToken?: string, extra?: Record<string, string>) {
-  const headers: Record<string, string> = {};
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-  if (hostToken) {
-    headers["X-Veslo-Host-Token"] = hostToken;
-  }
-  if (extra) {
-    Object.assign(headers, extra);
-  }
-  return headers;
-}
-
-export function normalizeBearerToken(token: string, label: string): string {
-  const trimmed = token.trim();
-  if (!trimmed) {
-    throw new Error(`${label} is required`);
-  }
-  return /^Bearer\s+/i.test(trimmed) ? trimmed : `Bearer ${trimmed}`;
-}
-
-export function buildGatewayCallerHeaders(userToken: string) {
-  return {
-    "X-Veslo-Gateway-Authorization": normalizeBearerToken(userToken, "userToken"),
-  };
-}
-
-export function buildDenContextHeaders(options?: VesloSkillRegistryAuthContext): Record<string, string> | undefined {
-  const denApiBase = options?.denApiBase?.trim() ?? "";
-  const denToken = options?.denToken?.trim() ?? "";
-  const denOrgId = options?.denOrgId?.trim() ?? "";
-  const denUserId = options?.denUserId?.trim() ?? "";
-  const headers = {
-    ...(denApiBase ? { "x-veslo-den-api-base": denApiBase } : {}),
-    ...(denToken ? { "x-veslo-den-token": denToken } : {}),
-    ...(denOrgId ? { "x-veslo-den-org-id": denOrgId } : {}),
-    ...(denUserId ? { "x-veslo-den-user-id": denUserId } : {}),
-  };
-  return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
 const auditedTauriFetch = wrapStartupRequestAuditFetch(

@@ -49,7 +49,6 @@ export type WorkspaceLocalActivationDeps = {
   engine: () => EngineInfo | null;
   resolveEngineRuntime: () => EngineInfo["runtime"];
   localRuntimeLifecycle: ReturnType<typeof createLocalRuntimeLifecycle>;
-  startHost: (opts?: { workspacePath?: string; navigate?: boolean }) => Promise<boolean>;
   syncWorkspaceSkillMaterializationBeforeRuntime: (
     workspace: WorkspaceInfo,
     options: { reason: string },
@@ -316,58 +315,41 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
     }
 
     let connectedToLocalHost = false;
-    const existingEngine = deps.engine();
-    const runtime = existingEngine?.runtime ?? deps.resolveEngineRuntime();
-    const canReuseHost =
-      isTauriRuntime() &&
-      Boolean(existingEngine?.running && existingEngine.baseUrl);
-
-    deps.wsDebug("activate:remote->local:hostReuse", {
-      canReuseHost,
+    const runtime = deps.engine()?.runtime ?? deps.resolveEngineRuntime();
+    deps.wsDebug("activate:remote->local:runtimePrepare", {
       runtime,
-      existingEngineBaseUrl: existingEngine?.baseUrl ?? null,
-      existingEngineProjectDir: existingEngine?.projectDir ?? null,
+      existingEngineBaseUrl: deps.engine()?.baseUrl ?? null,
+      existingEngineProjectDir: deps.engine()?.projectDir ?? null,
     });
-
-    if (canReuseHost && runtime === "veslo-orchestrator") {
-      try {
-        const reuseStart = Date.now();
-        deps.wsLog("[workspace:activate] STEP 4a.1 — localRuntimeLifecycle.reattachOrchestratorWorkspace...", {
-          path: next.path,
-        });
-        connectedToLocalHost = await deps.localRuntimeLifecycle.reattachOrchestratorWorkspace({
-          workspacePath: next.path,
-          workspaceId: next.id,
-          workspaceName: next.displayName?.trim() || next.name?.trim() || null,
-          reason: "workspace-attach-local",
-          navigate: false,
-        });
-        deps.wsDebug("activate:remote->local:reuseHost:done", {
-          ok: connectedToLocalHost,
-          ms: Date.now() - reuseStart,
-        });
-      } catch {
-        connectedToLocalHost = false;
-        deps.wsDebug("activate:remote->local:reuseHost:error");
-      }
+    const prepareStartedAt = Date.now();
+    deps.wsLog("[workspace:activate] STEP 4a.1 — localRuntimeLifecycle.prepareWorkspaceRuntime...", {
+      path: next.path,
+      runtime,
+    });
+    try {
+      connectedToLocalHost = await deps.localRuntimeLifecycle.prepareWorkspaceRuntime({
+        workspacePath: next.path,
+        workspaceId: next.id,
+        workspaceName: next.displayName?.trim() || next.name?.trim() || null,
+        reason: "workspace-attach-local",
+        navigate: false,
+      });
+      deps.wsDebug("activate:remote->local:prepareRuntime:done", {
+        ok: connectedToLocalHost,
+        ms: Date.now() - prepareStartedAt,
+      });
+    } catch (error) {
+      connectedToLocalHost = false;
+      deps.wsDebug("activate:remote->local:prepareRuntime:error", {
+        error: error instanceof Error ? error.message : deps.safeStringify(error),
+      });
     }
-
     if (!connectedToLocalHost) {
-      deps.wsLog("[workspace:activate] STEP 4a.5 — startHost (no reuse)...", { path: next.path });
-      const startHostAt = Date.now();
-      const ok = await deps.withTimeoutOrThrow(
-        deps.startHost({ workspacePath: next.path, navigate: false }),
-        { timeoutMs: deps.startHostTimeoutMs, label: "startHost" },
-      );
-      deps.wsLog("[workspace:activate] STEP 4a.5 — startHost DONE", { ok, ms: Date.now() - startHostAt });
-      deps.wsDebug("activate:remote->local:startHost:done", { ok, ms: Date.now() - startHostAt });
-      if (!ok) {
-        deps.updateWorkspaceConnectionState(id, {
-          status: "error",
-          message: deps.indirectT("ui.indirect.failed_to_start_local_engine_1uglec", deps.indirectLocale()),
-        });
-        return false;
-      }
+      deps.updateWorkspaceConnectionState(id, {
+        status: "error",
+        message: deps.indirectT("ui.indirect.failed_to_start_local_engine_1uglec", deps.indirectLocale()),
+      });
+      return false;
     }
     return true;
   }
@@ -449,11 +431,11 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
       if (!skillsReady) return "failed";
       const runtime = deps.resolveEngineRuntime();
       deps.wsLog("[workspace:activate] STEP 5 — runtime =", runtime);
-      deps.wsLog("[workspace:activate] STEP 5.1 — localRuntimeLifecycle.restartWorkspaceRuntime...", {
+      deps.wsLog("[workspace:activate] STEP 5.1 — localRuntimeLifecycle.prepareWorkspaceRuntime...", {
         path: next.path,
         runtime,
       });
-      const ok = await deps.localRuntimeLifecycle.restartWorkspaceRuntime({
+      const ok = await deps.localRuntimeLifecycle.prepareWorkspaceRuntime({
         workspacePath: next.path,
         workspaceId: next.id,
         workspaceName: next.displayName?.trim() || next.name?.trim() || null,

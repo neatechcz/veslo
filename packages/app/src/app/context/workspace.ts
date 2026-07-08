@@ -34,10 +34,7 @@ import {
 } from "../lib/veslo-server";
 import {
   engineInfo,
-  engineStart,
   engineStop,
-  orchestratorInstanceDispose,
-  orchestratorWorkspaceActivate,
   runtimePrepareWorkspace,
   workspaceBootstrap,
   workspaceForget,
@@ -236,13 +233,6 @@ export function createWorkspaceStore(options: {
   const START_HOST_TIMEOUT_MS = 45_000;
   const WORKSPACE_ACTIVATE_TIMEOUT_MS = 30_000;
   const BOOT_TRACE_SINK_STORAGE_KEY = "veslo:boot-trace-sink";
-  // VSLO-86 -- orchestrator_workspace_activate waits for the daemon's
-  // /workspaces/:id/activate path. That route eagerly spawns the per-workspace
-  // OpenCode engine and its default health window is 60s on cold dev starts
-  // (Bun + SQLite + sandbox init). Keep this timeout above that backend window;
-  // otherwise the UI falls back to startHost while the original activation is
-  // still alive, producing competing daemons and stale base URLs.
-  const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS = 75_000;
   const DB_MIGRATE_UNSUPPORTED_PATTERNS = [
     /unknown(?:\s+sub)?command\s+['"`]?db['"`]?/i,
     /unrecognized(?:\s+sub)?command\s+['"`]?db['"`]?/i,
@@ -468,20 +458,6 @@ export function createWorkspaceStore(options: {
     return resolved;
   };
 
-  async function activateOrchestratorWorkspace(input: {
-    workspacePath: string;
-    workspaceId?: string | null;
-    name?: string | null;
-  }) {
-    return await withTimeoutOrThrow(
-      orchestratorWorkspaceActivate(input),
-      {
-        timeoutMs: ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS,
-        label: "orchestrator workspace activation",
-      },
-    );
-  }
-
   const serverRegistry = createWorkspaceServerRegistry({
     getWorkspaces: workspaces,
     vesloServerClient: options.vesloServerClient,
@@ -657,7 +633,6 @@ export function createWorkspaceStore(options: {
           engine: engineStore.engine,
           resolveEngineRuntime,
           localRuntimeLifecycle,
-          startHost: engineStore.startHost,
           syncWorkspaceSkillMaterializationBeforeRuntime,
           clearDisplayedSessionState,
           updateWorkspaceConnectionState,
@@ -951,7 +926,6 @@ export function createWorkspaceStore(options: {
     connectToServer,
     resolveEngineRuntime,
     resolveWorkspacePaths,
-    activateOrchestratorWorkspace,
     activateVesloHostWorkspace,
     blockLocalAction,
     markOnboardingComplete,
@@ -1681,12 +1655,8 @@ export function createWorkspaceStore(options: {
     resolveWorkspacePaths,
     setEngine: engineStore.setEngine,
     setEngineAuth: engineStore.setEngineAuth,
-    startEngine: engineStart,
-    stopEngine: engineStop,
     readEngineInfo: engineInfo,
     prepareWorkspaceRuntime: runtimePrepareWorkspace,
-    activateOrchestratorWorkspace,
-    disposeOrchestratorWorkspace: orchestratorInstanceDispose,
     activateVesloHostWorkspace,
     connectToServer,
     connectQuiet: connectToEngineQuiet,

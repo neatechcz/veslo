@@ -15,6 +15,7 @@ import type {
   ConversationSubmitSubmittedResult,
 } from "../conversation-submit-contract.js";
 import { ApiError } from "../errors.js";
+import { VESLO_SEND_TRACE_ID_HEADER } from "../request-headers.js";
 import {
   OrchestratorLifecycleRequestError,
   type OrchestratorLifecycleClient,
@@ -604,7 +605,7 @@ export function registerConversationSessionRoutes(
   addRoute(routes, "POST", "/workspace/:id/conversations", "client", async (ctx) => {
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
-    const sendTraceId = ctx.request.headers.get("x-veslo-send-trace-id")?.trim() || null;
+    const sendTraceId = ctx.request.headers.get(VESLO_SEND_TRACE_ID_HEADER)?.trim() || null;
     const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const body = await readOptionalJsonBody(ctx.request);
     const directory = await resolveConversationReadDirectory(
@@ -649,7 +650,7 @@ export function registerConversationSessionRoutes(
   addRoute(routes, "POST", "/workspace/:id/conversations/submit", "client", async (ctx) => {
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
-    const sendTraceId = ctx.request.headers.get("x-veslo-send-trace-id")?.trim() || null;
+    const sendTraceId = ctx.request.headers.get(VESLO_SEND_TRACE_ID_HEADER)?.trim() || null;
     const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const body = await readJsonBody(ctx.request);
     const runtimeAuthorizationActorTokenHash = ctx.actor?.tokenHash?.trim() || null;

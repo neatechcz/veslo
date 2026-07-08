@@ -1,7 +1,10 @@
 import { recordAudit } from "../audit.js";
 import { ApiError } from "../errors.js";
-import { normalizeDenApiBaseUrl } from "../den-api-base.js";
 import { addRoute, type RequestContext, type Route } from "../routing.js";
+import {
+  readSkillRegistryRequestInput as skillRegistryRequestInput,
+  requireSkillRegistryRequestBaseUrl,
+} from "../request-headers.js";
 import {
   ensureWritable,
   emitReloadEvent,
@@ -198,37 +201,6 @@ function serializeSkillRemoval(record: SkillRemovalRecord): SkillRemovalListItem
     removedAt: record.removedAt ?? "",
     ...(record.restoredAt ? { restoredAt: record.restoredAt } : {}),
     canRestore: !record.restoredAt,
-  };
-}
-
-function normalizeSkillRegistryBaseUrl(value: string | null | undefined): string {
-  return normalizeDenApiBaseUrl(value) ?? "";
-}
-
-function skillRegistryRequestBaseUrl(ctx: RequestContext): string {
-  return (
-    ctx.config.skillRegistryBaseUrl?.trim() ||
-    normalizeSkillRegistryBaseUrl(ctx.request.headers.get("x-veslo-den-api-base"))
-  );
-}
-
-function requireSkillRegistryRequestBaseUrl(ctx: RequestContext): void {
-  if (!skillRegistryRequestBaseUrl(ctx)) {
-    throw new ApiError(503, "skill_registry_misconfigured", "Skill registry base URL is missing");
-  }
-}
-
-function skillRegistryRequestInput(ctx: RequestContext) {
-  const userId = ctx.request.headers.get("x-veslo-den-user-id")?.trim() ||
-    ctx.request.headers.get("x-veslo-user-id")?.trim() ||
-    ctx.request.headers.get("x-veslo-account-id")?.trim() ||
-    undefined;
-  return {
-    baseUrl: skillRegistryRequestBaseUrl(ctx),
-    token: ctx.config.skillRegistryToken?.trim() || undefined,
-    denToken: ctx.request.headers.get("x-veslo-den-token")?.trim() || undefined,
-    orgId: ctx.request.headers.get("x-veslo-den-org-id")?.trim() || undefined,
-    userId,
   };
 }
 

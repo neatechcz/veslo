@@ -12,6 +12,7 @@ import type {
   VesloSoulVersionsResponse,
   VesloWorkspaceSoulsResponse,
 } from "../veslo-server/types";
+import { buildDenContextHeaders } from "../veslo-server/header-profiles";
 
 type RequestJsonOptions = {
   method?: string;
@@ -33,20 +34,6 @@ export type SoulClientContext = {
 function setTrimmedSearchParam(search: URLSearchParams, key: string, value?: string | null) {
   const normalized = value?.trim() ?? "";
   if (normalized) search.set(key, normalized);
-}
-
-function buildDenContextHeaders(options?: VesloSoulAuthContext): Record<string, string> | undefined {
-  const denApiBase = options?.denApiBase?.trim() ?? "";
-  const denToken = options?.denToken?.trim() ?? "";
-  const denOrgId = options?.denOrgId?.trim() ?? "";
-  const denUserId = options?.denUserId?.trim() ?? "";
-  const headers = {
-    ...(denApiBase ? { "x-veslo-den-api-base": denApiBase } : {}),
-    ...(denToken ? { "x-veslo-den-token": denToken } : {}),
-    ...(denOrgId ? { "x-veslo-den-org-id": denOrgId } : {}),
-    ...(denUserId ? { "x-veslo-den-user-id": denUserId } : {}),
-  };
-  return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
 function activeWorkspaceIdsPayload(input?: {

@@ -31,6 +31,10 @@ import {
   type SoulVersion,
 } from "./soul-memory.js";
 import {
+  readDenUserIdentityHeader,
+  readSoulDenContext,
+} from "./request-headers.js";
+import {
   materializeEffectiveSoul,
   readSoulMaterializationManifest,
   readSoulMaterializationStatus,
@@ -38,7 +42,6 @@ import {
 } from "./soul-materializer.js";
 import { soulMaterializationApprovalPaths as soulRuntimeMaterializationApprovalPaths } from "./soul-runtime.js";
 import type { ResourceOwner, ServerConfig, WorkspaceInfo } from "./types.js";
-import { normalizeDenApiBaseUrl } from "./den-api-base.js";
 import { shortId } from "./utils.js";
 
 export type SoulSummary = {
@@ -74,10 +77,6 @@ export type SoulMaterializationTestHookInput = {
   workspaceId: string;
   overrides: Partial<Record<SoulScope, SoulDocument | null>>;
 };
-
-function normalizeHttpBaseUrl(value: string | null | undefined): string {
-  return normalizeDenApiBaseUrl(value) ?? "";
-}
 
 function ownerForWorkspace(workspace: WorkspaceInfo): ResourceOwner {
   return workspaceResourceOwner({ workspaceId: workspace.id, root: workspace.path, label: workspace.name });
@@ -155,18 +154,7 @@ export function createSoulController() {
   }
 
   function soulDenContext(ctx: RequestContext): SoulDenContext {
-    const userId = ctx.request.headers.get("x-veslo-den-user-id")?.trim() ||
-      ctx.request.headers.get("x-veslo-user-id")?.trim() ||
-      ctx.request.headers.get("x-veslo-account-id")?.trim() ||
-      undefined;
-    const requestBaseUrl = normalizeHttpBaseUrl(ctx.request.headers.get("x-veslo-den-api-base"));
-    const configuredBaseUrl = normalizeHttpBaseUrl(ctx.config.denApiBase);
-    return {
-      baseUrl: requestBaseUrl || configuredBaseUrl,
-      denToken: ctx.request.headers.get("x-veslo-den-token")?.trim() || undefined,
-      orgId: ctx.request.headers.get("x-veslo-den-org-id")?.trim() || undefined,
-      userId,
-    };
+    return readSoulDenContext(ctx);
   }
 
   function requireSoulDenToken(ctx: SoulDenContext): string {
@@ -257,9 +245,7 @@ export function createSoulController() {
   }
 
   function soulActorId(ctx: RequestContext): string {
-    return ctx.request.headers.get("x-veslo-den-user-id")?.trim() ||
-      ctx.request.headers.get("x-veslo-user-id")?.trim() ||
-      ctx.request.headers.get("x-veslo-account-id")?.trim() ||
+    return readDenUserIdentityHeader(ctx.request) ||
       ctx.actor?.tokenHash ||
       ctx.actor?.clientId ||
       "system";
