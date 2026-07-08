@@ -368,7 +368,7 @@ Implementation verification in `veslo-main`:
 - `bun test packages/server/src/tests/den-catalog.test.ts packages/server/src/tests/server.hub-mcp.test.ts packages/server/src/tests/server.mcp-routes.test.ts`
   - 36 tests passed.
 - `node --import=tsx/esm --test src/app/tests/lib/den-auth.test.ts src/app/tests/lib/veslo-server.test.ts src/app/tests/mcp-hub-contract.test.ts src/app/tests/context/mcp-connection-workflow.test.ts`
-  - 117 tests passed from `packages/app`.
+  - 118 tests passed from `packages/app`.
 - `pnpm --filter @neatech/den exec tsx --test test/org-mcp-catalog.test.ts test/google-workspace-oauth.test.ts test/microsoft-oauth-routes.test.ts`
   - 23 tests passed.
 - `pnpm --filter @neatech/veslo-ui typecheck`

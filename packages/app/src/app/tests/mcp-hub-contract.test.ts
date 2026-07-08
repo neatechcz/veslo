@@ -79,6 +79,15 @@ test("extensions store retries hub mcp after Veslo server auth context becomes r
   assert.match(autoRefreshSource, /refreshHubMcp\(\)\.catch/);
 });
 
+test("forced hub MCP refresh queues behind in-flight refreshes", () => {
+  const refreshHubMcpSource = extensionsSource.match(/async function refreshHubMcp[\s\S]*?createEffect/)?.[0] ?? "";
+
+  assert.match(extensionsSource, /let refreshHubMcpForcePending = false/);
+  assert.match(refreshHubMcpSource, /if \(refreshHubMcpInFlight\) \{[\s\S]*optionsOverride\?\.force[\s\S]*refreshHubMcpForcePending = true/);
+  assert.match(refreshHubMcpSource, /hubMcpLoaded = false/);
+  assert.match(refreshHubMcpSource, /if \(refreshHubMcpForcePending && !refreshHubMcpAborted\) \{[\s\S]*void refreshHubMcp\(\{ force: true \}\)/);
+});
+
 test("hub MCP requests and server-managed logout carry the Den API base context", () => {
   const refreshHubMcpSource = extensionsSource.match(/async function refreshHubMcp[\s\S]*?async function refreshHubSkills/)?.[0] ?? "";
   const installHubMcpSource =
