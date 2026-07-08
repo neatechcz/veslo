@@ -226,7 +226,7 @@ test("opens immediately when session is in active workspace", async () => {
 
 test("session list clicks record browse scope before route navigation", () => {
   for (const source of [sessionPageSource, dashboardSource]) {
-    const openSessionStart = source.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string) => {");
+    const openSessionStart = source.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {");
     assert.notEqual(openSessionStart, -1, "openSessionFromList should exist");
     const openSessionEnd = source.indexOf("  const resolveVesloWorkspaceId = (workspaceId: string) => {", openSessionStart);
     assert.notEqual(openSessionEnd, -1, "openSessionFromList block end should exist");
@@ -239,7 +239,7 @@ test("session list clicks record browse scope before route navigation", () => {
     );
     assert.match(
       openSessionSource,
-      /props\.setSessionBrowseScope\(\{[\s\S]*directory: session\?\.directory \?\? workspaceRoot,[\s\S]*conversationId: session\?\.conversationId \?\? null,[\s\S]*opencodeSessionId: session\?\.opencodeSessionId \?\? nextSessionId,/s,
+      /props\.setSessionBrowseScope\(\{[\s\S]*directory: target\?\.directory\?\.trim\(\) \|\| session\?\.directory\?\.trim\(\) \|\| scopedWorkspaceRoot,[\s\S]*conversationId: target\?\.conversationId \?\? session\?\.conversationId \?\? null,[\s\S]*opencodeSessionId: target\?\.opencodeSessionId \?\? session\?\.opencodeSessionId \?\? nextSessionId,/s,
       "existing-session navigation should carry conversation sidecars with the browse scope",
     );
     assert.match(

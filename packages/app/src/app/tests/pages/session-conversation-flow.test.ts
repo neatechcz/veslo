@@ -2899,7 +2899,7 @@ test("send prompt action preserves queue branch priority", () => {
       queuedDraftCount: 0,
       runVisible: true,
     }),
-    { kind: "append-to-running-queue" },
+    { kind: "send-running-server-queue" },
   );
 });
 

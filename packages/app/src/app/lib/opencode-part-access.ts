@@ -1,25 +1,39 @@
 import type { Part } from "@opencode-ai/sdk/v2/client";
 
-type PartObject = Record<string, unknown>;
+export type PartObject = Record<string, unknown>;
 
-function partObject(part: Part): PartObject {
+export function partRecord(part: Part): PartObject {
   return part as unknown as PartObject;
 }
 
-export function partText(part: Part): string {
-  const value = partObject(part).text;
+export function partStringField(part: Part, key: string): string {
+  const value = partRecord(part)[key];
   return typeof value === "string" ? value : "";
+}
+
+export function partObjectField(part: Part, key: string): PartObject {
+  const value = partRecord(part)[key];
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as PartObject
+    : {};
+}
+
+export function partText(part: Part): string {
+  return partStringField(part, "text");
 }
 
 export function toolNameFromPart(part: Part): string {
   if (part.type !== "tool") return "";
-  const value = partObject(part).tool;
-  return typeof value === "string" ? value : "";
+  return partStringField(part, "tool");
 }
 
 export function toolStateFromPart(part: Part): PartObject {
   if (part.type !== "tool") return {};
-  const value = partObject(part).state;
+  return partObjectField(part, "state");
+}
+
+export function toolInputFromPart(part: Part): PartObject {
+  const value = toolStateFromPart(part).input;
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as PartObject
     : {};

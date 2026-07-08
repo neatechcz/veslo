@@ -1,7 +1,11 @@
 export type { LoadedSidebarPrefetchInterest } from "../../types.js";
-import type { LoadedSidebarPrefetchInterest as LoadedSidebarPrefetchInterestType } from "../../types.js";
+import type {
+  LoadedSidebarPrefetchInterest as LoadedSidebarPrefetchInterestType,
+  LoadedSidebarPrefetchSessionRef,
+} from "../../types.js";
 
 type LoadedSidebarPrefetchRow = {
+  rowKey?: string | null;
   workspaceId: string;
   sessionId: string;
   directory?: string | null;
@@ -18,6 +22,10 @@ const createInterest = (): WorkspaceInterest => ({
   loadedTopLevelSessionIds: [],
   expandedSubagentSessionIds: [],
   sessionDirectoriesById: {},
+  clickedSession: null,
+  selectedSession: null,
+  loadedTopLevelSessions: [],
+  expandedSubagentSessions: [],
 });
 
 const ensureWorkspaceInterest = (
@@ -55,6 +63,7 @@ const recordSessionDirectory = (
   const normalizedSessionId = normalizeId(sessionId);
   const normalizedDirectory = normalizeId(directory);
   if (!normalizedSessionId || !normalizedDirectory) return;
+  if (interest.sessionDirectoriesById[normalizedSessionId]) return;
   interest.sessionDirectoriesById[normalizedSessionId] = normalizedDirectory;
 };
 
@@ -69,15 +78,77 @@ const findUniqueWorkspaceForSession = (
   return workspaces.values().next().value ?? null;
 };
 
+const sessionRefForRow = (row: Pick<LoadedSidebarPrefetchRow, "sessionId" | "directory">): LoadedSidebarPrefetchSessionRef | null => {
+  const sessionId = normalizeId(row.sessionId);
+  if (!sessionId) return null;
+  const directory = normalizeId(row.directory);
+  return directory ? { sessionId, directory } : { sessionId };
+};
+
+const sessionRefKey = (ref: LoadedSidebarPrefetchSessionRef) =>
+  `${normalizeId(ref.sessionId)}\0${normalizeId(ref.directory)}`;
+
+const pushSessionRef = (
+  refs: LoadedSidebarPrefetchSessionRef[],
+  seenRefs: Set<string>,
+  row: Pick<LoadedSidebarPrefetchRow, "sessionId" | "directory">,
+) => {
+  const ref = sessionRefForRow(row);
+  if (!ref) return;
+  const key = sessionRefKey(ref);
+  if (seenRefs.has(key)) return;
+  seenRefs.add(key);
+  refs.push(ref);
+};
+
+const buildRowLookup = (rows: LoadedSidebarPrefetchRow[]) => {
+  const byRowKey = new Map<string, LoadedSidebarPrefetchRow>();
+  const bySessionId = new Map<string, LoadedSidebarPrefetchRow[]>();
+
+  for (const row of rows) {
+    const rowKey = normalizeId(row.rowKey);
+    const sessionId = normalizeId(row.sessionId);
+    if (rowKey) byRowKey.set(rowKey, row);
+    if (!sessionId) continue;
+    const existing = bySessionId.get(sessionId) ?? [];
+    existing.push(row);
+    bySessionId.set(sessionId, existing);
+  }
+
+  return { byRowKey, bySessionId };
+};
+
+const resolveInterestRow = (
+  rowLookup: ReturnType<typeof buildRowLookup>,
+  rowKey: string | null | undefined,
+  sessionId: string | null | undefined,
+) => {
+  const normalizedRowKey = normalizeId(rowKey);
+  const normalizedSessionId = normalizeId(sessionId);
+  if (normalizedRowKey) {
+    const row = rowLookup.byRowKey.get(normalizedRowKey);
+    if (row && (!normalizedSessionId || normalizeId(row.sessionId) === normalizedSessionId)) return row;
+  }
+
+  if (!normalizedSessionId) return null;
+  const rows = rowLookup.bySessionId.get(normalizedSessionId) ?? [];
+  return rows.length === 1 ? rows[0] : null;
+};
+
 export function deriveLoadedSidebarPrefetchInterest(input: {
   selectedSessionId: string | null;
+  selectedRowKey?: string | null;
   clickedSessionId: string | null;
+  clickedRowKey?: string | null;
   loadedTopLevelRows: LoadedSidebarPrefetchRow[];
   expandedSubagentRows: LoadedSidebarPrefetchRow[];
 }) {
   const interests = new Map<string, WorkspaceInterest>();
   const sessionWorkspaces = new Map<string, Set<string>>();
   const seenTopLevelSessionIdsByWorkspace = new Map<string, Set<string>>();
+  const seenTopLevelSessionRefsByWorkspace = new Map<string, Set<string>>();
+  const allRows = [...input.loadedTopLevelRows, ...input.expandedSubagentRows];
+  const rowLookup = buildRowLookup(allRows);
 
   for (const row of input.loadedTopLevelRows) {
     const workspaceId = normalizeId(row.workspaceId);
@@ -93,6 +164,9 @@ export function deriveLoadedSidebarPrefetchInterest(input: {
       seenTopLevelSessionIdsByWorkspace.set(workspaceId, seenTopLevelSessionIds);
       interest.loadedTopLevelSessionIds.push(sessionId);
     }
+    const seenTopLevelSessionRefs = seenTopLevelSessionRefsByWorkspace.get(workspaceId) ?? new Set<string>();
+    seenTopLevelSessionRefsByWorkspace.set(workspaceId, seenTopLevelSessionRefs);
+    pushSessionRef(interest.loadedTopLevelSessions ?? [], seenTopLevelSessionRefs, row);
   }
 
   const expandedByWorkspace = new Map<string, Array<LoadedSidebarPrefetchRow & { index: number }>>();
@@ -102,26 +176,46 @@ export function deriveLoadedSidebarPrefetchInterest(input: {
     if (!workspaceId || !sessionId) return;
     recordSessionWorkspace(sessionWorkspaces, sessionId, workspaceId);
     const bucket = expandedByWorkspace.get(workspaceId) ?? [];
-    bucket.push({ workspaceId, sessionId, updatedAt: Number.isFinite(row.updatedAt) ? row.updatedAt : 0, index });
+    bucket.push({
+      ...row,
+      workspaceId,
+      sessionId,
+      updatedAt: Number.isFinite(row.updatedAt) ? row.updatedAt : 0,
+      index,
+    });
     expandedByWorkspace.set(workspaceId, bucket);
     const interest = ensureWorkspaceInterest(interests, workspaceId);
     if (interest) recordSessionDirectory(interest, sessionId, row.directory);
   });
 
-  const clickedWorkspaceId = input.clickedSessionId
+  const clickedRow = resolveInterestRow(rowLookup, input.clickedRowKey, input.clickedSessionId);
+  const clickedWorkspaceId = clickedRow
+    ? normalizeId(clickedRow.workspaceId)
+    : input.clickedSessionId
     ? findUniqueWorkspaceForSession(input.clickedSessionId, sessionWorkspaces)
     : null;
   if (clickedWorkspaceId) {
     const interest = ensureWorkspaceInterest(interests, clickedWorkspaceId);
-    if (interest) interest.clickedSessionId = normalizeId(input.clickedSessionId);
+    if (interest) {
+      const sessionId = clickedRow ? normalizeId(clickedRow.sessionId) : normalizeId(input.clickedSessionId);
+      interest.clickedSessionId = sessionId;
+      if (clickedRow) interest.clickedSession = sessionRefForRow(clickedRow);
+    }
   }
 
-  const selectedWorkspaceId = input.selectedSessionId
+  const selectedRow = resolveInterestRow(rowLookup, input.selectedRowKey, input.selectedSessionId);
+  const selectedWorkspaceId = selectedRow
+    ? normalizeId(selectedRow.workspaceId)
+    : input.selectedSessionId
     ? findUniqueWorkspaceForSession(input.selectedSessionId, sessionWorkspaces)
     : null;
   if (selectedWorkspaceId) {
     const interest = ensureWorkspaceInterest(interests, selectedWorkspaceId);
-    if (interest) interest.selectedSessionId = normalizeId(input.selectedSessionId);
+    if (interest) {
+      const sessionId = selectedRow ? normalizeId(selectedRow.sessionId) : normalizeId(input.selectedSessionId);
+      interest.selectedSessionId = sessionId;
+      if (selectedRow) interest.selectedSession = sessionRefForRow(selectedRow);
+    }
   }
 
   for (const [workspaceId, rows] of expandedByWorkspace.entries()) {
@@ -135,9 +229,11 @@ export function deriveLoadedSidebarPrefetchInterest(input: {
         return a.index - b.index;
       })
       .forEach((row) => {
-        if (seen.has(row.sessionId)) return;
-        seen.add(row.sessionId);
-        interest.expandedSubagentSessionIds.push(row.sessionId);
+        if (!seen.has(row.sessionId)) {
+          seen.add(row.sessionId);
+          interest.expandedSubagentSessionIds.push(row.sessionId);
+        }
+        pushSessionRef(interest.expandedSubagentSessions ?? [], seen, row);
       });
   }
 

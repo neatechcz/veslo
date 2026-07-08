@@ -1,5 +1,6 @@
 import type { WorkspaceInfo } from "../../lib/tauri";
 import type { WorkspaceSessionGroup } from "../../types";
+import { createUiConversationKey } from "../../lib/ui-conversation-scope";
 import { normalizeDirectoryPath } from "../../utils";
 import { currentLocale, t } from "../../../i18n";
 
@@ -25,6 +26,16 @@ export type FlatSessionRow = {
   projectLabel: string;
   projectTitle: string;
   isPrivateProject: boolean;
+};
+
+export type SidebarSessionOpenTarget = {
+  rowKey: string;
+  workspaceId: string;
+  sessionId: string;
+  workspaceRoot: string;
+  directory: string | null;
+  conversationId: string | null;
+  opencodeSessionId: string | null;
 };
 
 export type ProjectSessionGroup = {
@@ -263,10 +274,94 @@ const parentSessionIdForSession = (
   return value || null;
 };
 
-const rowKeyForSession = (workspaceId: string, sessionId: string) => `${workspaceId}:${sessionId}`;
+const legacyRowKeyForSession = (workspaceId: string, sessionId: string) => `${workspaceId}:${sessionId}`;
+
+const normalizeScopeValue = (value: string | null | undefined) => value?.trim() ?? "";
+
+const rowKeyForSession = (
+  workspaceId: string,
+  session: Pick<
+    WorkspaceSessionGroup["sessions"][number],
+    "id" | "directory" | "conversationId" | "opencodeSessionId"
+  >,
+  workspaceRoot?: string | null,
+) => {
+  const sessionId = normalizeScopeValue(session.id);
+  const workspace = normalizeScopeValue(workspaceId);
+  if (!workspace || !sessionId) return legacyRowKeyForSession(workspace, sessionId);
+
+  const directory = normalizeDirectoryPath(normalizeScopeValue(session.directory));
+  const conversationId = normalizeScopeValue(session.conversationId);
+  const opencodeSessionId = normalizeScopeValue(session.opencodeSessionId);
+  if (!directory && !conversationId && !opencodeSessionId) {
+    return legacyRowKeyForSession(workspace, sessionId);
+  }
+
+  return createUiConversationKey({
+    workspaceId: workspace,
+    workspaceRoot: normalizeDirectoryPath(normalizeScopeValue(workspaceRoot)),
+    directory,
+    conversationId,
+    opencodeSessionId,
+    kind: "session",
+    id: sessionId,
+  });
+};
 
 const rowIdentity = (row: Pick<FlatSessionRow, "rowKey" | "workspace" | "session">) =>
-  row.rowKey || rowKeyForSession(row.workspace.id, row.session.id);
+  row.rowKey || rowKeyForSession(row.workspace.id, row.session, rootForSession(row.workspace, row.session));
+
+const rowDirectory = (row: FlatSessionRow) =>
+  normalizeDirectoryPath(normalizeScopeValue(row.session.directory)) || row.projectRoot || rootForSession(row.workspace, row.session);
+
+const rowScopeMatches = (left: FlatSessionRow, right: FlatSessionRow) => {
+  if (left.workspace.id !== right.workspace.id) return false;
+  const leftDirectory = rowDirectory(left);
+  const rightDirectory = rowDirectory(right);
+  if (leftDirectory && rightDirectory && leftDirectory !== rightDirectory) return false;
+
+  const leftParentConversationId = normalizeScopeValue(left.session.parentConversationId);
+  const rightConversationId = normalizeScopeValue(right.session.conversationId);
+  if (leftParentConversationId && rightConversationId && leftParentConversationId !== rightConversationId) return false;
+
+  return true;
+};
+
+export const sidebarSessionOpenTargetForRow = (row: FlatSessionRow): SidebarSessionOpenTarget => {
+  const workspaceRoot = rootForWorkspace(row.workspace);
+  const directory = normalizeDirectoryPath(normalizeScopeValue(row.session.directory)) || row.projectRoot || workspaceRoot;
+  return {
+    rowKey: row.rowKey,
+    workspaceId: row.workspace.id,
+    sessionId: row.session.id,
+    workspaceRoot,
+    directory: directory || null,
+    conversationId: normalizeScopeValue(row.session.conversationId) || null,
+    opencodeSessionId: normalizeScopeValue(row.session.opencodeSessionId) || row.session.id,
+  };
+};
+
+export const sidebarSessionMatchesOpenTarget = (
+  session: WorkspaceSessionGroup["sessions"][number],
+  target: SidebarSessionOpenTarget | null | undefined,
+) => {
+  if (!target) return false;
+  if (session.id !== target.sessionId) return false;
+
+  const targetDirectory = normalizeDirectoryPath(normalizeScopeValue(target.directory));
+  const sessionDirectory = normalizeDirectoryPath(normalizeScopeValue(session.directory));
+  if (targetDirectory && targetDirectory !== sessionDirectory) return false;
+
+  const targetConversationId = normalizeScopeValue(target.conversationId);
+  const sessionConversationId = normalizeScopeValue(session.conversationId);
+  if (targetConversationId && targetConversationId !== sessionConversationId) return false;
+
+  const targetOpencodeSessionId = normalizeScopeValue(target.opencodeSessionId);
+  const sessionOpencodeSessionId = normalizeScopeValue(session.opencodeSessionId) || session.id;
+  if (targetOpencodeSessionId && targetOpencodeSessionId !== sessionOpencodeSessionId) return false;
+
+  return true;
+};
 
 const resolveRowByIdentity = (rows: FlatSessionRow[], identity: string): FlatSessionRow | null => {
   const id = identity.trim();
@@ -300,11 +395,17 @@ const resolveParentRowKey = (
   const parentId = row.parentSessionId?.trim() ?? "";
   if (!parentId) return null;
 
-  const sameWorkspaceKey = rowKeyForSession(row.workspace.id, parentId);
-  if (rowByKey.has(sameWorkspaceKey)) return sameWorkspaceKey;
+  const candidates = (rowKeysBySessionId.get(parentId) ?? [])
+    .map((key) => rowByKey.get(key) ?? null)
+    .filter((candidate): candidate is FlatSessionRow => Boolean(candidate));
 
-  const candidates = rowKeysBySessionId.get(parentId) ?? [];
-  return candidates.length === 1 ? candidates[0] ?? null : null;
+  const sameScope = candidates.filter((candidate) => rowScopeMatches(row, candidate));
+  if (sameScope.length === 1) return rowIdentity(sameScope[0]);
+
+  const sameWorkspace = candidates.filter((candidate) => candidate.workspace.id === row.workspace.id);
+  if (sameWorkspace.length === 1) return rowIdentity(sameWorkspace[0]);
+
+  return candidates.length === 1 ? rowIdentity(candidates[0]) : null;
 };
 
 const buildFlatSessionRow = (
@@ -314,7 +415,7 @@ const buildFlatSessionRow = (
 ): FlatSessionRow => {
   const projectRoot = rootForSession(group.workspace, session);
   const isPrivateProject = isPrivateProjectRoot(group.workspace, projectRoot, isPrivateWorkspacePath);
-  const rowKey = rowKeyForSession(group.workspace.id, session.id);
+  const rowKey = rowKeyForSession(group.workspace.id, session, rootForWorkspace(group.workspace));
 
   return {
     rowKey,
@@ -525,14 +626,25 @@ export type SessionRowClickAction = {
 export const resolveSessionRowClickAction = (input: {
   selectedSessionId: string | null | undefined;
   clickedSessionId: string | null | undefined;
+  selectedRowKey?: string | null | undefined;
+  clickedRowKey?: string | null | undefined;
   hasChildren: boolean;
   allowSelectedParentExpansion: boolean;
 }): SessionRowClickAction => {
   const selected = input.selectedSessionId?.trim() ?? "";
   const clicked = input.clickedSessionId?.trim() ?? "";
+  const selectedRowKey = input.selectedRowKey?.trim() ?? "";
+  const clickedRowKey = input.clickedRowKey?.trim() ?? "";
   if (!clicked) {
     return {
       openSession: false,
+      toggleExpandedParent: false,
+    };
+  }
+
+  if (selectedRowKey && clickedRowKey && selectedRowKey !== clickedRowKey) {
+    return {
+      openSession: true,
       toggleExpandedParent: false,
     };
   }
@@ -626,7 +738,7 @@ const buildHierarchicalRows = (
     if (!rootRow.isPrivateProject || rowIdentity(rootRow) === rowIdentity(row)) return row;
     return {
       ...row,
-      rowKey: rowKeyForSession(rootRow.workspace.id, row.session.id),
+      rowKey: rowKeyForSession(rootRow.workspace.id, row.session, rootRow.projectRoot),
       workspace: rootRow.workspace,
       status: rootRow.status,
       error: rootRow.error,

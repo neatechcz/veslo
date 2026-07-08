@@ -531,7 +531,7 @@ test("pending first sends pass captured sidebar placeholder metadata to app prom
 });
 
 test("clicking a pending sidebar row waits for workspace activation before opening the local pending session", () => {
-  const openStart = source.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string) => {");
+  const openStart = source.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {");
   const openEnd = source.indexOf("  const resolveVesloWorkspaceId = (workspaceId: string) => {", openStart);
   assert.notEqual(openStart, -1, "openSessionFromList should exist");
   assert.notEqual(openEnd, -1, "openSessionFromList should end before resolveVesloWorkspaceId");
@@ -539,7 +539,7 @@ test("clicking a pending sidebar row waits for workspace activation before openi
 
   assert.match(
     openSource,
-    /if \(isPendingSessionInstanceId\(sessionId\)\) \{[\s\S]*const openPendingSidebarSession = \(nextSessionId: string\) => \{[\s\S]*props\.setSessionBrowseScope\(\{[\s\S]*sessionId: nextSessionId,[\s\S]*workspaceId,[\s\S]*workspaceRoot,[\s\S]*directory: session\?\.directory \?\? workspaceRoot,[\s\S]*conversationId: null,[\s\S]*opencodeSessionId: null,[\s\S]*\}\);[\s\S]*props\.setView\("session", nextSessionId\);[\s\S]*\};[\s\S]*void openSessionWithWorkspaceActivation\(\{[\s\S]*activateWorkspaceBeforeOpen: true,[\s\S]*openSession: openPendingSidebarSession,[\s\S]*\}\)/,
+    /if \(isPendingSessionInstanceId\(sessionId\)\) \{[\s\S]*const openPendingSidebarSession = \(nextSessionId: string\) => \{[\s\S]*props\.setSessionBrowseScope\(\{[\s\S]*sessionId: nextSessionId,[\s\S]*workspaceId,[\s\S]*workspaceRoot: scopedWorkspaceRoot,[\s\S]*directory: target\?\.directory\?\.trim\(\) \|\| session\?\.directory\?\.trim\(\) \|\| scopedWorkspaceRoot,[\s\S]*conversationId: null,[\s\S]*opencodeSessionId: null,[\s\S]*\}\);[\s\S]*props\.setView\("session", nextSessionId\);[\s\S]*\};[\s\S]*void openSessionWithWorkspaceActivation\(\{[\s\S]*activateWorkspaceBeforeOpen: true,[\s\S]*openSession: openPendingSidebarSession,[\s\S]*\}\)/,
     "pending sidebar rows should bind and route to the local pending id only through the guarded activation helper",
   );
   assert.doesNotMatch(

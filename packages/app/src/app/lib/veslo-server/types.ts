@@ -552,6 +552,17 @@ export type VesloHubMcpAuthorization = {
   disconnectPath: string;
 };
 
+export type VesloHubMcpConnectionStatus = {
+  connectorId: string;
+  name?: string;
+  connected: boolean;
+  state: string;
+  scopes?: string[];
+  connectedAt: string | null;
+  revokedAt: string | null;
+  accessTokenExpiresAt: string | null;
+};
+
 export type VesloHubMcpItem = {
   id: string;
   name: string;
@@ -576,6 +587,7 @@ export type VesloHubMcpItem = {
     id: string;
     group?: string;
   };
+  connection?: VesloHubMcpConnectionStatus;
 };
 
 export type VesloSkillRegistryOwnerScope = "user" | "workspace" | "org" | "system";

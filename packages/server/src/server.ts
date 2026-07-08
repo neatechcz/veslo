@@ -1096,7 +1096,7 @@ async function fetchOpencodeJson(
       throw error;
     }
 
-    let json: any = null;
+    let json: unknown = null;
     try {
       json = text ? JSON.parse(text) : null;
     } catch {
@@ -1337,7 +1337,8 @@ function createOpenCodeAutomationExecutor(
           `/session/${encodeURIComponent(preferredSessionId)}`,
           { method: "GET", timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS },
         );
-        const existingId = typeof existing?.id === "string" ? existing.id.trim() : "";
+        const existingRecord = isRecordLike(existing) ? existing : {};
+        const existingId = typeof existingRecord.id === "string" ? existingRecord.id.trim() : "";
         if (existingId) {
           await postAutomationPrompt(workspace, existingId, input.prompt, input.target);
           return { sessionId: existingId, createdSession: false };
@@ -1352,7 +1353,8 @@ function createOpenCodeAutomationExecutor(
       body: { title: input.target.fallbackTitle?.trim() || `Automation: ${input.automation.name}` },
       timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS,
     });
-    const sessionId = typeof created?.id === "string" ? created.id.trim() : "";
+    const createdRecord = isRecordLike(created) ? created : {};
+    const sessionId = typeof createdRecord.id === "string" ? createdRecord.id.trim() : "";
     if (!sessionId) {
       throw new ApiError(502, "opencode_failed", "OpenCode session did not return an id");
     }

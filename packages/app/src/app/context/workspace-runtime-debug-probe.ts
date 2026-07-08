@@ -23,9 +23,14 @@ export type WorkspaceRuntimeDebugRoot = {
   __wsActivateLog?: string;
 };
 
+type RuntimeRecord = Record<string, unknown>;
+type WorkspaceRuntimeSnapshot = RuntimeRecord & {
+  diagnosis?: unknown;
+};
+
 export type WorkspaceRuntimeDebugProbeDeps = {
   windowTarget?: WorkspaceRuntimeDebugRoot | null | (() => WorkspaceRuntimeDebugRoot | null);
-  readSnapshot: () => Promise<Record<string, any>>;
+  readSnapshot: () => Promise<WorkspaceRuntimeSnapshot>;
   getRequestBrokerSnapshot: () => unknown;
   log?: (event: string, payload?: Record<string, unknown>) => void;
   consoleLog?: (label: string, payload: unknown) => void;
@@ -63,6 +68,32 @@ function debugNormalizePath(value?: string | null) {
   return normalizeDirectoryPath(value?.trim() ?? "");
 }
 
+function recordFromValue(value: unknown): RuntimeRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as RuntimeRecord
+    : {};
+}
+
+function recordsFromValue(value: unknown): RuntimeRecord[] {
+  return Array.isArray(value) ? value.map(recordFromValue) : [];
+}
+
+function stringFromValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function stringField(record: RuntimeRecord, key: string): string {
+  return stringFromValue(record[key]);
+}
+
+function firstString(...values: unknown[]): string {
+  for (const value of values) {
+    const text = stringFromValue(value);
+    if (text) return text;
+  }
+  return "";
+}
+
 export function debugSummarizeWorkspace(workspace?: Partial<WorkspaceInfo> | null) {
   if (!workspace) return null;
   return {
@@ -88,54 +119,64 @@ export function debugWorkspaceIdFromMountedBaseUrl(baseUrl?: string | null) {
   }
 }
 
-export function buildWorkspaceRuntimeDiagnosis(snapshot: Record<string, any>): WorkspaceRuntimeDiagnosisEntry[] {
+export function buildWorkspaceRuntimeDiagnosis(snapshot: WorkspaceRuntimeSnapshot): WorkspaceRuntimeDiagnosisEntry[] {
   const diagnosis: WorkspaceRuntimeDiagnosisEntry[] = [];
-  const activeWorkspaceId = String(snapshot.app?.activeWorkspaceId ?? "").trim();
-  const activeWorkspace = snapshot.app?.activeWorkspace as ReturnType<typeof debugSummarizeWorkspace>;
-  const activeWorkspaceRoot = debugNormalizePath(String(snapshot.app?.activeWorkspaceRoot ?? ""));
-  const currentEngine = snapshot.app?.engine ?? null;
+  const app = recordFromValue(snapshot.app);
+  const session = recordFromValue(snapshot.session);
+  const routing = recordFromValue(snapshot.routing);
+  const tauri = recordFromValue(snapshot.tauri);
+  const server = recordFromValue(snapshot.server);
+  const orchestrator = recordFromValue(snapshot.orchestrator);
+  const activeWorkspaceId = String(app.activeWorkspaceId ?? "").trim();
+  const activeWorkspace = recordFromValue(app.activeWorkspace);
+  const activeWorkspaceRoot = debugNormalizePath(String(app.activeWorkspaceRoot ?? ""));
+  const currentEngine = recordFromValue(app.engine);
 
-  if (snapshot.app?.connectingWorkspaceId) {
+  if (app.connectingWorkspaceId) {
     diagnosis.push({
       level: "info",
       code: "workspace-switch-in-progress",
       message: "A workspace activation is currently in progress.",
       details: {
         activeWorkspaceId,
-        connectingWorkspaceId: snapshot.app.connectingWorkspaceId,
+        connectingWorkspaceId: app.connectingWorkspaceId,
       },
     });
   }
 
-  const selectedScope = snapshot.session?.selectedScope;
-  if (selectedScope?.workspaceId && selectedScope.workspaceId !== activeWorkspaceId) {
+  const selectedScope = recordFromValue(session.selectedScope);
+  const selectedWorkspaceId = stringField(selectedScope, "workspaceId");
+  if (selectedWorkspaceId && selectedWorkspaceId !== activeWorkspaceId) {
     diagnosis.push({
       level: "info",
       code: "browse-only-selected-session",
       message: "The visible selected session is scoped to a different workspace than the active runtime workspace.",
       details: {
         activeWorkspaceId,
-        selectedSessionId: snapshot.session.selectedSessionId,
-        selectedWorkspaceId: selectedScope.workspaceId,
+        selectedSessionId: session.selectedSessionId,
+        selectedWorkspaceId,
       },
     });
   }
 
-  const sendTarget = snapshot.session?.sendTarget;
-  if (sendTarget?.workspaceId && sendTarget.workspaceId !== activeWorkspaceId) {
+  const sendTarget = recordFromValue(session.sendTarget);
+  const sendTargetWorkspaceId = stringField(sendTarget, "workspaceId");
+  if (sendTargetWorkspaceId && sendTargetWorkspaceId !== activeWorkspaceId) {
     diagnosis.push({
       level: "warning",
       code: "send-would-activate-workspace",
       message: "A send from the current visible session would first activate another workspace.",
       details: {
         activeWorkspaceId,
-        sendTargetWorkspaceId: sendTarget.workspaceId,
+        sendTargetWorkspaceId,
       },
     });
   }
 
-  const tauriActiveId = snapshot.tauri?.workspaceBootstrap?.ok
-    ? String(snapshot.tauri.workspaceBootstrap.value?.activeId ?? "").trim()
+  const workspaceBootstrap = recordFromValue(tauri.workspaceBootstrap);
+  const workspaceBootstrapValue = recordFromValue(workspaceBootstrap.value);
+  const tauriActiveId = workspaceBootstrap.ok
+    ? String(workspaceBootstrapValue.activeId ?? "").trim()
     : "";
   if (tauriActiveId && activeWorkspaceId && tauriActiveId !== activeWorkspaceId) {
     diagnosis.push({
@@ -149,14 +190,16 @@ export function buildWorkspaceRuntimeDiagnosis(snapshot: Record<string, any>): W
     });
   }
 
-  const serverList = snapshot.server?.workspaces?.ok ? snapshot.server.workspaces.value : null;
-  const serverItems = Array.isArray(serverList?.items) ? serverList.items : [];
-  const serverActiveId = String(serverList?.activeId ?? "").trim();
-  const serverActive = serverItems.find((item: any) => item?.id === serverActiveId) ?? null;
+  const serverWorkspaces = recordFromValue(server.workspaces);
+  const serverList = serverWorkspaces.ok ? recordFromValue(serverWorkspaces.value) : {};
+  const serverItems = recordsFromValue(serverList.items);
+  const serverActiveId = String(serverList.activeId ?? "").trim();
+  const serverActive = serverItems.find((item) => item.id === serverActiveId) ?? {};
+  const serverActiveOpencode = recordFromValue(serverActive.opencode);
   const serverActiveRoot = debugNormalizePath(
-    serverActive?.opencode?.directory ?? serverActive?.directory ?? serverActive?.path ?? "",
+    firstString(serverActiveOpencode.directory, serverActive.directory, serverActive.path),
   );
-  if (activeWorkspace?.type === "local" && serverActiveId) {
+  if (activeWorkspace.type === "local" && serverActiveId) {
     if (activeWorkspaceRoot && serverActiveRoot && activeWorkspaceRoot !== serverActiveRoot) {
       diagnosis.push({
         level: "error",
@@ -183,16 +226,15 @@ export function buildWorkspaceRuntimeDiagnosis(snapshot: Record<string, any>): W
     }
   }
 
-  const orchestratorStatusSnapshot = snapshot.orchestrator?.status?.ok
-    ? snapshot.orchestrator.status.value
-    : null;
-  const orchestratorActiveId = String(orchestratorStatusSnapshot?.activeId ?? "").trim();
-  const orchestratorItems = Array.isArray(orchestratorStatusSnapshot?.workspaces)
-    ? orchestratorStatusSnapshot.workspaces
-    : [];
-  const orchestratorActive = orchestratorItems.find((item: any) => item?.id === orchestratorActiveId) ?? null;
-  const orchestratorActiveRoot = debugNormalizePath(orchestratorActive?.directory ?? orchestratorActive?.path ?? "");
-  if (activeWorkspace?.type === "local" && orchestratorActiveId) {
+  const orchestratorStatus = recordFromValue(orchestrator.status);
+  const orchestratorStatusSnapshot = orchestratorStatus.ok
+    ? recordFromValue(orchestratorStatus.value)
+    : {};
+  const orchestratorActiveId = String(orchestratorStatusSnapshot.activeId ?? "").trim();
+  const orchestratorItems = recordsFromValue(orchestratorStatusSnapshot.workspaces);
+  const orchestratorActive = orchestratorItems.find((item) => item.id === orchestratorActiveId) ?? {};
+  const orchestratorActiveRoot = debugNormalizePath(firstString(orchestratorActive.directory, orchestratorActive.path));
+  if (activeWorkspace.type === "local" && orchestratorActiveId) {
     if (activeWorkspaceRoot && orchestratorActiveRoot && activeWorkspaceRoot !== orchestratorActiveRoot) {
       diagnosis.push({
         level: "error",
@@ -219,8 +261,10 @@ export function buildWorkspaceRuntimeDiagnosis(snapshot: Record<string, any>): W
     }
   }
 
-  const routeEntry = activeWorkspaceId ? snapshot.routing?.entries?.find((entry: any) => entry.workspaceId === activeWorkspaceId) : null;
-  if (snapshot.app?.engineReady && activeWorkspaceId && !routeEntry) {
+  const routeEntry = activeWorkspaceId
+    ? recordsFromValue(routing.entries).find((entry) => entry.workspaceId === activeWorkspaceId)
+    : null;
+  if (app.engineReady && activeWorkspaceId && !routeEntry) {
     diagnosis.push({
       level: "error",
       code: "engine-ready-without-active-route",
@@ -229,20 +273,21 @@ export function buildWorkspaceRuntimeDiagnosis(snapshot: Record<string, any>): W
     });
   }
 
-  const engineProjectRoot = debugNormalizePath(currentEngine?.projectDir ?? "");
-  if (activeWorkspace?.type === "local" && activeWorkspaceRoot && engineProjectRoot && activeWorkspaceRoot !== engineProjectRoot) {
+  const engineProjectRoot = debugNormalizePath(stringField(currentEngine, "projectDir"));
+  if (activeWorkspace.type === "local" && activeWorkspaceRoot && engineProjectRoot && activeWorkspaceRoot !== engineProjectRoot) {
     diagnosis.push({
       level: "error",
       code: "app-engine-project-dir-mismatch",
       message: "Current engine projectDir differs from the active local workspace root.",
       details: {
         appActiveRoot: activeWorkspaceRoot,
-        engineProjectDir: currentEngine?.projectDir ?? null,
+        engineProjectDir: currentEngine.projectDir ?? null,
       },
     });
   }
 
-  const currentEngineMountId = debugWorkspaceIdFromMountedBaseUrl(currentEngine?.baseUrl ?? "");
+  const currentEngineBaseUrl = stringField(currentEngine, "baseUrl");
+  const currentEngineMountId = debugWorkspaceIdFromMountedBaseUrl(currentEngineBaseUrl);
   if (currentEngineMountId && activeWorkspaceId && currentEngineMountId !== activeWorkspaceId) {
     diagnosis.push({
       level: "error",
@@ -251,13 +296,15 @@ export function buildWorkspaceRuntimeDiagnosis(snapshot: Record<string, any>): W
       details: {
         activeWorkspaceId,
         currentEngineMountId,
-        baseUrl: currentEngine?.baseUrl ?? null,
+        baseUrl: currentEngineBaseUrl || null,
       },
     });
   }
 
-  const liveEngineInfo = snapshot.tauri?.engineInfo?.ok ? snapshot.tauri.engineInfo.value : null;
-  const liveEngineMountId = debugWorkspaceIdFromMountedBaseUrl(liveEngineInfo?.baseUrl ?? "");
+  const engineInfo = recordFromValue(tauri.engineInfo);
+  const liveEngineInfo = engineInfo.ok ? recordFromValue(engineInfo.value) : {};
+  const liveEngineBaseUrl = stringField(liveEngineInfo, "baseUrl");
+  const liveEngineMountId = debugWorkspaceIdFromMountedBaseUrl(liveEngineBaseUrl);
   if (liveEngineMountId && activeWorkspaceId && liveEngineMountId !== activeWorkspaceId) {
     diagnosis.push({
       level: "error",
@@ -266,7 +313,7 @@ export function buildWorkspaceRuntimeDiagnosis(snapshot: Record<string, any>): W
       details: {
         activeWorkspaceId,
         liveEngineMountId,
-        baseUrl: liveEngineInfo?.baseUrl ?? null,
+        baseUrl: liveEngineBaseUrl || null,
       },
     });
   }
@@ -282,29 +329,47 @@ export function buildWorkspaceRuntimeDiagnosis(snapshot: Record<string, any>): W
   return diagnosis;
 }
 
-export function summarizeWorkspaceRuntimeSnapshotForDiff(snapshot: any) {
+export function summarizeWorkspaceRuntimeSnapshotForDiff(snapshot: unknown) {
+  const record = recordFromValue(snapshot);
+  const app = recordFromValue(record.app);
+  const session = recordFromValue(record.session);
+  const selectedScope = recordFromValue(session.selectedScope);
+  const sendTarget = recordFromValue(session.sendTarget);
+  const routing = recordFromValue(record.routing);
+  const tauri = recordFromValue(record.tauri);
+  const workspaceBootstrap = recordFromValue(tauri.workspaceBootstrap);
+  const workspaceBootstrapValue = recordFromValue(workspaceBootstrap.value);
+  const server = recordFromValue(record.server);
+  const serverWorkspaces = recordFromValue(server.workspaces);
+  const serverWorkspacesValue = recordFromValue(serverWorkspaces.value);
+  const orchestrator = recordFromValue(record.orchestrator);
+  const orchestratorStatus = recordFromValue(orchestrator.status);
+  const orchestratorStatusValue = recordFromValue(orchestratorStatus.value);
   return {
-    route: snapshot?.app?.route ?? null,
-    activeWorkspaceId: snapshot?.app?.activeWorkspaceId ?? "",
-    connectingWorkspaceId: snapshot?.app?.connectingWorkspaceId ?? null,
-    activeWorkspaceRoot: snapshot?.app?.activeWorkspaceRoot ?? "",
-    projectDir: snapshot?.app?.projectDir ?? "",
-    engineReady: Boolean(snapshot?.app?.engineReady),
-    selectedSessionId: snapshot?.session?.selectedSessionId ?? null,
-    selectedScopeWorkspaceId: snapshot?.session?.selectedScope?.workspaceId ?? null,
-    sendTargetWorkspaceId: snapshot?.session?.sendTarget?.workspaceId ?? null,
-    routedWorkspaceIds: snapshot?.routing?.entryIds ?? [],
-    tauriActiveId: snapshot?.tauri?.workspaceBootstrap?.ok
-      ? snapshot.tauri.workspaceBootstrap.value?.activeId ?? null
+    route: app.route ?? null,
+    activeWorkspaceId: app.activeWorkspaceId ?? "",
+    connectingWorkspaceId: app.connectingWorkspaceId ?? null,
+    activeWorkspaceRoot: app.activeWorkspaceRoot ?? "",
+    projectDir: app.projectDir ?? "",
+    engineReady: Boolean(app.engineReady),
+    selectedSessionId: session.selectedSessionId ?? null,
+    selectedScopeWorkspaceId: selectedScope.workspaceId ?? null,
+    sendTargetWorkspaceId: sendTarget.workspaceId ?? null,
+    routedWorkspaceIds: Array.isArray(routing.entryIds) ? routing.entryIds : [],
+    tauriActiveId: workspaceBootstrap.ok
+      ? workspaceBootstrapValue.activeId ?? null
       : null,
-    serverActiveId: snapshot?.server?.workspaces?.ok
-      ? snapshot.server.workspaces.value?.activeId ?? null
+    serverActiveId: serverWorkspaces.ok
+      ? serverWorkspacesValue.activeId ?? null
       : null,
-    orchestratorActiveId: snapshot?.orchestrator?.status?.ok
-      ? snapshot.orchestrator.status.value?.activeId ?? null
+    orchestratorActiveId: orchestratorStatus.ok
+      ? orchestratorStatusValue.activeId ?? null
       : null,
-    diagnosis: Array.isArray(snapshot?.diagnosis)
-      ? snapshot.diagnosis.map((entry: any) => `${entry.level}:${entry.code}`)
+    diagnosis: Array.isArray(record.diagnosis)
+      ? record.diagnosis.map((entry) => {
+          const diagnosisEntry = recordFromValue(entry);
+          return `${diagnosisEntry.level}:${diagnosisEntry.code}`;
+        })
       : [],
   };
 }
@@ -318,7 +383,7 @@ function resolveWindowTarget(
   return window as unknown as WorkspaceRuntimeDebugRoot;
 }
 
-function ensureWorkspaceRuntimeDiagnosis(snapshot: Record<string, any>) {
+function ensureWorkspaceRuntimeDiagnosis(snapshot: WorkspaceRuntimeSnapshot) {
   if (!Array.isArray(snapshot.diagnosis)) {
     snapshot.diagnosis = buildWorkspaceRuntimeDiagnosis(snapshot);
   }

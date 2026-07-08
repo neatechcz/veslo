@@ -107,6 +107,10 @@ import MessageList, { type PendingMessageState } from "../components/session/mes
 import Composer from "../components/session/composer";
 import type { ComposerSendOptions, ComposerSendResult } from "../components/session/composer";
 import ComposerTargetPicker from "../components/session/composer-target-picker";
+import {
+  sidebarSessionMatchesOpenTarget,
+  type SidebarSessionOpenTarget,
+} from "../components/session/workspace-session-list-model";
 import QueuedMessageList from "../components/session/queued-message-list";
 import { getEditableUserMessageDraft, type EditableUserMessageDraft } from "../components/session/message-editability";
 import {
@@ -362,7 +366,7 @@ export type SessionViewProps = {
   workspaceSessionPagingById: Record<string, { hasMore: boolean; loadingMore: boolean }>;
   subagentDecorationsBySessionId: Record<string, SidebarSubagentDecoration>;
   archivedSessionIds: string[];
-  archiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
+  archiveSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => Promise<void> | void;
   unarchiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
   loadMoreWorkspaceSidebarSessions: (workspaceId: string) => Promise<void> | void;
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
@@ -3007,22 +3011,25 @@ export default function SessionView(props: SessionViewProps) {
     props.setComposerDraft(draft);
   };
 
-  const openSessionFromList = (workspaceId: string, sessionId: string) => {
+  const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {
     const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
     const workspaceRoot =
       group?.workspace.directory?.trim() ||
       group?.workspace.path?.trim() ||
       "";
 
-    const session = group?.sessions.find((s) => s.id === sessionId);
+    const session =
+      (target ? group?.sessions.find((s) => sidebarSessionMatchesOpenTarget(s, target)) : null) ??
+      group?.sessions.find((s) => s.id === sessionId);
     const openRealSession = (nextSessionId: string) => {
+      const scopedWorkspaceRoot = target?.workspaceRoot?.trim() || workspaceRoot;
       props.setSessionBrowseScope({
         sessionId: nextSessionId,
         workspaceId,
-        workspaceRoot: workspaceRoot,
-        directory: session?.directory ?? workspaceRoot,
-        conversationId: session?.conversationId ?? null,
-        opencodeSessionId: session?.opencodeSessionId ?? nextSessionId,
+        workspaceRoot: scopedWorkspaceRoot,
+        directory: target?.directory?.trim() || session?.directory?.trim() || scopedWorkspaceRoot,
+        conversationId: target?.conversationId ?? session?.conversationId ?? null,
+        opencodeSessionId: target?.opencodeSessionId ?? session?.opencodeSessionId ?? nextSessionId,
       });
       void Promise.resolve(props.selectSession(nextSessionId))
         .catch((error) => reportError(error, "session.openSessionFromList.selectSession"));
@@ -3031,11 +3038,12 @@ export default function SessionView(props: SessionViewProps) {
 
     if (isPendingSessionInstanceId(sessionId)) {
       const openPendingSidebarSession = (nextSessionId: string) => {
+        const scopedWorkspaceRoot = target?.workspaceRoot?.trim() || workspaceRoot;
         props.setSessionBrowseScope({
           sessionId: nextSessionId,
           workspaceId,
-          workspaceRoot,
-          directory: session?.directory ?? workspaceRoot,
+          workspaceRoot: scopedWorkspaceRoot,
+          directory: target?.directory?.trim() || session?.directory?.trim() || scopedWorkspaceRoot,
           conversationId: null,
           opencodeSessionId: null,
         });
@@ -3415,6 +3423,7 @@ export default function SessionView(props: SessionViewProps) {
           archivedSessionIds: props.archivedSessionIds,
           activeWorkspaceId: props.activeWorkspaceId,
           selectedSessionId: props.selectedSessionId,
+          selectedSessionKey: props.activeUiConversationRef?.key ?? null,
           pendingPermissionCountByWs: props.pendingPermissionCountByWs,
           allowSelectedParentExpansion: true,
           sessionStatusById: props.sessionStatusById,

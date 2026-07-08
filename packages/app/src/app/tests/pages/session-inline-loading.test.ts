@@ -66,7 +66,7 @@ test("temporary runtime UI diagnostic is developer-mode only", () => {
 });
 
 test("session switch records browse scope and routes immediately without arming a preloader", () => {
-  const openSessionStart = sessionSource.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string) => {");
+  const openSessionStart = sessionSource.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {");
   const openSessionEnd = sessionSource.indexOf("  const resolveVesloWorkspaceId = (workspaceId: string) => {", openSessionStart);
   assert.notEqual(openSessionStart, -1, "openSessionFromList should exist");
   assert.notEqual(openSessionEnd, -1, "openSessionFromList block end should exist");
@@ -79,7 +79,7 @@ test("session switch records browse scope and routes immediately without arming 
   );
   assert.match(
     openSessionSource,
-    /props\.setSessionBrowseScope\(\{[\s\S]*workspaceId,[\s\S]*conversationId: session\?\.conversationId \?\? null,[\s\S]*opencodeSessionId: session\?\.opencodeSessionId \?\? nextSessionId,[\s\S]*\}\);[\s\S]*props\.setView\("session", nextSessionId\);/s,
+    /props\.setSessionBrowseScope\(\{[\s\S]*workspaceId,[\s\S]*conversationId: target\?\.conversationId \?\? session\?\.conversationId \?\? null,[\s\S]*opencodeSessionId: target\?\.opencodeSessionId \?\? session\?\.opencodeSessionId \?\? nextSessionId,[\s\S]*\}\);[\s\S]*props\.setView\("session", nextSessionId\);/s,
     "session click navigation should record browse scope before routing to the target session",
   );
 });

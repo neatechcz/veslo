@@ -3,14 +3,38 @@ import { currentLocale, t } from "../../i18n";
 
 const tr = (key: string) => t(key, currentLocale());
 
+type TauriWindow = Window & {
+  __TAURI_INTERNALS__?: unknown;
+  isTauri?: boolean;
+};
+
+type TauriGlobal = typeof globalThis & {
+  isTauri?: boolean;
+};
+
+type NavigatorWithUserAgentData = Navigator & {
+  userAgentData?: {
+    platform?: string;
+  };
+};
+
+function browserPlatform() {
+  const candidateNavigator = navigator as NavigatorWithUserAgentData;
+  return typeof candidateNavigator.userAgentData?.platform === "string"
+    ? candidateNavigator.userAgentData.platform
+    : typeof navigator.platform === "string"
+      ? navigator.platform
+      : "";
+}
+
 export function isTauriRuntime() {
   if (typeof window === "undefined") return false;
 
-  const candidateWindow = window as any;
+  const candidateWindow = window as TauriWindow;
   if (candidateWindow.__TAURI_INTERNALS__ != null) {
     return true;
   }
-  if (candidateWindow.isTauri === true || (globalThis as any).isTauri === true) {
+  if (candidateWindow.isTauri === true || (globalThis as TauriGlobal).isTauri === true) {
     return true;
   }
 
@@ -25,12 +49,7 @@ export function isWindowsPlatform() {
   if (typeof navigator === "undefined") return false;
 
   const ua = typeof navigator.userAgent === "string" ? navigator.userAgent : "";
-  const platform =
-    typeof (navigator as any).userAgentData?.platform === "string"
-      ? (navigator as any).userAgentData.platform
-      : typeof navigator.platform === "string"
-        ? navigator.platform
-        : "";
+  const platform = browserPlatform();
 
   return /windows/i.test(platform) || /windows/i.test(ua);
 }
@@ -39,12 +58,7 @@ export function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
 
   const ua = typeof navigator.userAgent === "string" ? navigator.userAgent : "";
-  const platform =
-    typeof (navigator as any).userAgentData?.platform === "string"
-      ? (navigator as any).userAgentData.platform
-      : typeof navigator.platform === "string"
-        ? navigator.platform
-        : "";
+  const platform = browserPlatform();
 
   return /mac/i.test(platform) || /macintosh/i.test(ua);
 }

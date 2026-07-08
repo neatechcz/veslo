@@ -93,6 +93,7 @@ import { createFeedbackWorkflow } from "./context/feedback-workflow";
 import { createDenDesktopAuthWorkflow } from "./context/den-desktop-auth-workflow";
 import { createSessionArchiveStore } from "./context/session-archive-store";
 import { buildArchivedSidebarSessionKey } from "./lib/session-archive-model";
+import type { SidebarSessionOpenTarget } from "./components/session/workspace-session-list-model";
 import {
   createWorkspaceRuntimeDebugProbe,
   debugProbeCall,
@@ -2728,7 +2729,7 @@ export default function App() {
         : debugProbeSkipped("no Veslo server client"),
     ]);
 
-    const snapshot: Record<string, any> = {
+    const snapshot: Record<string, unknown> = {
       capturedAt: new Date().toISOString(),
       capturedAtMs: Date.now(),
       app: {
@@ -2986,20 +2987,48 @@ export default function App() {
   const archiveSidebarSession = sessionArchiveStore.archiveSession;
   const unarchiveSession = sessionArchiveStore.unarchiveSession;
 
-  const archivedSessionMatchesSidebarTarget = (workspaceId: string, sessionId: string) => {
-    const key = buildArchivedSidebarSessionKey({ workspaceId, sessionId });
+  const archivedSessionMatchesSidebarTarget = (
+    workspaceId: string,
+    sessionId: string,
+    target?: SidebarSessionOpenTarget | null,
+  ) => {
+    const key = buildArchivedSidebarSessionKey({ workspaceId, sessionId, directory: target?.directory });
     return Boolean(key) && archivedSessionIds().includes(key);
   };
 
-  const activeSessionMatchesArchiveTarget = (workspaceId: string, sessionId: string) => {
+  const activeSessionMatchesArchiveTarget = (
+    workspaceId: string,
+    sessionId: string,
+    target?: SidebarSessionOpenTarget | null,
+  ) => {
     const normalizedWorkspaceId = workspaceId.trim();
     const normalizedSessionId = sessionId.trim();
     if (!normalizedWorkspaceId || !normalizedSessionId) return false;
     if (selectedSessionId()?.trim() !== normalizedSessionId) return false;
 
+    const targetRowKey = target?.rowKey?.trim() ?? "";
+    const activeRowKey = activeUiConversationRef().key?.trim() ?? "";
+    if (targetRowKey && activeRowKey && targetRowKey !== activeRowKey) return false;
+
     const scope = resolveSelectedSessionBrowseScope(normalizedSessionId);
     const activeWorkspaceId = scope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
-    return !activeWorkspaceId || activeWorkspaceId === normalizedWorkspaceId;
+    if (activeWorkspaceId && activeWorkspaceId !== normalizedWorkspaceId) return false;
+
+    const targetDirectory = target?.directory?.trim() ?? "";
+    const activeDirectory = scope?.directory?.trim() ?? "";
+    if (targetDirectory && activeDirectory && targetDirectory !== activeDirectory) return false;
+
+    const targetConversationId = target?.conversationId?.trim() ?? "";
+    const activeConversationId = scope?.conversationId?.trim() ?? "";
+    if (targetConversationId && activeConversationId && targetConversationId !== activeConversationId) return false;
+
+    const targetOpencodeSessionId = target?.opencodeSessionId?.trim() ?? "";
+    const activeOpencodeSessionId = scope?.opencodeSessionId?.trim() ?? "";
+    if (targetOpencodeSessionId && activeOpencodeSessionId && targetOpencodeSessionId !== activeOpencodeSessionId) {
+      return false;
+    }
+
+    return true;
   };
 
   const clearArchivedActiveSession = (sessionId: string) => {
@@ -3018,12 +3047,16 @@ export default function App() {
     }
   };
 
-  const archiveSidebarSessionAndClearActive = async (workspaceId: string, sessionId: string) => {
-    const shouldClearActiveSession = activeSessionMatchesArchiveTarget(workspaceId, sessionId);
-    await archiveSidebarSession(workspaceId, sessionId);
+  const archiveSidebarSessionAndClearActive = async (
+    workspaceId: string,
+    sessionId: string,
+    target?: SidebarSessionOpenTarget | null,
+  ) => {
+    const shouldClearActiveSession = activeSessionMatchesArchiveTarget(workspaceId, sessionId, target);
+    await archiveSidebarSession(workspaceId, sessionId, target ?? undefined);
     if (!shouldClearActiveSession) return;
-    if (!activeSessionMatchesArchiveTarget(workspaceId, sessionId)) return;
-    if (!archivedSessionMatchesSidebarTarget(workspaceId, sessionId)) return;
+    if (!activeSessionMatchesArchiveTarget(workspaceId, sessionId, target)) return;
+    if (!archivedSessionMatchesSidebarTarget(workspaceId, sessionId, target)) return;
 
     clearArchivedActiveSession(sessionId);
   };

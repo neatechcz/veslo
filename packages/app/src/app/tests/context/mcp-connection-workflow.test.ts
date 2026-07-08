@@ -356,7 +356,15 @@ test("MCP auth logout keeps the Veslo server facade usable without a routed runt
 
   await harness.workflow.logoutMcpAuth("github");
 
-  assert.deepEqual(harness.calls.find((call) => call.name === "veslo.mcp.logoutAuth")?.args, ["ws_1", "github"]);
+  assert.deepEqual(harness.calls.find((call) => call.name === "veslo.mcp.logoutAuth")?.args, [
+    "ws_1",
+    "github",
+    {
+      denApiBase: "https://den.example",
+      denToken: "den-token",
+      denOrgId: "org_1",
+    },
+  ]);
   assert.equal(harness.calls.some((call) => call.name === "createClient"), false);
   assert.equal(harness.calls.some((call) => call.name === "setClient"), false);
   assert.equal(harness.calls.some((call) => call.name === "runtime.mcp.status"), false);

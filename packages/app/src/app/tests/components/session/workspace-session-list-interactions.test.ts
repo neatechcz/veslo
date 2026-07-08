@@ -312,8 +312,8 @@ test("clicking selected rows still opens session detail while selected parents t
 
   assert.match(
     source,
-    /if \(action\.openSession\) \{\s*props\.onOpenSession\(row\.workspace\.id, row\.session\.id\);\s*\}/s,
-    "session rows should still open the clicked session whenever click action marks it as openable",
+    /if \(action\.openSession\) \{\s*props\.onOpenSession\(row\.workspace\.id, row\.session\.id, sidebarSessionOpenTargetForRow\(row\)\);\s*\}/s,
+    "session rows should open the clicked row with its scoped sidebar target",
   );
 
   assert.match(

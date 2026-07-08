@@ -47,6 +47,14 @@ type FileSessionCatalogEntry = {
   revision: string;
 };
 
+type BunFileRuntime = {
+  file: (path: string) => Blob;
+};
+
+function bunFile(path: string): Blob {
+  return (Bun as unknown as BunFileRuntime).file(path);
+}
+
 export function normalizeWorkspaceRelativePath(input: string, options: { allowSubdirs: boolean }): string {
   const raw = String(input ?? "").trim();
   if (!raw) {
@@ -403,7 +411,7 @@ export function registerFileSessionRoutes(routes: Route[], dependencies: FileSes
     headers.set("Content-Type", "application/octet-stream");
     headers.set("Content-Length", String(info.size));
     headers.set("Content-Disposition", `attachment; filename=\"${basename(relativePath)}\"`);
-    return new Response((Bun as any).file(absPath), { status: 200, headers });
+    return new Response(bunFile(absPath), { status: 200, headers });
   });
 
   addRoute(routes, "POST", "/workspace/:id/inbox", "client", async (ctx) => {
@@ -502,7 +510,7 @@ export function registerFileSessionRoutes(routes: Route[], dependencies: FileSes
     headers.set("Content-Type", "application/octet-stream");
     headers.set("Content-Length", String(info.size));
     headers.set("Content-Disposition", `attachment; filename="${basename(relativePath)}"`);
-    return new Response((Bun as any).file(absPath), { status: 200, headers });
+    return new Response(bunFile(absPath), { status: 200, headers });
   });
 
   addRoute(routes, "POST", "/workspace/:id/files/sessions", "client", async (ctx) => {

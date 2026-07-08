@@ -68,6 +68,7 @@ export function createMcpServersRefresher(options: McpServersRefresherOptions) {
       name: entry.name,
       config: entry.config as McpServerEntry["config"],
       source: entry.source,
+      owner: entry.owner,
       disabledByTools: entry.disabledByTools,
     }));
   };

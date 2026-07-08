@@ -15,7 +15,7 @@ import { createRequire } from "node:module";
 import { once } from "node:events";
 
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
-import type { TuiHandle } from "./tui/app.js";
+import type { TuiHandle, TuiRouterIdentityItem } from "./tui/app.js";
 import { normalizeOpencodeEvent as normalizeEvent } from "./opencode-event-normalization.js";
 import { reconcileOpencodeVersion } from "./opencode-version.js";
 import { sanitizeRuntimePayloadForLogs } from "./security.js";
@@ -139,6 +139,39 @@ type ParsedArgs = {
   flags: Map<string, string | boolean>;
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function recordFromValue(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function arrayField(value: Record<string, unknown>, key: string): unknown[] {
+  const field = value[key];
+  return Array.isArray(field) ? field : [];
+}
+
+function stringField(value: Record<string, unknown>, key: string): string | undefined {
+  const field = value[key];
+  return typeof field === "string" ? field : undefined;
+}
+
+function routerIdentityItemsFromPayload(payload: unknown): TuiRouterIdentityItem[] {
+  return arrayField(recordFromValue(payload), "items").flatMap((item) => {
+    const record = recordFromValue(item);
+    const id = stringField(record, "id");
+    if (!id) return [];
+    return [
+      {
+        id,
+        enabled: record.enabled === true,
+        running: record.running === true,
+      },
+    ];
+  });
+}
+
 type ChildHandle = {
   name: string;
   child: ReturnType<typeof spawn>;
@@ -222,6 +255,18 @@ type RouterWorkspace = {
   createdAt: number;
   lastUsedAt?: number;
 };
+
+function isRouterWorkspace(value: unknown): value is RouterWorkspace {
+  const record = recordFromValue(value);
+  const workspaceType = stringField(record, "workspaceType");
+  return (
+    typeof record.id === "string" &&
+    typeof record.name === "string" &&
+    typeof record.path === "string" &&
+    (workspaceType === "local" || workspaceType === "remote") &&
+    typeof record.createdAt === "number"
+  );
+}
 
 const ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER = "X-Veslo-Orchestrator-Token";
 const ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER_LOWER = ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER.toLowerCase();
@@ -3113,51 +3158,48 @@ async function verifyVesloServer(input: {
   expectedOpencodeUsername?: string;
   expectedOpencodePassword?: string;
 }): Promise<string | undefined> {
-  const health = await fetchJson(`${input.baseUrl}/health`);
-  const actualVersion = typeof health?.version === "string" ? health.version : undefined;
+  const health = recordFromValue(await fetchJson(`${input.baseUrl}/health`));
+  const actualVersion = stringField(health, "version");
   assertVersionMatch("veslo-server", input.expectedVersion, actualVersion, `${input.baseUrl}/health`);
 
   const headers = { Authorization: `Bearer ${input.token}` };
-  const workspaces = await fetchJson(`${input.baseUrl}/workspaces`, { headers });
-  const items = Array.isArray(workspaces?.items) ? (workspaces.items as Array<Record<string, unknown>>) : [];
+  const workspaces = recordFromValue(await fetchJson(`${input.baseUrl}/workspaces`, { headers }));
+  const items = arrayField(workspaces, "items").filter(isRecord);
   if (!items.length) {
     throw new Error("Veslo server returned no workspaces");
   }
 
   const expectedPath = normalizeWorkspacePath(input.expectedWorkspace);
   const matched = items.find((item) => {
-    const candidate = item as { path?: string };
-    const path = typeof candidate.path === "string" ? candidate.path : "";
+    const path = stringField(item, "path") ?? "";
     return path && normalizeWorkspacePath(path) === expectedPath;
-  }) as
-    | {
-        id?: string;
-        path?: string;
-        opencode?: { baseUrl?: string; directory?: string; username?: string; password?: string };
-      }
-    | undefined;
+  });
 
   if (!matched) {
     throw new Error(`Veslo server workspace mismatch. Expected ${expectedPath}.`);
   }
 
-  const opencode = matched.opencode;
-  if (input.expectedOpencodeBaseUrl && opencode?.baseUrl !== input.expectedOpencodeBaseUrl) {
+  const opencode = recordFromValue(matched.opencode);
+  const opencodeBaseUrl = stringField(opencode, "baseUrl");
+  const opencodeDirectory = stringField(opencode, "directory");
+  const opencodeUsername = stringField(opencode, "username");
+  const opencodePassword = stringField(opencode, "password");
+  if (input.expectedOpencodeBaseUrl && opencodeBaseUrl !== input.expectedOpencodeBaseUrl) {
     throw new Error(
-      `Veslo server OpenCode base URL mismatch: expected ${input.expectedOpencodeBaseUrl}, got ${opencode?.baseUrl ?? "<missing>"}.`,
+      `Veslo server OpenCode base URL mismatch: expected ${input.expectedOpencodeBaseUrl}, got ${opencodeBaseUrl ?? "<missing>"}.`,
     );
   }
-  if (input.expectedOpencodeDirectory && opencode?.directory !== input.expectedOpencodeDirectory) {
+  if (input.expectedOpencodeDirectory && opencodeDirectory !== input.expectedOpencodeDirectory) {
     throw new Error(
-      `Veslo server OpenCode directory mismatch: expected ${input.expectedOpencodeDirectory}, got ${opencode?.directory ?? "<missing>"}.`,
+      `Veslo server OpenCode directory mismatch: expected ${input.expectedOpencodeDirectory}, got ${opencodeDirectory ?? "<missing>"}.`,
     );
   }
-  if (input.expectedOpencodeUsername && opencode?.username !== input.expectedOpencodeUsername) {
+  if (input.expectedOpencodeUsername && opencodeUsername !== input.expectedOpencodeUsername) {
     throw new Error("Veslo server OpenCode username mismatch.");
   }
   // Veslo server intentionally omits opencode.password from workspace
   // serialization. If a future server does expose it, still catch mismatches.
-  if (input.expectedOpencodePassword && opencode?.password && opencode.password !== input.expectedOpencodePassword) {
+  if (input.expectedOpencodePassword && opencodePassword && opencodePassword !== input.expectedOpencodePassword) {
     throw new Error("Veslo server OpenCode password mismatch.");
   }
 
@@ -3177,12 +3219,16 @@ async function runChecks(input: {
   const baseUrl = input.vesloUrl.replace(/\/$/, "");
   const headers = { Authorization: `Bearer ${input.vesloToken}` };
   const hostHeaders = { "X-Veslo-Host-Token": input.hostToken };
-  const workspaces = await fetchJson(`${baseUrl}/workspaces`, { headers });
-  if (!workspaces?.items?.length) {
+  const workspaces = recordFromValue(await fetchJson(`${baseUrl}/workspaces`, { headers }));
+  const workspaceItems = arrayField(workspaces, "items").filter(isRecord);
+  if (!workspaceItems.length) {
     throw new Error("Veslo server returned no workspaces");
   }
 
-  const workspaceId = workspaces.items[0].id as string;
+  const workspaceId = stringField(workspaceItems[0], "id");
+  if (!workspaceId) {
+    throw new Error("Veslo server returned workspace without id");
+  }
   await fetchJson(`${baseUrl}/workspace/${workspaceId}/config`, { headers: { ...headers, ...hostHeaders } });
 
   // Smoke test: mounted opencodeRouter proxy and auth behavior.
@@ -3253,16 +3299,18 @@ async function runChecks(input: {
   }
 }
 
-async function fetchJson(url: string, init?: RequestInit): Promise<any> {
+async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
   const response = await fetch(url, init);
-  let payload: any = null;
+  let payload: unknown = null;
   try {
     payload = await response.json();
   } catch {
     payload = null;
   }
   if (!response.ok) {
-    const message = payload?.message ? ` ${payload.message}` : "";
+    const payloadRecord = recordFromValue(payload);
+    const payloadMessage = stringField(payloadRecord, "message");
+    const message = payloadMessage ? ` ${payloadMessage}` : "";
     throw new Error(`HTTP ${response.status}${message}`);
   }
   return payload;
@@ -3672,13 +3720,13 @@ async function runDaemonCommand(args: ParsedArgs) {
     }
     if (subcommand === "start") {
       const { baseUrl } = await ensureRouterDaemon(args, true);
-      const status = await fetchJson(`${baseUrl.replace(/\/$/, "")}/health`);
+      const status = recordFromValue(await fetchJson(`${baseUrl.replace(/\/$/, "")}/health`));
       outputResult({ ok: true, baseUrl, ...status }, outputJson);
       return;
     }
     if (subcommand === "status") {
       const { baseUrl } = await ensureRouterDaemon(args, false);
-      const status = await fetchJson(`${baseUrl.replace(/\/$/, "")}/health`);
+      const status = recordFromValue(await fetchJson(`${baseUrl.replace(/\/$/, "")}/health`));
       outputResult({ ok: true, baseUrl, ...status }, outputJson);
       return;
     }
@@ -3704,10 +3752,10 @@ async function runWorkspaceCommand(args: ParsedArgs) {
     if (subcommand === "add") {
       if (!id) throw new Error("workspace path is required");
       const name = readFlag(args.flags, "name");
-      const result = await requestRouter(args, "POST", "/workspaces", {
+      const result = recordFromValue(await requestRouter(args, "POST", "/workspaces", {
         path: id,
         name: name ?? null,
-      });
+      }));
       outputResult({ ok: true, ...result }, outputJson);
       return;
     }
@@ -3715,35 +3763,35 @@ async function runWorkspaceCommand(args: ParsedArgs) {
       if (!id) throw new Error("baseUrl is required");
       const directory = readFlag(args.flags, "directory");
       const name = readFlag(args.flags, "name");
-      const result = await requestRouter(args, "POST", "/workspaces/remote", {
+      const result = recordFromValue(await requestRouter(args, "POST", "/workspaces/remote", {
         baseUrl: id,
         directory: directory ?? null,
         name: name ?? null,
-      });
+      }));
       outputResult({ ok: true, ...result }, outputJson);
       return;
     }
     if (subcommand === "list") {
-      const result = await requestRouter(args, "GET", "/workspaces");
+      const result = recordFromValue(await requestRouter(args, "GET", "/workspaces"));
       outputResult({ ok: true, ...result }, outputJson);
       return;
     }
     if (subcommand === "switch") {
       if (!id) throw new Error("workspace id is required");
-      const result = await requestRouter(args, "POST", `/workspaces/${encodeURIComponent(id)}/activate`);
+      const result = recordFromValue(await requestRouter(args, "POST", `/workspaces/${encodeURIComponent(id)}/activate`));
       outputResult({ ok: true, ...result }, outputJson);
       return;
     }
     if (subcommand === "info") {
       if (!id) throw new Error("workspace id is required");
-      const result = await requestRouter(args, "GET", `/workspaces/${encodeURIComponent(id)}`);
+      const result = recordFromValue(await requestRouter(args, "GET", `/workspaces/${encodeURIComponent(id)}`));
       outputResult({ ok: true, ...result }, outputJson);
       return;
     }
     if (subcommand === "path") {
       if (!id) throw new Error("workspace id is required");
-      const result = await requestRouter(args, "GET", `/workspaces/${encodeURIComponent(id)}`);
-      const workspace = (result as { workspace?: RouterWorkspace }).workspace;
+      const result = recordFromValue(await requestRouter(args, "GET", `/workspaces/${encodeURIComponent(id)}`));
+      const workspace = isRouterWorkspace(result.workspace) ? result.workspace : undefined;
       if (!workspace) throw new Error("workspace not found");
       outputResult({
         ok: true,
@@ -3771,7 +3819,7 @@ async function runInstanceCommand(args: ParsedArgs) {
   try {
     if (subcommand === "dispose") {
       if (!id) throw new Error("workspace id is required");
-      const result = await requestRouter(args, "POST", `/instances/${encodeURIComponent(id)}/dispose`);
+      const result = recordFromValue(await requestRouter(args, "POST", `/instances/${encodeURIComponent(id)}/dispose`));
       outputResult({ ok: true, ...result }, outputJson);
       return;
     }
@@ -6273,8 +6321,7 @@ async function runStart(args: ParsedArgs) {
               "X-Veslo-Host-Token": vesloHostToken,
             },
           });
-          const items = Array.isArray(result?.items) ? result.items : [];
-          return { items };
+          return { items: routerIdentityItemsFromPayload(result) };
         },
         onRouterSlackIdentities: async () => {
           const url = `${vesloBaseUrl.replace(/\/$/, "")}/opencode-router/identities/slack`;
@@ -6283,8 +6330,7 @@ async function runStart(args: ParsedArgs) {
               "X-Veslo-Host-Token": vesloHostToken,
             },
           });
-          const items = Array.isArray(result?.items) ? result.items : [];
-          return { items };
+          return { items: routerIdentityItemsFromPayload(result) };
         },
         onRouterSetGroupsEnabled: async (enabled) => {
           try {

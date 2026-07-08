@@ -37,6 +37,7 @@ import {
 } from "../utils";
 import { parseVesloWorkspaceIdFromUrl } from "../lib/veslo-server";
 import { reportError } from "../lib/error-reporter";
+import type { UiConversationRef } from "../lib/ui-conversation-scope";
 import type {
   VesloAuditEntry,
   VesloSoulAuthContext,
@@ -74,6 +75,10 @@ import ShareWorkspaceModal from "../components/share-workspace-modal";
 import SidebarAdvancedNav from "../components/session/sidebar-advanced-nav";
 import SidebarDashboardNav from "../components/session/sidebar-dashboard-nav";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
+import {
+  sidebarSessionMatchesOpenTarget,
+  type SidebarSessionOpenTarget,
+} from "../components/session/workspace-session-list-model";
 import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
 import {
   clampLeftSidebarWidth,
@@ -168,6 +173,7 @@ export type DashboardViewProps = {
   activeWorkspaceDisplay: WorkspaceInfo;
   workspaces: WorkspaceInfo[];
   activeWorkspaceId: string;
+  activeUiConversationRef?: UiConversationRef;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   readyEngineWorkspaceIds?: Set<string>;
@@ -190,7 +196,7 @@ export type DashboardViewProps = {
   archivedSessionIds: string[];
   sessionStatusById: Record<string, string>;
   busySessionByWorkspaceId?: WorkspaceBusyMap;
-  archiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
+  archiveSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => Promise<void> | void;
   unarchiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
   loadMoreWorkspaceSidebarSessions: (workspaceId: string) => Promise<void> | void;
   selectedSessionId: string | null;
@@ -246,7 +252,7 @@ export type DashboardViewProps = {
   canUseDesktopTools: boolean;
   installSkillCreator: () => Promise<{ ok: boolean; message: string }>;
   installHubSkill: (name: string, target: HubSkillInstallTarget) => Promise<{ ok: boolean; message: string }>;
-  refreshHubMcp: () => void;
+  refreshHubMcp: (options?: { force?: boolean }) => void;
   installHubMcp: (name: string) => Promise<{ ok: boolean; message: string }>;
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
@@ -440,9 +446,11 @@ export default function DashboardView(props: DashboardViewProps) {
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
     workspace.workspaceType === "remote" ? "Remote" : "Local";
 
-  const openSessionFromList = (workspaceId: string, sessionId: string) => {
+  const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {
     const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
-    const session = group?.sessions.find((item) => item.id === sessionId);
+    const session =
+      (target ? group?.sessions.find((item) => sidebarSessionMatchesOpenTarget(item, target)) : null) ??
+      group?.sessions.find((item) => item.id === sessionId);
     const workspaceRoot =
       group?.workspace.directory?.trim() ||
       group?.workspace.path?.trim() ||
@@ -459,13 +467,14 @@ export default function DashboardView(props: DashboardViewProps) {
       // that case the route effect is deduped and would leave the main
       // transcript on the empty workspace screen.
       openSession: (nextSessionId) => {
+        const scopedWorkspaceRoot = target?.workspaceRoot?.trim() || workspaceRoot;
         props.setSessionBrowseScope({
           sessionId: nextSessionId,
           workspaceId,
-          workspaceRoot: workspaceRoot,
-          directory: session?.directory ?? workspaceRoot,
-          conversationId: session?.conversationId ?? null,
-          opencodeSessionId: session?.opencodeSessionId ?? nextSessionId,
+          workspaceRoot: scopedWorkspaceRoot,
+          directory: target?.directory?.trim() || session?.directory?.trim() || scopedWorkspaceRoot,
+          conversationId: target?.conversationId ?? session?.conversationId ?? null,
+          opencodeSessionId: target?.opencodeSessionId ?? session?.opencodeSessionId ?? nextSessionId,
         });
         void Promise.resolve(props.selectSession(nextSessionId))
           .catch((error) => reportError(error, "dashboard.openSessionFromList.selectSession"));
@@ -924,6 +933,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 archivedSessionIds={props.archivedSessionIds}
                 activeWorkspaceId={props.activeWorkspaceId}
                 selectedSessionId={props.selectedSessionId}
+                selectedSessionKey={props.activeUiConversationRef?.key ?? null}
                 sessionStatusById={props.sessionStatusById}
                 busySessionByWorkspaceId={props.busySessionByWorkspaceId}
                 allowSelectedParentExpansion={false}

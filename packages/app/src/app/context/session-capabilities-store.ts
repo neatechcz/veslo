@@ -21,7 +21,7 @@ import {
   type VesloServerCapabilities,
   type VesloServerStatus,
 } from "../lib/veslo-server";
-import type { McpServerEntry, McpStatusMap, SkillInventoryItem, WorkspaceSessionGroup } from "../types";
+import type { McpServerEntry, McpStatusMap, ResourceOwner, SkillInventoryItem, WorkspaceSessionGroup } from "../types";
 import {
   normalizeDirectoryPath,
   safeStringify,
@@ -55,6 +55,7 @@ export type SessionCapabilitiesVesloClient = {
         name: string;
         config: unknown;
         source?: string;
+        owner?: ResourceOwner;
         disabledByTools?: boolean;
       }>;
     }>;
@@ -378,6 +379,7 @@ export function createSessionCapabilitiesStore(deps: SessionCapabilitiesStoreDep
       name: entry.name,
       config: entry.config as McpServerEntry["config"],
       source: entry.source as McpServerEntry["source"],
+      owner: entry.owner,
       disabledByTools: entry.disabledByTools,
     }));
     const statuses = await loadSessionMcpStatuses(directory, mcpEntries, workspace);

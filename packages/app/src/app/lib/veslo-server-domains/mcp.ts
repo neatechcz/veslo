@@ -18,14 +18,17 @@ export type McpClientContext = {
 };
 
 type DenContextOptions = {
+  denApiBase?: string;
   denToken?: string;
   denOrgId?: string;
 };
 
 const buildDenHeaders = (options?: DenContextOptions) => {
+  const denApiBase = options?.denApiBase?.trim() ?? "";
   const denToken = options?.denToken?.trim() ?? "";
   const denOrgId = options?.denOrgId?.trim() ?? "";
   const extraHeaders = {
+    ...(denApiBase ? { "x-veslo-den-api-base": denApiBase } : {}),
     ...(denToken ? { "x-veslo-den-token": denToken } : {}),
     ...(denOrgId ? { "x-veslo-den-org-id": denOrgId } : {}),
   };
@@ -46,7 +49,7 @@ export function createMcpClient(context: McpClientContext) {
       }),
 
     installHub: (workspaceId: string, name: string, options?: DenContextOptions) =>
-      requestJson<{ ok: boolean; name: string; path: string; action: "added" | "updated"; written: number; skipped: number }>(
+      requestJson<{ ok: boolean; name: string; action: "added" | "updated" }>(
         baseUrl,
         `${workspaceMcpPath(workspaceId)}/hub/${encodeURIComponent(name)}`,
         {
@@ -87,11 +90,12 @@ export function createMcpClient(context: McpClientContext) {
         },
       ),
 
-    logoutAuth: (workspaceId: string, name: string) =>
+    logoutAuth: (workspaceId: string, name: string, options?: DenContextOptions) =>
       requestJson<{ ok: true }>(baseUrl, `${workspaceMcpPath(workspaceId)}/${encodeURIComponent(name)}/auth`, {
         token,
         hostToken,
         method: "DELETE",
+        extraHeaders: buildDenHeaders(options),
       }),
   };
 }

@@ -2,7 +2,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { recordAudit } from "../audit.js";
-import { createOrgMcpRuntimeToken, fetchOrgMcpCatalog } from "../den-catalog.js";
+import {
+  createOrgMcpRuntimeToken,
+  disconnectOrgMcpConnection,
+  fetchOrgMcpCatalog,
+  fetchOrgMcpConnectionStatuses,
+} from "../den-catalog.js";
 import { normalizeDenApiBaseUrl } from "../den-api-base.js";
 import { ApiError } from "../errors.js";
 import { addMcp, installHubMcp, listMcp, refreshMcpRuntimeToken, removeMcp } from "../mcp.js";
@@ -17,7 +22,7 @@ import {
   requireClientScope,
   resolveWorkspace,
 } from "../route-helpers.js";
-import type { WorkspaceInfo } from "../types.js";
+import type { HubMcpItem, WorkspaceInfo } from "../types.js";
 import { shortId } from "../utils.js";
 import { validateMcpName } from "../validators.js";
 import { opencodeConfigPath } from "../workspace-files.js";
@@ -50,6 +55,18 @@ function requireRouteParam(params: Record<string, string>, field: string, label 
   return value;
 }
 
+const resolveDenApiBaseForRequest = (ctx: Parameters<Route["handler"]>[0]) => {
+  const rawRequestBase = ctx.request.headers.get("x-veslo-den-api-base")?.trim() || "";
+  if (rawRequestBase) {
+    const normalized = normalizeDenApiBaseUrl(rawRequestBase);
+    if (!normalized) {
+      throw new ApiError(400, "den_api_base_invalid", "Invalid Den API base header (x-veslo-den-api-base)");
+    }
+    return normalized;
+  }
+  return normalizeDenApiBaseUrl(ctx.config.denApiBase) ?? "";
+};
+
 const requireDenCatalogContext = (ctx: Parameters<Route["handler"]>[0]) => {
   const denToken = ctx.request.headers.get("x-veslo-den-token")?.trim() || "";
   if (!denToken) {
@@ -61,13 +78,74 @@ const requireDenCatalogContext = (ctx: Parameters<Route["handler"]>[0]) => {
     throw new ApiError(400, "den_org_required", "Missing Den org header (x-veslo-den-org-id)");
   }
 
-  const denApiBase = normalizeDenApiBaseUrl(ctx.config.denApiBase) ?? "";
+  const denApiBase = resolveDenApiBaseForRequest(ctx);
   if (!denApiBase) {
     throw new ApiError(503, "den_catalog_misconfigured", "Den catalog base URL is missing");
   }
 
   return { denToken, denOrgId, denApiBase };
 };
+
+const readOptionalDenCatalogContext = (ctx: Parameters<Route["handler"]>[0]) => {
+  const denToken = ctx.request.headers.get("x-veslo-den-token")?.trim() || "";
+  const denOrgId = ctx.request.headers.get("x-veslo-den-org-id")?.trim() || "";
+  const denApiBaseHeader = ctx.request.headers.get("x-veslo-den-api-base")?.trim() || "";
+  if (!denToken && !denOrgId && !denApiBaseHeader) {
+    return null;
+  }
+  return requireDenCatalogContext(ctx);
+};
+
+async function disconnectServerManagedMcpAuth(ctx: Parameters<Route["handler"]>[0], name: string) {
+  const denContext = readOptionalDenCatalogContext(ctx);
+  if (!denContext) return;
+
+  const items = await fetchOrgMcpCatalog({
+    baseUrl: denContext.denApiBase,
+    orgId: denContext.denOrgId,
+    denToken: denContext.denToken,
+  });
+  const item = items.find((entry) => entry.id === name || entry.name === name);
+  if (item?.authorization?.type !== "veslo-server-oauth") return;
+
+  await disconnectOrgMcpConnection({
+    baseUrl: denContext.denApiBase,
+    denToken: denContext.denToken,
+    disconnectPath: item.authorization.disconnectPath,
+  });
+}
+
+async function attachServerManagedMcpConnectionStatuses(input: {
+  baseUrl: string;
+  denToken: string;
+  items: HubMcpItem[];
+}): Promise<HubMcpItem[]> {
+  const statusPaths = Array.from(
+    new Set(
+      input.items
+        .map((entry) => entry.authorization?.statusPath?.trim() ?? "")
+        .filter((statusPath) => statusPath.length > 0),
+    ),
+  );
+  if (!statusPaths.length) return input.items;
+
+  const statuses = await Promise.all(
+    statusPaths.map((statusPath) =>
+      fetchOrgMcpConnectionStatuses({
+        baseUrl: input.baseUrl,
+        denToken: input.denToken,
+        statusPath,
+      }).catch(() => []),
+    ),
+  );
+  const statusByConnectorId = new Map(statuses.flat().map((status) => [status.connectorId, status]));
+
+  return input.items.map((entry) => {
+    const connectorId = entry.authorization?.connectorId;
+    const connection = connectorId ? statusByConnectorId.get(connectorId) : undefined;
+    return connection ? { ...entry, connection } : entry;
+  });
+}
 
 export function registerMcpRoutes(routes: Route[], dependencies: McpRouteDependencies): void {
   addRoute(routes, "GET", "/hub/mcp", "client", async (ctx) => {
@@ -81,15 +159,20 @@ export function registerMcpRoutes(routes: Route[], dependencies: McpRouteDepende
       throw new ApiError(400, "den_org_required", "Missing Den org header (x-veslo-den-org-id)");
     }
 
-    const denApiBase = normalizeDenApiBaseUrl(ctx.config.denApiBase) ?? "";
+    const denApiBase = resolveDenApiBaseForRequest(ctx);
     if (!denApiBase) {
       return jsonResponse({ items: [] });
     }
 
-    const items = await fetchOrgMcpCatalog({
+    const catalogItems = await fetchOrgMcpCatalog({
       baseUrl: denApiBase,
       orgId: denOrgId,
       denToken,
+    });
+    const items = await attachServerManagedMcpConnectionStatuses({
+      baseUrl: denApiBase,
+      denToken,
+      items: catalogItems,
     });
 
     return jsonResponse({ items });
@@ -302,6 +385,8 @@ export function registerMcpRoutes(routes: Route[], dependencies: McpRouteDepende
       summary: `Logout MCP ${name}`,
       paths: [authStorePath],
     });
+
+    await disconnectServerManagedMcpAuth(ctx, name);
 
     try {
       await dependencies.fetchOpencodeJson(workspace, `/mcp/${encodeURIComponent(name)}/disconnect`, { method: "POST" });

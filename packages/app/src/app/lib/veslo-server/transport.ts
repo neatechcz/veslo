@@ -11,6 +11,12 @@ type RawJsonResponse<T> = {
   json: T | null;
 };
 
+function recordFromValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
 export class VesloServerError extends Error {
   status: number;
   code: string;
@@ -239,15 +245,16 @@ export async function requestBinary(
 
   if (!response.ok) {
     const text = await response.text();
-    let json: any = null;
+    let json: unknown = null;
     try {
       json = text ? JSON.parse(text) : null;
     } catch {
       json = null;
     }
-    const code = typeof json?.code === "string" ? json.code : "request_failed";
-    const message = typeof json?.message === "string" ? json.message : response.statusText;
-    throw new VesloServerError(response.status, code, message, json?.details);
+    const errorPayload = recordFromValue(json);
+    const code = typeof errorPayload.code === "string" ? errorPayload.code : "request_failed";
+    const message = typeof errorPayload.message === "string" ? errorPayload.message : response.statusText;
+    throw new VesloServerError(response.status, code, message, errorPayload.details);
   }
 
   const contentType = response.headers.get("content-type");

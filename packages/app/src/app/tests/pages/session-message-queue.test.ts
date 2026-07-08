@@ -88,22 +88,35 @@ test("session page owns session-local queue state and handleSendPrompt accepts s
   );
 });
 
-test("running non-sendNow sends transfer ownership to the visible queue before server admission", () => {
-  const resolverBranch = conversationFlowSource.indexOf("if (runVisible && !sendNow)");
+test("running non-sendNow sends use the server queue-drain contract directly", () => {
+  const resolverBranch = conversationFlowSource.indexOf('if (runVisible && !sendNow) return { kind: "send-running-server-queue" };');
   const handlerStart = flowHandleSendSource.indexOf("handleSendPrompt: async (");
-  const runningCase = flowHandleSendSource.indexOf('case "append-to-running-queue"', handlerStart);
-  const appendCall = flowHandleSendSource.indexOf("deps.queue.appendDraftToCurrentQueue(draft);", runningCase);
-  const drainCall = flowHandleSendSource.indexOf('void controller.drainNextQueuedDraft("queue-drain", sessionKey);', appendCall);
-  const returnQueued = flowHandleSendSource.indexOf('return localQueuedResult("local_queue_running_append");', drainCall);
-  const sendNormalCase = flowHandleSendSource.indexOf('case "send-normal"', returnQueued);
+  const runningCase = flowHandleSendSource.indexOf('case "send-running-server-queue"', handlerStart);
+  const sessionKeyCapture = flowHandleSendSource.indexOf("const sessionKey = deps.sessionKeys.currentSessionQueueKey();", runningCase);
+  const sendImmediateCall = flowHandleSendSource.indexOf("return controller.sendPromptImmediate(draft, {", sessionKeyCapture);
+  const queueDrainReason = flowHandleSendSource.indexOf('reason: "queue-drain"', sendImmediateCall);
+  const expectedSessionKey = flowHandleSendSource.indexOf("expectedSessionKey: sessionKey", queueDrainReason);
+  const sendNormalCase = flowHandleSendSource.indexOf('case "send-normal"', expectedSessionKey);
+  const runningBranchSource = flowHandleSendSource.slice(runningCase, sendNormalCase);
 
   assert.notEqual(resolverBranch, -1, "conversation-flow resolver should classify running non-sendNow sends");
   assert.notEqual(handlerStart, -1, "conversation-flow send handler should exist");
-  assert.ok(runningCase > handlerStart, "handler should have a running-queue action branch");
-  assert.ok(appendCall > runningCase, "running Enter sends should append to the visible queue first");
-  assert.ok(drainCall > appendCall, "running Enter sends should request server queue admission through queue drain");
-  assert.ok(returnQueued > drainCall, "running Enter sends should clear only after queue ownership transfer");
-  assert.ok(sendNormalCase > returnQueued, "running queued sends should return before the normal immediate send branch");
+  assert.ok(runningCase > handlerStart, "handler should have a running server-queue action branch");
+  assert.ok(sessionKeyCapture > runningCase, "running Enter sends should capture the visible session key");
+  assert.ok(sendImmediateCall > sessionKeyCapture, "running Enter sends should submit through sendPromptImmediate");
+  assert.ok(queueDrainReason > sendImmediateCall, "running Enter sends should use the existing queue-drain origin");
+  assert.ok(expectedSessionKey > queueDrainReason, "running Enter sends should preserve the captured session key");
+  assert.ok(sendNormalCase > expectedSessionKey, "running queued sends should return before the normal immediate send branch");
+  assert.equal(
+    runningBranchSource.includes("appendDraftToCurrentQueue"),
+    false,
+    "running Enter sends should not fabricate a local queue row before server admission",
+  );
+  assert.equal(
+    runningBranchSource.includes("local_queue_running_append"),
+    false,
+    "running Enter sends should return the typed server submit result",
+  );
 });
 
 test("paused queue Enter append unpauses and starts the first drain-eligible queued draft", () => {

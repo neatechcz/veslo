@@ -415,6 +415,7 @@ export function createExtensionsStore(options: {
   let refreshHubSkillsAborted = false;
   let refreshSkillImportCandidatesAborted = false;
   let refreshHubMcpInFlight = false;
+  let refreshHubMcpForcePending = false;
   let refreshHubMcpAborted = false;
   let skillsLoaded = false;
   let hubSkillsLoaded = false;
@@ -449,12 +450,15 @@ export function createExtensionsStore(options: {
       vesloCapabilities?.hub?.mcp?.read &&
       typeof vesloClient.mcp?.listHub === "function";
     const denAuth = readDenAuth();
+    const denApiBase = denAuth?.denApiBase?.trim() ?? "";
     const denToken = denAuth?.token?.trim() ?? "";
     const denOrgId = denAuth?.orgId?.trim() ?? "";
     const nextContextKey = JSON.stringify({
       root,
       canUseVesloServer,
+      denApiBase,
       denOrgId,
+      denTokenFingerprint: fingerprintSensitiveValue(denToken),
       hasDenToken: denToken.length > 0,
     });
 
@@ -463,9 +467,16 @@ export function createExtensionsStore(options: {
     }
 
     if (!optionsOverride?.force && hubMcpLoaded) return;
-    if (refreshHubMcpInFlight) return;
+    if (refreshHubMcpInFlight) {
+      if (optionsOverride?.force) {
+        refreshHubMcpForcePending = true;
+        hubMcpLoaded = false;
+      }
+      return;
+    }
 
     refreshHubMcpInFlight = true;
+    refreshHubMcpForcePending = false;
     refreshHubMcpAborted = false;
 
     try {
@@ -473,7 +484,7 @@ export function createExtensionsStore(options: {
       const orgCatalogPlaceholder = translate("mcp.org_catalog_placeholder");
 
       if (canUseVesloServer) {
-        if (!denToken || !denOrgId) {
+        if (!denApiBase || !denToken || !denOrgId) {
           setHubMcpCards([]);
           setHubMcpStatus(orgCatalogPlaceholder);
           hubMcpRoot = root;
@@ -482,6 +493,7 @@ export function createExtensionsStore(options: {
         }
 
         const response = await vesloClient.mcp.listHub({
+          denApiBase,
           denToken,
           denOrgId,
         });
@@ -499,6 +511,7 @@ export function createExtensionsStore(options: {
               oauth: entry.config.oauth === undefined ? true : entry.config.oauth,
               headers: entry.config.headers,
               authorization: entry.authorization,
+              connection: entry.connection,
               provider: entry.provider,
               source: entry.source,
             }))
@@ -522,6 +535,10 @@ export function createExtensionsStore(options: {
       setHubMcpStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_load_hub_mcp_1s9f65", __vesloIndirectLocale()));
     } finally {
       refreshHubMcpInFlight = false;
+      if (refreshHubMcpForcePending && !refreshHubMcpAborted) {
+        refreshHubMcpForcePending = false;
+        void refreshHubMcp({ force: true });
+      }
     }
   }
 
@@ -530,6 +547,7 @@ export function createExtensionsStore(options: {
     const vesloClient = options.vesloServerClient();
     const vesloCapabilities = options.vesloServerCapabilities();
     const denAuth = readDenAuth();
+    const denApiBase = denAuth?.denApiBase?.trim() ?? "";
     const denToken = denAuth?.token?.trim() ?? "";
     const denOrgId = denAuth?.orgId?.trim() ?? "";
     const canUseVesloServer =
@@ -538,7 +556,7 @@ export function createExtensionsStore(options: {
       vesloCapabilities?.hub?.mcp?.read &&
       typeof vesloClient.mcp?.listHub === "function";
 
-    if (!root || !canUseVesloServer || !denToken || !denOrgId) return;
+    if (!root || !canUseVesloServer || !denApiBase || !denToken || !denOrgId) return;
     void refreshHubMcp().catch(() => {
       // refreshHubMcp owns user-visible status; this guard keeps the reactive
       // retry from surfacing unhandled promise noise during startup.
@@ -1465,13 +1483,15 @@ export function createExtensionsStore(options: {
     try {
       const selectedEntry = hubMcpCards().find((entry) => entry.id === trimmed || entry.name === trimmed);
       const denAuth = readDenAuth();
+      const denApiBase = denAuth?.denApiBase?.trim() ?? "";
       const denToken = denAuth?.token?.trim() ?? "";
       const denOrgId = denAuth?.orgId?.trim() ?? "";
-      if (!denToken || !denOrgId) {
+      if (!denApiBase || !denToken || !denOrgId) {
         return { ok: false, message: __vesloIndirectT("ui.indirect.missing_den_auth_context_1l81wa", __vesloIndirectLocale()) };
       }
 
       const result = await vesloClient.mcp.installHub(vesloWorkspaceId, trimmed, {
+        denApiBase,
         denToken,
         denOrgId,
       });

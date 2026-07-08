@@ -2428,6 +2428,7 @@ test("listHubMcp forwards den auth context headers when provided", async () => {
     });
 
     await client.listHubMcp({
+      denApiBase: "https://api.veslo.test",
       denToken: "den-token",
       denOrgId: "org_123",
     });
@@ -2435,6 +2436,7 @@ test("listHubMcp forwards den auth context headers when provided", async () => {
     assert.equal(calls.length, 1);
     assert.equal(calls[0]?.url, "https://veslo.example/hub/mcp");
     assert.equal(calls[0]?.headers.get("authorization"), "Bearer token-123");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-api-base"), "https://api.veslo.test");
     assert.equal(calls[0]?.headers.get("x-veslo-den-token"), "den-token");
     assert.equal(calls[0]?.headers.get("x-veslo-den-org-id"), "org_123");
   } finally {
@@ -2479,6 +2481,16 @@ test("listHubMcp preserves platform connector metadata", async () => {
               statusPath: "/v1/orgs/org_123/integrations/google/connections",
               disconnectPath: "/v1/orgs/org_123/integrations/google/google-drive/connection",
             },
+            connection: {
+              connectorId: "google-drive",
+              name: "Google Drive",
+              connected: true,
+              state: "connected",
+              scopes: ["https://www.googleapis.com/auth/drive.readonly"],
+              connectedAt: "2026-07-08T12:00:00.000Z",
+              revokedAt: null,
+              accessTokenExpiresAt: "2030-06-19T12:00:00.000Z",
+            },
             source: { scope: "platform" },
             provider: { id: "google", group: "Google" },
           },
@@ -2508,6 +2520,7 @@ test("listHubMcp preserves platform connector metadata", async () => {
     assert.equal(result.items[0]?.config.oauth, false);
     assert.deepEqual(result.items[0]?.config.headers, { "X-Veslo-Connector": "google-drive" });
     assert.equal(result.items[0]?.authorization?.type, "veslo-server-oauth");
+    assert.equal(result.items[0]?.connection?.connected, true);
     assert.equal(
       result.items[0]?.authorization?.runtimeTokenPath,
       "/v1/orgs/org_123/integrations/google/google-drive/runtime-token",
@@ -2560,6 +2573,16 @@ test("refreshHubMcp preserves platform connector metadata in card state", async 
                       statusPath: "/v1/orgs/org_123/integrations/google/connections",
                       disconnectPath: "/v1/orgs/org_123/integrations/google/google-drive/connection",
                     },
+                    connection: {
+                      connectorId: "google-drive",
+                      name: "Google Drive",
+                      connected: true,
+                      state: "connected",
+                      scopes: ["https://www.googleapis.com/auth/drive.readonly"],
+                      connectedAt: "2026-07-08T12:00:00.000Z",
+                      revokedAt: null,
+                      accessTokenExpiresAt: "2030-06-19T12:00:00.000Z",
+                    },
                     source: { scope: "platform" },
                     provider: { id: "google", group: "Google" },
                   },
@@ -2591,6 +2614,7 @@ test("refreshHubMcp preserves platform connector metadata in card state", async 
         assert.equal(card?.oauth, false);
         assert.deepEqual(card?.headers, { "X-Veslo-Connector": "google-drive" });
         assert.equal(card?.authorization?.type, "veslo-server-oauth");
+        assert.equal(card?.connection?.connected, true);
         assert.equal(
           card?.authorization?.runtimeTokenPath,
           "/v1/orgs/org_123/integrations/google/google-drive/runtime-token",
@@ -2625,6 +2649,7 @@ test("installHubMcp forwards den auth context headers when provided", async () =
     });
 
     await client.installHubMcp("workspace-1", "catalog-item", {
+      denApiBase: "https://api.veslo.test",
       denToken: "den-token",
       denOrgId: "org_123",
     });
@@ -2633,6 +2658,7 @@ test("installHubMcp forwards den auth context headers when provided", async () =
     assert.equal(calls[0]?.url, "https://veslo.example/workspace/workspace-1/mcp/hub/catalog-item");
     assert.equal(calls[0]?.method, "POST");
     assert.equal(calls[0]?.headers.get("authorization"), "Bearer token-123");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-api-base"), "https://api.veslo.test");
     assert.equal(calls[0]?.headers.get("x-veslo-den-token"), "den-token");
     assert.equal(calls[0]?.headers.get("x-veslo-den-org-id"), "org_123");
   } finally {
@@ -2668,6 +2694,7 @@ test("refreshMcpRuntimeToken forwards den auth context headers when provided", a
     });
 
     await client.refreshMcpRuntimeToken("workspace-1", "google-gmail", {
+      denApiBase: "https://api.veslo.test",
       denToken: "den-token",
       denOrgId: "org_123",
     });
@@ -2679,6 +2706,47 @@ test("refreshMcpRuntimeToken forwards den auth context headers when provided", a
     );
     assert.equal(calls[0]?.method, "POST");
     assert.equal(calls[0]?.headers.get("authorization"), "Bearer token-123");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-api-base"), "https://api.veslo.test");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-token"), "den-token");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-org-id"), "org_123");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("logoutMcpAuth forwards den auth context headers when provided", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; headers: Headers; method?: string }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method,
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+    });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    await client.logoutMcpAuth("workspace-1", "google-gmail", {
+      denApiBase: "https://api.veslo.test",
+      denToken: "den-token",
+      denOrgId: "org_123",
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.url, "https://veslo.example/workspace/workspace-1/mcp/google-gmail/auth");
+    assert.equal(calls[0]?.method, "DELETE");
+    assert.equal(calls[0]?.headers.get("authorization"), "Bearer token-123");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-api-base"), "https://api.veslo.test");
     assert.equal(calls[0]?.headers.get("x-veslo-den-token"), "den-token");
     assert.equal(calls[0]?.headers.get("x-veslo-den-org-id"), "org_123");
   } finally {
@@ -3199,13 +3267,19 @@ test("mcp domain facade exposes hub and workspace mcp endpoints", async () => {
       hostToken: "host-token-123",
     });
 
-    await client.mcp.listHub({ denToken: "den-token", denOrgId: "org-123" });
-    await client.mcp.installHub("ws 1", "google/gmail", { denToken: "den-token", denOrgId: "org-123" });
+    const denContext = {
+      denApiBase: "https://api.veslo.test",
+      denToken: "den-token",
+      denOrgId: "org-123",
+    };
+
+    await client.mcp.listHub(denContext);
+    await client.mcp.installHub("ws 1", "google/gmail", denContext);
     await client.mcp.list("ws 1");
     await client.mcp.add("ws 1", { name: "local", config: { type: "local", command: ["node", "server.js"] } });
     await client.mcp.remove("ws 1", "local/name");
-    await client.mcp.refreshRuntimeToken("ws 1", "google-gmail", { denToken: "den-token", denOrgId: "org-123" });
-    await client.mcp.logoutAuth("ws 1", "google-gmail");
+    await client.mcp.refreshRuntimeToken("ws 1", "google-gmail", denContext);
+    await client.mcp.logoutAuth("ws 1", "google-gmail", denContext);
 
     assert.deepEqual(
       calls.map((call) => ({ url: call.url, method: call.method })),
@@ -3227,11 +3301,13 @@ test("mcp domain facade exposes hub and workspace mcp endpoints", async () => {
       assert.equal(call.headers.get("authorization"), "Bearer token-123");
       assert.equal(call.headers.get("x-veslo-host-token"), "host-token-123");
     }
-    for (const index of [0, 1, 5]) {
+    for (const index of [0, 1, 5, 6]) {
+      assert.equal(calls[index]?.headers.get("x-veslo-den-api-base"), "https://api.veslo.test");
       assert.equal(calls[index]?.headers.get("x-veslo-den-token"), "den-token");
       assert.equal(calls[index]?.headers.get("x-veslo-den-org-id"), "org-123");
     }
-    for (const index of [2, 3, 4, 6]) {
+    for (const index of [2, 3, 4]) {
+      assert.equal(calls[index]?.headers.has("x-veslo-den-api-base"), false);
       assert.equal(calls[index]?.headers.has("x-veslo-den-token"), false);
       assert.equal(calls[index]?.headers.has("x-veslo-den-org-id"), false);
     }

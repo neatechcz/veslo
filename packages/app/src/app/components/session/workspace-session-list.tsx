@@ -51,6 +51,7 @@ import {
   resolveSessionRowClickAction,
   requiredVisibleCountForExpandedSession,
   rowVisibleByExpansion,
+  sidebarSessionOpenTargetForRow,
   sessionChatLabel,
   sessionSidebarTitle,
   splitProjectGroupsForSidebar,
@@ -58,6 +59,7 @@ import {
   rootRowsForSessionTree,
   type FlatSessionRow,
   type ProjectSessionGroup,
+  type SidebarSessionOpenTarget,
 } from "./workspace-session-list-model";
 import {
   computeVisibleRowLoadCount,
@@ -107,6 +109,7 @@ type Props = {
   unreadSessionIds?: Record<string, true>;
   activeWorkspaceId: string;
   selectedSessionId: string | null;
+  selectedSessionKey?: string | null;
   allowSelectedParentExpansion: boolean;
   pendingSelectedSessionId?: string | null;
   pendingSelectedWorkspaceId?: string | null;
@@ -125,9 +128,9 @@ type Props = {
   showRemoteActions?: boolean;
   isPrivateWorkspacePath?: (folder: string | null | undefined) => boolean;
   onActivateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
-  onOpenSession: (workspaceId: string, sessionId: string) => void;
-  onDeleteSession?: (workspaceId: string, sessionId: string) => void;
-  onRenameSession?: (workspaceId: string, sessionId: string) => void;
+  onOpenSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => void;
+  onDeleteSession?: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => void;
+  onRenameSession?: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => void;
   onOpenPendingDirectoryDraftInWorkspace: (workspaceId: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
@@ -146,7 +149,7 @@ type Props = {
   onAddDirectorySession?: () => void;
   onLoadMoreWorkspaceSessions?: (workspaceId: string) => Promise<boolean> | boolean | Promise<void> | void;
   archivedSessionIds?: string[];
-  onArchiveSession?: (workspaceId: string, sessionId: string) => Promise<void> | void;
+  onArchiveSession?: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => Promise<void> | void;
   onUnarchiveSession?: (workspaceId: string, sessionId: string) => Promise<void> | void;
   onLoadedSessionPrefetchInterestChange?: LoadedSessionPrefetchInterestChangeHandler;
 };
@@ -155,8 +158,14 @@ type MenuState = {
   targetKind: "session" | "chat" | "project" | "recent" | "background";
   workspaceId?: string;
   sessionId?: string;
+  sessionTarget?: SidebarSessionOpenTarget;
   placement: SidebarMenuPlacement;
   selectedText: string;
+} | null;
+
+type LastClickedSessionTarget = {
+  rowKey: string;
+  sessionId: string;
 } | null;
 
 type MenuTargetKind = Exclude<NonNullable<MenuState>["targetKind"], "background" | "project">;
@@ -525,7 +534,7 @@ export default function WorkspaceSessionList(props: Props) {
   const [chatSidebarResizeDrag, setChatSidebarResizeDrag] = createSignal<ChatSidebarResizeState | null>(null);
   const [quickChatBusy, setQuickChatBusy] = createSignal(false);
   const [quickChatError, setQuickChatError] = createSignal<string | null>(null);
-  const [lastClickedSessionId, setLastClickedSessionId] = createSignal<string | null>(null);
+  const [lastClickedSessionTarget, setLastClickedSessionTarget] = createSignal<LastClickedSessionTarget>(null);
   const [sidebarMenuState, setSidebarMenuState] = createSignal<MenuState>(null);
   const [moreActionsMenuOpen, setMoreActionsMenuOpen] = createSignal(false);
   const [pendingArchiveConfirmationSessionId, setPendingArchiveConfirmationSessionId] = createSignal<string | null>(
@@ -606,20 +615,33 @@ export default function WorkspaceSessionList(props: Props) {
   const archivedSessionIdSet = createMemo(
     () => new Set(archivedSessionIds().map((sessionId) => sessionId.trim()).filter(Boolean)),
   );
-  const archiveKeyFor = (workspaceId: string, sessionId: string) =>
-    buildArchivedSidebarSessionKey({ workspaceId, sessionId });
-  const isSessionArchived = (workspaceId: string, sessionId: string) =>
-    archivedSessionIdSet().has(archiveKeyFor(workspaceId, sessionId));
-  const isArchiveConfirmationPending = (workspaceId: string, sessionId: string) =>
-    pendingArchiveConfirmationSessionId() === archiveKeyFor(workspaceId, sessionId);
-  const archiveActionTestId = (workspaceId: string, sessionId: string) =>
-    isArchiveConfirmationPending(workspaceId, sessionId)
+  const archiveKeyFor = (
+    workspaceId: string,
+    sessionId: string,
+    target?: SidebarSessionOpenTarget | null,
+  ) => buildArchivedSidebarSessionKey({ workspaceId, sessionId, directory: target?.directory });
+  const archiveKeyForRow = (row: FlatSessionRow) =>
+    archiveKeyFor(row.workspace.id, row.session.id, sidebarSessionOpenTargetForRow(row));
+  const isSessionArchived = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget | null) =>
+    archivedSessionIdSet().has(archiveKeyFor(workspaceId, sessionId, target));
+  const isRowArchived = (row: FlatSessionRow) => archivedSessionIdSet().has(archiveKeyForRow(row));
+  const isArchiveConfirmationPending = (
+    workspaceId: string,
+    sessionId: string,
+    target?: SidebarSessionOpenTarget | null,
+  ) => pendingArchiveConfirmationSessionId() === archiveKeyFor(workspaceId, sessionId, target);
+  const archiveActionTestId = (
+    workspaceId: string,
+    sessionId: string,
+    target?: SidebarSessionOpenTarget | null,
+  ) =>
+    isArchiveConfirmationPending(workspaceId, sessionId, target)
       ? "session-sidebar-archive-confirm-button"
-      : isSessionArchived(workspaceId, sessionId)
+      : isSessionArchived(workspaceId, sessionId, target)
       ? "session-sidebar-unarchive-button"
       : "session-sidebar-archive-button";
   const sessionHoverActionsSuspended = createMemo(() => Boolean(props.pendingSelectedSessionId?.trim()));
-  const shouldShowSessionRow = (row: FlatSessionRow) => !isSessionArchived(row.workspace.id, row.session.id);
+  const shouldShowSessionRow = (row: FlatSessionRow) => !isRowArchived(row);
 
   const recentRows = createMemo<FlatSessionRow[]>(() =>
     buildRecentRows(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
@@ -1039,7 +1061,12 @@ export default function WorkspaceSessionList(props: Props) {
     return color;
   };
 
-  const isRowSelected = (workspaceId: string, sessionId: string) => {
+  const isRowSelected = (row: FlatSessionRow) => {
+    const selectedSessionKey = props.selectedSessionKey?.trim() ?? "";
+    if (selectedSessionKey) return selectedSessionKey === row.rowKey;
+
+    const workspaceId = row.workspace.id;
+    const sessionId = row.session.id;
     const selectedSessionId = props.selectedSessionId?.trim() ?? "";
     if (selectedSessionId && selectedSessionId === sessionId) return true;
 
@@ -1105,10 +1132,12 @@ export default function WorkspaceSessionList(props: Props) {
     row: FlatSessionRow,
     hasChildren: (rowKey: string) => boolean,
   ) => {
-    setLastClickedSessionId(row.session.id);
+    setLastClickedSessionTarget({ rowKey: row.rowKey, sessionId: row.session.id });
     const action = resolveSessionRowClickAction({
       selectedSessionId: props.selectedSessionId,
       clickedSessionId: row.session.id,
+      selectedRowKey: props.selectedSessionKey,
+      clickedRowKey: row.rowKey,
       hasChildren: hasChildren(row.rowKey),
       allowSelectedParentExpansion: props.allowSelectedParentExpansion,
     });
@@ -1117,7 +1146,7 @@ export default function WorkspaceSessionList(props: Props) {
       toggleExpandedParentSession(row);
     }
     if (action.openSession) {
-      props.onOpenSession(row.workspace.id, row.session.id);
+      props.onOpenSession(row.workspace.id, row.session.id, sidebarSessionOpenTargetForRow(row));
     }
   };
 
@@ -1152,28 +1181,33 @@ export default function WorkspaceSessionList(props: Props) {
     handleSessionRowClick(row, hasChildren);
   };
 
-  const handleSessionArchiveAction = async (event: MouseEvent, workspaceId: string, sessionId: string) => {
+  const handleSessionArchiveAction = async (
+    event: MouseEvent,
+    workspaceId: string,
+    sessionId: string,
+    target?: SidebarSessionOpenTarget | null,
+  ) => {
     event.stopPropagation();
     const targetWorkspaceId = workspaceId.trim();
     const id = sessionId.trim();
     if (!targetWorkspaceId || !id) return;
-    const archived = isSessionArchived(targetWorkspaceId, id);
+    const archived = isSessionArchived(targetWorkspaceId, id, target);
 
     if (archived) {
       await Promise.resolve(props.onUnarchiveSession?.(targetWorkspaceId, id));
       return;
     }
 
-    if (!isArchiveConfirmationPending(targetWorkspaceId, id)) {
+    if (!isArchiveConfirmationPending(targetWorkspaceId, id, target)) {
       if (event.currentTarget instanceof HTMLButtonElement) {
         pendingArchiveConfirmButtonRef = event.currentTarget;
       }
-      setPendingArchiveConfirmationSessionId(archiveKeyFor(targetWorkspaceId, id));
+      setPendingArchiveConfirmationSessionId(archiveKeyFor(targetWorkspaceId, id, target));
       return;
     }
 
     setPendingArchiveConfirmationSessionId(null);
-    await Promise.resolve(props.onArchiveSession?.(targetWorkspaceId, id));
+    await Promise.resolve(props.onArchiveSession?.(targetWorkspaceId, id, target ?? undefined));
   };
 
   const selectedTextForMenuEvent = (event: MouseEvent) => {
@@ -1207,6 +1241,7 @@ export default function WorkspaceSessionList(props: Props) {
       targetKind,
       workspaceId: row.workspace.id,
       sessionId: row.session.id,
+      sessionTarget: sidebarSessionOpenTargetForRow(row),
       placement: { x: event.clientX, y: event.clientY },
       selectedText: selectedTextForMenuEvent(event),
     });
@@ -1516,9 +1551,9 @@ export default function WorkspaceSessionList(props: Props) {
 
   createEffect(() => {
     const validArchiveKeys = new Set(
-      projectRowsLoaded().map((row) => archiveKeyFor(row.workspace.id, row.session.id)),
+      projectRowsLoaded().map((row) => archiveKeyForRow(row)),
     );
-    for (const row of recentRowsLoaded()) validArchiveKeys.add(archiveKeyFor(row.workspace.id, row.session.id));
+    for (const row of recentRowsLoaded()) validArchiveKeys.add(archiveKeyForRow(row));
     const validSessionIds = new Set(
       projectRowsLoaded().flatMap((row) => [row.session.id]),
     );
@@ -1677,6 +1712,7 @@ export default function WorkspaceSessionList(props: Props) {
     const loadedTopLevelRows = currentRows
       .filter((row) => row.nestingLevel === 0)
       .map((row) => ({
+        rowKey: row.rowKey,
         workspaceId: row.workspace.id,
         sessionId: row.session.id,
         directory: row.session.directory ?? row.projectRoot,
@@ -1685,14 +1721,18 @@ export default function WorkspaceSessionList(props: Props) {
     const expandedSubagentRows = currentRows
       .filter((row) => row.nestingLevel > 0)
       .map((row) => ({
+        rowKey: row.rowKey,
         workspaceId: row.workspace.id,
         sessionId: row.session.id,
         directory: row.session.directory ?? row.projectRoot,
         updatedAt: row.updatedAt,
       }));
+    const lastClicked = lastClickedSessionTarget();
     const loadedInterest = deriveLoadedSidebarPrefetchInterest({
       selectedSessionId: props.selectedSessionId?.trim() || null,
-      clickedSessionId: lastClickedSessionId(),
+      selectedRowKey: props.selectedSessionKey?.trim() || null,
+      clickedSessionId: lastClicked?.sessionId ?? null,
+      clickedRowKey: lastClicked?.rowKey ?? null,
       loadedTopLevelRows,
       expandedSubagentRows,
     });
@@ -1705,6 +1745,10 @@ export default function WorkspaceSessionList(props: Props) {
         loadedTopLevelSessionIds: [],
         expandedSubagentSessionIds: [],
         sessionDirectoriesById: {},
+        clickedSession: null,
+        selectedSession: null,
+        loadedTopLevelSessions: [],
+        expandedSubagentSessions: [],
       };
       const signature = JSON.stringify(interest);
       if (lastReportedLoadedInterestByWorkspace.get(workspaceId) === signature) continue;
@@ -1721,6 +1765,10 @@ export default function WorkspaceSessionList(props: Props) {
         loadedTopLevelSessionIds: [],
         expandedSubagentSessionIds: [],
         sessionDirectoriesById: {},
+        clickedSession: null,
+        selectedSession: null,
+        loadedTopLevelSessions: [],
+        expandedSubagentSessions: [],
       });
     }
   });
@@ -1734,6 +1782,10 @@ export default function WorkspaceSessionList(props: Props) {
         loadedTopLevelSessionIds: [],
         expandedSubagentSessionIds: [],
         sessionDirectoriesById: {},
+        clickedSession: null,
+        selectedSession: null,
+        loadedTopLevelSessions: [],
+        expandedSubagentSessions: [],
       });
     }
     lastReportedLoadedInterestByWorkspace.clear();
@@ -1809,8 +1861,11 @@ export default function WorkspaceSessionList(props: Props) {
   };
 
   const rowForcesProjectOpen = (row: FlatSessionRow) => {
+    const selectedSessionKey = props.selectedSessionKey?.trim() ?? "";
+    if (selectedSessionKey && row.rowKey === selectedSessionKey) return true;
+
     const selectedSessionId = props.selectedSessionId?.trim() ?? "";
-    if (selectedSessionId && row.session.id === selectedSessionId) return true;
+    if (!selectedSessionKey && selectedSessionId && row.session.id === selectedSessionId) return true;
 
     const pendingSessionId = props.pendingSelectedSessionId?.trim() ?? "";
     if (pendingSessionId && row.session.id === pendingSessionId) {
@@ -1831,16 +1886,20 @@ export default function WorkspaceSessionList(props: Props) {
   const workspaceTypeFor = (workspace: WorkspaceInfo): "local" | "remote" =>
     workspace.workspaceType === "remote" ? "remote" : "local";
 
-  const toggleSessionArchiveFromMenu = (workspaceId: string, sessionId: string) => {
+  const toggleSessionArchiveFromMenu = (
+    workspaceId: string,
+    sessionId: string,
+    target?: SidebarSessionOpenTarget | null,
+  ) => {
     const targetWorkspaceId = workspaceId.trim();
     const id = sessionId.trim();
     if (!targetWorkspaceId || !id) return;
     setPendingArchiveConfirmationSessionId(null);
-    if (isSessionArchived(targetWorkspaceId, id)) {
+    if (isSessionArchived(targetWorkspaceId, id, target)) {
       void Promise.resolve(props.onUnarchiveSession?.(targetWorkspaceId, id));
       return;
     }
-    void Promise.resolve(props.onArchiveSession?.(targetWorkspaceId, id));
+    void Promise.resolve(props.onArchiveSession?.(targetWorkspaceId, id, target ?? undefined));
   };
 
   const projectSelectorValue = (projectKey: string) => {
@@ -1881,6 +1940,7 @@ export default function WorkspaceSessionList(props: Props) {
 
     const workspaceId = state.workspaceId?.trim() ?? "";
     const sessionId = state.sessionId?.trim() ?? "";
+    const sessionTarget = state.sessionTarget;
     const workspace = workspaceForId(workspaceId);
     if (!workspace) return [];
 
@@ -1906,12 +1966,12 @@ export default function WorkspaceSessionList(props: Props) {
     if (!sessionId) return [];
 
     const baseSessionActions = {
-      archived: isSessionArchived(workspaceId, sessionId),
+      archived: isSessionArchived(workspaceId, sessionId, sessionTarget),
       selectedText: state.selectedText,
       onCopyText: (text: string) => void copyText(text),
-      onRename: () => props.onRenameSession?.(workspaceId, sessionId),
-      onArchiveToggle: () => toggleSessionArchiveFromMenu(workspaceId, sessionId),
-      onDelete: props.onDeleteSession ? () => props.onDeleteSession?.(workspaceId, sessionId) : undefined,
+      onRename: () => props.onRenameSession?.(workspaceId, sessionId, sessionTarget),
+      onArchiveToggle: () => toggleSessionArchiveFromMenu(workspaceId, sessionId, sessionTarget),
+      onDelete: props.onDeleteSession ? () => props.onDeleteSession?.(workspaceId, sessionId, sessionTarget) : undefined,
     };
 
     if (state.targetKind === "chat") {
@@ -1950,7 +2010,8 @@ export default function WorkspaceSessionList(props: Props) {
   ) => {
     const workspace = () => row.workspace;
     const session = () => row.session;
-    const isSelected = () => isRowSelected(workspace().id, session().id);
+    const sessionTarget = () => sidebarSessionOpenTargetForRow(row);
+    const isSelected = () => isRowSelected(row);
     const isSessionActive = () =>
       rowSessionStatus(row) !== "idle" ||
       isBusyRowSession(row);
@@ -1963,7 +2024,8 @@ export default function WorkspaceSessionList(props: Props) {
         : sessionLabelParts(row);
     };
     const labelColor = () => labelOverride() ? "" : sessionLabelColor(row);
-    const archiveConfirmationPending = () => isArchiveConfirmationPending(row.workspace.id, row.session.id);
+    const archiveConfirmationPending = () =>
+      isArchiveConfirmationPending(row.workspace.id, row.session.id, sessionTarget());
     const targetKind: MenuTargetKind = options.showWorkspaceMenu === false ? "chat" : "session";
 
     return (
@@ -2029,21 +2091,21 @@ export default function WorkspaceSessionList(props: Props) {
         >
           <button
             type="button"
-            data-testid={archiveActionTestId(row.workspace.id, row.session.id)}
+            data-testid={archiveActionTestId(row.workspace.id, row.session.id, sessionTarget())}
             data-session-id={row.session.id}
             data-workspace-id={row.workspace.id}
             class={archiveConfirmationPending()
               ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
               : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
-            onClick={(event) => handleSessionArchiveAction(event, row.workspace.id, row.session.id)}
+            onClick={(event) => handleSessionArchiveAction(event, row.workspace.id, row.session.id, sessionTarget())}
             aria-label={archiveConfirmationPending()
               ? tr("sidebar.archive_confirm")
-              : isSessionArchived(row.workspace.id, row.session.id)
+              : isSessionArchived(row.workspace.id, row.session.id, sessionTarget())
               ? tr("sidebar.unarchive_session")
               : tr("sidebar.archive_session")}
             title={archiveConfirmationPending()
               ? tr("sidebar.archive_confirm")
-              : isSessionArchived(row.workspace.id, row.session.id)
+              : isSessionArchived(row.workspace.id, row.session.id, sessionTarget())
               ? tr("sidebar.unarchive_session")
               : tr("sidebar.archive_session")}
             ref={(el) => {
@@ -2067,7 +2129,8 @@ export default function WorkspaceSessionList(props: Props) {
   ) => {
     const workspace = () => row.workspace;
     const session = () => row.session;
-    const isSelected = () => isRowSelected(workspace().id, session().id);
+    const sessionTarget = () => sidebarSessionOpenTargetForRow(row);
+    const isSelected = () => isRowSelected(row);
     const isSessionActive = () =>
       rowSessionStatus(row) !== "idle" ||
       isBusyRowSession(row);
@@ -2076,7 +2139,8 @@ export default function WorkspaceSessionList(props: Props) {
     const taskLoadError = () => taskLoadErrorFor(workspace(), row.error);
     const label = () => sessionLabelParts(row);
     const labelColor = () => sessionLabelColor(row);
-    const archiveConfirmationPending = () => isArchiveConfirmationPending(workspace().id, session().id);
+    const archiveConfirmationPending = () =>
+      isArchiveConfirmationPending(workspace().id, session().id, sessionTarget());
 
     return (
       <div
@@ -2168,21 +2232,21 @@ export default function WorkspaceSessionList(props: Props) {
         >
           <button
             type="button"
-            data-testid={archiveActionTestId(workspace().id, session().id)}
+            data-testid={archiveActionTestId(workspace().id, session().id, sessionTarget())}
             data-session-id={session().id}
             data-workspace-id={workspace().id}
             class={archiveConfirmationPending()
               ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
               : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
-            onClick={(event) => handleSessionArchiveAction(event, workspace().id, session().id)}
+            onClick={(event) => handleSessionArchiveAction(event, workspace().id, session().id, sessionTarget())}
             aria-label={archiveConfirmationPending()
               ? tr("sidebar.archive_confirm")
-              : isSessionArchived(workspace().id, session().id)
+              : isSessionArchived(workspace().id, session().id, sessionTarget())
               ? tr("sidebar.unarchive_session")
               : tr("sidebar.archive_session")}
             title={archiveConfirmationPending()
               ? tr("sidebar.archive_confirm")
-              : isSessionArchived(workspace().id, session().id)
+              : isSessionArchived(workspace().id, session().id, sessionTarget())
               ? tr("sidebar.unarchive_session")
               : tr("sidebar.archive_session")}
             ref={(el) => {

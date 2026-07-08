@@ -7,6 +7,12 @@ import type { McpServerEntry, McpStatusMap } from "../../types.js";
 const remoteEntry: McpServerEntry = {
   name: "github",
   source: "config.project",
+  owner: {
+    kind: "workspace",
+    id: "ws-1",
+    label: "Workspace",
+    root: "/repo",
+  },
   config: {
     type: "remote",
     url: "https://mcp.example/github",

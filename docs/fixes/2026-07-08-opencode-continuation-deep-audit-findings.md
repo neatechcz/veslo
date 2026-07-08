@@ -510,3 +510,305 @@ Results:
 - app typecheck: passed,
 - app focused workflow/files/updater tests: 76 passed,
 - server conversation submit tests: 57 passed.
+
+## Display Typing Follow-up
+
+The next weak layer after send/files was transcript display. Several display
+models were reading dynamic OpenCode `Part` objects through local `as any`
+casts. Those reads are now routed through a shared tolerant accessor:
+
+- `partRecord(...)`
+- `partStringField(...)`
+- `partObjectField(...)`
+- `partText(...)`
+- `toolNameFromPart(...)`
+- `toolStateFromPart(...)`
+- `toolInputFromPart(...)`
+
+Changed surfaces:
+
+- media evidence extraction for analyzed/created images,
+- timeline detail modeling,
+- tool step summaries and legacy artifact derivation,
+- message grouping exploration-tool detection,
+- message-list latest step and message identity helpers,
+- part-view rendering for tool diagnostics, structured tool images, inline image
+  file parts, and step reason labels.
+
+This keeps the dynamic OpenCode boundary permissive, but centralizes the
+unknown-to-typed narrowing instead of scattering `as any` through rendering
+logic.
+
+One regression was caught during the refactor: timeline reasoning/text parts can
+also carry `state.status`, not only tool parts. The accessor now supports
+generic object-field reads, and the existing stale-running reasoning test covers
+that behavior.
+
+The part-view image path remains permissive for file sends and tool media:
+string `url`, `src`, `data`, and string `source` values are still considered,
+and `data + mediaType` still materializes a base64 data URL.
+
+### Verification
+
+```powershell
+pnpm --filter @neatech/veslo-ui typecheck
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/components/session/media-evidence-model.test.ts src/app/tests/components/session/timeline-detail-model.test.ts src/app/tests/utils/tools.test.ts src/app/tests/components/session/message-list-hybrid-timeline.test.ts src/app/tests/components/session/message-list-path-layout.test.ts
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/components/session/message-list-hybrid-timeline.test.ts src/app/tests/components/session/message-list-path-layout.test.ts src/app/tests/components/session/message-list-copy-affordance.test.ts src/app/tests/components/session/message-list-edit-user-message.test.ts src/app/tests/components/session/message-list-subagent-decorations.test.ts
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/components/part-view-code-copy.test.ts src/app/tests/components/part-view.path-links.test.ts
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/components/session/media-evidence-model.test.ts src/app/tests/components/session/timeline-detail-model.test.ts src/app/tests/utils/tools.test.ts src/app/tests/components/session/message-list-hybrid-timeline.test.ts src/app/tests/components/session/message-list-path-layout.test.ts src/app/tests/components/session/message-list-copy-affordance.test.ts src/app/tests/components/session/message-list-edit-user-message.test.ts src/app/tests/components/session/message-list-subagent-decorations.test.ts src/app/tests/components/part-view-code-copy.test.ts src/app/tests/components/part-view.path-links.test.ts
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/utils/messages-grouping.test.ts src/app/tests/components/session/message-list-hybrid-timeline.test.ts
+```
+
+Results:
+
+- display/timeline/tool focused tests: 103 passed,
+- message-list focused tests: 26 passed,
+- part-view focused tests: 15 passed,
+- display/timeline/tool/message-list/part-view combined tests: 123 passed,
+- message grouping focused tests: 23 passed,
+- app typecheck: passed.
+
+## Runtime Debug and Transport Typing Follow-up
+
+The next pass covered runtime/security-adjacent helpers that were still using
+explicit `any` while handling intentionally loose browser or runtime data.
+
+Changed surfaces:
+
+- `workspace-runtime-debug-probe.ts` now treats sampled runtime snapshots as
+  `Record<string, unknown>` and narrows each nested section before comparing
+  app, Tauri, server, orchestrator, routing, and session scope values.
+- `utils/paths.ts` now uses local `TauriWindow`, `TauriGlobal`, and
+  `NavigatorWithUserAgentData` shapes for desktop/browser platform detection
+  instead of casting browser globals to `any`.
+- `veslo-server/transport.ts` now parses binary-request error bodies as
+  `unknown` and extracts `code`, `message`, and `details` through an object
+  narrowing helper.
+
+This keeps the existing tolerant behavior: malformed or partial runtime
+snapshots still degrade into empty records, desktop detection still supports
+Tauri internals, `window.isTauri`, `globalThis.isTauri`, and
+`tauri.localhost`, and transport errors still preserve server-provided
+`details`.
+
+### Verification
+
+```powershell
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/workspace-runtime-debug-probe.test.ts
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/utils/paths.test.ts src/app/tests/utils/paths-tauri-runtime.test.ts src/app/tests/utils/paths-private-workspace.test.ts src/app/tests/utils/session-directory-scoping.test.ts src/app/tests/context/workspace-runtime-debug-probe.test.ts
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/lib/veslo-server.test.ts src/app/tests/lib/veslo-server-request-broker.test.ts
+pnpm --filter @neatech/veslo-ui typecheck
+```
+
+Results:
+
+- runtime debug probe focused tests: 3 passed,
+- paths/runtime debug focused tests: 23 passed,
+- Veslo server client and request broker tests: 65 passed,
+- app typecheck: passed.
+
+## Shell, Server, and Orchestrator Typing Follow-up
+
+The next pass covered small runtime boundary helpers outside the transcript
+display layer.
+
+Changed surfaces:
+
+- `app-shell-environment.ts` now models the shell window/document event targets
+  with local event maps instead of `event: any` listeners.
+- `orchestrator/security.ts` now sanitizes runtime payloads through
+  `Record<string, unknown>` narrowing before redacting OpenCode and Veslo
+  secrets.
+- `server.ts` now parses OpenCode JSON responses as `unknown`. The automation
+  executor explicitly narrows session-like responses before reading `id`.
+
+The server typecheck caught the useful edge here: automation code was relying on
+an untyped OpenCode JSON response to expose `id`. That read is now fail-closed
+through `isRecordLike(...)`; missing or malformed session ids still produce the
+existing `opencode_failed` error.
+
+### Verification
+
+```powershell
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/app-shell-environment.test.ts
+pnpm --filter @neatech/veslo-ui typecheck
+pnpm --filter veslo-orchestrator exec bun test src/tests/security.test.ts
+pnpm --filter veslo-orchestrator typecheck
+pnpm --filter veslo-server exec bun test src/tests/server-conversations.test.ts src/tests/server.ai-gateway.test.ts
+pnpm --filter veslo-server typecheck
+```
+
+Results:
+
+- app shell environment tests: 3 passed,
+- app typecheck: passed,
+- orchestrator security test: 1 passed,
+- orchestrator typecheck: passed,
+- server conversation and AI gateway tests: 67 passed,
+- server typecheck: passed.
+
+## Server Boundary Typing Follow-up
+
+The next server-side pass covered small dynamic boundaries that still used
+explicit `any`, without changing route behavior.
+
+Changed surfaces:
+
+- `skill-hub.ts` now fetches GitHub JSON as `unknown` and narrows directory and
+  tree entries before reading `type`, `name`, `path`, or `mode`.
+- `routes/soul.ts` now has concrete dependency input/output types for
+  `soulReadPayload(...)` and `soulSummary(...)`, including Soul summaries and
+  pending edits.
+- `routes/file-sessions.ts` now wraps `Bun.file(...)` behind a local typed
+  runtime helper instead of casting `Bun` to `any` at each download response.
+
+The Soul route typecheck initially caught that `soulReadPayload(...)` could not
+truthfully accept a model with `summary: unknown`. The route dependency model is
+now typed to the same summary shape produced by the controller.
+
+### Verification
+
+```powershell
+pnpm --filter veslo-server exec bun test src/tests/skill-hub.test.ts src/tests/skill-metadata.test.ts
+pnpm --filter veslo-server exec bun test src/tests/soul-controller.test.ts src/tests/soul-routes.test.ts
+pnpm --filter veslo-server exec bun test src/tests/file-sessions.test.ts src/tests/server.file-sessions-routes.test.ts
+pnpm --filter veslo-server typecheck
+```
+
+Results:
+
+- skill hub and metadata tests: 4 passed,
+- Soul controller and route tests: 24 passed,
+- file session route tests: 3 passed,
+- server typecheck: passed.
+
+## Orchestrator CLI JSON Typing Follow-up
+
+The next orchestrator pass covered the shared CLI `fetchJson(...)` helper. This
+was still returning `any`, so malformed router/server responses could flow
+through workspace, daemon, verification, and TUI identity commands without a
+typed checkpoint.
+
+Changed surfaces:
+
+- `cli.ts` now parses `fetchJson(...)` responses as `unknown` and extracts HTTP
+  error messages through a record guard.
+- Veslo server verification now narrows `/health` and `/workspaces` responses
+  before reading `version`, `items`, workspace paths, and OpenCode connection
+  fields.
+- `runChecks(...)` now fails explicitly if the workspace list is missing a
+  string `id`.
+- workspace and instance CLI commands now spread only narrowed
+  `Record<string, unknown>` responses.
+- TUI router identity callbacks now map response items into
+  `TuiRouterIdentityItem` instead of returning arbitrary arrays from the
+  router payload.
+
+The typecheck caught the useful edge here: once `requestRouter(...)` returned
+`unknown`, workspace and instance command output could no longer spread the raw
+result. Those call sites now keep the same output behavior for object payloads
+while fail-closing non-object payloads into `{ ok: true }`.
+
+### Verification
+
+```powershell
+pnpm --filter veslo-orchestrator typecheck
+pnpm --filter veslo-orchestrator exec bun test src/tests/router-proxy.test.ts src/tests/workspace-id-mapping.test.ts src/tests/security.test.ts
+```
+
+Results:
+
+- orchestrator typecheck: passed,
+- router proxy, workspace id mapping, and security tests: 31 passed.
+
+## Composer Fuzzysort Typing Follow-up
+
+The next app pass covered the composer mention and slash-command pickers. Both
+paths were mapping `fuzzysort.go(..., { keys })` results through
+`(entry: any) => entry.obj`.
+
+Changed surfaces:
+
+- `composer.tsx` now calls `fuzzysort.go<MentionOption>(...)` for file mention
+  results.
+- `composer.tsx` now calls `fuzzysort.go<SlashCommandOption>(...)` for slash
+  command results.
+
+This keeps the same runtime behavior while letting TypeScript track that
+`entry.obj` is the original `MentionOption` or `SlashCommandOption`.
+
+### Verification
+
+```powershell
+pnpm --filter @neatech/veslo-ui typecheck
+pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/components/session/composer-send-intent.test.ts src/app/tests/components/session/composer-screenshot-staging-regression.test.ts src/app/tests/components/session/composer-docx-delegation.test.ts
+```
+
+Results:
+
+- app typecheck: passed,
+- composer contract test attempt: 14 passed, 4 failed.
+
+The four failures were not caused by the `fuzzysort` typing change. The diff in
+`composer.tsx` only changes the two `fuzzysort.go(...)` calls. The failing
+assertions are stale regex contracts around the expanded `ComposerSendOptions`
+shape and attachment-routing validation code in `session-send-workflow.ts`.
+
+## OpenCode Router Route Typing Follow-up
+
+The next server pass covered the OpenCode Router workspace routes. This file is
+security-adjacent because it reads and writes Telegram/Slack identity config and
+also consumes live payloads from the local router health server.
+
+Changed surfaces:
+
+- `opencode-router.ts` now uses shared `isPlainRecord`, `arrayField`,
+  `recordArrayField`, and `stringField` helpers for dynamic JSON/config reads.
+- live router payloads now read `items` from narrowed records instead of
+  `(payload as any).items`.
+- persisted Telegram `bots` and Slack `apps` arrays now filter object entries
+  through `recordArrayField(...)` before reading identity fields.
+- token removal no longer casts mutable records to `any`; it deletes known keys
+  from `Record<string, unknown>` objects directly.
+- Telegram `getMe` JSON is parsed as `unknown` and narrowed before reading
+  `ok`, `result.id`, `username`, and `first_name`.
+
+The targeted regression test writes a mixed valid/invalid `opencode-router.json`
+with Telegram and Slack identities, forces the route through the config fallback
+path, and verifies that only the workspace-scoped normalized entries are
+returned.
+
+### Verification
+
+```powershell
+pnpm --filter veslo-server exec bun test src/tests/server.opencode-router-routes.test.ts
+pnpm --filter veslo-server typecheck
+```
+
+Results:
+
+- OpenCode Router route tests: 2 passed,
+- server typecheck: passed.
+
+## App Runtime Debug Snapshot Typing Follow-up
+
+The next app pass covered the workspace runtime debug snapshot assembled in
+`app.tsx`.
+
+Changed surface:
+
+- `app.tsx` now builds the debug snapshot as `Record<string, unknown>` instead
+  of `Record<string, any>`.
+
+This keeps the existing nested snapshot payload intact while preventing the
+debug probe boundary from erasing type information for downstream reads.
+
+### Verification
+
+```powershell
+pnpm --filter @neatech/veslo-ui typecheck
+```
+
+Results:
+
+- app typecheck: passed.

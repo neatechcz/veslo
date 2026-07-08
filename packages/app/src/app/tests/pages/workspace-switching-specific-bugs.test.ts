@@ -76,7 +76,7 @@ test("session Soul navigation does not switch views after workspace activation f
 test("pending sidebar session rows wait for workspace activation before changing the visible session scope", () => {
   const openSessionFromListSource = sourceBetween(
     sessionSource,
-    "  const openSessionFromList = (workspaceId: string, sessionId: string) => {",
+    "  const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {",
     "  const resolveVesloWorkspaceId",
   );
 

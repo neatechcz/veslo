@@ -1437,11 +1437,15 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           return localQueuedResult("local_queue_existing_append");
         }
 
-        case "append-to-running-queue": {
+        case "send-running-server-queue": {
           const sessionKey = deps.sessionKeys.currentSessionQueueKey();
-          deps.queue.appendDraftToCurrentQueue(draft);
-          void controller.drainNextQueuedDraft("queue-drain", sessionKey);
-          return localQueuedResult("local_queue_running_append");
+          return controller.sendPromptImmediate(draft, {
+            reason: "queue-drain",
+            expectedSessionKey: sessionKey,
+            sendTraceId: options.sendTraceId,
+            source: options.source,
+            implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
+          });
         }
 
         case "send-now": {
@@ -1705,7 +1709,7 @@ export type SendPromptAction =
   | { kind: "replace-transcript-message"; messageId: string }
   | { kind: "append-to-paused-queue-and-drain" }
   | { kind: "append-to-existing-queue-and-drain-if-idle" }
-  | { kind: "append-to-running-queue" }
+  | { kind: "send-running-server-queue" }
   | { kind: "send-now" }
   | { kind: "send-normal" };
 
@@ -1740,7 +1744,7 @@ export const resolveSendPromptAction = ({
 
   if (queuePaused && !sendNow) return { kind: "append-to-paused-queue-and-drain" };
   if (queuedDraftCount > 0 && !sendNow) return { kind: "append-to-existing-queue-and-drain-if-idle" };
-  if (runVisible && !sendNow) return { kind: "append-to-running-queue" };
+  if (runVisible && !sendNow) return { kind: "send-running-server-queue" };
   if (sendNow) return { kind: "send-now" };
   return { kind: "send-normal" };
 };

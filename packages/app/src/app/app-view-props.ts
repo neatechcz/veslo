@@ -11,6 +11,7 @@ import type { OnboardingViewProps } from "./pages/onboarding";
 import type { DashboardViewProps } from "./pages/dashboard";
 import type { SessionViewProps } from "./pages/session";
 import type { VesloServerStatus } from "./lib/veslo-server";
+import type { SidebarSessionOpenTarget } from "./components/session/workspace-session-list-model";
 
 export type DashboardViewAdapterProps = Omit<DashboardViewProps, "onOpenFeedback">;
 export type SessionViewAdapterProps = Omit<SessionViewProps, "onOpenFeedback">;
@@ -647,6 +648,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
       activeWorkspaceDisplay: activeWorkspaceDisplay(),
       workspaces: workspaceStore.workspaces(),
       activeWorkspaceId: workspaceStore.activeWorkspaceId(),
+      activeUiConversationRef: activeUiConversationRef(),
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
       workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
       readyEngineWorkspaceIds: readyEngineWorkspaceIds(),
@@ -679,8 +681,8 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
       archivedSessionIds: archivedSessionIds(),
       sessionStatusById: activeSessionStatusById(),
       busySessionByWorkspaceId: busySessionByWorkspaceId(),
-      archiveSession: (workspaceId: string, sessionId: string) =>
-        archiveSidebarSessionAndClearActive(workspaceId, sessionId).catch((error: unknown) => {
+      archiveSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) =>
+        archiveSidebarSessionAndClearActive(workspaceId, sessionId, target).catch((error: unknown) => {
           reportError(error, "sessionArchives.archiveSidebar");
           setError(error instanceof Error ? error.message : safeStringify(error));
         }),
@@ -873,7 +875,8 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
       quickConnect: localizedMcpQuickConnect(),
       hubMcpCards: hubMcpCards(),
       hubMcpStatus: hubMcpStatus(),
-      refreshHubMcp: () => refreshHubMcp().catch((e: unknown) => reportError(e, "skills.refreshHubMcp")),
+      refreshHubMcp: (options?: { force?: boolean }) =>
+        refreshHubMcp(options).catch((e: unknown) => reportError(e, "skills.refreshHubMcp")),
       installHubMcp: (name: string) => installHubMcpAndActivate(name).catch((e: unknown) => {
         reportError(e, "skills.installHubMcp");
         return { ok: false, message: e instanceof Error ? e.message : safeStringify(e) };
@@ -1042,8 +1045,8 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     workspaceSessionPagingById: workspaceSessionPagingById(),
     subagentDecorationsBySessionId: subagentDecorationsBySessionId(),
     archivedSessionIds: archivedSessionIds(),
-    archiveSession: (workspaceId: string, sessionId: string) =>
-      archiveSidebarSessionAndClearActive(workspaceId, sessionId).catch((error: unknown) => {
+    archiveSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) =>
+      archiveSidebarSessionAndClearActive(workspaceId, sessionId, target).catch((error: unknown) => {
         reportError(error, "sessionArchives.archiveSidebar");
         setError(error instanceof Error ? error.message : safeStringify(error));
       }),

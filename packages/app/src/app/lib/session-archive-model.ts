@@ -56,11 +56,13 @@ export function buildArchivedSidebarSessionKey(input: {
   workspaceId?: string | null;
   workspaceIdentity?: string | null;
   sessionId?: string | null;
+  directory?: string | null;
 }) {
   const workspaceScope = input.workspaceId?.trim() || input.workspaceIdentity?.trim() || "";
   const sessionId = input.sessionId?.trim() ?? "";
+  const directory = normalizeDirectoryPath(input.directory ?? "");
   if (!workspaceScope || !sessionId) return sessionId;
-  return [workspaceScope, sessionId].join(ARCHIVED_SIDEBAR_SESSION_KEY_SEPARATOR);
+  return [workspaceScope, sessionId, directory].filter(Boolean).join(ARCHIVED_SIDEBAR_SESSION_KEY_SEPARATOR);
 }
 
 export function archivedSidebarSessionKeyFromRecord(

@@ -187,12 +187,21 @@ export type SidebarSubagentDecoration = {
   color: string;
 };
 
+export type LoadedSidebarPrefetchSessionRef = {
+  sessionId: string;
+  directory?: string | null;
+};
+
 export type LoadedSidebarPrefetchInterest = {
   clickedSessionId: string | null;
   selectedSessionId: string | null;
   loadedTopLevelSessionIds: string[];
   expandedSubagentSessionIds: string[];
   sessionDirectoriesById: Record<string, string>;
+  clickedSession?: LoadedSidebarPrefetchSessionRef | null;
+  selectedSession?: LoadedSidebarPrefetchSessionRef | null;
+  loadedTopLevelSessions?: LoadedSidebarPrefetchSessionRef[];
+  expandedSubagentSessions?: LoadedSidebarPrefetchSessionRef[];
 };
 
 export type LoadedSessionPrefetchInterestChangeHandler = (
@@ -604,6 +613,17 @@ export type HubMcpAuthorization = {
   disconnectPath: string;
 };
 
+export type HubMcpConnectionStatus = {
+  connectorId: string;
+  name?: string;
+  connected: boolean;
+  state: string;
+  scopes?: string[];
+  connectedAt: string | null;
+  revokedAt: string | null;
+  accessTokenExpiresAt: string | null;
+};
+
 export type HubMcpItem = {
   id: string;
   name: string;
@@ -628,6 +648,7 @@ export type HubMcpItem = {
     id: string;
     group?: string;
   };
+  connection?: HubMcpConnectionStatus;
 };
 
 export type HubMcpCard = {
@@ -645,6 +666,7 @@ export type HubMcpCard = {
     group?: string;
   };
   source?: HubMcpItem["source"];
+  connection?: HubMcpConnectionStatus;
 };
 
 export type PluginInstallStep = {
@@ -715,6 +737,7 @@ export type McpServerEntry = {
   name: string;
   config: McpServerConfig;
   source?: "config.project" | "config.global" | "config.remote";
+  owner?: ResourceOwner;
   disabledByTools?: boolean;
 };
 
