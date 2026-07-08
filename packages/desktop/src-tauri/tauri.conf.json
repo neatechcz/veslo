@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Veslo by Neatech",
-  "version": "2026.7.4",
+  "version": "2026.7.5",
   "identifier": "com.neatech.veslo",
   "build": {
     "beforeDevCommand": "node ./scripts/tauri-before-dev.mjs",
@@ -39,7 +39,7 @@
       },
       "wix": {
         "upgradeCode": "d7c34db0-c7b1-5844-91a5-7beada0715b0",
-        "version": "26.7.4",
+        "version": "26.7.5",
         "language": {
           "cs-CZ": {
             "localePath": "windows/locales/cs-CZ.wxl"

@@ -165,6 +165,7 @@ jobs:
           feed_path="$RUNNER_TEMP/document-runtime-packages.json"
           if ! curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$feed_path" "$feed_url"; then
             echo "Document runtime package feed is unavailable; building macOS with remote-docs-only profile."
+            mkdir -p "packages/desktop/src-tauri/resources/document-runtime/${{ matrix.doc_runtime_platform }}"
             echo "VESLO_DOCUMENT_RUNTIME_RELEASE_PROFILE=remote-docs-only" >> "$GITHUB_ENV"
             exit 0
           fi
