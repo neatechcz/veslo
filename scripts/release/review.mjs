@@ -145,7 +145,7 @@ const hasMacosDocumentRuntimeBundleGate = (text) =>
       "--platform \"${{ matrix.doc_runtime_platform }}\"",
       "Verify macOS document runtime bundle",
       "node scripts/release/verify-document-runtime-macos.mjs",
-      "--profile local-docs-required",
+      "VESLO_DOCUMENT_RUNTIME_RELEASE_PROFILE",
       "--platform \"${{ matrix.doc_runtime_platform }}\"",
       buildFragment,
     ]),

@@ -331,8 +331,13 @@ jobs:
           set -euo pipefail
           feed_url="${DOCUMENT_RUNTIME_PACKAGE_FEED_URL:-https://github.com/${PUBLIC_RELEASE_REPO}/releases/latest/download/document-runtime-packages.json}"
           feed_path="$RUNNER_TEMP/document-runtime-packages.json"
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$feed_path" "$feed_url"
+          if ! curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$feed_path" "$feed_url"; then
+            echo "Document runtime package feed is unavailable; building macOS with remote-docs-only profile."
+            echo "VESLO_DOCUMENT_RUNTIME_RELEASE_PROFILE=remote-docs-only" >> "$GITHUB_ENV"
+            exit 0
+          fi
           echo "VESLO_DOCUMENT_RUNTIME_PACKAGE_FEED=$feed_path" >> "$GITHUB_ENV"
+          echo "VESLO_DOCUMENT_RUNTIME_RELEASE_PROFILE=local-docs-required" >> "$GITHUB_ENV"
           node scripts/document-runtime/install-package-resource.mjs \
             --platform "${{ matrix.doc_runtime_platform }}" \
             --feed "$feed_path" \
@@ -343,7 +348,7 @@ jobs:
         shell: bash
         run: |
           node scripts/release/verify-document-runtime-macos.mjs \
-            --profile local-docs-required \
+            --profile "${VESLO_DOCUMENT_RUNTIME_RELEASE_PROFILE:-local-docs-required}" \
             --json \
             --platform "${{ matrix.doc_runtime_platform }}"
 

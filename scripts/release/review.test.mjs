@@ -126,7 +126,7 @@ test("release review verifies document runtime metadata preflight and desktop bu
   );
   assert.match(
     workflow,
-    /Install macOS document runtime resource[\s\S]*install-package-resource\.mjs[\s\S]*Verify macOS document runtime bundle[\s\S]*verify-document-runtime-macos\.mjs[\s\S]*--profile local-docs-required[\s\S]*pnpm exec tauri -vvv build/,
+    /Install macOS document runtime resource[\s\S]*install-package-resource\.mjs[\s\S]*Verify macOS document runtime bundle[\s\S]*verify-document-runtime-macos\.mjs[\s\S]*VESLO_DOCUMENT_RUNTIME_RELEASE_PROFILE[\s\S]*pnpm exec tauri -vvv build/,
   );
   assert.match(
     workflow,
@@ -138,7 +138,7 @@ test("release review verifies document runtime metadata preflight and desktop bu
   );
   assert.match(
     prereleaseWorkflow,
-    /Install macOS document runtime resource[\s\S]*install-package-resource\.mjs[\s\S]*Verify macOS document runtime bundle[\s\S]*verify-document-runtime-macos\.mjs[\s\S]*--profile local-docs-required[\s\S]*tauri-apps\/tauri-action/,
+    /Install macOS document runtime resource[\s\S]*install-package-resource\.mjs[\s\S]*Verify macOS document runtime bundle[\s\S]*verify-document-runtime-macos\.mjs[\s\S]*VESLO_DOCUMENT_RUNTIME_RELEASE_PROFILE[\s\S]*tauri-apps\/tauri-action/,
   );
 
   const reviewSource = readFileSync(scriptPath, "utf8");
