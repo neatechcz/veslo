@@ -12,7 +12,7 @@ export type SharedSkillItem = {
   trigger?: string;
 };
 
-export type SharedSkillBundleV1 = {
+type SharedSkillBundleV1 = {
   schemaVersion: 1;
   type: "skill";
   name: string;
@@ -46,12 +46,12 @@ export type SharedBundleV1 =
 // Helpers
 // ---------------------------------------------------------------------------
 
-export function readRecord(value: unknown): Record<string, unknown> | null {
+function readRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
 }
 
-export function readSkillItem(value: unknown): SharedSkillItem | null {
+function readSkillItem(value: unknown): SharedSkillItem | null {
   const record = readRecord(value);
   if (!record) return null;
   const name = typeof record.name === "string" ? record.name.trim() : "";
@@ -69,7 +69,7 @@ export function readSkillItem(value: unknown): SharedSkillItem | null {
 // Parsing
 // ---------------------------------------------------------------------------
 
-export function parseSharedBundle(value: unknown): SharedBundleV1 {
+function parseSharedBundle(value: unknown): SharedBundleV1 {
   const record = readRecord(value);
   if (!record) {
     throw new Error("Invalid shared bundle payload.");

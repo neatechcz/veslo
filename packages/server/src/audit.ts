@@ -96,11 +96,11 @@ function expandHome(value: string): string {
   return value;
 }
 
-export function auditLogPath(workspaceId: string): string {
+function auditLogPath(workspaceId: string): string {
   return join(resolveVesloDataDir(), "audit", `${workspaceId}.jsonl`);
 }
 
-export function legacyAuditLogPath(workspaceRoot: string): string {
+function legacyAuditLogPath(workspaceRoot: string): string {
   return join(workspaceRoot, ".opencode", "veslo", "audit.jsonl");
 }
 

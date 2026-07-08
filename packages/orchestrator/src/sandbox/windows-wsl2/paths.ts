@@ -17,11 +17,11 @@ export function normalizeWindowsPathForWsl(path: string): string {
   return trimmed;
 }
 
-export function isUncPath(path: string): boolean {
+function isUncPath(path: string): boolean {
   return /^\\\\/.test(path) || /^\/\/[^/]/.test(path);
 }
 
-export function isDriveLetterPath(path: string): boolean {
+function isDriveLetterPath(path: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(path);
 }
 
@@ -46,7 +46,7 @@ export function windowsPathToWslPath(path: string): string {
   return rest ? `/mnt/${drive}/${rest}` : `/mnt/${drive}`;
 }
 
-export function wslPathToWindowsPath(path: string): string {
+function wslPathToWindowsPath(path: string): string {
   const match = path.match(/^\/mnt\/([a-zA-Z])(?:\/(.*))?$/);
   if (!match) {
     throw new Error(`WSL path is not under /mnt/<drive>: ${path}`);

@@ -33,7 +33,7 @@ const envTraceEnabled = () => {
   }
 };
 
-export function sendWorkflowTraceEnabled(options?: { developerMode?: boolean }): boolean {
+function sendWorkflowTraceEnabled(options?: { developerMode?: boolean }): boolean {
   if (options?.developerMode === false) return false;
   if (typeof window === "undefined") return envTraceEnabled();
   try {
@@ -107,7 +107,7 @@ export function recordSendWorkflowTrace(
   }
 }
 
-export function recordExternalSendWorkflowTraceEntries(entries: unknown) {
+function recordExternalSendWorkflowTraceEntries(entries: unknown) {
   if (!Array.isArray(entries)) return;
   for (const entry of entries) {
     if (!entry || typeof entry !== "object") continue;

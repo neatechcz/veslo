@@ -9,8 +9,8 @@ import {
   MAX_SKILL_PACKAGE_TOTAL_SIZE_BYTES,
 } from "./skill-packages.js";
 
-export type RegistrySkillVisibility = "personal" | "workspace" | "organization" | "platform";
-export type RegistrySkillReviewStatus = "draft" | "pending_review" | "approved" | "rejected";
+type RegistrySkillVisibility = "personal" | "workspace" | "organization" | "platform";
+type RegistrySkillReviewStatus = "draft" | "pending_review" | "approved" | "rejected";
 export type RegistrySkillInstallationSource = "personal" | "workspace" | "organization" | "platform";
 export type RegistrySkillRolloutPolicyTarget = "user-global" | "workspace";
 export type RegistrySkillRolloutPolicyAudience =
@@ -26,14 +26,14 @@ export type RegistrySkillRolloutPolicyUpdatePolicy =
   | "release_channel";
 export type RegistrySkillRolloutPolicyRemovalPolicy = "user_removable" | "admin_removable" | "locked";
 
-export type RegistrySkillVersionSummary = {
+type RegistrySkillVersionSummary = {
   id: string;
   version: string;
   packageSha256: string;
   createdAt: string;
 };
 
-export type RegistrySkillSummary = {
+type RegistrySkillSummary = {
   id: string;
   slug: string;
   name: string;
@@ -64,7 +64,7 @@ export type RegistrySkillVersionResponse = {
   version: RegistrySkillVersionSummary;
 };
 
-export type RegistrySkillPackageFile = SkillPackageFile & {
+type RegistrySkillPackageFile = SkillPackageFile & {
   contentBase64: string;
 };
 
@@ -78,7 +78,7 @@ export type RegistrySkillPackageResponse = {
   package: RegistrySkillPackageArchive;
 };
 
-export type RegistrySkillInstallation = {
+type RegistrySkillInstallation = {
   installationId: string;
   skillId: string;
   versionId: string;
@@ -151,7 +151,7 @@ export type RegistrySkillSearchResponse = RegistrySkillListResponse & {
   query: string;
 };
 
-export type RegistrySkillEvent = {
+type RegistrySkillEvent = {
   id: string;
   action: string;
   orgId?: string | null;

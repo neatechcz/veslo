@@ -1,6 +1,6 @@
 import type { ComposerDraft } from "../../types";
 
-export type QueuedDraftState = "queued" | "editing" | "sending" | "error";
+type QueuedDraftState = "queued" | "editing" | "sending" | "error";
 
 export type QueuedDraft = {
   id: string;

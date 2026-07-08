@@ -23,7 +23,7 @@ export function envFlagEnabled(value: string | undefined): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
-export function sharedOpencodeEngineRequested(env: NodeJS.ProcessEnv = process.env): boolean {
+function sharedOpencodeEngineRequested(env: NodeJS.ProcessEnv = process.env): boolean {
   return envFlagEnabled(env.VESLO_SHARED_OPENCODE_ENGINE);
 }
 

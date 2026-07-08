@@ -21,7 +21,7 @@ export type VesloServerSettingsLike = {
 
 export const CLOUD_ONLY_MODE: boolean = APP_RUNTIME_MODE === "cloud_only";
 
-export const filterRemoteWorkspaces = <
+const filterRemoteWorkspaces = <
   T extends {
     workspaceType?: string | null;
   },

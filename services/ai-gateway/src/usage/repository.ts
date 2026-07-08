@@ -22,7 +22,7 @@ export type AggregateUsageInput = {
   orgId: string | null;
 };
 
-export type UsageAggregateSummary = {
+type UsageAggregateSummary = {
   totalTokens: number;
   totalRequests: number;
 };

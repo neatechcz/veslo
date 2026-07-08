@@ -9,14 +9,14 @@ export type OrganizationBillingStatus =
   | "canceled"
   | "incomplete"
 
-export type BillingBlockingReason =
+type BillingBlockingReason =
   | "payment_required"
   | "payment_failed"
   | "insufficient_licenses"
   | "tier_not_allowed"
   | "organization_access_disabled"
 
-export type OrganizationBillingWarning = "payment_past_due"
+type OrganizationBillingWarning = "payment_past_due"
 
 export interface OrganizationBillingQuantities {
   managedAiBasic: number
@@ -24,13 +24,13 @@ export interface OrganizationBillingQuantities {
   localModels: number
 }
 
-export interface OrganizationManualAccess {
+interface OrganizationManualAccess {
   enabled: boolean
   allowManagedAi: boolean
   licenseLimit: number
 }
 
-export interface OrganizationBillingPolicy {
+interface OrganizationBillingPolicy {
   allowByokWithoutPaidAccess: boolean
   organizationAccessEnabled?: boolean
   tierAllowed?: boolean

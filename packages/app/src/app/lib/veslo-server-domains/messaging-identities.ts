@@ -312,4 +312,4 @@ export function createMessagingIdentitiesClient(context: MessagingIdentitiesClie
   };
 }
 
-export type MessagingIdentitiesClient = ReturnType<typeof createMessagingIdentitiesClient>;
+type MessagingIdentitiesClient = ReturnType<typeof createMessagingIdentitiesClient>;

@@ -3,7 +3,7 @@ export type OpenCodeProjectApiFetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-export type OpenCodeProjectApiProbeEndpoint = {
+type OpenCodeProjectApiProbeEndpoint = {
   ok: boolean;
   status?: number;
   error?: string;

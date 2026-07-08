@@ -11,7 +11,7 @@ import { classifyDeliveryError, withDeliveryRetry } from "./delivery.js";
 import type { InboundMessagePart, MediaKind, MessageDeliveryResult, OutboundMessagePart } from "./media.js";
 import type { MediaStore } from "./media-store.js";
 
-export type InboundMessage = {
+type InboundMessage = {
   channel: "slack";
   identityId: string;
   peerId: string;
@@ -46,7 +46,7 @@ export type SlackPeer = {
 // - DMs:   D12345678
 // - Threads in channels: C12345678|1700000000.000100
 // Using `|` avoids clashing with ALLOW_FROM's channel:peer parsing.
-export function formatSlackPeerId(peer: SlackPeer): string {
+function formatSlackPeerId(peer: SlackPeer): string {
   if (!peer.threadTs) return peer.channelId;
   return `${peer.channelId}|${peer.threadTs}`;
 }
@@ -59,7 +59,7 @@ export function parseSlackPeerId(peerId: string): SlackPeer {
   return { channelId: channelId || trimmed };
 }
 
-export function stripSlackMention(text: string, botUserId: string | null): string {
+function stripSlackMention(text: string, botUserId: string | null): string {
   let next = text ?? "";
   if (botUserId) {
     const token = `<@${botUserId}>`;

@@ -1,4 +1,4 @@
-export const GoogleWorkspaceConnectorIds = ["google-gmail", "google-calendar", "google-drive"] as const
+const GoogleWorkspaceConnectorIds = ["google-gmail", "google-calendar", "google-drive"] as const
 
 export type GoogleWorkspaceConnectorId = (typeof GoogleWorkspaceConnectorIds)[number]
 

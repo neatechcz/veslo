@@ -18,7 +18,7 @@ export type StripeOrganizationBillingEvent = {
 
 type StripeObject = Record<string, unknown>
 
-export type StripeOrganizationBillingWebhookProcessingResult = {
+type StripeOrganizationBillingWebhookProcessingResult = {
   ok: boolean
   status: OrganizationBillingEventStatus
   duplicate?: boolean

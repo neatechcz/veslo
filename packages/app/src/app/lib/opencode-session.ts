@@ -64,7 +64,7 @@ export async function unrevertSession(
  * Compact/summarize a long session to reduce context size.
  * Uses `session.summarize` when available and falls back to `/compact` command.
  */
-export async function compactSession(
+async function compactSession(
   client: Client,
   sessionID: string,
   model: ModelRef,
@@ -107,7 +107,7 @@ export async function compactSession(
  * Execute a shell command in a session. Uses `shell` from the SDK.
  * Falls back to `promptAsync` with a `!` prefix if `shell` is unavailable.
  */
-export async function shellInSession(
+async function shellInSession(
   client: Client,
   sessionID: string,
   command: string,

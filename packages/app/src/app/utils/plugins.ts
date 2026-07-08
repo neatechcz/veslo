@@ -3,7 +3,7 @@ import { applyEdits, modify, parse } from "jsonc-parser";
 import type { OpencodeConfigFile } from "../lib/tauri";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
-export type PluginConfigTuple = [string, Record<string, unknown>?];
+type PluginConfigTuple = [string, Record<string, unknown>?];
 export type PluginConfigEntry = string | PluginConfigTuple;
 type PluginListValue = string | unknown[] | null | undefined;
 
@@ -35,7 +35,7 @@ function pluginSpecFromConfigEntry(entry: PluginConfigEntry): string {
   return typeof entry === "string" ? entry : entry[0];
 }
 
-export function normalizePluginConfigEntries(value: PluginListValue): PluginConfigEntry[] {
+function normalizePluginConfigEntries(value: PluginListValue): PluginConfigEntry[] {
   if (typeof value === "string") {
     const trimmed = value.trim();
     return trimmed ? [trimmed] : [];
@@ -149,7 +149,7 @@ export function loadPluginsFromConfig(
   }
 }
 
-export function parsePluginsFromConfig(config: OpencodeConfigFile | null) {
+function parsePluginsFromConfig(config: OpencodeConfigFile | null) {
   if (!config?.content) return [] as string[];
   return parsePluginListFromContent(config.content);
 }

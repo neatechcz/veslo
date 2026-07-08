@@ -1,6 +1,6 @@
 import type { RunProbeResult } from "./run-registry.js";
 
-export const RUN_ACTIVITY_PROBE_TIMEOUT_MS = 4_000;
+const RUN_ACTIVITY_PROBE_TIMEOUT_MS = 4_000;
 
 export type RunActivityProbeRecord = {
   workspaceId: string;

@@ -270,4 +270,4 @@ export function createSoulClient(context: SoulClientContext) {
   };
 }
 
-export type SoulClient = ReturnType<typeof createSoulClient>;
+type SoulClient = ReturnType<typeof createSoulClient>;

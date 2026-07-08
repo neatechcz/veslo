@@ -6,7 +6,7 @@ export type WorkspaceSwitchTimeouts = {
   vesloHostWorkspaceActivateMs: number;
 };
 
-export const DEFAULT_WORKSPACE_SWITCH_TIMEOUTS: WorkspaceSwitchTimeouts = {
+const DEFAULT_WORKSPACE_SWITCH_TIMEOUTS: WorkspaceSwitchTimeouts = {
   engineStopMs: 20_000,
   engineStartMs: 75_000,
   // VSLO-86 — widened from 12s to 30s. The inner client.listWorkspaces +

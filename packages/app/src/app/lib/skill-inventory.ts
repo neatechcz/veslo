@@ -25,7 +25,7 @@ export type SkillInventorySkillInput = {
   writable?: boolean;
 };
 
-export type SkillInventoryWorkspaceInput = Omit<SkillInventoryWorkspace, "kind"> & {
+type SkillInventoryWorkspaceInput = Omit<SkillInventoryWorkspace, "kind"> & {
   kind?: SkillInventoryWorkspace["kind"];
 };
 

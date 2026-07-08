@@ -13,8 +13,8 @@ import type { CodexCapacityOverview } from "../managed-ai/usage/codex-capacity.j
 import type { CodexUsageStatus } from "../managed-ai/usage/codex-status.js"
 import { asyncRoute } from "./errors.js"
 
-export const OrganizationAdminCapabilities = ["organization", "users", "billing"] as const
-export const PlatformAdminCapabilities = [
+const OrganizationAdminCapabilities = ["organization", "users", "billing"] as const
+const PlatformAdminCapabilities = [
   ...OrganizationAdminCapabilities,
   "credentials",
   "usage",
@@ -23,8 +23,8 @@ export const PlatformAdminCapabilities = [
   "debugLogs",
   "managedAiUserAccess",
 ] as const
-export const OrganizationAdminAllowedPages = ["organization", "users", "billing"] as const
-export const PlatformAdminAllowedPages = [
+const OrganizationAdminAllowedPages = ["organization", "users", "billing"] as const
+const PlatformAdminAllowedPages = [
   ...OrganizationAdminAllowedPages,
   "credentials",
   "usage",
@@ -36,7 +36,7 @@ export const PlatformAdminAllowedPages = [
 export type AdminCapability = (typeof PlatformAdminCapabilities)[number]
 export type AdminAllowedPage = (typeof PlatformAdminAllowedPages)[number]
 
-export type AdminSessionOrganization = {
+type AdminSessionOrganization = {
   id: string
   name: string
   slug: string
@@ -189,12 +189,12 @@ export type AdminSessionRecord = {
   lastFailoverAt: string | null
 }
 
-export type AdminUsageLabel = {
+type AdminUsageLabel = {
   id: string
   label: string
 }
 
-export type AdminUsageSeries = {
+type AdminUsageSeries = {
   key: string
   label: string
   totalTokens: number
@@ -207,7 +207,7 @@ export type AdminCredentialEligibility = {
   resetAt: string | null
 }
 
-export type AdminCredentialUsageRecord = AdminUsageLabel & {
+type AdminCredentialUsageRecord = AdminUsageLabel & {
   name: string
   provider: string | null
   state: AdminCredentialRecord["state"] | null
@@ -295,18 +295,18 @@ export type AdminOrganizationBillingAccountRecord = {
   updatedAt: string
 }
 
-export type AdminOrganizationBillingTierRecord = {
+type AdminOrganizationBillingTierRecord = {
   tier: "managed_ai_basic" | "managed_ai_extended" | string
   enabled: boolean
 }
 
-export type AdminManagedAiBillingTierDefinition = {
+type AdminManagedAiBillingTierDefinition = {
   tier: "managed_ai_basic" | "managed_ai_extended"
   key: "basic" | "extended"
   name: "Basic" | "Extended"
 }
 
-export type AdminOrganizationBillingSummary = {
+type AdminOrganizationBillingSummary = {
   account: AdminOrganizationBillingAccountRecord | null
   entitlement: OrganizationBillingEntitlement
   allowedTiers: AdminOrganizationBillingTierRecord[]

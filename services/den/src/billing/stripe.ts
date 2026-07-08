@@ -3,7 +3,7 @@ import type { StripeOrganizationBillingConfig } from "./stripe-config.js"
 
 export type OrganizationStripeBillingMetadata = Record<string, string>
 
-export type OrganizationStripeCheckoutSessionCreateParams = {
+type OrganizationStripeCheckoutSessionCreateParams = {
   mode: "subscription"
   success_url: string
   cancel_url: string
@@ -15,7 +15,7 @@ export type OrganizationStripeCheckoutSessionCreateParams = {
   }
 }
 
-export type OrganizationStripeBillingPortalSessionCreateParams = {
+type OrganizationStripeBillingPortalSessionCreateParams = {
   customer: string
   return_url: string
 }
@@ -33,7 +33,7 @@ export type OrganizationStripeSubscription = {
   }
 }
 
-export type OrganizationStripeSubscriptionUpdateParams = {
+type OrganizationStripeSubscriptionUpdateParams = {
   proration_behavior?: "always_invoice" | "none"
   items?: Array<({ id: string } | { price: string }) & { quantity: number }>
   cancel_at_period_end?: boolean
@@ -57,7 +57,7 @@ export type OrganizationStripeBillingClient = {
   }
 }
 
-export const STRIPE_ORGANIZATION_BILLING_API_VERSION = Stripe.API_VERSION
+const STRIPE_ORGANIZATION_BILLING_API_VERSION = Stripe.API_VERSION
 
 export function createOrganizationStripeBillingClient(
   config: StripeOrganizationBillingConfig,

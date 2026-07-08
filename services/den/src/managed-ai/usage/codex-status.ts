@@ -6,7 +6,7 @@ import path from "node:path";
 import { resolveCodexCliCommandSpec, type CodexCliCommandSpec } from "../providers/codex-command.js";
 import { materializeCodexAuthJson } from "../providers/codex-cli-worker-transport.js";
 
-export type CodexUsageStatusSource =
+type CodexUsageStatusSource =
   | "codex_exec_rate_limits"
   | "codex_exec_no_rate_limits"
   | "codex_status"
@@ -81,7 +81,7 @@ export type CachedCodexCredentialStatusProviderDeps = {
   now?: () => Date;
 };
 
-export class UnavailableCodexCredentialStatusProvider implements CodexCredentialStatusProvider {
+class UnavailableCodexCredentialStatusProvider implements CodexCredentialStatusProvider {
   async getStatus(): Promise<CodexUsageStatus> {
     return unavailableStatus("Codex status probe is not configured.");
   }
@@ -179,7 +179,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
   }
 }
 
-export function parseCodexStatusText(
+function parseCodexStatusText(
   text: string,
   checkedAt: string,
 ): CodexUsageStatus {

@@ -20,9 +20,9 @@ import {
 } from "./workspace-files.js";
 import { ensureDir } from "./utils.js";
 
-export type PluginMaterializationTarget = "project" | "user";
+type PluginMaterializationTarget = "project" | "user";
 
-export type MaterializablePluginFile = {
+type MaterializablePluginFile = {
   path: string;
   content: string;
   executable?: boolean;
@@ -52,7 +52,7 @@ export type ManagedPluginSpecManifest = {
   entries: ManagedPluginSpecManifestEntry[];
 };
 
-export type ManagedPluginFileManifestFile = {
+type ManagedPluginFileManifestFile = {
   path: string;
   sha256: string;
   sizeBytes: number;
@@ -79,7 +79,7 @@ export type ManagedPluginFileManifest = {
   entries: ManagedPluginFileManifestEntry[];
 };
 
-export type PluginMaterializationConflict = {
+type PluginMaterializationConflict = {
   code:
     | "unmanaged_config_spec_conflict"
     | "unmanaged_file_plugin_conflict"
@@ -91,7 +91,7 @@ export type PluginMaterializationConflict = {
   path?: string;
 };
 
-export type PluginMaterializationTargetResult = {
+type PluginMaterializationTargetResult = {
   config: {
     manifestPath: string;
     addedSpecs: string[];
@@ -105,7 +105,7 @@ export type PluginMaterializationTargetResult = {
   };
 };
 
-export type PluginMaterializationSuccess = {
+type PluginMaterializationSuccess = {
   ok: true;
   phase: PluginActivationPhase;
   conflicts: [];
@@ -114,7 +114,7 @@ export type PluginMaterializationSuccess = {
   reloadRequired: boolean;
 };
 
-export type PluginMaterializationFailure = {
+type PluginMaterializationFailure = {
   ok: false;
   phase: PluginActivationPhase;
   conflicts: PluginMaterializationConflict[];
@@ -158,11 +158,11 @@ const SPEC_MANIFEST_FILE = "managed-plugin-specs.json";
 const FILE_ROOT_MANIFEST_FILE = ".veslo-plugin-materialization.json";
 const FILE_PLUGIN_MARKER_FILE = ".veslo-managed-plugin.json";
 
-export function pluginMaterializerManagedBy(): typeof MANAGED_BY {
+function pluginMaterializerManagedBy(): typeof MANAGED_BY {
   return MANAGED_BY;
 }
 
-export function managedPluginSpecManifestFileName(): typeof SPEC_MANIFEST_FILE {
+function managedPluginSpecManifestFileName(): typeof SPEC_MANIFEST_FILE {
   return SPEC_MANIFEST_FILE;
 }
 
@@ -170,7 +170,7 @@ export function managedPluginFileManifestPath(rootDir: string): string {
   return join(rootDir, FILE_ROOT_MANIFEST_FILE);
 }
 
-export function managedPluginFileMarkerPath(pluginDir: string): string {
+function managedPluginFileMarkerPath(pluginDir: string): string {
   return join(pluginDir, FILE_PLUGIN_MARKER_FILE);
 }
 
@@ -671,7 +671,7 @@ function pluginListFromConfig(config: Record<string, unknown>): PluginConfigEntr
   return [];
 }
 
-export function normalizePluginSpecForMaterialization(spec: string): string {
+function normalizePluginSpecForMaterialization(spec: string): string {
   return normalizePluginSpec(spec);
 }
 
@@ -1175,7 +1175,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-export const __pluginMaterializerTestHooks = {
+const __pluginMaterializerTestHooks = {
   managedBy: MANAGED_BY,
   specManifestFile: SPEC_MANIFEST_FILE,
   fileRootManifestFile: FILE_ROOT_MANIFEST_FILE,

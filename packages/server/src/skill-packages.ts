@@ -16,7 +16,7 @@ export const MAX_SKILL_PACKAGE_FILE_COUNT = 256;
 export const MAX_SKILL_PACKAGE_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 export const MAX_SKILL_PACKAGE_TOTAL_SIZE_BYTES = 25 * 1024 * 1024;
 
-export type SkillPackageArchiveFile = SkillPackageFile & {
+type SkillPackageArchiveFile = SkillPackageFile & {
   contentBase64: string;
 };
 

@@ -1,7 +1,7 @@
 import http from "node:http"
 import { setTimeout as sleep } from "node:timers/promises"
 
-export type WorkerStatus = "provisioning" | "healthy"
+type WorkerStatus = "provisioning" | "healthy"
 
 export type WorkerRecord = {
   id: string
@@ -77,11 +77,11 @@ export function workerVolumeName(workerId: string) {
   return `veslo-worker-${workerId}-workspace`
 }
 
-export function publicWorkerUrl(workerId: string, publicDomainSuffix: string) {
+function publicWorkerUrl(workerId: string, publicDomainSuffix: string) {
   return `https://${workerId}.${publicDomainSuffix.replace(/^\.+|\.+$/g, "")}`
 }
 
-export function assertSafeWorkerId(workerId: string) {
+function assertSafeWorkerId(workerId: string) {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(workerId)) {
     throw new Error("workerId contains unsupported characters")
   }

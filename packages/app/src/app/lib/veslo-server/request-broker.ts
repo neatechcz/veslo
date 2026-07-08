@@ -1,4 +1,4 @@
-export type VesloRequestBrokerEndpointCounters = {
+type VesloRequestBrokerEndpointCounters = {
   key: string;
   started: number;
   completed: number;

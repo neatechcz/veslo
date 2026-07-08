@@ -65,7 +65,7 @@ const mergeSelectedScopeWithRememberedScope = (
   };
 };
 
-export function normalizeUiConversationScope(
+function normalizeUiConversationScope(
   input: UiConversationScopeInput,
 ): UiConversationScope | null {
   const sessionId = normalizeText(input.sessionId);

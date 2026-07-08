@@ -1,6 +1,6 @@
-export const DOCUMENT_RUNTIME_ID = "veslo-document-runtime" as const;
+const DOCUMENT_RUNTIME_ID = "veslo-document-runtime" as const;
 
-export const documentRuntimeStatuses = [
+const documentRuntimeStatuses = [
   "ready",
   "missing",
   "repairing",
@@ -16,11 +16,11 @@ export const documentRuntimeStatuses = [
 
 export type DocumentRuntimeStatus = typeof documentRuntimeStatuses[number];
 
-export type DocumentRuntimeSkillId = "veslo-docx" | "veslo-xlsx" | "veslo-pdf" | "veslo-pptx";
+type DocumentRuntimeSkillId = "veslo-docx" | "veslo-xlsx" | "veslo-pdf" | "veslo-pptx";
 
 export type DocumentRuntimeFormat = "docx" | "xlsx" | "pdf" | "pptx";
 
-export type DocumentRuntimeSkillReadiness = {
+type DocumentRuntimeSkillReadiness = {
   id: DocumentRuntimeSkillId;
   format: DocumentRuntimeFormat;
   ready: boolean;
@@ -62,7 +62,7 @@ export type DocumentRuntimeSettingsRowModel = {
   action: "none" | "repair" | "update" | "wait";
 };
 
-export const documentRuntimeSkillFormats: Record<DocumentRuntimeFormat, DocumentRuntimeSkillId> = {
+const documentRuntimeSkillFormats: Record<DocumentRuntimeFormat, DocumentRuntimeSkillId> = {
   docx: "veslo-docx",
   xlsx: "veslo-xlsx",
   pdf: "veslo-pdf",

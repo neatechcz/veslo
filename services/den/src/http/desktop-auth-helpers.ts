@@ -2,7 +2,7 @@ import crypto from "node:crypto"
 
 const HANDOFF_TTL_MS = 5 * 60_000
 export const DESKTOP_AUTH_SESSION_TTL_MS = 10 * 60_000
-export const DESKTOP_AUTH_ALLOWED_REDIRECT_PROTOCOLS = new Set(["veslo:", "http:", "https:"])
+const DESKTOP_AUTH_ALLOWED_REDIRECT_PROTOCOLS = new Set(["veslo:", "http:", "https:"])
 
 export type HandoffRecord = {
   id: string

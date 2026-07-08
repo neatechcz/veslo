@@ -83,7 +83,7 @@ export function createDbSkillRegistryStore(database: DenDb): SkillRegistryStore 
   return new DbSkillRegistryStore(database)
 }
 
-export class DbSkillRegistryStore implements SkillRegistryStore {
+class DbSkillRegistryStore implements SkillRegistryStore {
   constructor(private readonly database: DenDb) {}
 
   async listSkills(context: SkillRegistryRouteContext, filters: Record<string, unknown> = {}) {

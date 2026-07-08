@@ -17,9 +17,9 @@ import type { ResourceOwner } from "./types.js";
 import { exists } from "./utils.js";
 import { validateSkillName } from "./validators.js";
 
-export const USER_GLOBAL_SKILL_STORE_SOURCE = "veslo-user-store";
-export const USER_GLOBAL_SKILL_VIRTUAL_PATH_PREFIX = "veslo-user-store://";
-export const USER_GLOBAL_SKILL_MATERIALIZED_CATEGORY = "veslo-user";
+const USER_GLOBAL_SKILL_STORE_SOURCE = "veslo-user-store";
+const USER_GLOBAL_SKILL_VIRTUAL_PATH_PREFIX = "veslo-user-store://";
+const USER_GLOBAL_SKILL_MATERIALIZED_CATEGORY = "veslo-user";
 
 const STORE_SCHEMA_VERSION = 1;
 const MANIFEST_SCHEMA_VERSION = 1;
@@ -27,7 +27,7 @@ const STORE_FILE = "store.json";
 const MATERIALIZATION_MANIFEST_FILE = ".veslo-user-skills.json";
 const MATERIALIZATION_MARKER_FILE = ".veslo-user-skill.json";
 
-export type UserGlobalSkillRecord = {
+type UserGlobalSkillRecord = {
   name: string;
   description: string;
   content: string;
@@ -38,7 +38,7 @@ export type UserGlobalSkillRecord = {
   updatedAt: string;
 };
 
-export type UserGlobalSkillFileRecord = {
+type UserGlobalSkillFileRecord = {
   path: string;
   contentBase64: string;
   hash: string;
@@ -78,7 +78,7 @@ type UserGlobalSkillMaterializationManifest = {
   entries: UserGlobalSkillMaterializationManifestEntry[];
 };
 
-export type UserGlobalSkillMaterializationConflict = {
+type UserGlobalSkillMaterializationConflict = {
   code: "local-skill-conflict";
   name: string;
   message: string;
@@ -136,11 +136,11 @@ const hashSkillRecord = (content: string, files: UserGlobalSkillFileRecord[] = [
   return hash.digest("hex");
 };
 
-export function userGlobalSkillVirtualPath(name: string): string {
+function userGlobalSkillVirtualPath(name: string): string {
   return `${USER_GLOBAL_SKILL_VIRTUAL_PATH_PREFIX}${encodeURIComponent(name)}`;
 }
 
-export function userGlobalSkillNameFromVirtualPath(path: string): string | null {
+function userGlobalSkillNameFromVirtualPath(path: string): string | null {
   const trimmed = path.trim();
   if (!trimmed.startsWith(USER_GLOBAL_SKILL_VIRTUAL_PATH_PREFIX)) return null;
   const encoded = trimmed.slice(USER_GLOBAL_SKILL_VIRTUAL_PATH_PREFIX.length);

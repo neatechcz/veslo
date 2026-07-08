@@ -1,5 +1,5 @@
 export type SidebarSide = "left" | "right";
-export type SidebarLayoutMode = "wide" | "narrow";
+type SidebarLayoutMode = "wide" | "narrow";
 
 export type SidebarDockedVisibility = {
   left: boolean;
@@ -43,7 +43,7 @@ export const createInitialSidebarLayoutState = (
   };
 };
 
-export const deriveSidebarLayoutMode = (
+const deriveSidebarLayoutMode = (
   currentMode: SidebarLayoutMode,
   availableChatWidth: number,
 ): SidebarLayoutMode => {

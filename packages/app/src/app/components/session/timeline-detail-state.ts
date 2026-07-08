@@ -75,4 +75,4 @@ export function reconcileTimelineOpenSectionIds(
   return nextOpenSectionIds;
 }
 
-export type { TimelineSectionKind };
+;

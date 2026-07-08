@@ -24,7 +24,7 @@ export type ReadSingleCachedSoulDocumentInput = SoulCacheInput & {
   scope: SoulScope;
 };
 
-export type SoulPendingEditDraft = {
+type SoulPendingEditDraft = {
   scope: SoulScope;
   ownerId: string;
   content: string;
@@ -60,7 +60,7 @@ const resolveDataDir = (dataDir?: string): string => {
   return trimmed ? resolve(trimmed) : resolveVesloDataDir();
 };
 
-export function soulCacheRoot(dataDir?: string): string {
+function soulCacheRoot(dataDir?: string): string {
   return join(resolveDataDir(dataDir), "soul-cache");
 }
 
@@ -74,11 +74,11 @@ function legacySoulCachePath(input: ReadCachedSoulDocumentInput): string | null 
   return join(soulCacheRoot(input.dataDir), input.scope, `${ownerId}.json`);
 }
 
-export function soulPendingCacheDir(dataDir?: string): string {
+function soulPendingCacheDir(dataDir?: string): string {
   return join(soulCacheRoot(dataDir), "pending");
 }
 
-export function soulPendingEditPath(input: SoulCacheInput & { pendingEditId: string }): string {
+function soulPendingEditPath(input: SoulCacheInput & { pendingEditId: string }): string {
   return join(soulPendingCacheDir(input.dataDir), `${normalizePendingId(input.pendingEditId)}.json`);
 }
 

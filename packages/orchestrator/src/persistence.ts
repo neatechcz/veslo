@@ -53,7 +53,7 @@ export type DebouncedPersisterOptions<TState> = {
   onError?: (error: unknown) => void;
 };
 
-export const DEFAULT_PERSIST_DEBOUNCE_MS = 500;
+const DEFAULT_PERSIST_DEBOUNCE_MS = 500;
 
 export function createDebouncedPersister<TState>(
   options: DebouncedPersisterOptions<TState>,

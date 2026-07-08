@@ -2,6 +2,7 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignoreBinaries": [
     "codex",
+    "dist/cli.js",
     "gh",
     "launchctl",
     "pkg-config",
@@ -13,6 +14,9 @@
     "tauri",
     "wsl.exe"
   ],
+  "ignoreIssues": {
+    "packages/app/src/app/context/workspace-skill-materialization.ts": ["exports"]
+  },
   "workspaces": {
     ".": {
       "entry": [
@@ -56,6 +60,18 @@
         "src/**/*.{ts,tsx}!",
         "scripts/**/*.{js,mjs,ts}",
         "script/**/*.{js,mjs,ts}"
+      ],
+      "ignoreDependencies": [
+        "@ai-sdk/openai-compatible",
+        "@ai-sdk/provider",
+        "@ai-sdk/provider-utils",
+        "@opencode-ai/plugin",
+        "@opentui/keymap",
+        "@standard-schema/spec",
+        "@workflow/serde",
+        "eventsource-parser",
+        "json-schema",
+        "zod"
       ]
     },
     "packages/opencode-router": {
@@ -138,6 +154,9 @@
       "project": [
         "src/**/*.ts!",
         "test/**/*.ts"
+      ],
+      "ignoreDependencies": [
+        "@openai/codex"
       ]
     },
     "services/den": {
@@ -149,6 +168,9 @@
         "src/**/*.ts!",
         "test/**/*.ts",
         "scripts/**/*.{js,mjs,ts}"
+      ],
+      "ignoreDependencies": [
+        "@openai/codex"
       ]
     },
     "services/worker-manager": {

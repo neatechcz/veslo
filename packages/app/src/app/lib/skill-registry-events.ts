@@ -14,21 +14,21 @@ export type SkillRegistryEvent = {
   createdAt: string;
 };
 
-export type SkillRegistryWorkspaceUpdate = {
+type SkillRegistryWorkspaceUpdate = {
   workspaceId: string;
   event: SkillRegistryEvent;
 };
 
-export type SkillRegistryPendingWorkspaceUpdate = SkillRegistryWorkspaceUpdate & {
+type SkillRegistryPendingWorkspaceUpdate = SkillRegistryWorkspaceUpdate & {
   status: "pending";
   reloadRequired: true;
 };
 
-export type SkillRegistryGlobalUpdate = {
+type SkillRegistryGlobalUpdate = {
   event: SkillRegistryEvent;
 };
 
-export type SkillRegistryEventListenerState = {
+type SkillRegistryEventListenerState = {
   running: boolean;
   cursor: string | null;
   revision: string | null;

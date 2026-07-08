@@ -11,18 +11,18 @@ import {
 } from "./opencode";
 import { isGatewayOwnedProvider } from "../utils/providers";
 
-export const AI_ACCESS_ADMIN_MANAGED_MESSAGE =
+const AI_ACCESS_ADMIN_MANAGED_MESSAGE =
   "Provider and model selection are managed by your platform admin.";
 export const AI_ACCESS_LOADING_MESSAGE = "Loading your AI access configuration.";
 export const AI_ACCESS_NOT_CONFIGURED_MESSAGE =
   "Your AI access has not been configured by the platform admin yet.";
 export const AI_ACCESS_INVALID_MESSAGE =
   "Assigned AI access is incomplete. Ask your platform admin to update it.";
-export const AI_ACCESS_LOAD_FAILED_MESSAGE = "Failed to load AI access";
+const AI_ACCESS_LOAD_FAILED_MESSAGE = "Failed to load AI access";
 export const AI_ACCESS_ADMIN_MANAGED_MESSAGE_KEY = "ai_access.admin_managed";
 export const AI_ACCESS_LOADING_MESSAGE_KEY = "ai_access.loading";
 export const AI_ACCESS_NOT_CONFIGURED_MESSAGE_KEY = "ai_access.not_configured";
-export const AI_ACCESS_INVALID_MESSAGE_KEY = "ai_access.invalid";
+const AI_ACCESS_INVALID_MESSAGE_KEY = "ai_access.invalid";
 export const AI_ACCESS_LOAD_FAILED_MESSAGE_KEY = "ai_access.load_failed";
 export const DEFAULT_MANAGED_AI_GATEWAY_BASE_URL = deploymentServiceUrl("ai", readViteDeploymentDomain());
 const REDACTED_SECRET_VALUE = "[REDACTED]";
@@ -35,17 +35,17 @@ const AI_ACCESS_MESSAGE_KEY_BY_TEXT = new Map<string, string>([
   [AI_ACCESS_LOAD_FAILED_MESSAGE, AI_ACCESS_LOAD_FAILED_MESSAGE_KEY],
 ]);
 
-export type ManagedAiRuntimeConfigCredentialState =
+type ManagedAiRuntimeConfigCredentialState =
   | "verified"
   | "redacted-unverified"
   | "missing";
 
-export type ManagedAiRuntimeConfigAuthMode =
+type ManagedAiRuntimeConfigAuthMode =
   | "server-client-token"
   | "redacted-server-client-token"
   | "missing";
 
-export type ManagedAiRuntimeConfigCredentialSource =
+type ManagedAiRuntimeConfigCredentialSource =
   | "provider-api-key"
   | "provider-authorization-header"
   | "model-authorization-header";
@@ -391,7 +391,7 @@ function hasManagedGatewayProviderRouting(
   );
 }
 
-export function hasManagedAiGatewayRoutingConfig(
+function hasManagedAiGatewayRoutingConfig(
   content: string | null | undefined,
   providerId?: string | null,
   gatewayBaseUrl?: string | null,

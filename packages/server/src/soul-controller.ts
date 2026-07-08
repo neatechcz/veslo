@@ -597,4 +597,4 @@ export function createSoulController() {
   };
 }
 
-export type SoulController = ReturnType<typeof createSoulController>;
+type SoulController = ReturnType<typeof createSoulController>;

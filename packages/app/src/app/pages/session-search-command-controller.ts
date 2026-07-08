@@ -3,8 +3,8 @@ import type { MessageWithParts, WorkspaceSessionGroup } from "../types";
 import type { WorkspaceInfo } from "../lib/tauri";
 import { isUserVisiblePart } from "../utils";
 
-export const MAX_SEARCH_MESSAGE_CHARS = 4_000;
-export const MAX_SEARCH_HITS = 2_000;
+const MAX_SEARCH_MESSAGE_CHARS = 4_000;
+const MAX_SEARCH_HITS = 2_000;
 
 export type CommandPaletteMode = "root" | "sessions";
 
@@ -39,7 +39,7 @@ export type CommandPaletteLabels = {
   noSearchMatches: string;
 };
 
-export type CommandPaletteLabelsSource = CommandPaletteLabels | Accessor<CommandPaletteLabels>;
+type CommandPaletteLabelsSource = CommandPaletteLabels | Accessor<CommandPaletteLabels>;
 
 export type CommandPaletteStateInput = {
   canCreateSession?: boolean;
@@ -175,7 +175,7 @@ export function messageIdFromInfo(message: MessageWithParts) {
   return "";
 }
 
-export function messageTextForSearch(message: MessageWithParts, maxChars = MAX_SEARCH_MESSAGE_CHARS) {
+function messageTextForSearch(message: MessageWithParts, maxChars = MAX_SEARCH_MESSAGE_CHARS) {
   const chunks: string[] = [];
   let used = 0;
   const push = (value: string) => {
@@ -220,7 +220,7 @@ export function messageTextForSearch(message: MessageWithParts, maxChars = MAX_S
   return chunks.join("\n");
 }
 
-export function collectSessionSearchHitsWithMeta(input: CollectSessionSearchHitsInput): CollectSessionSearchHitsResult {
+function collectSessionSearchHitsWithMeta(input: CollectSessionSearchHitsInput): CollectSessionSearchHitsResult {
   const query = input.query.trim().toLowerCase();
   if (!query) return { hits: [], capped: false };
 
@@ -253,7 +253,7 @@ export function collectSessionSearchHits(input: CollectSessionSearchHitsInput) {
   return collectSessionSearchHitsWithMeta(input).hits;
 }
 
-export function wrapActiveSearchHitIndex(current: number, total: number) {
+function wrapActiveSearchHitIndex(current: number, total: number) {
   if (total <= 0) return 0;
   return ((current % total) + total) % total;
 }
@@ -284,7 +284,7 @@ export function formatSearchPositionLabel(input: {
   return `${wrapActiveSearchHitIndex(input.activeIndex, input.hits.length) + 1}/${input.hits.length}`;
 }
 
-export function buildCommandPaletteSessionOptions(input: {
+function buildCommandPaletteSessionOptions(input: {
   groups: readonly WorkspaceSessionGroup[];
   activeWorkspaceId: string;
   workspaceLabel: (workspace: WorkspaceInfo) => string;

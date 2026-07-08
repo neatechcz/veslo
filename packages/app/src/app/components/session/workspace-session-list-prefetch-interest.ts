@@ -1,4 +1,4 @@
-export type { LoadedSidebarPrefetchInterest } from "../../types.js";
+;
 import type { LoadedSidebarPrefetchInterest as LoadedSidebarPrefetchInterestType } from "../../types.js";
 
 type LoadedSidebarPrefetchRow = {

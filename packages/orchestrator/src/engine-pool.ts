@@ -95,11 +95,11 @@ export type SerializedEngineState = {
   lastActivityAt: number;
 };
 
-export type EngineSnapshot = SerializedEngineState & {
+type EngineSnapshot = SerializedEngineState & {
   healthy: boolean;
 };
 
-export type EnginePoolLogger = (
+type EnginePoolLogger = (
   message: string,
   attributes?: Record<string, unknown>,
 ) => void;
@@ -184,7 +184,7 @@ export type EnginePoolConfig = {
   restartCountResetMs: number;
 };
 
-export const DEFAULT_ENGINE_POOL_CONFIG: EnginePoolConfig = {
+const DEFAULT_ENGINE_POOL_CONFIG: EnginePoolConfig = {
   maxEngines: 8,
   idleSuspendMs: 15 * 60_000,
   idleSweepIntervalMs: 60_000,

@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { exists } from "./utils.js";
 import { workspaceSkillLockfilePath as resolveWorkspaceSkillLockfilePath } from "./workspace-files.js";
 
-export type WorkspaceSkillLockfileEntry = {
+type WorkspaceSkillLockfileEntry = {
   skillId: string;
   installationId: string;
   versionId: string;
@@ -33,7 +33,7 @@ export type WorkspaceSkillLockfileComparison = {
   extra: WorkspaceSkillLockfileEntry[];
 };
 
-export class WorkspaceSkillLockfileError extends Error {
+class WorkspaceSkillLockfileError extends Error {
   code: string;
   repairable: boolean;
 
@@ -74,7 +74,7 @@ const validateEntry = (value: unknown, field: string): WorkspaceSkillLockfileEnt
   };
 };
 
-export function validateWorkspaceSkillLockfile(value: unknown): WorkspaceSkillLockfile {
+function validateWorkspaceSkillLockfile(value: unknown): WorkspaceSkillLockfile {
   if (!isRecord(value)) {
     throw new WorkspaceSkillLockfileError("Workspace skill lockfile must be an object");
   }

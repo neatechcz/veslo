@@ -7,7 +7,7 @@
  * with `bubblewrap`.
  */
 
-export type SandboxMount = {
+type SandboxMount = {
   /** Absolute host path. Realpath-resolved before passing. */
   hostPath: string;
   /** Read-only mount. Default true; explicit RW must be confirmed by user. */

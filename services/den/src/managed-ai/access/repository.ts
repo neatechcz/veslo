@@ -1,9 +1,9 @@
 import { MANAGED_AI_PROVIDERS, type ManagedAiProvider } from "../providers/ids.js"
 
-export const AiAccessProviders = MANAGED_AI_PROVIDERS
+const AiAccessProviders = MANAGED_AI_PROVIDERS
 
 export type AiAccessProvider = ManagedAiProvider
-export const AiAccessAssignmentOrigins = ["auto_assigned", "admin_assigned"] as const
+const AiAccessAssignmentOrigins = ["auto_assigned", "admin_assigned"] as const
 export type AiAccessAssignmentOrigin = (typeof AiAccessAssignmentOrigins)[number]
 
 export type UserAiAccessPolicyRecord = {

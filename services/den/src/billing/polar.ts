@@ -83,7 +83,7 @@ export type CloudWorkerAccess =
       checkoutUrl: string
     }
 
-export type CloudWorkerBillingPrice = {
+type CloudWorkerBillingPrice = {
   amount: number | null
   currency: string | null
   recurringInterval: string | null
@@ -104,7 +104,7 @@ export type CloudWorkerBillingSubscription = {
   endedAt: string | null
 }
 
-export type CloudWorkerBillingInvoice = {
+type CloudWorkerBillingInvoice = {
   id: string
   createdAt: string | null
   status: string

@@ -4,9 +4,9 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 export const E2E_MANAGED_AI_USER_ID = 'user_veslo_e2e_managed_ai';
 export const E2E_MANAGED_AI_ORG_ID = 'org_veslo_e2e_managed_ai';
 export const E2E_MANAGED_AI_TOKEN = 'veslo-e2e-managed-ai-token';
-export const E2E_MANAGED_AI_GATEWAY_ACCESS_TOKEN = 'veslo-e2e-managed-ai-gateway-access-token';
+const E2E_MANAGED_AI_GATEWAY_ACCESS_TOKEN = 'veslo-e2e-managed-ai-gateway-access-token';
 
-export type ManagedAiGatewayFixtureRequest = {
+type ManagedAiGatewayFixtureRequest = {
   at: string;
   method: string;
   pathname: string;

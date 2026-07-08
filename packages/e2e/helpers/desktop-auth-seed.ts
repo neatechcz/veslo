@@ -44,7 +44,7 @@ function firstOptionalBoolean(...values: unknown[]): boolean | null {
   return null;
 }
 
-export function defaultE2EDesktopAuthSeed(): DesktopAuthSeed {
+function defaultE2EDesktopAuthSeed(): DesktopAuthSeed {
   return {
     authJson: JSON.stringify({
       denApiBase: 'http://127.0.0.1:9',

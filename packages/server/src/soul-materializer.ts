@@ -22,7 +22,7 @@ const SOURCE_FILES: ReadonlyArray<{
   { scope: "workspace", relativePath: ".opencode/soul-workspace.md" },
 ];
 
-export type SoulMaterializationManifestFile = {
+type SoulMaterializationManifestFile = {
   path: string;
   scope: SoulScope;
   ownerId: string | null;
@@ -46,7 +46,7 @@ export type SoulMaterializationManifest = {
   files: SoulMaterializationManifestFile[];
 };
 
-export type SoulMaterializationConflict = {
+type SoulMaterializationConflict = {
   path: string;
   relativePath: string;
   reason: "unmanaged_target_exists" | "managed_target_modified" | "managed_target_missing";
@@ -57,7 +57,7 @@ type SoulMaterializationFileResult = SoulMaterializationManifestFile & {
   owner: ResourceOwner | null;
 };
 
-export type SoulMaterializationSuccess = {
+type SoulMaterializationSuccess = {
   ok: true;
   status: "current" | "pending";
   workspaceRoot: string;
@@ -71,7 +71,7 @@ export type SoulMaterializationSuccess = {
   requiresAction?: never;
 };
 
-export type SoulMaterializationFailure = {
+type SoulMaterializationFailure = {
   ok: false;
   reason: "conflict" | "config_error" | "manifest_error" | "write_error";
   message: string;

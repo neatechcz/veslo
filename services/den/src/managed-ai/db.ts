@@ -13,7 +13,7 @@ export type ManagedAiDbSelectionDependencies = {
   createManagedAiDb?: (databaseUrl: string) => unknown
 }
 
-export function createManagedAiClient(databaseUrl: string) {
+function createManagedAiClient(databaseUrl: string) {
   return mysql.createPool({
     uri: databaseUrl,
     waitForConnections: true,

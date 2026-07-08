@@ -9,7 +9,7 @@ export const scopedSessionStatusKey = (
   return workspace && session ? `${workspace}\0${session}` : "";
 };
 
-export const sessionStatusLookupKeys = (
+const sessionStatusLookupKeys = (
   workspaceId: string | null | undefined,
   sessionId: string | null | undefined,
 ) => {

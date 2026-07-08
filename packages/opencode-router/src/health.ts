@@ -35,11 +35,11 @@ export type HealthSnapshot = {
   };
 };
 
-export type GroupsConfigResult = {
+type GroupsConfigResult = {
   groupsEnabled: boolean;
 };
 
-export type TelegramIdentityItem = {
+type TelegramIdentityItem = {
   id: string;
   enabled: boolean;
   running: boolean;
@@ -47,21 +47,21 @@ export type TelegramIdentityItem = {
   pairingRequired?: boolean;
 };
 
-export type SlackIdentityItem = {
+type SlackIdentityItem = {
   id: string;
   enabled: boolean;
   running: boolean;
 };
 
-export type TelegramIdentitiesResult = {
+type TelegramIdentitiesResult = {
   items: TelegramIdentityItem[];
 };
 
-export type SlackIdentitiesResult = {
+type SlackIdentitiesResult = {
   items: SlackIdentityItem[];
 };
 
-export type UpsertIdentityResult = {
+type UpsertIdentityResult = {
   id: string;
   enabled: boolean;
   access?: "public" | "private";
@@ -71,7 +71,7 @@ export type UpsertIdentityResult = {
   error?: string;
 };
 
-export type DeleteIdentityResult = {
+type DeleteIdentityResult = {
   id: string;
   deleted: boolean;
   applied?: boolean;
@@ -79,7 +79,7 @@ export type DeleteIdentityResult = {
   error?: string;
 };
 
-export type TelegramIdentityUpsertInput = {
+type TelegramIdentityUpsertInput = {
   id?: string;
   token: string;
   enabled?: boolean;
@@ -88,7 +88,7 @@ export type TelegramIdentityUpsertInput = {
   pairingCodeHash?: string;
 };
 
-export type SlackIdentityUpsertInput = {
+type SlackIdentityUpsertInput = {
   id?: string;
   botToken: string;
   appToken: string;
@@ -96,7 +96,7 @@ export type SlackIdentityUpsertInput = {
   directory?: string;
 };
 
-export type BindingItem = {
+type BindingItem = {
   channel: string;
   identityId: string;
   peerId: string;
@@ -104,11 +104,11 @@ export type BindingItem = {
   updatedAt?: number;
 };
 
-export type BindingsListResult = {
+type BindingsListResult = {
   items: BindingItem[];
 };
 
-export type SendMessageInput = {
+type SendMessageInput = {
   channel: string;
   identityId?: string;
   directory?: string;
@@ -118,7 +118,7 @@ export type SendMessageInput = {
   parts?: OutboundMessagePart[];
 };
 
-export type SendMessageResult = {
+type SendMessageResult = {
   channel: string;
   directory: string;
   identityId?: string;

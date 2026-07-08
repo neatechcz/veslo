@@ -11,7 +11,7 @@ export const SOUL_INSTRUCTIONS = [
 
 export const SOUL_MANIFEST_PATH = ".opencode/veslo/soul-manifest.json";
 
-export function soulMemoryPaths(workspaceRoot: string): string[] {
+function soulMemoryPaths(workspaceRoot: string): string[] {
   return SOUL_INSTRUCTIONS.map((relativePath) => join(workspaceRoot, relativePath));
 }
 

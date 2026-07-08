@@ -23,11 +23,11 @@ const isParsedDbRecord = (value: unknown): value is Record<string, unknown> =>
 
 // --- Tauri invoke wrappers ---
 
-export async function readSessionsFromDb(directory: string): Promise<DbSessionRow[]> {
+async function readSessionsFromDb(directory: string): Promise<DbSessionRow[]> {
   return invoke<DbSessionRow[]>("opencode_db_read_sessions", { directory });
 }
 
-export async function readTranscriptFromDb(
+async function readTranscriptFromDb(
   sessionId: string,
   limit?: number,
   directory?: string,

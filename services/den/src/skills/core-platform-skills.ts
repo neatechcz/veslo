@@ -19,7 +19,7 @@ import type {
 const moduleDir = dirname(fileURLToPath(import.meta.url))
 const DEFAULT_SOURCE_ROOT = join(moduleDir, "core-platform-skill-assets")
 
-export type CorePlatformSkillName =
+type CorePlatformSkillName =
   | "veslo-docx"
   | "veslo-pdf"
   | "veslo-pptx"

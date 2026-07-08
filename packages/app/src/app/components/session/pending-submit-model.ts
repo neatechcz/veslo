@@ -4,7 +4,7 @@ import type { ComposerDraft, MessageWithParts } from "../../types";
 import type { EditableUserMessageDraft } from "./message-editability";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../../i18n";
 
-export type PendingSubmittedDraftState = "sending" | "error";
+type PendingSubmittedDraftState = "sending" | "error";
 
 export type PendingSubmittedDraft = {
   id: string;

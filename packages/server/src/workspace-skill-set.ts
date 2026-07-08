@@ -15,18 +15,9 @@ import type {
 } from "./types.js";
 
 export type {
-  BlockedWorkspaceSkillInstallation,
-  ManagedSkillSource,
-  ResolvedWorkspaceSkill,
-  WorkspaceSkillConflict,
-  WorkspaceSkillMaterialization,
   WorkspaceSkillRegistryInstallation,
   WorkspaceSkillRolloutPolicy,
-  WorkspaceSkillSetLocalUnmanagedSkill,
-  WorkspaceSkillSetPolicy,
   WorkspaceSkillSetResolution,
-  WorkspaceSkillSetUser,
-  WorkspaceSkillSetWorkspace,
 } from "./types.js";
 
 export type ResolveWorkspaceSkillSetInput = {

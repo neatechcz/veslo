@@ -12,8 +12,8 @@ import {
   SESSION_CHAT_MIN_WIDTH_EXIT,
 } from "../components/session/sidebar-layout-model";
 
-export const LEFT_SIDEBAR_DOCKED_WIDTH = LEFT_SIDEBAR_WIDTH_DEFAULT;
-export const RIGHT_SIDEBAR_DOCKED_WIDTH = 280;
+const LEFT_SIDEBAR_DOCKED_WIDTH = LEFT_SIDEBAR_WIDTH_DEFAULT;
+const RIGHT_SIDEBAR_DOCKED_WIDTH = 280;
 
 const effectiveDockedForWidth = (state: SidebarLayoutState) =>
   state.mode === "narrow" ? state.dockedPreference : state.docked;

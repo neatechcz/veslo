@@ -4,12 +4,12 @@ import type { WorkspaceBusyMap } from "./workspace-debug";
 import type { WorkspaceLifecycleState } from "./workspace-lifecycle-state";
 import type { RoutingClient, WorkspaceRouting } from "./workspace-routing";
 
-export type RuntimeOwnerReason =
+type RuntimeOwnerReason =
   | "orchestrator-ready"
   | "routed-client"
   | "not-ready";
 
-export type RuntimeOwnerDecision = {
+type RuntimeOwnerDecision = {
   owner: {
     type: "workspace-runtime";
     workspaceId: string;

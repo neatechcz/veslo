@@ -1,7 +1,7 @@
 import type { WorkspaceInfo } from "../lib/tauri";
 import type { EngineRuntime } from "../types";
 
-export type WorkspaceLifecyclePhase =
+type WorkspaceLifecyclePhase =
   | "idle"
   | "activating"
   | "browsing"
@@ -10,7 +10,7 @@ export type WorkspaceLifecyclePhase =
   | "degraded"
   | "error";
 
-export type WorkspaceLifecycleEntry = {
+type WorkspaceLifecycleEntry = {
   workspaceId: string;
   phase: WorkspaceLifecyclePhase;
   workspaceType?: WorkspaceInfo["workspaceType"];

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { TextDecoder } from "node:util"
 
-export type SkillRegistryPackageFile = {
+type SkillRegistryPackageFile = {
   path: string
   sha256: string
   sizeBytes: number
@@ -24,7 +24,7 @@ export type SkillRegistryPackageManifest = {
   }
 }
 
-export type SkillRegistryPackageArchiveFile = SkillRegistryPackageFile & {
+type SkillRegistryPackageArchiveFile = SkillRegistryPackageFile & {
   contentBase64: string
 }
 
@@ -39,9 +39,9 @@ export type SkillRegistryPendingPackageFile = {
   executable?: boolean
 }
 
-export const MAX_SKILL_REGISTRY_PACKAGE_FILE_COUNT = 256
-export const MAX_SKILL_REGISTRY_PACKAGE_FILE_SIZE_BYTES = 10 * 1024 * 1024
-export const MAX_SKILL_REGISTRY_PACKAGE_TOTAL_SIZE_BYTES = 25 * 1024 * 1024
+const MAX_SKILL_REGISTRY_PACKAGE_FILE_COUNT = 256
+const MAX_SKILL_REGISTRY_PACKAGE_FILE_SIZE_BYTES = 10 * 1024 * 1024
+const MAX_SKILL_REGISTRY_PACKAGE_TOTAL_SIZE_BYTES = 25 * 1024 * 1024
 
 const ENTRYPOINT = "SKILL.md"
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i
@@ -96,7 +96,7 @@ function optionalStringArray(value: unknown, field: string): string[] | undefine
   return entries.length > 0 ? entries : undefined
 }
 
-export function normalizeSkillRegistryPackagePath(path: string): string {
+function normalizeSkillRegistryPackagePath(path: string): string {
   const trimmed = requireTrimmedString(path, "package file path")
   if (
     trimmed.startsWith("/") ||
@@ -206,7 +206,7 @@ function stableStringify(value: unknown): string {
   return `{${entries.map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`).join(",")}}`
 }
 
-export function computeSkillRegistryPackageSha256(manifest: Omit<SkillRegistryPackageManifest, "packageSha256">): string {
+function computeSkillRegistryPackageSha256(manifest: Omit<SkillRegistryPackageManifest, "packageSha256">): string {
   return sha256Hex(stableStringify(manifest))
 }
 

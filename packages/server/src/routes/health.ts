@@ -22,7 +22,7 @@ export type HealthStatusRouteDependencies = {
   serializeWorkspaceForResponse: (workspace: WorkspaceInfo) => unknown;
 };
 
-export type RuntimeChainStatus =
+type RuntimeChainStatus =
   | "server_running"
   | "runtime_chain_ready"
   | "orchestrator_unavailable"

@@ -36,7 +36,7 @@ export type ConversationSubmitService = {
   }): Promise<ConversationSubmitServiceResponse>;
 };
 
-export type ConversationSubmitServiceResponse = {
+type ConversationSubmitServiceResponse = {
   payload: ConversationSubmitResult;
   httpStatus: number;
 };

@@ -20,7 +20,7 @@ export type ProgressCommentItem = {
 
 export type ProgressGroupItem = ProgressStepItem | ProgressCommentItem;
 
-export type ProgressMessageBlock = {
+type ProgressMessageBlock = {
   kind: "message";
   message: MessageWithParts;
   renderableParts: Part[];
@@ -29,7 +29,7 @@ export type ProgressMessageBlock = {
   messageId: string;
 };
 
-export type ProgressGroupBlock = {
+type ProgressGroupBlock = {
   kind: "progress-group";
   id: string;
   items: ProgressGroupItem[];
@@ -57,7 +57,7 @@ const messageIdFor = (message: MessageWithParts, fallback: string) => {
   return typeof id === "string" && id.trim() ? id : fallback;
 };
 
-export function renderablePartsForProgressMessage(
+function renderablePartsForProgressMessage(
   message: MessageWithParts,
   options: { developerMode: boolean; showThinking: boolean },
 ): Part[] {

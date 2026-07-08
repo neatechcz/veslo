@@ -1,4 +1,4 @@
-export type SkillLocationKind = "workspace" | "personal-global" | "organization" | "platform";
+type SkillLocationKind = "workspace" | "personal-global" | "organization" | "platform";
 
 export type SkillLocation = {
   id: string;
@@ -9,11 +9,11 @@ export type SkillLocation = {
   orgId?: string;
 };
 
-export type SkillLocationOperation = "copy" | "move" | "remove" | "restore";
+type SkillLocationOperation = "copy" | "move" | "remove" | "restore";
 
-export type SkillLocationConflictPolicy = "skip" | "rename" | "overwrite";
+type SkillLocationConflictPolicy = "skip" | "rename" | "overwrite";
 
-export type SkillLocationTargetConstraint = "allow-parallel" | "retarget-same-skill";
+type SkillLocationTargetConstraint = "allow-parallel" | "retarget-same-skill";
 
 export type SkillLocationSelection = {
   installationId: string;
@@ -26,7 +26,7 @@ export type SkillLocationSelection = {
   originalLocation?: SkillLocation;
 };
 
-export type ExistingSkillTargetLocation = {
+type ExistingSkillTargetLocation = {
   installationId: string;
   skillId?: string;
   name: string;
@@ -43,7 +43,7 @@ export type BuildSkillLocationActionReviewInput = {
   targetConstraint?: SkillLocationTargetConstraint;
 };
 
-export type CreateSkillInstallationStep = {
+type CreateSkillInstallationStep = {
   type: "create-installation";
   operation: "copy" | "move";
   sourceInstallationId: string;
@@ -58,7 +58,7 @@ export type CreateSkillInstallationStep = {
   requiresBackupSnapshot?: true;
 };
 
-export type DeleteSkillInstallationStep = {
+type DeleteSkillInstallationStep = {
   type: "delete-installation";
   operation: "move" | "remove";
   installationId: string;
@@ -68,7 +68,7 @@ export type DeleteSkillInstallationStep = {
   sourceLocation: SkillLocation;
 };
 
-export type RestoreSkillInstallationStep = {
+type RestoreSkillInstallationStep = {
   type: "restore-installation";
   operation: "restore";
   installationId: string;
@@ -84,7 +84,7 @@ export type RestoreSkillInstallationStep = {
   requiresBackupSnapshot?: true;
 };
 
-export type RetargetSkillInstallationStep = {
+type RetargetSkillInstallationStep = {
   type: "retarget-installation";
   operation: "move";
   installationId: string;
@@ -99,7 +99,7 @@ export type RetargetSkillInstallationStep = {
   requiresBackupSnapshot?: true;
 };
 
-export type RequireSkillBackupSnapshotStep = {
+type RequireSkillBackupSnapshotStep = {
   type: "require-backup-snapshot";
   operation: "copy" | "move" | "restore";
   skillId: string;
@@ -109,14 +109,14 @@ export type RequireSkillBackupSnapshotStep = {
   existingInstallationId: string;
 };
 
-export type SkillLocationActionStep =
+type SkillLocationActionStep =
   | CreateSkillInstallationStep
   | DeleteSkillInstallationStep
   | RestoreSkillInstallationStep
   | RetargetSkillInstallationStep
   | RequireSkillBackupSnapshotStep;
 
-export type SkillLocationActionConflict = {
+type SkillLocationActionConflict = {
   action: SkillLocationConflictPolicy;
   policy: SkillLocationConflictPolicy;
   reason?: "retarget-source-unavailable";
@@ -130,7 +130,7 @@ export type SkillLocationActionConflict = {
   requiresBackupSnapshot?: true;
 };
 
-export type SkillLocationAffectedSkill = {
+type SkillLocationAffectedSkill = {
   skillId: string;
   name: string;
   slug: string;
@@ -139,7 +139,7 @@ export type SkillLocationAffectedSkill = {
   stepTypes: SkillLocationActionStep["type"][];
 };
 
-export type SkillLocationReloadImpact = {
+type SkillLocationReloadImpact = {
   required: boolean;
   locationIds: string[];
   skillIds: string[];

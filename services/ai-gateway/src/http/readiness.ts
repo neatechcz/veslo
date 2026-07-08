@@ -4,7 +4,7 @@ import type { AiAccessRepository } from "../access/repository.js";
 import type { CredentialRepository } from "../credentials/repository.js";
 import { classifyProviderProxyFailure } from "./providers/proxy-failure-alert.js";
 
-export type ReadinessProviderProbe = {
+type ReadinessProviderProbe = {
   provider: string;
   url: string;
 };
@@ -65,7 +65,7 @@ export function createReadinessRouter(deps: ReadinessDependencies) {
   return router;
 }
 
-export async function checkReadiness(deps: ReadinessDependencies): Promise<ReadinessPayload> {
+async function checkReadiness(deps: ReadinessDependencies): Promise<ReadinessPayload> {
   const [providerReachability, credentials, aiAccessPolicies] = await Promise.all([
     checkProviderReachability(deps),
     checkCredentials(deps.credentials),

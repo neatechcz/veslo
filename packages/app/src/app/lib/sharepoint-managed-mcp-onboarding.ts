@@ -17,7 +17,7 @@ type McpServerLike = {
   };
 };
 
-export function sharePointMcpPromptStorageKey(orgId: string) {
+function sharePointMcpPromptStorageKey(orgId: string) {
   return `${SHAREPOINT_MCP_PROMPT_STORAGE_PREFIX}.${orgId.trim()}`;
 }
 
@@ -33,7 +33,7 @@ export function markSharePointMcpPromptAccepted(storage: StorageLike | null | un
   storage.setItem(sharePointMcpPromptStorageKey(normalizedOrgId), "accepted");
 }
 
-export function isSharePointMcpInstalled(mcpServers: readonly McpServerLike[]) {
+function isSharePointMcpInstalled(mcpServers: readonly McpServerLike[]) {
   return mcpServers.some((entry) => {
     if (entry.name === SHAREPOINT_MCP_ID) return true;
     const headers = entry.config?.headers ?? {};
@@ -41,7 +41,7 @@ export function isSharePointMcpInstalled(mcpServers: readonly McpServerLike[]) {
   });
 }
 
-export function hasSharePointHubMcp(hubMcpCards: readonly HubMcpLike[]) {
+function hasSharePointHubMcp(hubMcpCards: readonly HubMcpLike[]) {
   return hubMcpCards.some((entry) => entry.id === SHAREPOINT_MCP_ID || entry.name === SHAREPOINT_MCP_ID);
 }
 

@@ -136,7 +136,7 @@ export function createSoulRouter(options: SoulRouterOptions = {}) {
   return router
 }
 
-export function createInMemorySoulRouter(options: Omit<SoulRouterOptions, "store"> = {}) {
+function createInMemorySoulRouter(options: Omit<SoulRouterOptions, "store"> = {}) {
   return createSoulRouter({ ...options, store: new InMemorySoulStore() })
 }
 

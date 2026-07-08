@@ -31,7 +31,7 @@ export type ListPluginsOptions = {
   userOpencodeConfigDir?: string;
 };
 
-export type PluginListWarning = {
+type PluginListWarning = {
   code: "managed_plugin_manifest_invalid";
   path: string;
   source: "config.project" | "config.global" | "dir.project" | "dir.global";

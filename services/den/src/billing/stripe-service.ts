@@ -35,7 +35,7 @@ export class OrganizationStripeBillingServiceError extends Error {
   }
 }
 
-export type CreateManagedAiCheckoutSessionInput = {
+type CreateManagedAiCheckoutSessionInput = {
   orgId: string
   actorUserId: string
   interval: OrganizationBillingInterval
@@ -43,24 +43,24 @@ export type CreateManagedAiCheckoutSessionInput = {
   returnOrigin?: string | null
 }
 
-export type CreateBillingPortalSessionInput = {
+type CreateBillingPortalSessionInput = {
   orgId: string
   actorUserId: string
   returnOrigin?: string | null
 }
 
-export type UpdateManagedAiSubscriptionQuantitiesInput = {
+type UpdateManagedAiSubscriptionQuantitiesInput = {
   orgId: string
   actorUserId: string
   quantities: ManagedAiBillingQuantities
 }
 
-export type CancelManagedAiSubscriptionAtPeriodEndInput = {
+type CancelManagedAiSubscriptionAtPeriodEndInput = {
   orgId: string
   actorUserId: string
 }
 
-export type CreateLocalModelsStripeInvoiceOrSubscriptionInput = {
+type CreateLocalModelsStripeInvoiceOrSubscriptionInput = {
   orgId: string
   actorUserId: string
   platformAdmin: boolean

@@ -17,15 +17,15 @@ import { exists } from "./utils.js";
 import { validateSkillName } from "./validators.js";
 import { projectSkillsDir } from "./workspace-files.js";
 
-export type SkillImportSourceAgent = "codex" | "claude" | "opencode" | "agents";
-export type SkillImportSourceLocation = "user-global" | "workspace";
-export type SkillImportStatus = "ready" | "needs-review" | "invalid" | "conflict";
+type SkillImportSourceAgent = "codex" | "claude" | "opencode" | "agents";
+type SkillImportSourceLocation = "user-global" | "workspace";
+type SkillImportStatus = "ready" | "needs-review" | "invalid" | "conflict";
 
-export type SkillImportTarget =
+type SkillImportTarget =
   | { scope: "user-global" }
   | { scope: "workspace"; workspaceId: string; workspaceName: string };
 
-export type SkillImportConflict = {
+type SkillImportConflict = {
   code: "target-exists" | "duplicate-candidate";
   message: string;
   path?: string;
@@ -59,7 +59,7 @@ export type SkillImportRequest = SkillImportCandidateInput & {
   candidateIds: string[];
 };
 
-export type SkillImportResultItem = {
+type SkillImportResultItem = {
   candidateId: string;
   name?: string;
   ok: boolean;

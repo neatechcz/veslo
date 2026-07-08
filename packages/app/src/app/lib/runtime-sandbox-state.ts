@@ -1,4 +1,4 @@
-export type RuntimeSandboxBackend =
+type RuntimeSandboxBackend =
   | "none"
   | "docker"
   | "container"
@@ -8,8 +8,8 @@ export type RuntimeSandboxBackend =
   | "stub"
   | "unknown";
 
-export type RuntimeEngineChildKind = "direct" | "wsl";
-export type RuntimeDirectoryQueryPathMode = "auto" | "sandbox" | "non-sandbox";
+type RuntimeEngineChildKind = "direct" | "wsl";
+type RuntimeDirectoryQueryPathMode = "auto" | "sandbox" | "non-sandbox";
 
 export type RuntimeSandboxCapability = {
   enabled?: boolean | null;

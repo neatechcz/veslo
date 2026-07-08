@@ -39,7 +39,7 @@ import { shortId } from "../utils.js";
 const SESSION_TRANSCRIPT_DEFAULT_LIMIT = 140;
 const SESSION_TRANSCRIPT_MAX_LIMIT = 200;
 
-export type ConversationRunKind = "prompt_async" | "command" | "shell" | "summarize";
+type ConversationRunKind = "prompt_async" | "command" | "shell" | "summarize";
 
 export type ConversationRunTracer = {
   entries: Array<Record<string, unknown>>;

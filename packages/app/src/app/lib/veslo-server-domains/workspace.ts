@@ -221,4 +221,4 @@ export function createWorkspaceClient(context: WorkspaceClientContext) {
   };
 }
 
-export type WorkspaceClient = ReturnType<typeof createWorkspaceClient>;
+type WorkspaceClient = ReturnType<typeof createWorkspaceClient>;

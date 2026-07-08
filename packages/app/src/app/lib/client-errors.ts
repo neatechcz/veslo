@@ -89,7 +89,7 @@ export const describeRequestError = (error: unknown, fallback: string): string =
   return fallback;
 };
 
-export const assertNoClientError = (result: unknown): void => {
+const assertNoClientError = (result: unknown): void => {
   const maybe = result as { error?: unknown } | null | undefined;
   if (!maybe || maybe.error === undefined) return;
   throw new Error(describeRequestError(maybe.error, tr("errors.request_failed")));

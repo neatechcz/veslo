@@ -258,4 +258,4 @@ export function createConversationsClient(context: ConversationsClientContext) {
   };
 }
 
-export type ConversationsClient = ReturnType<typeof createConversationsClient>;
+type ConversationsClient = ReturnType<typeof createConversationsClient>;

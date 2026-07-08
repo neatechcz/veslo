@@ -152,11 +152,11 @@ export async function requireSoulApproval(
   });
 }
 
-export function readMaxBytes(options?: BodyReadOptions): number {
+function readMaxBytes(options?: BodyReadOptions): number {
   return options?.maxBytes ?? DEFAULT_JSON_BODY_MAX_BYTES;
 }
 
-export function bodyLimitLabel(options?: BodyReadOptions): string {
+function bodyLimitLabel(options?: BodyReadOptions): string {
   return options?.label ?? "request body";
 }
 
@@ -208,7 +208,7 @@ export async function readTextPreview(
   };
 }
 
-export async function readRequestTextWithLimit(request: Request, options?: BodyReadOptions): Promise<string> {
+async function readRequestTextWithLimit(request: Request, options?: BodyReadOptions): Promise<string> {
   const maxBytes = readMaxBytes(options);
   const label = bodyLimitLabel(options);
   const contentLength = contentLengthFor(request.headers);

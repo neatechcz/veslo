@@ -1,7 +1,7 @@
 import type { Actor } from "./types.js";
 import { ApiError } from "./errors.js";
 
-export const AI_GATEWAY_REDACTED_SECRET_VALUE = "[REDACTED]";
+const AI_GATEWAY_REDACTED_SECRET_VALUE = "[REDACTED]";
 
 const OPENCODE_SESSION_ID_MARKER = "OPENCODE_SESSION_ID";
 const DEFAULT_SESSION_HIT_TTL_MS = 5 * 60 * 1000;
@@ -21,7 +21,7 @@ export type ActiveAiGatewayRunContext = {
   runtimeAuthorizationActorTokenHash: string | null;
 };
 
-export type AiGatewaySessionResolutionSource =
+type AiGatewaySessionResolutionSource =
   | "veslo-session-header"
   | "opencode-session-header"
   | "workspace-active-run-context"
@@ -91,7 +91,7 @@ export function normalizeAiGatewaySessionId(sessionId?: string | null): string {
   return normalized;
 }
 
-export function containsUnresolvedOpenCodeSessionId(value?: string | null): boolean {
+function containsUnresolvedOpenCodeSessionId(value?: string | null): boolean {
   return (value?.trim() ?? "").includes(OPENCODE_SESSION_ID_MARKER);
 }
 
@@ -740,4 +740,4 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
   };
 }
 
-export type AiGatewayRuntimeOwner = ReturnType<typeof createAiGatewayRuntimeOwner>;
+type AiGatewayRuntimeOwner = ReturnType<typeof createAiGatewayRuntimeOwner>;

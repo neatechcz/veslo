@@ -27,7 +27,7 @@ export type OpenCodeSessionCreate = (
   input: OpenCodeSessionCreateInput,
 ) => Promise<unknown>;
 
-export type ConversationCreateResult = Record<string, unknown> & {
+type ConversationCreateResult = Record<string, unknown> & {
   workspaceId: string;
   id: string;
   conversationId: string;

@@ -94,7 +94,7 @@ export function buildSkillSearchDocument(input: SkillSearchIndexInput): SkillSea
   }
 }
 
-export function expandSkillSearchQuery(query: string, language?: string | null): string[] {
+function expandSkillSearchQuery(query: string, language?: string | null): string[] {
   const normalized = normalizeSearchText(query)
   if (!normalized) return []
 

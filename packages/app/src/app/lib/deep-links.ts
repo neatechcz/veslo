@@ -1,6 +1,6 @@
 import { normalizeVesloServerUrl } from "./veslo-server";
 
-export type SharedBundleImportIntent = "new_worker" | "import_current";
+type SharedBundleImportIntent = "new_worker" | "import_current";
 
 export type SharedBundleDeepLink = {
   bundleUrl: string;
@@ -18,7 +18,7 @@ type RemoteWorkspaceDefaults = {
   displayName?: string | null;
 };
 
-export function normalizeSharedBundleImportIntent(value: string | null | undefined): SharedBundleImportIntent {
+function normalizeSharedBundleImportIntent(value: string | null | undefined): SharedBundleImportIntent {
   const normalized = (value ?? "").trim().toLowerCase();
   if (normalized === "new_worker" || normalized === "new-worker" || normalized === "newworker") {
     return "new_worker";

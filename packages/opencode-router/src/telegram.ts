@@ -7,7 +7,7 @@ import type { InboundMessagePart, MediaKind, MessageDeliveryResult, OutboundMess
 import type { MediaStore } from "./media-store.js";
 import { chunkText } from "./text.js";
 
-export type InboundMessage = {
+type InboundMessage = {
   channel: "telegram";
   identityId: string;
   peerId: string;
@@ -37,7 +37,7 @@ export function isTelegramPeerId(peerId: string): boolean {
   return TELEGRAM_CHAT_ID_PATTERN.test(peerId.trim());
 }
 
-export function parseTelegramPeerId(peerId: string): number | null {
+function parseTelegramPeerId(peerId: string): number | null {
   const trimmed = peerId.trim();
   if (!isTelegramPeerId(trimmed)) return null;
   const parsed = Number(trimmed);

@@ -22,7 +22,7 @@ export type ConversationBinding = {
   lastSeenAt: number;
 };
 
-export type ConversationBindingInput = {
+type ConversationBindingInput = {
   workspaceId: string;
   directory: string;
   engineSessionId: string;

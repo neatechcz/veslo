@@ -1,4 +1,4 @@
-export type SessionFlowProgressOwner = "send" | "create" | "runtime";
+type SessionFlowProgressOwner = "send" | "create" | "runtime";
 
 type SessionFlowProgressStartEvent =
   | { type: "runtime.connecting"; owner?: SessionFlowProgressOwner }

@@ -33,7 +33,7 @@ type ManagedDependencyEvent = {
   payload: Record<string, unknown>;
 };
 
-export type ManagedDependencyEmitter = (
+type ManagedDependencyEmitter = (
   event: string,
   payload: Record<string, unknown>,
 ) => void;
@@ -98,7 +98,7 @@ async function readPackageJsonVersion(packageDir: string): Promise<string | null
   }
 }
 
-export async function inspectOpencodeManagedDependencyStatus(configDir: string): Promise<ManagedDependencyStatus> {
+async function inspectOpencodeManagedDependencyStatus(configDir: string): Promise<ManagedDependencyStatus> {
   const pluginDir = managedPackageDir(configDir, "@opencode-ai/plugin");
   const zodDir = managedPackageDir(configDir, "zod");
   const openAiCompatibleDir = managedPackageDir(configDir, "@ai-sdk/openai-compatible");

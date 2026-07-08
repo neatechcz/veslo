@@ -74,4 +74,4 @@ export function createAutomationsClient(context: AutomationsClientContext) {
   };
 }
 
-export type AutomationsClient = ReturnType<typeof createAutomationsClient>;
+type AutomationsClient = ReturnType<typeof createAutomationsClient>;

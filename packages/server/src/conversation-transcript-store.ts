@@ -12,7 +12,7 @@ import { resolveConversationBindingDbPath } from "./conversation-binding-store.j
 // engine session id so imported/legacy OpenCode ids cannot collide across
 // directory-scoped bindings.
 
-export type TranscriptPartInput = {
+type TranscriptPartInput = {
   id: string;
   type?: string | null;
   payload: unknown;
@@ -27,7 +27,7 @@ export type TranscriptMessageInput = {
   parts: TranscriptPartInput[];
 };
 
-export type PersistedTranscript = {
+type PersistedTranscript = {
   messages: unknown[];
   partsByMessageId: Record<string, unknown[]>;
 };

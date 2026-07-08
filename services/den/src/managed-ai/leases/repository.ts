@@ -10,7 +10,7 @@ export type SessionLease = {
   activeBindingId: string
 }
 
-export type AdminSessionState = "healthy" | "degraded" | "rebound"
+type AdminSessionState = "healthy" | "degraded" | "rebound"
 
 export type AdminSessionRecord = {
   id: string

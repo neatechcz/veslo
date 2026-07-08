@@ -29,7 +29,7 @@ export function buildUnsandboxedSandboxWarning(input: {
   return `${RED}${lines.join("\n")}${RESET}`;
 }
 
-export function sandboxDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+function sandboxDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boolean {
   return envFlagEnabled(env.VESLO_DISABLE_SANDBOX);
 }
 

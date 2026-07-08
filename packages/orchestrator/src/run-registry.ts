@@ -9,11 +9,11 @@ import {
   type RunWaitReason,
 } from "./run-store.js";
 
-export const MODEL_RETRY_NO_PROGRESS_SOFT_MS = 120_000;
+const MODEL_RETRY_NO_PROGRESS_SOFT_MS = 120_000;
 export const MODEL_RETRY_NO_PROGRESS_HARD_MS = 600_000;
 export const MODEL_RETRY_NO_PROGRESS_TIMEOUT = "model_retry_no_output_timeout";
 
-export type RunProbeActivityResult = {
+type RunProbeActivityResult = {
   active: boolean;
   activityKind?: RunActivityKind | null;
   waitReason?: RunWaitReason | null;
@@ -22,7 +22,7 @@ export type RunProbeActivityResult = {
 
 export type RunProbeResult = RunProbeActivityResult | { unreachable: true };
 
-export type ReconciledRun = {
+type ReconciledRun = {
   record: RunRecord;
   stale: boolean;
   noProgressSeconds: number | null;

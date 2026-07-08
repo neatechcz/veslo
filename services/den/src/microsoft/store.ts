@@ -6,7 +6,7 @@ import { MicrosoftConnectionTable } from "../db/schema.js"
 import type { MicrosoftConnectorId } from "./connectors.js"
 import type { MicrosoftOAuthGrant } from "./oauth.js"
 
-export type MicrosoftConnectionState = "connected" | "revoked" | "error"
+type MicrosoftConnectionState = "connected" | "revoked" | "error"
 
 export type MicrosoftConnection = {
   id: string

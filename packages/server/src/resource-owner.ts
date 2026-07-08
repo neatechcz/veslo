@@ -2,8 +2,8 @@ import { resolve } from "node:path";
 
 import type { ManagedSkillSource, ResourceOwner } from "./types.js";
 
-export const LOCAL_USER_RESOURCE_OWNER_ID = "local";
-export const PLATFORM_RESOURCE_OWNER_ID = "veslo-platform";
+const LOCAL_USER_RESOURCE_OWNER_ID = "local";
+const PLATFORM_RESOURCE_OWNER_ID = "veslo-platform";
 
 const clean = (value: string | null | undefined): string => String(value ?? "").trim();
 
@@ -67,7 +67,7 @@ export function organizationResourceOwner(input: {
   );
 }
 
-export function platformResourceOwner(input: {
+function platformResourceOwner(input: {
   platformId?: string | null;
   label?: string | null;
 } = {}): ResourceOwner {

@@ -168,7 +168,7 @@ async function collectSkillFiles(skillRoot: string, dir: string = skillRoot, fil
   }
   return files;
 }
-export const extractTriggerFromBody = extractTriggerFromSkillBody;
+const extractTriggerFromBody = extractTriggerFromSkillBody;
 
 const markerString = (value: unknown, key: string): string | undefined => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
@@ -526,7 +526,7 @@ export async function readGlobalSkillFilesAtPath(
   };
 }
 
-export async function deleteSkill(workspaceRoot: string, name: string): Promise<{ path: string }> {
+async function deleteSkill(workspaceRoot: string, name: string): Promise<{ path: string }> {
   const trimmed = name.trim();
   validateSkillName(trimmed);
   const baseDir = workspaceSkillsRoot(workspaceRoot);
@@ -588,7 +588,7 @@ export async function deleteGlobalSkillRecoverable(
   return { path: record.originalDir, removalId: record.id };
 }
 
-export async function deleteSkillAtPath(
+async function deleteSkillAtPath(
   workspaceRoot: string,
   payload: { name: string; path: string },
 ): Promise<{ path: string }> {

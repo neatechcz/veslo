@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 
 import { ApiError } from "./errors.js";
 
-export type ConversationSubmitDraftMode = "prompt" | "shell";
-export type ConversationSubmitImplicitSkillCommandPolicy = "confirm" | "allow" | "disable";
-export type ConversationSubmitAttachmentKind = "image" | "file";
+type ConversationSubmitDraftMode = "prompt" | "shell";
+type ConversationSubmitImplicitSkillCommandPolicy = "confirm" | "allow" | "disable";
+type ConversationSubmitAttachmentKind = "image" | "file";
 
 export type ConversationSubmitAttachment = {
   name: string;
@@ -72,7 +72,7 @@ export type ConversationSubmitResolvedRunInput =
       kind: "summarize";
     };
 
-export type ConversationSubmitDryRunResult = {
+type ConversationSubmitDryRunResult = {
   status: "dry_run";
   workspaceId: string;
   clientMessageId: string;
@@ -88,7 +88,7 @@ export type ConversationSubmitDryRunResult = {
   debugTrace?: ConversationSubmitDebugTraceEntry[];
 };
 
-export type ConversationSubmitMaterializedResult = {
+type ConversationSubmitMaterializedResult = {
   status: "materialized";
   workspaceId: string;
   conversationId: string;
@@ -125,13 +125,13 @@ export type ConversationSubmitQueuedResult = {
   debugTrace?: ConversationSubmitDebugTraceEntry[];
 };
 
-export type ConversationSubmitImplicitSkillCommandConfirmation = {
+type ConversationSubmitImplicitSkillCommandConfirmation = {
   type: "implicit_skill_command";
   skillName: string;
   arguments: string;
 };
 
-export type ConversationSubmitConfirmation =
+type ConversationSubmitConfirmation =
   | ConversationSubmitImplicitSkillCommandConfirmation;
 
 export type ConversationSubmitBlockedResult = {
@@ -362,7 +362,7 @@ function stableJsonValue(value: unknown): unknown {
   return result;
 }
 
-export function stableJsonStringify(value: unknown): string {
+function stableJsonStringify(value: unknown): string {
   return JSON.stringify(stableJsonValue(value));
 }
 
