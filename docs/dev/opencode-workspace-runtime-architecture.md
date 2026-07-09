@@ -323,6 +323,13 @@ It must not:
 The selected workspace is display context. The run's workspace and directory are
 part of the persisted conversation/run state.
 
+When a scoped sidebar session belongs to the already-active workspace and that
+workspace has been explicitly allowed for live transcript reads by the send/run
+flow, selecting it should read the active live session directly. Host-first
+offline transcript browsing remains the fallback for foreign workspace browsing,
+browse-only/runtime-unavailable state, and sessions whose workspace has not been
+live-read enabled.
+
 ## Error Handling Rules
 
 - Local server unavailable: surface local runtime readiness and retry recovery.

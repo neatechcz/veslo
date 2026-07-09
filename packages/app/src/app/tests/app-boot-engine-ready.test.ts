@@ -46,7 +46,7 @@ test("boot warmup readiness is separate from live transcript read policy", () =>
   );
   assert.match(
     appSource,
-    /return !isLiveTranscriptReadAllowedForWorkspace\(workspaceStore\.activeWorkspaceId\(\)\.trim\(\)\);/,
+    /const activeWorkspaceId = workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*return !isLiveTranscriptReadAllowedForWorkspace\(activeWorkspaceId\);/,
     "ordinary history browsing should not become live SDK reading merely because the runtime is ready",
   );
   assert.doesNotMatch(

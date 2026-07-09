@@ -1061,8 +1061,16 @@ export default function App() {
     }),
     shouldBrowseSessionFromDb: (sessionId) => {
       const transcriptScope = resolveSelectedSessionBrowseScope(sessionId);
-      if (transcriptScope) return true;
-      return !isLiveTranscriptReadAllowedForWorkspace(workspaceStore.activeWorkspaceId().trim());
+      const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+      if (transcriptScope) {
+        const scopeWorkspaceId = transcriptScope.workspaceId?.trim() ?? "";
+        const activeScopedSession =
+          Boolean(scopeWorkspaceId) &&
+          Boolean(activeWorkspaceId) &&
+          scopeWorkspaceId === activeWorkspaceId;
+        return !(activeScopedSession && isLiveTranscriptReadAllowedForWorkspace(scopeWorkspaceId));
+      }
+      return !isLiveTranscriptReadAllowedForWorkspace(activeWorkspaceId);
     },
     onAssistantResponseObserved: (sessionId) => {
       noteAssistantResponseObserved(sessionId);

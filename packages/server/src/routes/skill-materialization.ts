@@ -125,16 +125,39 @@ function skillRegistryErrorPayload(error: ApiError) {
   const details = error.details && typeof error.details === "object" && !Array.isArray(error.details)
     ? error.details as Record<string, unknown>
     : {};
-  const registryAction = typeof details.registryAction === "string" ? details.registryAction : undefined;
-  const registryResource = typeof details.registryResource === "string" ? details.registryResource : undefined;
-  const registryScope = typeof details.registryScope === "string" ? details.registryScope : undefined;
+  const stringDetail = (key: string) => {
+    const value = details[key];
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
+  };
+  const registryPath = (() => {
+    const explicit = stringDetail("registryPath");
+    if (explicit) return explicit;
+    const url = stringDetail("url");
+    if (!url) return undefined;
+    try {
+      const parsed = new URL(url);
+      return `${parsed.pathname}${parsed.search}`;
+    } catch {
+      return url;
+    }
+  })();
   return {
     code: error.code,
     message: error.message,
     status: error.status,
-    ...(registryAction ? { registryAction } : {}),
-    ...(registryResource ? { registryResource } : {}),
-    ...(registryScope ? { registryScope } : {}),
+    ...(stringDetail("registryAction") ? { registryAction: stringDetail("registryAction") } : {}),
+    ...(stringDetail("registryResource") ? { registryResource: stringDetail("registryResource") } : {}),
+    ...(stringDetail("registryScope") ? { registryScope: stringDetail("registryScope") } : {}),
+    ...(registryPath ? { registryPath } : {}),
+    ...(stringDetail("workspaceId") ? { workspaceId: stringDetail("workspaceId") } : {}),
+    ...(stringDetail("versionId") ? { versionId: stringDetail("versionId") } : {}),
+    ...(stringDetail("installationId") ? { installationId: stringDetail("installationId") } : {}),
+    ...(stringDetail("skillId") ? { skillId: stringDetail("skillId") } : {}),
+    ...(stringDetail("skillName") ? { skillName: stringDetail("skillName") } : {}),
+    ...(stringDetail("rolloutPolicyId") ? { rolloutPolicyId: stringDetail("rolloutPolicyId") } : {}),
+    ...(stringDetail("target") ? { target: stringDetail("target") } : {}),
+    ...(stringDetail("source") ? { source: stringDetail("source") } : {}),
+    ...(stringDetail("audience") ? { audience: stringDetail("audience") } : {}),
   };
 }
 
@@ -445,6 +468,14 @@ async function fetchRegistryWorkspaceMaterializations(
     const packageResponse = await downloadSkillPackageFromRegistry({
       ...registryInput,
       versionId,
+      registryContext: {
+        ...(targetWorkspace.id === "personal-global" ? {} : { workspaceId: targetWorkspace.id }),
+        installationId: installation.installationId,
+        skillId: installation.skillId,
+        ...(installation.name ? { skillName: installation.name } : {}),
+        target: targetWorkspace.id === "personal-global" ? "personal-global" : "workspace",
+        source: installation.source,
+      },
     });
     const workspaceInstallation = registryInstallationToWorkspaceInstallation({
       installation,
@@ -495,6 +526,13 @@ async function fetchRegistryWorkspaceMaterializations(
       const packageResponse = await downloadSkillPackageFromRegistry({
         ...registryInput,
         versionId: requireRolloutPolicyVersionId(policy),
+        registryContext: {
+          workspaceId: policy.workspaceId ?? workspace.id,
+          skillId: policy.skillId,
+          rolloutPolicyId: policy.id,
+          target: policy.target,
+          audience: policy.audience,
+        },
       });
       const workspacePolicy = registryRolloutPolicyToWorkspacePolicy({
         policy,
@@ -580,6 +618,13 @@ async function fetchRegistryPersonalGlobalMaterializations(
     const packageResponse = await downloadSkillPackageFromRegistry({
       ...registryInput,
       versionId: installation.versionId,
+      registryContext: {
+        installationId: installation.installationId,
+        skillId: installation.skillId,
+        ...(installation.name ? { skillName: installation.name } : {}),
+        target: "personal-global",
+        source: installation.source,
+      },
     });
     const workspaceInstallation = registryInstallationToWorkspaceInstallation({
       installation,
@@ -606,6 +651,12 @@ async function fetchRegistryPersonalGlobalMaterializations(
     const packageResponse = await downloadSkillPackageFromRegistry({
       ...registryInput,
       versionId: requireRolloutPolicyVersionId(policy),
+      registryContext: {
+        skillId: policy.skillId,
+        rolloutPolicyId: policy.id,
+        target: policy.target,
+        audience: policy.audience,
+      },
     });
     const workspacePolicy = registryRolloutPolicyToWorkspacePolicy({
       policy,

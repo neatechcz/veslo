@@ -59,6 +59,16 @@ test("workspace materialization trace carries registry errors for degraded diagn
     /trace\("synced",\s*\{[\s\S]*registryError:\s*result\.registryError\s*\?\?\s*null/s,
     "sync trace should include registry errors returned by the sync endpoint",
   );
+  assert.match(
+    source,
+    /function skillRegistryErrorTracePayload\(error: VesloServerError\)[\s\S]*\.\.\.skillRegistryDetailsPayload\(error\.details\)/s,
+    "caught registry errors should keep server-provided registry details for exact diagnostics",
+  );
+  assert.match(
+    source,
+    /trace\("degraded",\s*\{[\s\S]*registryError,[\s\S]*\}\);/s,
+    "degraded trace should carry the structured registry error payload",
+  );
 });
 
 test("local materialization sync starts the managed server before using the fallback client", () => {

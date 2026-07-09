@@ -430,8 +430,8 @@ test("app routes selected session browsing through DB scope", () => {
   );
   assert.match(
     appSource,
-    /shouldBrowseSessionFromDb: \(sessionId\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*if \(transcriptScope\) return true;[\s\S]*return !isLiveTranscriptReadAllowedForWorkspace\(workspaceStore\.activeWorkspaceId\(\)\.trim\(\)\);[\s\S]*\},/s,
-    "session store should force DB browsing for scoped sidebar selections or workspaces not explicitly live-read-enabled by send flow",
+    /shouldBrowseSessionFromDb: \(sessionId\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*const activeWorkspaceId = workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const activeScopedSession =[\s\S]*scopeWorkspaceId === activeWorkspaceId;[\s\S]*return !\(activeScopedSession && isLiveTranscriptReadAllowedForWorkspace\(scopeWorkspaceId\)\);[\s\S]*return !isLiveTranscriptReadAllowedForWorkspace\(activeWorkspaceId\);[\s\S]*\},/s,
+    "session store should keep foreign scoped sidebar selections on DB browsing while allowing active live-scoped sessions to read directly",
   );
   assert.match(
     appSource,

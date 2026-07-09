@@ -1958,6 +1958,12 @@ test("POST workspace materialization sync surfaces a missing required registry p
       registryAction?: string;
       registryResource?: string;
       registryScope?: string;
+      registryPath?: string;
+      versionId?: string;
+      installationId?: string;
+      skillId?: string;
+      target?: string;
+      source?: string;
     };
   };
   expect(payload).toMatchObject({
@@ -1967,6 +1973,12 @@ test("POST workspace materialization sync surfaces a missing required registry p
       registryAction: "download",
       registryResource: "skill-package",
       registryScope: "skill-version",
+      registryPath: "/v1/skill-versions/version_missing_package/package",
+      versionId: "version_missing_package",
+      installationId: "install_missing_package",
+      skillId: "skill_missing_package",
+      target: "workspace",
+      source: "workspace",
     },
   });
   expect(registryCalls).toEqual([

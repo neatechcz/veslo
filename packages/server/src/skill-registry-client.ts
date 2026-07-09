@@ -59,8 +59,20 @@ type SearchInput = PaginatedInput & {
   language?: string;
 };
 
+type RegistrySkillRequestContext = {
+  workspaceId?: string;
+  installationId?: string;
+  skillId?: string;
+  skillName?: string;
+  rolloutPolicyId?: string;
+  target?: string;
+  source?: string;
+  audience?: string;
+};
+
 type DownloadPackageInput = RegistryClientInput & {
   versionId: string;
+  registryContext?: RegistrySkillRequestContext;
 };
 
 type SkillVersionsInput = PaginatedInput & {
@@ -195,6 +207,9 @@ type RegistryRequestMetadata = {
   registryAction: string;
   registryResource: string;
   registryScope?: string;
+} & RegistrySkillRequestContext & {
+  versionId?: string;
+  registryPath?: string;
 };
 
 type ReviewDecisionInput = RegistryClientInput & {
@@ -277,7 +292,15 @@ async function buildStatusDetails(
   metadata?: RegistryRequestMetadata,
 ): Promise<{ url: string; status: number } & Partial<RegistryRequestMetadata>> {
   await response.body?.cancel().catch(() => undefined);
-  return { url, status: response.status, ...metadata };
+  const registryPath = (() => {
+    try {
+      const parsed = new URL(url);
+      return `${parsed.pathname}${parsed.search}`;
+    } catch {
+      return url;
+    }
+  })();
+  return { url, registryPath, status: response.status, ...metadata };
 }
 
 async function throwRegistryStatusError(
@@ -392,6 +415,8 @@ export async function downloadSkillPackageFromRegistry(
     registryAction: "download",
     registryResource: "skill-package",
     registryScope: "skill-version",
+    versionId: input.versionId,
+    ...input.registryContext,
   };
   const url = buildUrl(input.baseUrl, `/v1/skill-versions/${encodeURIComponent(input.versionId)}/package`);
   const payload = await fetchRegistryJson(input, url, { metadata });
@@ -405,6 +430,7 @@ export async function getWorkspaceSkillSetFromRegistry(
     registryAction: "read",
     registryResource: "workspace-skill-set",
     registryScope: "workspace",
+    workspaceId: input.workspaceId,
   };
   const url = buildUrl(input.baseUrl, `/v1/workspaces/${encodeURIComponent(input.workspaceId)}/skill-set`);
   const payload = await fetchRegistryJson(input, url, { metadata });
@@ -433,6 +459,8 @@ export async function listRegistrySkillInstallations(
     registryAction: "list",
     registryResource: "skill-installations",
     registryScope: input.target ?? input.source ?? "all",
+    ...(input.target ? { target: input.target } : {}),
+    ...(input.source ? { source: input.source } : {}),
   };
   const url = buildUrl(input.baseUrl, "/v1/skill-installations", {
     cursor: input.cursor,
@@ -462,6 +490,10 @@ export async function listRegistrySkillRolloutPolicies(
     registryAction: "list",
     registryResource: "skill-rollout-policies",
     registryScope: input.target ?? input.catalogScope ?? "all",
+    ...(input.skillId ? { skillId: input.skillId } : {}),
+    ...(input.target ? { target: input.target } : {}),
+    ...(input.audience ? { audience: input.audience } : {}),
+    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
   };
   const url = buildUrl(input.baseUrl, "/v1/skill-rollout-policies", {
     cursor: input.cursor,

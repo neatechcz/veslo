@@ -659,6 +659,7 @@ describe("skill registry client", () => {
 
     expect(error.details).toEqual({
       url: "https://registry.example/v1/skills",
+      registryPath: "/v1/skills",
       status: 403,
     });
     expect(JSON.stringify(error.details)).not.toContain("registry-token");
@@ -677,10 +678,12 @@ describe("skill registry client", () => {
 
     expect(error.details).toEqual({
       url: "https://registry.example/v1/workspaces/workspace_1/skill-set",
+      registryPath: "/v1/workspaces/workspace_1/skill-set",
       status: 404,
       registryAction: "read",
       registryResource: "workspace-skill-set",
       registryScope: "workspace",
+      workspaceId: "workspace_1",
     });
     expect(JSON.stringify(error.details)).not.toContain("registry-token");
   });
@@ -697,6 +700,7 @@ describe("skill registry client", () => {
 
     expect(error.details).toEqual({
       url: "https://registry.example/v1/skills",
+      registryPath: "/v1/skills",
       status: 403,
     });
     expect(JSON.stringify(error.details)).not.toContain("registry-token");
