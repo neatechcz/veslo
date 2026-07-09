@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  AI_ACCESS_LOADING_MESSAGE,
+  AI_ACCESS_LOADING_MESSAGE_KEY,
   AI_ACCESS_INVALID_MESSAGE,
   AI_ACCESS_NOT_CONFIGURED_MESSAGE,
   DEFAULT_MANAGED_AI_GATEWAY_BASE_URL,
@@ -9,6 +11,7 @@ import {
   extractManagedApiKey,
   formatManagedAiAccessConfig,
   hasUsableManagedAiRuntimeConfig,
+  isAiAccessLoadingMessage,
   type ManagedAiAccessProfile,
   resolveManagedAiAccess,
   resolveManagedAiAccessBundleState,
@@ -116,6 +119,15 @@ test("resolveManagedAiAccess returns a configured profile for valid admin policy
     },
     reason: null,
   });
+});
+
+test("isAiAccessLoadingMessage accepts localized loading copy", () => {
+  const tr = (key: string) =>
+    key === AI_ACCESS_LOADING_MESSAGE_KEY ? "Načítám konfiguraci přístupu k AI." : key;
+
+  assert.equal(isAiAccessLoadingMessage(AI_ACCESS_LOADING_MESSAGE), true);
+  assert.equal(isAiAccessLoadingMessage("Načítám konfiguraci přístupu k AI.", tr), true);
+  assert.equal(isAiAccessLoadingMessage("AI access blocked", tr), false);
 });
 
 test("resolveManagedAiAccess reports unconfigured access for missing or disabled records", () => {

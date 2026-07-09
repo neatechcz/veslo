@@ -13,6 +13,7 @@ import {
 import type { SendTargetWorkspaceScope } from "../../context/workspace-session-selection.js";
 import type { SessionFlowProgressEvent } from "../../context/session-flow-progress-presenter.js";
 import type { LiveTranscriptReadPolicyEvent } from "../../context/live-transcript-read-policy.js";
+import type { SubmittedRunTranscriptCatchupTarget } from "../../context/submitted-run-transcript-catchup.js";
 import type { DocumentRuntimeStatusPayload } from "../../lib/document-runtime.js";
 import type {
   VesloConversationRunInput,
@@ -72,6 +73,7 @@ type Harness = {
   busyState: () => boolean;
   liveReadAllowedWorkspaceIds: string[];
   liveTranscriptPolicyEvents: LiveTranscriptReadPolicyEvent[];
+  catchups: SubmittedRunTranscriptCatchupTarget[];
 };
 
 function documentRuntimePayload(
@@ -134,6 +136,7 @@ function createHarness(
   let busyState = false;
   const liveReadAllowedWorkspaceIds: string[] = [];
   const liveTranscriptPolicyEvents: LiveTranscriptReadPolicyEvent[] = [];
+  const catchups: SubmittedRunTranscriptCatchupTarget[] = [];
 
   const optionsWithBridge = {
     abortConversationFromVesloWriteApi: async () => null,
@@ -157,6 +160,8 @@ function createHarness(
     captureDisplayedConversationGuard: (sessionId) => ({
       sessionId,
       workspaceId: "ws-active",
+      workspaceRoot: "/active",
+      directory: "/active",
       conversationId: "",
       opencodeSessionId: sessionId,
     }),
@@ -186,7 +191,8 @@ function createHarness(
     },
     finishPerf: () => undefined,
     holdVisibleRuntimeActivity: (sessionId, reason) => actions.push(`hold:${sessionId}:${reason}`),
-    isPendingSessionInstanceId: (sessionId) => Boolean(sessionId?.startsWith("pending-session:")),
+    isPendingSessionInstanceKey: (sessionId: string | null | undefined) =>
+      Boolean(sessionId?.startsWith("pending-session:")),
     isTauriRuntime: () => false,
     isUiScopeTokenCurrent: () => true,
     isWorkspaceClientStaleError: (_error): _error is { entryWorkspaceId?: string | null; currentWorkspaceId?: string | null } =>
@@ -220,6 +226,7 @@ function createHarness(
     registerPendingSidebarSession: () => actions.push("register-pending-sidebar"),
     removeSessionFromWorkspaceSidebar: (workspaceId, sessionId) => actions.push(`remove-pending:${workspaceId}:${sessionId}`),
     reportError: () => undefined,
+    scheduleSubmittedRunTranscriptCatchup: (target) => catchups.push(target),
     resolveConversationAbortScope: (sessionId, target) => ({
       sessionId,
       workspaceId: target?.workspaceId?.trim() || "ws-active",
@@ -309,6 +316,7 @@ function createHarness(
     busyState: () => busyState,
     liveReadAllowedWorkspaceIds,
     liveTranscriptPolicyEvents,
+    catchups,
   };
 }
 
@@ -920,6 +928,14 @@ test("session send workflow submits an existing local prompt through server subm
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing:start"));
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing-success"));
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
+  assert.deepEqual(harness.catchups, [{
+    workspaceId: "ws-active",
+    sessionId: "sess-target",
+    directory: "/active",
+    runId: "run-submit",
+    traceId: "trace-created",
+    reason: "sendPrompt:server-submit-existing-success",
+  }]);
 });
 
 test("session send workflow blocks existing-session submit when scoped workspace activation reports missing scope", async () => {
@@ -1231,6 +1247,7 @@ test("session send workflow handles queued server submit results for send-now", 
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing-success"));
   assert.ok(harness.actions.includes("hold:sess-target:sendPrompt:server-submit-existing-success"));
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
+  assert.deepEqual(harness.catchups, []);
   const queuedEvent = harness.liveTranscriptPolicyEvents.at(-1);
   assert.equal(queuedEvent?.type, "conversation-run.queued");
   assert.equal(queuedEvent?.reason, "sendPrompt:queued");
@@ -1585,6 +1602,14 @@ test("session send workflow accepts first-session server submit results without 
   assert.equal(createOptions[0]?.submitDraft?.text, "first server submit");
   assert.ok(harness.events.includes("sendPrompt:server-submit-first-success"));
   assert.equal(harness.liveTranscriptPolicyEvents.at(-1)?.reason, "sendPrompt:success");
+  assert.deepEqual(harness.catchups, [{
+    workspaceId: "ws-active",
+    sessionId: "sess-created",
+    directory: "/active",
+    runId: "run-created",
+    traceId: "trace-created",
+    reason: "sendPrompt:server-submit-first-success",
+  }]);
   assert.ok(harness.actions.includes("clear-pending-draft"));
   assert.ok(harness.actions.includes("refresh-pending-drafts"));
   assert.deepEqual(composerDraftCleanupCalls, ["cleanup"]);
@@ -1633,6 +1658,7 @@ test("session send workflow emits queued event for first-session queued submit r
   assert.equal(sent.accepted, true);
   assert.equal(sent.status, "queued");
   assert.equal(sent.queueItemId, "queue-created");
+  assert.deepEqual(harness.catchups, []);
   const queuedEvent = harness.liveTranscriptPolicyEvents.at(-1);
   assert.equal(queuedEvent?.type, "conversation-run.queued");
   assert.equal(queuedEvent?.reason, "sendPrompt:queued");

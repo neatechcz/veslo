@@ -37,7 +37,7 @@ export const isPendingSessionInstanceId = (
   );
 };
 
-function pendingSessionInstanceIdFromKey(
+export function pendingSessionInstanceIdFromKey(
   value: string | null | undefined,
 ): PendingSessionInstanceId | null {
   const key = (value ?? "").trim();
@@ -47,6 +47,9 @@ function pendingSessionInstanceIdFromKey(
   if (parsed?.kind !== "pending-session") return null;
   return isPendingSessionInstanceId(parsed.id) ? parsed.id : null;
 }
+
+export const isPendingSessionInstanceKey = (value: string | null | undefined) =>
+  Boolean(pendingSessionInstanceIdFromKey(value));
 
 export const createPendingSessionInstanceId = (
   uuid: string | (() => string) = createDefaultPendingSessionInstanceSuffix,

@@ -64,7 +64,7 @@ test("expanded subagents are included newest-first and deduplicated per workspac
       "child-older": "/work/a",
       "child-newer": "/work/a",
     },
-    clickedSession: null,
+    clickedSession: { sessionId: "child-newer", directory: "/work/a" },
     selectedSession: null,
     loadedTopLevelSessions: [{ sessionId: "parent", directory: "/work/a" }],
     expandedSubagentSessions: [
@@ -171,6 +171,33 @@ test("preserves same-workspace duplicate raw session ids as scoped refs", () => 
     sessionDirectoriesById: { shared: "/work/a" },
     clickedSession: { sessionId: "shared", directory: "/work/a" },
     selectedSession: { sessionId: "shared", directory: "/work/b" },
+    loadedTopLevelSessions: [
+      { sessionId: "shared", directory: "/work/a" },
+      { sessionId: "shared", directory: "/work/b" },
+    ],
+    expandedSubagentSessions: [],
+  });
+});
+
+test("does not guess clicked or selected directory for same-workspace duplicate raw ids without row keys", () => {
+  const result = deriveLoadedSidebarPrefetchInterest({
+    selectedSessionId: "shared",
+    clickedSessionId: "shared",
+    loadedTopLevelRows: [
+      { workspaceId: "ws-a", sessionId: "shared", directory: "/work/a", updatedAt: 30 },
+      { workspaceId: "ws-a", sessionId: "shared", directory: "/work/b", updatedAt: 20 },
+    ],
+    expandedSubagentRows: [],
+  });
+
+  assert.deepEqual(result.get("ws-a"), {
+    clickedSessionId: null,
+    selectedSessionId: null,
+    loadedTopLevelSessionIds: ["shared"],
+    expandedSubagentSessionIds: [],
+    sessionDirectoriesById: { shared: "/work/a" },
+    clickedSession: null,
+    selectedSession: null,
     loadedTopLevelSessions: [
       { sessionId: "shared", directory: "/work/a" },
       { sessionId: "shared", directory: "/work/b" },

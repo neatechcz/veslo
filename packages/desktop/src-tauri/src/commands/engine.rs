@@ -686,6 +686,15 @@ pub async fn runtime_prepare_workspace(
     )?;
 
     let engine = if runtime == EngineRuntime::Orchestrator {
+        // Fresh orchestrator start only boots the daemon; activate spawns the workspace engine.
+        crate::commands::orchestrator::orchestrator_workspace_activate(
+            app.clone(),
+            app.state::<OrchestratorManager>(),
+            project_dir.clone(),
+            workspace_id.clone(),
+            workspace_name.clone(),
+        )
+        .await?;
         engine_info(
             app.state::<EngineManager>(),
             app.state::<OrchestratorManager>(),

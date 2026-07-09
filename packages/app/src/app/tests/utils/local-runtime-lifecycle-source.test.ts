@@ -37,7 +37,7 @@ test("local runtime lifecycle traces engine_info poll failures and timeouts", ()
   );
   assert.match(
     source,
-    /prepareQueue: Promise<void>[\s\S]*label: "local runtime prepare queue"[\s\S]*prepare-runtime:queue-timeout[\s\S]*prepare-runtime:native-start[\s\S]*withTimeoutOrThrow\(nativePrepare,[\s\S]*label: "local runtime prepare"[\s\S]*prepare-runtime:native-timeout[\s\S]*releaseOnce\(\)/,
+    /prepareQueue: Promise<void>[\s\S]*prepare-runtime:queue-wait:start[\s\S]*label: "local runtime prepare queue"[\s\S]*prepare-runtime:queue-timeout[\s\S]*prepare-runtime:queue-wait:done[\s\S]*prepare-runtime:native-start[\s\S]*withTimeoutOrThrow\(nativePrepare,[\s\S]*label: "local runtime prepare"[\s\S]*prepare-runtime:native-timeout[\s\S]*releaseOnce\(\)/,
     "native runtime preparation should be serialized and bounded before UI sends wait forever",
   );
 });

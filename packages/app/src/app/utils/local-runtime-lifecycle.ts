@@ -174,6 +174,9 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
 
     const timeoutMs = resolveRuntimePrepareTimeoutMs(deps.runtimePrepareTimeoutMs?.() ?? null);
     const queuedAt = Date.now();
+    recordPrepareTrace("prepare-runtime:queue-wait:start", options, {
+      timeoutMs,
+    });
     try {
       await withTimeoutOrThrow(previous.catch(() => undefined), {
         timeoutMs,
@@ -187,6 +190,10 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
       releaseOnce();
       throw error;
     }
+    recordPrepareTrace("prepare-runtime:queue-wait:done", options, {
+      durationMs: Date.now() - queuedAt,
+      timeoutMs,
+    });
 
     const startedAt = Date.now();
     recordPrepareTrace("prepare-runtime:native-start", options, {

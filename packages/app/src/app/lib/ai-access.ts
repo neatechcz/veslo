@@ -64,6 +64,17 @@ export function resolveManagedAiAccessMessageKey(message: string | null | undefi
   return trimmed ? AI_ACCESS_MESSAGE_KEY_BY_TEXT.get(trimmed) ?? null : null;
 }
 
+export function isAiAccessLoadingMessage(
+  message: string | null | undefined,
+  translate?: ((key: string) => string) | null,
+): boolean {
+  const trimmed = message?.trim() ?? "";
+  if (!trimmed) return false;
+  if (trimmed === AI_ACCESS_LOADING_MESSAGE || trimmed === AI_ACCESS_LOADING_MESSAGE_KEY) return true;
+  const translated = translate?.(AI_ACCESS_LOADING_MESSAGE_KEY)?.trim() ?? "";
+  return Boolean(translated && trimmed === translated);
+}
+
 export type ManagedAiAccessProfile = {
   userId: string;
   providerId: VesloGatewayProvider;

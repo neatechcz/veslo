@@ -57,6 +57,7 @@ import type {
   ConversationSendPreflightContext,
 } from "../context/conversation-service";
 import type { LiveTranscriptReadPolicyEvent } from "../context/live-transcript-read-policy";
+import type { SubmittedRunTranscriptCatchupTarget } from "../context/submitted-run-transcript-catchup";
 import type { UiScopeToken } from "../lib/ui-conversation-scope";
 import { deleteSessionComposerDraft } from "./session-composer-drafts";
 import type {
@@ -342,7 +343,7 @@ export type SessionSendWorkflowOptions = {
     payload?: Record<string, unknown>,
   ) => void;
   holdVisibleRuntimeActivity: (sessionId: string | null | undefined, reason: string) => void;
-  isPendingSessionInstanceId: (sessionId: string | null | undefined) => boolean;
+  isPendingSessionInstanceKey: (sessionId: string | null | undefined) => boolean;
   isTauriRuntime: () => boolean;
   isUiScopeTokenCurrent: (token: UiScopeToken) => boolean;
   isWorkspaceClientStaleError: (error: unknown) => error is {
@@ -372,6 +373,7 @@ export type SessionSendWorkflowOptions = {
   releaseSendPromptInFlight?: () => void;
   removeSessionFromWorkspaceSidebar: (workspaceId: string, sessionId: string) => void;
   reportError: (error: unknown, context: string) => void;
+  scheduleSubmittedRunTranscriptCatchup?: (target: SubmittedRunTranscriptCatchupTarget) => void;
   resolveConversationAbortScope: (
     sessionId: string,
     target?: ConversationAbortTarget,
@@ -1140,10 +1142,10 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       !activeWorkspaceIdForSend ||
       selectedSessionScopeWorkspaceId === activeWorkspaceIdForSend;
     const selectedRealSessionId =
-      deps.isPendingSessionInstanceId(selectedSessionCandidate) || !selectedSessionBelongsToActiveWorkspace
+      deps.isPendingSessionInstanceKey(selectedSessionCandidate) || !selectedSessionBelongsToActiveWorkspace
         ? null
         : selectedSessionCandidate;
-    const explicitTargetSessionId = deps.isPendingSessionInstanceId(options.targetSessionId)
+    const explicitTargetSessionId = deps.isPendingSessionInstanceKey(options.targetSessionId)
       ? ""
       : options.targetSessionId?.trim() ?? "";
     let sessionID = explicitTargetSessionId || selectedRealSessionId;
@@ -1740,6 +1742,14 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           sessionId: existingSessionId,
           traceId: sendTraceId,
         });
+        deps.scheduleSubmittedRunTranscriptCatchup?.({
+          workspaceId,
+          sessionId: existingSessionId,
+          directory,
+          runId: result.runId,
+          traceId: sendTraceId,
+          reason: "sendPrompt:server-submit-existing-success",
+        });
       }
       deps.holdVisibleRuntimeActivity(
         existingSessionId,
@@ -2023,6 +2033,17 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           workspaceId: serverFirstSubmitResult.workspaceId,
           sessionId: sessionID,
           traceId: sendTraceId,
+        });
+        deps.scheduleSubmittedRunTranscriptCatchup?.({
+          workspaceId: serverFirstSubmitResult.workspaceId,
+          sessionId: sessionID,
+          directory:
+            sendTargetWorkspace?.directory?.trim() ||
+            sendTargetWorkspace?.workspaceRoot?.trim() ||
+            deps.workspace.activeWorkspaceRoot().trim(),
+          runId: serverFirstSubmitResult.runId,
+          traceId: sendTraceId,
+          reason: "sendPrompt:server-submit-first-success",
         });
       }
       await consumePendingDraftAfterAcceptedSend(true);

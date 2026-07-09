@@ -462,6 +462,8 @@ export function createWorkspaceStore(options: {
     getWorkspaces: workspaces,
     vesloServerClient: options.vesloServerClient,
     vesloServerHostInfo: options.vesloServerHostInfo,
+    ensureLocalVesloServerRunning: () =>
+      options.ensureLocalVesloServerRunning?.({ requireRuntimeChainReady: false }) ?? Promise.resolve(false),
     wsDebug,
   });
   const activateVesloHostWorkspace = serverRegistry.activateVesloHostWorkspace;

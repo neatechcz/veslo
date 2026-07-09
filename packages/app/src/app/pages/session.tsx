@@ -36,7 +36,7 @@ import {
   workspaceGrantFolderAccess,
 } from "../lib/tauri";
 import { acquireBlankNativeWindowTitleLease } from "../lib/native-window-title-lease";
-import { AI_ACCESS_LOADING_MESSAGE } from "../lib/ai-access";
+import { isAiAccessLoadingMessage } from "../lib/ai-access";
 
 import {
   ChevronDown,
@@ -107,10 +107,7 @@ import MessageList, { type PendingMessageState } from "../components/session/mes
 import Composer from "../components/session/composer";
 import type { ComposerSendOptions, ComposerSendResult } from "../components/session/composer";
 import ComposerTargetPicker from "../components/session/composer-target-picker";
-import {
-  sidebarSessionMatchesOpenTarget,
-  type SidebarSessionOpenTarget,
-} from "../components/session/workspace-session-list-model";
+import type { SidebarSessionOpenTarget } from "../components/session/workspace-session-list-model";
 import QueuedMessageList from "../components/session/queued-message-list";
 import { getEditableUserMessageDraft, type EditableUserMessageDraft } from "../components/session/message-editability";
 import {
@@ -120,7 +117,6 @@ import {
 } from "../components/session/pending-submit-model";
 import {
   createPendingSessionInstanceId,
-  isPendingSessionInstanceId,
   materializePendingSessionInstance,
   removePendingSubmittedDraftForKey,
   selectPendingSubmittedDraft,
@@ -153,7 +149,7 @@ import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
 import type { ArtifactFamily } from "../components/session/artifact-family-model";
 import type { SessionCapabilitiesSnapshot } from "../lib/session-capabilities";
-import { openSessionWithWorkspaceActivation, type SessionBrowseScope } from "./session-navigation";
+import { openSidebarSessionFromList, type SessionBrowseScope } from "./session-navigation";
 import type { WorkspaceActivationOptions } from "../context/workspace-types";
 import type { ReconnectState } from "../context/session-reconnect";
 import { createSessionViewFlowFacade } from "../context/session-flow-facade";
@@ -250,6 +246,15 @@ type TempRuntimeUiRenderSource = {
   origin?: SessionSendOrigin;
   detail?: string;
   at: number;
+};
+
+type ActiveSessionSwitchHandoff = {
+  fromSessionId: string;
+  toSessionId: string;
+  heldMessages: MessageWithParts[];
+  observedLoading: boolean;
+  startedAt: number;
+  token: number;
 };
 
 export type SessionHistoryUnavailableView = {
@@ -1404,6 +1409,94 @@ export default function SessionView(props: SessionViewProps) {
   const renderedMessages = transcriptViewport.renderedMessages;
 
   const effectiveRenderedMessages = transcriptViewport.effectiveRenderedMessages;
+  const [activeSessionSwitchHandoff, setActiveSessionSwitchHandoff] =
+    createSignal<ActiveSessionSwitchHandoff | null>(null);
+  let activeSessionSwitchHandoffToken = 0;
+  let lastSelectedSessionId = props.selectedSessionId?.trim() ?? "";
+  let lastPaintedSessionId = props.selectedSessionId?.trim() ?? "";
+  let lastPaintedMessages: MessageWithParts[] = [];
+  createEffect(
+    on(
+      () => [
+        props.selectedSessionId?.trim() ?? "",
+        effectiveRenderedMessages(),
+        props.loadingEarlierMessages,
+      ] as const,
+      ([sessionId, rendered, loadingEarlierMessages]) => {
+        const messageCount = rendered.length;
+        const currentHandoff = untrack(activeSessionSwitchHandoff);
+
+        if (!sessionId) {
+          setActiveSessionSwitchHandoff(null);
+          lastSelectedSessionId = "";
+          lastPaintedSessionId = "";
+          lastPaintedMessages = [];
+          return;
+        }
+
+        if (
+          lastSelectedSessionId &&
+          sessionId !== lastSelectedSessionId &&
+          lastSelectedSessionId === lastPaintedSessionId &&
+          lastPaintedMessages.length > 0 &&
+          messageCount === 0
+        ) {
+          setActiveSessionSwitchHandoff({
+            fromSessionId: lastPaintedSessionId,
+            toSessionId: sessionId,
+            heldMessages: lastPaintedMessages,
+            observedLoading: loadingEarlierMessages,
+            startedAt: Date.now(),
+            token: ++activeSessionSwitchHandoffToken,
+          });
+        } else if (currentHandoff?.toSessionId === sessionId) {
+          if (messageCount > 0) {
+            setActiveSessionSwitchHandoff(null);
+          } else if (loadingEarlierMessages && !currentHandoff.observedLoading) {
+            setActiveSessionSwitchHandoff({
+              ...currentHandoff,
+              observedLoading: true,
+            });
+          } else if (!loadingEarlierMessages && currentHandoff.observedLoading) {
+            setActiveSessionSwitchHandoff(null);
+          }
+        } else if (currentHandoff) {
+          setActiveSessionSwitchHandoff(null);
+        }
+
+        if (messageCount > 0) {
+          lastPaintedSessionId = sessionId;
+          lastPaintedMessages = rendered;
+        }
+        lastSelectedSessionId = sessionId;
+      },
+    ),
+  );
+  createEffect(() => {
+    const handoff = activeSessionSwitchHandoff();
+    if (!handoff || handoff.observedLoading || typeof window === "undefined") return;
+    const timer = window.setTimeout(() => {
+      setActiveSessionSwitchHandoff((current) =>
+        current?.token === handoff.token && !current.observedLoading ? null : current,
+      );
+    }, 250);
+    onCleanup(() => window.clearTimeout(timer));
+  });
+  const activeSessionSwitchHandoffActive = createMemo(() => {
+    const handoff = activeSessionSwitchHandoff();
+    const sessionId = props.selectedSessionId?.trim() ?? "";
+    return Boolean(
+      handoff &&
+      handoff.toSessionId === sessionId &&
+      effectiveRenderedMessages().length === 0 &&
+      handoff.heldMessages.length > 0,
+    );
+  });
+  const displayedEffectiveMessages = createMemo(() =>
+    activeSessionSwitchHandoffActive()
+      ? activeSessionSwitchHandoff()?.heldMessages ?? []
+      : effectiveRenderedMessages(),
+  );
   const hiddenMessageCount = transcriptViewport.hiddenMessageCount;
   const nextRevealCount = transcriptViewport.nextRevealCount;
   const hasServerEarlierMessages = transcriptViewport.hasServerEarlierMessages;
@@ -1415,25 +1508,33 @@ export default function SessionView(props: SessionViewProps) {
   const scheduleScrollToLatest = transcriptViewport.scheduleScrollToLatest;
   const jumpToLatest = transcriptViewport.jumpToLatest;
   const showSessionLoadingState = createMemo(() =>
+    !activeSessionSwitchHandoffActive() &&
     shouldShowSessionLoadingState({
       hasWorkspaceSetupEmptyState: showWorkspaceSetupEmptyState(),
       selectedSessionId: transcriptDisplaySessionId(),
-      messageCount: effectiveRenderedMessages().length,
+      messageCount: displayedEffectiveMessages().length,
       loadingEarlierMessages: props.loadingEarlierMessages,
     })
   );
   const showComposerEntryState = createMemo(() =>
-    effectiveRenderedMessages().length === 0 &&
+    displayedEffectiveMessages().length === 0 &&
     !composerEntryDismissed() &&
     !showWorkspaceSetupEmptyState() &&
+    !activeSessionSwitchHandoffActive() &&
     !showSessionLoadingState(),
+  );
+  const showFooterComposerArea = createMemo(() =>
+    !showWorkspaceSetupEmptyState() &&
+    !showComposerEntryState() &&
+    !showSessionLoadingState() &&
+    !activeSessionSwitchHandoffActive(),
   );
   const showFooterComposerTargetContext = createMemo(() =>
     !props.selectedSessionId &&
     !composerEntryDismissed(),
   );
   createEffect(() => {
-    const effectiveMessageCount = effectiveRenderedMessages().length;
+    const effectiveMessageCount = displayedEffectiveMessages().length;
     const workspaceSetupVisible = showWorkspaceSetupEmptyState();
     const composerEntryVisible = showComposerEntryState();
     const sessionLoadingVisible = showSessionLoadingState();
@@ -1464,7 +1565,7 @@ export default function SessionView(props: SessionViewProps) {
         status: props.sessionStatus,
         messageCount: props.messages.length,
         partCount: totalPartCount(),
-        renderedMessageCount: effectiveRenderedMessages().length,
+        renderedMessageCount: displayedEffectiveMessages().length,
       });
     }, MAIN_THREAD_LAG_INTERVAL_MS);
 
@@ -2764,7 +2865,7 @@ export default function SessionView(props: SessionViewProps) {
   const publishWorkspaceProfileLink = shareController.publishWorkspaceProfileLink;
   const publishSkillsSetLink = shareController.publishSkillsSetLink;
 
-  const aiAccessLoading = createMemo(() => props.aiAccessBlockedReason === AI_ACCESS_LOADING_MESSAGE);
+  const aiAccessLoading = createMemo(() => isAiAccessLoadingMessage(props.aiAccessBlockedReason, tr));
 
   const conversationFlow = createSessionConversationFlow({
     identity: {
@@ -3015,70 +3116,20 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {
-    const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
-    const workspaceRoot =
-      group?.workspace.directory?.trim() ||
-      group?.workspace.path?.trim() ||
-      "";
-
-    const session =
-      (target ? group?.sessions.find((s) => sidebarSessionMatchesOpenTarget(s, target)) : null) ??
-      group?.sessions.find((s) => s.id === sessionId);
-    const openRealSession = (nextSessionId: string) => {
-      const scopedWorkspaceRoot = target?.workspaceRoot?.trim() || workspaceRoot;
-      props.setSessionBrowseScope({
-        sessionId: nextSessionId,
-        workspaceId,
-        workspaceRoot: scopedWorkspaceRoot,
-        directory: target?.directory?.trim() || session?.directory?.trim() || scopedWorkspaceRoot,
-        conversationId: target?.conversationId ?? session?.conversationId ?? null,
-        opencodeSessionId: target?.opencodeSessionId ?? session?.opencodeSessionId ?? nextSessionId,
-      });
-      void Promise.resolve(props.selectSession(nextSessionId))
-        .catch((error) => reportError(error, "session.openSessionFromList.selectSession"));
-      props.setView("session", nextSessionId);
-    };
-
-    if (isPendingSessionInstanceId(sessionId)) {
-      const openPendingSidebarSession = (nextSessionId: string) => {
-        const scopedWorkspaceRoot = target?.workspaceRoot?.trim() || workspaceRoot;
-        props.setSessionBrowseScope({
-          sessionId: nextSessionId,
-          workspaceId,
-          workspaceRoot: scopedWorkspaceRoot,
-          directory: target?.directory?.trim() || session?.directory?.trim() || scopedWorkspaceRoot,
-          conversationId: null,
-          opencodeSessionId: null,
-        });
-        props.setView("session", nextSessionId);
-      };
-
-      void openSessionWithWorkspaceActivation({
-        activeWorkspaceId: props.activeWorkspaceId,
-        getActiveWorkspaceId: () => props.activeWorkspaceId,
-        workspaceId,
-        sessionId,
-        activateWorkspace: props.activateWorkspace,
-        activateWorkspaceBeforeOpen: true,
-        openSession: openPendingSidebarSession,
-      }).catch((error) => reportError(error, "session.openPendingSessionFromList"));
-      return;
-    }
-
-    void openSessionWithWorkspaceActivation({
+    void openSidebarSessionFromList({
+      workspaceSessionGroups: props.workspaceSessionGroups,
       activeWorkspaceId: props.activeWorkspaceId,
       getActiveWorkspaceId: () => props.activeWorkspaceId,
       workspaceId,
       sessionId,
+      target,
       activateWorkspace: props.activateWorkspace,
-      // Route-driven selection handles normal id changes. Also select
-      // explicitly after recording the browse scope because the user can
-      // return to the same /session/:id route after switching projects; in
-      // that case the route effect is deduped and would leave the main
-      // transcript on the empty workspace screen.
-      openSession: openRealSession,
-    })
-      .catch((error) => reportError(error, "session.openSessionFromList"));
+      setSessionBrowseScope: props.setSessionBrowseScope,
+      selectSession: props.selectSession,
+      setView: props.setView,
+      reportError,
+      sourceContext: "session",
+    });
   };
 
   const resolveVesloWorkspaceId = (workspaceId: string) => {
@@ -3776,7 +3827,7 @@ export default function SessionView(props: SessionViewProps) {
           </Show>
 
           <MessageList
-            messages={effectiveRenderedMessages()}
+            messages={displayedEffectiveMessages()}
             isStreaming={showRunIndicator()}
             developerMode={props.developerMode}
             showThinking={props.showThinking}
@@ -3920,7 +3971,7 @@ export default function SessionView(props: SessionViewProps) {
 
         )}
         composerArea={(
-      <Show when={!showWorkspaceSetupEmptyState() && !showComposerEntryState()}>
+      <Show when={showFooterComposerArea()}>
         <>
               <Show when={props.aiAccessBlockedReason}>
                 <div class="mx-auto mb-3 w-full max-w-[min(100%,72rem)] rounded-2xl border border-amber-7/30 bg-amber-2/30 px-4 py-3 text-sm text-amber-12">

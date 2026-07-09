@@ -38,6 +38,7 @@ import type {
   VesloServerClient,
 } from "../lib/veslo-server";
 import type { ConversationSendPreflightContext } from "../context/conversation-service";
+import type { SubmittedRunTranscriptCatchupTarget } from "../context/submitted-run-transcript-catchup";
 import type { SendTargetWorkspaceScope } from "../context/workspace-session-selection";
 import type {
   Client,
@@ -145,6 +146,7 @@ export type SessionMutationWorkflowDeps = {
     input: VesloConversationSubmitRequest,
     preflight?: SendPreflightContextLike,
   ) => Promise<VesloConversationSubmitResult | null | undefined>;
+  scheduleSubmittedRunTranscriptCatchup?: (target: SubmittedRunTranscriptCatchupTarget) => void;
   messageFromUnknownError: (error: unknown) => string;
   safeStringify: (value: unknown) => string;
   renameSession: (sessionId: string, title: string, workspaceId?: string) => Promise<unknown>;
@@ -665,6 +667,16 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
           replaceMessageId: messageID,
           clientMessageId: sendCorrelation.clientMessageId,
         });
+        if (result.status === "submitted") {
+          deps.scheduleSubmittedRunTranscriptCatchup?.({
+            workspaceId,
+            sessionId: sessionID,
+            directory: submitDirectory,
+            runId: result.runId,
+            traceId: sendTraceId,
+            reason: "replaceUserMessage:server-submit-success",
+          });
+        }
         return sessionSubmitResultFromReplacementSubmit(result);
       }
       deps.recordSendTrace(

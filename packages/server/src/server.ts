@@ -1350,11 +1350,16 @@ function createOpenCodeAutomationExecutor(
 ): (input: AutomationExecutionInput) => Promise<AutomationExecutionResult> {
   return async (input) => {
     const workspace = await resolveWorkspace(config, input.workspaceId);
+    const fetchAutomationOpenCodeJson = (
+      targetWorkspace: WorkspaceInfo,
+      path: string,
+      init: Parameters<typeof fetchOpencodeJson>[2],
+    ) => fetchOpencodeJsonWithOrchestratorFallback(config, targetWorkspace, path, init);
 
     const preferredSessionId = input.target.preferredSessionId?.trim() || "";
     if (preferredSessionId) {
       try {
-        const existing = await fetchOpencodeJson(
+        const existing = await fetchAutomationOpenCodeJson(
           workspace,
           `/session/${encodeURIComponent(preferredSessionId)}`,
           { method: "GET", timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS },
@@ -1362,7 +1367,7 @@ function createOpenCodeAutomationExecutor(
         const existingRecord = isRecordLike(existing) ? existing : {};
         const existingId = typeof existingRecord.id === "string" ? existingRecord.id.trim() : "";
         if (existingId) {
-          await postAutomationPrompt(workspace, existingId, input.prompt, input.target);
+          await postAutomationPrompt(fetchAutomationOpenCodeJson, workspace, existingId, input.prompt, input.target);
           return { sessionId: existingId, createdSession: false };
         }
       } catch {
@@ -1370,7 +1375,7 @@ function createOpenCodeAutomationExecutor(
       }
     }
 
-    const created = await fetchOpencodeJson(workspace, "/session", {
+    const created = await fetchAutomationOpenCodeJson(workspace, "/session", {
       method: "POST",
       body: { title: input.target.fallbackTitle?.trim() || `Automation: ${input.automation.name}` },
       timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS,
@@ -1380,12 +1385,17 @@ function createOpenCodeAutomationExecutor(
     if (!sessionId) {
       throw new ApiError(502, "opencode_failed", "OpenCode session did not return an id");
     }
-    await postAutomationPrompt(workspace, sessionId, input.prompt, input.target);
+    await postAutomationPrompt(fetchAutomationOpenCodeJson, workspace, sessionId, input.prompt, input.target);
     return { sessionId, createdSession: true };
   };
 }
 
 async function postAutomationPrompt(
+  fetchAutomationOpenCodeJson: (
+    workspace: WorkspaceInfo,
+    path: string,
+    init: Parameters<typeof fetchOpencodeJson>[2],
+  ) => Promise<unknown>,
   workspace: WorkspaceInfo,
   sessionId: string,
   prompt: string,
@@ -1406,7 +1416,7 @@ async function postAutomationPrompt(
   if (variant) {
     body.variant = variant;
   }
-  await fetchOpencodeJson(workspace, `/session/${encodeURIComponent(sessionId)}/prompt_async`, {
+  await fetchAutomationOpenCodeJson(workspace, `/session/${encodeURIComponent(sessionId)}/prompt_async`, {
     method: "POST",
     body,
     timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS,
@@ -4168,9 +4178,12 @@ function createRoutes(
     createConversationRunTracer,
     resolveConversationExecutionTarget,
     deleteOpenCodeSession: async ({ workspace, sessionId }) => {
-      await fetchOpencodeJson(workspace, `/session/${encodeURIComponent(sessionId)}`, {
-        method: "DELETE",
-      });
+      await fetchOpencodeJsonWithOrchestratorFallback(
+        config,
+        workspace,
+        `/session/${encodeURIComponent(sessionId)}`,
+        { method: "DELETE" },
+      );
     },
     loadOpenCodeSession: async ({ workspace, target, sendTraceId }) =>
       await fetchOpencodeJsonWithOrchestratorFallback(
@@ -4233,7 +4246,10 @@ function createRoutes(
 
   registerWorkspaceSkillRoutes(routes, { serverDataDir });
 
-  registerMcpRoutes(routes, { fetchOpencodeJson });
+  registerMcpRoutes(routes, {
+    fetchOpencodeJson: (workspace, path, init) =>
+      fetchOpencodeJsonWithOrchestratorFallback(config, workspace, path, init),
+  });
 
   registerCommandRoutes(routes, { requireHost });
 

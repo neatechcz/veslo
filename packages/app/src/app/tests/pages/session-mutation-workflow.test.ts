@@ -5,6 +5,7 @@ import type { Session } from "@opencode-ai/sdk/v2/client";
 
 import type { ComposerDraft, ComposerPart, MessageWithParts } from "../../types.js";
 import { createSessionMutationWorkflow } from "../../pages/session-mutation-workflow.js";
+import type { SubmittedRunTranscriptCatchupTarget } from "../../context/submitted-run-transcript-catchup.js";
 import {
   sessionSubmitAcceptedResult,
   type SessionSubmitResult,
@@ -73,6 +74,7 @@ function createHarness(overrides: Record<string, unknown> = {}) {
   let prompt = "";
   let statusById: Record<string, string> = { ses_1: "idle" };
   const calls: Array<{ name: string; args: unknown[] }> = [];
+  const catchups: SubmittedRunTranscriptCatchupTarget[] = [];
   const deps = {
     lastPromptSent: () => "retry prompt",
     sendPrompt: async (...args: unknown[]) => {
@@ -157,6 +159,9 @@ function createHarness(overrides: Record<string, unknown> = {}) {
     sessionDirectoryOverrideById: () => ({}),
     workspaceProjectDir: () => "/repo",
     resolveSelectedSessionBrowseScope: () => null,
+    scheduleSubmittedRunTranscriptCatchup: (target: SubmittedRunTranscriptCatchupTarget) => {
+      catchups.push(target);
+    },
     messageFromUnknownError: String,
     safeStringify: JSON.stringify,
     renameSession: async (...args: unknown[]) => {
@@ -230,6 +235,7 @@ function createHarness(overrides: Record<string, unknown> = {}) {
     get statusById() {
       return statusById;
     },
+    catchups,
   };
 }
 
@@ -422,6 +428,14 @@ test("session mutation workflow replaces a user message through server-owned sub
     },
   });
   assert.ok(harness.calls.some((call) => call.name === "recordSendTrace" && call.args[0] === "replaceUserMessage:server-submit-success"));
+  assert.deepEqual(harness.catchups, [{
+    workspaceId: "ws_1",
+    sessionId: "ses_1",
+    directory: "/repo",
+    runId: "run_replace",
+    traceId: "trace_1",
+    reason: "replaceUserMessage:server-submit-success",
+  }]);
   assert.equal(harness.calls.some((call) => call.name === "revertSession"), false);
   assert.equal(harness.calls.some((call) => call.name === "sendPrompt"), false);
 });
@@ -483,6 +497,7 @@ test("session mutation workflow returns typed replacement server blocked and fai
     assert.ok(
       harness.calls.some((call) => call.name === "recordSendTrace" && call.args[0] === `replaceUserMessage:server-submit-${item.status}`),
     );
+    assert.deepEqual(harness.catchups, []);
     assert.equal(harness.calls.some((call) => call.name === "revertSession"), false);
     assert.equal(harness.calls.some((call) => call.name === "sendPrompt"), false);
   }

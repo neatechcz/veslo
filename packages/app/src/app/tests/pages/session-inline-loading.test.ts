@@ -4,6 +4,7 @@ import test from "node:test";
 
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 const sessionSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
+const sessionNavigationSource = readFileSync(new URL("../../pages/session-navigation.ts", import.meta.url), "utf8");
 const conversationFlowSource = readFileSync(
   new URL("../../pages/session-conversation-flow.ts", import.meta.url),
   "utf8",
@@ -21,7 +22,7 @@ const sessionQueueDrainControllerSource = readFileSync(
 test("session loading stays route-owned without a pending preloader", () => {
   assert.match(
     sessionSource,
-    /const showSessionLoadingState = createMemo\(\(\) =>[\s\S]*shouldShowSessionLoadingState\(\{[\s\S]*selectedSessionId: transcriptDisplaySessionId\(\),[\s\S]*messageCount: effectiveRenderedMessages\(\)\.length,[\s\S]*loadingEarlierMessages: props\.loadingEarlierMessages,[\s\S]*\}\)[\s\S]*\);/,
+    /const showSessionLoadingState = createMemo\(\(\) =>[\s\S]*!activeSessionSwitchHandoffActive\(\) &&[\s\S]*shouldShowSessionLoadingState\(\{[\s\S]*selectedSessionId: transcriptDisplaySessionId\(\),[\s\S]*messageCount: displayedEffectiveMessages\(\)\.length,[\s\S]*loadingEarlierMessages: props\.loadingEarlierMessages,[\s\S]*\}\)[\s\S]*\);/,
     "session page should derive inline loading from the effectively rendered conversation, not raw backend messages only",
   );
 
@@ -68,19 +69,52 @@ test("temporary runtime UI diagnostic is developer-mode only", () => {
 test("session switch records browse scope and routes immediately without arming a preloader", () => {
   const openSessionStart = sessionSource.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {");
   const openSessionEnd = sessionSource.indexOf("  const resolveVesloWorkspaceId = (workspaceId: string) => {", openSessionStart);
+  const helperStart = sessionNavigationSource.indexOf("export function openSidebarSessionFromList");
+  const helperEnd = sessionNavigationSource.indexOf("export async function createSessionWithWorkspaceActivation", helperStart);
   assert.notEqual(openSessionStart, -1, "openSessionFromList should exist");
   assert.notEqual(openSessionEnd, -1, "openSessionFromList block end should exist");
+  assert.notEqual(helperStart, -1, "openSidebarSessionFromList should exist");
+  assert.notEqual(helperEnd, -1, "openSidebarSessionFromList block end should exist");
   const openSessionSource = sessionSource.slice(openSessionStart, openSessionEnd);
+  const helperSource = sessionNavigationSource.slice(helperStart, helperEnd);
 
   assert.doesNotMatch(
-    openSessionSource,
+    `${openSessionSource}\n${helperSource}`,
     /setPendingSessionLoad|pendingSessionLoad/,
     "sidebar session clicks should not arm a pending-session preloader",
   );
   assert.match(
-    openSessionSource,
-    /props\.setSessionBrowseScope\(\{[\s\S]*workspaceId,[\s\S]*conversationId: target\?\.conversationId \?\? session\?\.conversationId \?\? null,[\s\S]*opencodeSessionId: target\?\.opencodeSessionId \?\? session\?\.opencodeSessionId \?\? nextSessionId,[\s\S]*\}\);[\s\S]*props\.setView\("session", nextSessionId\);/s,
+    helperSource,
+    /input\.setSessionBrowseScope\(\{[\s\S]*workspaceId: input\.workspaceId,[\s\S]*conversationId: input\.target\?\.conversationId \?\? session\?\.conversationId \?\? null,[\s\S]*opencodeSessionId: input\.target\?\.opencodeSessionId \?\? session\?\.opencodeSessionId \?\? nextSessionId,[\s\S]*\}\);[\s\S]*input\.setView\("session", nextSessionId\);/s,
     "session click navigation should record browse scope before routing to the target session",
+  );
+});
+
+test("active session switch handoff suppresses empty browse and loading surfaces", () => {
+  assert.match(
+    sessionSource,
+    /const \[activeSessionSwitchHandoff, setActiveSessionSwitchHandoff\] =[\s\S]*createSignal<ActiveSessionSwitchHandoff \| null>\(null\);/,
+    "SessionView should track an active-session handoff while the next transcript is cold",
+  );
+  assert.match(
+    sessionSource,
+    /const displayedEffectiveMessages = createMemo\(\(\) =>[\s\S]*activeSessionSwitchHandoffActive\(\)[\s\S]*activeSessionSwitchHandoff\(\)\?\.heldMessages[\s\S]*effectiveRenderedMessages\(\),/s,
+    "session switches should keep rendering the last active transcript instead of an empty browse surface",
+  );
+  assert.match(
+    sessionSource,
+    /const showComposerEntryState = createMemo\(\(\) =>[\s\S]*displayedEffectiveMessages\(\)\.length === 0[\s\S]*!activeSessionSwitchHandoffActive\(\)[\s\S]*!showSessionLoadingState\(\),/s,
+    "the centered composer entry should not appear during active-to-active session handoff",
+  );
+  assert.match(
+    sessionSource,
+    /const showFooterComposerArea = createMemo\(\(\) =>[\s\S]*!showSessionLoadingState\(\)[\s\S]*!activeSessionSwitchHandoffActive\(\),/s,
+    "the footer composer should stay hidden while the opening loader or active-session handoff owns the pane",
+  );
+  assert.match(
+    sessionSource,
+    /<MessageList[\s\S]*messages=\{displayedEffectiveMessages\(\)\}/s,
+    "MessageList should render the handoff transcript instead of the cold empty target transcript",
   );
 });
 
@@ -95,7 +129,7 @@ test("pending draft write-back only runs while the bare pending draft route owns
 test("bare new-session screen centers the composer entry without quickstart templates", () => {
   assert.match(
     sessionSource,
-    /const showComposerEntryState = createMemo\(\(\) =>[\s\S]*effectiveRenderedMessages\(\)\.length === 0[\s\S]*!showWorkspaceSetupEmptyState\(\)[\s\S]*!showSessionLoadingState\(\)[\s\S]*\);/s,
+    /const showComposerEntryState = createMemo\(\(\) =>[\s\S]*displayedEffectiveMessages\(\)\.length === 0[\s\S]*!showWorkspaceSetupEmptyState\(\)[\s\S]*!showSessionLoadingState\(\)[\s\S]*\);/s,
     "bare new sessions should derive a dedicated centered composer-entry state from the rendered conversation",
   );
 
@@ -121,7 +155,7 @@ test("first submit dismisses the centered composer entry before backend handoff 
 
   assert.match(
     sessionSource,
-    /const showComposerEntryState = createMemo\(\(\) =>\s*effectiveRenderedMessages\(\)\.length === 0 &&\s*!composerEntryDismissed\(\) &&\s*!showWorkspaceSetupEmptyState\(\) &&\s*!showSessionLoadingState\(\),\s*\);/s,
+    /const showComposerEntryState = createMemo\(\(\) =>\s*displayedEffectiveMessages\(\)\.length === 0 &&\s*!composerEntryDismissed\(\) &&\s*!showWorkspaceSetupEmptyState\(\) &&\s*!activeSessionSwitchHandoffActive\(\) &&\s*!showSessionLoadingState\(\),\s*\);/s,
     "a submit attempt should hide the centered entry even before backend messages or optimistic handoff survive",
   );
 
@@ -183,7 +217,7 @@ test("run begun trace is emitted only when the per-session state changes", () =>
 test("materializing a pending submitted draft does not hide the optimistic transcript for initial anchoring", () => {
   assert.match(
     conversationFlowSource,
-    /const materializedPendingSubmit = pendingKey\s*\? pendingSubmittedDrafts\(\)\[pendingKey\]\?\.state === "sending"\s*: false;[\s\S]*if \(pendingKey && !isPendingSessionInstanceId\(selectedSessionId\)\) \{[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingKey, selectedSessionId\);[\s\S]*\}[\s\S]*shouldMarkInitialAnchor: !materializedPendingSubmit,/s,
+    /const materializedPendingSubmit = pendingKey\s*\? pendingSubmittedDrafts\(\)\[pendingKey\]\?\.state === "sending"\s*: false;[\s\S]*if \([\s\S]*pendingKey[\s\S]*!isPendingSessionInstanceKey\(selectedSessionId\)[\s\S]*queueKeysShareWorkspace\(deps\.sessionKeys\.workspaceIdForQueueKey, pendingKey, sessionKey\)[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingKey, selectedSessionId\);[\s\S]*return \{[\s\S]*materializedPendingSubmit,[\s\S]*shouldMarkInitialAnchor: !materializedPendingSubmit,/s,
     "pending-to-real session materialization should keep the optimistic message visible instead of arming the transcript invisible anchor state",
   );
   assert.match(

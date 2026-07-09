@@ -473,6 +473,11 @@ test("backend runtime prepare owns orchestrator attach fallback decisions", () =
     "backend prepare should fall back from orchestrator attach to fresh start inside Rust",
   );
   assert.match(
+    engineCommandSource,
+    /engine_start\([\s\S]*\)\?;[\s\S]*Fresh orchestrator start only boots the daemon[\s\S]*orchestrator_workspace_activate[\s\S]*\.await\?;[\s\S]*engine_info/s,
+    "fresh orchestrator start must activate the target workspace before returning engine_info",
+  );
+  assert.match(
     orchestratorCommandSource,
     /ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS[\s\S]*AgentBuilder::new\(\)[\s\S]*\.timeout\(Duration::from_millis\(\s*ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS,?\s*\)\)[\s\S]*\.post\(&activate_url\)/s,
     "orchestrator workspace activation must have a native HTTP timeout so runtime prepare cannot hang indefinitely",

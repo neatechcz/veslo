@@ -2198,6 +2198,19 @@ test("session queue keys distinguish real scoped sessions from pending identitie
   assert.equal(resolveSessionQueueKeyForSessionId(context, null), resolvePendingSessionQueueKey(context));
 });
 
+test("session queue keys preserve already-scoped pending identities", () => {
+  const scopedPendingKey = createUiConversationKey({
+    workspaceId: "workspace-pending",
+    kind: "pending-session",
+    id: "pending-session:created-1",
+  });
+  const context = queueContext({ activeWorkspaceId: "workspace-active" });
+
+  assert.equal(resolveSessionQueueKeyForSessionId(context, scopedPendingKey), scopedPendingKey);
+  assert.equal(resolveSessionIdForQueueKey(scopedPendingKey), null);
+  assert.equal(resolveWorkspaceIdForQueueKey(context, scopedPendingKey), "workspace-pending");
+});
+
 test("session queue keys distinguish same session id in different directories", () => {
   const left = resolveSessionQueueKeyForSessionId(
     queueContext({
@@ -2415,11 +2428,17 @@ test("pending handoff scope creates a unique instance for first sends without a 
   });
 
   assert.deepEqual(createdIds, ["called"]);
+  const expectedPendingInstanceKey = createUiConversationKey({
+    workspaceId: "workspace-pending",
+    kind: "pending-session",
+    id: "pending-session:created-1",
+  });
+
   assert.deepEqual(scope, {
     pendingSessionBaseKeyBeforeHandoff: baseSessionKey,
-    pendingInstanceKey: "pending-session:created-1",
-    sessionKey: "pending-session:created-1",
-    pendingSessionKeyBeforeHandoff: "pending-session:created-1",
+    pendingInstanceKey: expectedPendingInstanceKey,
+    sessionKey: expectedPendingInstanceKey,
+    pendingSessionKeyBeforeHandoff: expectedPendingInstanceKey,
   });
 });
 

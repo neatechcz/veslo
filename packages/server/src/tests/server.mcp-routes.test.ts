@@ -7,6 +7,7 @@ import { ApprovalService } from "../approvals.js";
 import { ReloadEventStore } from "../events.js";
 import { addMcp, listMcp, refreshMcpRuntimeToken, removeMcp } from "../mcp.js";
 import { registerMcpRoutes } from "../routes/mcp.js";
+import { startServer } from "../server.js";
 import { matchRoute, type Route } from "../routing.js";
 import type { ServerConfig } from "../types.js";
 
@@ -306,6 +307,103 @@ describe("MCP routes", () => {
       ]);
     } finally {
       denServer.stop(true);
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("MCP auth logout retries stale local baseUrl through orchestrator daemon", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-mcp-auth-orchestrator-stale-"));
+    let staleBaseUrlHit = false;
+    const staleUpstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async () => {
+        staleBaseUrlHit = true;
+        return new Response(JSON.stringify({ error: "engine_not_running", workspaceId: "ws_old" }), {
+          status: 503,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    }) as { port: number; stop: (closeActiveConnections?: boolean) => void };
+    const orchestratorRequests: Array<{ path: string; method: string; body: Record<string, unknown> | null }> = [];
+    const orchestrator = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = request.method === "POST"
+          ? await request.json().catch(() => null) as Record<string, unknown> | null
+          : null;
+        orchestratorRequests.push({ path: url.pathname, method: request.method, body });
+        if (request.method === "POST" && url.pathname === "/workspaces") {
+          return Response.json({ ok: true });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/mcp/google-gmail/disconnect") {
+          return Response.json({ ok: true });
+        }
+        if (request.method === "DELETE" && url.pathname === "/workspace/ws_1/opencode/mcp/google-gmail/auth") {
+          return Response.json({ ok: true });
+        }
+        return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
+      },
+    }) as { port: number; stop: (closeActiveConnections?: boolean) => void };
+
+    const server = startServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "client-token",
+      hostToken: "host-token",
+      approval: { mode: "auto", timeoutMs: 1_000 },
+      corsOrigins: ["*"],
+      workspaces: [
+        {
+          id: "ws_1",
+          name: "Workspace",
+          path: workspaceRoot,
+          workspaceType: "local",
+          baseUrl: `http://127.0.0.1:${staleUpstream.port}/workspace/ws_old/opencode`,
+        },
+      ],
+      authorizedRoots: [workspaceRoot],
+      readOnly: false,
+      startedAt: Date.now(),
+      tokenSource: "cli",
+      hostTokenSource: "cli",
+      logFormat: "pretty",
+      logRequests: false,
+      orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
+      debugLogs: {
+        enabled: false,
+        ingestUrl: null,
+        ingestToken: null,
+        batchMaxEvents: 200,
+        batchMaxBytes: 256 * 1024,
+        spoolMaxBytes: 100 * 1024 * 1024,
+        flushIntervalMs: 5000,
+      },
+    });
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/mcp/google-gmail/auth`, {
+        method: "DELETE",
+        headers: { Authorization: "Bearer client-token" },
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ ok: true });
+      expect(staleBaseUrlHit).toBe(true);
+      const paths = orchestratorRequests.map((entry) => entry.path);
+      const firstRegisterIndex = paths.indexOf("/workspaces");
+      const disconnectIndex = paths.indexOf("/workspace/ws_1/opencode/mcp/google-gmail/disconnect");
+      const authIndex = paths.indexOf("/workspace/ws_1/opencode/mcp/google-gmail/auth");
+      expect(firstRegisterIndex).toBeGreaterThanOrEqual(0);
+      expect(disconnectIndex).toBeGreaterThan(firstRegisterIndex);
+      expect(authIndex).toBeGreaterThan(disconnectIndex);
+      expect(orchestratorRequests.find((entry) => entry.path === "/workspaces")?.body?.serverWorkspaceId).toBe("ws_1");
+    } finally {
+      server.stop(true);
+      staleUpstream.stop(true);
+      orchestrator.stop(true);
       await rm(workspaceRoot, { recursive: true, force: true });
     }
   });

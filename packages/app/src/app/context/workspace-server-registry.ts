@@ -10,6 +10,7 @@ export type WorkspaceServerRegistryDeps = {
     engineUrl?: string | null;
     clientToken?: string | null;
   } | null;
+  ensureLocalVesloServerRunning?: () => Promise<boolean>;
   wsDebug: (label: string, payload?: unknown) => void;
 };
 
@@ -41,14 +42,16 @@ function workspaceRegistryUnsynced(reason: string, details?: Record<string, unkn
 }
 
 export function createWorkspaceServerRegistry(deps: WorkspaceServerRegistryDeps) {
-  const addLocalWorkspaceOnServer = async (
+  const isInvalidHostTokenFailure = (error: unknown) =>
+    error instanceof VesloServerError &&
+    error.status === 401 &&
+    /invalid host token/i.test(error.message);
+
+  const addLocalWorkspaceWithClient = async (
+    client: VesloServerClient,
     path: string,
     name?: string,
   ): Promise<WorkspaceRegistrySyncResult> => {
-    const client = deps.vesloServerClient?.();
-    if (!client) {
-      return { ok: false, reason: "server_client_unavailable" };
-    }
     const trimmed = path.trim();
     if (!trimmed) {
       return { ok: false, reason: "empty_path" };
@@ -71,21 +74,85 @@ export function createWorkspaceServerRegistry(deps: WorkspaceServerRegistryDeps)
       }
       const message = errorMessage(err);
       deps.wsDebug("addLocalWorkspaceOnServer:failed", { path: trimmed, error: message });
-      return { ok: false, reason: "add_failed", error: message };
+      return {
+        ok: false,
+        reason: isInvalidHostTokenFailure(err) ? "invalid_host_token" : "add_failed",
+        error: message,
+      };
     }
   };
 
-  const activateVesloHostWorkspace = async (workspacePath: string) => {
+  const addLocalWorkspaceOnServer = async (
+    path: string,
+    name?: string,
+  ): Promise<WorkspaceRegistrySyncResult> => {
     const client = deps.vesloServerClient?.();
     if (!client) {
+      return { ok: false, reason: "server_client_unavailable" };
+    }
+    return addLocalWorkspaceWithClient(client, path, name);
+  };
+
+  const activateVesloHostWorkspace = async (workspacePath: string) => {
+    const initialClient = deps.vesloServerClient?.();
+    if (!initialClient) {
       throw workspaceRegistryUnsynced("server_client_unavailable", { workspacePath });
     }
     const targetPath = normalizeDirectoryPath(workspacePath);
     if (!targetPath) {
       throw workspaceRegistryUnsynced("empty_workspace_path");
     }
-    try {
-      const response = await client.listWorkspaces();
+
+    const refreshClientAfterHostAuthFailure = async (
+      error: unknown,
+      stage: "list" | "register" | "activate",
+      previousClient: VesloServerClient,
+    ) => {
+      const message = errorMessage(error);
+      if (
+        !deps.ensureLocalVesloServerRunning ||
+        !(isInvalidHostTokenFailure(error) || /invalid host token/i.test(message))
+      ) {
+        return null;
+      }
+      deps.wsDebug("activateVesloHostWorkspace:host-token-refresh:start", {
+        path: targetPath,
+        stage,
+      });
+      // Local host tokens can rotate across sidecar respawns; refresh once before failing activation.
+      const ok = await deps.ensureLocalVesloServerRunning().catch((refreshError) => {
+        deps.wsDebug("activateVesloHostWorkspace:host-token-refresh:failed", {
+          path: targetPath,
+          stage,
+          error: errorMessage(refreshError),
+        });
+        return false;
+      });
+      const refreshedClient = ok ? deps.vesloServerClient?.() ?? null : null;
+      deps.wsDebug("activateVesloHostWorkspace:host-token-refresh:end", {
+        path: targetPath,
+        stage,
+        ok,
+        hasRefreshedClient: Boolean(refreshedClient && refreshedClient !== previousClient),
+        sameClient: Boolean(refreshedClient && refreshedClient === previousClient),
+      });
+      return refreshedClient && refreshedClient !== previousClient ? refreshedClient : null;
+    };
+
+    const activateWithClient = async (
+      client: VesloServerClient,
+      allowHostAuthRefresh: boolean,
+    ): Promise<void> => {
+      let response;
+      try {
+        response = await client.listWorkspaces();
+      } catch (error) {
+        if (allowHostAuthRefresh) {
+          const refreshedClient = await refreshClientAfterHostAuthFailure(error, "list", client);
+          if (refreshedClient) return activateWithClient(refreshedClient, false);
+        }
+        throw error;
+      }
       const items = Array.isArray(response.items) ? response.items : [];
       let match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
       if (!match) {
@@ -95,11 +162,20 @@ export function createWorkspaceServerRegistry(deps: WorkspaceServerRegistryDeps)
             normalizeDirectoryPath(w.path?.trim() ?? "") === targetPath,
         );
         if (local?.path) {
-          const registration = await addLocalWorkspaceOnServer(
+          const registration = await addLocalWorkspaceWithClient(
+            client,
             local.path,
             local.displayName?.trim() || local.name?.trim(),
           );
           if (!registration.ok) {
+            if (allowHostAuthRefresh && registration.reason === "invalid_host_token") {
+              const refreshedClient = await refreshClientAfterHostAuthFailure(
+                new VesloServerError(401, "unauthorized", registration.error ?? "Invalid host token"),
+                "register",
+                client,
+              );
+              if (refreshedClient) return activateWithClient(refreshedClient, false);
+            }
             throw workspaceRegistryUnsynced("registration_failed", {
               path: local.path,
               reason: registration.reason,
@@ -116,7 +192,19 @@ export function createWorkspaceServerRegistry(deps: WorkspaceServerRegistryDeps)
         throw workspaceRegistryUnsynced("workspace_not_registered", { workspacePath: targetPath });
       }
       if (response.activeId === match.id) return;
-      await client.activateWorkspace(match.id);
+      try {
+        await client.activateWorkspace(match.id);
+      } catch (error) {
+        if (allowHostAuthRefresh) {
+          const refreshedClient = await refreshClientAfterHostAuthFailure(error, "activate", client);
+          if (refreshedClient) return activateWithClient(refreshedClient, false);
+        }
+        throw error;
+      }
+    };
+
+    try {
+      await activateWithClient(initialClient, true);
     } catch (err) {
       const message = errorMessage(err);
       deps.wsDebug("activateVesloHostWorkspace:failed", { path: targetPath, error: message });

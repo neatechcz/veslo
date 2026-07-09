@@ -43,7 +43,7 @@ describe("session transcript prefetch core", () => {
     expect(result.items).toEqual([]);
   });
 
-  test("keeps scoped session refs with duplicate ids isolated by directory", async () => {
+  test("keeps scoped session refs with duplicate ids isolated by directory and ignores ambiguous legacy fallback", async () => {
     const calls: Array<{ sessionId: string; directory: string | null | undefined }> = [];
     const store = createSessionTranscriptPrefetchStore({
       loadTranscript: async ({ workspaceId, sessionId, directory }) => {
@@ -75,7 +75,7 @@ describe("session transcript prefetch core", () => {
       limit: 140,
     });
 
-    expect(result.queuedSessionIds).toEqual(["shared", "shared", "child", "shared", "shared"]);
+    expect(result.queuedSessionIds).toEqual(["shared", "shared", "child", "shared"]);
     await store.prefetchWorkspace("ws_local");
 
     expect(calls).toEqual([
@@ -83,7 +83,6 @@ describe("session transcript prefetch core", () => {
       { sessionId: "shared", directory: "/work/b" },
       { sessionId: "child", directory: "/work/a" },
       { sessionId: "shared", directory: "/work/c" },
-      { sessionId: "shared", directory: "/work/d" },
     ]);
   });
 

@@ -316,6 +316,12 @@ const conversationWorkspaceCacheKey = (workspaceId: string, directory: string) =
   normalizeDirectoryPath(directory) || directory.trim(),
 ].join("\n");
 
+function isInvalidHostTokenError(error: unknown): boolean {
+  return error instanceof VesloServerError &&
+    error.status === 401 &&
+    /invalid host token/i.test(error.message);
+}
+
 export function createConversationService<Client extends ConversationServiceClient>(
   deps: ConversationServiceDeps<Client>,
 ) {
@@ -597,42 +603,92 @@ export function createConversationService<Client extends ConversationServiceClie
         return { id: "", cacheable: false };
       }
 
-      try {
-        const listed = await serverClient.listWorkspaces();
-        const existing = findMatchingWorkspace(listed.items);
-        if (existing && matchesRegistration(existing, opencodeRegistration)) {
-          return { id: existing.id, cacheable: true };
+      const refreshClientAfterHostAuthFailure = async (
+        error: unknown,
+        stage: "list" | "register",
+      ): Promise<Client | null> => {
+        if (!isInvalidHostTokenError(error) || !deps.isTauriRuntime() || deps.startupPreference() === "server") {
+          return null;
         }
-      } catch (error) {
-        deps.wsDebug("conversation-read:workspace-list:failed", {
-          workspaceId,
-          error: error instanceof Error ? error.message : safeStringify(error),
-        });
-      }
-
-      try {
-        const added = await serverClient.addLocalWorkspace({
-          path: workspaceRootRaw || targetDirectoryRaw,
-          name: workspace.name?.trim() || undefined,
-          baseUrl: opencodeRegistration?.baseUrl ?? undefined,
-          directory: opencodeRegistration?.directory || targetDirectoryRaw,
-          opencodeUsername: opencodeRegistration?.opencodeUsername ?? undefined,
-          opencodePassword: opencodeRegistration?.opencodePassword ?? undefined,
-        });
-        const registered = findMatchingWorkspace(added.items);
-        if (registered && matchesRegistration(registered, opencodeRegistration)) {
-          return { id: registered.id, cacheable: true };
-        }
-      } catch (error) {
-        deps.wsDebug("conversation-read:workspace-register:failed", {
+        deps.recordSendTrace("conversation-workspace-registration:host-token-refresh:start", {
           workspaceId,
           directory: targetDirectory,
-          hasBaseUrl: Boolean(opencodeRegistration?.baseUrl),
-          error: error instanceof Error ? error.message : safeStringify(error),
+          stage,
         });
-      }
+        // Local host tokens can rotate across sidecar respawns; refresh once before giving up.
+        const ok = await deps.ensureLocalVesloServerRunning().catch((refreshError) => {
+          deps.wsDebug("conversation-workspace-registration:host-token-refresh:failed", {
+            workspaceId,
+            directory: targetDirectory,
+            stage,
+            error: refreshError instanceof Error ? refreshError.message : safeStringify(refreshError),
+          });
+          return false;
+        });
+        const refreshedClient = ok ? deps.vesloServerClient() : null;
+        const usable = refreshedClient && refreshedClient !== serverClient ? refreshedClient : null;
+        deps.recordSendTrace("conversation-workspace-registration:host-token-refresh:end", {
+          workspaceId,
+          directory: targetDirectory,
+          stage,
+          ok,
+          hasRefreshedClient: Boolean(usable),
+          sameClient: Boolean(refreshedClient && refreshedClient === serverClient),
+        });
+        return usable;
+      };
 
-      return { id: "", cacheable: false };
+      const registerWithClient = async (
+        activeClient: Client,
+        allowHostAuthRefresh: boolean,
+      ): Promise<{ id: string; cacheable: boolean }> => {
+        try {
+          const listed = await activeClient.listWorkspaces();
+          const existing = findMatchingWorkspace(listed.items);
+          if (existing && matchesRegistration(existing, opencodeRegistration)) {
+            return { id: existing.id, cacheable: true };
+          }
+        } catch (error) {
+          if (allowHostAuthRefresh) {
+            const refreshedClient = await refreshClientAfterHostAuthFailure(error, "list");
+            if (refreshedClient) return registerWithClient(refreshedClient, false);
+          }
+          deps.wsDebug("conversation-read:workspace-list:failed", {
+            workspaceId,
+            error: error instanceof Error ? error.message : safeStringify(error),
+          });
+        }
+
+        try {
+          const added = await activeClient.addLocalWorkspace({
+            path: workspaceRootRaw || targetDirectoryRaw,
+            name: workspace.name?.trim() || undefined,
+            baseUrl: opencodeRegistration?.baseUrl ?? undefined,
+            directory: opencodeRegistration?.directory || targetDirectoryRaw,
+            opencodeUsername: opencodeRegistration?.opencodeUsername ?? undefined,
+            opencodePassword: opencodeRegistration?.opencodePassword ?? undefined,
+          });
+          const registered = findMatchingWorkspace(added.items);
+          if (registered && matchesRegistration(registered, opencodeRegistration)) {
+            return { id: registered.id, cacheable: true };
+          }
+        } catch (error) {
+          if (allowHostAuthRefresh) {
+            const refreshedClient = await refreshClientAfterHostAuthFailure(error, "register");
+            if (refreshedClient) return registerWithClient(refreshedClient, false);
+          }
+          deps.wsDebug("conversation-read:workspace-register:failed", {
+            workspaceId,
+            directory: targetDirectory,
+            hasBaseUrl: Boolean(opencodeRegistration?.baseUrl),
+            error: error instanceof Error ? error.message : safeStringify(error),
+          });
+        }
+
+        return { id: "", cacheable: false };
+      };
+
+      return await registerWithClient(serverClient, true);
     })();
 
     registrationCache.set(registrationCacheKey, registrationPromise);
@@ -744,8 +800,10 @@ export function createConversationService<Client extends ConversationServiceClie
           serverWorkspaceId,
           directory: normalizedDirectory,
         });
+        // Host-token recovery can swap the memoized local client during registration.
+        const resolvedServerClient = deps.vesloServerClient() ?? serverClient;
         return {
-          serverClient,
+          serverClient: resolvedServerClient,
           serverWorkspaceId,
           workspaceId: normalizedWorkspaceId,
           directory: normalizedDirectory,

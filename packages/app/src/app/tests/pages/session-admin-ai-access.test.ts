@@ -39,13 +39,13 @@ test("ai access blocking keeps the submitted draft as a failed pending message",
 test("transient ai access loading is not treated as a permanent submit blocker", () => {
   assert.match(
     conversationFlowSource,
-    /import\s+\{\s*AI_ACCESS_LOADING_MESSAGE\s*\}\s+from\s+"..\/lib\/ai-access";/,
-    "conversation flow should classify transient loading explicitly",
+    /import\s+\{\s*isAiAccessLoadingMessage\s*\}\s+from\s+"..\/lib\/ai-access";/,
+    "conversation flow should classify transient loading by helper",
   );
   assert.match(
     flowSendImmediateSource,
-    /const aiAccessSubmitBlockedReason = aiAccessBlockedReason === AI_ACCESS_LOADING_MESSAGE \? null : aiAccessBlockedReason;/,
-    "transient loading should not use the permanent ai access submit block",
+    /const aiAccessSubmitBlockedReason = isAiAccessLoadingMessage\(aiAccessBlockedReason, deps\.feedback\.tr\)\s*\?\s*null\s*:\s*aiAccessBlockedReason;/,
+    "transient loading should not depend on English display text",
   );
   assert.match(
     flowSendImmediateSource,
@@ -57,13 +57,13 @@ test("transient ai access loading is not treated as a permanent submit blocker",
 test("transient ai access loading disables composer send before the draft is released", () => {
   assert.match(
     source,
-    /import\s+\{\s*AI_ACCESS_LOADING_MESSAGE\s*\}\s+from\s+"..\/lib\/ai-access";/,
+    /import\s+\{\s*isAiAccessLoadingMessage\s*\}\s+from\s+"..\/lib\/ai-access";/,
     "session should distinguish transient ai access loading from permanent admin blocks",
   );
   assert.match(
     source,
-    /const aiAccessLoading = createMemo\(\(\) => props\.aiAccessBlockedReason === AI_ACCESS_LOADING_MESSAGE\);/,
-    "session should expose transient ai access loading as a readiness state",
+    /const aiAccessLoading = createMemo\(\(\) => isAiAccessLoadingMessage\(props\.aiAccessBlockedReason, tr\)\);/,
+    "session should expose localized transient ai access loading as a readiness state",
   );
   assert.match(
     source,

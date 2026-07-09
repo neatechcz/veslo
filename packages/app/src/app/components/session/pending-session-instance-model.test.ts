@@ -7,6 +7,7 @@ import {
   createPendingSessionInstance,
   createPendingSessionInstanceId,
   isPendingSessionInstanceId,
+  isPendingSessionInstanceKey,
   materializePendingSessionInstance,
   pendingSessionKeyForInstance,
   removePendingSubmittedDraftForKey,
@@ -49,6 +50,18 @@ test("pending session ids fall back when sanitized input has an empty suffix", (
 test("pending session id guard rejects prefix-only values", () => {
   assert.equal(isPendingSessionInstanceId("pending-session:"), false);
   assert.equal(isPendingSessionInstanceId(" pending-session: "), false);
+});
+
+test("pending session key guard accepts scoped pending session keys", () => {
+  const pendingKey = createUiConversationKey({
+    workspaceId: "ws-a",
+    kind: "pending-session",
+    id: "pending-session:abc",
+  });
+
+  assert.equal(isPendingSessionInstanceKey("pending-session:abc"), true);
+  assert.equal(isPendingSessionInstanceKey(pendingKey), true);
+  assert.equal(isPendingSessionInstanceId(pendingKey), false);
 });
 
 test("two pending sessions in the same workspace keep separate submitted drafts", () => {

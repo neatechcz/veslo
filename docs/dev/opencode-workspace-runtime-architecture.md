@@ -178,6 +178,11 @@ It must support two execution modes behind one runtime boundary:
 - shared OpenCode process without sandbox,
 - workspace-scoped sandboxed engine process.
 
+Runtime prepare is a readiness contract. After a fresh orchestrator daemon start,
+the desktop runtime must activate the target workspace engine before returning a
+ready engine snapshot; the app should not paper over an absent workspace engine
+with generic UI retries.
+
 The run/conversation model must not depend on sandbox availability. Sandbox is
 an isolation strategy, not the only mechanism for parallel workspace execution.
 

@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const sessionSource = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
+const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
+const sessionNavigationSource = readFileSync(new URL("./session-navigation.ts", import.meta.url), "utf8");
 const conversationFlowSource = readFileSync(new URL("./session-conversation-flow.ts", import.meta.url), "utf8");
 const queueDrainControllerSource = readFileSync(
   new URL("../context/session-queue-drain-controller.ts", import.meta.url),
@@ -291,7 +293,7 @@ test("pending sidebar selection does not materialize another pending draft into 
   );
   assert.match(
     conversationFlowSource,
-    /if \([\s\S]*pendingKey[\s\S]*!isPendingSessionInstanceId\(selectedSessionId\)[\s\S]*queueKeysShareWorkspace\(deps\.sessionKeys\.workspaceIdForQueueKey, pendingKey, sessionKey\)[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingKey, selectedSessionId\);[\s\S]*deps\.pendingHandoff\.clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);[\s\S]*blocked-workspace-mismatch/s,
+    /if \([\s\S]*pendingKey[\s\S]*!isPendingSessionInstanceKey\(selectedSessionId\)[\s\S]*queueKeysShareWorkspace\(deps\.sessionKeys\.workspaceIdForQueueKey, pendingKey, sessionKey\)[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingKey, selectedSessionId\);[\s\S]*deps\.pendingHandoff\.clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);[\s\S]*blocked-workspace-mismatch/s,
     "selecting a pending sidebar row must not remap a different workspace send into that row",
   );
   assert.doesNotMatch(
@@ -317,13 +319,13 @@ test("opening another project pending draft clears only the visible base mapping
 test("first-send handoff stores and clears the pending instance by base key", () => {
   assert.match(
     conversationFlowSource,
-    /const pendingSessionBaseKeyBeforeHandoff =[\s\S]*!targetSessionId && !resolveSessionIdForQueueKey\(baseKey\)[\s\S]*\? isPendingSessionInstanceId\(baseKey\)[\s\S]*\? pendingSessionQueueKey[\s\S]*: baseKey[\s\S]*: null;/,
+    /const pendingSessionBaseKeyBeforeHandoff =[\s\S]*!targetSessionId && !resolveSessionIdForQueueKey\(baseKey\)[\s\S]*\? isPendingSessionInstanceKey\(baseKey\)[\s\S]*\? pendingSessionQueueKey[\s\S]*: baseKey[\s\S]*: null;/,
     "first sends should capture the base pending key separately from the pending instance key",
   );
 
   assert.match(
     conversationFlowSource,
-    /const needsPendingSessionInstance =[\s\S]*Boolean\(pendingSessionBaseKeyBeforeHandoff\) && !isPendingSessionInstanceId\(baseKey\);/,
+    /const needsPendingSessionInstance =[\s\S]*Boolean\(pendingSessionBaseKeyBeforeHandoff\) && !isPendingSessionInstanceKey\(baseKey\);/,
     "first sends should not create a new pending instance when already targeting a pending instance",
   );
 
@@ -460,7 +462,7 @@ test("pending handoffs materialize from the app callback with captured keys", ()
   );
   assert.match(
     conversationFlowSource,
-    /export const resolvePendingSessionHandoffMaterialization = \(\{[\s\S]*const materializedPendingKey = handoff\?\.pendingSessionKey\?\.trim\(\) \|\| pendingSessionKey;[\s\S]*if \(materializedPendingKey !== pendingSessionKey\)[\s\S]*if \(handoffClientMessageId && handoffClientMessageId !== clientMessageId\)[\s\S]*const materializedSessionId = handoff\?\.sessionId\?\.trim\(\);[\s\S]*if \(!materializedSessionId\)[\s\S]*if \(isPendingSessionInstanceId\(materializedSessionId\)\)[\s\S]*kind: "materialize"/,
+    /export const resolvePendingSessionHandoffMaterialization = \(\{[\s\S]*const materializedPendingKey = handoff\?\.pendingSessionKey\?\.trim\(\) \|\| pendingSessionKey;[\s\S]*if \(materializedPendingKey !== pendingSessionKey\)[\s\S]*if \(handoffClientMessageId && handoffClientMessageId !== clientMessageId\)[\s\S]*const materializedSessionId = handoff\?\.sessionId\?\.trim\(\);[\s\S]*if \(!materializedSessionId\)[\s\S]*if \(isPendingSessionInstanceKey\(materializedSessionId\)\)[\s\S]*kind: "materialize"/,
     "materialization should require the captured pending key/client id and atomically remap to the real queue while keeping the visible base key pointed at it until selectedSessionId catches up",
   );
   assert.match(
@@ -529,26 +531,70 @@ test("pending first sends pass captured sidebar placeholder metadata to app prom
 });
 
 test("clicking a pending sidebar row waits for workspace activation before opening the local pending session", () => {
-  const openStart = source.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {");
-  const openEnd = source.indexOf("  const resolveVesloWorkspaceId = (workspaceId: string) => {", openStart);
-  assert.notEqual(openStart, -1, "openSessionFromList should exist");
-  assert.notEqual(openEnd, -1, "openSessionFromList should end before resolveVesloWorkspaceId");
-  const openSource = source.slice(openStart, openEnd);
+  const openStart = sessionNavigationSource.indexOf("export function openSidebarSessionFromList");
+  const openEnd = sessionNavigationSource.indexOf("export async function createSessionWithWorkspaceActivation", openStart);
+  assert.notEqual(openStart, -1, "openSidebarSessionFromList should exist");
+  assert.notEqual(openEnd, -1, "openSidebarSessionFromList should end before createSessionWithWorkspaceActivation");
+  const openSource = sessionNavigationSource.slice(openStart, openEnd);
 
   assert.match(
     openSource,
-    /if \(isPendingSessionInstanceId\(sessionId\)\) \{[\s\S]*const openPendingSidebarSession = \(nextSessionId: string\) => \{[\s\S]*props\.setSessionBrowseScope\(\{[\s\S]*sessionId: nextSessionId,[\s\S]*workspaceId,[\s\S]*workspaceRoot: scopedWorkspaceRoot,[\s\S]*directory: target\?\.directory\?\.trim\(\) \|\| session\?\.directory\?\.trim\(\) \|\| scopedWorkspaceRoot,[\s\S]*conversationId: null,[\s\S]*opencodeSessionId: null,[\s\S]*\}\);[\s\S]*props\.setView\("session", nextSessionId\);[\s\S]*\};[\s\S]*void openSessionWithWorkspaceActivation\(\{[\s\S]*activateWorkspaceBeforeOpen: true,[\s\S]*openSession: openPendingSidebarSession,[\s\S]*\}\)/,
+    /const openPendingSession = \(nextSessionId: string\) => \{[\s\S]*input\.setSessionBrowseScope\(\{[\s\S]*sessionId: nextSessionId,[\s\S]*workspaceId: input\.workspaceId,[\s\S]*workspaceRoot: root,[\s\S]*directory: input\.target\?\.directory\?\.trim\(\) \|\| session\?\.directory\?\.trim\(\) \|\| root,[\s\S]*conversationId: null,[\s\S]*opencodeSessionId: null,[\s\S]*\}\);[\s\S]*input\.setView\("session", nextSessionId\);[\s\S]*\};[\s\S]*if \(isPendingSessionInstanceKey\(input\.sessionId\)\) \{[\s\S]*activateWorkspaceBeforeOpen: true,[\s\S]*openSession: openPendingSession,/,
     "pending sidebar rows should bind and route to the local pending id only through the guarded activation helper",
   );
   assert.doesNotMatch(
     openSource,
-    /openPendingSidebarSession\(sessionId\);[\s\S]*void openSessionWithWorkspaceActivation\(\{[\s\S]*activateWorkspaceBeforeOpen: true/,
+    /openPendingSession\(input\.sessionId\);[\s\S]*openSessionWithWorkspaceActivation\(\{[\s\S]*activateWorkspaceBeforeOpen: true/,
     "pending sidebar rows should not pre-open the local pending id before workspace activation",
   );
   assert.match(
     openSource,
-    /void openSessionWithWorkspaceActivation/,
+    /return openSessionWithWorkspaceActivation\(\{[\s\S]*openSession: openRealSession,/,
     "real sidebar rows should continue through the existing workspace/session navigation path",
+  );
+});
+
+test("clicking a pending dashboard sidebar row does not select it as a server session", () => {
+  const openStart = dashboardSource.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {");
+  const openEnd = dashboardSource.indexOf("  const resolveVesloWorkspaceId = (workspaceId: string) => {", openStart);
+  const helperStart = sessionNavigationSource.indexOf("export function openSidebarSessionFromList");
+  const helperEnd = sessionNavigationSource.indexOf("export async function createSessionWithWorkspaceActivation", helperStart);
+  assert.notEqual(openStart, -1, "dashboard openSessionFromList should exist");
+  assert.notEqual(openEnd, -1, "dashboard openSessionFromList should end before resolveVesloWorkspaceId");
+  assert.notEqual(helperStart, -1, "openSidebarSessionFromList should exist");
+  assert.notEqual(helperEnd, -1, "openSidebarSessionFromList should end before createSessionWithWorkspaceActivation");
+  const openSource = dashboardSource.slice(openStart, openEnd);
+  const helperSource = sessionNavigationSource.slice(helperStart, helperEnd);
+  const pendingStart = helperSource.indexOf("  if (isPendingSessionInstanceKey(input.sessionId)) {");
+  const pendingReturnStart = helperSource.indexOf("    return openSessionWithWorkspaceActivation({", pendingStart);
+  const pendingEnd = helperSource.indexOf(
+    "  return openSessionWithWorkspaceActivation({",
+    pendingReturnStart + "    return openSessionWithWorkspaceActivation({".length,
+  );
+  assert.notEqual(pendingStart, -1, "dashboard pending branch should exist");
+  assert.notEqual(pendingReturnStart, -1, "dashboard pending branch should route through activation helper");
+  assert.notEqual(pendingEnd, -1, "dashboard pending branch should return before real-session path");
+  const pendingSource = helperSource.slice(pendingStart, pendingEnd);
+
+  assert.match(
+    pendingSource,
+    /if \(isPendingSessionInstanceKey\(input\.sessionId\)\) \{[\s\S]*return openSessionWithWorkspaceActivation\(\{[\s\S]*activateWorkspaceBeforeOpen: true,[\s\S]*openSession: openPendingSession,[\s\S]*\}\)\.catch/,
+    "dashboard pending sidebar rows should wait for workspace activation before routing",
+  );
+  assert.match(
+    helperSource,
+    /const openPendingSession = \(nextSessionId: string\) => \{[\s\S]*input\.setSessionBrowseScope\(\{[\s\S]*sessionId: nextSessionId,[\s\S]*conversationId: null,[\s\S]*opencodeSessionId: null,[\s\S]*\}\);[\s\S]*input\.setView\("session", nextSessionId\);[\s\S]*\};/,
+    "dashboard pending sidebar rows should only bind local browse scope and route",
+  );
+  assert.doesNotMatch(
+    pendingSource,
+    /input\.selectSession/,
+    "dashboard pending sidebar rows must not call selectSession with a pending alias",
+  );
+  assert.match(
+    openSource,
+    /void openSidebarSessionFromList\(\{[\s\S]*setSessionBrowseScope: props\.setSessionBrowseScope,[\s\S]*selectSession: props\.selectSession,/s,
+    "dashboard sidebar rows should delegate through the guarded navigation helper",
   );
 });
 
@@ -645,7 +691,7 @@ test("first sends create unique pending session instance keys before handoff", (
 test("pending session instance queue keys are treated as not-yet-real sessions", () => {
   assert.match(
     conversationFlowSource,
-    /const isLegacyPendingSessionKey = \(value: string\) =>[\s\S]*isPendingSessionInstanceId\(value\)[\s\S]*value\.startsWith\("pending:"\)/,
+    /const isLegacyPendingSessionKey = \(value: string\) =>[\s\S]*isPendingSessionInstanceKey\(value\)[\s\S]*value\.startsWith\("pending:"\)/,
     "pending session instance keys should not resolve to real session ids",
   );
   assert.match(

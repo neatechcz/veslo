@@ -1,4 +1,10 @@
 import type { WorkspaceActivationOptions } from "../context/workspace-types";
+import { isPendingSessionInstanceKey } from "../components/session/pending-session-instance-model";
+import {
+  sidebarSessionMatchesOpenTarget,
+  type SidebarSessionOpenTarget,
+} from "../components/session/workspace-session-list-model";
+import type { WorkspaceSessionGroup } from "../types";
 
 export type OpenSessionWithWorkspaceActivationInput = {
   activeWorkspaceId: string;
@@ -19,6 +25,21 @@ export type SessionBrowseScope = {
   directory?: string | null;
   conversationId?: string | null;
   opencodeSessionId?: string | null;
+};
+
+export type OpenSidebarSessionFromListInput = {
+  workspaceSessionGroups: WorkspaceSessionGroup[];
+  activeWorkspaceId: string;
+  getActiveWorkspaceId?: () => string;
+  workspaceId: string;
+  sessionId: string;
+  target?: SidebarSessionOpenTarget | null;
+  activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
+  setSessionBrowseScope: (scope: SessionBrowseScope) => void;
+  selectSession: (sessionId: string) => Promise<void> | void;
+  setView: (view: "session", sessionId: string) => void;
+  reportError: (error: unknown, context: string) => void;
+  sourceContext: string;
 };
 
 export type CreateSessionWithWorkspaceActivationInput = {
@@ -108,6 +129,72 @@ export async function openSessionWithWorkspaceActivation(
     () => undefined,
   );
   return await task;
+}
+
+export function openSidebarSessionFromList(
+  input: OpenSidebarSessionFromListInput,
+): Promise<OpenSessionWithWorkspaceActivationResult | void> {
+  const group = input.workspaceSessionGroups.find((g) => g.workspace.id === input.workspaceId);
+  const session =
+    (input.target ? group?.sessions.find((item) => sidebarSessionMatchesOpenTarget(item, input.target)) : null) ??
+    group?.sessions.find((item) => item.id === input.sessionId);
+  const workspaceRoot =
+    group?.workspace.directory?.trim() ||
+    group?.workspace.path?.trim() ||
+    "";
+
+  const scopedWorkspaceRoot = () => input.target?.workspaceRoot?.trim() || workspaceRoot;
+
+  const openRealSession = (nextSessionId: string) => {
+    const root = scopedWorkspaceRoot();
+    input.setSessionBrowseScope({
+      sessionId: nextSessionId,
+      workspaceId: input.workspaceId,
+      workspaceRoot: root,
+      directory: input.target?.directory?.trim() || session?.directory?.trim() || root,
+      conversationId: input.target?.conversationId ?? session?.conversationId ?? null,
+      opencodeSessionId: input.target?.opencodeSessionId ?? session?.opencodeSessionId ?? nextSessionId,
+    });
+    // Route effects can dedupe same-id opens; select after scope so DB reads use the clicked workspace.
+    void Promise.resolve(input.selectSession(nextSessionId))
+      .catch((error) => input.reportError(error, `${input.sourceContext}.openSessionFromList.selectSession`));
+    input.setView("session", nextSessionId);
+  };
+
+  const openPendingSession = (nextSessionId: string) => {
+    const root = scopedWorkspaceRoot();
+    input.setSessionBrowseScope({
+      sessionId: nextSessionId,
+      workspaceId: input.workspaceId,
+      workspaceRoot: root,
+      directory: input.target?.directory?.trim() || session?.directory?.trim() || root,
+      conversationId: null,
+      opencodeSessionId: null,
+    });
+    input.setView("session", nextSessionId);
+  };
+
+  if (isPendingSessionInstanceKey(input.sessionId)) {
+    // Pending rows are client aliases; selecting them as real sessions hits server reads.
+    return openSessionWithWorkspaceActivation({
+      activeWorkspaceId: input.activeWorkspaceId,
+      getActiveWorkspaceId: input.getActiveWorkspaceId,
+      workspaceId: input.workspaceId,
+      sessionId: input.sessionId,
+      activateWorkspace: input.activateWorkspace,
+      activateWorkspaceBeforeOpen: true,
+      openSession: openPendingSession,
+    }).catch((error) => input.reportError(error, `${input.sourceContext}.openPendingSessionFromList`));
+  }
+
+  return openSessionWithWorkspaceActivation({
+    activeWorkspaceId: input.activeWorkspaceId,
+    getActiveWorkspaceId: input.getActiveWorkspaceId,
+    workspaceId: input.workspaceId,
+    sessionId: input.sessionId,
+    activateWorkspace: input.activateWorkspace,
+    openSession: openRealSession,
+  }).catch((error) => input.reportError(error, `${input.sourceContext}.openSessionFromList`));
 }
 
 export async function createSessionWithWorkspaceActivation(

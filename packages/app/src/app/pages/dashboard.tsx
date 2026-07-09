@@ -75,10 +75,7 @@ import ShareWorkspaceModal from "../components/share-workspace-modal";
 import SidebarAdvancedNav from "../components/session/sidebar-advanced-nav";
 import SidebarDashboardNav from "../components/session/sidebar-dashboard-nav";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
-import {
-  sidebarSessionMatchesOpenTarget,
-  type SidebarSessionOpenTarget,
-} from "../components/session/workspace-session-list-model";
+import type { SidebarSessionOpenTarget } from "../components/session/workspace-session-list-model";
 import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
 import {
   clampLeftSidebarWidth,
@@ -89,7 +86,7 @@ import {
   readGlobalSidebarDockedPrefs,
   writeGlobalSidebarDockedPrefs,
 } from "../components/layout/global-sidebar-prefs";
-import { openSessionWithWorkspaceActivation, type SessionBrowseScope } from "./session-navigation";
+import { openSidebarSessionFromList, type SessionBrowseScope } from "./session-navigation";
 import type { WorkspaceActivationOptions } from "../context/workspace-types";
 import type { WorkspaceBusyMap } from "../context/workspace-debug";
 import type { DocumentRuntimeStatusPayload } from "../lib/document-runtime";
@@ -452,39 +449,19 @@ export default function DashboardView(props: DashboardViewProps) {
     workspace.workspaceType === "remote" ? "Remote" : "Local";
 
   const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {
-    const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
-    const session =
-      (target ? group?.sessions.find((item) => sidebarSessionMatchesOpenTarget(item, target)) : null) ??
-      group?.sessions.find((item) => item.id === sessionId);
-    const workspaceRoot =
-      group?.workspace.directory?.trim() ||
-      group?.workspace.path?.trim() ||
-      "";
-    void openSessionWithWorkspaceActivation({
+    void openSidebarSessionFromList({
+      workspaceSessionGroups: props.workspaceSessionGroups,
       activeWorkspaceId: props.activeWorkspaceId,
       getActiveWorkspaceId: () => props.activeWorkspaceId,
       workspaceId,
       sessionId,
+      target,
       activateWorkspace: props.activateWorkspace,
-      // Route-driven selection handles normal id changes. Also select
-      // explicitly after recording the browse scope because the user can
-      // return to the same /session/:id route after switching projects; in
-      // that case the route effect is deduped and would leave the main
-      // transcript on the empty workspace screen.
-      openSession: (nextSessionId) => {
-        const scopedWorkspaceRoot = target?.workspaceRoot?.trim() || workspaceRoot;
-        props.setSessionBrowseScope({
-          sessionId: nextSessionId,
-          workspaceId,
-          workspaceRoot: scopedWorkspaceRoot,
-          directory: target?.directory?.trim() || session?.directory?.trim() || scopedWorkspaceRoot,
-          conversationId: target?.conversationId ?? session?.conversationId ?? null,
-          opencodeSessionId: target?.opencodeSessionId ?? session?.opencodeSessionId ?? nextSessionId,
-        });
-        void Promise.resolve(props.selectSession(nextSessionId))
-          .catch((error) => reportError(error, "dashboard.openSessionFromList.selectSession"));
-        props.setView("session", nextSessionId);
-      },
+      setSessionBrowseScope: props.setSessionBrowseScope,
+      selectSession: props.selectSession,
+      setView: props.setView,
+      reportError,
+      sourceContext: "dashboard",
     });
   };
 

@@ -57,7 +57,7 @@ type SubmitConversationCall = {
 function createFakeClient(options: {
   listWorkspaceItems?: FakeWorkspaceRegistryItem[];
   addLocalWorkspaceItems?: FakeWorkspaceRegistryItem[];
-  failWorkspaceRegistration?: boolean;
+  failWorkspaceRegistration?: boolean | "invalid-host-token";
   runStatusError?: unknown;
 } = {}) {
   const calls: string[] = [];
@@ -84,6 +84,9 @@ function createFakeClient(options: {
     }) => {
       calls.push(`addLocalWorkspace:${input.path}`);
       if (options.failWorkspaceRegistration) {
+        if (options.failWorkspaceRegistration === "invalid-host-token") {
+          throw new VesloServerError(401, "unauthorized", "Invalid host token");
+        }
         throw new Error("registration unavailable");
       }
       const items = options.addLocalWorkspaceItems ?? [
@@ -231,7 +234,10 @@ function createService(options: {
   workspaceVesloWorkspaceId?: string | null;
   listWorkspaceItems?: FakeWorkspaceRegistryItem[];
   addLocalWorkspaceItems?: FakeWorkspaceRegistryItem[];
-  failWorkspaceRegistration?: boolean;
+  failWorkspaceRegistration?: boolean | "invalid-host-token";
+  refreshClientOnEnsure?: boolean;
+  refreshedListWorkspaceItems?: FakeWorkspaceRegistryItem[];
+  refreshedAddLocalWorkspaceItems?: FakeWorkspaceRegistryItem[];
   engineBaseWorkspaceId?: string;
   engineBaseUrl?: string | null;
   runStatusError?: unknown;
@@ -250,6 +256,13 @@ function createService(options: {
     failWorkspaceRegistration: options.failWorkspaceRegistration,
     runStatusError: options.runStatusError,
   });
+  const refreshedFake = options.refreshClientOnEnsure
+    ? createFakeClient({
+        listWorkspaceItems: options.refreshedListWorkspaceItems ?? options.listWorkspaceItems,
+        addLocalWorkspaceItems: options.refreshedAddLocalWorkspaceItems ?? options.addLocalWorkspaceItems,
+        runStatusError: options.runStatusError,
+      })
+    : null;
   let serverClient: ConversationServiceClient | null = options.startDisconnected ? null : client;
   const engineBaseWorkspaceId = options.engineBaseWorkspaceId ?? "server-ws";
   const engineBaseUrl = options.engineBaseUrl === undefined
@@ -308,7 +321,7 @@ function createService(options: {
     ensureLocalVesloServerRunning: async () => {
       ensureCalls.push("ensure-local-server");
       if (options.failServerStart) return false;
-      serverClient = client;
+      serverClient = refreshedFake?.client ?? client;
       return true;
     },
     workspaces: () => [
@@ -384,6 +397,7 @@ function createService(options: {
   return {
     service,
     calls,
+    refreshedCalls: refreshedFake?.calls ?? [],
     submitConversationCalls,
     ensureCalls,
     rememberedScopes,
@@ -470,6 +484,41 @@ test("conversation write refreshes stale server workspace registration with live
     "addLocalWorkspace:/repo",
     "createConversation:server-ws",
   ]);
+});
+
+test("conversation write refreshes stale local host token once before declaring registration unavailable", async () => {
+  const { service, calls, refreshedCalls, ensureCalls, sendTraces } = createService({
+    failWorkspaceRegistration: "invalid-host-token",
+    refreshClientOnEnsure: true,
+  });
+
+  const result = await service.createConversationFromVesloWriteApi("app-ws", "/repo", "Refresh token");
+
+  assert.equal(result?.id, "sess-created");
+  assert.deepEqual(ensureCalls, ["ensure-local-server"]);
+  assert.deepEqual(calls.filter((call) =>
+    call === "listWorkspaces" ||
+    call.startsWith("addLocalWorkspace:")
+  ), [
+    "listWorkspaces",
+    "addLocalWorkspace:/repo",
+  ]);
+  assert.deepEqual(refreshedCalls.filter((call) =>
+    call === "listWorkspaces" ||
+    call.startsWith("addLocalWorkspace:") ||
+    call.startsWith("createConversation:")
+  ), [
+    "listWorkspaces",
+    "addLocalWorkspace:/repo",
+    "createConversation:server-ws",
+  ]);
+  assert.ok(sendTraces.some((entry) =>
+    entry.event === "conversation-workspace-registration:host-token-refresh:start"
+  ));
+  assert.ok(sendTraces.some((entry) =>
+    entry.event === "conversation-workspace-registration:host-token-refresh:end" &&
+    entry.payload?.hasRefreshedClient === true
+  ));
 });
 
 test("conversation write blocks first submit when live OpenCode URL is unavailable", async () => {

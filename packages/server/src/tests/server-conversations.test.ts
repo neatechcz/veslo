@@ -657,6 +657,75 @@ describe("conversation routes", () => {
     expect(registrations.every((entry) => entry.body?.path === workspaceRoot)).toBe(true);
   });
 
+  test("DELETE /workspace/:id/sessions/:sessionId retries stale local baseUrl through orchestrator daemon", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-delete-session-orchestrator-stale-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+
+    let staleBaseUrlHit = false;
+    const staleUpstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async () => {
+        staleBaseUrlHit = true;
+        return Response.json({ error: "engine_not_running", workspaceId: "ws_old" }, { status: 503 });
+      },
+    });
+    runningServers.push(staleUpstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const orchestratorRequests: Array<{ path: string; method: string; body: Record<string, unknown> | null }> = [];
+    const orchestrator = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = request.method === "POST"
+          ? await request.json().catch(() => null) as Record<string, unknown> | null
+          : null;
+        orchestratorRequests.push({ path: url.pathname, method: request.method, body });
+        if (request.method === "POST" && url.pathname === "/workspaces") {
+          return Response.json({ ok: true });
+        }
+        if (request.method === "DELETE" && url.pathname === "/workspace/ws_delete/opencode/session/sess-delete") {
+          return Response.json({ ok: true });
+        }
+        return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(orchestrator as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: staleUpstream.port,
+      orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
+      workspaces: [
+        {
+          id: "ws_delete",
+          name: "Delete",
+          path: workspaceRoot,
+          baseUrl: `http://127.0.0.1:${staleUpstream.port}/workspace/ws_old/opencode`,
+        },
+      ],
+    });
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_delete/sessions/sess-delete`,
+      {
+        method: "DELETE",
+        headers: { Authorization: "Bearer client-token" },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(staleBaseUrlHit).toBe(true);
+    const paths = orchestratorRequests.map((entry) => entry.path);
+    expect(paths.indexOf("/workspaces")).toBeGreaterThanOrEqual(0);
+    expect(paths.indexOf("/workspace/ws_delete/opencode/session/sess-delete")).toBeGreaterThan(
+      paths.indexOf("/workspaces"),
+    );
+    expect(orchestratorRequests.find((entry) => entry.path === "/workspaces")?.body?.serverWorkspaceId).toBe("ws_delete");
+  });
+
   test("POST /workspace/:id/conversations/submit joins duplicate sends while OpenCode is slow", async () => {
     await useTempVesloDataDir();
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-slow-"));

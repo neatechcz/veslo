@@ -84,6 +84,7 @@ import {
 } from "./context/managed-ai-runtime-config";
 import { createConversationService } from "./context/conversation-service";
 import { createLiveTranscriptReadPolicy } from "./context/live-transcript-read-policy";
+import { createSubmittedRunTranscriptCatchup } from "./context/submitted-run-transcript-catchup";
 import { createPendingSessionDraftController } from "./context/pending-session-draft-controller";
 import { createSessionFlowFacade } from "./context/session-flow-facade";
 import { createSessionFlowProgressPresenter } from "./context/session-flow-progress-presenter";
@@ -109,7 +110,7 @@ import {
   type SendRuntimePreflightTargetWorkspace,
 } from "./context/send-runtime-readiness";
 import { createAppRouteSync } from "./context/app-route-sync";
-import { createSessionRouteSync } from "./context/session-route-sync";
+import { createSessionRouteSync, sessionIdFromRoutePath } from "./context/session-route-sync";
 import { createAppSendTrace } from "./context/app-send-trace";
 import { createAppDeepLinkWorkflow } from "./context/app-deep-link-workflow";
 import { createAppStartupHydration } from "./context/app-startup-hydration";
@@ -143,7 +144,7 @@ import {
 import { createSessionSendWorkflow } from "./pages/session-send-workflow";
 import { createSessionMutationWorkflow } from "./pages/session-mutation-workflow";
 import { createSoulDataStore } from "./pages/soul-data-store";
-import { isPendingSessionInstanceId } from "./components/session/pending-session-instance-model";
+import { isPendingSessionInstanceKey } from "./components/session/pending-session-instance-model";
 import ProtoWorkspacesView from "./pages/proto-workspaces";
 import ProtoV1UxView from "./pages/proto-v1-ux";
 import {
@@ -329,6 +330,7 @@ import {
   writeVesloServerSettings,
   clearVesloServerSettings,
   type VesloSessionLatestRunArtifacts,
+  type VesloSessionTranscriptSnapshot,
   type VesloServerClient,
   VesloServerError,
 } from "./lib/veslo-server";
@@ -755,6 +757,15 @@ export default function App() {
       recordSendWorkflowTrace("live-transcript-policy", event, payload, { developerMode: developerMode() }),
   });
   const isLiveTranscriptReadAllowedForWorkspace = liveTranscriptReadPolicy.isAllowedForWorkspace;
+  const assistantResponseObservationVersionBySession = new Map<string, number>();
+  const noteAssistantResponseObserved = (sessionId: string) => {
+    const id = sessionId.trim();
+    if (!id) return;
+    assistantResponseObservationVersionBySession.set(
+      id,
+      (assistantResponseObservationVersionBySession.get(id) ?? 0) + 1,
+    );
+  };
 
   // VSLO-171 F3Ú8: cross-workspace takeover confirmation dialog removed.
   // See comment in sendPrompt about replacement strategy.
@@ -1054,6 +1065,7 @@ export default function App() {
       return !isLiveTranscriptReadAllowedForWorkspace(workspaceStore.activeWorkspaceId().trim());
     },
     onAssistantResponseObserved: (sessionId) => {
+      noteAssistantResponseObserved(sessionId);
       setUnreadSessionIds((current) =>
         markUnreadAfterAssistantResponse(current, {
           responseSessionId: sessionId,
@@ -1177,7 +1189,36 @@ export default function App() {
     selectedSessionLoadingEarlierMessages,
     hydrateTranscriptSnapshot,
     hasWarmTranscript,
+    getCachedTranscriptMessages,
   } = sessionStore;
+
+  const submittedRunTranscriptCatchup = createSubmittedRunTranscriptCatchup<VesloSessionTranscriptSnapshot>({
+    selectedSessionId,
+    resolveSelectedSessionWorkspaceId: (sessionId) => {
+      const scopedWorkspaceId = resolveSelectedSessionBrowseScope(sessionId)?.workspaceId?.trim() ?? "";
+      return scopedWorkspaceId || workspaceStore.activeWorkspaceId().trim() || null;
+    },
+    assistantObservationVersion: (sessionId) =>
+      assistantResponseObservationVersionBySession.get(sessionId.trim()) ?? 0,
+    assistantMessageCount: (sessionId) =>
+      getCachedTranscriptMessages(sessionId.trim())
+        .filter((message) => message.role === "assistant")
+        .length,
+    loadTranscript: (target) => {
+      const visibleMessageCount = getCachedTranscriptMessages(target.sessionId).length;
+      const catchupLimit = Math.max(140, visibleMessageCount + 20);
+      return getTranscriptFromVesloReadApi(
+        target.workspaceId,
+        target.sessionId,
+        catchupLimit,
+        target.directory?.trim() || undefined,
+        { activeVisibleSelectedSession: selectedSessionId()?.trim() === target.sessionId },
+      );
+    },
+    hydrateTranscriptSnapshot,
+    trace: recordSendTrace,
+  });
+  onCleanup(() => submittedRunTranscriptCatchup.dispose());
 
   const [e2eFolderAccessPermissionIds, setE2eFolderAccessPermissionIds] = createSignal<Set<string>>(
     new Set(),
@@ -1244,7 +1285,7 @@ export default function App() {
   });
   const holdVisibleRuntimeActivity = (sessionId: string | null | undefined, reason: string) => {
     const id = sessionId?.trim();
-    if (!id || isPendingSessionInstanceId(id)) return;
+    if (!id || isPendingSessionInstanceKey(id)) return;
     const token = `run-handoff:${id}`;
     const expiresAt = Date.now() + 3_000;
     setVisibleRuntimeActivityHold({ sessionId: id, token, expiresAt });
@@ -1293,7 +1334,7 @@ export default function App() {
     if (sendTraceId) return sendTraceId;
 
     const sessionId = selectedSessionId()?.trim();
-    if (!sessionId || isPendingSessionInstanceId(sessionId)) return null;
+    if (!sessionId || isPendingSessionInstanceKey(sessionId)) return null;
     const status = statusForSession(sessionId);
     if (status === "running" || status === "retry") return `run:${sessionId}`;
     const hold = visibleRuntimeActivityHold();
@@ -1404,7 +1445,7 @@ export default function App() {
   const latestRunArtifactScope = createMemo(() => {
     const sessionId = selectedSessionId()?.trim() ?? "";
     if (!sessionId) return null;
-    if (isPendingSessionInstanceId(sessionId)) return null;
+    if (isPendingSessionInstanceKey(sessionId)) return null;
     const scope = resolveSelectedSessionBrowseScope(sessionId);
     const workspaceId = scope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
     const workspaceRoot = scope?.workspaceRoot?.trim() || workspaceStore.activeWorkspaceRoot().trim();
@@ -1650,7 +1691,7 @@ export default function App() {
       ensureSelectedSessionWorkspaceActiveForSend(sessionId, sendTraceId),
     finishPerf,
     holdVisibleRuntimeActivity,
-    isPendingSessionInstanceId,
+    isPendingSessionInstanceKey,
     isTauriRuntime,
     isUiScopeTokenCurrent,
     isWorkspaceClientStaleError,
@@ -1671,6 +1712,7 @@ export default function App() {
     registerPendingSidebarSession: (pendingSession) => registerPendingSidebarSession(pendingSession),
     removeSessionFromWorkspaceSidebar: (workspaceId, sessionId) => removeSessionFromWorkspaceSidebar(workspaceId, sessionId),
     reportError,
+    scheduleSubmittedRunTranscriptCatchup: (target) => submittedRunTranscriptCatchup.schedule(target),
     resolveConversationAbortScope,
     resolveRuntimeSandboxStateForTarget: (target) =>
       resolveRuntimeSandboxStateForTarget(target as SendRuntimePreflightTargetWorkspace | null),
@@ -1751,6 +1793,7 @@ export default function App() {
     workspaceProjectDir: () => workspaceProjectDir(),
     resolveSelectedSessionBrowseScope,
     submitConversationFromVesloWriteApi,
+    scheduleSubmittedRunTranscriptCatchup: (target) => submittedRunTranscriptCatchup.schedule(target),
     messageFromUnknownError: (error) => messageFromUnknownError(error),
     safeStringify,
     renameSession,
@@ -3043,8 +3086,7 @@ export default function App() {
       setTodos([]);
     });
 
-    const [, , routeSessionSegment] = location.pathname.trim().split("/");
-    if (routeSessionSegment?.trim() === normalizedSessionId) {
+    if (sessionIdFromRoutePath(location.pathname) === normalizedSessionId) {
       navigate("/session", { replace: true });
     }
   };
@@ -3078,8 +3120,8 @@ export default function App() {
   // session or sends a prompt; /session/:id selection is route-driven.
 
   function isRouteSelectedSession(sessionId: string) {
-    const [, , sessionSegment] = location.pathname.trim().split("/");
-    return Boolean(sessionSegment?.trim() && sessionSegment.trim() === sessionId.trim());
+    const routeSessionId = sessionIdFromRoutePath(location.pathname);
+    return Boolean(routeSessionId && routeSessionId === sessionId.trim());
   }
 
   const sessionRouteSync = createSessionRouteSync({
@@ -3099,7 +3141,7 @@ export default function App() {
     selectedSessionLoadingEarlierMessages,
     activePendingDraftKey,
     activePendingDraftMeta,
-    isPendingSessionInstanceId,
+    isPendingSessionInstanceKey,
     visibleSelectedSessionStatus,
     setSelectedSessionId,
     setMessages,

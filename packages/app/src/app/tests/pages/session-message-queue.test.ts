@@ -342,7 +342,7 @@ test("accepted first pending submit captures and remaps the pending queue key", 
   );
   assert.match(
     conversationFlowSource,
-    /if \([\s\S]*pendingKey[\s\S]*!isPendingSessionInstanceId\(selectedSessionId\)[\s\S]*queueKeysShareWorkspace\(deps\.sessionKeys\.workspaceIdForQueueKey, pendingKey, sessionKey\)[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingKey, selectedSessionId\);[\s\S]*deps\.pendingHandoff\.clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);[\s\S]*blocked-workspace-mismatch/s,
+    /if \([\s\S]*pendingKey[\s\S]*!isPendingSessionInstanceKey\(selectedSessionId\)[\s\S]*queueKeysShareWorkspace\(deps\.sessionKeys\.workspaceIdForQueueKey, pendingKey, sessionKey\)[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingKey, selectedSessionId\);[\s\S]*deps\.pendingHandoff\.clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);[\s\S]*blocked-workspace-mismatch/s,
     "conversation-flow controller should remap pending queues only when the materialized session is in the same workspace",
   );
 
@@ -412,7 +412,7 @@ test("rejected pending queue drain updates the remapped item key", () => {
 
 test("app prompt send accepts an explicit target session without freezing model bootstrap", () => {
   const sendStart = sendWorkflowSource.indexOf("async function sendPrompt");
-  const targetCapture = sendWorkflowSource.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceId(options.targetSessionId)", sendStart);
+  const targetCapture = sendWorkflowSource.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceKey(options.targetSessionId)", sendStart);
   const bridgePrepare = sendWorkflowSource.indexOf("conversationRunCompatibilityBridge.prepare({", targetCapture);
   const bridgeSubmit = sendWorkflowSource.indexOf("conversationRunCompatibilityBridge.submit({", bridgePrepare);
   const bridgeSource = conversationRunCompatibilityBridgeSource();

@@ -4,6 +4,7 @@ import test from "node:test";
 
 const dashboardSource = readFileSync(new URL("../../pages/dashboard.tsx", import.meta.url), "utf8");
 const sessionSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
+const sessionNavigationSource = readFileSync(new URL("../../pages/session-navigation.ts", import.meta.url), "utf8");
 const localWorkspacesSource = readFileSync(
   new URL("../../context/workspace-local-workspaces.ts", import.meta.url),
   "utf8",
@@ -74,16 +75,21 @@ test("session Soul navigation does not switch views after workspace activation f
 });
 
 test("pending sidebar session rows wait for workspace activation before changing the visible session scope", () => {
-  const openSessionFromListSource = sourceBetween(
-    sessionSource,
-    "  const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {",
-    "  const resolveVesloWorkspaceId",
+  const openSidebarSessionSource = sourceBetween(
+    sessionNavigationSource,
+    "export function openSidebarSessionFromList",
+    "export async function createSessionWithWorkspaceActivation",
   );
 
   assert.doesNotMatch(
-    openSessionFromListSource,
-    /openPendingSidebarSession\(sessionId\);[\s\S]*openSessionWithWorkspaceActivation\(\{[\s\S]*activateWorkspaceBeforeOpen: true/,
+    openSidebarSessionSource,
+    /openPendingSession\(input\.sessionId\);[\s\S]*openSessionWithWorkspaceActivation\(\{[\s\S]*activateWorkspaceBeforeOpen: true/,
     "pending rows should not pre-open a workspace-scoped pending session before activation has succeeded",
+  );
+  assert.match(
+    openSidebarSessionSource,
+    /if \(isPendingSessionInstanceKey\(input\.sessionId\)\) \{[\s\S]*activateWorkspaceBeforeOpen: true,[\s\S]*openSession: openPendingSession,/,
+    "pending rows should wait for workspace activation before opening the local pending session",
   );
 });
 
