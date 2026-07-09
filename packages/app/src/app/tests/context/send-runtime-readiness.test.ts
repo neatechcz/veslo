@@ -902,6 +902,8 @@ test("local runtime health error helpers classify dead endpoints and probe timeo
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"workspace not found"}')), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("workspace_registry_unsynced")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("workspace_id_mismatch")), true);
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("Unauthorized: Invalid bearer token")), true);
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"code":"unauthorized","message":"Invalid bearer token"}')), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"opencode_request_failed","status":503}')), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("OpenCode health returned status 404")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"status":404}')), true);

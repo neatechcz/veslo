@@ -374,7 +374,8 @@ function isLoopbackUrl(value: string | null): boolean {
 
 function resolveLiveDenAuthSnapshotPath(env: Record<string, string | undefined>): string | null {
   const snapshotPath = normalizeOptionalText(env.VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE)
-    ?? normalizeOptionalText(env.E2E_DEN_AUTH_SNAPSHOT_FILE);
+    ?? normalizeOptionalText(env.E2E_DEN_AUTH_SNAPSHOT_FILE)
+    ?? normalizeOptionalText(env.VESLO_DEN_AUTH_SNAPSHOT_PATH);
   return snapshotPath ? resolve(snapshotPath) : null;
 }
 
@@ -428,7 +429,7 @@ export function assertLiveManagedAiAuthForScenarioSelection(
     const snapshotPath = resolveLiveDenAuthSnapshotPath(env);
     if (!snapshotPath) {
       throw new Error(
-        'Managed-AI inference pilot scenarios require live Den auth. Set VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE to a real user snapshot, for example C:\\Users\\jajse\\.veslo\\den-auth.json.',
+        'Managed-AI inference pilot scenarios require live Den auth. Set VESLO_DEN_AUTH_SNAPSHOT_PATH or VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE to a real user snapshot, for example C:\\Users\\jajse\\.veslo\\den-auth.json.',
       );
     }
     if (!existsSync(snapshotPath)) {

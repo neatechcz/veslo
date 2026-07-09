@@ -103,6 +103,14 @@ pnpm test
 
 The E2E launcher uses an isolated app profile under `packages/e2e/.tmp-veslo-home` by default so local desktop state does not leak into tests. Set `E2E_USE_EXISTING_PROFILE=1` only when a test explicitly needs the current user profile.
 
+For live Den auth, Tauri Pilot accepts the same production desktop snapshot input as the app:
+
+```bash
+VESLO_DEN_AUTH_SNAPSHOT_PATH="$HOME/.veslo/den-auth.json"
+```
+
+`VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE` remains available when a test needs an E2E-only snapshot path.
+
 For core platform skill materialization coverage, build with the pilot-enabled E2E config and run the targeted pilot script:
 
 Prerequisite: the `tauri-pilot` CLI must be on `PATH`. If it is installed elsewhere, set `E2E_TAURI_PILOT_BIN=/absolute/path/to/tauri-pilot`.

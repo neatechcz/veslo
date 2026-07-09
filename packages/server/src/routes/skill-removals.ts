@@ -210,8 +210,8 @@ export function registerSkillRemovalRoutes(
 ): void {
   const { serverDataDir, resolveActor } = dependencies;
 
-  addRoute(routes, "GET", "/skill-removals", "none", async (ctx) => {
-    const actor = await resolveActor(ctx);
+  addRoute(routes, "GET", "/skill-removals", "hostOrClient", async (ctx) => {
+    const actor = ctx.actor ?? await resolveActor(ctx);
     if (scopeRank(actor.scope ?? "viewer") < scopeRank("collaborator")) {
       throw new ApiError(403, "forbidden", "Insufficient token scope", {
         required: "collaborator",

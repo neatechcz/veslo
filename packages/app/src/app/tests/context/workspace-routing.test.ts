@@ -14,6 +14,22 @@ const makeClient = (id: string, calls: string[] = []) => ({
   },
 }) as any;
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function tick(count = 1) {
+  for (let index = 0; index < count; index += 1) {
+    await Promise.resolve();
+  }
+}
+
 function createTestRouting() {
   const fallbackClient = { marker: "fallback", health: () => "fallback" };
   let activeWorkspaceId = "";
@@ -79,6 +95,57 @@ test("explicit workspace client lookup does not fall back to the active client",
     } finally {
       dispose();
     }
+  });
+});
+
+test("workspace routing release invalidates pending ensure before it can republish a stale route", async () => {
+  await new Promise<void>((resolve, reject) => {
+    createRoot((dispose) => {
+      void (async () => {
+        const healthGates: Array<ReturnType<typeof deferred<{ healthy: boolean }>>> = [];
+        let createCalls = 0;
+        try {
+          const routing = createWorkspaceRouting({
+            clientSource: () => null,
+            activeWorkspaceId: () => "ws-active",
+            createClient: () => {
+              createCalls += 1;
+              return makeClient(`client-${createCalls}`);
+            },
+            waitForHealthy: async () => {
+              const gate = deferred<{ healthy: boolean }>();
+              healthGates.push(gate);
+              return await gate.promise;
+            },
+          });
+
+          const first = routing.ensure("ws-active", "http://engine", { directory: "/workspace" });
+          await tick();
+          assert.equal(healthGates.length, 1);
+
+          routing.release("ws-active");
+          const second = routing.ensure("ws-active", "http://engine", { directory: "/workspace" });
+          await tick();
+
+          assert.equal(createCalls, 2, "new ensure after release must not join the released pending ensure");
+          assert.equal(healthGates.length, 2);
+
+          healthGates[0]?.resolve({ healthy: true });
+          assert.equal(await first, null);
+          assert.equal(routing.entry("ws-active"), null);
+
+          healthGates[1]?.resolve({ healthy: true });
+          const secondEntry = await second;
+          assert.equal((secondEntry?.client as any)?.id, "client-2");
+          assert.equal((routing.entry("ws-active")?.client as any)?.id, "client-2");
+          resolve();
+        } catch (error) {
+          reject(error);
+        } finally {
+          dispose();
+        }
+      })();
+    });
   });
 });
 

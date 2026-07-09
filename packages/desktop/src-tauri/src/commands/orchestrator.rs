@@ -17,6 +17,35 @@ use crate::workspace::validation::{validate_workspace_path, ValidationMode};
 
 const DEFAULT_DETACHED_VESLO_HOST: &str = "127.0.0.1";
 const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS: u64 = 10_000;
+const DETACHED_VESLO_READY_TIMEOUT_MS: u64 = 30_000;
+const DETACHED_VESLO_READY_POLL_MS: u64 = 200;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DetachedVesloReadyProbe {
+    stage: &'static str,
+    path: &'static str,
+    bearer_auth: bool,
+}
+
+const DETACHED_VESLO_REQUIRED_READY_PROBES: [DetachedVesloReadyProbe; 2] = [
+    DetachedVesloReadyProbe {
+        stage: "health",
+        path: "/health",
+        bearer_auth: false,
+    },
+    DetachedVesloReadyProbe {
+        stage: "capabilities",
+        path: "/capabilities",
+        bearer_auth: true,
+    },
+];
+
+const DETACHED_VESLO_OPTIONAL_READY_PROBES: [DetachedVesloReadyProbe; 1] =
+    [DetachedVesloReadyProbe {
+        stage: "opencode-router.health",
+        path: "/opencode-router/health",
+        bearer_auth: true,
+    }];
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +70,77 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+fn detached_veslo_ready_probes() -> &'static [DetachedVesloReadyProbe] {
+    &DETACHED_VESLO_REQUIRED_READY_PROBES
+}
+
+fn detached_veslo_optional_ready_probes() -> &'static [DetachedVesloReadyProbe] {
+    &DETACHED_VESLO_OPTIONAL_READY_PROBES
+}
+
+fn detached_veslo_probe_url(base_url: &str, path: &str) -> String {
+    format!("{}{}", base_url.trim_end_matches('/'), path)
+}
+
+fn probe_detached_veslo_endpoint(
+    base_url: &str,
+    token: &str,
+    probe: DetachedVesloReadyProbe,
+) -> Result<(), String> {
+    let url = detached_veslo_probe_url(base_url, probe.path);
+    let mut request = ureq::get(&url).set("Accept", "application/json");
+    if probe.bearer_auth {
+        request = request.set("Authorization", &format!("Bearer {token}"));
+    }
+
+    match request.call() {
+        Ok(response) if response.status() >= 200 && response.status() < 300 => Ok(()),
+        Ok(response) => Err(format!("{} HTTP {}", probe.stage, response.status())),
+        Err(error) => Err(format!("{} {}", probe.stage, error)),
+    }
+}
+
+fn probe_detached_veslo_ready(base_url: &str, token: &str) -> Result<(), String> {
+    for probe in detached_veslo_ready_probes() {
+        probe_detached_veslo_endpoint(base_url, token, *probe)?;
+    }
+    Ok(())
+}
+
+fn probe_detached_veslo_optional_ready(base_url: &str, token: &str) -> Vec<String> {
+    let mut warnings = Vec::new();
+    for probe in detached_veslo_optional_ready_probes() {
+        if let Err(error) = probe_detached_veslo_endpoint(base_url, token, *probe) {
+            warnings.push(error);
+        }
+    }
+    warnings
+}
+
+fn wait_for_detached_veslo_ready(
+    base_url: &str,
+    token: &str,
+    timeout_ms: u64,
+    poll_ms: u64,
+) -> Result<u128, String> {
+    let start = Instant::now();
+    let mut last_error: Option<String> = None;
+
+    while start.elapsed() < Duration::from_millis(timeout_ms) {
+        match probe_detached_veslo_ready(base_url, token) {
+            Ok(()) => return Ok(start.elapsed().as_millis()),
+            Err(error) => last_error = Some(error),
+        }
+        std::thread::sleep(Duration::from_millis(poll_ms));
+    }
+
+    let elapsed_ms = start.elapsed().as_millis();
+    Err(format!(
+        "Timed out waiting for Veslo server (stage=veslo.readycheck, elapsed_ms={elapsed_ms}, url={base_url}, last_error={})",
+        last_error.as_deref().unwrap_or("none")
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -141,7 +241,11 @@ fn orchestrator_workspace_registration_payload(
 
 #[cfg(test)]
 mod tests {
-    use super::{orchestrator_workspace_registration_payload, resolve_live_base_url_from_status};
+    use super::{
+        detached_veslo_optional_ready_probes, detached_veslo_probe_url,
+        detached_veslo_ready_probes, orchestrator_workspace_registration_payload,
+        resolve_live_base_url_from_status, DetachedVesloReadyProbe,
+    };
     use crate::types::{OrchestratorDaemonState, OrchestratorStatus};
 
     fn status(running: bool, base_url: Option<&str>) -> OrchestratorStatus {
@@ -212,6 +316,49 @@ mod tests {
         assert_eq!(payload["appWorkspaceId"], "app-ws");
         assert!(payload["serverWorkspaceId"].is_null());
         assert!(payload["vesloWorkspaceId"].is_null());
+    }
+
+    #[test]
+    fn detached_veslo_ready_probes_verify_liveness_and_auth() {
+        assert_eq!(
+            detached_veslo_ready_probes(),
+            &[
+                DetachedVesloReadyProbe {
+                    stage: "health",
+                    path: "/health",
+                    bearer_auth: false,
+                },
+                DetachedVesloReadyProbe {
+                    stage: "capabilities",
+                    path: "/capabilities",
+                    bearer_auth: true,
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn detached_veslo_optional_ready_probes_cover_router_without_blocking_start() {
+        assert_eq!(
+            detached_veslo_optional_ready_probes(),
+            &[DetachedVesloReadyProbe {
+                stage: "opencode-router.health",
+                path: "/opencode-router/health",
+                bearer_auth: true,
+            },],
+        );
+    }
+
+    #[test]
+    fn detached_veslo_probe_url_accepts_base_url_with_or_without_trailing_slash() {
+        assert_eq!(
+            detached_veslo_probe_url("http://127.0.0.1:8787", "/capabilities"),
+            "http://127.0.0.1:8787/capabilities",
+        );
+        assert_eq!(
+            detached_veslo_probe_url("http://127.0.0.1:8787/", "/capabilities"),
+            "http://127.0.0.1:8787/capabilities",
+        );
     }
 }
 
@@ -700,43 +847,33 @@ pub fn orchestrator_start_detached(
         );
     }
 
-    let health_timeout_ms: u64 = 12_000;
-    let start = Instant::now();
-    let mut last_error: Option<String> = None;
-
-    while start.elapsed() < Duration::from_millis(health_timeout_ms) {
-        match ureq::get(&format!("{}/health", veslo_url.trim_end_matches('/'))).call() {
-            Ok(response) if response.status() >= 200 && response.status() < 300 => {
-                last_error = None;
-                break;
-            }
-            Ok(response) => {
-                last_error = Some(format!("HTTP {}", response.status()));
-            }
-            Err(err) => {
-                last_error = Some(err.to_string());
-            }
+    let ready_elapsed_ms = match wait_for_detached_veslo_ready(
+        &veslo_url,
+        &token,
+        DETACHED_VESLO_READY_TIMEOUT_MS,
+        DETACHED_VESLO_READY_POLL_MS,
+    ) {
+        Ok(elapsed_ms) => elapsed_ms,
+        Err(message) => {
+            eprintln!(
+                "[orchestrator-detached][at={}][runId={host_run_id}][stage=timeout] ready wait failed error={message}",
+                now_ms()
+            );
+            return Err(message);
         }
-        std::thread::sleep(Duration::from_millis(200));
-    }
+    };
 
-    if start.elapsed() >= Duration::from_millis(health_timeout_ms) {
-        let elapsed_ms = start.elapsed().as_millis() as u64;
-        let message = format!(
-            "Timed out waiting for Veslo server (stage=veslo.healthcheck, elapsed_ms={elapsed_ms}, url={veslo_url}, last_error={})",
-            last_error.as_deref().unwrap_or("none")
-        );
+    for warning in probe_detached_veslo_optional_ready(&veslo_url, &token) {
         eprintln!(
-            "[orchestrator-detached][at={}][runId={host_run_id}][stage=timeout] health wait timed out after {elapsed_ms}ms error={message}",
+            "[orchestrator-detached][at={}][runId={host_run_id}][stage=optional-readiness] {warning}",
             now_ms()
         );
-        return Err(message);
     }
 
     eprintln!(
         "[orchestrator-detached][at={}][runId={host_run_id}][stage=complete] detached host ready in {}ms url={veslo_url}",
         now_ms(),
-        start.elapsed().as_millis()
+        ready_elapsed_ms
     );
 
     Ok(OrchestratorDetachedHost {

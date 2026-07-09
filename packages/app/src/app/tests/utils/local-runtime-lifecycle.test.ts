@@ -46,6 +46,17 @@ function createHarness(options?: {
     reason?: string | null;
     forceFreshRuntime?: boolean;
   }) => Promise<WorkspaceRuntimePrepareResult>;
+  connectQuiet?: (
+    baseUrl: string,
+    directory: string,
+    auth?: OpencodeAuth,
+    context?: {
+      workspaceId?: string;
+      workspaceType?: "local" | "remote";
+      targetRoot?: string;
+      reason?: string;
+    },
+  ) => Promise<boolean>;
 }) {
   const calls: string[] = [];
   const snapshots: EngineInfo[] = [];
@@ -128,6 +139,9 @@ function createHarness(options?: {
     connectQuiet: async (baseUrl, directory, auth, context) => {
       calls.push(`connectQuiet:${directory}`);
       quietConnections.push({ baseUrl, directory, auth, context });
+      if (options?.connectQuiet) {
+        return await options.connectQuiet(baseUrl, directory, auth, context);
+      }
       return options?.quietConnectResult ?? true;
     },
   });
@@ -254,6 +268,73 @@ test("queued send recovery starts after stalled warmup times out", async () => {
   assert.equal(secondResult, true);
   assert.deepEqual(prepareStarts, ["/tmp/slow-boot", "/tmp/send-recovery"]);
   await new Promise((resolve) => setTimeout(resolve, 90));
+});
+
+test("runtime preparation queue includes quiet reconnect before queued recovery starts", async () => {
+  let releaseWarmupReconnect: () => void = () => {
+    throw new Error("warmup reconnect was not started");
+  };
+  const prepareStarts: string[] = [];
+  const quietReconnects: string[] = [];
+  let markWarmupReconnectStarted: () => void = () => {};
+  const warmupReconnectGate = new Promise<void>((resolve) => {
+    releaseWarmupReconnect = resolve;
+  });
+  const warmupReconnectObserved = new Promise<void>((resolve) => {
+    markWarmupReconnectStarted = resolve;
+  });
+  const harness = createHarness({
+    runtime: "veslo-orchestrator",
+    prepareRuntime: async (input) => {
+      prepareStarts.push(`${input.reason ?? ""}:${input.projectDir}`);
+      return {
+        ok: true,
+        action: input.forceFreshRuntime === true ? "fresh_start" : "orchestrator_activate",
+        reason: input.reason ?? "",
+        engine: makeEngineInfo({
+          runtime: input.runtime,
+          projectDir: input.projectDir,
+          baseUrl: `http://127.0.0.1:4096/workspace/${input.workspaceId ?? "ws"}/opencode`,
+        }),
+      };
+    },
+    connectQuiet: async (_baseUrl, directory, _auth, context) => {
+      quietReconnects.push(`${context?.reason ?? ""}:${directory}`);
+      if (context?.reason === "boot-warmup") {
+        markWarmupReconnectStarted();
+        await warmupReconnectGate;
+      }
+      return true;
+    },
+  });
+
+  const warmup = harness.lifecycle.restartWorkspaceRuntime({
+    workspacePath: "/tmp/workspace",
+    workspaceId: "ws-a",
+    reason: "boot-warmup",
+    connectMode: "quiet",
+  });
+  await warmupReconnectObserved;
+
+  const recovery = harness.lifecycle.restartWorkspaceRuntime({
+    workspacePath: "/tmp/workspace",
+    workspaceId: "ws-a",
+    reason: "createSessionAndOpen-runtime-recovery",
+    connectMode: "quiet",
+    forceFreshRuntime: true,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.deepEqual(prepareStarts, ["boot-warmup:/tmp/workspace"]);
+  assert.deepEqual(quietReconnects, ["boot-warmup:/tmp/workspace"]);
+
+  releaseWarmupReconnect();
+  assert.equal(await warmup, true);
+  assert.equal(await recovery, true);
+  assert.deepEqual(prepareStarts, [
+    "boot-warmup:/tmp/workspace",
+    "createSessionAndOpen-runtime-recovery:/tmp/workspace",
+  ]);
 });
 
 test("startHost delegates runtime process preparation to the backend and reconnects", async () => {

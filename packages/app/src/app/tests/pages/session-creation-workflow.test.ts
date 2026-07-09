@@ -476,6 +476,41 @@ test("session creation passes the prepared create preflight to conversation crea
   assert.equal(observedPreflight?.conversationWorkspaceByDirectory instanceof Map, true);
 });
 
+test("session creation recovers a stale local Veslo bearer during first create", async () => {
+  let createCalls = 0;
+  const ensureForceRecoveryValues: boolean[] = [];
+  const harness = createHarness({
+    ensureLocalRuntimeReachableForSend: async (_reason, preflight) => {
+      ensureForceRecoveryValues.push(preflight.forceRecovery === true);
+      preflight.runtimeHealthOk = true;
+      preflight.enginePrepared = true;
+      if (preflight.forceRecovery) preflight.forceRecovery = false;
+      return true;
+    },
+    createConversationFromVesloWriteApi: async () => {
+      createCalls += 1;
+      if (createCalls === 1) {
+        throw new Error('{"code":"unauthorized","message":"Invalid bearer token"}');
+      }
+      return {
+        ...session({ id: "sess-recovered" }),
+        conversationId: "conv-recovered",
+        opencodeSessionId: "open-recovered",
+      };
+    },
+  });
+  const workflow = createSessionCreationWorkflow(harness.options);
+
+  const result = await workflow.createSessionAndOpen("hello");
+
+  assert.equal(result, "sess-recovered");
+  assert.equal(createCalls, 2);
+  assert.deepEqual(ensureForceRecoveryValues, [false, true]);
+  assert.ok(harness.events.includes("createSessionAndOpen:create-runtime-recovery-start"));
+  assert.ok(harness.events.includes("createSessionAndOpen:create-runtime-recovery-result"));
+  assert.ok(harness.events.includes("createSessionAndOpen:create-ok"));
+});
+
 test("session creation can return a backend result without route or sidebar effects", async () => {
   const harness = createHarness();
   const workflow = createSessionCreationWorkflow(harness.options);

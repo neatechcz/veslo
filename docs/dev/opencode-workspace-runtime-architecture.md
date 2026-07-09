@@ -183,6 +183,17 @@ the desktop runtime must activate the target workspace engine before returning a
 ready engine snapshot; the app should not paper over an absent workspace engine
 with generic UI retries.
 
+On the app side, local runtime prepare serialization must stay held until native
+prepare, orchestrator workspace activation, and routed reconnect have all
+finished. A foreground send/session recovery may start after a timed-out native
+warmup, but it must not force a second fresh engine while a boot warmup is still
+binding the routed workspace client.
+
+Workspace route release must also invalidate in-flight routed-client ensures.
+Recovery, port rotation, and stale-route cleanup all depend on release meaning
+"the previous route cannot reappear later" rather than only deleting the
+currently cached entry.
+
 The run/conversation model must not depend on sandbox availability. Sandbox is
 an isolation strategy, not the only mechanism for parallel workspace execution.
 

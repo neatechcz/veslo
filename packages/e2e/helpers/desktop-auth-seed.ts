@@ -81,6 +81,7 @@ export function resolveDesktopAuthSeedFromEnv(
   const snapshotFile = firstOptionalText(
     env.VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE,
     env.E2E_DEN_AUTH_SNAPSHOT_FILE,
+    env.VESLO_DEN_AUTH_SNAPSHOT_PATH,
   );
   if (snapshotFile) {
     return parseSnapshotFile(readFileSync(snapshotFile, 'utf8'));

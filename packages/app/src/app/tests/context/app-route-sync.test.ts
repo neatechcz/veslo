@@ -112,6 +112,39 @@ test("desktop hash sync consumes absolute Tauri routes and mirrors dashboard tab
   });
 });
 
+test("desktop hash sync preserves encoded scoped session routes for the session route owner", () => {
+  createRoot((dispose) => {
+    const scopedSessionKey = createUiConversationKey({
+      workspaceId: "ws-a",
+      workspaceRoot: "/repo",
+      directory: "/repo/project-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "open-a",
+      kind: "session",
+      id: "shared",
+    });
+    const encodedRoute = `/session/${encodeURIComponent(scopedSessionKey)}`;
+    const navigations: Navigation[] = [];
+    const routeSync = createAppRouteSync({
+      pathname: () => "/dashboard/scheduled",
+      navigate: (to, options) => navigations.push({ to, options }),
+      isTauriRuntime: () => true,
+      creatingSession: () => false,
+    });
+    const windowTarget = {
+      location: { hash: `#${encodedRoute}` },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    };
+
+    routeSync.syncExternalHashRoute(windowTarget);
+
+    assert.deepEqual(navigations, [{ to: encodedRoute, options: { replace: true } }]);
+
+    dispose();
+  });
+});
+
 test("desktop hash sync listener ignores hashchange event arguments", () => {
   createRoot((dispose) => {
     const navigations: Navigation[] = [];

@@ -301,6 +301,76 @@ test("sidebar session helper records browse scope before route navigation", asyn
   ]);
 });
 
+test("sidebar session helper uses the clicked target for duplicate raw session ids", async () => {
+  const scopes: Array<{
+    sessionId: string;
+    directory: string | null;
+    conversationId: string | null;
+    opencodeSessionId: string | null;
+  }> = [];
+  const selected: string[] = [];
+  const result = await openSidebarSessionFromList({
+    workspaceSessionGroups: [{
+      workspace: { id: "ws-a", directory: "/repo", path: "/fallback" },
+      sessions: [
+        {
+          id: "shared",
+          directory: "/repo/project-a",
+          conversationId: "conv-a",
+          opencodeSessionId: "open-a",
+        },
+        {
+          id: "shared",
+          directory: "/repo/project-b",
+          conversationId: "conv-b",
+          opencodeSessionId: "open-b",
+        },
+      ],
+      status: "ready",
+    }] as never,
+    activeWorkspaceId: "ws-a",
+    workspaceId: "ws-a",
+    sessionId: "shared",
+    target: {
+      rowKey: "row-project-b",
+      workspaceId: "ws-a",
+      sessionId: "shared",
+      workspaceRoot: "/repo",
+      directory: "/repo/project-b",
+      conversationId: "conv-b",
+      opencodeSessionId: "open-b",
+    },
+    activateWorkspace: async () => {
+      throw new Error("same-workspace open should not activate");
+    },
+    setSessionBrowseScope: (scope) => {
+      scopes.push({
+        sessionId: scope.sessionId,
+        directory: scope.directory ?? null,
+        conversationId: scope.conversationId ?? null,
+        opencodeSessionId: scope.opencodeSessionId ?? null,
+      });
+    },
+    selectSession: (sessionId) => {
+      selected.push(sessionId);
+    },
+    setView: () => undefined,
+    reportError: (error) => {
+      throw error;
+    },
+    sourceContext: "test",
+  });
+
+  assert.equal(result, "opened");
+  assert.deepEqual(scopes, [{
+    sessionId: "shared",
+    directory: "/repo/project-b",
+    conversationId: "conv-b",
+    opencodeSessionId: "open-b",
+  }]);
+  assert.deepEqual(selected, ["shared"]);
+});
+
 test("sidebar pending rows activate workspace without selecting a server session", async () => {
   const events: string[] = [];
   let activeWorkspaceId = "ws-a";

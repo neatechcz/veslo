@@ -123,6 +123,44 @@ test("session route sync normalizes encoded and raw scoped pending route ids", (
   assert.equal(sessionIdFromRoutePath(`/session/${scopedPendingKey}`), scopedPendingKey);
 });
 
+test("session route sync selects encoded scoped session routes through browse scope", async () => {
+  const scopedSessionKey = createUiConversationKey({
+    workspaceId: "ws-a",
+    workspaceRoot: "/repo",
+    directory: "/repo/project-a",
+    conversationId: "conv-a",
+    opencodeSessionId: "open-a",
+    kind: "session",
+    id: "shared",
+  });
+  const harness = createHarness({
+    resolveSelectedSessionBrowseScope: (sessionId: string) =>
+      sessionId === scopedSessionKey
+        ? {
+          sessionId,
+          workspaceId: "ws-a",
+          workspaceRoot: "/repo",
+          directory: "/repo/project-a",
+          conversationId: "conv-a",
+          opencodeSessionId: "open-a",
+        }
+        : null,
+    sessions: () => [],
+    sidebarWorkspaceGroups: () => [],
+    scopedSessionIds: () => [scopedSessionKey],
+  });
+
+  await harness.sync.handleSessionRoute({
+    rawPath: `/session/${encodeURIComponent(scopedSessionKey)}`,
+  });
+
+  assert.deepEqual(
+    harness.calls.filter((call) => call.name === "selectSession").map((call) => call.args[0]),
+    [scopedSessionKey],
+  );
+  assert.equal(harness.selectedSessionId, scopedSessionKey);
+});
+
 test("session route sync consumes own navigation without selecting again", async () => {
   const harness = createHarness();
   harness.setSelectedSessionId("sess-new");

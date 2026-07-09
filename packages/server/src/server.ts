@@ -899,7 +899,9 @@ export function startServer(config: ServerConfig) {
           ? await requireHost(request, config, tokens)
           : route.auth === "client"
             ? await requireClient(request, config, tokens)
-            : undefined;
+            : route.auth === "hostOrClient"
+              ? await requireHostOrClient(request, config, tokens)
+              : undefined;
         const response = await route.handler({
           request,
           url,

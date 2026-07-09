@@ -117,6 +117,36 @@ test("resolveDesktopAuthSeedFromEnv can import an existing snapshot file", () =>
   });
 });
 
+test("resolveDesktopAuthSeedFromEnv accepts the production desktop snapshot env name", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "veslo-e2e-auth-prod-file-"));
+  const sourcePath = join(tempDir, "den-auth.json");
+  writeFileSync(sourcePath, JSON.stringify({
+    version: 1,
+    authJson: "{\"token\":\"from-production-env\"}",
+    keepSignedIn: true,
+    language: "en",
+    onboardingComplete: true,
+    updatedAt: Date.now(),
+    source: "desktop-runtime",
+  }));
+
+  try {
+    const seed = resolveDesktopAuthSeedFromEnv({
+      VESLO_DEN_AUTH_SNAPSHOT_PATH: sourcePath,
+    });
+
+    assert.deepEqual(seed, {
+      authJson: "{\"token\":\"from-production-env\"}",
+      keepSignedIn: true,
+      language: "en",
+      onboardingComplete: true,
+      source: "desktop-runtime",
+    });
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("resolveDesktopAuthSeedFromEnv tolerates a UTF-8 BOM in snapshot files", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "veslo-e2e-auth-seed-bom-"));
   const sourcePath = join(tempDir, "den-auth.json");

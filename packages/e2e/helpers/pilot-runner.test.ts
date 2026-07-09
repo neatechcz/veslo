@@ -442,6 +442,26 @@ test('runtime cold-start handoff pilot scenario disables debug dev autostart', (
   );
 });
 
+test('resolvePilotDenAuthJson reads authJson from the production desktop snapshot path', () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'veslo-pilot-den-auth-prod-'));
+  const snapshotPath = join(tempDir, 'den-auth.json');
+  const authJson = JSON.stringify({
+    denApiBase: 'https://api.veslo.work',
+    token: 'live-token',
+    user: { email: 'user@neatech.cz' },
+  });
+
+  try {
+    writeFileSync(snapshotPath, JSON.stringify({ version: 1, authJson }));
+    assert.equal(
+      resolvePilotDenAuthJson({ VESLO_DEN_AUTH_SNAPSHOT_PATH: snapshotPath }),
+      authJson,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('managed AI inference pilot scenarios disable debug dev autostart for production-path runtime startup', () => {
   const e2eRoot = '/repo/packages/e2e';
 
@@ -528,7 +548,7 @@ test('VSLO-271 pilot scenario requires live managed-AI auth and not the fixture'
     assert.equal(scenarioSelectionNeedsManagedAiGatewayFixture(scenarios), false);
     assert.throws(
       () => assertLiveManagedAiAuthForScenarioSelection(scenarios, { E2E_MANAGED_AI_GATEWAY_FIXTURE: '0' }),
-      /Managed-AI inference pilot scenarios require live Den auth/,
+      /VESLO_DEN_AUTH_SNAPSHOT_PATH/,
     );
 
     writeSnapshot('veslo-e2e@example.test');
@@ -576,6 +596,10 @@ test('VSLO-271 pilot scenario requires live managed-AI auth and not the fixture'
     );
     assert.doesNotThrow(() => assertLiveManagedAiAuthForScenarioSelection(scenarios, {
       VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: snapshotPath,
+      E2E_MANAGED_AI_GATEWAY_FIXTURE: '0',
+    }));
+    assert.doesNotThrow(() => assertLiveManagedAiAuthForScenarioSelection(scenarios, {
+      VESLO_DEN_AUTH_SNAPSHOT_PATH: snapshotPath,
       E2E_MANAGED_AI_GATEWAY_FIXTURE: '0',
     }));
     assert.doesNotThrow(() => assertLiveManagedAiAuthForScenarioSelection(scenarios, {

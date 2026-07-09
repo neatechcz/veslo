@@ -247,6 +247,48 @@ test("submitted run catch-up waits for the submitted session to become selected"
   assert.equal(cachedMessages.filter((entry) => entry.role === "assistant").length, 1);
 });
 
+test("submitted run catch-up exhausts without reading after the user switches away", async () => {
+  const timers = createManualTimers();
+  const traces: string[] = [];
+  let loadCalls = 0;
+
+  const catchup = createSubmittedRunTranscriptCatchup({
+    selectedSessionId: () => "sess-other",
+    resolveSelectedSessionWorkspaceId: () => "ws-a",
+    assistantObservationVersion: () => 0,
+    assistantMessageCount: () => 0,
+    loadTranscript: async () => {
+      loadCalls += 1;
+      return {
+        source: "server",
+        sessionId: "sess-a",
+        messages: [message("msg-assistant", "assistant")],
+      };
+    },
+    hydrateTranscriptSnapshot: () => undefined,
+    trace: (event) => traces.push(event),
+    delaysMs: [0, 0],
+    scheduleTimer: timers.scheduleTimer,
+    clearTimer: timers.clearTimer,
+  });
+
+  catchup.schedule({
+    workspaceId: "ws-a",
+    sessionId: "sess-a",
+    runId: "run-a",
+    reason: "test",
+  });
+  await timers.runNext();
+  await timers.runNext();
+
+  assert.equal(loadCalls, 0);
+  assert.equal(
+    traces.filter((event) => event === "submitted-run-transcript-catchup:defer-not-selected").length,
+    2,
+  );
+  assert.ok(traces.includes("submitted-run-transcript-catchup:exhausted"));
+});
+
 test("submitted run catch-up does not hydrate through a mismatched selected workspace scope", async () => {
   const timers = createManualTimers();
   const traces: string[] = [];

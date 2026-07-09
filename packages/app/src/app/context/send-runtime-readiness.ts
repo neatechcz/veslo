@@ -168,12 +168,20 @@ export function isLocalRuntimeHealthTimeoutError(
   return messageFromUnknownError(error, safeStringify).includes(localRuntimeHealthTimeoutMessage);
 }
 
+function isLocalVesloServerInvalidBearerMessage(normalizedMessage: string): boolean {
+  return normalizedMessage.includes("invalid bearer token") ||
+    normalizedMessage.includes("invalid_bearer_token");
+}
+
 export function shouldRecoverLocalRuntimeFromHealthError(
   error: unknown,
   safeStringify?: (value: unknown) => string,
 ): boolean {
   const message = messageFromUnknownError(error, safeStringify);
   const normalized = message.toLowerCase();
+  // Local OpenCode runtimes inherit the Veslo client token at spawn time; a 401
+  // means the routed runtime is stale and should be rebuilt once.
+  const localRuntimeStaleAuth = isLocalVesloServerInvalidBearerMessage(normalized);
   const localRuntimeUnavailable =
     normalized.includes("engine_not_running") ||
     normalized.includes("engine_starting") ||
@@ -192,6 +200,7 @@ export function shouldRecoverLocalRuntimeFromHealthError(
     /\b(?:upstream\s+)?status\s+(?:404|502|503)\b/.test(normalized) ||
     /"status"\s*:\s*(?:404|502|503)\b/.test(normalized);
   return (
+    localRuntimeStaleAuth ||
     localRuntimeUnavailable ||
     normalized.includes("error sending request") ||
     normalized.includes("connection refused") ||

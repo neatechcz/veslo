@@ -188,8 +188,9 @@ After the build, these invariants should hold:
 - `tauri-pilot --version` reports `tauri-pilot 0.7.2`, matching
   `tauri-plugin-pilot = "0.7.2"`.
 - The package runner still seeds WebView Den auth from
-  `VESLO_E2E_DEN_AUTH_JSON` or `VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE` before a
-  TOML scenario runs.
+  `VESLO_E2E_DEN_AUTH_JSON`, `VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE`, or the
+  production desktop `VESLO_DEN_AUTH_SNAPSHOT_PATH` fallback before a TOML
+  scenario runs.
 - Managed-AI/inference scenarios still reject
   `E2E_MANAGED_AI_GATEWAY_FIXTURE=1` and do not auto-enable that fixture.
 
@@ -295,17 +296,18 @@ The E2E runner does not behave like `pnpm dev`.
 - `E2E_USE_EXISTING_PROFILE=1` is only for scenarios that explicitly need the
   current desktop profile.
 
-For live Den auth in the E2E runner, set the E2E seed input:
+For live Den auth in the E2E runner, use the same production desktop snapshot
+path accepted by the app:
 
 ```powershell
-$env:VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE = "C:\Users\jajse\.veslo\den-auth.json"
+$env:VESLO_DEN_AUTH_SNAPSHOT_PATH = "C:\Users\jajse\.veslo\den-auth.json"
 ```
 
-The runner copies that snapshot into the isolated profile, launches the app
-with `VESLO_DEN_AUTH_SNAPSHOT_PATH` pointing at the copied file, and seeds the
-WebView Den localStorage from the same snapshot before the TOML scenario runs.
-Setting only `VESLO_DEN_AUTH_SNAPSHOT_PATH` is correct for a manual `pnpm dev`
-run, but it is not the primary input for the E2E launcher.
+`VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE` remains available when a test needs a
+separate E2E-only input. In both cases the runner copies that snapshot into the
+isolated profile, launches the app with `VESLO_DEN_AUTH_SNAPSHOT_PATH` pointing
+at the copied file, and seeds the WebView Den localStorage from the same
+snapshot before the TOML scenario runs.
 
 Managed-AI/inference pilot scenarios must use the live Den auth seed. They
 fail fast when the seed is missing, when it uses an `@example.test` user,
