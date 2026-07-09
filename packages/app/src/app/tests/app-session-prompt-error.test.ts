@@ -5,21 +5,21 @@ import test from "node:test";
 const source = readFileSync(new URL("../pages/session-send-workflow.ts", import.meta.url), "utf8");
 
 function conversationRunCompatibilityBridgeSubmitSource(): string {
-  const fallbackStart = source.indexOf("export function createConversationRunCompatibilityBridge(");
-  const submitStart = source.indexOf("  const submit = async", fallbackStart);
+  const bridgeStart = source.indexOf("export function createConversationRunCompatibilityBridge(");
+  const submitStart = source.indexOf("  const submit = async", bridgeStart);
   const fallbackEnd = source.indexOf("export function createSessionSendWorkflow(", submitStart);
   assert.ok(submitStart >= 0 && fallbackEnd > submitStart, "compatibility bridge submit source should be present");
   return source.slice(submitStart, fallbackEnd);
 }
 
 test("prompt send failures only update the still-displayed conversation error state", () => {
-  const fallbackSubmitSource = conversationRunCompatibilityBridgeSubmitSource();
-  const catchStart = fallbackSubmitSource.indexOf("    } catch (e) {", fallbackSubmitSource.indexOf('deps.finishPerf(perfEnabled, "session.prompt", "done"'));
-  const finallyStart = fallbackSubmitSource.indexOf("    } finally {", catchStart);
+  const bridgeSubmitSource = conversationRunCompatibilityBridgeSubmitSource();
+  const catchStart = bridgeSubmitSource.indexOf("    } catch (e) {", bridgeSubmitSource.indexOf('deps.finishPerf(perfEnabled, "session.prompt", "done"'));
+  const finallyStart = bridgeSubmitSource.indexOf("    } finally {", catchStart);
   assert.notEqual(catchStart, -1, "compatibility bridge catch block should exist");
   assert.notEqual(finallyStart, -1, "compatibility bridge finally block should exist");
 
-  const catchBlock = fallbackSubmitSource.slice(catchStart, finallyStart);
+  const catchBlock = bridgeSubmitSource.slice(catchStart, finallyStart);
   assert.match(
     catchBlock,
     /const message = e instanceof Error \? e\.message : deps\.safeStringify\(e\);[\s\S]*input\.reportSendErrorToDisplayedTarget\(message\);/s,

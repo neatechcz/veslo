@@ -52,14 +52,14 @@ test("pending draft sends snapshot selected target metadata and fall back to the
 
 test("successful pending draft sends consume the pending draft only after the prompt handoff succeeds", () => {
   const source = sendPromptSource();
-  const fallbackSource = conversationRunCompatibilityBridgeSource();
+  const bridgeSource = conversationRunCompatibilityBridgeSource();
   assert.match(
     source,
     /const consumePendingDraftAfterAcceptedSend = async \(clearDisplayedPendingDraftState: boolean\) => \{[\s\S]*const pendingDraftStorageKey = pendingDraftSendState\.key;[\s\S]*const pendingDraftId = pendingDraftSendState\.draftId;[\s\S]*if \(pendingDraftId && deps\.isTauriRuntime\(\)\) \{[\s\S]*await deps\.pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*\}[\s\S]*deps\.setComposerDraftBySessionId\(\(current\) => deleteSessionComposerDraft\(current, \{[\s\S]*storageKey: pendingDraftStorageKey,[\s\S]*\}\)\);[\s\S]*\};/s,
     "pending drafts should be deleted and cleared through the accepted-send cleanup helper",
   );
   assert.match(
-    fallbackSource,
+    bridgeSource,
     /await runConversationOrFail\(\s*\{[\s\S]*kind: "prompt_async",[\s\S]*\}\);\s*\}\s*await input\.consumePendingDraftAfterAcceptedSend\(input\.sendTargetStillDisplayed\(\)\);[\s\S]*deps\.finishPerf\(perfEnabled, "session\.prompt", "done", startedAt, \{[\s\S]*\}\);\s*deps\.recordSendTrace\("sendPrompt:success"[\s\S]*return true;/s,
     "compatibility bridge should consume pending drafts only after the prompt handoff succeeds",
   );

@@ -408,38 +408,38 @@ test("rejected pending queue drain updates the remapped item key", () => {
 test("app prompt send accepts an explicit target session without freezing model bootstrap", () => {
   const sendStart = sendWorkflowSource.indexOf("async function sendPrompt");
   const targetCapture = sendWorkflowSource.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceId(options.targetSessionId)", sendStart);
-  const fallbackPrepare = sendWorkflowSource.indexOf("conversationRunCompatibilityBridge.prepare({", targetCapture);
-  const fallbackSubmit = sendWorkflowSource.indexOf("conversationRunCompatibilityBridge.submit({", fallbackPrepare);
-  const fallbackSource = conversationRunCompatibilityBridgeSource();
+  const bridgePrepare = sendWorkflowSource.indexOf("conversationRunCompatibilityBridge.prepare({", targetCapture);
+  const bridgeSubmit = sendWorkflowSource.indexOf("conversationRunCompatibilityBridge.submit({", bridgePrepare);
+  const bridgeSource = conversationRunCompatibilityBridgeSource();
 
   assert.notEqual(sendStart, -1, "app sendPrompt should exist");
   assert.ok(targetCapture > sendStart, "sendPrompt should accept a captured target session id");
   assert.match(
-    sendWorkflowSource.slice(targetCapture, fallbackPrepare),
+    sendWorkflowSource.slice(targetCapture, bridgePrepare),
     /let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;/,
     "sendPrompt should prefer an explicit target session over implicit active-workspace selection",
   );
-  assert.ok(fallbackPrepare > targetCapture, "compatibility bridge prepare should run after the explicit target is captured");
-  assert.ok(fallbackSubmit > fallbackPrepare, "compatibility bridge submit should run after prepare for the legacy send path");
+  assert.ok(bridgePrepare > targetCapture, "compatibility bridge prepare should run after the explicit target is captured");
+  assert.ok(bridgeSubmit > bridgePrepare, "compatibility bridge submit should run after prepare for the compatibility run path");
   assert.match(
-    sendWorkflowSource.slice(fallbackPrepare, fallbackSubmit),
+    sendWorkflowSource.slice(bridgePrepare, bridgeSubmit),
     /sendTargetWorkspace,/,
     "sendPrompt should pass the snapshotted target workspace into compatibility bridge prepare",
   );
   assert.match(
-    sendWorkflowSource.slice(fallbackSubmit),
+    sendWorkflowSource.slice(bridgeSubmit),
     /sendTargetWorkspace,/,
     "sendPrompt should pass the snapshotted target workspace into compatibility bridge submit",
   );
   assert.match(
-    fallbackSource,
+    bridgeSource,
     /deps\.prepareSendRuntimeForSend\("sendPrompt", input\.sendPreflight\)[\s\S]*const c = deps\.routedClientForSendTarget\(input\.sendTargetWorkspace\);/,
     "compatibility bridge should prepare the target runtime before reading its routed client",
   );
   assert.match(
-    fallbackSource,
+    bridgeSource,
     /const model = deps\.modelForSession\(materializedSessionID\);[\s\S]*const agent = deps\.agentForSession\(sessionID\);/,
-    "compatibility bridge should resolve model and agent after the prepared legacy handoff begins",
+    "compatibility bridge should resolve model and agent after the prepared compatibility handoff begins",
   );
 });
 

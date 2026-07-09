@@ -77,11 +77,11 @@ test("attachment staging self-heals a missing local server workspace once before
     "file-session creation should retry once after refreshing the local workspace/server state",
   );
 
-  const fallbackSource = conversationRunCompatibilityBridgeSource();
-  const appStagingCallIndex = fallbackSource.search(
+  const bridgeSource = conversationRunCompatibilityBridgeSource();
+  const appStagingCallIndex = bridgeSource.search(
     /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, input\.sendPreflight\)/,
   );
-  const promptAsyncIndex = fallbackSource.indexOf('kind: "prompt_async"');
+  const promptAsyncIndex = bridgeSource.indexOf('kind: "prompt_async"');
   assert.notEqual(appStagingCallIndex, -1, "send workflow should call the staging module");
   assert.notEqual(promptAsyncIndex, -1, "prompt_async conversation handoff should exist");
   assert.ok(

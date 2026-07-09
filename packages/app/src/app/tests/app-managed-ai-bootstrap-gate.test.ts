@@ -22,8 +22,8 @@ const runtimeConfigSource = readFileSync(
 const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
 
 function conversationRunCompatibilityBridgePrepareSource(): string {
-  const fallbackStart = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
-  const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", fallbackStart);
+  const bridgeStart = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
+  const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", bridgeStart);
   const submitStart = sendWorkflowSource.indexOf("  const submit = async", prepareStart);
   assert.ok(prepareStart >= 0 && submitStart > prepareStart, "compatibility bridge prepare source should be present");
   return sendWorkflowSource.slice(prepareStart, submitStart);

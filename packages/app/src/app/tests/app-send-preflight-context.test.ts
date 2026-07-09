@@ -28,8 +28,8 @@ function sendPromptSource(): string {
 }
 
 function conversationRunCompatibilityBridgePrepareSource(): string {
-  const fallbackStart = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
-  const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", fallbackStart);
+  const bridgeStart = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
+  const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", bridgeStart);
   const submitStart = sendWorkflowSource.indexOf("  const submit = async", prepareStart);
   assert.ok(prepareStart >= 0 && submitStart > prepareStart, "compatibility bridge prepare source should be present");
   return sendWorkflowSource.slice(prepareStart, submitStart);
@@ -44,7 +44,7 @@ function createSessionAndOpenSource(): string {
 
 test("sendPrompt carries a preflight context into first-session creation", () => {
   const source = sendPromptSource();
-  const fallbackPrepareSource = conversationRunCompatibilityBridgePrepareSource();
+  const bridgePrepareSource = conversationRunCompatibilityBridgePrepareSource();
 
   assert.match(
     source,
@@ -52,7 +52,7 @@ test("sendPrompt carries a preflight context into first-session creation", () =>
     "sendPrompt should create one preflight context for the whole send flow",
   );
   assert.match(
-    fallbackPrepareSource,
+    bridgePrepareSource,
     /const sendRuntimePreparation = await deps\.prepareSendRuntimeForSend\("sendPrompt", input\.sendPreflight\);[\s\S]*if \(!sendRuntimePreparation\.ok\) \{/,
     "compatibility bridge prepare should delegate runtime and managed AI readiness to the send readiness owner and consume its typed result",
   );

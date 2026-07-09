@@ -17,14 +17,14 @@ function conversationRunCompatibilityBridgeSource(): string {
 }
 
 test("staging failure blocks send with an explicit error and no draft clear", () => {
-  const fallbackSource = conversationRunCompatibilityBridgeSource();
-  const stagingStart = fallbackSource.indexOf(
+  const bridgeSource = conversationRunCompatibilityBridgeSource();
+  const stagingStart = bridgeSource.indexOf(
     '"sendPrompt:stage-attachments"',
   );
-  const stagingEnd = fallbackSource.indexOf("const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();");
+  const stagingEnd = bridgeSource.indexOf("const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();");
   assert.notEqual(stagingStart, -1, "staging call should exist in send flow");
   assert.notEqual(stagingEnd, -1, "send flow should continue after staging call");
-  const stagingWindow = fallbackSource.slice(stagingStart, stagingEnd);
+  const stagingWindow = bridgeSource.slice(stagingStart, stagingEnd);
 
   assert.match(
     stagingWindow,
@@ -138,22 +138,22 @@ test("session props do not borrow devtools workspace fallbacks for attachment ga
 });
 
 test("send flow blocks screenshot analysis on non-vision models instead of relying on a hidden read fallback", () => {
-  const fallbackSource = conversationRunCompatibilityBridgeSource();
+  const bridgeSource = conversationRunCompatibilityBridgeSource();
 
   assert.match(
-    fallbackSource,
+    bridgeSource,
     /const routedDraft = deps\.routeStagedAttachmentsForModel\(\{\s*draft: resolvedDraft,\s*stagedAttachments,\s*model,\s*providers: deps\.providers\(\),\s*\}\);/s,
     "send flow should route staged attachments using the selected model capabilities",
   );
 
   assert.match(
-    fallbackSource,
+    bridgeSource,
     /if \(routedDraft\.error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*deps\.setError\(routedDraft\.error\);[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\}/s,
     "non-vision screenshot sends should fail with a visible error before the prompt runs",
   );
 
   assert.doesNotMatch(
-    fallbackSource,
+    bridgeSource,
     /stagedPaths\.join\("\\n"\)/,
     "staged screenshot filenames should not be appended directly into prompt text",
   );

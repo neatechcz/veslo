@@ -135,7 +135,7 @@ function createHarness(
   const liveReadAllowedWorkspaceIds: string[] = [];
   const liveTranscriptPolicyEvents: LiveTranscriptReadPolicyEvent[] = [];
 
-  const optionsWithLegacy = {
+  const optionsWithBridge = {
     abortConversationFromVesloWriteApi: async () => null,
     abortSessionTyped: async () => undefined,
     activePendingDraftKey: () => null,
@@ -286,17 +286,17 @@ function createHarness(
     ...optionOverrides,
   } as SessionSendWorkflowOptions & ConversationRunCompatibilityBridgeOptions;
 
-  const hasExplicitLegacyFallback = Object.prototype.hasOwnProperty.call(
-    optionsWithLegacy,
+  const hasExplicitCompatibilityBridge = Object.prototype.hasOwnProperty.call(
+    optionsWithBridge,
     "conversationRunCompatibilityBridge",
   );
   const options: SessionSendWorkflowOptions = {
-    ...optionsWithLegacy,
-    conversationRunCompatibilityBridge: hasExplicitLegacyFallback
-      ? optionsWithLegacy.conversationRunCompatibilityBridge
-      : createConversationRunCompatibilityBridge(optionsWithLegacy),
+    ...optionsWithBridge,
+    conversationRunCompatibilityBridge: hasExplicitCompatibilityBridge
+      ? optionsWithBridge.conversationRunCompatibilityBridge
+      : createConversationRunCompatibilityBridge(optionsWithBridge),
     stageServerSubmitAttachments:
-      optionsWithLegacy.stageServerSubmitAttachments ?? optionsWithLegacy.stageAttachmentsIntoSessionDirectory,
+      optionsWithBridge.stageServerSubmitAttachments ?? optionsWithBridge.stageAttachmentsIntoSessionDirectory,
   };
 
   return {

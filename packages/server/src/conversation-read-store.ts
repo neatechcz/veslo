@@ -282,13 +282,34 @@ function resolveOpenCodeDbPath(input: {
   return join(home, ".local", "share", "opencode", "opencode.db");
 }
 
+type OpenReadOnlyDatabaseResult =
+  | { db: Database; dbPath: string; diagnostic?: undefined }
+  | { db: null; dbPath: string | null; diagnostic: ConversationReadDiagnostic };
+
 function openReadOnlyDatabase(input: {
   workspaceId: string;
+  directory?: string | null;
+  sessionId?: string | null;
   workspace?: ConversationReadWorkspace | null;
-}): Database | null {
+}): OpenReadOnlyDatabaseResult {
+  const workspaceId = normalizeId(input.workspaceId);
   const dbPath = resolveOpenCodeDbPath(input);
-  if (!dbPath || !existsSync(dbPath)) return null;
-  return new Database(dbPath, { readonly: true });
+  const exists = Boolean(dbPath && existsSync(dbPath));
+  if (!dbPath || !exists) {
+    return {
+      db: null,
+      dbPath,
+      diagnostic: {
+        reason: "database_missing",
+        workspaceId,
+        directory: input.directory ?? null,
+        sessionId: input.sessionId ?? null,
+        dbPath,
+        dbPathExists: false,
+      },
+    };
+  }
+  return { db: new Database(dbPath, { readonly: true }), dbPath };
 }
 
 function isOpenCodeReadSchemaUnavailableError(error: unknown): boolean {
@@ -298,19 +319,35 @@ function isOpenCodeReadSchemaUnavailableError(error: unknown): boolean {
     /no such column:\s*(id|title|directory|parent_id|time_created|time_updated|session_id|data|message_id)\b/i.test(message);
 }
 
-function parseJsonRecord(raw: string | null, fallback: Record<string, unknown>): Record<string, unknown> | null {
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+type JsonParseCounters = {
+  invalidMessageJsonRows: number;
+  invalidPartJsonRows: number;
+};
+
+function parseJsonRecord(
+  raw: string | null,
+  fallback: Record<string, unknown>,
+  onInvalidJson?: () => void,
+): Record<string, unknown> | null {
   if (!raw) return fallback;
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return fallback;
     return parsed as Record<string, unknown>;
   } catch {
+    onInvalidJson?.();
     return null;
   }
 }
 
-function normalizeMessage(row: MessageRow): Record<string, unknown> | null {
-  const parsed = parseJsonRecord(row.data, {});
+function normalizeMessage(row: MessageRow, counters?: JsonParseCounters): Record<string, unknown> | null {
+  const parsed = parseJsonRecord(row.data, {}, () => {
+    if (counters) counters.invalidMessageJsonRows += 1;
+  });
   if (!parsed) return null;
   return {
     ...parsed,
@@ -322,8 +359,10 @@ function normalizeMessage(row: MessageRow): Record<string, unknown> | null {
   };
 }
 
-function normalizePart(row: PartRow): Record<string, unknown> | null {
-  const parsed = parseJsonRecord(row.data, {});
+function normalizePart(row: PartRow, counters?: JsonParseCounters): Record<string, unknown> | null {
+  const parsed = parseJsonRecord(row.data, {}, () => {
+    if (counters) counters.invalidPartJsonRows += 1;
+  });
   if (!parsed) return null;
   const messageId =
     typeof parsed.messageID === "string" && parsed.messageID.trim()
