@@ -77,6 +77,7 @@ const appSourceContractInventory: AppSourceContractInventoryEntry[] = [
   { path: "app-view-props.test.ts", classification: "wiring", retargetBy: "AM24" },
   { path: "app-veslo-server-state-stability.test.ts", classification: "behavior", retargetBy: "AM04" },
   { path: "app-workspace-folder-access-request.test.ts", classification: "wiring", retargetBy: "AM05/AM24" },
+  { path: "mcp-hub-contract.test.ts", classification: "wiring", retargetBy: "AM20/AM24" },
   { path: "components/session/composer-docx-delegation.test.ts", classification: "behavior", retargetBy: "AM10" },
   { path: "context/session-switch-metrics.test.ts", classification: "behavior", retargetBy: "AM11/AM16" },
   { path: "context/session-transcript-hydration.test.ts", classification: "behavior", retargetBy: "AM09" },
