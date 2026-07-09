@@ -30,6 +30,7 @@ use uuid::Uuid;
 
 const DEFAULT_OPENCODE_BIND_HOST: &str = "127.0.0.1";
 const VESLO_OPENCODE_BIND_HOST_ENV: &str = "VESLO_OPENCODE_BIND_HOST";
+#[cfg(debug_assertions)]
 const VESLO_DISABLE_DEV_AUTOSTART_ENV: &str = "VESLO_DISABLE_DEV_AUTOSTART";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,6 +128,7 @@ fn resolve_opencode_bind_host() -> String {
     resolve_opencode_bind_host_from_env(std::env::var(VESLO_OPENCODE_BIND_HOST_ENV).ok().as_deref())
 }
 
+#[cfg(debug_assertions)]
 fn dev_autostart_disabled_from_env(value: Option<&str>) -> bool {
     matches!(
         value.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
@@ -134,6 +136,7 @@ fn dev_autostart_disabled_from_env(value: Option<&str>) -> bool {
     )
 }
 
+#[cfg(debug_assertions)]
 fn dev_autostart_disabled() -> bool {
     dev_autostart_disabled_from_env(
         std::env::var(VESLO_DISABLE_DEV_AUTOSTART_ENV)

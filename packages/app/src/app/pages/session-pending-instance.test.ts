@@ -291,8 +291,8 @@ test("pending sidebar selection does not materialize another pending draft into 
   );
   assert.match(
     conversationFlowSource,
-    /if \(pendingKey && !isPendingSessionInstanceId\(selectedSessionId\)\) \{\s*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingKey, selectedSessionId\);\s*deps\.pendingHandoff\.clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);\s*\}/,
-    "selecting a pending sidebar row must not remap a different pending send into that pending row",
+    /if \([\s\S]*pendingKey[\s\S]*!isPendingSessionInstanceId\(selectedSessionId\)[\s\S]*queueKeysShareWorkspace\(deps\.sessionKeys\.workspaceIdForQueueKey, pendingKey, sessionKey\)[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingKey, selectedSessionId\);[\s\S]*deps\.pendingHandoff\.clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);[\s\S]*blocked-workspace-mismatch/s,
+    "selecting a pending sidebar row must not remap a different workspace send into that row",
   );
   assert.doesNotMatch(
     conversationFlowSource,

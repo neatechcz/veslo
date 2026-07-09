@@ -329,6 +329,11 @@ test("accepted first pending submit captures and remaps the pending queue key", 
     /materializedSessionIdFromHandoff \?\? deps\.sessionKeys\.selectedSessionId\(\)\?\.trim\(\)/,
     "accepted first-submit materialization must not guess from the currently selected session",
   );
+  assert.match(
+    flowSendImmediateSource,
+    /queueKeysShareWorkspace\([\s\S]*pendingSessionKey[\s\S]*materializedSessionKey[\s\S]*sendPromptImmediate:materialized-handoff:blocked-workspace-mismatch/s,
+    "accepted first-submit materialization should reject cross-workspace handoffs",
+  );
 
   assert.match(
     queueDrainControllerSource,
@@ -337,8 +342,8 @@ test("accepted first pending submit captures and remaps the pending queue key", 
   );
   assert.match(
     conversationFlowSource,
-    /if \(pendingKey && !isPendingSessionInstanceId\(selectedSessionId\)\) \{[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingKey, selectedSessionId\);[\s\S]*deps\.pendingHandoff\.clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);[\s\S]*\}/s,
-    "conversation-flow controller should remap pending queues when the selected session id arrives in a later reactive update",
+    /if \([\s\S]*pendingKey[\s\S]*!isPendingSessionInstanceId\(selectedSessionId\)[\s\S]*queueKeysShareWorkspace\(deps\.sessionKeys\.workspaceIdForQueueKey, pendingKey, sessionKey\)[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingKey, selectedSessionId\);[\s\S]*deps\.pendingHandoff\.clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);[\s\S]*blocked-workspace-mismatch/s,
+    "conversation-flow controller should remap pending queues only when the materialized session is in the same workspace",
   );
 
   assert.doesNotMatch(

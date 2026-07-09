@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use base64::Engine as _;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 const ENGINE_SSE_EVENT_NAME: &str = "veslo://engine-sse-event";
@@ -538,11 +538,12 @@ async fn run_subscription(
     });
 }
 
-pub fn register(app: &AppHandle) {
-    if app.try_state::<EngineSseRegistry>().is_none() {
-        app.manage(EngineSseRegistry::default());
-    }
-}
+// Parked for now: lib.rs manages EngineSseRegistry directly in the Tauri builder.
+// pub fn register(app: &AppHandle) {
+//     if app.try_state::<EngineSseRegistry>().is_none() {
+//         app.manage(EngineSseRegistry::default());
+//     }
+// }
 
 #[cfg(test)]
 mod tests {

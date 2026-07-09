@@ -264,7 +264,7 @@ fn resolve_engine_urls_from_interfaces(
         .collect()
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 fn resolve_engine_url_from_interfaces(
     port: u16,
     interfaces: impl IntoIterator<Item = (String, IpAddr)>,
@@ -435,10 +435,11 @@ fn build_urls_for_host(
     build_urls_for_host_with_engine_resolver(host, port, resolve_engine_url)
 }
 
-pub fn resolve_connect_url(port: u16) -> Option<String> {
-    let (connect_url, _mdns_url, _lan_url, _engine_url) = build_urls_for_host("0.0.0.0", port);
-    connect_url
-}
+// Parked for now: server state resolution now goes through build_urls_for_host.
+// pub fn resolve_connect_url(port: u16) -> Option<String> {
+//     let (connect_url, _mdns_url, _lan_url, _engine_url) = build_urls_for_host("0.0.0.0", port);
+//     connect_url
+// }
 
 fn persisted_state_path(dir: &Path) -> PathBuf {
     dir.join(PERSISTED_STATE_FILE_NAME)
@@ -715,6 +716,7 @@ fn read_persisted_veslo_server_info_with_cleanup(
     Ok(info)
 }
 
+#[cfg(test)]
 pub fn read_persisted_veslo_server_info(dir: &Path) -> Result<Option<VesloServerInfo>, String> {
     read_persisted_veslo_server_info_with_cleanup(
         dir,

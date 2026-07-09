@@ -1757,7 +1757,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       deps.submitConversationFromVesloWriteApi,
     );
     if (shouldUseServerSubmitForFirstSession) {
-      deps.recordSendTrace("sendPrompt:runtime-preflight:server-submit-first-skip", {
+      deps.recordSendTrace("sendPrompt:runtime-preflight:server-submit-first-delegated-to-create", {
         traceId: sendTraceId,
         targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
       });

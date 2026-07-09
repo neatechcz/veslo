@@ -511,9 +511,11 @@ export function createConversationService<Client extends ConversationServiceClie
     serverClient: Client,
     workspaceIdRaw: string,
     directoryRaw?: string | null,
+    options: { requireLiveOpencodeBaseUrl?: boolean } = {},
   ) => {
     const workspaceId = workspaceIdRaw.trim();
     const fallback = resolveConversationServerWorkspaceId(workspaceId);
+    const requireLiveOpencodeBaseUrl = options.requireLiveOpencodeBaseUrl === true;
     if (!workspaceId) return "";
 
     const workspace = deps.workspaces().find((entry) => entry.id === workspaceId) ?? null;
@@ -552,11 +554,11 @@ export function createConversationService<Client extends ConversationServiceClie
       entry: ConversationWorkspaceRegistryEntry,
       registration: Awaited<ReturnType<typeof resolveLocalOpencodeRegistration>>,
     ) => {
-      if (!registration?.baseUrl) return true;
+      if (!registration?.baseUrl) return !requireLiveOpencodeBaseUrl;
       const existingBaseUrl = normalizeBaseUrlForCompare(entry.baseUrl || entry.opencode?.baseUrl);
       const mountId = parseWorkspaceMountId(registration.baseUrl);
       if (mountId && entry.id !== mountId) return false;
-      if (!existingBaseUrl) return true;
+      if (!existingBaseUrl) return !requireLiveOpencodeBaseUrl;
       return existingBaseUrl === registration.baseUrl;
     };
 
@@ -575,7 +577,10 @@ export function createConversationService<Client extends ConversationServiceClie
     };
 
     const registrationCache = conversationWorkspaceRegistrationCacheFor(serverClient);
-    const registrationCacheKey = conversationWorkspaceCacheKey(workspaceId, targetDirectoryRaw);
+    const registrationCacheKey = [
+      conversationWorkspaceCacheKey(workspaceId, targetDirectoryRaw),
+      requireLiveOpencodeBaseUrl ? "live-opencode" : "read",
+    ].join("\0");
     const cachedRegistration = registrationCache.get(registrationCacheKey);
     if (cachedRegistration) {
       return (await cachedRegistration).id;
@@ -583,6 +588,14 @@ export function createConversationService<Client extends ConversationServiceClie
 
     const registrationPromise = (async (): Promise<{ id: string; cacheable: boolean }> => {
       const opencodeRegistration = await resolveLocalOpencodeRegistration();
+      if (requireLiveOpencodeBaseUrl && !opencodeRegistration?.baseUrl) {
+        // OpenCode URLs are per-runtime; writes must not reuse stale registrations.
+        deps.recordSendTrace("conversation-read:live-opencode-unavailable", {
+          workspaceId,
+          directory: targetDirectory,
+        });
+        return { id: "", cacheable: false };
+      }
 
       try {
         const listed = await serverClient.listWorkspaces();
@@ -708,6 +721,7 @@ export function createConversationService<Client extends ConversationServiceClie
             serverClient,
             normalizedWorkspaceId,
             normalizedDirectory,
+            { requireLiveOpencodeBaseUrl: true },
           ),
           {
             ...(tracePayload ?? {}),

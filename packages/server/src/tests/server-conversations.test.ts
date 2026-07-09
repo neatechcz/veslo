@@ -2667,6 +2667,82 @@ describe("conversation routes", () => {
     expect(payload.opencodeSessionId).toBe("sess-orch-stale");
   });
 
+  test("POST /workspace/:id/conversations retries unable-to-connect local baseUrl through orchestrator daemon", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-orchestrator-unable-connect-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+
+    let staleBaseUrlHit = false;
+    const staleUpstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async () => {
+        staleBaseUrlHit = true;
+        return Response.json({
+          error: "Unable to connect. Is the computer able to access the url?",
+        }, { status: 500 });
+      },
+    });
+    runningServers.push(staleUpstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    let orchestratorPath = "";
+    const orchestrator = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        orchestratorPath = url.pathname;
+        if (request.method === "POST" && url.pathname === "/workspace/ws_orch_unable_connect/opencode/session") {
+          return Response.json({
+            id: "sess-orch-unable-connect",
+            title: "Orchestrated unable connect",
+            directory: workspaceRoot,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+        return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(orchestrator as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: staleUpstream.port,
+      orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
+      workspaces: [
+        {
+          id: "ws_orch_unable_connect",
+          name: "Orchestrated unable connect",
+          path: workspaceRoot,
+          baseUrl: `http://127.0.0.1:${staleUpstream.port}/workspace/ws_old/opencode`,
+        },
+      ],
+    });
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_orch_unable_connect/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Orchestrated unable connect",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(201);
+    expect(staleBaseUrlHit).toBe(true);
+    expect(orchestratorPath).toBe("/workspace/ws_orch_unable_connect/opencode/session");
+    const payload = await response.json() as { id: string; opencodeSessionId: string };
+    expect(payload.id).toBe("sess-orch-unable-connect");
+    expect(payload.opencodeSessionId).toBe("sess-orch-unable-connect");
+  });
+
   test("POST /workspace/:id/conversations ignores persisted empty workspace opencode mount", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-empty-mount-"));
     tempDirs.push(workspaceRoot);

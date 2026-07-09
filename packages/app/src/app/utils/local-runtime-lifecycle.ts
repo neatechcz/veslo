@@ -4,6 +4,10 @@ import type { EngineInfo, WorkspaceInfo, WorkspaceRuntimePrepareResult } from ".
 import {
   activateVesloHostWorkspaceWithTimeout,
 } from "./workspace-switch-timeouts";
+import { withTimeoutOrThrow } from "./promise-timeout";
+
+const DEFAULT_LOCAL_RUNTIME_PREPARE_TIMEOUT_MS = 75_000;
+const DEFAULT_LOCAL_RUNTIME_PREPARE_QUEUE_STALE_RELEASE_MS = 190_000;
 
 export type LocalRuntimeStartOptions = {
   preferSidecar: boolean;
@@ -39,6 +43,7 @@ export interface LocalRuntimeLifecycleDeps {
   setEngine: (info: EngineInfo) => void;
   setEngineAuth: (auth: OpencodeAuth | null) => void;
   readEngineInfo: (workspaceId?: string, workspacePath?: string) => Promise<EngineInfo>;
+  runtimePrepareTimeoutMs?: () => number | null;
   prepareWorkspaceRuntime: (input: LocalRuntimeStartOptions & {
     projectDir: string;
     workspaceId?: string | null;
@@ -95,7 +100,15 @@ function messageFromUnknownError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function resolveRuntimePrepareTimeoutMs(value: number | null | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : DEFAULT_LOCAL_RUNTIME_PREPARE_TIMEOUT_MS;
+}
+
 export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
+  let prepareQueue: Promise<void> = Promise.resolve();
+
   const buildStartOptions = (runtime: EngineInfo["runtime"]): LocalRuntimeStartOptions => ({
     preferSidecar: deps.engineSource() === "sidecar",
     opencodeBinPath: deps.engineSource() === "custom" ? deps.engineCustomBinPath?.().trim() || null : null,
@@ -117,6 +130,116 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
     if (options.quiet !== undefined) next.quiet = options.quiet;
     if (options.navigate !== undefined) next.navigate = options.navigate;
     return Object.keys(next).length ? next : undefined;
+  };
+
+  const recordPrepareTrace = (
+    event: string,
+    options: LocalRuntimeReconnectOptions,
+    payload: Record<string, unknown> = {},
+  ) => {
+    recordSendWorkflowTrace("local-runtime-lifecycle", event, {
+      workspaceId: options.workspaceId ?? null,
+      workspacePath: options.workspacePath,
+      reason: options.reason,
+      connectMode: options.connectMode ?? "server",
+      ...payload,
+    });
+  };
+
+  const runSerializedNativePrepare = async (
+    input: LocalRuntimeStartOptions & {
+      projectDir: string;
+      workspaceId?: string | null;
+      workspaceName?: string | null;
+      reason?: string | null;
+      forceFreshRuntime?: boolean;
+    },
+    options: LocalRuntimeReconnectOptions,
+  ) => {
+    const previous = prepareQueue;
+    let releaseQueue!: () => void;
+    const current = new Promise<void>((resolve) => {
+      releaseQueue = resolve;
+    });
+    prepareQueue = previous.catch(() => undefined).then(() => current);
+
+    let released = false;
+    let staleReleaseId: ReturnType<typeof setTimeout> | null = null;
+    const releaseOnce = () => {
+      if (released) return;
+      released = true;
+      if (staleReleaseId) clearTimeout(staleReleaseId);
+      releaseQueue();
+    };
+
+    const timeoutMs = resolveRuntimePrepareTimeoutMs(deps.runtimePrepareTimeoutMs?.() ?? null);
+    const queuedAt = Date.now();
+    try {
+      await withTimeoutOrThrow(previous.catch(() => undefined), {
+        timeoutMs,
+        label: "local runtime prepare queue",
+      });
+    } catch (error) {
+      recordPrepareTrace("prepare-runtime:queue-timeout", options, {
+        durationMs: Date.now() - queuedAt,
+        timeoutMs,
+      });
+      releaseOnce();
+      throw error;
+    }
+
+    const startedAt = Date.now();
+    recordPrepareTrace("prepare-runtime:native-start", options, {
+      runtime: input.runtime,
+      forceFreshRuntime: input.forceFreshRuntime === true,
+      timeoutMs,
+    });
+
+    const nativePrepare = deps.prepareWorkspaceRuntime(input);
+    // Native start mutates the singleton orchestrator; queue it so boot warmup cannot cancel a send.
+    staleReleaseId = setTimeout(() => {
+      recordPrepareTrace("prepare-runtime:native-queue-stale-release", options, {
+        durationMs: Date.now() - startedAt,
+      });
+      releaseOnce();
+    }, Math.max(timeoutMs, DEFAULT_LOCAL_RUNTIME_PREPARE_QUEUE_STALE_RELEASE_MS));
+    nativePrepare.then(
+      (result) => {
+        recordPrepareTrace("prepare-runtime:native-done", options, {
+          durationMs: Date.now() - startedAt,
+          action: result.action,
+          ok: result.ok,
+          engineState: result.engine.engineState ?? null,
+          running: result.engine.running,
+        });
+        releaseOnce();
+      },
+      (error) => {
+        recordPrepareTrace("prepare-runtime:native-error", options, {
+          durationMs: Date.now() - startedAt,
+          error: messageFromUnknownError(error),
+        });
+        releaseOnce();
+      },
+    );
+
+    try {
+      return await withTimeoutOrThrow(nativePrepare, {
+        timeoutMs,
+        label: "local runtime prepare",
+      });
+    } catch (error) {
+      const message = messageFromUnknownError(error);
+      if (message.includes("Timed out waiting for local runtime prepare")) {
+        recordPrepareTrace("prepare-runtime:native-timeout", options, {
+          durationMs: Date.now() - startedAt,
+          timeoutMs,
+        });
+        // Timed-out warmup must release the queue so a send recovery can take over.
+        releaseOnce();
+      }
+      throw error;
+    }
   };
 
   const reconnectFromEngineSnapshot = async (
@@ -273,14 +396,14 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
 
   async function prepareWorkspaceRuntime(options: LocalRuntimeReconnectOptions) {
     const runtime = deps.resolveEngineRuntime();
-    const result = await deps.prepareWorkspaceRuntime({
+    const result = await runSerializedNativePrepare({
       ...buildStartOptions(runtime),
       projectDir: options.workspacePath,
       workspaceId: options.workspaceId?.trim() || null,
       workspaceName: options.workspaceName?.trim() || null,
       reason: options.reason,
       forceFreshRuntime: options.forceFreshRuntime === true,
-    });
+    }, options);
 
     if (result.engine.runtime === "veslo-orchestrator") {
       await activateVesloHostWorkspaceWithTimeout(

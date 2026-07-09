@@ -223,11 +223,12 @@ export function createSessionCreationWorkflow(
       deps.resolveSendTargetWorkspaceScope(null) ??
       null;
     const clientMessageId = options.clientMessageId?.trim() ?? "";
-    const serverSubmitOwnsRuntimeAdmission = Boolean(
+    const serverSubmitOwnsFirstMessageAdmission = Boolean(
       options.submitDraft &&
       clientMessageId &&
       deps.submitConversationFromVesloWriteApi,
     );
+    const serverSubmitOwnsManagedAiAdmission = serverSubmitOwnsFirstMessageAdmission;
     deps.recordSendTrace("createSessionAndOpen:start", {
       ...(tracePayload ?? {}),
       connectingWorkspaceId: deps.workspace.connectingWorkspaceId(),
@@ -237,7 +238,9 @@ export function createSessionCreationWorkflow(
       targetWorkspaceRoot: targetWorkspace?.workspaceRoot ?? null,
       targetDirectory: targetWorkspace?.directory ?? null,
       hasClient: Boolean(deps.routedClient()),
-      serverSubmitOwnsRuntimeAdmission,
+      serverSubmitOwnsRuntimeAdmission: false,
+      serverSubmitOwnsFirstMessageAdmission,
+      serverSubmitOwnsManagedAiAdmission,
     });
 
     const connectingWorkspaceId = deps.workspace.connectingWorkspaceId()?.trim() ?? "";
@@ -270,12 +273,7 @@ export function createSessionCreationWorkflow(
       preflightEnginePrepared: Boolean(createPreflight.enginePrepared),
       preflightRuntimeHealthOk: Boolean(createPreflight.runtimeHealthOk),
     });
-    if (serverSubmitOwnsRuntimeAdmission) {
-      deps.recordSendTrace("createSessionAndOpen:server-submit-runtime-admission-skip", {
-        ...(tracePayload ?? {}),
-        targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
-      });
-    } else if (runtimeHealthPreflightDecision.type === "skip") {
+    if (runtimeHealthPreflightDecision.type === "skip") {
       deps.recordSendTrace("createSessionAndOpen:health-skip", {
         ...(tracePayload ?? {}),
         reason: runtimeHealthPreflightDecision.reason,
@@ -302,14 +300,12 @@ export function createSessionCreationWorkflow(
       deps.setError("Local runtime is not ready yet.");
       return undefined;
     }
-    if (!serverSubmitOwnsRuntimeAdmission) {
-      createPreflight.enginePrepared = true;
-    }
+    createPreflight.enginePrepared = true;
     createPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(targetWorkspace);
     const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision({
       preflightManagedAiReady: Boolean(createPreflight.managedAiReady),
     });
-    if (serverSubmitOwnsRuntimeAdmission) {
+    if (serverSubmitOwnsManagedAiAdmission) {
       deps.recordSendTrace("createSessionAndOpen:server-submit-managed-ai-admission-skip", {
         ...(tracePayload ?? {}),
         targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
@@ -337,7 +333,9 @@ export function createSessionCreationWorkflow(
       }
       createPreflight.managedAiReady = true;
     }
-    if (!serverSubmitOwnsRuntimeAdmission) {
+    const requiresRoutedRuntimeClient =
+      !serverSubmitOwnsFirstMessageAdmission || Boolean(createPreflight.runtimeHealthOk);
+    if (requiresRoutedRuntimeClient) {
       const client = deps.routedClientForSendTarget(targetWorkspace);
       if (!client) {
         deps.recordSendTrace("createSessionAndOpen:blocked-no-client", tracePayload);

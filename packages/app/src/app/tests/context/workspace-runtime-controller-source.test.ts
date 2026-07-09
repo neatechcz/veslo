@@ -4,6 +4,14 @@ import test from "node:test";
 import { createWorkspaceRuntimeController } from "../../context/workspace-runtime-controller.js";
 import { readContextSource, readWorkspaceFacadeSource } from "./workspace-source";
 
+async function waitForCondition(condition: () => boolean) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  assert.equal(condition(), true);
+}
+
 test("lazy runtime ensure lives in workspace runtime controller", () => {
   const runtimeSource = readContextSource("workspace-runtime-controller.ts");
   const facadeSource = readWorkspaceFacadeSource();
@@ -18,7 +26,7 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
   assert.match(
     runtimeSource,
     /async function ensureEngineForWorkspace\([\s\S]*workspaceId\?: string \| null,[\s\S]*options: EnsureEngineForWorkspaceOptions = \{\},[\s\S]*\): Promise<boolean>/,
-    "boot warmup and first-send recovery should share ensureEngineForWorkspace",
+    "boot warmup and first-send recovery should share the same runtime ensure owner",
   );
   assert.match(runtimeSource, /connectMode: "quiet"/);
   const ensureStart = runtimeSource.indexOf("async function ensureEngineForWorkspace");
@@ -230,8 +238,87 @@ test("runtime ensure sends recovery reasons to the backend-owned prepare workflo
   assert.equal(freshOk, true);
   assert.deepEqual(calls, [
     "syncSkills",
-    "prepare:false:sendPrompt-runtime-recovery",
+    "prepare:true:sendPrompt-runtime-recovery",
     "syncSkills",
     "prepare:true:event-stream-runtime-recovery",
   ]);
+});
+
+test("runtime recovery does not wait on an in-flight boot warmup single-flight", async () => {
+  const calls: string[] = [];
+  let releaseBootWarmup: () => void = () => {
+    throw new Error("boot warmup was not started");
+  };
+  let markBootWarmupStarted: () => void = () => {};
+  const bootWarmupStarted = new Promise<void>((resolve) => {
+    markBootWarmupStarted = resolve;
+  });
+  const controller = createWorkspaceRuntimeController({
+    activeWorkspaceId: () => "ws-a",
+    workspaces: () => [
+      {
+        id: "ws-a",
+        name: "Workspace A",
+        path: "/repo/a",
+        workspaceType: "local",
+      } as never,
+    ],
+    workspacesHydrated: () => true,
+    routing: {
+      release: () => {},
+      ensure: async () => null,
+      lastEnsureError: () => null,
+    },
+    resolveEngineRuntime: () => "veslo-orchestrator",
+    localRuntimeLifecycle: {
+      prepareWorkspaceRuntime: async (options: { reason?: string; forceFreshRuntime?: boolean }) => {
+        calls.push(`prepare:${options.forceFreshRuntime === true}:${options.reason ?? ""}`);
+        if (options.reason === "boot-warmup") {
+          markBootWarmupStarted();
+          await new Promise<void>((resolve) => {
+            releaseBootWarmup = resolve;
+          });
+        }
+        return true;
+      },
+    } as never,
+    connectToServer: async () => true,
+    loadSessions: async () => {},
+    setClient: () => {},
+    setConnectedVersion: () => {},
+    setBaseUrl: () => {},
+    setClientDirectory: () => {},
+    setEngineReady: () => {},
+    setError: () => {},
+    updateWorkspaceConnectionState: () => {},
+    clearWorkspaceBusyAllExcept: () => {},
+    ensureLocalRuntimeReadyForWorkspaceStart: async () => true,
+    syncWorkspaceSkillMaterializationBeforeRuntime: async () => true,
+    createClient: () => {
+      throw new Error("createClient should not run in this recovery test");
+    },
+    waitForHealthy: async () => ({}),
+    safeStringify: String,
+    wsLog: () => {},
+  });
+
+  const bootWarmup = controller.ensureEngineForWorkspace("ws-a", {
+    reason: "boot-warmup",
+    loadSessions: false,
+  });
+  await bootWarmupStarted;
+
+  const recovery = controller.ensureEngineForWorkspace("ws-a", {
+    reason: "sendPrompt-runtime-recovery",
+    loadSessions: false,
+  });
+  await waitForCondition(() => calls.length === 2);
+
+  assert.deepEqual(calls, [
+    "prepare:false:boot-warmup",
+    "prepare:true:sendPrompt-runtime-recovery",
+  ]);
+  assert.equal(await recovery, true);
+  releaseBootWarmup();
+  assert.equal(await bootWarmup, true);
 });

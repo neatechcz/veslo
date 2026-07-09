@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { OpencodeAuth } from "../../lib/opencode";
-import type { EngineInfo } from "../../lib/tauri";
+import type { EngineInfo, WorkspaceRuntimePrepareResult } from "../../lib/tauri";
 import { createLocalRuntimeLifecycle } from "../../utils/local-runtime-lifecycle.js";
 
 function makeEngineInfo(overrides: Partial<EngineInfo> = {}): EngineInfo {
@@ -22,6 +22,14 @@ function makeEngineInfo(overrides: Partial<EngineInfo> = {}): EngineInfo {
   };
 }
 
+async function waitForMicrotaskCondition(condition: () => boolean) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (condition()) return;
+    await Promise.resolve();
+  }
+  assert.equal(condition(), true);
+}
+
 function createHarness(options?: {
   runtime?: EngineInfo["runtime"];
   startInfo?: EngineInfo;
@@ -30,6 +38,14 @@ function createHarness(options?: {
   infoSnapshots?: EngineInfo[];
   serverConnectResult?: boolean;
   quietConnectResult?: boolean;
+  runtimePrepareTimeoutMs?: number;
+  prepareRuntime?: (input: {
+    projectDir: string;
+    runtime: EngineInfo["runtime"];
+    workspaceId?: string | null;
+    reason?: string | null;
+    forceFreshRuntime?: boolean;
+  }) => Promise<WorkspaceRuntimePrepareResult>;
 }) {
   const calls: string[] = [];
   const snapshots: EngineInfo[] = [];
@@ -83,10 +99,14 @@ function createHarness(options?: {
       readInfoRequests.push({ workspaceId, workspacePath });
       return infoSnapshots.shift() ?? infoSnapshot;
     },
+    runtimePrepareTimeoutMs: () => options?.runtimePrepareTimeoutMs ?? null,
     prepareWorkspaceRuntime: async (input) => {
       calls.push(
         `prepareRuntime:${input.projectDir}:${input.runtime}:${input.workspaceId ?? ""}:${input.reason ?? ""}:${input.forceFreshRuntime === true}`,
       );
+      if (options?.prepareRuntime) {
+        return await options.prepareRuntime(input);
+      }
       return {
         ok: true,
         action: input.forceFreshRuntime === true || input.runtime === "direct"
@@ -124,6 +144,117 @@ function createHarness(options?: {
     infoSnapshot,
   };
 }
+
+test("runtime preparation is serialized so boot warmup cannot cancel send recovery", async () => {
+  let releaseFirst: () => void = () => {
+    throw new Error("first prepare was not started");
+  };
+  const prepareStarts: string[] = [];
+  const harness = createHarness({
+    prepareRuntime: async (input) => {
+      prepareStarts.push(input.projectDir);
+      if (input.projectDir === "/tmp/first") {
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+      }
+      return {
+        ok: true,
+        action: "fresh_start",
+        reason: input.reason ?? "",
+        engine: makeEngineInfo({
+          runtime: input.runtime,
+          projectDir: input.projectDir,
+          baseUrl: `http://127.0.0.1:4096/${input.workspaceId ?? "ws"}`,
+        }),
+      };
+    },
+  });
+
+  const first = harness.lifecycle.restartWorkspaceRuntime({
+    workspacePath: "/tmp/first",
+    workspaceId: "ws-first",
+    reason: "boot-warmup",
+  });
+  await waitForMicrotaskCondition(() => prepareStarts.length === 1);
+  const second = harness.lifecycle.restartWorkspaceRuntime({
+    workspacePath: "/tmp/second",
+    workspaceId: "ws-second",
+    reason: "createSessionAndOpen-runtime-recovery",
+  });
+  await Promise.resolve();
+
+  assert.deepEqual(prepareStarts, ["/tmp/first"]);
+  releaseFirst();
+  assert.equal(await first, true);
+  assert.equal(await second, true);
+  assert.deepEqual(prepareStarts, ["/tmp/first", "/tmp/second"]);
+});
+
+test("runtime preparation fails fast when native prepare exceeds the UI timeout", async () => {
+  const harness = createHarness({
+    runtimePrepareTimeoutMs: 10,
+    prepareRuntime: async (input) => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return {
+        ok: true,
+        action: "fresh_start",
+        reason: input.reason ?? "",
+        engine: makeEngineInfo({ runtime: input.runtime, projectDir: input.projectDir }),
+      };
+    },
+  });
+
+  await assert.rejects(
+    () => harness.lifecycle.restartWorkspaceRuntime({
+      workspacePath: "/tmp/slow",
+      workspaceId: "ws-slow",
+      reason: "createSessionAndOpen-runtime-recovery",
+    }),
+    /Timed out waiting for local runtime prepare after 10ms/,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+});
+
+test("queued send recovery starts after stalled warmup times out", async () => {
+  const prepareStarts: string[] = [];
+  const harness = createHarness({
+    runtimePrepareTimeoutMs: 50,
+    prepareRuntime: async (input) => {
+      prepareStarts.push(input.projectDir);
+      if (input.projectDir === "/tmp/slow-boot") {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+      }
+      return {
+        ok: true,
+        action: "fresh_start",
+        reason: input.reason ?? "",
+        engine: makeEngineInfo({ runtime: input.runtime, projectDir: input.projectDir }),
+      };
+    },
+  });
+
+  const first = harness.lifecycle.restartWorkspaceRuntime({
+    workspacePath: "/tmp/slow-boot",
+    workspaceId: "ws-boot",
+    reason: "boot-warmup",
+  }).catch((error: unknown) => error);
+  await waitForMicrotaskCondition(() => prepareStarts.length === 1);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  const second = harness.lifecycle.restartWorkspaceRuntime({
+    workspacePath: "/tmp/send-recovery",
+    workspaceId: "ws-send",
+    reason: "createSessionAndOpen-runtime-recovery",
+    forceFreshRuntime: true,
+  });
+
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+  assert.match(String(firstResult), /Timed out waiting for local runtime prepare after 50ms/);
+  assert.equal(secondResult, true);
+  assert.deepEqual(prepareStarts, ["/tmp/slow-boot", "/tmp/send-recovery"]);
+  await new Promise((resolve) => setTimeout(resolve, 90));
+});
 
 test("startHost delegates runtime process preparation to the backend and reconnects", async () => {
   const harness = createHarness();

@@ -176,6 +176,19 @@ export const resolveWorkspaceIdForQueueKey = (
   sessionKey: string,
 ) => parseUiConversationKey(sessionKey)?.workspaceId ?? context.activeWorkspaceId;
 
+export const queueKeysShareWorkspace = (
+  resolveWorkspaceId: (sessionKey: string) => string,
+  leftKey: string | null | undefined,
+  rightKey: string | null | undefined,
+) => {
+  const left = leftKey?.trim() || "";
+  const right = rightKey?.trim() || "";
+  if (!left || !right) return false;
+  const leftWorkspaceId = resolveWorkspaceId(left).trim();
+  const rightWorkspaceId = resolveWorkspaceId(right).trim();
+  return Boolean(leftWorkspaceId && rightWorkspaceId && leftWorkspaceId === rightWorkspaceId);
+};
+
 export const resolveCurrentSessionQueueKey = ({
   selectedSessionId,
   pendingQueueKeyAwaitingSessionIdByBaseKey,
@@ -805,15 +818,29 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         };
       }
 
+      const sessionKey = deps.sessionKeys.sessionQueueKeyForSessionId(selectedSessionId);
       const materializedPendingSubmit = pendingKey
         ? pendingSubmittedDrafts()[pendingKey]?.state === "sending"
         : false;
-      if (pendingKey && !isPendingSessionInstanceId(selectedSessionId)) {
+      if (
+        pendingKey &&
+        !isPendingSessionInstanceId(selectedSessionId) &&
+        queueKeysShareWorkspace(deps.sessionKeys.workspaceIdForQueueKey, pendingKey, sessionKey)
+      ) {
         deps.pendingHandoff.remapPendingQueueToSession(pendingKey, selectedSessionId);
         deps.pendingHandoff.clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingBaseKey, pendingKey);
+      } else if (pendingKey && !isPendingSessionInstanceId(selectedSessionId)) {
+        // Pending sends are workspace-scoped; route switches must not materialize them elsewhere.
+        deps.trace.recordSendTrace("run-state:remap-pending-to-session:blocked-workspace-mismatch", {
+          pendingBaseKey,
+          pendingKey,
+          sessionId: selectedSessionId,
+          sessionKey,
+          pendingWorkspaceId: deps.sessionKeys.workspaceIdForQueueKey(pendingKey),
+          sessionWorkspaceId: deps.sessionKeys.workspaceIdForQueueKey(sessionKey),
+        });
       }
 
-      const sessionKey = deps.sessionKeys.sessionQueueKeyForSessionId(selectedSessionId);
       if (
         !materializedPendingSubmit &&
         statusForSessionId(selectedSessionId, sessionStatusById) === "idle" &&
@@ -1063,6 +1090,25 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           opencodeSessionId:
             handoff.scope.kind === "conversation" ? handoff.scope.opencodeSessionId : null,
         });
+        if (!queueKeysShareWorkspace(
+          deps.sessionKeys.workspaceIdForQueueKey,
+          pendingSessionKey,
+          materializedSessionKey,
+        )) {
+          // Pending sends are workspace-scoped; accepted handoff must stay on its captured target.
+          deps.trace.recordSendTrace("sendPromptImmediate:materialized-handoff:blocked-workspace-mismatch", {
+            sendTraceId: options.sendTraceId ?? null,
+            clientMessageId,
+            origin,
+            pendingSessionBaseKeyBeforeHandoff: pendingSessionBaseKey,
+            pendingSessionKeyBeforeHandoff: pendingSessionKey,
+            materializedSessionId,
+            materializedSessionKey,
+            pendingWorkspaceId: deps.sessionKeys.workspaceIdForQueueKey(pendingSessionKey),
+            materializedWorkspaceId: deps.sessionKeys.workspaceIdForQueueKey(materializedSessionKey),
+          });
+          return;
+        }
         deps.effects.batch(() => {
           deps.pendingHandoff.setPendingQueueKeyAwaitingSessionIdForBaseKey(
             pendingSessionBaseKey,

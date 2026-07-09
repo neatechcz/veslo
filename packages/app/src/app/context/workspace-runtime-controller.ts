@@ -277,9 +277,10 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
     let id = workspaceId?.trim() || deps.activeWorkspaceId().trim();
     const ensureReason = options.reason?.trim() || "ensure-engine-for-workspace";
     const shouldLoadSessions = options.loadSessions !== false;
-    const forceFreshRuntime = options.forceFreshRuntime === true;
     const isBootWarmup = ensureReason === "boot-warmup";
     const isRuntimeRecovery = ensureReason.includes("runtime-recovery");
+    // First sends must not share the background warmup single-flight.
+    const forceFreshRuntime = options.forceFreshRuntime === true || isRuntimeRecovery;
     if (!deps.workspacesHydrated()) {
       const start = Date.now();
       while (!deps.workspacesHydrated() && Date.now() - start < 5_000) {

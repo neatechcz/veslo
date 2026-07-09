@@ -96,7 +96,7 @@ test("local runtime recovery restarts for dead endpoints and health timeouts", (
   );
   assert.match(
     recoverySource,
-    /if \(targetIsActiveWorkspace\) \{[\s\S]*deps\.setEngineReady\(false\);[\s\S]*deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined, \{[\s\S]*loadSessions: false/s,
+    /if \(targetIsActiveWorkspace\) \{[\s\S]*deps\.setEngineReady\(false\);[\s\S]*deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined, \{[\s\S]*loadSessions: false,[\s\S]*forceFreshRuntime: true,/s,
     "runtime recovery should restart before send without forcing session-list UI side effects and reflect readiness only when the target is still active",
   );
 });
@@ -116,7 +116,7 @@ test("send runtime recovery uses the snapshotted target workspace", () => {
   );
   assert.match(
     recoverySource,
-    /deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined, \{[\s\S]*reason: `\$\{reason\}-runtime-recovery`,[\s\S]*loadSessions: false/s,
+    /deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined, \{[\s\S]*reason: `\$\{reason\}-runtime-recovery`,[\s\S]*loadSessions: false,[\s\S]*forceFreshRuntime: true,/s,
     "runtime recovery should restart the target workspace engine without blocking on session load",
   );
   assert.match(

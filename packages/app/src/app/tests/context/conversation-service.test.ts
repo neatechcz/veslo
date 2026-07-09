@@ -75,7 +75,13 @@ function createFakeClient(options: {
       calls.push("listWorkspaces");
       return { items: listWorkspaceItems, activeId: listWorkspaceItems[0]?.id ?? null };
     },
-    addLocalWorkspace: async (input: { path: string }) => {
+    addLocalWorkspace: async (input: {
+      path: string;
+      directory?: string;
+      baseUrl?: string;
+      opencodeUsername?: string;
+      opencodePassword?: string;
+    }) => {
       calls.push(`addLocalWorkspace:${input.path}`);
       if (options.failWorkspaceRegistration) {
         throw new Error("registration unavailable");
@@ -84,7 +90,14 @@ function createFakeClient(options: {
         {
           id: "server-ws",
           path: input.path,
-          directory: input.path,
+          directory: input.directory ?? input.path,
+          baseUrl: input.baseUrl,
+          opencode: input.baseUrl
+            ? {
+                baseUrl: input.baseUrl,
+                directory: input.directory ?? input.path,
+              }
+            : undefined,
         },
       ];
       return {
@@ -220,6 +233,7 @@ function createService(options: {
   addLocalWorkspaceItems?: FakeWorkspaceRegistryItem[];
   failWorkspaceRegistration?: boolean;
   engineBaseWorkspaceId?: string;
+  engineBaseUrl?: string | null;
   runStatusError?: unknown;
   managedAiAccess?: {
     providerId?: string | null;
@@ -238,6 +252,9 @@ function createService(options: {
   });
   let serverClient: ConversationServiceClient | null = options.startDisconnected ? null : client;
   const engineBaseWorkspaceId = options.engineBaseWorkspaceId ?? "server-ws";
+  const engineBaseUrl = options.engineBaseUrl === undefined
+    ? `http://127.0.0.1:4096/workspace/${encodeURIComponent(engineBaseWorkspaceId)}/opencode`
+    : options.engineBaseUrl ?? "";
   const ensureCalls: string[] = [];
   const rememberedScopes: RememberedScope[] = [];
   const sendTraces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
@@ -356,7 +373,7 @@ function createService(options: {
     sendTraceStep: async (_event, run) => run(),
     recordExternalSendTraceEntries: () => undefined,
     engineInfo: async () => ({
-      baseUrl: `http://127.0.0.1:4096/workspace/${encodeURIComponent(engineBaseWorkspaceId)}/opencode`,
+      baseUrl: engineBaseUrl,
       projectDir: "/repo",
       opencodeUsername: "user",
       opencodePassword: "pass",
@@ -426,6 +443,53 @@ test("mapped local workspace id is used for server calls while app scopes stay l
   );
   assert.equal(rememberedScopes[0]?.workspaceId, "app-ws");
   assert.equal(rememberedScopes[0]?.conversationId, "conv-created");
+});
+
+test("conversation write refreshes stale server workspace registration with live OpenCode URL", async () => {
+  const staleBaseUrl = "http://127.0.0.1:60956/workspace/server-ws/opencode";
+  const { service, calls } = createService({
+    listWorkspaceItems: [
+      {
+        id: "server-ws",
+        path: "/repo",
+        directory: "/repo",
+        baseUrl: staleBaseUrl,
+      },
+    ],
+  });
+
+  const result = await service.createConversationFromVesloWriteApi("app-ws", "/repo", "Refresh");
+
+  assert.equal(result?.id, "sess-created");
+  assert.deepEqual(calls.filter((call) =>
+    call === "listWorkspaces" ||
+    call.startsWith("addLocalWorkspace:") ||
+    call.startsWith("createConversation:")
+  ), [
+    "listWorkspaces",
+    "addLocalWorkspace:/repo",
+    "createConversation:server-ws",
+  ]);
+});
+
+test("conversation write blocks first submit when live OpenCode URL is unavailable", async () => {
+  const { service, calls, sendTraces } = createService({
+    engineBaseUrl: "",
+    listWorkspaceItems: [
+      {
+        id: "server-ws",
+        path: "/repo",
+        directory: "/repo",
+        baseUrl: "http://127.0.0.1:60956/workspace/server-ws/opencode",
+      },
+    ],
+  });
+
+  const result = await service.createConversationFromVesloWriteApi("app-ws", "/repo", "Missing runtime");
+
+  assert.equal(result, null);
+  assert.equal(calls.some((call) => call.startsWith("createConversation:")), false);
+  assert.ok(sendTraces.some((entry) => entry.event === "conversation-read:live-opencode-unavailable"));
 });
 
 test("conversation create reports malformed preflight cache instead of throwing", async () => {

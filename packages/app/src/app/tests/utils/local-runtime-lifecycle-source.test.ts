@@ -35,4 +35,9 @@ test("local runtime lifecycle traces engine_info poll failures and timeouts", ()
     /phase: "starting"[\s\S]*recordEngineInfoPollTrace\("engine-info-poll:timeout"/,
     "engine-starting polling timeout should include a summary trace",
   );
+  assert.match(
+    source,
+    /prepareQueue: Promise<void>[\s\S]*label: "local runtime prepare queue"[\s\S]*prepare-runtime:queue-timeout[\s\S]*prepare-runtime:native-start[\s\S]*withTimeoutOrThrow\(nativePrepare,[\s\S]*label: "local runtime prepare"[\s\S]*prepare-runtime:native-timeout[\s\S]*releaseOnce\(\)/,
+    "native runtime preparation should be serialized and bounded before UI sends wait forever",
+  );
 });

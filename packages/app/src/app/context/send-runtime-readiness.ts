@@ -488,6 +488,7 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         () => deps.ensureEngineForWorkspace(targetWorkspaceId || undefined, {
           reason: `${reason}-runtime-recovery`,
           loadSessions: false,
+          forceFreshRuntime: true,
         }),
         {
           ...(tracePayload ?? {}),
@@ -513,6 +514,7 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
             () => deps.ensureEngineForWorkspace(targetWorkspaceId || undefined, {
               reason: `${reason}-runtime-recovery-retry`,
               loadSessions: false,
+              forceFreshRuntime: true,
             }),
             {
               ...(tracePayload ?? {}),

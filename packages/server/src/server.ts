@@ -1188,6 +1188,8 @@ function detailsText(details: unknown): string {
 
 function shouldRetryOpenCodeViaOrchestrator(error: unknown): boolean {
   if (!(error instanceof ApiError)) return false;
+  // Local OpenCode URLs are per-runtime; retry stale/missing mounts via orchestrator.
+  if (error.code === "opencode_unconfigured") return true;
   if (error.code === "opencode_request_timeout") return true;
   if (error.code !== "opencode_request_failed") return false;
   const details = isRecordLike(error.details) ? error.details : {};
@@ -1200,6 +1202,7 @@ function shouldRetryOpenCodeViaOrchestrator(error: unknown): boolean {
     text.includes("engine_not_running") ||
     text.includes("connection refused") ||
     text.includes("econnrefused") ||
+    text.includes("unable to connect") ||
     text.includes("failed to fetch") ||
     text.includes("fetch failed") ||
     text.includes("error sending request")

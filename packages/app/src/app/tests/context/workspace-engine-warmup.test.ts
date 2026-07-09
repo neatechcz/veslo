@@ -86,8 +86,8 @@ test("runtime ensure preserves single-flight startup and can skip loadSessions f
   );
   assert.match(
     runtimeSource,
-    /const shouldLoadSessions = options\.loadSessions !== false;[\s\S]*const forceFreshRuntime = options\.forceFreshRuntime === true;[\s\S]*const singleFlightKey = forceFreshRuntime[\s\S]*return await ensureEngineForWorkspaceSingleFlight\(singleFlightKey, async \(\) => \{/s,
-    "runtime ensure should keep one single-flight owner for boot warmup and first-send recovery",
+    /const shouldLoadSessions = options\.loadSessions !== false;[\s\S]*const isBootWarmup = ensureReason === "boot-warmup";[\s\S]*const isRuntimeRecovery = ensureReason\.includes\("runtime-recovery"\);[\s\S]*const forceFreshRuntime = options\.forceFreshRuntime === true \|\| isRuntimeRecovery;[\s\S]*const singleFlightKey = forceFreshRuntime[\s\S]*return await ensureEngineForWorkspaceSingleFlight\(singleFlightKey, async \(\) => \{/s,
+    "runtime recovery should use a fresh single-flight while boot warmup stays shared",
   );
   assert.match(
     runtimeSource,

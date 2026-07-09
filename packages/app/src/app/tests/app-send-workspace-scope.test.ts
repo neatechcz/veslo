@@ -90,7 +90,7 @@ test("send engine startup uses the snapshotted target workspace", () => {
   );
   assert.match(
     readinessSource,
-    /deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined, \{[\s\S]*reason: `\$\{reason\}-runtime-recovery`,[\s\S]*loadSessions: false/s,
+    /deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined, \{[\s\S]*reason: `\$\{reason\}-runtime-recovery`,[\s\S]*loadSessions: false,[\s\S]*forceFreshRuntime: true,/s,
     "send runtime readiness owner should start the snapshotted target workspace engine instead of whichever workspace is currently active",
   );
 });
