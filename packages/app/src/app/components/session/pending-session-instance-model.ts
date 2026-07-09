@@ -2,7 +2,7 @@ import type { PendingSubmittedDraft } from "./pending-submit-model";
 import { remapPendingSubmittedSession } from "./pending-submit-model";
 import { parseUiConversationKey } from "../../lib/ui-conversation-scope";
 
-export const PENDING_SESSION_INSTANCE_PREFIX = "pending-session:";
+const PENDING_SESSION_INSTANCE_PREFIX = "pending-session:";
 
 export type PendingSessionInstanceId = `${typeof PENDING_SESSION_INSTANCE_PREFIX}${string}`;
 
@@ -37,7 +37,7 @@ export const isPendingSessionInstanceId = (
   );
 };
 
-export function pendingSessionInstanceIdFromKey(
+function pendingSessionInstanceIdFromKey(
   value: string | null | undefined,
 ): PendingSessionInstanceId | null {
   const key = (value ?? "").trim();

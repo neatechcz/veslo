@@ -1,4 +1,5 @@
 import type { OpencodeAuth } from "../lib/opencode";
+import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 import type { EngineInfo, WorkspaceInfo, WorkspaceRuntimePrepareResult } from "../lib/tauri";
 import {
   activateVesloHostWorkspaceWithTimeout,
@@ -90,6 +91,10 @@ function shouldSkipQuietConnectForOrchestratorState(
   return info.engineState === "absent" || info.engineState === "stopped" || info.engineState === "failed";
 }
 
+function messageFromUnknownError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
   const buildStartOptions = (runtime: EngineInfo["runtime"]): LocalRuntimeStartOptions => ({
     preferSidecar: deps.engineSource() === "sidecar",
@@ -141,6 +146,18 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
 
     let auth = syncEngineSnapshot(activeInfo);
     let baseUrl = activeInfo.baseUrl?.trim() ?? "";
+    const recordEngineInfoPollTrace = (
+      event: string,
+      payload: Record<string, unknown>,
+    ) => {
+      recordSendWorkflowTrace("local-runtime-lifecycle", event, {
+        workspaceId: options.workspaceId ?? null,
+        workspacePath: options.workspacePath,
+        reason: options.reason,
+        connectMode: options.connectMode ?? "server",
+        ...payload,
+      });
+    };
 
     // VSLO-171 — orchestrator F2Ú7 spawn-on-demand: engine_info returns an
     // empty baseUrl when the per-workspace engine hasn't been spawned yet.
@@ -150,11 +167,24 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
       const pollStart = Date.now();
       const timeoutMs = 10_000;
       const pollIntervalMs = 200;
+      let attempts = 0;
+      let failures = 0;
+      let lastError: string | null = null;
       while (Date.now() - pollStart < timeoutMs) {
         await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        attempts += 1;
         try {
           activeInfo = await deps.readEngineInfo(options.workspaceId, options.workspacePath);
-        } catch {
+        } catch (error) {
+          failures += 1;
+          lastError = messageFromUnknownError(error);
+          if (failures === 1) {
+            recordEngineInfoPollTrace("engine-info-poll:error", {
+              phase: "base-url",
+              attempt: attempts,
+              error: lastError,
+            });
+          }
           continue;
         }
         baseUrl = activeInfo.baseUrl?.trim() ?? "";
@@ -163,22 +193,54 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
           break;
         }
       }
+      if (!baseUrl && (attempts > 0 || failures > 0)) {
+        recordEngineInfoPollTrace("engine-info-poll:timeout", {
+          phase: "base-url",
+          attempts,
+          failures,
+          lastError,
+          durationMs: Date.now() - pollStart,
+        });
+      }
     }
 
     if (options.workspaceId && isEngineStarting(activeInfo)) {
       const pollStart = Date.now();
       const timeoutMs = 10_000;
       const pollIntervalMs = 250;
+      let attempts = 0;
+      let failures = 0;
+      let lastError: string | null = null;
       while (Date.now() - pollStart < timeoutMs) {
         await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        attempts += 1;
         try {
           activeInfo = await deps.readEngineInfo(options.workspaceId, options.workspacePath);
-        } catch {
+        } catch (error) {
+          failures += 1;
+          lastError = messageFromUnknownError(error);
+          if (failures === 1) {
+            recordEngineInfoPollTrace("engine-info-poll:error", {
+              phase: "starting",
+              attempt: attempts,
+              error: lastError,
+            });
+          }
           continue;
         }
         baseUrl = activeInfo.baseUrl?.trim() ?? baseUrl;
         auth = syncEngineSnapshot(activeInfo);
         if (!isEngineStarting(activeInfo) || activeInfo.running) break;
+      }
+      if (isEngineStarting(activeInfo) && !activeInfo.running && (attempts > 0 || failures > 0)) {
+        recordEngineInfoPollTrace("engine-info-poll:timeout", {
+          phase: "starting",
+          attempts,
+          failures,
+          lastError,
+          engineState: activeInfo.engineState ?? null,
+          durationMs: Date.now() - pollStart,
+        });
       }
     }
 

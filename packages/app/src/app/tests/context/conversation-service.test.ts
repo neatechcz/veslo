@@ -6,6 +6,7 @@ import {
   type ConversationServiceClient,
 } from "../../context/conversation-service.js";
 import type { ManagedAiRuntimeAuthPrimeDiagnostic } from "../../context/managed-ai-runtime-config.js";
+import { VesloServerError } from "../../lib/veslo-server.js";
 import type {
   VesloConversationAbortInput,
   VesloConversationRunInput,
@@ -57,6 +58,7 @@ function createFakeClient(options: {
   listWorkspaceItems?: FakeWorkspaceRegistryItem[];
   addLocalWorkspaceItems?: FakeWorkspaceRegistryItem[];
   failWorkspaceRegistration?: boolean;
+  runStatusError?: unknown;
 } = {}) {
   const calls: string[] = [];
   const submitConversationCalls: SubmitConversationCall[] = [];
@@ -170,6 +172,7 @@ function createFakeClient(options: {
     },
     getConversationRunStatus: async (workspaceId: string, conversationId: string, runId: string) => {
       calls.push(`getConversationRunStatus:${workspaceId}:${conversationId}:${runId}`);
+      if (options.runStatusError) throw options.runStatusError;
       return {
         ok: true,
         workspaceId,
@@ -209,17 +212,20 @@ function createService(options: {
   addLocalWorkspaceItems?: FakeWorkspaceRegistryItem[];
   failWorkspaceRegistration?: boolean;
   engineBaseWorkspaceId?: string;
+  runStatusError?: unknown;
   managedAiAccess?: {
     providerId?: string | null;
     defaultModel?: { modelID?: string | null } | null;
   } | null;
   runtimeAuthorizationResult?: boolean;
   runtimeAuthorizationDiagnostic?: ManagedAiRuntimeAuthPrimeDiagnostic | null;
+  resolveWorkspaceRootForConversationScope?: (workspaceId: string, directory?: string | null) => string;
 } = {}) {
   const { client, calls, submitConversationCalls, setRunConversationResult, setSubmitConversationResult } = createFakeClient({
     listWorkspaceItems: options.listWorkspaceItems,
     addLocalWorkspaceItems: options.addLocalWorkspaceItems,
     failWorkspaceRegistration: options.failWorkspaceRegistration,
+    runStatusError: options.runStatusError,
   });
   let serverClient: ConversationServiceClient | null = options.startDisconnected ? null : client;
   const engineBaseWorkspaceId = options.engineBaseWorkspaceId ?? "server-ws";
@@ -302,7 +308,8 @@ function createService(options: {
             opencodeSessionId: "open-a",
           }
         : null,
-    resolveWorkspaceRootForConversationScope: () => "/repo",
+    resolveWorkspaceRootForConversationScope:
+      options.resolveWorkspaceRootForConversationScope ?? (() => "/repo"),
     rememberConversationScope: (scope) => rememberedScopes.push(scope),
     rememberConversationScopesFromSessions: () => undefined,
     rememberConversationScopeFromTranscript: (workspaceId, directory, snapshot) => {
@@ -424,6 +431,34 @@ test("conversation create reports malformed preflight cache instead of throwing"
     entry.event === "createConversationFromVesloWriteApi:conversation-preflight-contract:validation-failed"
   );
   assert.ok(validation, "malformed preflight should be diagnosed at the service boundary");
+  assert.equal(validation.payload?.schema, "conversation-send-preflight-context");
+  assert.equal(validation.payload?.hasConversationWorkspaceByDirectory, false);
+  assert.equal(validation.payload?.conversationWorkspaceByDirectoryType, "undefined");
+});
+
+test("conversation run reports malformed preflight cache instead of hiding it", async () => {
+  const { service, sendTraces } = createService();
+
+  const result = await service.runConversationFromVesloWriteApi("sess-a", {
+    kind: "prompt_async",
+    directory: "/repo",
+  }, {
+    preflight: {
+      traceId: "trace-run",
+      targetWorkspace: null,
+    } as any,
+  });
+
+  assert.equal(result?.status, "submitted");
+  const start = sendTraces.find((entry) => entry.event === "runConversationFromVesloWriteApi:start");
+  assert.ok(start, "run start should include the preflight contract summary");
+  assert.equal(start.payload?.hasConversationWorkspaceByDirectory, false);
+  assert.equal(start.payload?.conversationWorkspaceByDirectoryType, "undefined");
+
+  const validation = sendTraces.find((entry) =>
+    entry.event === "runConversationFromVesloWriteApi:conversation-preflight-contract:validation-failed"
+  );
+  assert.ok(validation, "malformed run preflight should be diagnosed at the service boundary");
   assert.equal(validation.payload?.schema, "conversation-send-preflight-context");
   assert.equal(validation.payload?.hasConversationWorkspaceByDirectory, false);
   assert.equal(validation.payload?.conversationWorkspaceByDirectoryType, "undefined");
@@ -605,7 +640,7 @@ test("passive browse reads do not start the local conversation server", async ()
 });
 
 test("status polls do not start the local conversation server", async () => {
-  const { service, ensureCalls } = createService({ startDisconnected: true });
+  const { service, ensureCalls, sendTraces } = createService({ startDisconnected: true });
 
   const result = await service.readConversationRunStatus({
     workspaceId: "app-ws",
@@ -616,6 +651,65 @@ test("status polls do not start the local conversation server", async () => {
 
   assert.equal(result, null);
   assert.deepEqual(ensureCalls, []);
+  const unavailable = sendTraces.find((entry) =>
+    entry.event === "readConversationRunStatus:unavailable"
+  );
+  assert.ok(unavailable, "status-poll unavailability should be traceable");
+  assert.equal(unavailable.payload?.reason, "no-server-client");
+  assert.equal(unavailable.payload?.workspaceId, "app-ws");
+  assert.equal(unavailable.payload?.conversationId, "conv-a");
+  assert.equal(unavailable.payload?.runId, "run-a");
+});
+
+test("status polls trace unavailable workspace registration without fallback server id", async () => {
+  const { service, calls, sendTraces } = createService({ failWorkspaceRegistration: true });
+
+  const result = await service.readConversationRunStatus({
+    workspaceId: "app-ws",
+    directory: "/repo",
+    conversationId: "conv-a",
+    runId: "run-a",
+  });
+
+  assert.equal(result, null);
+  assert.equal(
+    calls.some((call) => call.startsWith("getConversationRunStatus:app-ws:")),
+    false,
+  );
+  const unavailable = sendTraces.find((entry) =>
+    entry.event === "readConversationRunStatus:unavailable"
+      && entry.payload?.reason === "workspace-registration-unavailable"
+  );
+  assert.ok(unavailable, "workspace registration failure should be traceable for status polls");
+  assert.equal(unavailable.payload?.workspaceId, "app-ws");
+  assert.equal(unavailable.payload?.directory, "/repo");
+  assert.equal(unavailable.payload?.conversationId, "conv-a");
+  assert.equal(unavailable.payload?.runId, "run-a");
+});
+
+test("status polls trace 404 run misses before returning null", async () => {
+  const { service, sendTraces } = createService({
+    runStatusError: new VesloServerError(404, "run_not_found", "Run was not found for this conversation"),
+  });
+
+  const result = await service.readConversationRunStatus({
+    workspaceId: "app-ws",
+    directory: "/repo",
+    conversationId: "conv-a",
+    runId: "run-missing",
+  });
+
+  assert.equal(result, null);
+  const notFound = sendTraces.find((entry) =>
+    entry.event === "readConversationRunStatus:not-found"
+  );
+  assert.ok(notFound, "404 run status misses should be traceable");
+  assert.equal(notFound.payload?.workspaceId, "app-ws");
+  assert.equal(notFound.payload?.serverWorkspaceId, "server-ws");
+  assert.equal(notFound.payload?.conversationId, "conv-a");
+  assert.equal(notFound.payload?.runId, "run-missing");
+  assert.equal(notFound.payload?.status, 404);
+  assert.equal(notFound.payload?.code, "run_not_found");
 });
 
 test("conversation run remembers submitted run ids under Veslo and UI identities", async () => {
@@ -971,7 +1065,7 @@ test("managed conversation runs stop before submit when runtime authorization is
 });
 
 test("conversation run requires a scoped workspace instead of falling back to the active workspace", async () => {
-  const { service, calls } = createService();
+  const { service, calls, sendTraces } = createService();
 
   await assert.rejects(
     () => service.runConversationFromVesloWriteApi("unknown-session", {
@@ -982,6 +1076,73 @@ test("conversation run requires a scoped workspace instead of falling back to th
   );
 
   assert.equal(calls.some((call) => call.startsWith("runConversation:")), false);
+  const blocked = sendTraces.find((entry) =>
+    entry.event === "runConversationFromVesloWriteApi:blocked-missing-workspace-scope"
+  );
+  assert.ok(blocked, "missing scoped workspace should be visible in send traces");
+  assert.equal(blocked.payload?.sessionId, "unknown-session");
+  assert.equal(blocked.payload?.scopeWorkspaceId, null);
+  assert.equal(blocked.payload?.targetWorkspaceId, null);
+  assert.equal(blocked.payload?.hasPreflight, false);
+});
+
+test("conversation run diagnoses foreign target workspace before submit", async () => {
+  const { service, calls, sendTraces } = createService();
+
+  await assert.rejects(
+    () => service.runConversationFromVesloWriteApi("sess-a", {
+      kind: "prompt_async",
+      directory: "/repo",
+    }, {
+      targetWorkspace: {
+        workspaceId: "other-ws",
+        workspaceRoot: "/other",
+        directory: "/other",
+      },
+    }),
+    /workspace does not match/,
+  );
+
+  assert.equal(calls.some((call) => call.startsWith("runConversation:")), false);
+  const blocked = sendTraces.find((entry) =>
+    entry.event === "runConversationFromVesloWriteApi:blocked-workspace-scope-mismatch"
+  );
+  assert.ok(blocked, "workspace mismatch should be visible in send traces");
+  assert.equal(blocked.payload?.sessionId, "sess-a");
+  assert.equal(blocked.payload?.scopeWorkspaceId, "app-ws");
+  assert.equal(blocked.payload?.targetWorkspaceId, "other-ws");
+  assert.equal(blocked.payload?.scopeDirectory, "/repo");
+  assert.equal(blocked.payload?.targetDirectory, "/other");
+});
+
+test("conversation run diagnoses missing directory before submit", async () => {
+  const { service, calls, sendTraces } = createService({
+    resolveWorkspaceRootForConversationScope: () => "",
+  });
+
+  await assert.rejects(
+    () => service.runConversationFromVesloWriteApi("unknown-session", {
+      kind: "prompt_async",
+    }, {
+      targetWorkspace: {
+        workspaceId: "app-ws",
+        workspaceRoot: "",
+        directory: "",
+      },
+    }),
+    /directory is required/,
+  );
+
+  assert.equal(calls.some((call) => call.startsWith("runConversation:")), false);
+  const blocked = sendTraces.find((entry) =>
+    entry.event === "runConversationFromVesloWriteApi:blocked-missing-directory"
+  );
+  assert.ok(blocked, "missing conversation directory should be visible in send traces");
+  assert.equal(blocked.payload?.sessionId, "unknown-session");
+  assert.equal(blocked.payload?.workspaceId, "app-ws");
+  assert.equal(blocked.payload?.scopeWorkspaceId, null);
+  assert.equal(blocked.payload?.targetWorkspaceId, "app-ws");
+  assert.equal(blocked.payload?.workspaceRoot, null);
 });
 
 test("queued conversation runs keep the active run id as the current abort target", async () => {

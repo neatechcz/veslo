@@ -16,9 +16,9 @@ export type SessionSendOptionsBase = SessionSendCorrelation & {
   sendTraceId?: string | null;
 };
 
-export type SessionSubmitDraftDisposition = "clear" | "restore" | "keep" | "mark-failed";
+type SessionSubmitDraftDisposition = "clear" | "restore" | "keep" | "mark-failed";
 
-export type SessionSubmitStatus = "accepted" | "submitted" | "queued" | "blocked" | "failed";
+type SessionSubmitStatus = "accepted" | "submitted" | "queued" | "blocked" | "failed";
 
 export type SessionSubmitImplicitSkillCommandConfirmation = {
   type: "implicit_skill_command";
@@ -26,7 +26,7 @@ export type SessionSubmitImplicitSkillCommandConfirmation = {
   arguments: string;
 };
 
-export type SessionSubmitConfirmation =
+type SessionSubmitConfirmation =
   | SessionSubmitImplicitSkillCommandConfirmation;
 
 export type SessionSubmitResult = {
@@ -46,14 +46,14 @@ export type SessionSubmitResult = {
   confirmation?: SessionSubmitConfirmation | null;
 };
 
-export type MaterializedSessionConversationScope = {
+type MaterializedSessionConversationScope = {
   kind: "conversation";
   workspaceId: string;
   conversationId: string;
   opencodeSessionId: string;
 };
 
-export type MaterializedSessionWorkspaceScope = {
+type MaterializedSessionWorkspaceScope = {
   kind: "workspace";
   workspaceId: string;
 };

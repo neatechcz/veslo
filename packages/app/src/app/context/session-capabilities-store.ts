@@ -89,6 +89,7 @@ export type SessionCapabilitiesStoreDeps = {
   client: Accessor<SessionCapabilitiesRuntimeClient | null | undefined>;
   activeWorkspaceRuntimeReady: Accessor<boolean>;
   activeVisibleRuntimeActivityId: Accessor<string | null | undefined>;
+  mcpRefreshFingerprint?: Accessor<string | number | null | undefined>;
   developerMode: Accessor<boolean>;
   vesloServerClient: Accessor<SessionCapabilitiesVesloClient | null | undefined>;
   vesloServerStatus: Accessor<VesloServerStatus>;
@@ -425,6 +426,7 @@ export function createSessionCapabilitiesStore(deps: SessionCapabilitiesStoreDep
       runtimeBaseUrl: deps.baseUrl().trim(),
       runtimeVersion: deps.connectedVersion() ?? "",
       hasRuntimeClient: Boolean(deps.client()),
+      mcpRefreshFingerprint: deps.mcpRefreshFingerprint?.() ?? "",
       runtimeMatch: runtimeMatchContextForSessionCapabilities(),
       matchedWorkspaceId: workspace?.id ?? "",
     };

@@ -59,7 +59,7 @@ export type SidebarProjectGroupSplit = {
 
 export const PRIVATE_PROJECT_GROUP_KEY = "project:veslo-private";
 
-export const isPrivateChatProjectGroup = (group: ProjectSessionGroup) =>
+const isPrivateChatProjectGroup = (group: ProjectSessionGroup) =>
   group.key === PRIVATE_PROJECT_GROUP_KEY || group.isPrivateProject;
 
 const mergePrivateChatProjectGroup = (
@@ -106,7 +106,7 @@ export const sessionSidebarTitle = (
 
 export type CollapsedProjectMap = Record<string, boolean>;
 export const NEW_SESSION_LABEL_VISIBLE_WIDTH = 220;
-export const NEW_SESSION_LABEL_EXPAND_WIDTH = 300;
+const NEW_SESSION_LABEL_EXPAND_WIDTH = 300;
 
 const defaultPrivateWorkspacePath = () => false;
 
@@ -118,13 +118,13 @@ const workspaceLabel = (workspace: WorkspaceInfo) =>
   workspace.path?.trim() ||
   "Workspace";
 
-export const creationTimestamp = (session: WorkspaceSessionGroup["sessions"][number]) =>
+const creationTimestamp = (session: WorkspaceSessionGroup["sessions"][number]) =>
   session.time?.created ?? 0;
 
-export const updatedTimestamp = (session: WorkspaceSessionGroup["sessions"][number]) =>
+const updatedTimestamp = (session: WorkspaceSessionGroup["sessions"][number]) =>
   session.time?.updated ?? 0;
 
-export const activityTimestamp = (session: WorkspaceSessionGroup["sessions"][number]) =>
+const activityTimestamp = (session: WorkspaceSessionGroup["sessions"][number]) =>
   session.time?.updated ?? session.time?.created ?? 0;
 
 export const displayTimestamp = (session: WorkspaceSessionGroup["sessions"][number]) =>

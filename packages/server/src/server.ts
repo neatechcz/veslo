@@ -2870,6 +2870,21 @@ const perfMs = () =>
     ? performance.now()
     : Date.now();
 
+function conversationRunTraceErrorFields(error: unknown): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
+    message: error instanceof Error ? error.message : String(error),
+  };
+  if (error instanceof Error) {
+    fields.errorName = error.name;
+  }
+  if (error instanceof OrchestratorLifecycleRequestError) {
+    fields.upstreamStatus = error.status;
+    fields.upstreamPath = error.path;
+    fields.upstreamBody = redactSensitiveConfig(error.body);
+  }
+  return fields;
+}
+
 function createConversationRunTracer(request: Request) {
   const traceId = request.headers.get(VESLO_SEND_TRACE_ID_HEADER)?.trim() || "";
   const enabled = Boolean(traceId) || ["1", "true", "yes"].includes((process.env.VESLO_FLOW_LOG ?? "").toLowerCase());
@@ -2915,7 +2930,7 @@ function createConversationRunTracer(request: Request) {
         ...payload,
         durationMs: roundTraceMs(perfMs() - startedAt),
         outcome: "error",
-        message: error instanceof Error ? error.message : String(error),
+        ...conversationRunTraceErrorFields(error),
       });
       throw error;
     }
@@ -2959,7 +2974,7 @@ function createBackgroundConversationRunTracer(traceId: string | null = null): C
         ...payload,
         durationMs: roundTraceMs(perfMs() - startedAt),
         outcome: "error",
-        message: error instanceof Error ? error.message : String(error),
+        ...conversationRunTraceErrorFields(error),
       });
       throw error;
     }

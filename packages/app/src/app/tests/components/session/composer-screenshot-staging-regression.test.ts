@@ -8,16 +8,16 @@ const sessionPageSource = readFileSync(new URL("../../../pages/session.tsx", imp
 const sessionSendWorkflowSource = readFileSync(new URL("../../../pages/session-send-workflow.ts", import.meta.url), "utf8");
 const stagingSource = readFileSync(new URL("../../../pages/session-attachment-staging.ts", import.meta.url), "utf8");
 
-function legacyConversationRunFallbackSource(): string {
-  const start = sessionSendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+function conversationRunCompatibilityBridgeSource(): string {
+  const start = sessionSendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
   const end = sessionSendWorkflowSource.indexOf("export function createSessionSendWorkflow", start);
-  assert.notEqual(start, -1, "legacy conversation run fallback source should exist");
-  assert.notEqual(end, -1, "legacy conversation run fallback block should end before createSessionSendWorkflow");
+  assert.notEqual(start, -1, "conversation run compatibility bridge source should exist");
+  assert.notEqual(end, -1, "conversation run compatibility bridge block should end before createSessionSendWorkflow");
   return sessionSendWorkflowSource.slice(start, end);
 }
 
 test("staging failure blocks send with an explicit error and no draft clear", () => {
-  const fallbackSource = legacyConversationRunFallbackSource();
+  const fallbackSource = conversationRunCompatibilityBridgeSource();
   const stagingStart = fallbackSource.indexOf(
     '"sendPrompt:stage-attachments"',
   );
@@ -138,7 +138,7 @@ test("session props do not borrow devtools workspace fallbacks for attachment ga
 });
 
 test("send flow blocks screenshot analysis on non-vision models instead of relying on a hidden read fallback", () => {
-  const fallbackSource = legacyConversationRunFallbackSource();
+  const fallbackSource = conversationRunCompatibilityBridgeSource();
 
   assert.match(
     fallbackSource,

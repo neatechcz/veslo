@@ -27,11 +27,11 @@ function sendPromptSource(): string {
   return sendWorkflowSource.slice(start, end);
 }
 
-function legacyConversationRunFallbackPrepareSource(): string {
-  const fallbackStart = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+function conversationRunCompatibilityBridgePrepareSource(): string {
+  const fallbackStart = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
   const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", fallbackStart);
   const submitStart = sendWorkflowSource.indexOf("  const submit = async", prepareStart);
-  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "legacy fallback prepare source should be present");
+  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "compatibility bridge prepare source should be present");
   return sendWorkflowSource.slice(prepareStart, submitStart);
 }
 
@@ -44,7 +44,7 @@ function createSessionAndOpenSource(): string {
 
 test("sendPrompt carries a preflight context into first-session creation", () => {
   const source = sendPromptSource();
-  const fallbackPrepareSource = legacyConversationRunFallbackPrepareSource();
+  const fallbackPrepareSource = conversationRunCompatibilityBridgePrepareSource();
 
   assert.match(
     source,
@@ -54,7 +54,7 @@ test("sendPrompt carries a preflight context into first-session creation", () =>
   assert.match(
     fallbackPrepareSource,
     /const sendRuntimePreparation = await deps\.prepareSendRuntimeForSend\("sendPrompt", input\.sendPreflight\);[\s\S]*if \(!sendRuntimePreparation\.ok\) \{/,
-    "legacy fallback prepare should delegate runtime and managed AI readiness to the send readiness owner and consume its typed result",
+    "compatibility bridge prepare should delegate runtime and managed AI readiness to the send readiness owner and consume its typed result",
   );
   const prepareStart = runtimeReadinessSource.indexOf("async function prepareSendRuntimeForSend(");
   const prepareEnd = runtimeReadinessSource.indexOf("async function connectLocalRuntimeClientFromEngineInfo", prepareStart);

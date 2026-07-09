@@ -799,10 +799,12 @@ test("duplicate workspace SSE setup replaces the previous stream generation", wi
       assert.equal(signals[1]?.aborted, false);
       assert.equal(firstCloseCount, 1);
       assert.equal(secondCloseCount, 0);
-      assert.equal(
-        target.__vesloSendWorkflowTrace?.some((entry) => entry.event === "session-sse:replaced-existing"),
-        true,
+      const replacementTrace = target.__vesloSendWorkflowTrace?.find((entry) =>
+        entry.event === "session-sse:replaced-existing"
       );
+      assert.ok(replacementTrace);
+      assert.equal(replacementTrace.streamConnectionKey, "ws-a");
+      assert.equal(replacementTrace.bridgeConnectionKey, "session-workspace:ws-a");
 
       cleanupFirst();
       cleanupSecond();

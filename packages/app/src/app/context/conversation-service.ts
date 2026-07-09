@@ -955,12 +955,26 @@ export function createConversationService<Client extends ConversationServiceClie
     if (!workspaceId) {
       deps.recordSendTrace("runConversationFromVesloWriteApi:blocked-missing-workspace-scope", {
         ...(tracePayload ?? {}),
+        ...conversationPreflightContractDiagnostics(options.preflight),
         sessionId: normalizedSessionId,
         kind: input.kind,
+        scopeWorkspaceId: scopeWorkspaceId || null,
+        targetWorkspaceId: targetWorkspaceId || null,
+        hasConversationScope: Boolean(scope?.conversationId?.trim()),
       });
       throw new Error("Conversation run requires a scoped workspace.");
     }
     if (scopeWorkspaceId && targetWorkspaceId && scopeWorkspaceId !== targetWorkspaceId) {
+      deps.recordSendTrace("runConversationFromVesloWriteApi:blocked-workspace-scope-mismatch", {
+        ...(tracePayload ?? {}),
+        ...conversationPreflightContractDiagnostics(options.preflight),
+        sessionId: normalizedSessionId,
+        kind: input.kind,
+        scopeWorkspaceId,
+        targetWorkspaceId,
+        scopeDirectory: scope?.directory?.trim() || null,
+        targetDirectory: targetWorkspace?.directory?.trim() || null,
+      });
       throw new Error("Conversation workspace does not match the send target workspace.");
     }
     const scopedDirectory = input.directory?.trim() || scope?.directory?.trim() || targetWorkspace?.directory?.trim() || "";
@@ -971,11 +985,23 @@ export function createConversationService<Client extends ConversationServiceClie
       "";
     const directory = scopedDirectory || workspaceRoot;
     if (!directory) {
+      deps.recordSendTrace("runConversationFromVesloWriteApi:blocked-missing-directory", {
+        ...(tracePayload ?? {}),
+        ...conversationPreflightContractDiagnostics(options.preflight),
+        sessionId: normalizedSessionId,
+        workspaceId,
+        kind: input.kind,
+        scopeWorkspaceId: scopeWorkspaceId || null,
+        targetWorkspaceId: targetWorkspaceId || null,
+        scopedDirectory: scopedDirectory || null,
+        workspaceRoot: workspaceRoot || null,
+      });
       throw new Error("Conversation directory is required.");
     }
 
     deps.recordSendTrace("runConversationFromVesloWriteApi:start", {
       ...(tracePayload ?? {}),
+      ...conversationPreflightContractDiagnostics(options.preflight),
       sessionId: normalizedSessionId,
       workspaceId,
       directory,
@@ -983,6 +1009,10 @@ export function createConversationService<Client extends ConversationServiceClie
       clientMessageId: typeof input.clientMessageId === "string" ? input.clientMessageId : null,
       origin: typeof input.origin === "string" ? input.origin : null,
       hasConversationScope: Boolean(scope?.conversationId),
+      scopeWorkspaceId: scopeWorkspaceId || null,
+      targetWorkspaceId: targetWorkspaceId || null,
+      conversationId: scope?.conversationId?.trim() || null,
+      opencodeSessionId: scope?.opencodeSessionId?.trim() || null,
       expectAiGatewayStart,
       managedProviderId: managedProfile?.providerId ?? null,
       managedModelId: managedProfile?.defaultModel?.modelID ?? null,
@@ -1254,13 +1284,31 @@ export function createConversationService<Client extends ConversationServiceClie
       workspaceId: scope.workspaceId,
       directory: scope.directory,
     });
-    if (!serverClient) return null;
+    const tracePayload = {
+      workspaceId: scope.workspaceId,
+      directory: scope.directory?.trim() || null,
+      conversationId: scope.conversationId,
+      runId: scope.runId,
+    };
+    if (!serverClient) {
+      deps.recordSendTrace("readConversationRunStatus:unavailable", {
+        ...tracePayload,
+        reason: "no-server-client",
+      });
+      return null;
+    }
     const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(
       serverClient,
       scope.workspaceId,
       scope.directory,
     );
-    if (!serverWorkspaceId) return null;
+    if (!serverWorkspaceId) {
+      deps.recordSendTrace("readConversationRunStatus:unavailable", {
+        ...tracePayload,
+        reason: "workspace-registration-unavailable",
+      });
+      return null;
+    }
     try {
       return await serverClient.getConversationRunStatus(
         serverWorkspaceId,
@@ -1268,7 +1316,16 @@ export function createConversationService<Client extends ConversationServiceClie
         scope.runId,
       );
     } catch (error) {
-      if (error instanceof VesloServerError && error.status === 404) return null;
+      if (error instanceof VesloServerError && error.status === 404) {
+        deps.recordSendTrace("readConversationRunStatus:not-found", {
+          ...tracePayload,
+          serverWorkspaceId,
+          status: error.status,
+          code: error.code,
+          message: error.message,
+        });
+        return null;
+      }
       throw error;
     }
   };

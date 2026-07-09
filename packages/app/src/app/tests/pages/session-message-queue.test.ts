@@ -24,11 +24,11 @@ const flowHandleSendStart = conversationFlowSource.indexOf("handleSendPrompt: as
 const flowHandleSendEnd = conversationFlowSource.indexOf("drainNextQueuedDraft: async (", flowHandleSendStart);
 const flowHandleSendSource = conversationFlowSource.slice(flowHandleSendStart, flowHandleSendEnd);
 
-function legacyConversationRunFallbackSource(): string {
-  const start = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+function conversationRunCompatibilityBridgeSource(): string {
+  const start = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
   const end = sendWorkflowSource.indexOf("export function createSessionSendWorkflow", start);
-  assert.notEqual(start, -1, "legacy conversation run fallback should exist");
-  assert.notEqual(end, -1, "legacy conversation run fallback block should end before createSessionSendWorkflow");
+  assert.notEqual(start, -1, "conversation run compatibility bridge should exist");
+  assert.notEqual(end, -1, "conversation run compatibility bridge block should end before createSessionSendWorkflow");
   return sendWorkflowSource.slice(start, end);
 }
 
@@ -408,9 +408,9 @@ test("rejected pending queue drain updates the remapped item key", () => {
 test("app prompt send accepts an explicit target session without freezing model bootstrap", () => {
   const sendStart = sendWorkflowSource.indexOf("async function sendPrompt");
   const targetCapture = sendWorkflowSource.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceId(options.targetSessionId)", sendStart);
-  const fallbackPrepare = sendWorkflowSource.indexOf("legacyConversationRunFallback.prepare({", targetCapture);
-  const fallbackSubmit = sendWorkflowSource.indexOf("legacyConversationRunFallback.submit({", fallbackPrepare);
-  const fallbackSource = legacyConversationRunFallbackSource();
+  const fallbackPrepare = sendWorkflowSource.indexOf("conversationRunCompatibilityBridge.prepare({", targetCapture);
+  const fallbackSubmit = sendWorkflowSource.indexOf("conversationRunCompatibilityBridge.submit({", fallbackPrepare);
+  const fallbackSource = conversationRunCompatibilityBridgeSource();
 
   assert.notEqual(sendStart, -1, "app sendPrompt should exist");
   assert.ok(targetCapture > sendStart, "sendPrompt should accept a captured target session id");
@@ -419,27 +419,27 @@ test("app prompt send accepts an explicit target session without freezing model 
     /let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;/,
     "sendPrompt should prefer an explicit target session over implicit active-workspace selection",
   );
-  assert.ok(fallbackPrepare > targetCapture, "legacy fallback prepare should run after the explicit target is captured");
-  assert.ok(fallbackSubmit > fallbackPrepare, "legacy fallback submit should run after prepare for the legacy send path");
+  assert.ok(fallbackPrepare > targetCapture, "compatibility bridge prepare should run after the explicit target is captured");
+  assert.ok(fallbackSubmit > fallbackPrepare, "compatibility bridge submit should run after prepare for the legacy send path");
   assert.match(
     sendWorkflowSource.slice(fallbackPrepare, fallbackSubmit),
     /sendTargetWorkspace,/,
-    "sendPrompt should pass the snapshotted target workspace into legacy fallback prepare",
+    "sendPrompt should pass the snapshotted target workspace into compatibility bridge prepare",
   );
   assert.match(
     sendWorkflowSource.slice(fallbackSubmit),
     /sendTargetWorkspace,/,
-    "sendPrompt should pass the snapshotted target workspace into legacy fallback submit",
+    "sendPrompt should pass the snapshotted target workspace into compatibility bridge submit",
   );
   assert.match(
     fallbackSource,
     /deps\.prepareSendRuntimeForSend\("sendPrompt", input\.sendPreflight\)[\s\S]*const c = deps\.routedClientForSendTarget\(input\.sendTargetWorkspace\);/,
-    "legacy fallback should prepare the target runtime before reading its routed client",
+    "compatibility bridge should prepare the target runtime before reading its routed client",
   );
   assert.match(
     fallbackSource,
     /const model = deps\.modelForSession\(materializedSessionID\);[\s\S]*const agent = deps\.agentForSession\(sessionID\);/,
-    "legacy fallback should resolve model and agent after the prepared legacy handoff begins",
+    "compatibility bridge should resolve model and agent after the prepared legacy handoff begins",
   );
 });
 

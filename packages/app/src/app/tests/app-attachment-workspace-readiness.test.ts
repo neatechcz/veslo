@@ -5,10 +5,10 @@ import test from "node:test";
 const stagingModuleSource = readFileSync(new URL("../pages/session-attachment-staging.ts", import.meta.url), "utf8");
 const sendWorkflowSource = readFileSync(new URL("../pages/session-send-workflow.ts", import.meta.url), "utf8");
 
-function legacyConversationRunFallbackSource(): string {
-  const start = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+function conversationRunCompatibilityBridgeSource(): string {
+  const start = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
   const end = sendWorkflowSource.indexOf("export function createSessionSendWorkflow(", start);
-  assert.ok(start >= 0 && end > start, "legacy conversation run fallback source should be present");
+  assert.ok(start >= 0 && end > start, "conversation run compatibility bridge source should be present");
   return sendWorkflowSource.slice(start, end);
 }
 
@@ -77,7 +77,7 @@ test("attachment staging self-heals a missing local server workspace once before
     "file-session creation should retry once after refreshing the local workspace/server state",
   );
 
-  const fallbackSource = legacyConversationRunFallbackSource();
+  const fallbackSource = conversationRunCompatibilityBridgeSource();
   const appStagingCallIndex = fallbackSource.search(
     /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, input\.sendPreflight\)/,
   );

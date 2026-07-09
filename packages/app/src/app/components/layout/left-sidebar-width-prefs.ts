@@ -6,7 +6,7 @@ export type LeftSidebarWidthStorage = {
 export const LEFT_SIDEBAR_WIDTH_MIN = 256;
 export const LEFT_SIDEBAR_WIDTH_DEFAULT = 260;
 export const LEFT_SIDEBAR_WIDTH_MAX = 420;
-export const LEFT_SIDEBAR_WIDTH_KEY = "veslo.global.sidebar.left-width.v1";
+const LEFT_SIDEBAR_WIDTH_KEY = "veslo.global.sidebar.left-width.v1";
 
 const resolveStorage = (
   storage?: LeftSidebarWidthStorage | null,

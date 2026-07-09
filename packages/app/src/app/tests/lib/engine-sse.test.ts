@@ -23,7 +23,12 @@ test("engine SSE forwards connection key to desktop subscribe command", async ()
           subscriptionId: options.subscriptionId,
           workspaceId: options.workspaceId,
         });
-        return { subscriptionId: options.subscriptionId, replacedExisting: true } as any;
+        return {
+          subscriptionId: options.subscriptionId,
+          replacedExisting: true,
+          activeSubscriptionCount: 2,
+          activeConnectionCount: 2,
+        } as any;
       }
       return true as any;
     },
@@ -37,6 +42,8 @@ test("engine SSE forwards connection key to desktop subscribe command", async ()
 
   assert.equal((invocations[0].args as any)?.options?.connectionKey, "session-workspace:ws-a");
   assert.equal(subscription.replacedExisting, true);
+  assert.equal(subscription.activeSubscriptionCount, 2);
+  assert.equal(subscription.activeConnectionCount, 2);
   await subscription.close();
   assert.equal(invocations[1].cmd, "engine_sse_unsubscribe");
   assert.equal((invocations[1].args as any)?.subscriptionId, subscription.subscriptionId);

@@ -46,9 +46,24 @@ struct EngineSseRegistryInner {
     by_connection: HashMap<String, String>,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct EngineSseRegistrySnapshot {
+    active_subscription_count: usize,
+    active_connection_count: usize,
+}
+
 struct EngineSseRegistration {
     cancel: tokio::sync::oneshot::Sender<()>,
     connection_key: Option<String>,
+}
+
+impl EngineSseRegistryInner {
+    fn snapshot(&self) -> EngineSseRegistrySnapshot {
+        EngineSseRegistrySnapshot {
+            active_subscription_count: self.by_subscription.len(),
+            active_connection_count: self.by_connection.len(),
+        }
+    }
 }
 
 impl EngineSseRegistry {
@@ -57,8 +72,12 @@ impl EngineSseRegistry {
         id: String,
         connection_key: Option<String>,
         sender: tokio::sync::oneshot::Sender<()>,
-    ) -> Vec<tokio::sync::oneshot::Sender<()>> {
+    ) -> (
+        Vec<tokio::sync::oneshot::Sender<()>>,
+        EngineSseRegistrySnapshot,
+    ) {
         let mut replaced = Vec::new();
+        let mut snapshot = EngineSseRegistrySnapshot::default();
         if let Ok(mut inner) = self.inner.lock() {
             if let Some(existing) = inner.by_subscription.remove(&id) {
                 remove_connection_if_current(&mut inner, existing.connection_key.as_deref(), &id);
@@ -82,8 +101,9 @@ impl EngineSseRegistry {
                     connection_key,
                 },
             );
+            snapshot = inner.snapshot();
         }
-        replaced
+        (replaced, snapshot)
     }
 
     fn remove(&self, id: &str) -> Option<tokio::sync::oneshot::Sender<()>> {
@@ -187,6 +207,8 @@ pub struct EngineSseSubscribeOptions {
 pub struct EngineSseSubscribeResult {
     pub subscription_id: String,
     pub replaced_existing: bool,
+    pub active_subscription_count: usize,
+    pub active_connection_count: usize,
 }
 
 #[tauri::command]
@@ -198,7 +220,8 @@ pub async fn engine_sse_subscribe(
     let subscription_id = resolve_subscription_id(options.subscription_id.as_deref());
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
     let connection_key = normalize_connection_key(options.connection_key.as_deref());
-    let replaced = registry.insert(subscription_id.clone(), connection_key, cancel_tx);
+    let (replaced, registry_snapshot) =
+        registry.insert(subscription_id.clone(), connection_key, cancel_tx);
     let replaced_existing = !replaced.is_empty();
     for cancel_tx in replaced {
         let _ = cancel_tx.send(());
@@ -242,6 +265,8 @@ pub async fn engine_sse_subscribe(
     Ok(EngineSseSubscribeResult {
         subscription_id,
         replaced_existing,
+        active_subscription_count: registry_snapshot.active_subscription_count,
+        active_connection_count: registry_snapshot.active_connection_count,
     })
 }
 
@@ -576,12 +601,26 @@ mod tests {
     fn registry_replaces_existing_connection_key() {
         let registry = EngineSseRegistry::default();
         let (first_tx, mut first_rx) = tokio::sync::oneshot::channel::<()>();
-        let replaced = registry.insert("sub-a".into(), Some("key-a".into()), first_tx);
+        let (replaced, snapshot) = registry.insert("sub-a".into(), Some("key-a".into()), first_tx);
         assert!(replaced.is_empty());
+        assert_eq!(
+            snapshot,
+            EngineSseRegistrySnapshot {
+                active_subscription_count: 1,
+                active_connection_count: 1,
+            }
+        );
 
         let (second_tx, _second_rx) = tokio::sync::oneshot::channel::<()>();
-        let replaced = registry.insert("sub-b".into(), Some("key-a".into()), second_tx);
+        let (replaced, snapshot) = registry.insert("sub-b".into(), Some("key-a".into()), second_tx);
         assert_eq!(replaced.len(), 1);
+        assert_eq!(
+            snapshot,
+            EngineSseRegistrySnapshot {
+                active_subscription_count: 1,
+                active_connection_count: 1,
+            }
+        );
         for cancel_tx in replaced {
             let _ = cancel_tx.send(());
         }
@@ -595,10 +634,11 @@ mod tests {
     fn registry_finish_old_subscription_does_not_remove_replacement() {
         let registry = EngineSseRegistry::default();
         let (first_tx, _first_rx) = tokio::sync::oneshot::channel::<()>();
-        registry.insert("sub-a".into(), Some("key-a".into()), first_tx);
+        let _ = registry.insert("sub-a".into(), Some("key-a".into()), first_tx);
 
         let (second_tx, _second_rx) = tokio::sync::oneshot::channel::<()>();
-        let replaced = registry.insert("sub-b".into(), Some("key-a".into()), second_tx);
+        let (replaced, _snapshot) =
+            registry.insert("sub-b".into(), Some("key-a".into()), second_tx);
         assert_eq!(replaced.len(), 1);
 
         registry.finish("sub-a");

@@ -45,10 +45,10 @@ const createWorkflowSource = readFileSync(
   "utf8",
 );
 
-function legacyConversationRunFallbackSource(): string {
-  const start = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+function conversationRunCompatibilityBridgeSource(): string {
+  const start = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
   const end = sendWorkflowSource.indexOf("export function createSessionSendWorkflow(", start);
-  assert.ok(start >= 0 && end > start, "legacy conversation run fallback source should be present");
+  assert.ok(start >= 0 && end > start, "conversation run compatibility bridge source should be present");
   return sendWorkflowSource.slice(start, end);
 }
 
@@ -232,7 +232,7 @@ test("create run and compact do not fall back to legacy OpenCode SDK writes", ()
   assert.ok(compactStart >= 0 && compactEnd > compactStart, "compactCurrentSession source should be present");
   assert.ok(createStart >= 0 && createEnd > createStart, "runCreateSessionFlow source should be present");
 
-  const fallbackSource = legacyConversationRunFallbackSource();
+  const fallbackSource = conversationRunCompatibilityBridgeSource();
   const compactSource = mutationWorkflowSource.slice(compactStart, compactEnd);
   const createSource = createWorkflowSource.slice(createStart, createEnd);
 

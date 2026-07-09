@@ -40,7 +40,7 @@ export const DEFAULT_UPDATE_AUTO_DOWNLOAD = false;
 export const UPDATE_AUTO_DOWNLOAD_DEFAULT_OFF_MIGRATION_KEY =
   "veslo.updateAutoDownloadDefaultOff.v1";
 export const UPDATE_INSTALL_STATE_KEY = "veslo.updateInstallState.v1";
-export const UPDATE_INSTALL_STALE_AFTER_MS = 2 * 60 * 60_000;
+const UPDATE_INSTALL_STALE_AFTER_MS = 2 * 60 * 60_000;
 export const UPDATE_AUTO_DOWNLOAD_RETRY_DELAYS_MS = [
   30_000,
   2 * 60_000,
@@ -284,7 +284,7 @@ export function resolveUpdateStartupPreferences(input: {
   return { autoCheck: true, autoDownload };
 }
 
-export function getUpdateLastCheckedAt(state: UpdateStatus) {
+function getUpdateLastCheckedAt(state: UpdateStatus) {
   if (state.state === "checking") return null;
   if (state.state === "installing") return null;
   return state.lastCheckedAt ?? null;

@@ -5,7 +5,7 @@ export type BuildSkillPackageManifestInput = {
   files: SkillPackageFile[];
 };
 
-export type SkillPackageArchiveFile = SkillPackageFile & {
+type SkillPackageArchiveFile = SkillPackageFile & {
   contentBase64: string;
 };
 
@@ -48,7 +48,7 @@ const optionalTrimmedString = (value: string | undefined): string | undefined =>
   return normalized || undefined;
 };
 
-export function normalizeSkillPackagePath(path: string): string {
+function normalizeSkillPackagePath(path: string): string {
   const trimmed = requireTrimmedString(path, "file path");
   if (
     trimmed.startsWith("/") ||
@@ -189,7 +189,7 @@ const bytesToBase64 = (bytes: Uint8Array): string => {
   return btoa(binary);
 };
 
-export async function computeSkillPackageSha256(
+async function computeSkillPackageSha256(
   manifest: Omit<SkillPackageManifest, "packageSha256">,
 ): Promise<string> {
   return sha256Hex(

@@ -8,11 +8,11 @@ const sendWorkflowSource = readFileSync(
 );
 const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
 
-function legacyConversationRunFallbackPrepareSource(): string {
-  const fallbackStart = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+function conversationRunCompatibilityBridgePrepareSource(): string {
+  const fallbackStart = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
   const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", fallbackStart);
   const submitStart = sendWorkflowSource.indexOf("  const submit = async", prepareStart);
-  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "legacy fallback prepare source should be present");
+  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "compatibility bridge prepare source should be present");
   return sendWorkflowSource.slice(prepareStart, submitStart);
 }
 
@@ -24,14 +24,14 @@ function ensureLocalRuntimeReachableForSendResultSource(): string {
 }
 
 test("sendPrompt recovers a stale local runtime before reading the client", () => {
-  const prepareSource = legacyConversationRunFallbackPrepareSource();
+  const prepareSource = conversationRunCompatibilityBridgePrepareSource();
   const recoveryCheckIndex = prepareSource.indexOf('deps.prepareSendRuntimeForSend("sendPrompt", input.sendPreflight)');
   const routedClientIndex = prepareSource.indexOf("const c = deps.routedClientForSendTarget(input.sendTargetWorkspace);");
-  assert.ok(recoveryCheckIndex >= 0, "legacy fallback should prepare send runtime readiness");
-  assert.ok(routedClientIndex >= 0, "legacy fallback should capture the routed client after recovery");
+  assert.ok(recoveryCheckIndex >= 0, "compatibility bridge should prepare send runtime readiness");
+  assert.ok(routedClientIndex >= 0, "compatibility bridge should capture the routed client after recovery");
   assert.ok(
     recoveryCheckIndex < routedClientIndex,
-    "legacy fallback should verify and recover the local runtime before capturing the routed client used for prompt calls",
+    "compatibility bridge should verify and recover the local runtime before capturing the routed client used for prompt calls",
   );
 });
 

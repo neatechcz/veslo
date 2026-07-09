@@ -3,11 +3,11 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
-  createLegacyConversationRunFallback,
+  createConversationRunCompatibilityBridge,
   createSessionSendWorkflow,
   documentRuntimeBlockReasonForSkillCommand,
   documentRuntimeFormatForSkillCommand,
-  type LegacyConversationRunFallbackOptions,
+  type ConversationRunCompatibilityBridgeOptions,
   type SessionSendWorkflowOptions,
 } from "../../pages/session-send-workflow.js";
 import type { SendTargetWorkspaceScope } from "../../context/workspace-session-selection.js";
@@ -112,7 +112,7 @@ function documentRuntimePayload(
 }
 
 function createHarness(
-  overrides: Partial<SessionSendWorkflowOptions & LegacyConversationRunFallbackOptions> = {},
+  overrides: Partial<SessionSendWorkflowOptions & ConversationRunCompatibilityBridgeOptions> = {},
 ): Harness {
   const events: string[] = [];
   const progressEvents: SessionFlowProgressEvent["type"][] = [];
@@ -284,17 +284,17 @@ function createHarness(
     },
     ensureSelectedSessionWorkspaceActiveForSend: async () => true,
     ...optionOverrides,
-  } as SessionSendWorkflowOptions & LegacyConversationRunFallbackOptions;
+  } as SessionSendWorkflowOptions & ConversationRunCompatibilityBridgeOptions;
 
   const hasExplicitLegacyFallback = Object.prototype.hasOwnProperty.call(
     optionsWithLegacy,
-    "legacyConversationRunFallback",
+    "conversationRunCompatibilityBridge",
   );
   const options: SessionSendWorkflowOptions = {
     ...optionsWithLegacy,
-    legacyConversationRunFallback: hasExplicitLegacyFallback
-      ? optionsWithLegacy.legacyConversationRunFallback
-      : createLegacyConversationRunFallback(optionsWithLegacy),
+    conversationRunCompatibilityBridge: hasExplicitLegacyFallback
+      ? optionsWithLegacy.conversationRunCompatibilityBridge
+      : createConversationRunCompatibilityBridge(optionsWithLegacy),
     stageServerSubmitAttachments:
       optionsWithLegacy.stageServerSubmitAttachments ?? optionsWithLegacy.stageAttachmentsIntoSessionDirectory,
   };
@@ -352,7 +352,7 @@ test("session send workflow blocks sends without a client message id", async () 
   assert.ok(harness.events.includes("sendPrompt:blocked-missing-client-message-id"));
 });
 
-test("app wiring keeps the normal send workflow free of legacy run fallback dependency", () => {
+test("app wiring keeps the normal send workflow free of conversation run compatibility bridge dependency", () => {
   const workflowStart = appSource.indexOf("const sessionSendWorkflow = createSessionSendWorkflow({");
   const workflowEnd = appSource.indexOf("\n  });", workflowStart);
 
@@ -362,17 +362,17 @@ test("app wiring keeps the normal send workflow free of legacy run fallback depe
 
   assert.doesNotMatch(
     workflowDeps,
-    /\blegacyConversationRunFallback\b/,
-    "normal production send wiring must not inject the legacy conversation-run fallback",
+    /\bconversationRunCompatibilityBridge\b/,
+    "normal production send wiring must not inject the conversation run compatibility bridge",
   );
 });
 
 test("session send workflow blocks compatibility fallback when it is not configured", async () => {
   const harness = createHarness({
-    legacyConversationRunFallback: null as never,
+    conversationRunCompatibilityBridge: null as never,
     submitConversationFromVesloWriteApi: undefined,
     runConversationFromVesloWriteApi: async () => {
-      throw new Error("legacy run should not run when fallback is disabled");
+      throw new Error("compatibility run should not run when fallback is disabled");
     },
   });
   const workflow = createSessionSendWorkflow(harness.options);
@@ -385,8 +385,8 @@ test("session send workflow blocks compatibility fallback when it is not configu
 
   assert.equal(sent.accepted, false);
   assert.equal(sent.status, "blocked");
-  assert.equal(sent.code, "legacy_fallback_disabled");
-  assert.ok(harness.events.includes("sendPrompt:blocked-legacy-fallback-disabled"));
+  assert.equal(sent.code, "conversation_run_bridge_disabled");
+  assert.ok(harness.events.includes("sendPrompt:blocked-conversation-run-bridge-disabled"));
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
 });
 
@@ -599,9 +599,9 @@ test("session send workflow reports invalid runtime preflight contracts", async 
       ok: true,
       runtimeReady: true,
       managedAiReady: true,
-    } as unknown as Awaited<ReturnType<LegacyConversationRunFallbackOptions["prepareSendRuntimeForSend"]>>),
+    } as unknown as Awaited<ReturnType<ConversationRunCompatibilityBridgeOptions["prepareSendRuntimeForSend"]>>),
     runConversationFromVesloWriteApi: async () => {
-      throw new Error("legacy run should not run after invalid preflight");
+      throw new Error("compatibility run should not run after invalid preflight");
     },
   });
   const workflow = createSessionSendWorkflow(harness.options);
@@ -614,7 +614,7 @@ test("session send workflow reports invalid runtime preflight contracts", async 
 
   assert.equal(sent.accepted, false);
   assert.equal(sent.status, "blocked");
-  assert.equal(sent.code, "legacy_prepare_blocked");
+  assert.equal(sent.code, "conversation_run_prepare_blocked");
   assert.ok(harness.events.includes("sendPrompt:runtime-preflight:validation-failed"));
   assert.match(harness.errors.at(-1) ?? "", /send-runtime-preparation-result/);
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
@@ -626,7 +626,7 @@ test("session send workflow can report invalid preflight contracts without block
       ok: true,
       runtimeReady: true,
       managedAiReady: true,
-    } as unknown as Awaited<ReturnType<LegacyConversationRunFallbackOptions["prepareSendRuntimeForSend"]>>),
+    } as unknown as Awaited<ReturnType<ConversationRunCompatibilityBridgeOptions["prepareSendRuntimeForSend"]>>),
     sendBoundaryValidationMode: () => "report",
   });
   const workflow = createSessionSendWorkflow(harness.options);
@@ -648,7 +648,7 @@ test("session send workflow can disable boundary validation reporting", async ()
       ok: true,
       runtimeReady: true,
       managedAiReady: true,
-    } as unknown as Awaited<ReturnType<LegacyConversationRunFallbackOptions["prepareSendRuntimeForSend"]>>),
+    } as unknown as Awaited<ReturnType<ConversationRunCompatibilityBridgeOptions["prepareSendRuntimeForSend"]>>),
     sendBoundaryValidationMode: () => "off",
   });
   const workflow = createSessionSendWorkflow(harness.options);
@@ -664,7 +664,7 @@ test("session send workflow can disable boundary validation reporting", async ()
   assert.ok(harness.actions.includes("run:sess-target"));
 });
 
-test("session send workflow strict validation blocks legacy prepare with missing workspace scope", async () => {
+test("session send workflow strict validation blocks compatibility bridge prepare with missing workspace scope", async () => {
   const targetlessWorkspace = {
     activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
     activeWorkspaceId: () => "",
@@ -675,7 +675,7 @@ test("session send workflow strict validation blocks legacy prepare with missing
     resolveSendTargetWorkspaceScope: () => null,
     workspace: targetlessWorkspace,
     runConversationFromVesloWriteApi: async () => {
-      throw new Error("legacy run should not run with invalid prepare scope");
+      throw new Error("compatibility run should not run with invalid prepare scope");
     },
   });
   const workflow = createSessionSendWorkflow(harness.options);
@@ -688,13 +688,13 @@ test("session send workflow strict validation blocks legacy prepare with missing
 
   assert.equal(sent.accepted, false);
   assert.equal(sent.status, "blocked");
-  assert.equal(sent.code, "legacy_prepare_blocked");
-  assert.ok(harness.events.includes("sendPrompt:legacy-fallback-prepare-input:validation-failed"));
-  assert.match(harness.errors.at(-1) ?? "", /legacy-fallback-prepare-input/);
+  assert.equal(sent.code, "conversation_run_prepare_blocked");
+  assert.ok(harness.events.includes("sendPrompt:conversation-run-bridge-prepare-input:validation-failed"));
+  assert.match(harness.errors.at(-1) ?? "", /conversation-run-bridge-prepare-input/);
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
 });
 
-test("session send workflow report validation logs legacy prepare scope without blocking send", async () => {
+test("session send workflow report validation logs compatibility bridge prepare scope without blocking send", async () => {
   const targetlessWorkspace = {
     activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
     activeWorkspaceId: () => "",
@@ -715,7 +715,7 @@ test("session send workflow report validation logs legacy prepare scope without 
   });
 
   assert.equal(sent.accepted, true);
-  assert.ok(harness.events.includes("sendPrompt:legacy-fallback-prepare-input:validation-failed"));
+  assert.ok(harness.events.includes("sendPrompt:conversation-run-bridge-prepare-input:validation-failed"));
   assert.ok(harness.actions.includes("run:sess-target"));
 });
 
@@ -841,7 +841,7 @@ test("session send workflow submits an existing local prompt through server subm
       throw new Error("runtime prep should not run for server submit");
     },
     runConversationFromVesloWriteApi: async () => {
-      throw new Error("legacy run should not run for server submit");
+      throw new Error("compatibility run should not run for server submit");
     },
     resolveSelectedSessionBrowseScope: (sessionId) =>
       sessionId === "sess-target"
@@ -929,7 +929,7 @@ test("session send workflow reports invalid server submit result contracts", asy
       throw new Error("runtime prep should not run after invalid server submit result");
     },
     runConversationFromVesloWriteApi: async () => {
-      throw new Error("legacy run should not run after invalid server submit result");
+      throw new Error("compatibility run should not run after invalid server submit result");
     },
     resolveSelectedSessionBrowseScope: (sessionId) =>
       sessionId === "sess-target"
@@ -1008,7 +1008,7 @@ test("session send workflow stages existing local attachments as server submit r
       throw new Error("legacy attachment routing should not run for server submit attachments");
     },
     runConversationFromVesloWriteApi: async () => {
-      throw new Error("legacy run should not run for server submit attachments");
+      throw new Error("compatibility run should not run for server submit attachments");
     },
     resolveSelectedSessionBrowseScope: (sessionId) =>
       sessionId === "sess-target"
@@ -1084,7 +1084,7 @@ test("session send workflow submits existing local compact through server submit
       throw new Error("runtime prep should not run for server compact submit");
     },
     runConversationFromVesloWriteApi: async () => {
-      throw new Error("legacy run should not run for server compact submit");
+      throw new Error("compatibility run should not run for server compact submit");
     },
     resolveSelectedSessionBrowseScope: (sessionId) =>
       sessionId === "sess-target"
@@ -1157,7 +1157,7 @@ test("session send workflow handles queued server submit results for send-now", 
       throw new Error("runtime prep should not run for queued server submit");
     },
     runConversationFromVesloWriteApi: async () => {
-      throw new Error("legacy run should not run for queued server submit");
+      throw new Error("compatibility run should not run for queued server submit");
     },
     resolveSelectedSessionBrowseScope: (sessionId) =>
       sessionId === "sess-target"
@@ -1219,7 +1219,7 @@ test("session send workflow does not clear the active composer for explicit serv
       throw new Error("runtime prep should not run for explicit server submit");
     },
     runConversationFromVesloWriteApi: async () => {
-      throw new Error("legacy run should not run for explicit server submit");
+      throw new Error("compatibility run should not run for explicit server submit");
     },
     resolveSelectedSessionBrowseScope: (sessionId) =>
       sessionId === "sess-target"
@@ -1274,7 +1274,7 @@ test("session send workflow reports failed server submit into the visible transc
       throw new Error("runtime prep should not run after failed server submit");
     },
     runConversationFromVesloWriteApi: async () => {
-      throw new Error("legacy run should not run after failed server submit");
+      throw new Error("compatibility run should not run after failed server submit");
     },
     resolveSelectedSessionBrowseScope: (sessionId) =>
       sessionId === "sess-target"
@@ -1343,7 +1343,7 @@ test("session send workflow reports remote server-submit blocks without legacy r
       directory: "/remote",
     }),
     runConversationFromVesloWriteApi: async () => {
-      throw new Error("legacy run should not run for remote server submit block");
+      throw new Error("compatibility run should not run for remote server submit block");
     },
     submitConversationFromVesloWriteApi: async (_workspaceId, _directory, input) => {
       submitCalls.push(input);
@@ -1405,7 +1405,7 @@ test("session send workflow blocks legacy run when server submit is unavailable"
   });
   const workflow = createSessionSendWorkflow(harness.options);
 
-  const sent = await workflow.sendPrompt(promptDraft("legacy fallback"), {
+  const sent = await workflow.sendPrompt(promptDraft("compatibility bridge"), {
     clientMessageId: "client-server-unavailable",
     origin: "session:normal",
     targetSessionId: "sess-target",
@@ -1430,7 +1430,7 @@ test("session send workflow blocks legacy run when server submit target is missi
       directory: "",
     }),
     runConversationFromVesloWriteApi: async () => {
-      throw new Error("legacy run should not run after server target resolution failed");
+      throw new Error("compatibility run should not run after server target resolution failed");
     },
     submitConversationFromVesloWriteApi: async () => {
       throw new Error("server submit should not be called without a workspace and directory");
@@ -1537,7 +1537,7 @@ test("session send workflow accepts first-session server submit results without 
       throw new Error("routed client should not be required before first-session server submit");
     },
     runConversationFromVesloWriteApi: async () => {
-      throw new Error("legacy run should not run after first-session server submit");
+      throw new Error("compatibility run should not run after first-session server submit");
     },
     selectedSessionId: () => null,
     setComposerDraftBySessionId: (updater) => {
@@ -1590,7 +1590,7 @@ test("session send workflow emits queued event for first-session queued submit r
       throw new Error("runtime prep should not run before first-session queued server submit");
     },
     runConversationFromVesloWriteApi: async () => {
-      throw new Error("legacy run should not run after first-session queued server submit");
+      throw new Error("compatibility run should not run after first-session queued server submit");
     },
     selectedSessionId: () => null,
     submitConversationFromVesloWriteApi: async () => null,
@@ -1656,7 +1656,7 @@ test("session send workflow preserves pre-materialized first-session terminal su
         throw new Error("runtime prep should not run before first-session terminal server submit");
       },
       runConversationFromVesloWriteApi: async () => {
-        throw new Error("legacy run should not run after first-session terminal server submit");
+        throw new Error("compatibility run should not run after first-session terminal server submit");
       },
       selectedSessionId: () => null,
       submitConversationFromVesloWriteApi: async () => null,
@@ -2004,7 +2004,7 @@ test("session send workflow sends the initial model snapshot with first server s
       };
     },
     runConversationFromVesloWriteApi: async () => {
-      throw new Error("legacy run should not run after first server submit");
+      throw new Error("compatibility run should not run after first server submit");
     },
     submitConversationFromVesloWriteApi: async () => null,
   });

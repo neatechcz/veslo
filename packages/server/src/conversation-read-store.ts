@@ -28,19 +28,50 @@ export type ConversationTranscriptSnapshot = {
   fetchedAt: number;
 };
 
+export type ConversationReadDiagnosticReason =
+  | "missing_scope"
+  | "database_missing"
+  | "schema_unavailable"
+  | "session_not_found"
+  | "malformed_json";
+
+export type ConversationReadDiagnostic = {
+  reason: ConversationReadDiagnosticReason;
+  workspaceId?: string;
+  directory?: string | null;
+  sessionId?: string | null;
+  missing?: Array<"workspaceId" | "directory" | "sessionId">;
+  dbPath?: string | null;
+  dbPathExists?: boolean;
+  directoryVariantCount?: number;
+  message?: string;
+  invalidMessageJsonRows?: number;
+  invalidPartJsonRows?: number;
+  messageRowCount?: number;
+  partRowCount?: number;
+};
+
 export type ConversationReadStore = {
   listConversations(input: {
     workspaceId: string;
     directory: string | null;
     workspace?: ConversationReadWorkspace | null;
-  }): Promise<{ workspaceId: string; items: ConversationSummary[]; source: "sqlite" | "unavailable" }>;
+  }): Promise<{
+    workspaceId: string;
+    items: ConversationSummary[];
+    source: "sqlite" | "unavailable";
+    diagnostic?: ConversationReadDiagnostic;
+  }>;
   getTranscript(input: {
     workspaceId: string;
     sessionId: string;
     limit: number;
     directory: string | null;
     workspace?: ConversationReadWorkspace | null;
-  }): Promise<ConversationTranscriptSnapshot & { source: "sqlite" | "unavailable" }>;
+  }): Promise<ConversationTranscriptSnapshot & {
+    source: "sqlite" | "unavailable";
+    diagnostic?: ConversationReadDiagnostic;
+  }>;
 };
 
 export type ConversationReadWorkspace = {

@@ -3242,6 +3242,7 @@ export default function App() {
     client,
     activeWorkspaceRuntimeReady,
     activeVisibleRuntimeActivityId,
+    mcpRefreshFingerprint: mcpLastUpdatedAt,
     developerMode,
     vesloServerClient,
     vesloServerStatus,

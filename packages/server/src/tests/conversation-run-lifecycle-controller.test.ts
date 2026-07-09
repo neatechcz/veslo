@@ -99,6 +99,7 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
   statusError: unknown = null;
   registerError: unknown = null;
   registerResult: LifecycleRunStatusResult | null = null;
+  markFailedError: unknown = null;
   readonly calls: string[] = [];
 
   async active(workspaceId: string, conversationId: string): Promise<LifecycleRunStatusResult | null> {
@@ -133,6 +134,7 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
 
   async markFailed(workspaceId: string, runId: string, reason: string): Promise<void> {
     this.calls.push(`markFailed:${workspaceId}:${runId}:${reason}`);
+    if (this.markFailedError) throw this.markFailedError;
   }
 
   async markAborted(workspaceId: string, runId: string, reason: string): Promise<void> {
@@ -854,6 +856,48 @@ test("submitRun marks lifecycle failed, schedules reconcile, and clears active g
   }]);
   expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
   expect(providerWatchCalls).toEqual([]);
+});
+
+test("submitRun traces lifecycle markFailed errors without hiding the submit failure", async () => {
+  const {
+    controller,
+    behavior,
+    lifecycle,
+    activeGatewayCalls,
+    reconcileCalls,
+    traceEntries,
+  } = controllerHarness();
+  behavior.submitError = new Error("opencode submit failed");
+  lifecycle.markFailedError = new Error("lifecycle mark failed");
+  const input = submitInput({ expectAiGatewayStart: true });
+
+  await expect(controller.submitRun(input)).rejects.toThrow("opencode submit failed");
+
+  expect(lifecycle.calls).toContain("markFailed:ws_1:run-reserved:opencode submit failed");
+  expect(input.runTrace.entries).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:lifecycle-mark-failed:error",
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "opencode submit failed",
+    message: "lifecycle mark failed",
+  }));
+  expect(traceEntries).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:lifecycle-mark-failed:error",
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "opencode submit failed",
+    message: "lifecycle mark failed",
+  }));
+  expect(reconcileCalls).toContainEqual(expect.objectContaining({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "submit-failed",
+    delayMs: 0,
+  }));
+  expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
 });
 
 test("submitRun provider-start timeout records diagnostics without failing, aborting, or clearing active gateway context", async () => {

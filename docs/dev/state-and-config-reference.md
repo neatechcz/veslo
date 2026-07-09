@@ -488,10 +488,10 @@ OpenCode config only represents runtime installation, not Microsoft grant
 ownership.
 
 Desktop workspace provisioning seeds the default Chrome MCP as a local command
-using `npx -y chrome-devtools-mcp@latest --isolated`. Existing
-`chrome-devtools` or `control-chrome` aliases are not duplicated. Known legacy
-aliases that still use `chrome-devtools-mcp --isolated` are migrated to the
-same npx fallback so they work outside the desktop sidecar PATH as well.
+using `chrome-devtools-mcp --isolated`. Existing `chrome-devtools` or
+`control-chrome` aliases are not duplicated. Known legacy aliases that still use
+`npx -y chrome-devtools-mcp@latest --isolated` or the equivalent `npm exec`
+shape are migrated to the packaged sidecar command.
 
 ## Skills Inventory
 

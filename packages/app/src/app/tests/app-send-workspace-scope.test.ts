@@ -21,11 +21,11 @@ const mutationWorkflowSource = readFileSync(
   "utf8",
 );
 
-function legacyConversationRunFallbackPrepareSource(): string {
-  const fallbackStart = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+function conversationRunCompatibilityBridgePrepareSource(): string {
+  const fallbackStart = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
   const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", fallbackStart);
   const submitStart = sendWorkflowSource.indexOf("  const submit = async", prepareStart);
-  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "legacy fallback prepare source should be present");
+  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "compatibility bridge prepare source should be present");
   return sendWorkflowSource.slice(prepareStart, submitStart);
 }
 
@@ -81,12 +81,12 @@ test("createSessionAndOpen uses preflight target only when send preflight provid
 });
 
 test("send engine startup uses the snapshotted target workspace", () => {
-  const prepareSource = legacyConversationRunFallbackPrepareSource();
+  const prepareSource = conversationRunCompatibilityBridgePrepareSource();
 
   assert.match(
     prepareSource,
     /deps\.prepareSendRuntimeForSend\("sendPrompt", input\.sendPreflight\)/,
-    "browsing-mode legacy fallback should delegate engine startup to the send runtime readiness owner",
+    "browsing-mode compatibility bridge should delegate engine startup to the send runtime readiness owner",
   );
   assert.match(
     readinessSource,
@@ -107,9 +107,9 @@ test("scoped send and session creation do not fall back to the active client", (
     "explicitly scoped sends should return null when the target workspace client is missing instead of using the active workspace client",
   );
   assert.match(
-    legacyConversationRunFallbackPrepareSource(),
+    conversationRunCompatibilityBridgePrepareSource(),
     /const c = deps\.routedClientForSendTarget\(input\.sendTargetWorkspace\);/,
-    "legacy fallback prepare should use the scoped client resolver",
+    "compatibility bridge prepare should use the scoped client resolver",
   );
   assert.match(
     createWorkflowSource,

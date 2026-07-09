@@ -65,6 +65,8 @@ type EventStreamStoreState = {
 type SseSubscription = {
   subscriptionId?: string;
   replacedExisting?: boolean;
+  activeSubscriptionCount?: number;
+  activeConnectionCount?: number;
   stream: AsyncIterable<unknown>;
   close?: () => Promise<void> | void;
   [Symbol.asyncDispose]?: () => Promise<void> | void;
@@ -1111,6 +1113,8 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             subscriptionId: sub.subscriptionId ?? null,
             replacedExisting: sub.replacedExisting === true,
             connectionKey: bridgeConnectionKey,
+            activeRustSseSubscriptions: sub.activeSubscriptionCount ?? null,
+            activeRustSseConnections: sub.activeConnectionCount ?? null,
             activeEventStreamsByWorkspace: activeEventStreamsSnapshot(),
           });
         }
@@ -1329,6 +1333,8 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     reason = "start",
   ): (() => void) => {
     const streamConnectionKey = sseConnectionKey(sourceWsId);
+    const bridgeConnectionKey = sseBridgeConnectionKey(sourceWsId);
+    const streamDescriptor = routeDescriptor(sourceWsId ? deps.routing.entry(sourceWsId) : null, c);
     const previous = activeSseStreamsByWorkspace.get(streamConnectionKey);
     const generation = ++nextSseStreamGeneration;
     if (previous) {
@@ -1341,6 +1347,10 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         reason: "replaced-existing",
         requestedReason: reason,
         replacementCount,
+        streamConnectionKey,
+        bridgeConnectionKey,
+        baseUrl: streamDescriptor.baseUrl || null,
+        directory: streamDescriptor.directory || null,
         activeEventStreamsByWorkspace: activeEventStreamsSnapshot(),
       });
       previous.cleanup();
@@ -1350,9 +1360,14 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       workspaceId: sourceWsId || null,
       generation,
       reason,
+      streamConnectionKey,
+      bridgeConnectionKey,
+      baseUrl: streamDescriptor.baseUrl || null,
+      directory: streamDescriptor.directory || null,
       activeEventStreamsByWorkspace: activeEventStreamsSnapshot(),
     });
 
+    const startedAt = Date.now();
     const innerCleanup = createSseStream(sourceWsId, c, generation);
     let cleaned = false;
     const cleanup = () => {
@@ -1366,6 +1381,11 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         workspaceId: sourceWsId || null,
         generation,
         staleGeneration: current ? current.generation !== generation : true,
+        streamConnectionKey,
+        bridgeConnectionKey,
+        baseUrl: streamDescriptor.baseUrl || null,
+        directory: streamDescriptor.directory || null,
+        durationMs: Date.now() - startedAt,
         activeEventStreamsByWorkspace: activeEventStreamsSnapshot(),
       });
       innerCleanup();
@@ -1373,7 +1393,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     activeSseStreamsByWorkspace.set(streamConnectionKey, {
       generation,
       cleanup,
-      startedAt: Date.now(),
+      startedAt,
     });
     return cleanup;
   };

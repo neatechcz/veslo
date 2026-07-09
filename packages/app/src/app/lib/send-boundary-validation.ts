@@ -128,7 +128,7 @@ const sendPreflightContextSummarySchema = z.object({
   targetWorkspace: sendTargetWorkspaceSchema.nullable().optional(),
 }).passthrough();
 
-const legacyFallbackPrepareInputSchema = z.object({
+const conversationRunBridgePrepareInputSchema = z.object({
   traceId: nonEmptyStringSchema,
   targetWorkspaceId: nonEmptyStringSchema,
   sendPreflight: sendPreflightContextSummarySchema,
@@ -141,7 +141,7 @@ const sendCorrelationSchema = z.object({
   source: nullableStringSchema,
 }).passthrough();
 
-const legacyFallbackSubmitInputSchema = z.object({
+const conversationRunBridgeSubmitInputSchema = z.object({
   traceId: nonEmptyStringSchema,
   sessionID: nonEmptyStringSchema,
   targetWorkspaceId: nonEmptyStringSchema,
@@ -492,23 +492,23 @@ export function validateConversationSubmitRequest(
   });
 }
 
-export function validateLegacyFallbackPrepareInput<T>(
+export function validateConversationRunBridgePrepareInput<T>(
   value: T,
   options: Omit<SendBoundaryValidationOptions, "schema">,
 ): SendBoundaryValidationResult<T> {
-  return validateSendBoundary(legacyFallbackPrepareInputSchema, value, {
+  return validateSendBoundary(conversationRunBridgePrepareInputSchema, value, {
     ...options,
-    schema: "legacy-fallback-prepare-input",
+    schema: "conversation-run-bridge-prepare-input",
   });
 }
 
-export function validateLegacyFallbackSubmitInput<T>(
+export function validateConversationRunBridgeSubmitInput<T>(
   value: T,
   options: Omit<SendBoundaryValidationOptions, "schema">,
 ): SendBoundaryValidationResult<T> {
-  return validateSendBoundary(legacyFallbackSubmitInputSchema, value, {
+  return validateSendBoundary(conversationRunBridgeSubmitInputSchema, value, {
     ...options,
-    schema: "legacy-fallback-submit-input",
+    schema: "conversation-run-bridge-submit-input",
   });
 }
 

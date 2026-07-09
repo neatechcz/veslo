@@ -257,8 +257,8 @@ test("session flow owners keep UI progress state behind narrow app adapters", ()
   );
   assert.doesNotMatch(
     sendWorkflowDeps,
-    /\blegacyConversationRunFallback\b|\bprepareSendRuntimeForSend\b/,
-    "normal send workflow wiring must not receive legacy run fallback or frontend runtime preparation",
+    /\bconversationRunCompatibilityBridge\b|\bprepareSendRuntimeForSend\b/,
+    "normal send workflow wiring must not receive conversation run compatibility bridge or frontend runtime preparation",
   );
   assert.match(
     source,

@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const userArgs = process.argv.slice(2);
 const strict = userArgs.includes("--strict");
 const help = userArgs.includes("--help") || userArgs.includes("-h");
-const forwardedArgs = userArgs.filter((arg) => arg !== "--strict");
+const forwardedArgs = userArgs.filter((arg) => arg !== "--strict" && arg !== "--");
 
 if (help) {
   console.log(`Usage:

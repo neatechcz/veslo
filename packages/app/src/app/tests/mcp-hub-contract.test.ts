@@ -143,6 +143,16 @@ test("installed MCP server mappings preserve owner metadata from Veslo server", 
   assert.match(sessionCapabilitiesStoreSource, /owner:\s*entry\.owner,/);
 });
 
+test("session right-sidebar MCP capabilities refresh after MCP list updates", () => {
+  const sessionCapabilitiesSetup =
+    appSource.match(/const sessionCapabilitiesStore = createSessionCapabilitiesStore\(\{[\s\S]*?\n  \}\);/)?.[0] ?? "";
+
+  assert.match(appSource, /const \[mcpLastUpdatedAt, setMcpLastUpdatedAt\] = createSignal<number \| null>\(null\)/);
+  assert.match(sessionCapabilitiesSetup, /mcpRefreshFingerprint:\s*mcpLastUpdatedAt/);
+  assert.match(sessionCapabilitiesStoreSource, /mcpRefreshFingerprint\?:\s*Accessor<string \| number \| null \| undefined>/);
+  assert.match(sessionCapabilitiesStoreSource, /mcpRefreshFingerprint:\s*deps\.mcpRefreshFingerprint\?\.\(\) \?\? ""/);
+});
+
 test("mcp page displays Microsoft SharePoint from catalog name and provider metadata", () => {
   const pageConversionSource =
     mcpSource.match(/const orgCatalogQuickConnect[\s\S]*?\}\)\),\s*\);/)?.[0] ?? "";

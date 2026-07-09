@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
 use crate::engine::doctor::resolve_engine_path;
@@ -16,6 +17,8 @@ use crate::types::ExecResult;
 use crate::veslo_server::manager::VesloServerManager;
 use rusqlite::{params, Connection};
 use tauri::{AppHandle, Manager, State};
+
+static SEND_WORKFLOW_TRACE_WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(serde::Serialize)]
 pub struct CacheResetResult {
@@ -334,12 +337,22 @@ fn resolve_send_workflow_trace_mirror_file() -> Option<PathBuf> {
     None
 }
 
+fn send_workflow_trace_write_lock() -> &'static Mutex<()> {
+    SEND_WORKFLOW_TRACE_WRITE_LOCK.get_or_init(|| Mutex::new(()))
+}
+
 fn append_send_workflow_trace_line(path: &Path, line: &str) {
+    let _guard = match send_workflow_trace_write_lock().lock() {
+        Ok(guard) => guard,
+        Err(_) => return,
+    };
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
     if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(file, "{}", line);
+        let _ = file.write_all(line.as_bytes());
+        let _ = file.write_all(b"\n");
+        let _ = file.flush();
     }
 }
 
@@ -641,16 +654,50 @@ pub fn read_obsidian_mirror_file(
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_obsidian_mirror_relative_path, sanitize_obsidian_workspace_id,
-        update_session_directory_in_db,
+        append_send_workflow_trace_line, normalize_obsidian_mirror_relative_path,
+        sanitize_obsidian_workspace_id, update_session_directory_in_db,
     };
     use rusqlite::Connection;
+    use std::fs;
     use std::path::PathBuf;
+    use std::sync::Arc;
+    use tempfile::tempdir;
 
     #[test]
     fn sanitize_workspace_id_collapses_separators() {
         let out = sanitize_obsidian_workspace_id(" Team Alpha / Worker #1 ");
         assert_eq!(out, "team-alpha-worker-1");
+    }
+
+    #[test]
+    fn send_workflow_trace_append_keeps_concurrent_writes_line_delimited() {
+        let dir = tempdir().expect("temp dir");
+        let path = Arc::new(dir.path().join("send-workflow-trace.ui.ndjson"));
+        let mut handles = Vec::new();
+
+        for thread_id in 0..8 {
+            let path = Arc::clone(&path);
+            handles.push(std::thread::spawn(move || {
+                for item_id in 0..25 {
+                    append_send_workflow_trace_line(
+                        &path,
+                        &format!("{{\"thread\":{thread_id},\"item\":{item_id}}}"),
+                    );
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().expect("writer thread should finish");
+        }
+
+        let raw = fs::read_to_string(path.as_ref()).expect("trace file");
+        let lines: Vec<&str> = raw.lines().collect();
+        assert_eq!(lines.len(), 200);
+        assert!(lines
+            .iter()
+            .all(|line| line.starts_with('{') && line.ends_with('}')));
+        assert!(lines.iter().all(|line| !line.contains("}{")));
     }
 
     #[test]

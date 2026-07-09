@@ -91,6 +91,9 @@ type Logger = {
   child: (component: string, attributes?: LogAttributes) => LoggerChild;
 };
 
+const OPENCODE_EVENT_MAX_LISTENERS_ENV = "VESLO_OPENCODE_EVENT_MAX_LISTENERS";
+const DEFAULT_OPENCODE_EVENT_MAX_LISTENERS = 128;
+
 type LogEvent = {
   time: number;
   level: LogLevel;
@@ -2380,6 +2383,7 @@ function selectedProcessEnvForDiag(env: NodeJS.ProcessEnv): LogAttributes {
   const keys = [
     "APPDATA",
     "BUN_CONFIG_DNS_RESULT_ORDER",
+    "BUN_INSPECT_PRELOAD",
     "BUN_OPTIONS",
     "HOME",
     "LOCALAPPDATA",
@@ -2391,6 +2395,7 @@ function selectedProcessEnvForDiag(env: NodeJS.ProcessEnv): LogAttributes {
     "USERPROFILE",
     "VESLO_APP_DATA_DIR",
     "VESLO_APP_LOCAL_DATA_DIR",
+    OPENCODE_EVENT_MAX_LISTENERS_ENV,
     "VESLO_DATA_DIR",
     "WSLENV",
     "XDG_CACHE_HOME",
@@ -2403,6 +2408,55 @@ function selectedProcessEnvForDiag(env: NodeJS.ProcessEnv): LogAttributes {
     if (typeof value === "string" && value.length > 0) out[key] = value;
   }
   return out;
+}
+
+function resolveOpencodeEventMaxListeners(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env[OPENCODE_EVENT_MAX_LISTENERS_ENV]?.trim();
+  if (!raw) return DEFAULT_OPENCODE_EVENT_MAX_LISTENERS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_OPENCODE_EVENT_MAX_LISTENERS;
+  return Math.floor(parsed);
+}
+
+function normalizeRuntimeOptionPath(filePath: string): string {
+  return filePath.replace(/\\/g, "/");
+}
+
+function quoteRuntimeOptionPath(filePath: string): string {
+  const normalized = normalizeRuntimeOptionPath(filePath);
+  if (!/\s/.test(normalized)) return normalized;
+  return `"${normalized.replace(/"/g, '\\"')}"`;
+}
+
+function appendRuntimeOption(current: string | undefined, option: string): string {
+  const existing = current?.trim();
+  return existing ? `${existing} ${option}` : option;
+}
+
+async function ensureOpencodeListenerLimitPreload(options: {
+  configDir?: string;
+  workspace: string;
+  limit: number;
+}): Promise<string> {
+  const preloadDir = join(options.configDir ?? join(options.workspace, ".veslo", "opencode-runtime"), "veslo-preload");
+  await mkdir(preloadDir, { recursive: true });
+  const preloadPath = join(preloadDir, "opencode-listener-limit.cjs");
+  const source = [
+    "'use strict';",
+    "try {",
+    "  const events = require('node:events');",
+    `  const fallbackLimit = ${options.limit};`,
+    `  const configured = Number(process.env.${OPENCODE_EVENT_MAX_LISTENERS_ENV} || fallbackLimit);`,
+    "  const limit = Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : fallbackLimit;",
+    "  if (typeof events.setMaxListeners === 'function') events.setMaxListeners(limit);",
+    "  events.defaultMaxListeners = limit;",
+    "} catch {",
+    "  // Listener-limit preload must never block OpenCode startup.",
+    "}",
+    "",
+  ].join("\n");
+  await writeFile(preloadPath, source, "utf8");
+  return preloadPath;
 }
 
 /**
@@ -2611,6 +2665,33 @@ async function startOpencode(options: {
     args.push("--cors", origin);
   }
 
+  const opencodeEventMaxListeners = resolveOpencodeEventMaxListeners(process.env);
+  let listenerLimitPreloadPath: string | null = null;
+  try {
+    listenerLimitPreloadPath = await ensureOpencodeListenerLimitPreload({
+      configDir: options.configDir,
+      workspace: options.workspace,
+      limit: opencodeEventMaxListeners,
+    });
+  } catch (error) {
+    options.logger.warn(
+      "unable to prepare OpenCode listener-limit preload",
+      {
+        workspace: options.workspace,
+        configDir: options.configDir ?? null,
+        limit: opencodeEventMaxListeners,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "opencode",
+    );
+  }
+  const listenerLimitPreloadOption = listenerLimitPreloadPath
+    ? quoteRuntimeOptionPath(listenerLimitPreloadPath)
+    : null;
+  const listenerLimitPreloadEnvPath = listenerLimitPreloadPath
+    ? normalizeRuntimeOptionPath(listenerLimitPreloadPath)
+    : null;
+
   const env = {
     ...process.env,
     OPENCODE_CLIENT: "veslo-orchestrator",
@@ -2629,6 +2710,14 @@ async function startOpencode(options: {
     ...(options.password ? { OPENCODE_SERVER_PASSWORD: options.password } : {}),
     ...(options.vesloServerToken ? { [VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV]: options.vesloServerToken } : {}),
     ...(options.configDir ? { OPENCODE_CONFIG_DIR: options.configDir } : {}),
+    [OPENCODE_EVENT_MAX_LISTENERS_ENV]: String(opencodeEventMaxListeners),
+    ...(listenerLimitPreloadOption
+      ? {
+          NODE_OPTIONS: appendRuntimeOption(process.env.NODE_OPTIONS, `--require=${listenerLimitPreloadOption}`),
+          BUN_OPTIONS: appendRuntimeOption(process.env.BUN_OPTIONS, `--preload=${listenerLimitPreloadOption}`),
+        }
+      : {}),
+    ...(listenerLimitPreloadEnvPath ? { BUN_INSPECT_PRELOAD: listenerLimitPreloadEnvPath } : {}),
     OPENCODE_HOT_RELOAD: options.hotReload.enabled ? "1" : "0",
     OPENCODE_HOT_RELOAD_DEBOUNCE_MS: String(options.hotReload.debounceMs),
     OPENCODE_HOT_RELOAD_COOLDOWN_MS: String(options.hotReload.cooldownMs),
@@ -2752,6 +2841,8 @@ async function startOpencode(options: {
         port: options.port,
         displayCommand: launch.displayCommand,
         connectHost: launch.connectHost,
+        opencodeEventMaxListeners,
+        listenerLimitPreloadPath,
       },
       "sandbox",
     );
@@ -2787,6 +2878,8 @@ async function startOpencode(options: {
         childKind,
         bindHost: options.bindHost,
         port: options.port,
+        opencodeEventMaxListeners,
+        listenerLimitPreloadPath,
       },
       "opencode",
     );
@@ -2810,6 +2903,8 @@ async function startOpencode(options: {
       effectiveSandboxBackend: sandbox?.name ?? "none",
       sandboxMode,
       sandboxFallbackReason,
+      opencodeEventMaxListeners,
+      listenerLimitPreloadPath,
     },
     "opencode",
   );
@@ -2843,6 +2938,8 @@ async function startOpencode(options: {
         effectiveSandboxBackend: sandbox?.name ?? "none",
         sandboxMode,
         sandboxFallbackReason,
+        opencodeEventMaxListeners,
+        listenerLimitPreloadPath,
       })}`,
     );
   }
@@ -2861,6 +2958,8 @@ async function startOpencode(options: {
     sandboxFallbackReason,
     sandboxBackend: sandbox?.name ?? "none",
     displayCommand: launchDiag?.displayCommand ?? null,
+    opencodeEventMaxListeners,
+    listenerLimitPreloadPath,
   });
 
   prefixStream(child.stdout, "opencode", "stdout", options.logger, child.pid ?? undefined);

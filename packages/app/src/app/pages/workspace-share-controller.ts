@@ -23,7 +23,7 @@ export type WorkspaceShareField = {
   hint?: string;
 };
 
-export type WorkspaceShareClient = Pick<VesloServerClient, "exportWorkspace">;
+type WorkspaceShareClient = Pick<VesloServerClient, "exportWorkspace">;
 
 export type WorkspaceShareCreateClient = (input: {
   baseUrl: string;
@@ -85,7 +85,7 @@ export type WorkspaceShareController = {
   publishSkillsSetLink: () => Promise<void>;
 };
 
-export const resolveWorkspaceShare = (
+const resolveWorkspaceShare = (
   workspaces: readonly WorkspaceInfo[],
   workspaceId: string | null,
 ) => {
@@ -225,7 +225,7 @@ export const resolveShareFields = ({
   ];
 };
 
-export const resolveShareNote = ({
+const resolveShareNote = ({
   workspace,
   engineRuntime,
   t,
@@ -271,7 +271,7 @@ export const resolveShareServiceDisabledReason = ({
   return null;
 };
 
-export const resolveExportDisabledReason = ({
+const resolveExportDisabledReason = ({
   workspace,
   isDesktopRuntime,
   exportWorkspaceBusy,

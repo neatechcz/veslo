@@ -4,8 +4,8 @@ import { recordPerfLog } from "../lib/perf-log";
 import type { WorkspaceDisplay } from "../types";
 import { computeWorkspaceSwitchOverlayHoldMs } from "../utils/workspace-switch-overlay";
 
-export const WORKSPACE_SWITCH_OVERLAY_DELAY_MS = 250;
-export const WORKSPACE_SWITCH_OVERLAY_MIN_VISIBLE_MS = 350;
+const WORKSPACE_SWITCH_OVERLAY_DELAY_MS = 250;
+const WORKSPACE_SWITCH_OVERLAY_MIN_VISIBLE_MS = 350;
 
 type WorkspaceSwitchOverlayStateOptions = {
   booting: () => boolean;
