@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  AI_ACCESS_LOADING_MESSAGE,
+  AI_ACCESS_LOADING_MESSAGE_KEY,
   AI_ACCESS_INVALID_MESSAGE,
   AI_ACCESS_NOT_CONFIGURED_MESSAGE,
   DEFAULT_MANAGED_AI_GATEWAY_BASE_URL,
@@ -9,6 +11,7 @@ import {
   extractManagedApiKey,
   formatManagedAiAccessConfig,
   hasUsableManagedAiRuntimeConfig,
+  isAiAccessLoadingMessage,
   type ManagedAiAccessProfile,
   resolveManagedAiAccess,
   resolveManagedAiAccessBundleState,
@@ -58,6 +61,36 @@ const managedCodexProfile: ManagedAiAccessProfile = {
   updatedAt: null,
 };
 
+type SendWorkflowTraceTestWindow = {
+  __vesloSendWorkflowTraceEnabled?: boolean;
+  __vesloSendWorkflowTrace?: Array<Record<string, unknown>>;
+  __vesloSendWorkflowTraceSeq?: number;
+};
+
+function withSendWorkflowTraceWindow(
+  run: (target: SendWorkflowTraceTestWindow) => void | Promise<void>,
+) {
+  return async () => {
+    const root = globalThis as unknown as Record<string, unknown>;
+    const hadWindow = Object.prototype.hasOwnProperty.call(root, "window");
+    const previousWindow = root.window;
+    const target: SendWorkflowTraceTestWindow = {
+      __vesloSendWorkflowTraceEnabled: true,
+    };
+    root.window = target;
+
+    try {
+      await run(target);
+    } finally {
+      if (!hadWindow) {
+        Reflect.deleteProperty(root, "window");
+      } else {
+        root.window = previousWindow;
+      }
+    }
+  };
+}
+
 test("desktop managed AI defaults to the owned server gateway", () => {
   assert.equal(DEFAULT_MANAGED_AI_GATEWAY_BASE_URL, "https://ai.veslo.work");
 });
@@ -86,6 +119,15 @@ test("resolveManagedAiAccess returns a configured profile for valid admin policy
     },
     reason: null,
   });
+});
+
+test("isAiAccessLoadingMessage accepts localized loading copy", () => {
+  const tr = (key: string) =>
+    key === AI_ACCESS_LOADING_MESSAGE_KEY ? "Načítám konfiguraci přístupu k AI." : key;
+
+  assert.equal(isAiAccessLoadingMessage(AI_ACCESS_LOADING_MESSAGE), true);
+  assert.equal(isAiAccessLoadingMessage("Načítám konfiguraci přístupu k AI.", tr), true);
+  assert.equal(isAiAccessLoadingMessage("AI access blocked", tr), false);
 });
 
 test("resolveManagedAiAccess reports unconfigured access for missing or disabled records", () => {
@@ -521,6 +563,26 @@ test("formatManagedAiAccessConfig can route provider calls through an engine-rea
     "http://engine-host.internal:8787/ai-gateway/providers/codex_oauth/v1",
   );
 });
+
+test(
+  "formatManagedAiAccessConfig does not trace pure provider routing formatting",
+  withSendWorkflowTraceWindow((target) => {
+    const content = formatManagedAiAccessConfig("{}", {
+      profile: managedCodexProfile,
+      serverBaseUrl: "http://127.0.0.1:8787",
+      engineBaseUrl: "http://engine-host.internal:8787",
+      serverClientToken: "veslo-client-token",
+      gatewayAccessToken: "gateway-access-token",
+    });
+
+    assert.match(content, /ai-gateway\/providers\/codex_oauth\/v1/);
+    const events = (target.__vesloSendWorkflowTrace ?? []).map((entry) => String(entry.event ?? ""));
+    assert.deepEqual(
+      events.filter((event) => event.startsWith("apply-gateway-provider-routing:")),
+      [],
+    );
+  }),
+);
 
 test("resolveManagedAiGatewayBaseUrl uses managed AI gateway instead of remote Veslo URL in desktop remote workspaces", () => {
   assert.equal(

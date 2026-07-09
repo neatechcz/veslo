@@ -43,6 +43,49 @@ describe("session transcript prefetch core", () => {
     expect(result.items).toEqual([]);
   });
 
+  test("keeps scoped session refs with duplicate ids isolated by directory and ignores ambiguous legacy fallback", async () => {
+    const calls: Array<{ sessionId: string; directory: string | null | undefined }> = [];
+    const store = createSessionTranscriptPrefetchStore({
+      loadTranscript: async ({ workspaceId, sessionId, directory }) => {
+        calls.push({ sessionId, directory });
+        return {
+          workspaceId,
+          sessionId,
+          directory,
+          messages: [],
+          partsByMessageId: {},
+        };
+      },
+      autoPrefetchOnInterest: false,
+    });
+
+    const result = await store.updateInterest({
+      workspaceId: "ws_local",
+      clickedSession: { sessionId: "shared", directory: "/work/a" },
+      selectedSession: { sessionId: "shared", directory: "/work/b" },
+      clickedSessionId: null,
+      selectedSessionId: null,
+      expandedSubagentSessions: [{ sessionId: "child", directory: "/work/a" }],
+      expandedSubagentSessionIds: [],
+      loadedTopLevelSessions: [{ sessionId: "shared", directory: "/work/c" }],
+      loadedTopLevelSessionIds: ["shared"],
+      sessionDirectoriesById: {
+        shared: "/work/d",
+      },
+      limit: 140,
+    });
+
+    expect(result.queuedSessionIds).toEqual(["shared", "shared", "child", "shared"]);
+    await store.prefetchWorkspace("ws_local");
+
+    expect(calls).toEqual([
+      { sessionId: "shared", directory: "/work/a" },
+      { sessionId: "shared", directory: "/work/b" },
+      { sessionId: "child", directory: "/work/a" },
+      { sessionId: "shared", directory: "/work/c" },
+    ]);
+  });
+
   test("drains the whole loaded set instead of stopping after a prefix", async () => {
     const calls: string[] = [];
     const store = createSessionTranscriptPrefetchStore({
@@ -72,6 +115,37 @@ describe("session transcript prefetch core", () => {
     expect(calls).toEqual(["sess-a", "sess-b", "sess-c", "sess-d", "sess-e"]);
     expect(store.debugQueue("ws_local")).toEqual([]);
     expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-e" })?.sessionId).toBe("sess-e");
+  });
+
+  test("preserves unavailable read diagnostics through getOrLoad", async () => {
+    const store = createSessionTranscriptPrefetchStore({
+      loadTranscript: async ({ workspaceId, sessionId }) => ({
+        workspaceId,
+        sessionId,
+        messages: [],
+        partsByMessageId: {},
+        source: "unavailable" as const,
+        diagnostic: {
+          reason: "database_missing" as const,
+          workspaceId,
+          sessionId,
+          dbPath: "/missing/opencode.db",
+          dbPathExists: false,
+        },
+      }),
+      autoPrefetchOnInterest: false,
+    });
+
+    const snapshot = await store.getOrLoad({ workspaceId: "ws_local", sessionId: "sess-a", limit: 140 });
+
+    expect(snapshot.source).toBe("unavailable");
+    expect(snapshot.diagnostic).toEqual({
+      reason: "database_missing",
+      workspaceId: "ws_local",
+      sessionId: "sess-a",
+      dbPath: "/missing/opencode.db",
+      dbPathExists: false,
+    });
   });
 
   test("drops a failed background load and keeps draining later queue items", async () => {
@@ -210,6 +284,53 @@ describe("session transcript prefetch core", () => {
       store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a", directory: "/work/b" })?.directory,
     ).toBe("/work/b");
     expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a" })).toBeNull();
+  });
+
+  test("queues scoped duplicate session ids by directory from sidebar refs", async () => {
+    const calls: Array<{ sessionId: string; directory: string | null | undefined }> = [];
+    const store = createSessionTranscriptPrefetchStore({
+      loadTranscript: async ({ workspaceId, sessionId, directory }) => {
+        calls.push({ sessionId, directory });
+        return {
+          workspaceId,
+          sessionId,
+          messages: [{ directory }],
+          partsByMessageId: {},
+        };
+      },
+      autoPrefetchOnInterest: false,
+    });
+
+    const interest = await store.updateInterest({
+      workspaceId: "ws_local",
+      clickedSessionId: "sess-a",
+      clickedSession: { sessionId: "sess-a", directory: "/work/b" },
+      selectedSessionId: null,
+      expandedSubagentSessionIds: [],
+      loadedTopLevelSessionIds: ["sess-a"],
+      loadedTopLevelSessions: [
+        { sessionId: "sess-a", directory: "/work/a" },
+        { sessionId: "sess-a", directory: "/work/b" },
+      ],
+      sessionDirectoriesById: {
+        "sess-a": "/work/a",
+      },
+      limit: 140,
+    });
+
+    expect(interest.queuedSessionIds).toEqual(["sess-a", "sess-a"]);
+    await store.prefetchWorkspace("ws_local");
+
+    expect(calls).toEqual([
+      { sessionId: "sess-a", directory: "/work/b" },
+      { sessionId: "sess-a", directory: "/work/a" },
+    ]);
+    expect(
+      store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a", directory: "/work/a" })?.directory,
+    ).toBe("/work/a");
+    expect(
+      store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a", directory: "/work/b" })?.directory,
+    ).toBe("/work/b");
   });
 
   test("evicts least-recently-accessed entries when workspace cache is bounded", async () => {

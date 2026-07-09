@@ -5,21 +5,29 @@ function redactIfPresent(value: unknown): unknown {
   return value.trim() ? REDACTED_SECRET_VALUE : value;
 }
 
-export function sanitizeRuntimePayloadForLogs<T extends Record<string, any>>(payload: T): T {
+function recordFromValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+export function sanitizeRuntimePayloadForLogs<T extends Record<string, unknown>>(payload: T): T {
+  const opencode = recordFromValue(payload.opencode);
+  const veslo = recordFromValue(payload.veslo);
   return {
     ...payload,
     opencode: payload.opencode
       ? {
-          ...payload.opencode,
-          password: redactIfPresent(payload.opencode.password),
+          ...opencode,
+          password: redactIfPresent(opencode.password),
         }
       : payload.opencode,
     veslo: payload.veslo
       ? {
-          ...payload.veslo,
-          token: redactIfPresent(payload.veslo.token),
-          hostToken: redactIfPresent(payload.veslo.hostToken),
+          ...veslo,
+          token: redactIfPresent(veslo.token),
+          hostToken: redactIfPresent(veslo.hostToken),
         }
       : payload.veslo,
-  };
+  } as T;
 }

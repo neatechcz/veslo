@@ -7,8 +7,11 @@ const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const mcpSource = readFileSync(new URL("../pages/mcp.tsx", import.meta.url), "utf8");
 const workflowSource = readFileSync(new URL("../context/mcp-connection-workflow.ts", import.meta.url), "utf8");
 const mcpRefreshSource = readFileSync(new URL("../lib/mcp-server-refresh.ts", import.meta.url), "utf8");
+const sessionCapabilitiesStoreSource =
+  readFileSync(new URL("../context/session-capabilities-store.ts", import.meta.url), "utf8");
 const authModalSource = readFileSync(new URL("../components/mcp-auth-modal.tsx", import.meta.url), "utf8");
 const constantsSource = readFileSync(new URL("../constants.ts", import.meta.url), "utf8");
+const typesSource = readFileSync(new URL("../types.ts", import.meta.url), "utf8");
 const enLocaleSource = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
 const csLocaleSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
 const zhLocaleSource = readFileSync(new URL("../../i18n/locales/zh.ts", import.meta.url), "utf8");
@@ -39,7 +42,7 @@ const microsoftSharePointCatalogItem = {
 
 test("extensions store wires hub mcp auth and actions", () => {
   const refreshHubMcpSource = extensionsSource.match(/async function refreshHubMcp[\s\S]*?async function refreshHubSkills/)?.[0] ?? "";
-  const noAuthBranchSource = refreshHubMcpSource.match(/if \(!denToken \|\| !denOrgId\)\s*\{[\s\S]*?return;/)?.[0] ?? "";
+  const noAuthBranchSource = refreshHubMcpSource.match(/if \(!denApiBase \|\| !denToken \|\| !denOrgId\)\s*\{[\s\S]*?return;/)?.[0] ?? "";
 
   assert.match(extensionsSource, /readDenAuth\(\)/);
   assert.match(extensionsSource, /vesloClient\.mcp\.listHub/);
@@ -72,8 +75,48 @@ test("extensions store retries hub mcp after Veslo server auth context becomes r
   assert.match(autoRefreshSource, /options\.vesloServerStatus\(\) === "connected"/);
   assert.match(autoRefreshSource, /vesloCapabilities\?\.hub\?\.mcp\?\.read/);
   assert.match(autoRefreshSource, /readDenAuth\(\)/);
-  assert.match(autoRefreshSource, /!root \|\| !canUseVesloServer \|\| !denToken \|\| !denOrgId/);
+  assert.match(autoRefreshSource, /!root \|\| !canUseVesloServer \|\| !denApiBase \|\| !denToken \|\| !denOrgId/);
   assert.match(autoRefreshSource, /refreshHubMcp\(\)\.catch/);
+});
+
+test("forced hub MCP refresh queues behind in-flight refreshes", () => {
+  const refreshHubMcpSource = extensionsSource.match(/async function refreshHubMcp[\s\S]*?createEffect/)?.[0] ?? "";
+
+  assert.match(extensionsSource, /let refreshHubMcpForcePending = false/);
+  assert.match(refreshHubMcpSource, /if \(refreshHubMcpInFlight\) \{[\s\S]*optionsOverride\?\.force[\s\S]*refreshHubMcpForcePending = true/);
+  assert.match(refreshHubMcpSource, /hubMcpLoaded = false/);
+  assert.match(refreshHubMcpSource, /if \(refreshHubMcpForcePending && !refreshHubMcpAborted\) \{[\s\S]*void refreshHubMcp\(\{ force: true \}\)/);
+});
+
+test("hub MCP requests and server-managed logout carry the Den API base context", () => {
+  const refreshHubMcpSource = extensionsSource.match(/async function refreshHubMcp[\s\S]*?async function refreshHubSkills/)?.[0] ?? "";
+  const installHubMcpSource =
+    extensionsSource.match(/async function installHubMcp[\s\S]*?const isPluginInstalledByName/)?.[0] ?? "";
+  const runtimeRefreshSource =
+    workflowSource.match(/refreshRuntimeTokens: async[\s\S]*?setStatuses: deps\.setMcpStatuses/)?.[0] ?? "";
+  const logoutSource = workflowSource.match(/async function logoutMcpAuth[\s\S]*?async function removeMcp/)?.[0] ?? "";
+
+  assert.match(refreshHubMcpSource, /const denApiBase = denAuth\?\.denApiBase\?\.trim\(\) \?\? ""/);
+  assert.match(refreshHubMcpSource, /vesloClient\.mcp\.listHub\(\{\s*denApiBase,\s*denToken,\s*denOrgId,/);
+  assert.match(installHubMcpSource, /vesloClient\.mcp\.installHub\(vesloWorkspaceId, trimmed, \{\s*denApiBase,\s*denToken,\s*denOrgId,/);
+  assert.match(runtimeRefreshSource, /vesloClient\.mcp\.refreshRuntimeToken\(vesloWorkspaceId, name, \{\s*denApiBase,\s*denToken,\s*denOrgId,/);
+  assert.match(logoutSource, /vesloClient\.mcp\.logoutAuth\([\s\S]*denApiBase && denToken && denOrgId/);
+});
+
+test("hub MCP provider connection status stays separate from runtime status", () => {
+  const refreshHubMcpSource = extensionsSource.match(/async function refreshHubMcp[\s\S]*?async function refreshHubSkills/)?.[0] ?? "";
+  const pageAuthSource = mcpSource.match(/const providerAuthConnected[\s\S]*?const resolveStatus/)?.[0] ?? "";
+  const rowAuthSource = mcpSource.match(/const authConnected = \(\)[\s\S]*?const Icon = serviceIcon/)?.[0] ?? "";
+  const logoutSource = mcpSource.match(/const confirmLogout = async \(\) => \{[\s\S]*?\n  \};/)?.[0] ?? "";
+
+  assert.match(typesSource, /export type HubMcpConnectionStatus = \{/);
+  assert.match(constantsSource, /connection\?:\s*HubMcpItem\["connection"\];/);
+  assert.match(refreshHubMcpSource, /connection:\s*entry\.connection,/);
+  assert.match(pageAuthSource, /hubCard\.connection\.connected/);
+  assert.match(rowAuthSource, /authConnected\(\) === false/);
+  assert.match(rowAuthSource, /authConnected\(\) === true/);
+  assert.match(rowAuthSource, /status\(\) !== "connected"/);
+  assert.match(logoutSource, /props\.refreshHubMcp\(\{\s*force:\s*true\s*\}\)/);
 });
 
 test("mcp page renders hub mcp catalog entries after built-in quick connect", () => {
@@ -82,6 +125,32 @@ test("mcp page renders hub mcp catalog entries after built-in quick connect", ()
   assert.match(mcpSource, /props\.installHubMcp/);
   assert.match(mcpSource, /props\.quickConnect/);
   assert.match(mcpSource, /data-testid="mcp-page"/);
+});
+
+test("built-in quick connect status checks configured aliases", () => {
+  const quickConnectStatusSource =
+    mcpSource.match(/const quickConnectStatus = \(entry: McpDirectoryInfo\) => \{[\s\S]*?\n  \};/)?.[0] ?? "";
+
+  assert.match(constantsSource, /aliases\?:\s*string\[\];/);
+  assert.match(constantsSource, /id:\s*"chrome-devtools"[\s\S]*aliases:\s*\["control-chrome"\]/);
+  assert.match(quickConnectStatusSource, /entry\.aliases \?\? \[\]/);
+  assert.match(quickConnectStatusSource, /props\.mcpStatuses\[key\]/);
+});
+
+test("installed MCP server mappings preserve owner metadata from Veslo server", () => {
+  assert.match(typesSource, /export type McpServerEntry = \{[\s\S]*owner\?:\s*ResourceOwner;/);
+  assert.match(mcpRefreshSource, /owner:\s*entry\.owner,/);
+  assert.match(sessionCapabilitiesStoreSource, /owner:\s*entry\.owner,/);
+});
+
+test("session right-sidebar MCP capabilities refresh after MCP list updates", () => {
+  const sessionCapabilitiesSetup =
+    appSource.match(/const sessionCapabilitiesStore = createSessionCapabilitiesStore\(\{[\s\S]*?\n  \}\);/)?.[0] ?? "";
+
+  assert.match(appSource, /const \[mcpLastUpdatedAt, setMcpLastUpdatedAt\] = createSignal<number \| null>\(null\)/);
+  assert.match(sessionCapabilitiesSetup, /mcpRefreshFingerprint:\s*mcpLastUpdatedAt/);
+  assert.match(sessionCapabilitiesStoreSource, /mcpRefreshFingerprint\?:\s*Accessor<string \| number \| null \| undefined>/);
+  assert.match(sessionCapabilitiesStoreSource, /mcpRefreshFingerprint:\s*deps\.mcpRefreshFingerprint\?\.\(\) \?\? ""/);
 });
 
 test("mcp page displays Microsoft SharePoint from catalog name and provider metadata", () => {
@@ -114,12 +183,14 @@ test("hub mcp cards preserve provider metadata and install by catalog identity",
   assert.match(constantsSource, /provider\?:\s*\{[\s\S]*id:\s*string;[\s\S]*group\?:\s*string;[\s\S]*\};/);
   assert.match(constantsSource, /source\?:\s*HubMcpItem\["source"\];/);
   assert.match(pageConversionSource, /provider:\s*entry\.provider,/);
+  assert.match(pageConversionSource, /connection:\s*entry\.connection,/);
   assert.match(pageConversionSource, /source:\s*entry\.source,/);
   assert.match(pageConversionSource, /headers:\s*entry\.headers,/);
   assert.match(pageConversionSource, /authorization:\s*entry\.authorization,/);
   assert.match(directoryHelperSource, /provider:\s*entry\.provider,/);
   assert.match(directoryHelperSource, /source:\s*entry\.source,/);
   assert.match(directoryHelperSource, /headers:\s*entry\.headers/);
+  assert.match(directoryHelperSource, /connection:\s*entry\.connection/);
   assert.match(directoryHelperSource, /authorization:\s*entry\.authorization/);
   assert.match(hubCatalogButtonSource, /data-mcp-name=\{entry\.name\}/);
   assert.match(installClickSource, /props\.installHubMcp\(entry\.id \|\| entry\.name\)/);
@@ -146,15 +217,18 @@ test("Microsoft SharePoint catalog metadata stays provider-generic through app n
   assert.match(refreshHubMcpSource, /provider:\s*entry\.provider,/);
   assert.match(refreshHubMcpSource, /source:\s*entry\.source,/);
   assert.match(refreshHubMcpSource, /authorization:\s*entry\.authorization,/);
+  assert.match(refreshHubMcpSource, /connection:\s*entry\.connection,/);
   assert.match(refreshHubMcpSource, /headers:\s*entry\.config\.headers,/);
   assert.match(pageConversionSource, /id:\s*entry\.id,/);
   assert.match(pageConversionSource, /name:\s*entry\.name,/);
   assert.match(pageConversionSource, /provider:\s*entry\.provider,/);
   assert.match(pageConversionSource, /authorization:\s*entry\.authorization,/);
+  assert.match(pageConversionSource, /connection:\s*entry\.connection,/);
   assert.match(directoryHelperSource, /id:\s*entry\.id,/);
   assert.match(directoryHelperSource, /name:\s*entry\.name,/);
   assert.match(directoryHelperSource, /provider:\s*entry\.provider,/);
   assert.match(directoryHelperSource, /authorization:\s*entry\.authorization/);
+  assert.match(directoryHelperSource, /connection:\s*entry\.connection/);
   assert.match(serverOAuthSource, /const startPath = entry\.authorization\.startPath\.trim\(\)/);
   assert.match(serverOAuthSource, /\$\{denApiBase\}\$\{startPath\}/);
   assert.doesNotMatch(serverOAuthSource, /google|Google/);
@@ -172,7 +246,8 @@ test("mcp page exposes sign-in for installed server-managed hub connectors", () 
   assert.match(hubLookupSource, /candidateId === entry\.name/);
   assert.match(hubLookupSource, /quickConnectEntryKey\(\{ id: candidate\.id, name: candidate\.name \}\) === entry\.name/);
   assert.match(supportsOauthSource, /hubMcpCardForInstalledEntry\(entry\)\?\.authorization\?\.type === "veslo-server-oauth"/);
-  assert.match(mcpSource, /supportsOauth\(entry\) && status\(\) !== "connected"/);
+  assert.match(mcpSource, /const showLogin = \(\) =>[\s\S]*authConnected\(\) === false/);
+  assert.match(mcpSource, /authConnected\(\) == null && status\(\) !== "connected"/);
   assert.equal(microsoftSharePointCatalogItem.oauth, false);
   assert.equal(microsoftSharePointCatalogItem.authorization.type, "veslo-server-oauth");
 });

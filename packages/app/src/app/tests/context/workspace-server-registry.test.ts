@@ -20,6 +20,20 @@ function registryWithClient(client: Partial<VesloServerClient>, debug: unknown[]
   });
 }
 
+function registryWithClientGetter(input: {
+  getClient: () => Partial<VesloServerClient>;
+  ensureLocalVesloServerRunning?: () => Promise<boolean>;
+  debug?: unknown[];
+}) {
+  const debug = input.debug ?? [];
+  return createWorkspaceServerRegistry({
+    getWorkspaces: () => [localWorkspace],
+    vesloServerClient: () => input.getClient() as VesloServerClient,
+    ensureLocalVesloServerRunning: input.ensureLocalVesloServerRunning,
+    wsDebug: (label, payload) => debug.push({ label, payload }),
+  });
+}
+
 test("activateVesloHostWorkspace fails fast when local registration fails", async () => {
   const debug: unknown[] = [];
   const registry = registryWithClient(
@@ -142,6 +156,68 @@ test("activateVesloHostWorkspace rejects mismatched workspace_exists evidence in
     /workspace_registry_unsynced:registration_failed/,
   );
   assert.equal(activateCalls, 0);
+});
+
+test("activateVesloHostWorkspace refreshes stale local host token once", async () => {
+  const calls: string[] = [];
+  const debug: unknown[] = [];
+  const staleClient = {
+    listWorkspaces: async () => {
+      calls.push("stale:list");
+      return { activeId: null, items: [] };
+    },
+    addLocalWorkspace: async () => {
+      calls.push("stale:add");
+      throw new VesloServerError(401, "unauthorized", "Invalid host token");
+    },
+  };
+  const freshWorkspace: VesloWorkspaceInfo = {
+    id: "ws-project",
+    name: "Project",
+    path: "/tmp/project",
+    workspaceType: "local",
+  };
+  const freshClient = {
+    listWorkspaces: async () => {
+      calls.push("fresh:list");
+      return {
+        activeId: null,
+        items: [freshWorkspace],
+      };
+    },
+    activateWorkspace: async (workspaceId: string) => {
+      calls.push(`fresh:activate:${workspaceId}`);
+      const workspace: VesloWorkspaceInfo = {
+        id: workspaceId,
+        name: "Project",
+        path: "/tmp/project",
+        workspaceType: "local",
+      };
+      return { activeId: workspaceId, workspace };
+    },
+  };
+  let currentClient: Partial<VesloServerClient> = staleClient;
+  const registry = registryWithClientGetter({
+    debug,
+    getClient: () => currentClient,
+    ensureLocalVesloServerRunning: async () => {
+      calls.push("ensure-local");
+      currentClient = freshClient;
+      return true;
+    },
+  });
+
+  await registry.activateVesloHostWorkspace("/tmp/project");
+
+  assert.deepEqual(calls, [
+    "stale:list",
+    "stale:add",
+    "ensure-local",
+    "fresh:list",
+    "fresh:activate:ws-project",
+  ]);
+  assert.match(JSON.stringify(debug), /host-token-refresh:start/);
+  assert.doesNotMatch(JSON.stringify(debug), /activateVesloHostWorkspace:failed/);
 });
 
 test("reconcileVesloServerWorkspaces is read-only for missing local workspaces", async () => {

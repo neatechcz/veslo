@@ -1,3 +1,5 @@
+import type { ConversationReadDiagnostic } from "./conversation-read-store.js";
+
 export type SessionTranscriptSnapshot = {
   workspaceId: string;
   sessionId: string;
@@ -10,6 +12,7 @@ export type SessionTranscriptSnapshot = {
   fetchedAt: number;
   staleAt: number;
   source?: "sqlite" | "unavailable";
+  diagnostic?: ConversationReadDiagnostic;
 };
 
 export type SessionTranscriptLoadInput = {
@@ -29,17 +32,27 @@ export type SessionTranscriptLoadResult = {
   fetchedAt?: number;
   staleAt?: number;
   source?: "sqlite" | "unavailable";
+  diagnostic?: ConversationReadDiagnostic;
 };
 
 export type SessionTranscriptPrefetchInterest = {
   workspaceId: string;
   clickedSessionId?: string | null;
   selectedSessionId?: string | null;
+  clickedSession?: SessionTranscriptPrefetchSessionRef | null;
+  selectedSession?: SessionTranscriptPrefetchSessionRef | null;
   loadedTopLevelSessionIds: string[];
   expandedSubagentSessionIds: string[];
+  loadedTopLevelSessions?: SessionTranscriptPrefetchSessionRef[];
+  expandedSubagentSessions?: SessionTranscriptPrefetchSessionRef[];
   directory?: string | null;
   sessionDirectoriesById?: Record<string, string | null | undefined>;
   limit?: number;
+};
+
+export type SessionTranscriptPrefetchSessionRef = {
+  sessionId: string;
+  directory?: string | null;
 };
 
 export type SessionTranscriptPrefetchResult = {
@@ -260,22 +273,59 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
     const ordered: QueueItem[] = [];
     const seen = new Set<string>();
     const { defaultDirectory, directories } = normalizeSessionDirectories(input);
-    const push = (value: string | null | undefined) => {
-      const sessionId = normalizeId(value);
+    const refDirectoriesBySession = new Map<string, Set<string>>();
+    const effectiveRefDirectory = (sessionId: string, directory: string | null | undefined) =>
+      normalizeDirectory(directory) || directories.get(sessionId) || defaultDirectory;
+    const rememberRefDirectory = (ref: SessionTranscriptPrefetchSessionRef | null | undefined) => {
+      if (!ref || typeof ref !== "object") return;
+      const sessionId = normalizeId(ref.sessionId);
       if (!sessionId) return;
-      const item = {
-        sessionId,
-        directory: directories.get(sessionId) ?? defaultDirectory,
-      };
+      const directory = effectiveRefDirectory(sessionId, ref.directory);
+      if (!directory) return;
+      const refs = refDirectoriesBySession.get(sessionId) ?? new Set<string>();
+      refs.add(directory);
+      refDirectoriesBySession.set(sessionId, refs);
+    };
+    rememberRefDirectory(input.clickedSession);
+    rememberRefDirectory(input.selectedSession);
+    for (const value of input.expandedSubagentSessions ?? []) rememberRefDirectory(value);
+    for (const value of input.loadedTopLevelSessions ?? []) rememberRefDirectory(value);
+    const legacyDirectoryFor = (sessionId: string): string | null => {
+      const refDirectories = refDirectoriesBySession.get(sessionId);
+      if (refDirectories?.size === 1) {
+        return refDirectories.values().next().value ?? "";
+      }
+      if (refDirectories && refDirectories.size > 1) return null;
+      return directories.get(sessionId) ?? defaultDirectory;
+    };
+    const pushItem = (sessionId: string, directory: string) => {
+      const item = { sessionId, directory };
       const key = queueItemKey(item);
       if (seen.has(key)) return;
       seen.add(key);
       ordered.push(item);
     };
+    const push = (value: string | null | undefined) => {
+      const sessionId = normalizeId(value);
+      if (!sessionId) return;
+      const directory = legacyDirectoryFor(sessionId);
+      if (directory === null) return;
+      pushItem(sessionId, directory);
+    };
+    const pushRef = (ref: SessionTranscriptPrefetchSessionRef | null | undefined) => {
+      if (!ref || typeof ref !== "object") return;
+      const sessionId = normalizeId(ref.sessionId);
+      if (!sessionId) return;
+      pushItem(sessionId, effectiveRefDirectory(sessionId, ref.directory));
+    };
 
+    pushRef(input.clickedSession);
     push(input.clickedSessionId);
+    pushRef(input.selectedSession);
     push(input.selectedSessionId);
+    for (const value of input.expandedSubagentSessions ?? []) pushRef(value);
     for (const value of input.expandedSubagentSessionIds) push(value);
+    for (const value of input.loadedTopLevelSessions ?? []) pushRef(value);
     for (const value of input.loadedTopLevelSessionIds) push(value);
 
     return ordered;
@@ -330,6 +380,7 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
         fetchedAt,
         staleAt,
         source: raw.source,
+        ...(raw.diagnostic ? { diagnostic: raw.diagnostic } : {}),
       };
       const invalidatedAt = invalidatedAtBySession.get(dedupeKey) ?? 0;
       if (snapshot.source !== "unavailable" && invalidatedAt <= loadStartedAt) {

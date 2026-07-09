@@ -5,7 +5,11 @@ import { createRoot, createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import type { Session } from "@opencode-ai/sdk/v2/client";
 
-import { createSessionSelectionController } from "../../context/session-selection-controller.js";
+import {
+  classifyOfflineTranscriptFallbackReason,
+  classifyOfflineTranscriptUnavailableReason,
+  createSessionSelectionController,
+} from "../../context/session-selection-controller.js";
 import type { MessageInfo, MessageWithParts, TodoItem } from "../../types";
 
 function ok<T>(data: T) {
@@ -57,6 +61,20 @@ function makeTranscriptSnapshot(
     source: "sqlite" as const,
   };
 }
+
+test("offline transcript fallback taxonomy classifies trace reasons", () => {
+  assert.equal(classifyOfflineTranscriptFallbackReason("client unavailable"), "client-unavailable");
+  assert.equal(classifyOfflineTranscriptFallbackReason("read policy"), "read-policy");
+  assert.equal(classifyOfflineTranscriptFallbackReason("session not found"), "session-not-found");
+  assert.equal(classifyOfflineTranscriptFallbackReason("unexpected"), "other");
+
+  assert.equal(classifyOfflineTranscriptUnavailableReason("missing-workspace-root"), "missing-workspace-root");
+  assert.equal(classifyOfflineTranscriptUnavailableReason("veslo-read-api-unavailable"), "veslo-read-api-unavailable");
+  assert.equal(classifyOfflineTranscriptUnavailableReason("source-unavailable"), "source-unavailable");
+  assert.equal(classifyOfflineTranscriptUnavailableReason("offline-transcript-unavailable"), "offline-transcript-unavailable");
+  assert.equal(classifyOfflineTranscriptUnavailableReason(""), null);
+  assert.equal(classifyOfflineTranscriptUnavailableReason("new-reason"), "other");
+});
 
 function makeController(options: {
   activeClient?: any;

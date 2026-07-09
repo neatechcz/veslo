@@ -1,6 +1,6 @@
 import { homeDir } from "@tauri-apps/api/path";
 
-import type { WorkspacePreset } from "../types";
+import type { DashboardTab, View, WorkspaceConnectionState, WorkspacePreset } from "../types";
 import {
   addOpencodeCacheHint,
   isPrivateWorkspacePathForRoot,
@@ -35,8 +35,8 @@ export type WorkspaceLocalWorkspacesDeps = {
   startHost: (opts?: { workspacePath?: string; navigate?: boolean }) => Promise<boolean>;
   openSessionState: {
     loadSessions: (scopeRoot?: string) => Promise<void>;
-    setView: (value: any) => void;
-    setTab: (value: any) => void;
+    setView: (value: View) => void;
+    setTab: (value: DashboardTab) => void;
   };
   clearDisplayedSessionState: (
     reason: "remote_to_local_workspace_changed" | "connect_workspace_scope_changed" | "open_empty_session",
@@ -49,7 +49,7 @@ export type WorkspaceLocalWorkspacesDeps = {
       clearPendingPermissions?: boolean;
     },
   ) => void;
-  updateWorkspaceConnectionState: (workspaceId: string, next: any) => void;
+  updateWorkspaceConnectionState: (workspaceId: string, next: Partial<WorkspaceConnectionState>) => void;
   clearWorkspaceConnectionState: (workspaceId: string) => void;
   setProjectDir: (value: string) => void;
   setCreateWorkspaceOpen: (value: boolean) => void;

@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
+import { For, Match, Show, Switch, createMemo, createSignal, type Component } from "solid-js";
 
 import type {
   AutomationWorkspaceSummary,
@@ -11,7 +11,7 @@ import type {
   WorkspaceAutomationItem,
 } from "../types";
 import { formatRelativeTime } from "../utils";
-import { currentLocale, t } from "../../i18n";
+import { currentLocale, t, type Language } from "../../i18n";
 import { createAsyncAction } from "../hooks/create-async-action";
 import {
   buildSchedule,
@@ -57,7 +57,7 @@ export type ScheduledTasksViewProps = {
 };
 
 type AutomationTemplate = {
-  icon: any;
+  icon: Component<{ size?: number; class?: string }>;
   nameKey: string;
   descriptionKey: string;
   promptKey: string;
@@ -132,17 +132,17 @@ const automationTemplates: AutomationTemplate[] = [
 
 const pad2 = (value: number) => String(value).padStart(2, "0");
 
-const toRelative = (value?: string | null, locale?: string) => {
-  const neverLabel = t("scheduled.never", (locale as any) ?? currentLocale());
+const toRelative = (value?: string | null, locale: Language = currentLocale()) => {
+  const neverLabel = t("scheduled.never", locale);
   if (!value) return neverLabel;
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) return neverLabel;
   return formatRelativeTime(parsed);
 };
 
-const describeSchedule = (schedule: VesloAutomationSchedule, locale?: string) => {
+const describeSchedule = (schedule: VesloAutomationSchedule, locale: Language = currentLocale()) => {
   const tr = (key: string, replacements?: Record<string, string>) => {
-    let value = locale ? t(key, locale as any) : t(key);
+    let value = t(key, locale);
     for (const [name, replacement] of Object.entries(replacements ?? {})) {
       value = value.replace(`{${name}}`, replacement);
     }
@@ -175,8 +175,8 @@ const describeSchedule = (schedule: VesloAutomationSchedule, locale?: string) =>
   return `${tr("scheduled.cron_label")} ${schedule.expression}`;
 };
 
-const automationStatusLabel = (status: VesloAutomationStatus, locale?: string) => {
-  const tr = (key: string) => (locale ? t(key, locale as any) : t(key));
+const automationStatusLabel = (status: VesloAutomationStatus, locale: Language = currentLocale()) => {
+  const tr = (key: string) => t(key, locale);
   if (status === "active") return tr("scheduled.status_active");
   if (status === "paused") return tr("scheduled.status_paused");
   if (status === "completed") return tr("scheduled.status_completed");
@@ -201,7 +201,7 @@ const latestRunFor = (automation: VesloAutomation, runs: VesloAutomationRun[]) =
 };
 
 const AutomationTemplateCard = (props: {
-  icon: any;
+  icon: Component<{ size?: number; class?: string }>;
   name: string;
   description: string;
   tone?: string;

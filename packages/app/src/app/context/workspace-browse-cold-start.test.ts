@@ -18,18 +18,18 @@ test("browse cold start is owned by workspace runtime controller and lifecycle",
   const ensureSource = runtimeControllerSource.slice(ensureStart);
   assert.match(
     ensureSource,
-    /localRuntimeLifecycle\.startHost\(\{[\s\S]*reason: "browse-cold-start"/,
-    "ensureEngineForWorkspace fallback should identify the cold first-prompt startup reason",
+    /const prepareReason = ensureReason;[\s\S]*localRuntimeLifecycle\.prepareWorkspaceRuntime\(\{/,
+    "ensureEngineForWorkspace should pass the original runtime intent to the backend prepare owner",
   );
   assert.match(
     ensureSource,
-    /localRuntimeLifecycle\.startHost\(\{[\s\S]*reason: "browse-cold-start"[\s\S]*connectMode: "quiet"/,
-    "first prompt cold starts should connect quietly and let ensureEngineForWorkspace own session loading",
+    /localRuntimeLifecycle\.prepareWorkspaceRuntime\(\{[\s\S]*reason: prepareReason,[\s\S]*connectMode: "quiet"/,
+    "first prompt runtime prepare should connect quietly and let ensureEngineForWorkspace own session loading",
   );
-  assert.match(
+  assert.doesNotMatch(
     ensureSource,
-    /catch \(startHostError\) \{[\s\S]*messageFromUnknownError\(startHostError,[\s\S]*\)\.includes\("Request timed out"\)[\s\S]*reattachOrchestratorAfterColdStart\("browse-cold-start-reattach", startHostError\)/,
-    "if engine_start times out after spawning orchestrator, first prompt should reattach instead of failing immediately",
+    /startHostQuiet|reattachOrchestratorAfterColdStart|localRuntimeLifecycle\.startHost\(/,
+    "backend prepare should own cold-start fallback decisions instead of the UI retrying lifecycle primitives",
   );
   assert.match(
     ensureSource,
@@ -39,12 +39,12 @@ test("browse cold start is owned by workspace runtime controller and lifecycle",
 
   assert.match(
     lifecycleSource,
-    /runWorkspaceEngineRestartWithTimeouts\(/,
-    "direct runtime restarts should keep using lifecycle restart timeouts",
+    /deps\.prepareWorkspaceRuntime\(\{/,
+    "local runtime lifecycle should delegate process preparation to the backend command",
   );
-  assert.match(
+  assert.doesNotMatch(
     lifecycleSource,
-    /deps\.readEngineInfo\(options\.workspaceId, options\.workspacePath\),[\s\S]*timeoutMs: 30_000,[\s\S]*label: "engine_info"/,
-    "orchestrator reattach should keep the widened engine_info wait after activation",
+    /runWorkspaceEngineRestartWithTimeouts\(|deps\.startEngine\(|deps\.stopEngine\(|deps\.activateOrchestratorWorkspace\(/,
+    "frontend lifecycle code should not choose engine process primitives",
   );
 });

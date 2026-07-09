@@ -1,4 +1,10 @@
 import type { Part } from "@opencode-ai/sdk/v2/client";
+import {
+  partStringField,
+  toolInputFromPart,
+  toolNameFromPart,
+  toolStateFromPart,
+} from "../../lib/opencode-part-access";
 import { getBasename as basename, normalizePath, workspaceArtifactPathToRelative } from "../../utils/workspace-path";
 
 export type MediaEvidenceKind = "analyzed" | "created";
@@ -53,13 +59,11 @@ const CREATED_PATH_INPUT_KEYS = ["filePath", "path", "file", "outputPath"] as co
 const CREATED_OUTPUT_PATH_INPUT_KEYS = ["outputPath"] as const;
 
 function getState(part: Part): Record<string, unknown> {
-  const state = (part as any).state;
-  return state && typeof state === "object" ? (state as Record<string, unknown>) : {};
+  return toolStateFromPart(part);
 }
 
 function getInput(part: Part): Record<string, unknown> {
-  const input = getState(part).input;
-  return input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  return toolInputFromPart(part);
 }
 
 function getObjectField(record: Record<string, unknown>, key: string): Record<string, unknown> {
@@ -68,7 +72,7 @@ function getObjectField(record: Record<string, unknown>, key: string): Record<st
 }
 
 function getToolName(part: Part): string {
-  return typeof (part as any).tool === "string" ? String((part as any).tool).toLowerCase() : "";
+  return toolNameFromPart(part).toLowerCase();
 }
 
 function safelyDecodeURIComponent(value: string): string {
@@ -254,22 +258,24 @@ function buildInlineFileEvidence(
   input: BuildMediaEvidenceInput,
   index: number,
 ): MediaEvidence | null {
-  const mime = (part as any).mime;
-  const url = (part as any).url;
+  const mime = partStringField(part, "mime");
+  const url = partStringField(part, "url");
+  const filename = partStringField(part, "filename");
+  const name = partStringField(part, "name");
   const normalizedMime = isNonEmptyString(mime) ? normalizeMime(mime) : "";
   if (!normalizedMime || !isBitmapMime(normalizedMime)) return null;
   if (!isNonEmptyString(url) || !hasAllowedImageSourceScheme(url)) return null;
   if (hasSvgSourceExtension(url)) return null;
-  if (isNonEmptyString((part as any).filename) && hasSvgFamilyExtension((part as any).filename, { decode: true })) return null;
-  if (isNonEmptyString((part as any).name) && hasSvgFamilyExtension((part as any).name, { decode: true })) return null;
+  if (isNonEmptyString(filename) && hasSvgFamilyExtension(filename, { decode: true })) return null;
+  if (isNonEmptyString(name) && hasSvgFamilyExtension(name, { decode: true })) return null;
 
   return {
     id: buildEvidenceId(input.sourceId, part.id, `inline:${index}`),
     kind: "analyzed",
-    title: isNonEmptyString((part as any).filename)
-      ? (part as any).filename
-      : isNonEmptyString((part as any).name)
-        ? (part as any).name
+    title: isNonEmptyString(filename)
+      ? filename
+      : isNonEmptyString(name)
+        ? name
         : "Image",
     mime: normalizedMime,
     src: url,

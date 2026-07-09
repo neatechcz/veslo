@@ -1,7 +1,13 @@
 import { afterEach, expect, test } from "bun:test";
 
 import { ApiError } from "../errors.js";
-import { createOrgMcpRuntimeToken, fetchOrgMcpCatalog, fetchOrgSkillsCatalog } from "../den-catalog.js";
+import {
+  createOrgMcpRuntimeToken,
+  disconnectOrgMcpConnection,
+  fetchOrgMcpCatalog,
+  fetchOrgMcpConnectionStatuses,
+  fetchOrgSkillsCatalog,
+} from "../den-catalog.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -618,5 +624,75 @@ test("createOrgMcpRuntimeToken posts to Den and returns connector token", async 
   expect(calls[0]?.url).toBe("https://den.example/v1/orgs/org_123/integrations/google/google-gmail/runtime-token");
   const headers = new Headers(calls[0]?.init?.headers);
   expect(calls[0]?.init?.method).toBe("POST");
+  expect(headers.get("authorization")).toBe("Bearer token_abc");
+});
+
+test("fetchOrgMcpConnectionStatuses gets Den connector grant state", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+
+  globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    return new Response(JSON.stringify({
+      items: [
+        {
+          connectorId: "google-gmail",
+          name: "Google Gmail",
+          connected: true,
+          state: "connected",
+          scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
+          connectedAt: "2026-07-08T12:00:00.000Z",
+          revokedAt: null,
+          accessTokenExpiresAt: "2030-06-19T12:00:00.000Z",
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+
+  const result = await fetchOrgMcpConnectionStatuses({
+    baseUrl: "https://den.example/",
+    denToken: "token_abc",
+    statusPath: "/v1/orgs/org_123/integrations/google/connections",
+  });
+
+  expect(result).toEqual([
+    {
+      connectorId: "google-gmail",
+      name: "Google Gmail",
+      connected: true,
+      state: "connected",
+      scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
+      connectedAt: "2026-07-08T12:00:00.000Z",
+      revokedAt: null,
+      accessTokenExpiresAt: "2030-06-19T12:00:00.000Z",
+    },
+  ]);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.url).toBe("https://den.example/v1/orgs/org_123/integrations/google/connections");
+  const headers = new Headers(calls[0]?.init?.headers);
+  expect(calls[0]?.init?.method).toBe("GET");
+  expect(headers.get("authorization")).toBe("Bearer token_abc");
+});
+
+test("disconnectOrgMcpConnection deletes the Den connector connection", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+
+  globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    return new Response(null, { status: 204 });
+  });
+
+  await disconnectOrgMcpConnection({
+    baseUrl: "https://den.example/",
+    denToken: "token_abc",
+    disconnectPath: "/v1/orgs/org_123/integrations/google/google-gmail/connection",
+  });
+
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.url).toBe("https://den.example/v1/orgs/org_123/integrations/google/google-gmail/connection");
+  const headers = new Headers(calls[0]?.init?.headers);
+  expect(calls[0]?.init?.method).toBe("DELETE");
   expect(headers.get("authorization")).toBe("Bearer token_abc");
 });

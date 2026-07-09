@@ -6,7 +6,7 @@ export type WorkspaceSwitchTimeouts = {
   vesloHostWorkspaceActivateMs: number;
 };
 
-export const DEFAULT_WORKSPACE_SWITCH_TIMEOUTS: WorkspaceSwitchTimeouts = {
+const DEFAULT_WORKSPACE_SWITCH_TIMEOUTS: WorkspaceSwitchTimeouts = {
   engineStopMs: 20_000,
   engineStartMs: 75_000,
   // VSLO-86 — widened from 12s to 30s. The inner client.listWorkspaces +
@@ -15,8 +15,8 @@ export const DEFAULT_WORKSPACE_SWITCH_TIMEOUTS: WorkspaceSwitchTimeouts = {
   // alongside the orchestrator SSE stream, the engine status polls and the
   // workspace-config patch effect — boot-time contention occasionally pushes
   // these past 12s and the user sees the "Opening conversation…" spinner.
-  // The outer activate flow still falls back to startHost on failure, so the
-  // worst case is just a longer wait, not a stuck spinner.
+  // Backend runtime_prepare_workspace owns orchestrator-attach fallback; this
+  // helper only bounds the post-prepare Veslo host workspace activation wait.
   vesloHostWorkspaceActivateMs: 30_000,
 };
 

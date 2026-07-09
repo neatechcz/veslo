@@ -178,6 +178,22 @@ It must support two execution modes behind one runtime boundary:
 - shared OpenCode process without sandbox,
 - workspace-scoped sandboxed engine process.
 
+Runtime prepare is a readiness contract. After a fresh orchestrator daemon start,
+the desktop runtime must activate the target workspace engine before returning a
+ready engine snapshot; the app should not paper over an absent workspace engine
+with generic UI retries.
+
+On the app side, local runtime prepare serialization must stay held until native
+prepare, orchestrator workspace activation, and routed reconnect have all
+finished. A foreground send/session recovery may start after a timed-out native
+warmup, but it must not force a second fresh engine while a boot warmup is still
+binding the routed workspace client.
+
+Workspace route release must also invalidate in-flight routed-client ensures.
+Recovery, port rotation, and stale-route cleanup all depend on release meaning
+"the previous route cannot reappear later" rather than only deleting the
+currently cached entry.
+
 The run/conversation model must not depend on sandbox availability. Sandbox is
 an isolation strategy, not the only mechanism for parallel workspace execution.
 
@@ -306,6 +322,13 @@ It must not:
 
 The selected workspace is display context. The run's workspace and directory are
 part of the persisted conversation/run state.
+
+When a scoped sidebar session belongs to the already-active workspace and that
+workspace has been explicitly allowed for live transcript reads by the send/run
+flow, selecting it should read the active live session directly. Host-first
+offline transcript browsing remains the fallback for foreign workspace browsing,
+browse-only/runtime-unavailable state, and sessions whose workspace has not been
+live-read enabled.
 
 ## Error Handling Rules
 

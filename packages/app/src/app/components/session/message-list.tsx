@@ -14,6 +14,10 @@ import {
 import { compactHumanStepText, containsPathLikeText, summarizeStep } from "../../utils";
 import PartView from "../part-view";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
+import {
+  toolInputFromPart,
+  toolNameFromPart,
+} from "../../lib/opencode-part-access";
 import { getTaskPartSubagentInfo, isVesloInternalSubagentType } from "../../lib/internal-subagents";
 import { currentLocale, t } from "../../../i18n";
 import { buildTimelineDetailModel, type TimelineRowModel, type TimelineRowType, type TimelineSectionKind } from "./timeline-detail-model.js";
@@ -74,6 +78,12 @@ type MessageBlockItem = ProgressRenderBlock;
 
 const VIRTUALIZATION_THRESHOLD = 500;
 const VIRTUAL_OVERSCAN = 4;
+
+function messageInfoString(message: MessageWithParts, key: string): string {
+  const record = message.info as unknown as Record<string, unknown>;
+  const value = record[key];
+  return value === undefined || value === null ? "" : String(value);
+}
 
 function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   if (left.size !== right.size) return false;
@@ -604,7 +614,7 @@ export default function MessageList(props: MessageListProps) {
     let addedMessageCount = 0;
 
     props.messages.forEach((message, index) => {
-      const messageId = String((message.info as any).id ?? "");
+      const messageId = messageInfoString(message, "id");
       const idKey = messageId || `idx:${index}`;
       const totalParts = message.parts.length;
       nextMessagePartCountById.set(idKey, totalParts);
@@ -672,8 +682,8 @@ export default function MessageList(props: MessageListProps) {
   const latestAssistantMessageId = createMemo(() => {
     for (let index = props.messages.length - 1; index >= 0; index -= 1) {
       const message = props.messages[index];
-      if ((message.info as any).role === "assistant") {
-        return String((message.info as any).id ?? "");
+      if (messageInfoString(message, "role") === "assistant") {
+        return messageInfoString(message, "id");
       }
     }
     return "";
@@ -885,10 +895,8 @@ export default function MessageList(props: MessageListProps) {
     const toolHeadline = (part: Part) => {
       if (part.type !== "tool") return "";
 
-      const record = part as any;
-      const state = record.state ?? {};
-      const input = state.input && typeof state.input === "object" ? (state.input as Record<string, unknown>) : {};
-      const tool = typeof record.tool === "string" ? record.tool.toLowerCase() : "";
+      const input = toolInputFromPart(part);
+      const tool = toolNameFromPart(part).toLowerCase();
 
       const pick = (...keys: string[]) => {
         for (const key of keys) {
@@ -965,7 +973,7 @@ export default function MessageList(props: MessageListProps) {
       if (fromTool) return compactText(fromTool, 42, { preservePaths: true });
 
       if (step.type === "tool") {
-        const toolName = String((step as any).tool ?? "").trim();
+        const toolName = toolNameFromPart(step).trim();
         if (toolName) {
           const friendlyTool = toolName.replace(/[_-]+/g, " ");
           return compactText(friendlyTool);

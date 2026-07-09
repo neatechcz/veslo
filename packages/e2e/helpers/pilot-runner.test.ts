@@ -15,6 +15,7 @@ import {
   pilotReadinessProbeCommands,
   resolvePilotBinary,
   resolvePilotDenAuthJson,
+  resolvePilotScenarioCommandTimeoutMs,
   resolvePilotScenarioSelection,
   sanitizePilotArtifactName,
   scenarioSelectionNeedsSkillEnableInventoryFixture,
@@ -62,6 +63,23 @@ test('buildPilotCommand passes the deterministic socket before pilot subcommands
       args: ['--socket', '/tmp/veslo.sock', 'run', './pilot-scenarios/smoke.toml'],
     },
   );
+});
+
+test('resolvePilotScenarioCommandTimeoutMs bounds tauri-pilot scenario runs while allowing live overrides', () => {
+  assert.equal(resolvePilotScenarioCommandTimeoutMs({}), 1_200_000);
+  assert.equal(resolvePilotScenarioCommandTimeoutMs({ E2E_PILOT_SCENARIO_TIMEOUT_MS: '900000' }), 900_000);
+  assert.throws(
+    () => resolvePilotScenarioCommandTimeoutMs({ E2E_PILOT_SCENARIO_TIMEOUT_MS: '999' }),
+    /Invalid E2E_PILOT_SCENARIO_TIMEOUT_MS/,
+  );
+});
+
+test('runPilotScenarios passes an explicit timeout to tauri-pilot run commands', () => {
+  const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
+
+  assert.match(source, /const scenarioCommandTimeoutMs = resolvePilotScenarioCommandTimeoutMs\(\)/);
+  assert.match(source, /args: \['run', scenario\],[\s\S]*timeoutMs: scenarioCommandTimeoutMs/);
+  assert.match(source, /args: \['run', reconnectScenario\],[\s\S]*timeoutMs: scenarioCommandTimeoutMs/);
 });
 
 test('sanitizePilotArtifactName creates stable filesystem-safe scenario names', () => {
@@ -424,6 +442,38 @@ test('runtime cold-start handoff pilot scenario disables debug dev autostart', (
   );
 });
 
+test('resolvePilotDenAuthJson reads authJson from the production desktop snapshot path', () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'veslo-pilot-den-auth-prod-'));
+  const snapshotPath = join(tempDir, 'den-auth.json');
+  const authJson = JSON.stringify({
+    denApiBase: 'https://api.veslo.work',
+    token: 'live-token',
+    user: { email: 'user@neatech.cz' },
+  });
+
+  try {
+    writeFileSync(snapshotPath, JSON.stringify({ version: 1, authJson }));
+    assert.equal(
+      resolvePilotDenAuthJson({ VESLO_DEN_AUTH_SNAPSHOT_PATH: snapshotPath }),
+      authJson,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('managed AI inference pilot scenarios disable debug dev autostart for production-path runtime startup', () => {
+  const e2eRoot = '/repo/packages/e2e';
+
+  for (const scenarioName of MANAGED_AI_INFERENCE_SCENARIOS) {
+    assert.equal(
+      scenarioSelectionDisablesDevAutostart(resolvePilotScenarioSelection({ scenario: [scenarioName] }, e2eRoot)),
+      true,
+      scenarioName,
+    );
+  }
+});
+
 test('model stream retry pilot scenario is focused-only because it enables a global probe fixture', () => {
   const e2eRoot = '/repo/packages/e2e';
   const isolated = resolvePilotScenarioSelection({ scenario: ['model-stream-retry-no-progress'] }, e2eRoot);
@@ -498,7 +548,7 @@ test('VSLO-271 pilot scenario requires live managed-AI auth and not the fixture'
     assert.equal(scenarioSelectionNeedsManagedAiGatewayFixture(scenarios), false);
     assert.throws(
       () => assertLiveManagedAiAuthForScenarioSelection(scenarios, { E2E_MANAGED_AI_GATEWAY_FIXTURE: '0' }),
-      /Managed-AI inference pilot scenarios require live Den auth/,
+      /VESLO_DEN_AUTH_SNAPSHOT_PATH/,
     );
 
     writeSnapshot('veslo-e2e@example.test');
@@ -546,6 +596,10 @@ test('VSLO-271 pilot scenario requires live managed-AI auth and not the fixture'
     );
     assert.doesNotThrow(() => assertLiveManagedAiAuthForScenarioSelection(scenarios, {
       VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: snapshotPath,
+      E2E_MANAGED_AI_GATEWAY_FIXTURE: '0',
+    }));
+    assert.doesNotThrow(() => assertLiveManagedAiAuthForScenarioSelection(scenarios, {
+      VESLO_DEN_AUTH_SNAPSHOT_PATH: snapshotPath,
       E2E_MANAGED_AI_GATEWAY_FIXTURE: '0',
     }));
     assert.doesNotThrow(() => assertLiveManagedAiAuthForScenarioSelection(scenarios, {

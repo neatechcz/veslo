@@ -20,6 +20,8 @@ import {
   splitProjectGroupsForSidebar,
   requiredVisibleCountForExpandedSession,
   rowVisibleByExpansion,
+  sidebarSessionMatchesOpenTarget,
+  sidebarSessionOpenTargetForRow,
   shouldShowNewSessionLabelText,
   shouldUseExpandedNewSessionLabel,
   toggleProjectCollapsed,
@@ -155,7 +157,113 @@ test("buildRecentRows keeps duplicate session ids from different workspaces visi
     rows.map((row) => `${row.workspace.id}:${row.session.id}:${row.session.title}`),
     ["workspace-b:same-session:B", "workspace-a:same-session:A"],
   );
-  assert.deepEqual(rows.map((row) => row.rowKey), ["workspace-b:same-session", "workspace-a:same-session"]);
+  assert.equal(new Set(rows.map((row) => row.rowKey)).size, 2);
+});
+
+test("buildRecentRows keeps duplicate session ids from the same workspace visible by scoped row key", () => {
+  const workspace = {
+    id: "workspace-a",
+    name: "workspace-a",
+    path: "/tmp/workspace-a",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+
+  const rows = buildRecentRows([
+    {
+      workspace,
+      sessions: [
+        {
+          id: "same-session",
+          title: "A",
+          directory: "/tmp/workspace-a/project-a",
+          conversationId: "conv-a",
+          opencodeSessionId: "same-session",
+          time: { created: 100, updated: 100 },
+        },
+        {
+          id: "same-session",
+          title: "B",
+          directory: "/tmp/workspace-a/project-b",
+          conversationId: "conv-b",
+          opencodeSessionId: "same-session",
+          time: { created: 200, updated: 200 },
+        },
+      ],
+      status: "ready",
+    },
+  ]);
+
+  assert.deepEqual(
+    rows.map((row) => `${row.workspace.id}:${row.session.id}:${row.session.title}:${row.session.directory}`),
+    [
+      "workspace-a:same-session:B:/tmp/workspace-a/project-b",
+      "workspace-a:same-session:A:/tmp/workspace-a/project-a",
+    ],
+  );
+  assert.equal(new Set(rows.map((row) => row.rowKey)).size, 2);
+
+  const projectA = rows.find((row) => row.session.title === "A");
+  const projectB = rows.find((row) => row.session.title === "B");
+  assert.ok(projectA);
+  assert.ok(projectB);
+  const targetA = sidebarSessionOpenTargetForRow(projectA);
+  assert.deepEqual(
+    {
+      sessionId: targetA.sessionId,
+      directory: targetA.directory,
+      conversationId: targetA.conversationId,
+      opencodeSessionId: targetA.opencodeSessionId,
+    },
+    {
+      sessionId: "same-session",
+      directory: "/tmp/workspace-a/project-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "same-session",
+    },
+  );
+  assert.equal(sidebarSessionMatchesOpenTarget(projectA.session, targetA), true);
+  assert.equal(sidebarSessionMatchesOpenTarget(projectB.session, targetA), false);
+});
+
+test("buildProjectGroups keeps same-workspace duplicate session ids in their directory groups", () => {
+  const workspace = {
+    id: "workspace-a",
+    name: "workspace-a",
+    path: "/tmp/workspace-a",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+
+  const groups = buildProjectGroups([
+    {
+      workspace,
+      sessions: [
+        {
+          id: "same-session",
+          title: "A",
+          directory: "/tmp/workspace-a/project-a",
+          conversationId: "conv-a",
+          opencodeSessionId: "same-session",
+          time: { created: 100, updated: 100 },
+        },
+        {
+          id: "same-session",
+          title: "B",
+          directory: "/tmp/workspace-a/project-b",
+          conversationId: "conv-b",
+          opencodeSessionId: "same-session",
+          time: { created: 200, updated: 200 },
+        },
+      ],
+      status: "ready",
+    },
+  ]);
+
+  assert.deepEqual(
+    groups.map((group) => `${group.projectRoot}:${group.sessions.map((row) => row.session.title).join(",")}`),
+    ["/tmp/workspace-a/project-b:B", "/tmp/workspace-a/project-a:A"],
+  );
 });
 
 test("session tree hierarchy scopes duplicate parent ids by workspace row key", () => {
@@ -209,6 +317,64 @@ test("session tree hierarchy scopes duplicate parent ids by workspace row key", 
   assert.deepEqual(
     descendantRowsForParent(rows, "workspace-b:root").map((row) => row.rowKey),
     ["workspace-b:child-b"],
+  );
+});
+
+test("session tree hierarchy scopes duplicate parent ids by directory row key in the same workspace", () => {
+  const workspace = {
+    id: "workspace-a",
+    name: "workspace-a",
+    path: "/tmp/workspace-a",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+
+  const rows = buildRecentRows([
+    {
+      workspace,
+      sessions: [
+        {
+          id: "root",
+          title: "A root",
+          directory: "/tmp/workspace-a/project-a",
+          time: { created: 100, updated: 100 },
+        },
+        {
+          id: "child-a",
+          title: "A child",
+          parentID: "root",
+          directory: "/tmp/workspace-a/project-a",
+          time: { created: 110, updated: 110 },
+        },
+        {
+          id: "root",
+          title: "B root",
+          directory: "/tmp/workspace-a/project-b",
+          time: { created: 200, updated: 200 },
+        },
+        {
+          id: "child-b",
+          title: "B child",
+          parentID: "root",
+          directory: "/tmp/workspace-a/project-b",
+          time: { created: 210, updated: 210 },
+        },
+      ],
+      status: "ready",
+    },
+  ]);
+
+  const rootA = rows.find((row) => row.session.title === "A root");
+  const rootB = rows.find((row) => row.session.title === "B root");
+  assert.ok(rootA);
+  assert.ok(rootB);
+  assert.deepEqual(
+    directChildRowsForParent(rows, rootA.rowKey).map((row) => row.session.title),
+    ["A child"],
+  );
+  assert.deepEqual(
+    directChildRowsForParent(rows, rootB.rowKey).map((row) => row.session.title),
+    ["B child"],
   );
 });
 
@@ -766,6 +932,22 @@ test("selected parent session navigation clicks can open without expanding subag
     clickedSessionId: "root-parent",
     hasChildren: true,
     allowSelectedParentExpansion: false,
+  });
+
+  assert.deepEqual(action, {
+    openSession: true,
+    toggleExpandedParent: false,
+  });
+});
+
+test("same raw selected session id does not expand a different scoped row", () => {
+  const action = resolveSessionRowClickAction({
+    selectedSessionId: "root-parent",
+    clickedSessionId: "root-parent",
+    selectedRowKey: "row-a",
+    clickedRowKey: "row-b",
+    hasChildren: true,
+    allowSelectedParentExpansion: true,
   });
 
   assert.deepEqual(action, {

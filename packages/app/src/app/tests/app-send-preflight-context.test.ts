@@ -27,11 +27,11 @@ function sendPromptSource(): string {
   return sendWorkflowSource.slice(start, end);
 }
 
-function legacyConversationRunFallbackPrepareSource(): string {
-  const fallbackStart = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
-  const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", fallbackStart);
+function conversationRunCompatibilityBridgePrepareSource(): string {
+  const bridgeStart = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
+  const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", bridgeStart);
   const submitStart = sendWorkflowSource.indexOf("  const submit = async", prepareStart);
-  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "legacy fallback prepare source should be present");
+  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "compatibility bridge prepare source should be present");
   return sendWorkflowSource.slice(prepareStart, submitStart);
 }
 
@@ -44,7 +44,7 @@ function createSessionAndOpenSource(): string {
 
 test("sendPrompt carries a preflight context into first-session creation", () => {
   const source = sendPromptSource();
-  const fallbackPrepareSource = legacyConversationRunFallbackPrepareSource();
+  const bridgePrepareSource = conversationRunCompatibilityBridgePrepareSource();
 
   assert.match(
     source,
@@ -52,9 +52,9 @@ test("sendPrompt carries a preflight context into first-session creation", () =>
     "sendPrompt should create one preflight context for the whole send flow",
   );
   assert.match(
-    fallbackPrepareSource,
+    bridgePrepareSource,
     /const sendRuntimePreparation = await deps\.prepareSendRuntimeForSend\("sendPrompt", input\.sendPreflight\);[\s\S]*if \(!sendRuntimePreparation\.ok\) \{/,
-    "legacy fallback prepare should delegate runtime and managed AI readiness to the send readiness owner and consume its typed result",
+    "compatibility bridge prepare should delegate runtime and managed AI readiness to the send readiness owner and consume its typed result",
   );
   const prepareStart = runtimeReadinessSource.indexOf("async function prepareSendRuntimeForSend(");
   const prepareEnd = runtimeReadinessSource.indexOf("async function connectLocalRuntimeClientFromEngineInfo", prepareStart);
@@ -143,8 +143,8 @@ test("app wires runtime recovery options through the workspace runtime owner", (
   );
   assert.match(
     appSource,
-    /recoverWorkspaceRuntimeForEventStream: \(workspaceId\) =>[\s\S]*workspaceStore\.ensureEngineForWorkspace\(workspaceId, \{[\s\S]*reason: "event-stream-runtime-recovery",[\s\S]*loadSessions: false,/,
-    "event stream recovery should reuse the same runtime owner without forcing session-list UI side effects",
+    /recoverWorkspaceRuntimeForEventStream: \(workspaceId\) =>[\s\S]*workspaceStore\.ensureEngineForWorkspace\(workspaceId, \{[\s\S]*reason: "event-stream-runtime-recovery",[\s\S]*loadSessions: false,[\s\S]*forceFreshRuntime: true,/,
+    "event stream recovery should reuse the runtime owner, skip session-list side effects, and force a fresh local runtime",
   );
 });
 

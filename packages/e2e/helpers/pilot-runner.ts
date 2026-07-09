@@ -15,10 +15,12 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DEFAULT_READY_POLL_INTERVAL = 250;
+const DEFAULT_PILOT_SCENARIO_COMMAND_TIMEOUT_MS = 20 * 60_000;
 const DEFAULT_PILOT_SCENARIO_NAMES = ['smoke', 'navigation'] as const;
 const MANAGED_AI_INFERENCE_SCENARIO_NAMES = [
   'global-unpublished-draft',
   'message-send-registry-degraded',
+  'live-skills-finder-roundtrip',
   'model-stream-retry-no-progress',
   'pending-session-instance-isolation',
   'runtime-cold-start-session-handoff',
@@ -129,6 +131,17 @@ export function buildPilotCommand(options: BuildPilotCommandOptions): { command:
     command: options.binary,
     args: ['--socket', options.socket, ...options.args],
   };
+}
+
+export function resolvePilotScenarioCommandTimeoutMs(env: Record<string, string | undefined> = process.env): number {
+  const raw = env.E2E_PILOT_SCENARIO_TIMEOUT_MS?.trim() ?? '';
+  if (!raw) return DEFAULT_PILOT_SCENARIO_COMMAND_TIMEOUT_MS;
+
+  const timeoutMs = Number(raw);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000) {
+    throw new Error(`Invalid E2E_PILOT_SCENARIO_TIMEOUT_MS: ${raw}`);
+  }
+  return timeoutMs;
 }
 
 export function sanitizePilotArtifactName(value: string): string {
@@ -293,10 +306,14 @@ export function scenarioSelectionNeedsModelStreamRetryFixture(scenarios: string[
 }
 
 export function scenarioSelectionDisablesDevAutostart(scenarios: string[]): boolean {
-  return scenarios.some((scenario) =>
-    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/runtime-cold-start-session-handoff.toml') ||
-    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml'),
-  );
+  return scenarios.some((scenario) => {
+    const normalized = scenario.replaceAll('\\', '/');
+    return normalized.endsWith('/pilot-scenarios/runtime-cold-start-session-handoff.toml') ||
+      normalized.endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml') ||
+      MANAGED_AI_INFERENCE_SCENARIO_NAMES.some((name) =>
+        normalized.endsWith(`/pilot-scenarios/${name}.toml`),
+      );
+  });
 }
 
 export function scenarioSelectionNeedsSkillRegistryWorkspaceEventFixture(scenarios: string[]): boolean {
@@ -357,7 +374,8 @@ function isLoopbackUrl(value: string | null): boolean {
 
 function resolveLiveDenAuthSnapshotPath(env: Record<string, string | undefined>): string | null {
   const snapshotPath = normalizeOptionalText(env.VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE)
-    ?? normalizeOptionalText(env.E2E_DEN_AUTH_SNAPSHOT_FILE);
+    ?? normalizeOptionalText(env.E2E_DEN_AUTH_SNAPSHOT_FILE)
+    ?? normalizeOptionalText(env.VESLO_DEN_AUTH_SNAPSHOT_PATH);
   return snapshotPath ? resolve(snapshotPath) : null;
 }
 
@@ -411,7 +429,7 @@ export function assertLiveManagedAiAuthForScenarioSelection(
     const snapshotPath = resolveLiveDenAuthSnapshotPath(env);
     if (!snapshotPath) {
       throw new Error(
-        'Managed-AI inference pilot scenarios require live Den auth. Set VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE to a real user snapshot, for example C:\\Users\\jajse\\.veslo\\den-auth.json.',
+        'Managed-AI inference pilot scenarios require live Den auth. Set VESLO_DEN_AUTH_SNAPSHOT_PATH or VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE to a real user snapshot, for example C:\\Users\\jajse\\.veslo\\den-auth.json.',
       );
     }
     if (!existsSync(snapshotPath)) {
@@ -499,6 +517,18 @@ export async function runPilotCommand(options: RunPilotCommandOptions): Promise<
     const output: Uint8Array[] = [];
     const errors: Uint8Array[] = [];
     let timeout: NodeJS.Timeout | null = null;
+    let settled = false;
+
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolveCommand();
+    };
 
     child.stdout?.on('data', (chunk: Uint8Array) => {
       output.push(chunk);
@@ -512,26 +542,24 @@ export async function runPilotCommand(options: RunPilotCommandOptions): Promise<
     if (options.timeoutMs) {
       timeout = setTimeout(() => {
         child.kill(process.platform === 'win32' ? undefined : 'SIGKILL');
-        reject(new Error(`tauri-pilot command timed out after ${options.timeoutMs}ms: ${args.join(' ')}`));
+        finish(new Error(`tauri-pilot command timed out after ${options.timeoutMs}ms: ${args.join(' ')}`));
       }, options.timeoutMs);
     }
 
     child.on('error', (error) => {
-      if (timeout) clearTimeout(timeout);
-      reject(error);
+      finish(error);
     });
 
     child.on('exit', (code, signal) => {
-      if (timeout) clearTimeout(timeout);
       if (code === 0) {
-        resolveCommand();
+        finish();
         return;
       }
 
       const stderr = Buffer.concat(errors).toString().trim();
       const stdout = Buffer.concat(output).toString().trim();
       const detail = [stderr, stdout].filter(Boolean).join('\n');
-      reject(new Error(`tauri-pilot exited with ${code ?? signal}: ${args.join(' ')}${detail ? `\n${tailText(detail)}` : ''}`));
+      finish(new Error(`tauri-pilot exited with ${code ?? signal}: ${args.join(' ')}${detail ? `\n${tailText(detail)}` : ''}`));
     });
   });
 }
@@ -707,6 +735,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   const binary = options.binary ?? resolvePilotBinary();
   const socket = options.socket ?? resolvePilotSocketPath({ runtimeDir: resolvePilotRuntimeDir() });
   const timeoutMs = options.timeoutMs ?? resolveLaunchTimeout();
+  const scenarioCommandTimeoutMs = resolvePilotScenarioCommandTimeoutMs();
 
   for (const scenario of scenarios) {
     if (!existsSync(scenario)) {
@@ -772,6 +801,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
           socket,
           args: ['run', scenario],
           cwd: e2eRoot,
+          timeoutMs: scenarioCommandTimeoutMs,
           inheritStdio: true,
         });
       } catch (error) {
@@ -794,6 +824,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
             socket,
             args: ['run', reconnectScenario],
             cwd: e2eRoot,
+            timeoutMs: scenarioCommandTimeoutMs,
             inheritStdio: true,
           });
         } catch (error) {

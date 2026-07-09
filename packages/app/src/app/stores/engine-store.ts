@@ -1,6 +1,15 @@
 import { createSignal } from "solid-js";
 
-import type { EngineRuntime, OnboardingStep } from "../types";
+import type {
+  Client,
+  EngineRuntime,
+  MessageWithParts,
+  OnboardingStep,
+  PendingPermission,
+  StartupPreference,
+  TodoItem,
+  View,
+} from "../types";
 import {
   addOpencodeCacheHint,
   isTauriRuntime,
@@ -16,14 +25,14 @@ import {
   engineDoctor,
   engineInfo,
   engineInstall,
-  engineStart,
   engineStop,
-  orchestratorInstanceDispose,
+  runtimePrepareWorkspace,
   type EngineDoctorResult,
   type EngineInfo,
   type WorkspaceInfo,
 } from "../lib/tauri";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
+import type { MigrationRepairResult } from "./config-store";
 
 export interface EngineStoreDeps {
   // Workspace path / info accessors
@@ -51,18 +60,18 @@ export interface EngineStoreDeps {
   setBusyLabel: (value: string | null) => void;
   setBusyStartedAt: (value: number | null) => void;
   setBaseUrl: (value: string) => void;
-  setClient: (value: any) => void;
+  setClient: (value: Client | null) => void;
   setConnectedVersion: (value: string | null) => void;
   setSelectedSessionId: (value: string | null) => void;
-  setMessages: (value: any[]) => void;
-  setTodos: (value: any[]) => void;
-  setPendingPermissions: (value: any[]) => void;
+  setMessages: (value: MessageWithParts[]) => void;
+  setTodos: (value: TodoItem[]) => void;
+  setPendingPermissions: (value: PendingPermission[]) => void;
   setSessionStatusById: (value: Record<string, string>) => void;
   setSseConnected: (value: boolean) => void;
-  setStartupPreference: (value: any) => void;
+  setStartupPreference: (value: StartupPreference | null) => void;
   setOnboardingStep: (step: OnboardingStep) => void;
-  setView: (value: any) => void;
-  client: () => any;
+  setView: (value: View) => void;
+  client: () => Client | null;
   routing: WorkspaceRouting;
   onEngineStable?: () => void;
 
@@ -83,18 +92,13 @@ export interface EngineStoreDeps {
   // Orchestrator / runtime helpers
   resolveEngineRuntime: () => EngineRuntime;
   resolveWorkspacePaths: () => string[];
-  activateOrchestratorWorkspace: (input: {
-    workspacePath: string;
-    workspaceId?: string | null;
-    name?: string | null;
-  }) => Promise<any>;
-  activateVesloHostWorkspace: (workspacePath: string) => Promise<any>;
+  activateVesloHostWorkspace: (workspacePath: string) => Promise<unknown>;
 
   // Workspace-level helpers
   blockLocalAction: (code: string, detail: string) => boolean;
   markOnboardingComplete: () => void;
   resolveWelcomeOnboardingStep: () => OnboardingStep;
-  setMigrationRepairResult: (value: any) => void;
+  setMigrationRepairResult: (value: MigrationRepairResult | null) => void;
 }
 
 export function createEngineStore(deps: EngineStoreDeps) {
@@ -120,10 +124,8 @@ export function createEngineStore(deps: EngineStoreDeps) {
     idleSuspendMs: deps.idleSuspendMs,
     setEngine,
     setEngineAuth,
-    startEngine: engineStart,
-    stopEngine: engineStop,
     readEngineInfo: engineInfo,
-    activateOrchestratorWorkspace: deps.activateOrchestratorWorkspace,
+    prepareWorkspaceRuntime: runtimePrepareWorkspace,
     activateVesloHostWorkspace: deps.activateVesloHostWorkspace,
     connectToServer: deps.connectToServer,
     connectQuiet: async (baseUrl, directory, auth, context) =>
@@ -368,12 +370,7 @@ export function createEngineStore(deps: EngineStoreDeps) {
         workspaceId: activeLocalWorkspaceId,
         workspaceName: deps.activeWorkspaceInfo()?.displayName?.trim() || deps.activeWorkspaceInfo()?.name?.trim() || null,
         reason: runtime === "veslo-orchestrator" ? "engine-reload-orchestrator" : "engine-reload",
-        beforeOrchestratorReconnect:
-          runtime === "veslo-orchestrator"
-            ? async () => {
-                await orchestratorInstanceDispose(root);
-              }
-            : undefined,
+        forceFreshRuntime: true,
       });
       if (!ok) {
         deps.setError("Failed to reconnect after reload");

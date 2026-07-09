@@ -264,12 +264,10 @@ export function registerOpenCodeRouterRoutes(routes: Route[]): void {
 
     if (apply.applied && apply.body && typeof apply.body === "object") {
       const payload = apply.body as Record<string, unknown>;
-      const rawItems = (payload as any).items;
-      if (Array.isArray(rawItems)) {
+      const rawItems = arrayField(payload, "items");
+      if (rawItems.length) {
         const items = rawItems
-          .filter(
-            (entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object" && !Array.isArray(entry)),
-          )
+          .filter(isPlainRecord)
           .map((entry) => {
             const id = normalizeOpenCodeRouterIdentityId(entry.id);
             const enabled = entry.enabled === undefined ? true : entry.enabled === true || entry.enabled === "true";
@@ -289,10 +287,7 @@ export function registerOpenCodeRouterRoutes(routes: Route[]): void {
     const current = await readOpenCodeRouterConfigFile(resolveOpenCodeRouterConfigPath());
     const channels = ensurePlainObject(current.channels);
     const telegram = ensurePlainObject(channels.telegram);
-    const botsRaw = (telegram as any).bots;
-    const bots = Array.isArray(botsRaw) ? (botsRaw as unknown[]) : [];
-    const items = bots
-      .filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object" && !Array.isArray(entry)))
+    const items = recordArrayField(telegram, "bots")
       .map((entry) => {
         const id = normalizeOpenCodeRouterIdentityId(entry.id);
         const enabled = entry.enabled === undefined ? true : entry.enabled === true || entry.enabled === "true";
@@ -521,12 +516,10 @@ export function registerOpenCodeRouterRoutes(routes: Route[]): void {
 
     if (apply.applied && apply.body && typeof apply.body === "object") {
       const payload = apply.body as Record<string, unknown>;
-      const rawItems = (payload as any).items;
-      if (Array.isArray(rawItems)) {
+      const rawItems = arrayField(payload, "items");
+      if (rawItems.length) {
         const items = rawItems
-          .filter(
-            (entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object" && !Array.isArray(entry)),
-          )
+          .filter(isPlainRecord)
           .map((entry) => {
             const id = normalizeOpenCodeRouterIdentityId(entry.id);
             const enabled = entry.enabled === undefined ? true : entry.enabled === true || entry.enabled === "true";
@@ -542,10 +535,7 @@ export function registerOpenCodeRouterRoutes(routes: Route[]): void {
     const current = await readOpenCodeRouterConfigFile(resolveOpenCodeRouterConfigPath());
     const channels = ensurePlainObject(current.channels);
     const slack = ensurePlainObject(channels.slack);
-    const appsRaw = (slack as any).apps;
-    const apps = Array.isArray(appsRaw) ? (appsRaw as unknown[]) : [];
-    const items = apps
-      .filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object" && !Array.isArray(entry)))
+    const items = recordArrayField(slack, "apps")
       .map((entry) => {
         const id = normalizeOpenCodeRouterIdentityId(entry.id);
         const enabled = entry.enabled === undefined ? true : entry.enabled === true || entry.enabled === "true";
@@ -956,9 +946,26 @@ type TelegramBotInfo = {
   name?: string;
 };
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
 function ensurePlainObject(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return value as Record<string, unknown>;
+  return isPlainRecord(value) ? value : {};
+}
+
+function arrayField(record: Record<string, unknown>, key: string): unknown[] {
+  const value = record[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function recordArrayField(record: Record<string, unknown>, key: string): Array<Record<string, unknown>> {
+  return arrayField(record, key).filter(isPlainRecord);
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" ? value : undefined;
 }
 
 function normalizeOpenCodeRouterIdentityId(value: unknown): string {
@@ -1085,13 +1092,9 @@ async function persistOpenCodeRouterTelegramIdentity(identity: {
     throw new ApiError(400, "token_required", "Telegram token is required");
   }
 
-  const botsRaw = (telegram as any).bots;
-  const bots = Array.isArray(botsRaw) ? (botsRaw as unknown[]) : [];
   const nextBots: Array<Record<string, unknown>> = [];
   let found = false;
-  for (const entry of bots) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
+  for (const record of recordArrayField(telegram, "bots")) {
     const entryId = normalizeOpenCodeRouterIdentityId(record.id);
     if (entryId !== id) {
       nextBots.push(record);
@@ -1159,13 +1162,9 @@ async function deleteOpenCodeRouterTelegramIdentity(idRaw: string): Promise<bool
   const channels = ensurePlainObject(current.channels);
   const telegram = ensurePlainObject(channels.telegram);
 
-  const botsRaw = (telegram as any).bots;
-  const bots = Array.isArray(botsRaw) ? (botsRaw as unknown[]) : [];
   const nextBots: Array<Record<string, unknown>> = [];
   let deleted = false;
-  for (const entry of bots) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
+  for (const record of recordArrayField(telegram, "bots")) {
     const entryId = normalizeOpenCodeRouterIdentityId(record.id);
     if (entryId === id) {
       deleted = true;
@@ -1179,7 +1178,7 @@ async function deleteOpenCodeRouterTelegramIdentity(idRaw: string): Promise<bool
     bots: nextBots,
   };
   if (id === "default") {
-    delete (nextTelegram as any).token;
+    delete nextTelegram.token;
   }
 
   const next: OpenCodeRouterConfigFile = {
@@ -1199,20 +1198,17 @@ async function persistOpenCodeRouterTelegramEnabled(enabled: boolean, options?: 
   const channels = ensurePlainObject(current.channels);
   const telegram = ensurePlainObject(channels.telegram);
 
-  const botsRaw = (telegram as any).bots;
-  const bots = Array.isArray(botsRaw) ? (botsRaw as unknown[]) : [];
+  const bots = recordArrayField(telegram, "bots");
   const nextBots: Array<Record<string, unknown>> = [];
-  for (const entry of bots) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
-    const id = typeof record.id === "string" ? record.id.trim() : "";
+  for (const record of bots) {
+    const id = stringField(record, "id")?.trim() ?? "";
     if (!id) {
       nextBots.push(record);
       continue;
     }
     if (!enabled && options?.clearToken && id === "default") {
       const nextRecord = { ...record };
-      delete (nextRecord as any).token;
+      delete nextRecord.token;
       nextBots.push(nextRecord);
       continue;
     }
@@ -1248,13 +1244,13 @@ async function fetchTelegramBotInfo(token: string): Promise<TelegramBotInfo | nu
       method: "GET",
       signal: controller.signal,
     });
-    const json = (await response.json().catch(() => null)) as any;
-    if (!response.ok || !json?.ok || !json?.result) return null;
-    const result = json.result as Record<string, unknown>;
+    const json = ensurePlainObject(await response.json().catch(() => null));
+    const result = ensurePlainObject(json.result);
+    if (!response.ok || json.ok !== true || !Object.keys(result).length) return null;
     const id = typeof result.id === "number" ? result.id : null;
     if (id == null) return null;
-    const username = typeof result.username === "string" ? result.username : undefined;
-    const name = typeof result.first_name === "string" ? result.first_name : undefined;
+    const username = stringField(result, "username");
+    const name = stringField(result, "first_name");
     return { id, username, name };
   } catch {
     return null;
@@ -1275,21 +1271,17 @@ async function readOpenCodeRouterTelegramInfo(): Promise<{
 
   const channelEnabled = telegram.enabled === undefined ? true : telegram.enabled === true || telegram.enabled === "true";
 
-  const botsRaw = (telegram as any).bots;
-  const bots = Array.isArray(botsRaw) ? (botsRaw as unknown[]) : [];
   let token = "";
   let identityEnabled = true;
-  for (const entry of bots) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
-    const id = typeof record.id === "string" ? record.id.trim() : "";
+  for (const record of recordArrayField(telegram, "bots")) {
+    const id = stringField(record, "id")?.trim() ?? "";
     if (id !== "default") continue;
-    token = typeof record.token === "string" ? record.token.trim() : "";
+    token = stringField(record, "token")?.trim() ?? "";
     identityEnabled = record.enabled === undefined ? true : record.enabled === true || record.enabled === "true";
     break;
   }
   if (!token) {
-    token = typeof telegram.token === "string" ? telegram.token.trim() : "";
+    token = stringField(telegram, "token")?.trim() ?? "";
   }
 
   const configured = Boolean(token);
@@ -1318,13 +1310,9 @@ async function persistOpenCodeRouterSlackIdentity(identity: {
     throw new ApiError(400, "token_required", "Slack botToken and appToken are required");
   }
 
-  const appsRaw = (slack as any).apps;
-  const apps = Array.isArray(appsRaw) ? (appsRaw as unknown[]) : [];
   const nextApps: Array<Record<string, unknown>> = [];
   let found = false;
-  for (const entry of apps) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
+  for (const record of recordArrayField(slack, "apps")) {
     const entryId = normalizeOpenCodeRouterIdentityId(record.id);
     if (entryId !== id) {
       nextApps.push(record);
@@ -1366,13 +1354,9 @@ async function deleteOpenCodeRouterSlackIdentity(idRaw: string): Promise<boolean
   const channels = ensurePlainObject(current.channels);
   const slack = ensurePlainObject(channels.slack);
 
-  const appsRaw = (slack as any).apps;
-  const apps = Array.isArray(appsRaw) ? (appsRaw as unknown[]) : [];
   const nextApps: Array<Record<string, unknown>> = [];
   let deleted = false;
-  for (const entry of apps) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
+  for (const record of recordArrayField(slack, "apps")) {
     const entryId = normalizeOpenCodeRouterIdentityId(record.id);
     if (entryId === id) {
       deleted = true;
@@ -1386,8 +1370,8 @@ async function deleteOpenCodeRouterSlackIdentity(idRaw: string): Promise<boolean
     apps: nextApps,
   };
   if (id === "default") {
-    delete (nextSlack as any).botToken;
-    delete (nextSlack as any).appToken;
+    delete nextSlack.botToken;
+    delete nextSlack.appToken;
   }
 
   const next: OpenCodeRouterConfigFile = {

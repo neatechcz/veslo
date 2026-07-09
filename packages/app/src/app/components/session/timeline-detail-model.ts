@@ -1,4 +1,10 @@
 import type { Part } from "@opencode-ai/sdk/v2/client";
+import {
+  partObjectField,
+  partText,
+  toolInputFromPart,
+  toolNameFromPart,
+} from "../../lib/opencode-part-access";
 import { getBasename as basename } from "../../utils/workspace-path";
 import { currentLocale, t } from "../../../i18n";
 import { buildMediaEvidenceForParts, type MediaEvidence } from "./media-evidence-model.js";
@@ -97,18 +103,15 @@ function normalizeText(value: unknown): string {
 }
 
 function getToolName(part: Part): string {
-  return typeof (part as any).tool === "string" ? String((part as any).tool).toLowerCase() : "";
+  return toolNameFromPart(part).toLowerCase();
 }
 
 function getState(part: Part): Record<string, unknown> {
-  const state = (part as any).state;
-  return state && typeof state === "object" ? (state as Record<string, unknown>) : {};
+  return partObjectField(part, "state");
 }
 
 function getInput(part: Part): Record<string, unknown> {
-  const state = getState(part);
-  const input = state.input;
-  return input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  return toolInputFromPart(part);
 }
 
 function getStatus(part: Part): "done" | "running" | "error" | "pass" | undefined {
@@ -137,12 +140,12 @@ function isErrorPart(part: Part): boolean {
   const status = normalizeText(state.status).toLowerCase();
   if (status === "error" || status === "failed") return true;
   if (hasStrongToolErrorPayload(part)) return true;
-  const text = normalizeText((part as any).text);
+  const text = normalizeText(partText(part));
   return text.toLowerCase().startsWith("session-error:");
 }
 
 function isExplicitPlanningText(part: Part): boolean {
-  const text = normalizeText((part as any).text);
+  const text = normalizeText(partText(part));
   if (!text) return false;
   const firstLine = text.split(/\r?\n/, 1)[0].trim();
   return (
@@ -334,7 +337,7 @@ function buildVerifyRow(part: Part): TimelineRowModel {
 }
 
 function buildGenericReasoningRow(part: Part, kind: TimelineSectionKind): TimelineRowModel {
-  const text = normalizeText((part as any).text);
+  const text = normalizeText(partText(part));
   const clean = text.replace(/^session-error:\s*/i, "");
   const status = getStatus(part);
   if (kind === "issues") {

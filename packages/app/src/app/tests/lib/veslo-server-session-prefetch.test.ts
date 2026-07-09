@@ -52,8 +52,12 @@ test("veslo server client exposes transcript prefetch methods", async () => {
         input: {
           clickedSessionId?: string | null;
           selectedSessionId?: string | null;
+          clickedSession?: { sessionId: string; directory?: string | null } | null;
+          selectedSession?: { sessionId: string; directory?: string | null } | null;
           loadedTopLevelSessionIds: string[];
           expandedSubagentSessionIds: string[];
+          loadedTopLevelSessions?: Array<{ sessionId: string; directory?: string | null }>;
+          expandedSubagentSessions?: Array<{ sessionId: string; directory?: string | null }>;
           directory?: string | null;
           sessionDirectoriesById?: Record<string, string | null | undefined>;
           limit?: number;
@@ -62,8 +66,18 @@ test("veslo server client exposes transcript prefetch methods", async () => {
     }).prefetchSessionTranscripts("ws 1", {
       clickedSessionId: "sess-clicked",
       selectedSessionId: "sess-a",
+      clickedSession: { sessionId: "sess-clicked", directory: "/tmp/work space/clicked" },
+      selectedSession: { sessionId: "sess-a", directory: "/tmp/work space" },
       loadedTopLevelSessionIds: ["sess-a", "sess-b"],
       expandedSubagentSessionIds: ["sub-2", "sub-1"],
+      loadedTopLevelSessions: [
+        { sessionId: "sess-a", directory: "/tmp/work space" },
+        { sessionId: "sess-b", directory: "/tmp/work space/b" },
+      ],
+      expandedSubagentSessions: [
+        { sessionId: "sub-2", directory: "/tmp/work space/sub" },
+        { sessionId: "sub-1", directory: "/tmp/work space/sub" },
+      ],
       directory: "/tmp/work space",
       sessionDirectoriesById: {
         "sess-a": "/tmp/work space",
@@ -122,8 +136,18 @@ test("veslo server client exposes transcript prefetch methods", async () => {
     assert.deepEqual(JSON.parse(calls[0]?.body ?? "{}"), {
       clickedSessionId: "sess-clicked",
       selectedSessionId: "sess-a",
+      clickedSession: { sessionId: "sess-clicked", directory: "/tmp/work space/clicked" },
+      selectedSession: { sessionId: "sess-a", directory: "/tmp/work space" },
       loadedTopLevelSessionIds: ["sess-a", "sess-b"],
       expandedSubagentSessionIds: ["sub-2", "sub-1"],
+      loadedTopLevelSessions: [
+        { sessionId: "sess-a", directory: "/tmp/work space" },
+        { sessionId: "sess-b", directory: "/tmp/work space/b" },
+      ],
+      expandedSubagentSessions: [
+        { sessionId: "sub-2", directory: "/tmp/work space/sub" },
+        { sessionId: "sub-1", directory: "/tmp/work space/sub" },
+      ],
       directory: "/tmp/work space",
       sessionDirectoriesById: {
         "sess-a": "/tmp/work space",

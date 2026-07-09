@@ -187,12 +187,21 @@ export type SidebarSubagentDecoration = {
   color: string;
 };
 
+export type LoadedSidebarPrefetchSessionRef = {
+  sessionId: string;
+  directory?: string | null;
+};
+
 export type LoadedSidebarPrefetchInterest = {
   clickedSessionId: string | null;
   selectedSessionId: string | null;
   loadedTopLevelSessionIds: string[];
   expandedSubagentSessionIds: string[];
   sessionDirectoriesById: Record<string, string>;
+  clickedSession?: LoadedSidebarPrefetchSessionRef | null;
+  selectedSession?: LoadedSidebarPrefetchSessionRef | null;
+  loadedTopLevelSessions?: LoadedSidebarPrefetchSessionRef[];
+  expandedSubagentSessions?: LoadedSidebarPrefetchSessionRef[];
 };
 
 export type LoadedSessionPrefetchInterestChangeHandler = (
@@ -278,12 +287,14 @@ export type ComposerPart =
   | { type: "file"; path: string; label?: string }
   | { type: "paste"; id: string; label: string; text: string; lines: number };
 
+export type ComposerAttachmentKind = "image" | "file";
+
 export type ComposerAttachment = {
   id: string;
   name: string;
   mimeType: string;
   size: number;
-  kind: "image" | "file";
+  kind: ComposerAttachmentKind;
   dataUrl: string;
 };
 
@@ -602,6 +613,17 @@ export type HubMcpAuthorization = {
   disconnectPath: string;
 };
 
+export type HubMcpConnectionStatus = {
+  connectorId: string;
+  name?: string;
+  connected: boolean;
+  state: string;
+  scopes?: string[];
+  connectedAt: string | null;
+  revokedAt: string | null;
+  accessTokenExpiresAt: string | null;
+};
+
 export type HubMcpItem = {
   id: string;
   name: string;
@@ -626,6 +648,7 @@ export type HubMcpItem = {
     id: string;
     group?: string;
   };
+  connection?: HubMcpConnectionStatus;
 };
 
 export type HubMcpCard = {
@@ -643,6 +666,7 @@ export type HubMcpCard = {
     group?: string;
   };
   source?: HubMcpItem["source"];
+  connection?: HubMcpConnectionStatus;
 };
 
 export type PluginInstallStep = {
@@ -713,6 +737,7 @@ export type McpServerEntry = {
   name: string;
   config: McpServerConfig;
   source?: "config.project" | "config.global" | "config.remote";
+  owner?: ResourceOwner;
   disabledByTools?: boolean;
 };
 
@@ -810,6 +835,16 @@ export type WorkspaceDisplay = WorkspaceInfo & {
   name: string;
 };
 
+export type UpdateDownloadEvent = {
+  event: "Started" | "Progress" | "Finished" | string;
+  data?: {
+    contentLength?: number;
+    chunkLength?: number;
+    [key: string]: unknown;
+  } | null;
+  [key: string]: unknown;
+};
+
 export type UpdateHandle = {
   available: boolean;
   currentVersion: string;
@@ -818,7 +853,7 @@ export type UpdateHandle = {
   body?: string;
   rawJson: Record<string, unknown>;
   close: () => Promise<void>;
-  download: (onEvent?: (event: any) => void) => Promise<void>;
+  download: (onEvent?: (event: UpdateDownloadEvent) => void) => Promise<void>;
   install: () => Promise<void>;
-  downloadAndInstall: (onEvent?: (event: any) => void) => Promise<void>;
+  downloadAndInstall: (onEvent?: (event: UpdateDownloadEvent) => void) => Promise<void>;
 };

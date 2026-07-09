@@ -76,6 +76,13 @@ function isOpenCodeRouterIdentities(value: unknown): value is { ok: boolean; ite
   return typeof record.ok === "boolean" && Array.isArray(record.items);
 }
 
+function stringField(value: unknown, field: string): string | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const fieldValue = record[field];
+  return typeof fieldValue === "string" ? fieldValue : null;
+}
+
 function getTelegramUsernameFromResult(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
@@ -447,9 +454,8 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         setHealth(null);
         if (!healthRes.ok) {
           const message =
-            (healthRes.json && typeof (healthRes.json as any).message === "string")
-              ? String((healthRes.json as any).message)
-              : __vesloT("identities.router_health_unavailable", __vesloCurrentLocale()).replace("{status}", String(healthRes.status));
+            stringField(healthRes.json, "message")
+              ?? __vesloT("identities.router_health_unavailable", __vesloCurrentLocale()).replace("{status}", String(healthRes.status));
           setHealthError(message);
         }
       }
@@ -533,12 +539,11 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         } else {
           setTelegramPairingCode(null);
         }
-        const username = (result.telegram as any)?.bot?.username;
+        const username = getTelegramUsernameFromResult(result.telegram);
         if (username) {
-          const normalized = String(username).trim().replace(/^@+/, "");
-          setTelegramBotUsername(normalized || null);
+          setTelegramBotUsername(username);
           if (access !== "private" || !pairingCode) {
-            setTelegramStatus(__vesloT("identities.saved_account", __vesloCurrentLocale()).replace("{account}", `@${normalized || String(username)}`));
+            setTelegramStatus(__vesloT("identities.saved_account", __vesloCurrentLocale()).replace("{account}", `@${username}`));
           }
         } else {
           if (access !== "private" || !pairingCode) {

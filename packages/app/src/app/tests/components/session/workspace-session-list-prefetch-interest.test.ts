@@ -21,6 +21,13 @@ test("recent mode groups loaded rows by workspace across the whole sidebar", () 
     loadedTopLevelSessionIds: ["ws-a-1", "ws-a-2"],
     expandedSubagentSessionIds: [],
     sessionDirectoriesById: { "ws-a-1": "/work/a", "ws-a-2": "/work/a" },
+    clickedSession: null,
+    selectedSession: null,
+    loadedTopLevelSessions: [
+      { sessionId: "ws-a-1", directory: "/work/a" },
+      { sessionId: "ws-a-2", directory: "/work/a" },
+    ],
+    expandedSubagentSessions: [],
   });
   assert.deepEqual(result.get("ws-b"), {
     clickedSessionId: null,
@@ -28,6 +35,10 @@ test("recent mode groups loaded rows by workspace across the whole sidebar", () 
     loadedTopLevelSessionIds: ["ws-b-selected"],
     expandedSubagentSessionIds: [],
     sessionDirectoriesById: { "ws-b-selected": "/work/b" },
+    clickedSession: null,
+    selectedSession: { sessionId: "ws-b-selected", directory: "/work/b" },
+    loadedTopLevelSessions: [{ sessionId: "ws-b-selected", directory: "/work/b" }],
+    expandedSubagentSessions: [],
   });
 });
 
@@ -53,6 +64,13 @@ test("expanded subagents are included newest-first and deduplicated per workspac
       "child-older": "/work/a",
       "child-newer": "/work/a",
     },
+    clickedSession: { sessionId: "child-newer", directory: "/work/a" },
+    selectedSession: null,
+    loadedTopLevelSessions: [{ sessionId: "parent", directory: "/work/a" }],
+    expandedSubagentSessions: [
+      { sessionId: "child-newer", directory: "/work/a" },
+      { sessionId: "child-older", directory: "/work/a" },
+    ],
   });
 });
 
@@ -86,6 +104,14 @@ test("normalizes ids, filters blanks, and deduplicates duplicate top-level rows"
       "top-a": "/work/a",
       "sub-a": "/work/a",
     },
+    clickedSession: { sessionId: "clicked-a", directory: "/work/a" },
+    selectedSession: { sessionId: "selected-a", directory: "/work/a" },
+    loadedTopLevelSessions: [
+      { sessionId: "selected-a", directory: "/work/a" },
+      { sessionId: "clicked-a", directory: "/work/a" },
+      { sessionId: "top-a", directory: "/work/a" },
+    ],
+    expandedSubagentSessions: [{ sessionId: "sub-a", directory: "/work/a" }],
   });
 });
 
@@ -106,6 +132,10 @@ test("does not misattribute ambiguous clicked or selected ids across workspaces"
     loadedTopLevelSessionIds: ["shared"],
     expandedSubagentSessionIds: [],
     sessionDirectoriesById: { shared: "/work/a" },
+    clickedSession: null,
+    selectedSession: null,
+    loadedTopLevelSessions: [{ sessionId: "shared", directory: "/work/a" }],
+    expandedSubagentSessions: [],
   });
   assert.deepEqual(result.get("ws-b"), {
     clickedSessionId: null,
@@ -113,5 +143,65 @@ test("does not misattribute ambiguous clicked or selected ids across workspaces"
     loadedTopLevelSessionIds: ["shared"],
     expandedSubagentSessionIds: [],
     sessionDirectoriesById: { shared: "/work/b" },
+    clickedSession: null,
+    selectedSession: null,
+    loadedTopLevelSessions: [{ sessionId: "shared", directory: "/work/b" }],
+    expandedSubagentSessions: [],
+  });
+});
+
+test("preserves same-workspace duplicate raw session ids as scoped refs", () => {
+  const result = deriveLoadedSidebarPrefetchInterest({
+    selectedSessionId: "shared",
+    selectedRowKey: "row-b",
+    clickedSessionId: "shared",
+    clickedRowKey: "row-a",
+    loadedTopLevelRows: [
+      { rowKey: "row-a", workspaceId: "ws-a", sessionId: "shared", directory: "/work/a", updatedAt: 30 },
+      { rowKey: "row-b", workspaceId: "ws-a", sessionId: "shared", directory: "/work/b", updatedAt: 20 },
+    ],
+    expandedSubagentRows: [],
+  });
+
+  assert.deepEqual(result.get("ws-a"), {
+    clickedSessionId: "shared",
+    selectedSessionId: "shared",
+    loadedTopLevelSessionIds: ["shared"],
+    expandedSubagentSessionIds: [],
+    sessionDirectoriesById: { shared: "/work/a" },
+    clickedSession: { sessionId: "shared", directory: "/work/a" },
+    selectedSession: { sessionId: "shared", directory: "/work/b" },
+    loadedTopLevelSessions: [
+      { sessionId: "shared", directory: "/work/a" },
+      { sessionId: "shared", directory: "/work/b" },
+    ],
+    expandedSubagentSessions: [],
+  });
+});
+
+test("does not guess clicked or selected directory for same-workspace duplicate raw ids without row keys", () => {
+  const result = deriveLoadedSidebarPrefetchInterest({
+    selectedSessionId: "shared",
+    clickedSessionId: "shared",
+    loadedTopLevelRows: [
+      { workspaceId: "ws-a", sessionId: "shared", directory: "/work/a", updatedAt: 30 },
+      { workspaceId: "ws-a", sessionId: "shared", directory: "/work/b", updatedAt: 20 },
+    ],
+    expandedSubagentRows: [],
+  });
+
+  assert.deepEqual(result.get("ws-a"), {
+    clickedSessionId: null,
+    selectedSessionId: null,
+    loadedTopLevelSessionIds: ["shared"],
+    expandedSubagentSessionIds: [],
+    sessionDirectoriesById: { shared: "/work/a" },
+    clickedSession: null,
+    selectedSession: null,
+    loadedTopLevelSessions: [
+      { sessionId: "shared", directory: "/work/a" },
+      { sessionId: "shared", directory: "/work/b" },
+    ],
+    expandedSubagentSessions: [],
   });
 });

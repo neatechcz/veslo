@@ -15,6 +15,7 @@ import type {
 } from "../lib/veslo-server";
 import type { WorkspaceInfo } from "../lib/tauri";
 import type { SessionArchiveItem, WorkspaceSessionGroup } from "../types";
+import { normalizeDirectoryPath } from "../utils";
 
 export { LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY } from "../lib/session-archive-model";
 
@@ -47,12 +48,23 @@ export type SessionArchiveStoreDeps = {
 export type SessionArchiveStore = {
   archivedSessionIds: Accessor<string[]>;
   sessionArchives: Accessor<SessionArchiveItem[]>;
-  archiveSession: (workspaceId: string, sessionId: string) => Promise<void>;
+  archiveSession: (
+    workspaceId: string,
+    sessionId: string,
+    target?: SessionArchiveTarget | null,
+  ) => Promise<void>;
   unarchiveSession: (
     workspaceId: string,
     sessionId: string,
     workspaceIdentityHint?: string | null,
+    target?: SessionArchiveTarget | null,
   ) => Promise<void>;
+};
+
+export type SessionArchiveTarget = {
+  directory?: string | null;
+  conversationId?: string | null;
+  opencodeSessionId?: string | null;
 };
 
 function defaultStorage(): SessionArchiveStorage | null {
@@ -116,14 +128,22 @@ export function createSessionArchiveStore(deps: SessionArchiveStoreDeps): Sessio
 
   const archivedSessionIds = () => {
     const workspaces = deps.workspaces();
-    return sessionArchiveRecords().map((record) => {
+    const keys = sessionArchiveRecords().flatMap((record) => {
       const item = toSessionArchiveItem(record, workspaces);
-      return buildArchivedSidebarSessionKey({
+      const legacyKey = buildArchivedSidebarSessionKey({
         workspaceId: item.workspaceId,
         workspaceIdentity: item.workspaceIdentity,
         sessionId: item.sessionId,
       });
+      const directoryKey = buildArchivedSidebarSessionKey({
+        workspaceId: item.workspaceId,
+        workspaceIdentity: item.workspaceIdentity,
+        sessionId: item.sessionId,
+        directory: item.resolvedDirectory,
+      });
+      return [legacyKey, directoryKey].filter(Boolean);
     });
+    return Array.from(new Set(keys));
   };
 
   const sessionArchives = () =>
@@ -136,8 +156,9 @@ export function createSessionArchiveStore(deps: SessionArchiveStoreDeps): Sessio
     sessionId: string,
     task: () => Promise<void>,
     workspaceIdentity?: string | null,
+    directory?: string | null,
   ) => {
-    const id = buildArchivedSidebarSessionKey({ workspaceId, workspaceIdentity, sessionId });
+    const id = buildArchivedSidebarSessionKey({ workspaceId, workspaceIdentity, sessionId, directory });
     if (!id) return;
     if (sessionArchivePendingIds().has(id)) return;
 
@@ -271,7 +292,11 @@ export function createSessionArchiveStore(deps: SessionArchiveStoreDeps): Sessio
     })();
   });
 
-  const archiveSession = async (workspaceId: string, sessionId: string) => {
+  const archiveSession = async (
+    workspaceId: string,
+    sessionId: string,
+    target?: SessionArchiveTarget | null,
+  ) => {
     const client = deps.vesloArchiveClient();
     const ownerKey = deps.sessionArchiveOwnerKey();
     if (!client || !ownerKey) {
@@ -279,8 +304,19 @@ export function createSessionArchiveStore(deps: SessionArchiveStoreDeps): Sessio
       return;
     }
 
+    const targetDirectory = normalizeDirectoryPath(target?.directory ?? "");
+    const targetConversationId = target?.conversationId?.trim() ?? "";
+    const targetOpencodeSessionId = target?.opencodeSessionId?.trim() ?? "";
     const group = deps.sidebarWorkspaceGroups().find((entry) => entry.workspace.id === workspaceId) ?? null;
-    const session = group?.sessions.find((entry) => entry.id === sessionId) ?? null;
+    const session = group?.sessions.find((entry) => {
+      if (entry.id !== sessionId) return false;
+      if (targetDirectory && normalizeDirectoryPath(entry.directory ?? "") !== targetDirectory) return false;
+      if (targetConversationId && (entry.conversationId?.trim() ?? "") !== targetConversationId) return false;
+      if (targetOpencodeSessionId && (entry.opencodeSessionId?.trim() || entry.id) !== targetOpencodeSessionId) {
+        return false;
+      }
+      return true;
+    }) ?? null;
     if (!group || !session) return;
 
     await withPendingArchivedSession(workspaceId, sessionId, async () => {
@@ -291,13 +327,14 @@ export function createSessionArchiveStore(deps: SessionArchiveStoreDeps): Sessio
       applySessionArchiveRecords(response.items ?? []);
       clearLegacyArchivedSessionIds(storage);
       writeArchiveMigrationDone(storage, ownerKey);
-    });
+    }, null, targetDirectory);
   };
 
   const unarchiveSession = async (
     workspaceId: string,
     sessionId: string,
     workspaceIdentityHint?: string | null,
+    target?: SessionArchiveTarget | null,
   ) => {
     const client = deps.vesloArchiveClient();
     const ownerKey = deps.sessionArchiveOwnerKey();
@@ -308,21 +345,29 @@ export function createSessionArchiveStore(deps: SessionArchiveStoreDeps): Sessio
 
     const workspaces = deps.workspaces();
     const normalizedIdentityHint = workspaceIdentityHint?.trim() ?? "";
+    const targetDirectory = normalizeDirectoryPath(target?.directory ?? "");
     const archiveItem = sessionArchiveRecords()
       .map((record) => toSessionArchiveItem(record, workspaces))
       .find((item) =>
         item.sessionId === sessionId &&
         item.workspaceId === workspaceId &&
-        (!normalizedIdentityHint || item.workspaceIdentity === normalizedIdentityHint)
+        (!normalizedIdentityHint || item.workspaceIdentity === normalizedIdentityHint) &&
+        (!targetDirectory || normalizeDirectoryPath(item.resolvedDirectory ?? "") === targetDirectory)
       );
     const workspaceIdentity = normalizedIdentityHint || archiveItem?.workspaceIdentity?.trim() || undefined;
 
     await withPendingArchivedSession(workspaceId, sessionId, async () => {
-      const response = await client.deleteSessionArchive(sessionId, { workspaceId, workspaceIdentity });
+      const deleteOptions: { workspaceId: string; workspaceIdentity?: string; directory?: string } = {
+        workspaceId,
+      };
+      if (workspaceIdentity) deleteOptions.workspaceIdentity = workspaceIdentity;
+      if (targetDirectory) deleteOptions.directory = targetDirectory;
+
+      const response = await client.deleteSessionArchive(sessionId, deleteOptions);
       applySessionArchiveRecords(response.items ?? []);
       clearLegacyArchivedSessionIds(storage);
       writeArchiveMigrationDone(storage, ownerKey);
-    }, workspaceIdentity);
+    }, workspaceIdentity, targetDirectory || archiveItem?.resolvedDirectory);
   };
 
   return {

@@ -6,6 +6,11 @@ import { isTauriRuntime, safeStringify, summarizeStep } from "../utils";
 import { usePlatform } from "../context/platform";
 import { perfNow, recordPerfLog } from "../lib/perf-log";
 import {
+  partStringField,
+  toolNameFromPart,
+  toolStateFromPart,
+} from "../lib/opencode-part-access";
+import {
   normalizeFilePath,
   parseLinkFromToken,
   splitTextWithStandalonePathLinks,
@@ -167,6 +172,31 @@ function rendererForTone(tone: "light" | "dark", copyCodeLabel: string) {
   const next = createCustomRenderer(tone, { copyCodeLabel });
   rendererByTone.set(key, next);
   return next;
+}
+
+type RuntimeRecord = Record<string, unknown>;
+type ToolImage = { src: string; alt: string };
+
+function recordFromValue(value: unknown): RuntimeRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as RuntimeRecord
+    : {};
+}
+
+function stringFromValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function stringField(record: RuntimeRecord, key: string): string {
+  return stringFromValue(record[key]);
+}
+
+function firstString(...values: unknown[]): string {
+  for (const value of values) {
+    const text = stringFromValue(value);
+    if (text) return text;
+  }
+  return "";
 }
 
 export default function PartView(props: Props) {
@@ -478,11 +508,6 @@ export default function PartView(props: Props) {
     void markdownSnapshot;
   });
 
-  const toolData = () => {
-    if (p().type !== "tool") return null;
-    return p() as any;
-  };
-
   let toolSummaryRuns = 0;
   let lastToolSummaryAt = 0;
   const toolSummary = createMemo(() => {
@@ -508,21 +533,18 @@ export default function PartView(props: Props) {
 
     return summary;
   });
-  const toolState = () => toolData()?.state ?? {};
-  const toolName = () => (toolData()?.tool ? String(toolData()?.tool) : "tool");
+  const toolState = () => toolStateFromPart(p());
+  const toolName = () => toolNameFromPart(p()) || "tool";
   const toolTitle = () => {
     const title = toolSummary()?.title;
     if (title) return title;
-    return toolState()?.title ? String(toolState().title) : toolName();
+    return stringField(toolState(), "title") || toolName();
   };
-  const toolStatus = () => (toolState()?.status ? String(toolState().status) : "unknown");
+  const toolStatus = () => stringField(toolState(), "status") || "unknown";
   const toolSubtitle = () => {
     const detail = toolSummary()?.detail;
     if (detail) return detail;
-    if (toolState()?.subtitle || toolState()?.detail || toolState()?.summary) {
-      return String(toolState().subtitle ?? toolState().detail ?? toolState().summary);
-    }
-    return "";
+    return firstString(toolState().subtitle, toolState().detail, toolState().summary);
   };
 
   const extractDiff = () => {
@@ -559,22 +581,24 @@ export default function PartView(props: Props) {
   });
 
   const toolError = () => {
-    const error = toolState()?.error;
+    const error = toolState().error;
     return typeof error === "string" ? error : null;
   };
 
-  const toolInput = () => toolState()?.input;
+  const toolInput = () => toolState().input;
 
   const diagnostics = () => {
-    const items = toolState()?.diagnostics;
-    return Array.isArray(items) ? items : [];
+    const items = toolState().diagnostics;
+    return Array.isArray(items) ? items.map(recordFromValue) : [];
   };
 
-  const formatDiagnosticLocation = (diagnostic: any) => {
-    const raw = diagnostic?.file ?? diagnostic?.path ?? diagnostic?.uri ?? "";
+  const formatDiagnosticLocation = (diagnostic: RuntimeRecord) => {
+    const raw = diagnostic.file ?? diagnostic.path ?? diagnostic.uri ?? "";
     const file = typeof raw === "string" ? raw.replace(/^file:\/\//, "") : "";
-    const line = diagnostic?.line ?? diagnostic?.range?.start?.line;
-    const character = diagnostic?.character ?? diagnostic?.range?.start?.character;
+    const range = recordFromValue(diagnostic.range);
+    const start = recordFromValue(range.start);
+    const line = diagnostic.line ?? start.line;
+    const character = diagnostic.character ?? start.character;
     const location =
       typeof line === "number"
         ? `${line + 1}${typeof character === "number" ? `:${character + 1}` : ""}`
@@ -582,8 +606,8 @@ export default function PartView(props: Props) {
     return `${file}${file && location ? ":" : ""}${location}`.trim();
   };
 
-  const formatDiagnosticLabel = (diagnostic: any) => {
-    const severity = diagnostic?.severity ?? diagnostic?.level;
+  const formatDiagnosticLabel = (diagnostic: RuntimeRecord) => {
+    const severity = diagnostic.severity ?? diagnostic.level;
     if (typeof severity === "string") return severity;
     if (severity === 1) return "error";
     if (severity === 2) return "warning";
@@ -606,32 +630,43 @@ export default function PartView(props: Props) {
 
   const toolImages = () => {
     const state = toolState();
-    const candidates = Array.isArray(state?.images) ? state.images : [];
+    const candidates = Array.isArray(state.images) ? state.images : [];
     return candidates
-      .map((item: any) => {
+      .map((item): ToolImage | null => {
         if (typeof item === "string") return { src: item, alt: "" };
-        const src = item?.url ?? item?.src ?? item?.data;
+        const record = recordFromValue(item);
+        const data = stringField(record, "data");
+        const mediaType = stringField(record, "mediaType");
+        const src = firstString(record.url, record.src, data);
         if (!src) return null;
-        if (item?.data && item?.mediaType && !String(item.data).startsWith("data:")) {
-          return { src: `data:${item.mediaType};base64,${item.data}`, alt: item?.alt ?? "" };
+        if (data && mediaType && !data.startsWith("data:")) {
+          return { src: `data:${mediaType};base64,${data}`, alt: stringField(record, "alt") };
         }
-        return { src, alt: item?.alt ?? "" };
+        return { src, alt: stringField(record, "alt") };
       })
-      .filter(Boolean);
+      .filter((image): image is ToolImage => image !== null);
   };
 
   const inlineImage = () => {
     if (p().type !== "file") return null;
-    const record = p() as any;
-    const mime = typeof record?.mime === "string" ? record.mime : "";
+    const part = p();
+    const mime = partStringField(part, "mime");
     if (!mime.startsWith("image/")) return null;
-    const src = record?.url ?? record?.src ?? record?.data ?? record?.source;
+    const data = partStringField(part, "data");
+    const mediaType = partStringField(part, "mediaType");
+    const src = firstString(
+      partStringField(part, "url"),
+      partStringField(part, "src"),
+      data,
+      partStringField(part, "source"),
+    );
     if (!src) return null;
-    if (record?.data && record?.mediaType && !String(record.data).startsWith("data:")) {
-      return `data:${record.mediaType};base64,${record.data}`;
+    if (data && mediaType && !data.startsWith("data:")) {
+      return `data:${mediaType};base64,${data}`;
     }
-    return src as string;
+    return src;
   };
+  const stepReason = () => partStringField(p(), "reason");
 
   return (
     <Switch>
@@ -797,13 +832,13 @@ export default function PartView(props: Props) {
                 <div class={`font-product type-ui-xs font-medium ${subtleTextClass()}`.trim()}>{__vesloT("ui.literal.diagnostics_1stxhg", __vesloCurrentLocale())}</div>
                 <div class="mt-2 grid gap-2">
                   <For each={diagnostics()}>
-                    {(diag: any) => (
+                    {(diag) => (
                       <div class="flex items-start justify-between gap-4 text-xs">
                         <div>
-                          <div class="font-medium text-gray-12">{String(diag?.message ?? "")}</div>
-                          <Show when={diag?.source || diag?.code}>
+                          <div class="font-medium text-gray-12">{String(diag.message ?? "")}</div>
+                          <Show when={diag.source || diag.code}>
                             <div class="text-[11px] text-gray-10">
-                              {[diag?.source, diag?.code].filter(Boolean).join(" · ")}
+                              {[diag.source, diag.code].filter(Boolean).join(" · ")}
                             </div>
                           </Show>
                         </div>
@@ -842,7 +877,7 @@ export default function PartView(props: Props) {
             <Show when={toolImages().length > 0}>
               <div class="grid gap-2">
                 <For each={toolImages()}>
-                  {(image: any) => (
+                  {(image) => (
                     <img
                       src={image.src}
                       alt={image.alt || ""}
@@ -908,9 +943,9 @@ export default function PartView(props: Props) {
       <Match when={p().type === "step-start" || p().type === "step-finish"}>
         <div class={`text-xs ${subtleTextClass()}`.trim()}>
           {p().type === "step-start" ? __vesloT("tools.step_started", __vesloCurrentLocale()) : __vesloT("tools.step_finished", __vesloCurrentLocale())}
-          <Show when={"reason" in p() && (p() as any).reason}>
+          <Show when={stepReason()}>
             <span class={tone() === "dark" ? "text-gray-12/80" : "text-gray-11"}>
-              {" "}· {String((p() as any).reason)}
+              {" "}· {stepReason()}
             </span>
           </Show>
         </div>

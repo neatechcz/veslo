@@ -161,6 +161,69 @@ test("GET /hub/mcp returns items from den org catalog", async () => {
   ]);
 });
 
+test("GET /hub/mcp prefers the request Den API base over server config", async () => {
+  const configuredDenCalls: string[] = [];
+  const configuredDenServer = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      configuredDenCalls.push(new URL(request.url).pathname);
+      return new Response(JSON.stringify({ error: "wrong den base" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+  runningServers.push(configuredDenServer as { stop?: (closeActiveConnections?: boolean) => void });
+
+  const requestDenCalls: string[] = [];
+  const requestDenServer = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      requestDenCalls.push(new URL(request.url).pathname);
+      return new Response(JSON.stringify({
+        items: [
+          {
+            id: "request-base-demo",
+            name: "Request Base Demo",
+            config: {
+              type: "remote",
+              url: "https://mcp.example.test/request-base",
+              oauth: false,
+            },
+            source: {
+              scope: "org",
+              orgId: "org_1",
+            },
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+  runningServers.push(requestDenServer as { stop?: (closeActiveConnections?: boolean) => void });
+
+  const { server } = await startFixture({ denApiBase: `http://127.0.0.1:${configuredDenServer.port}` });
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/hub/mcp`, {
+    headers: {
+      Authorization: "Bearer client-token",
+      "x-veslo-den-api-base": `http://127.0.0.1:${requestDenServer.port}`,
+      "x-veslo-den-token": "den-token",
+      "x-veslo-den-org-id": "org_1",
+    },
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as { items: Array<{ id: string }> };
+  expect(payload.items[0]?.id).toBe("request-base-demo");
+  expect(requestDenCalls).toEqual(["/v1/orgs/org_1/mcp/catalog"]);
+  expect(configuredDenCalls).toEqual([]);
+});
+
 test("GET /hub/mcp accepts platform Google MCP entries with server OAuth metadata", async () => {
   const denServer = Bun.serve({
     hostname: "127.0.0.1",
@@ -223,6 +286,112 @@ test("GET /hub/mcp accepts platform Google MCP entries with server OAuth metadat
   expect(payload.items[0].authorization.scopes).toContain("https://www.googleapis.com/auth/gmail.readonly");
   expect(payload.items[0].authorization.runtimeTokenPath).toBe("/v1/orgs/org_1/integrations/google/google-gmail/runtime-token");
   expect(JSON.stringify(payload)).not.toContain("VESLO_GOOGLE_MCP_CLIENT_SECRET");
+});
+
+test("GET /hub/mcp includes Veslo-managed provider connection status when available", async () => {
+  const denCalls: Array<{ pathname: string; method: string; authHeader: string | null }> = [];
+  const denServer = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      denCalls.push({
+        pathname: url.pathname,
+        method: request.method,
+        authHeader: request.headers.get("authorization"),
+      });
+
+      if (url.pathname === "/v1/orgs/org_1/integrations/google/connections") {
+        return new Response(JSON.stringify({
+          items: [
+            {
+              connectorId: "google-gmail",
+              name: "Google Gmail",
+              connected: true,
+              state: "connected",
+              scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
+              connectedAt: "2026-07-08T12:00:00.000Z",
+              revokedAt: null,
+              accessTokenExpiresAt: "2030-06-19T12:00:00.000Z",
+            },
+          ],
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({
+        items: [
+          {
+            id: "google-gmail",
+            name: "Google Gmail",
+            config: {
+              type: "remote",
+              url: "https://api.veslo.work/v1/orgs/org_1/integrations/google/google-gmail/mcp",
+              oauth: false,
+              headers: {
+                "X-Veslo-Connector": "google-gmail",
+              },
+            },
+            authorization: {
+              type: "veslo-server-oauth",
+              provider: "google",
+              connectorId: "google-gmail",
+              scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
+              startPath: "/v1/orgs/org_1/integrations/google/google-gmail/oauth/start",
+              runtimeTokenPath: "/v1/orgs/org_1/integrations/google/google-gmail/runtime-token",
+              statusPath: "/v1/orgs/org_1/integrations/google/connections",
+              disconnectPath: "/v1/orgs/org_1/integrations/google/google-gmail/connection",
+            },
+            source: { scope: "platform" },
+            provider: { id: "google", group: "Google" },
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+  runningServers.push(denServer as { stop?: (closeActiveConnections?: boolean) => void });
+
+  const { server } = await startFixture({ denApiBase: `http://127.0.0.1:${denServer.port}` });
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/hub/mcp`, {
+    headers: {
+      Authorization: "Bearer client-token",
+      "x-veslo-den-token": "den-token",
+      "x-veslo-den-org-id": "org_1",
+    },
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as {
+    items: Array<{
+      id: string;
+      connection?: { connectorId: string; connected: boolean; state: string; accessTokenExpiresAt: string | null };
+    }>;
+  };
+  expect(payload.items[0]?.id).toBe("google-gmail");
+  expect(payload.items[0]?.connection).toMatchObject({
+    connectorId: "google-gmail",
+    connected: true,
+    state: "connected",
+    accessTokenExpiresAt: "2030-06-19T12:00:00.000Z",
+  });
+  expect(denCalls).toEqual([
+    {
+      pathname: "/v1/orgs/org_1/mcp/catalog",
+      method: "GET",
+      authHeader: "Bearer den-token",
+    },
+    {
+      pathname: "/v1/orgs/org_1/integrations/google/connections",
+      method: "GET",
+      authHeader: "Bearer den-token",
+    },
+  ]);
 });
 
 test("GET /capabilities exposes hub mcp access without repo metadata", async () => {

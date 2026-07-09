@@ -47,6 +47,40 @@ const matchesScopeIdentity = (left: UiConversationScope, right: UiConversationSc
   return false;
 };
 
+const scopePathKey = (value: string | null | undefined) =>
+  normalizeText(value)
+    .replace(/^\\\\\?\\/, "")
+    .replace(/\\/g, "/")
+    .toLowerCase();
+
+const activePathScore = (
+  scope: UiConversationScope,
+  activeWorkspaceRoot: string | null | undefined,
+) => {
+  const activeRoot = normalizeText(activeWorkspaceRoot);
+  if (!activeRoot) return 0;
+  if (scope.directory === activeRoot || scope.workspaceRoot === activeRoot) return 2;
+  const activeKey = scopePathKey(activeRoot);
+  if (!activeKey) return 0;
+  return scopePathKey(scope.directory) === activeKey || scopePathKey(scope.workspaceRoot) === activeKey
+    ? 1
+    : 0;
+};
+
+const newestPreferredScope = (
+  scopes: UiConversationScope[],
+  activeWorkspaceRoot?: string | null,
+) => {
+  return scopes.reduce<UiConversationScope | null>((best, scope) => {
+    if (!best) return scope;
+    const scopeScore = activePathScore(scope, activeWorkspaceRoot);
+    const bestScore = activePathScore(best, activeWorkspaceRoot);
+    if (scopeScore !== bestScore) return scopeScore > bestScore ? scope : best;
+    if (scope.updatedAt !== best.updatedAt) return scope.updatedAt > best.updatedAt ? scope : best;
+    return scope;
+  }, null);
+};
+
 const mergeSelectedScopeWithRememberedScope = (
   selected: UiConversationScope,
   candidates: UiConversationScope[],
@@ -65,7 +99,7 @@ const mergeSelectedScopeWithRememberedScope = (
   };
 };
 
-export function normalizeUiConversationScope(
+function normalizeUiConversationScope(
   input: UiConversationScopeInput,
 ): UiConversationScope | null {
   const sessionId = normalizeText(input.sessionId);
@@ -146,6 +180,7 @@ export function resolveUiConversationScope(
   sessionId: string | null | undefined,
   options?: {
     activeWorkspaceId?: string | null;
+    activeWorkspaceRoot?: string | null;
     selectedScope?: UiConversationScopeInput | null;
   },
 ): UiConversationScope | null {
@@ -168,6 +203,26 @@ export function resolveUiConversationScope(
     ? candidates.filter((scope) => scope.workspaceId === activeWorkspaceId)
     : [];
   if (activeMatches.length === 1) return activeMatches[0] ?? null;
+  if (activeMatches.length > 1) {
+    const activeConversationIds = activeMatches
+      .map((scope) => scope.conversationId?.trim() ?? "")
+      .filter(Boolean);
+    const uniqueConversationIds = new Set(activeConversationIds);
+    if (uniqueConversationIds.size === 1) {
+      return newestPreferredScope(
+        activeMatches.filter((scope) => scope.conversationId?.trim()),
+        options?.activeWorkspaceRoot,
+      );
+    }
+    if (uniqueConversationIds.size === 0) {
+      const activeOpenCodeIds = activeMatches
+        .map((scope) => scope.opencodeSessionId?.trim() ?? "")
+        .filter(Boolean);
+      if (new Set(activeOpenCodeIds).size === 1) {
+        return newestPreferredScope(activeMatches, options?.activeWorkspaceRoot);
+      }
+    }
+  }
   if (candidates.length === 1) return candidates[0] ?? null;
 
   return null;

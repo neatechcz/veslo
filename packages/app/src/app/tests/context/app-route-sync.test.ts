@@ -9,6 +9,7 @@ import {
   type AppRouteNavigateOptions,
   type AppStartupRouteSyncDeps,
 } from "../../context/app-route-sync.js";
+import { createUiConversationKey } from "../../lib/ui-conversation-scope.js";
 import type { OnboardingStep } from "../../types.js";
 
 type Navigation = {
@@ -32,6 +33,17 @@ test("app route sync exposes view and navigation helpers without owning session 
     sessionRouteSync.goToSession(" sess-b ");
     assert.deepEqual(navigations.at(-1), { to: "/session/sess-b", options: undefined });
 
+    const scopedPendingKey = createUiConversationKey({
+      workspaceId: "ws-a",
+      kind: "pending-session",
+      id: "pending-session:abc",
+    });
+    sessionRouteSync.goToSession(scopedPendingKey);
+    assert.deepEqual(navigations.at(-1), {
+      to: `/session/${encodeURIComponent(scopedPendingKey)}`,
+      options: undefined,
+    });
+
     const dashboardRouteSync = createAppRouteSync({
       pathname: () => "/dashboard/scheduled",
       navigate: (to, options) => navigations.push({ to, options }),
@@ -51,14 +63,19 @@ test("app route sync exposes view and navigation helpers without owning session 
       creatingSession: () => creatingSession,
     });
 
+    const navigationCountBeforeTabChange = navigations.length;
     nonDashboardRouteSync.setTab("plugins");
     assert.equal(nonDashboardRouteSync.tab(), "plugins");
-    assert.equal(navigations.length, 2, "non-dashboard tab changes should only update local dashboard state");
+    assert.equal(
+      navigations.length,
+      navigationCountBeforeTabChange,
+      "non-dashboard tab changes should only update local dashboard state",
+    );
 
     creatingSession = true;
     nonDashboardRouteSync.setView("dashboard");
     creatingSession = false;
-    assert.equal(navigations.length, 2, "session creation guard should block dashboard navigation");
+    assert.equal(navigations.length, navigationCountBeforeTabChange, "session creation guard should block dashboard navigation");
 
     nonDashboardRouteSync.setView("dashboard");
     assert.deepEqual(navigations.at(-1), { to: "/dashboard/plugins", options: undefined });
@@ -90,6 +107,39 @@ test("desktop hash sync consumes absolute Tauri routes and mirrors dashboard tab
     windowTarget.location.hash = "#not-a-route";
     routeSync.syncExternalHashRoute(windowTarget);
     assert.equal(navigations.length, 1, "non-path hashes should stay untouched");
+
+    dispose();
+  });
+});
+
+test("desktop hash sync preserves encoded scoped session routes for the session route owner", () => {
+  createRoot((dispose) => {
+    const scopedSessionKey = createUiConversationKey({
+      workspaceId: "ws-a",
+      workspaceRoot: "/repo",
+      directory: "/repo/project-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "open-a",
+      kind: "session",
+      id: "shared",
+    });
+    const encodedRoute = `/session/${encodeURIComponent(scopedSessionKey)}`;
+    const navigations: Navigation[] = [];
+    const routeSync = createAppRouteSync({
+      pathname: () => "/dashboard/scheduled",
+      navigate: (to, options) => navigations.push({ to, options }),
+      isTauriRuntime: () => true,
+      creatingSession: () => false,
+    });
+    const windowTarget = {
+      location: { hash: `#${encodedRoute}` },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    };
+
+    routeSync.syncExternalHashRoute(windowTarget);
+
+    assert.deepEqual(navigations, [{ to: encodedRoute, options: { replace: true } }]);
 
     dispose();
   });

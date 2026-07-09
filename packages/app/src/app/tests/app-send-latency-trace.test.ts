@@ -45,10 +45,10 @@ const createWorkflowSource = readFileSync(
   "utf8",
 );
 
-function legacyConversationRunFallbackSource(): string {
-  const start = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+function conversationRunCompatibilityBridgeSource(): string {
+  const start = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
   const end = sendWorkflowSource.indexOf("export function createSessionSendWorkflow(", start);
-  assert.ok(start >= 0 && end > start, "legacy conversation run fallback source should be present");
+  assert.ok(start >= 0 && end > start, "conversation run compatibility bridge source should be present");
   return sendWorkflowSource.slice(start, end);
 }
 
@@ -224,20 +224,20 @@ test("create session preflight records duration for duplicate gates and server c
 });
 
 test("create run and compact do not fall back to legacy OpenCode SDK writes", () => {
-  const compactStart = mutationWorkflowSource.indexOf("  async function compactCurrentSession(");
+  const compactStart = mutationWorkflowSource.indexOf("  async function submitCurrentSessionCompaction(");
   const compactEnd = mutationWorkflowSource.indexOf("  async function replaceUserMessage(", compactStart);
   const createStart = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
   const createEnd = createWorkflowSource.indexOf("\n  const createSession = (", createStart);
 
-  assert.ok(compactStart >= 0 && compactEnd > compactStart, "compactCurrentSession source should be present");
+  assert.ok(compactStart >= 0 && compactEnd > compactStart, "submitCurrentSessionCompaction source should be present");
   assert.ok(createStart >= 0 && createEnd > createStart, "runCreateSessionFlow source should be present");
 
-  const fallbackSource = legacyConversationRunFallbackSource();
+  const bridgeSource = conversationRunCompatibilityBridgeSource();
   const compactSource = mutationWorkflowSource.slice(compactStart, compactEnd);
   const createSource = createWorkflowSource.slice(createStart, createEnd);
 
-  assert.match(fallbackSource, /const runConversationOrFail = async \(runInput: VesloConversationRunInput\)/);
-  assert.doesNotMatch(fallbackSource, /runConversationOrLegacy|sendPrompt:legacy-run-fallback|c\.session\.promptAsync|c\.session\.command|shellInSession/);
+  assert.match(bridgeSource, /const runConversationOrFail = async \(runInput: VesloConversationRunInput\)/);
+  assert.doesNotMatch(bridgeSource, /runConversationOrLegacy|sendPrompt:legacy-run-fallback|c\.session\.promptAsync|c\.session\.command|shellInSession/);
   assert.doesNotMatch(compactSource, /compactSession:legacy-run-fallback|compactSessionTyped|falling back to OpenCode SDK/);
   assert.doesNotMatch(createSource, /legacy-create-fallback|legacy-session-create|c\.session\.create|falling back to OpenCode SDK/);
   assert.match(createSource, /throw new Error\("Conversation service is unavailable for session creation\."\);/);
@@ -306,8 +306,8 @@ test("sidebar conversation read sync follows warm workspace readiness", () => {
   );
   assert.match(
     sidebarWorkspaceSessionsSource,
-    /const hostFirstResult = await refreshFromHostReadApi\("host-first"\);[\s\S]*if \(hostFirstResult\) return;[\s\S]*const activeWorkspaceId = options\.workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*if \(hostReadDirectory && options\.allowLiveWorkspaceSessionList\?\.\(id\) !== true\) \{[\s\S]*markSidebarRefreshUnavailable\(id, "live-session-list-not-allowed"\);[\s\S]*return;[\s\S]*\}[\s\S]*if \(activeWorkspaceId === id && !options\.activeWorkspaceRuntimeReady\(\)\) \{[\s\S]*markSidebarRefreshUnavailable\(id, "active-runtime-not-ready"\);[\s\S]*return;[\s\S]*\}[\s\S]*if \(!config\.baseUrl\)/,
-    "normal local sidebar refresh should prefer host conversation reads and skip live OpenCode session listing until send flow explicitly allows live reads",
+    /const hostFirstResult = await refreshFromHostReadApi\("host-first"\);[\s\S]*if \(hostFirstResult\) return;[\s\S]*const activeWorkspaceId = options\.workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*if \(hostReadDirectory && options\.allowLiveWorkspaceSessionList\?\.\(id\) !== true\) \{[\s\S]*skipLiveSidebarSessionList\(id, "live-session-list-not-allowed"\);[\s\S]*return;[\s\S]*\}[\s\S]*if \(activeWorkspaceId === id && !options\.activeWorkspaceRuntimeReady\(\)\) \{[\s\S]*markSidebarRefreshUnavailable\(id, "active-runtime-not-ready"\);[\s\S]*return;[\s\S]*\}[\s\S]*if \(!config\.baseUrl\)/,
+    "normal local sidebar refresh should prefer host conversation reads and soft-skip live OpenCode session listing until send flow explicitly allows live reads",
   );
   assert.match(
     source,
@@ -542,8 +542,13 @@ test("MCP auto refresh scheduler keeps UI wiring thin", () => {
   );
   assert.match(
     schedulerSource,
-    /if \(!options\.isTauriRuntime\(\)\) return;[\s\S]*if \(options\.activeWorkspaceRuntimeReady\(\) === false\) return;[\s\S]*const projectDir = options\.workspaceProjectDir\(\)\.trim\(\);[\s\S]*if \(!projectDir\) return;[\s\S]*const activeSendTraceId = options\.activeSendTraceId\?\.\(\)\?\.trim\(\) \?\? "";[\s\S]*if \(activeSendTraceId\) \{[\s\S]*scheduleDeferredRefresh\(activeSendTraceId, projectDir\);[\s\S]*return;[\s\S]*\}[\s\S]*void options\.refreshMcpServers\(\);/,
+    /if \(!options\.isTauriRuntime\(\)\) return;[\s\S]*if \(options\.activeWorkspaceRuntimeReady\(\) === false\) return;[\s\S]*const projectDir = options\.workspaceProjectDir\(\)\.trim\(\);[\s\S]*if \(!projectDir\) return;[\s\S]*const activeSendTraceId = options\.activeSendTraceId\?\.\(\)\?\.trim\(\) \?\? "";[\s\S]*if \(activeSendTraceId\) \{[\s\S]*scheduleDeferredRefresh\(activeSendTraceId, projectDir\);[\s\S]*return;[\s\S]*\}[\s\S]*scheduleAutoRefresh\(projectDir\);/,
     "MCP scheduler should preserve Tauri, engine and project directory gates while deferring during active sends",
+  );
+  assert.match(
+    schedulerSource,
+    /export function mcpAutoRefreshTargetKey[\s\S]*export function shouldRefreshMcpAutoRefreshTarget[\s\S]*"workspace\.mcp", "refresh-skip-recent-target"/,
+    "MCP scheduler should dedupe repeated auto refreshes by stable workspace/project target",
   );
   assert.match(
     schedulerSource,
@@ -564,5 +569,25 @@ test("MCP auto refresh scheduler keeps UI wiring thin", () => {
     source,
     /createEffect\(\(\) => \{\s*if \(!isTauriRuntime\(\)\) return;\s*workspaceStore\.activeWorkspaceId\(\);\s*workspaceProjectDir\(\);\s*void refreshMcpServers\(\);\s*\}\);/,
     "app must not keep a raw MCP auto-refresh effect that bypasses the scheduler active-send guard",
+  );
+});
+
+test("active visible transcript recovery opt-in stays scoped to selected-session reads", () => {
+  assert.match(
+    source,
+    /loadOfflineTranscript: async \(sessionId, limit\) => \{[\s\S]*const snapshot = await getTranscriptFromVesloReadApi\([\s\S]*transcriptWorkspaceId,[\s\S]*sessionId,[\s\S]*limit,[\s\S]*transcriptDirectory \|\| undefined,[\s\S]*\{ activeVisibleSelectedSession: selectedSessionId\(\)\?\.trim\(\) === sessionId\.trim\(\) \},[\s\S]*\);/s,
+    "visible selected-session transcript reads should explicitly opt into bounded recovery",
+  );
+
+  assert.match(
+    source,
+    /hydrateLatestSessionFromDb: async \(workspaceId: string, directory: string\) => \{[\s\S]*const snapshot = await getTranscriptFromVesloReadApi\(workspaceId, latest\.id, 50, directory\);/s,
+    "background latest-session hydration must remain passive and must not opt into server-start recovery",
+  );
+
+  assert.match(
+    source,
+    /const submittedRunTranscriptCatchup = createSubmittedRunTranscriptCatchup[\s\S]*const visibleMessageCount = getCachedTranscriptMessages\(target\.sessionId\)\.length;[\s\S]*const catchupLimit = Math\.max\(140, visibleMessageCount \+ 20\);[\s\S]*getTranscriptFromVesloReadApi\([\s\S]*target\.workspaceId,[\s\S]*target\.sessionId,[\s\S]*catchupLimit,/s,
+    "submitted-run catch-up should request at least the visible transcript size so hydration is not discarded as a shorter stale snapshot",
   );
 });

@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import type { SetStoreFunction } from "solid-js/store";
 
 import { finishPerf, perfNow, recordPerfLog, runtimePerfAuditEnabled } from "../lib/perf-log";
 import { unwrap } from "../lib/opencode";
@@ -12,9 +13,27 @@ type RuntimePromptStoreState = {
   pendingQuestions: PendingQuestion[];
 };
 
+type PermissionReplyApi = {
+  reply: (input: { sessionID: string; requestID: string; reply: "once" | "always" | "reject" }) => Promise<unknown>;
+};
+
+type QuestionReplyApi = {
+  reply: (input: { sessionID: string; requestID: string; questionV2Reply: { answers: string[][] } }) => Promise<unknown>;
+  reject: (input: { sessionID: string; requestID: string }) => Promise<unknown>;
+};
+
+type RoutingClientWithV2Prompts = RoutingClient & {
+  v2?: {
+    session?: {
+      permission?: Partial<PermissionReplyApi>;
+      question?: Partial<QuestionReplyApi>;
+    };
+  };
+};
+
 export type SessionRuntimePromptsDeps = {
   store: RuntimePromptStoreState;
-  setStore: (...args: any[]) => void;
+  setStore: SetStoreFunction<RuntimePromptStoreState>;
   routing: WorkspaceRouting;
   selectedSessionId: () => string | null;
   isWorkspaceRuntimeReady: (workspaceId?: string | null) => boolean;
@@ -61,7 +80,7 @@ async function replyPermissionWithV2Fallback(
     return;
   } catch (error) {
     const sessionID = permission?.sessionID;
-    const permissionApi = (client as any).v2?.session?.permission;
+    const permissionApi = (client as RoutingClientWithV2Prompts).v2?.session?.permission;
     if (!sessionID || !isRequestNotFoundError(error) || typeof permissionApi?.reply !== "function") {
       throw error;
     }
@@ -80,7 +99,7 @@ async function replyQuestionWithV2Fallback(
     return;
   } catch (error) {
     const sessionID = question?.sessionID;
-    const questionApi = (client as any).v2?.session?.question;
+    const questionApi = (client as RoutingClientWithV2Prompts).v2?.session?.question;
     if (!sessionID || !isRequestNotFoundError(error) || typeof questionApi?.reply !== "function") {
       throw error;
     }
@@ -98,7 +117,7 @@ async function rejectQuestionWithV2Fallback(
     return;
   } catch (error) {
     const sessionID = question?.sessionID;
-    const questionApi = (client as any).v2?.session?.question;
+    const questionApi = (client as RoutingClientWithV2Prompts).v2?.session?.question;
     if (!sessionID || !isRequestNotFoundError(error) || typeof questionApi?.reject !== "function") {
       throw error;
     }

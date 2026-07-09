@@ -6,7 +6,7 @@ import {
 } from "../components/session/pending-submit-model";
 import type { EditableUserMessageDraft } from "../components/session/message-editability";
 import {
-  isPendingSessionInstanceId,
+  isPendingSessionInstanceKey,
   removePendingSubmittedDraftForKey,
   setPendingSubmittedDraftForKey,
   type PendingSubmittedDraftBySessionKey,
@@ -36,7 +36,7 @@ import {
   sessionSubmitQueuedResult,
   sessionSubmitWasAccepted,
 } from "../lib/session-send-contract";
-import { AI_ACCESS_LOADING_MESSAGE } from "../lib/ai-access";
+import { isAiAccessLoadingMessage } from "../lib/ai-access";
 import {
   createUiConversationKey,
   parseUiConversationKey,
@@ -71,10 +71,28 @@ export type CurrentSessionQueueKeyInput = SessionQueueKeyContext & {
 };
 
 const isLegacyPendingSessionKey = (value: string) =>
-  isPendingSessionInstanceId(value) ||
+  isPendingSessionInstanceKey(value) ||
   value.startsWith("pending:") ||
   value.startsWith("pending-draft:") ||
   value.startsWith("pending-workspace:");
+
+const createScopedPendingSessionInstanceKey = (
+  pendingInstanceId: string,
+  baseKey: string,
+) => {
+  const scope = parseUiConversationKey(baseKey);
+  if (!scope) return pendingInstanceId;
+  // Pending sends can outlive workspace switches; keep their queue key scoped.
+  return createUiConversationKey({
+    workspaceId: scope.workspaceId,
+    workspaceRoot: scope.workspaceRoot,
+    directory: scope.directory,
+    conversationId: scope.conversationId,
+    opencodeSessionId: scope.opencodeSessionId,
+    kind: "pending-session",
+    id: pendingInstanceId,
+  });
+};
 
 export const resolveActiveUiConversationWorkspaceId = ({
   activeUiConversationRef,
@@ -135,6 +153,7 @@ export const resolveSessionQueueKeyForSessionId = (
 ) => {
   const id = sessionId?.trim() ?? "";
   if (!id) return resolvePendingSessionQueueKey(context);
+  if (parseUiConversationKey(id)) return id;
   const pending = isLegacyPendingSessionKey(id);
   const ref = context.activeUiConversationRef;
   const refMatches = Boolean(
@@ -175,6 +194,19 @@ export const resolveWorkspaceIdForQueueKey = (
   context: Pick<SessionQueueKeyContext, "activeWorkspaceId">,
   sessionKey: string,
 ) => parseUiConversationKey(sessionKey)?.workspaceId ?? context.activeWorkspaceId;
+
+export const queueKeysShareWorkspace = (
+  resolveWorkspaceId: (sessionKey: string) => string,
+  leftKey: string | null | undefined,
+  rightKey: string | null | undefined,
+) => {
+  const left = leftKey?.trim() || "";
+  const right = rightKey?.trim() || "";
+  if (!left || !right) return false;
+  const leftWorkspaceId = resolveWorkspaceId(left).trim();
+  const rightWorkspaceId = resolveWorkspaceId(right).trim();
+  return Boolean(leftWorkspaceId && rightWorkspaceId && leftWorkspaceId === rightWorkspaceId);
+};
 
 export const resolveCurrentSessionQueueKey = ({
   selectedSessionId,
@@ -254,13 +286,18 @@ export const resolvePendingSessionHandoffScope = ({
   const baseKey = baseSessionKey.trim();
   const pendingSessionBaseKeyBeforeHandoff =
     !targetSessionId && !resolveSessionIdForQueueKey(baseKey)
-      ? isPendingSessionInstanceId(baseKey)
+      ? isPendingSessionInstanceKey(baseKey)
         ? pendingSessionQueueKey
         : baseKey
       : null;
   const needsPendingSessionInstance =
-    Boolean(pendingSessionBaseKeyBeforeHandoff) && !isPendingSessionInstanceId(baseKey);
-  const pendingInstanceKey = needsPendingSessionInstance ? createPendingSessionInstanceId() : null;
+    Boolean(pendingSessionBaseKeyBeforeHandoff) && !isPendingSessionInstanceKey(baseKey);
+  const pendingInstanceKey = needsPendingSessionInstance
+    ? createScopedPendingSessionInstanceKey(
+        createPendingSessionInstanceId(),
+        pendingSessionBaseKeyBeforeHandoff ?? baseKey,
+      )
+    : null;
   const sessionKey = pendingInstanceKey ?? baseKey;
   const pendingSessionKeyBeforeHandoff =
     !targetSessionId && !resolveSessionIdForQueueKey(sessionKey) ? sessionKey : null;
@@ -383,7 +420,7 @@ export const resolvePendingSessionHandoffMaterialization = ({
 
   const materializedSessionId = handoff?.sessionId?.trim();
   if (!materializedSessionId) return { kind: "skip", reason: "missing-session-id" };
-  if (isPendingSessionInstanceId(materializedSessionId)) {
+  if (isPendingSessionInstanceKey(materializedSessionId)) {
     return { kind: "skip", reason: "pending-session-id" };
   }
 
@@ -590,7 +627,7 @@ export type SessionConversationFlowControllerDeps = {
     setEscapeStopConfirmationPending: (pending: boolean) => void;
   };
   runState: {
-    resetRunState: (sessionKey: string) => void;
+    resetRunState: (sessionKey: string, reason?: string) => void;
     showRunIndicator: () => boolean;
     startRun: (sessionKey: string) => void;
   };
@@ -741,7 +778,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
       deps.queue.setQueuePausedForSessionKey(sessionKey, true);
 
       if (deps.runControl.runPhase() === "error" && deps.runControl.hasAbortableBackendRun?.() !== true) {
-        deps.runState.resetRunState(sessionKey);
+        deps.runState.resetRunState(sessionKey, "run-error-clear");
         return;
       }
 
@@ -805,15 +842,29 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         };
       }
 
+      const sessionKey = deps.sessionKeys.sessionQueueKeyForSessionId(selectedSessionId);
       const materializedPendingSubmit = pendingKey
         ? pendingSubmittedDrafts()[pendingKey]?.state === "sending"
         : false;
-      if (pendingKey && !isPendingSessionInstanceId(selectedSessionId)) {
+      if (
+        pendingKey &&
+        !isPendingSessionInstanceKey(selectedSessionId) &&
+        queueKeysShareWorkspace(deps.sessionKeys.workspaceIdForQueueKey, pendingKey, sessionKey)
+      ) {
         deps.pendingHandoff.remapPendingQueueToSession(pendingKey, selectedSessionId);
         deps.pendingHandoff.clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingBaseKey, pendingKey);
+      } else if (pendingKey && !isPendingSessionInstanceKey(selectedSessionId)) {
+        // Pending sends are workspace-scoped; route switches must not materialize them elsewhere.
+        deps.trace.recordSendTrace("run-state:remap-pending-to-session:blocked-workspace-mismatch", {
+          pendingBaseKey,
+          pendingKey,
+          sessionId: selectedSessionId,
+          sessionKey,
+          pendingWorkspaceId: deps.sessionKeys.workspaceIdForQueueKey(pendingKey),
+          sessionWorkspaceId: deps.sessionKeys.workspaceIdForQueueKey(sessionKey),
+        });
       }
 
-      const sessionKey = deps.sessionKeys.sessionQueueKeyForSessionId(selectedSessionId);
       if (
         !materializedPendingSubmit &&
         statusForSessionId(selectedSessionId, sessionStatusById) === "idle" &&
@@ -1063,6 +1114,25 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           opencodeSessionId:
             handoff.scope.kind === "conversation" ? handoff.scope.opencodeSessionId : null,
         });
+        if (!queueKeysShareWorkspace(
+          deps.sessionKeys.workspaceIdForQueueKey,
+          pendingSessionKey,
+          materializedSessionKey,
+        )) {
+          // Pending sends are workspace-scoped; accepted handoff must stay on its captured target.
+          deps.trace.recordSendTrace("sendPromptImmediate:materialized-handoff:blocked-workspace-mismatch", {
+            sendTraceId: options.sendTraceId ?? null,
+            clientMessageId,
+            origin,
+            pendingSessionBaseKeyBeforeHandoff: pendingSessionBaseKey,
+            pendingSessionKeyBeforeHandoff: pendingSessionKey,
+            materializedSessionId,
+            materializedSessionKey,
+            pendingWorkspaceId: deps.sessionKeys.workspaceIdForQueueKey(pendingSessionKey),
+            materializedWorkspaceId: deps.sessionKeys.workspaceIdForQueueKey(materializedSessionKey),
+          });
+          return;
+        }
         deps.effects.batch(() => {
           deps.pendingHandoff.setPendingQueueKeyAwaitingSessionIdForBaseKey(
             pendingSessionBaseKey,
@@ -1160,7 +1230,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             transcriptMessageIdsAtSubmit: deps.transcript.messageIds(),
             sessionId:
               targetSessionId ??
-              (isPendingSessionInstanceId(deps.sessionKeys.selectedSessionId())
+              (isPendingSessionInstanceKey(deps.sessionKeys.selectedSessionId())
                 ? null
                 : deps.sessionKeys.selectedSessionId()),
             draft,
@@ -1172,7 +1242,10 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
       }
 
       const aiAccessBlockedReason = deps.runtime.aiAccessBlockedReason();
-      const aiAccessSubmitBlockedReason = aiAccessBlockedReason === AI_ACCESS_LOADING_MESSAGE ? null : aiAccessBlockedReason;
+      // Loading copy is localized; classify by key before deciding submit policy.
+      const aiAccessSubmitBlockedReason = isAiAccessLoadingMessage(aiAccessBlockedReason, deps.feedback.tr)
+        ? null
+        : aiAccessBlockedReason;
       if (aiAccessSubmitBlockedReason) {
         deps.trace.recordSendTrace("sendPromptImmediate:blocked-ai-access", {
           clientMessageId,
@@ -1185,7 +1258,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         });
         if (showOptimisticSubmit) {
           markMatchingPendingSubmitFailed(aiAccessSubmitBlockedReason);
-          deps.runState.resetRunState(runStateSessionKeyForHandoffFailure());
+          deps.runState.resetRunState(runStateSessionKeyForHandoffFailure(), "ai-access-blocked");
         }
         finishPendingSessionHandoffFailure();
         deps.feedback.setToastMessage(aiAccessSubmitBlockedReason);
@@ -1246,7 +1319,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           if (sessionSubmitNeedsImplicitSkillConfirmation(submitResult)) {
             if (showOptimisticSubmit) {
               clearMatchingPendingSubmit();
-              deps.runState.resetRunState(runStateSessionKeyForHandoffFailure());
+              deps.runState.resetRunState(runStateSessionKeyForHandoffFailure(), "implicit-skill-confirmation");
             }
             finishPendingSessionHandoffFailure();
             return submitResult;
@@ -1257,7 +1330,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
               deps.runtime.error() ??
               deps.feedback.tr("session.connect_server_to_attach");
             markMatchingPendingSubmitFailed(errorMessage);
-            deps.runState.resetRunState(runStateSessionKeyForHandoffFailure());
+            deps.runState.resetRunState(runStateSessionKeyForHandoffFailure(), "send-rejected");
           }
           finishPendingSessionHandoffFailure();
           deps.feedback.setToastMessage(
@@ -1329,7 +1402,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
               ? error.message
               : deps.feedback.tr("session.connect_server_to_attach"));
           markMatchingPendingSubmitFailed(errorMessage);
-          deps.runState.resetRunState(runStateSessionKeyForHandoffFailure());
+          deps.runState.resetRunState(runStateSessionKeyForHandoffFailure(), "send-exception");
         }
         finishPendingSessionHandoffFailure();
         deps.trace.reportError(error, "session.sendPrompt");
@@ -1437,11 +1510,15 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           return localQueuedResult("local_queue_existing_append");
         }
 
-        case "append-to-running-queue": {
+        case "send-running-server-queue": {
           const sessionKey = deps.sessionKeys.currentSessionQueueKey();
-          deps.queue.appendDraftToCurrentQueue(draft);
-          void controller.drainNextQueuedDraft("queue-drain", sessionKey);
-          return localQueuedResult("local_queue_running_append");
+          return controller.sendPromptImmediate(draft, {
+            reason: "queue-drain",
+            expectedSessionKey: sessionKey,
+            sendTraceId: options.sendTraceId,
+            source: options.source,
+            implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
+          });
         }
 
         case "send-now": {
@@ -1705,7 +1782,7 @@ export type SendPromptAction =
   | { kind: "replace-transcript-message"; messageId: string }
   | { kind: "append-to-paused-queue-and-drain" }
   | { kind: "append-to-existing-queue-and-drain-if-idle" }
-  | { kind: "append-to-running-queue" }
+  | { kind: "send-running-server-queue" }
   | { kind: "send-now" }
   | { kind: "send-normal" };
 
@@ -1740,7 +1817,7 @@ export const resolveSendPromptAction = ({
 
   if (queuePaused && !sendNow) return { kind: "append-to-paused-queue-and-drain" };
   if (queuedDraftCount > 0 && !sendNow) return { kind: "append-to-existing-queue-and-drain-if-idle" };
-  if (runVisible && !sendNow) return { kind: "append-to-running-queue" };
+  if (runVisible && !sendNow) return { kind: "send-running-server-queue" };
   if (sendNow) return { kind: "send-now" };
   return { kind: "send-normal" };
 };

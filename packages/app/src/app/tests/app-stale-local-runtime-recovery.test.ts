@@ -8,11 +8,11 @@ const sendWorkflowSource = readFileSync(
 );
 const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
 
-function legacyConversationRunFallbackPrepareSource(): string {
-  const fallbackStart = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
-  const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", fallbackStart);
+function conversationRunCompatibilityBridgePrepareSource(): string {
+  const bridgeStart = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
+  const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", bridgeStart);
   const submitStart = sendWorkflowSource.indexOf("  const submit = async", prepareStart);
-  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "legacy fallback prepare source should be present");
+  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "compatibility bridge prepare source should be present");
   return sendWorkflowSource.slice(prepareStart, submitStart);
 }
 
@@ -24,14 +24,14 @@ function ensureLocalRuntimeReachableForSendResultSource(): string {
 }
 
 test("sendPrompt recovers a stale local runtime before reading the client", () => {
-  const prepareSource = legacyConversationRunFallbackPrepareSource();
+  const prepareSource = conversationRunCompatibilityBridgePrepareSource();
   const recoveryCheckIndex = prepareSource.indexOf('deps.prepareSendRuntimeForSend("sendPrompt", input.sendPreflight)');
   const routedClientIndex = prepareSource.indexOf("const c = deps.routedClientForSendTarget(input.sendTargetWorkspace);");
-  assert.ok(recoveryCheckIndex >= 0, "legacy fallback should prepare send runtime readiness");
-  assert.ok(routedClientIndex >= 0, "legacy fallback should capture the routed client after recovery");
+  assert.ok(recoveryCheckIndex >= 0, "compatibility bridge should prepare send runtime readiness");
+  assert.ok(routedClientIndex >= 0, "compatibility bridge should capture the routed client after recovery");
   assert.ok(
     recoveryCheckIndex < routedClientIndex,
-    "legacy fallback should verify and recover the local runtime before capturing the routed client used for prompt calls",
+    "compatibility bridge should verify and recover the local runtime before capturing the routed client used for prompt calls",
   );
 });
 
@@ -96,7 +96,7 @@ test("local runtime recovery restarts for dead endpoints and health timeouts", (
   );
   assert.match(
     recoverySource,
-    /if \(targetIsActiveWorkspace\) \{[\s\S]*deps\.setEngineReady\(false\);[\s\S]*deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined, \{[\s\S]*loadSessions: false/s,
+    /if \(targetIsActiveWorkspace\) \{[\s\S]*deps\.setEngineReady\(false\);[\s\S]*deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined, \{[\s\S]*loadSessions: false,[\s\S]*forceFreshRuntime: true,/s,
     "runtime recovery should restart before send without forcing session-list UI side effects and reflect readiness only when the target is still active",
   );
 });
@@ -116,7 +116,7 @@ test("send runtime recovery uses the snapshotted target workspace", () => {
   );
   assert.match(
     recoverySource,
-    /deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined, \{[\s\S]*reason: `\$\{reason\}-runtime-recovery`,[\s\S]*loadSessions: false/s,
+    /deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined, \{[\s\S]*reason: `\$\{reason\}-runtime-recovery`,[\s\S]*loadSessions: false,[\s\S]*forceFreshRuntime: true,/s,
     "runtime recovery should restart the target workspace engine without blocking on session load",
   );
   assert.match(

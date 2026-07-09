@@ -43,8 +43,12 @@ import {
 import { safeStringify } from "../utils";
 import type { StartupPreference } from "../types";
 
-function isUsableVesloServerStatus(status: VesloServerStatus) {
+function isReachableVesloServerStatus(status: VesloServerStatus) {
   return status === "connected" || status === "limited";
+}
+
+function isAuthenticatedVesloServerStatus(status: VesloServerStatus) {
+  return status === "connected";
 }
 
 export type VesloServerConnectionHostInfo = {
@@ -275,7 +279,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
   let lastLocalVesloEnsureKey = "";
 
   const markVesloServerReachable = (status: VesloServerStatus, at = now()) => {
-    if (isUsableVesloServerStatus(status)) {
+    if (isReachableVesloServerStatus(status)) {
       vesloServerLastReachableAt = at;
     }
   };
@@ -492,7 +496,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     }
     const result = await checkVesloServer(derived, next.token, vesloServerAuth().hostToken);
     applyVesloServerProbeResult(result);
-    const ok = isUsableVesloServerStatus(result.status);
+    const ok = isAuthenticatedVesloServerStatus(result.status);
     if (ok && !deps.isTauriRuntime()) {
       const active = deps.workspace?.activeWorkspaceDisplay();
       const shouldAttach =
@@ -551,7 +555,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
 
       const result = await checkVesloServer(url, auth.token, auth.hostToken);
       applyVesloServerProbeResult(result);
-      return isUsableVesloServerStatus(result.status);
+      return isAuthenticatedVesloServerStatus(result.status);
     } finally {
       setVesloReconnectBusy(false);
     }
@@ -589,10 +593,11 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
           { requireRuntimeChainReady },
         );
         applyVesloServerProbeResult(result);
-        if (isUsableVesloServerStatus(result.status)) {
+        if (isAuthenticatedVesloServerStatus(result.status)) {
           return true;
         }
-        if (result.status === "auth_desync") return false;
+        // Desktop owns this local process; auth desync blocks inference, so try
+        // one respawn instead of leaving non-technical users stuck.
       }
 
       const restarted = await restartVesloServer();
@@ -611,7 +616,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
         { requireRuntimeChainReady },
       );
       applyVesloServerProbeResult(result);
-      return isUsableVesloServerStatus(result.status);
+      return isAuthenticatedVesloServerStatus(result.status);
     })().finally(() => {
       if (ensureLocalVesloServerRunningInFlight.get(ensureKey) === ensurePromise) {
         ensureLocalVesloServerRunningInFlight.delete(ensureKey);
@@ -779,7 +784,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     }
 
     const client = vesloServerClient();
-    if (!client || !isUsableVesloServerStatus(vesloServerStatus())) {
+    if (!client || !isAuthenticatedVesloServerStatus(vesloServerStatus())) {
       setVesloServerDiagnostics(null);
       return;
     }

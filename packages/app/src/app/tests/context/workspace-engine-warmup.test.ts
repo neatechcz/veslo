@@ -81,13 +81,13 @@ test("background engine warmup reuses the runtime ensure path without session-li
 test("runtime ensure preserves single-flight startup and can skip loadSessions for boot warmup", () => {
   assert.match(
     runtimeSource,
-    /export type EnsureEngineForWorkspaceOptions = \{[\s\S]*reason\?: string;[\s\S]*loadSessions\?: boolean;[\s\S]*\};/,
+    /export type EnsureEngineForWorkspaceOptions = \{[\s\S]*reason\?: string;[\s\S]*loadSessions\?: boolean;[\s\S]*forceFreshRuntime\?: boolean;[\s\S]*\};/,
     "runtime ensure should expose only the options boot warmup and send recovery need",
   );
   assert.match(
     runtimeSource,
-    /const shouldLoadSessions = options\.loadSessions !== false;[\s\S]*return await ensureEngineForWorkspaceSingleFlight\(workspace\.id \|\| workspace\.path, async \(\) => \{/s,
-    "runtime ensure should keep one single-flight owner for boot warmup and first-send recovery",
+    /const shouldLoadSessions = options\.loadSessions !== false;[\s\S]*const isBootWarmup = ensureReason === "boot-warmup";[\s\S]*const isRuntimeRecovery = ensureReason\.includes\("runtime-recovery"\);[\s\S]*const forceFreshRuntime = options\.forceFreshRuntime === true \|\| isRuntimeRecovery;[\s\S]*const singleFlightKey = forceFreshRuntime[\s\S]*return await ensureEngineForWorkspaceSingleFlight\(singleFlightKey, async \(\) => \{/s,
+    "runtime recovery should use a fresh single-flight while boot warmup stays shared",
   );
   assert.match(
     runtimeSource,

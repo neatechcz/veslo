@@ -20,6 +20,7 @@ import {
   resetRunStateRecord,
   resolveSessionIdForQueueKey,
   resolveSessionQueueKeyForSessionId,
+  queueKeysShareWorkspace,
   markMatchingPendingSubmittedDraftFailed,
   resolveQueueDrainCompletionAction,
   resolveQueueDrainStart,
@@ -2197,6 +2198,19 @@ test("session queue keys distinguish real scoped sessions from pending identitie
   assert.equal(resolveSessionQueueKeyForSessionId(context, null), resolvePendingSessionQueueKey(context));
 });
 
+test("session queue keys preserve already-scoped pending identities", () => {
+  const scopedPendingKey = createUiConversationKey({
+    workspaceId: "workspace-pending",
+    kind: "pending-session",
+    id: "pending-session:created-1",
+  });
+  const context = queueContext({ activeWorkspaceId: "workspace-active" });
+
+  assert.equal(resolveSessionQueueKeyForSessionId(context, scopedPendingKey), scopedPendingKey);
+  assert.equal(resolveSessionIdForQueueKey(scopedPendingKey), null);
+  assert.equal(resolveWorkspaceIdForQueueKey(context, scopedPendingKey), "workspace-pending");
+});
+
 test("session queue keys distinguish same session id in different directories", () => {
   const left = resolveSessionQueueKeyForSessionId(
     queueContext({
@@ -2256,6 +2270,30 @@ test("queue key parsing preserves scoped and legacy session identities", () => {
   assert.equal(resolveSessionIdForQueueKey("legacy-session-id"), "legacy-session-id");
   assert.equal(resolveWorkspaceIdForQueueKey(context, realKey), "workspace-real");
   assert.equal(resolveWorkspaceIdForQueueKey(context, "legacy-session-id"), "workspace-active");
+});
+
+test("pending queue remap scope rejects cross-workspace keys", () => {
+  const pendingKey = createUiConversationKey({
+    workspaceId: "workspace-pending",
+    kind: "pending-session",
+    id: "pending-session:created-1",
+  });
+  const realSameWorkspace = createUiConversationKey({
+    workspaceId: "workspace-pending",
+    kind: "session",
+    id: "session-real",
+  });
+  const realOtherWorkspace = createUiConversationKey({
+    workspaceId: "workspace-other",
+    kind: "session",
+    id: "session-real",
+  });
+
+  const resolveWorkspaceId = (sessionKey: string) =>
+    resolveWorkspaceIdForQueueKey({ activeWorkspaceId: "workspace-active" }, sessionKey);
+
+  assert.equal(queueKeysShareWorkspace(resolveWorkspaceId, pendingKey, realSameWorkspace), true);
+  assert.equal(queueKeysShareWorkspace(resolveWorkspaceId, pendingKey, realOtherWorkspace), false);
 });
 
 test("current session queue key selects a captured pending handoff for its own base key", () => {
@@ -2390,11 +2428,17 @@ test("pending handoff scope creates a unique instance for first sends without a 
   });
 
   assert.deepEqual(createdIds, ["called"]);
+  const expectedPendingInstanceKey = createUiConversationKey({
+    workspaceId: "workspace-pending",
+    kind: "pending-session",
+    id: "pending-session:created-1",
+  });
+
   assert.deepEqual(scope, {
     pendingSessionBaseKeyBeforeHandoff: baseSessionKey,
-    pendingInstanceKey: "pending-session:created-1",
-    sessionKey: "pending-session:created-1",
-    pendingSessionKeyBeforeHandoff: "pending-session:created-1",
+    pendingInstanceKey: expectedPendingInstanceKey,
+    sessionKey: expectedPendingInstanceKey,
+    pendingSessionKeyBeforeHandoff: expectedPendingInstanceKey,
   });
 });
 
@@ -2899,7 +2943,7 @@ test("send prompt action preserves queue branch priority", () => {
       queuedDraftCount: 0,
       runVisible: true,
     }),
-    { kind: "append-to-running-queue" },
+    { kind: "send-running-server-queue" },
   );
 });
 

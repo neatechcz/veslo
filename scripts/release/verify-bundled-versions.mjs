@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -21,66 +22,64 @@ const REQUIRED_MANIFEST_ENTRIES = [
   "opencode-managed-deps",
 ];
 
-const candidateManifestPaths = (appPath, targetTriple) => {
-  const suffixes = targetTriple ? ["", `-${targetTriple}`] : [""];
-  const roots = [
-    join(appPath, "Contents", "MacOS"),
-    join(appPath, "Contents", "Resources"),
-  ];
+const manifestEntrySidecarName = (key) =>
+  key === "opencode-managed-deps" ? "opencode-managed-deps.json" : key;
+
+const candidateRoots = (bundlePath) =>
+  bundlePath.endsWith(".app")
+    ? [join(bundlePath, "Contents", "MacOS"), join(bundlePath, "Contents", "Resources")]
+    : [bundlePath];
+
+const candidateManifestPaths = (bundlePath, targetTriple) => {
+  const suffixes = targetTriple ? ["", `-${targetTriple}`, `-${targetTriple}.exe`] : [""];
+  const roots = candidateRoots(bundlePath);
 
   return roots.flatMap((root) => suffixes.map((suffix) => join(root, `versions.json${suffix}`)));
 };
 
-const candidateSidecarPaths = (appPath, targetTriple, name) => {
-  const suffixes = targetTriple ? [`-${targetTriple}`, ""] : [""];
-  const roots = [
-    join(appPath, "Contents", "MacOS"),
-    join(appPath, "Contents", "Resources"),
-  ];
+const candidateSidecarPaths = (bundlePath, targetTriple, name) => {
+  const suffixes = targetTriple ? [`-${targetTriple}.exe`, `-${targetTriple}`, ".exe", ""] : [".exe", ""];
+  const roots = candidateRoots(bundlePath);
 
   return roots.flatMap((root) => suffixes.map((suffix) => join(root, `${name}${suffix}`)));
 };
 
-const findAppBundle = (extractRoot) => {
+const findBundlePath = (extractRoot) => {
   const entries = readdirSync(extractRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name.endsWith(".app"))
     .map((entry) => join(extractRoot, entry.name));
-
-  if (entries.length === 0) {
-    throw new Error(`No macOS app bundle found in ${extractRoot}`);
-  }
 
   if (entries.length > 1) {
     throw new Error(`Multiple macOS app bundles found in ${extractRoot}: ${entries.join(", ")}`);
   }
 
-  return entries[0];
+  return entries[0] ?? extractRoot;
 };
 
 export const findBundledVersionsManifest = (extractRoot, { targetTriple } = {}) => {
   const root = resolve(extractRoot);
-  const appPath = findAppBundle(root);
+  const bundlePath = findBundlePath(root);
 
-  for (const candidate of candidateManifestPaths(appPath, targetTriple)) {
+  for (const candidate of candidateManifestPaths(bundlePath, targetTriple)) {
     if (existsSync(candidate) && statSync(candidate).isFile()) {
       return candidate;
     }
   }
 
   throw new Error(
-    `versions.json missing from app bundle ${appPath}. Checked: ${candidateManifestPaths(appPath, targetTriple).join(", ")}`,
+    `versions.json missing from bundle ${bundlePath}. Checked: ${candidateManifestPaths(bundlePath, targetTriple).join(", ")}`,
   );
 };
 
-const findRequiredSidecar = (appPath, targetTriple, name) => {
-  for (const candidate of candidateSidecarPaths(appPath, targetTriple, name)) {
+const findRequiredSidecar = (bundlePath, targetTriple, name) => {
+  for (const candidate of candidateSidecarPaths(bundlePath, targetTriple, name)) {
     if (existsSync(candidate) && statSync(candidate).isFile()) {
       return candidate;
     }
   }
 
   throw new Error(
-    `${name} missing from app bundle ${appPath}. Checked: ${candidateSidecarPaths(appPath, targetTriple, name).join(", ")}`,
+    `${name} missing from bundle ${bundlePath}. Checked: ${candidateSidecarPaths(bundlePath, targetTriple, name).join(", ")}`,
   );
 };
 
@@ -110,8 +109,9 @@ const readVersionsManifest = (manifestPath) => {
   }
 };
 
-const assertVersionsManifestEntries = (manifestPath) => {
-  const manifest = readVersionsManifest(manifestPath);
+const sha256File = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
+
+const assertVersionsManifestEntries = (manifestPath, manifest) => {
   for (const key of REQUIRED_MANIFEST_ENTRIES) {
     const entry = manifest?.[key];
     const sha256 = typeof entry?.sha256 === "string" ? entry.sha256.trim() : "";
@@ -121,11 +121,32 @@ const assertVersionsManifestEntries = (manifestPath) => {
   }
 };
 
+const assertBundledManifestHashes = (manifestPath, manifest, sidecars) => {
+  const sidecarPathsByName = new Map(sidecars.map((sidecar) => [sidecar.name, sidecar.path]));
+
+  for (const key of REQUIRED_MANIFEST_ENTRIES) {
+    const sidecarName = manifestEntrySidecarName(key);
+    const sidecarPath = sidecarPathsByName.get(sidecarName);
+    if (!sidecarPath) {
+      throw new Error(`Bundled sidecar for manifest entry ${key} was not found`);
+    }
+
+    const expected = manifest[key].sha256.trim().toLowerCase();
+    const actual = sha256File(sidecarPath).toLowerCase();
+    if (actual !== expected) {
+      throw new Error(
+        `Bundled versions manifest ${manifestPath} sha256 mismatch for ${key}: ${actual} vs ${expected}`,
+      );
+    }
+  }
+};
+
 export const verifyBundledSidecars = (extractRoot, { targetTriple } = {}) => {
   const root = resolve(extractRoot);
-  const appPath = findAppBundle(root);
+  const appPath = findBundlePath(root);
   const manifestPath = findBundledVersionsManifest(root, { targetTriple });
-  assertVersionsManifestEntries(manifestPath);
+  const manifest = readVersionsManifest(manifestPath);
+  assertVersionsManifestEntries(manifestPath, manifest);
 
   const executables = REQUIRED_EXECUTABLE_SIDECARS.map((name) => {
     const path = findRequiredSidecar(appPath, targetTriple, name);
@@ -138,10 +159,13 @@ export const verifyBundledSidecars = (extractRoot, { targetTriple } = {}) => {
     return { name, path };
   });
 
+  const sidecars = [...executables, ...dataFiles];
+  assertBundledManifestHashes(manifestPath, manifest, sidecars);
+
   return {
     appPath,
     manifestPath,
-    sidecars: [...executables, ...dataFiles],
+    sidecars,
   };
 };
 

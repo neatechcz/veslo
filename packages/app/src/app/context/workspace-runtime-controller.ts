@@ -99,6 +99,7 @@ export type WorkspaceRuntimeControllerDeps = {
 export type EnsureEngineForWorkspaceOptions = {
   reason?: string;
   loadSessions?: boolean;
+  forceFreshRuntime?: boolean;
 };
 
 export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControllerDeps) {
@@ -278,6 +279,8 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
     const shouldLoadSessions = options.loadSessions !== false;
     const isBootWarmup = ensureReason === "boot-warmup";
     const isRuntimeRecovery = ensureReason.includes("runtime-recovery");
+    // First sends must not share the background warmup single-flight.
+    const forceFreshRuntime = options.forceFreshRuntime === true || isRuntimeRecovery;
     if (!deps.workspacesHydrated()) {
       const start = Date.now();
       while (!deps.workspacesHydrated() && Date.now() - start < 5_000) {
@@ -300,7 +303,11 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
       return false;
     }
 
-    return await ensureEngineForWorkspaceSingleFlight(workspace.id || workspace.path, async () => {
+    const singleFlightKey = forceFreshRuntime
+      ? `${workspace.id || workspace.path}::fresh-runtime`
+      : workspace.id || workspace.path;
+
+    return await ensureEngineForWorkspaceSingleFlight(singleFlightKey, async () => {
       const runtime = deps.resolveEngineRuntime();
       deps.dispatchLifecycle?.({
         type: "runtime-starting",
@@ -316,6 +323,7 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
         runtime,
         reason: ensureReason,
         loadSessions: shouldLoadSessions,
+        forceFreshRuntime,
         workspacesHydrated: deps.workspacesHydrated(),
       });
 
@@ -375,101 +383,31 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           return false;
         }
 
-        let ok = false;
-        const reattachOrchestratorAfterColdStart = async (reason: string, error?: unknown) => {
-          const message = error === undefined ? "" : messageFromUnknownError(error, deps.safeStringify);
-          deps.wsLog("[workspace:ensureEngine] startHost did not attach, trying orchestrator reattach...", {
-            id,
-            ...(message ? { error: message } : {}),
-          });
-          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:start-host:not-started", {
-            workspaceId: id,
-            ...(message ? { error: message } : {}),
-          });
-          const reattachStartedAt = Date.now();
-          const reattached = await deps.localRuntimeLifecycle.reattachOrchestratorWorkspace({
-            workspacePath: workspace.path,
-            workspaceId: workspace.id,
-            workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
-            reason,
-            connectMode: "quiet",
-            navigate: false,
-          });
-          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:reattach:done", {
-            workspaceId: id,
-            ok: reattached,
-            durationMs: Date.now() - reattachStartedAt,
-          });
-          return reattached;
-        };
-        try {
-          const startedAt = Date.now();
-          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:restart-runtime:start", {
-            workspaceId: id,
-            workspacePath: workspace.path,
-            runtime,
-          });
-          ok = await deps.localRuntimeLifecycle.restartWorkspaceRuntime({
-            workspacePath: workspace.path,
-            workspaceId: workspace.id,
-            workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
-            reason: runtime === "veslo-orchestrator" ? "browse-attach-orchestrator" : "browse-attach-direct",
-            connectMode: "quiet",
-          });
-          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:restart-runtime:done", {
-            workspaceId: id,
-            ok,
-            durationMs: Date.now() - startedAt,
-            runtime,
-          });
-        } catch (restartError) {
-          deps.wsLog("[workspace:ensureEngine] restartWorkspaceRuntime failed, trying startHost...", {
-            id,
-            error: messageFromUnknownError(restartError, deps.safeStringify),
-          });
-          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:restart-runtime:error", {
-            workspaceId: id,
-            error: messageFromUnknownError(restartError, deps.safeStringify),
-          });
-          try {
-            const startHostStartedAt = Date.now();
-            recordSendWorkflowTrace("workspace-runtime", "ensure-engine:start-host:start", {
-              workspaceId: id,
-              workspacePath: workspace.path,
-            });
-            ok = await deps.localRuntimeLifecycle.startHost({
-              workspacePath: workspace.path,
-              workspaceId: workspace.id,
-              reason: "browse-cold-start",
-              connectMode: "quiet",
-              navigate: false,
-            });
-            recordSendWorkflowTrace("workspace-runtime", "ensure-engine:start-host:done", {
-              workspaceId: id,
-              ok,
-              durationMs: Date.now() - startHostStartedAt,
-            });
-            if (!ok && runtime === "veslo-orchestrator") {
-              ok = await reattachOrchestratorAfterColdStart("browse-cold-start-reattach");
-            }
-          } catch (startHostError) {
-            if (
-              deps.resolveEngineRuntime() !== "veslo-orchestrator" ||
-              !messageFromUnknownError(startHostError, deps.safeStringify).includes("Request timed out")
-            ) {
-              throw startHostError;
-            }
-            deps.wsLog("[workspace:ensureEngine] startHost timed out, trying orchestrator reattach...", {
-              id,
-              error: messageFromUnknownError(startHostError, deps.safeStringify),
-            });
-            recordSendWorkflowTrace("workspace-runtime", "ensure-engine:start-host:error", {
-              workspaceId: id,
-              error: messageFromUnknownError(startHostError, deps.safeStringify),
-            });
-            ok = await reattachOrchestratorAfterColdStart("browse-cold-start-reattach", startHostError);
-          }
-        }
+        const prepareReason = ensureReason;
+        const startedAt = Date.now();
+        recordSendWorkflowTrace("workspace-runtime", "ensure-engine:prepare-runtime:start", {
+          workspaceId: id,
+          workspacePath: workspace.path,
+          runtime,
+          reason: prepareReason,
+          forceFreshRuntime,
+        });
+        const ok = await deps.localRuntimeLifecycle.prepareWorkspaceRuntime({
+          workspacePath: workspace.path,
+          workspaceId: workspace.id,
+          workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
+          reason: prepareReason,
+          connectMode: "quiet",
+          forceFreshRuntime,
+        });
+        recordSendWorkflowTrace("workspace-runtime", "ensure-engine:prepare-runtime:done", {
+          workspaceId: id,
+          ok,
+          durationMs: Date.now() - startedAt,
+          runtime,
+          reason: prepareReason,
+          forceFreshRuntime,
+        });
         if (!ok) {
           recordSendWorkflowTrace("workspace-runtime", "ensure-engine:not-started", {
             workspaceId: id,

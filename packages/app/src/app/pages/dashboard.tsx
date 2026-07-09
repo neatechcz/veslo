@@ -37,6 +37,7 @@ import {
 } from "../utils";
 import { parseVesloWorkspaceIdFromUrl } from "../lib/veslo-server";
 import { reportError } from "../lib/error-reporter";
+import type { UiConversationRef } from "../lib/ui-conversation-scope";
 import type {
   VesloSoulAuthContext,
   VesloSoulOverviewResponse,
@@ -73,6 +74,7 @@ import ShareWorkspaceModal from "../components/share-workspace-modal";
 import SidebarAdvancedNav from "../components/session/sidebar-advanced-nav";
 import SidebarDashboardNav from "../components/session/sidebar-dashboard-nav";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
+import type { SidebarSessionOpenTarget } from "../components/session/workspace-session-list-model";
 import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
 import {
   clampLeftSidebarWidth,
@@ -83,7 +85,7 @@ import {
   readGlobalSidebarDockedPrefs,
   writeGlobalSidebarDockedPrefs,
 } from "../components/layout/global-sidebar-prefs";
-import { openSessionWithWorkspaceActivation, type SessionBrowseScope } from "./session-navigation";
+import { openSidebarSessionFromList, type SessionBrowseScope } from "./session-navigation";
 import type { WorkspaceActivationOptions } from "../context/workspace-types";
 import type { WorkspaceBusyMap } from "../context/workspace-debug";
 import type { DocumentRuntimeStatusPayload } from "../lib/document-runtime";
@@ -164,6 +166,7 @@ export type DashboardViewProps = {
   activeWorkspaceDisplay: WorkspaceInfo;
   workspaces: WorkspaceInfo[];
   activeWorkspaceId: string;
+  activeUiConversationRef?: UiConversationRef;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   readyEngineWorkspaceIds?: Set<string>;
@@ -186,8 +189,8 @@ export type DashboardViewProps = {
   archivedSessionIds: string[];
   sessionStatusById: Record<string, string>;
   busySessionByWorkspaceId?: WorkspaceBusyMap;
-  archiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
-  unarchiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
+  archiveSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => Promise<void> | void;
+  unarchiveSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => Promise<void> | void;
   loadMoreWorkspaceSidebarSessions: (workspaceId: string) => Promise<void> | void;
   selectedSessionId: string | null;
   lastWorkspaceSessionId: string | null;
@@ -242,7 +245,7 @@ export type DashboardViewProps = {
   canUseDesktopTools: boolean;
   installSkillCreator: () => Promise<{ ok: boolean; message: string }>;
   installHubSkill: (name: string, target: HubSkillInstallTarget) => Promise<{ ok: boolean; message: string }>;
-  refreshHubMcp: () => void;
+  refreshHubMcp: (options?: { force?: boolean }) => void;
   installHubMcp: (name: string) => Promise<{ ok: boolean; message: string }>;
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
@@ -393,7 +396,12 @@ export type DashboardViewProps = {
   notionBusy: boolean;
   connectNotion: () => void;
   sessionArchives: SessionArchiveItem[];
-  onUnarchiveArchivedSession: (workspaceId: string, sessionId: string, workspaceIdentity?: string | null) => Promise<void> | void;
+  onUnarchiveArchivedSession: (
+    workspaceId: string,
+    sessionId: string,
+    workspaceIdentity?: string | null,
+    directory?: string | null,
+  ) => Promise<void> | void;
 };
 
 export default function DashboardView(props: DashboardViewProps) {
@@ -436,37 +444,20 @@ export default function DashboardView(props: DashboardViewProps) {
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
     workspace.workspaceType === "remote" ? "Remote" : "Local";
 
-  const openSessionFromList = (workspaceId: string, sessionId: string) => {
-    const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
-    const session = group?.sessions.find((item) => item.id === sessionId);
-    const workspaceRoot =
-      group?.workspace.directory?.trim() ||
-      group?.workspace.path?.trim() ||
-      "";
-    void openSessionWithWorkspaceActivation({
+  const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {
+    void openSidebarSessionFromList({
+      workspaceSessionGroups: props.workspaceSessionGroups,
       activeWorkspaceId: props.activeWorkspaceId,
       getActiveWorkspaceId: () => props.activeWorkspaceId,
       workspaceId,
       sessionId,
+      target,
       activateWorkspace: props.activateWorkspace,
-      // Route-driven selection handles normal id changes. Also select
-      // explicitly after recording the browse scope because the user can
-      // return to the same /session/:id route after switching projects; in
-      // that case the route effect is deduped and would leave the main
-      // transcript on the empty workspace screen.
-      openSession: (nextSessionId) => {
-        props.setSessionBrowseScope({
-          sessionId: nextSessionId,
-          workspaceId,
-          workspaceRoot: workspaceRoot,
-          directory: session?.directory ?? workspaceRoot,
-          conversationId: session?.conversationId ?? null,
-          opencodeSessionId: session?.opencodeSessionId ?? nextSessionId,
-        });
-        void Promise.resolve(props.selectSession(nextSessionId))
-          .catch((error) => reportError(error, "dashboard.openSessionFromList.selectSession"));
-        props.setView("session", nextSessionId);
-      },
+      setSessionBrowseScope: props.setSessionBrowseScope,
+      selectSession: props.selectSession,
+      setView: props.setView,
+      reportError,
+      sourceContext: "dashboard",
     });
   };
 
@@ -920,6 +911,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 archivedSessionIds={props.archivedSessionIds}
                 activeWorkspaceId={props.activeWorkspaceId}
                 selectedSessionId={props.selectedSessionId}
+                selectedSessionKey={props.activeUiConversationRef?.key ?? null}
                 sessionStatusById={props.sessionStatusById}
                 busySessionByWorkspaceId={props.busySessionByWorkspaceId}
                 allowSelectedParentExpansion={false}

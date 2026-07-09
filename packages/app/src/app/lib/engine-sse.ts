@@ -55,6 +55,8 @@ export type EngineSseSubscribeOptions = {
   baseUrl: string;
   /** Optional `directory` query for engine-side filtering. */
   directory?: string | null;
+  /** Stable owner key used by the desktop bridge to replace older duplicate streams. */
+  connectionKey?: string | null;
   username?: string | null;
   password?: string | null;
   /** Veslo-server bearer token. Takes precedence over username/password when set. */
@@ -65,10 +67,20 @@ export type EngineSseSubscribeOptions = {
 
 export type EngineSseSubscription = {
   subscriptionId: string;
+  replacedExisting: boolean;
+  activeSubscriptionCount?: number;
+  activeConnectionCount?: number;
   /** Async iterable of parsed event payloads, matching SDK `subscription.stream` shape. */
   stream: AsyncIterable<unknown>;
   /** Tear down the Rust-side task and remove the listener. Idempotent. */
   close: () => Promise<void>;
+};
+
+type EngineSseSubscribeResult = {
+  subscriptionId: string;
+  replacedExisting?: boolean;
+  activeSubscriptionCount?: number;
+  activeConnectionCount?: number;
 };
 
 export function isEngineSseAvailable(): boolean {
@@ -157,6 +169,9 @@ async function engineSseSubscribeWithRuntime(
   };
 
   let unlisten: UnlistenFn | null = null;
+  let replacedExisting = false;
+  let activeSubscriptionCount: number | undefined;
+  let activeConnectionCount: number | undefined;
   try {
     unlisten = await runtime.listen<SsePayload>(SSE_EVENT_NAME, (event) => {
       const payload = event.payload;
@@ -200,17 +215,21 @@ async function engineSseSubscribeWithRuntime(
       }
     });
 
-    await runtime.invoke<{ subscriptionId: string }>("engine_sse_subscribe", {
+    const subscribeResult = await runtime.invoke<EngineSseSubscribeResult>("engine_sse_subscribe", {
       options: {
         subscriptionId,
         workspaceId: options.workspaceId,
         baseUrl: options.baseUrl,
         directory: options.directory ?? null,
+        connectionKey: options.connectionKey ?? null,
         username: options.username ?? null,
         password: options.password ?? null,
         bearerToken: options.bearerToken ?? null,
       },
     });
+    replacedExisting = subscribeResult.replacedExisting === true;
+    activeSubscriptionCount = subscribeResult.activeSubscriptionCount;
+    activeConnectionCount = subscribeResult.activeConnectionCount;
     await ready;
   } catch (err) {
     // Couldn't register listener — try to clean up Rust subscription.
@@ -291,6 +310,9 @@ async function engineSseSubscribeWithRuntime(
 
   return {
     subscriptionId,
+    replacedExisting,
+    activeSubscriptionCount,
+    activeConnectionCount,
     stream,
     close,
   };

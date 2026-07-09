@@ -42,19 +42,34 @@ const normalizeRecord = (record: SessionArchiveRecord): SessionArchiveRecord => 
 const sortRecords = (records: SessionArchiveRecord[]) =>
   [...records].sort((left, right) => right.archivedAt - left.archivedAt);
 
-const archiveRecordKey = (record: Pick<SessionArchiveRecord, "sessionId" | "workspaceIdAtArchive" | "workspaceIdentity">) =>
-  [
+const archiveRecordDirectory = (
+  record: Pick<SessionArchiveRecord, "resolvedDirectoryAtArchive" | "projectRootAtArchive">,
+) => record.resolvedDirectoryAtArchive?.trim() || record.projectRootAtArchive?.trim() || "";
+
+const archiveRecordKey = (
+  record: Pick<
+    SessionArchiveRecord,
+    "sessionId" | "workspaceIdAtArchive" | "workspaceIdentity" | "resolvedDirectoryAtArchive" | "projectRootAtArchive"
+  >,
+) => {
+  const directory = archiveRecordDirectory(record);
+  const base = [
     record.workspaceIdAtArchive?.trim() || record.workspaceIdentity?.trim() || "",
     record.sessionId.trim(),
-  ].join("\0");
+  ];
+  return (directory ? [...base, directory] : base).join("\0");
+};
 
 const matchesDeleteScope = (
   record: SessionArchiveRecord,
   sessionId: string,
   workspaceId?: string | null,
   workspaceIdentity?: string | null,
+  directory?: string | null,
 ) => {
   if (record.sessionId !== sessionId) return false;
+  const scopedDirectory = directory?.trim() ?? "";
+  if (scopedDirectory && archiveRecordDirectory(record) !== scopedDirectory) return false;
   const scopedWorkspaceId = workspaceId?.trim() ?? "";
   const scopedWorkspaceIdentity = workspaceIdentity?.trim() ?? "";
   if (!scopedWorkspaceId && !scopedWorkspaceIdentity) return true;
@@ -115,11 +130,15 @@ export function createSessionArchiveStore(options?: { dir?: string }) {
       await writeOwnerRecords(ownerKey, next);
       return sortRecords(next);
     },
-    async delete(ownerKey: string, sessionId: string, options?: { workspaceId?: string | null; workspaceIdentity?: string | null }): Promise<SessionArchiveRecord[]> {
+    async delete(
+      ownerKey: string,
+      sessionId: string,
+      options?: { workspaceId?: string | null; workspaceIdentity?: string | null; directory?: string | null },
+    ): Promise<SessionArchiveRecord[]> {
       const normalizedId = sessionId.trim();
       const existing = await readOwnerRecords(ownerKey);
       const next = existing.filter((entry) =>
-        !matchesDeleteScope(entry, normalizedId, options?.workspaceId, options?.workspaceIdentity)
+        !matchesDeleteScope(entry, normalizedId, options?.workspaceId, options?.workspaceIdentity, options?.directory)
       );
       await writeOwnerRecords(ownerKey, next);
       return sortRecords(next);

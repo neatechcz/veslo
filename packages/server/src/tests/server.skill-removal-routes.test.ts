@@ -10,7 +10,7 @@ describe("Skill removal routes", () => {
     registerSkillRemovalRoutes(routes, dependencies);
 
     const expectedRoutes: Array<[string, string, Route["auth"]]> = [
-      ["GET", "/skill-removals", "none"],
+      ["GET", "/skill-removals", "hostOrClient"],
       ["POST", "/skill-removals/removal-1/restore", "host"],
       ["POST", "/skills/batch-remove", "host"],
     ];

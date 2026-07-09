@@ -22,6 +22,7 @@ export const SUGGESTED_PLUGINS: SuggestedPlugin[] = [];
 
 export type McpDirectoryInfo = {
   id?: string;
+  aliases?: string[];
   name: string;
   description: string;
   descriptionKey?: string;
@@ -31,6 +32,7 @@ export type McpDirectoryInfo = {
   oauth: HubMcpOAuthConfig;
   headers?: Record<string, string>;
   authorization?: HubMcpItem["authorization"];
+  connection?: HubMcpItem["connection"];
   provider?: {
     id: string;
     group?: string;
@@ -41,6 +43,7 @@ export type McpDirectoryInfo = {
 export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
   {
     id: "chrome-devtools",
+    aliases: ["control-chrome"],
     name: "Control Chrome",
     description: "Drive Chrome tabs with browser automation.",
     descriptionKey: "mcp.quick_control_chrome_description",

@@ -1,6 +1,6 @@
 import { createEffect, onCleanup, onMount } from "solid-js";
 
-import { EditorState, StateField } from "@codemirror/state";
+import { EditorState, StateField, type Range } from "@codemirror/state";
 import {
   Decoration,
   type DecorationSet,
@@ -125,8 +125,8 @@ const obsidianishLivePreview = () => {
   const strongMark = Decoration.mark({ class: "cm-ow-strong" });
 
   const compute = (state: EditorState): DecorationSet => {
-    const ranges: any[] = [];
-    const add = (from: number, to: number, deco: any) => {
+    const ranges: Range<Decoration>[] = [];
+    const add = (from: number, to: number, deco: Decoration) => {
       ranges.push(deco.range(from, to));
     };
 

@@ -3,8 +3,8 @@ import { join, resolve } from "node:path";
 
 import { recordAudit } from "../audit.js";
 import { fetchOrgSkillsCatalog } from "../den-catalog.js";
-import { normalizeDenApiBaseUrl } from "../den-api-base.js";
 import { ApiError } from "../errors.js";
+import { requireConfiguredDenCatalogContext } from "../request-headers.js";
 import { workspaceResourceOwner } from "../resource-owner.js";
 import {
   emitReloadEvent,
@@ -76,17 +76,7 @@ export function registerWorkspaceSkillRoutes(
   };
 
   addRoute(routes, "GET", "/hub/skills", "client", async (ctx) => {
-    const denToken = ctx.request.headers.get("x-veslo-den-token")?.trim() || "";
-    if (!denToken) {
-      throw new ApiError(401, "den_token_required", "Missing Den token header (x-veslo-den-token)");
-    }
-
-    const denOrgId = ctx.request.headers.get("x-veslo-den-org-id")?.trim() || "";
-    if (!denOrgId) {
-      throw new ApiError(400, "den_org_required", "Missing Den org header (x-veslo-den-org-id)");
-    }
-
-    const denApiBase = normalizeDenApiBaseUrl(ctx.config.denApiBase) ?? "";
+    const { denApiBase, denOrgId, denToken } = requireConfiguredDenCatalogContext(ctx);
     if (!denApiBase) {
       return jsonResponse({ items: [] });
     }

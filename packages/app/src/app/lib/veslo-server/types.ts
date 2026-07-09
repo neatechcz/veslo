@@ -552,6 +552,17 @@ export type VesloHubMcpAuthorization = {
   disconnectPath: string;
 };
 
+export type VesloHubMcpConnectionStatus = {
+  connectorId: string;
+  name?: string;
+  connected: boolean;
+  state: string;
+  scopes?: string[];
+  connectedAt: string | null;
+  revokedAt: string | null;
+  accessTokenExpiresAt: string | null;
+};
+
 export type VesloHubMcpItem = {
   id: string;
   name: string;
@@ -576,6 +587,7 @@ export type VesloHubMcpItem = {
     id: string;
     group?: string;
   };
+  connection?: VesloHubMcpConnectionStatus;
 };
 
 export type VesloSkillRegistryOwnerScope = "user" | "workspace" | "org" | "system";
@@ -848,6 +860,19 @@ export type VesloSkillMaterializationStatus = {
     code: string;
     message: string;
     status?: number;
+    registryAction?: string;
+    registryResource?: string;
+    registryScope?: string;
+    registryPath?: string;
+    workspaceId?: string;
+    versionId?: string;
+    installationId?: string;
+    skillId?: string;
+    skillName?: string;
+    rolloutPolicyId?: string;
+    target?: string;
+    source?: string;
+    audience?: string;
   };
   rootDir?: string;
   materializedSkills: VesloSkillMaterializationEntry[];
@@ -1272,6 +1297,22 @@ export type VesloSessionLatestRunArtifacts = {
   items: VesloSessionArtifactItem[];
 };
 
+export type VesloConversationReadDiagnostic = {
+  reason: string;
+  workspaceId?: string;
+  directory?: string | null;
+  sessionId?: string | null;
+  missing?: string[];
+  dbPath?: string | null;
+  dbPathExists?: boolean;
+  directoryVariantCount?: number;
+  message?: string;
+  invalidMessageJsonRows?: number;
+  invalidPartJsonRows?: number;
+  messageRowCount?: number;
+  partRowCount?: number;
+};
+
 export type VesloSessionTranscriptSnapshot = {
   workspaceId: string;
   sessionId: string;
@@ -1284,13 +1325,18 @@ export type VesloSessionTranscriptSnapshot = {
   fetchedAt?: number;
   staleAt?: number;
   source?: "sqlite" | "unavailable";
+  diagnostic?: VesloConversationReadDiagnostic;
 };
 
 export type VesloSessionTranscriptPrefetchInput = {
   clickedSessionId?: string | null;
   selectedSessionId?: string | null;
+  clickedSession?: { sessionId: string; directory?: string | null } | null;
+  selectedSession?: { sessionId: string; directory?: string | null } | null;
   loadedTopLevelSessionIds: string[];
   expandedSubagentSessionIds: string[];
+  loadedTopLevelSessions?: Array<{ sessionId: string; directory?: string | null }>;
+  expandedSubagentSessions?: Array<{ sessionId: string; directory?: string | null }>;
   directory?: string | null;
   sessionDirectoriesById?: Record<string, string | null | undefined>;
   limit?: number;
@@ -1321,6 +1367,7 @@ export type VesloConversationList = {
     branchId?: string | null;
   }>;
   source?: "sqlite" | "unavailable";
+  diagnostic?: VesloConversationReadDiagnostic;
 };
 
 export type VesloConversationCreateResult = Session & {
@@ -1355,9 +1402,11 @@ export type VesloConversationRunLifecycleStatus =
   | "failed"
   | "aborted";
 
+export type VesloConversationSubmitAttachmentKind = "image" | "file";
+
 export type VesloConversationSubmitAttachment = {
   name: string;
-  kind: string;
+  kind: VesloConversationSubmitAttachmentKind;
   mimeType: string;
   dataUrl?: string | null;
   contentBase64?: string | null;

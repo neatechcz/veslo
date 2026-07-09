@@ -37,6 +37,52 @@ export function isSkillRegistryMaterializationError(error: unknown): boolean {
   return message.includes("Skill registry") || message.includes("skill registry");
 }
 
+const SKILL_REGISTRY_DIAGNOSTIC_KEYS = [
+  "registryAction",
+  "registryResource",
+  "registryScope",
+  "registryPath",
+  "workspaceId",
+  "versionId",
+  "installationId",
+  "skillId",
+  "skillName",
+  "rolloutPolicyId",
+  "target",
+  "source",
+  "audience",
+] as const;
+
+function skillRegistryDetailsPayload(details: unknown): Record<string, string> {
+  const record = details && typeof details === "object" && !Array.isArray(details)
+    ? details as Record<string, unknown>
+    : {};
+  const payload: Record<string, string> = {};
+  for (const key of SKILL_REGISTRY_DIAGNOSTIC_KEYS) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) payload[key] = value.trim();
+  }
+  const url = typeof record.url === "string" ? record.url.trim() : "";
+  if (url && !payload.registryPath) {
+    try {
+      const parsed = new URL(url);
+      payload.registryPath = `${parsed.pathname}${parsed.search}`;
+    } catch {
+      payload.registryPath = url;
+    }
+  }
+  return payload;
+}
+
+function skillRegistryErrorTracePayload(error: VesloServerError) {
+  return {
+    code: error.code,
+    message: error.message,
+    status: error.status,
+    ...skillRegistryDetailsPayload(error.details),
+  };
+}
+
 export function createWorkspaceSkillMaterializationGate(
   deps: WorkspaceSkillMaterializationGateDeps,
 ) {
@@ -132,6 +178,7 @@ export function createWorkspaceSkillMaterializationGate(
               status.registryError.status ?? 0,
               status.registryError.code,
               status.registryError.message,
+              status.registryError,
             ),
             "workspace.skillMaterialization",
           );
@@ -188,15 +235,20 @@ export function createWorkspaceSkillMaterializationGate(
         (observedMaterializationStatus.status !== "current" ||
           observedMaterializationStatus.reloadRequired === true);
       if (isSkillRegistryMaterializationError(error)) {
+        const registryError = error instanceof VesloServerError
+          ? skillRegistryErrorTracePayload(error)
+          : null;
         trace("degraded", {
           message,
           code: error instanceof VesloServerError ? error.code : null,
           status: error instanceof VesloServerError ? error.status : null,
+          registryError,
         });
         deps.wsDebug("skills:materialization:degraded", {
           workspaceId,
           reason: context?.reason ?? null,
           message,
+          registryError,
         });
         reportError(error, "workspace.skillMaterialization");
         return true;

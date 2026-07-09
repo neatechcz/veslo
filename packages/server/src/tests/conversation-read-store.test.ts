@@ -77,6 +77,18 @@ const seedBadSchemaDb = (dbPath: string) => {
   }
 };
 
+const seedMalformedTranscriptRows = (dbPath: string) => {
+  const db = new Database(dbPath);
+  try {
+    db.query("INSERT INTO message (id, session_id, data) VALUES (?1, ?2, ?3)")
+      .run("msg-bad", "sess-a", "{not-json");
+    db.query("INSERT INTO part (id, session_id, message_id, data) VALUES (?1, ?2, ?3, ?4)")
+      .run("part-bad", "sess-a", "msg-1", "{not-json");
+  } finally {
+    db.close();
+  }
+};
+
 describe("conversation read store DB path resolution", () => {
   test("uses workspace opencodeDbPath before global defaults", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-read-workspace-db-"));
@@ -136,7 +148,60 @@ describe("conversation read store DB path resolution", () => {
     // Not found under directory must be reported as unavailable so the UI does
     // not render a misleading empty transcript as a completed read.
     expect(transcript.source).toBe("unavailable");
+    expect(transcript.diagnostic).toMatchObject({
+      reason: "session_not_found",
+      workspaceId: "ws-a",
+      sessionId: "sess-does-not-exist",
+      directory: workspaceRoot,
+      dbPath,
+      dbPathExists: true,
+    });
     expect(transcript.messages.length).toBe(0);
+  });
+
+  test("reports unavailable diagnostics when the configured OpenCode DB is missing", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-read-missing-db-"));
+    tempDirs.push(workspaceRoot);
+    const dbPath = join(workspaceRoot, "missing-opencode.db");
+
+    const store = createConversationReadStore();
+    const workspace = {
+      id: "ws-a",
+      path: workspaceRoot,
+      opencodeDbPath: dbPath,
+    };
+
+    const list = await store.listConversations({
+      workspaceId: "ws-a",
+      directory: workspaceRoot,
+      workspace,
+    });
+    expect(list.source).toBe("unavailable");
+    expect(list.diagnostic).toEqual({
+      reason: "database_missing",
+      workspaceId: "ws-a",
+      directory: workspaceRoot,
+      sessionId: null,
+      dbPath,
+      dbPathExists: false,
+    });
+
+    const transcript = await store.getTranscript({
+      workspaceId: "ws-a",
+      sessionId: "sess-a",
+      limit: 10,
+      directory: workspaceRoot,
+      workspace,
+    });
+    expect(transcript.source).toBe("unavailable");
+    expect(transcript.diagnostic).toEqual({
+      reason: "database_missing",
+      workspaceId: "ws-a",
+      directory: workspaceRoot,
+      sessionId: "sess-a",
+      dbPath,
+      dbPathExists: false,
+    });
   });
 
   test("reports unavailable when the OpenCode DB schema is missing session tables", async () => {
@@ -157,10 +222,17 @@ describe("conversation read store DB path resolution", () => {
       directory: workspaceRoot,
       workspace,
     });
-    expect(list).toEqual({
+    expect(list).toMatchObject({
       workspaceId: "ws-a",
       items: [],
       source: "unavailable",
+      diagnostic: {
+        reason: "schema_unavailable",
+        workspaceId: "ws-a",
+        directory: workspaceRoot,
+        dbPath,
+        dbPathExists: true,
+      },
     });
 
     const transcript = await store.getTranscript({
@@ -171,8 +243,53 @@ describe("conversation read store DB path resolution", () => {
       workspace,
     });
     expect(transcript.source).toBe("unavailable");
+    expect(transcript.diagnostic).toMatchObject({
+      reason: "schema_unavailable",
+      workspaceId: "ws-a",
+      sessionId: "sess-a",
+      directory: workspaceRoot,
+      dbPath,
+      dbPathExists: true,
+    });
     expect(transcript.messages).toEqual([]);
     expect(transcript.partsByMessageId).toEqual({});
+  });
+
+  test("reports malformed transcript JSON rows without failing the sqlite read", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-read-malformed-json-"));
+    tempDirs.push(workspaceRoot);
+    const dbPath = join(workspaceRoot, "workspace-opencode.db");
+    seedDb(dbPath, workspaceRoot);
+    seedMalformedTranscriptRows(dbPath);
+
+    const store = createConversationReadStore();
+    const transcript = await store.getTranscript({
+      workspaceId: "ws-a",
+      sessionId: "sess-a",
+      limit: 10,
+      directory: workspaceRoot,
+      workspace: {
+        id: "ws-a",
+        path: workspaceRoot,
+        opencodeDbPath: dbPath,
+      },
+    });
+
+    expect(transcript.source).toBe("sqlite");
+    expect(transcript.messages.map((message) => (message as { id?: string }).id)).toEqual(["msg-1"]);
+    expect(transcript.partsByMessageId["msg-1"]?.map((part) => (part as { id?: string }).id)).toEqual(["part-1"]);
+    expect(transcript.diagnostic).toEqual({
+      reason: "malformed_json",
+      workspaceId: "ws-a",
+      sessionId: "sess-a",
+      directory: workspaceRoot,
+      dbPath,
+      dbPathExists: true,
+      invalidMessageJsonRows: 1,
+      invalidPartJsonRows: 1,
+      messageRowCount: 2,
+      partRowCount: 2,
+    });
   });
 
   test("matches Windows directory variants when reading OpenCode sqlite", async () => {

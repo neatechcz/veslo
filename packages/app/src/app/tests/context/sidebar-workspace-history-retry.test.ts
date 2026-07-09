@@ -116,3 +116,75 @@ test("merged sidebar history keeps live display fields and DB conversation ident
   assert.equal(merged[0]?.conversationId, "conv-shared");
   assert.equal(merged[0]?.opencodeSessionId, "sess-shared");
 });
+
+test("merged sidebar history keeps duplicate raw session ids scoped by stored conversation identity", () => {
+  const merged = mergeSidebarSessionItemsByActivity(
+    [],
+    [
+      {
+        id: "same-session",
+        title: "DB project A",
+        directory: "/workspace/project-a",
+        conversationId: "conv-a",
+        opencodeSessionId: "same-session",
+        time: { created: 10, updated: 10 },
+      },
+      {
+        id: "same-session",
+        title: "DB project B",
+        directory: "/workspace/project-b",
+        conversationId: "conv-b",
+        opencodeSessionId: "same-session",
+        time: { created: 20, updated: 20 },
+      },
+    ],
+  );
+
+  assert.deepEqual(
+    merged.map((item) => `${item.title}:${item.directory}:${item.conversationId}`),
+    [
+      "DB project B:/workspace/project-b:conv-b",
+      "DB project A:/workspace/project-a:conv-a",
+    ],
+  );
+});
+
+test("merged sidebar history does not collapse ambiguous live rows into stored scoped conversations", () => {
+  const merged = mergeSidebarSessionItemsByActivity(
+    [
+      {
+        id: "same-session",
+        title: "Live ambiguous",
+        directory: "/workspace",
+        time: { created: 30, updated: 30 },
+      },
+    ],
+    [
+      {
+        id: "same-session",
+        title: "DB project A",
+        directory: "/workspace/project-a",
+        conversationId: "conv-a",
+        opencodeSessionId: "same-session",
+        time: { created: 10, updated: 10 },
+      },
+      {
+        id: "same-session",
+        title: "DB project B",
+        directory: "/workspace/project-b",
+        conversationId: "conv-b",
+        opencodeSessionId: "same-session",
+        time: { created: 20, updated: 20 },
+      },
+    ],
+  );
+
+  assert.deepEqual(
+    merged.map((item) => `${item.title}:${item.directory}:${item.conversationId ?? ""}`),
+    [
+      "Live ambiguous:/workspace:",
+      "DB project B:/workspace/project-b:conv-b",
+      "DB project A:/workspace/project-a:conv-a",
+    ],
+  );
+});

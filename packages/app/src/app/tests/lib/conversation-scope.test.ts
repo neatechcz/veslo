@@ -75,6 +75,36 @@ test("merges later Veslo conversation identity into an existing OpenCode scope",
   assert.equal(map["sess-a"]?.length, 1);
 });
 
+test("resolves duplicate active workspace scopes when they share one conversation identity", () => {
+  let map: UiConversationScopeMap = {};
+  map = upsertUiConversationScope(map, {
+    sessionId: "sess-a",
+    workspaceId: "ws-a",
+    workspaceRoot: "\\\\?\\C:\\repo",
+    directory: "\\\\?\\C:\\repo",
+    conversationId: "conv-a",
+    opencodeSessionId: "sess-a",
+    updatedAt: 20,
+  });
+  map = upsertUiConversationScope(map, {
+    sessionId: "sess-a",
+    workspaceId: "ws-a",
+    workspaceRoot: "c:/repo",
+    directory: "c:/repo",
+    conversationId: "conv-a",
+    opencodeSessionId: "sess-a",
+    updatedAt: 20,
+  });
+
+  const resolved = resolveUiConversationScope(map, "sess-a", {
+    activeWorkspaceId: "ws-a",
+    activeWorkspaceRoot: "c:/repo",
+  });
+
+  assert.equal(resolved?.conversationId, "conv-a");
+  assert.equal(resolved?.directory, "c:/repo");
+});
+
 test("selected scope wins over stored ambiguous candidates", () => {
   let map: UiConversationScopeMap = {};
   map = upsertUiConversationScope(map, {

@@ -266,6 +266,13 @@ Server-controlled registry package materialization is a local server responsibil
 - `POST /workspace/:id/skills/materialization/sync`
   Requires host or owner auth. Downloads the desired registry workspace skill set and matching selected-workspace rollout policies, validates package archives, writes server-controlled runtime skill directories, returns any resolver `conflicts`, and returns `pending` without mutating files when the caller reports an active run.
 
+Registry materialization errors should carry scrubbed registry diagnostics such
+as `registryAction`, `registryResource`, `registryScope`, `registryPath`,
+`versionId`, `installationId`, `skillId`, rollout policy id, and target/source
+where available. The app may record these fields in runtime traces so a
+degraded boot warmup can be tied to the exact registry resource without logging
+tokens or upstream response bodies.
+
 Veslo-created user skills use a local server store separate from legacy
 filesystem user skill roots:
 

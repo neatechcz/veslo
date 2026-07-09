@@ -127,7 +127,7 @@ test("automatic context compaction no longer has a persisted preference layer", 
   );
   assert.match(
     appSource,
-    /const triggerAutoCompaction = async \(sessionID: string\) => \{[\s\S]*await compactCurrentSession\(sessionID\);/,
+    /const triggerAutoCompaction = async \(sessionID: string\) => \{[\s\S]*await submitCurrentSessionCompaction\(sessionID\);/,
     "automatic compaction should remain wired as always-on behavior",
   );
   assert.match(

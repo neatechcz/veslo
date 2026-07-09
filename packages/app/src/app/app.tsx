@@ -84,6 +84,7 @@ import {
 } from "./context/managed-ai-runtime-config";
 import { createConversationService } from "./context/conversation-service";
 import { createLiveTranscriptReadPolicy } from "./context/live-transcript-read-policy";
+import { createSubmittedRunTranscriptCatchup } from "./context/submitted-run-transcript-catchup";
 import { createPendingSessionDraftController } from "./context/pending-session-draft-controller";
 import { createSessionFlowFacade } from "./context/session-flow-facade";
 import { createSessionFlowProgressPresenter } from "./context/session-flow-progress-presenter";
@@ -93,6 +94,7 @@ import { createFeedbackWorkflow } from "./context/feedback-workflow";
 import { createDenDesktopAuthWorkflow } from "./context/den-desktop-auth-workflow";
 import { createSessionArchiveStore } from "./context/session-archive-store";
 import { buildArchivedSidebarSessionKey } from "./lib/session-archive-model";
+import type { SidebarSessionOpenTarget } from "./components/session/workspace-session-list-model";
 import {
   createWorkspaceRuntimeDebugProbe,
   debugProbeCall,
@@ -108,7 +110,7 @@ import {
   type SendRuntimePreflightTargetWorkspace,
 } from "./context/send-runtime-readiness";
 import { createAppRouteSync } from "./context/app-route-sync";
-import { createSessionRouteSync } from "./context/session-route-sync";
+import { createSessionRouteSync, sessionIdFromRoutePath } from "./context/session-route-sync";
 import { createAppSendTrace } from "./context/app-send-trace";
 import { createAppDeepLinkWorkflow } from "./context/app-deep-link-workflow";
 import { createAppStartupHydration } from "./context/app-startup-hydration";
@@ -142,7 +144,7 @@ import {
 import { createSessionSendWorkflow } from "./pages/session-send-workflow";
 import { createSessionMutationWorkflow } from "./pages/session-mutation-workflow";
 import { createSoulDataStore } from "./pages/soul-data-store";
-import { isPendingSessionInstanceId } from "./components/session/pending-session-instance-model";
+import { isPendingSessionInstanceKey } from "./components/session/pending-session-instance-model";
 import ProtoWorkspacesView from "./pages/proto-workspaces";
 import ProtoV1UxView from "./pages/proto-v1-ux";
 import {
@@ -328,6 +330,7 @@ import {
   writeVesloServerSettings,
   clearVesloServerSettings,
   type VesloSessionLatestRunArtifacts,
+  type VesloSessionTranscriptSnapshot,
   type VesloServerClient,
   VesloServerError,
 } from "./lib/veslo-server";
@@ -748,6 +751,15 @@ export default function App() {
       recordSendWorkflowTrace("live-transcript-policy", event, payload, { developerMode: developerMode() }),
   });
   const isLiveTranscriptReadAllowedForWorkspace = liveTranscriptReadPolicy.isAllowedForWorkspace;
+  const assistantResponseObservationVersionBySession = new Map<string, number>();
+  const noteAssistantResponseObserved = (sessionId: string) => {
+    const id = sessionId.trim();
+    if (!id) return;
+    assistantResponseObservationVersionBySession.set(
+      id,
+      (assistantResponseObservationVersionBySession.get(id) ?? 0) + 1,
+    );
+  };
 
   // VSLO-171 F3Ú8: cross-workspace takeover confirmation dialog removed.
   // See comment in sendPrompt about replacement strategy.
@@ -996,7 +1008,7 @@ export default function App() {
     getTranscriptFromVesloReadApi,
     createConversationFromVesloWriteApi,
     submitConversationFromVesloWriteApi,
-    runConversationFromVesloWriteApi,
+    submitConversationRunViaVesloWriteApi,
     resolveConversationAbortScope,
     abortConversationFromVesloWriteApi,
     resolveConversationRunForSession,
@@ -1043,10 +1055,19 @@ export default function App() {
     }),
     shouldBrowseSessionFromDb: (sessionId) => {
       const transcriptScope = resolveSelectedSessionBrowseScope(sessionId);
-      if (transcriptScope) return true;
-      return !isLiveTranscriptReadAllowedForWorkspace(workspaceStore.activeWorkspaceId().trim());
+      const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+      if (transcriptScope) {
+        const scopeWorkspaceId = transcriptScope.workspaceId?.trim() ?? "";
+        const activeScopedSession =
+          Boolean(scopeWorkspaceId) &&
+          Boolean(activeWorkspaceId) &&
+          scopeWorkspaceId === activeWorkspaceId;
+        return !(activeScopedSession && isLiveTranscriptReadAllowedForWorkspace(scopeWorkspaceId));
+      }
+      return !isLiveTranscriptReadAllowedForWorkspace(activeWorkspaceId);
     },
     onAssistantResponseObserved: (sessionId) => {
+      noteAssistantResponseObserved(sessionId);
       setUnreadSessionIds((current) =>
         markUnreadAfterAssistantResponse(current, {
           responseSessionId: sessionId,
@@ -1076,6 +1097,7 @@ export default function App() {
         sessionId,
         limit,
         transcriptDirectory || undefined,
+        { activeVisibleSelectedSession: selectedSessionId()?.trim() === sessionId.trim() },
       );
       if (!snapshot) {
         return { status: "unavailable" as const, scope, reason: "veslo-read-api-unavailable" };
@@ -1127,6 +1149,7 @@ export default function App() {
       workspaceStore.ensureEngineForWorkspace(workspaceId, {
         reason: "event-stream-runtime-recovery",
         loadSessions: false,
+        forceFreshRuntime: true,
       }),
     onSessionBusyChange: (sessionId, busy, sourceWorkspaceId) => {
       const wsId = sourceWorkspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
@@ -1168,7 +1191,36 @@ export default function App() {
     selectedSessionLoadingEarlierMessages,
     hydrateTranscriptSnapshot,
     hasWarmTranscript,
+    getCachedTranscriptMessages,
   } = sessionStore;
+
+  const submittedRunTranscriptCatchup = createSubmittedRunTranscriptCatchup<VesloSessionTranscriptSnapshot>({
+    selectedSessionId,
+    resolveSelectedSessionWorkspaceId: (sessionId) => {
+      const scopedWorkspaceId = resolveSelectedSessionBrowseScope(sessionId)?.workspaceId?.trim() ?? "";
+      return scopedWorkspaceId || workspaceStore.activeWorkspaceId().trim() || null;
+    },
+    assistantObservationVersion: (sessionId) =>
+      assistantResponseObservationVersionBySession.get(sessionId.trim()) ?? 0,
+    assistantMessageCount: (sessionId) =>
+      getCachedTranscriptMessages(sessionId.trim())
+        .filter((message) => message.role === "assistant")
+        .length,
+    loadTranscript: (target) => {
+      const visibleMessageCount = getCachedTranscriptMessages(target.sessionId).length;
+      const catchupLimit = Math.max(140, visibleMessageCount + 20);
+      return getTranscriptFromVesloReadApi(
+        target.workspaceId,
+        target.sessionId,
+        catchupLimit,
+        target.directory?.trim() || undefined,
+        { activeVisibleSelectedSession: selectedSessionId()?.trim() === target.sessionId },
+      );
+    },
+    hydrateTranscriptSnapshot,
+    trace: recordSendTrace,
+  });
+  onCleanup(() => submittedRunTranscriptCatchup.dispose());
 
   const [e2eFolderAccessPermissionIds, setE2eFolderAccessPermissionIds] = createSignal<Set<string>>(
     new Set(),
@@ -1235,7 +1287,7 @@ export default function App() {
   });
   const holdVisibleRuntimeActivity = (sessionId: string | null | undefined, reason: string) => {
     const id = sessionId?.trim();
-    if (!id || isPendingSessionInstanceId(id)) return;
+    if (!id || isPendingSessionInstanceKey(id)) return;
     const token = `run-handoff:${id}`;
     const expiresAt = Date.now() + 3_000;
     setVisibleRuntimeActivityHold({ sessionId: id, token, expiresAt });
@@ -1284,7 +1336,7 @@ export default function App() {
     if (sendTraceId) return sendTraceId;
 
     const sessionId = selectedSessionId()?.trim();
-    if (!sessionId || isPendingSessionInstanceId(sessionId)) return null;
+    if (!sessionId || isPendingSessionInstanceKey(sessionId)) return null;
     const status = statusForSession(sessionId);
     if (status === "running" || status === "retry") return `run:${sessionId}`;
     const hold = visibleRuntimeActivityHold();
@@ -1395,7 +1447,7 @@ export default function App() {
   const latestRunArtifactScope = createMemo(() => {
     const sessionId = selectedSessionId()?.trim() ?? "";
     if (!sessionId) return null;
-    if (isPendingSessionInstanceId(sessionId)) return null;
+    if (isPendingSessionInstanceKey(sessionId)) return null;
     const scope = resolveSelectedSessionBrowseScope(sessionId);
     const workspaceId = scope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
     const workspaceRoot = scope?.workspaceRoot?.trim() || workspaceStore.activeWorkspaceRoot().trim();
@@ -1641,7 +1693,7 @@ export default function App() {
       ensureSelectedSessionWorkspaceActiveForSend(sessionId, sendTraceId),
     finishPerf,
     holdVisibleRuntimeActivity,
-    isPendingSessionInstanceId,
+    isPendingSessionInstanceKey,
     isTauriRuntime,
     isUiScopeTokenCurrent,
     isWorkspaceClientStaleError,
@@ -1662,6 +1714,7 @@ export default function App() {
     registerPendingSidebarSession: (pendingSession) => registerPendingSidebarSession(pendingSession),
     removeSessionFromWorkspaceSidebar: (workspaceId, sessionId) => removeSessionFromWorkspaceSidebar(workspaceId, sessionId),
     reportError,
+    scheduleSubmittedRunTranscriptCatchup: (target) => submittedRunTranscriptCatchup.schedule(target),
     resolveConversationAbortScope,
     resolveRuntimeSandboxStateForTarget: (target) =>
       resolveRuntimeSandboxStateForTarget(target as SendRuntimePreflightTargetWorkspace | null),
@@ -1742,6 +1795,7 @@ export default function App() {
     workspaceProjectDir: () => workspaceProjectDir(),
     resolveSelectedSessionBrowseScope,
     submitConversationFromVesloWriteApi,
+    scheduleSubmittedRunTranscriptCatchup: (target) => submittedRunTranscriptCatchup.schedule(target),
     messageFromUnknownError: (error) => messageFromUnknownError(error),
     safeStringify,
     renameSession,
@@ -1771,7 +1825,7 @@ export default function App() {
   });
 
   const retryLastPrompt = sessionMutationWorkflow.retryLastPrompt;
-  const compactCurrentSession = sessionMutationWorkflow.compactCurrentSession;
+  const submitCurrentSessionCompaction = sessionMutationWorkflow.submitCurrentSessionCompaction;
   const replaceUserMessage = sessionMutationWorkflow.replaceUserMessage;
   const undoLastUserMessage = sessionMutationWorkflow.undoLastUserMessage;
   const redoLastUserMessage = sessionMutationWorkflow.redoLastUserMessage;
@@ -1786,7 +1840,7 @@ export default function App() {
 
     setAutoCompactingSessionId(sessionID);
     try {
-      await compactCurrentSession(sessionID);
+      await submitCurrentSessionCompaction(sessionID);
     } catch {
       // ignore auto-compaction failures; manual compact remains available
     } finally {
@@ -2722,7 +2776,7 @@ export default function App() {
         : debugProbeSkipped("no Veslo server client"),
     ]);
 
-    const snapshot: Record<string, any> = {
+    const snapshot: Record<string, unknown> = {
       capturedAt: new Date().toISOString(),
       capturedAtMs: Date.now(),
       app: {
@@ -2980,20 +3034,48 @@ export default function App() {
   const archiveSidebarSession = sessionArchiveStore.archiveSession;
   const unarchiveSession = sessionArchiveStore.unarchiveSession;
 
-  const archivedSessionMatchesSidebarTarget = (workspaceId: string, sessionId: string) => {
-    const key = buildArchivedSidebarSessionKey({ workspaceId, sessionId });
+  const archivedSessionMatchesSidebarTarget = (
+    workspaceId: string,
+    sessionId: string,
+    target?: SidebarSessionOpenTarget | null,
+  ) => {
+    const key = buildArchivedSidebarSessionKey({ workspaceId, sessionId, directory: target?.directory });
     return Boolean(key) && archivedSessionIds().includes(key);
   };
 
-  const activeSessionMatchesArchiveTarget = (workspaceId: string, sessionId: string) => {
+  const activeSessionMatchesArchiveTarget = (
+    workspaceId: string,
+    sessionId: string,
+    target?: SidebarSessionOpenTarget | null,
+  ) => {
     const normalizedWorkspaceId = workspaceId.trim();
     const normalizedSessionId = sessionId.trim();
     if (!normalizedWorkspaceId || !normalizedSessionId) return false;
     if (selectedSessionId()?.trim() !== normalizedSessionId) return false;
 
+    const targetRowKey = target?.rowKey?.trim() ?? "";
+    const activeRowKey = activeUiConversationRef().key?.trim() ?? "";
+    if (targetRowKey && activeRowKey && targetRowKey !== activeRowKey) return false;
+
     const scope = resolveSelectedSessionBrowseScope(normalizedSessionId);
     const activeWorkspaceId = scope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
-    return !activeWorkspaceId || activeWorkspaceId === normalizedWorkspaceId;
+    if (activeWorkspaceId && activeWorkspaceId !== normalizedWorkspaceId) return false;
+
+    const targetDirectory = target?.directory?.trim() ?? "";
+    const activeDirectory = scope?.directory?.trim() ?? "";
+    if (targetDirectory && activeDirectory && targetDirectory !== activeDirectory) return false;
+
+    const targetConversationId = target?.conversationId?.trim() ?? "";
+    const activeConversationId = scope?.conversationId?.trim() ?? "";
+    if (targetConversationId && activeConversationId && targetConversationId !== activeConversationId) return false;
+
+    const targetOpencodeSessionId = target?.opencodeSessionId?.trim() ?? "";
+    const activeOpencodeSessionId = scope?.opencodeSessionId?.trim() ?? "";
+    if (targetOpencodeSessionId && activeOpencodeSessionId && targetOpencodeSessionId !== activeOpencodeSessionId) {
+      return false;
+    }
+
+    return true;
   };
 
   const clearArchivedActiveSession = (sessionId: string) => {
@@ -3006,18 +3088,21 @@ export default function App() {
       setTodos([]);
     });
 
-    const [, , routeSessionSegment] = location.pathname.trim().split("/");
-    if (routeSessionSegment?.trim() === normalizedSessionId) {
+    if (sessionIdFromRoutePath(location.pathname) === normalizedSessionId) {
       navigate("/session", { replace: true });
     }
   };
 
-  const archiveSidebarSessionAndClearActive = async (workspaceId: string, sessionId: string) => {
-    const shouldClearActiveSession = activeSessionMatchesArchiveTarget(workspaceId, sessionId);
-    await archiveSidebarSession(workspaceId, sessionId);
+  const archiveSidebarSessionAndClearActive = async (
+    workspaceId: string,
+    sessionId: string,
+    target?: SidebarSessionOpenTarget | null,
+  ) => {
+    const shouldClearActiveSession = activeSessionMatchesArchiveTarget(workspaceId, sessionId, target);
+    await archiveSidebarSession(workspaceId, sessionId, target ?? undefined);
     if (!shouldClearActiveSession) return;
-    if (!activeSessionMatchesArchiveTarget(workspaceId, sessionId)) return;
-    if (!archivedSessionMatchesSidebarTarget(workspaceId, sessionId)) return;
+    if (!activeSessionMatchesArchiveTarget(workspaceId, sessionId, target)) return;
+    if (!archivedSessionMatchesSidebarTarget(workspaceId, sessionId, target)) return;
 
     clearArchivedActiveSession(sessionId);
   };
@@ -3037,8 +3122,8 @@ export default function App() {
   // session or sends a prompt; /session/:id selection is route-driven.
 
   function isRouteSelectedSession(sessionId: string) {
-    const [, , sessionSegment] = location.pathname.trim().split("/");
-    return Boolean(sessionSegment?.trim() && sessionSegment.trim() === sessionId.trim());
+    const routeSessionId = sessionIdFromRoutePath(location.pathname);
+    return Boolean(routeSessionId && routeSessionId === sessionId.trim());
   }
 
   const sessionRouteSync = createSessionRouteSync({
@@ -3058,7 +3143,7 @@ export default function App() {
     selectedSessionLoadingEarlierMessages,
     activePendingDraftKey,
     activePendingDraftMeta,
-    isPendingSessionInstanceId,
+    isPendingSessionInstanceKey,
     visibleSelectedSessionStatus,
     setSelectedSessionId,
     setMessages,
@@ -3161,6 +3246,7 @@ export default function App() {
     client,
     activeWorkspaceRuntimeReady,
     activeVisibleRuntimeActivityId,
+    mcpRefreshFingerprint: mcpLastUpdatedAt,
     developerMode,
     vesloServerClient,
     vesloServerStatus,
@@ -4067,7 +4153,7 @@ export default function App() {
       registerPendingInitialSessionTitle(result.sessionId, result.initialTitle);
     }
     if (result.workspaceScope.workspaceId) {
-      rememberConversationScope({
+      setSessionBrowseScope({
         sessionId: result.sessionId,
         workspaceId: result.workspaceScope.workspaceId,
         workspaceRoot: result.workspaceScope.workspaceRoot,
@@ -4128,6 +4214,7 @@ export default function App() {
     baseUrl,
     currentView,
     developerMode,
+    createSendPreflightContext,
     ensureLocalRuntimeReachableForSend,
     ensureManagedAiBootstrapReady,
     isWorkspaceClientStaleError,
@@ -4156,20 +4243,8 @@ export default function App() {
       connectingWorkspaceId: () => workspaceStore.connectingWorkspaceId(),
     },
     abortRefreshes,
-    createConversationFromVesloWriteApi: (workspaceId, directory, title, preflight) =>
-      createConversationFromVesloWriteApi(
-        workspaceId,
-        directory,
-        title,
-        preflight as Parameters<typeof createConversationFromVesloWriteApi>[3],
-      ),
-    submitConversationFromVesloWriteApi: (workspaceId, directory, input, preflight) =>
-      submitConversationFromVesloWriteApi(
-        workspaceId,
-        directory,
-        input,
-        preflight as Parameters<typeof submitConversationFromVesloWriteApi>[3],
-      ),
+    createConversationFromVesloWriteApi,
+    submitConversationFromVesloWriteApi,
   });
 
   async function createSessionAndOpen(
@@ -4709,7 +4784,7 @@ export default function App() {
     abortSession,
     undoLastUserMessage,
     redoLastUserMessage,
-    compactCurrentSession,
+    submitCurrentSessionCompaction,
     lastPromptSent,
     retryLastPrompt,
     selectedSessionDisplayTitle,

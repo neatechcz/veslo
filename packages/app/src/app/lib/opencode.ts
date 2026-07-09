@@ -332,8 +332,12 @@ function normalizeConfigForServerPatchComparison(value: unknown): unknown {
 
   const input = value as Record<string, unknown>;
   const output: Record<string, unknown> = {};
+  const entries = Object.entries(input).sort(([left], [right]) => {
+    const normalized = normalizeConfigKey(left).localeCompare(normalizeConfigKey(right));
+    return normalized || left.localeCompare(right);
+  });
 
-  for (const [key, rawValue] of Object.entries(input)) {
+  for (const [key, rawValue] of entries) {
     const normalizedKey = normalizeConfigKey(key);
     // Desired config no longer contains gateway credentials. If a server read
     // still contains this legacy header, force a scrub patch even when redacted.
@@ -396,6 +400,7 @@ export function applyGatewayProviderRouting(
     gatewayAccessToken?: string | null;
     workspaceId?: string | null;
     models?: string[];
+    trace?: boolean;
   },
 ) {
   const providerId = input.providerId.trim().toLowerCase();
@@ -425,23 +430,26 @@ export function applyGatewayProviderRouting(
   const assignedModels = Array.from(
     new Set((input.models ?? []).map((value) => value.trim()).filter(Boolean)),
   );
-  recordOpencodeConfigTrace("apply-gateway-provider-routing:start", {
-    providerId,
-    workspaceId: workspaceId || null,
-    serverBaseUrl: summarizeUrlForTrace(serverBaseUrl),
-    modelCount: assignedModels.length,
-    models: assignedModels,
-    openAiCompatible: isOpenAiCompatibleGatewayProvider,
-    hasServerClientToken: Boolean(serverClientToken),
-    hasGatewayAccessToken: Boolean(input.gatewayAccessToken?.trim()),
-    existingProviderKeys: Object.keys(existingProvider).sort((a, b) => a.localeCompare(b)),
-    existingOptionsKeys: Object.keys(existingOptions).sort((a, b) => a.localeCompare(b)),
-    existingOptionsBaseUrl: summarizeUrlForTrace(
-      typeof existingOptions.baseURL === "string" ? existingOptions.baseURL : null,
-    ),
-    existingProviderHeaderNames: headerNamesForTrace(existingOptions.headers),
-    existingModelNames: modelNamesForTrace(existingModels),
-  });
+  const shouldTrace = input.trace !== false;
+  if (shouldTrace) {
+    recordOpencodeConfigTrace("apply-gateway-provider-routing:start", {
+      providerId,
+      workspaceId: workspaceId || null,
+      serverBaseUrl: summarizeUrlForTrace(serverBaseUrl),
+      modelCount: assignedModels.length,
+      models: assignedModels,
+      openAiCompatible: isOpenAiCompatibleGatewayProvider,
+      hasServerClientToken: Boolean(serverClientToken),
+      hasGatewayAccessToken: Boolean(input.gatewayAccessToken?.trim()),
+      existingProviderKeys: Object.keys(existingProvider).sort((a, b) => a.localeCompare(b)),
+      existingOptionsKeys: Object.keys(existingOptions).sort((a, b) => a.localeCompare(b)),
+      existingOptionsBaseUrl: summarizeUrlForTrace(
+        typeof existingOptions.baseURL === "string" ? existingOptions.baseURL : null,
+      ),
+      existingProviderHeaderNames: headerNamesForTrace(existingOptions.headers),
+      existingModelNames: modelNamesForTrace(existingModels),
+    });
+  }
   const routedModels = assignedModels.reduce<Record<string, unknown>>((models, modelId) => {
     const existingModel = sanitizeGatewayProviderModel(existingModels[modelId]);
     const modelConfig: Record<string, unknown> = {
@@ -519,24 +527,26 @@ export function applyGatewayProviderRouting(
   };
 
   const output = JSON.stringify(parsed, null, 2);
-  recordOpencodeConfigTrace("apply-gateway-provider-routing:done", {
-    providerId,
-    workspaceId: workspaceId || null,
-    serverBaseUrl: summarizeUrlForTrace(serverBaseUrl),
-    routeBaseUrl: summarizeUrlForTrace(`${serverBaseUrl}/ai-gateway/providers/${providerId}/v1`),
-    modelCount: assignedModels.length,
-    models: assignedModels,
-    modelHeaderNames: Object.fromEntries(
-      assignedModels.map((modelId) => [
-        modelId,
-        headerNamesForTrace(readConfigObject(readConfigObject(routedModels[modelId]).headers)),
-      ]),
-    ),
-    providerOptionKeys: Object.keys(nextProvider.options as Record<string, unknown>).sort((a, b) =>
-      a.localeCompare(b)
-    ),
-    outputBytes: output.length,
-  });
+  if (shouldTrace) {
+    recordOpencodeConfigTrace("apply-gateway-provider-routing:done", {
+      providerId,
+      workspaceId: workspaceId || null,
+      serverBaseUrl: summarizeUrlForTrace(serverBaseUrl),
+      routeBaseUrl: summarizeUrlForTrace(`${serverBaseUrl}/ai-gateway/providers/${providerId}/v1`),
+      modelCount: assignedModels.length,
+      models: assignedModels,
+      modelHeaderNames: Object.fromEntries(
+        assignedModels.map((modelId) => [
+          modelId,
+          headerNamesForTrace(readConfigObject(readConfigObject(routedModels[modelId]).headers)),
+        ]),
+      ),
+      providerOptionKeys: Object.keys(nextProvider.options as Record<string, unknown>).sort((a, b) =>
+        a.localeCompare(b)
+      ),
+      outputBytes: output.length,
+    });
+  }
   return output;
 }
 

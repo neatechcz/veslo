@@ -37,6 +37,10 @@ function trimmedSearchParam(params: URLSearchParams, key: string): string | unde
   return value || undefined;
 }
 
+async function requireRouteActor(ctx: RequestContext, resolveActor: UserGlobalSkillRouteDependencies["resolveActor"]): Promise<Actor> {
+  return ctx.actor ?? await resolveActor(ctx);
+}
+
 export function registerUserGlobalSkillRoutes(
   routes: Route[],
   dependencies: UserGlobalSkillRouteDependencies,
@@ -141,8 +145,8 @@ export function registerUserGlobalSkillRoutes(
     });
   });
 
-  addRoute(routes, "GET", "/skills/user-global/:name", "none", async (ctx) => {
-    await resolveActor(ctx);
+  addRoute(routes, "GET", "/skills/user-global/:name", "hostOrClient", async (ctx) => {
+    await requireRouteActor(ctx, resolveActor);
     const name = String(ctx.params.name ?? "").trim();
     if (!name) {
       throw new ApiError(400, "invalid_skill_name", "Skill name is required");
@@ -172,8 +176,8 @@ export function registerUserGlobalSkillRoutes(
     });
   });
 
-  addRoute(routes, "GET", "/skills/user-global/:name/files", "none", async (ctx) => {
-    await resolveActor(ctx);
+  addRoute(routes, "GET", "/skills/user-global/:name/files", "hostOrClient", async (ctx) => {
+    await requireRouteActor(ctx, resolveActor);
     const name = String(ctx.params.name ?? "").trim();
     if (!name) {
       throw new ApiError(400, "invalid_skill_name", "Skill name is required");
@@ -203,9 +207,9 @@ export function registerUserGlobalSkillRoutes(
     });
   });
 
-  addRoute(routes, "DELETE", "/skills/user-global/:name", "none", async (ctx) => {
+  addRoute(routes, "DELETE", "/skills/user-global/:name", "hostOrClient", async (ctx) => {
     ensureWritable(ctx.config);
-    const actor = await resolveActor(ctx);
+    const actor = await requireRouteActor(ctx, resolveActor);
     if (scopeRank(actor.scope ?? "viewer") < scopeRank("collaborator")) {
       throw new ApiError(403, "forbidden", "Insufficient token scope", {
         required: "collaborator",

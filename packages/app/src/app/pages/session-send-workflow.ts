@@ -15,8 +15,8 @@ import {
 import {
   validateConversationSubmitRequest,
   validateConversationSubmitTerminalResult,
-  validateLegacyFallbackPrepareInput,
-  validateLegacyFallbackSubmitInput,
+  validateConversationRunBridgePrepareInput,
+  validateConversationRunBridgeSubmitInput,
   validateRoutedComposerDraftResult,
   validateSendRuntimePreparationResult,
   validateStagedSessionAttachments,
@@ -26,6 +26,10 @@ import {
 import type {
   StagedSessionAttachment,
 } from "../lib/attachment-prompt-routing";
+import type {
+  SessionAttachmentFilePartInput,
+  SessionAttachmentPartInput,
+} from "./session-attachment-staging";
 import type {
   VesloConversationRunInput,
   VesloConversationSubmitRequest,
@@ -53,6 +57,7 @@ import type {
   ConversationSendPreflightContext,
 } from "../context/conversation-service";
 import type { LiveTranscriptReadPolicyEvent } from "../context/live-transcript-read-policy";
+import type { SubmittedRunTranscriptCatchupTarget } from "../context/submitted-run-transcript-catchup";
 import type { UiScopeToken } from "../lib/ui-conversation-scope";
 import { deleteSessionComposerDraft } from "./session-composer-drafts";
 import type {
@@ -162,7 +167,7 @@ export type SessionSendPreflightContext =
   SendRuntimePreflightContext &
   ConversationSendPreflightContext<VesloServerClient>;
 
-export type LegacyConversationRunFallbackPrepareInput = {
+export type ConversationRunCompatibilityBridgePrepareInput = {
   cleanupPendingSidebarSession: () => void;
   sendPreflight: SessionSendPreflightContext;
   sendTargetWorkspace?: SendTargetWorkspaceScope | null;
@@ -171,7 +176,7 @@ export type LegacyConversationRunFallbackPrepareInput = {
   traceId: string;
 };
 
-export type LegacyConversationRunFallbackSubmitInput = {
+export type ConversationRunCompatibilityBridgeSubmitInput = {
   commandName: string | null;
   compactCommand: boolean;
   consumePendingDraftAfterAcceptedSend: (clearDisplayedPendingDraftState: boolean) => Promise<void>;
@@ -189,16 +194,16 @@ export type LegacyConversationRunFallbackSubmitInput = {
   traceId: string;
 };
 
-export type LegacyConversationRunFallback = {
-  prepare: (input: LegacyConversationRunFallbackPrepareInput) => Promise<boolean>;
-  submit: (input: LegacyConversationRunFallbackSubmitInput) => Promise<boolean>;
+export type ConversationRunCompatibilityBridge = {
+  prepare: (input: ConversationRunCompatibilityBridgePrepareInput) => Promise<boolean>;
+  submit: (input: ConversationRunCompatibilityBridgeSubmitInput) => Promise<boolean>;
 };
 
-export type LegacyConversationRunFallbackOptions = {
+export type ConversationRunCompatibilityBridgeOptions = {
   agentForSession: (sessionId: string | null | undefined) => string | null | undefined;
-  buildCommandFileParts: (draft: ComposerDraft) => unknown[];
-  buildPromptParts: (draft: ComposerDraft) => unknown[];
-  compactCurrentSession: (sessionId?: string) => Promise<unknown>;
+  buildCommandFileParts: (draft: ComposerDraft) => SessionAttachmentFilePartInput[];
+  buildPromptParts: (draft: ComposerDraft) => SessionAttachmentPartInput[];
+  submitCurrentSessionCompaction: (sessionId?: string) => Promise<unknown>;
   developerMode: () => boolean;
   emitLiveTranscriptPolicyEvent: (event: LiveTranscriptReadPolicyEvent) => void;
   finishPerf: (
@@ -249,7 +254,7 @@ export type LegacyConversationRunFallbackOptions = {
     error?: string;
   };
   routedClientForSendTarget: (targetWorkspace?: SendTargetWorkspaceScope | null) => Client | null;
-  runConversationFromVesloWriteApi: (
+  submitConversationRunViaVesloWriteApi: (
     sessionId: string,
     input: VesloConversationRunInput,
     options?: {
@@ -338,7 +343,7 @@ export type SessionSendWorkflowOptions = {
     payload?: Record<string, unknown>,
   ) => void;
   holdVisibleRuntimeActivity: (sessionId: string | null | undefined, reason: string) => void;
-  isPendingSessionInstanceId: (sessionId: string | null | undefined) => boolean;
+  isPendingSessionInstanceKey: (sessionId: string | null | undefined) => boolean;
   isTauriRuntime: () => boolean;
   isUiScopeTokenCurrent: (token: UiScopeToken) => boolean;
   isWorkspaceClientStaleError: (error: unknown) => error is {
@@ -368,6 +373,7 @@ export type SessionSendWorkflowOptions = {
   releaseSendPromptInFlight?: () => void;
   removeSessionFromWorkspaceSidebar: (workspaceId: string, sessionId: string) => void;
   reportError: (error: unknown, context: string) => void;
+  scheduleSubmittedRunTranscriptCatchup?: (target: SubmittedRunTranscriptCatchupTarget) => void;
   resolveConversationAbortScope: (
     sessionId: string,
     target?: ConversationAbortTarget,
@@ -394,7 +400,7 @@ export type SessionSendWorkflowOptions = {
   resolveSendTargetWorkspaceScope: (sessionId?: string | null) => SendTargetWorkspaceScope | null;
   resolvedDevtoolsWorkspaceId: () => string;
   routedClient: (workspaceId?: string | null) => Client | null;
-  legacyConversationRunFallback?: LegacyConversationRunFallback | null;
+  conversationRunCompatibilityBridge?: ConversationRunCompatibilityBridge | null;
   submitConversationFromVesloWriteApi?: (
     workspaceId: string,
     directory: string,
@@ -520,21 +526,21 @@ function sendBoundaryValidationOptions(
   };
 }
 
-export function createLegacyConversationRunFallback(
-  deps: LegacyConversationRunFallbackOptions,
-): LegacyConversationRunFallback {
-  const prepare = async (input: LegacyConversationRunFallbackPrepareInput): Promise<boolean> => {
+export function createConversationRunCompatibilityBridge(
+  deps: ConversationRunCompatibilityBridgeOptions,
+): ConversationRunCompatibilityBridge {
+  const prepare = async (input: ConversationRunCompatibilityBridgePrepareInput): Promise<boolean> => {
     const sendRuntimeWorkspaceId = input.sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim();
-    const prepareInputValidation = validateLegacyFallbackPrepareInput({
+    const prepareInputValidation = validateConversationRunBridgePrepareInput({
       traceId: input.traceId,
       targetWorkspaceId: sendRuntimeWorkspaceId,
       sendPreflight: input.sendPreflight,
       sendTargetWorkspace: input.sendTargetWorkspace ?? null,
     }, sendBoundaryValidationOptions(deps, {
-      event: "sendPrompt:legacy-fallback-prepare-input:validation-failed",
+      event: "sendPrompt:conversation-run-bridge-prepare-input:validation-failed",
       traceId: input.traceId,
       context: {
-        phase: "legacy-prepare",
+        phase: "conversation-run-prepare",
         targetWorkspaceId: sendRuntimeWorkspaceId || null,
       },
     }));
@@ -555,7 +561,7 @@ export function createLegacyConversationRunFallback(
       event: "sendPrompt:runtime-preflight:validation-failed",
       traceId: input.traceId,
       context: {
-        phase: "legacy-prepare",
+        phase: "conversation-run-prepare",
         targetWorkspaceId: input.sendTargetWorkspace?.workspaceId ?? null,
       },
     }));
@@ -584,12 +590,12 @@ export function createLegacyConversationRunFallback(
     return true;
   };
 
-  const submit = async (input: LegacyConversationRunFallbackSubmitInput): Promise<boolean> => {
+  const submit = async (input: ConversationRunCompatibilityBridgeSubmitInput): Promise<boolean> => {
     let resolvedDraft = input.draft;
     const sessionID = input.sessionID;
     const materializedSessionID = input.sessionID;
     const submitTargetWorkspaceId = input.sendTargetWorkspace?.workspaceId ?? deps.workspace.activeWorkspaceId().trim();
-    const submitInputValidation = validateLegacyFallbackSubmitInput({
+    const submitInputValidation = validateConversationRunBridgeSubmitInput({
       traceId: input.traceId,
       sessionID,
       targetWorkspaceId: submitTargetWorkspaceId,
@@ -601,10 +607,10 @@ export function createLegacyConversationRunFallback(
       sendPreflight: input.sendPreflight,
       sendTargetWorkspace: input.sendTargetWorkspace ?? null,
     }, sendBoundaryValidationOptions(deps, {
-      event: "sendPrompt:legacy-fallback-submit-input:validation-failed",
+      event: "sendPrompt:conversation-run-bridge-submit-input:validation-failed",
       traceId: input.traceId,
       context: {
-        phase: "legacy-submit",
+        phase: "conversation-run-submit",
         sessionID,
         targetWorkspaceId: submitTargetWorkspaceId || null,
         clientMessageId: input.sendCorrelation.clientMessageId,
@@ -636,7 +642,7 @@ export function createLegacyConversationRunFallback(
         event: "sendPrompt:stage-attachments-result:validation-failed",
         traceId: input.traceId,
         context: {
-          phase: "legacy-attachment-staging",
+          phase: "conversation-run-attachment-staging",
           sessionID,
           attachmentCount: resolvedDraft.attachments.length,
           stagedAttachmentCount: stagedAttachments.length,
@@ -656,7 +662,7 @@ export function createLegacyConversationRunFallback(
         event: "sendPrompt:staged-attachment-routing-result:validation-failed",
         traceId: input.traceId,
         context: {
-          phase: "legacy-attachment-routing",
+          phase: "conversation-run-attachment-routing",
           sessionID,
           attachmentCount: resolvedDraft.attachments.length,
           stagedAttachmentCount: stagedAttachments.length,
@@ -747,7 +753,7 @@ export function createLegacyConversationRunFallback(
           clientMessageId: input.sendCorrelation.clientMessageId,
           origin: input.sendCorrelation.origin,
         };
-        const submitConversationRun = async () => deps.runConversationFromVesloWriteApi(
+        const submitConversationRun = async () => deps.submitConversationRunViaVesloWriteApi(
           materializedSessionID,
           inputWithCorrelation,
           {
@@ -797,7 +803,7 @@ export function createLegacyConversationRunFallback(
               event: "sendPrompt:runtime-recovery:validation-failed",
               traceId: input.traceId,
               context: {
-                phase: "legacy-run-retry",
+                phase: "conversation-run-retry",
                 sessionID,
                 kind: runInput.kind,
                 clientMessageId: input.sendCorrelation.clientMessageId,
@@ -836,7 +842,7 @@ export function createLegacyConversationRunFallback(
         });
       } else if (resolvedDraft.command || input.compactCommand) {
         if (input.compactCommand) {
-          await deps.compactCurrentSession(sessionID);
+          await deps.submitCurrentSessionCompaction(sessionID);
           deps.finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
             sessionID,
             mode: resolvedDraft.mode,
@@ -956,7 +962,7 @@ export function createLegacyConversationRunFallback(
 }
 
 export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): SessionSendWorkflow {
-  const legacyConversationRunFallback = deps.legacyConversationRunFallback ?? null;
+  const conversationRunCompatibilityBridge = deps.conversationRunCompatibilityBridge ?? null;
 
   async function maybeResolveSkillCommand(
     draft: ComposerDraft,
@@ -1136,10 +1142,10 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       !activeWorkspaceIdForSend ||
       selectedSessionScopeWorkspaceId === activeWorkspaceIdForSend;
     const selectedRealSessionId =
-      deps.isPendingSessionInstanceId(selectedSessionCandidate) || !selectedSessionBelongsToActiveWorkspace
+      deps.isPendingSessionInstanceKey(selectedSessionCandidate) || !selectedSessionBelongsToActiveWorkspace
         ? null
         : selectedSessionCandidate;
-    const explicitTargetSessionId = deps.isPendingSessionInstanceId(options.targetSessionId)
+    const explicitTargetSessionId = deps.isPendingSessionInstanceKey(options.targetSessionId)
       ? ""
       : options.targetSessionId?.trim() ?? "";
     let sessionID = explicitTargetSessionId || selectedRealSessionId;
@@ -1219,16 +1225,16 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       }
     };
     const hasExplicitDraft = Boolean(draft);
-    const fallbackDraft = deps.composerDraft();
-    const fallbackText = fallbackDraft.text.trim();
-    const fallbackResolvedText = (fallbackDraft.resolvedText ?? fallbackDraft.text).trim();
+    const composerDraftSnapshot = deps.composerDraft();
+    const composerText = composerDraftSnapshot.text.trim();
+    const composerResolvedText = (composerDraftSnapshot.resolvedText ?? composerDraftSnapshot.text).trim();
     let resolvedDraft: ComposerDraft = draft ?? {
-      mode: fallbackDraft.mode,
-      parts: fallbackDraft.parts.length ? fallbackDraft.parts : (fallbackText ? [{ type: "text", text: fallbackText } as ComposerPart] : []),
-      attachments: fallbackDraft.attachments,
-      text: fallbackText,
-      resolvedText: fallbackResolvedText || undefined,
-      command: fallbackDraft.command,
+      mode: composerDraftSnapshot.mode,
+      parts: composerDraftSnapshot.parts.length ? composerDraftSnapshot.parts : (composerText ? [{ type: "text", text: composerText } as ComposerPart] : []),
+      attachments: composerDraftSnapshot.attachments,
+      text: composerText,
+      resolvedText: composerResolvedText || undefined,
+      command: composerDraftSnapshot.command,
     };
 
     const preflightContent = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
@@ -1736,6 +1742,14 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           sessionId: existingSessionId,
           traceId: sendTraceId,
         });
+        deps.scheduleSubmittedRunTranscriptCatchup?.({
+          workspaceId,
+          sessionId: existingSessionId,
+          directory,
+          runId: result.runId,
+          traceId: sendTraceId,
+          reason: "sendPrompt:server-submit-existing-success",
+        });
       }
       deps.holdVisibleRuntimeActivity(
         existingSessionId,
@@ -1753,13 +1767,13 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       deps.submitConversationFromVesloWriteApi,
     );
     if (shouldUseServerSubmitForFirstSession) {
-      deps.recordSendTrace("sendPrompt:runtime-preflight:server-submit-first-skip", {
+      deps.recordSendTrace("sendPrompt:runtime-preflight:server-submit-first-delegated-to-create", {
         traceId: sendTraceId,
         targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
       });
     } else {
-      if (!legacyConversationRunFallback) {
-        deps.recordSendTrace("sendPrompt:blocked-legacy-fallback-disabled", {
+      if (!conversationRunCompatibilityBridge) {
+        deps.recordSendTrace("sendPrompt:blocked-conversation-run-bridge-disabled", {
           traceId: sendTraceId,
           targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
           hasServerSubmit: Boolean(deps.submitConversationFromVesloWriteApi),
@@ -1767,11 +1781,11 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         cleanupPendingSidebarSession();
         stopSendPromptBusy();
         return sessionSubmitBlockedResult({
-          code: "legacy_fallback_disabled",
+          code: "conversation_run_bridge_disabled",
           message: "Server-owned conversation submit is required for this send path.",
         });
       }
-      if (!(await legacyConversationRunFallback.prepare({
+      if (!(await conversationRunCompatibilityBridge.prepare({
         cleanupPendingSidebarSession,
         sendPreflight,
         sendTargetWorkspace,
@@ -1780,7 +1794,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         traceId: sendTraceId,
       }))) {
         return sessionSubmitBlockedResult({
-          code: "legacy_prepare_blocked",
+          code: "conversation_run_prepare_blocked",
           message: "The runtime is not ready for sending.",
         });
       }
@@ -2020,6 +2034,17 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           sessionId: sessionID,
           traceId: sendTraceId,
         });
+        deps.scheduleSubmittedRunTranscriptCatchup?.({
+          workspaceId: serverFirstSubmitResult.workspaceId,
+          sessionId: sessionID,
+          directory:
+            sendTargetWorkspace?.directory?.trim() ||
+            sendTargetWorkspace?.workspaceRoot?.trim() ||
+            deps.workspace.activeWorkspaceRoot().trim(),
+          runId: serverFirstSubmitResult.runId,
+          traceId: sendTraceId,
+          reason: "sendPrompt:server-submit-first-success",
+        });
       }
       await consumePendingDraftAfterAcceptedSend(true);
       deps.holdVisibleRuntimeActivity(sessionID, "sendPrompt:server-submit-first-success");
@@ -2044,8 +2069,8 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
 
     const materializedSessionID: string = sessionID;
 
-    if (!legacyConversationRunFallback) {
-      deps.recordSendTrace("sendPrompt:blocked-legacy-fallback-disabled", {
+    if (!conversationRunCompatibilityBridge) {
+      deps.recordSendTrace("sendPrompt:blocked-conversation-run-bridge-disabled", {
         traceId: sendTraceId,
         sessionID: materializedSessionID,
         targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
@@ -2054,7 +2079,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       cleanupPendingSidebarSession();
       stopSendPromptBusy();
       return sessionSubmitBlockedResult({
-        code: "legacy_fallback_disabled",
+        code: "conversation_run_bridge_disabled",
         message: "Server-owned conversation submit is required for this send path.",
       });
     }
@@ -2085,7 +2110,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       }
     };
 
-    const legacyAccepted = await legacyConversationRunFallback.submit({
+    const compatibilityAccepted = await conversationRunCompatibilityBridge.submit({
       commandName,
       compactCommand,
       consumePendingDraftAfterAcceptedSend,
@@ -2102,7 +2127,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       stopSendPromptBusy,
       traceId: sendTraceId,
     });
-    return sessionSubmitCompatibilityResultFromAccepted(legacyAccepted, null);
+    return sessionSubmitCompatibilityResultFromAccepted(compatibilityAccepted, null);
     } finally {
       stopSendPromptBusy();
     }

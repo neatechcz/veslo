@@ -432,6 +432,17 @@ export type HubMcpAuthorization = {
   disconnectPath: string;
 };
 
+export type HubMcpConnectionStatus = {
+  connectorId: string;
+  name?: string;
+  connected: boolean;
+  state: string;
+  scopes?: string[];
+  connectedAt: string | null;
+  revokedAt: string | null;
+  accessTokenExpiresAt: string | null;
+};
+
 export interface HubMcpItem {
   id: string;
   name: string;
@@ -444,6 +455,7 @@ export interface HubMcpItem {
     headers?: Record<string, string>;
   };
   authorization?: HubMcpAuthorization;
+  connection?: HubMcpConnectionStatus;
   source:
     | { scope: "org"; orgId: string }
     | { scope: "platform" };

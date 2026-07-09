@@ -33,7 +33,7 @@ const envTraceEnabled = () => {
   }
 };
 
-export function sendWorkflowTraceEnabled(options?: { developerMode?: boolean }): boolean {
+function sendWorkflowTraceEnabled(options?: { developerMode?: boolean }): boolean {
   if (options?.developerMode === false) return false;
   if (typeof window === "undefined") return envTraceEnabled();
   try {

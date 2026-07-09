@@ -62,13 +62,13 @@ Use these for coding-agent work, implementation changes, and system maintenance.
 - `docs/dev/app-map.md`
 - `docs/dev/state-and-config-reference.md`
 - `docs/dev/veslo-server-app-contract.md`
+- `docs/dev/conversation-workflow-contract.md`
 - `docs/dev/opencode-workspace-runtime-architecture.md`
 - `docs/dev/testing-playbook.md`
 - `docs/dev/build-and-rebuild-matrix.md`
 - `docs/dev/development-startup.md`
 - `docs/dev/cloud-deployments.md`
 - `docs/dev/veslo-application-logs.md`
-- `docs/dev/graphify-agent-workflow.md`
 - `docs/dev/release-skill.md`
 - `docs/dev/documentation-promotion.md`
 

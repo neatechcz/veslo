@@ -159,7 +159,7 @@ test("send-time scoped activation activates only when selected session belongs t
 });
 
 test("send-time scoped activation does not treat active fallback as explicit session scope", async () => {
-  const events: string[] = [];
+  const traces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
   const target = createWorkspaceSendTarget({
     activePendingDraftMeta: () => null,
     resolveWorkspaceRoot: () => "",
@@ -173,6 +173,74 @@ test("send-time scoped activation does not treat active fallback as explicit ses
     activateWorkspace: async () => {
       throw new Error("unexpected activation");
     },
+    recordSendTrace: (event, payload) => traces.push({ event, payload }),
+    sendTraceStep: async (event, run) => {
+      traces.push({ event });
+      return run();
+    },
+    messageFromUnknownError: (error) => String(error),
+  });
+
+  assert.equal(await target.ensureSelectedSessionWorkspaceActiveForSend("unknown", "trace-1"), true);
+  const events = traces.map((entry) => entry.event);
+  assert.ok(events.includes("sendPrompt:scoped-workspace-skipped-no-scope"));
+  assert.ok(!events.includes("sendPrompt:scoped-workspace-already-active"));
+  const skipped = traces.find((entry) => entry.event === "sendPrompt:scoped-workspace-skipped-no-scope");
+  assert.equal(skipped?.payload?.reason, "active-fallback-not-authoritative");
+  assert.equal(skipped?.payload?.sessionId, "unknown");
+  assert.equal(skipped?.payload?.selectedSessionId, "unknown");
+  assert.equal(skipped?.payload?.activeWorkspaceId, "ws-a");
+  assert.equal(skipped?.payload?.sendTargetWorkspaceId, "ws-a");
+  assert.equal(skipped?.payload?.hasBrowseScope, false);
+  assert.equal(skipped?.payload?.hasSendTargetWorkspace, true);
+  assert.equal(skipped?.payload?.scopeCandidateCount, 1);
+});
+
+test("send-time scoped activation blocks when browse and authoritative send-target scopes are both missing", async () => {
+  const traces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+  const target = createWorkspaceSendTarget({
+    activePendingDraftMeta: () => null,
+    resolveWorkspaceRoot: () => "",
+    resolveSessionSendTargetScope: () => null,
+    resolveSelectedSessionBrowseScope: () => null,
+    activeWorkspaceId: () => "ws-a",
+    activateWorkspace: async () => {
+      throw new Error("unexpected activation");
+    },
+    recordSendTrace: (event, payload) => traces.push({ event, payload }),
+    sendTraceStep: async (event, run) => {
+      traces.push({ event });
+      return run();
+    },
+    messageFromUnknownError: (error) => String(error),
+  });
+
+  assert.equal(await target.ensureSelectedSessionWorkspaceActiveForSend("missing", "trace-1"), false);
+  assert.deepEqual(traces.map((entry) => entry.event), ["sendPrompt:scoped-workspace-blocked-missing-scope"]);
+  assert.equal(traces[0]?.payload?.sessionId, "missing");
+  assert.equal(traces[0]?.payload?.selectedSessionId, "missing");
+  assert.equal(traces[0]?.payload?.activeWorkspaceId, "ws-a");
+  assert.equal(traces[0]?.payload?.browseScopeWorkspaceId, null);
+  assert.equal(traces[0]?.payload?.sendTargetWorkspaceId, null);
+  assert.equal(traces[0]?.payload?.hasBrowseScope, false);
+  assert.equal(traces[0]?.payload?.hasSendTargetWorkspace, false);
+  assert.equal(traces[0]?.payload?.scopeCandidateCount, 0);
+});
+
+test("send-time scoped activation can recover from a missing hydrated browse scope", async () => {
+  const events: string[] = [];
+  const activations: string[] = [];
+  const target = createWorkspaceSendTarget({
+    activePendingDraftMeta: () => null,
+    resolveWorkspaceRoot: () => "",
+    resolveSessionSendTargetScope: (sessionId) =>
+      sessionId === "b1" ? { workspaceId: "ws-b", workspaceRoot: "/repo/b", directory: "/repo/b" } : null,
+    resolveSelectedSessionBrowseScope: () => null,
+    activeWorkspaceId: () => "ws-a",
+    activateWorkspace: async (workspaceId) => {
+      activations.push(workspaceId);
+      return true;
+    },
     recordSendTrace: (event) => events.push(event),
     sendTraceStep: async (event, run) => {
       events.push(event);
@@ -181,7 +249,8 @@ test("send-time scoped activation does not treat active fallback as explicit ses
     messageFromUnknownError: (error) => String(error),
   });
 
-  assert.equal(await target.ensureSelectedSessionWorkspaceActiveForSend("unknown", "trace-1"), true);
-  assert.ok(events.includes("sendPrompt:scoped-workspace-skipped-no-scope"));
-  assert.ok(!events.includes("sendPrompt:scoped-workspace-already-active"));
+  assert.equal(await target.ensureSelectedSessionWorkspaceActiveForSend("b1", "trace-1"), true);
+  assert.deepEqual(activations, ["ws-b"]);
+  assert.ok(events.includes("sendPrompt:activate-scoped-workspace-call"));
+  assert.ok(!events.includes("sendPrompt:scoped-workspace-skipped-no-scope"));
 });

@@ -13,10 +13,10 @@ const conversationServiceSource = readFileSync(
 );
 
 test("conversation runs remember abort and lifecycle run ids under scoped identities", () => {
-  const runStart = conversationServiceSource.indexOf("  const runConversationFromVesloWriteApi = async (");
+  const runStart = conversationServiceSource.indexOf("  const submitConversationRunViaVesloWriteApi = async (");
   const abortStart = conversationServiceSource.indexOf("  const resolveConversationAbortScope = (", runStart);
-  assert.notEqual(runStart, -1, "runConversationFromVesloWriteApi should exist");
-  assert.notEqual(abortStart, -1, "abortConversationFromVesloWriteApi should follow runConversationFromVesloWriteApi");
+  assert.notEqual(runStart, -1, "submitConversationRunViaVesloWriteApi should exist");
+  assert.notEqual(abortStart, -1, "abortConversationFromVesloWriteApi should follow submitConversationRunViaVesloWriteApi");
 
   const runSource = conversationServiceSource.slice(runStart, abortStart);
   assert.match(

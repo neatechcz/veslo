@@ -1,5 +1,5 @@
-import { createSignal } from "solid-js";
-import { reconcile } from "solid-js/store";
+import { createSignal, type Setter } from "solid-js";
+import { reconcile, type SetStoreFunction } from "solid-js/store";
 
 import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 
@@ -91,9 +91,23 @@ export type SessionOfflineTranscriptLoadResult =
   | null
   | undefined;
 
+export type OfflineTranscriptFallbackKind =
+  | "client-unavailable"
+  | "read-policy"
+  | "session-not-found"
+  | "other";
+
+export type OfflineTranscriptUnavailableKind =
+  | "missing-workspace-root"
+  | "veslo-read-api-unavailable"
+  | "source-unavailable"
+  | "offline-transcript-unavailable"
+  | "other"
+  | null;
+
 export type SessionSelectionControllerDeps = {
   store: SelectionStoreState;
-  setStore: (...args: any[]) => void;
+  setStore: SetStoreFunction<SelectionStoreState>;
   routing: WorkspaceRouting;
   selectedSessionId: () => string | null;
   setSelectedSessionId: (id: string | null) => void;
@@ -122,17 +136,37 @@ export type SessionSelectionControllerDeps = {
   setMessagesForSession: (sessionID: string, list: MessageWithParts[]) => void;
   hydrateTranscriptSnapshot: (snapshot: VesloSessionTranscriptSnapshot) => void;
   messageLimitBySession: () => Record<string, number>;
-  setMessageLimitBySession: (value: any) => void;
+  setMessageLimitBySession: Setter<Record<string, number>>;
   messageCompleteBySession: () => Record<string, boolean>;
-  setMessageCompleteBySession: (value: any) => void;
+  setMessageCompleteBySession: Setter<Record<string, boolean>>;
   messageLoadBusyBySession: () => Record<string, boolean>;
-  setMessageLoadBusyBySession: (value: any) => void;
+  setMessageLoadBusyBySession: Setter<Record<string, boolean>>;
   refreshPendingPermissions: () => Promise<void>;
 };
 
 export function isSessionNotFoundError(error: unknown) {
   const message = error instanceof Error ? error.message : safeStringify(error);
   return /Session not found|NotFoundError|status\W*404|\b404\b/i.test(message);
+}
+
+export function classifyOfflineTranscriptFallbackReason(reason: string): OfflineTranscriptFallbackKind {
+  const normalized = reason.trim().toLowerCase();
+  if (normalized === "client unavailable") return "client-unavailable";
+  if (normalized === "read policy") return "read-policy";
+  if (normalized === "session not found") return "session-not-found";
+  return "other";
+}
+
+export function classifyOfflineTranscriptUnavailableReason(
+  reason: string | null | undefined,
+): OfflineTranscriptUnavailableKind {
+  const normalized = reason?.trim().toLowerCase() ?? "";
+  if (!normalized) return null;
+  if (normalized === "missing-workspace-root") return "missing-workspace-root";
+  if (normalized === "veslo-read-api-unavailable") return "veslo-read-api-unavailable";
+  if (normalized === "source-unavailable") return "source-unavailable";
+  if (normalized === "offline-transcript-unavailable") return "offline-transcript-unavailable";
+  return "other";
 }
 
 function isHistoryLoadResult(input: SessionOfflineTranscriptLoadResult): input is SessionHistoryLoadResult {
@@ -548,16 +582,19 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
       const c = sessionClient.client;
       const readPolicy = deps.sessionReadPolicy(sessionID, sessionClient.workspaceId);
       const loadOfflineTranscriptFallback = async (reason: string) => {
+        const fallbackKind = classifyOfflineTranscriptFallbackReason(reason);
         const fallbackStartedAt = perfNow();
         mark("calling offline transcript fallback", {
           limit: requestLimit,
           reason,
+          fallbackKind,
           activeWorkspaceId: readPolicy.activeWorkspaceId || null,
           sessionWorkspaceId: readPolicy.sessionWorkspaceId || null,
         });
         traceSelect("offline-transcript-fallback:start", {
           limit: requestLimit,
           reason,
+          fallbackKind,
           activeWorkspaceId: readPolicy.activeWorkspaceId || null,
           sessionWorkspaceId: readPolicy.sessionWorkspaceId || null,
           browseFromDb: readPolicy.browseFromDb,
@@ -580,10 +617,12 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
           deps.addError(error);
           mark("offline transcript fallback failed", {
             reason,
+            fallbackKind,
             error: error instanceof Error ? error.message : safeStringify(error),
           });
           traceSelect("offline-transcript-fallback:error", {
             reason,
+            fallbackKind,
             durationMs: Math.round((perfNow() - fallbackStartedAt) * 100) / 100,
             error: error instanceof Error ? error.message : safeStringify(error),
           });
@@ -592,6 +631,7 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
         if (abortIfStale("selection changed before offline transcript applied")) {
           traceSelect("offline-transcript-fallback:stale", {
             reason,
+            fallbackKind,
             durationMs: Math.round((perfNow() - fallbackStartedAt) * 100) / 100,
             status: history.status,
           });
@@ -606,10 +646,12 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
             count: snapshot.messages.length,
             limit: requestLimit,
             reason,
+            fallbackKind,
             status: history.status,
           });
           traceSelect("offline-transcript-fallback:done", {
             reason,
+            fallbackKind,
             durationMs: Math.round((perfNow() - fallbackStartedAt) * 100) / 100,
             status: history.status,
             count: snapshot.messages.length,
@@ -622,13 +664,17 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
         }
         mark("offline transcript fallback unavailable", {
           reason,
+          fallbackKind,
           unavailableReason: history.reason ?? null,
+          unavailableKind: classifyOfflineTranscriptUnavailableReason(history.reason),
           scope: history.scope,
         });
         traceSelect("offline-transcript-fallback:unavailable", {
           reason,
+          fallbackKind,
           durationMs: Math.round((perfNow() - fallbackStartedAt) * 100) / 100,
           unavailableReason: history.reason ?? null,
+          unavailableKind: classifyOfflineTranscriptUnavailableReason(history.reason),
           scope: history.scope,
         });
         return { status: "unavailable" as const, history };

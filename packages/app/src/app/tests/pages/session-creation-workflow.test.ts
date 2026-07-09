@@ -5,10 +5,10 @@ import type { Session } from "@opencode-ai/sdk/v2/client";
 
 import {
   createSessionCreationWorkflow,
+  type SessionCreationPreflightContext,
   type SessionCreationWorkflowOptions,
 } from "../../pages/session-creation-workflow.js";
 import type { SessionFlowProgressEvent } from "../../context/session-flow-progress-presenter.js";
-import type { SendRuntimePreflightContext } from "../../context/send-runtime-readiness.js";
 import type { MaterializedSessionHandoff } from "../../lib/session-send-contract.js";
 import type { PendingSidebarSessionMetadata } from "../../types.js";
 
@@ -39,6 +39,19 @@ function session(overrides: Partial<Session> = {}): Session {
   } as Session;
 }
 
+function sessionPreflight(overrides: Partial<SessionCreationPreflightContext> = {}): SessionCreationPreflightContext {
+  return {
+    traceId: "trace-test",
+    managedAiReady: false,
+    runtimeHealthOk: false,
+    enginePrepared: false,
+    effectiveSandbox: null,
+    targetWorkspace: null,
+    conversationWorkspaceByDirectory: new Map(),
+    ...overrides,
+  };
+}
+
 function createHarness(overrides: Partial<SessionCreationWorkflowOptions> = {}): Harness {
   const actions: string[] = [];
   const progressEvents: SessionFlowProgressEvent["type"][] = [];
@@ -53,6 +66,9 @@ function createHarness(overrides: Partial<SessionCreationWorkflowOptions> = {}):
     baseUrl: () => "http://127.0.0.1:4096",
     currentView: () => "session",
     developerMode: () => false,
+    createSendPreflightContext: (sendTraceId) => sessionPreflight({
+      traceId: sendTraceId?.trim() || "trace-created",
+    }),
     ensureLocalRuntimeReachableForSend: async () => {
       actions.push("ensure-runtime");
       return true;
@@ -153,13 +169,13 @@ test("session creation blocks while the target workspace is still connecting", a
 });
 
 test("session creation reuses send preflight readiness without rerunning runtime gates", async () => {
-  const preflight: SendRuntimePreflightContext = {
+  const preflight = sessionPreflight({
     traceId: "trace-send",
     targetWorkspace,
     enginePrepared: true,
     runtimeHealthOk: false,
     managedAiReady: true,
-  };
+  });
   const harness = createHarness();
   const workflow = createSessionCreationWorkflow(harness.options);
 
@@ -175,17 +191,25 @@ test("session creation reuses send preflight readiness without rerunning runtime
   assert.doesNotMatch(harness.actions.join("\n"), /ensure-runtime|ensure-managed-ai/);
 });
 
-test("session creation lets server submit own first-message runtime admission", async () => {
-  const observedPreflights: Array<SendRuntimePreflightContext | undefined> = [];
+test("session creation prepares runtime before first server submit", async () => {
+  const observedPreflights: Array<SessionCreationPreflightContext | undefined> = [];
+  const runtimePreflightSnapshots: Array<{ enginePrepared: boolean; managedAiReady: boolean }> = [];
+  const routedClientTargets: Array<string | null> = [];
   const harness = createHarness({
-    ensureLocalRuntimeReachableForSend: async () => {
-      throw new Error("runtime gate should not run before server submit materialization");
+    ensureLocalRuntimeReachableForSend: async (_reason, preflight) => {
+      runtimePreflightSnapshots.push({
+        enginePrepared: Boolean(preflight.enginePrepared),
+        managedAiReady: Boolean(preflight.managedAiReady),
+      });
+      preflight.runtimeHealthOk = true;
+      return true;
     },
     ensureManagedAiBootstrapReady: async () => {
       throw new Error("managed AI gate should not run before server submit materialization");
     },
-    routedClientForSendTarget: () => {
-      throw new Error("routed client should not be required before server submit materialization");
+    routedClientForSendTarget: (target) => {
+      routedClientTargets.push(target?.workspaceId?.trim() || null);
+      return {};
     },
     submitConversationFromVesloWriteApi: async (_workspaceId, _directory, input, preflight) => {
       observedPreflights.push(preflight);
@@ -217,20 +241,163 @@ test("session creation lets server submit own first-message runtime admission", 
       command: null,
       attachments: [],
     },
-    preflight: {
+    preflight: sessionPreflight({
       traceId: "trace-submit",
       targetWorkspace,
       runtimeHealthOk: false,
-    },
+    }),
   });
 
   assert.equal(result, "sess-submit");
+  assert.deepEqual(runtimePreflightSnapshots, [{ enginePrepared: false, managedAiReady: false }]);
+  assert.deepEqual(routedClientTargets, ["ws-main"]);
   assert.equal(observedPreflights.length, 1);
-  assert.equal(observedPreflights[0]?.enginePrepared, undefined);
-  assert.equal(observedPreflights[0]?.managedAiReady, undefined);
-  assert.ok(harness.events.includes("createSessionAndOpen:server-submit-runtime-admission-skip"));
+  assert.equal(observedPreflights[0]?.runtimeHealthOk, true);
+  assert.equal(observedPreflights[0]?.enginePrepared, true);
+  assert.equal(observedPreflights[0]?.managedAiReady, false);
+  assert.equal(harness.events.includes("createSessionAndOpen:server-submit-runtime-admission-skip"), false);
   assert.ok(harness.events.includes("createSessionAndOpen:server-submit-managed-ai-admission-skip"));
-  assert.doesNotMatch(harness.actions.join("\n"), /ensure-runtime|ensure-managed-ai|create-conversation/);
+  assert.doesNotMatch(harness.actions.join("\n"), /ensure-managed-ai|create-conversation/);
+});
+
+test("session creation blocks first server submit when runtime preparation fails", async () => {
+  let submitCalled = false;
+  const harness = createHarness({
+    ensureLocalRuntimeReachableForSend: async () => false,
+    submitConversationFromVesloWriteApi: async () => {
+      submitCalled = true;
+      throw new Error("submit should not run without a prepared runtime");
+    },
+  });
+  const workflow = createSessionCreationWorkflow(harness.options);
+
+  const result = await workflow.createSessionAndOpen("hello", {
+    clientMessageId: "client-submit",
+    submitDraft: {
+      mode: "prompt",
+      text: "hello",
+      resolvedText: "hello",
+      parts: [{ type: "text", text: "hello" }],
+      command: null,
+      attachments: [],
+    },
+    preflight: sessionPreflight({
+      traceId: "trace-submit",
+      targetWorkspace,
+      runtimeHealthOk: false,
+    }),
+  });
+
+  assert.equal(result, undefined);
+  assert.equal(submitCalled, false);
+  assert.ok(harness.events.includes("createSessionAndOpen:blocked-runtime-unreachable"));
+  assert.deepEqual(harness.errors, ["Local runtime is not ready yet."]);
+});
+
+test("session creation blocks first server submit when prepared local runtime has no routed client", async () => {
+  let submitCalled = false;
+  const harness = createHarness({
+    ensureLocalRuntimeReachableForSend: async (_reason, preflight) => {
+      preflight.runtimeHealthOk = true;
+      return true;
+    },
+    routedClientForSendTarget: () => null,
+    submitConversationFromVesloWriteApi: async () => {
+      submitCalled = true;
+      throw new Error("submit should not run without a routed runtime client");
+    },
+  });
+  const workflow = createSessionCreationWorkflow(harness.options);
+
+  const result = await workflow.createSessionAndOpen("hello", {
+    clientMessageId: "client-submit",
+    submitDraft: {
+      mode: "prompt",
+      text: "hello",
+      resolvedText: "hello",
+      parts: [{ type: "text", text: "hello" }],
+      command: null,
+      attachments: [],
+    },
+    preflight: sessionPreflight({
+      traceId: "trace-submit",
+      targetWorkspace,
+      runtimeHealthOk: false,
+    }),
+  });
+
+  assert.equal(result, undefined);
+  assert.equal(submitCalled, false);
+  assert.ok(harness.events.includes("createSessionAndOpen:blocked-no-client"));
+  assert.deepEqual(harness.errors, ["Local runtime is not ready yet."]);
+});
+
+test("session creation lets first server submit proceed without a routed client when runtime health is skipped", async () => {
+  const remoteTargetWorkspace = {
+    workspaceId: "ws-remote",
+    workspaceRoot: "/remote",
+    directory: "/remote",
+  };
+  let submitCalled = false;
+  const harness = createHarness({
+    ensureLocalRuntimeReachableForSend: async (_reason, preflight) => {
+      assert.equal(preflight.runtimeHealthOk, false);
+      return true;
+    },
+    ensureManagedAiBootstrapReady: async () => {
+      throw new Error("managed AI gate should not run before server submit materialization");
+    },
+    resolveSendTargetWorkspaceScope: () => remoteTargetWorkspace,
+    routedClientForSendTarget: () => {
+      throw new Error("routed client should not be required when local runtime health was skipped");
+    },
+    submitConversationFromVesloWriteApi: async (_workspaceId, _directory, input, preflight) => {
+      submitCalled = true;
+      assert.equal(preflight?.runtimeHealthOk, false);
+      return {
+        status: "submitted",
+        workspaceId: "ws-remote",
+        conversationId: "conv-remote-submit",
+        opencodeSessionId: "open-remote-submit",
+        runId: "run-remote-submit",
+        clientMessageId: input.clientMessageId,
+        draftDisposition: "clear",
+        materializedSession: {
+          ...session({ id: "sess-remote-submit", directory: "/remote" }),
+          conversationId: "conv-remote-submit",
+          opencodeSessionId: "open-remote-submit",
+        },
+      };
+    },
+    workspace: {
+      activeWorkspaceDisplay: () => ({ workspaceType: "remote" }),
+      activeWorkspaceId: () => "ws-remote",
+      activeWorkspaceRoot: () => "/remote",
+      connectingWorkspaceId: () => "",
+    },
+  });
+  const workflow = createSessionCreationWorkflow(harness.options);
+
+  const result = await workflow.createSessionAndOpen("hello", {
+    clientMessageId: "client-remote-submit",
+    submitDraft: {
+      mode: "prompt",
+      text: "hello",
+      resolvedText: "hello",
+      parts: [{ type: "text", text: "hello" }],
+      command: null,
+      attachments: [],
+    },
+    preflight: sessionPreflight({
+      traceId: "trace-remote-submit",
+      targetWorkspace: remoteTargetWorkspace,
+      runtimeHealthOk: false,
+    }),
+  });
+
+  assert.equal(result, "sess-remote-submit");
+  assert.equal(submitCalled, true);
+  assert.ok(harness.events.includes("createSessionAndOpen:server-submit-managed-ai-admission-skip"));
 });
 
 test("session creation opens a materialized session when first server submit failed after create", async () => {
@@ -275,7 +442,7 @@ test("session creation opens a materialized session when first server submit fai
 });
 
 test("session creation passes the prepared create preflight to conversation creation", async () => {
-  let observedPreflight: SendRuntimePreflightContext | undefined;
+  let observedPreflight: SessionCreationPreflightContext | undefined;
   const harness = createHarness({
     ensureLocalRuntimeReachableForSend: async (_reason, preflight) => {
       preflight.runtimeHealthOk = true;
@@ -306,6 +473,42 @@ test("session creation passes the prepared create preflight to conversation crea
   assert.equal(observedPreflight?.managedAiReady, true);
   assert.deepEqual(observedPreflight?.targetWorkspace, targetWorkspace);
   assert.deepEqual(observedPreflight?.effectiveSandbox, { mode: "test" });
+  assert.equal(observedPreflight?.conversationWorkspaceByDirectory instanceof Map, true);
+});
+
+test("session creation recovers a stale local Veslo bearer during first create", async () => {
+  let createCalls = 0;
+  const ensureForceRecoveryValues: boolean[] = [];
+  const harness = createHarness({
+    ensureLocalRuntimeReachableForSend: async (_reason, preflight) => {
+      ensureForceRecoveryValues.push(preflight.forceRecovery === true);
+      preflight.runtimeHealthOk = true;
+      preflight.enginePrepared = true;
+      if (preflight.forceRecovery) preflight.forceRecovery = false;
+      return true;
+    },
+    createConversationFromVesloWriteApi: async () => {
+      createCalls += 1;
+      if (createCalls === 1) {
+        throw new Error('{"code":"unauthorized","message":"Invalid bearer token"}');
+      }
+      return {
+        ...session({ id: "sess-recovered" }),
+        conversationId: "conv-recovered",
+        opencodeSessionId: "open-recovered",
+      };
+    },
+  });
+  const workflow = createSessionCreationWorkflow(harness.options);
+
+  const result = await workflow.createSessionAndOpen("hello");
+
+  assert.equal(result, "sess-recovered");
+  assert.equal(createCalls, 2);
+  assert.deepEqual(ensureForceRecoveryValues, [false, true]);
+  assert.ok(harness.events.includes("createSessionAndOpen:create-runtime-recovery-start"));
+  assert.ok(harness.events.includes("createSessionAndOpen:create-runtime-recovery-result"));
+  assert.ok(harness.events.includes("createSessionAndOpen:create-ok"));
 });
 
 test("session creation can return a backend result without route or sidebar effects", async () => {

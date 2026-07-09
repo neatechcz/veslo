@@ -42,8 +42,8 @@ test("app delegates created session materialization decisions to session creatio
   );
   assert.match(
     source,
-    /const sessionCreationWorkflow = createSessionCreationWorkflow\(\{[\s\S]*applyCreatedSessionState,[\s\S]*applyCreatedSessionTransition,[\s\S]*createConversationFromVesloWriteApi:[\s\S]*submitConversationFromVesloWriteApi:[\s\S]*\}\);/,
-    "app.tsx should wire app state effects and Veslo conversation creation into the workflow",
+    /const sessionCreationWorkflow = createSessionCreationWorkflow\(\{[\s\S]*createSendPreflightContext,[\s\S]*applyCreatedSessionState,[\s\S]*applyCreatedSessionTransition,[\s\S]*createConversationFromVesloWriteApi,[\s\S]*submitConversationFromVesloWriteApi,[\s\S]*\}\);/,
+    "app.tsx should wire app state effects, canonical send preflight, and Veslo conversation creation into the workflow",
   );
 });
 
@@ -73,8 +73,8 @@ test("createSessionAndOpen uses the creation flow helpers before selecting the s
   );
   assert.match(
     applyStateSource,
-    /rememberConversationScope\(\{[\s\S]*sessionId: result\.sessionId,[\s\S]*workspaceId: result\.workspaceScope\.workspaceId,[\s\S]*\}\);[\s\S]*buildCreatedSidebarSessionItem\(\{[\s\S]*session: result\.session,[\s\S]*displaySession,[\s\S]*pendingSidebarSession: result\.pendingSession,[\s\S]*\}\)[\s\S]*options\.onMaterializedSessionId\?\.\(result\.handoff\);/s,
-    "app-side state helper should publish scope, materialize the sidebar row, and emit the scoped handoff",
+    /setSessionBrowseScope\(\{[\s\S]*sessionId: result\.sessionId,[\s\S]*workspaceId: result\.workspaceScope\.workspaceId,[\s\S]*\}\);[\s\S]*buildCreatedSidebarSessionItem\(\{[\s\S]*session: result\.session,[\s\S]*displaySession,[\s\S]*pendingSidebarSession: result\.pendingSession,[\s\S]*\}\)[\s\S]*options\.onMaterializedSessionId\?\.\(result\.handoff\);/s,
+    "app-side state helper should publish active scope, materialize the sidebar row, and emit the scoped handoff",
   );
   assert.match(
     applyTransitionSource,

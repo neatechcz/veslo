@@ -188,8 +188,17 @@ export function GlobalSDKProvider(props: ParentProps) {
         rustSubscription = await engineSseSubscribe({
           workspaceId: "__global__",
           baseUrl,
+          connectionKey: `global:${baseUrl.trim() || "__global__"}`,
           bearerToken: bearerToken || null,
           signal: abort.signal,
+        });
+        recordSendWorkflowTrace("global-sdk", "global-sse:rust-proxy-subscribed", {
+          transport: "rust-proxy",
+          subscriptionId: rustSubscription.subscriptionId,
+          replacedExisting: rustSubscription.replacedExisting === true,
+          activeRustSseSubscriptions: rustSubscription.activeSubscriptionCount ?? null,
+          activeRustSseConnections: rustSubscription.activeConnectionCount ?? null,
+          hasBaseUrl: Boolean(baseUrl),
         });
         await consumeEvents(rustSubscription.stream);
       } else {

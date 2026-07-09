@@ -17,6 +17,31 @@ type McpRefreshInFlight = {
   promise: Promise<void>;
 };
 
+const stableStringifyMcpValue = (value: unknown): string => {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringifyMcpValue).join(",")}]`;
+
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, entryValue]) => entryValue !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right));
+  return `{${entries.map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringifyMcpValue(entryValue)}`).join(",")}}`;
+};
+
+export const fingerprintMcpServerEntries = (entries: McpServerEntry[]) =>
+  stableStringifyMcpValue(
+    entries
+      .map((entry) => ({
+        name: entry.name,
+        source: entry.source,
+        owner: entry.owner,
+        disabledByTools: entry.disabledByTools,
+        config: entry.config,
+      }))
+      .sort((left, right) =>
+        `${left.name}\u0000${left.source ?? ""}`.localeCompare(`${right.name}\u0000${right.source ?? ""}`),
+      ),
+  );
+
 export type McpServersRefresherOptions = {
   projectDir: () => string;
   workspaceType: () => WorkspaceType;
@@ -37,16 +62,33 @@ export type McpServersRefresherOptions = {
 
 export function createMcpServersRefresher(options: McpServersRefresherOptions) {
   const refreshInFlightByKey = new Map<string, McpRefreshInFlight>();
+  let lastAppliedEntriesFingerprint: string | null = null;
 
   const applyEmptyState = (status: string) => {
+    lastAppliedEntriesFingerprint = null;
     options.setMcpStatus(status);
     options.setMcpServers([]);
     options.setMcpStatuses({});
   };
 
   const applyEntries = (projectDir: string, entries: McpServerEntry[], probeRuntimeStatus: boolean) => {
+    const refreshFingerprint = stableStringifyMcpValue({
+      workspaceId: options.activeWorkspaceId().trim(),
+      projectDir,
+      entries: fingerprintMcpServerEntries(entries),
+    });
+    const entriesChanged = refreshFingerprint !== lastAppliedEntriesFingerprint;
+    lastAppliedEntriesFingerprint = refreshFingerprint;
     options.setMcpServers(entries);
-    options.setMcpLastUpdatedAt(Date.now());
+    if (entriesChanged) {
+      options.setMcpLastUpdatedAt(Date.now());
+    } else {
+      recordPerfLog(options.developerMode(), "workspace.mcp", "refresh-entries-unchanged", {
+        activeWorkspaceId: options.activeWorkspaceId().trim(),
+        projectDir,
+        entries: entries.map((entry) => entry.name),
+      });
+    }
     if (probeRuntimeStatus) {
       options.scheduleRuntimeStatusRefresh(projectDir, entries);
     } else if (entries.length) {
@@ -68,6 +110,7 @@ export function createMcpServersRefresher(options: McpServersRefresherOptions) {
       name: entry.name,
       config: entry.config as McpServerEntry["config"],
       source: entry.source,
+      owner: entry.owner,
       disabledByTools: entry.disabledByTools,
     }));
   };

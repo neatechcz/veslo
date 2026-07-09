@@ -25,6 +25,8 @@ export type SessionAttachmentPartInput =
   | AgentPartInput
   | SubtaskPartInput;
 
+export type SessionAttachmentFilePartInput = FilePartInput;
+
 export type SessionAttachmentWorkspaceEntry = {
   id: string;
   path?: string | null;

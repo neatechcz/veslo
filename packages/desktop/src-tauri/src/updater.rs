@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(any(target_os = "macos", test))]
+use std::path::PathBuf;
+#[cfg(any(target_os = "macos", test))]
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -99,6 +102,7 @@ pub fn prepare_update_install(app: &tauri::AppHandle) -> Result<(), String> {
     })
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub fn macos_app_bundle_path_from_executable(executable_path: &Path) -> Option<PathBuf> {
     let macos_dir = executable_path.parent()?;
     if macos_dir.file_name()? != "MacOS" {
@@ -118,6 +122,7 @@ pub fn macos_app_bundle_path_from_executable(executable_path: &Path) -> Option<P
     Some(bundle_dir.to_path_buf())
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub fn macos_relaunch_after_exit_command(current_pid: u32, app_bundle_path: &Path) -> Command {
     let mut command = Command::new("/bin/sh");
     command

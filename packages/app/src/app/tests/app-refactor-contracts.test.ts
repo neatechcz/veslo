@@ -257,8 +257,8 @@ test("session flow owners keep UI progress state behind narrow app adapters", ()
   );
   assert.doesNotMatch(
     sendWorkflowDeps,
-    /\blegacyConversationRunFallback\b|\bprepareSendRuntimeForSend\b/,
-    "normal send workflow wiring must not receive legacy run fallback or frontend runtime preparation",
+    /\bconversationRunCompatibilityBridge\b|\bprepareSendRuntimeForSend\b/,
+    "normal send workflow wiring must not receive conversation run compatibility bridge or frontend runtime preparation",
   );
   assert.match(
     source,
@@ -332,8 +332,8 @@ test("passive conversation reads require explicit side-effect intent", () => {
   );
   assert.match(
     conversationServiceSource,
-    /policy\?\.intent === "write-follow-up" \|\| policy\?\.intent === "write-control"/,
-    "only write follow-up/control policies may start or resolve the local server",
+    /policy\?\.intent === "write-follow-up" \|\|[\s\S]*policy\?\.intent === "write-control" \|\|[\s\S]*Boolean\(policy\?\.serverStartRecoveryKey\?\.trim\(\)\)/,
+    "only write follow-up/control or explicit recovery policies may start or resolve the local server",
   );
   assert.match(
     helperSource,

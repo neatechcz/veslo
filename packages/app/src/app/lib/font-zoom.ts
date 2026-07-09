@@ -1,13 +1,13 @@
-export const FONT_ZOOM_STORAGE_KEY = "veslo.desktop-font-zoom.v1";
-export const FONT_ZOOM_BASE_PX = 16;
+const FONT_ZOOM_STORAGE_KEY = "veslo.desktop-font-zoom.v1";
+const FONT_ZOOM_BASE_PX = 16;
 export const FONT_ZOOM_STEP = 0.1;
-export const FONT_ZOOM_MIN = 0.8;
-export const FONT_ZOOM_MAX = 1.6;
+const FONT_ZOOM_MIN = 0.8;
+const FONT_ZOOM_MAX = 1.6;
 
 export type FontZoomShortcutAction = "in" | "out" | "reset";
 export type FontZoomTarget = { setZoom: (scaleFactor: number) => Promise<void> };
 
-export function clampFontZoom(value: number): number {
+function clampFontZoom(value: number): number {
   return Math.min(FONT_ZOOM_MAX, Math.max(FONT_ZOOM_MIN, value));
 }
 

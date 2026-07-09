@@ -14,15 +14,43 @@ import {
 } from "../lib/font-zoom";
 import { isFileDragTransfer } from "../utils/data-transfer-files";
 
+type AppShellWindowEventMap = {
+  blur: FocusEvent;
+  dragover: DragEvent;
+  drop: DragEvent;
+  focus: FocusEvent;
+  keydown: KeyboardEvent;
+};
+
+type AppShellDocumentEventMap = {
+  visibilitychange: Event;
+};
+
 type AppShellWindow = {
-  addEventListener: (type: string, listener: (event: any) => void, options?: boolean | AddEventListenerOptions) => void;
-  removeEventListener: (type: string, listener: (event: any) => void, options?: boolean | EventListenerOptions) => void;
+  addEventListener: <Type extends keyof AppShellWindowEventMap>(
+    type: Type,
+    listener: (event: AppShellWindowEventMap[Type]) => void,
+    options?: boolean | AddEventListenerOptions,
+  ) => void;
+  removeEventListener: <Type extends keyof AppShellWindowEventMap>(
+    type: Type,
+    listener: (event: AppShellWindowEventMap[Type]) => void,
+    options?: boolean | EventListenerOptions,
+  ) => void;
   localStorage: Pick<Storage, "getItem" | "setItem">;
 };
 
 type AppShellDocument = {
-  addEventListener: (type: string, listener: (event: any) => void, options?: boolean | AddEventListenerOptions) => void;
-  removeEventListener: (type: string, listener: (event: any) => void, options?: boolean | EventListenerOptions) => void;
+  addEventListener: <Type extends keyof AppShellDocumentEventMap>(
+    type: Type,
+    listener: (event: AppShellDocumentEventMap[Type]) => void,
+    options?: boolean | AddEventListenerOptions,
+  ) => void;
+  removeEventListener: <Type extends keyof AppShellDocumentEventMap>(
+    type: Type,
+    listener: (event: AppShellDocumentEventMap[Type]) => void,
+    options?: boolean | EventListenerOptions,
+  ) => void;
   hasFocus: () => boolean;
   visibilityState: string;
   documentElement: {
@@ -61,12 +89,12 @@ export type AppShellEnvironment = {
   appFocused: Accessor<boolean>;
 };
 
-function defaultWindow() {
-  return typeof window === "undefined" ? null : window;
+function defaultWindow(): AppShellWindow | null {
+  return typeof window === "undefined" ? null : window as AppShellWindow;
 }
 
-function defaultDocument() {
-  return typeof document === "undefined" ? null : document;
+function defaultDocument(): AppShellDocument | null {
+  return typeof document === "undefined" ? null : document as AppShellDocument;
 }
 
 export function createAppShellEnvironment(deps: AppShellEnvironmentDeps): AppShellEnvironment {

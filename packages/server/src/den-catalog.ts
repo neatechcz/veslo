@@ -1,5 +1,5 @@
 import { ApiError } from "./errors.js";
-import type { HubMcpAuthorization, HubMcpItem, HubSkillItem } from "./types.js";
+import type { HubMcpAuthorization, HubMcpConnectionStatus, HubMcpItem, HubSkillItem } from "./types.js";
 
 type DenCatalogPayload = {
   items?: unknown;
@@ -268,6 +268,40 @@ function toHubMcpItem(item: unknown, index: number): HubMcpItem {
   };
 }
 
+function toMcpConnectionStatus(item: unknown, index: number): HubMcpConnectionStatus {
+  if (!item || typeof item !== "object") {
+    throw new ApiError(502, "den_mcp_status_invalid_payload", `Invalid Den MCP status item at index ${index}`);
+  }
+
+  const payload = item as Record<string, unknown>;
+  const scopes = payload.scopes;
+  if (
+    typeof payload.connectorId !== "string" ||
+    typeof payload.connected !== "boolean" ||
+    typeof payload.state !== "string" ||
+    (payload.name !== undefined && typeof payload.name !== "string") ||
+    (scopes !== undefined && (!Array.isArray(scopes) || scopes.some((scope) => typeof scope !== "string"))) ||
+    (payload.connectedAt !== null && payload.connectedAt !== undefined && typeof payload.connectedAt !== "string") ||
+    (payload.revokedAt !== null && payload.revokedAt !== undefined && typeof payload.revokedAt !== "string") ||
+    (payload.accessTokenExpiresAt !== null &&
+      payload.accessTokenExpiresAt !== undefined &&
+      typeof payload.accessTokenExpiresAt !== "string")
+  ) {
+    throw new ApiError(502, "den_mcp_status_invalid_payload", `Invalid Den MCP status item at index ${index}`);
+  }
+
+  return {
+    connectorId: payload.connectorId,
+    ...(typeof payload.name === "string" ? { name: payload.name } : {}),
+    connected: payload.connected,
+    state: payload.state,
+    ...(Array.isArray(scopes) ? { scopes: scopes as string[] } : {}),
+    connectedAt: typeof payload.connectedAt === "string" ? payload.connectedAt : null,
+    revokedAt: typeof payload.revokedAt === "string" ? payload.revokedAt : null,
+    accessTokenExpiresAt: typeof payload.accessTokenExpiresAt === "string" ? payload.accessTokenExpiresAt : null,
+  };
+}
+
 export async function fetchOrgSkillsCatalog(input: {
   baseUrl: string;
   orgId: string;
@@ -458,4 +492,109 @@ export async function createOrgMcpRuntimeToken(input: {
     token: payload.token,
     expiresAt: typeof payload.expiresAt === "string" ? payload.expiresAt : null,
   };
+}
+
+export async function fetchOrgMcpConnectionStatuses(input: {
+  baseUrl: string;
+  denToken: string;
+  statusPath: string;
+}): Promise<HubMcpConnectionStatus[]> {
+  const baseUrl = normalizeBaseUrl(input.baseUrl);
+  if (!baseUrl) {
+    throw new ApiError(500, "den_catalog_misconfigured", "Den catalog base URL is missing");
+  }
+
+  const denToken = input.denToken.trim();
+  if (!denToken) {
+    throw new ApiError(401, "den_token_required", "Den token is required");
+  }
+
+  const path = input.statusPath.trim();
+  if (!path.startsWith("/v1/")) {
+    throw new ApiError(502, "den_catalog_invalid_payload", "Den MCP status path is invalid");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${denToken}`,
+      },
+    });
+  } catch (error) {
+    throw new ApiError(
+      502,
+      "den_mcp_status_fetch_failed",
+      "Failed to fetch Den MCP connection statuses",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => "");
+    throw new ApiError(
+      502,
+      "den_mcp_status_fetch_failed",
+      `Failed to fetch Den MCP connection statuses (${response.status})`,
+      details || path,
+    );
+  }
+
+  const payload = await response.json().catch(() => null) as { items?: unknown } | null;
+  if (!payload || typeof payload !== "object" || !Array.isArray(payload.items)) {
+    throw new ApiError(502, "den_mcp_status_invalid_payload", "Den MCP connection status payload must contain items array");
+  }
+
+  return payload.items.map((item, index) => toMcpConnectionStatus(item, index));
+}
+
+export async function disconnectOrgMcpConnection(input: {
+  baseUrl: string;
+  denToken: string;
+  disconnectPath: string;
+}): Promise<void> {
+  const baseUrl = normalizeBaseUrl(input.baseUrl);
+  if (!baseUrl) {
+    throw new ApiError(500, "den_catalog_misconfigured", "Den catalog base URL is missing");
+  }
+
+  const denToken = input.denToken.trim();
+  if (!denToken) {
+    throw new ApiError(401, "den_token_required", "Den token is required");
+  }
+
+  const path = input.disconnectPath.trim();
+  if (!path.startsWith("/v1/")) {
+    throw new ApiError(502, "den_catalog_invalid_payload", "Den disconnect path is invalid");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      method: "DELETE",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${denToken}`,
+      },
+    });
+  } catch (error) {
+    throw new ApiError(
+      502,
+      "den_mcp_disconnect_failed",
+      "Failed to disconnect Den MCP connection",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => "");
+    throw new ApiError(
+      502,
+      "den_mcp_disconnect_failed",
+      `Failed to disconnect Den MCP connection (${response.status})`,
+      details || path,
+    );
+  }
 }

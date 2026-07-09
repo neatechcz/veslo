@@ -497,3 +497,40 @@ test("session capabilities store updates local skills without reloading MCP or r
     }
   });
 });
+
+test("session capabilities store refreshes local MCP rows when the MCP list revision changes", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const effects = createManualEffectRunner();
+      const [mcpRevision, setMcpRevision] = createSignal<number | null>(1);
+      let mcpReads = 0;
+      const store = createSessionCapabilitiesStore(baseDeps({
+        mcpRefreshFingerprint: mcpRevision,
+        readEffectiveMcpServerEntries: async () => {
+          mcpReads += 1;
+          return mcpReads === 1
+            ? [
+                { name: "browser", config: { type: "remote", url: "https://mcp.example/browser" }, source: "config.global" },
+              ]
+            : [
+                { name: "browser", config: { type: "remote", url: "https://mcp.example/browser" }, source: "config.global" },
+                { name: "sharepoint", config: { type: "remote", url: "https://mcp.example/sharepoint" }, source: "config.project" },
+              ];
+        },
+        effect: effects.effect,
+      }));
+
+      await effects.flush();
+      assert.equal(mcpReads, 1);
+      assert.deepEqual(store.sessionCapabilities()?.mcp.map((row) => row.name), ["browser"]);
+
+      setMcpRevision(2);
+      await effects.flush();
+
+      assert.equal(mcpReads, 2);
+      assert.deepEqual(store.sessionCapabilities()?.mcp.map((row) => row.name), ["browser", "sharepoint"]);
+    } finally {
+      dispose();
+    }
+  });
+});

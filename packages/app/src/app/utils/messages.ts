@@ -7,6 +7,7 @@ import type {
   OpencodeEvent,
   PlaceholderAssistantMessage,
 } from "../types";
+import { toolNameFromPart } from "../lib/opencode-part-access";
 
 export function normalizeEvent(raw: unknown): OpencodeEvent | null {
   if (!raw || typeof raw !== "object") {
@@ -271,7 +272,7 @@ const EXPLORATION_TOOL_NAMES = new Set(["read", "glob", "grep", "search", "list"
 
 function isExplorationToolPart(part: Part) {
   if (part.type !== "tool") return false;
-  const tool = typeof (part as any).tool === "string" ? String((part as any).tool).toLowerCase() : "";
+  const tool = toolNameFromPart(part).toLowerCase();
   return EXPLORATION_TOOL_NAMES.has(tool);
 }
 

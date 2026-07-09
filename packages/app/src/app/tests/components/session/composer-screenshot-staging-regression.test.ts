@@ -8,27 +8,27 @@ const sessionPageSource = readFileSync(new URL("../../../pages/session.tsx", imp
 const sessionSendWorkflowSource = readFileSync(new URL("../../../pages/session-send-workflow.ts", import.meta.url), "utf8");
 const stagingSource = readFileSync(new URL("../../../pages/session-attachment-staging.ts", import.meta.url), "utf8");
 
-function legacyConversationRunFallbackSource(): string {
-  const start = sessionSendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+function conversationRunCompatibilityBridgeSource(): string {
+  const start = sessionSendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
   const end = sessionSendWorkflowSource.indexOf("export function createSessionSendWorkflow", start);
-  assert.notEqual(start, -1, "legacy conversation run fallback source should exist");
-  assert.notEqual(end, -1, "legacy conversation run fallback block should end before createSessionSendWorkflow");
+  assert.notEqual(start, -1, "conversation run compatibility bridge source should exist");
+  assert.notEqual(end, -1, "conversation run compatibility bridge block should end before createSessionSendWorkflow");
   return sessionSendWorkflowSource.slice(start, end);
 }
 
 test("staging failure blocks send with an explicit error and no draft clear", () => {
-  const fallbackSource = legacyConversationRunFallbackSource();
-  const stagingStart = fallbackSource.indexOf(
+  const bridgeSource = conversationRunCompatibilityBridgeSource();
+  const stagingStart = bridgeSource.indexOf(
     '"sendPrompt:stage-attachments"',
   );
-  const stagingEnd = fallbackSource.indexOf("const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();");
+  const stagingEnd = bridgeSource.indexOf("const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();");
   assert.notEqual(stagingStart, -1, "staging call should exist in send flow");
   assert.notEqual(stagingEnd, -1, "send flow should continue after staging call");
-  const stagingWindow = fallbackSource.slice(stagingStart, stagingEnd);
+  const stagingWindow = bridgeSource.slice(stagingStart, stagingEnd);
 
   assert.match(
     stagingWindow,
-    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, input\.sendPreflight\)[\s\S]*const routedDraft = deps\.routeStagedAttachmentsForModel\(\{[\s\S]*if \(routedDraft\.error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*deps\.setError\(routedDraft\.error\);[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\} catch \(error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*deps\.setError\(error instanceof Error \? error\.message : deps\.safeStringify\(error\)\);[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;/s,
+    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, input\.sendPreflight\)[\s\S]*let routedDraft = deps\.routeStagedAttachmentsForModel\(\{[\s\S]*if \(routedDraft\.error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*if \(input\.sendTargetStillDisplayed\(\)\) \{\s*deps\.setError\(routedDraft\.error\);\s*\}[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\} catch \(error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*if \(input\.sendTargetStillDisplayed\(\)\) \{\s*deps\.setError\(error instanceof Error \? error\.message : deps\.safeStringify\(error\)\);\s*\}[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;/s,
     "send flow should hard-fail when attachment staging or routing fails",
   );
 
@@ -41,7 +41,7 @@ test("staging failure blocks send with an explicit error and no draft clear", ()
 
 test("send flow snapshots pending draft context before materializing a real session", () => {
   const sendStart = sessionSendWorkflowSource.indexOf("async function sendPrompt");
-  const sessionTarget = sessionSendWorkflowSource.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceId(options.targetSessionId)", sendStart);
+  const sessionTarget = sessionSendWorkflowSource.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceKey(options.targetSessionId)", sendStart);
   const pendingSnapshot = sessionSendWorkflowSource.indexOf("const pendingDraftSendState = (() => {", sessionTarget);
   const pendingKey = sessionSendWorkflowSource.indexOf("const pendingDraftKey = (deps.activePendingDraftKey() ?? \"\").trim();", pendingSnapshot);
   const sessionCreate = sessionSendWorkflowSource.indexOf(
@@ -138,22 +138,22 @@ test("session props do not borrow devtools workspace fallbacks for attachment ga
 });
 
 test("send flow blocks screenshot analysis on non-vision models instead of relying on a hidden read fallback", () => {
-  const fallbackSource = legacyConversationRunFallbackSource();
+  const bridgeSource = conversationRunCompatibilityBridgeSource();
 
   assert.match(
-    fallbackSource,
-    /const routedDraft = deps\.routeStagedAttachmentsForModel\(\{\s*draft: resolvedDraft,\s*stagedAttachments,\s*model,\s*providers: deps\.providers\(\),\s*\}\);/s,
+    bridgeSource,
+    /let routedDraft = deps\.routeStagedAttachmentsForModel\(\{\s*draft: resolvedDraft,\s*stagedAttachments,\s*model,\s*providers: deps\.providers\(\),\s*\}\);/s,
     "send flow should route staged attachments using the selected model capabilities",
   );
 
   assert.match(
-    fallbackSource,
-    /if \(routedDraft\.error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*deps\.setError\(routedDraft\.error\);[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\}/s,
+    bridgeSource,
+    /if \(routedDraft\.error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*if \(input\.sendTargetStillDisplayed\(\)\) \{\s*deps\.setError\(routedDraft\.error\);\s*\}[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\}/s,
     "non-vision screenshot sends should fail with a visible error before the prompt runs",
   );
 
   assert.doesNotMatch(
-    fallbackSource,
+    bridgeSource,
     /stagedPaths\.join\("\\n"\)/,
     "staged screenshot filenames should not be appended directly into prompt text",
   );

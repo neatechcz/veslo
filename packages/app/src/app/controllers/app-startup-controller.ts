@@ -86,7 +86,7 @@ export function resolveAppStartupRouteDecision(
 
   const fallback = trim(input.activeSessionId);
   if (fallback) {
-    return { type: "navigate", to: `/session/${fallback}`, replace: true, reason: "fallback-session" };
+    return { type: "navigate", to: `/session/${encodeURIComponent(fallback)}`, replace: true, reason: "fallback-session" };
   }
   return { type: "navigate", to: "/session", replace: true, reason: "fallback-session" };
 }

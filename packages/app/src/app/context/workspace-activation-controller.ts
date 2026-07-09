@@ -1,3 +1,4 @@
+import type { WorkspaceConnectionState, StartupPreference } from "../types";
 import type { WorkspaceInfo } from "../lib/tauri";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import type { WorkspaceActivationOptions } from "./workspace-types";
@@ -93,7 +94,7 @@ export type WorkspaceActivationControllerDeps = {
   workspaces: () => WorkspaceInfo[];
   activeWorkspaceId: () => string;
   projectDir: () => string;
-  startupPreference: () => unknown;
+  startupPreference: () => StartupPreference | null;
   hasActiveRoute: () => boolean;
   setConnectingWorkspaceId: (
     value: string | null | ((prev: string | null) => string | null),
@@ -107,7 +108,7 @@ export type WorkspaceActivationControllerDeps = {
       | null
       | ((prev: WorkspaceSwitchOverlayTarget | null) => WorkspaceSwitchOverlayTarget | null),
   ) => void;
-  updateWorkspaceConnectionState: (workspaceId: string, next: any) => void;
+  updateWorkspaceConnectionState: (workspaceId: string, next: Partial<WorkspaceConnectionState>) => void;
   wsActivateGuard: {
     enter: (workspaceId: string) => number;
     isSuperseded: (version: number) => boolean;

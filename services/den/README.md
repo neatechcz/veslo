@@ -196,56 +196,15 @@ pnpm db:migrate
 
 ## Deployment
 
-The workflow `.github/workflows/deploy-den.yml` updates Render env vars and deploys the service only when it is run manually from GitHub Actions. Pushes and merges to `main` or `dev` must not deploy Den by themselves.
-
-The workflow also patches the configured Render control-plane service with `autoDeploy: no` on every manual run. Keep native Render Auto-Deploy off for this service.
-
-The deployment workflow preserves existing Render YouTrack projector variables when matching GitHub secrets/vars are not provided, then writes them back during the env sync. It fails before deploying when the final config has no REST URL plus token, which prevents a manual Den deploy from silently disabling feedback projection.
+Den production is deployed as part of the owned-server Compose stack through
+`.github/workflows/deploy-owned-server.yml`. The workflow is manual-only
+(`workflow_dispatch`); pushes and merges to `main` or `dev` must not deploy Den
+by themselves.
 
 See `docs/dev/cloud-deployments.md` for the canonical operator procedure.
 
-Required GitHub Actions secrets:
-
-- `RENDER_API_KEY`
-- `RENDER_DEN_CONTROL_PLANE_SERVICE_ID`
-- `RENDER_OWNER_ID`
-- `DEN_DATABASE_URL`
-- `DEN_BETTER_AUTH_SECRET`
-- `DEN_LETTR_API_KEY` when hosted verification or password reset emails should be enabled
-
-Optional GitHub Actions secrets (enable GitHub social sign-in):
-
-- `DEN_GITHUB_CLIENT_ID`
-- `DEN_GITHUB_CLIENT_SECRET`
-
-Optional GitHub Actions variable:
-
-- `DEN_RENDER_WORKER_REPO` (defaults to `https://github.com/<github.repository>` in workflow, or `https://github.com/neatechcz/veslo` fallback)
-- `DEN_RENDER_WORKER_PLAN` (defaults to `standard`)
-- `DEN_RENDER_WORKER_VESLO_VERSION` (defaults to `0.11.113` and is used for `veslo-orchestrator`)
-- `DEN_CORS_ORIGINS` (hosted owned-server deployments derive app and AI Gateway origins from `VESLO_DEPLOYMENT_DOMAIN`; legacy Render deploys may still include the Render service URL)
-- `DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` (defaults to `veslo.studio`)
-- `DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` (defaults to `240000`)
-- `DEN_VERCEL_API_BASE` (defaults to `https://api.vercel.com`)
-- `DEN_VERCEL_TEAM_ID` (optional)
-- `DEN_VERCEL_TEAM_SLUG` (optional, defaults to `prologe`)
-- `DEN_VERCEL_DNS_DOMAIN` (defaults to `veslo.studio`)
-- `DEN_POLAR_FEATURE_GATE_ENABLED` (`true`/`false`, defaults to `false`)
-- `DEN_POLAR_API_BASE` (defaults to `https://api.polar.sh`)
-- `DEN_POLAR_SUCCESS_URL` (defaults to `https://app.veslo.work`)
-- `DEN_POLAR_RETURN_URL` (defaults to `DEN_POLAR_SUCCESS_URL`)
-- `DEN_AUTH_EMAIL_ADDRESS` sender email value for hosted auth emails, for example `noreply@mail.veslo.work`
-- `DEN_AUTH_EMAIL_FROM_NAME` optional sender display name for hosted auth emails, for example `Veslo`
-- `DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED` (`true`/`false`, defaults to `false`)
-
-Required additional secret when using vanity worker domains:
-
-- `VERCEL_TOKEN`
-
-For hosted auth-email testing:
-
-- set `DEN_LETTR_API_KEY` and `DEN_AUTH_EMAIL_ADDRESS` to enable verification and password-reset email delivery on Render
-- set `DEN_AUTH_EMAIL_FROM_NAME` when you want the sender to display as `Veslo`
-- set `DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true` only when you want the desktop handoff to hard-block unverified users
-- if `DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true`, both `DEN_LETTR_API_KEY` and `DEN_AUTH_EMAIL_ADDRESS` must be configured or the deploy workflow will fail validation
-- if those GitHub repo inputs are blank, the deploy workflow preserves the current Render values for `LETTR_API_KEY`, `AUTH_EMAIL_ADDRESS`, `AUTH_EMAIL_FROM_NAME`, and `DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED` instead of clearing them
+Production secrets and service-specific values live in the server-side
+owned-server env file referenced by `OWNED_SERVER_ENV_FILE`, not in a retired
+Render deploy workflow. Render and Vercel worker-provisioning variables may
+still be present as rollback or worker-domain configuration, but they are not
+the production Den deployment mechanism.

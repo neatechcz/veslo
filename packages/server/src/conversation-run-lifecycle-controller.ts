@@ -576,7 +576,19 @@ export function createConversationRunLifecycleController(
         runId: input.runId,
         ...payload,
       },
-    ).catch(() => undefined);
+    ).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      const tracePayload = {
+        workspaceId: input.workspace.id,
+        conversationId: input.target.conversationId,
+        runId: input.runId,
+        reason,
+        message,
+        ...payload,
+      };
+      input.runTrace.record(`${event}:error`, tracePayload);
+      recordTrace(`${event}:error`, tracePayload);
+    });
   };
 
   const scheduleProviderStartWatch = (

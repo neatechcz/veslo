@@ -4,7 +4,7 @@ import type { ReloadEventStore } from "./events.js";
 import type { TokenService } from "./tokens.js";
 import type { Actor, ServerConfig } from "./types.js";
 
-export type AuthMode = "none" | "client" | "host";
+export type AuthMode = "none" | "client" | "host" | "hostOrClient";
 
 export interface RequestContext {
   request: Request;

@@ -237,6 +237,7 @@ jobs:
       # Ensure Tauri's beforeBuildCommand (prepare:sidecar) uses our fork.
       OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
       OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
+      VESLO_SIDECAR_FORCE_BUILD: "1"
       VESLO_GLITCHTIP_DSN: ${{ vars.VESLO_GLITCHTIP_DSN }}
       VITE_VESLO_GLITCHTIP_DSN: ${{ vars.VESLO_GLITCHTIP_DSN }}
       VESLO_GLITCHTIP_ENVIRONMENT: production
@@ -639,7 +640,80 @@ jobs:
             --dir "$tmp_dir"
 
           tar -xzf "$tmp_dir/veslo-desktop-darwin-${asset_arch}.app.tar.gz" -C "$tmp_dir"
-          node scripts/release/verify-bundled-versions.mjs "$tmp_dir" "${{ matrix.target }}"
+          # macOS codesign mutates executable sidecar bytes after prepare:sidecar
+          # writes versions.json. Keep this post-upload guard focused on bundle
+          # completeness; Windows still verifies bundled executable hashes.
+          node - "$tmp_dir" "${{ matrix.target }}" <<'NODE'
+          const { existsSync, readdirSync, readFileSync, statSync } = require("node:fs");
+          const { join, resolve } = require("node:path");
+
+          const [extractRootArg, targetTriple] = process.argv.slice(2);
+          const extractRoot = resolve(extractRootArg);
+          const executableSidecars = [
+            "veslo-code",
+            "opencode",
+            "veslo-server",
+            "veslo-code-router",
+            "veslo-orchestrator",
+            "chrome-devtools-mcp",
+          ];
+          const dataSidecars = ["opencode-managed-deps.json"];
+          const manifestKeys = [
+            "veslo-code",
+            "veslo-server",
+            "veslo-code-router",
+            "veslo-orchestrator",
+            "chrome-devtools-mcp",
+            "opencode-managed-deps",
+          ];
+
+          const fail = (message) => {
+            console.error(`ERROR: ${message}`);
+            process.exit(1);
+          };
+
+          const apps = readdirSync(extractRoot, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory() && entry.name.endsWith(".app"))
+            .map((entry) => join(extractRoot, entry.name));
+          if (apps.length !== 1) {
+            fail(`Expected exactly one .app bundle in ${extractRoot}, found ${apps.length}`);
+          }
+
+          const macosDir = join(apps[0], "Contents", "MacOS");
+          const findBundledFile = (name) => {
+            const candidates = [join(macosDir, name), join(macosDir, `${name}-${targetTriple}`)];
+            for (const candidate of candidates) {
+              if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
+            }
+            fail(`${name} missing from ${macosDir}. Checked: ${candidates.join(", ")}`);
+          };
+
+          const manifestPath = findBundledFile("versions.json");
+          const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+          for (const key of manifestKeys) {
+            const entry = manifest[key];
+            const version = typeof entry?.version === "string" ? entry.version.trim() : "";
+            const sha256 = typeof entry?.sha256 === "string" ? entry.sha256.trim() : "";
+            if (!version) fail(`versions.json is missing a version for ${key}`);
+            if (!/^[a-f0-9]{64}$/i.test(sha256)) fail(`versions.json is missing a sha256 for ${key}`);
+          }
+
+          for (const name of executableSidecars) {
+            const sidecarPath = findBundledFile(name);
+            const stat = statSync(sidecarPath);
+            if (stat.size <= 0) fail(`Bundled sidecar is empty: ${sidecarPath}`);
+            if ((stat.mode & 0o111) === 0) fail(`Bundled sidecar is not executable: ${sidecarPath}`);
+            console.log(`Found executable sidecar ${name} at ${sidecarPath}`);
+          }
+
+          for (const name of dataSidecars) {
+            const sidecarPath = findBundledFile(name);
+            if (statSync(sidecarPath).size <= 0) fail(`Bundled sidecar data file is empty: ${sidecarPath}`);
+            console.log(`Found data sidecar ${name} at ${sidecarPath}`);
+          }
+
+          console.log(`Found bundled versions.json at ${manifestPath}`);
+          NODE
 
   publish-tauri-windows:
     name: Build + Publish (x86_64-pc-windows-msvc)
@@ -659,6 +733,7 @@ jobs:
       RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}
       OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
       OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
+      VESLO_SIDECAR_FORCE_BUILD: "1"
       TARGET_TRIPLE: x86_64-pc-windows-msvc
       TAURI_WINDOWS_RELEASE_CONFIG: src-tauri/tauri.windows.release.conf.json
       VESLO_WINDOWS_SIGNING_DESCRIPTION: Veslo by Neatech
@@ -923,6 +998,10 @@ jobs:
           Push-Location packages/desktop
           pnpm exec tauri -vvv build --config $env:TAURI_WINDOWS_RELEASE_CONFIG --target $env:TARGET_TRIPLE --bundles msi
           Pop-Location
+
+      - name: Verify bundled sidecars
+        shell: pwsh
+        run: node scripts/release/verify-bundled-versions.mjs "packages/desktop/src-tauri/target/$env:TARGET_TRIPLE/release" "$env:TARGET_TRIPLE"
 
       - name: Resolve Windows bundle paths
         shell: pwsh

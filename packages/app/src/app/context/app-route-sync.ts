@@ -175,7 +175,7 @@ export function createAppRouteSync(deps: AppRouteSyncDeps): AppRouteSyncControll
       deps.navigate("/session", options);
       return;
     }
-    deps.navigate(`/session/${trimmed}`, options);
+    deps.navigate(`/session/${encodeURIComponent(trimmed)}`, options);
   };
 
   const setTab = (nextTab: DashboardTab) => {

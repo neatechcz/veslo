@@ -9,6 +9,7 @@ import {
 import {
   createSessionFromDirectorySelection,
   createSessionWithWorkspaceActivation,
+  openSidebarSessionFromList,
   openSessionWithWorkspaceActivation,
 } from "../../pages/session-navigation.js";
 import * as sessionNavigation from "../../pages/session-navigation.js";
@@ -17,6 +18,7 @@ import type { WorkspaceActivationOptions } from "../../context/workspace-types.j
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 const appViewPropsSource = readFileSync(new URL("../../app-view-props.ts", import.meta.url), "utf8");
 const sessionSendWorkflowSource = readFileSync(new URL("../../pages/session-send-workflow.ts", import.meta.url), "utf8");
+const sessionNavigationSource = readFileSync(new URL("../../pages/session-navigation.ts", import.meta.url), "utf8");
 const sessionPageSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
 const dashboardSource = readFileSync(new URL("../../pages/dashboard.tsx", import.meta.url), "utf8");
 const workspaceSessionSelectionSource = readFileSync(
@@ -74,12 +76,6 @@ const abortSessionEnd = appSource.indexOf("  function retryLastPrompt()", abortS
 const abortSessionSource =
   abortSessionStart >= 0 && abortSessionEnd >= 0
     ? appSource.slice(abortSessionStart, abortSessionEnd)
-    : "";
-const compactCurrentSessionStart = appSource.indexOf("  async function compactCurrentSession(");
-const compactCurrentSessionEnd = appSource.indexOf("  const triggerAutoCompaction = async (sessionID: string) => {", compactCurrentSessionStart);
-const compactCurrentSessionSource =
-  compactCurrentSessionStart >= 0 && compactCurrentSessionEnd >= 0
-    ? appSource.slice(compactCurrentSessionStart, compactCurrentSessionEnd)
     : "";
 const replaceUserMessageStart = appSource.indexOf("  async function replaceUserMessage(");
 const replaceUserMessageEnd = appSource.indexOf("  async function undoLastUserMessage() {", replaceUserMessageStart);
@@ -225,8 +221,30 @@ test("opens immediately when session is in active workspace", async () => {
 });
 
 test("session list clicks record browse scope before route navigation", () => {
+  const helperStart = sessionNavigationSource.indexOf("export function openSidebarSessionFromList");
+  const helperEnd = sessionNavigationSource.indexOf("export async function createSessionWithWorkspaceActivation", helperStart);
+  assert.notEqual(helperStart, -1, "openSidebarSessionFromList should exist");
+  assert.notEqual(helperEnd, -1, "openSidebarSessionFromList block end should exist");
+  const helperSource = sessionNavigationSource.slice(helperStart, helperEnd);
+
+  assert.match(
+    helperSource,
+    /input\.setSessionBrowseScope\(\{[\s\S]*sessionId: nextSessionId,[\s\S]*workspaceId: input\.workspaceId,[\s\S]*workspaceRoot: root,/,
+    "existing-session navigation should record the workspace scope for DB transcript browsing",
+  );
+  assert.match(
+    helperSource,
+    /input\.setSessionBrowseScope\(\{[\s\S]*directory: input\.target\?\.directory\?\.trim\(\) \|\| session\?\.directory\?\.trim\(\) \|\| root,[\s\S]*conversationId: input\.target\?\.conversationId \?\? session\?\.conversationId \?\? null,[\s\S]*opencodeSessionId: input\.target\?\.opencodeSessionId \?\? session\?\.opencodeSessionId \?\? nextSessionId,/s,
+    "existing-session navigation should carry conversation sidecars with the browse scope",
+  );
+  assert.match(
+    helperSource,
+    /input\.setSessionBrowseScope\(\{[\s\S]*\}\);\s*\/\/ Route effects can dedupe same-id opens; select after scope so DB reads use the clicked workspace\.\s*void Promise\.resolve\(input\.selectSession\(nextSessionId\)\)[\s\S]*input\.setView\("session", nextSessionId\);/s,
+    "session browse scope must be recorded before explicit selection and route navigation",
+  );
+
   for (const source of [sessionPageSource, dashboardSource]) {
-    const openSessionStart = source.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string) => {");
+    const openSessionStart = source.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {");
     assert.notEqual(openSessionStart, -1, "openSessionFromList should exist");
     const openSessionEnd = source.indexOf("  const resolveVesloWorkspaceId = (workspaceId: string) => {", openSessionStart);
     assert.notEqual(openSessionEnd, -1, "openSessionFromList block end should exist");
@@ -234,25 +252,169 @@ test("session list clicks record browse scope before route navigation", () => {
 
     assert.match(
       openSessionSource,
-      /props\.setSessionBrowseScope\(\{[\s\S]*sessionId: nextSessionId,[\s\S]*workspaceId,[\s\S]*workspaceRoot:/,
-      "existing-session navigation should record the workspace scope for DB transcript browsing",
-    );
-    assert.match(
-      openSessionSource,
-      /props\.setSessionBrowseScope\(\{[\s\S]*directory: session\?\.directory \?\? workspaceRoot,[\s\S]*conversationId: session\?\.conversationId \?\? null,[\s\S]*opencodeSessionId: session\?\.opencodeSessionId \?\? nextSessionId,/s,
-      "existing-session navigation should carry conversation sidecars with the browse scope",
-    );
-    assert.match(
-      openSessionSource,
-      /props\.setSessionBrowseScope\(\{[\s\S]*\}\);\s*void Promise\.resolve\(props\.selectSession\(nextSessionId\)\)[\s\S]*props\.setView\("session", nextSessionId\);/s,
-      "session browse scope must be recorded before explicit selection and route navigation",
-    );
-    assert.match(
-      openSessionSource,
-      /props\.selectSession\(nextSessionId\)/,
-      "existing-session navigation should explicitly reload the selected session when the route id is unchanged",
+      /void openSidebarSessionFromList\(\{[\s\S]*setSessionBrowseScope: props\.setSessionBrowseScope,[\s\S]*selectSession: props\.selectSession,[\s\S]*setView: props\.setView,/s,
+      "session surfaces should delegate sidebar opens through the scoped navigation helper",
     );
   }
+});
+
+test("sidebar session helper records browse scope before route navigation", async () => {
+  const events: string[] = [];
+  const result = await openSidebarSessionFromList({
+    workspaceSessionGroups: [{
+      workspace: { id: "ws-a", directory: "/repo", path: "/fallback" },
+      sessions: [{
+        id: "sess-1",
+        directory: "/repo/project",
+        conversationId: "conv-1",
+        opencodeSessionId: "open-1",
+      }],
+      status: "ready",
+    }] as never,
+    activeWorkspaceId: "ws-a",
+    workspaceId: "ws-a",
+    sessionId: "sess-1",
+    activateWorkspace: async () => {
+      events.push("activate");
+      return true;
+    },
+    setSessionBrowseScope: (scope) => {
+      events.push(`scope:${scope.sessionId}:${scope.directory}:${scope.conversationId}:${scope.opencodeSessionId}`);
+    },
+    selectSession: (sessionId) => {
+      events.push(`select:${sessionId}`);
+    },
+    setView: (view, sessionId) => {
+      events.push(`view:${view}:${sessionId}`);
+    },
+    reportError: (error) => {
+      throw error;
+    },
+    sourceContext: "test",
+  });
+
+  assert.equal(result, "opened");
+  assert.deepEqual(events, [
+    "scope:sess-1:/repo/project:conv-1:open-1",
+    "select:sess-1",
+    "view:session:sess-1",
+  ]);
+});
+
+test("sidebar session helper uses the clicked target for duplicate raw session ids", async () => {
+  const scopes: Array<{
+    sessionId: string;
+    directory: string | null;
+    conversationId: string | null;
+    opencodeSessionId: string | null;
+  }> = [];
+  const selected: string[] = [];
+  const result = await openSidebarSessionFromList({
+    workspaceSessionGroups: [{
+      workspace: { id: "ws-a", directory: "/repo", path: "/fallback" },
+      sessions: [
+        {
+          id: "shared",
+          directory: "/repo/project-a",
+          conversationId: "conv-a",
+          opencodeSessionId: "open-a",
+        },
+        {
+          id: "shared",
+          directory: "/repo/project-b",
+          conversationId: "conv-b",
+          opencodeSessionId: "open-b",
+        },
+      ],
+      status: "ready",
+    }] as never,
+    activeWorkspaceId: "ws-a",
+    workspaceId: "ws-a",
+    sessionId: "shared",
+    target: {
+      rowKey: "row-project-b",
+      workspaceId: "ws-a",
+      sessionId: "shared",
+      workspaceRoot: "/repo",
+      directory: "/repo/project-b",
+      conversationId: "conv-b",
+      opencodeSessionId: "open-b",
+    },
+    activateWorkspace: async () => {
+      throw new Error("same-workspace open should not activate");
+    },
+    setSessionBrowseScope: (scope) => {
+      scopes.push({
+        sessionId: scope.sessionId,
+        directory: scope.directory ?? null,
+        conversationId: scope.conversationId ?? null,
+        opencodeSessionId: scope.opencodeSessionId ?? null,
+      });
+    },
+    selectSession: (sessionId) => {
+      selected.push(sessionId);
+    },
+    setView: () => undefined,
+    reportError: (error) => {
+      throw error;
+    },
+    sourceContext: "test",
+  });
+
+  assert.equal(result, "opened");
+  assert.deepEqual(scopes, [{
+    sessionId: "shared",
+    directory: "/repo/project-b",
+    conversationId: "conv-b",
+    opencodeSessionId: "open-b",
+  }]);
+  assert.deepEqual(selected, ["shared"]);
+});
+
+test("sidebar pending rows activate workspace without selecting a server session", async () => {
+  const events: string[] = [];
+  let activeWorkspaceId = "ws-a";
+  const result = await openSidebarSessionFromList({
+    workspaceSessionGroups: [{
+      workspace: { id: "ws-b", directory: "/repo-b", path: "/fallback-b" },
+      sessions: [{
+        id: "pending-session:one",
+        directory: "/repo-b",
+        conversationId: "conv-ignored",
+        opencodeSessionId: "open-ignored",
+      }],
+      status: "ready",
+    }] as never,
+    activeWorkspaceId,
+    getActiveWorkspaceId: () => activeWorkspaceId,
+    workspaceId: "ws-b",
+    sessionId: "pending-session:one",
+    activateWorkspace: async (workspaceId, options) => {
+      events.push(`activate:${workspaceId}:${options.origin}`);
+      activeWorkspaceId = workspaceId;
+      return true;
+    },
+    setSessionBrowseScope: (scope) => {
+      events.push(`scope:${scope.sessionId}:${scope.directory}:${scope.conversationId}:${scope.opencodeSessionId}`);
+    },
+    selectSession: (sessionId) => {
+      events.push(`select:${sessionId}`);
+    },
+    setView: (view, sessionId) => {
+      events.push(`view:${view}:${sessionId}`);
+    },
+    reportError: (error) => {
+      throw error;
+    },
+    sourceContext: "test",
+  });
+
+  assert.equal(result, "opened");
+  assert.deepEqual(events, [
+    "activate:ws-b:session-navigation:open-session-before-open",
+    "scope:pending-session:one:/repo-b:null:null",
+    "view:session:pending-session:one",
+  ]);
 });
 
 test("app routes selected session browsing through DB scope", () => {
@@ -268,8 +430,8 @@ test("app routes selected session browsing through DB scope", () => {
   );
   assert.match(
     appSource,
-    /shouldBrowseSessionFromDb: \(sessionId\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*if \(transcriptScope\) return true;[\s\S]*return !isLiveTranscriptReadAllowedForWorkspace\(workspaceStore\.activeWorkspaceId\(\)\.trim\(\)\);[\s\S]*\},/s,
-    "session store should force DB browsing for scoped sidebar selections or workspaces not explicitly live-read-enabled by send flow",
+    /shouldBrowseSessionFromDb: \(sessionId\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*const activeWorkspaceId = workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const activeScopedSession =[\s\S]*scopeWorkspaceId === activeWorkspaceId;[\s\S]*return !\(activeScopedSession && isLiveTranscriptReadAllowedForWorkspace\(scopeWorkspaceId\)\);[\s\S]*return !isLiveTranscriptReadAllowedForWorkspace\(activeWorkspaceId\);[\s\S]*\},/s,
+    "session store should keep foreign scoped sidebar selections on DB browsing while allowing active live-scoped sessions to read directly",
   );
   assert.match(
     appSource,
@@ -281,17 +443,17 @@ test("app routes selected session browsing through DB scope", () => {
 test("app activates selected session workspace at send time, not browse time", () => {
   assert.match(
     sendPromptSource,
-    /const selectedSessionScopeForSend = selectedSessionCandidate[\s\S]*resolveSelectedSessionBrowseScope\(selectedSessionCandidate\)[\s\S]*const selectedSessionBelongsToActiveWorkspace =[\s\S]*selectedSessionScopeWorkspaceId === activeWorkspaceIdForSend;[\s\S]*const selectedRealSessionId =[\s\S]*isPendingSessionInstanceId\(selectedSessionCandidate\) \|\| !selectedSessionBelongsToActiveWorkspace[\s\S]*\? null[\s\S]*: selectedSessionCandidate;/s,
+    /const selectedSessionScopeForSend = selectedSessionCandidate[\s\S]*resolveSelectedSessionBrowseScope\(selectedSessionCandidate\)[\s\S]*const selectedSessionBelongsToActiveWorkspace =[\s\S]*selectedSessionScopeWorkspaceId === activeWorkspaceIdForSend;[\s\S]*const selectedRealSessionId =[\s\S]*isPendingSessionInstanceKey\(selectedSessionCandidate\) \|\| !selectedSessionBelongsToActiveWorkspace[\s\S]*\? null[\s\S]*: selectedSessionCandidate;/s,
     "implicit sends should ignore a selected session whose browse scope belongs to another workspace",
   );
   assert.match(
     sendPromptSource,
-    /const explicitTargetSessionId = deps\.isPendingSessionInstanceId\(options\.targetSessionId\)[\s\S]*let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;[\s\S]*selectedSessionIgnoredForForeignWorkspace: Boolean\([\s\S]*selectedSessionCandidate && !selectedSessionBelongsToActiveWorkspace && !explicitTargetSessionId,[\s\S]*\),/s,
+    /const explicitTargetSessionId = deps\.isPendingSessionInstanceKey\(options\.targetSessionId\)[\s\S]*let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;[\s\S]*selectedSessionIgnoredForForeignWorkspace: Boolean\([\s\S]*selectedSessionCandidate && !selectedSessionBelongsToActiveWorkspace && !explicitTargetSessionId,[\s\S]*\),/s,
     "send trace should expose when a stale selected session was ignored, but not when it was passed as the explicit send target",
   );
   assert.match(
     workspaceSendTargetSource,
-    /const transcriptScope = options\.resolveSelectedSessionBrowseScope\s*\? options\.resolveSelectedSessionBrowseScope\(sessionId\)\s*: options\.resolveSessionSendTargetScope\(sessionId\);[\s\S]*options\.sendTraceStep\(\s*"sendPrompt:activate-scoped-workspace-call",[\s\S]*options\.activateWorkspace\(targetWorkspaceId, \{ origin: "send-target:selected-session-workspace" \}\)/s,
+    /const browseScope = options\.resolveSelectedSessionBrowseScope[\s\S]*options\.resolveSelectedSessionBrowseScope\(sessionId\)[\s\S]*const sendTargetScope = browseScope[\s\S]*options\.resolveSessionSendTargetScope\(sessionId\);[\s\S]*const transcriptScope = browseScope \?\?[\s\S]*sendTargetWorkspaceId === activeWorkspaceId[\s\S]*options\.sendTraceStep\(\s*"sendPrompt:activate-scoped-workspace-call",[\s\S]*options\.activateWorkspace\(targetWorkspaceId, \{ origin: "send-target:selected-session-workspace" \}\)/s,
     "send path should activate the workspace from the selected browse scope, falling back to the send target scope",
   );
   assert.match(
@@ -326,6 +488,19 @@ test("workspace snapshot effect preserves scoped browse session during send-time
     workspaceSessionSnapshotsSource,
     /const selectedBelongsToIncoming = selectedScopeWorkspaceId === activeWorkspaceId;[\s\S]*if \(!selectedBelongsToIncoming\) \{[\s\S]*loadWorkspaceId = activeWorkspaceId;/s,
     "send-time activation must not immediately replace the scoped browsed session with a stale workspace snapshot",
+  );
+});
+
+test("session run-state reset traces use concrete idle reasons", () => {
+  assert.match(
+    sessionPageSource,
+    /if \(props\.sessionStatus === "idle" && \(runHasBegun\(\) \|\| responseStarted\(\)\)\) \{\s*resetRunState\(currentSessionQueueKey\(\), "active-session-idle"\);/s,
+    "active idle reset should be tagged with a concrete reason",
+  );
+  assert.match(
+    sessionPageSource,
+    /!runHasBegun\(\) &&\s*!responseStarted\(\)\s*\) \{\s*resetRunState\(currentSessionQueueKey\(\), "idle-grace-expired"\);/s,
+    "idle grace reset should be tagged with a concrete reason",
   );
 });
 

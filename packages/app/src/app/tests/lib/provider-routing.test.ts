@@ -536,3 +536,51 @@ test("server-backed managed config comparison requires a patch when model author
     false,
   );
 });
+
+test("server-backed managed config comparison ignores JSON object key order", () => {
+  const desired = applyGatewayProviderRouting(
+    JSON.stringify({
+      provider: {
+        codex_oauth: {
+          options: {
+            baseURL: "http://127.0.0.1:4318/ai-gateway/providers/codex_oauth/v1",
+          },
+        },
+      },
+    }),
+    {
+      providerId: "codex_oauth",
+      serverBaseUrl: "http://127.0.0.1:4318",
+      serverClientToken: "new-local-client-token",
+      gatewayAccessToken: "gateway-access-token",
+      models: ["gpt-5.5"],
+    },
+  );
+  const parsed = JSON.parse(desired) as {
+    provider?: {
+      codex_oauth?: {
+        env?: string[];
+        models?: Record<string, unknown>;
+        name?: string;
+        npm?: string;
+        options?: Record<string, unknown>;
+      };
+    };
+  };
+  const currentWithDifferentKeyOrder = JSON.stringify({
+    provider: {
+      codex_oauth: {
+        models: parsed.provider?.codex_oauth?.models,
+        options: parsed.provider?.codex_oauth?.options,
+        env: parsed.provider?.codex_oauth?.env,
+        npm: parsed.provider?.codex_oauth?.npm,
+        name: parsed.provider?.codex_oauth?.name,
+      },
+    },
+  }, null, 2);
+
+  assert.equal(
+    managedConfigContentsMatchForServerPatch(currentWithDifferentKeyOrder, desired),
+    true,
+  );
+});

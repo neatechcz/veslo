@@ -21,11 +21,11 @@ const runtimeConfigSource = readFileSync(
 );
 const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
 
-function legacyConversationRunFallbackPrepareSource(): string {
-  const fallbackStart = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
-  const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", fallbackStart);
+function conversationRunCompatibilityBridgePrepareSource(): string {
+  const bridgeStart = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
+  const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", bridgeStart);
   const submitStart = sendWorkflowSource.indexOf("  const submit = async", prepareStart);
-  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "legacy fallback prepare source should be present");
+  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "compatibility bridge prepare source should be present");
   return sendWorkflowSource.slice(prepareStart, submitStart);
 }
 
@@ -33,14 +33,14 @@ test("managed AI bootstrap readiness returns a blocking result when setup is not
   const start = readinessSource.indexOf("const ensureManagedAiBootstrapReady = async");
   const end = readinessSource.indexOf("async function ensureLocalRuntimeReachableForSend", start);
   assert.ok(start >= 0 && end > start, "ensureManagedAiBootstrapReady source should be present");
-  const prepareSource = legacyConversationRunFallbackPrepareSource();
+  const prepareSource = conversationRunCompatibilityBridgePrepareSource();
   const gateIndex = prepareSource.indexOf('deps.prepareSendRuntimeForSend("sendPrompt", input.sendPreflight)');
   const clientIndex = prepareSource.indexOf("const c = deps.routedClientForSendTarget(input.sendTargetWorkspace);");
-  assert.ok(gateIndex >= 0, "legacy fallback prepare should call the runtime readiness owner");
-  assert.ok(clientIndex >= 0, "legacy fallback prepare should read the routed client");
+  assert.ok(gateIndex >= 0, "compatibility bridge prepare should call the runtime readiness owner");
+  assert.ok(clientIndex >= 0, "compatibility bridge prepare should read the routed client");
   assert.ok(
     gateIndex < clientIndex,
-    "legacy fallback prepare should wait for managed bootstrap readiness before grabbing the routed client",
+    "compatibility bridge prepare should wait for managed bootstrap readiness before grabbing the routed client",
   );
   assert.match(
     readinessSource,

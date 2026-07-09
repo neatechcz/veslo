@@ -217,6 +217,7 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
     if (!id) return null;
     return resolveUiConversationScope(conversationScopeBySessionId(), id, {
       activeWorkspaceId: options.activeWorkspaceId(),
+      activeWorkspaceRoot: options.activeWorkspaceRoot?.() ?? null,
       selectedScope: selectedBrowseScopeInput(),
     });
   };

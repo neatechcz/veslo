@@ -1,4 +1,4 @@
-import { reconcile } from "solid-js/store";
+import { reconcile, type SetStoreFunction } from "solid-js/store";
 
 import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 
@@ -52,7 +52,7 @@ export type WorkspaceSessionCache = {
 
 export type SessionWorkspaceCacheControllerDeps = {
   store: SessionWorkspaceCacheStoreState;
-  setStore: (...args: any[]) => void;
+  setStore: SetStoreFunction<SessionWorkspaceCacheStoreState>;
   routing: Pick<WorkspaceRouting, "activeWorkspaceId">;
   selectedSessionId: () => string | null;
   setSelectedSessionId: (id: string | null) => void;

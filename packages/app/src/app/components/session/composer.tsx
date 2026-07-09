@@ -562,7 +562,7 @@ export default function Composer(props: ComposerProps) {
       }));
     const all = [...recentFiles, ...searchFiles];
     const list = query
-      ? fuzzysort.go(query, all, { keys: ["display"] }).map((entry: any) => entry.obj)
+      ? fuzzysort.go<MentionOption>(query, all, { keys: ["display"] }).map((entry) => entry.obj)
       : all;
     const groups: MentionGroup[] = [];
     const bucket = new Map<MentionGroup["category"], MentionOption[]>();
@@ -874,8 +874,8 @@ export default function Composer(props: ComposerProps) {
     const commands = slashCommands();
     if (!query) return commands.slice(0, 15);
     return fuzzysort
-      .go(query, commands, { keys: ["name", "description"] })
-      .map((entry: any) => entry.obj)
+      .go<SlashCommandOption>(query, commands, { keys: ["name", "description"] })
+      .map((entry) => entry.obj)
       .slice(0, 15);
   });
 

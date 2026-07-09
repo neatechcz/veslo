@@ -45,7 +45,10 @@ test("session send flow starts optimistic run UI before prompt handoff resolves"
   const sendCall = flowSendImmediateSource.indexOf("deps.transport.sendPromptAsync(draft, promptSendOptions)", startRun);
   const rejectedBranch = flowSendImmediateSource.indexOf("if (!submitResult.accepted) {", sendCall);
   const markFailed = flowSendImmediateSource.indexOf("markMatchingPendingSubmitFailed(errorMessage);", rejectedBranch);
-  const resetRun = flowSendImmediateSource.indexOf("deps.runState.resetRunState(runStateSessionKeyForHandoffFailure());", rejectedBranch);
+  const resetRun = flowSendImmediateSource.indexOf(
+    'deps.runState.resetRunState(runStateSessionKeyForHandoffFailure(), "send-rejected");',
+    rejectedBranch,
+  );
   const failedBranchEnd = flowSendImmediateSource.indexOf("deps.feedback.setToastMessage(deps.runtime.error() ?? deps.feedback.tr(\"session.connect_server_to_attach\"));", rejectedBranch);
   const failedBranch = flowSendImmediateSource.slice(rejectedBranch, failedBranchEnd);
 

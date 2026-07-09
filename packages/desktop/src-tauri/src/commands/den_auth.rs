@@ -140,6 +140,7 @@ fn write_den_auth_snapshot_file(snapshot: &DenAuthSnapshot) -> Result<(), String
     Ok(())
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn parse_keep_signed_in(raw: &str) -> Option<bool> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "1" | "true" => Some(true),
@@ -148,6 +149,7 @@ fn parse_keep_signed_in(raw: &str) -> Option<bool> {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn decode_hex(input: &str) -> Option<Vec<u8>> {
     let trimmed = input.trim();
     if trimmed.is_empty() || trimmed.len() % 2 != 0 {
@@ -167,6 +169,7 @@ fn decode_hex(input: &str) -> Option<Vec<u8>> {
     Some(output)
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn decode_webkit_storage_hex_value(raw_hex: &str) -> Option<String> {
     let bytes = decode_hex(raw_hex)?;
     if bytes.is_empty() {

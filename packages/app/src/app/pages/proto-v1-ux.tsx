@@ -1,4 +1,5 @@
 import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
+import type { Component, JSX } from "solid-js";
 import {
   ArrowUp,
   BookOpen,
@@ -31,8 +32,9 @@ import {
 } from "lucide-solid";
 
 type TabKey = "new-thread" | "automations" | "skills";
+type IconComponent = Component<{ size?: number; class?: string }>;
 
-const navTabs: Array<{ id: TabKey; label: string; icon: any }> = [
+const navTabs: Array<{ id: TabKey; label: string; icon: IconComponent }> = [
   { id: "new-thread", label: "New thread", icon: Plus },
   { id: "automations", label: "Automations", icon: History },
   { id: "skills", label: "Skills", icon: Zap },
@@ -112,7 +114,7 @@ const promptSuggestions = [
 ];
 
 const SidebarItem = (props: {
-  icon: any;
+  icon: IconComponent;
   label: string;
   active?: boolean;
   onClick?: () => void;
@@ -145,7 +147,7 @@ const ThreadItem = (props: { text: string; time: string }) => (
   </div>
 );
 
-const ProjectFolder = (props: { name: string; children: any }) => {
+const ProjectFolder = (props: { name: string; children: JSX.Element }) => {
   const [expanded, setExpanded] = createSignal(true);
   const toggleExpanded = () => setExpanded((current) => !current);
 
@@ -196,7 +198,7 @@ const ProjectFolder = (props: { name: string; children: any }) => {
 };
 
 const AutomationCard = (props: {
-  icon: any;
+  icon: IconComponent;
   description: string;
   color?: string;
   onClick?: () => void;
@@ -223,7 +225,7 @@ const AutomationCard = (props: {
 };
 
 const SkillCard = (props: {
-  icon: any;
+  icon: IconComponent;
   title: string;
   description: string;
   badge?: string;

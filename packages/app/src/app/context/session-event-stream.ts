@@ -47,7 +47,7 @@ import {
 import { shouldRecoverLocalRuntimeFromHealthError } from "./send-runtime-readiness";
 import { shouldReleaseStaleWorkspaceRoute } from "./session-runtime-prompts";
 import { INITIAL_SESSION_MESSAGE_LIMIT } from "./session-transcript-controller";
-import type { RoutingClient, WorkspaceRouting } from "./workspace-routing";
+import type { ClientEntry, RoutingClient, WorkspaceRouting } from "./workspace-routing";
 
 type EventStreamStoreState = {
   sessions: Session[];
@@ -63,10 +63,38 @@ type EventStreamStoreState = {
 };
 
 type SseSubscription = {
+  subscriptionId?: string;
+  replacedExisting?: boolean;
+  activeSubscriptionCount?: number;
+  activeConnectionCount?: number;
   stream: AsyncIterable<unknown>;
   close?: () => Promise<void> | void;
   [Symbol.asyncDispose]?: () => Promise<void> | void;
 };
+
+export type ReconciledSseStream = {
+  workspaceId: string;
+  client: RoutingClient;
+  baseUrl: string;
+  directory: string;
+  cleanup: () => void;
+};
+
+export type SseTargetDescriptor = {
+  wsId: string;
+  key: string;
+  client: RoutingClient;
+  baseUrl: string;
+  directory: string;
+};
+
+const sameRouteDescriptor = (
+  current: ReconciledSseStream,
+  next: Pick<SseTargetDescriptor, "client" | "baseUrl" | "directory">,
+) =>
+  current.client === next.client &&
+  current.baseUrl === next.baseUrl &&
+  current.directory === next.directory;
 
 const PERMISSION_REFRESH_EVENT_TYPES = new Set([
   "permission.asked",
@@ -90,6 +118,52 @@ export function isPermissionRefreshEvent(type: string): boolean {
 
 export function isQuestionRefreshEvent(type: string): boolean {
   return QUESTION_REFRESH_EVENT_TYPES.has(type);
+}
+
+function cleanupReconciledSseStream(
+  streams: Map<string, ReconciledSseStream>,
+  key: string,
+  stream: ReconciledSseStream,
+) {
+  stream.cleanup();
+  if (streams.get(key) === stream) {
+    streams.delete(key);
+  }
+}
+
+export function reconcileSseStreamTargets(
+  streams: Map<string, ReconciledSseStream>,
+  targets: SseTargetDescriptor[],
+  setupStream: (target: SseTargetDescriptor) => () => void,
+): boolean {
+  let changed = false;
+  const seen = new Set<string>();
+
+  for (const target of targets) {
+    seen.add(target.key);
+    const current = streams.get(target.key);
+    if (current && sameRouteDescriptor(current, target)) continue;
+    if (current) {
+      cleanupReconciledSseStream(streams, target.key, current);
+    }
+    const cleanup = setupStream(target);
+    streams.set(target.key, {
+      workspaceId: target.wsId,
+      client: target.client,
+      baseUrl: target.baseUrl,
+      directory: target.directory,
+      cleanup,
+    });
+    changed = true;
+  }
+
+  for (const [key, stream] of Array.from(streams.entries())) {
+    if (seen.has(key)) continue;
+    cleanupReconciledSseStream(streams, key, stream);
+    changed = true;
+  }
+
+  return changed;
 }
 
 export type SessionEventStreamControllerDeps = {
@@ -185,6 +259,12 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
   let nextSseStreamGeneration = 0;
 
   const sseConnectionKey = (sourceWsId: string) => sourceWsId.trim() || "__active__";
+  const sseBridgeConnectionKey = (sourceWsId: string) => `session-workspace:${sseConnectionKey(sourceWsId)}`;
+  const routeDescriptor = (entry: ClientEntry | null, client: RoutingClient) => ({
+    client: entry?.client ?? client,
+    baseUrl: entry?.baseUrl ?? "",
+    directory: entry?.directory ?? "",
+  });
 
   const activeEventStreamsSnapshot = () =>
     Object.fromEntries(
@@ -995,6 +1075,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       try {
         const entry = sourceWsId ? deps.routing.entry(sourceWsId) : null;
         const useRustSse = Boolean(isEngineSseAvailable() && entry?.baseUrl);
+        const bridgeConnectionKey = sseBridgeConnectionKey(sourceWsId);
         recordSendWorkflowTrace(
           "session-sse",
           useRustSse ? "session-sse:rust-proxy" : "session-sse:sdk-fallback",
@@ -1008,6 +1089,8 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
                 : "engine_sse_unavailable",
             hasRoute: Boolean(entry),
             hasBaseUrl: Boolean(entry?.baseUrl),
+            connectionKey: useRustSse ? bridgeConnectionKey : null,
+            directory: entry?.directory ?? null,
             generation,
             activeEventStreamsByWorkspace: activeEventStreamsSnapshot(),
           },
@@ -1017,11 +1100,24 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
               workspaceId: sourceWsId,
               baseUrl: entry?.baseUrl ?? "",
               directory: entry?.directory ?? null,
+              connectionKey: bridgeConnectionKey,
               ...engineSseAuthOptions(entry?.auth),
               signal: controller.signal,
             })
           : c.event.subscribe(undefined, { signal: controller.signal })) as SseSubscription;
         activeSubscriptions.add(sub);
+        if (useRustSse) {
+          recordSendWorkflowTrace("session-sse", "session-sse:rust-proxy-subscribed", {
+            workspaceId: sourceWsId || null,
+            generation,
+            subscriptionId: sub.subscriptionId ?? null,
+            replacedExisting: sub.replacedExisting === true,
+            connectionKey: bridgeConnectionKey,
+            activeRustSseSubscriptions: sub.activeSubscriptionCount ?? null,
+            activeRustSseConnections: sub.activeConnectionCount ?? null,
+            activeEventStreamsByWorkspace: activeEventStreamsSnapshot(),
+          });
+        }
         if (cancelled || controller.signal.aborted) {
           await closeSseSubscription(sub);
           activeSubscriptions.delete(sub);
@@ -1237,6 +1333,8 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     reason = "start",
   ): (() => void) => {
     const streamConnectionKey = sseConnectionKey(sourceWsId);
+    const bridgeConnectionKey = sseBridgeConnectionKey(sourceWsId);
+    const streamDescriptor = routeDescriptor(sourceWsId ? deps.routing.entry(sourceWsId) : null, c);
     const previous = activeSseStreamsByWorkspace.get(streamConnectionKey);
     const generation = ++nextSseStreamGeneration;
     if (previous) {
@@ -1249,6 +1347,10 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         reason: "replaced-existing",
         requestedReason: reason,
         replacementCount,
+        streamConnectionKey,
+        bridgeConnectionKey,
+        baseUrl: streamDescriptor.baseUrl || null,
+        directory: streamDescriptor.directory || null,
         activeEventStreamsByWorkspace: activeEventStreamsSnapshot(),
       });
       previous.cleanup();
@@ -1258,9 +1360,14 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       workspaceId: sourceWsId || null,
       generation,
       reason,
+      streamConnectionKey,
+      bridgeConnectionKey,
+      baseUrl: streamDescriptor.baseUrl || null,
+      directory: streamDescriptor.directory || null,
       activeEventStreamsByWorkspace: activeEventStreamsSnapshot(),
     });
 
+    const startedAt = Date.now();
     const innerCleanup = createSseStream(sourceWsId, c, generation);
     let cleaned = false;
     const cleanup = () => {
@@ -1274,6 +1381,11 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         workspaceId: sourceWsId || null,
         generation,
         staleGeneration: current ? current.generation !== generation : true,
+        streamConnectionKey,
+        bridgeConnectionKey,
+        baseUrl: streamDescriptor.baseUrl || null,
+        directory: streamDescriptor.directory || null,
+        durationMs: Date.now() - startedAt,
         activeEventStreamsByWorkspace: activeEventStreamsSnapshot(),
       });
       innerCleanup();
@@ -1281,38 +1393,52 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     activeSseStreamsByWorkspace.set(streamConnectionKey, {
       generation,
       cleanup,
-      startedAt: Date.now(),
+      startedAt,
     });
     return cleanup;
   };
 
   const startEventStreams = () => {
+    const reconciledStreams = new Map<string, ReconciledSseStream>();
+
+    const cleanupAllReconciledStreams = () => {
+      for (const [key, stream] of Array.from(reconciledStreams.entries())) {
+        cleanupReconciledSseStream(reconciledStreams, key, stream);
+      }
+    };
+
     createEffect(() => {
       const entryIds = deps.routing.entryIds();
 
-      const targets: Array<{ wsId: string; client: RoutingClient }> = [];
+      const targets: SseTargetDescriptor[] = [];
       for (const wsId of entryIds) {
         if (!deps.isWorkspaceRuntimeReady(wsId)) continue;
-        const c = deps.routing.client(wsId);
-        if (c) targets.push({ wsId, client: c });
+        const entry = deps.routing.entry(wsId);
+        const c = entry?.client ?? deps.routing.client(wsId);
+        if (!c) continue;
+        const descriptor = routeDescriptor(entry, c);
+        targets.push({
+          wsId,
+          key: sseConnectionKey(wsId),
+          ...descriptor,
+        });
       }
 
-      deps.workspaceSessionIds.clear();
+      const changed = reconcileSseStreamTargets(
+        reconciledStreams,
+        targets,
+        (target) => setupSseStream(target.wsId, target.client, "routing-entry"),
+      );
+      if (changed) deps.workspaceSessionIds.clear();
 
-      if (targets.length === 0) {
+      if (reconciledStreams.size === 0) {
         sseConnectedByStream.clear();
         deps.setSseConnected(false);
-        return;
       }
+    });
 
-      const cleanups: Array<() => void> = [];
-      for (const target of targets) {
-        cleanups.push(setupSseStream(target.wsId, target.client, "routing-entry"));
-      }
-
-      onCleanup(() => {
-        for (const cleanup of cleanups) cleanup();
-      });
+    onCleanup(() => {
+      cleanupAllReconciledStreams();
     });
   };
 

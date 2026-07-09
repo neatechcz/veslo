@@ -26,6 +26,10 @@ import type { WorkspaceRouting } from "./workspace-routing";
 import { perfNow, recordPerfLog } from "../lib/perf-log";
 import { detectChromeMcpCompletedError } from "../lib/chrome-mcp-error";
 import {
+  toolNameFromPart,
+  toolStateFromPart,
+} from "../lib/opencode-part-access";
+import {
   readSessionStatus,
   scopedSessionStatusKey,
   withSessionStatus,
@@ -522,8 +526,7 @@ export function createSessionStore(options: {
 
   const toolErrorText = (part: Part) => {
     if (part.type !== "tool") return "";
-    const record = part as any;
-    const state = (record.state ?? {}) as Record<string, unknown>;
+    const state = toolStateFromPart(part);
     const title = typeof state.title === "string" ? state.title : "";
     const error = typeof state.error === "string" ? state.error : "";
     const detail = typeof state.detail === "string" ? state.detail : "";
@@ -544,8 +547,7 @@ export function createSessionStore(options: {
   };
 
   const invalidToolNextStepHint = (part: Part) => {
-    const record = part as any;
-    const name = typeof record.tool === "string" ? record.tool : "";
+    const name = toolNameFromPart(part);
     const lower = name.toLowerCase();
     if (lower.includes("browser") || lower.includes("chrome") || lower.includes("devtools")) {
       return __vesloIndirectT("ui.indirect.chrome_mcp_is_not_ready_yet_open_the_mcp_tab_c_r0vewj", __vesloIndirectLocale());
@@ -569,8 +571,8 @@ export function createSessionStore(options: {
       notifySessionBusy(part.sessionID, "idle", statusWorkspaceId());
     }
 
-    const record = part as any;
-    const tool = typeof record.tool === "string" && record.tool.trim() ? record.tool.trim() : __vesloIndirectT("ui.indirect.unknown_tool_8c32ki", __vesloIndirectLocale());
+    const toolName = toolNameFromPart(part).trim();
+    const tool = toolName || __vesloIndirectT("ui.indirect.unknown_tool_8c32ki", __vesloIndirectLocale());
     const hint = invalidToolNextStepHint(part);
     options.setError(`Invalid tool call: ${tool}.\n\n${hint}`);
   };
@@ -697,7 +699,7 @@ export function createSessionStore(options: {
 
   const transcriptController = createSessionTranscriptController({
     store,
-    setStore: setStore as (...args: any[]) => void,
+    setStore,
     routing: options.routing,
     activeWorkspaceRoot: options.activeWorkspaceRoot,
     appendTranscriptSnapshot: options.appendTranscriptSnapshot,
@@ -763,7 +765,7 @@ export function createSessionStore(options: {
 
   const runtimePrompts = createSessionRuntimePrompts({
     store,
-    setStore: setStore as any,
+    setStore,
     routing: options.routing,
     selectedSessionId: options.selectedSessionId,
     isWorkspaceRuntimeReady,
@@ -797,7 +799,7 @@ export function createSessionStore(options: {
 
   const selectionController = createSessionSelectionController({
     store,
-    setStore: setStore as any,
+    setStore,
     routing: options.routing,
     selectedSessionId: options.selectedSessionId,
     setSelectedSessionId: options.setSelectedSessionId,
@@ -921,7 +923,7 @@ export function createSessionStore(options: {
 
   const eventStreamController = createSessionEventStreamController({
     store,
-    setStore: setStore as any,
+    setStore,
     routing: options.routing,
     client: options.client,
     activeWorkspaceRoot: options.activeWorkspaceRoot,
@@ -969,7 +971,7 @@ export function createSessionStore(options: {
 
   const workspaceCacheController = createSessionWorkspaceCacheController({
     store,
-    setStore: setStore as any,
+    setStore,
     routing: options.routing,
     selectedSessionId: options.selectedSessionId,
     setSelectedSessionId: options.setSelectedSessionId,

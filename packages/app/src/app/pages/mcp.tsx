@@ -40,7 +40,7 @@ export type McpViewProps = {
   quickConnect: McpDirectoryInfo[];
   hubMcpCards: HubMcpCard[];
   hubMcpStatus: string | null;
-  refreshHubMcp: () => void;
+  refreshHubMcp: (options?: { force?: boolean }) => void;
   installHubMcp: (name: string) => Promise<{ ok: boolean; message: string }>;
   refreshMcpServers: () => void;
   connectMcp: (entry: McpDirectoryInfo) => void;
@@ -152,6 +152,7 @@ export default function McpView(props: McpViewProps) {
         oauth: entry.oauth,
         headers: entry.headers,
         authorization: entry.authorization,
+        connection: entry.connection,
         provider: entry.provider,
         source: entry.source,
       })),
@@ -164,8 +165,14 @@ export default function McpView(props: McpViewProps) {
   };
 
   const quickConnectStatus = (entry: McpDirectoryInfo) => {
-    const key = quickConnectEntryKey(entry);
-    return props.mcpStatuses[key];
+    const keys = [quickConnectEntryKey(entry), ...(entry.aliases ?? [])]
+      .map((key) => key.trim())
+      .filter((key) => key.length > 0);
+    for (const key of keys) {
+      const status = props.mcpStatuses[key];
+      if (status) return status;
+    }
+    return undefined;
   };
 
   const isQuickConnectConnected = (entry: McpDirectoryInfo) => {
@@ -190,6 +197,13 @@ export default function McpView(props: McpViewProps) {
     hubMcpCardForInstalledEntry(entry)?.authorization?.type === "veslo-server-oauth" ||
     (entry.config.type === "remote" && entry.config.oauth !== false);
 
+  const providerAuthConnected = (entry: McpServerEntry) => {
+    const hubCard = hubMcpCardForInstalledEntry(entry);
+    return hubCard?.authorization?.type === "veslo-server-oauth" && hubCard.connection
+      ? hubCard.connection.connected
+      : null;
+  };
+
   const resolveStatus = (entry: McpServerEntry): McpStatus => {
     if (entry.config.enabled === false) return "disabled";
     const resolved = props.mcpStatuses[entry.name];
@@ -212,6 +226,7 @@ export default function McpView(props: McpViewProps) {
     setLogoutBusy(true);
     try {
       await props.logoutMcpAuth(name);
+      props.refreshHubMcp({ force: true });
     } finally {
       setLogoutBusy(false);
       setLogoutOpen(false);
@@ -486,6 +501,13 @@ export default function McpView(props: McpViewProps) {
             <For each={props.mcpServers}>
               {(entry) => {
                 const status = () => resolveStatus(entry);
+                const authConnected = () => providerAuthConnected(entry);
+                const showLogin = () =>
+                  supportsOauth(entry) &&
+                  (authConnected() === false || (authConnected() == null && status() !== "connected"));
+                const showLogout = () =>
+                  supportsOauth(entry) &&
+                  (authConnected() === true || (authConnected() == null && status() === "connected"));
                 const Icon = serviceIcon(entry.name);
                 const isSelected = () => props.selectedMcp === entry.name;
                 const errorInfo = () => {
@@ -561,7 +583,7 @@ export default function McpView(props: McpViewProps) {
                           )}
                         </Show>
 
-                        <Show when={supportsOauth(entry) && status() !== "connected"}>
+                        <Show when={showLogin()}>
                           <div class="pt-1 flex items-center justify-between gap-3">
                             <div class="text-xs text-dls-secondary">
                               {tr("mcp.logout_label")}
@@ -582,7 +604,7 @@ export default function McpView(props: McpViewProps) {
                           </div>
                         </Show>
 
-                        <Show when={supportsOauth(entry) && status() === "connected"}>
+                        <Show when={showLogout()}>
                           <div class="pt-1 flex items-center justify-between gap-3">
                             <div class="text-xs text-dls-secondary">
                               {tr("mcp.logout_label")}

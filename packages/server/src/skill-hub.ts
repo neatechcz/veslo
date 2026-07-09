@@ -31,7 +31,13 @@ function hubRawBase(repo: HubRepo) {
   return `https://raw.githubusercontent.com/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/${encodeURIComponent(repo.ref)}`;
 }
 
-async function fetchJson(url: string): Promise<any> {
+function recordFromValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+async function fetchJson(url: string): Promise<unknown> {
   const res = await fetch(url, {
     headers: {
       Accept: "application/vnd.github+json",
@@ -88,8 +94,9 @@ export async function listHubSkills(repo: HubRepo = DEFAULT_HUB_REPO): Promise<H
   const listing = await fetchJson(`${hubApiBase(repo)}/contents/skills?ref=${encodeURIComponent(repo.ref)}`);
   const dirs = Array.isArray(listing)
     ? listing
-        .filter((entry) => entry && typeof entry === "object" && entry.type === "dir" && typeof entry.name === "string")
-        .map((entry) => String(entry.name))
+        .map(recordFromValue)
+        .filter((entry) => entry.type === "dir" && typeof entry.name === "string")
+        .map((entry) => entry.name as string)
     : [];
 
   const rawBase = hubRawBase(repo);
@@ -167,7 +174,10 @@ export async function installHubSkill(
   await mkdir(baseDir, { recursive: true });
 
   const tree = await fetchJson(`${hubApiBase(repo)}/git/trees/${encodeURIComponent(repo.ref)}?recursive=1`);
-  const entries: HubTreeEntry[] = Array.isArray(tree?.tree) ? tree.tree : [];
+  const treeRecord = recordFromValue(tree);
+  const entries: HubTreeEntry[] = Array.isArray(treeRecord.tree)
+    ? treeRecord.tree.map(recordFromValue)
+    : [];
   const files = entries
     .filter((entry) => entry && entry.type === "blob" && typeof entry.path === "string" && entry.path.startsWith(prefix))
     .map((entry) => ({

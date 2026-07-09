@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 
-import type { WorkspaceVesloConfig } from "../types";
+import type { OnboardingStep, StartupPreference, WorkspaceVesloConfig } from "../types";
 import {
   addOpencodeCacheHint,
   isTauriRuntime,
@@ -50,8 +50,8 @@ export interface ConfigStoreDeps {
   setBusy: (value: boolean) => void;
   setBusyLabel: (value: string | null) => void;
   setBusyStartedAt: (value: number | null) => void;
-  setStartupPreference: (value: any) => void;
-  setOnboardingStep: (step: any) => void;
+  setStartupPreference: (value: StartupPreference | null) => void;
+  setOnboardingStep: (step: OnboardingStep) => void;
   blockLocalAction: (code: string, detail: string) => boolean;
   normalizeRoots: (roots: string[]) => string[];
   resolveWorkspacePath: (path: string) => Promise<string>;

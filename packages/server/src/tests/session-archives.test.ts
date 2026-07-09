@@ -74,6 +74,43 @@ test("session archive store upserts existing sessions and sorts newest first", a
   );
 });
 
+test("session archive store scopes duplicate workspace session ids by directory", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "veslo-session-archives-"));
+  const store = createSessionArchiveStore({ dir });
+
+  await store.put("usr_123", {
+    sessionId: "shared",
+    workspaceIdAtArchive: "workspace-a",
+    resolvedDirectoryAtArchive: "/work/a",
+    archivedAt: 10,
+    titleSnapshot: "Project A",
+  });
+  await store.put("usr_123", {
+    sessionId: "shared",
+    workspaceIdAtArchive: "workspace-a",
+    resolvedDirectoryAtArchive: "/work/b",
+    archivedAt: 20,
+    titleSnapshot: "Project B",
+  });
+
+  assert.deepEqual(
+    (await store.list("usr_123")).map((entry) => [entry.titleSnapshot, entry.resolvedDirectoryAtArchive]),
+    [
+      ["Project B", "/work/b"],
+      ["Project A", "/work/a"],
+    ],
+  );
+
+  const afterDirectoryDelete = await store.delete("usr_123", "shared", {
+    workspaceId: "workspace-a",
+    directory: "/work/a",
+  });
+  assert.deepEqual(
+    afterDirectoryDelete.map((entry) => [entry.titleSnapshot, entry.resolvedDirectoryAtArchive]),
+    [["Project B", "/work/b"]],
+  );
+});
+
 test("session archive store deletes records idempotently", async () => {
   const dir = await mkdtemp(join(tmpdir(), "veslo-session-archives-"));
   const store = createSessionArchiveStore({ dir });

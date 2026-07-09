@@ -128,6 +128,16 @@ function valueOrDefault(env, name, fallback) {
   return env[name]?.trim() ? env[name] : fallback;
 }
 
+function deriveTraceFilePath(basePath, channel) {
+  return basePath.toLowerCase().endsWith(".ndjson")
+    ? `${basePath.slice(0, -".ndjson".length)}.${channel}.ndjson`
+    : `${basePath}.${channel}`;
+}
+
+function valueOrDerivedTrace(env, name, basePath, channel) {
+  return env[name]?.trim() ? env[name] : deriveTraceFilePath(basePath, channel);
+}
+
 function buildPilotCapabilityConfig() {
   return {
     app: {
@@ -161,6 +171,32 @@ function createManualPilotRuntime(baseEnv) {
     "VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE",
     join(repoRoot, ".tmp", "send-workflow-trace.ndjson"),
   );
+  const sendWorkflowTraceUiFile = valueOrDerivedTrace(baseEnv, "VESLO_SEND_WORKFLOW_TRACE_UI_FILE", sendWorkflowTraceFile, "ui");
+  const sendWorkflowTraceServerFile = valueOrDerivedTrace(baseEnv, "VESLO_SEND_WORKFLOW_TRACE_SERVER_FILE", sendWorkflowTraceFile, "server");
+  const sendWorkflowTraceOrchestratorFile = valueOrDerivedTrace(
+    baseEnv,
+    "VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_FILE",
+    sendWorkflowTraceFile,
+    "orchestrator",
+  );
+  const sendWorkflowTraceUiMirrorFile = valueOrDerivedTrace(
+    baseEnv,
+    "VESLO_SEND_WORKFLOW_TRACE_UI_MIRROR_FILE",
+    sendWorkflowTraceMirrorFile,
+    "ui",
+  );
+  const sendWorkflowTraceServerMirrorFile = valueOrDerivedTrace(
+    baseEnv,
+    "VESLO_SEND_WORKFLOW_TRACE_SERVER_MIRROR_FILE",
+    sendWorkflowTraceMirrorFile,
+    "server",
+  );
+  const sendWorkflowTraceOrchestratorMirrorFile = valueOrDerivedTrace(
+    baseEnv,
+    "VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_MIRROR_FILE",
+    sendWorkflowTraceMirrorFile,
+    "orchestrator",
+  );
   const opencodeHealthDiagFile = valueOrDefault(baseEnv, "VESLO_OPENCODE_HEALTH_DIAG_FILE", join(logDir, "opencode-health.ndjson"));
   const runtimeInfoPath = join(logDir, "runtime-info.json");
 
@@ -175,6 +211,12 @@ function createManualPilotRuntime(baseEnv) {
     VESLO_SEND_WORKFLOW_TRACE: valueOrDefault(baseEnv, "VESLO_SEND_WORKFLOW_TRACE", "1"),
     VESLO_SEND_WORKFLOW_TRACE_FILE: sendWorkflowTraceFile,
     VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE: sendWorkflowTraceMirrorFile,
+    VESLO_SEND_WORKFLOW_TRACE_UI_FILE: sendWorkflowTraceUiFile,
+    VESLO_SEND_WORKFLOW_TRACE_SERVER_FILE: sendWorkflowTraceServerFile,
+    VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_FILE: sendWorkflowTraceOrchestratorFile,
+    VESLO_SEND_WORKFLOW_TRACE_UI_MIRROR_FILE: sendWorkflowTraceUiMirrorFile,
+    VESLO_SEND_WORKFLOW_TRACE_SERVER_MIRROR_FILE: sendWorkflowTraceServerMirrorFile,
+    VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_MIRROR_FILE: sendWorkflowTraceOrchestratorMirrorFile,
     VESLO_SEND_WORKFLOW_TRACE_CONSOLE: valueOrDefault(baseEnv, "VESLO_SEND_WORKFLOW_TRACE_CONSOLE", "1"),
     VITE_VESLO_SEND_WORKFLOW_TRACE: valueOrDefault(baseEnv, "VITE_VESLO_SEND_WORKFLOW_TRACE", "1"),
     VESLO_OPENCODE_HEALTH_DIAG: valueOrDefault(baseEnv, "VESLO_OPENCODE_HEALTH_DIAG", "1"),
@@ -193,6 +235,12 @@ function createManualPilotRuntime(baseEnv) {
     runtimeTraceFile,
     sendWorkflowTraceFile,
     sendWorkflowTraceMirrorFile,
+    sendWorkflowTraceUiFile,
+    sendWorkflowTraceServerFile,
+    sendWorkflowTraceOrchestratorFile,
+    sendWorkflowTraceUiMirrorFile,
+    sendWorkflowTraceServerMirrorFile,
+    sendWorkflowTraceOrchestratorMirrorFile,
     opencodeHealthDiagFile,
     env,
   };
@@ -228,6 +276,16 @@ function writeManualRuntimeInfo(runtime, env, args) {
       runtimeTraceFile: runtime.runtimeTraceFile,
       sendWorkflowTraceFile: runtime.sendWorkflowTraceFile,
       sendWorkflowTraceMirrorFile: runtime.sendWorkflowTraceMirrorFile,
+      sendWorkflowTraceFiles: {
+        ui: runtime.sendWorkflowTraceUiFile,
+        server: runtime.sendWorkflowTraceServerFile,
+        orchestrator: runtime.sendWorkflowTraceOrchestratorFile,
+      },
+      sendWorkflowTraceMirrorFiles: {
+        ui: runtime.sendWorkflowTraceUiMirrorFile,
+        server: runtime.sendWorkflowTraceServerMirrorFile,
+        orchestrator: runtime.sendWorkflowTraceOrchestratorMirrorFile,
+      },
       opencodeHealthDiagFile: runtime.opencodeHealthDiagFile,
     },
     env: {
@@ -241,6 +299,12 @@ function writeManualRuntimeInfo(runtime, env, args) {
       VESLO_RUNTIME_TRACE_FILE: env.VESLO_RUNTIME_TRACE_FILE,
       VESLO_SEND_WORKFLOW_TRACE_FILE: env.VESLO_SEND_WORKFLOW_TRACE_FILE,
       VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE: env.VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE,
+      VESLO_SEND_WORKFLOW_TRACE_UI_FILE: env.VESLO_SEND_WORKFLOW_TRACE_UI_FILE,
+      VESLO_SEND_WORKFLOW_TRACE_SERVER_FILE: env.VESLO_SEND_WORKFLOW_TRACE_SERVER_FILE,
+      VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_FILE: env.VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_FILE,
+      VESLO_SEND_WORKFLOW_TRACE_UI_MIRROR_FILE: env.VESLO_SEND_WORKFLOW_TRACE_UI_MIRROR_FILE,
+      VESLO_SEND_WORKFLOW_TRACE_SERVER_MIRROR_FILE: env.VESLO_SEND_WORKFLOW_TRACE_SERVER_MIRROR_FILE,
+      VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_MIRROR_FILE: env.VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_MIRROR_FILE,
       VESLO_OPENCODE_HEALTH_DIAG_FILE: env.VESLO_OPENCODE_HEALTH_DIAG_FILE,
       VESLO_DEN_AUTH_SNAPSHOT_PATH: env.VESLO_DEN_AUTH_SNAPSHOT_PATH || null,
     },
@@ -264,6 +328,12 @@ function printManualRuntimeInfo(info) {
   console.info(`[veslo:dev-runtime] runtimeTrace=${info.traces.runtimeTraceFile}`);
   console.info(`[veslo:dev-runtime] sendWorkflowTrace=${info.traces.sendWorkflowTraceFile}`);
   console.info(`[veslo:dev-runtime] sendWorkflowTraceMirror=${info.traces.sendWorkflowTraceMirrorFile}`);
+  console.info(`[veslo:dev-runtime] sendWorkflowTrace.ui=${info.traces.sendWorkflowTraceFiles.ui}`);
+  console.info(`[veslo:dev-runtime] sendWorkflowTrace.server=${info.traces.sendWorkflowTraceFiles.server}`);
+  console.info(`[veslo:dev-runtime] sendWorkflowTrace.orchestrator=${info.traces.sendWorkflowTraceFiles.orchestrator}`);
+  console.info(`[veslo:dev-runtime] sendWorkflowTraceMirror.ui=${info.traces.sendWorkflowTraceMirrorFiles.ui}`);
+  console.info(`[veslo:dev-runtime] sendWorkflowTraceMirror.server=${info.traces.sendWorkflowTraceMirrorFiles.server}`);
+  console.info(`[veslo:dev-runtime] sendWorkflowTraceMirror.orchestrator=${info.traces.sendWorkflowTraceMirrorFiles.orchestrator}`);
   console.info(`[veslo:dev-runtime] opencodeHealthDiag=${info.traces.opencodeHealthDiagFile}`);
 }
 

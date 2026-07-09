@@ -8,6 +8,7 @@ import {
   createSessionEventStreamController,
   isPermissionRefreshEvent,
   isQuestionRefreshEvent,
+  reconcileSseStreamTargets,
 } from "../../context/session-event-stream.js";
 import type { ReconnectState } from "../../context/session-reconnect.js";
 import type { MessageInfo, OpencodeEvent, SessionErrorTurn, TodoItem } from "../../types";
@@ -798,10 +799,12 @@ test("duplicate workspace SSE setup replaces the previous stream generation", wi
       assert.equal(signals[1]?.aborted, false);
       assert.equal(firstCloseCount, 1);
       assert.equal(secondCloseCount, 0);
-      assert.equal(
-        target.__vesloSendWorkflowTrace?.some((entry) => entry.event === "session-sse:replaced-existing"),
-        true,
+      const replacementTrace = target.__vesloSendWorkflowTrace?.find((entry) =>
+        entry.event === "session-sse:replaced-existing"
       );
+      assert.ok(replacementTrace);
+      assert.equal(replacementTrace.streamConnectionKey, "ws-a");
+      assert.equal(replacementTrace.bridgeConnectionKey, "session-workspace:ws-a");
 
       cleanupFirst();
       cleanupSecond();
@@ -812,6 +815,46 @@ test("duplicate workspace SSE setup replaces the previous stream generation", wi
     }
   });
 }));
+
+test("SSE target reconciler ignores unchanged readiness reruns", () => {
+  let subscribeCount = 0;
+  let closeCount = 0;
+  const streams = new Map();
+  const client = {} as any;
+  const target = {
+    wsId: "ws-a",
+    key: "ws-a",
+    client,
+    baseUrl: "http://127.0.0.1:8787/workspace/ws-a/opencode",
+    directory: "/repo",
+  };
+  const setup = () => {
+    subscribeCount += 1;
+    return () => {
+      closeCount += 1;
+    };
+  };
+
+  assert.equal(reconcileSseStreamTargets(streams, [target], setup), true);
+  assert.equal(subscribeCount, 1);
+  assert.equal(closeCount, 0);
+
+  assert.equal(reconcileSseStreamTargets(streams, [{ ...target }], setup), false);
+  assert.equal(subscribeCount, 1);
+  assert.equal(closeCount, 0);
+
+  assert.equal(
+    reconcileSseStreamTargets(streams, [{ ...target, directory: "/repo-renamed" }], setup),
+    true,
+  );
+  assert.equal(subscribeCount, 2);
+  assert.equal(closeCount, 1);
+
+  assert.equal(reconcileSseStreamTargets(streams, [], setup), true);
+  assert.equal(subscribeCount, 2);
+  assert.equal(closeCount, 2);
+  assert.equal(streams.size, 0);
+});
 
 test("local Veslo bearer session errors trace and recover workspace runtime", withSendWorkflowTraceWindow(async (target) => {
   await createRoot(async (dispose) => {

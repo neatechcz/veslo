@@ -24,11 +24,11 @@ const flowHandleSendStart = conversationFlowSource.indexOf("handleSendPrompt: as
 const flowHandleSendEnd = conversationFlowSource.indexOf("drainNextQueuedDraft: async (", flowHandleSendStart);
 const flowHandleSendSource = conversationFlowSource.slice(flowHandleSendStart, flowHandleSendEnd);
 
-function legacyConversationRunFallbackSource(): string {
-  const start = sendWorkflowSource.indexOf("export function createLegacyConversationRunFallback(");
+function conversationRunCompatibilityBridgeSource(): string {
+  const start = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
   const end = sendWorkflowSource.indexOf("export function createSessionSendWorkflow", start);
-  assert.notEqual(start, -1, "legacy conversation run fallback should exist");
-  assert.notEqual(end, -1, "legacy conversation run fallback block should end before createSessionSendWorkflow");
+  assert.notEqual(start, -1, "conversation run compatibility bridge should exist");
+  assert.notEqual(end, -1, "conversation run compatibility bridge block should end before createSessionSendWorkflow");
   return sendWorkflowSource.slice(start, end);
 }
 
@@ -88,22 +88,35 @@ test("session page owns session-local queue state and handleSendPrompt accepts s
   );
 });
 
-test("running non-sendNow sends transfer ownership to the visible queue before server admission", () => {
-  const resolverBranch = conversationFlowSource.indexOf("if (runVisible && !sendNow)");
+test("running non-sendNow sends use the server queue-drain contract directly", () => {
+  const resolverBranch = conversationFlowSource.indexOf('if (runVisible && !sendNow) return { kind: "send-running-server-queue" };');
   const handlerStart = flowHandleSendSource.indexOf("handleSendPrompt: async (");
-  const runningCase = flowHandleSendSource.indexOf('case "append-to-running-queue"', handlerStart);
-  const appendCall = flowHandleSendSource.indexOf("deps.queue.appendDraftToCurrentQueue(draft);", runningCase);
-  const drainCall = flowHandleSendSource.indexOf('void controller.drainNextQueuedDraft("queue-drain", sessionKey);', appendCall);
-  const returnQueued = flowHandleSendSource.indexOf('return localQueuedResult("local_queue_running_append");', drainCall);
-  const sendNormalCase = flowHandleSendSource.indexOf('case "send-normal"', returnQueued);
+  const runningCase = flowHandleSendSource.indexOf('case "send-running-server-queue"', handlerStart);
+  const sessionKeyCapture = flowHandleSendSource.indexOf("const sessionKey = deps.sessionKeys.currentSessionQueueKey();", runningCase);
+  const sendImmediateCall = flowHandleSendSource.indexOf("return controller.sendPromptImmediate(draft, {", sessionKeyCapture);
+  const queueDrainReason = flowHandleSendSource.indexOf('reason: "queue-drain"', sendImmediateCall);
+  const expectedSessionKey = flowHandleSendSource.indexOf("expectedSessionKey: sessionKey", queueDrainReason);
+  const sendNormalCase = flowHandleSendSource.indexOf('case "send-normal"', expectedSessionKey);
+  const runningBranchSource = flowHandleSendSource.slice(runningCase, sendNormalCase);
 
   assert.notEqual(resolverBranch, -1, "conversation-flow resolver should classify running non-sendNow sends");
   assert.notEqual(handlerStart, -1, "conversation-flow send handler should exist");
-  assert.ok(runningCase > handlerStart, "handler should have a running-queue action branch");
-  assert.ok(appendCall > runningCase, "running Enter sends should append to the visible queue first");
-  assert.ok(drainCall > appendCall, "running Enter sends should request server queue admission through queue drain");
-  assert.ok(returnQueued > drainCall, "running Enter sends should clear only after queue ownership transfer");
-  assert.ok(sendNormalCase > returnQueued, "running queued sends should return before the normal immediate send branch");
+  assert.ok(runningCase > handlerStart, "handler should have a running server-queue action branch");
+  assert.ok(sessionKeyCapture > runningCase, "running Enter sends should capture the visible session key");
+  assert.ok(sendImmediateCall > sessionKeyCapture, "running Enter sends should submit through sendPromptImmediate");
+  assert.ok(queueDrainReason > sendImmediateCall, "running Enter sends should use the existing queue-drain origin");
+  assert.ok(expectedSessionKey > queueDrainReason, "running Enter sends should preserve the captured session key");
+  assert.ok(sendNormalCase > expectedSessionKey, "running queued sends should return before the normal immediate send branch");
+  assert.equal(
+    runningBranchSource.includes("appendDraftToCurrentQueue"),
+    false,
+    "running Enter sends should not fabricate a local queue row before server admission",
+  );
+  assert.equal(
+    runningBranchSource.includes("local_queue_running_append"),
+    false,
+    "running Enter sends should return the typed server submit result",
+  );
 });
 
 test("paused queue Enter append unpauses and starts the first drain-eligible queued draft", () => {
@@ -316,6 +329,11 @@ test("accepted first pending submit captures and remaps the pending queue key", 
     /materializedSessionIdFromHandoff \?\? deps\.sessionKeys\.selectedSessionId\(\)\?\.trim\(\)/,
     "accepted first-submit materialization must not guess from the currently selected session",
   );
+  assert.match(
+    flowSendImmediateSource,
+    /queueKeysShareWorkspace\([\s\S]*pendingSessionKey[\s\S]*materializedSessionKey[\s\S]*sendPromptImmediate:materialized-handoff:blocked-workspace-mismatch/s,
+    "accepted first-submit materialization should reject cross-workspace handoffs",
+  );
 
   assert.match(
     queueDrainControllerSource,
@@ -324,8 +342,8 @@ test("accepted first pending submit captures and remaps the pending queue key", 
   );
   assert.match(
     conversationFlowSource,
-    /if \(pendingKey && !isPendingSessionInstanceId\(selectedSessionId\)\) \{[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingKey, selectedSessionId\);[\s\S]*deps\.pendingHandoff\.clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);[\s\S]*\}/s,
-    "conversation-flow controller should remap pending queues when the selected session id arrives in a later reactive update",
+    /if \([\s\S]*pendingKey[\s\S]*!isPendingSessionInstanceKey\(selectedSessionId\)[\s\S]*queueKeysShareWorkspace\(deps\.sessionKeys\.workspaceIdForQueueKey, pendingKey, sessionKey\)[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\(pendingKey, selectedSessionId\);[\s\S]*deps\.pendingHandoff\.clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);[\s\S]*blocked-workspace-mismatch/s,
+    "conversation-flow controller should remap pending queues only when the materialized session is in the same workspace",
   );
 
   assert.doesNotMatch(
@@ -394,39 +412,39 @@ test("rejected pending queue drain updates the remapped item key", () => {
 
 test("app prompt send accepts an explicit target session without freezing model bootstrap", () => {
   const sendStart = sendWorkflowSource.indexOf("async function sendPrompt");
-  const targetCapture = sendWorkflowSource.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceId(options.targetSessionId)", sendStart);
-  const fallbackPrepare = sendWorkflowSource.indexOf("legacyConversationRunFallback.prepare({", targetCapture);
-  const fallbackSubmit = sendWorkflowSource.indexOf("legacyConversationRunFallback.submit({", fallbackPrepare);
-  const fallbackSource = legacyConversationRunFallbackSource();
+  const targetCapture = sendWorkflowSource.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceKey(options.targetSessionId)", sendStart);
+  const bridgePrepare = sendWorkflowSource.indexOf("conversationRunCompatibilityBridge.prepare({", targetCapture);
+  const bridgeSubmit = sendWorkflowSource.indexOf("conversationRunCompatibilityBridge.submit({", bridgePrepare);
+  const bridgeSource = conversationRunCompatibilityBridgeSource();
 
   assert.notEqual(sendStart, -1, "app sendPrompt should exist");
   assert.ok(targetCapture > sendStart, "sendPrompt should accept a captured target session id");
   assert.match(
-    sendWorkflowSource.slice(targetCapture, fallbackPrepare),
+    sendWorkflowSource.slice(targetCapture, bridgePrepare),
     /let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;/,
     "sendPrompt should prefer an explicit target session over implicit active-workspace selection",
   );
-  assert.ok(fallbackPrepare > targetCapture, "legacy fallback prepare should run after the explicit target is captured");
-  assert.ok(fallbackSubmit > fallbackPrepare, "legacy fallback submit should run after prepare for the legacy send path");
+  assert.ok(bridgePrepare > targetCapture, "compatibility bridge prepare should run after the explicit target is captured");
+  assert.ok(bridgeSubmit > bridgePrepare, "compatibility bridge submit should run after prepare for the compatibility run path");
   assert.match(
-    sendWorkflowSource.slice(fallbackPrepare, fallbackSubmit),
+    sendWorkflowSource.slice(bridgePrepare, bridgeSubmit),
     /sendTargetWorkspace,/,
-    "sendPrompt should pass the snapshotted target workspace into legacy fallback prepare",
+    "sendPrompt should pass the snapshotted target workspace into compatibility bridge prepare",
   );
   assert.match(
-    sendWorkflowSource.slice(fallbackSubmit),
+    sendWorkflowSource.slice(bridgeSubmit),
     /sendTargetWorkspace,/,
-    "sendPrompt should pass the snapshotted target workspace into legacy fallback submit",
+    "sendPrompt should pass the snapshotted target workspace into compatibility bridge submit",
   );
   assert.match(
-    fallbackSource,
+    bridgeSource,
     /deps\.prepareSendRuntimeForSend\("sendPrompt", input\.sendPreflight\)[\s\S]*const c = deps\.routedClientForSendTarget\(input\.sendTargetWorkspace\);/,
-    "legacy fallback should prepare the target runtime before reading its routed client",
+    "compatibility bridge should prepare the target runtime before reading its routed client",
   );
   assert.match(
-    fallbackSource,
+    bridgeSource,
     /const model = deps\.modelForSession\(materializedSessionID\);[\s\S]*const agent = deps\.agentForSession\(sessionID\);/,
-    "legacy fallback should resolve model and agent after the prepared legacy handoff begins",
+    "compatibility bridge should resolve model and agent after the prepared compatibility handoff begins",
   );
 });
 

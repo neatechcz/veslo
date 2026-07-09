@@ -229,6 +229,7 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
       const vesloClient = deps.vesloServerClient();
       const vesloWorkspaceId = deps.vesloServerWorkspaceId();
       const denAuth = deps.readDenAuth();
+      const denApiBase = denAuth?.denApiBase?.trim() ?? "";
       const denToken = denAuth?.token?.trim() ?? "";
       const denOrgId = denAuth?.orgId?.trim() ?? "";
       if (
@@ -236,6 +237,7 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
         !vesloClient ||
         !vesloWorkspaceId ||
         !deps.vesloCapabilities()?.mcp?.write ||
+        !denApiBase ||
         !denToken ||
         !denOrgId ||
         typeof vesloClient.mcp.refreshRuntimeToken !== "function"
@@ -247,6 +249,7 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
       for (const name of candidates) {
         try {
           await vesloClient.mcp.refreshRuntimeToken(vesloWorkspaceId, name, {
+            denApiBase,
             denToken,
             denOrgId,
           });
@@ -344,6 +347,7 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
       oauth: entry.oauth,
       ...(entry.headers ? { headers: entry.headers } : {}),
       ...(entry.authorization ? { authorization: entry.authorization } : {}),
+      ...(entry.connection ? { connection: entry.connection } : {}),
       provider: entry.provider,
       source: entry.source,
     };
@@ -713,7 +717,21 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
 
     try {
       if (canUseVesloServer && vesloClient && vesloWorkspaceId) {
-        await vesloClient.mcp.logoutAuth(vesloWorkspaceId, safeName);
+        const denAuth = deps.readDenAuth();
+        const denApiBase = denAuth?.denApiBase?.trim() ?? "";
+        const denToken = denAuth?.token?.trim() ?? "";
+        const denOrgId = denAuth?.orgId?.trim() ?? "";
+        await vesloClient.mcp.logoutAuth(
+          vesloWorkspaceId,
+          safeName,
+          denApiBase && denToken && denOrgId
+            ? {
+                denApiBase,
+                denToken,
+                denOrgId,
+              }
+            : undefined,
+        );
       } else {
         if (!activeClient) {
           deps.setMcpStatus(tr("mcp.connect_server_first"));

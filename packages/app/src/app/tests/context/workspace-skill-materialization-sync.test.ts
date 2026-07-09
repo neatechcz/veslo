@@ -59,6 +59,16 @@ test("workspace materialization trace carries registry errors for degraded diagn
     /trace\("synced",\s*\{[\s\S]*registryError:\s*result\.registryError\s*\?\?\s*null/s,
     "sync trace should include registry errors returned by the sync endpoint",
   );
+  assert.match(
+    source,
+    /function skillRegistryErrorTracePayload\(error: VesloServerError\)[\s\S]*\.\.\.skillRegistryDetailsPayload\(error\.details\)/s,
+    "caught registry errors should keep server-provided registry details for exact diagnostics",
+  );
+  assert.match(
+    source,
+    /trace\("degraded",\s*\{[\s\S]*registryError,[\s\S]*\}\);/s,
+    "degraded trace should carry the structured registry error payload",
+  );
 });
 
 test("local materialization sync starts the managed server before using the fallback client", () => {
@@ -81,19 +91,21 @@ test("local runtime starts are gated behind skill materialization sync", () => {
 
   const ensureSource = runtimeSource.slice(ensureStart);
   const syncIdx = ensureSource.indexOf(helperCall);
-  const restartIdx = ensureSource.indexOf("deps.localRuntimeLifecycle.restartWorkspaceRuntime({");
-  const coldStartIdx = ensureSource.indexOf("deps.localRuntimeLifecycle.startHost({");
+  const prepareIdx = ensureSource.indexOf("deps.localRuntimeLifecycle.prepareWorkspaceRuntime({");
 
   assert.notStrictEqual(syncIdx, -1, "ensureEngineForWorkspace should sync skills before runtime start");
-  assert.ok(syncIdx < restartIdx, "sync must happen before browsing-mode runtime restart");
-  assert.ok(syncIdx < coldStartIdx, "sync must happen before browsing-mode cold start fallback");
+  assert.notStrictEqual(prepareIdx, -1, "ensureEngineForWorkspace should delegate runtime preparation");
+  assert.ok(syncIdx < prepareIdx, "sync must happen before backend runtime preparation");
 });
 
 test("workspace activation local restart is gated behind skill materialization sync", () => {
   const activationSource = readContextSource("workspace-activation-local.ts");
+  const restartStart = activationSource.indexOf("async function restartLocalRuntimeForSwitch(");
+  assert.notStrictEqual(restartStart, -1, "restartLocalRuntimeForSwitch should exist");
+  const restartSource = activationSource.slice(restartStart);
 
-  const syncIdx = activationSource.indexOf("await deps.syncWorkspaceSkillMaterializationBeforeRuntime(next,");
-  const restartIdx = activationSource.indexOf("deps.localRuntimeLifecycle.restartWorkspaceRuntime({");
+  const syncIdx = restartSource.indexOf("await deps.syncWorkspaceSkillMaterializationBeforeRuntime(next,");
+  const restartIdx = restartSource.indexOf("deps.localRuntimeLifecycle.prepareWorkspaceRuntime({");
 
   assert.notStrictEqual(syncIdx, -1, "activateWorkspace should sync skills before local runtime restart");
   assert.ok(syncIdx < restartIdx, "sync must happen before local-to-local runtime restart");

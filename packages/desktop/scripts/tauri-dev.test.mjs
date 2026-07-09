@@ -18,6 +18,11 @@ test("tauri-dev enables the manual Pilot runtime diagnostics by default", () => 
   assert.match(source, /TAURI_PILOT_LOG_DIR/);
   assert.match(source, /VESLO_RUNTIME_TRACE_FILE/);
   assert.match(source, /VESLO_SEND_WORKFLOW_TRACE_FILE/);
+  assert.match(source, /VESLO_SEND_WORKFLOW_TRACE_UI_FILE/);
+  assert.match(source, /VESLO_SEND_WORKFLOW_TRACE_SERVER_FILE/);
+  assert.match(source, /VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_FILE/);
+  assert.match(source, /deriveTraceFilePath/);
+  assert.match(source, /\.\$\{channel\}\.ndjson/);
   assert.match(source, /VITE_VESLO_SEND_WORKFLOW_TRACE/);
   assert.match(source, /VESLO_OPENCODE_HEALTH_DIAG_FILE/);
   assert.match(source, /runtime-info\.json/);

@@ -131,6 +131,73 @@ test("POST /workspace/ws_1/automations/:id/run creates a run and posts prompt to
   });
 });
 
+test("automation run retries stale local baseUrl through orchestrator daemon", async () => {
+  let staleBaseUrlHit = false;
+  const staleUpstream = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async () => {
+      staleBaseUrlHit = true;
+      return json(503, { error: "engine_not_running", workspaceId: "ws_old" });
+    },
+  });
+  runningServers.push(staleUpstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+  const orchestratorRequests: Array<{ path: string; method: string; body: Record<string, unknown> | null }> = [];
+  const orchestrator = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      const body = request.method === "POST"
+        ? await request.json().catch(() => null) as Record<string, unknown> | null
+        : null;
+      orchestratorRequests.push({ path: url.pathname, method: request.method, body });
+      if (request.method === "POST" && url.pathname === "/workspaces") {
+        return json(200, { ok: true });
+      }
+      if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session") {
+        return json(200, { id: "ses_orchestrator_auto" });
+      }
+      if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session/ses_orchestrator_auto/prompt_async") {
+        return json(200, { ok: true });
+      }
+      return json(404, { error: "unexpected orchestrator route", path: url.pathname });
+    },
+  });
+  runningServers.push(orchestrator as { stop?: (closeActiveConnections?: boolean) => void });
+
+  const fixture = await startFixture({
+    workspaceBaseUrl: `http://127.0.0.1:${staleUpstream.port}/workspace/ws_old/opencode`,
+    orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
+  });
+  const created = await fixture.createAutomation({
+    target: { fallbackTitle: "Fallback title" },
+  });
+
+  const response = await fixture.clientFetch(`/workspace/ws_1/automations/${created.id}/run`, {
+    method: "POST",
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as { run: AutomationRun };
+  expect(payload.run).toMatchObject({
+    automationId: created.id,
+    status: "success",
+    sessionId: "ses_orchestrator_auto",
+    createdSession: true,
+  });
+  expect(staleBaseUrlHit).toBe(true);
+  const paths = orchestratorRequests.map((entry) => entry.path);
+  const firstRegisterIndex = paths.indexOf("/workspaces");
+  const sessionIndex = paths.indexOf("/workspace/ws_1/opencode/session");
+  const promptIndex = paths.indexOf("/workspace/ws_1/opencode/session/ses_orchestrator_auto/prompt_async");
+  expect(firstRegisterIndex).toBeGreaterThanOrEqual(0);
+  expect(sessionIndex).toBeGreaterThan(firstRegisterIndex);
+  expect(promptIndex).toBeGreaterThan(sessionIndex);
+  expect(orchestratorRequests.find((entry) => entry.path === "/workspaces")?.body?.serverWorkspaceId).toBe("ws_1");
+});
+
 test("GET /workspace/ws_1/automations/:id/runs returns run history", async () => {
   const fixture = await startFixture();
   const automation = fixture.makeAutomation({ id: "auto_history" });
@@ -546,6 +613,8 @@ type FixtureOptions = {
   readOnly?: boolean;
   failPrompt?: boolean;
   sessionDelayMs?: number;
+  workspaceBaseUrl?: string;
+  orchestratorDaemonUrl?: string;
   configPath?: string;
   approval?: { mode: "auto" | "manual"; timeoutMs: number };
   beforeStart?: (workspaceRoot: string) => Promise<void>;
@@ -604,7 +673,7 @@ async function startFixture(options: FixtureOptions = {}) {
         name: "Workspace",
         path: workspaceRoot,
         workspaceType: "local",
-        baseUrl: `http://127.0.0.1:${upstream.port}`,
+        baseUrl: options.workspaceBaseUrl ?? `http://127.0.0.1:${upstream.port}`,
       },
       ...(options.extraWorkspaces ?? []),
     ],
@@ -616,6 +685,7 @@ async function startFixture(options: FixtureOptions = {}) {
     hostTokenSource: "cli",
     logFormat: "pretty",
     logRequests: false,
+    orchestratorDaemonUrl: options.orchestratorDaemonUrl,
     debugLogs: {
       enabled: false,
       ingestUrl: null,

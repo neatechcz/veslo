@@ -6,6 +6,10 @@ import { promoteStoredProjectOrderKey } from "../components/session/workspace-se
 import { createClient, unwrap, type OpencodeAuth } from "../lib/opencode";
 import { recordPerfLog } from "../lib/perf-log";
 import {
+  findSidebarSessionItemMergeIndex,
+  sidebarSessionIdentityKey,
+} from "../lib/sidebar-session-identity";
+import {
   shouldPreserveSidebarRowsOnRead,
   shouldSyncSidebarFromSessionStore,
 } from "../lib/sidebar-session-sync-guard";
@@ -40,6 +44,9 @@ import type { WorkspaceStore } from "./workspace";
 type SidebarWorkspaceSessionsStatus = WorkspaceSessionGroup["status"];
 type SidebarSessionsByWorkspaceId = Record<string, SidebarSessionItem[]>;
 type SidebarStatusByWorkspaceId = Record<string, SidebarWorkspaceSessionsStatus>;
+
+const sidebarReadUnavailableMessage = (reason: string) =>
+  `Sidebar conversation read unavailable: ${reason}`;
 
 type ConversationReadResult = {
   items: Session[];
@@ -131,6 +138,11 @@ const sidebarSessionItemsEqual = (left: SidebarSessionItem[], right: SidebarSess
       a.slug !== b.slug ||
       a.parentID !== b.parentID ||
       a.directory !== b.directory ||
+      a.conversationId !== b.conversationId ||
+      a.opencodeSessionId !== b.opencodeSessionId ||
+      a.parentConversationId !== b.parentConversationId ||
+      a.branchId !== b.branchId ||
+      a.pendingSessionInstanceId !== b.pendingSessionInstanceId ||
       (a.time?.created ?? 0) !== (b.time?.created ?? 0) ||
       (a.time?.updated ?? 0) !== (b.time?.updated ?? 0)
     ) {
@@ -182,21 +194,27 @@ export const mergeSidebarSessionItemsByActivity = (
   primary: SidebarSessionItem[],
   secondary: SidebarSessionItem[],
 ): SidebarSessionItem[] => {
-  const byId = new Map<string, SidebarSessionItem>();
+  const items: SidebarSessionItem[] = [];
   const upsert = (item: SidebarSessionItem) => {
     const id = item.id.trim();
     if (!id) return;
-    const existing = byId.get(id);
-    byId.set(id, existing ? mergeSidebarSessionItem(existing, item) : item);
+    const existingIndex = findSidebarSessionItemMergeIndex(items, item);
+    if (existingIndex === -1) {
+      items.push(item);
+      return;
+    }
+    const existing = items[existingIndex];
+    if (!existing) return;
+    items[existingIndex] = mergeSidebarSessionItem(existing, item);
   };
 
   secondary.forEach(upsert);
   primary.forEach(upsert);
 
-  return Array.from(byId.values()).sort((a, b) => {
+  return items.sort((a, b) => {
     const delta = sidebarItemActivity(b) - sidebarItemActivity(a);
     if (delta !== 0) return delta;
-    return a.id.localeCompare(b.id);
+    return sidebarSessionIdentityKey(a).localeCompare(sidebarSessionIdentityKey(b));
   });
 };
 
@@ -439,6 +457,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     workspaceId: string;
     items: SidebarSessionItem[];
     available: boolean;
+    reason?: string;
   }) => {
     const id = input.workspaceId.trim();
     if (!id) return;
@@ -459,8 +478,17 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     if (!preserveExisting) {
       setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: input.items }));
     }
-    setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
-    setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
+    if (input.available) {
+      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
+      setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
+    } else {
+      const reason = input.reason?.trim() || "unavailable";
+      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "error" as const }));
+      setSidebarSessionErrorByWorkspaceId((prev) => ({
+        ...prev,
+        [id]: sidebarReadUnavailableMessage(reason),
+      }));
+    }
   };
 
   const isSidebarRuntimeUnavailableError = (message: string) =>
@@ -497,8 +525,11 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
       workspaceId,
       items: result.items,
       available: result.available,
+      reason,
     });
-    setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [workspaceId]: false }));
+    if (result.available || result.items.length > 0) {
+      setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [workspaceId]: false }));
+    }
     options.wsDebug("sidebar:conversation-read", {
       id: workspaceId,
       reason,
@@ -580,14 +611,34 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
   };
 
   const markSidebarRefreshUnavailable = (id: string, reason: string) => {
-    setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
-    setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
-    setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
+    setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "error" as const }));
+    setSidebarSessionErrorByWorkspaceId((prev) => ({
+      ...prev,
+      [id]: sidebarReadUnavailableMessage(reason),
+    }));
     setSidebarSessionLoadingMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
     options.wsDebug("sidebar:conversation-read:unavailable", {
       id,
       reason,
       existingCount: untrack(() => sidebarSessionsByWorkspaceId()[id]?.length ?? 0),
+    });
+  };
+
+  const skipLiveSidebarSessionList = (id: string, reason: string) => {
+    const existingCount = untrack(() => sidebarSessionsByWorkspaceId()[id]?.length ?? 0);
+    setSidebarSessionStatusByWorkspaceId((prev) =>
+      prev[id] === "ready" ? prev : { ...prev, [id]: "ready" as const },
+    );
+    setSidebarSessionErrorByWorkspaceId((prev) =>
+      prev[id] == null ? prev : { ...prev, [id]: null },
+    );
+    setSidebarSessionLoadingMoreByWorkspaceId((prev) =>
+      prev[id] === false ? prev : { ...prev, [id]: false },
+    );
+    options.wsDebug("sidebar:live-session-list:skipped", {
+      id,
+      reason,
+      existingCount,
     });
   };
 
@@ -628,7 +679,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
 
     const activeWorkspaceId = options.workspaceStore.activeWorkspaceId().trim();
     if (hostReadDirectory && options.allowLiveWorkspaceSessionList?.(id) !== true) {
-      markSidebarRefreshUnavailable(id, "live-session-list-not-allowed");
+      skipLiveSidebarSessionList(id, "live-session-list-not-allowed");
       return;
     }
 
@@ -790,8 +841,11 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
               workspaceId: id,
               items: readResult.items,
               available: readResult.available,
+              reason: "live-empty",
             });
-            setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
+            if (readResult.available || readResult.items.length > 0) {
+              setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
+            }
             options.wsDebug("sidebar:conversation-read", {
               id,
               reason: "live-empty",

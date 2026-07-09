@@ -5,6 +5,7 @@ import {
   resolveSessionPathDecision,
 } from "../controllers/session-route-controller";
 import { shouldFallbackFromSessionRoute } from "../lib/session-route-selection-guard";
+import { parseUiConversationKey } from "../lib/ui-conversation-scope";
 import type {
   MessageWithParts,
   TodoItem,
@@ -37,7 +38,7 @@ export type SessionRouteSyncDeps = {
   selectedSessionLoadingEarlierMessages: () => boolean;
   activePendingDraftKey: () => string | null | undefined;
   activePendingDraftMeta: () => unknown;
-  isPendingSessionInstanceId: (sessionId: string) => boolean;
+  isPendingSessionInstanceKey: (sessionId: string) => boolean;
   visibleSelectedSessionStatus: () => string | null | undefined;
   setSelectedSessionId: (sessionId: string | null) => void;
   setMessages: (messages: MessageWithParts[]) => void;
@@ -50,6 +51,22 @@ const routeSessionIdMatches = (ids: string[], sessionId: string) => {
   const id = sessionId.trim();
   if (!id) return false;
   return ids.some((item) => item.trim() === id);
+};
+
+const safeDecodeRouteSegment = (value: string) => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
+export const sessionIdFromRoutePath = (path: string) => {
+  const [, , sessionSegment] = path.trim().split("/");
+  const raw = sessionSegment?.trim() ?? "";
+  if (!raw) return "";
+  if (parseUiConversationKey(raw)) return raw;
+  return safeDecodeRouteSegment(raw).trim();
 };
 
 export function createSessionRouteSync(deps: SessionRouteSyncDeps) {
@@ -92,8 +109,8 @@ export function createSessionRouteSync(deps: SessionRouteSyncDeps) {
   };
 
   const isRouteSelectedSession = (sessionId: string) => {
-    const [, , sessionSegment] = deps.pathname().trim().split("/");
-    return Boolean(sessionSegment?.trim() && sessionSegment.trim() === sessionId.trim());
+    const routeSessionId = sessionIdFromRoutePath(deps.pathname());
+    return Boolean(routeSessionId && routeSessionId === sessionId.trim());
   };
 
   const clearDisplayedSessionForBareRoute = () => {
@@ -121,8 +138,7 @@ export function createSessionRouteSync(deps: SessionRouteSyncDeps) {
     const path = rawPath.toLowerCase();
     if (!path.startsWith("/session/")) return;
 
-    const [, , sessionSegment] = rawPath.split("/");
-    const id = (sessionSegment ?? "").trim();
+    const id = sessionIdFromRoutePath(rawPath);
 
     const routeBrowseScope = deps.resolveSelectedSessionBrowseScope(id);
     const routeWorkspaceId = routeBrowseScope?.workspaceId?.trim() || undefined;
@@ -146,7 +162,7 @@ export function createSessionRouteSync(deps: SessionRouteSyncDeps) {
     const routeResumeDecision = resolveRouteResumeDecision({
       path: rawPath,
       routeSessionId: id,
-      isPendingSession: deps.isPendingSessionInstanceId(id),
+      isPendingSession: deps.isPendingSessionInstanceKey(id),
       routeWorkspaceId,
       activeWorkspaceId: deps.activeWorkspaceId().trim(),
       connectionKey,
@@ -188,8 +204,7 @@ export function createSessionRouteSync(deps: SessionRouteSyncDeps) {
   };
 
   const handleSessionRoute = async ({ rawPath }: { rawPath: string }) => {
-    const [, , sessionSegment] = rawPath.split("/");
-    const id = (sessionSegment ?? "").trim();
+    const id = sessionIdFromRoutePath(rawPath);
     const routeBrowseScope = id ? deps.resolveSelectedSessionBrowseScope(id) : null;
     const routeWorkspaceId = routeBrowseScope?.workspaceId ?? null;
     const routeConversationKey = routeConversationIdentityKeyFor(id, routeBrowseScope);
@@ -217,7 +232,7 @@ export function createSessionRouteSync(deps: SessionRouteSyncDeps) {
       routeSessionId: id,
       activePendingDraftKey: deps.activePendingDraftKey(),
       selectedSessionId: deps.selectedSessionId(),
-      isPendingSession: deps.isPendingSessionInstanceId(id),
+      isPendingSession: deps.isPendingSessionInstanceKey(id),
       shouldFallbackFromRoute,
       ownNavigationSessionId: routeResumeSelectionAlreadyHandledForSession,
       workspaceReady,

@@ -1,6 +1,6 @@
 import * as Sentry from "@sentry/browser";
 
-export type ErrorMonitoringPlatform = "desktop" | "web";
+type ErrorMonitoringPlatform = "desktop" | "web";
 export type ErrorMonitoringSeverity = "warning" | "error";
 
 type ErrorMonitoringEnv = {

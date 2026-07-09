@@ -234,6 +234,33 @@ function hashRuntimeAuthorizationCachePart(value?: string | null): string {
   return hash.toString(16).padStart(8, "0");
 }
 
+function normalizeManagedAiRouteFingerprintUrl(value?: string | null): string {
+  return (value?.trim() ?? "").replace(/\/+$/, "");
+}
+
+function managedAiAccessConfigFingerprint(profile: ManagedAiAccessProfile | null | undefined): string {
+  if (!profile) return "";
+  return JSON.stringify({
+    providerId: profile.providerId,
+    defaultModel: formatModelRef(profile.defaultModel),
+    allowedModels: Array.from(
+      new Set(profile.allowedModels.map((value) => value.trim()).filter(Boolean)),
+    ).sort((a, b) => a.localeCompare(b)),
+  });
+}
+
+function managedAiInactiveHealFingerprint(input: {
+  profile: ManagedAiAccessProfile;
+  providerRoutingTarget: NonNullable<ReturnType<typeof resolveManagedAiProviderRoutingTarget>>;
+}): string {
+  return JSON.stringify({
+    profile: managedAiAccessConfigFingerprint(input.profile),
+    routeBaseUrl: normalizeManagedAiRouteFingerprintUrl(input.providerRoutingTarget.baseUrl),
+    routeEngineBaseUrl: normalizeManagedAiRouteFingerprintUrl(input.providerRoutingTarget.engineBaseUrl),
+    serverClientToken: hashRuntimeAuthorizationCachePart(input.providerRoutingTarget.serverClientToken),
+  });
+}
+
 function summarizeUrlForManagedAiTrace(value: string | null | undefined): Record<string, unknown> {
   const trimmed = value?.trim() ?? "";
   if (!trimmed) return { present: false };
@@ -311,7 +338,8 @@ export function createManagedAiRuntimeConfigSync(
   let lastRuntimeAuthorizationPrimeDiagnostic: ManagedAiRuntimeAuthPrimeDiagnostic | null = null;
   let managedAiConfigSyncGeneration = 0;
   let inactiveWorkspaceBaseUrlHealGeneration = 0;
-  let lastManagedAiAccessResetKey = "";
+  let lastManagedAiConfigTrackingResetKey = "";
+  let lastManagedAiAuthPrimeResetKey = "";
   const [
     lastManagedAiConfigAppliedForServerToken,
     setLastManagedAiConfigAppliedForServerToken,
@@ -1305,7 +1333,10 @@ export function createManagedAiRuntimeConfigSync(
       return;
     }
 
-    const sessionToken = `${providerRoutingTarget.serverClientToken}@${providerRoutingTarget.engineBaseUrl}`;
+    const healFingerprint = managedAiInactiveHealFingerprint({
+      profile: managedProfile,
+      providerRoutingTarget,
+    });
     const healGeneration = ++inactiveWorkspaceBaseUrlHealGeneration;
     const isCurrentInactiveWorkspaceHeal = () =>
       !(options?.isCancelled?.() ?? false) &&
@@ -1324,7 +1355,7 @@ export function createManagedAiRuntimeConfigSync(
       if (!isCurrentInactiveWorkspaceHeal()) return;
       if (workspace.workspaceType !== "local") continue;
       if (workspace.id === activeWorkspaceId) continue;
-      if (inactiveWorkspaceBaseUrlHealedFor.get(workspace.id) === sessionToken) continue;
+      if (inactiveWorkspaceBaseUrlHealedFor.get(workspace.id) === healFingerprint) continue;
       try {
         const config = await vesloClient.getConfig(workspace.id);
         if (!isCurrentInactiveWorkspaceHeal()) return;
@@ -1338,7 +1369,7 @@ export function createManagedAiRuntimeConfigSync(
           workspaceId: workspace.id,
         });
         if (managedConfigContentsMatch(currentOpencodeContent, desiredContent)) {
-          inactiveWorkspaceBaseUrlHealedFor.set(workspace.id, sessionToken);
+          inactiveWorkspaceBaseUrlHealedFor.set(workspace.id, healFingerprint);
           continue;
         }
         if (!isCurrentInactiveWorkspaceHeal()) return;
@@ -1346,12 +1377,12 @@ export function createManagedAiRuntimeConfigSync(
           opencode: JSON.parse(desiredContent) as Record<string, unknown>,
         });
         if (!isCurrentInactiveWorkspaceHeal()) return;
-        inactiveWorkspaceBaseUrlHealedFor.set(workspace.id, sessionToken);
+        inactiveWorkspaceBaseUrlHealedFor.set(workspace.id, healFingerprint);
       } catch (error) {
         if (options?.isCancelled?.()) continue;
         const message = error instanceof Error ? error.message : deps.safeStringify(error);
         if (/not authorized|unauthorized|401/i.test(message)) {
-          inactiveWorkspaceBaseUrlHealedFor.set(workspace.id, sessionToken);
+          inactiveWorkspaceBaseUrlHealedFor.set(workspace.id, healFingerprint);
           continue;
         }
         deps.reportError(error, `managed-baseurl.heal:${workspace.id}`);
@@ -1360,11 +1391,18 @@ export function createManagedAiRuntimeConfigSync(
   };
 
   effect(() => {
-    const nextKey = JSON.stringify(deps.managedAiAccess() ?? null);
-    if (nextKey === lastManagedAiAccessResetKey) return;
-    lastManagedAiAccessResetKey = nextKey;
-    clearManagedConfigTracking();
-    clearManagedAiRuntimeAuthorizationPrimeCache();
+    const profile = deps.managedAiAccess();
+    const nextConfigKey = managedAiAccessConfigFingerprint(profile);
+    if (nextConfigKey !== lastManagedAiConfigTrackingResetKey) {
+      lastManagedAiConfigTrackingResetKey = nextConfigKey;
+      clearManagedConfigTracking();
+    }
+
+    const nextAuthKey = JSON.stringify(profile ?? null);
+    if (nextAuthKey !== lastManagedAiAuthPrimeResetKey) {
+      lastManagedAiAuthPrimeResetKey = nextAuthKey;
+      clearManagedAiRuntimeAuthorizationPrimeCache();
+    }
   });
 
   effect(() => {

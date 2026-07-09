@@ -2,8 +2,13 @@ import { createHash } from "node:crypto";
 
 import { recordAudit } from "../audit.js";
 import { ApiError } from "../errors.js";
-import { normalizeDenApiBaseUrl } from "../den-api-base.js";
 import { getPlatformManagedPersonalGlobalSkillSet } from "../platform-managed-skills.js";
+import {
+  readSkillRegistryRequestInput as skillRegistryRequestInput,
+  skillRegistryConfiguredBaseUrl,
+  skillRegistryRequestBaseUrl,
+  type SkillRegistryRequestInput,
+} from "../request-headers.js";
 import {
   emitReloadEvent,
   ensureWritable,
@@ -63,14 +68,6 @@ type WorkspaceSkillMaterializationStatusOptions = {
   registryError?: ApiError;
 };
 
-type SkillRegistryRequestInput = {
-  baseUrl: string;
-  token?: string;
-  denToken?: string;
-  orgId?: string;
-  userId?: string;
-};
-
 function requireRouteParam(params: Record<string, string>, field: string, label = field): string {
   const value = params[field]?.trim() ?? "";
   if (!value) {
@@ -80,35 +77,7 @@ function requireRouteParam(params: Record<string, string>, field: string, label 
 }
 
 function skillRegistryBaseUrl(config: ServerConfig): string {
-  return config.skillRegistryBaseUrl?.trim() || "";
-}
-
-function normalizeSkillRegistryBaseUrl(value: string | null | undefined): string {
-  return normalizeDenApiBaseUrl(value) ?? "";
-}
-
-function skillRegistryRequestBaseUrl(ctx: RequestContext): string {
-  return (
-    skillRegistryBaseUrl(ctx.config) ||
-    normalizeSkillRegistryBaseUrl(ctx.request.headers.get("x-veslo-den-api-base"))
-  );
-}
-
-function skillRegistryRequestInput(ctx: RequestContext): SkillRegistryRequestInput {
-  const token = ctx.config.skillRegistryToken?.trim() || undefined;
-  const denToken = ctx.request.headers.get("x-veslo-den-token")?.trim() || undefined;
-  const orgId = ctx.request.headers.get("x-veslo-den-org-id")?.trim() || undefined;
-  const userId = ctx.request.headers.get("x-veslo-den-user-id")?.trim() ||
-    ctx.request.headers.get("x-veslo-user-id")?.trim() ||
-    ctx.request.headers.get("x-veslo-account-id")?.trim() ||
-    undefined;
-  return {
-    baseUrl: skillRegistryRequestBaseUrl(ctx),
-    ...(token !== undefined ? { token } : {}),
-    ...(denToken !== undefined ? { denToken } : {}),
-    ...(orgId !== undefined ? { orgId } : {}),
-    ...(userId !== undefined ? { userId } : {}),
-  };
+  return skillRegistryConfiguredBaseUrl(config);
 }
 
 function registryIdentityPayload(input: Pick<SkillRegistryRequestInput, "orgId" | "userId">): {
@@ -153,10 +122,42 @@ function materializationSummaryPayload(entry: WorkspaceSkillMaterialization) {
 }
 
 function skillRegistryErrorPayload(error: ApiError) {
+  const details = error.details && typeof error.details === "object" && !Array.isArray(error.details)
+    ? error.details as Record<string, unknown>
+    : {};
+  const stringDetail = (key: string) => {
+    const value = details[key];
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
+  };
+  const registryPath = (() => {
+    const explicit = stringDetail("registryPath");
+    if (explicit) return explicit;
+    const url = stringDetail("url");
+    if (!url) return undefined;
+    try {
+      const parsed = new URL(url);
+      return `${parsed.pathname}${parsed.search}`;
+    } catch {
+      return url;
+    }
+  })();
   return {
     code: error.code,
     message: error.message,
     status: error.status,
+    ...(stringDetail("registryAction") ? { registryAction: stringDetail("registryAction") } : {}),
+    ...(stringDetail("registryResource") ? { registryResource: stringDetail("registryResource") } : {}),
+    ...(stringDetail("registryScope") ? { registryScope: stringDetail("registryScope") } : {}),
+    ...(registryPath ? { registryPath } : {}),
+    ...(stringDetail("workspaceId") ? { workspaceId: stringDetail("workspaceId") } : {}),
+    ...(stringDetail("versionId") ? { versionId: stringDetail("versionId") } : {}),
+    ...(stringDetail("installationId") ? { installationId: stringDetail("installationId") } : {}),
+    ...(stringDetail("skillId") ? { skillId: stringDetail("skillId") } : {}),
+    ...(stringDetail("skillName") ? { skillName: stringDetail("skillName") } : {}),
+    ...(stringDetail("rolloutPolicyId") ? { rolloutPolicyId: stringDetail("rolloutPolicyId") } : {}),
+    ...(stringDetail("target") ? { target: stringDetail("target") } : {}),
+    ...(stringDetail("source") ? { source: stringDetail("source") } : {}),
+    ...(stringDetail("audience") ? { audience: stringDetail("audience") } : {}),
   };
 }
 
@@ -214,9 +215,13 @@ async function buildWorkspaceSkillRegistryUnavailableStatus(
 }
 
 function isWorkspaceSkillRegistryNotFound(error: unknown): error is ApiError {
-  return error instanceof ApiError &&
-    error.status === 404 &&
-    error.code === "skill_registry_not_found";
+  if (!(error instanceof ApiError) || error.status !== 404 || error.code !== "skill_registry_not_found") {
+    return false;
+  }
+  const details = error.details && typeof error.details === "object" && !Array.isArray(error.details)
+    ? error.details as Record<string, unknown>
+    : {};
+  return details.registryResource === undefined || details.registryResource === "workspace-skill-set";
 }
 
 function isSkillRegistryApiError(error: unknown): error is ApiError {
@@ -463,6 +468,14 @@ async function fetchRegistryWorkspaceMaterializations(
     const packageResponse = await downloadSkillPackageFromRegistry({
       ...registryInput,
       versionId,
+      registryContext: {
+        ...(targetWorkspace.id === "personal-global" ? {} : { workspaceId: targetWorkspace.id }),
+        installationId: installation.installationId,
+        skillId: installation.skillId,
+        ...(installation.name ? { skillName: installation.name } : {}),
+        target: targetWorkspace.id === "personal-global" ? "personal-global" : "workspace",
+        source: installation.source,
+      },
     });
     const workspaceInstallation = registryInstallationToWorkspaceInstallation({
       installation,
@@ -513,6 +526,13 @@ async function fetchRegistryWorkspaceMaterializations(
       const packageResponse = await downloadSkillPackageFromRegistry({
         ...registryInput,
         versionId: requireRolloutPolicyVersionId(policy),
+        registryContext: {
+          workspaceId: policy.workspaceId ?? workspace.id,
+          skillId: policy.skillId,
+          rolloutPolicyId: policy.id,
+          target: policy.target,
+          audience: policy.audience,
+        },
       });
       const workspacePolicy = registryRolloutPolicyToWorkspacePolicy({
         policy,
@@ -598,6 +618,13 @@ async function fetchRegistryPersonalGlobalMaterializations(
     const packageResponse = await downloadSkillPackageFromRegistry({
       ...registryInput,
       versionId: installation.versionId,
+      registryContext: {
+        installationId: installation.installationId,
+        skillId: installation.skillId,
+        ...(installation.name ? { skillName: installation.name } : {}),
+        target: "personal-global",
+        source: installation.source,
+      },
     });
     const workspaceInstallation = registryInstallationToWorkspaceInstallation({
       installation,
@@ -624,6 +651,12 @@ async function fetchRegistryPersonalGlobalMaterializations(
     const packageResponse = await downloadSkillPackageFromRegistry({
       ...registryInput,
       versionId: requireRolloutPolicyVersionId(policy),
+      registryContext: {
+        skillId: policy.skillId,
+        rolloutPolicyId: policy.id,
+        target: policy.target,
+        audience: policy.audience,
+      },
     });
     const workspacePolicy = registryRolloutPolicyToWorkspacePolicy({
       policy,

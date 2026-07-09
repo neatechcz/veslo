@@ -23,6 +23,7 @@ import {
   clearPendingSoulEdits,
   readCachedSoulDocument,
   soulCachePath,
+  type SoulPendingEdit,
 } from "../soul-cache.js";
 import {
   createSoulVersion,
@@ -30,7 +31,7 @@ import {
   type SoulDocument,
   type SoulScope,
 } from "../soul-memory.js";
-import type { ServerConfig, WorkspaceInfo } from "../types.js";
+import type { ResourceOwner, ServerConfig, WorkspaceInfo } from "../types.js";
 import { shortId } from "../utils.js";
 
 type SoulDenContext = {
@@ -40,12 +41,37 @@ type SoulDenContext = {
   userId?: string;
 };
 
+type SoulSummaryStatus = "active" | "pending" | "conflict" | "not_configured";
+
+type SoulSummary = {
+  scope: SoulScope;
+  ownerId: string;
+  owner: ResourceOwner;
+  title: string;
+  currentVersionId: string | null;
+  updatedAt: string | null;
+  updatedBy: string | null;
+  status: SoulSummaryStatus;
+  heartbeatEnabled: boolean;
+  pendingSuggestionCount: number;
+  canEdit: boolean;
+};
+
 type SoulModel = {
   document: SoulDocument | null;
-  summary: unknown;
-  pendingEdits?: unknown[];
+  summary: SoulSummary;
+  pendingEdits?: SoulPendingEdit[];
   denSynced?: boolean;
   materialization?: unknown;
+};
+
+type SoulSummaryInput = {
+  scope: SoulScope;
+  ownerId: string;
+  document: SoulDocument | null;
+  canEdit: boolean;
+  status?: SoulSummaryStatus;
+  workspace?: WorkspaceInfo;
 };
 
 type SoulMaterializationAuditSet = {
@@ -57,7 +83,7 @@ export type SoulRouteDependencies = {
   readOrganizationSoulModel: (ctx: RequestContext) => Promise<SoulModel>;
   readUserSoulModel: (ctx: RequestContext) => Promise<SoulModel>;
   readWorkspaceSoulModel: (ctx: RequestContext, workspace: WorkspaceInfo) => Promise<SoulModel>;
-  soulReadPayload: (input: any) => unknown;
+  soulReadPayload: (input: SoulModel) => unknown;
   materializeSoulForWorkspace: (
     dataDir: string,
     ctx: RequestContext,
@@ -87,7 +113,7 @@ export type SoulRouteDependencies = {
   requireSoulOrgId: (ctx: SoulDenContext) => string;
   requireSoulUserId: (ctx: SoulDenContext) => string;
   soulCanEdit: (ctx: RequestContext, scope: SoulScope) => boolean;
-  soulSummary: (input: any) => unknown;
+  soulSummary: (input: SoulSummaryInput) => SoulSummary;
   isSoulDenUnavailable: (error: unknown) => boolean;
   requireSoulText: (body: Record<string, unknown>, field: "content" | "changeSummary") => string;
   optionalSoulBaseVersionId: (body: Record<string, unknown>) => string | null;

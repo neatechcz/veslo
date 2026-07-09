@@ -79,6 +79,20 @@ test("root, onboarding-complete, and unknown routes fallback without choosing ol
     }),
     { type: "navigate", to: "/session/sess-a", replace: true, reason: "fallback-session" },
   );
+  assert.deepEqual(
+    resolveAppStartupRouteDecision({
+      rawPath: "/unknown",
+      onboardingStep: "welcome",
+      isTauriRuntime: true,
+      activeSessionId: "ws:ws-a:pending-session:pending-session%3Aabc",
+    }),
+    {
+      type: "navigate",
+      to: "/session/ws%3Aws-a%3Apending-session%3Apending-session%253Aabc",
+      replace: true,
+      reason: "fallback-session",
+    },
+  );
 });
 
 test("session and proto route decisions stay explicit", () => {

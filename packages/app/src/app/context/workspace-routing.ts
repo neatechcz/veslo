@@ -182,9 +182,13 @@ export function createWorkspaceRouting(
       baseUrl: string;
       directory?: string;
       authKey: string;
+      generation: number;
+      requestId: number;
       promise: Promise<ClientEntry | null>;
     }
   >();
+  const releaseGenerations = new Map<string, number>();
+  let nextEnsureRequestId = 0;
   // VSLO-86 F4Ú12 — reactive trigger so consumers (SSE multiplex) re-run
   // when workspaces are ensured/released.
   const [entryIdsSignal, setEntryIdsSignal] = createSignal<string[]>([], {
@@ -257,13 +261,17 @@ export function createWorkspaceRouting(
       const pending = pendingEnsures.get(workspaceId);
       if (
         pending &&
+        pending.generation === (releaseGenerations.get(workspaceId) ?? 0) &&
         pending.baseUrl === baseUrl &&
         pending.directory === directory &&
         pending.authKey === nextAuthKey
       ) {
         return pending.promise;
       }
+      const generation = releaseGenerations.get(workspaceId) ?? 0;
+      const requestId = ++nextEnsureRequestId;
       const promise = (async () => {
+        await Promise.resolve();
         const client = opts.createClient(
           baseUrl,
           directory,
@@ -273,12 +281,24 @@ export function createWorkspaceRouting(
           try {
             await opts.waitForHealthy(client, { timeoutMs: 10_000 });
           } catch (error) {
+            if (
+              pendingEnsures.get(workspaceId)?.requestId !== requestId ||
+              (releaseGenerations.get(workspaceId) ?? 0) !== generation
+            ) {
+              return null;
+            }
             ensureErrors.set(
               workspaceId,
               error instanceof Error ? error.message : String(error),
             );
             return null;
           }
+        }
+        if (
+          pendingEnsures.get(workspaceId)?.requestId !== requestId ||
+          (releaseGenerations.get(workspaceId) ?? 0) !== generation
+        ) {
+          return null;
         }
         const entry: ClientEntry = {
           workspaceId,
@@ -293,7 +313,7 @@ export function createWorkspaceRouting(
         bumpEntryIds();
         return entry;
       })();
-      pendingEnsures.set(workspaceId, { baseUrl, directory, authKey: nextAuthKey, promise });
+      pendingEnsures.set(workspaceId, { baseUrl, directory, authKey: nextAuthKey, generation, requestId, promise });
       try {
         return await promise;
       } finally {
@@ -309,6 +329,8 @@ export function createWorkspaceRouting(
     },
     release(workspaceId: string) {
       ensureErrors.delete(workspaceId);
+      releaseGenerations.set(workspaceId, (releaseGenerations.get(workspaceId) ?? 0) + 1);
+      pendingEnsures.delete(workspaceId);
       if (entries.delete(workspaceId)) bumpEntryIds();
     },
     forEach(cb) {

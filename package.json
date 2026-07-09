@@ -31,9 +31,19 @@
     "test:e2e:feedback-youtrack-live": "pnpm --filter @neatech/veslo-e2e test:pilot:feedback-youtrack-live",
     "test:e2e:ui:update-baselines": "pnpm --filter @neatech/veslo-e2e test:update-baselines",
     "test:orchestrator": "pnpm --filter veslo-orchestrator test:router",
+    "audit:static": "pnpm audit:cycles && pnpm audit:veslo-headers && pnpm audit:knip",
     "audit:cycles": "node scripts/audit-cycles.mjs",
+    "audit:knip": "knip --no-progress --dependencies --files --max-show-issues 80 --no-exit-code",
+    "audit:knip:strict": "knip --no-progress --dependencies --files --max-show-issues 80",
+    "audit:knip:exports": "node scripts/audit-unused-exports.mjs",
+    "audit:knip:exports:strict": "node scripts/audit-unused-exports.mjs --strict",
+    "audit:unused-exports": "pnpm audit:knip:exports",
+    "audit:unused-exports:strict": "pnpm audit:knip:exports:strict",
     "audit:imports": "node scripts/audit-import-boundaries.mjs",
     "audit:routes": "node scripts/audit-route-contracts.mjs",
+    "audit:headers": "node scripts/audit-header-inventory.mjs",
+    "audit:headers:variants": "node scripts/audit-header-inventory.mjs --variants",
+    "audit:veslo-headers": "node scripts/audit-veslo-headers.mjs",
     "audit:fallbacks": "node scripts/audit-fallback-risks.mjs",
     "audit:client-logic": "node scripts/audit-client-logic.mjs",
     "audit:owners": "node scripts/audit-owner-hotspots.mjs",
@@ -48,6 +58,10 @@
     "release:prepare:dry": "node scripts/release/prepare.mjs --dry-run",
     "release:ship": "node scripts/release/ship.mjs",
     "release:ship:watch": "node scripts/release/ship.mjs --watch",
+    "release:prod": "node scripts/release/dispatch-production.mjs --push-tag --yes --watch",
+    "release:prod:dry": "node scripts/release/dispatch-production.mjs --dry-run",
+    "release:production": "node scripts/release/dispatch-production.mjs",
+    "release:production:dry": "node scripts/release/dispatch-production.mjs --dry-run",
     "test:staging-app-build": "node scripts/release/staging-app-build.test.mjs",
     "tauri": "pnpm --filter @neatech/veslo exec tauri"
   },
@@ -66,6 +80,7 @@
   },
   "packageManager": "pnpm@10.27.0",
   "devDependencies": {
+    "knip": "^6.25.0",
     "madge": "8.0.0"
   }
 }

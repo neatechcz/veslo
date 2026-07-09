@@ -135,6 +135,53 @@ test("server health checks distinguish no-token limited mode from auth desync", 
   });
 });
 
+test("manual connection test requires authenticated server status", async () => {
+  let remoteWorkspaceCalls = 0;
+  const factory: VesloServerConnectionClientFactory = ({ token }) => ({
+    baseUrl: "http://worker.test",
+    health: async () => ({ ok: true, version: "test", uptimeMs: 1 }),
+    capabilities: async () => {
+      if (!token) {
+        throw new VesloServerError(403, "forbidden", "Forbidden");
+      }
+      return capabilities();
+    },
+  });
+
+  await createRoot(async (dispose) => {
+    try {
+      const connection = createVesloServerConnection({
+        startupPreference: () => null,
+        opencodeBaseUrl: () => "",
+        authenticatedAccountId: () => null,
+        cloudEnvironment: {},
+        documentVisible: () => false,
+        developerMode: () => false,
+        isTauriRuntime: () => false,
+        workspace: {
+          workspacesHydrated: () => true,
+          activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
+          activeWorkspaceId: () => "ws-a",
+          activeWorkspaceRoot: () => "/tmp/ws-a",
+          createRemoteWorkspaceFlow: async () => {
+            remoteWorkspaceCalls += 1;
+          },
+        },
+        createClient: factory,
+      });
+
+      const ok = await connection.testVesloServerConnection({ urlOverride: "http://worker.test" });
+
+      assert.equal(ok, false);
+      assert.equal(connection.vesloServerStatus(), "limited");
+      assert.equal(connection.vesloServerCapabilities(), null);
+      assert.equal(remoteWorkspaceCalls, 0);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("local Tauri server check requires runtimeChain readiness", async () => {
   let rootStatusCalls = 0;
   const workspaceStatusCalls: string[] = [];
@@ -396,14 +443,40 @@ test("local ensure single-flights each readiness mode independently", async () =
   });
 });
 
-test("local ensure does not restart the server on auth desync", async () => {
+test("local ensure respawns the owned server once on auth desync", async () => {
   let restartCalls = 0;
   const factory: VesloServerConnectionClientFactory = () => ({
     baseUrl: "http://127.0.0.1:8787",
     health: async () => ({ ok: true, version: "test", uptimeMs: 1 }),
     capabilities: async () => {
-      throw new VesloServerError(401, "invalid_bearer_token", "Invalid bearer token");
+      if (restartCalls === 0) {
+        throw new VesloServerError(401, "invalid_bearer_token", "Invalid bearer token");
+      }
+      return capabilities();
     },
+    workspace: {
+      statusForWorkspace: async () => ({
+        ok: true,
+        version: "test",
+        uptimeMs: 1,
+        readOnly: false,
+        approval: { mode: "manual", timeoutMs: 1 },
+        corsOrigins: [],
+        workspaceCount: 1,
+        activeWorkspaceId: "ws-a",
+        workspace: null,
+        authorizedRoots: [],
+        server: { host: "127.0.0.1", port: 8787, configPath: null },
+        tokenSource: { client: "generated", host: "generated" },
+        runtimeChain: {
+          status: "runtime_chain_ready",
+          checkedAt: Date.now(),
+          orchestrator: { configured: true, daemonUrl: "http://127.0.0.1:52008", ok: true, engineTopology: "shared-unsandboxed", error: null },
+          sharedEngine: { running: true, pending: false, engineState: "ready", baseUrl: "http://127.0.0.1:53553" },
+          proxy: { workspaceId: "ws-a", ok: true, status: 200, error: null },
+        },
+      }),
+    } as any,
   });
 
   await createRoot(async (dispose) => {
@@ -432,9 +505,9 @@ test("local ensure does not restart the server on auth desync", async () => {
 
       const ok = await connection.ensureLocalVesloServerRunning({ ignoreStartupPreference: true });
 
-      assert.equal(ok, false);
-      assert.equal(restartCalls, 0);
-      assert.equal(connection.vesloServerStatus(), "auth_desync");
+      assert.equal(ok, true);
+      assert.equal(restartCalls, 1);
+      assert.equal(connection.vesloServerStatus(), "connected");
     } finally {
       dispose();
     }

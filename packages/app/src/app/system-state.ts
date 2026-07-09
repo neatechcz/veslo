@@ -7,6 +7,7 @@ import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
 import { reportError } from "./lib/error-reporter";
+import { recordBootstrapDiagnostic } from "./lib/bootstrap-diagnostics";
 import { recordPerfLog } from "./lib/perf-log";
 import type {
   Client,
@@ -14,6 +15,7 @@ import type {
   ReloadReason,
   ReloadTrigger,
   ResetVesloMode,
+  UpdateDownloadEvent,
   UpdateHandle,
 } from "./types";
 import type { WorkspaceBusyMap } from "./context/workspace-debug";
@@ -40,15 +42,15 @@ import { unwrap, waitForHealthy } from "./lib/opencode";
 import type { WorkspaceRouting } from "./context/workspace-routing";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../i18n";
 
-function throttle<T extends (...args: any[]) => any>(
-  fn: T,
+function throttle<Args extends unknown[]>(
+  fn: (...args: Args) => unknown,
   delayMs: number
-): (...args: Parameters<T>) => void {
+): (...args: Args) => void {
   let lastCall = 0;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  let lastArgs: Parameters<T> | null = null;
+  let lastArgs: Args | null = null;
 
-  return (...args: Parameters<T>) => {
+  return (...args: Args) => {
     const now = Date.now();
     lastArgs = args;
 
@@ -83,6 +85,11 @@ function clearUpdateInstallState() {
   } catch {
     // ignore
   }
+}
+
+function recordUpdaterDiagnostic(event: string, payload?: Record<string, unknown>) {
+  recordPerfLog(true, "workspace.updater", event, payload);
+  void recordBootstrapDiagnostic(`updater:${event}`, payload);
 }
 
 export type NotionState = {
@@ -482,13 +489,13 @@ export function createSystemState(options: {
     if (updateStatus().state === "installing") return;
 
     const startedAt = Date.now();
-    recordPerfLog(true, "workspace.updater", "check-start", {
+    recordUpdaterDiagnostic("check-start", {
       quiet: Boolean(optionsCheck?.quiet),
     });
 
     const env = updateEnv();
     if (env && !env.supported) {
-      recordPerfLog(true, "workspace.updater", "check-unsupported", {
+      recordUpdaterDiagnostic("check-unsupported", {
         quiet: Boolean(optionsCheck?.quiet),
         reason: env.reason ?? null,
         ms: Date.now() - startedAt,
@@ -514,7 +521,7 @@ export function createSystemState(options: {
       const checkedAt = Date.now();
 
       if (!update) {
-        recordPerfLog(true, "workspace.updater", "check-end", {
+        recordUpdaterDiagnostic("check-end", {
           quiet: Boolean(optionsCheck?.quiet),
           available: false,
           ms: checkedAt - startedAt,
@@ -525,7 +532,7 @@ export function createSystemState(options: {
       }
 
       const notes = typeof update.body === "string" ? update.body : undefined;
-      recordPerfLog(true, "workspace.updater", "check-end", {
+      recordUpdaterDiagnostic("check-end", {
         quiet: Boolean(optionsCheck?.quiet),
         available: true,
         version: update.version,
@@ -541,7 +548,7 @@ export function createSystemState(options: {
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
-      recordPerfLog(true, "workspace.updater", "check-error", {
+      recordUpdaterDiagnostic("check-error", {
         quiet: Boolean(optionsCheck?.quiet),
         message,
         ms: Date.now() - startedAt,
@@ -606,7 +613,7 @@ export function createSystemState(options: {
       if (!pending) return;
       const downloadPending = pending;
 
-      recordPerfLog(true, "workspace.updater", "download-start", {
+      recordUpdaterDiagnostic("download-start", {
         automatic: Boolean(optionsDownload?.automatic),
         refreshBeforeDownload: Boolean(optionsDownload?.refreshBeforeDownload),
         retryAttempt: optionsDownload?.retryAttempt ?? 0,
@@ -645,17 +652,14 @@ export function createSystemState(options: {
         });
       }, 100);
 
-      await downloadPending.update.download((event: any) => {
-        if (!event || typeof event !== "object") return;
-        const record = event as Record<string, any>;
-
-        if (record.event === "Started") {
+      await downloadPending.update.download((event: UpdateDownloadEvent) => {
+        if (event.event === "Started") {
           const newTotal =
-            record.data && typeof record.data.contentLength === "number"
-              ? record.data.contentLength
+            event.data && typeof event.data.contentLength === "number"
+              ? event.data.contentLength
               : null;
           totalBytes = newTotal;
-          recordPerfLog(true, "workspace.updater", "download-progress", {
+          recordUpdaterDiagnostic("download-progress", {
             version: pending?.version ?? null,
             totalBytes,
             downloadedBytes: accumulatedBytes,
@@ -664,16 +668,16 @@ export function createSystemState(options: {
           throttledUpdateProgress();
         }
 
-        if (record.event === "Progress") {
+        if (event.event === "Progress") {
           const chunk =
-            record.data && typeof record.data.chunkLength === "number"
-              ? record.data.chunkLength
+            event.data && typeof event.data.chunkLength === "number"
+              ? event.data.chunkLength
               : 0;
           accumulatedBytes += chunk;
           const nowMs = Date.now();
           if (nowMs - lastProgressLogAt >= 2_000) {
             lastProgressLogAt = nowMs;
-            recordPerfLog(true, "workspace.updater", "download-progress", {
+            recordUpdaterDiagnostic("download-progress", {
               version: pending?.version ?? null,
               totalBytes,
               downloadedBytes: accumulatedBytes,
@@ -684,7 +688,7 @@ export function createSystemState(options: {
         }
       });
 
-      recordPerfLog(true, "workspace.updater", "download-end", {
+      recordUpdaterDiagnostic("download-end", {
         automatic: Boolean(optionsDownload?.automatic),
         version: pending.version,
         totalBytes,
@@ -693,7 +697,7 @@ export function createSystemState(options: {
       });
 
       if (optionsDownload?.automatic && !updateAutoDownload()) {
-        recordPerfLog(true, "workspace.updater", "download-paused-after-complete", {
+        recordUpdaterDiagnostic("download-paused-after-complete", {
           version: downloadPending.version,
           totalBytes,
           downloadedBytes: accumulatedBytes,
@@ -716,7 +720,7 @@ export function createSystemState(options: {
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
-      recordPerfLog(true, "workspace.updater", "download-error", {
+      recordUpdaterDiagnostic("download-error", {
         automatic: Boolean(optionsDownload?.automatic),
         version: pending?.version ?? pendingUpdate()?.version ?? null,
         message,
@@ -799,7 +803,7 @@ export function createSystemState(options: {
       notes: pending.notes,
     });
 
-    recordPerfLog(true, "workspace.updater", "install-start", {
+    recordUpdaterDiagnostic("install-start", {
       version: pending.version,
       currentVersion: pending.update.currentVersion,
       platform,
@@ -807,13 +811,13 @@ export function createSystemState(options: {
 
     try {
       await updaterPrepareInstall();
-      recordPerfLog(true, "workspace.updater", "install-prepared", {
+      recordUpdaterDiagnostic("install-prepared", {
         version: pending.version,
         platform,
       });
 
       await pending.update.install();
-      recordPerfLog(true, "workspace.updater", "install-handoff", {
+      recordUpdaterDiagnostic("install-handoff", {
         version: pending.version,
         platform,
         frontendRelaunch: restartAction === "frontend-relaunch",
@@ -827,7 +831,7 @@ export function createSystemState(options: {
       }
 
       await pending.update.close().catch((error) => {
-        recordPerfLog(true, "workspace.updater", "install-close-error", {
+        recordUpdaterDiagnostic("install-close-error", {
           version: pending.version,
           platform,
           message: error instanceof Error ? error.message : safeStringify(error),
@@ -841,7 +845,7 @@ export function createSystemState(options: {
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       clearUpdateInstallState();
-      recordPerfLog(true, "workspace.updater", "install-error", {
+      recordUpdaterDiagnostic("install-error", {
         version: pending.version,
         platform,
         message,

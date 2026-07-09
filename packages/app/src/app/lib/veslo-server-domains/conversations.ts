@@ -17,6 +17,7 @@ import type {
   VesloSessionTranscriptPrefetchResult,
   VesloSessionTranscriptSnapshot,
 } from "../veslo-server/types";
+import { VESLO_ACCOUNT_ID_HEADER, VESLO_SEND_TRACE_ID_HEADER } from "../veslo-server/header-profiles";
 
 type RequestJsonOptions = {
   method?: string;
@@ -50,11 +51,11 @@ type TranscriptOptions = {
 };
 
 const sendTraceHeaders = (options?: { sendTraceId?: string | null }) =>
-  options?.sendTraceId?.trim() ? { "X-Veslo-Send-Trace-Id": options.sendTraceId.trim() } : undefined;
+  options?.sendTraceId?.trim() ? { [VESLO_SEND_TRACE_ID_HEADER]: options.sendTraceId.trim() } : undefined;
 
 export function createConversationsClient(context: ConversationsClientContext) {
   const { baseUrl, token, hostToken, accountId, requestJson, timeouts } = context;
-  const archiveHeaders = accountId ? { "X-Veslo-Account-Id": accountId } : undefined;
+  const archiveHeaders = accountId ? { [VESLO_ACCOUNT_ID_HEADER]: accountId } : undefined;
 
   return {
     listArchives: () =>
@@ -77,12 +78,17 @@ export function createConversationsClient(context: ConversationsClientContext) {
         },
       ),
 
-    deleteArchive: (sessionId: string, options?: { workspaceId?: string | null; workspaceIdentity?: string | null }) => {
+    deleteArchive: (
+      sessionId: string,
+      options?: { workspaceId?: string | null; workspaceIdentity?: string | null; directory?: string | null },
+    ) => {
       const workspaceId = options?.workspaceId?.trim() ?? "";
       const workspaceIdentity = options?.workspaceIdentity?.trim() ?? "";
+      const directory = options?.directory?.trim() ?? "";
       const search = new URLSearchParams();
       if (workspaceId) search.set("workspaceId", workspaceId);
       if (workspaceIdentity) search.set("workspaceIdentity", workspaceIdentity);
+      if (directory) search.set("directory", directory);
       const query = search.size > 0 ? `?${search.toString()}` : "";
       return requestJson<{ items: VesloSessionArchiveRecord[] }>(
         baseUrl,

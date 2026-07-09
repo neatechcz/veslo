@@ -1,4 +1,5 @@
 import type { VesloHubMcpItem, VesloMcpItem } from "../veslo-server/types";
+import { buildDenContextHeaders } from "../veslo-server/header-profiles";
 import { workspacePath } from "./path";
 
 type RequestJsonOptions = {
@@ -18,18 +19,9 @@ export type McpClientContext = {
 };
 
 type DenContextOptions = {
+  denApiBase?: string;
   denToken?: string;
   denOrgId?: string;
-};
-
-const buildDenHeaders = (options?: DenContextOptions) => {
-  const denToken = options?.denToken?.trim() ?? "";
-  const denOrgId = options?.denOrgId?.trim() ?? "";
-  const extraHeaders = {
-    ...(denToken ? { "x-veslo-den-token": denToken } : {}),
-    ...(denOrgId ? { "x-veslo-den-org-id": denOrgId } : {}),
-  };
-  return Object.keys(extraHeaders).length > 0 ? extraHeaders : undefined;
 };
 
 const workspaceMcpPath = (workspaceId: string) => `${workspacePath(workspaceId)}/mcp`;
@@ -42,18 +34,18 @@ export function createMcpClient(context: McpClientContext) {
       requestJson<{ items: VesloHubMcpItem[] }>(baseUrl, "/hub/mcp", {
         token,
         hostToken,
-        extraHeaders: buildDenHeaders(options),
+        extraHeaders: buildDenContextHeaders(options),
       }),
 
     installHub: (workspaceId: string, name: string, options?: DenContextOptions) =>
-      requestJson<{ ok: boolean; name: string; path: string; action: "added" | "updated"; written: number; skipped: number }>(
+      requestJson<{ ok: boolean; name: string; action: "added" | "updated" }>(
         baseUrl,
         `${workspaceMcpPath(workspaceId)}/hub/${encodeURIComponent(name)}`,
         {
           token,
           hostToken,
           method: "POST",
-          extraHeaders: buildDenHeaders(options),
+          extraHeaders: buildDenContextHeaders(options),
         },
       ),
 
@@ -83,15 +75,16 @@ export function createMcpClient(context: McpClientContext) {
           token,
           hostToken,
           method: "POST",
-          extraHeaders: buildDenHeaders(options),
+          extraHeaders: buildDenContextHeaders(options),
         },
       ),
 
-    logoutAuth: (workspaceId: string, name: string) =>
+    logoutAuth: (workspaceId: string, name: string, options?: DenContextOptions) =>
       requestJson<{ ok: true }>(baseUrl, `${workspaceMcpPath(workspaceId)}/${encodeURIComponent(name)}/auth`, {
         token,
         hostToken,
         method: "DELETE",
+        extraHeaders: buildDenContextHeaders(options),
       }),
   };
 }

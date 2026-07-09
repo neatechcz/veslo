@@ -15,9 +15,9 @@ describe("User-global skill routes", () => {
       ["GET", "/skills/user-global-store/helper/files", "client"],
       ["POST", "/skills/user-global-store", "client"],
       ["DELETE", "/skills/user-global-store/helper", "client"],
-      ["GET", "/skills/user-global/helper", "none"],
-      ["GET", "/skills/user-global/helper/files", "none"],
-      ["DELETE", "/skills/user-global/helper", "none"],
+      ["GET", "/skills/user-global/helper", "hostOrClient"],
+      ["GET", "/skills/user-global/helper/files", "hostOrClient"],
+      ["DELETE", "/skills/user-global/helper", "hostOrClient"],
     ];
 
     expect(routes).toHaveLength(expectedRoutes.length);

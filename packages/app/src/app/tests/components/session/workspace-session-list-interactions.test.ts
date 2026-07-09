@@ -150,8 +150,8 @@ test("sidebar session list no longer persists archived visibility locally", () =
 
   assert.match(
     source,
-    /const shouldShowSessionRow = \(row: FlatSessionRow\) =>\s*!isSessionArchived\(row\.workspace\.id, row\.session\.id\);/,
-    "sidebar rows should hide archived sessions by workspace-scoped identity instead of toggling them inline",
+    /const shouldShowSessionRow = \(row: FlatSessionRow\) => !isRowArchived\(row\);/,
+    "sidebar rows should hide archived sessions by scoped row identity instead of toggling them inline",
   );
 });
 
@@ -300,8 +300,8 @@ test("project rows expose drag lifecycle bindings without dedicated grip handle"
 test("clicking selected rows still opens session detail while selected parents toggle subagent expansion", () => {
   assert.match(
     source,
-    /const action = resolveSessionRowClickAction\(\{\s*selectedSessionId: props\.selectedSessionId,\s*clickedSessionId: row\.session\.id,\s*hasChildren: hasChildren\(row\.rowKey\),\s*allowSelectedParentExpansion: props\.allowSelectedParentExpansion,\s*\}\);/s,
-    "session row clicks should compute selected-row behavior through shared click action logic",
+    /const action = resolveSessionRowClickAction\(\{\s*selectedSessionId: props\.selectedSessionId,\s*clickedSessionId: row\.session\.id,\s*selectedRowKey: props\.selectedSessionKey,\s*clickedRowKey: row\.rowKey,\s*hasChildren: hasChildren\(row\.rowKey\),\s*allowSelectedParentExpansion: props\.allowSelectedParentExpansion,\s*\}\);/s,
+    "session row clicks should compute selected-row behavior through shared scoped click action logic",
   );
 
   assert.match(
@@ -312,8 +312,8 @@ test("clicking selected rows still opens session detail while selected parents t
 
   assert.match(
     source,
-    /if \(action\.openSession\) \{\s*props\.onOpenSession\(row\.workspace\.id, row\.session\.id\);\s*\}/s,
-    "session rows should still open the clicked session whenever click action marks it as openable",
+    /if \(action\.openSession\) \{\s*props\.onOpenSession\(row\.workspace\.id, row\.session\.id, sidebarSessionOpenTargetForRow\(row\)\);\s*\}/s,
+    "session rows should open the clicked row with its scoped sidebar target",
   );
 
   assert.match(
@@ -559,8 +559,8 @@ test("collapsed sidebar sections keep real drawer state while exposing selected 
 test("session rows use archive action and open shared sidebar context menu on right-click", () => {
   assert.match(
     source,
-    /onRenameSession\?: \(workspaceId: string, sessionId: string\) => void;/,
-    "session list should accept a session rename callback for context-menu rows",
+    /onRenameSession\?: \(workspaceId: string, sessionId: string, target\?: SidebarSessionOpenTarget\) => void;/,
+    "session list should accept a scoped session rename callback for context-menu rows",
   );
 
   assert.match(
@@ -571,8 +571,8 @@ test("session rows use archive action and open shared sidebar context menu on ri
 
   assert.match(
     source,
-    /setSidebarMenuState\(\{\s*targetKind,\s*workspaceId: row\.workspace\.id,\s*sessionId: row\.session\.id,\s*placement: \{ x: event\.clientX, y: event\.clientY \},\s*selectedText: selectedTextForMenuEvent\(event\),\s*\}\);/,
-    "right-clicking a session row should open the shared menu at pointer coordinates for that exact row",
+    /setSidebarMenuState\(\{\s*targetKind,\s*workspaceId: row\.workspace\.id,\s*sessionId: row\.session\.id,\s*sessionTarget: sidebarSessionOpenTargetForRow\(row\),\s*placement: \{ x: event\.clientX, y: event\.clientY \},\s*selectedText: selectedTextForMenuEvent\(event\),\s*\}\);/,
+    "right-clicking a session row should open the shared menu at pointer coordinates for that exact scoped row",
   );
 
   assert.match(
@@ -589,8 +589,8 @@ test("session rows use archive action and open shared sidebar context menu on ri
 
   assert.match(
     source,
-    /onRename: \(\) => props\.onRenameSession\?\.\(workspaceId, sessionId\),[\s\S]*onArchiveToggle: \(\) => toggleSessionArchiveFromMenu\(workspaceId, sessionId\),[\s\S]*onDelete: props\.onDeleteSession \? \(\) => props\.onDeleteSession\?\.\(workspaceId, sessionId\) : undefined,/,
-    "session-row menu entries should delegate rename, archive, and delete to row-scoped callbacks",
+    /onRename: \(\) => props\.onRenameSession\?\.\(workspaceId, sessionId, sessionTarget\),[\s\S]*onArchiveToggle: \(\) => toggleSessionArchiveFromMenu\(workspaceId, sessionId, sessionTarget\),[\s\S]*onDelete: props\.onDeleteSession \? \(\) => props\.onDeleteSession\?\.\(workspaceId, sessionId, sessionTarget\) : undefined,/,
+    "session-row menu entries should delegate rename, archive, and delete to scoped row callbacks",
   );
 
   assert.match(
@@ -607,14 +607,14 @@ test("session rows use archive action and open shared sidebar context menu on ri
 
   assert.match(
     source,
-    /onArchiveSession\?: \(workspaceId: string, sessionId: string\) => Promise<void> \| void;/,
-    "session list should accept an archive callback from callers",
+    /onArchiveSession\?: \(workspaceId: string, sessionId: string, target\?: SidebarSessionOpenTarget\) => Promise<void> \| void;/,
+    "session list should accept a scoped archive callback from callers",
   );
 
   assert.match(
     source,
-    /onUnarchiveSession\?: \(workspaceId: string, sessionId: string\) => Promise<void> \| void;/,
-    "session list should accept an unarchive callback from callers",
+    /onUnarchiveSession\?: \(workspaceId: string, sessionId: string, target\?: SidebarSessionOpenTarget\) => Promise<void> \| void;/,
+    "session list should accept a scoped unarchive callback from callers",
   );
 
   assert.match(
@@ -643,20 +643,20 @@ test("session rows use archive action and open shared sidebar context menu on ri
 
   assert.match(
     source,
-    /const handleSessionArchiveAction = async \(event: MouseEvent, workspaceId: string, sessionId: string\) => \{/,
-    "archive actions should be async and receive explicit workspace scope",
+    /const handleSessionArchiveAction = async \(\s*event: MouseEvent,\s*workspaceId: string,\s*sessionId: string,\s*target\?: SidebarSessionOpenTarget \| null,\s*\) => \{/,
+    "archive actions should be async and receive explicit scoped workspace target",
   );
 
   assert.match(
     source,
-    /if \(archived\) \{\s*await Promise\.resolve\(props\.onUnarchiveSession\?\.\(targetWorkspaceId, id\)\);\s*return;\s*\}/s,
-    "archived sessions should route unarchive through the caller callback",
+    /if \(archived\) \{\s*await Promise\.resolve\(props\.onUnarchiveSession\?\.\(targetWorkspaceId, id, target \?\? undefined\)\);\s*return;\s*\}/s,
+    "archived sessions should route scoped unarchive through the caller callback",
   );
 
   assert.match(
     source,
-    /await Promise\.resolve\(props\.onArchiveSession\?\.\(targetWorkspaceId, id\)\);/,
-    "archive confirmation should call the caller archive callback",
+    /await Promise\.resolve\(props\.onArchiveSession\?\.\(targetWorkspaceId, id, target \?\? undefined\)\);/,
+    "archive confirmation should call the caller archive callback with scoped target",
   );
 
   assert.match(
@@ -667,20 +667,20 @@ test("session rows use archive action and open shared sidebar context menu on ri
 
   assert.match(
     source,
-    /if \(archived\) \{\s*await Promise\.resolve\(props\.onUnarchiveSession\?\.\(targetWorkspaceId, id\)\);\s*return;\s*\}[\s\S]*if \(!isArchiveConfirmationPending\(targetWorkspaceId, id\)\) \{[\s\S]*setPendingArchiveConfirmationSessionId\(archiveKeyFor\(targetWorkspaceId, id\)\);\s*return;\s*\}/s,
-    "first click on a non-archived session should only arm inline confirmation, while archived sessions unarchive immediately",
+    /if \(archived\) \{\s*await Promise\.resolve\(props\.onUnarchiveSession\?\.\(targetWorkspaceId, id, target \?\? undefined\)\);\s*return;\s*\}[\s\S]*if \(!isArchiveConfirmationPending\(targetWorkspaceId, id, target\)\) \{[\s\S]*setPendingArchiveConfirmationSessionId\(archiveKeyFor\(targetWorkspaceId, id, target\)\);\s*return;\s*\}/s,
+    "first click on a non-archived session should only arm scoped inline confirmation, while archived sessions unarchive immediately",
   );
 
   assert.match(
     source,
-    /onClick=\{\(event\) => handleSessionArchiveAction\(event, workspace\(\)\.id, session\(\)\.id\)\}/,
-    "recent session rows should route hover action through two-step archive confirmation and caller callbacks",
+    /onClick=\{\(event\) => handleSessionArchiveAction\(event, workspace\(\)\.id, session\(\)\.id, sessionTarget\(\)\)\}/,
+    "recent session rows should route hover action through scoped two-step archive confirmation and caller callbacks",
   );
 
   assert.match(
     source,
-    /onClick=\{\(event\) => handleSessionArchiveAction\(event, row\.workspace\.id, row\.session\.id\)\}/,
-    "by-project session rows should route hover action through two-step archive confirmation and caller callbacks",
+    /onClick=\{\(event\) => handleSessionArchiveAction\(event, row\.workspace\.id, row\.session\.id, sessionTarget\(\)\)\}/,
+    "by-project session rows should route hover action through scoped two-step archive confirmation and caller callbacks",
   );
 
   assert.match(
@@ -737,7 +737,7 @@ test("workspace context menu is fixed and viewport clamped so scroll containers 
 test("archive action stores clicked button as pending confirm target before arming confirmation", () => {
   assert.match(
     source,
-    /if \(!isArchiveConfirmationPending\(targetWorkspaceId, id\)\) \{\s*if \(event\.currentTarget instanceof HTMLButtonElement\) \{\s*pendingArchiveConfirmButtonRef = event\.currentTarget;\s*\}\s*setPendingArchiveConfirmationSessionId\(archiveKeyFor\(targetWorkspaceId, id\)\);\s*return;\s*\}/s,
+    /if \(!isArchiveConfirmationPending\(targetWorkspaceId, id, target\)\) \{\s*if \(event\.currentTarget instanceof HTMLButtonElement\) \{\s*pendingArchiveConfirmButtonRef = event\.currentTarget;\s*\}\s*setPendingArchiveConfirmationSessionId\(archiveKeyFor\(targetWorkspaceId, id, target\)\);\s*return;\s*\}/s,
     "first archive click should capture button target before pending mode, so outside-click cancellation does not clear confirm click",
   );
 });
@@ -745,7 +745,7 @@ test("archive action stores clicked button as pending confirm target before armi
 test("pending archive confirmation cleanup validates workspace-scoped archive keys", () => {
   assert.match(
     source,
-    /const validArchiveKeys = new Set\(\s*projectRowsLoaded\(\)\.map\(\(row\) => archiveKeyFor\(row\.workspace\.id, row\.session\.id\)\),\s*\);[\s\S]*for \(const row of recentRowsLoaded\(\)\) validArchiveKeys\.add\(archiveKeyFor\(row\.workspace\.id, row\.session\.id\)\);[\s\S]*const pendingId = pendingArchiveConfirmationSessionId\(\);[\s\S]*if \(pendingId && !validArchiveKeys\.has\(pendingId\)\) \{/s,
-    "pending archive confirmation should not be cleared by comparing an archive key against raw session ids",
+    /const validArchiveKeys = new Set\(\s*projectRowsLoaded\(\)\.map\(\(row\) => archiveKeyForRow\(row\)\),\s*\);[\s\S]*for \(const row of recentRowsLoaded\(\)\) validArchiveKeys\.add\(archiveKeyForRow\(row\)\);[\s\S]*const pendingId = pendingArchiveConfirmationSessionId\(\);[\s\S]*if \(pendingId && !validArchiveKeys\.has\(pendingId\)\) \{/s,
+    "pending archive confirmation should not be cleared by comparing a scoped archive key against raw session ids",
   );
 });

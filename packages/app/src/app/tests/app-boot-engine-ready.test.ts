@@ -46,7 +46,7 @@ test("boot warmup readiness is separate from live transcript read policy", () =>
   );
   assert.match(
     appSource,
-    /return !isLiveTranscriptReadAllowedForWorkspace\(workspaceStore\.activeWorkspaceId\(\)\.trim\(\)\);/,
+    /const activeWorkspaceId = workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*return !isLiveTranscriptReadAllowedForWorkspace\(activeWorkspaceId\);/,
     "ordinary history browsing should not become live SDK reading merely because the runtime is ready",
   );
   assert.doesNotMatch(
@@ -59,7 +59,7 @@ test("boot warmup readiness is separate from live transcript read policy", () =>
 test("session SSE does not connect while lazy boot has no ready engine", () => {
   assert.match(
     eventStreamSource,
-    /for \(const wsId of entryIds\) \{[\s\S]*if \(!deps\.isWorkspaceRuntimeReady\(wsId\)\) continue;[\s\S]*const c = deps\.routing\.client\(wsId\);/s,
+    /for \(const wsId of entryIds\) \{[\s\S]*if \(!deps\.isWorkspaceRuntimeReady\(wsId\)\) continue;[\s\S]*const entry = deps\.routing\.entry\(wsId\);[\s\S]*const c = entry\?\.client \?\? deps\.routing\.client\(wsId\);/s,
     "workspace SSE streams should only open for routed workspaces whose runtime is ready",
   );
   assert.doesNotMatch(
@@ -69,7 +69,7 @@ test("session SSE does not connect while lazy boot has no ready engine", () => {
   );
   assert.match(
     eventStreamSource,
-    /if \(targets\.length === 0\) \{[\s\S]*deps\.setSseConnected\(false\);[\s\S]*return;[\s\S]*\}/s,
+    /if \(reconciledStreams\.size === 0\) \{[\s\S]*sseConnectedByStream\.clear\(\);[\s\S]*deps\.setSseConnected\(false\);[\s\S]*\}/s,
     "lazy boot without any ready workspace target should not leave SSE marked connected",
   );
   assert.doesNotMatch(

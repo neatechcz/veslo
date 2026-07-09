@@ -1,6 +1,14 @@
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import type { ArtifactItem, MessageWithParts } from "../types";
 import { isVesloInternalSubagentType } from "../lib/internal-subagents";
+import {
+  partRecord,
+  partStringField,
+  partText,
+  toolInputFromPart,
+  toolNameFromPart,
+  toolStateFromPart,
+} from "../lib/opencode-part-access";
 import { currentLocale, t } from "../../i18n";
 
 const tr = (key: string, replacements?: Record<string, string>): string => {
@@ -87,13 +95,17 @@ function formatAgentLabel(value: string): string {
     .join(" ");
 }
 
-function getToolInput(state: any): Record<string, unknown> {
-  const input = state?.input;
-  if (input && typeof input === "object") return input as Record<string, unknown>;
-  return {};
+function recordFromValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
-function pickInputText(input: Record<string, unknown>, keys: string[]): string {
+function getToolInput(state: Record<string, unknown>): Record<string, unknown> {
+  return recordFromValue(state.input);
+}
+
+function pickInputText(input: Record<string, unknown>, keys: readonly string[]): string {
   for (const key of keys) {
     const value = input[key];
     const text = normalizeStepText(value);
@@ -102,7 +114,7 @@ function pickInputText(input: Record<string, unknown>, keys: string[]): string {
   return "";
 }
 
-function buildToolTitle(state: any, toolName: string): string {
+function buildToolTitle(state: Record<string, unknown>, toolName: string): string {
   const lower = toolName.toLowerCase();
   const input = getToolInput(state);
   const pick = (...keys: string[]) => pickInputText(input, keys);
@@ -177,7 +189,7 @@ function buildToolTitle(state: any, toolName: string): string {
 }
 
 /** Build a concise detail line for a tool call — avoids dumping raw output */
-function buildToolDetail(state: any, toolName: string): string | undefined {
+function buildToolDetail(state: Record<string, unknown>, toolName: string): string | undefined {
   const lower = toolName.toLowerCase();
   const input = getToolInput(state);
   const pick = (...keys: string[]) => pickInputText(input, keys);
@@ -232,7 +244,7 @@ function buildToolDetail(state: any, toolName: string): string | undefined {
   // For edits that report updated files, show filename(s)
   const files = state?.files;
   if (Array.isArray(files) && files.length > 0) {
-    const names = files.filter((f: any) => typeof f === "string").map(extractFilename);
+    const names = files.filter((file): file is string => typeof file === "string").map(extractFilename);
     if (names.length === 1) return names[0];
     if (names.length > 1) return `${names[0]} +${names.length - 1} more`;
   }
@@ -295,19 +307,19 @@ function buildToolDetail(state: any, toolName: string): string | undefined {
 
 export function summarizeStep(part: Part): { title: string; detail?: string; isSkill?: boolean; skillName?: string; toolCategory?: string; status?: string } {
   if (part.type === "tool") {
-    const record = part as any;
-    const toolName = record.tool ? String(record.tool) : "Tool";
-    const state = record.state ?? {};
+    const toolName = toolNameFromPart(part) || "Tool";
+    const state = toolStateFromPart(part);
     const title = buildToolTitle(state, toolName);
     const category = classifyTool(toolName);
-    const status = state.status ? String(state.status) : undefined;
+    const status = state.status === undefined || state.status === null ? undefined : String(state.status);
     const detail = buildToolDetail(state, toolName);
     const normalizedTitle = normalizeStepText(title).toLowerCase();
     const finalDetail = detail && normalizeStepText(detail).toLowerCase() !== normalizedTitle ? detail : undefined;
 
     // Detect skill trigger
     if (category === "skill") {
-      const skillName = state.metadata?.name || title.replace(/^(Loaded skill:\s*|Load skill\s+)/i, "");
+      const metadata = recordFromValue(state.metadata);
+      const skillName = normalizeStepText(metadata.name) || title.replace(/^(Loaded skill:\s*|Load skill\s+)/i, "");
       return { title, isSkill: true, skillName, detail: finalDetail, toolCategory: category, status };
     }
 
@@ -315,8 +327,7 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
   }
 
   if (part.type === "reasoning") {
-    const record = part as any;
-    const text = typeof record.text === "string" ? cleanReasoningText(record.text) : "";
+    const text = cleanReasoningText(partText(part));
     if (!text) return { title: tr("tools.thinking"), toolCategory: "tool" };
 
     const lines = text
@@ -347,7 +358,7 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
   }
 
   if (part.type === "step-start" || part.type === "step-finish") {
-    const reason = (part as any).reason;
+    const reason = partStringField(part, "reason");
     return {
       title: part.type === "step-start" ? tr("tools.step_started") : tr("tools.step_finished"),
       detail: reason ? String(reason) : undefined,
@@ -440,7 +451,12 @@ function isLegacyArtifactPathCandidate(value: string, options: { rejectBareHost?
   );
 }
 
-function collectLegacyDirectPaths(record: any, state: any, input: Record<string, unknown>, toolName: string): string[] {
+function collectLegacyDirectPaths(
+  record: Record<string, unknown>,
+  state: Record<string, unknown>,
+  input: Record<string, unknown>,
+  _toolName: string,
+): string[] {
   const directValues = [
     ...LEGACY_INPUT_PATH_KEYS.map((key) => input[key]),
     ...LEGACY_INPUT_PATH_KEYS.map((key) => state?.[key]),
@@ -549,18 +565,16 @@ export function deriveArtifacts(list: MessageWithParts[], options: DeriveArtifac
   const source = maxMessages && list.length > maxMessages ? list.slice(list.length - maxMessages) : list;
 
   source.forEach((message) => {
-    const messageId = String((message.info as any)?.id ?? "");
+    const messageInfo = recordFromValue(message.info);
+    const messageId = messageInfo.id === undefined || messageInfo.id === null ? "" : String(messageInfo.id);
 
     message.parts.forEach((part) => {
       if (part.type !== "tool") return;
-      const record = part as any;
-      const state = record.state ?? {};
+      const record = partRecord(part);
+      const state = toolStateFromPart(part);
       const matches = new Set<string>();
-      const toolName =
-        typeof record.tool === "string" && record.tool.trim()
-          ? record.tool.trim().toLowerCase()
-          : "";
-      const input = getToolInput(state);
+      const toolName = toolNameFromPart(part).trim().toLowerCase();
+      const input = toolInputFromPart(part);
       const interaction: ArtifactItem["fileInteraction"] = LEGACY_MODIFIED_TOOLS.has(toolName)
         ? "modified"
         : LEGACY_OPEN_TOOLS.has(toolName)
