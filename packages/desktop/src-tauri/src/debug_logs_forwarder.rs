@@ -814,6 +814,7 @@ fn is_direct_fallback_event(event: &serde_json::Value) -> bool {
 
     event_type.starts_with("desktop-auth:")
         || event_type.starts_with("new-session:")
+        || event_type.starts_with("updater:")
         || event_type.starts_with("veslo-server-launch:")
         || event_type.starts_with("debug-log-delivery:")
 }
@@ -1318,6 +1319,20 @@ mod tests {
             "source": "Veslo bootstrap",
             "stream": "diagnostic",
             "payload": { "eventType": "unbounded:custom" },
+        })));
+    }
+
+    #[test]
+    fn direct_fallback_allows_updater_diagnostics_only_through_bootstrap_lane() {
+        assert!(is_direct_fallback_event(&serde_json::json!({
+            "source": "Veslo bootstrap",
+            "stream": "diagnostic",
+            "payload": { "eventType": "updater:download-end" },
+        })));
+        assert!(!is_direct_fallback_event(&serde_json::json!({
+            "source": "Veslo UI",
+            "stream": "stderr",
+            "payload": { "eventType": "updater:download-end" },
         })));
     }
 

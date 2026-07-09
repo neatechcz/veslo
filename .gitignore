@@ -78,6 +78,3 @@ dev-specific/
 
 # Veslo runtime logs
 docs/sandbox/runtime-logs/
-
-# Graphify generated knowledge graph
-graphify-out/

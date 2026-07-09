@@ -43,6 +43,17 @@ test("system state schedules automatic updater download retries", () => {
   assert.match(source, /refreshBeforeDownload\?:\s*boolean/);
 });
 
+test("updater diagnostics are forwarded into the desktop debug-log pipeline", () => {
+  assert.match(source, /import \{ recordBootstrapDiagnostic \} from "\.\/lib\/bootstrap-diagnostics";/);
+  assert.match(source, /function recordUpdaterDiagnostic\(/);
+  assert.match(source, /recordPerfLog\(true,\s*"workspace\.updater",\s*event,\s*payload\);/);
+  assert.match(source, /void recordBootstrapDiagnostic\(`updater:\$\{event\}`,\s*payload\s*\);/);
+  assert.match(source, /recordUpdaterDiagnostic\("check-start"/);
+  assert.match(source, /recordUpdaterDiagnostic\("download-start"/);
+  assert.match(source, /recordUpdaterDiagnostic\("download-end"/);
+  assert.match(source, /recordUpdaterDiagnostic\("install-start"/);
+});
+
 test("scheduled updater retries refresh the update handle before downloading", () => {
   assert.match(source, /async function refreshPendingUpdateForDownload/);
   assert.match(source, /requireUpdate\?:\s*boolean/);
